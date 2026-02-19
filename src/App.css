@@ -294,3 +294,64 @@
 .stop-btn:hover {
   background: #7a3030;
 }
+
+/* Tool call blocks */
+.tool-call-block {
+  margin: 8px 0;
+  padding: 10px 12px;
+  background: #1a1a3a;
+  border-left: 3px solid #4a6aaa;
+  border-radius: 4px;
+  font-size: 13px;
+}
+
+.tool-call-header {
+  color: #7799cc;
+  font-weight: 500;
+  margin-bottom: 6px;
+}
+
+.tool-call-args {
+  color: #9999bb;
+  font-size: 12px;
+  white-space: pre-wrap;
+  font-family: "SF Mono", "Fira Code", "Fira Mono", Menlo, monospace;
+  margin: 0;
+}
+
+/* Tool result blocks */
+.tool-result-block {
+  margin: 8px 0;
+  padding: 10px 12px;
+  background: #1a2a1a;
+  border-left: 3px solid #4a8a4a;
+  border-radius: 4px;
+  font-size: 13px;
+}
+
+.tool-result-header {
+  color: #66aa66;
+  font-weight: 500;
+  margin-bottom: 6px;
+}
+
+.tool-result-content {
+  color: #99bb99;
+  font-size: 12px;
+  white-space: pre-wrap;
+  font-family: "SF Mono", "Fira Code", "Fira Mono", Menlo, monospace;
+  margin: 0;
+}
+
+.tool-result-error {
+  background: #2a1a1a;
+  border-left-color: #aa4a4a;
+}
+
+.tool-result-error .tool-result-header {
+  color: #cc6666;
+}
+
+.tool-result-error .tool-result-content {
+  color: #bb7777;
+}

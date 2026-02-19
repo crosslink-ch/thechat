@@ -1,8 +1,8 @@
 import { useState, useRef, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { useChat } from "./useChat";
+import { useChat } from "./hooks/useChat";
 import { MessageBubble, StreamingBubble } from "./MessageBubble";
-import type { Conversation } from "./types";
+import type { Conversation } from "./core/types";
 import "./App.css";
 
 function App() {
@@ -96,10 +96,7 @@ function App() {
             <MessageBubble key={msg.id} message={msg} />
           ))}
           {streaming && (
-            <StreamingBubble
-              content={streaming.content}
-              reasoning={streaming.reasoning}
-            />
+            <StreamingBubble parts={streaming.parts} />
           )}
           {error && <div className="error-message">{error}</div>}
           <div ref={messagesEndRef} />
