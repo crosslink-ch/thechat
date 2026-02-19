@@ -12,9 +12,9 @@
   "app": {
     "windows": [
       {
-        "title": "thechat",
-        "width": 800,
-        "height": 600
+        "title": "TheChat",
+        "width": 900,
+        "height": 700
       }
     ],
     "security": {
