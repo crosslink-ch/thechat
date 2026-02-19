@@ -60,7 +60,10 @@ pub fn run() {
         Database::new(db_path.to_str().unwrap()).expect("Failed to initialize database");
     let db_state: DbState = Arc::new(database);
 
+    log::info!("App started");
+
     tauri::Builder::default()
+        .plugin(tauri_plugin_log::Builder::new().build())
         .plugin(tauri_plugin_opener::init())
         .manage(db_state)
         .invoke_handler(tauri::generate_handler![
@@ -73,4 +76,54 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tauri::Manager;
+
+    #[test]
+    fn app_builds_with_mock_runtime() {
+        let database = Database::new(":memory:").unwrap();
+        let db_state: DbState = Arc::new(database);
+
+        let app = tauri::test::mock_builder()
+            .plugin(tauri_plugin_log::Builder::new().build())
+            .manage(db_state)
+            .invoke_handler(tauri::generate_handler![
+                get_config,
+                create_conversation,
+                list_conversations,
+                update_conversation_title,
+                save_message,
+                get_messages,
+            ])
+            .build(tauri::generate_context!())
+            .expect("failed to build app with mock runtime");
+
+        // Verify managed state is accessible
+        let state = app.state::<DbState>();
+        let convs = state.list_conversations().unwrap();
+        assert!(convs.is_empty());
+    }
+
+    #[test]
+    fn managed_db_operations_through_app_state() {
+        let database = Database::new(":memory:").unwrap();
+        let db_state: DbState = Arc::new(database);
+
+        let app = tauri::test::mock_builder()
+            .manage(db_state)
+            .build(tauri::generate_context!())
+            .expect("failed to build app");
+
+        let db = app.state::<DbState>();
+        let conv = db.create_conversation("Test").unwrap();
+        assert_eq!(conv.title, "Test");
+
+        db.save_message(&conv.id, "user", "Hello", None).unwrap();
+        let msgs = db.get_messages(&conv.id).unwrap();
+        assert_eq!(msgs.len(), 1);
+    }
 }

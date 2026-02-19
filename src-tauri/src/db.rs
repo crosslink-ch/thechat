@@ -172,3 +172,129 @@ impl Database {
         Ok(messages)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_db() -> Database {
+        Database::new(":memory:").unwrap()
+    }
+
+    #[test]
+    fn create_conversation() {
+        let db = test_db();
+        let conv = db.create_conversation("Test Chat").unwrap();
+        assert_eq!(conv.title, "Test Chat");
+        assert!(!conv.id.is_empty());
+        assert!(!conv.created_at.is_empty());
+        assert_eq!(conv.created_at, conv.updated_at);
+    }
+
+    #[test]
+    fn list_conversations_empty() {
+        let db = test_db();
+        let convs = db.list_conversations().unwrap();
+        assert!(convs.is_empty());
+    }
+
+    #[test]
+    fn list_conversations_ordered_by_updated_at() {
+        let db = test_db();
+        let first = db.create_conversation("First").unwrap();
+        let second = db.create_conversation("Second").unwrap();
+
+        let convs = db.list_conversations().unwrap();
+        assert_eq!(convs.len(), 2);
+        // Most recently created should be first (ORDER BY updated_at DESC)
+        assert_eq!(convs[0].id, second.id);
+        assert_eq!(convs[1].id, first.id);
+    }
+
+    #[test]
+    fn update_conversation_title() {
+        let db = test_db();
+        let conv = db.create_conversation("Old Title").unwrap();
+        db.update_conversation_title(&conv.id, "New Title").unwrap();
+
+        let convs = db.list_conversations().unwrap();
+        assert_eq!(convs.len(), 1);
+        assert_eq!(convs[0].title, "New Title");
+    }
+
+    #[test]
+    fn save_and_get_messages() {
+        let db = test_db();
+        let conv = db.create_conversation("Chat").unwrap();
+
+        db.save_message(&conv.id, "user", "Hello", None).unwrap();
+        db.save_message(&conv.id, "assistant", "Hi there", Some("thinking..."))
+            .unwrap();
+
+        let msgs = db.get_messages(&conv.id).unwrap();
+        assert_eq!(msgs.len(), 2);
+        assert_eq!(msgs[0].role, "user");
+        assert_eq!(msgs[0].content, "Hello");
+        assert!(msgs[0].reasoning_content.is_none());
+        assert_eq!(msgs[1].role, "assistant");
+        assert_eq!(msgs[1].content, "Hi there");
+        assert_eq!(msgs[1].reasoning_content.as_deref(), Some("thinking..."));
+    }
+
+    #[test]
+    fn get_messages_empty() {
+        let db = test_db();
+        let conv = db.create_conversation("Empty").unwrap();
+        let msgs = db.get_messages(&conv.id).unwrap();
+        assert!(msgs.is_empty());
+    }
+
+    #[test]
+    fn save_message_updates_conversation_timestamp() {
+        let db = test_db();
+        let conv = db.create_conversation("Chat").unwrap();
+        let original_updated = conv.updated_at.clone();
+
+        // Small sleep to ensure timestamp differs
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        db.save_message(&conv.id, "user", "Hello", None).unwrap();
+
+        let convs = db.list_conversations().unwrap();
+        assert!(convs[0].updated_at >= original_updated);
+    }
+
+    #[test]
+    fn messages_ordered_by_created_at() {
+        let db = test_db();
+        let conv = db.create_conversation("Chat").unwrap();
+
+        db.save_message(&conv.id, "user", "First", None).unwrap();
+        db.save_message(&conv.id, "assistant", "Second", None)
+            .unwrap();
+        db.save_message(&conv.id, "user", "Third", None).unwrap();
+
+        let msgs = db.get_messages(&conv.id).unwrap();
+        assert_eq!(msgs[0].content, "First");
+        assert_eq!(msgs[1].content, "Second");
+        assert_eq!(msgs[2].content, "Third");
+    }
+
+    #[test]
+    fn messages_isolated_per_conversation() {
+        let db = test_db();
+        let conv1 = db.create_conversation("Chat 1").unwrap();
+        let conv2 = db.create_conversation("Chat 2").unwrap();
+
+        db.save_message(&conv1.id, "user", "In chat 1", None)
+            .unwrap();
+        db.save_message(&conv2.id, "user", "In chat 2", None)
+            .unwrap();
+
+        let msgs1 = db.get_messages(&conv1.id).unwrap();
+        let msgs2 = db.get_messages(&conv2.id).unwrap();
+        assert_eq!(msgs1.len(), 1);
+        assert_eq!(msgs2.len(), 1);
+        assert_eq!(msgs1[0].content, "In chat 1");
+        assert_eq!(msgs2[0].content, "In chat 2");
+    }
+}
