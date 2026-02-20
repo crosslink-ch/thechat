@@ -49,7 +49,7 @@ export async function runTask(prompt: string, signal?: AbortSignal): Promise<str
       "You are a helpful sub-agent completing a specific task. Be concise and focused. " +
       "Complete the task and report results clearly.",
     tools,
-    maxToolRoundtrips: 10,
+    maxToolRoundtrips: Infinity,
     signal,
     onEvent,
   });
