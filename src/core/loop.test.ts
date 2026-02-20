@@ -133,12 +133,7 @@ describe("runChatLoop", () => {
   });
 
   it("stops after maxToolRoundtrips", async () => {
-    // Always return a tool call
-    mockStreamCompletion.mockResolvedValue({
-      text: "",
-      reasoning: "",
-      toolCalls: [{ id: "call_loop", name: "infinite_tool", args: {} }],
-    });
+    let callCount = 0;
 
     const infiniteTool: ToolDefinition = {
       name: "infinite_tool",
@@ -146,6 +141,16 @@ describe("runChatLoop", () => {
       parameters: { type: "object", properties: {} },
       execute: vi.fn().mockResolvedValue("again"),
     };
+
+    // Each call returns a tool call with different args (to avoid doom loop)
+    mockStreamCompletion.mockImplementation(async () => {
+      callCount++;
+      return {
+        text: "",
+        reasoning: "",
+        toolCalls: [{ id: `call_${callCount}`, name: "infinite_tool", args: { attempt: callCount } }],
+      };
+    });
 
     const events: StreamEvent[] = [];
     await runChatLoop({
@@ -301,6 +306,109 @@ describe("runChatLoop", () => {
     expect(toolMsg).toBeDefined();
     const parsed = JSON.parse(toolMsg!.content as string);
     expect(parsed.error).toContain("User denied permission");
+  });
+
+  it("detects doom loop and forces text-only response", async () => {
+    const stubbornTool: ToolDefinition = {
+      name: "read_file",
+      description: "Read a file",
+      parameters: { type: "object", properties: {} },
+      execute: vi.fn().mockResolvedValue("file contents"),
+    };
+
+    // Rounds 1-3: model keeps calling the same tool with same args
+    for (let i = 0; i < 3; i++) {
+      mockStreamCompletion.mockResolvedValueOnce({
+        text: "",
+        reasoning: "",
+        toolCalls: [{ id: `call_${i}`, name: "read_file", args: { path: "/foo.txt" } }],
+      });
+    }
+
+    // Round 4: doom loop detected, text-only call (no tools)
+    mockStreamCompletion.mockResolvedValueOnce({
+      text: "Here is my best answer based on what I found.",
+      reasoning: "",
+      toolCalls: [],
+      usage: { prompt_tokens: 50, completion_tokens: 20, total_tokens: 70 },
+    });
+
+    const events: StreamEvent[] = [];
+    await runChatLoop({
+      apiKey: "key",
+      model: "model",
+      messages: [{ role: "user", content: "read foo" }],
+      tools: [stubbornTool],
+      onEvent: (e) => events.push(e),
+    });
+
+    // Tool was executed 3 times before doom loop was detected
+    expect(stubbornTool.execute).toHaveBeenCalledTimes(3);
+
+    // Doom loop error event was emitted
+    const doomError = events.find(
+      (e) => e.type === "error" && e.error.includes("Doom loop"),
+    );
+    expect(doomError).toBeDefined();
+
+    // Final text-only call was made (4th streamCompletion call, without tools)
+    expect(mockStreamCompletion).toHaveBeenCalledTimes(4);
+    const lastCall = mockStreamCompletion.mock.calls[3][0];
+    expect(lastCall.tools).toBeUndefined();
+
+    // Finished successfully
+    expect(events.some((e) => e.type === "finish")).toBe(true);
+  });
+
+  it("does not trigger doom loop for same tool with different args", async () => {
+    const readTool: ToolDefinition = {
+      name: "read_file",
+      description: "Read a file",
+      parameters: { type: "object", properties: {} },
+      execute: vi.fn().mockResolvedValue("contents"),
+    };
+
+    // 3 calls to same tool but with different args each time
+    mockStreamCompletion.mockResolvedValueOnce({
+      text: "",
+      reasoning: "",
+      toolCalls: [{ id: "call_1", name: "read_file", args: { path: "/a.txt" } }],
+    });
+    mockStreamCompletion.mockResolvedValueOnce({
+      text: "",
+      reasoning: "",
+      toolCalls: [{ id: "call_2", name: "read_file", args: { path: "/b.txt" } }],
+    });
+    mockStreamCompletion.mockResolvedValueOnce({
+      text: "",
+      reasoning: "",
+      toolCalls: [{ id: "call_3", name: "read_file", args: { path: "/c.txt" } }],
+    });
+    mockStreamCompletion.mockResolvedValueOnce({
+      text: "Done reading all files",
+      reasoning: "",
+      toolCalls: [],
+      usage: { prompt_tokens: 30, completion_tokens: 10, total_tokens: 40 },
+    });
+
+    const events: StreamEvent[] = [];
+    await runChatLoop({
+      apiKey: "key",
+      model: "model",
+      messages: [{ role: "user", content: "read files" }],
+      tools: [readTool],
+      onEvent: (e) => events.push(e),
+    });
+
+    // No doom loop error
+    const doomError = events.find(
+      (e) => e.type === "error" && e.error.includes("Doom loop"),
+    );
+    expect(doomError).toBeUndefined();
+
+    // Normal finish
+    expect(events.some((e) => e.type === "finish")).toBe(true);
+    expect(readTool.execute).toHaveBeenCalledTimes(3);
   });
 
   it("handles streamCompletion error", async () => {

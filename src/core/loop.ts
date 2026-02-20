@@ -7,6 +7,25 @@ You are a helpful assistant. \
 Be concise and direct in your responses. \
 When using tools, explain what you're doing briefly.`;
 
+const DOOM_LOOP_THRESHOLD = 3;
+
+interface ToolCallRecord {
+  toolName: string;
+  argsJson: string;
+}
+
+/**
+ * Detect doom loops: the last N tool calls are the same tool with identical args.
+ */
+function isDoomLoop(history: ToolCallRecord[]): boolean {
+  if (history.length < DOOM_LOOP_THRESHOLD) return false;
+  const recent = history.slice(-DOOM_LOOP_THRESHOLD);
+  const first = recent[0];
+  return recent.every(
+    (r) => r.toolName === first.toolName && r.argsJson === first.argsJson,
+  );
+}
+
 export async function runChatLoop(options: ChatLoopOptions): Promise<void> {
   const {
     apiKey,
@@ -15,7 +34,7 @@ export async function runChatLoop(options: ChatLoopOptions): Promise<void> {
     systemPrompt,
     params,
     tools,
-    maxToolRoundtrips = 20,
+    maxToolRoundtrips = Infinity,
     signal,
     onEvent,
   } = options;
@@ -31,8 +50,42 @@ export async function runChatLoop(options: ChatLoopOptions): Promise<void> {
     }
   }
 
+  const toolCallHistory: ToolCallRecord[] = [];
+
   for (let round = 0; round <= maxToolRoundtrips; round++) {
     if (signal?.aborted) return;
+
+    // Doom loop detected — do one final text-only call so the model can respond
+    if (isDoomLoop(toolCallHistory)) {
+      onEvent({
+        type: "error",
+        error: "Doom loop detected: the same tool was called with identical arguments 3 times in a row. Requesting text-only response.",
+      });
+
+      workingMessages.push({
+        role: "user",
+        content:
+          "You appear to be stuck in a loop, repeating the same tool call with the same arguments. " +
+          "Stop using tools and provide your best response with the information you have so far.",
+      });
+
+      try {
+        const finalResult = await streamCompletion({
+          apiKey,
+          model,
+          messages: workingMessages,
+          params,
+          tools: undefined, // no tools — force text-only
+          signal,
+          onEvent,
+        });
+        onEvent({ type: "finish", usage: finalResult.usage });
+      } catch (e) {
+        if (e instanceof DOMException && e.name === "AbortError") return;
+        onEvent({ type: "error", error: String(e) });
+      }
+      return;
+    }
 
     let result: StreamResult;
     try {
@@ -132,6 +185,14 @@ export async function runChatLoop(options: ChatLoopOptions): Promise<void> {
       }),
     );
 
+    // Track tool calls for doom loop detection
+    for (const tc of result.toolCalls) {
+      toolCallHistory.push({
+        toolName: tc.name,
+        argsJson: JSON.stringify(tc.args),
+      });
+    }
+
     // Append tool result messages (with truncation)
     for (const tr of toolResults) {
       const content = JSON.stringify(tr.result);
@@ -145,6 +206,6 @@ export async function runChatLoop(options: ChatLoopOptions): Promise<void> {
     // Continue loop — model will see tool results
   }
 
-  // Exceeded max roundtrips
+  // Exceeded max roundtrips (only reachable if explicitly set)
   onEvent({ type: "error", error: `Exceeded maximum tool roundtrips (${maxToolRoundtrips})` });
 }
