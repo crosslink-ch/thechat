@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, useMemo } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useChat } from "./hooks/useChat";
-import { MessageBubble, StreamingBubble } from "./MessageBubble";
+import { ChatMessage, StreamingMessage } from "./ChatMessage";
 import { CommandPalette } from "./CommandPalette";
 import { getCurrentTimeTool } from "./core/tools";
 import type { Conversation, McpToolInfo, ToolDefinition } from "./core/types";
@@ -154,10 +154,10 @@ function App() {
             <div className="empty-state">Send a message to start chatting</div>
           )}
           {messages.map((msg) => (
-            <MessageBubble key={msg.id} message={msg} />
+            <ChatMessage key={msg.id} message={msg} />
           ))}
           {streaming && (
-            <StreamingBubble parts={streaming.parts} />
+            <StreamingMessage parts={streaming.parts} />
           )}
           {error && <div className="error-message">{error}</div>}
           <div ref={messagesEndRef} />
