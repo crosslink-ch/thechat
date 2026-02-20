@@ -363,6 +363,84 @@
   color: #a07070;
 }
 
+/* Permission bar */
+.permission-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 16px;
+  background: #1a1a22;
+  border-top: 1px solid #2c2c3c;
+}
+
+.permission-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
+}
+
+.permission-label {
+  color: #999999;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.permission-command {
+  font-family: "SF Mono", "Fira Code", "Fira Mono", Menlo, monospace;
+  font-size: 13px;
+  color: #c0c0c0;
+  background: #262630;
+  padding: 2px 8px;
+  border-radius: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.permission-desc {
+  color: #666666;
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.permission-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.permission-btn {
+  padding: 5px 14px;
+  border: none;
+  border-radius: 6px;
+  font-size: 13px;
+  cursor: pointer;
+  font-weight: 500;
+}
+
+.permission-allow {
+  background: #2a4a2a;
+  color: #80c080;
+}
+
+.permission-allow:hover {
+  background: #305530;
+}
+
+.permission-deny {
+  background: #3a2222;
+  color: #c08080;
+}
+
+.permission-deny:hover {
+  background: #4a2a2a;
+}
+
 /* Command Palette */
 .palette-overlay {
   position: fixed;

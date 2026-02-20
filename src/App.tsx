@@ -4,11 +4,25 @@ import { listen } from "@tauri-apps/api/event";
 import { useChat } from "./hooks/useChat";
 import { MessageBubble, StreamingBubble } from "./MessageBubble";
 import { CommandPalette } from "./CommandPalette";
-import { getCurrentTimeTool } from "./core/tools";
+import { getCurrentTimeTool, shellTool } from "./core/tools";
+import { onPermissionRequest, type PermissionRequest } from "./core/permission";
 import type { Conversation, McpToolInfo, ToolDefinition } from "./core/types";
 import "./App.css";
 
-const builtinTools = [getCurrentTimeTool];
+const builtinTools = [getCurrentTimeTool, shellTool];
+
+function getSystemPrompt(): string {
+  const platform = navigator.platform?.toLowerCase() ?? "";
+  let os = "Unknown OS";
+  if (platform.includes("win")) os = "Windows";
+  else if (platform.includes("mac") || platform.includes("darwin")) os = "macOS";
+  else if (platform.includes("linux")) os = "Linux";
+
+  return `You are a helpful assistant running on ${os}. \
+Be concise and direct in your responses. \
+When using tools, explain what you're doing briefly. \
+When running shell commands, use the correct syntax for ${os}.`;
+}
 
 function App() {
   const [mcpTools, setMcpTools] = useState<ToolDefinition[]>([]);
@@ -17,6 +31,8 @@ function App() {
     () => [...builtinTools, ...mcpTools],
     [mcpTools],
   );
+
+  const systemPrompt = useMemo(() => getSystemPrompt(), []);
 
   const {
     messages,
@@ -28,12 +44,13 @@ function App() {
     stopStreaming,
     loadConversation,
     startNewConversation,
-  } = useChat({ tools });
+  } = useChat({ tools, systemPrompt });
 
   const [input, setInput] = useState("");
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [pendingPermission, setPendingPermission] = useState<PermissionRequest | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -68,6 +85,13 @@ function App() {
       unlistenPromise.then((unlisten) => unlisten());
       invoke("mcp_shutdown").catch(() => {});
     };
+  }, []);
+
+  // Subscribe to permission requests from tool execution
+  useEffect(() => {
+    return onPermissionRequest((request) => {
+      setPendingPermission(request);
+    });
   }, []);
 
   // Load conversations list
@@ -162,6 +186,38 @@ function App() {
           {error && <div className="error-message">{error}</div>}
           <div ref={messagesEndRef} />
         </div>
+
+        {pendingPermission && (
+          <div className="permission-bar">
+            <div className="permission-info">
+              <span className="permission-label">Run command:</span>
+              <code className="permission-command">{pendingPermission.command}</code>
+              {pendingPermission.description && (
+                <span className="permission-desc">{pendingPermission.description}</span>
+              )}
+            </div>
+            <div className="permission-actions">
+              <button
+                className="permission-btn permission-allow"
+                onClick={() => {
+                  pendingPermission.resolve();
+                  setPendingPermission(null);
+                }}
+              >
+                Allow
+              </button>
+              <button
+                className="permission-btn permission-deny"
+                onClick={() => {
+                  pendingPermission.reject("User denied permission");
+                  setPendingPermission(null);
+                }}
+              >
+                Deny
+              </button>
+            </div>
+          </div>
+        )}
 
         <div className="input-bar">
           <textarea
