@@ -663,3 +663,228 @@
   color: var(--color-text-placeholder);
   font-size: 14px;
 }
+
+/* Todo Panel */
+.todo-panel {
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-bg-surface);
+}
+
+.todo-panel-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 16px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--color-text-muted);
+  text-align: left;
+  box-shadow: none;
+}
+
+.todo-panel-toggle:hover {
+  background: var(--color-bg-hover);
+}
+
+.todo-panel-chevron {
+  font-size: 10px;
+  width: 12px;
+}
+
+.todo-panel-title {
+  font-weight: 600;
+  color: var(--color-text-secondary);
+}
+
+.todo-panel-summary {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--color-text-dimmed);
+}
+
+.todo-panel-list {
+  padding: 0 16px 8px;
+}
+
+.todo-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 4px 0;
+  font-size: 13px;
+  color: var(--color-text-secondary);
+}
+
+.todo-icon {
+  flex-shrink: 0;
+  width: 16px;
+  text-align: center;
+  line-height: 1.5;
+}
+
+.todo-icon-active {
+  animation: pulse 1.5s infinite;
+}
+
+.todo-content {
+  flex: 1;
+  line-height: 1.5;
+}
+
+.todo-status-completed .todo-content {
+  text-decoration: line-through;
+  color: var(--color-text-dimmed);
+}
+
+.todo-status-cancelled .todo-content {
+  text-decoration: line-through;
+  color: var(--color-text-dimmed);
+}
+
+.todo-priority {
+  flex-shrink: 0;
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.todo-priority-high {
+  color: var(--color-error);
+  background: var(--color-error-bg);
+}
+
+.todo-priority-medium {
+  color: var(--color-accent);
+  background: rgba(122, 154, 184, 0.1);
+}
+
+.todo-priority-low {
+  color: var(--color-text-dimmed);
+  background: var(--color-bg-elevated);
+}
+
+/* Question overlay */
+.question-overlay {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background: var(--color-overlay);
+  display: flex;
+  justify-content: center;
+  align-items: flex-end;
+  padding: 16px;
+  z-index: 5;
+}
+
+.question-card {
+  width: 100%;
+  max-width: 560px;
+  background: var(--color-bg-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  padding: 16px;
+  box-shadow: var(--shadow-card);
+  max-height: 80vh;
+  overflow-y: auto;
+}
+
+.question-block {
+  margin-bottom: 16px;
+}
+
+.question-block:last-of-type {
+  margin-bottom: 12px;
+}
+
+.question-header {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--color-text-dimmed);
+  margin-bottom: 4px;
+}
+
+.question-text {
+  font-size: 14px;
+  color: var(--color-text);
+  margin-bottom: 10px;
+}
+
+.question-options {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.question-option {
+  display: flex;
+  flex-direction: column;
+  padding: 8px 12px;
+  background: var(--color-bg-base);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  cursor: pointer;
+  text-align: left;
+  font-family: inherit;
+  box-shadow: none;
+  transition: border-color 0.15s;
+}
+
+.question-option:hover {
+  border-color: var(--color-border-strong);
+  background: var(--color-bg-hover);
+}
+
+.question-option-selected {
+  border-color: var(--color-accent-border);
+  background: rgba(122, 154, 184, 0.08);
+}
+
+.question-option-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-text);
+}
+
+.question-option-desc {
+  font-size: 12px;
+  color: var(--color-text-muted);
+  margin-top: 2px;
+}
+
+.question-custom {
+  margin-top: 8px;
+}
+
+.question-custom input {
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-bg-base);
+  color: var(--color-text);
+  font-size: 13px;
+  font-family: inherit;
+  outline: none;
+}
+
+.question-custom input:focus {
+  border-color: var(--color-border-focus);
+}
+
+.question-custom input::placeholder {
+  color: var(--color-text-placeholder);
+}
+
+.question-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}

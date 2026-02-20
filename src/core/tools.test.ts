@@ -10,7 +10,8 @@ vi.mock("./permission", () => ({
 
 import { invoke } from "@tauri-apps/api/core";
 import { requestPermission } from "./permission";
-import { shellTool, getCurrentTimeTool, defineTool } from "./tools";
+// Note: tools/shell.ts imports from "../permission" which resolves to "./permission" at this level
+import { shellTool, getCurrentTimeTool, defineTool } from "./tools/index";
 
 const mockInvoke = vi.mocked(invoke);
 const mockRequestPermission = vi.mocked(requestPermission);

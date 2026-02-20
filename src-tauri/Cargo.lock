@@ -4137,7 +4137,9 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "dirs 5.0.1",
+ "glob",
  "log",
+ "regex",
  "rusqlite",
  "serde",
  "serde_json",
@@ -4145,7 +4147,9 @@ dependencies = [
  "tauri-build",
  "tauri-plugin-log",
  "tauri-plugin-opener",
+ "tempfile",
  "uuid",
+ "walkdir",
 ]
 
 [[package]]

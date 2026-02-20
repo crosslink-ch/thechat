@@ -28,7 +28,11 @@ rusqlite = { version = "0.31", features = ["bundled"] }
 uuid = { version = "1", features = ["v4"] }
 chrono = { version = "0.4", features = ["serde"] }
 dirs = "5"
+glob = "0.3"
+regex = "1"
+walkdir = "2"
 
 [dev-dependencies]
+tempfile = "3"
 tauri = { version = "2", features = ["test"] }
 

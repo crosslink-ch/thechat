@@ -1,5 +1,6 @@
 mod config;
 mod db;
+mod fs;
 mod mcp;
 mod shell;
 
@@ -82,6 +83,12 @@ pub fn run() {
             mcp::mcp_call_tool,
             mcp::mcp_shutdown,
             shell::execute_shell_command,
+            fs::fs_read_file,
+            fs::fs_write_file,
+            fs::fs_edit_file,
+            fs::fs_glob,
+            fs::fs_grep,
+            fs::fs_list_dir,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -113,6 +120,12 @@ mod tests {
                 mcp::mcp_call_tool,
                 mcp::mcp_shutdown,
                 shell::execute_shell_command,
+                fs::fs_read_file,
+                fs::fs_write_file,
+                fs::fs_edit_file,
+                fs::fs_glob,
+                fs::fs_grep,
+                fs::fs_list_dir,
             ])
             .build(tauri::generate_context!())
             .expect("failed to build app with mock runtime");

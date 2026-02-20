@@ -1,35 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
-import { requestPermission } from "./permission";
-import type { ToolDefinition } from "./types";
-
-export function defineTool<TArgs = Record<string, unknown>>(
-  tool: ToolDefinition<TArgs>,
-): ToolDefinition<TArgs> {
-  return tool;
-}
-
-export const getCurrentTimeTool = defineTool({
-  name: "get_current_time",
-  description: "Get the current date and time in ISO 8601 format",
-  parameters: {
-    type: "object",
-    properties: {
-      timezone: {
-        type: "string",
-        description: "IANA timezone name (e.g. 'America/New_York'). Defaults to UTC.",
-      },
-    },
-    required: [],
-  },
-  execute: (args) => {
-    const tz = (args as { timezone?: string }).timezone || "UTC";
-    return {
-      time: new Date().toLocaleString("en-US", { timeZone: tz }),
-      timezone: tz,
-      iso: new Date().toISOString(),
-    };
-  },
-});
+import { requestPermission } from "../permission";
+import { defineTool } from "./define";
 
 interface ShellResult {
   stdout: string;
@@ -42,7 +13,17 @@ export const shellTool = defineTool({
   name: "shell",
   description: `Execute a shell command on the user's machine. The command runs in the user's login shell.
 The user will be asked for permission before the command runs.
-Use this for file operations, running scripts, installing packages, git commands, and any system task.
+
+IMPORTANT: Prefer using specialized tools over shell commands:
+- Use "read" instead of cat/head/tail
+- Use "write" instead of echo/cat with redirects
+- Use "edit" instead of sed/awk
+- Use "glob" instead of find/ls for finding files
+- Use "grep" instead of grep/rg for searching file contents
+- Use "list" instead of ls/tree for directory listings
+
+Use shell for: git commands, running scripts, installing packages, build commands, and system tasks that don't have a dedicated tool.
+
 Always provide a short description of what the command does.
 Prefer simple, single commands. For multi-step tasks, call the tool multiple times.
 The command has a default timeout of 120 seconds.`,
@@ -61,14 +42,19 @@ The command has a default timeout of 120 seconds.`,
         type: "number",
         description: "Timeout in seconds (default: 120)",
       },
+      workdir: {
+        type: "string",
+        description: "Working directory for the command. Defaults to the project root.",
+      },
     },
     required: ["command", "description"],
   },
   execute: async (args) => {
-    const { command, description, timeout } = args as {
+    const { command, description, timeout, workdir } = args as {
       command: string;
       description: string;
       timeout?: number;
+      workdir?: string;
     };
 
     await requestPermission({ command, description });
@@ -76,6 +62,7 @@ The command has a default timeout of 120 seconds.`,
     const result = await invoke<ShellResult>("execute_shell_command", {
       command,
       timeout: timeout ?? undefined,
+      workdir: workdir ?? undefined,
     });
 
     if (result.timed_out) {

@@ -48,6 +48,36 @@ export interface McpToolInfo {
   input_schema: Record<string, unknown>;
 }
 
+// -- Todo Items --
+
+export interface TodoItem {
+  id: string;
+  content: string;
+  status: "pending" | "in_progress" | "completed" | "cancelled";
+  priority?: "high" | "medium" | "low";
+}
+
+// -- Question Types --
+
+export interface QuestionOption {
+  label: string;
+  description: string;
+}
+
+export interface QuestionInfo {
+  question: string;
+  header: string;
+  options: QuestionOption[];
+  multiple?: boolean;
+}
+
+export interface QuestionRequest {
+  id: string;
+  questions: QuestionInfo[];
+  resolve: (answers: string[][]) => void;
+  reject: (reason: string) => void;
+}
+
 // -- Chat Parameters --
 
 export interface ChatParams {
