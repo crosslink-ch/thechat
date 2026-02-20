@@ -13,6 +13,10 @@
     "test:api": "pnpm --filter @thechat/api test",
     "tauri": "pnpm --filter @thechat/desktop tauri",
     "tauri:dev": "pnpm --filter @thechat/desktop tauri dev",
-    "tauri:build": "pnpm --filter @thechat/desktop tauri build"
+    "tauri:build": "pnpm --filter @thechat/desktop tauri build",
+    "db:generate": "pnpm --filter @thechat/api db:generate",
+    "db:migrate": "pnpm --filter @thechat/api db:migrate",
+    "db:push": "pnpm --filter @thechat/api db:push",
+    "db:studio": "pnpm --filter @thechat/api db:studio"
   }
 }

@@ -26,4 +26,8 @@ dist-ssr
 # App config (contains API keys)
 config.json
 
+# Environment variables
+.env
+.env.local
+
 .claude
