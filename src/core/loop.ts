@@ -1,11 +1,17 @@
 import { streamCompletion } from "./openrouter";
 import type { ChatLoopOptions, StreamResult, ToolDefinition } from "./types";
 
+const DEFAULT_SYSTEM_PROMPT = `\
+You are a helpful assistant. \
+Be concise and direct in your responses. \
+When using tools, explain what you're doing briefly.`;
+
 export async function runChatLoop(options: ChatLoopOptions): Promise<void> {
   const {
     apiKey,
     model,
     messages,
+    systemPrompt,
     params,
     tools,
     maxToolRoundtrips = 10,
@@ -13,7 +19,10 @@ export async function runChatLoop(options: ChatLoopOptions): Promise<void> {
     onEvent,
   } = options;
 
-  const workingMessages = [...messages];
+  const workingMessages: Array<Record<string, unknown>> = [
+    { role: "system", content: systemPrompt ?? DEFAULT_SYSTEM_PROMPT },
+    ...messages,
+  ];
   const toolMap = new Map<string, ToolDefinition>();
   if (tools) {
     for (const t of tools) {

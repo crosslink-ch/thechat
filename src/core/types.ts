@@ -103,6 +103,7 @@ export interface ChatLoopOptions {
   apiKey: string;
   model: string;
   messages: Array<Record<string, unknown>>;
+  systemPrompt?: string;
   params?: ChatParams;
   tools?: ToolDefinition[];
   maxToolRoundtrips?: number;

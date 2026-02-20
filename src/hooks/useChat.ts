@@ -68,6 +68,7 @@ interface StreamingState {
 interface UseChatOptions {
   tools?: ToolDefinition[];
   params?: ChatParams;
+  systemPrompt?: string;
 }
 
 export function useChat(options?: UseChatOptions) {
@@ -206,6 +207,7 @@ export function useChat(options?: UseChatOptions) {
           apiKey: config.api_key,
           model: config.model,
           messages: apiMessages,
+          systemPrompt: options?.systemPrompt,
           params: options?.params,
           tools: options?.tools,
           signal: controller.signal,
