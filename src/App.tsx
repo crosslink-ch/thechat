@@ -2,8 +2,11 @@ import { useState, useRef, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useChat } from "./hooks/useChat";
 import { MessageBubble, StreamingBubble } from "./MessageBubble";
+import { getCurrentTimeTool } from "./core/tools";
 import type { Conversation } from "./core/types";
 import "./App.css";
+
+const tools = [getCurrentTimeTool];
 
 function App() {
   const {
@@ -16,7 +19,7 @@ function App() {
     stopStreaming,
     loadConversation,
     startNewConversation,
-  } = useChat();
+  } = useChat({ tools });
 
   const [input, setInput] = useState("");
   const [conversations, setConversations] = useState<Conversation[]>([]);
