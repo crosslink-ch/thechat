@@ -1,4 +1,5 @@
 import { streamCompletion } from "./openrouter";
+import { truncateToolResult } from "./truncate";
 import type { ChatLoopOptions, StreamResult, ToolDefinition } from "./types";
 
 const DEFAULT_SYSTEM_PROMPT = `\
@@ -69,8 +70,33 @@ export async function runChatLoop(options: ChatLoopOptions): Promise<void> {
     // Execute all tool calls in parallel
     const toolResults = await Promise.all(
       result.toolCalls.map(async (tc) => {
-        const tool = toolMap.get(tc.name);
+        let tool = toolMap.get(tc.name);
+
+        // Invalid tool injection: redirect unknown tools to the "invalid" tool
         if (!tool) {
+          const invalidTool = toolMap.get("invalid");
+          if (invalidTool) {
+            const availableNames = Array.from(toolMap.keys())
+              .filter((n) => n !== "invalid")
+              .join(", ");
+            const errorArgs = {
+              error: `Unknown tool "${tc.name}". Available tools: ${availableNames}`,
+            };
+            try {
+              const execResult = await invalidTool.execute(errorArgs);
+              onEvent({
+                type: "tool-result",
+                toolCallId: tc.id,
+                toolName: tc.name,
+                result: execResult,
+                isError: true,
+              });
+              return { toolCallId: tc.id, result: execResult, isError: true };
+            } catch {
+              // Fall through to generic error
+            }
+          }
+
           const errorResult = { error: `Unknown tool: ${tc.name}` };
           onEvent({
             type: "tool-result",
@@ -106,12 +132,13 @@ export async function runChatLoop(options: ChatLoopOptions): Promise<void> {
       }),
     );
 
-    // Append tool result messages
+    // Append tool result messages (with truncation)
     for (const tr of toolResults) {
+      const content = JSON.stringify(tr.result);
       workingMessages.push({
         role: "tool",
         tool_call_id: tr.toolCallId,
-        content: JSON.stringify(tr.result),
+        content: truncateToolResult(content),
       });
     }
 

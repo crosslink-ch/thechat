@@ -1,28 +1,53 @@
-import { useState, useRef, useEffect, useMemo } from "react";
+import { useState, useRef, useEffect, useMemo, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useChat } from "./hooks/useChat";
 import { ChatMessage, StreamingMessage } from "./ChatMessage";
 import { CommandPalette } from "./CommandPalette";
-import { getCurrentTimeTool, shellTool } from "./core/tools";
+import { TodoPanel } from "./TodoPanel";
+import {
+  getCurrentTimeTool,
+  shellTool,
+  readTool,
+  writeTool,
+  editTool,
+  multiEditTool,
+  globTool,
+  grepTool,
+  listTool,
+  questionTool,
+  batchTool,
+  taskTool,
+  todoReadTool,
+  todoWriteTool,
+  invalidTool,
+} from "./core/tools/index";
+import { setBatchToolRegistry } from "./core/tools/batch";
+import { setTaskRunnerConfig } from "./core/task-runner";
 import { onPermissionRequest, type PermissionRequest } from "./core/permission";
-import type { Conversation, McpToolInfo, ToolDefinition } from "./core/types";
+import { onQuestionRequest } from "./core/question";
+import { onTodoUpdate, resetTodos } from "./core/todo";
+import { buildSystemPrompt } from "./core/system-prompt";
+import type { AppConfig, Conversation, McpToolInfo, QuestionRequest, TodoItem, ToolDefinition } from "./core/types";
 import "./App.css";
 
-const builtinTools = [getCurrentTimeTool, shellTool];
-
-function getSystemPrompt(): string {
-  const platform = navigator.platform?.toLowerCase() ?? "";
-  let os = "Unknown OS";
-  if (platform.includes("win")) os = "Windows";
-  else if (platform.includes("mac") || platform.includes("darwin")) os = "macOS";
-  else if (platform.includes("linux")) os = "Linux";
-
-  return `You are a helpful assistant running on ${os}. \
-Be concise and direct in your responses. \
-When using tools, explain what you're doing briefly. \
-When running shell commands, use the correct syntax for ${os}.`;
-}
+const builtinTools = [
+  getCurrentTimeTool,
+  shellTool,
+  readTool,
+  writeTool,
+  editTool,
+  multiEditTool,
+  globTool,
+  grepTool,
+  listTool,
+  questionTool,
+  batchTool,
+  taskTool,
+  todoReadTool,
+  todoWriteTool,
+  invalidTool,
+];
 
 function App() {
   const [mcpTools, setMcpTools] = useState<ToolDefinition[]>([]);
@@ -32,7 +57,7 @@ function App() {
     [mcpTools],
   );
 
-  const systemPrompt = useMemo(() => getSystemPrompt(), []);
+  const systemPrompt = useMemo(() => buildSystemPrompt(), []);
 
   const {
     messages,
@@ -51,8 +76,32 @@ function App() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [pendingPermission, setPendingPermission] = useState<PermissionRequest | null>(null);
+  const [pendingQuestion, setPendingQuestion] = useState<QuestionRequest | null>(null);
+  const [questionAnswers, setQuestionAnswers] = useState<string[][]>([]);
+  const [customInputs, setCustomInputs] = useState<string[]>([]);
+  const [todosState, setTodosState] = useState<TodoItem[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // Update batch tool registry when tools change
+  useEffect(() => {
+    setBatchToolRegistry(tools);
+  }, [tools]);
+
+  // Initialize task runner config
+  useEffect(() => {
+    invoke<AppConfig>("get_config")
+      .then((config) => {
+        setTaskRunnerConfig({
+          apiKey: config.api_key,
+          model: config.model,
+          availableTools: tools,
+        });
+      })
+      .catch(() => {
+        // Config not yet available, will be set when available
+      });
+  }, [tools]);
 
   // Initialize MCP servers — tools arrive incrementally via events
   useEffect(() => {
@@ -91,6 +140,22 @@ function App() {
   useEffect(() => {
     return onPermissionRequest((request) => {
       setPendingPermission(request);
+    });
+  }, []);
+
+  // Subscribe to question requests
+  useEffect(() => {
+    return onQuestionRequest((request) => {
+      setPendingQuestion(request);
+      setQuestionAnswers(request.questions.map(() => []));
+      setCustomInputs(request.questions.map(() => ""));
+    });
+  }, []);
+
+  // Subscribe to todo updates
+  useEffect(() => {
+    return onTodoUpdate((todos) => {
+      setTodosState(todos);
     });
   }, []);
 
@@ -185,6 +250,64 @@ function App() {
     }
   };
 
+  const handleNewConversation = useCallback(() => {
+    startNewConversation();
+    setSidebarOpen(false);
+    resetTodos();
+    setTodosState([]);
+  }, [startNewConversation]);
+
+  const handleQuestionSubmit = () => {
+    if (!pendingQuestion) return;
+    pendingQuestion.resolve(questionAnswers);
+    setPendingQuestion(null);
+  };
+
+  const handleQuestionCancel = () => {
+    if (!pendingQuestion) return;
+    pendingQuestion.reject("User cancelled");
+    setPendingQuestion(null);
+  };
+
+  const toggleQuestionOption = (qIndex: number, label: string) => {
+    setQuestionAnswers((prev) => {
+      const updated = [...prev];
+      const current = updated[qIndex] ?? [];
+      const isMultiple = pendingQuestion?.questions[qIndex]?.multiple;
+
+      if (isMultiple) {
+        if (current.includes(label)) {
+          updated[qIndex] = current.filter((a) => a !== label);
+        } else {
+          updated[qIndex] = [...current, label];
+        }
+      } else {
+        updated[qIndex] = [label];
+      }
+      return updated;
+    });
+  };
+
+  const submitCustomAnswer = (qIndex: number) => {
+    const text = customInputs[qIndex]?.trim();
+    if (!text) return;
+    setQuestionAnswers((prev) => {
+      const updated = [...prev];
+      const isMultiple = pendingQuestion?.questions[qIndex]?.multiple;
+      if (isMultiple) {
+        updated[qIndex] = [...(updated[qIndex] ?? []), text];
+      } else {
+        updated[qIndex] = [text];
+      }
+      return updated;
+    });
+    setCustomInputs((prev) => {
+      const updated = [...prev];
+      updated[qIndex] = "";
+      return updated;
+    });
+  };
+
   return (
     <div className="app">
       {/* Sidebar overlay */}
@@ -192,7 +315,7 @@ function App() {
 
       {/* Sidebar */}
       <div className={`sidebar ${sidebarOpen ? "sidebar-open" : ""}`}>
-        <button className="new-chat-btn" onClick={() => { startNewConversation(); setSidebarOpen(false); }}>
+        <button className="new-chat-btn" onClick={handleNewConversation}>
           + New Chat
         </button>
         <div className="conversations-list">
@@ -219,6 +342,8 @@ function App() {
           </span>
         </div>
 
+        <TodoPanel todos={todosState} />
+
         <div className="messages-area">
           {messages.length === 0 && !streaming && (
             <div className="empty-state">Send a message to start chatting</div>
@@ -238,6 +363,61 @@ function App() {
           <div ref={messagesEndRef} />
         </div>
 
+        {pendingQuestion && (
+          <div className="question-overlay">
+            <div className="question-card">
+              {pendingQuestion.questions.map((q, qIndex) => (
+                <div key={qIndex} className="question-block">
+                  <div className="question-header">{q.header}</div>
+                  <div className="question-text">{q.question}</div>
+                  <div className="question-options">
+                    {q.options.map((opt) => {
+                      const selected = (questionAnswers[qIndex] ?? []).includes(opt.label);
+                      return (
+                        <button
+                          key={opt.label}
+                          className={`question-option ${selected ? "question-option-selected" : ""}`}
+                          onClick={() => toggleQuestionOption(qIndex, opt.label)}
+                        >
+                          <span className="question-option-label">{opt.label}</span>
+                          <span className="question-option-desc">{opt.description}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <div className="question-custom">
+                    <input
+                      type="text"
+                      placeholder="Type your own answer..."
+                      value={customInputs[qIndex] ?? ""}
+                      onChange={(e) =>
+                        setCustomInputs((prev) => {
+                          const updated = [...prev];
+                          updated[qIndex] = e.target.value;
+                          return updated;
+                        })
+                      }
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          submitCustomAnswer(qIndex);
+                        }
+                      }}
+                    />
+                  </div>
+                </div>
+              ))}
+              <div className="question-actions">
+                <button className="question-btn question-btn-cancel" onClick={handleQuestionCancel}>
+                  Cancel
+                </button>
+                <button className="question-btn question-btn-submit" onClick={handleQuestionSubmit}>
+                  Submit
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
         <div className="input-bar">
           <textarea
             ref={textareaRef}

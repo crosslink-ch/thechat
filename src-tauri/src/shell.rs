@@ -10,15 +10,20 @@ pub struct ShellResult {
 }
 
 #[tauri::command]
-pub fn execute_shell_command(command: String, timeout: Option<u64>) -> Result<ShellResult, String> {
+pub fn execute_shell_command(command: String, timeout: Option<u64>, workdir: Option<String>) -> Result<ShellResult, String> {
     let timeout_secs = timeout.unwrap_or(120);
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into());
 
-    let mut child = Command::new(&shell)
-        .args(["-l", "-c", &command])
+    let mut cmd = Command::new(&shell);
+    cmd.args(["-l", "-c", &command])
         .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
+        .stderr(std::process::Stdio::piped());
+
+    if let Some(ref dir) = workdir {
+        cmd.current_dir(dir);
+    }
+
+    let mut child = cmd.spawn()
         .map_err(|e| format!("Failed to spawn shell: {}", e))?;
 
     let timeout_duration = std::time::Duration::from_secs(timeout_secs);
