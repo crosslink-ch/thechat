@@ -1,5 +1,5 @@
 use chrono::{DateTime, Utc};
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
 use uuid::Uuid;
@@ -45,6 +45,10 @@ impl Database {
                 reasoning_content TEXT,
                 created_at TEXT NOT NULL,
                 FOREIGN KEY (conversation_id) REFERENCES conversations(id)
+            );
+            CREATE TABLE IF NOT EXISTS kv_store (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
             );",
         )
         .map_err(|e| format!("Failed to create tables: {}", e))?;
@@ -142,6 +146,35 @@ impl Database {
             reasoning_content: reasoning_content.map(|s| s.to_string()),
             created_at: now_str,
         })
+    }
+
+    pub fn kv_get(&self, key: &str) -> Result<Option<String>, String> {
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        let mut stmt = conn
+            .prepare("SELECT value FROM kv_store WHERE key = ?1")
+            .map_err(|e| e.to_string())?;
+        let result = stmt
+            .query_row(params![key], |row| row.get(0))
+            .optional()
+            .map_err(|e| e.to_string())?;
+        Ok(result)
+    }
+
+    pub fn kv_set(&self, key: &str, value: &str) -> Result<(), String> {
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        conn.execute(
+            "INSERT INTO kv_store (key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            params![key, value],
+        )
+        .map_err(|e| format!("Failed to set kv: {}", e))?;
+        Ok(())
+    }
+
+    pub fn kv_delete(&self, key: &str) -> Result<(), String> {
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        conn.execute("DELETE FROM kv_store WHERE key = ?1", params![key])
+            .map_err(|e| format!("Failed to delete kv: {}", e))?;
+        Ok(())
     }
 
     pub fn get_messages(&self, conversation_id: &str) -> Result<Vec<Message>, String> {
@@ -277,6 +310,42 @@ mod tests {
         assert_eq!(msgs[0].content, "First");
         assert_eq!(msgs[1].content, "Second");
         assert_eq!(msgs[2].content, "Third");
+    }
+
+    #[test]
+    fn kv_set_and_get() {
+        let db = test_db();
+        db.kv_set("hello", "world").unwrap();
+        assert_eq!(db.kv_get("hello").unwrap(), Some("world".to_string()));
+    }
+
+    #[test]
+    fn kv_get_missing() {
+        let db = test_db();
+        assert_eq!(db.kv_get("nonexistent").unwrap(), None);
+    }
+
+    #[test]
+    fn kv_overwrite() {
+        let db = test_db();
+        db.kv_set("key", "first").unwrap();
+        db.kv_set("key", "second").unwrap();
+        assert_eq!(db.kv_get("key").unwrap(), Some("second".to_string()));
+    }
+
+    #[test]
+    fn kv_delete() {
+        let db = test_db();
+        db.kv_set("key", "value").unwrap();
+        db.kv_delete("key").unwrap();
+        assert_eq!(db.kv_get("key").unwrap(), None);
+    }
+
+    #[test]
+    fn kv_delete_missing() {
+        let db = test_db();
+        // Should not error
+        db.kv_delete("nonexistent").unwrap();
     }
 
     #[test]

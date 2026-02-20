@@ -1,10 +1,14 @@
 import { Elysia } from "elysia";
 import { yoga } from "@elysiajs/graphql-yoga";
+import { cors } from "@elysiajs/cors";
 import { sql } from "drizzle-orm";
 import { db } from "./db";
+import { authRoutes } from "./auth";
 
 const app = new Elysia()
+  .use(cors())
   .decorate("db", db)
+  .use(authRoutes)
   .use(
     yoga({
       typeDefs: /* GraphQL */ `

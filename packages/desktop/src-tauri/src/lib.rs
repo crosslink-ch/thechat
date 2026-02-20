@@ -52,6 +52,21 @@ fn get_messages(conversation_id: String, db: State<DbState>) -> Result<Vec<Messa
     db.get_messages(&conversation_id)
 }
 
+#[tauri::command]
+fn kv_get(key: String, db: State<DbState>) -> Result<Option<String>, String> {
+    db.kv_get(&key)
+}
+
+#[tauri::command]
+fn kv_set(key: String, value: String, db: State<DbState>) -> Result<(), String> {
+    db.kv_set(&key, &value)
+}
+
+#[tauri::command]
+fn kv_delete(key: String, db: State<DbState>) -> Result<(), String> {
+    db.kv_delete(&key)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let db_path = dirs::data_dir()
@@ -79,6 +94,9 @@ pub fn run() {
             update_conversation_title,
             save_message,
             get_messages,
+            kv_get,
+            kv_set,
+            kv_delete,
             mcp::mcp_initialize,
             mcp::mcp_call_tool,
             mcp::mcp_shutdown,
@@ -116,6 +134,9 @@ mod tests {
                 update_conversation_title,
                 save_message,
                 get_messages,
+                kv_get,
+                kv_set,
+                kv_delete,
                 mcp::mcp_initialize,
                 mcp::mcp_call_tool,
                 mcp::mcp_shutdown,

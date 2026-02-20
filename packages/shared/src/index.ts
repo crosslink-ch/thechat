@@ -48,6 +48,26 @@ export interface TodoItem {
   priority?: "high" | "medium" | "low";
 }
 
+// -- Auth Types --
+
+export interface AuthUser {
+  id: string;
+  name: string;
+  email: string | null;
+  avatar: string | null;
+}
+
+export interface LoginResponse {
+  token: string;
+  user: AuthUser;
+}
+
+export interface RegisterResponse {
+  token?: string;
+  user?: AuthUser;
+  message?: string;
+}
+
 // -- Chat Parameters --
 
 export interface ChatParams {

@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useMemo, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useChat } from "./hooks/useChat";
+import { useAuth } from "./hooks/useAuth";
 import { useKeybindings } from "./hooks/useKeybindings";
 import { useMcpTools } from "./hooks/useMcpTools";
 import { ChatMessage, StreamingMessage } from "./ChatMessage";
@@ -9,6 +10,7 @@ import { TodoPanel } from "./TodoPanel";
 import { Sidebar } from "./components/Sidebar";
 import { InputBar } from "./components/InputBar";
 import { QuestionOverlay } from "./components/QuestionOverlay";
+import { AuthModal } from "./components/AuthModal";
 import {
   getCurrentTimeTool,
   shellTool,
@@ -54,6 +56,8 @@ const builtinTools = [
 ];
 
 function App() {
+  const { user, login, register, logout } = useAuth();
+  const [authModalOpen, setAuthModalOpen] = useState(false);
   const mcpTools = useMcpTools();
 
   const tools = useMemo(
@@ -166,9 +170,12 @@ function App() {
         open={sidebarOpen}
         conversations={conversations}
         currentId={conversation?.id}
+        user={user}
         onClose={() => setSidebarOpen(false)}
         onNewChat={handleNewConversation}
         onSelectConversation={(conv) => { loadConversation(conv); setSidebarOpen(false); }}
+        onLoginClick={() => setAuthModalOpen(true)}
+        onLogout={logout}
       />
 
       <div className="chat-main">
@@ -223,6 +230,14 @@ function App() {
           currentId={conversation?.id}
           onSelect={(conv) => { loadConversation(conv); setPaletteOpen(false); }}
           onClose={() => setPaletteOpen(false)}
+        />
+      )}
+
+      {authModalOpen && (
+        <AuthModal
+          onLogin={login}
+          onRegister={register}
+          onClose={() => setAuthModalOpen(false)}
         />
       )}
     </div>

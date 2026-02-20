@@ -1,21 +1,28 @@
 import type { Conversation } from "../core/types";
+import type { AuthUser } from "@thechat/shared";
 
 interface SidebarProps {
   open: boolean;
   conversations: Conversation[];
   currentId: string | undefined;
+  user: AuthUser | null;
   onClose: () => void;
   onNewChat: () => void;
   onSelectConversation: (conv: Conversation) => void;
+  onLoginClick: () => void;
+  onLogout: () => void;
 }
 
 export function Sidebar({
   open,
   conversations,
   currentId,
+  user,
   onClose,
   onNewChat,
   onSelectConversation,
+  onLoginClick,
+  onLogout,
 }: SidebarProps) {
   return (
     <>
@@ -34,6 +41,20 @@ export function Sidebar({
               {conv.title}
             </button>
           ))}
+        </div>
+        <div className="sidebar-footer">
+          {user ? (
+            <div className="sidebar-user-info">
+              <span className="sidebar-user-name">{user.name}</span>
+              <button className="sidebar-logout-btn" onClick={onLogout}>
+                Log out
+              </button>
+            </div>
+          ) : (
+            <button className="sidebar-login-btn" onClick={onLoginClick}>
+              Log in
+            </button>
+          )}
         </div>
       </div>
     </>

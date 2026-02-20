@@ -2,7 +2,7 @@
   "name": "thechat-monorepo",
   "private": true,
   "scripts": {
-    "dev": "pnpm --filter @thechat/desktop dev",
+    "dev": "pnpm --filter @thechat/desktop --filter @thechat/api --parallel dev",
     "dev:desktop": "pnpm --filter @thechat/desktop dev",
     "dev:api": "pnpm --filter @thechat/api dev",
     "build": "pnpm -r build",

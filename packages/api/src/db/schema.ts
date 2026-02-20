@@ -9,6 +9,7 @@ import {
   primaryKey,
   index,
   uniqueIndex,
+  boolean,
 } from "drizzle-orm/pg-core";
 import { relations } from "drizzle-orm";
 import type { MessagePart } from "@thechat/shared";
@@ -36,6 +37,8 @@ export const users = pgTable(
     email: varchar("email", { length: 255 }),
     type: userTypeEnum("type").notNull(),
     avatar: text("avatar"),
+    passwordHash: text("password_hash"),
+    emailVerifiedAt: timestamp("email_verified_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
       .notNull(),
@@ -111,11 +114,45 @@ export const messages = pgTable(
   ]
 );
 
+export const sessions = pgTable(
+  "sessions",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    token: varchar("token", { length: 64 }).notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (t) => [uniqueIndex("sessions_token_idx").on(t.token)]
+);
+
+export const emailVerifications = pgTable(
+  "email_verifications",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    token: varchar("token", { length: 64 }).notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (t) => [uniqueIndex("email_verifications_token_idx").on(t.token)]
+);
+
 // -- Relations --
 
 export const usersRelations = relations(users, ({ many }) => ({
   participations: many(conversationParticipants),
   messages: many(messages),
+  sessions: many(sessions),
+  emailVerifications: many(emailVerifications),
 }));
 
 export const conversationsRelations = relations(conversations, ({ many }) => ({
@@ -147,3 +184,20 @@ export const messagesRelations = relations(messages, ({ one }) => ({
     references: [users.id],
   }),
 }));
+
+export const sessionsRelations = relations(sessions, ({ one }) => ({
+  user: one(users, {
+    fields: [sessions.userId],
+    references: [users.id],
+  }),
+}));
+
+export const emailVerificationsRelations = relations(
+  emailVerifications,
+  ({ one }) => ({
+    user: one(users, {
+      fields: [emailVerifications.userId],
+      references: [users.id],
+    }),
+  })
+);
