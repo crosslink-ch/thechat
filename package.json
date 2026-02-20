@@ -2,7 +2,7 @@
   "name": "thechat-monorepo",
   "private": true,
   "scripts": {
-    "dev": "pnpm --filter @thechat/desktop --filter @thechat/api --parallel dev",
+    "dev": "concurrently -n api,tauri -c blue,green \"pnpm dev:api\" \"pnpm tauri:dev\"",
     "dev:desktop": "pnpm --filter @thechat/desktop dev",
     "dev:api": "pnpm --filter @thechat/api dev",
     "build": "pnpm -r build",
@@ -18,5 +18,8 @@
     "db:migrate": "pnpm --filter @thechat/api db:migrate",
     "db:push": "pnpm --filter @thechat/api db:push",
     "db:studio": "pnpm --filter @thechat/api db:studio"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1"
   }
 }
