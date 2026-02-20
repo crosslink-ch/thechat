@@ -1,7 +1,8 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { ChatMessage, StreamingMessage } from "./ChatMessage";
 import type { Message } from "./core/types";
+import type { PermissionRequest } from "./core/permission";
 
 const userMsg: Message = {
   id: "1",
@@ -221,5 +222,114 @@ describe("StreamingMessage", () => {
     // Thinking section open by default during streaming, showing tool name
     expect(screen.getByText("search")).toBeInTheDocument();
     expect(screen.getByText("Running...")).toBeInTheDocument();
+  });
+
+  it("renders permission prompt when pendingPermission is provided", () => {
+    const permission: PermissionRequest = {
+      id: "1",
+      command: "ls -la",
+      description: "List files",
+      resolve: vi.fn(),
+      reject: vi.fn(),
+    };
+    render(
+      <StreamingMessage
+        parts={[{ type: "tool-call", toolCallId: "tc1", toolName: "shell", args: { command: "ls -la" } }]}
+        pendingPermission={permission}
+        onPermissionAllow={vi.fn()}
+        onPermissionDeny={vi.fn()}
+      />,
+    );
+    expect(screen.getByText("Run command?")).toBeInTheDocument();
+    expect(screen.getByText("ls -la")).toBeInTheDocument();
+    expect(screen.getByText("List files")).toBeInTheDocument();
+  });
+
+  it("calls onPermissionAllow when Allow is clicked", () => {
+    const onAllow = vi.fn();
+    const permission: PermissionRequest = {
+      id: "1",
+      command: "echo hi",
+      description: "",
+      resolve: vi.fn(),
+      reject: vi.fn(),
+    };
+    render(
+      <StreamingMessage
+        parts={[]}
+        pendingPermission={permission}
+        onPermissionAllow={onAllow}
+        onPermissionDeny={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByText(/Allow/));
+    expect(onAllow).toHaveBeenCalledOnce();
+  });
+
+  it("calls onPermissionDeny when Deny is clicked", () => {
+    const onDeny = vi.fn();
+    const permission: PermissionRequest = {
+      id: "1",
+      command: "rm -rf /",
+      description: "",
+      resolve: vi.fn(),
+      reject: vi.fn(),
+    };
+    render(
+      <StreamingMessage
+        parts={[]}
+        pendingPermission={permission}
+        onPermissionAllow={vi.fn()}
+        onPermissionDeny={onDeny}
+      />,
+    );
+    fireEvent.click(screen.getByText(/Deny/));
+    expect(onDeny).toHaveBeenCalledOnce();
+  });
+
+  it("shows keyboard shortcut hints C-x a and C-x d", () => {
+    const permission: PermissionRequest = {
+      id: "1",
+      command: "pwd",
+      description: "",
+      resolve: vi.fn(),
+      reject: vi.fn(),
+    };
+    render(
+      <StreamingMessage
+        parts={[]}
+        pendingPermission={permission}
+        onPermissionAllow={vi.fn()}
+        onPermissionDeny={vi.fn()}
+      />,
+    );
+    expect(screen.getByText("C-x a")).toBeInTheDocument();
+    expect(screen.getByText("C-x d")).toBeInTheDocument();
+  });
+
+  it("does not render permission prompt when pendingPermission is null", () => {
+    const { container } = render(
+      <StreamingMessage parts={[{ type: "text", text: "Hello" }]} pendingPermission={null} />,
+    );
+    expect(container.querySelector(".permission-inline")).toBeNull();
+  });
+
+  it("hides typing indicator when permission prompt is visible", () => {
+    const permission: PermissionRequest = {
+      id: "1",
+      command: "echo test",
+      description: "",
+      resolve: vi.fn(),
+      reject: vi.fn(),
+    };
+    const { container } = render(
+      <StreamingMessage
+        parts={[]}
+        pendingPermission={permission}
+        onPermissionAllow={vi.fn()}
+        onPermissionDeny={vi.fn()}
+      />,
+    );
+    expect(container.querySelector(".typing-indicator")).toBeNull();
   });
 });

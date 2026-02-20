@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { Message, MessagePart } from "./core/types";
+import type { PermissionRequest } from "./core/permission";
 
 type ToolCallPart = Extract<MessagePart, { type: "tool-call" }>;
 type ToolResultPart = Extract<MessagePart, { type: "tool-result" }>;
@@ -108,6 +109,34 @@ function ThinkingSection({
   );
 }
 
+function PermissionPromptBlock({
+  permission,
+  onAllow,
+  onDeny,
+}: {
+  permission: PermissionRequest;
+  onAllow: () => void;
+  onDeny: () => void;
+}) {
+  return (
+    <div className="permission-inline">
+      <div className="permission-inline-header">Run command?</div>
+      <code className="permission-inline-command">{permission.command}</code>
+      {permission.description && (
+        <div className="permission-inline-desc">{permission.description}</div>
+      )}
+      <div className="permission-inline-actions">
+        <button className="permission-inline-btn permission-inline-deny" onClick={onDeny}>
+          Deny <kbd>C-x d</kbd>
+        </button>
+        <button className="permission-inline-btn permission-inline-allow" onClick={onAllow}>
+          Allow <kbd>C-x a</kbd>
+        </button>
+      </div>
+    </div>
+  );
+}
+
 interface ChatMessageProps {
   message: Message;
 }
@@ -148,9 +177,12 @@ export function ChatMessage({ message }: ChatMessageProps) {
 
 interface StreamingMessageProps {
   parts: MessagePart[];
+  pendingPermission?: PermissionRequest | null;
+  onPermissionAllow?: () => void;
+  onPermissionDeny?: () => void;
 }
 
-export function StreamingMessage({ parts }: StreamingMessageProps) {
+export function StreamingMessage({ parts, pendingPermission, onPermissionAllow, onPermissionDeny }: StreamingMessageProps) {
   const reasoningParts = parts.filter((p) => p.type === "reasoning");
   const reasoningText = reasoningParts.map((p) => p.text).join("");
   const toolCalls = parts.filter((p): p is ToolCallPart => p.type === "tool-call");
@@ -177,7 +209,14 @@ export function StreamingMessage({ parts }: StreamingMessageProps) {
             {part.text}
           </div>
         ))}
-        {!hasContent && !hasThinking && (
+        {pendingPermission && onPermissionAllow && onPermissionDeny && (
+          <PermissionPromptBlock
+            permission={pendingPermission}
+            onAllow={onPermissionAllow}
+            onDeny={onPermissionDeny}
+          />
+        )}
+        {!pendingPermission && !hasContent && !hasThinking && (
           <div className="message-text typing-indicator">...</div>
         )}
       </div>

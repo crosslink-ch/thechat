@@ -102,7 +102,7 @@ function App() {
   // Auto-scroll on new content
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, streaming]);
+  }, [messages, streaming, pendingPermission]);
 
   // Auto-resize textarea
   useEffect(() => {
@@ -113,17 +113,63 @@ function App() {
     }
   }, [input]);
 
-  // Ctrl+P command palette
+  // Unified keydown handler: Ctrl+P palette + C-x prefix for permissions
+  const cxPrefixRef = useRef(false);
+  const cxTimeoutRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+
+  const handlePermissionAllow = () => {
+    if (pendingPermission) {
+      pendingPermission.resolve();
+      setPendingPermission(null);
+    }
+  };
+
+  const handlePermissionDeny = () => {
+    if (pendingPermission) {
+      pendingPermission.reject("User denied permission");
+      setPendingPermission(null);
+    }
+  };
+
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
+      // Ctrl+P: toggle command palette
       if ((e.ctrlKey || e.metaKey) && e.key === "p") {
         e.preventDefault();
         setPaletteOpen((open) => !open);
+        return;
+      }
+
+      // C-x prefix mode
+      if (cxPrefixRef.current) {
+        cxPrefixRef.current = false;
+        clearTimeout(cxTimeoutRef.current);
+        if (e.key === "a" && pendingPermission) {
+          e.preventDefault();
+          handlePermissionAllow();
+        } else if (e.key === "d" && pendingPermission) {
+          e.preventDefault();
+          handlePermissionDeny();
+        }
+        // Any other key: cancel prefix silently
+        return;
+      }
+
+      // Enter C-x prefix only when a permission prompt is active
+      if (e.ctrlKey && e.key === "x" && pendingPermission) {
+        e.preventDefault();
+        cxPrefixRef.current = true;
+        cxTimeoutRef.current = setTimeout(() => {
+          cxPrefixRef.current = false;
+        }, 2000);
       }
     };
     window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, []);
+    return () => {
+      window.removeEventListener("keydown", handler);
+      clearTimeout(cxTimeoutRef.current);
+    };
+  }, [pendingPermission]);
 
   const handleSend = () => {
     if (!input.trim() || isStreaming) return;
@@ -181,43 +227,16 @@ function App() {
             <ChatMessage key={msg.id} message={msg} />
           ))}
           {streaming && (
-            <StreamingMessage parts={streaming.parts} />
+            <StreamingMessage
+              parts={streaming.parts}
+              pendingPermission={pendingPermission}
+              onPermissionAllow={handlePermissionAllow}
+              onPermissionDeny={handlePermissionDeny}
+            />
           )}
           {error && <div className="error-message">{error}</div>}
           <div ref={messagesEndRef} />
         </div>
-
-        {pendingPermission && (
-          <div className="permission-overlay">
-            <div className="permission-card">
-              <div className="permission-header">Run command?</div>
-              <code className="permission-command">{pendingPermission.command}</code>
-              {pendingPermission.description && (
-                <div className="permission-desc">{pendingPermission.description}</div>
-              )}
-              <div className="permission-actions">
-                <button
-                  className="permission-btn permission-deny"
-                  onClick={() => {
-                    pendingPermission.reject("User denied permission");
-                    setPendingPermission(null);
-                  }}
-                >
-                  Deny
-                </button>
-                <button
-                  className="permission-btn permission-allow"
-                  onClick={() => {
-                    pendingPermission.resolve();
-                    setPendingPermission(null);
-                  }}
-                >
-                  Allow
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
 
         <div className="input-bar">
           <textarea

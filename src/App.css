@@ -503,88 +503,86 @@
   color: var(--color-error-light);
 }
 
-/* Permission prompt */
-.permission-overlay {
-  position: absolute;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  background: var(--color-overlay);
-  display: flex;
-  justify-content: center;
-  align-items: flex-end;
-  padding: 16px;
-  z-index: 5;
+/* Inline permission prompt */
+.permission-inline {
+  margin: 8px 0;
+  padding: 12px;
+  background: var(--color-bg-raised);
+  border-left: 3px solid var(--color-accent-border);
+  border-radius: 4px;
 }
 
-.permission-card {
-  width: 100%;
-  max-width: 560px;
-  background: var(--color-bg-surface);
-  border: 1px solid var(--color-border);
-  border-radius: 12px;
-  padding: 16px;
-  box-shadow: var(--shadow-card);
-}
-
-.permission-header {
+.permission-inline-header {
   font-size: 13px;
   font-weight: 600;
   color: var(--color-text-muted);
-  margin-bottom: 10px;
+  margin-bottom: 8px;
 }
 
-.permission-command {
+.permission-inline-command {
   display: block;
   font-family: var(--font-mono);
   font-size: 13px;
   color: var(--color-text);
   background: var(--color-bg-base);
   border: 1px solid var(--color-border);
-  border-radius: 8px;
-  padding: 10px 12px;
+  border-radius: 4px;
+  padding: 8px 10px;
   white-space: pre-wrap;
   word-break: break-all;
+  margin-bottom: 8px;
+}
+
+.permission-inline-desc {
+  color: var(--color-text-muted);
+  font-size: 12px;
   margin-bottom: 10px;
 }
 
-.permission-desc {
-  color: var(--color-text-muted);
-  font-size: 12px;
-  margin-bottom: 12px;
-}
-
-.permission-actions {
+.permission-inline-actions {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
 }
 
-.permission-btn {
-  padding: 8px 20px;
+.permission-inline-btn {
+  padding: 6px 14px;
   border: none;
-  border-radius: 12px;
-  font-size: 14px;
+  border-radius: 4px;
+  font-size: 13px;
   cursor: pointer;
   font-weight: 500;
   box-shadow: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 
-.permission-allow {
+.permission-inline-btn kbd {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--color-text-dimmed);
+  background: var(--color-bg-base);
+  border: 1px solid var(--color-border);
+  border-radius: 3px;
+  padding: 1px 4px;
+}
+
+.permission-inline-allow {
   background: var(--color-bg-button);
   color: var(--color-text);
 }
 
-.permission-allow:hover {
+.permission-inline-allow:hover {
   background: var(--color-bg-button-hover);
 }
 
-.permission-deny {
+.permission-inline-deny {
   background: none;
   color: var(--color-text-muted);
 }
 
-.permission-deny:hover {
+.permission-inline-deny:hover {
   color: var(--color-text);
 }
 
