@@ -1,10 +1,14 @@
 import { useState, useRef, useEffect, useMemo, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
 import { useChat } from "./hooks/useChat";
+import { useKeybindings } from "./hooks/useKeybindings";
+import { useMcpTools } from "./hooks/useMcpTools";
 import { ChatMessage, StreamingMessage } from "./ChatMessage";
 import { CommandPalette } from "./CommandPalette";
 import { TodoPanel } from "./TodoPanel";
+import { Sidebar } from "./components/Sidebar";
+import { InputBar } from "./components/InputBar";
+import { QuestionOverlay } from "./components/QuestionOverlay";
 import {
   getCurrentTimeTool,
   shellTool,
@@ -28,7 +32,7 @@ import { onPermissionRequest, type PermissionRequest } from "./core/permission";
 import { onQuestionRequest } from "./core/question";
 import { onTodoUpdate, resetTodos } from "./core/todo";
 import { buildSystemPrompt } from "./core/system-prompt";
-import type { AppConfig, Conversation, McpToolInfo, QuestionRequest, TodoItem, ToolDefinition } from "./core/types";
+import type { AppConfig, Conversation, QuestionRequest, TodoItem } from "./core/types";
 import "./App.css";
 
 const builtinTools = [
@@ -50,7 +54,7 @@ const builtinTools = [
 ];
 
 function App() {
-  const [mcpTools, setMcpTools] = useState<ToolDefinition[]>([]);
+  const mcpTools = useMcpTools();
 
   const tools = useMemo(
     () => [...builtinTools, ...mcpTools],
@@ -71,17 +75,13 @@ function App() {
     startNewConversation,
   } = useChat({ tools, systemPrompt });
 
-  const [input, setInput] = useState("");
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [pendingPermission, setPendingPermission] = useState<PermissionRequest | null>(null);
   const [pendingQuestion, setPendingQuestion] = useState<QuestionRequest | null>(null);
-  const [questionAnswers, setQuestionAnswers] = useState<string[][]>([]);
-  const [customInputs, setCustomInputs] = useState<string[]>([]);
   const [todosState, setTodosState] = useState<TodoItem[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   // Update batch tool registry when tools change
   useEffect(() => {
@@ -98,43 +98,8 @@ function App() {
           availableTools: tools,
         });
       })
-      .catch(() => {
-        // Config not yet available, will be set when available
-      });
+      .catch(() => {});
   }, [tools]);
-
-  // Initialize MCP servers — tools arrive incrementally via events
-  useEffect(() => {
-    setMcpTools([]);
-
-    const unlistenPromise = listen<McpToolInfo[]>("mcp-tools-ready", (event) => {
-      const newTools: ToolDefinition[] = event.payload.map((info) => ({
-        name: `${info.server}__${info.name}`,
-        description: info.description,
-        parameters: info.input_schema as Record<string, unknown>,
-        execute: (args: Record<string, unknown>) =>
-          invoke<string>("mcp_call_tool", {
-            server: info.server,
-            tool: info.name,
-            args,
-          }),
-      }));
-      setMcpTools((prev) => {
-        const existing = new Set(prev.map((t) => t.name));
-        const unique = newTools.filter((t) => !existing.has(t.name));
-        return unique.length > 0 ? [...prev, ...unique] : prev;
-      });
-    });
-
-    invoke("mcp_initialize").catch((e) =>
-      console.error("MCP initialization failed:", e),
-    );
-
-    return () => {
-      unlistenPromise.then((unlisten) => unlisten());
-      invoke("mcp_shutdown").catch(() => {});
-    };
-  }, []);
 
   // Subscribe to permission requests from tool execution
   useEffect(() => {
@@ -147,8 +112,6 @@ function App() {
   useEffect(() => {
     return onQuestionRequest((request) => {
       setPendingQuestion(request);
-      setQuestionAnswers(request.questions.map(() => []));
-      setCustomInputs(request.questions.map(() => ""));
     });
   }, []);
 
@@ -169,15 +132,6 @@ function App() {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, streaming, pendingPermission]);
 
-  // Auto-resize textarea
-  useEffect(() => {
-    const el = textareaRef.current;
-    if (el) {
-      el.style.height = "auto";
-      el.style.height = Math.min(el.scrollHeight, 200) + "px";
-    }
-  }, [input]);
-
   const handleNewConversation = useCallback(() => {
     startNewConversation();
     setSidebarOpen(false);
@@ -185,156 +139,38 @@ function App() {
     setTodosState([]);
   }, [startNewConversation]);
 
-  // Unified keydown handler: Ctrl+P palette + C-x prefix (n=new chat, a/d=permissions)
-  const cxPrefixRef = useRef(false);
-  const cxTimeoutRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-
-  const handlePermissionAllow = () => {
+  const handlePermissionAllow = useCallback(() => {
     if (pendingPermission) {
       pendingPermission.resolve();
       setPendingPermission(null);
     }
-  };
+  }, [pendingPermission]);
 
-  const handlePermissionDeny = () => {
+  const handlePermissionDeny = useCallback(() => {
     if (pendingPermission) {
       pendingPermission.reject("User denied permission");
       setPendingPermission(null);
     }
-  };
+  }, [pendingPermission]);
 
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      // Ctrl+P: toggle command palette
-      if ((e.ctrlKey || e.metaKey) && e.key === "p") {
-        e.preventDefault();
-        setPaletteOpen((open) => !open);
-        return;
-      }
-
-      // C-x prefix mode
-      if (cxPrefixRef.current) {
-        cxPrefixRef.current = false;
-        clearTimeout(cxTimeoutRef.current);
-        if (e.key === "n") {
-          e.preventDefault();
-          handleNewConversation();
-        } else if (e.key === "a" && pendingPermission) {
-          e.preventDefault();
-          handlePermissionAllow();
-        } else if (e.key === "d" && pendingPermission) {
-          e.preventDefault();
-          handlePermissionDeny();
-        }
-        // Any other key: cancel prefix silently
-        return;
-      }
-
-      // Enter C-x prefix
-      if (e.ctrlKey && e.key === "x") {
-        e.preventDefault();
-        cxPrefixRef.current = true;
-        cxTimeoutRef.current = setTimeout(() => {
-          cxPrefixRef.current = false;
-        }, 2000);
-      }
-    };
-    window.addEventListener("keydown", handler);
-    return () => {
-      window.removeEventListener("keydown", handler);
-      clearTimeout(cxTimeoutRef.current);
-    };
-  }, [pendingPermission, handleNewConversation]);
-
-  const handleSend = () => {
-    if (!input.trim() || isStreaming) return;
-    const content = input;
-    setInput("");
-    sendMessage(content);
-  };
-
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      handleSend();
-    }
-  };
-
-  const handleQuestionSubmit = () => {
-    if (!pendingQuestion) return;
-    pendingQuestion.resolve(questionAnswers);
-    setPendingQuestion(null);
-  };
-
-  const handleQuestionCancel = () => {
-    if (!pendingQuestion) return;
-    pendingQuestion.reject("User cancelled");
-    setPendingQuestion(null);
-  };
-
-  const toggleQuestionOption = (qIndex: number, label: string) => {
-    setQuestionAnswers((prev) => {
-      const updated = [...prev];
-      const current = updated[qIndex] ?? [];
-      const isMultiple = pendingQuestion?.questions[qIndex]?.multiple;
-
-      if (isMultiple) {
-        if (current.includes(label)) {
-          updated[qIndex] = current.filter((a) => a !== label);
-        } else {
-          updated[qIndex] = [...current, label];
-        }
-      } else {
-        updated[qIndex] = [label];
-      }
-      return updated;
-    });
-  };
-
-  const submitCustomAnswer = (qIndex: number) => {
-    const text = customInputs[qIndex]?.trim();
-    if (!text) return;
-    setQuestionAnswers((prev) => {
-      const updated = [...prev];
-      const isMultiple = pendingQuestion?.questions[qIndex]?.multiple;
-      if (isMultiple) {
-        updated[qIndex] = [...(updated[qIndex] ?? []), text];
-      } else {
-        updated[qIndex] = [text];
-      }
-      return updated;
-    });
-    setCustomInputs((prev) => {
-      const updated = [...prev];
-      updated[qIndex] = "";
-      return updated;
-    });
-  };
+  useKeybindings({
+    onNewChat: handleNewConversation,
+    onPaletteToggle: () => setPaletteOpen((open) => !open),
+    onPermissionAllow: pendingPermission ? handlePermissionAllow : null,
+    onPermissionDeny: pendingPermission ? handlePermissionDeny : null,
+  });
 
   return (
     <div className="app">
-      {/* Sidebar overlay */}
-      {sidebarOpen && <div className="sidebar-overlay" onClick={() => setSidebarOpen(false)} />}
+      <Sidebar
+        open={sidebarOpen}
+        conversations={conversations}
+        currentId={conversation?.id}
+        onClose={() => setSidebarOpen(false)}
+        onNewChat={handleNewConversation}
+        onSelectConversation={(conv) => { loadConversation(conv); setSidebarOpen(false); }}
+      />
 
-      {/* Sidebar */}
-      <div className={`sidebar ${sidebarOpen ? "sidebar-open" : ""}`}>
-        <button className="new-chat-btn" onClick={handleNewConversation}>
-          + New Chat
-        </button>
-        <div className="conversations-list">
-          {conversations.map((conv) => (
-            <button
-              key={conv.id}
-              className={`conv-item ${conversation?.id === conv.id ? "conv-active" : ""}`}
-              onClick={() => { loadConversation(conv); setSidebarOpen(false); }}
-            >
-              {conv.title}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* Main chat area */}
       <div className="chat-main">
         <div className="chat-header">
           <button className="menu-btn" onClick={() => setSidebarOpen(!sidebarOpen)}>
@@ -367,84 +203,18 @@ function App() {
         </div>
 
         {pendingQuestion && (
-          <div className="question-overlay">
-            <div className="question-card">
-              {pendingQuestion.questions.map((q, qIndex) => (
-                <div key={qIndex} className="question-block">
-                  <div className="question-header">{q.header}</div>
-                  <div className="question-text">{q.question}</div>
-                  <div className="question-options">
-                    {q.options.map((opt) => {
-                      const selected = (questionAnswers[qIndex] ?? []).includes(opt.label);
-                      return (
-                        <button
-                          key={opt.label}
-                          className={`question-option ${selected ? "question-option-selected" : ""}`}
-                          onClick={() => toggleQuestionOption(qIndex, opt.label)}
-                        >
-                          <span className="question-option-label">{opt.label}</span>
-                          <span className="question-option-desc">{opt.description}</span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                  <div className="question-custom">
-                    <input
-                      type="text"
-                      placeholder="Type your own answer..."
-                      value={customInputs[qIndex] ?? ""}
-                      onChange={(e) =>
-                        setCustomInputs((prev) => {
-                          const updated = [...prev];
-                          updated[qIndex] = e.target.value;
-                          return updated;
-                        })
-                      }
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") {
-                          e.preventDefault();
-                          submitCustomAnswer(qIndex);
-                        }
-                      }}
-                    />
-                  </div>
-                </div>
-              ))}
-              <div className="question-actions">
-                <button className="question-btn question-btn-cancel" onClick={handleQuestionCancel}>
-                  Cancel
-                </button>
-                <button className="question-btn question-btn-submit" onClick={handleQuestionSubmit}>
-                  Submit
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-        <div className="input-bar">
-          <textarea
-            ref={textareaRef}
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder="Type a message..."
-            rows={1}
-            disabled={isStreaming}
+          <QuestionOverlay
+            request={pendingQuestion}
+            onSubmit={(answers) => { pendingQuestion.resolve(answers); setPendingQuestion(null); }}
+            onCancel={() => { pendingQuestion.reject("User cancelled"); setPendingQuestion(null); }}
           />
-          {isStreaming ? (
-            <button className="send-btn stop-btn" onClick={stopStreaming}>
-              Stop
-            </button>
-          ) : (
-            <button
-              className="send-btn"
-              onClick={handleSend}
-              disabled={!input.trim()}
-            >
-              Send
-            </button>
-          )}
-        </div>
+        )}
+
+        <InputBar
+          isStreaming={isStreaming}
+          onSend={sendMessage}
+          onStop={stopStreaming}
+        />
       </div>
 
       {paletteOpen && (
