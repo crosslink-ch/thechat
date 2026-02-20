@@ -28,26 +28,38 @@ This is a **Tauri 2 desktop chat application** with a React/TypeScript frontend 
 
 - **React 19 + TypeScript + Vite** — entry point at `main.tsx` → `App.tsx`
 - **`core/`** — Chat engine, independent of React:
-  - `types.ts` — Rich message model with parts (text, reasoning, tool calls, tool results)
+  - `types.ts` — Rich message model with parts (text, reasoning, tool calls, tool results). Also defines `TodoItem`, `QuestionRequest`, `ChatParams`, `StreamEvent`, `ToolDefinition`.
   - `openrouter.ts` — Streaming SSE client for OpenRouter API (`https://openrouter.ai/api/v1/chat/completions`)
-  - `loop.ts` — `runChatLoop()` orchestrates multi-turn conversations with automatic tool execution (up to 10 roundtrips). Supports AbortSignal cancellation.
-  - `tools.ts` — Tool definitions with JSON Schema and executor functions
+  - `loop.ts` — `runChatLoop()` orchestrates multi-turn conversations with automatic tool execution (unlimited roundtrips by default). Includes doom loop detection — if the same tool is called with identical args 3 times in a row, it forces a text-only response. Supports AbortSignal cancellation.
+  - `system-prompt.ts` — `buildSystemPrompt()` generates platform-aware system prompt with tool usage guidelines, safety rules, and permission handling instructions
+  - `truncate.ts` — `truncateToolResult()` caps tool output to 2000 lines / 50KB
+  - `permission.ts` — Observer-pattern permission system; tools like write/edit/shell call `requestPermission()` which pauses until the UI resolves it
+  - `question.ts` — Same pattern for asking users multiple-choice questions from within tool execution
+  - `todo.ts` — In-memory todo state (`getTodos`/`setTodos`) with observer for UI sync
+  - `task-runner.ts` — Sub-agent system; `runTask()` spawns a restricted chat loop with a subset of tools (no batch, task, question, or todo tools)
+  - `tools/` — 15 built-in tools: `read`, `write`, `edit`, `multiedit`, `glob`, `grep`, `list`, `shell`, `get_current_time`, `batch` (parallel execution), `task` (sub-agent delegation), `question`, `todoread`, `todowrite`, `invalid` (unknown tool defense)
 - **`hooks/useChat.ts`** — Main React hook managing chat state, conversation CRUD, message serialization (parts ↔ JSON for DB storage), and streaming lifecycle
-- **`MessageBubble.tsx`** — Renders completed and streaming messages with collapsible reasoning sections and tool call visualization
+- **`ChatMessage.tsx`** — Renders messages with collapsible reasoning sections, tool activity blocks, and permission/question dialogs
+- **`CommandPalette.tsx`** — Searchable conversation switcher with keyboard navigation
+- **`TodoPanel.tsx`** — Displays task list with status/priority badges
 
 ### Backend (`src-tauri/`)
 
 - **Rust + Tauri 2** — exposes IPC commands invoked from frontend via `@tauri-apps/api`
 - **`db.rs`** — SQLite (rusqlite, bundled) with `Mutex<Connection>` for thread safety. Tables: `conversations`, `messages`
-- **`config.rs`** — Loads `config.json` (API key + model). Search order: project root → parent dir → beside executable → `~/.config/thechat/config.json`
-- **`lib.rs`** — Tauri command handlers: `get_config`, `create_conversation`, `list_conversations`, `update_conversation_title`, `save_message`, `get_messages`
+- **`config.rs`** — Loads `config.json` (API key, model, MCP servers). Search order: project root → parent dir → beside executable → `~/.config/thechat/config.json`
+- **`fs.rs`** — File system commands: `fs_read_file`, `fs_write_file`, `fs_edit_file`, `fs_glob`, `fs_grep`, `fs_list_dir`. Shared constants for line limits, result caps, and default ignores (node_modules, .git, dist, target, etc.)
+- **`shell.rs`** — `execute_shell_command` spawns via login shell with timeout (default 120s)
+- **`mcp.rs`** — Full MCP (Model Context Protocol) client: spawns external tool servers, JSON-RPC v2 handshake, tool discovery, tool invocation, graceful shutdown. `McpManager` holds multiple named `McpClient` instances.
+- **`lib.rs`** — Tauri command handlers and app setup. SQLite DB stored at `~/.local/share/thechat/thechat.db`
 
 ### Data Flow
 
 1. User sends message → `useChat` saves to SQLite via Tauri IPC → calls `runChatLoop()`
 2. `runChatLoop()` streams from OpenRouter, emitting `StreamEvent`s that update React state in real-time
-3. If the model returns tool calls, the loop executes tools and continues automatically
-4. Final assistant response is saved to SQLite
+3. If the model returns tool calls, the loop executes tools and continues automatically (with doom loop detection as a safety net)
+4. Tools that need user consent (write, edit, shell) pause via the permission system until the UI resolves
+5. Final assistant response is saved to SQLite
 
 ### Configuration
 
@@ -55,7 +67,14 @@ This is a **Tauri 2 desktop chat application** with a React/TypeScript frontend 
 ```json
 {
   "api_key": "sk-or-v1-...",
-  "model": "google/gemini-3.1-pro-preview"
+  "model": "google/gemini-3.1-pro-preview",
+  "mcp_servers": {
+    "server-name": {
+      "command": "npx",
+      "args": ["-y", "@some/mcp-server"],
+      "env": {}
+    }
+  }
 }
 ```
 
@@ -64,6 +83,7 @@ This is a **Tauri 2 desktop chat application** with a React/TypeScript frontend 
 - Frontend: Vitest with jsdom, globals enabled, setup in `src/test-setup.ts` (clears Tauri mocks after each test)
 - Backend: Rust inline `#[cfg(test)]` modules in `db.rs` and `config.rs`
 - Tests mock the Tauri IPC layer and OpenRouter API responses
+- Tool tests live alongside their source in `src/core/tools/*.test.ts`
 
 ## OpenCode as best practice
 
