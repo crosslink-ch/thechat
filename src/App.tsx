@@ -178,7 +178,14 @@ function App() {
     }
   }, [input]);
 
-  // Unified keydown handler: Ctrl+P palette + C-x prefix for permissions
+  const handleNewConversation = useCallback(() => {
+    startNewConversation();
+    setSidebarOpen(false);
+    resetTodos();
+    setTodosState([]);
+  }, [startNewConversation]);
+
+  // Unified keydown handler: Ctrl+P palette + C-x prefix (n=new chat, a/d=permissions)
   const cxPrefixRef = useRef(false);
   const cxTimeoutRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
@@ -209,7 +216,10 @@ function App() {
       if (cxPrefixRef.current) {
         cxPrefixRef.current = false;
         clearTimeout(cxTimeoutRef.current);
-        if (e.key === "a" && pendingPermission) {
+        if (e.key === "n") {
+          e.preventDefault();
+          handleNewConversation();
+        } else if (e.key === "a" && pendingPermission) {
           e.preventDefault();
           handlePermissionAllow();
         } else if (e.key === "d" && pendingPermission) {
@@ -220,8 +230,8 @@ function App() {
         return;
       }
 
-      // Enter C-x prefix only when a permission prompt is active
-      if (e.ctrlKey && e.key === "x" && pendingPermission) {
+      // Enter C-x prefix
+      if (e.ctrlKey && e.key === "x") {
         e.preventDefault();
         cxPrefixRef.current = true;
         cxTimeoutRef.current = setTimeout(() => {
@@ -234,7 +244,7 @@ function App() {
       window.removeEventListener("keydown", handler);
       clearTimeout(cxTimeoutRef.current);
     };
-  }, [pendingPermission]);
+  }, [pendingPermission, handleNewConversation]);
 
   const handleSend = () => {
     if (!input.trim() || isStreaming) return;
@@ -249,13 +259,6 @@ function App() {
       handleSend();
     }
   };
-
-  const handleNewConversation = useCallback(() => {
-    startNewConversation();
-    setSidebarOpen(false);
-    resetTodos();
-    setTodosState([]);
-  }, [startNewConversation]);
 
   const handleQuestionSubmit = () => {
     if (!pendingQuestion) return;
