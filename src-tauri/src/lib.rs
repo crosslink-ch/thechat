@@ -1,6 +1,7 @@
 mod config;
 mod db;
 mod mcp;
+mod shell;
 
 use db::{Conversation, Database, Message};
 use mcp::McpManager;
@@ -80,6 +81,7 @@ pub fn run() {
             mcp::mcp_initialize,
             mcp::mcp_call_tool,
             mcp::mcp_shutdown,
+            shell::execute_shell_command,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -110,6 +112,7 @@ mod tests {
                 mcp::mcp_initialize,
                 mcp::mcp_call_tool,
                 mcp::mcp_shutdown,
+                shell::execute_shell_command,
             ])
             .build(tauri::generate_context!())
             .expect("failed to build app with mock runtime");

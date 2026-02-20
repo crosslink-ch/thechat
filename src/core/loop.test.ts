@@ -215,6 +215,94 @@ describe("runChatLoop", () => {
     }
   });
 
+  it("waits for async tool that resolves after a delay", async () => {
+    const asyncTool: ToolDefinition = {
+      name: "slow_tool",
+      description: "A tool that takes time",
+      parameters: { type: "object", properties: {} },
+      execute: vi.fn().mockImplementation(
+        () => new Promise((resolve) => setTimeout(() => resolve({ done: true }), 50)),
+      ),
+    };
+
+    mockStreamCompletion.mockResolvedValueOnce({
+      text: "",
+      reasoning: "",
+      toolCalls: [{ id: "call_1", name: "slow_tool", args: {} }],
+    });
+
+    mockStreamCompletion.mockResolvedValueOnce({
+      text: "Done",
+      reasoning: "",
+      toolCalls: [],
+    });
+
+    const events: StreamEvent[] = [];
+    await runChatLoop({
+      apiKey: "key",
+      model: "model",
+      messages: [{ role: "user", content: "do something slow" }],
+      tools: [asyncTool],
+      onEvent: (e) => events.push(e),
+    });
+
+    expect(asyncTool.execute).toHaveBeenCalled();
+    const toolResult = events.find((e) => e.type === "tool-result");
+    expect(toolResult).toMatchObject({
+      type: "tool-result",
+      isError: false,
+    });
+    if (toolResult && toolResult.type === "tool-result") {
+      expect(toolResult.result).toEqual({ done: true });
+    }
+  });
+
+  it("handles async tool rejection (permission denied) as error result", async () => {
+    const deniedTool: ToolDefinition = {
+      name: "guarded_tool",
+      description: "A tool that requires permission",
+      parameters: { type: "object", properties: {} },
+      execute: vi.fn().mockRejectedValue(new Error("User denied permission")),
+    };
+
+    mockStreamCompletion.mockResolvedValueOnce({
+      text: "",
+      reasoning: "",
+      toolCalls: [{ id: "call_1", name: "guarded_tool", args: {} }],
+    });
+
+    mockStreamCompletion.mockResolvedValueOnce({
+      text: "Permission was denied",
+      reasoning: "",
+      toolCalls: [],
+    });
+
+    const events: StreamEvent[] = [];
+    await runChatLoop({
+      apiKey: "key",
+      model: "model",
+      messages: [{ role: "user", content: "run guarded" }],
+      tools: [deniedTool],
+      onEvent: (e) => events.push(e),
+    });
+
+    const toolResult = events.find((e) => e.type === "tool-result");
+    expect(toolResult).toMatchObject({
+      type: "tool-result",
+      toolCallId: "call_1",
+      isError: true,
+    });
+
+    // The error message should be passed back to the LLM
+    const secondCallMessages = mockStreamCompletion.mock.calls[1][0].messages;
+    const toolMsg = secondCallMessages.find(
+      (m: Record<string, unknown>) => m.role === "tool",
+    );
+    expect(toolMsg).toBeDefined();
+    const parsed = JSON.parse(toolMsg!.content as string);
+    expect(parsed.error).toContain("User denied permission");
+  });
+
   it("handles streamCompletion error", async () => {
     mockStreamCompletion.mockRejectedValueOnce(new Error("API failed"));
 
