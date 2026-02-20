@@ -1,11 +1,23 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpServerConfig {
+    pub command: String,
+    #[serde(default)]
+    pub args: Vec<String>,
+    #[serde(default)]
+    pub env: HashMap<String, String>,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
     pub api_key: String,
     pub model: String,
+    #[serde(default, rename = "mcpServers")]
+    pub mcp_servers: HashMap<String, McpServerConfig>,
 }
 
 pub fn load_config() -> Result<AppConfig, String> {

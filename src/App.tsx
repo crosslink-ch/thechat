@@ -1,15 +1,22 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useMemo } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useChat } from "./hooks/useChat";
 import { MessageBubble, StreamingBubble } from "./MessageBubble";
 import { CommandPalette } from "./CommandPalette";
 import { getCurrentTimeTool } from "./core/tools";
-import type { Conversation } from "./core/types";
+import type { Conversation, McpToolInfo, ToolDefinition } from "./core/types";
 import "./App.css";
 
-const tools = [getCurrentTimeTool];
+const builtinTools = [getCurrentTimeTool];
 
 function App() {
+  const [mcpTools, setMcpTools] = useState<ToolDefinition[]>([]);
+
+  const tools = useMemo(
+    () => [...builtinTools, ...mcpTools],
+    [mcpTools],
+  );
+
   const {
     messages,
     conversation,
@@ -28,6 +35,30 @@ function App() {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // Initialize MCP servers and convert their tools to ToolDefinitions
+  useEffect(() => {
+    invoke<McpToolInfo[]>("mcp_initialize")
+      .then((mcpToolInfos) => {
+        const tools: ToolDefinition[] = mcpToolInfos.map((info) => ({
+          name: `${info.server}__${info.name}`,
+          description: info.description,
+          parameters: info.input_schema as Record<string, unknown>,
+          execute: (args: Record<string, unknown>) =>
+            invoke<string>("mcp_call_tool", {
+              server: info.server,
+              tool: info.name,
+              args,
+            }),
+        }));
+        setMcpTools(tools);
+      })
+      .catch((e) => console.error("MCP initialization failed:", e));
+
+    return () => {
+      invoke("mcp_shutdown").catch(() => {});
+    };
+  }, []);
 
   // Load conversations list
   useEffect(() => {

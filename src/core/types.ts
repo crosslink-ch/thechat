@@ -39,6 +39,15 @@ export interface AppConfig {
   model: string;
 }
 
+// -- MCP Tool Info (from backend) --
+
+export interface McpToolInfo {
+  server: string;
+  name: string;
+  description: string;
+  input_schema: Record<string, unknown>;
+}
+
 // -- Chat Parameters --
 
 export interface ChatParams {

@@ -1,7 +1,9 @@
 mod config;
 mod db;
+mod mcp;
 
 use db::{Conversation, Database, Message};
+use mcp::McpManager;
 use std::sync::Arc;
 use tauri::State;
 
@@ -59,6 +61,7 @@ pub fn run() {
     let database =
         Database::new(db_path.to_str().unwrap()).expect("Failed to initialize database");
     let db_state: DbState = Arc::new(database);
+    let mcp_state: Arc<McpManager> = Arc::new(McpManager::new());
 
     log::info!("App started");
 
@@ -66,6 +69,7 @@ pub fn run() {
         .plugin(tauri_plugin_log::Builder::new().build())
         .plugin(tauri_plugin_opener::init())
         .manage(db_state)
+        .manage(mcp_state)
         .invoke_handler(tauri::generate_handler![
             get_config,
             create_conversation,
@@ -73,6 +77,9 @@ pub fn run() {
             update_conversation_title,
             save_message,
             get_messages,
+            mcp::mcp_initialize,
+            mcp::mcp_call_tool,
+            mcp::mcp_shutdown,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -87,10 +94,12 @@ mod tests {
     fn app_builds_with_mock_runtime() {
         let database = Database::new(":memory:").unwrap();
         let db_state: DbState = Arc::new(database);
+        let mcp_state: Arc<McpManager> = Arc::new(McpManager::new());
 
         let app = tauri::test::mock_builder()
             .plugin(tauri_plugin_log::Builder::new().build())
             .manage(db_state)
+            .manage(mcp_state)
             .invoke_handler(tauri::generate_handler![
                 get_config,
                 create_conversation,
@@ -98,6 +107,9 @@ mod tests {
                 update_conversation_title,
                 save_message,
                 get_messages,
+                mcp::mcp_initialize,
+                mcp::mcp_call_tool,
+                mcp::mcp_shutdown,
             ])
             .build(tauri::generate_context!())
             .expect("failed to build app with mock runtime");
