@@ -14,7 +14,7 @@ export async function runChatLoop(options: ChatLoopOptions): Promise<void> {
     systemPrompt,
     params,
     tools,
-    maxToolRoundtrips = 10,
+    maxToolRoundtrips = 20,
     signal,
     onEvent,
   } = options;
