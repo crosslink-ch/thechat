@@ -64,3 +64,11 @@ This is a **Tauri 2 desktop chat application** with a React/TypeScript frontend 
 - Frontend: Vitest with jsdom, globals enabled, setup in `src/test-setup.ts` (clears Tauri mocks after each test)
 - Backend: Rust inline `#[cfg(test)]` modules in `db.rs` and `config.rs`
 - Tests mock the Tauri IPC layer and OpenRouter API responses
+
+## OpenCode as best practice
+
+For things related to the core chat loop, managing subagents, skills, preventing doom loops, having good system prompts, you can reference OpenCode when it makes sense.
+
+Don't reference OpenCode for everything. Just for things related to managing LLMs where it makes sense. Especially don't reference OpenCode for UI related stuff.
+
+We have OpenCode checked out here /home/bruno/projects/experiment/loop/opencode
