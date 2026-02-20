@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useChat } from "./hooks/useChat";
 import { MessageBubble, StreamingBubble } from "./MessageBubble";
+import { CommandPalette } from "./CommandPalette";
 import { getCurrentTimeTool } from "./core/tools";
 import type { Conversation } from "./core/types";
 import "./App.css";
@@ -24,6 +25,7 @@ function App() {
   const [input, setInput] = useState("");
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [paletteOpen, setPaletteOpen] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -45,6 +47,18 @@ function App() {
       el.style.height = Math.min(el.scrollHeight, 200) + "px";
     }
   }, [input]);
+
+  // Ctrl+P command palette
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === "p") {
+        e.preventDefault();
+        setPaletteOpen((open) => !open);
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, []);
 
   const handleSend = () => {
     if (!input.trim() || isStreaming) return;
@@ -133,6 +147,15 @@ function App() {
           )}
         </div>
       </div>
+
+      {paletteOpen && (
+        <CommandPalette
+          conversations={conversations}
+          currentId={conversation?.id}
+          onSelect={(conv) => { loadConversation(conv); setPaletteOpen(false); }}
+          onClose={() => setPaletteOpen(false)}
+        />
+      )}
     </div>
   );
 }
