@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useMemo } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { useChat } from "./hooks/useChat";
 import { MessageBubble, StreamingBubble } from "./MessageBubble";
 import { CommandPalette } from "./CommandPalette";
@@ -36,26 +37,35 @@ function App() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  // Initialize MCP servers and convert their tools to ToolDefinitions
+  // Initialize MCP servers — tools arrive incrementally via events
   useEffect(() => {
-    invoke<McpToolInfo[]>("mcp_initialize")
-      .then((mcpToolInfos) => {
-        const tools: ToolDefinition[] = mcpToolInfos.map((info) => ({
-          name: `${info.server}__${info.name}`,
-          description: info.description,
-          parameters: info.input_schema as Record<string, unknown>,
-          execute: (args: Record<string, unknown>) =>
-            invoke<string>("mcp_call_tool", {
-              server: info.server,
-              tool: info.name,
-              args,
-            }),
-        }));
-        setMcpTools(tools);
-      })
-      .catch((e) => console.error("MCP initialization failed:", e));
+    setMcpTools([]);
+
+    const unlistenPromise = listen<McpToolInfo[]>("mcp-tools-ready", (event) => {
+      const newTools: ToolDefinition[] = event.payload.map((info) => ({
+        name: `${info.server}__${info.name}`,
+        description: info.description,
+        parameters: info.input_schema as Record<string, unknown>,
+        execute: (args: Record<string, unknown>) =>
+          invoke<string>("mcp_call_tool", {
+            server: info.server,
+            tool: info.name,
+            args,
+          }),
+      }));
+      setMcpTools((prev) => {
+        const existing = new Set(prev.map((t) => t.name));
+        const unique = newTools.filter((t) => !existing.has(t.name));
+        return unique.length > 0 ? [...prev, ...unique] : prev;
+      });
+    });
+
+    invoke("mcp_initialize").catch((e) =>
+      console.error("MCP initialization failed:", e),
+    );
 
     return () => {
+      unlistenPromise.then((unlisten) => unlisten());
       invoke("mcp_shutdown").catch(() => {});
     };
   }, []);

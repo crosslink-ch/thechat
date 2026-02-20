@@ -297,85 +297,112 @@ impl McpManager {
 
 // -- Tauri commands --
 
+/// Initialize a single MCP server: spawn, handshake, list tools.
+/// Returns the client and discovered tools, or an error.
+fn init_server(
+    server_name: &str,
+    command: &str,
+    args: &[String],
+    env: &HashMap<String, String>,
+) -> Result<(McpClient, Vec<McpToolInfo>), String> {
+    let mut client = McpClient::spawn(command, args, env)?;
+
+    if let Err(e) = client.initialize() {
+        client.shutdown();
+        return Err(format!("Handshake failed: {}", e));
+    }
+
+    let raw_tools = match client.list_tools() {
+        Ok(t) => t,
+        Err(e) => {
+            client.shutdown();
+            return Err(format!("tools/list failed: {}", e));
+        }
+    };
+
+    let tools: Vec<McpToolInfo> = raw_tools
+        .into_iter()
+        .map(|tool| {
+            let name = tool
+                .get("name")
+                .and_then(|n| n.as_str())
+                .unwrap_or("unknown")
+                .to_string();
+            let description = tool
+                .get("description")
+                .and_then(|d| d.as_str())
+                .unwrap_or("")
+                .to_string();
+            let input_schema = tool
+                .get("inputSchema")
+                .cloned()
+                .unwrap_or(json!({"type": "object", "properties": {}}));
+
+            McpToolInfo {
+                server: server_name.to_string(),
+                name,
+                description,
+                input_schema,
+            }
+        })
+        .collect();
+
+    Ok((client, tools))
+}
+
 #[tauri::command]
-pub fn mcp_initialize(
+pub fn mcp_initialize<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     manager: tauri::State<'_, Arc<McpManager>>,
-) -> Result<Vec<McpToolInfo>, String> {
+) -> Result<(), String> {
+    use tauri::Emitter;
+
     let config = load_config()?;
 
     if config.mcp_servers.is_empty() {
-        return Ok(vec![]);
+        return Ok(());
     }
 
-    let mut all_tools = Vec::new();
-    let mut clients = manager
-        .clients
-        .lock()
-        .map_err(|e| format!("Lock error: {}", e))?;
+    let manager = Arc::clone(&manager);
 
-    for (server_name, server_config) in &config.mcp_servers {
-        log::info!("Initializing MCP server: {}", server_name);
+    for (server_name, server_config) in config.mcp_servers {
+        let manager = Arc::clone(&manager);
+        let app = app.clone();
 
-        match McpClient::spawn(&server_config.command, &server_config.args, &server_config.env) {
-            Ok(mut client) => {
-                if let Err(e) = client.initialize() {
+        std::thread::spawn(move || {
+            log::info!("Initializing MCP server: {}", server_name);
+
+            match init_server(
+                &server_name,
+                &server_config.command,
+                &server_config.args,
+                &server_config.env,
+            ) {
+                Ok((client, tools)) => {
+                    log::info!(
+                        "MCP server '{}' ready with {} tools",
+                        server_name,
+                        tools.len()
+                    );
+
+                    // Register the client
+                    if let Ok(mut clients) = manager.clients.lock() {
+                        clients.insert(server_name.clone(), Arc::new(Mutex::new(client)));
+                    }
+
+                    // Emit tools to the frontend
+                    if let Err(e) = app.emit("mcp-tools-ready", &tools) {
+                        log::error!("Failed to emit mcp-tools-ready for '{}': {}", server_name, e);
+                    }
+                }
+                Err(e) => {
                     log::error!("Failed to initialize MCP server '{}': {}", server_name, e);
-                    client.shutdown();
-                    continue;
-                }
-
-                match client.list_tools() {
-                    Ok(tools) => {
-                        for tool in tools {
-                            let name = tool
-                                .get("name")
-                                .and_then(|n| n.as_str())
-                                .unwrap_or("unknown")
-                                .to_string();
-                            let description = tool
-                                .get("description")
-                                .and_then(|d| d.as_str())
-                                .unwrap_or("")
-                                .to_string();
-                            let input_schema = tool
-                                .get("inputSchema")
-                                .cloned()
-                                .unwrap_or(json!({"type": "object", "properties": {}}));
-
-                            log::info!("  Tool: {} - {}", name, description);
-                            all_tools.push(McpToolInfo {
-                                server: server_name.clone(),
-                                name,
-                                description,
-                                input_schema,
-                            });
-                        }
-
-                        clients
-                            .insert(server_name.clone(), Arc::new(Mutex::new(client)));
-                    }
-                    Err(e) => {
-                        log::error!(
-                            "Failed to list tools from MCP server '{}': {}",
-                            server_name,
-                            e
-                        );
-                        client.shutdown();
-                    }
                 }
             }
-            Err(e) => {
-                log::error!("Failed to spawn MCP server '{}': {}", server_name, e);
-            }
-        }
+        });
     }
 
-    log::info!(
-        "MCP initialization complete: {} tools from {} servers",
-        all_tools.len(),
-        clients.len()
-    );
-    Ok(all_tools)
+    Ok(())
 }
 
 #[tauri::command]
