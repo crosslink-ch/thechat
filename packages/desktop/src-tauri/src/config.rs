@@ -25,8 +25,12 @@ pub fn load_config() -> Result<AppConfig, String> {
     let paths: Vec<PathBuf> = vec![
         // CWD (project root in production)
         PathBuf::from("config.json"),
-        // Parent of CWD (dev mode CWD is src-tauri/, config is in project root)
+        // Parent of CWD (dev mode CWD is src-tauri/, config is in packages/desktop/)
         PathBuf::from("../config.json"),
+        // Monorepo root when CWD is packages/desktop/src-tauri/
+        PathBuf::from("../../config.json"),
+        // Extra safety net (monorepo root from deeper nesting)
+        PathBuf::from("../../../config.json"),
         // Alongside the executable
         std::env::current_exe()
             .ok()

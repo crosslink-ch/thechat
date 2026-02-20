@@ -1,34 +1,18 @@
 {
-  "name": "thechat",
+  "name": "thechat-monorepo",
   "private": true,
-  "version": "0.1.0",
-  "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "tsc && vite build",
-    "preview": "vite preview",
-    "tauri": "tauri",
-    "test": "vitest run",
-    "test:watch": "vitest"
-  },
-  "dependencies": {
-    "@tauri-apps/api": "^2",
-    "@tauri-apps/plugin-log": "^2.8.0",
-    "@tauri-apps/plugin-opener": "^2",
-    "react": "^19.1.0",
-    "react-dom": "^19.1.0"
-  },
-  "devDependencies": {
-    "@tauri-apps/cli": "^2",
-    "@testing-library/jest-dom": "^6.9.1",
-    "@testing-library/react": "^16.3.2",
-    "@testing-library/user-event": "^14.6.1",
-    "@types/react": "^19.1.8",
-    "@types/react-dom": "^19.1.6",
-    "@vitejs/plugin-react": "^4.6.0",
-    "jsdom": "^28.1.0",
-    "typescript": "~5.8.3",
-    "vite": "^7.0.4",
-    "vitest": "^4.0.18"
+    "dev": "pnpm --filter @thechat/desktop dev",
+    "dev:desktop": "pnpm --filter @thechat/desktop dev",
+    "dev:api": "pnpm --filter @thechat/api dev",
+    "build": "pnpm -r build",
+    "build:desktop": "pnpm --filter @thechat/desktop build",
+    "build:api": "pnpm --filter @thechat/api build",
+    "test": "pnpm -r test",
+    "test:desktop": "pnpm --filter @thechat/desktop test",
+    "test:api": "pnpm --filter @thechat/api test",
+    "tauri": "pnpm --filter @thechat/desktop tauri",
+    "tauri:dev": "pnpm --filter @thechat/desktop tauri dev",
+    "tauri:build": "pnpm --filter @thechat/desktop tauri build"
   }
 }

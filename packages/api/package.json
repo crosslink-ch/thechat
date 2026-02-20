@@ -1,0 +1,21 @@
+{
+  "name": "@thechat/api",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "bun run --watch src/index.ts",
+    "build": "bun build src/index.ts --outdir dist --target bun",
+    "start": "bun run dist/index.js",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@thechat/shared": "workspace:*",
+    "elysia": "^1.2.0",
+    "@elysiajs/graphql-yoga": "^1.2.0"
+  },
+  "devDependencies": {
+    "typescript": "~5.8.3",
+    "@types/bun": "latest"
+  }
+}

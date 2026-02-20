@@ -39,15 +39,6 @@ export interface AppConfig {
   model: string;
 }
 
-// -- MCP Tool Info (from backend) --
-
-export interface McpToolInfo {
-  server: string;
-  name: string;
-  description: string;
-  input_schema: Record<string, unknown>;
-}
-
 // -- Todo Items --
 
 export interface TodoItem {
@@ -55,27 +46,6 @@ export interface TodoItem {
   content: string;
   status: "pending" | "in_progress" | "completed" | "cancelled";
   priority?: "high" | "medium" | "low";
-}
-
-// -- Question Types --
-
-export interface QuestionOption {
-  label: string;
-  description: string;
-}
-
-export interface QuestionInfo {
-  question: string;
-  header: string;
-  options: QuestionOption[];
-  multiple?: boolean;
-}
-
-export interface QuestionRequest {
-  id: string;
-  questions: QuestionInfo[];
-  resolve: (answers: string[][]) => void;
-  reject: (reason: string) => void;
 }
 
 // -- Chat Parameters --
@@ -98,15 +68,6 @@ export interface ChatParams {
   thinking?: { type: "enabled"; budget_tokens: number };
   seed?: number;
   provider?: { allow_fallbacks?: boolean; order?: string[] };
-}
-
-// -- Tool Definition --
-
-export interface ToolDefinition<TArgs = Record<string, unknown>> {
-  name: string;
-  description: string;
-  parameters: Record<string, unknown>; // JSON Schema
-  execute: (args: TArgs) => unknown | Promise<unknown>;
 }
 
 // -- Stream Events (core → UI callback) --
@@ -134,18 +95,4 @@ export interface StreamResult {
   reasoning: string;
   toolCalls: ToolCallResult[];
   usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number };
-}
-
-// -- Chat Loop Options --
-
-export interface ChatLoopOptions {
-  apiKey: string;
-  model: string;
-  messages: Array<Record<string, unknown>>;
-  systemPrompt?: string;
-  params?: ChatParams;
-  tools?: ToolDefinition[];
-  maxToolRoundtrips?: number;
-  signal?: AbortSignal;
-  onEvent: (event: StreamEvent) => void;
 }
