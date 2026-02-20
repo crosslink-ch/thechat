@@ -36,12 +36,11 @@ export const optionalAuth = new Elysia({ name: "optional-auth" }).derive(
   }
 );
 
-export const requireAuth = new Elysia({ name: "require-auth" }).derive(
-  async ({ headers, set }) => {
+export const requireAuth = new Elysia({ name: "require-auth" })
+  .derive(async ({ headers }) => {
     const authHeader = headers.authorization;
     if (!authHeader?.startsWith("Bearer ")) {
-      set.status = 401;
-      throw new Error("Authentication required");
+      return { user: null, sessionToken: null } as any;
     }
 
     const token = authHeader.slice(7);
@@ -52,8 +51,7 @@ export const requireAuth = new Elysia({ name: "require-auth" }).derive(
       .limit(1);
 
     if (!session) {
-      set.status = 401;
-      throw new Error("Invalid or expired session");
+      return { user: null, sessionToken: null } as any;
     }
 
     const [user] = await db
@@ -68,10 +66,14 @@ export const requireAuth = new Elysia({ name: "require-auth" }).derive(
       .limit(1);
 
     if (!user) {
-      set.status = 401;
-      throw new Error("User not found");
+      return { user: null, sessionToken: null } as any;
     }
 
     return { user, sessionToken: token };
-  }
-);
+  })
+  .onBeforeHandle(({ user, set }) => {
+    if (!user) {
+      set.status = 401;
+      return { error: "Authentication required" };
+    }
+  });

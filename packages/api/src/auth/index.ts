@@ -3,7 +3,6 @@ import { eq, and, gt } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "../db";
 import { users, sessions, emailVerifications } from "../db/schema";
-import { requireAuth } from "./middleware";
 import { sendVerificationEmail } from "./email";
 import crypto from "crypto";
 
@@ -171,19 +170,7 @@ export const authRoutes = new Elysia({ prefix: "/auth" })
     };
   })
 
-  // ── Logout ──
-  .use(requireAuth)
-  .post("/logout", async ({ sessionToken }) => {
-    await db.delete(sessions).where(eq(sessions.token, sessionToken));
-    return { success: true };
-  })
-
-  // ── Get current user ──
-  .get("/me", ({ user }) => {
-    return { user };
-  })
-
-  // ── Verify email ──
+  // ── Verify email (public) ──
   .get("/verify-email", async ({ query, set }) => {
     const { token } = query;
     if (!token) {
@@ -264,4 +251,43 @@ export const authRoutes = new Elysia({ prefix: "/auth" })
     }
 
     return { message };
+  })
+
+  // ── Authenticated routes ──
+  .derive(async ({ headers }) => {
+    const authHeader = headers.authorization;
+    if (!authHeader?.startsWith("Bearer ")) {
+      return { user: null, sessionToken: null } as any;
+    }
+    const token = authHeader.slice(7);
+    const [session] = await db
+      .select()
+      .from(sessions)
+      .where(and(eq(sessions.token, token), gt(sessions.expiresAt, new Date())))
+      .limit(1);
+    if (!session) {
+      return { user: null, sessionToken: null } as any;
+    }
+    const [user] = await db
+      .select({ id: users.id, name: users.name, email: users.email, avatar: users.avatar })
+      .from(users)
+      .where(eq(users.id, session.userId))
+      .limit(1);
+    if (!user) {
+      return { user: null, sessionToken: null } as any;
+    }
+    return { user, sessionToken: token };
+  })
+  .onBeforeHandle(({ user, set }) => {
+    if (!user) {
+      set.status = 401;
+      return { error: "Authentication required" };
+    }
+  })
+  .post("/logout", async ({ sessionToken }) => {
+    await db.delete(sessions).where(eq(sessions.token, sessionToken));
+    return { success: true };
+  })
+  .get("/me", ({ user }) => {
+    return { user };
   });
