@@ -39,6 +39,13 @@
   margin-left: 0;
 }
 
+.sidebar-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9;
+  background: rgba(0, 0, 0, 0.4);
+}
+
 .new-chat-btn {
   margin: 12px;
   padding: 10px;

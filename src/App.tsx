@@ -59,6 +59,9 @@ function App() {
 
   return (
     <div className="app">
+      {/* Sidebar overlay */}
+      {sidebarOpen && <div className="sidebar-overlay" onClick={() => setSidebarOpen(false)} />}
+
       {/* Sidebar */}
       <div className={`sidebar ${sidebarOpen ? "sidebar-open" : ""}`}>
         <button className="new-chat-btn" onClick={() => { startNewConversation(); setSidebarOpen(false); }}>
