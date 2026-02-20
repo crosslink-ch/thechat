@@ -1,10 +1,22 @@
 import { useState, useEffect, useRef, type FormEvent } from "react";
+import { z } from "zod";
 
 interface AuthModalProps {
   onLogin: (email: string, password: string) => Promise<void>;
   onRegister: (name: string, email: string, password: string) => Promise<string | null>;
   onClose: () => void;
 }
+
+const registerSchema = z.object({
+  name: z.string().trim().min(1, "Name is required"),
+  email: z.email("Please enter a valid email address"),
+  password: z.string().min(8, "Password must be at least 8 characters"),
+});
+
+const loginSchema = z.object({
+  email: z.email("Please enter a valid email address"),
+  password: z.string().min(1, "Password is required"),
+});
 
 export function AuthModal({ onLogin, onRegister, onClose }: AuthModalProps) {
   const [mode, setMode] = useState<"login" | "register">("login");
@@ -14,10 +26,10 @@ export function AuthModal({ onLogin, onRegister, onClose }: AuthModalProps) {
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const [submitting, setSubmitting] = useState(false);
-  const emailRef = useRef<HTMLInputElement>(null);
+  const firstInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    emailRef.current?.focus();
+    firstInputRef.current?.focus();
   }, [mode]);
 
   useEffect(() => {
@@ -44,14 +56,26 @@ export function AuthModal({ onLogin, onRegister, onClose }: AuthModalProps) {
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     reset();
+
+    const parsed = mode === "register"
+      ? registerSchema.safeParse({ name, email, password })
+      : loginSchema.safeParse({ email, password });
+
+    if (!parsed.success) {
+      setError(parsed.error.issues[0]?.message ?? "Invalid input");
+      return;
+    }
+
     setSubmitting(true);
 
     try {
       if (mode === "login") {
-        await onLogin(email, password);
+        const data = parsed.data as z.infer<typeof loginSchema>;
+        await onLogin(data.email, data.password);
         onClose();
       } else {
-        const message = await onRegister(name, email, password);
+        const data = parsed.data as z.infer<typeof registerSchema>;
+        const message = await onRegister(data.name, data.email, data.password);
         if (message) {
           setSuccess(message);
         } else {
@@ -72,35 +96,44 @@ export function AuthModal({ onLogin, onRegister, onClose }: AuthModalProps) {
           {mode === "login" ? "Log in" : "Create account"}
         </h2>
 
-        <form onSubmit={handleSubmit}>
+        <form onSubmit={handleSubmit} noValidate>
           {mode === "register" && (
-            <input
-              className="auth-input"
-              type="text"
-              placeholder="Name"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              required
-            />
+            <div className="auth-field">
+              <label className="auth-label" htmlFor="auth-name">Name</label>
+              <input
+                ref={mode === "register" ? firstInputRef : undefined}
+                id="auth-name"
+                className="auth-input"
+                type="text"
+                placeholder="John Doe"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+              />
+            </div>
           )}
-          <input
-            ref={emailRef}
-            className="auth-input"
-            type="email"
-            placeholder="Email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            required
-          />
-          <input
-            className="auth-input"
-            type="password"
-            placeholder="Password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            required
-            minLength={mode === "register" ? 8 : 1}
-          />
+          <div className="auth-field">
+            <label className="auth-label" htmlFor="auth-email">Email</label>
+            <input
+              ref={mode === "login" ? firstInputRef : undefined}
+              id="auth-email"
+              className="auth-input"
+              type="email"
+              placeholder="you@example.com"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+            />
+          </div>
+          <div className="auth-field">
+            <label className="auth-label" htmlFor="auth-password">Password</label>
+            <input
+              id="auth-password"
+              className="auth-input"
+              type="password"
+              placeholder={mode === "register" ? "At least 8 characters" : ""}
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+            />
+          </div>
 
           {error && <div className="auth-error">{error}</div>}
           {success && <div className="auth-success">{success}</div>}
@@ -110,7 +143,7 @@ export function AuthModal({ onLogin, onRegister, onClose }: AuthModalProps) {
               ? "..."
               : mode === "login"
                 ? "Log in"
-                : "Register"}
+                : "Create account"}
           </button>
         </form>
 

@@ -943,11 +943,22 @@
   margin-bottom: 20px;
 }
 
+.auth-field {
+  margin-bottom: 14px;
+}
+
+.auth-label {
+  display: block;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-text-secondary);
+  margin-bottom: 6px;
+}
+
 .auth-input {
   display: block;
   width: 100%;
   padding: 10px 14px;
-  margin-bottom: 12px;
   border: 1px solid var(--color-border);
   border-radius: 8px;
   background: var(--color-bg-base);
