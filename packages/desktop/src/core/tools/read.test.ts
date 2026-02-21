@@ -32,6 +32,7 @@ describe("readTool", () => {
       filePath: "/tmp/test.txt",
       offset: undefined,
       limit: undefined,
+      lineNumbers: true,
     });
     expect(result).toHaveProperty("content");
   });
@@ -50,6 +51,7 @@ describe("readTool", () => {
       filePath: "/tmp/test.txt",
       offset: 5,
       limit: 10,
+      lineNumbers: true,
     });
   });
 

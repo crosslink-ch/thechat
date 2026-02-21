@@ -75,10 +75,18 @@ const DEFAULT_IGNORES: &[&str] = &[
 // -- Commands --
 
 #[tauri::command]
+pub fn get_cwd() -> Result<String, String> {
+    std::env::current_dir()
+        .map(|p| p.to_string_lossy().to_string())
+        .map_err(|e| format!("Failed to get current directory: {}", e))
+}
+
+#[tauri::command]
 pub fn fs_read_file(
     file_path: String,
     offset: Option<usize>,
     limit: Option<usize>,
+    line_numbers: Option<bool>,
 ) -> Result<ReadFileResult, String> {
     let path = Path::new(&file_path);
     if !path.exists() {
@@ -108,6 +116,7 @@ pub fn fs_read_file(
     let end = (start + max_lines).min(total_lines);
     let truncated = end < total_lines;
 
+    let show_line_numbers = line_numbers.unwrap_or(false);
     let mut result = String::new();
     for (i, line) in all_lines[start..end].iter().enumerate() {
         let line_num = start + i + 1; // 1-based
@@ -116,7 +125,12 @@ pub fn fs_read_file(
         } else {
             line
         };
-        result.push_str(&format!("{:>6}\t{}\n", line_num, display_line));
+        if show_line_numbers {
+            result.push_str(&format!("{:>6}\t{}\n", line_num, display_line));
+        } else {
+            result.push_str(display_line);
+            result.push('\n');
+        }
     }
 
     Ok(ReadFileResult {
@@ -446,12 +460,18 @@ mod tests {
         let file = dir.path().join("test.txt");
         fs::write(&file, "line1\nline2\nline3\n").unwrap();
 
-        let result = fs_read_file(file.to_string_lossy().to_string(), None, None).unwrap();
+        let result = fs_read_file(file.to_string_lossy().to_string(), None, None, None).unwrap();
         assert_eq!(result.total_lines, 3);
         assert_eq!(result.lines_read, 3);
         assert!(!result.truncated);
         assert!(result.content.contains("line1"));
         assert!(result.content.contains("line2"));
+        // Default: no line numbers
+        assert!(!result.content.contains("\t"));
+
+        // With line numbers
+        let result_ln = fs_read_file(file.to_string_lossy().to_string(), None, None, Some(true)).unwrap();
+        assert!(result_ln.content.contains("     1\tline1"));
     }
 
     #[test]
@@ -460,7 +480,7 @@ mod tests {
         let file = dir.path().join("test.txt");
         fs::write(&file, "a\nb\nc\nd\ne\n").unwrap();
 
-        let result = fs_read_file(file.to_string_lossy().to_string(), Some(1), Some(2)).unwrap();
+        let result = fs_read_file(file.to_string_lossy().to_string(), Some(1), Some(2), None).unwrap();
         assert_eq!(result.lines_read, 2);
         assert!(result.truncated);
         assert!(result.content.contains("b"));
@@ -470,7 +490,7 @@ mod tests {
 
     #[test]
     fn read_file_not_found() {
-        let result = fs_read_file("/nonexistent/file.txt".into(), None, None);
+        let result = fs_read_file("/nonexistent/file.txt".into(), None, None, None);
         assert!(result.is_err());
     }
 

@@ -14,3 +14,4 @@ export { taskTool } from "./task";
 export { todoReadTool } from "./todoread";
 export { todoWriteTool } from "./todowrite";
 export { invalidTool } from "./invalid";
+export { createSkillTool } from "./skill";
