@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, useMemo, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useChat } from "./hooks/useChat";
 import { useAuth } from "./hooks/useAuth";
+import { useIsStreaming } from "./stores/streaming";
 import { useWorkspaces } from "./hooks/useWorkspaces";
 import { useKeybindings } from "./hooks/useKeybindings";
 import { useMcpTools } from "./hooks/useMcpTools";
@@ -118,9 +119,6 @@ function App() {
   const {
     messages,
     conversation,
-    streaming,
-    isStreaming,
-    streamingConvIds,
     error,
     sendMessage,
     stopStreaming,
@@ -144,6 +142,8 @@ function App() {
       }
     },
   });
+
+  const isStreaming = useIsStreaming(conversation?.id);
 
   // Keep ref in sync for onStreamComplete callback
   activeAgentConvIdRef.current = conversation?.id ?? null;
@@ -387,12 +387,12 @@ function App() {
     invoke<Conversation[]>("list_conversations").then(setConversations);
   }, [conversation]);
 
-  // Auto-scroll on new content (agent chat)
+  // Auto-scroll on new content (agent chat) — streaming scroll handled by ActiveStreamingMessage
   useEffect(() => {
     if (viewMode.type === "agent-chat") {
       messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
     }
-  }, [messages, streaming, pendingPermission, viewMode.type]);
+  }, [messages, pendingPermission, viewMode.type]);
 
   const handleNewConversation = useCallback(() => {
     startNewConversation();
@@ -463,7 +463,6 @@ function App() {
         activeDmUserId={viewMode.type === "dm" ? viewMode.otherUser.id : null}
         unreadChannels={unreadChannels}
         unreadAgentChats={unreadAgentChats}
-        streamingConvIds={streamingConvIds}
       />
 
       <div className="chat-main">
@@ -489,20 +488,18 @@ function App() {
             <TodoPanel todos={todosState} />
 
             <div className="messages-area">
-              {messages.length === 0 && !streaming && (
+              {messages.length === 0 && !isStreaming && (
                 <div className="empty-state">Send a message to start chatting</div>
               )}
               {messages.map((msg) => (
                 <ChatMessage key={msg.id} message={msg} />
               ))}
-              {streaming && (
-                <StreamingMessage
-                  parts={streaming.parts}
-                  pendingPermission={pendingPermission}
-                  onPermissionAllow={handlePermissionAllow}
-                  onPermissionDeny={handlePermissionDeny}
-                />
-              )}
+              <StreamingMessage
+                convId={conversation?.id}
+                pendingPermission={pendingPermission}
+                onPermissionAllow={handlePermissionAllow}
+                onPermissionDeny={handlePermissionDeny}
+              />
               {error && <div className="error-message">{error}</div>}
               <div ref={messagesEndRef} />
             </div>
@@ -516,7 +513,7 @@ function App() {
             )}
 
             <InputBar
-              isStreaming={isStreaming}
+              convId={conversation?.id}
               onSend={sendMessage}
               onStop={stopStreaming}
             />
@@ -536,7 +533,6 @@ function App() {
           conversations={conversations}
           currentId={conversation?.id}
           unreadAgentChats={unreadAgentChats}
-          streamingConvIds={streamingConvIds}
           onSelect={(conv) => {
             setViewMode({ type: "agent-chat" });
             loadConversation(conv);

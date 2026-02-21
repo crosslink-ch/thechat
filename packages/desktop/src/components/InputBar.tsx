@@ -1,12 +1,14 @@
 import { useState, useRef, useEffect } from "react";
+import { useIsStreaming } from "../stores/streaming";
 
 interface InputBarProps {
-  isStreaming: boolean;
+  convId: string | undefined;
   onSend: (content: string) => void;
   onStop: () => void;
 }
 
-export function InputBar({ isStreaming, onSend, onStop }: InputBarProps) {
+export function InputBar({ convId, onSend, onStop }: InputBarProps) {
+  const isStreaming = useIsStreaming(convId);
   const [input, setInput] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 

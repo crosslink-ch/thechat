@@ -1,8 +1,19 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { ChatMessage, StreamingMessage } from "./ChatMessage";
-import type { Message } from "./core/types";
+import { useStreamingStore } from "./stores/streaming";
+import type { Message, MessagePart } from "./core/types";
 import type { PermissionRequest } from "./core/permission";
+
+const CONV_ID = "test-conv";
+
+function setupStreaming(parts: MessagePart[]) {
+  const store = useStreamingStore.getState();
+  store.startStreaming(CONV_ID);
+  if (parts.length > 0) {
+    store.updateParts(CONV_ID, parts);
+  }
+}
 
 const userMsg: Message = {
   id: "1",
@@ -30,6 +41,12 @@ const assistantMsgNoReasoning: Message = {
   parts: [{ type: "text", text: "Quick reply" }],
   created_at: "2026-01-01T00:00:02Z",
 };
+
+beforeEach(() => {
+  // Reset store between tests
+  const store = useStreamingStore.getState();
+  store.stopStreaming(CONV_ID);
+});
 
 describe("ChatMessage", () => {
   it("renders user message content", () => {
@@ -175,50 +192,52 @@ describe("ChatMessage", () => {
 
 describe("StreamingMessage", () => {
   it("shows typing indicator when no content or reasoning", () => {
-    const { container } = render(<StreamingMessage parts={[]} />);
+    setupStreaming([]);
+    const { container } = render(<StreamingMessage convId={CONV_ID} />);
     expect(container.querySelector(".typing-indicator")).not.toBeNull();
   });
 
+  it("returns null when not streaming", () => {
+    const { container } = render(<StreamingMessage convId={CONV_ID} />);
+    expect(container.querySelector(".chat-message")).toBeNull();
+  });
+
   it("shows AI label", () => {
-    render(<StreamingMessage parts={[]} />);
+    setupStreaming([]);
+    render(<StreamingMessage convId={CONV_ID} />);
     expect(screen.getByText("AI")).toBeInTheDocument();
   });
 
   it("shows content when available", () => {
-    render(<StreamingMessage parts={[{ type: "text", text: "Responding..." }]} />);
+    setupStreaming([{ type: "text", text: "Responding..." }]);
+    render(<StreamingMessage convId={CONV_ID} />);
     expect(screen.getByText("Responding...")).toBeInTheDocument();
   });
 
   it("shows reasoning when available (thinking section open by default)", () => {
-    render(
-      <StreamingMessage parts={[{ type: "reasoning", text: "Thinking hard..." }]} />,
-    );
+    setupStreaming([{ type: "reasoning", text: "Thinking hard..." }]);
+    render(<StreamingMessage convId={CONV_ID} />);
     expect(screen.getByText("Thinking hard...")).toBeInTheDocument();
   });
 
   it("thinking section is open by default during streaming", () => {
-    render(
-      <StreamingMessage parts={[{ type: "reasoning", text: "Working on it..." }]} />,
-    );
+    setupStreaming([{ type: "reasoning", text: "Working on it..." }]);
+    render(<StreamingMessage convId={CONV_ID} />);
     expect(screen.getByText("Working on it...")).toBeInTheDocument();
     expect(screen.getByText("Thought")).toBeInTheDocument();
   });
 
   it("hides typing indicator when reasoning is present", () => {
-    const { container } = render(
-      <StreamingMessage parts={[{ type: "reasoning", text: "Thinking..." }]} />,
-    );
+    setupStreaming([{ type: "reasoning", text: "Thinking..." }]);
+    const { container } = render(<StreamingMessage convId={CONV_ID} />);
     expect(container.querySelector(".typing-indicator")).toBeNull();
   });
 
   it("renders tool-call during streaming in open thinking section", () => {
-    render(
-      <StreamingMessage
-        parts={[
-          { type: "tool-call", toolCallId: "tc1", toolName: "search", args: { q: "test" } },
-        ]}
-      />,
-    );
+    setupStreaming([
+      { type: "tool-call", toolCallId: "tc1", toolName: "search", args: { q: "test" } },
+    ]);
+    render(<StreamingMessage convId={CONV_ID} />);
     // Thinking section open by default during streaming, showing tool name
     expect(screen.getByText("search")).toBeInTheDocument();
     expect(screen.getByText("Running...")).toBeInTheDocument();
@@ -232,9 +251,12 @@ describe("StreamingMessage", () => {
       resolve: vi.fn(),
       reject: vi.fn(),
     };
+    setupStreaming([
+      { type: "tool-call", toolCallId: "tc1", toolName: "shell", args: { command: "ls -la" } },
+    ]);
     render(
       <StreamingMessage
-        parts={[{ type: "tool-call", toolCallId: "tc1", toolName: "shell", args: { command: "ls -la" } }]}
+        convId={CONV_ID}
         pendingPermission={permission}
         onPermissionAllow={vi.fn()}
         onPermissionDeny={vi.fn()}
@@ -254,9 +276,10 @@ describe("StreamingMessage", () => {
       resolve: vi.fn(),
       reject: vi.fn(),
     };
+    setupStreaming([]);
     render(
       <StreamingMessage
-        parts={[]}
+        convId={CONV_ID}
         pendingPermission={permission}
         onPermissionAllow={onAllow}
         onPermissionDeny={vi.fn()}
@@ -275,9 +298,10 @@ describe("StreamingMessage", () => {
       resolve: vi.fn(),
       reject: vi.fn(),
     };
+    setupStreaming([]);
     render(
       <StreamingMessage
-        parts={[]}
+        convId={CONV_ID}
         pendingPermission={permission}
         onPermissionAllow={vi.fn()}
         onPermissionDeny={onDeny}
@@ -295,9 +319,10 @@ describe("StreamingMessage", () => {
       resolve: vi.fn(),
       reject: vi.fn(),
     };
+    setupStreaming([]);
     render(
       <StreamingMessage
-        parts={[]}
+        convId={CONV_ID}
         pendingPermission={permission}
         onPermissionAllow={vi.fn()}
         onPermissionDeny={vi.fn()}
@@ -308,8 +333,9 @@ describe("StreamingMessage", () => {
   });
 
   it("does not render permission prompt when pendingPermission is null", () => {
+    setupStreaming([{ type: "text", text: "Hello" }]);
     const { container } = render(
-      <StreamingMessage parts={[{ type: "text", text: "Hello" }]} pendingPermission={null} />,
+      <StreamingMessage convId={CONV_ID} pendingPermission={null} />,
     );
     expect(container.querySelector(".permission-inline")).toBeNull();
   });
@@ -322,9 +348,10 @@ describe("StreamingMessage", () => {
       resolve: vi.fn(),
       reject: vi.fn(),
     };
+    setupStreaming([]);
     const { container } = render(
       <StreamingMessage
-        parts={[]}
+        convId={CONV_ID}
         pendingPermission={permission}
         onPermissionAllow={vi.fn()}
         onPermissionDeny={vi.fn()}

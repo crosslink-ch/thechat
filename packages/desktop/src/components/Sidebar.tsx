@@ -7,6 +7,7 @@ import type {
   WorkspaceChannel,
   WorkspaceMember,
 } from "@thechat/shared";
+import { useStreamingConvIds } from "../stores/streaming";
 
 interface SidebarProps {
   open: boolean;
@@ -28,7 +29,6 @@ interface SidebarProps {
   activeDmUserId?: string | null;
   unreadChannels?: Set<string>;
   unreadAgentChats?: Set<string>;
-  streamingConvIds?: Set<string>;
 }
 
 export function Sidebar({
@@ -51,8 +51,8 @@ export function Sidebar({
   activeDmUserId,
   unreadChannels,
   unreadAgentChats,
-  streamingConvIds,
 }: SidebarProps) {
+  const streamingConvIds = useStreamingConvIds();
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [agentChatsCollapsed, setAgentChatsCollapsed] = useState(false);
 

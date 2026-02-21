@@ -1,6 +1,7 @@
 import { useState, useCallback, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { runChatLoop } from "../core/loop";
+import { useStreamingStore } from "../stores/streaming";
 import type {
   Message,
   MessagePart,
@@ -59,12 +60,6 @@ function messageToDbFields(msg: Message): { content: string; reasoningContent: s
   return { content, reasoningContent };
 }
 
-// -- Streaming state shape --
-
-interface StreamingState {
-  parts: MessagePart[];
-}
-
 interface UseChatOptions {
   tools?: ToolDefinition[];
   params?: ChatParams;
@@ -75,16 +70,11 @@ interface UseChatOptions {
 export function useChat(options?: UseChatOptions) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [conversation, setConversation] = useState<Conversation | null>(null);
-  const [streaming, setStreaming] = useState<StreamingState | null>(null);
-  const [streamingConvIds, setStreamingConvIds] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
   const abortControllersRef = useRef<Map<string, AbortController>>(new Map());
   const activeConvIdRef = useRef<string | null>(null);
   const onStreamCompleteRef = useRef(options?.onStreamComplete);
   onStreamCompleteRef.current = options?.onStreamComplete;
-
-  // Derive isStreaming for the current conversation
-  const isStreaming = conversation ? streamingConvIds.has(conversation.id) : false;
 
   const loadConversation = useCallback(async (conv: Conversation) => {
     activeConvIdRef.current = conv.id;
@@ -93,7 +83,6 @@ export function useChat(options?: UseChatOptions) {
     });
     setConversation(conv);
     setMessages(dbMsgs.map(dbMessageToMessage));
-    setStreaming(null);
     setError(null);
   }, []);
 
@@ -102,14 +91,13 @@ export function useChat(options?: UseChatOptions) {
     setConversation(null);
     setMessages([]);
     setError(null);
-    setStreaming(null);
   }, []);
 
   const sendMessage = useCallback(
     async (userContent: string) => {
       if (!userContent.trim()) return;
       // Don't allow sending in a conversation that's already streaming
-      if (conversation && streamingConvIds.has(conversation.id)) return;
+      if (conversation && useStreamingStore.getState().streamingConvIds.has(conversation.id)) return;
 
       setError(null);
       let streamConvId: string | null = null;
@@ -132,11 +120,7 @@ export function useChat(options?: UseChatOptions) {
         streamConvTitle = conv.title;
 
         // Mark this conversation as streaming
-        setStreamingConvIds((prev) => {
-          const next = new Set(prev);
-          next.add(streamConvId!);
-          return next;
-        });
+        useStreamingStore.getState().startStreaming(streamConvId);
 
         // Save user message to DB
         const userDbMsg = await invoke<DbMessage>("save_message", {
@@ -162,9 +146,6 @@ export function useChat(options?: UseChatOptions) {
         abortControllersRef.current.set(streamConvId, controller);
 
         const streamingParts: MessagePart[] = [];
-        if (activeConvIdRef.current === streamConvId) {
-          setStreaming({ parts: [] });
-        }
 
         const onEvent = (event: StreamEvent) => {
           switch (event.type) {
@@ -175,9 +156,7 @@ export function useChat(options?: UseChatOptions) {
               } else {
                 streamingParts.push({ type: "text", text: event.text });
               }
-              if (activeConvIdRef.current === streamConvId) {
-                setStreaming({ parts: [...streamingParts] });
-              }
+              useStreamingStore.getState().updateParts(streamConvId!, [...streamingParts]);
               break;
             }
             case "reasoning-delta": {
@@ -193,9 +172,7 @@ export function useChat(options?: UseChatOptions) {
                   streamingParts.splice(insertIdx, 0, { type: "reasoning", text: event.text });
                 }
               }
-              if (activeConvIdRef.current === streamConvId) {
-                setStreaming({ parts: [...streamingParts] });
-              }
+              useStreamingStore.getState().updateParts(streamConvId!, [...streamingParts]);
               break;
             }
             case "tool-call-start":
@@ -205,9 +182,7 @@ export function useChat(options?: UseChatOptions) {
                 toolName: event.toolName,
                 args: {},
               });
-              if (activeConvIdRef.current === streamConvId) {
-                setStreaming({ parts: [...streamingParts] });
-              }
+              useStreamingStore.getState().updateParts(streamConvId!, [...streamingParts]);
               break;
             case "tool-call-complete": {
               const tc = streamingParts.find(
@@ -216,9 +191,7 @@ export function useChat(options?: UseChatOptions) {
               if (tc && tc.type === "tool-call") {
                 tc.args = event.args;
               }
-              if (activeConvIdRef.current === streamConvId) {
-                setStreaming({ parts: [...streamingParts] });
-              }
+              useStreamingStore.getState().updateParts(streamConvId!, [...streamingParts]);
               break;
             }
             case "tool-result":
@@ -229,9 +202,7 @@ export function useChat(options?: UseChatOptions) {
                 result: event.result,
                 isError: event.isError,
               });
-              if (activeConvIdRef.current === streamConvId) {
-                setStreaming({ parts: [...streamingParts] });
-              }
+              useStreamingStore.getState().updateParts(streamConvId!, [...streamingParts]);
               break;
             case "error":
               setError(event.error);
@@ -270,10 +241,7 @@ export function useChat(options?: UseChatOptions) {
           // Only update UI state if still viewing this conversation
           if (activeConvIdRef.current === streamConvId) {
             setMessages((prev) => [...prev, savedMsg]);
-            setStreaming(null);
           }
-        } else if (activeConvIdRef.current === streamConvId) {
-          setStreaming(null);
         }
 
         onStreamCompleteRef.current?.(streamConvId, streamConvTitle);
@@ -286,21 +254,14 @@ export function useChat(options?: UseChatOptions) {
             onStreamCompleteRef.current?.(streamConvId, streamConvTitle);
           }
         }
-        if (streamConvId && activeConvIdRef.current === streamConvId) {
-          setStreaming(null);
-        }
       } finally {
         if (streamConvId) {
-          setStreamingConvIds((prev) => {
-            const next = new Set(prev);
-            next.delete(streamConvId!);
-            return next;
-          });
+          useStreamingStore.getState().stopStreaming(streamConvId);
           abortControllersRef.current.delete(streamConvId);
         }
       }
     },
-    [conversation, messages, streamingConvIds, options?.params, options?.tools],
+    [conversation, messages, options?.params, options?.tools],
   );
 
   const stopStreaming = useCallback(() => {
@@ -313,9 +274,6 @@ export function useChat(options?: UseChatOptions) {
   return {
     messages,
     conversation,
-    streaming,
-    isStreaming,
-    streamingConvIds,
     error,
     sendMessage,
     stopStreaming,

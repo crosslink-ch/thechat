@@ -1,5 +1,6 @@
 import { useState, useDeferredValue, useRef, useEffect } from "react";
 import type { Conversation } from "./core/types";
+import { useStreamingConvIds } from "./stores/streaming";
 
 interface CommandPaletteProps {
   conversations: Conversation[];
@@ -7,10 +8,10 @@ interface CommandPaletteProps {
   onSelect: (conv: Conversation) => void;
   onClose: () => void;
   unreadAgentChats?: Set<string>;
-  streamingConvIds?: Set<string>;
 }
 
-export function CommandPalette({ conversations, currentId, onSelect, onClose, unreadAgentChats, streamingConvIds }: CommandPaletteProps) {
+export function CommandPalette({ conversations, currentId, onSelect, onClose, unreadAgentChats }: CommandPaletteProps) {
+  const streamingConvIds = useStreamingConvIds();
   const [query, setQuery] = useState("");
   const deferredQuery = useDeferredValue(query);
   const isStale = query !== deferredQuery;

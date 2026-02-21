@@ -65,7 +65,7 @@ export function ChannelChatView({
         )}
         <div ref={endRef} />
       </div>
-      <InputBar isStreaming={false} onSend={handleSend} onStop={() => {}} />
+      <InputBar convId={undefined} onSend={handleSend} onStop={() => {}} />
     </>
   );
 }

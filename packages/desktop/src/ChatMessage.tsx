@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import type { Message, MessagePart } from "./core/types";
 import type { PermissionRequest } from "./core/permission";
+import { useStreamingParts } from "./stores/streaming";
 import { TextWithUiBlocks } from "./components/TextWithUiBlocks";
 
 type ToolCallPart = Extract<MessagePart, { type: "tool-call" }>;
@@ -175,13 +176,22 @@ export function ChatMessage({ message }: ChatMessageProps) {
 }
 
 interface StreamingMessageProps {
-  parts: MessagePart[];
+  convId: string | undefined;
   pendingPermission?: PermissionRequest | null;
   onPermissionAllow?: () => void;
   onPermissionDeny?: () => void;
 }
 
-export function StreamingMessage({ parts, pendingPermission, onPermissionAllow, onPermissionDeny }: StreamingMessageProps) {
+export function StreamingMessage({ convId, pendingPermission, onPermissionAllow, onPermissionDeny }: StreamingMessageProps) {
+  const parts = useStreamingParts(convId);
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    scrollRef.current?.scrollIntoView?.({ behavior: "smooth" });
+  }, [parts]);
+
+  if (!parts) return null;
+
   const reasoningParts = parts.filter((p) => p.type === "reasoning");
   const reasoningText = reasoningParts.map((p) => p.text).join("");
   const toolCalls = parts.filter((p): p is ToolCallPart => p.type === "tool-call");
@@ -191,32 +201,35 @@ export function StreamingMessage({ parts, pendingPermission, onPermissionAllow, 
   const hasContent = textParts.length > 0;
 
   return (
-    <div className="chat-message chat-message-assistant">
-      <div className="message-label label-ai">AI</div>
-      <div className="message-body">
-        {hasThinking && (
-          <ThinkingSection
-            reasoningText={reasoningText}
-            toolCalls={toolCalls}
-            toolResults={toolResults}
-            defaultOpen={true}
-            isStreaming={true}
-          />
-        )}
-        {textParts.map((part, i) => (
-          <TextWithUiBlocks key={i} text={part.text} />
-        ))}
-        {pendingPermission && onPermissionAllow && onPermissionDeny && (
-          <PermissionPromptBlock
-            permission={pendingPermission}
-            onAllow={onPermissionAllow}
-            onDeny={onPermissionDeny}
-          />
-        )}
-        {!pendingPermission && !hasContent && !hasThinking && (
-          <div className="message-text typing-indicator">...</div>
-        )}
+    <>
+      <div className="chat-message chat-message-assistant">
+        <div className="message-label label-ai">AI</div>
+        <div className="message-body">
+          {hasThinking && (
+            <ThinkingSection
+              reasoningText={reasoningText}
+              toolCalls={toolCalls}
+              toolResults={toolResults}
+              defaultOpen={true}
+              isStreaming={true}
+            />
+          )}
+          {textParts.map((part, i) => (
+            <TextWithUiBlocks key={i} text={part.text} />
+          ))}
+          {pendingPermission && onPermissionAllow && onPermissionDeny && (
+            <PermissionPromptBlock
+              permission={pendingPermission}
+              onAllow={onPermissionAllow}
+              onDeny={onPermissionDeny}
+            />
+          )}
+          {!pendingPermission && !hasContent && !hasThinking && (
+            <div className="message-text typing-indicator">...</div>
+          )}
+        </div>
       </div>
-    </div>
+      <div ref={scrollRef} />
+    </>
   );
 }
