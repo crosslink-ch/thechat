@@ -22,6 +22,7 @@ export function useChannelChat({
   useEffect(() => {
     if (!conversationId || !token) {
       setMessages([]);
+      prevConvId.current = null;
       return;
     }
 
