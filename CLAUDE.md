@@ -83,6 +83,32 @@ thechat/
 
 - **ElysiaJS + GraphQL Yoga** running on **Bun**
 - GraphQL playground at `http://localhost:3000/graphql`
+- Exports `App` type (`typeof app`) from `src/index.ts` for Eden Treaty type inference
+
+### Desktop ↔ API Communication
+
+All API calls from the desktop app to the backend **must** use [Eden Treaty](https://elysiajs.com/eden/treaty/overview.html), the type-safe REST client for ElysiaJS. Do not use raw `fetch` or other HTTP clients.
+
+- **Client setup:** `packages/desktop/src/lib/api.ts` creates a shared `api` client via `treaty<App>(API_URL)`
+- **Usage pattern:** `const { data, error } = await api.route.method(body, options)`
+- **Examples:**
+  ```ts
+  import { api } from "../lib/api";
+
+  // GET with auth
+  const { data, error } = await api.auth.me.get({
+    headers: { authorization: `Bearer ${token}` },
+  });
+
+  // POST with body and auth
+  const { data, error } = await api.auth.login.post({ email, password });
+
+  // Route params + query
+  const { data, error } = await api.messages({ conversationId }).get({
+    query: { limit: 50 },
+    headers: { authorization: `Bearer ${token}` },
+  });
+  ```
 
 ### Data Flow (Desktop)
 

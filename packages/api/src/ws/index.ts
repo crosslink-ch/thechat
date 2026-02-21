@@ -1,14 +1,14 @@
 import { Elysia } from "elysia";
-import { eq, and, gt } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { db } from "../db";
 import {
-  sessions,
-  users,
   messages,
   conversations,
   conversationParticipants,
 } from "../db/schema";
 import type { WsClientEvent, WsServerEvent } from "@thechat/shared";
+import { resolveTokenToUser } from "../auth/middleware";
+import { processMessageMentions } from "../bots/webhooks";
 
 // Connection tracking
 const userSockets = new Map<string, Set<WebSocket>>();
@@ -54,21 +54,9 @@ function broadcastToUser(userId: string, event: WsServerEvent) {
 }
 
 async function validateToken(token: string) {
-  const [session] = await db
-    .select()
-    .from(sessions)
-    .where(and(eq(sessions.token, token), gt(sessions.expiresAt, new Date())))
-    .limit(1);
-
-  if (!session) return null;
-
-  const [user] = await db
-    .select({ id: users.id, name: users.name })
-    .from(users)
-    .where(eq(users.id, session.userId))
-    .limit(1);
-
-  return user ?? null;
+  const user = await resolveTokenToUser(token);
+  if (!user) return null;
+  return { id: user.id, name: user.name };
 }
 
 async function handleSendMessage(
@@ -118,6 +106,8 @@ async function handleSendMessage(
     .from(conversationParticipants)
     .where(eq(conversationParticipants.conversationId, conversationId));
 
+  const createdAt = msg.createdAt.toISOString();
+
   const event: WsServerEvent = {
     type: "new_message",
     message: {
@@ -126,7 +116,7 @@ async function handleSendMessage(
       senderId: msg.senderId,
       senderName: userName,
       content: msg.content,
-      createdAt: msg.createdAt.toISOString(),
+      createdAt,
     },
     conversationType: conv?.type ?? "group",
   };
@@ -135,6 +125,16 @@ async function handleSendMessage(
   for (const p of participants) {
     broadcastToUser(p.userId, event);
   }
+
+  // Fire-and-forget webhook notifications for @mentioned bots
+  processMessageMentions({
+    id: msg.id,
+    content: msg.content,
+    conversationId: msg.conversationId,
+    senderId: msg.senderId,
+    senderName: userName,
+    createdAt,
+  });
 }
 
 async function handleTyping(

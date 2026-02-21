@@ -1,5 +1,5 @@
 import { Elysia } from "elysia";
-import { eq, and, gt } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "../db";
 import {
@@ -8,8 +8,8 @@ import {
   conversations,
   conversationParticipants,
   users,
-  sessions,
 } from "../db/schema";
+import { resolveTokenToUser } from "../auth/middleware";
 
 function generateWorkspaceId(name: string): string {
   const slug = name
@@ -39,31 +39,8 @@ export const workspaceRoutes = new Elysia({ prefix: "/workspaces" })
     }
 
     const token = authHeader.slice(7);
-    const [session] = await db
-      .select()
-      .from(sessions)
-      .where(and(eq(sessions.token, token), gt(sessions.expiresAt, new Date())))
-      .limit(1);
-
-    if (!session) {
-      return { user: null } as any;
-    }
-
-    const [user] = await db
-      .select({
-        id: users.id,
-        name: users.name,
-        email: users.email,
-        avatar: users.avatar,
-      })
-      .from(users)
-      .where(eq(users.id, session.userId))
-      .limit(1);
-
-    if (!user) {
-      return { user: null } as any;
-    }
-
+    const user = await resolveTokenToUser(token);
+    if (!user) return { user: null } as any;
     return { user };
   })
   .onBeforeHandle(({ user, set }) => {

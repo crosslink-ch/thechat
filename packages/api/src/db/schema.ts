@@ -166,6 +166,33 @@ export const messages = pgTable(
   ]
 );
 
+export const bots = pgTable(
+  "bots",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    ownerId: uuid("owner_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    webhookUrl: text("webhook_url"),
+    apiKey: varchar("api_key", { length: 128 }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull()
+      .$onUpdate(() => new Date()),
+  },
+  (t) => [
+    uniqueIndex("bots_user_id_idx").on(t.userId),
+    uniqueIndex("bots_api_key_idx").on(t.apiKey),
+    index("bots_owner_id_idx").on(t.ownerId),
+  ]
+);
+
 export const sessions = pgTable(
   "sessions",
   {
@@ -206,6 +233,7 @@ export const usersRelations = relations(users, ({ many }) => ({
   sessions: many(sessions),
   emailVerifications: many(emailVerifications),
   workspaceMemberships: many(workspaceMembers),
+  ownedBots: many(bots, { relationName: "botOwner" }),
 }));
 
 export const workspacesRelations = relations(workspaces, ({ one, many }) => ({
@@ -265,6 +293,19 @@ export const messagesRelations = relations(messages, ({ one }) => ({
   sender: one(users, {
     fields: [messages.senderId],
     references: [users.id],
+  }),
+}));
+
+export const botsRelations = relations(bots, ({ one }) => ({
+  user: one(users, {
+    fields: [bots.userId],
+    references: [users.id],
+    relationName: "botUser",
+  }),
+  owner: one(users, {
+    fields: [bots.ownerId],
+    references: [users.id],
+    relationName: "botOwner",
   }),
 }));
 

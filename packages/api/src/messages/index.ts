@@ -1,13 +1,14 @@
 import { Elysia } from "elysia";
-import { eq, and, gt, lt, desc } from "drizzle-orm";
+import { eq, and, lt, desc } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "../db";
 import {
   messages,
   conversationParticipants,
   users,
-  sessions,
 } from "../db/schema";
+import { resolveTokenToUser } from "../auth/middleware";
+import { processMessageMentions } from "../bots/webhooks";
 
 const sendSchema = z.object({
   content: z.string().trim().min(1),
@@ -21,31 +22,8 @@ export const messageRoutes = new Elysia({ prefix: "/messages" })
     }
 
     const token = authHeader.slice(7);
-    const [session] = await db
-      .select()
-      .from(sessions)
-      .where(and(eq(sessions.token, token), gt(sessions.expiresAt, new Date())))
-      .limit(1);
-
-    if (!session) {
-      return { user: null } as any;
-    }
-
-    const [user] = await db
-      .select({
-        id: users.id,
-        name: users.name,
-        email: users.email,
-        avatar: users.avatar,
-      })
-      .from(users)
-      .where(eq(users.id, session.userId))
-      .limit(1);
-
-    if (!user) {
-      return { user: null } as any;
-    }
-
+    const user = await resolveTokenToUser(token);
+    if (!user) return { user: null } as any;
     return { user };
   })
   .onBeforeHandle(({ user, set }) => {
@@ -145,12 +123,24 @@ export const messageRoutes = new Elysia({ prefix: "/messages" })
       })
       .returning();
 
+    const createdAt = msg.createdAt.toISOString();
+
+    // Fire-and-forget webhook notifications for @mentioned bots
+    processMessageMentions({
+      id: msg.id,
+      content: msg.content,
+      conversationId: msg.conversationId,
+      senderId: msg.senderId,
+      senderName: user.name,
+      createdAt,
+    });
+
     return {
       id: msg.id,
       conversationId: msg.conversationId,
       senderId: msg.senderId,
       senderName: user.name,
       content: msg.content,
-      createdAt: msg.createdAt.toISOString(),
+      createdAt,
     };
   });

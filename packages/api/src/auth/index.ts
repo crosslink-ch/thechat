@@ -4,6 +4,7 @@ import { z } from "zod";
 import { db } from "../db";
 import { users, sessions, emailVerifications } from "../db/schema";
 import { sendVerificationEmail } from "./email";
+import { resolveTokenToUser } from "./middleware";
 import crypto from "crypto";
 
 function generateToken(): string {
@@ -260,19 +261,7 @@ export const authRoutes = new Elysia({ prefix: "/auth" })
       return { user: null, sessionToken: null } as any;
     }
     const token = authHeader.slice(7);
-    const [session] = await db
-      .select()
-      .from(sessions)
-      .where(and(eq(sessions.token, token), gt(sessions.expiresAt, new Date())))
-      .limit(1);
-    if (!session) {
-      return { user: null, sessionToken: null } as any;
-    }
-    const [user] = await db
-      .select({ id: users.id, name: users.name, email: users.email, avatar: users.avatar })
-      .from(users)
-      .where(eq(users.id, session.userId))
-      .limit(1);
+    const user = await resolveTokenToUser(token);
     if (!user) {
       return { user: null, sessionToken: null } as any;
     }

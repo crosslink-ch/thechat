@@ -177,6 +177,42 @@ export type WsClientEvent =
   | { type: "send_message"; conversationId: string; content: string }
   | { type: "typing"; conversationId: string };
 
+// -- Bot Types --
+
+export interface Bot {
+  id: string;
+  userId: string;
+  name: string;
+  webhookUrl: string | null;
+  createdAt: string;
+}
+
+export interface BotWithApiKey extends Bot {
+  apiKey: string;
+}
+
+export interface WebhookPayload {
+  event: "mention";
+  message: {
+    id: string;
+    content: string;
+    conversationId: string;
+    senderId: string;
+    senderName: string;
+    createdAt: string;
+  };
+  conversation: {
+    id: string;
+    type: "direct" | "group";
+    name: string | null;
+    workspaceId: string | null;
+  };
+  workspace: { id: string; name: string } | null;
+  bot: { id: string; name: string };
+}
+
+// -- WebSocket Event Types --
+
 export type WsServerEvent =
   | { type: "auth_ok"; userId: string }
   | { type: "auth_error"; message: string }

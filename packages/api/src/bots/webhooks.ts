@@ -1,0 +1,114 @@
+import { eq, and } from "drizzle-orm";
+import { db } from "../db";
+import {
+  bots,
+  users,
+  conversations,
+  conversationParticipants,
+  workspaces,
+} from "../db/schema";
+import type { WebhookPayload } from "@thechat/shared";
+
+/**
+ * After a message is created, check for @mentions of bots in the conversation
+ * and fire webhooks to those bots.
+ */
+export async function processMessageMentions(msg: {
+  id: string;
+  content: string;
+  conversationId: string;
+  senderId: string;
+  senderName: string;
+  createdAt: string;
+}) {
+  // Get all participants of the conversation
+  const participants = await db
+    .select({ userId: conversationParticipants.userId })
+    .from(conversationParticipants)
+    .where(eq(conversationParticipants.conversationId, msg.conversationId));
+
+  const participantIds = participants.map((p) => p.userId);
+  if (participantIds.length === 0) return;
+
+  // Find bots among participants that have a webhookUrl
+  const botRows = await db
+    .select({
+      botId: bots.id,
+      botUserId: bots.userId,
+      webhookUrl: bots.webhookUrl,
+      botName: users.name,
+    })
+    .from(bots)
+    .innerJoin(users, eq(bots.userId, users.id))
+    .where(eq(bots.webhookUrl, bots.webhookUrl)); // get all bots, filter in JS
+
+  // Filter to only bots that are participants and have a webhook URL
+  const participantBots = botRows.filter(
+    (b) => b.webhookUrl && participantIds.includes(b.botUserId)
+  );
+
+  if (participantBots.length === 0) return;
+
+  // Check which bots are @mentioned in the message content
+  const mentionedBots = participantBots.filter((b) => {
+    const escaped = b.botName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const regex = new RegExp(`@${escaped}\\b`, "i");
+    return regex.test(msg.content);
+  });
+
+  if (mentionedBots.length === 0) return;
+
+  // Get conversation details
+  const [conv] = await db
+    .select({
+      id: conversations.id,
+      type: conversations.type,
+      name: conversations.name,
+      workspaceId: conversations.workspaceId,
+    })
+    .from(conversations)
+    .where(eq(conversations.id, msg.conversationId))
+    .limit(1);
+
+  if (!conv) return;
+
+  // Get workspace details if applicable
+  let workspace: { id: string; name: string } | null = null;
+  if (conv.workspaceId) {
+    const [ws] = await db
+      .select({ id: workspaces.id, name: workspaces.name })
+      .from(workspaces)
+      .where(eq(workspaces.id, conv.workspaceId))
+      .limit(1);
+    if (ws) workspace = ws;
+  }
+
+  // Fire webhooks (fire-and-forget)
+  for (const bot of mentionedBots) {
+    const payload: WebhookPayload = {
+      event: "mention",
+      message: {
+        id: msg.id,
+        content: msg.content,
+        conversationId: msg.conversationId,
+        senderId: msg.senderId,
+        senderName: msg.senderName,
+        createdAt: msg.createdAt,
+      },
+      conversation: {
+        id: conv.id,
+        type: conv.type,
+        name: conv.name,
+        workspaceId: conv.workspaceId,
+      },
+      workspace,
+      bot: { id: bot.botId, name: bot.botName },
+    };
+
+    fetch(bot.webhookUrl!, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    }).catch(console.error);
+  }
+}
