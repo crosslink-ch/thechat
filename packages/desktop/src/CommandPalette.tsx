@@ -6,9 +6,11 @@ interface CommandPaletteProps {
   currentId: string | undefined;
   onSelect: (conv: Conversation) => void;
   onClose: () => void;
+  unreadAgentChats?: Set<string>;
+  streamingConvIds?: Set<string>;
 }
 
-export function CommandPalette({ conversations, currentId, onSelect, onClose }: CommandPaletteProps) {
+export function CommandPalette({ conversations, currentId, onSelect, onClose, unreadAgentChats, streamingConvIds }: CommandPaletteProps) {
   const [query, setQuery] = useState("");
   const deferredQuery = useDeferredValue(query);
   const isStale = query !== deferredQuery;
@@ -59,16 +61,22 @@ export function CommandPalette({ conversations, currentId, onSelect, onClose }: 
           onKeyDown={handleKeyDown}
         />
         <div className="palette-list" ref={listRef} style={{ opacity: isStale ? 0.6 : 1 }}>
-          {filtered.map((conv, i) => (
-            <button
-              key={conv.id}
-              className={`palette-item${i === highlightIndex ? " palette-item-highlighted" : ""}${conv.id === currentId ? " palette-item-active" : ""}`}
-              onClick={() => onSelect(conv)}
-              onMouseEnter={() => setHighlightIndex(i)}
-            >
-              {conv.title}
-            </button>
-          ))}
+          {filtered.map((conv, i) => {
+            const isStreamingBg = streamingConvIds?.has(conv.id);
+            const isUnread = unreadAgentChats?.has(conv.id);
+            return (
+              <button
+                key={conv.id}
+                className={`palette-item${i === highlightIndex ? " palette-item-highlighted" : ""}${conv.id === currentId ? " palette-item-active" : ""}`}
+                onClick={() => onSelect(conv)}
+                onMouseEnter={() => setHighlightIndex(i)}
+              >
+                <span className="palette-item-title">{conv.title}</span>
+                {isStreamingBg && <span className="conv-streaming-indicator" />}
+                {!isStreamingBg && isUnread && <span className="conv-unread-dot" />}
+              </button>
+            );
+          })}
           {filtered.length === 0 && (
             <div className="palette-empty">No matching chats</div>
           )}
