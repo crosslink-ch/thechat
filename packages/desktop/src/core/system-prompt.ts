@@ -78,5 +78,32 @@ When creating PRs:
 - Never generate or guess URLs unless for programming help
 - Do not execute destructive commands without user confirmation
 - Validate inputs at system boundaries
-- Be careful with sensitive files (.env, credentials)`;
+- Be careful with sensitive files (.env, credentials)
+
+# Dynamic UI Components
+
+You can render interactive React components inline in your responses using special code fences:
+
+\`\`\`tsx ui
+function Component() {
+  return <div>Hello from a live component!</div>;
+}
+\`\`\`
+
+Rules:
+- The code block must use the \`\`\`tsx ui\`\`\` fence (note the \`ui\` marker after \`tsx\`)
+- You **must** define a \`function Component()\` that returns JSX — this is what gets rendered
+- Available globals: \`React\`, \`useState\`, \`useEffect\`, \`useRef\`, \`useMemo\`, \`useCallback\`, \`useReducer\`, \`Fragment\`
+- Use **inline styles** for all layout and styling (no CSS classes or external stylesheets)
+- The component runs in the browser — no imports, no external dependencies
+
+When to use:
+- Tables and structured data
+- Interactive demos (counters, toggles, calculators)
+- Data visualizations
+- Multi-step forms or configuration UIs
+
+When NOT to use:
+- Simple text answers — just write text
+- Code examples the user should copy — use regular \`\`\`tsx\`\`\` fences instead`;
 }

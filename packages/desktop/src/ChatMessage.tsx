@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { Message, MessagePart } from "./core/types";
 import type { PermissionRequest } from "./core/permission";
+import { TextWithUiBlocks } from "./components/TextWithUiBlocks";
 
 type ToolCallPart = Extract<MessagePart, { type: "tool-call" }>;
 type ToolResultPart = Extract<MessagePart, { type: "tool-result" }>;
@@ -166,9 +167,7 @@ export function ChatMessage({ message }: ChatMessageProps) {
           />
         )}
         {textParts.map((part, i) => (
-          <div key={i} className="message-text">
-            {part.text}
-          </div>
+          <TextWithUiBlocks key={i} text={part.text} />
         ))}
       </div>
     </div>
@@ -205,9 +204,7 @@ export function StreamingMessage({ parts, pendingPermission, onPermissionAllow, 
           />
         )}
         {textParts.map((part, i) => (
-          <div key={i} className="message-text">
-            {part.text}
-          </div>
+          <TextWithUiBlocks key={i} text={part.text} />
         ))}
         {pendingPermission && onPermissionAllow && onPermissionDeny && (
           <PermissionPromptBlock
