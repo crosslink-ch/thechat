@@ -10,14 +10,14 @@
     "./test-helpers": "./src/test-helpers.ts"
   },
   "scripts": {
-    "dev": "bun run --watch src/index.ts",
+    "dev": "bun run --env-file ../../.env --watch src/index.ts",
     "build": "bun build src/index.ts --outdir dist --target bun",
-    "start": "bun run dist/index.js",
-    "test": "bun test",
-    "db:generate": "drizzle-kit generate",
-    "db:migrate": "drizzle-kit migrate",
-    "db:push": "drizzle-kit push",
-    "db:studio": "drizzle-kit studio"
+    "start": "bun run --env-file ../../.env dist/index.js",
+    "test": "bun test --env-file ../../.env",
+    "db:generate": "bun run --env-file ../../.env drizzle-kit generate",
+    "db:migrate": "bun run --env-file ../../.env drizzle-kit migrate",
+    "db:push": "bun run --env-file ../../.env drizzle-kit push",
+    "db:studio": "bun run --env-file ../../.env drizzle-kit studio"
   },
   "dependencies": {
     "@elysiajs/cors": "^1.2.0",

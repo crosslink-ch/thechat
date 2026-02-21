@@ -15,8 +15,8 @@ pnpm build:desktop        # TypeScript check + Vite production build (desktop)
 pnpm build:api            # Bun build (API)
 pnpm tauri:build          # Full production build (frontend + Rust)
 pnpm test                 # Run tests across all packages
-pnpm test:desktop         # Run Vitest tests for desktop
-pnpm test:api             # Run Bun tests for API
+pnpm test:unit            # Run only unit tests
+pnpm test:integration     # Run integration tests (requires pnpm dev to be running)
 ```
 
 Run a single test file: `pnpm --filter @thechat/desktop vitest run src/core/loop.test.ts`
