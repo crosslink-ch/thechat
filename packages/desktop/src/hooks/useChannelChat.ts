@@ -1,7 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import type { ChatMessage } from "@thechat/shared";
-
-const API_URL = import.meta.env.VITE_API_URL || "http://localhost:3000";
+import { api } from "../lib/api";
 
 interface UseChannelChatOptions {
   conversationId: string | null;
@@ -30,13 +29,13 @@ export function useChannelChat({
     prevConvId.current = conversationId;
 
     setLoading(true);
-    fetch(`${API_URL}/messages/${conversationId}?limit=50`, {
-      headers: { Authorization: `Bearer ${token}` },
+    api.messages({ conversationId }).get({
+      query: { limit: 50 },
+      headers: { authorization: `Bearer ${token}` },
     })
-      .then((res) => res.json())
-      .then((data) => {
+      .then(({ data }) => {
         if (Array.isArray(data)) {
-          setMessages(data);
+          setMessages(data as ChatMessage[]);
         }
       })
       .catch(() => {})

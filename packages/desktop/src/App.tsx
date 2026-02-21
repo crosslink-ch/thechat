@@ -51,9 +51,8 @@ import type {
   WorkspaceMember,
   ChatMessage as WsChatMessage,
 } from "@thechat/shared";
+import { api } from "./lib/api";
 import "./App.css";
-
-const API_URL = import.meta.env.VITE_API_URL || "http://localhost:3000";
 
 type ViewMode =
   | { type: "agent-chat" }
@@ -269,19 +268,12 @@ function App() {
       if (!token || !activeWorkspace) return;
 
       try {
-        const res = await fetch(`${API_URL}/conversations/dm`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify({
-            workspaceId: activeWorkspace.id,
-            otherUserId: member.userId,
-          }),
-        });
-        const data = await res.json();
-        if (data.id) {
+        const { data, error } = await api.conversations.dm.post(
+          { workspaceId: activeWorkspace.id, otherUserId: member.userId },
+          { headers: { authorization: `Bearer ${token}` } },
+        );
+        if (error) throw error;
+        if (data && "id" in data) {
           setViewMode({
             type: "dm",
             conversationId: data.id,

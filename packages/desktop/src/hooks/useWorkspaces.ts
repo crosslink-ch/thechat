@@ -5,8 +5,8 @@ import type {
   WorkspaceListItem,
   WorkspaceWithDetails,
 } from "@thechat/shared";
+import { api } from "../lib/api";
 
-const API_URL = import.meta.env.VITE_API_URL || "http://localhost:3000";
 const KV_ACTIVE_WORKSPACE = "active_workspace_id";
 
 async function kvGet(key: string): Promise<string | null> {
@@ -21,18 +21,8 @@ async function kvDelete(key: string): Promise<void> {
   return invoke("kv_delete", { key });
 }
 
-async function apiFetch(path: string, token: string, options?: RequestInit) {
-  const res = await fetch(`${API_URL}${path}`, {
-    ...options,
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
-      ...options?.headers,
-    },
-  });
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.error || "Request failed");
-  return data;
+function auth(token: string) {
+  return { headers: { authorization: `Bearer ${token}` } };
 }
 
 export function useWorkspaces(
@@ -47,8 +37,9 @@ export function useWorkspaces(
   const fetchWorkspaces = useCallback(async () => {
     if (!token) return;
     try {
-      const data = await apiFetch("/workspaces/list", token);
-      setWorkspaces(data);
+      const { data, error } = await api.workspaces.list.get(auth(token));
+      if (error) throw new Error((error as any).error || "Request failed");
+      setWorkspaces(data as WorkspaceListItem[]);
       return data as WorkspaceListItem[];
     } catch {
       return [];
@@ -59,8 +50,9 @@ export function useWorkspaces(
     async (id: string) => {
       if (!token) return;
       try {
-        const data = await apiFetch(`/workspaces/${id}`, token);
-        setActiveWorkspace(data);
+        const { data, error } = await api.workspaces({ id }).get(auth(token));
+        if (error) throw new Error((error as any).error || "Request failed");
+        setActiveWorkspace(data as WorkspaceWithDetails);
         await kvSet(KV_ACTIVE_WORKSPACE, id);
       } catch {
         // Workspace may have been deleted
@@ -74,10 +66,8 @@ export function useWorkspaces(
   const createWorkspace = useCallback(
     async (name: string) => {
       if (!token) return;
-      const data = await apiFetch("/workspaces/create", token, {
-        method: "POST",
-        body: JSON.stringify({ name }),
-      });
+      const { data, error } = await api.workspaces.create.post({ name }, auth(token));
+      if (error) throw new Error((error as any).error || "Request failed");
       await fetchWorkspaces();
       await selectWorkspace(data.id);
       return data;
@@ -88,10 +78,8 @@ export function useWorkspaces(
   const joinWorkspace = useCallback(
     async (workspaceId: string) => {
       if (!token) return;
-      await apiFetch("/workspaces/join", token, {
-        method: "POST",
-        body: JSON.stringify({ workspaceId }),
-      });
+      const { error } = await api.workspaces.join.post({ workspaceId }, auth(token));
+      if (error) throw new Error((error as any).error || "Request failed");
       await fetchWorkspaces();
       await selectWorkspace(workspaceId);
     },
