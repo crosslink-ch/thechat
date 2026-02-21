@@ -27,6 +27,8 @@ interface SidebarProps {
   activeChannelId?: string | null;
   activeDmUserId?: string | null;
   unreadChannels?: Set<string>;
+  unreadAgentChats?: Set<string>;
+  streamingConvIds?: Set<string>;
 }
 
 export function Sidebar({
@@ -48,6 +50,8 @@ export function Sidebar({
   activeChannelId,
   activeDmUserId,
   unreadChannels,
+  unreadAgentChats,
+  streamingConvIds,
 }: SidebarProps) {
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [agentChatsCollapsed, setAgentChatsCollapsed] = useState(false);
@@ -174,17 +178,22 @@ export function Sidebar({
                 + New Chat
               </button>
               <div className="conversations-list">
-                {conversations.map((conv) => (
-                  <button
-                    key={conv.id}
-                    className={`conv-item ${
-                      currentId === conv.id ? "conv-active" : ""
-                    }`}
-                    onClick={() => onSelectConversation(conv)}
-                  >
-                    {conv.title}
-                  </button>
-                ))}
+                {conversations.map((conv) => {
+                  const isActive = currentId === conv.id;
+                  const isUnread = !isActive && unreadAgentChats?.has(conv.id);
+                  const isStreamingBg = !isActive && streamingConvIds?.has(conv.id);
+                  return (
+                    <button
+                      key={conv.id}
+                      className={`conv-item ${isActive ? "conv-active" : ""} ${isUnread ? "conv-unread" : ""}`}
+                      onClick={() => onSelectConversation(conv)}
+                    >
+                      <span className="conv-title">{conv.title}</span>
+                      {isStreamingBg && <span className="conv-streaming-indicator" />}
+                      {!isStreamingBg && isUnread && <span className="conv-unread-dot" />}
+                    </button>
+                  );
+                })}
               </div>
             </>
           )}

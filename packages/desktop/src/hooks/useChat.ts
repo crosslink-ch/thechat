@@ -69,26 +69,36 @@ interface UseChatOptions {
   tools?: ToolDefinition[];
   params?: ChatParams;
   systemPrompt?: string;
+  onStreamComplete?: (convId: string, convTitle: string) => void;
 }
 
 export function useChat(options?: UseChatOptions) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [conversation, setConversation] = useState<Conversation | null>(null);
   const [streaming, setStreaming] = useState<StreamingState | null>(null);
-  const [isStreaming, setIsStreaming] = useState(false);
+  const [streamingConvIds, setStreamingConvIds] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
-  const abortRef = useRef<AbortController | null>(null);
+  const abortControllersRef = useRef<Map<string, AbortController>>(new Map());
+  const activeConvIdRef = useRef<string | null>(null);
+  const onStreamCompleteRef = useRef(options?.onStreamComplete);
+  onStreamCompleteRef.current = options?.onStreamComplete;
+
+  // Derive isStreaming for the current conversation
+  const isStreaming = conversation ? streamingConvIds.has(conversation.id) : false;
 
   const loadConversation = useCallback(async (conv: Conversation) => {
+    activeConvIdRef.current = conv.id;
     const dbMsgs = await invoke<DbMessage[]>("get_messages", {
       conversationId: conv.id,
     });
     setConversation(conv);
     setMessages(dbMsgs.map(dbMessageToMessage));
+    setStreaming(null);
     setError(null);
   }, []);
 
   const startNewConversation = useCallback(() => {
+    activeConvIdRef.current = null;
     setConversation(null);
     setMessages([]);
     setError(null);
@@ -97,10 +107,13 @@ export function useChat(options?: UseChatOptions) {
 
   const sendMessage = useCallback(
     async (userContent: string) => {
-      if (isStreaming || !userContent.trim()) return;
+      if (!userContent.trim()) return;
+      // Don't allow sending in a conversation that's already streaming
+      if (conversation && streamingConvIds.has(conversation.id)) return;
 
       setError(null);
-      setIsStreaming(true);
+      let streamConvId: string | null = null;
+      let streamConvTitle = "";
 
       try {
         const config = await invoke<AppConfig>("get_config");
@@ -112,7 +125,18 @@ export function useChat(options?: UseChatOptions) {
             userContent.length > 50 ? userContent.substring(0, 50) + "..." : userContent;
           conv = await invoke<Conversation>("create_conversation", { title });
           setConversation(conv);
+          activeConvIdRef.current = conv.id;
         }
+
+        streamConvId = conv.id;
+        streamConvTitle = conv.title;
+
+        // Mark this conversation as streaming
+        setStreamingConvIds((prev) => {
+          const next = new Set(prev);
+          next.add(streamConvId!);
+          return next;
+        });
 
         // Save user message to DB
         const userDbMsg = await invoke<DbMessage>("save_message", {
@@ -135,10 +159,12 @@ export function useChat(options?: UseChatOptions) {
 
         // Start streaming
         const controller = new AbortController();
-        abortRef.current = controller;
+        abortControllersRef.current.set(streamConvId, controller);
 
         const streamingParts: MessagePart[] = [];
-        setStreaming({ parts: [] });
+        if (activeConvIdRef.current === streamConvId) {
+          setStreaming({ parts: [] });
+        }
 
         const onEvent = (event: StreamEvent) => {
           switch (event.type) {
@@ -149,7 +175,9 @@ export function useChat(options?: UseChatOptions) {
               } else {
                 streamingParts.push({ type: "text", text: event.text });
               }
-              setStreaming({ parts: [...streamingParts] });
+              if (activeConvIdRef.current === streamConvId) {
+                setStreaming({ parts: [...streamingParts] });
+              }
               break;
             }
             case "reasoning-delta": {
@@ -165,7 +193,9 @@ export function useChat(options?: UseChatOptions) {
                   streamingParts.splice(insertIdx, 0, { type: "reasoning", text: event.text });
                 }
               }
-              setStreaming({ parts: [...streamingParts] });
+              if (activeConvIdRef.current === streamConvId) {
+                setStreaming({ parts: [...streamingParts] });
+              }
               break;
             }
             case "tool-call-start":
@@ -175,7 +205,9 @@ export function useChat(options?: UseChatOptions) {
                 toolName: event.toolName,
                 args: {},
               });
-              setStreaming({ parts: [...streamingParts] });
+              if (activeConvIdRef.current === streamConvId) {
+                setStreaming({ parts: [...streamingParts] });
+              }
               break;
             case "tool-call-complete": {
               const tc = streamingParts.find(
@@ -184,7 +216,9 @@ export function useChat(options?: UseChatOptions) {
               if (tc && tc.type === "tool-call") {
                 tc.args = event.args;
               }
-              setStreaming({ parts: [...streamingParts] });
+              if (activeConvIdRef.current === streamConvId) {
+                setStreaming({ parts: [...streamingParts] });
+              }
               break;
             }
             case "tool-result":
@@ -195,7 +229,9 @@ export function useChat(options?: UseChatOptions) {
                 result: event.result,
                 isError: event.isError,
               });
-              setStreaming({ parts: [...streamingParts] });
+              if (activeConvIdRef.current === streamConvId) {
+                setStreaming({ parts: [...streamingParts] });
+              }
               break;
             case "error":
               setError(event.error);
@@ -231,26 +267,47 @@ export function useChat(options?: UseChatOptions) {
             reasoningContent,
           });
           const savedMsg = dbMessageToMessage(savedDb);
-          setMessages((prev) => [...prev, savedMsg]);
+          // Only update UI state if still viewing this conversation
+          if (activeConvIdRef.current === streamConvId) {
+            setMessages((prev) => [...prev, savedMsg]);
+            setStreaming(null);
+          }
+        } else if (activeConvIdRef.current === streamConvId) {
+          setStreaming(null);
         }
-        setStreaming(null);
+
+        onStreamCompleteRef.current?.(streamConvId, streamConvTitle);
       } catch (e) {
         if (e instanceof DOMException && e.name === "AbortError") {
           // User cancelled
         } else {
           setError(String(e));
+          if (streamConvId) {
+            onStreamCompleteRef.current?.(streamConvId, streamConvTitle);
+          }
         }
-        setStreaming(null);
+        if (streamConvId && activeConvIdRef.current === streamConvId) {
+          setStreaming(null);
+        }
       } finally {
-        setIsStreaming(false);
-        abortRef.current = null;
+        if (streamConvId) {
+          setStreamingConvIds((prev) => {
+            const next = new Set(prev);
+            next.delete(streamConvId!);
+            return next;
+          });
+          abortControllersRef.current.delete(streamConvId);
+        }
       }
     },
-    [conversation, messages, isStreaming, options?.params, options?.tools],
+    [conversation, messages, streamingConvIds, options?.params, options?.tools],
   );
 
   const stopStreaming = useCallback(() => {
-    abortRef.current?.abort();
+    const convId = activeConvIdRef.current;
+    if (convId) {
+      abortControllersRef.current.get(convId)?.abort();
+    }
   }, []);
 
   return {
@@ -258,6 +315,7 @@ export function useChat(options?: UseChatOptions) {
     conversation,
     streaming,
     isStreaming,
+    streamingConvIds,
     error,
     sendMessage,
     stopStreaming,

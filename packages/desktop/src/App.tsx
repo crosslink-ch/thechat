@@ -102,12 +102,33 @@ function App() {
     conversation,
     streaming,
     isStreaming,
+    streamingConvIds,
     error,
     sendMessage,
     stopStreaming,
     loadConversation,
     startNewConversation,
-  } = useChat({ tools, systemPrompt });
+  } = useChat({
+    tools,
+    systemPrompt,
+    onStreamComplete: (convId: string, convTitle: string) => {
+      invoke<Conversation[]>("list_conversations").then(setConversations);
+      const isViewingThisChat =
+        viewModeRef.current.type === "agent-chat" &&
+        activeAgentConvIdRef.current === convId;
+      if (!isViewingThisChat) {
+        setUnreadAgentChats((prev) => {
+          const next = new Set(prev);
+          next.add(convId);
+          return next;
+        });
+        fireNotification("Agent Chat", `Response ready: ${convTitle}`);
+      }
+    },
+  });
+
+  // Keep ref in sync for onStreamComplete callback
+  activeAgentConvIdRef.current = conversation?.id ?? null;
 
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -122,6 +143,10 @@ function App() {
 
   // Unread channels
   const [unreadChannels, setUnreadChannels] = useState<Set<string>>(new Set());
+
+  // Unread agent chats
+  const [unreadAgentChats, setUnreadAgentChats] = useState<Set<string>>(new Set());
+  const activeAgentConvIdRef = useRef<string | null>(null);
 
   // Typing indicators
   const [typingUsers, setTypingUsers] = useState<Map<string, string>>(new Map());
@@ -293,6 +318,15 @@ function App() {
   const handleBackToAgentChat = useCallback(() => {
     setViewMode({ type: "agent-chat" });
     setTypingUsers(new Map());
+    const convId = activeAgentConvIdRef.current;
+    if (convId) {
+      setUnreadAgentChats((prev) => {
+        if (!prev.has(convId)) return prev;
+        const next = new Set(prev);
+        next.delete(convId);
+        return next;
+      });
+    }
   }, []);
 
   // Update batch tool registry when tools change
@@ -398,6 +432,12 @@ function App() {
           setViewMode({ type: "agent-chat" });
           loadConversation(conv);
           setSidebarOpen(false);
+          setUnreadAgentChats((prev) => {
+            if (!prev.has(conv.id)) return prev;
+            const next = new Set(prev);
+            next.delete(conv.id);
+            return next;
+          });
         }}
         onLoginClick={() => setAuthModalOpen(true)}
         onLogout={logout}
@@ -408,6 +448,8 @@ function App() {
         activeChannelId={viewMode.type === "channel" ? viewMode.channelId : null}
         activeDmUserId={viewMode.type === "dm" ? viewMode.otherUser.id : null}
         unreadChannels={unreadChannels}
+        unreadAgentChats={unreadAgentChats}
+        streamingConvIds={streamingConvIds}
       />
 
       <div className="chat-main">
@@ -479,7 +521,19 @@ function App() {
         <CommandPalette
           conversations={conversations}
           currentId={conversation?.id}
-          onSelect={(conv) => { loadConversation(conv); setPaletteOpen(false); }}
+          unreadAgentChats={unreadAgentChats}
+          streamingConvIds={streamingConvIds}
+          onSelect={(conv) => {
+            setViewMode({ type: "agent-chat" });
+            loadConversation(conv);
+            setPaletteOpen(false);
+            setUnreadAgentChats((prev) => {
+              if (!prev.has(conv.id)) return prev;
+              const next = new Set(prev);
+              next.delete(conv.id);
+              return next;
+            });
+          }}
           onClose={() => setPaletteOpen(false)}
         />
       )}

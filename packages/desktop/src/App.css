@@ -122,7 +122,9 @@
 }
 
 .conv-item {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 6px;
   width: 100%;
   padding: 10px 12px;
   margin-bottom: 2px;
@@ -133,9 +135,36 @@
   text-align: left;
   cursor: pointer;
   font-size: 13px;
-  white-space: nowrap;
+}
+
+.conv-title {
   overflow: hidden;
+  white-space: nowrap;
   text-overflow: ellipsis;
+  flex: 1;
+  min-width: 0;
+}
+
+.conv-unread {
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.conv-unread-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--color-accent);
+  flex-shrink: 0;
+}
+
+.conv-streaming-indicator {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--color-accent);
+  flex-shrink: 0;
+  animation: pulse 1.5s infinite;
 }
 
 .conv-item:hover {
@@ -630,7 +659,9 @@
 }
 
 .palette-item {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 6px;
   width: 100%;
   padding: 10px 16px;
   background: none;
@@ -640,9 +671,14 @@
   cursor: pointer;
   font-size: 14px;
   font-family: inherit;
-  white-space: nowrap;
+}
+
+.palette-item-title {
   overflow: hidden;
+  white-space: nowrap;
   text-overflow: ellipsis;
+  flex: 1;
+  min-width: 0;
 }
 
 .palette-item:hover,
