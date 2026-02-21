@@ -4,7 +4,10 @@
   "version": "0.1.0",
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./db": "./src/db/index.ts",
+    "./db/schema": "./src/db/schema.ts",
+    "./test-helpers": "./src/test-helpers.ts"
   },
   "scripts": {
     "dev": "bun run --watch src/index.ts",
