@@ -1,5 +1,7 @@
 # TheChat
 
+Bot and human collaboration app.
+
 ## Development
 
 ### PostgreSQL
