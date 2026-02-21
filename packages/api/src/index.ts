@@ -4,12 +4,18 @@ import { sql } from "drizzle-orm";
 import { db } from "./db";
 import { authRoutes } from "./auth";
 import { workspaceRoutes } from "./workspaces";
+import { conversationRoutes } from "./conversations";
+import { messageRoutes } from "./messages";
+import { wsRoutes } from "./ws";
 
 const app = new Elysia()
   .use(cors())
   .decorate("db", db)
   .use(authRoutes)
   .use(workspaceRoutes)
+  .use(conversationRoutes)
+  .use(messageRoutes)
+  .use(wsRoutes)
   .get("/", () => "TheChat API")
   .get("/health", async ({ db }) => {
     try {

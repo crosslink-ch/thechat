@@ -4,6 +4,8 @@ import type {
   AuthUser,
   WorkspaceListItem,
   WorkspaceWithDetails,
+  WorkspaceChannel,
+  WorkspaceMember,
 } from "@thechat/shared";
 
 interface SidebarProps {
@@ -20,6 +22,11 @@ interface SidebarProps {
   onLogout: () => void;
   onSelectWorkspace: (id: string) => void;
   onOpenWorkspaceModal: () => void;
+  onSelectChannel?: (channel: WorkspaceChannel) => void;
+  onSelectDm?: (member: WorkspaceMember) => void;
+  activeChannelId?: string | null;
+  activeDmUserId?: string | null;
+  unreadChannels?: Set<string>;
 }
 
 export function Sidebar({
@@ -36,6 +43,11 @@ export function Sidebar({
   onLogout,
   onSelectWorkspace,
   onOpenWorkspaceModal,
+  onSelectChannel,
+  onSelectDm,
+  activeChannelId,
+  activeDmUserId,
+  unreadChannels,
 }: SidebarProps) {
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [agentChatsCollapsed, setAgentChatsCollapsed] = useState(false);
@@ -96,11 +108,20 @@ export function Sidebar({
             <div className="sidebar-section">
               <div className="sidebar-section-header">Channels</div>
               <div className="sidebar-section-list">
-                {activeWorkspace.channels.map((ch) => (
-                  <button key={ch.id} className="channel-item">
-                    <span className="channel-hash">#</span> {ch.name}
-                  </button>
-                ))}
+                {activeWorkspace.channels.map((ch) => {
+                  const isActive = activeChannelId === ch.id;
+                  const isUnread = unreadChannels?.has(ch.id);
+                  return (
+                    <button
+                      key={ch.id}
+                      className={`channel-item ${isActive ? "channel-item-active" : ""} ${isUnread ? "channel-item-unread" : ""}`}
+                      onClick={() => onSelectChannel?.(ch)}
+                    >
+                      <span className="channel-hash">#</span> {ch.name}
+                      {isUnread && <span className="channel-unread-dot" />}
+                    </button>
+                  );
+                })}
               </div>
             </div>
 
@@ -109,14 +130,21 @@ export function Sidebar({
               <div className="sidebar-section-list">
                 {activeWorkspace.members
                   .filter((m) => m.userId !== user.id)
-                  .map((m) => (
-                    <button key={m.userId} className="dm-item">
-                      <span className="dm-avatar">
-                        {m.user.name.charAt(0).toUpperCase()}
-                      </span>
-                      <span className="dm-name">{m.user.name}</span>
-                    </button>
-                  ))}
+                  .map((m) => {
+                    const isActive = activeDmUserId === m.userId;
+                    return (
+                      <button
+                        key={m.userId}
+                        className={`dm-item ${isActive ? "dm-item-active" : ""}`}
+                        onClick={() => onSelectDm?.(m)}
+                      >
+                        <span className="dm-avatar">
+                          {m.user.name.charAt(0).toUpperCase()}
+                        </span>
+                        <span className="dm-name">{m.user.name}</span>
+                      </button>
+                    );
+                  })}
               </div>
             </div>
 

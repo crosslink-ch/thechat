@@ -1301,3 +1301,120 @@
   background: var(--color-border);
   margin: 4px 12px;
 }
+
+/* Channel/DM active + unread states */
+.channel-item-active,
+.dm-item-active {
+  background: var(--color-bg-elevated);
+  color: var(--color-text);
+}
+
+.channel-item-unread {
+  font-weight: 600;
+  color: var(--color-text);
+  position: relative;
+}
+
+.channel-unread-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--color-accent);
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+/* Back button */
+.back-btn {
+  background: none;
+  border: none;
+  color: var(--color-text-muted);
+  font-size: 18px;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 4px;
+}
+
+.back-btn:hover {
+  background: var(--color-bg-hover);
+  color: var(--color-text);
+}
+
+/* WS connection status */
+.ws-status {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.ws-connected {
+  background: var(--color-success);
+}
+
+/* Channel chat messages */
+.channel-message {
+  display: flex;
+  gap: 10px;
+  padding: 8px 16px;
+}
+
+.channel-message:hover {
+  background: var(--color-bg-raised);
+}
+
+.channel-message-avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.channel-message-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.channel-message-header {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 2px;
+}
+
+.channel-message-sender {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.channel-message-time {
+  font-size: 11px;
+  color: var(--color-text-dimmed);
+}
+
+.channel-message-text {
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--color-text-secondary);
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+
+.channel-typing {
+  padding: 4px 16px 8px;
+  font-size: 12px;
+  color: var(--color-text-dimmed);
+  animation: pulse 1.5s infinite;
+}

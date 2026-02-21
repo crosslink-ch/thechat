@@ -152,3 +152,34 @@ export interface StreamResult {
   toolCalls: ToolCallResult[];
   usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number };
 }
+
+// -- Human-to-Human Chat Types --
+
+export interface ChatMessage {
+  id: string;
+  conversationId: string;
+  senderId: string;
+  senderName: string;
+  content: string;
+  createdAt: string;
+}
+
+export interface DirectConversation {
+  id: string;
+  otherUser: AuthUser;
+  lastMessage: ChatMessage | null;
+}
+
+// -- WebSocket Event Types --
+
+export type WsClientEvent =
+  | { type: "auth"; token: string }
+  | { type: "send_message"; conversationId: string; content: string }
+  | { type: "typing"; conversationId: string };
+
+export type WsServerEvent =
+  | { type: "auth_ok"; userId: string }
+  | { type: "auth_error"; message: string }
+  | { type: "new_message"; message: ChatMessage; conversationType: "direct" | "group" }
+  | { type: "typing"; conversationId: string; userId: string; userName: string }
+  | { type: "error"; message: string };

@@ -5,11 +5,14 @@ import { useAuth } from "./hooks/useAuth";
 import { useWorkspaces } from "./hooks/useWorkspaces";
 import { useKeybindings } from "./hooks/useKeybindings";
 import { useMcpTools } from "./hooks/useMcpTools";
+import { useWebSocket } from "./hooks/useWebSocket";
+import { useChannelChat } from "./hooks/useChannelChat";
 import { ChatMessage, StreamingMessage } from "./ChatMessage";
 import { CommandPalette } from "./CommandPalette";
 import { TodoPanel } from "./TodoPanel";
 import { Sidebar } from "./components/Sidebar";
 import { InputBar } from "./components/InputBar";
+import { ChannelChatView } from "./components/ChannelChatView";
 import { QuestionOverlay } from "./components/QuestionOverlay";
 import { AuthModal } from "./components/AuthModal";
 import { WorkspaceModal } from "./components/WorkspaceModal";
@@ -36,8 +39,26 @@ import { onPermissionRequest, type PermissionRequest } from "./core/permission";
 import { onQuestionRequest } from "./core/question";
 import { onTodoUpdate, resetTodos } from "./core/todo";
 import { buildSystemPrompt } from "./core/system-prompt";
-import type { AppConfig, Conversation, QuestionRequest, TodoItem } from "./core/types";
+import type {
+  AppConfig,
+  Conversation,
+  QuestionRequest,
+  TodoItem,
+} from "./core/types";
+import type {
+  AuthUser,
+  WorkspaceChannel,
+  WorkspaceMember,
+  ChatMessage as WsChatMessage,
+} from "@thechat/shared";
 import "./App.css";
+
+const API_URL = import.meta.env.VITE_API_URL || "http://localhost:3000";
+
+type ViewMode =
+  | { type: "agent-chat" }
+  | { type: "channel"; channelId: string; channelName: string }
+  | { type: "dm"; conversationId: string; otherUser: AuthUser };
 
 const builtinTools = [
   getCurrentTimeTool,
@@ -97,6 +118,191 @@ function App() {
   const [todosState, setTodosState] = useState<TodoItem[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
+  // ViewMode state
+  const [viewMode, setViewMode] = useState<ViewMode>({ type: "agent-chat" });
+
+  // Unread channels
+  const [unreadChannels, setUnreadChannels] = useState<Set<string>>(new Set());
+
+  // Typing indicators
+  const [typingUsers, setTypingUsers] = useState<Map<string, string>>(new Map());
+  const typingTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+
+  // Notification permission state
+  const [, setNotifPermission] = useState(false);
+
+  // Currently viewed conversation ID for channel/dm views
+  const currentConversationId =
+    viewMode.type === "channel"
+      ? viewMode.channelId
+      : viewMode.type === "dm"
+        ? viewMode.conversationId
+        : null;
+
+  const currentConversationIdRef = useRef(currentConversationId);
+  currentConversationIdRef.current = currentConversationId;
+  const viewModeRef = useRef(viewMode);
+  viewModeRef.current = viewMode;
+  const userRef = useRef(user);
+  userRef.current = user;
+
+  // WebSocket callbacks
+  const handleWsNewMessage = useCallback(
+    (msg: WsChatMessage, conversationType: "direct" | "group") => {
+      // If the message is for the currently viewed conversation, add it
+      if (msg.conversationId === currentConversationIdRef.current) {
+        channelChatRef.current?.addMessage(msg);
+      } else {
+        // Not viewing this conversation
+        if (conversationType === "group") {
+          // Mark channel as unread
+          setUnreadChannels((prev) => {
+            const next = new Set(prev);
+            next.add(msg.conversationId);
+            return next;
+          });
+        }
+        if (
+          conversationType === "direct" &&
+          msg.senderId !== userRef.current?.id
+        ) {
+          // Fire native notification for DM
+          fireNotification(msg.senderName, msg.content);
+        }
+      }
+
+      // Clear typing indicator for this user
+      setTypingUsers((prev) => {
+        if (!prev.has(msg.senderId)) return prev;
+        const next = new Map(prev);
+        next.delete(msg.senderId);
+        return next;
+      });
+    },
+    []
+  );
+
+  const handleWsTyping = useCallback(
+    (conversationId: string, userId: string, userName: string) => {
+      if (conversationId !== currentConversationIdRef.current) return;
+      setTypingUsers((prev) => {
+        const next = new Map(prev);
+        next.set(userId, userName);
+        return next;
+      });
+
+      // Clear after 3s
+      const existing = typingTimers.current.get(userId);
+      if (existing) clearTimeout(existing);
+      typingTimers.current.set(
+        userId,
+        setTimeout(() => {
+          setTypingUsers((prev) => {
+            const next = new Map(prev);
+            next.delete(userId);
+            return next;
+          });
+          typingTimers.current.delete(userId);
+        }, 3000)
+      );
+    },
+    []
+  );
+
+  const { connected, sendMessage: wsSendMessage } = useWebSocket({
+    token,
+    onNewMessage: handleWsNewMessage,
+    onTyping: handleWsTyping,
+  });
+
+  // Channel chat hook
+  const channelChat = useChannelChat({
+    conversationId: currentConversationId,
+    token,
+    wsSendMessage,
+  });
+
+  // Store ref for WS callback access
+  const channelChatRef = useRef(channelChat);
+  channelChatRef.current = channelChat;
+
+  // Fire native notification
+  async function fireNotification(title: string, body: string) {
+    try {
+      const { isPermissionGranted, requestPermission, sendNotification } =
+        await import("@tauri-apps/plugin-notification");
+
+      let permitted = await isPermissionGranted();
+      if (!permitted) {
+        const result = await requestPermission();
+        permitted = result === "granted";
+        setNotifPermission(permitted);
+      }
+      if (permitted) {
+        sendNotification({ title, body });
+      }
+    } catch {
+      // Plugin not available (e.g., in browser dev mode)
+    }
+  }
+
+  // Handle channel selection
+  const handleSelectChannel = useCallback(
+    (channel: WorkspaceChannel) => {
+      setViewMode({ type: "channel", channelId: channel.id, channelName: channel.name });
+      setSidebarOpen(false);
+      setTypingUsers(new Map());
+      // Clear unread for this channel
+      setUnreadChannels((prev) => {
+        if (!prev.has(channel.id)) return prev;
+        const next = new Set(prev);
+        next.delete(channel.id);
+        return next;
+      });
+    },
+    []
+  );
+
+  // Handle DM selection
+  const handleSelectDm = useCallback(
+    async (member: WorkspaceMember) => {
+      if (!token || !activeWorkspace) return;
+
+      try {
+        const res = await fetch(`${API_URL}/conversations/dm`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            workspaceId: activeWorkspace.id,
+            otherUserId: member.userId,
+          }),
+        });
+        const data = await res.json();
+        if (data.id) {
+          setViewMode({
+            type: "dm",
+            conversationId: data.id,
+            otherUser: member.user,
+          });
+          setSidebarOpen(false);
+          setTypingUsers(new Map());
+        }
+      } catch {
+        // Failed to create/get DM
+      }
+    },
+    [token, activeWorkspace]
+  );
+
+  // Handle switching back to agent chat
+  const handleBackToAgentChat = useCallback(() => {
+    setViewMode({ type: "agent-chat" });
+    setTypingUsers(new Map());
+  }, []);
+
   // Update batch tool registry when tools change
   useEffect(() => {
     setBatchToolRegistry(tools);
@@ -141,13 +347,16 @@ function App() {
     invoke<Conversation[]>("list_conversations").then(setConversations);
   }, [conversation]);
 
-  // Auto-scroll on new content
+  // Auto-scroll on new content (agent chat)
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, streaming, pendingPermission]);
+    if (viewMode.type === "agent-chat") {
+      messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    }
+  }, [messages, streaming, pendingPermission, viewMode.type]);
 
   const handleNewConversation = useCallback(() => {
     startNewConversation();
+    setViewMode({ type: "agent-chat" });
     setSidebarOpen(false);
     resetTodos();
     setTodosState([]);
@@ -174,22 +383,39 @@ function App() {
     onPermissionDeny: pendingPermission ? handlePermissionDeny : null,
   });
 
+  // Chat header title
+  const chatTitle =
+    viewMode.type === "channel"
+      ? `# ${viewMode.channelName}`
+      : viewMode.type === "dm"
+        ? viewMode.otherUser.name
+        : conversation?.title || "New Chat";
+
   return (
     <div className="app">
       <Sidebar
         open={sidebarOpen}
         conversations={conversations}
-        currentId={conversation?.id}
+        currentId={viewMode.type === "agent-chat" ? conversation?.id : undefined}
         user={user}
         workspaces={workspaces}
         activeWorkspace={activeWorkspace}
         onClose={() => setSidebarOpen(false)}
         onNewChat={handleNewConversation}
-        onSelectConversation={(conv) => { loadConversation(conv); setSidebarOpen(false); }}
+        onSelectConversation={(conv) => {
+          setViewMode({ type: "agent-chat" });
+          loadConversation(conv);
+          setSidebarOpen(false);
+        }}
         onLoginClick={() => setAuthModalOpen(true)}
         onLogout={logout}
         onSelectWorkspace={selectWorkspace}
         onOpenWorkspaceModal={() => setWorkspaceModalOpen(true)}
+        onSelectChannel={handleSelectChannel}
+        onSelectDm={handleSelectDm}
+        activeChannelId={viewMode.type === "channel" ? viewMode.channelId : null}
+        activeDmUserId={viewMode.type === "dm" ? viewMode.otherUser.id : null}
+        unreadChannels={unreadChannels}
       />
 
       <div className="chat-main">
@@ -197,45 +423,64 @@ function App() {
           <button className="menu-btn" onClick={() => setSidebarOpen(!sidebarOpen)}>
             &#9776;
           </button>
+          {viewMode.type !== "agent-chat" && (
+            <button className="back-btn" onClick={handleBackToAgentChat}>
+              &larr;
+            </button>
+          )}
           <span className="chat-title">
-            {conversation?.title || "New Chat"}
+            {chatTitle}
           </span>
+          {viewMode.type !== "agent-chat" && connected && (
+            <span className="ws-status ws-connected" />
+          )}
         </div>
 
-        <TodoPanel todos={todosState} />
+        {viewMode.type === "agent-chat" ? (
+          <>
+            <TodoPanel todos={todosState} />
 
-        <div className="messages-area">
-          {messages.length === 0 && !streaming && (
-            <div className="empty-state">Send a message to start chatting</div>
-          )}
-          {messages.map((msg) => (
-            <ChatMessage key={msg.id} message={msg} />
-          ))}
-          {streaming && (
-            <StreamingMessage
-              parts={streaming.parts}
-              pendingPermission={pendingPermission}
-              onPermissionAllow={handlePermissionAllow}
-              onPermissionDeny={handlePermissionDeny}
+            <div className="messages-area">
+              {messages.length === 0 && !streaming && (
+                <div className="empty-state">Send a message to start chatting</div>
+              )}
+              {messages.map((msg) => (
+                <ChatMessage key={msg.id} message={msg} />
+              ))}
+              {streaming && (
+                <StreamingMessage
+                  parts={streaming.parts}
+                  pendingPermission={pendingPermission}
+                  onPermissionAllow={handlePermissionAllow}
+                  onPermissionDeny={handlePermissionDeny}
+                />
+              )}
+              {error && <div className="error-message">{error}</div>}
+              <div ref={messagesEndRef} />
+            </div>
+
+            {pendingQuestion && (
+              <QuestionOverlay
+                request={pendingQuestion}
+                onSubmit={(answers) => { pendingQuestion.resolve(answers); setPendingQuestion(null); }}
+                onCancel={() => { pendingQuestion.reject("User cancelled"); setPendingQuestion(null); }}
+              />
+            )}
+
+            <InputBar
+              isStreaming={isStreaming}
+              onSend={sendMessage}
+              onStop={stopStreaming}
             />
-          )}
-          {error && <div className="error-message">{error}</div>}
-          <div ref={messagesEndRef} />
-        </div>
-
-        {pendingQuestion && (
-          <QuestionOverlay
-            request={pendingQuestion}
-            onSubmit={(answers) => { pendingQuestion.resolve(answers); setPendingQuestion(null); }}
-            onCancel={() => { pendingQuestion.reject("User cancelled"); setPendingQuestion(null); }}
+          </>
+        ) : (
+          <ChannelChatView
+            messages={channelChat.messages}
+            loading={channelChat.loading}
+            typingUsers={typingUsers}
+            onSend={channelChat.sendMessage}
           />
         )}
-
-        <InputBar
-          isStreaming={isStreaming}
-          onSend={sendMessage}
-          onStop={stopStreaming}
-        />
       </div>
 
       {paletteOpen && (

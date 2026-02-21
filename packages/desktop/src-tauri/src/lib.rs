@@ -85,6 +85,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_log::Builder::new().build())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_notification::init())
         .manage(db_state)
         .manage(mcp_state)
         .invoke_handler(tauri::generate_handler![
@@ -125,6 +126,7 @@ mod tests {
 
         let app = tauri::test::mock_builder()
             .plugin(tauri_plugin_log::Builder::new().build())
+            .plugin(tauri_plugin_notification::init())
             .manage(db_state)
             .manage(mcp_state)
             .invoke_handler(tauri::generate_handler![
