@@ -37,6 +37,7 @@
     "@types/ws": "^8.18.1",
     "@vitejs/plugin-react": "^4.6.0",
     "jsdom": "^28.1.0",
+    "react-devtools": "^7.0.1",
     "typescript": "~5.8.3",
     "vite": "^7.0.4",
     "vitest": "^4.0.18",
