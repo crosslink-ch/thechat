@@ -10,7 +10,7 @@ vi.mock("@tauri-apps/api/path", () => ({
 
 import { invoke } from "@tauri-apps/api/core";
 import { homeDir } from "@tauri-apps/api/path";
-import { stripLineNumbers, discoverSkills, loadSkill } from "./index";
+import { discoverSkills, loadSkill } from "./index";
 
 const mockInvoke = vi.mocked(invoke);
 const mockHomeDir = vi.mocked(homeDir);
@@ -20,33 +20,11 @@ beforeEach(() => {
   // Reset the module-level cache by re-discovering
 });
 
-describe("stripLineNumbers", () => {
-  it("removes cat -n line number prefixes", () => {
-    const input = "     1\tFirst line\n     2\tSecond line\n     3\tThird line";
-    expect(stripLineNumbers(input)).toBe("First line\nSecond line\nThird line");
-  });
-
-  it("handles single-digit and multi-digit line numbers", () => {
-    const input = "     1\tLine 1\n   100\tLine 100\n  1000\tLine 1000";
-    expect(stripLineNumbers(input)).toBe("Line 1\nLine 100\nLine 1000");
-  });
-
-  it("preserves lines without tab-separated numbers", () => {
-    const input = "No line numbers here\nJust plain text";
-    expect(stripLineNumbers(input)).toBe("No line numbers here\nJust plain text");
-  });
-
-  it("handles empty string", () => {
-    expect(stripLineNumbers("")).toBe("");
-  });
-});
-
 describe("discoverSkills", () => {
   it("includes built-in skills", async () => {
     mockHomeDir.mockResolvedValue("/home/test/");
-    // pwd command
     mockInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === "execute_shell_command") return "/tmp/test-project";
+      if (cmd === "get_cwd") return "/tmp/test-project";
       if (cmd === "fs_glob") return { files: [], count: 0, truncated: false };
       return null;
     });
@@ -59,7 +37,7 @@ describe("discoverSkills", () => {
   it("discovers filesystem skills", async () => {
     mockHomeDir.mockResolvedValue("/home/test/");
     mockInvoke.mockImplementation(async (cmd: string, args?: any) => {
-      if (cmd === "execute_shell_command") return "/tmp/test-project";
+      if (cmd === "get_cwd") return "/tmp/test-project";
       if (cmd === "fs_glob") {
         if (args?.path === "/tmp/test-project/.thechat/skills") {
           return {
@@ -73,7 +51,7 @@ describe("discoverSkills", () => {
       if (cmd === "fs_read_file") {
         return {
           content:
-            "     1\t---\n     2\tname: custom-skill\n     3\tdescription: A custom skill\n     4\t---\n     5\t# Custom\n     6\tDo custom things.\n",
+            "---\nname: custom-skill\ndescription: A custom skill\n---\n# Custom\nDo custom things.\n",
           total_lines: 6,
           lines_read: 6,
           truncated: false,
@@ -92,7 +70,7 @@ describe("discoverSkills", () => {
   it("project skills override global skills on name collision", async () => {
     mockHomeDir.mockResolvedValue("/home/test/");
     mockInvoke.mockImplementation(async (cmd: string, args?: any) => {
-      if (cmd === "execute_shell_command") return "/tmp/project";
+      if (cmd === "get_cwd") return "/tmp/project";
       if (cmd === "fs_glob") {
         if (args?.path === "/home/test/.config/thechat/skills") {
           return {
@@ -114,7 +92,7 @@ describe("discoverSkills", () => {
         if (args?.filePath?.startsWith("/home/test/")) {
           return {
             content:
-              "     1\t---\n     2\tname: dupe\n     3\tdescription: Global version\n     4\t---\n     5\tGlobal content.\n",
+              "---\nname: dupe\ndescription: Global version\n---\nGlobal content.\n",
             total_lines: 5,
             lines_read: 5,
             truncated: false,
@@ -122,7 +100,7 @@ describe("discoverSkills", () => {
         }
         return {
           content:
-            "     1\t---\n     2\tname: dupe\n     3\tdescription: Project version\n     4\t---\n     5\tProject content.\n",
+            "---\nname: dupe\ndescription: Project version\n---\nProject content.\n",
           total_lines: 5,
           lines_read: 5,
           truncated: false,
@@ -143,7 +121,7 @@ describe("loadSkill", () => {
   it("returns built-in skill content directly", async () => {
     mockHomeDir.mockResolvedValue("/home/test/");
     mockInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === "execute_shell_command") return "/tmp/test";
+      if (cmd === "get_cwd") return "/tmp/test";
       if (cmd === "fs_glob") return { files: [], count: 0, truncated: false };
       return null;
     });
@@ -159,7 +137,7 @@ describe("loadSkill", () => {
   it("returns null for unknown skill name", async () => {
     mockHomeDir.mockResolvedValue("/home/test/");
     mockInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === "execute_shell_command") return "/tmp/test";
+      if (cmd === "get_cwd") return "/tmp/test";
       if (cmd === "fs_glob") return { files: [], count: 0, truncated: false };
       return null;
     });

@@ -43,6 +43,7 @@ Use this tool instead of shell commands like cat, head, or tail.`,
       filePath: file_path,
       offset: offset ?? undefined,
       limit: limit ?? undefined,
+      lineNumbers: true,
     });
 
     return result;

@@ -6,27 +6,6 @@ import type { SkillMeta, SkillInfo } from "./types";
 
 export type { SkillMeta, SkillInfo };
 
-// --- Line number stripping ---
-
-/**
- * Remove `cat -n` line-number prefixes from fs_read_file output.
- * Each line looks like: `     1\tActual content`
- */
-export function stripLineNumbers(content: string): string {
-  return content
-    .split("\n")
-    .map((line) => {
-      const tabIdx = line.indexOf("\t");
-      if (tabIdx === -1) return line;
-      const prefix = line.slice(0, tabIdx);
-      if (/^\s*\d+$/.test(prefix)) {
-        return line.slice(tabIdx + 1);
-      }
-      return line;
-    })
-    .join("\n");
-}
-
 // --- Filesystem helpers ---
 
 interface GlobResult {
@@ -56,7 +35,7 @@ async function readFile(filePath: string): Promise<string | null> {
     const result = await invoke<ReadFileResult>("fs_read_file", {
       filePath,
     });
-    return stripLineNumbers(result.content);
+    return result.content;
   } catch {
     return null;
   }
@@ -64,10 +43,7 @@ async function readFile(filePath: string): Promise<string | null> {
 
 async function getCwd(): Promise<string> {
   try {
-    return await invoke<string>("execute_shell_command", {
-      command: "pwd",
-      timeoutSecs: 5,
-    });
+    return await invoke<string>("get_cwd");
   } catch {
     return ".";
   }
