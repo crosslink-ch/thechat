@@ -20,6 +20,7 @@ async function kvDelete(key: string): Promise<void> {
 
 export function useAuth() {
   const [user, setUser] = useState<AuthUser | null>(null);
+  const [token, setToken] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
   // Validate session on mount
@@ -38,6 +39,7 @@ export function useAuth() {
 
         if (data && !error && "user" in data) {
           setUser(data.user);
+          setToken(token);
           await kvSet(KV_USER, JSON.stringify(data.user));
         } else {
           // Token invalid — try cached user as fallback
@@ -45,6 +47,7 @@ export function useAuth() {
           if (cached) {
             try {
               setUser(JSON.parse(cached));
+              setToken(token);
             } catch {
               await kvDelete(KV_TOKEN);
               await kvDelete(KV_USER);
@@ -55,10 +58,12 @@ export function useAuth() {
         }
       } catch {
         // Server unreachable — fall back to cached user
+        const storedToken = await kvGet(KV_TOKEN);
         const cached = await kvGet(KV_USER);
         if (cached) {
           try {
             setUser(JSON.parse(cached));
+            if (storedToken) setToken(storedToken);
           } catch {
             // Corrupt cache
           }
@@ -77,6 +82,7 @@ export function useAuth() {
 
     await kvSet(KV_TOKEN, data.token!);
     await kvSet(KV_USER, JSON.stringify(data.user!));
+    setToken(data.token!);
     setUser(data.user!);
   }, []);
 
@@ -104,6 +110,7 @@ export function useAuth() {
       if ("token" in data) {
         await kvSet(KV_TOKEN, data.token!);
         await kvSet(KV_USER, JSON.stringify(data.user!));
+        setToken(data.token!);
         setUser(data.user!);
       }
       return null;
@@ -124,8 +131,9 @@ export function useAuth() {
     }
     await kvDelete(KV_TOKEN);
     await kvDelete(KV_USER);
+    setToken(null);
     setUser(null);
   }, []);
 
-  return { user, loading, login, register, logout };
+  return { user, token, loading, login, register, logout };
 }

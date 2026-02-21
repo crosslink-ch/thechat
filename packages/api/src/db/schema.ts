@@ -25,6 +25,11 @@ export const participantRoleEnum = pgEnum("participant_role", [
   "admin",
   "owner",
 ]);
+export const workspaceMemberRoleEnum = pgEnum("workspace_member_role", [
+  "member",
+  "admin",
+  "owner",
+]);
 
 // -- Tables --
 
@@ -52,10 +57,12 @@ export const users = pgTable(
   ]
 );
 
-export const conversations = pgTable("conversations", {
-  id: uuid("id").defaultRandom().primaryKey(),
-  title: varchar("title", { length: 255 }),
-  type: conversationTypeEnum("type").notNull(),
+export const workspaces = pgTable("workspaces", {
+  id: varchar("id", { length: 100 }).primaryKey(),
+  name: varchar("name", { length: 255 }).notNull(),
+  createdById: uuid("created_by_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
   createdAt: timestamp("created_at", { withTimezone: true })
     .defaultNow()
     .notNull(),
@@ -64,6 +71,52 @@ export const conversations = pgTable("conversations", {
     .notNull()
     .$onUpdate(() => new Date()),
 });
+
+export const workspaceMembers = pgTable(
+  "workspace_members",
+  {
+    workspaceId: varchar("workspace_id", { length: 100 })
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    role: workspaceMemberRoleEnum("role").notNull().default("member"),
+    joinedAt: timestamp("joined_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.workspaceId, t.userId] }),
+    index("wm_workspace_id_idx").on(t.workspaceId),
+    index("wm_user_id_idx").on(t.userId),
+  ]
+);
+
+export const conversations = pgTable(
+  "conversations",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    title: varchar("title", { length: 255 }),
+    type: conversationTypeEnum("type").notNull(),
+    workspaceId: varchar("workspace_id", { length: 100 }).references(
+      () => workspaces.id,
+      { onDelete: "cascade" }
+    ),
+    name: varchar("name", { length: 100 }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull()
+      .$onUpdate(() => new Date()),
+  },
+  (t) => [
+    index("conversations_workspace_id_idx").on(t.workspaceId),
+    uniqueIndex("conversations_workspace_name_idx").on(t.workspaceId, t.name),
+  ]
+);
 
 export const conversationParticipants = pgTable(
   "conversation_participants",
@@ -152,12 +205,43 @@ export const usersRelations = relations(users, ({ many }) => ({
   messages: many(messages),
   sessions: many(sessions),
   emailVerifications: many(emailVerifications),
+  workspaceMemberships: many(workspaceMembers),
 }));
 
-export const conversationsRelations = relations(conversations, ({ many }) => ({
-  participants: many(conversationParticipants),
-  messages: many(messages),
+export const workspacesRelations = relations(workspaces, ({ one, many }) => ({
+  createdBy: one(users, {
+    fields: [workspaces.createdById],
+    references: [users.id],
+  }),
+  members: many(workspaceMembers),
+  conversations: many(conversations),
 }));
+
+export const workspaceMembersRelations = relations(
+  workspaceMembers,
+  ({ one }) => ({
+    workspace: one(workspaces, {
+      fields: [workspaceMembers.workspaceId],
+      references: [workspaces.id],
+    }),
+    user: one(users, {
+      fields: [workspaceMembers.userId],
+      references: [users.id],
+    }),
+  })
+);
+
+export const conversationsRelations = relations(
+  conversations,
+  ({ one, many }) => ({
+    participants: many(conversationParticipants),
+    messages: many(messages),
+    workspace: one(workspaces, {
+      fields: [conversations.workspaceId],
+      references: [workspaces.id],
+    }),
+  })
+);
 
 export const conversationParticipantsRelations = relations(
   conversationParticipants,

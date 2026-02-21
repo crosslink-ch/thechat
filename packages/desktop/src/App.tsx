@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, useMemo, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useChat } from "./hooks/useChat";
 import { useAuth } from "./hooks/useAuth";
+import { useWorkspaces } from "./hooks/useWorkspaces";
 import { useKeybindings } from "./hooks/useKeybindings";
 import { useMcpTools } from "./hooks/useMcpTools";
 import { ChatMessage, StreamingMessage } from "./ChatMessage";
@@ -11,6 +12,7 @@ import { Sidebar } from "./components/Sidebar";
 import { InputBar } from "./components/InputBar";
 import { QuestionOverlay } from "./components/QuestionOverlay";
 import { AuthModal } from "./components/AuthModal";
+import { WorkspaceModal } from "./components/WorkspaceModal";
 import {
   getCurrentTimeTool,
   shellTool,
@@ -56,8 +58,16 @@ const builtinTools = [
 ];
 
 function App() {
-  const { user, login, register, logout } = useAuth();
+  const { user, token, login, register, logout } = useAuth();
+  const {
+    workspaces,
+    activeWorkspace,
+    selectWorkspace,
+    createWorkspace,
+    joinWorkspace,
+  } = useWorkspaces(user, token);
   const [authModalOpen, setAuthModalOpen] = useState(false);
+  const [workspaceModalOpen, setWorkspaceModalOpen] = useState(false);
   const mcpTools = useMcpTools();
 
   const tools = useMemo(
@@ -171,11 +181,15 @@ function App() {
         conversations={conversations}
         currentId={conversation?.id}
         user={user}
+        workspaces={workspaces}
+        activeWorkspace={activeWorkspace}
         onClose={() => setSidebarOpen(false)}
         onNewChat={handleNewConversation}
         onSelectConversation={(conv) => { loadConversation(conv); setSidebarOpen(false); }}
         onLoginClick={() => setAuthModalOpen(true)}
         onLogout={logout}
+        onSelectWorkspace={selectWorkspace}
+        onOpenWorkspaceModal={() => setWorkspaceModalOpen(true)}
       />
 
       <div className="chat-main">
@@ -238,6 +252,14 @@ function App() {
           onLogin={login}
           onRegister={register}
           onClose={() => setAuthModalOpen(false)}
+        />
+      )}
+
+      {workspaceModalOpen && (
+        <WorkspaceModal
+          onCreateWorkspace={async (name) => { await createWorkspace(name); }}
+          onJoinWorkspace={async (id) => { await joinWorkspace(id); }}
+          onClose={() => setWorkspaceModalOpen(false)}
         />
       )}
     </div>

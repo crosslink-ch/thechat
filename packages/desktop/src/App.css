@@ -1097,3 +1097,207 @@
   color: var(--color-text);
   background: var(--color-bg-hover);
 }
+
+/* Workspace Switcher */
+.workspace-switcher {
+  padding: 8px;
+  border-bottom: 1px solid var(--color-border);
+  position: relative;
+}
+
+.workspace-switcher-btn {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 8px 12px;
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border-strong);
+  border-radius: 8px;
+  color: var(--color-text);
+  cursor: pointer;
+  font-size: 14px;
+  font-family: inherit;
+  font-weight: 500;
+}
+
+.workspace-switcher-btn:hover {
+  background: var(--color-border-strong);
+}
+
+.workspace-switcher-chevron {
+  font-size: 10px;
+  color: var(--color-text-muted);
+}
+
+.workspace-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 8px;
+  right: 8px;
+  background: var(--color-bg-surface);
+  border: 1px solid var(--color-border-strong);
+  border-radius: 8px;
+  box-shadow: var(--shadow-card);
+  z-index: 15;
+  overflow: hidden;
+  margin-top: 4px;
+}
+
+.workspace-dropdown-item {
+  display: block;
+  width: 100%;
+  padding: 8px 12px;
+  background: none;
+  border: none;
+  color: var(--color-text-muted);
+  text-align: left;
+  cursor: pointer;
+  font-size: 13px;
+  font-family: inherit;
+}
+
+.workspace-dropdown-item:hover {
+  background: var(--color-bg-hover);
+  color: var(--color-text);
+}
+
+.workspace-dropdown-active {
+  color: var(--color-text);
+  background: var(--color-bg-elevated);
+}
+
+.workspace-dropdown-action {
+  border-top: 1px solid var(--color-border);
+  color: var(--color-accent);
+}
+
+/* Sidebar Sections */
+.sidebar-section {
+  padding: 0 8px;
+}
+
+.sidebar-section-header {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--color-text-dimmed);
+  padding: 12px 12px 4px;
+}
+
+.sidebar-section-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.sidebar-section-toggle:hover {
+  color: var(--color-text-muted-hover);
+}
+
+.sidebar-section-chevron {
+  font-size: 9px;
+  width: 12px;
+}
+
+.sidebar-section-list {
+  padding: 0 0 4px;
+}
+
+.sidebar-section-agent {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.sidebar-section-agent .conversations-list {
+  flex: 1;
+}
+
+.sidebar-section-agent .new-chat-btn {
+  margin: 4px 4px 4px;
+}
+
+/* Channel Items */
+.channel-item {
+  display: block;
+  width: 100%;
+  padding: 6px 12px;
+  margin-bottom: 1px;
+  background: none;
+  border: none;
+  border-radius: 6px;
+  color: var(--color-text-muted);
+  text-align: left;
+  cursor: pointer;
+  font-size: 13px;
+  font-family: inherit;
+}
+
+.channel-item:hover {
+  background: var(--color-bg-hover);
+  color: var(--color-text);
+}
+
+.channel-hash {
+  color: var(--color-text-dimmed);
+  margin-right: 2px;
+}
+
+/* DM Items */
+.dm-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 12px;
+  margin-bottom: 1px;
+  background: none;
+  border: none;
+  border-radius: 6px;
+  color: var(--color-text-muted);
+  text-align: left;
+  cursor: pointer;
+  font-size: 13px;
+  font-family: inherit;
+}
+
+.dm-item:hover {
+  background: var(--color-bg-hover);
+  color: var(--color-text);
+}
+
+.dm-avatar {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  flex-shrink: 0;
+}
+
+.dm-name {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Sidebar Divider */
+.sidebar-divider {
+  height: 1px;
+  background: var(--color-border);
+  margin: 4px 12px;
+}

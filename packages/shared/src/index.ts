@@ -68,6 +68,42 @@ export interface RegisterResponse {
   message?: string;
 }
 
+// -- Workspace Types --
+
+export type WorkspaceMemberRole = "member" | "admin" | "owner";
+
+export interface Workspace {
+  id: string;
+  name: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface WorkspaceMember {
+  userId: string;
+  role: WorkspaceMemberRole;
+  joinedAt: string;
+  user: AuthUser;
+}
+
+export interface WorkspaceChannel {
+  id: string;
+  workspaceId: string;
+  name: string;
+  title: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface WorkspaceWithDetails extends Workspace {
+  members: WorkspaceMember[];
+  channels: WorkspaceChannel[];
+}
+
+export interface WorkspaceListItem extends Workspace {
+  role: WorkspaceMemberRole;
+}
+
 // -- Chat Parameters --
 
 export interface ChatParams {

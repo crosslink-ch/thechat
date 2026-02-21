@@ -3,11 +3,13 @@ import { cors } from "@elysiajs/cors";
 import { sql } from "drizzle-orm";
 import { db } from "./db";
 import { authRoutes } from "./auth";
+import { workspaceRoutes } from "./workspaces";
 
 const app = new Elysia()
   .use(cors())
   .decorate("db", db)
   .use(authRoutes)
+  .use(workspaceRoutes)
   .get("/", () => "TheChat API")
   .get("/health", async ({ db }) => {
     try {

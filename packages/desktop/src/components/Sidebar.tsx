@@ -1,16 +1,25 @@
+import { useState } from "react";
 import type { Conversation } from "../core/types";
-import type { AuthUser } from "@thechat/shared";
+import type {
+  AuthUser,
+  WorkspaceListItem,
+  WorkspaceWithDetails,
+} from "@thechat/shared";
 
 interface SidebarProps {
   open: boolean;
   conversations: Conversation[];
   currentId: string | undefined;
   user: AuthUser | null;
+  workspaces: WorkspaceListItem[];
+  activeWorkspace: WorkspaceWithDetails | null;
   onClose: () => void;
   onNewChat: () => void;
   onSelectConversation: (conv: Conversation) => void;
   onLoginClick: () => void;
   onLogout: () => void;
+  onSelectWorkspace: (id: string) => void;
+  onOpenWorkspaceModal: () => void;
 }
 
 export function Sidebar({
@@ -18,30 +27,141 @@ export function Sidebar({
   conversations,
   currentId,
   user,
+  workspaces,
+  activeWorkspace,
   onClose,
   onNewChat,
   onSelectConversation,
   onLoginClick,
   onLogout,
+  onSelectWorkspace,
+  onOpenWorkspaceModal,
 }: SidebarProps) {
+  const [dropdownOpen, setDropdownOpen] = useState(false);
+  const [agentChatsCollapsed, setAgentChatsCollapsed] = useState(false);
+
   return (
     <>
       {open && <div className="sidebar-overlay" onClick={onClose} />}
       <div className={`sidebar ${open ? "sidebar-open" : ""}`}>
-        <button className="new-chat-btn" onClick={onNewChat}>
-          + New Chat
-        </button>
-        <div className="conversations-list">
-          {conversations.map((conv) => (
+        {/* Workspace switcher (only when logged in) */}
+        {user && (
+          <div className="workspace-switcher">
             <button
-              key={conv.id}
-              className={`conv-item ${currentId === conv.id ? "conv-active" : ""}`}
-              onClick={() => onSelectConversation(conv)}
+              className="workspace-switcher-btn"
+              onClick={() => setDropdownOpen(!dropdownOpen)}
             >
-              {conv.title}
+              <span className="workspace-switcher-name">
+                {activeWorkspace ? activeWorkspace.name : "Select workspace"}
+              </span>
+              <span className="workspace-switcher-chevron">
+                {dropdownOpen ? "\u25B2" : "\u25BC"}
+              </span>
             </button>
-          ))}
+            {dropdownOpen && (
+              <div className="workspace-dropdown">
+                {workspaces.map((ws) => (
+                  <button
+                    key={ws.id}
+                    className={`workspace-dropdown-item ${
+                      activeWorkspace?.id === ws.id
+                        ? "workspace-dropdown-active"
+                        : ""
+                    }`}
+                    onClick={() => {
+                      onSelectWorkspace(ws.id);
+                      setDropdownOpen(false);
+                    }}
+                  >
+                    {ws.name}
+                  </button>
+                ))}
+                <button
+                  className="workspace-dropdown-item workspace-dropdown-action"
+                  onClick={() => {
+                    onOpenWorkspaceModal();
+                    setDropdownOpen(false);
+                  }}
+                >
+                  + Create or join
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Workspace content: channels + DMs */}
+        {user && activeWorkspace && (
+          <>
+            <div className="sidebar-section">
+              <div className="sidebar-section-header">Channels</div>
+              <div className="sidebar-section-list">
+                {activeWorkspace.channels.map((ch) => (
+                  <button key={ch.id} className="channel-item">
+                    <span className="channel-hash">#</span> {ch.name}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="sidebar-section">
+              <div className="sidebar-section-header">Direct Messages</div>
+              <div className="sidebar-section-list">
+                {activeWorkspace.members
+                  .filter((m) => m.userId !== user.id)
+                  .map((m) => (
+                    <button key={m.userId} className="dm-item">
+                      <span className="dm-avatar">
+                        {m.user.name.charAt(0).toUpperCase()}
+                      </span>
+                      <span className="dm-name">{m.user.name}</span>
+                    </button>
+                  ))}
+              </div>
+            </div>
+
+            <div className="sidebar-divider" />
+          </>
+        )}
+
+        {/* Agent Chats section */}
+        <div className="sidebar-section sidebar-section-agent">
+          {user && activeWorkspace ? (
+            <button
+              className="sidebar-section-header sidebar-section-toggle"
+              onClick={() => setAgentChatsCollapsed(!agentChatsCollapsed)}
+            >
+              <span className="sidebar-section-chevron">
+                {agentChatsCollapsed ? "\u25B6" : "\u25BC"}
+              </span>
+              Agent Chats
+            </button>
+          ) : (
+            <div className="sidebar-section-header">Agent Chats</div>
+          )}
+
+          {!agentChatsCollapsed && (
+            <>
+              <button className="new-chat-btn" onClick={onNewChat}>
+                + New Chat
+              </button>
+              <div className="conversations-list">
+                {conversations.map((conv) => (
+                  <button
+                    key={conv.id}
+                    className={`conv-item ${
+                      currentId === conv.id ? "conv-active" : ""
+                    }`}
+                    onClick={() => onSelectConversation(conv)}
+                  >
+                    {conv.title}
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
         </div>
+
         <div className="sidebar-footer">
           {user ? (
             <div className="sidebar-user-info">
