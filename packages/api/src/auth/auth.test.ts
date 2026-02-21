@@ -59,7 +59,7 @@ async function req(
 }
 
 describe("Auth: Registration", () => {
-  test("successful registration returns token and user", async () => {
+  test("successful registration returns accessToken, refreshToken, and user", async () => {
     const email = uniqueEmail();
     createdUserEmails.push(email);
 
@@ -70,10 +70,14 @@ describe("Auth: Registration", () => {
     });
 
     expect(res.status).toBe(200);
-    expect(res.body.token).toBeDefined();
+    expect(res.body.accessToken).toBeDefined();
+    expect(res.body.refreshToken).toBeDefined();
     expect(res.body.user).toBeDefined();
     expect(res.body.user.name).toBe("Test User");
     expect(res.body.user.email).toBe(email);
+
+    // accessToken should be a JWT (3 dot-separated segments)
+    expect(res.body.accessToken.split(".").length).toBe(3);
   });
 
   test("duplicate email returns 409", async () => {
@@ -106,7 +110,7 @@ describe("Auth: Registration", () => {
 });
 
 describe("Auth: Login", () => {
-  test("correct credentials return token and user", async () => {
+  test("correct credentials return accessToken, refreshToken, and user", async () => {
     const email = uniqueEmail();
     createdUserEmails.push(email);
 
@@ -122,7 +126,8 @@ describe("Auth: Login", () => {
     });
 
     expect(res.status).toBe(200);
-    expect(res.body.token).toBeDefined();
+    expect(res.body.accessToken).toBeDefined();
+    expect(res.body.refreshToken).toBeDefined();
     expect(res.body.user.email).toBe(email);
   });
 
@@ -165,7 +170,7 @@ describe("Auth: Session (GET /auth/me)", () => {
       password: "password123",
     });
 
-    const res = await req("GET", "/auth/me", undefined, reg.body.token);
+    const res = await req("GET", "/auth/me", undefined, reg.body.accessToken);
 
     expect(res.status).toBe(200);
     expect(res.body.user.email).toBe(email);
@@ -183,7 +188,7 @@ describe("Auth: Session (GET /auth/me)", () => {
 });
 
 describe("Auth: Logout", () => {
-  test("invalidates session", async () => {
+  test("invalidates refresh token", async () => {
     const email = uniqueEmail();
     createdUserEmails.push(email);
 
@@ -193,14 +198,82 @@ describe("Auth: Logout", () => {
       password: "password123",
     });
 
-    const token = reg.body.token;
+    const accessToken = reg.body.accessToken;
+    const refreshToken = reg.body.refreshToken;
 
-    // Logout
-    const logoutRes = await req("POST", "/auth/logout", undefined, token);
+    // Logout — sends refresh token in body
+    const logoutRes = await req(
+      "POST",
+      "/auth/logout",
+      { refreshToken },
+      accessToken
+    );
     expect(logoutRes.status).toBe(200);
 
-    // Session should be invalid now
-    const meRes = await req("GET", "/auth/me", undefined, token);
-    expect(meRes.status).toBe(401);
+    // JWT access token still works (stateless — valid until expiry)
+    const meRes = await req("GET", "/auth/me", undefined, accessToken);
+    expect(meRes.status).toBe(200);
+
+    // But refresh token is invalidated — cannot get new access tokens
+    const refreshRes = await req("POST", "/auth/refresh", { refreshToken });
+    expect(refreshRes.status).toBe(401);
+  });
+});
+
+describe("Auth: Refresh", () => {
+  test("returns new access token for valid refresh token", async () => {
+    const email = uniqueEmail();
+    createdUserEmails.push(email);
+
+    const reg = await req("POST", "/auth/register", {
+      name: "Refresh Test",
+      email,
+      password: "password123",
+    });
+
+    const res = await req("POST", "/auth/refresh", {
+      refreshToken: reg.body.refreshToken,
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.accessToken).toBeDefined();
+    expect(res.body.accessToken.split(".").length).toBe(3);
+
+    // New access token should work for /me
+    const meRes = await req("GET", "/auth/me", undefined, res.body.accessToken);
+    expect(meRes.status).toBe(200);
+    expect(meRes.body.user.email).toBe(email);
+  });
+
+  test("invalid refresh token returns 401", async () => {
+    const res = await req("POST", "/auth/refresh", {
+      refreshToken: "invalid-refresh-token",
+    });
+    expect(res.status).toBe(401);
+  });
+
+  test("refresh after logout fails", async () => {
+    const email = uniqueEmail();
+    createdUserEmails.push(email);
+
+    const reg = await req("POST", "/auth/register", {
+      name: "Refresh After Logout",
+      email,
+      password: "password123",
+    });
+
+    // Logout
+    await req(
+      "POST",
+      "/auth/logout",
+      { refreshToken: reg.body.refreshToken },
+      reg.body.accessToken
+    );
+
+    // Refresh should fail
+    const res = await req("POST", "/auth/refresh", {
+      refreshToken: reg.body.refreshToken,
+    });
+    expect(res.status).toBe(401);
   });
 });

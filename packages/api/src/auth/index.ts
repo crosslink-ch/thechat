@@ -5,9 +5,10 @@ import { db } from "../db";
 import { users, sessions, emailVerifications } from "../db/schema";
 import { sendVerificationEmail } from "./email";
 import { resolveTokenToUser } from "./middleware";
+import { signAccessToken } from "./jwt";
 import crypto from "crypto";
 
-function generateToken(): string {
+function generateRefreshToken(): string {
   return crypto.randomBytes(32).toString("hex"); // 64 hex chars
 }
 
@@ -35,6 +36,10 @@ const loginSchema = z.object({
 
 const resendVerificationSchema = z.object({
   email: z.email("Please enter a valid email address"),
+});
+
+const refreshSchema = z.object({
+  refreshToken: z.string().min(1, "Refresh token is required"),
 });
 
 function formatZodError(err: z.ZodError): string {
@@ -87,7 +92,7 @@ export const authRoutes = new Elysia({ prefix: "/auth" })
       });
 
     if (requireEmailVerification) {
-      const token = generateToken();
+      const token = generateRefreshToken();
       const expiresAt = new Date();
       expiresAt.setHours(expiresAt.getHours() + 24);
 
@@ -109,15 +114,23 @@ export const authRoutes = new Elysia({ prefix: "/auth" })
       };
     }
 
-    // Auto-login: create session
-    const token = generateToken();
+    // Auto-login: create refresh token (session) + JWT access token
+    const refreshToken = generateRefreshToken();
     await db.insert(sessions).values({
       userId: user.id,
-      token,
+      token: refreshToken,
       expiresAt: sessionExpiresAt(),
     });
 
-    return { token, user };
+    const accessToken = await signAccessToken({
+      sub: user.id,
+      name: user.name,
+      email: user.email,
+      avatar: user.avatar,
+      type: "human",
+    });
+
+    return { accessToken, refreshToken, user };
   })
 
   // ── Login ──
@@ -153,15 +166,24 @@ export const authRoutes = new Elysia({ prefix: "/auth" })
       return { error: "Please verify your email before logging in" };
     }
 
-    const token = generateToken();
+    const refreshToken = generateRefreshToken();
     await db.insert(sessions).values({
       userId: user.id,
-      token,
+      token: refreshToken,
       expiresAt: sessionExpiresAt(),
     });
 
+    const accessToken = await signAccessToken({
+      sub: user.id,
+      name: user.name,
+      email: user.email,
+      avatar: user.avatar,
+      type: "human",
+    });
+
     return {
-      token,
+      accessToken,
+      refreshToken,
       user: {
         id: user.id,
         name: user.name,
@@ -234,7 +256,7 @@ export const authRoutes = new Elysia({ prefix: "/auth" })
         .delete(emailVerifications)
         .where(eq(emailVerifications.userId, user.id));
 
-      const token = generateToken();
+      const token = generateRefreshToken();
       const expiresAt = new Date();
       expiresAt.setHours(expiresAt.getHours() + 24);
 
@@ -252,6 +274,56 @@ export const authRoutes = new Elysia({ prefix: "/auth" })
     }
 
     return { message };
+  })
+
+  // ── Refresh (public — no Bearer required) ──
+  .post("/refresh", async ({ body, set }) => {
+    const parsed = refreshSchema.safeParse(body);
+    if (!parsed.success) {
+      set.status = 400;
+      return { error: formatZodError(parsed.error) };
+    }
+
+    const { refreshToken } = parsed.data;
+
+    const [session] = await db
+      .select()
+      .from(sessions)
+      .where(
+        and(eq(sessions.token, refreshToken), gt(sessions.expiresAt, new Date()))
+      )
+      .limit(1);
+
+    if (!session) {
+      set.status = 401;
+      return { error: "Invalid or expired refresh token" };
+    }
+
+    const [user] = await db
+      .select({
+        id: users.id,
+        name: users.name,
+        email: users.email,
+        avatar: users.avatar,
+      })
+      .from(users)
+      .where(eq(users.id, session.userId))
+      .limit(1);
+
+    if (!user) {
+      set.status = 401;
+      return { error: "User not found" };
+    }
+
+    const accessToken = await signAccessToken({
+      sub: user.id,
+      name: user.name,
+      email: user.email,
+      avatar: user.avatar,
+      type: "human",
+    });
+
+    return { accessToken };
   })
 
   // ── Authenticated routes ──
@@ -273,8 +345,16 @@ export const authRoutes = new Elysia({ prefix: "/auth" })
       return { error: "Authentication required" };
     }
   })
-  .post("/logout", async ({ sessionToken }) => {
-    await db.delete(sessions).where(eq(sessions.token, sessionToken));
+  .post("/logout", async ({ body, set }) => {
+    const refreshToken =
+      body && typeof body === "object" && "refreshToken" in body
+        ? (body as any).refreshToken
+        : null;
+
+    if (refreshToken) {
+      await db.delete(sessions).where(eq(sessions.token, refreshToken));
+    }
+
     return { success: true };
   })
   .get("/me", ({ user }) => {

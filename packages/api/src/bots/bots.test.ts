@@ -83,7 +83,7 @@ async function registerUser(name: string) {
     password: "password123",
   });
 
-  return { token: res.body.token as string, user: res.body.user };
+  return { token: res.body.accessToken as string, user: res.body.user };
 }
 
 async function createBot(

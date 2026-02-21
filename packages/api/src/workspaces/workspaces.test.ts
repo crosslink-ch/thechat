@@ -83,7 +83,7 @@ async function registerAndGetToken(name = "Test User"): Promise<{
     password: "password123",
   });
 
-  return { token: res.body.token, user: res.body.user };
+  return { token: res.body.accessToken, user: res.body.user };
 }
 
 describe("Workspaces: Creation", () => {

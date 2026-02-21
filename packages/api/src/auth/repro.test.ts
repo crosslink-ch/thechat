@@ -44,7 +44,7 @@ describe("Registration validation", () => {
       password: "uuuUuuuu5$",
     });
     expect(res.status).toBe(200);
-    expect(res.body.token).toBeString();
+    expect(res.body.accessToken).toBeString();
     expect(res.body.user.email).toBe(email);
   });
 
@@ -111,7 +111,7 @@ describe("Login validation", () => {
 
     const res = await post("/auth/login", { email, password: "password123" });
     expect(res.status).toBe(200);
-    expect(res.body.token).toBeString();
+    expect(res.body.accessToken).toBeString();
     expect(res.body.user.email).toBe(email);
   });
 

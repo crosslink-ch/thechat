@@ -47,7 +47,7 @@ async function registerUser(name: string) {
     password: "password123",
   });
   if (error) throw new Error("Registration failed");
-  return { token: data.token!, user: data.user! };
+  return { token: data.accessToken!, user: data.user! };
 }
 
 /** Connect a WebSocket, authenticate, and return the ready socket. */

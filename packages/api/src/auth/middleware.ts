@@ -1,57 +1,51 @@
 import { Elysia } from "elysia";
-import { eq, and, gt } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { db } from "../db";
-import { sessions, users, bots } from "../db/schema";
+import { bots, users } from "../db/schema";
+import { verifyAccessToken } from "./jwt";
 
 /**
  * Resolve a Bearer token to a user record.
- * Checks session tokens first, then bot API keys.
+ * - JWT (contains dots) → verify and reconstruct user from payload (0 DB queries)
+ * - bot_ prefix → DB lookup (unchanged)
  */
 export async function resolveTokenToUser(token: string) {
-  // 1. Check sessions (with expiry)
-  const [session] = await db
-    .select()
-    .from(sessions)
-    .where(and(eq(sessions.token, token), gt(sessions.expiresAt, new Date())))
-    .limit(1);
-
-  if (session) {
-    const [user] = await db
-      .select({
-        id: users.id,
-        name: users.name,
-        email: users.email,
-        avatar: users.avatar,
-        type: users.type,
-      })
-      .from(users)
-      .where(eq(users.id, session.userId))
-      .limit(1);
-
-    return user ?? null;
+  // 1. JWT access token (has 2 dots)
+  if (token.includes(".")) {
+    const payload = await verifyAccessToken(token);
+    if (!payload) return null;
+    return {
+      id: payload.sub,
+      name: payload.name,
+      email: payload.email,
+      avatar: payload.avatar,
+      type: payload.type,
+    };
   }
 
-  // 2. Check bot API keys (no expiry)
-  const [bot] = await db
-    .select({ userId: bots.userId })
-    .from(bots)
-    .where(eq(bots.apiKey, token))
-    .limit(1);
-
-  if (bot) {
-    const [user] = await db
-      .select({
-        id: users.id,
-        name: users.name,
-        email: users.email,
-        avatar: users.avatar,
-        type: users.type,
-      })
-      .from(users)
-      .where(eq(users.id, bot.userId))
+  // 2. Bot API keys (no expiry)
+  if (token.startsWith("bot_")) {
+    const [bot] = await db
+      .select({ userId: bots.userId })
+      .from(bots)
+      .where(eq(bots.apiKey, token))
       .limit(1);
 
-    return user ?? null;
+    if (bot) {
+      const [user] = await db
+        .select({
+          id: users.id,
+          name: users.name,
+          email: users.email,
+          avatar: users.avatar,
+          type: users.type,
+        })
+        .from(users)
+        .where(eq(users.id, bot.userId))
+        .limit(1);
+
+      return user ?? null;
+    }
   }
 
   return null;
