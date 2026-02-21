@@ -1,4 +1,5 @@
 import { eq, and } from "drizzle-orm";
+import crypto from "crypto";
 import { db } from "../db";
 import {
   bots,
@@ -8,6 +9,22 @@ import {
   workspaces,
 } from "../db/schema";
 import type { WebhookPayload } from "@thechat/shared";
+
+/**
+ * Sign a webhook payload with HMAC-SHA256.
+ * Returns the hex-encoded signature.
+ */
+export function signWebhookPayload(
+  body: string,
+  secret: string,
+  timestamp: number
+): string {
+  const signedContent = `${timestamp}.${body}`;
+  return crypto
+    .createHmac("sha256", secret)
+    .update(signedContent)
+    .digest("hex");
+}
 
 /**
  * After a message is created, check for @mentions of bots in the conversation
@@ -36,6 +53,7 @@ export async function processMessageMentions(msg: {
       botId: bots.id,
       botUserId: bots.userId,
       webhookUrl: bots.webhookUrl,
+      webhookSecret: bots.webhookSecret,
       botName: users.name,
     })
     .from(bots)
@@ -105,10 +123,18 @@ export async function processMessageMentions(msg: {
       bot: { id: bot.botId, name: bot.botName },
     };
 
+    const body = JSON.stringify(payload);
+    const timestamp = Math.floor(Date.now() / 1000);
+    const signature = signWebhookPayload(body, bot.webhookSecret, timestamp);
+
     fetch(bot.webhookUrl!, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
+      headers: {
+        "Content-Type": "application/json",
+        "X-Webhook-Timestamp": String(timestamp),
+        "X-Webhook-Signature": signature,
+      },
+      body,
     }).catch(console.error);
   }
 }

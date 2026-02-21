@@ -191,6 +191,7 @@ export interface Bot {
 
 export interface BotWithApiKey extends Bot {
   apiKey: string;
+  webhookSecret: string;
 }
 
 export interface WebhookPayload {

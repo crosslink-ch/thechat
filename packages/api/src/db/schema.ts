@@ -177,6 +177,7 @@ export const bots = pgTable(
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
     webhookUrl: text("webhook_url"),
+    webhookSecret: varchar("webhook_secret", { length: 128 }).notNull(),
     apiKey: varchar("api_key", { length: 128 }).notNull(),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()

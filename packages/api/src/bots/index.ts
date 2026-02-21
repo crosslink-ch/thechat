@@ -16,6 +16,10 @@ function generateApiKey(): string {
   return `bot_${crypto.randomBytes(32).toString("hex")}`;
 }
 
+function generateWebhookSecret(): string {
+  return `whsec_${crypto.randomBytes(32).toString("hex")}`;
+}
+
 const createSchema = z.object({
   name: z.string().trim().min(1, "Bot name is required"),
   webhookUrl: z.string().url().nullish(),
@@ -59,6 +63,7 @@ export const botRoutes = new Elysia({ prefix: "/bots" })
 
     const { name, webhookUrl } = parsed.data;
     const apiKey = generateApiKey();
+    const webhookSecret = generateWebhookSecret();
 
     // Create the bot's user record
     const [botUser] = await db
@@ -76,6 +81,7 @@ export const botRoutes = new Elysia({ prefix: "/bots" })
         userId: botUser.id,
         ownerId: user.id,
         webhookUrl: webhookUrl ?? null,
+        webhookSecret,
         apiKey,
       })
       .returning();
@@ -86,6 +92,7 @@ export const botRoutes = new Elysia({ prefix: "/bots" })
       name: botUser.name,
       apiKey,
       webhookUrl: bot.webhookUrl,
+      webhookSecret: bot.webhookSecret,
       createdAt: bot.createdAt.toISOString(),
     };
   })
@@ -97,6 +104,7 @@ export const botRoutes = new Elysia({ prefix: "/bots" })
         id: bots.id,
         userId: bots.userId,
         webhookUrl: bots.webhookUrl,
+        webhookSecret: bots.webhookSecret,
         createdAt: bots.createdAt,
         name: users.name,
       })
@@ -109,6 +117,7 @@ export const botRoutes = new Elysia({ prefix: "/bots" })
       userId: r.userId,
       name: r.name,
       webhookUrl: r.webhookUrl,
+      webhookSecret: r.webhookSecret,
       createdAt: r.createdAt.toISOString(),
     }));
   })
@@ -291,4 +300,33 @@ export const botRoutes = new Elysia({ prefix: "/bots" })
     await db.update(bots).set({ apiKey: newApiKey }).where(eq(bots.id, botId));
 
     return { apiKey: newApiKey };
+  })
+
+  // Regenerate webhook secret (owner only)
+  .post("/:botId/regenerate-secret", async ({ params, user, set }) => {
+    const { botId } = params;
+
+    const [bot] = await db
+      .select({ id: bots.id, ownerId: bots.ownerId })
+      .from(bots)
+      .where(eq(bots.id, botId))
+      .limit(1);
+
+    if (!bot) {
+      set.status = 404;
+      return { error: "Bot not found" };
+    }
+
+    if (bot.ownerId !== user.id) {
+      set.status = 403;
+      return { error: "Only the bot owner can regenerate the webhook secret" };
+    }
+
+    const newSecret = generateWebhookSecret();
+    await db
+      .update(bots)
+      .set({ webhookSecret: newSecret })
+      .where(eq(bots.id, botId));
+
+    return { webhookSecret: newSecret };
   });

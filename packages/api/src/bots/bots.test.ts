@@ -104,7 +104,7 @@ async function createBot(
 }
 
 describe("Bots: Create", () => {
-  test("human creates bot, verify name + apiKey returned", async () => {
+  test("human creates bot, verify name + apiKey + webhookSecret returned", async () => {
     const human = await registerUser("BotOwner");
 
     const res = await createBot(human.token, "MyBot");
@@ -113,6 +113,8 @@ describe("Bots: Create", () => {
     expect(res.body.name).toBe("MyBot");
     expect(res.body.apiKey).toBeDefined();
     expect(res.body.apiKey).toStartWith("bot_");
+    expect(res.body.webhookSecret).toBeDefined();
+    expect(res.body.webhookSecret).toStartWith("whsec_");
     expect(res.body.id).toBeDefined();
     expect(res.body.userId).toBeDefined();
   });
@@ -410,16 +412,26 @@ describe("Bots: DM with bot", () => {
 });
 
 describe("Bots: @mention webhook", () => {
-  test("webhook receives payload when bot is @mentioned", async () => {
+  test("webhook receives payload with valid signature when bot is @mentioned", async () => {
     const human = await registerUser("WebhookOwner");
 
     // Set up a mock webhook server
     let receivedPayload: any = null;
+    let receivedHeaders: Record<string, string> = {};
+    let receivedBody: string = "";
+    let webhookSecret: string = "";
     const webhookPromise = new Promise<void>((resolve) => {
       const server = Bun.serve({
         port: 0, // random available port
         async fetch(request) {
-          receivedPayload = await request.json();
+          receivedBody = await request.text();
+          receivedPayload = JSON.parse(receivedBody);
+          receivedHeaders = {
+            "x-webhook-timestamp":
+              request.headers.get("x-webhook-timestamp") ?? "",
+            "x-webhook-signature":
+              request.headers.get("x-webhook-signature") ?? "",
+          };
           resolve();
           // Schedule server stop for next tick
           setTimeout(() => server.stop(), 0);
@@ -446,6 +458,9 @@ describe("Bots: @mention webhook", () => {
           "WebhookBot",
           webhookUrl
         );
+
+        // Store the secret for verification
+        webhookSecret = botRes.body.webhookSecret;
 
         // Add bot to workspace
         await req(
@@ -491,5 +506,18 @@ describe("Bots: @mention webhook", () => {
     expect(receivedPayload.conversation).toBeDefined();
     expect(receivedPayload.workspace).toBeDefined();
     expect(receivedPayload.workspace.name).toBe("Webhook WS");
+
+    // Verify signature headers are present
+    expect(receivedHeaders["x-webhook-timestamp"]).toBeTruthy();
+    expect(receivedHeaders["x-webhook-signature"]).toBeTruthy();
+
+    // Verify the signature is correct
+    const timestamp = receivedHeaders["x-webhook-timestamp"];
+    const signedContent = `${timestamp}.${receivedBody}`;
+    const expectedSignature = crypto
+      .createHmac("sha256", webhookSecret)
+      .update(signedContent)
+      .digest("hex");
+    expect(receivedHeaders["x-webhook-signature"]).toBe(expectedSignature);
   });
 });
