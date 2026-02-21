@@ -106,6 +106,15 @@ function App() {
 
   const systemPrompt = useMemo(() => buildSystemPrompt(), []);
 
+  // Unread agent chats (declared before useChat so onStreamComplete can reference them)
+  const [unreadAgentChats, setUnreadAgentChats] = useState<Set<string>>(new Set());
+  const activeAgentConvIdRef = useRef<string | null>(null);
+
+  // ViewMode state (declared before useChat so onStreamComplete can reference viewModeRef)
+  const [viewMode, setViewMode] = useState<ViewMode>({ type: "agent-chat" });
+  const viewModeRef = useRef(viewMode);
+  viewModeRef.current = viewMode;
+
   const {
     messages,
     conversation,
@@ -147,15 +156,8 @@ function App() {
   const [todosState, setTodosState] = useState<TodoItem[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  // ViewMode state
-  const [viewMode, setViewMode] = useState<ViewMode>({ type: "agent-chat" });
-
   // Unread channels
   const [unreadChannels, setUnreadChannels] = useState<Set<string>>(new Set());
-
-  // Unread agent chats
-  const [unreadAgentChats, setUnreadAgentChats] = useState<Set<string>>(new Set());
-  const activeAgentConvIdRef = useRef<string | null>(null);
 
   // Typing indicators
   const [typingUsers, setTypingUsers] = useState<Map<string, string>>(new Map());
@@ -174,8 +176,6 @@ function App() {
 
   const currentConversationIdRef = useRef(currentConversationId);
   currentConversationIdRef.current = currentConversationId;
-  const viewModeRef = useRef(viewMode);
-  viewModeRef.current = viewMode;
   const userRef = useRef(user);
   userRef.current = user;
 
@@ -310,7 +310,7 @@ function App() {
         if (data && "id" in data) {
           setViewMode({
             type: "dm",
-            conversationId: data.id,
+            conversationId: data.id!,
             otherUser: member.user,
           });
           setSidebarOpen(false);

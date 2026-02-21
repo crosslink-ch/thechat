@@ -345,7 +345,7 @@ export const authRoutes = new Elysia({ prefix: "/auth" })
       return { error: "Authentication required" };
     }
   })
-  .post("/logout", async ({ body, set }) => {
+  .post("/logout", async ({ body }) => {
     const refreshToken =
       body && typeof body === "object" && "refreshToken" in body
         ? (body as any).refreshToken

@@ -119,7 +119,7 @@ describe.skipIf(!INTEGRATION)("Channel message visibility (integration)", () => 
       auth(userA.token),
     );
     if (wsErr) throw new Error(`Workspace creation failed: ${JSON.stringify(wsErr)}`);
-    workspaceId = ws!.id;
+    workspaceId = (ws as any).id;
 
     // User B joins
     await api.workspaces.join.post({ workspaceId }, auth(userB.token));
@@ -128,8 +128,8 @@ describe.skipIf(!INTEGRATION)("Channel message visibility (integration)", () => 
     const { data: detail } = await api.workspaces({ id: workspaceId }).get(
       auth(userA.token),
     );
-    generalChannelId = detail!.channels.find(
-      (c) => c.name === "general",
+    generalChannelId = (detail as any).channels.find(
+      (c: any) => c.name === "general",
     )!.id;
 
     // Create DM between the two users
@@ -137,7 +137,7 @@ describe.skipIf(!INTEGRATION)("Channel message visibility (integration)", () => 
       { workspaceId, otherUserId: userB.user.id },
       auth(userA.token),
     );
-    dmConversationId = dm!.id;
+    dmConversationId = (dm as any).id;
   });
 
   afterAll(async () => {

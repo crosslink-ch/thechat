@@ -69,7 +69,7 @@ export function useWorkspaces(
       const { data, error } = await api.workspaces.create.post({ name }, auth(token));
       if (error) throw new Error((error as any).error || "Request failed");
       await fetchWorkspaces();
-      await selectWorkspace(data.id);
+      await selectWorkspace((data as any).id);
       return data;
     },
     [token, fetchWorkspaces, selectWorkspace]
