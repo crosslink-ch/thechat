@@ -2,13 +2,12 @@
  * Integration test for channel/DM message visibility.
  *
  * Requires:
- *  - DATABASE_URL env var
- *  - API server running on port 3000
- *  - PostgreSQL running
+ *  - API server running on port 3000 (with PostgreSQL)
  *
  * Run:
- *   DATABASE_URL=postgresql://user:password@localhost:5432/thechat \
- *     pnpm test:desktop -- src/hooks/useChannelChat.integration.test.ts
+ *   pnpm test:integration
+ *   # or:
+ *   INTEGRATION=true pnpm test:desktop -- src/hooks/useChannelChat.integration.test.ts
  */
 import { describe, test, expect, beforeAll, afterAll, vi } from "vitest";
 import { renderHook, waitFor, act } from "@testing-library/react";
@@ -17,7 +16,7 @@ import type { App } from "@thechat/api";
 import { useChannelChat } from "./useChannelChat";
 import WS from "ws";
 
-const HAS_DB = !!process.env.DATABASE_URL;
+const INTEGRATION = process.env.INTEGRATION === "true";
 
 const API_URL = "http://localhost:3000";
 const WS_URL = "ws://localhost:3000";
@@ -91,10 +90,10 @@ function onWsMessage(ws: WS, callback: (event: any) => void) {
 }
 
 // ---------------------------------------------------------------------------
-// Test suite — skipped when DATABASE_URL is not set
+// Test suite — skipped unless INTEGRATION=true
 // ---------------------------------------------------------------------------
 
-describe.skipIf(!HAS_DB)("Channel message visibility (integration)", () => {
+describe.skipIf(!INTEGRATION)("Channel message visibility (integration)", () => {
   let userA: { token: string; user: { id: string; name: string } };
   let userB: { token: string; user: { id: string; name: string } };
   let workspaceId: string;
@@ -102,6 +101,15 @@ describe.skipIf(!HAS_DB)("Channel message visibility (integration)", () => {
   let dmConversationId: string;
 
   beforeAll(async () => {
+    // Verify the API server is actually reachable
+    try {
+      await fetch(API_URL);
+    } catch {
+      throw new Error(
+        `API server not reachable at ${API_URL}. Start it with: pnpm dev:api`,
+      );
+    }
+
     userA = await registerUser("Alice");
     userB = await registerUser("Bob");
 
@@ -133,7 +141,6 @@ describe.skipIf(!HAS_DB)("Channel message visibility (integration)", () => {
   });
 
   afterAll(async () => {
-    // Dynamic import to avoid blowing up when DATABASE_URL is missing
     const { cleanupWorkspace, cleanupUserByEmail } = await import(
       "@thechat/api/test-helpers"
     );
