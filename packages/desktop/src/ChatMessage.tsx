@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import type { Message, MessagePart } from "./core/types";
 import type { PermissionRequest } from "./core/permission";
 import { useStreamingParts } from "./stores/streaming";
@@ -86,7 +86,10 @@ function ThinkingSection({
   if (!hasReasoning && toolCount === 0) return null;
 
   const label = buildThinkingLabel(hasReasoning, toolCount);
-  const resultMap = new Map(toolResults.map((r) => [r.toolCallId, r]));
+  const resultMap = useMemo(
+    () => new Map(toolResults.map((r) => [r.toolCallId, r])),
+    [toolResults],
+  );
 
   return (
     <div className="thinking-section">
@@ -146,11 +149,15 @@ interface ChatMessageProps {
 export function ChatMessage({ message }: ChatMessageProps) {
   const isUser = message.role === "user";
 
-  const reasoningParts = message.parts.filter((p) => p.type === "reasoning");
-  const reasoningText = reasoningParts.map((p) => p.text).join("");
-  const toolCalls = message.parts.filter((p): p is ToolCallPart => p.type === "tool-call");
-  const toolResults = message.parts.filter((p): p is ToolResultPart => p.type === "tool-result");
-  const textParts = message.parts.filter((p): p is Extract<MessagePart, { type: "text" }> => p.type === "text");
+  const { reasoningText, toolCalls, toolResults, textParts } = useMemo(() => {
+    const reasoning = message.parts.filter((p) => p.type === "reasoning");
+    return {
+      reasoningText: reasoning.map((p) => p.text).join(""),
+      toolCalls: message.parts.filter((p): p is ToolCallPart => p.type === "tool-call"),
+      toolResults: message.parts.filter((p): p is ToolResultPart => p.type === "tool-result"),
+      textParts: message.parts.filter((p): p is Extract<MessagePart, { type: "text" }> => p.type === "text"),
+    };
+  }, [message.parts]);
   const hasThinking = !isUser && (reasoningText.length > 0 || toolCalls.length > 0);
 
   return (

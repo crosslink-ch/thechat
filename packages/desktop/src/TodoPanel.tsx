@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import type { TodoItem } from "./core/types";
 
 interface TodoPanelProps {
@@ -17,10 +17,15 @@ export function TodoPanel({ todos }: TodoPanelProps) {
 
   if (todos.length === 0) return null;
 
-  const pending = todos.filter((t) => t.status === "pending").length;
-  const inProgress = todos.filter((t) => t.status === "in_progress").length;
-  const completed = todos.filter((t) => t.status === "completed").length;
-  const total = todos.length;
+  const { pending, inProgress, completed, total } = useMemo(() => {
+    let p = 0, ip = 0, c = 0;
+    for (const t of todos) {
+      if (t.status === "pending") p++;
+      else if (t.status === "in_progress") ip++;
+      else if (t.status === "completed") c++;
+    }
+    return { pending: p, inProgress: ip, completed: c, total: todos.length };
+  }, [todos]);
 
   return (
     <div className="todo-panel">

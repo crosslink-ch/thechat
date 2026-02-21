@@ -1,4 +1,4 @@
-import { useState, useDeferredValue, useRef, useEffect } from "react";
+import { useState, useDeferredValue, useMemo, useRef, useEffect } from "react";
 import type { Conversation } from "./core/types";
 import { useStreamingConvIds } from "./stores/streaming";
 
@@ -19,8 +19,11 @@ export function CommandPalette({ conversations, currentId, onSelect, onClose, un
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
-  const filtered = conversations.filter((c) =>
-    c.title.toLowerCase().includes(deferredQuery.toLowerCase())
+  const filtered = useMemo(
+    () => conversations.filter((c) =>
+      c.title.toLowerCase().includes(deferredQuery.toLowerCase())
+    ),
+    [conversations, deferredQuery],
   );
 
   useEffect(() => {

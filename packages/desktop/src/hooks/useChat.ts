@@ -75,6 +75,8 @@ export function useChat(options?: UseChatOptions) {
   const activeConvIdRef = useRef<string | null>(null);
   const onStreamCompleteRef = useRef(options?.onStreamComplete);
   onStreamCompleteRef.current = options?.onStreamComplete;
+  const messagesRef = useRef(messages);
+  messagesRef.current = messages;
 
   const loadConversation = useCallback(async (conv: Conversation) => {
     activeConvIdRef.current = conv.id;
@@ -134,7 +136,7 @@ export function useChat(options?: UseChatOptions) {
 
         // Build API messages from current messages + new user message
         const apiMessages = [
-          ...messages.map((m) => {
+          ...messagesRef.current.map((m) => {
             const textParts = m.parts.filter((p) => p.type === "text");
             return { role: m.role, content: textParts.map((p) => p.text).join("") };
           }),
@@ -261,7 +263,7 @@ export function useChat(options?: UseChatOptions) {
         }
       }
     },
-    [conversation, messages, options?.params, options?.tools],
+    [conversation, options?.params, options?.tools],
   );
 
   const stopStreaming = useCallback(() => {

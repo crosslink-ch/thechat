@@ -7,12 +7,10 @@ interface KeybindingActions {
   onPermissionDeny: (() => void) | null;
 }
 
-export function useKeybindings({
-  onNewChat,
-  onPaletteToggle,
-  onPermissionAllow,
-  onPermissionDeny,
-}: KeybindingActions) {
+export function useKeybindings(actions: KeybindingActions) {
+  const actionsRef = useRef(actions);
+  actionsRef.current = actions;
+
   const cxPrefixRef = useRef(false);
   const cxTimeoutRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
@@ -21,7 +19,7 @@ export function useKeybindings({
       // Ctrl+P: toggle command palette
       if ((e.ctrlKey || e.metaKey) && e.key === "p") {
         e.preventDefault();
-        onPaletteToggle();
+        actionsRef.current.onPaletteToggle();
         return;
       }
 
@@ -31,13 +29,13 @@ export function useKeybindings({
         clearTimeout(cxTimeoutRef.current);
         if (e.key === "n") {
           e.preventDefault();
-          onNewChat();
-        } else if (e.key === "a" && onPermissionAllow) {
+          actionsRef.current.onNewChat();
+        } else if (e.key === "a" && actionsRef.current.onPermissionAllow) {
           e.preventDefault();
-          onPermissionAllow();
-        } else if (e.key === "d" && onPermissionDeny) {
+          actionsRef.current.onPermissionAllow();
+        } else if (e.key === "d" && actionsRef.current.onPermissionDeny) {
           e.preventDefault();
-          onPermissionDeny();
+          actionsRef.current.onPermissionDeny();
         }
         // Any other key: cancel prefix silently
         return;
@@ -57,5 +55,5 @@ export function useKeybindings({
       window.removeEventListener("keydown", handler);
       clearTimeout(cxTimeoutRef.current);
     };
-  }, [onNewChat, onPaletteToggle, onPermissionAllow, onPermissionDeny]);
+  }, []);
 }

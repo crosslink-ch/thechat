@@ -2,6 +2,8 @@ import { useRef, useEffect, useCallback } from "react";
 import { InputBar } from "./InputBar";
 import type { ChatMessage } from "@thechat/shared";
 
+const noop = () => {};
+
 interface ChannelChatViewProps {
   messages: ChatMessage[];
   loading: boolean;
@@ -65,7 +67,7 @@ export function ChannelChatView({
         )}
         <div ref={endRef} />
       </div>
-      <InputBar convId={undefined} onSend={handleSend} onStop={() => {}} />
+      <InputBar convId={undefined} onSend={handleSend} onStop={noop} />
     </>
   );
 }

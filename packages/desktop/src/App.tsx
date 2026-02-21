@@ -416,9 +416,55 @@ function App() {
     }
   }, [pendingPermission]);
 
+  const handleCloseSidebar = useCallback(() => setSidebarOpen(false), []);
+  const handleToggleSidebar = useCallback(() => setSidebarOpen((o) => !o), []);
+  const handleTogglePalette = useCallback(() => setPaletteOpen((o) => !o), []);
+  const handleClosePalette = useCallback(() => setPaletteOpen(false), []);
+  const handleOpenLogin = useCallback(() => setAuthModalOpen(true), []);
+  const handleCloseAuth = useCallback(() => setAuthModalOpen(false), []);
+  const handleOpenWorkspaceModal = useCallback(() => setWorkspaceModalOpen(true), []);
+  const handleCloseWorkspaceModal = useCallback(() => setWorkspaceModalOpen(false), []);
+  const handleCreateWorkspace = useCallback(
+    async (name: string) => { await createWorkspace(name); },
+    [createWorkspace],
+  );
+  const handleJoinWorkspace = useCallback(
+    async (id: string) => { await joinWorkspace(id); },
+    [joinWorkspace],
+  );
+
+  const handleSelectConversation = useCallback(
+    (conv: Conversation) => {
+      setViewMode({ type: "agent-chat" });
+      loadConversation(conv);
+      setSidebarOpen(false);
+      setPaletteOpen(false);
+      setUnreadAgentChats((prev) => {
+        if (!prev.has(conv.id)) return prev;
+        const next = new Set(prev);
+        next.delete(conv.id);
+        return next;
+      });
+    },
+    [loadConversation],
+  );
+
+  const handleQuestionSubmit = useCallback(
+    (answers: string[][]) => {
+      pendingQuestion?.resolve(answers);
+      setPendingQuestion(null);
+    },
+    [pendingQuestion],
+  );
+
+  const handleQuestionCancel = useCallback(() => {
+    pendingQuestion?.reject("User cancelled");
+    setPendingQuestion(null);
+  }, [pendingQuestion]);
+
   useKeybindings({
     onNewChat: handleNewConversation,
-    onPaletteToggle: () => setPaletteOpen((open) => !open),
+    onPaletteToggle: handleTogglePalette,
     onPermissionAllow: pendingPermission ? handlePermissionAllow : null,
     onPermissionDeny: pendingPermission ? handlePermissionDeny : null,
   });
@@ -440,23 +486,13 @@ function App() {
         user={user}
         workspaces={workspaces}
         activeWorkspace={activeWorkspace}
-        onClose={() => setSidebarOpen(false)}
+        onClose={handleCloseSidebar}
         onNewChat={handleNewConversation}
-        onSelectConversation={(conv) => {
-          setViewMode({ type: "agent-chat" });
-          loadConversation(conv);
-          setSidebarOpen(false);
-          setUnreadAgentChats((prev) => {
-            if (!prev.has(conv.id)) return prev;
-            const next = new Set(prev);
-            next.delete(conv.id);
-            return next;
-          });
-        }}
-        onLoginClick={() => setAuthModalOpen(true)}
+        onSelectConversation={handleSelectConversation}
+        onLoginClick={handleOpenLogin}
         onLogout={logout}
         onSelectWorkspace={selectWorkspace}
-        onOpenWorkspaceModal={() => setWorkspaceModalOpen(true)}
+        onOpenWorkspaceModal={handleOpenWorkspaceModal}
         onSelectChannel={handleSelectChannel}
         onSelectDm={handleSelectDm}
         activeChannelId={viewMode.type === "channel" ? viewMode.channelId : null}
@@ -467,7 +503,7 @@ function App() {
 
       <div className="chat-main">
         <div className="chat-header">
-          <button className="menu-btn" onClick={() => setSidebarOpen(!sidebarOpen)}>
+          <button className="menu-btn" onClick={handleToggleSidebar}>
             &#9776;
           </button>
           {viewMode.type !== "agent-chat" && (
@@ -507,8 +543,8 @@ function App() {
             {pendingQuestion && (
               <QuestionOverlay
                 request={pendingQuestion}
-                onSubmit={(answers) => { pendingQuestion.resolve(answers); setPendingQuestion(null); }}
-                onCancel={() => { pendingQuestion.reject("User cancelled"); setPendingQuestion(null); }}
+                onSubmit={handleQuestionSubmit}
+                onCancel={handleQuestionCancel}
               />
             )}
 
@@ -533,18 +569,8 @@ function App() {
           conversations={conversations}
           currentId={conversation?.id}
           unreadAgentChats={unreadAgentChats}
-          onSelect={(conv) => {
-            setViewMode({ type: "agent-chat" });
-            loadConversation(conv);
-            setPaletteOpen(false);
-            setUnreadAgentChats((prev) => {
-              if (!prev.has(conv.id)) return prev;
-              const next = new Set(prev);
-              next.delete(conv.id);
-              return next;
-            });
-          }}
-          onClose={() => setPaletteOpen(false)}
+          onSelect={handleSelectConversation}
+          onClose={handleClosePalette}
         />
       )}
 
@@ -552,15 +578,15 @@ function App() {
         <AuthModal
           onLogin={login}
           onRegister={register}
-          onClose={() => setAuthModalOpen(false)}
+          onClose={handleCloseAuth}
         />
       )}
 
       {workspaceModalOpen && (
         <WorkspaceModal
-          onCreateWorkspace={async (name) => { await createWorkspace(name); }}
-          onJoinWorkspace={async (id) => { await joinWorkspace(id); }}
-          onClose={() => setWorkspaceModalOpen(false)}
+          onCreateWorkspace={handleCreateWorkspace}
+          onJoinWorkspace={handleJoinWorkspace}
+          onClose={handleCloseWorkspaceModal}
         />
       )}
     </div>

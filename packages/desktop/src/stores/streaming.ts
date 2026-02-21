@@ -3,7 +3,7 @@ import { useShallow } from "zustand/shallow";
 import type { MessagePart } from "../core/types";
 
 interface StreamingStore {
-  streams: Map<string, MessagePart[]>;
+  streams: Record<string, MessagePart[]>;
   streamingConvIds: Set<string>;
 
   startStreaming: (convId: string) => void;
@@ -12,38 +12,33 @@ interface StreamingStore {
 }
 
 export const useStreamingStore = create<StreamingStore>((set) => ({
-  streams: new Map(),
+  streams: {},
   streamingConvIds: new Set(),
 
   startStreaming: (convId) =>
     set((state) => {
-      const streams = new Map(state.streams);
-      streams.set(convId, []);
       const streamingConvIds = new Set(state.streamingConvIds);
       streamingConvIds.add(convId);
-      return { streams, streamingConvIds };
+      return { streams: { ...state.streams, [convId]: [] }, streamingConvIds };
     }),
 
   updateParts: (convId, parts) =>
-    set((state) => {
-      const streams = new Map(state.streams);
-      streams.set(convId, parts);
-      return { streams };
-    }),
+    set((state) => ({
+      streams: { ...state.streams, [convId]: parts },
+    })),
 
   stopStreaming: (convId) =>
     set((state) => {
-      const streams = new Map(state.streams);
-      streams.delete(convId);
+      const { [convId]: _, ...rest } = state.streams;
       const streamingConvIds = new Set(state.streamingConvIds);
       streamingConvIds.delete(convId);
-      return { streams, streamingConvIds };
+      return { streams: rest, streamingConvIds };
     }),
 }));
 
 export function useStreamingParts(convId: string | undefined): MessagePart[] | null {
   return useStreamingStore(
-    useShallow((state) => (convId ? state.streams.get(convId) ?? null : null)),
+    useShallow((state) => (convId ? state.streams[convId] ?? null : null)),
   );
 }
 

@@ -1,9 +1,10 @@
+import { useMemo } from "react";
 import { parseTextSegments } from "../core/ui-blocks";
 import { DynamicUiBlock } from "./DynamicUiBlock";
 import { PendingUiBlock } from "./PendingUiBlock";
 
 export function TextWithUiBlocks({ text }: { text: string }) {
-  const segments = parseTextSegments(text);
+  const segments = useMemo(() => parseTextSegments(text), [text]);
 
   return (
     <>
