@@ -4,7 +4,7 @@ use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, Command, Stdio};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 // -- JSON-RPC types --
@@ -285,12 +285,14 @@ impl McpClient {
 
 pub struct McpManager {
     clients: Mutex<HashMap<String, Arc<Mutex<McpClient>>>>,
+    initialized: AtomicBool,
 }
 
 impl McpManager {
     pub fn new() -> Self {
         McpManager {
             clients: Mutex::new(HashMap::new()),
+            initialized: AtomicBool::new(false),
         }
     }
 }
@@ -356,6 +358,11 @@ pub fn mcp_initialize<R: tauri::Runtime>(
     manager: tauri::State<'_, Arc<McpManager>>,
 ) -> Result<(), String> {
     use tauri::Emitter;
+
+    if manager.initialized.swap(true, Ordering::SeqCst) {
+        log::info!("MCP servers already initialized, skipping");
+        return Ok(());
+    }
 
     let config = load_config()?;
 
@@ -445,6 +452,8 @@ pub fn mcp_shutdown(manager: tauri::State<'_, Arc<McpManager>>) -> Result<(), St
             client.shutdown();
         }
     }
+
+    manager.initialized.store(false, Ordering::SeqCst);
 
     Ok(())
 }
