@@ -32,7 +32,9 @@ import {
   todoReadTool,
   todoWriteTool,
   invalidTool,
+  createSkillTool,
 } from "./core/tools/index";
+import { discoverSkills } from "./core/skills";
 import { setBatchToolRegistry } from "./core/tools/batch";
 import { setTaskRunnerConfig } from "./core/task-runner";
 import { onPermissionRequest, type PermissionRequest } from "./core/permission";
@@ -45,6 +47,7 @@ import type {
   QuestionRequest,
   TodoItem,
 } from "./core/types";
+import type { SkillMeta } from "./core/skills/types";
 import type {
   AuthUser,
   WorkspaceChannel,
@@ -89,10 +92,16 @@ function App() {
   const [authModalOpen, setAuthModalOpen] = useState(false);
   const [workspaceModalOpen, setWorkspaceModalOpen] = useState(false);
   const mcpTools = useMcpTools();
+  const [skills, setSkills] = useState<SkillMeta[]>([]);
+
+  const skillTool = useMemo(
+    () => (skills.length > 0 ? createSkillTool(skills) : null),
+    [skills],
+  );
 
   const tools = useMemo(
-    () => [...builtinTools, ...mcpTools],
-    [mcpTools],
+    () => [...builtinTools, ...(skillTool ? [skillTool] : []), ...mcpTools],
+    [skillTool, mcpTools],
   );
 
   const systemPrompt = useMemo(() => buildSystemPrompt(), []);
@@ -293,6 +302,11 @@ function App() {
   const handleBackToAgentChat = useCallback(() => {
     setViewMode({ type: "agent-chat" });
     setTypingUsers(new Map());
+  }, []);
+
+  // Discover skills on mount
+  useEffect(() => {
+    discoverSkills().then(setSkills).catch(() => {});
   }, []);
 
   // Update batch tool registry when tools change
