@@ -19,12 +19,15 @@ function sseStream(chunks: string[]): ReadableStream<Uint8Array> {
 }
 
 function mockFetch(chunks: string[], status = 200) {
-  return vi.fn().mockResolvedValue({
-    ok: status >= 200 && status < 300,
-    status,
-    text: async () => "error body",
-    body: sseStream(chunks),
-  });
+  return Object.assign(
+    vi.fn().mockResolvedValue({
+      ok: status >= 200 && status < 300,
+      status,
+      text: async () => "error body",
+      body: sseStream(chunks),
+    }),
+    { preconnect: vi.fn() }
+  );
 }
 
 beforeEach(() => {
