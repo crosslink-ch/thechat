@@ -47,7 +47,7 @@ export function useWorkspaces(
   const fetchWorkspaces = useCallback(async () => {
     if (!token) return;
     try {
-      const data = await apiFetch("/workspaces", token);
+      const data = await apiFetch("/workspaces/list", token);
       setWorkspaces(data);
       return data as WorkspaceListItem[];
     } catch {
@@ -74,7 +74,7 @@ export function useWorkspaces(
   const createWorkspace = useCallback(
     async (name: string) => {
       if (!token) return;
-      const data = await apiFetch("/workspaces", token, {
+      const data = await apiFetch("/workspaces/create", token, {
         method: "POST",
         body: JSON.stringify({ name }),
       });

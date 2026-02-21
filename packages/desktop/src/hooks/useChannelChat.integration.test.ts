@@ -106,8 +106,7 @@ describe.skipIf(!HAS_DB)("Channel message visibility (integration)", () => {
     userB = await registerUser("Bob");
 
     // User A creates a workspace
-    // Eden Treaty: .post() on the path proxy = POST /workspaces
-    const { data: ws, error: wsErr } = await (api.workspaces as any).post(
+    const { data: ws, error: wsErr } = await api.workspaces.create.post(
       { name: "Integration Test" },
       auth(userA.token),
     );

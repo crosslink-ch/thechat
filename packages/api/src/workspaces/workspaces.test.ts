@@ -90,7 +90,7 @@ describe("Workspaces: Creation", () => {
   test("creates workspace and returns slug-based ID", async () => {
     const { token } = await registerAndGetToken();
 
-    const res = await req("POST", "/workspaces", { name: "My Team" }, token);
+    const res = await req("POST", "/workspaces/create", { name: "My Team" }, token);
     createdWorkspaceIds.push(res.body.id);
 
     expect(res.status).toBe(200);
@@ -104,7 +104,7 @@ describe("Workspaces: Creation", () => {
 
     const createRes = await req(
       "POST",
-      "/workspaces",
+      "/workspaces/create",
       { name: "Owner Test" },
       token
     );
@@ -130,7 +130,7 @@ describe("Workspaces: Creation", () => {
 
     const createRes = await req(
       "POST",
-      "/workspaces",
+      "/workspaces/create",
       { name: "Channel Test" },
       token
     );
@@ -153,7 +153,7 @@ describe("Workspaces: Creation", () => {
 
     const createRes = await req(
       "POST",
-      "/workspaces",
+      "/workspaces/create",
       { name: "Participant Test" },
       token
     );
@@ -183,12 +183,12 @@ describe("Workspaces: Creation", () => {
   test("rejects empty name", async () => {
     const { token } = await registerAndGetToken();
 
-    const res = await req("POST", "/workspaces", { name: "" }, token);
+    const res = await req("POST", "/workspaces/create", { name: "" }, token);
     expect(res.status).toBe(400);
   });
 
   test("rejects unauthenticated request", async () => {
-    const res = await req("POST", "/workspaces", { name: "No Auth" });
+    const res = await req("POST", "/workspaces/create", { name: "No Auth" });
     expect(res.status).toBe(401);
   });
 });
@@ -200,7 +200,7 @@ describe("Workspaces: Join", () => {
 
     const createRes = await req(
       "POST",
-      "/workspaces",
+      "/workspaces/create",
       { name: "Join Target" },
       owner.token
     );
@@ -233,7 +233,7 @@ describe("Workspaces: Join", () => {
 
     const createRes = await req(
       "POST",
-      "/workspaces",
+      "/workspaces/create",
       { name: "Channel Join" },
       owner.token
     );
@@ -272,7 +272,7 @@ describe("Workspaces: Join", () => {
 
     const createRes = await req(
       "POST",
-      "/workspaces",
+      "/workspaces/create",
       { name: "Idempotent" },
       owner.token
     );
@@ -331,7 +331,7 @@ describe("Workspaces: List", () => {
 
     const res1 = await req(
       "POST",
-      "/workspaces",
+      "/workspaces/create",
       { name: "List One" },
       token
     );
@@ -339,13 +339,13 @@ describe("Workspaces: List", () => {
 
     const res2 = await req(
       "POST",
-      "/workspaces",
+      "/workspaces/create",
       { name: "List Two" },
       token
     );
     createdWorkspaceIds.push(res2.body.id);
 
-    const listRes = await req("GET", "/workspaces", undefined, token);
+    const listRes = await req("GET", "/workspaces/list", undefined, token);
 
     expect(listRes.status).toBe(200);
     expect(listRes.body.length).toBeGreaterThanOrEqual(2);
@@ -358,7 +358,7 @@ describe("Workspaces: List", () => {
   test("returns empty list for user with no workspaces", async () => {
     const { token } = await registerAndGetToken();
 
-    const listRes = await req("GET", "/workspaces", undefined, token);
+    const listRes = await req("GET", "/workspaces/list", undefined, token);
 
     expect(listRes.status).toBe(200);
     expect(listRes.body).toEqual([]);
@@ -370,7 +370,7 @@ describe("Workspaces: List", () => {
 
     const createRes = await req(
       "POST",
-      "/workspaces",
+      "/workspaces/create",
       { name: "Role Check" },
       owner.token
     );
@@ -383,7 +383,7 @@ describe("Workspaces: List", () => {
       member.token
     );
 
-    const ownerList = await req("GET", "/workspaces", undefined, owner.token);
+    const ownerList = await req("GET", "/workspaces/list", undefined, owner.token);
     const ownerWorkspace = ownerList.body.find(
       (w: any) => w.id === createRes.body.id
     );
@@ -391,7 +391,7 @@ describe("Workspaces: List", () => {
 
     const memberList = await req(
       "GET",
-      "/workspaces",
+      "/workspaces/list",
       undefined,
       member.token
     );
@@ -408,7 +408,7 @@ describe("Workspaces: Detail", () => {
 
     const createRes = await req(
       "POST",
-      "/workspaces",
+      "/workspaces/create",
       { name: "Detail Test" },
       token
     );
@@ -441,7 +441,7 @@ describe("Workspaces: Detail", () => {
 
     const createRes = await req(
       "POST",
-      "/workspaces",
+      "/workspaces/create",
       { name: "Private" },
       owner.token
     );

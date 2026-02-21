@@ -88,7 +88,7 @@ describe("Channel message visibility", () => {
     // 2. User A creates a workspace
     const createRes = await req(
       "POST",
-      "/workspaces",
+      "/workspaces/create",
       { name: "Visibility Test" },
       userA.token,
     );
@@ -154,7 +154,7 @@ describe("Channel message visibility", () => {
 
     const createRes = await req(
       "POST",
-      "/workspaces",
+      "/workspaces/create",
       { name: "Private WS" },
       userA.token,
     );
@@ -191,7 +191,7 @@ describe("Channel message visibility", () => {
 
     const createRes = await req(
       "POST",
-      "/workspaces",
+      "/workspaces/create",
       { name: "Order Test" },
       userA.token,
     );

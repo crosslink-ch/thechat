@@ -74,7 +74,7 @@ export const workspaceRoutes = new Elysia({ prefix: "/workspaces" })
   })
 
   // Create workspace
-  .post("/", async ({ body, user, set }) => {
+  .post("/create", async ({ body, user, set }) => {
     const parsed = createSchema.safeParse(body);
     if (!parsed.success) {
       set.status = 400;
@@ -212,7 +212,7 @@ export const workspaceRoutes = new Elysia({ prefix: "/workspaces" })
   })
 
   // List my workspaces
-  .get("/", async ({ user }) => {
+  .get("/list", async ({ user }) => {
     const memberships = await db
       .select({
         workspaceId: workspaceMembers.workspaceId,
