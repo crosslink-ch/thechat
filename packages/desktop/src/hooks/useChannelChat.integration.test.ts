@@ -12,6 +12,8 @@
  */
 import { describe, test, expect, beforeAll, afterAll, vi } from "vitest";
 import { renderHook, waitFor, act } from "@testing-library/react";
+import { treaty } from "@elysiajs/eden";
+import type { App } from "@thechat/api";
 import { useChannelChat } from "./useChannelChat";
 import WS from "ws";
 
@@ -20,27 +22,14 @@ const HAS_DB = !!process.env.DATABASE_URL;
 const API_URL = "http://localhost:3000";
 const WS_URL = "ws://localhost:3000";
 
+const api = treaty<App>(API_URL);
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-async function api(
-  method: string,
-  path: string,
-  body?: unknown,
-  token?: string,
-) {
-  const headers: Record<string, string> = {};
-  if (body) headers["Content-Type"] = "application/json";
-  if (token) headers["Authorization"] = `Bearer ${token}`;
-
-  const res = await fetch(`${API_URL}${path}`, {
-    method,
-    headers,
-    body: body ? JSON.stringify(body) : undefined,
-  });
-
-  return res.json();
+function auth(token: string) {
+  return { headers: { authorization: `Bearer ${token}` } };
 }
 
 let emailCounter = 0;
@@ -53,12 +42,13 @@ const createdEmails: string[] = [];
 async function registerUser(name: string) {
   const email = uniqueEmail();
   createdEmails.push(email);
-  const data = await api("POST", "/auth/register", {
+  const { data, error } = await api.auth.register.post({
     name,
     email,
     password: "password123",
   });
-  return { token: data.token as string, user: data.user };
+  if (error) throw new Error("Registration failed");
+  return { token: data.token!, user: data.user! };
 }
 
 /** Connect a WebSocket, authenticate, and return the ready socket. */
@@ -116,36 +106,31 @@ describe.skipIf(!HAS_DB)("Channel message visibility (integration)", () => {
     userB = await registerUser("Bob");
 
     // User A creates a workspace
-    const ws = await api(
-      "POST",
-      "/workspaces",
+    // Eden Treaty: .post() on the path proxy = POST /workspaces
+    const { data: ws, error: wsErr } = await (api.workspaces as any).post(
       { name: "Integration Test" },
-      userA.token,
+      auth(userA.token),
     );
-    workspaceId = ws.id;
+    if (wsErr) throw new Error(`Workspace creation failed: ${JSON.stringify(wsErr)}`);
+    workspaceId = ws!.id;
 
     // User B joins
-    await api("POST", "/workspaces/join", { workspaceId }, userB.token);
+    await api.workspaces.join.post({ workspaceId }, auth(userB.token));
 
     // Get general channel ID
-    const detail = await api(
-      "GET",
-      `/workspaces/${workspaceId}`,
-      undefined,
-      userA.token,
+    const { data: detail } = await api.workspaces({ id: workspaceId }).get(
+      auth(userA.token),
     );
-    generalChannelId = detail.channels.find(
-      (c: any) => c.name === "general",
-    ).id;
+    generalChannelId = detail!.channels.find(
+      (c) => c.name === "general",
+    )!.id;
 
     // Create DM between the two users
-    const dm = await api(
-      "POST",
-      "/conversations/dm",
+    const { data: dm } = await api.conversations.dm.post(
       { workspaceId, otherUserId: userB.user.id },
-      userA.token,
+      auth(userA.token),
     );
-    dmConversationId = dm.id;
+    dmConversationId = dm!.id;
   });
 
   afterAll(async () => {
@@ -168,11 +153,9 @@ describe.skipIf(!HAS_DB)("Channel message visibility (integration)", () => {
 
   describe("useChannelChat fetches messages", () => {
     test("User B sees messages sent by User A", async () => {
-      await api(
-        "POST",
-        `/messages/${generalChannelId}`,
+      await api.messages({ conversationId: generalChannelId }).post(
         { content: "Hello from Alice!" },
-        userA.token,
+        auth(userA.token),
       );
 
       const { result, unmount } = renderHook(() =>
@@ -196,11 +179,9 @@ describe.skipIf(!HAS_DB)("Channel message visibility (integration)", () => {
     });
 
     test("messages re-fetch after navigating away and back", async () => {
-      await api(
-        "POST",
-        `/messages/${generalChannelId}`,
+      await api.messages({ conversationId: generalChannelId }).post(
         { content: "Persist test" },
-        userA.token,
+        auth(userA.token),
       );
 
       const { result, rerender, unmount } = renderHook(
