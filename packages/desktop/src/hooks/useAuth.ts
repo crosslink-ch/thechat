@@ -1,8 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { AuthUser } from "@thechat/shared";
-
-const API_URL = import.meta.env.VITE_API_URL || "http://localhost:3000";
+import { api } from "../lib/api";
 
 const KV_TOKEN = "auth_session_token";
 const KV_USER = "auth_user";
@@ -33,12 +32,11 @@ export function useAuth() {
           return;
         }
 
-        const res = await fetch(`${API_URL}/auth/me`, {
-          headers: { Authorization: `Bearer ${token}` },
+        const { data, error } = await api.auth.me.get({
+          headers: { authorization: `Bearer ${token}` },
         });
 
-        if (res.ok) {
-          const data = await res.json();
+        if (data && !error && "user" in data) {
           setUser(data.user);
           await kvSet(KV_USER, JSON.stringify(data.user));
         } else {
@@ -72,18 +70,14 @@ export function useAuth() {
   }, []);
 
   const login = useCallback(async (email: string, password: string) => {
-    const res = await fetch(`${API_URL}/auth/login`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, password }),
-    });
+    const { data, error } = await api.auth.login.post({ email, password });
 
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || "Login failed");
+    if (error) throw new Error((error as any).error || "Login failed");
+    if (!data || !("token" in data)) throw new Error("Login failed");
 
-    await kvSet(KV_TOKEN, data.token);
-    await kvSet(KV_USER, JSON.stringify(data.user));
-    setUser(data.user);
+    await kvSet(KV_TOKEN, data.token!);
+    await kvSet(KV_USER, JSON.stringify(data.user!));
+    setUser(data.user!);
   }, []);
 
   const register = useCallback(
@@ -92,24 +86,26 @@ export function useAuth() {
       email: string,
       password: string
     ): Promise<string | null> => {
-      const res = await fetch(`${API_URL}/auth/register`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, email, password }),
+      const { data, error } = await api.auth.register.post({
+        name,
+        email,
+        password,
       });
 
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Registration failed");
+      if (error) throw new Error((error as any).error || "Registration failed");
+      if (!data) throw new Error("Registration failed");
 
       // If verification required, return message
-      if (data.message) {
-        return data.message;
+      if ("message" in data) {
+        return data.message as string;
       }
 
       // Auto-login
-      await kvSet(KV_TOKEN, data.token);
-      await kvSet(KV_USER, JSON.stringify(data.user));
-      setUser(data.user);
+      if ("token" in data) {
+        await kvSet(KV_TOKEN, data.token!);
+        await kvSet(KV_USER, JSON.stringify(data.user!));
+        setUser(data.user!);
+      }
       return null;
     },
     []
@@ -119,9 +115,8 @@ export function useAuth() {
     try {
       const token = await kvGet(KV_TOKEN);
       if (token) {
-        await fetch(`${API_URL}/auth/logout`, {
-          method: "POST",
-          headers: { Authorization: `Bearer ${token}` },
+        await api.auth.logout.post(undefined, {
+          headers: { authorization: `Bearer ${token}` },
         });
       }
     } catch {

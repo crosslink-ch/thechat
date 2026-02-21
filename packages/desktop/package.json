@@ -12,6 +12,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@elysiajs/eden": "^1.2.0",
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-log": "^2.8.0",
     "@tauri-apps/plugin-opener": "^2",
@@ -22,6 +23,7 @@
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2",
+    "@thechat/api": "workspace:*",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.1",
