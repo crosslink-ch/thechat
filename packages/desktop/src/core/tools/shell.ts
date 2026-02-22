@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { requestPermission } from "../permission";
+import type { ToolExecutionContext } from "../types";
 import { defineTool } from "./define";
 
 interface ShellResult {
@@ -49,7 +50,7 @@ The command has a default timeout of 120 seconds.`,
     },
     required: ["command", "description"],
   },
-  execute: async (args) => {
+  execute: async (args, context?: ToolExecutionContext) => {
     const { command, description, timeout, workdir } = args as {
       command: string;
       description: string;
@@ -59,25 +60,38 @@ The command has a default timeout of 120 seconds.`,
 
     await requestPermission({ command, description });
 
-    const result = await invoke<ShellResult>("execute_shell_command", {
-      command,
-      timeout: timeout ?? undefined,
-      workdir: workdir ?? undefined,
-    });
+    const processId = crypto.randomUUID();
 
-    if (result.timed_out) {
+    // If the chat loop is aborted, kill the running process
+    const abortHandler = () => {
+      invoke("kill_shell_process", { processId }).catch(() => {});
+    };
+    context?.signal?.addEventListener("abort", abortHandler, { once: true });
+
+    try {
+      const result = await invoke<ShellResult>("execute_shell_command", {
+        command,
+        timeout: timeout ?? undefined,
+        workdir: workdir ?? undefined,
+        processId,
+      });
+
+      if (result.timed_out) {
+        return {
+          stdout: result.stdout,
+          stderr: result.stderr,
+          exit_code: result.exit_code,
+          error: `Command timed out after ${timeout ?? 120} seconds`,
+        };
+      }
+
       return {
         stdout: result.stdout,
         stderr: result.stderr,
         exit_code: result.exit_code,
-        error: `Command timed out after ${timeout ?? 120} seconds`,
       };
+    } finally {
+      context?.signal?.removeEventListener("abort", abortHandler);
     }
-
-    return {
-      stdout: result.stdout,
-      stderr: result.stderr,
-      exit_code: result.exit_code,
-    };
   },
 });

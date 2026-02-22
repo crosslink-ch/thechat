@@ -46,11 +46,15 @@ export interface QuestionRequest {
 
 // -- Tool Definition --
 
+export interface ToolExecutionContext {
+  signal?: AbortSignal;
+}
+
 export interface ToolDefinition<TArgs = Record<string, unknown>> {
   name: string;
   description: string;
   parameters: Record<string, unknown>; // JSON Schema
-  execute: (args: TArgs) => unknown | Promise<unknown>;
+  execute: (args: TArgs, context?: ToolExecutionContext) => unknown | Promise<unknown>;
 }
 
 // -- Chat Loop Options --

@@ -143,7 +143,7 @@ export async function runChatLoop(options: ChatLoopOptions): Promise<void> {
               error: `Unknown tool "${tc.name}". Available tools: ${availableNames}`,
             };
             try {
-              const execResult = await invalidTool.execute(errorArgs);
+              const execResult = await invalidTool.execute(errorArgs, { signal });
               onEvent({
                 type: "tool-result",
                 toolCallId: tc.id,
@@ -169,7 +169,7 @@ export async function runChatLoop(options: ChatLoopOptions): Promise<void> {
         }
 
         try {
-          const execResult = await tool.execute(tc.args);
+          const execResult = await tool.execute(tc.args, { signal });
           onEvent({
             type: "tool-result",
             toolCallId: tc.id,

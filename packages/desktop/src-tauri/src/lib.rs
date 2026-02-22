@@ -6,6 +6,7 @@ mod shell;
 
 use db::{Conversation, Database, Message};
 use mcp::McpManager;
+use shell::ShellProcesses;
 use std::sync::Arc;
 use tauri::State;
 
@@ -89,6 +90,7 @@ pub fn run() {
         Database::new(db_path.to_str().unwrap()).expect("Failed to initialize database");
     let db_state: DbState = Arc::new(database);
     let mcp_state: Arc<McpManager> = Arc::new(McpManager::new());
+    let shell_state: Arc<ShellProcesses> = Arc::new(ShellProcesses::new());
 
     log::info!("App started");
 
@@ -98,6 +100,7 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .manage(db_state)
         .manage(mcp_state)
+        .manage(shell_state)
         .invoke_handler(tauri::generate_handler![
             get_config,
             create_conversation,
@@ -114,6 +117,7 @@ pub fn run() {
             mcp::mcp_call_tool,
             mcp::mcp_shutdown,
             shell::execute_shell_command,
+            shell::kill_shell_process,
             fs::get_cwd,
             fs::fs_read_file,
             fs::fs_write_file,
@@ -136,12 +140,14 @@ mod tests {
         let database = Database::new(":memory:").unwrap();
         let db_state: DbState = Arc::new(database);
         let mcp_state: Arc<McpManager> = Arc::new(McpManager::new());
+        let shell_state: Arc<ShellProcesses> = Arc::new(ShellProcesses::new());
 
         let app = tauri::test::mock_builder()
             .plugin(tauri_plugin_log::Builder::new().build())
             .plugin(tauri_plugin_notification::init())
             .manage(db_state)
             .manage(mcp_state)
+            .manage(shell_state)
             .invoke_handler(tauri::generate_handler![
                 get_config,
                 create_conversation,
@@ -157,6 +163,7 @@ mod tests {
                 mcp::mcp_call_tool,
                 mcp::mcp_shutdown,
                 shell::execute_shell_command,
+                shell::kill_shell_process,
                 fs::get_cwd,
                 fs::fs_read_file,
                 fs::fs_write_file,

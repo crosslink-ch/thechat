@@ -70,7 +70,7 @@ describe("runChatLoop", () => {
       onEvent: (e) => events.push(e),
     });
 
-    expect(mockTool.execute).toHaveBeenCalledWith({ city: "Paris" });
+    expect(mockTool.execute).toHaveBeenCalledWith({ city: "Paris" }, { signal: undefined });
     expect(mockStreamCompletion).toHaveBeenCalledTimes(2);
 
     const toolResult = events.find((e) => e.type === "tool-result");
@@ -469,8 +469,8 @@ describe("runChatLoop", () => {
     expect(getTools).toHaveBeenCalledTimes(3);
 
     // Both tools were executed successfully
-    expect(initialTool.execute).toHaveBeenCalledWith({ name: "k8s" });
-    expect(dynamicTool.execute).toHaveBeenCalledWith({});
+    expect(initialTool.execute).toHaveBeenCalledWith({ name: "k8s" }, { signal: undefined });
+    expect(dynamicTool.execute).toHaveBeenCalledWith({}, { signal: undefined });
 
     // The dynamic tool result should not be an error
     const dynamicResult = events.find(

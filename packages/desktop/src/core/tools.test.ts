@@ -66,10 +66,15 @@ describe("shellTool", () => {
       command: "echo hello",
       description: "Print hello",
     });
-    expect(mockInvoke).toHaveBeenCalledWith("execute_shell_command", {
-      command: "echo hello",
-      timeout: undefined,
-    });
+    expect(mockInvoke).toHaveBeenCalledWith(
+      "execute_shell_command",
+      expect.objectContaining({
+        command: "echo hello",
+        timeout: undefined,
+        workdir: undefined,
+        processId: expect.any(String),
+      }),
+    );
     expect(result).toEqual({
       stdout: "hello\n",
       stderr: "",
@@ -121,9 +126,53 @@ describe("shellTool", () => {
       timeout: 30,
     });
 
-    expect(mockInvoke).toHaveBeenCalledWith("execute_shell_command", {
-      command: "ls",
-      timeout: 30,
-    });
+    expect(mockInvoke).toHaveBeenCalledWith(
+      "execute_shell_command",
+      expect.objectContaining({
+        command: "ls",
+        timeout: 30,
+      }),
+    );
+  });
+
+  it("calls kill_shell_process when signal aborts", async () => {
+    mockRequestPermission.mockResolvedValueOnce(undefined);
+
+    const controller = new AbortController();
+
+    // Make invoke hang until we abort
+    mockInvoke.mockImplementation(
+      (cmd) =>
+        new Promise((resolve) => {
+          if (cmd === "execute_shell_command") {
+            // Abort mid-execution
+            setTimeout(() => controller.abort(), 10);
+            // Resolve after abort so the execute() promise settles
+            setTimeout(
+              () =>
+                resolve({
+                  stdout: "",
+                  stderr: "",
+                  exit_code: -1,
+                  timed_out: false,
+                }),
+              20,
+            );
+          } else {
+            // kill_shell_process
+            resolve(undefined);
+          }
+        }),
+    );
+
+    await shellTool.execute(
+      { command: "sleep 999", description: "Long command" },
+      { signal: controller.signal },
+    );
+
+    expect(mockInvoke).toHaveBeenCalledWith(
+      "kill_shell_process",
+      expect.objectContaining({ processId: expect.any(String) }),
+    );
   });
 });

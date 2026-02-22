@@ -4435,6 +4435,7 @@ dependencies = [
  "chrono",
  "dirs 5.0.1",
  "glob",
+ "libc",
  "log",
  "regex",
  "reqwest 0.12.28",
@@ -4447,6 +4448,7 @@ dependencies = [
  "tauri-plugin-notification",
  "tauri-plugin-opener",
  "tempfile",
+ "tokio",
  "uuid",
  "walkdir",
 ]
@@ -4559,6 +4561,7 @@ dependencies = [
  "libc",
  "mio",
  "pin-project-lite",
+ "signal-hook-registry",
  "socket2",
  "windows-sys 0.61.2",
 ]
