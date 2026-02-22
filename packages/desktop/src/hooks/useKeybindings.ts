@@ -5,6 +5,7 @@ interface KeybindingActions {
   onPaletteToggle: () => void;
   onPermissionAllow: (() => void) | null;
   onPermissionDeny: (() => void) | null;
+  onPermissionDenyWithFeedback: (() => void) | null;
 }
 
 export function useKeybindings(actions: KeybindingActions) {
@@ -36,6 +37,9 @@ export function useKeybindings(actions: KeybindingActions) {
         } else if (e.key === "d" && actionsRef.current.onPermissionDeny) {
           e.preventDefault();
           actionsRef.current.onPermissionDeny();
+        } else if (e.key === "f" && actionsRef.current.onPermissionDenyWithFeedback) {
+          e.preventDefault();
+          actionsRef.current.onPermissionDenyWithFeedback();
         }
         // Any other key: cancel prefix silently
         return;

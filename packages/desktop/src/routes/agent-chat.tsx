@@ -57,6 +57,7 @@ export function AgentChatRoute() {
   activeAgentConvIdRef.current = conversation?.id ?? null;
 
   const [pendingPermission, setPendingPermission] = useState<PermissionRequest | null>(null);
+  const [showFeedbackInput, setShowFeedbackInput] = useState(false);
   const [pendingQuestion, setPendingQuestion] = useState<QuestionRequest | null>(null);
   const [todosState, setTodosState] = useState<TodoItem[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -137,6 +138,7 @@ export function AgentChatRoute() {
     if (pendingPermission) {
       pendingPermission.resolve();
       setPendingPermission(null);
+      setShowFeedbackInput(false);
     }
   }, [pendingPermission]);
 
@@ -144,8 +146,20 @@ export function AgentChatRoute() {
     if (pendingPermission) {
       pendingPermission.reject("User denied permission");
       setPendingPermission(null);
+      setShowFeedbackInput(false);
     }
   }, [pendingPermission]);
+
+  const handlePermissionDenyWithFeedback = useCallback(
+    (feedback: string) => {
+      if (pendingPermission) {
+        pendingPermission.reject(`User denied permission. User feedback: ${feedback}`);
+        setPendingPermission(null);
+        setShowFeedbackInput(false);
+      }
+    },
+    [pendingPermission],
+  );
 
   const handleQuestionSubmit = useCallback(
     (answers: string[][]) => {
@@ -171,6 +185,7 @@ export function AgentChatRoute() {
     onPaletteToggle: togglePalette,
     onPermissionAllow: pendingPermission ? handlePermissionAllow : null,
     onPermissionDeny: pendingPermission ? handlePermissionDeny : null,
+    onPermissionDenyWithFeedback: pendingPermission ? () => setShowFeedbackInput(true) : null,
   });
 
   return (
@@ -189,6 +204,8 @@ export function AgentChatRoute() {
           pendingPermission={pendingPermission}
           onPermissionAllow={handlePermissionAllow}
           onPermissionDeny={handlePermissionDeny}
+          onPermissionDenyWithFeedback={handlePermissionDenyWithFeedback}
+          showFeedbackInput={showFeedbackInput}
         />
         {error && <div className="error-message">{error}</div>}
         <div ref={messagesEndRef} />

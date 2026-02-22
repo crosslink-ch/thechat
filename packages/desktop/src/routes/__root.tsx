@@ -78,6 +78,7 @@ export function RootLayout() {
     onPaletteToggle: togglePalette,
     onPermissionAllow: null,
     onPermissionDeny: null,
+    onPermissionDenyWithFeedback: null,
   });
 
   return (

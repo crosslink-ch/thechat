@@ -307,11 +307,15 @@ describe("StreamingMessage", () => {
         onPermissionDeny={onDeny}
       />,
     );
-    fireEvent.click(screen.getByText(/Deny/));
+    // Match the Deny button specifically (not "Deny with feedback")
+    const denyBtn = screen.getAllByText(/Deny/).find(
+      (el) => el.textContent?.trim().startsWith("Deny") && !el.textContent?.includes("feedback"),
+    )!;
+    fireEvent.click(denyBtn);
     expect(onDeny).toHaveBeenCalledOnce();
   });
 
-  it("shows keyboard shortcut hints C-x a and C-x d", () => {
+  it("shows keyboard shortcut hints C-x a, C-x d, and C-x f", () => {
     const permission: PermissionRequest = {
       id: "1",
       command: "pwd",
@@ -326,10 +330,132 @@ describe("StreamingMessage", () => {
         pendingPermission={permission}
         onPermissionAllow={vi.fn()}
         onPermissionDeny={vi.fn()}
+        onPermissionDenyWithFeedback={vi.fn()}
       />,
     );
     expect(screen.getByText("C-x a")).toBeInTheDocument();
     expect(screen.getByText("C-x d")).toBeInTheDocument();
+    expect(screen.getByText("C-x f")).toBeInTheDocument();
+  });
+
+  it("renders 'Deny with feedback' button with C-x f hint", () => {
+    const permission: PermissionRequest = {
+      id: "1",
+      command: "echo hi",
+      description: "",
+      resolve: vi.fn(),
+      reject: vi.fn(),
+    };
+    setupStreaming([]);
+    render(
+      <StreamingMessage
+        convId={CONV_ID}
+        pendingPermission={permission}
+        onPermissionAllow={vi.fn()}
+        onPermissionDeny={vi.fn()}
+        onPermissionDenyWithFeedback={vi.fn()}
+      />,
+    );
+    expect(screen.getByText(/Deny with feedback/)).toBeInTheDocument();
+    expect(screen.getByText("C-x f")).toBeInTheDocument();
+  });
+
+  it("clicking 'Deny with feedback' shows text input", () => {
+    const permission: PermissionRequest = {
+      id: "1",
+      command: "echo hi",
+      description: "",
+      resolve: vi.fn(),
+      reject: vi.fn(),
+    };
+    setupStreaming([]);
+    render(
+      <StreamingMessage
+        convId={CONV_ID}
+        pendingPermission={permission}
+        onPermissionAllow={vi.fn()}
+        onPermissionDeny={vi.fn()}
+        onPermissionDenyWithFeedback={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByText(/Deny with feedback/));
+    expect(screen.getByPlaceholderText("Feedback for AI...")).toBeInTheDocument();
+  });
+
+  it("submitting feedback calls onPermissionDenyWithFeedback with the text", () => {
+    const onDenyWithFeedback = vi.fn();
+    const permission: PermissionRequest = {
+      id: "1",
+      command: "echo hi",
+      description: "",
+      resolve: vi.fn(),
+      reject: vi.fn(),
+    };
+    setupStreaming([]);
+    render(
+      <StreamingMessage
+        convId={CONV_ID}
+        pendingPermission={permission}
+        onPermissionAllow={vi.fn()}
+        onPermissionDeny={vi.fn()}
+        onPermissionDenyWithFeedback={onDenyWithFeedback}
+      />,
+    );
+    fireEvent.click(screen.getByText(/Deny with feedback/));
+    const input = screen.getByPlaceholderText("Feedback for AI...");
+    fireEvent.change(input, { target: { value: "Use git diff instead" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(onDenyWithFeedback).toHaveBeenCalledWith("Use git diff instead");
+  });
+
+  it("Escape hides the feedback input", () => {
+    const permission: PermissionRequest = {
+      id: "1",
+      command: "echo hi",
+      description: "",
+      resolve: vi.fn(),
+      reject: vi.fn(),
+    };
+    setupStreaming([]);
+    render(
+      <StreamingMessage
+        convId={CONV_ID}
+        pendingPermission={permission}
+        onPermissionAllow={vi.fn()}
+        onPermissionDeny={vi.fn()}
+        onPermissionDenyWithFeedback={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByText(/Deny with feedback/));
+    const input = screen.getByPlaceholderText("Feedback for AI...");
+    fireEvent.keyDown(input, { key: "Escape" });
+    expect(screen.queryByPlaceholderText("Feedback for AI...")).not.toBeInTheDocument();
+  });
+
+  it("empty feedback cannot be submitted (Send button disabled)", () => {
+    const onDenyWithFeedback = vi.fn();
+    const permission: PermissionRequest = {
+      id: "1",
+      command: "echo hi",
+      description: "",
+      resolve: vi.fn(),
+      reject: vi.fn(),
+    };
+    setupStreaming([]);
+    render(
+      <StreamingMessage
+        convId={CONV_ID}
+        pendingPermission={permission}
+        onPermissionAllow={vi.fn()}
+        onPermissionDeny={vi.fn()}
+        onPermissionDenyWithFeedback={onDenyWithFeedback}
+      />,
+    );
+    fireEvent.click(screen.getByText(/Deny with feedback/));
+    const sendBtn = screen.getByText("Send");
+    expect(sendBtn).toBeDisabled();
+    fireEvent.click(sendBtn);
+    expect(onDenyWithFeedback).not.toHaveBeenCalled();
   });
 
   it("does not render permission prompt when pendingPermission is null", () => {

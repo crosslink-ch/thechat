@@ -615,6 +615,41 @@
   color: var(--color-text);
 }
 
+.permission-inline-feedback {
+  background: none;
+  color: var(--color-text-muted);
+}
+
+.permission-inline-feedback:hover {
+  color: var(--color-text);
+}
+
+.permission-feedback-input {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.permission-feedback-field {
+  flex: 1;
+  padding: 6px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  background: var(--color-bg-base);
+  color: var(--color-text);
+  font-size: 13px;
+  font-family: inherit;
+  outline: none;
+}
+
+.permission-feedback-field:focus {
+  border-color: var(--color-accent-border);
+}
+
+.permission-feedback-field::placeholder {
+  color: var(--color-text-placeholder);
+}
+
 /* Command Palette */
 .palette-overlay {
   position: fixed;

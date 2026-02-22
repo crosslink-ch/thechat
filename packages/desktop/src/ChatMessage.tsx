@@ -118,11 +118,35 @@ function PermissionPromptBlock({
   permission,
   onAllow,
   onDeny,
+  onDenyWithFeedback,
+  showFeedbackInput,
 }: {
   permission: PermissionRequest;
   onAllow: () => void;
   onDeny: () => void;
+  onDenyWithFeedback?: (feedback: string) => void;
+  showFeedbackInput?: boolean;
 }) {
+  const [feedbackVisible, setFeedbackVisible] = useState(showFeedbackInput ?? false);
+  const [feedbackText, setFeedbackText] = useState("");
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  // Sync with external showFeedbackInput prop (from keyboard shortcut)
+  useEffect(() => {
+    if (showFeedbackInput) setFeedbackVisible(true);
+  }, [showFeedbackInput]);
+
+  // Auto-focus input when it appears
+  useEffect(() => {
+    if (feedbackVisible) inputRef.current?.focus();
+  }, [feedbackVisible]);
+
+  const handleSubmitFeedback = () => {
+    const trimmed = feedbackText.trim();
+    if (!trimmed || !onDenyWithFeedback) return;
+    onDenyWithFeedback(trimmed);
+  };
+
   return (
     <div className="permission-inline">
       <div className="permission-inline-header">Run command?</div>
@@ -130,14 +154,52 @@ function PermissionPromptBlock({
       {permission.description && (
         <div className="permission-inline-desc">{permission.description}</div>
       )}
-      <div className="permission-inline-actions">
-        <button className="permission-inline-btn permission-inline-deny" onClick={onDeny}>
-          Deny <kbd>C-x d</kbd>
-        </button>
-        <button className="permission-inline-btn permission-inline-allow" onClick={onAllow}>
-          Allow <kbd>C-x a</kbd>
-        </button>
-      </div>
+      {feedbackVisible ? (
+        <div className="permission-feedback-input">
+          <input
+            ref={inputRef}
+            className="permission-feedback-field"
+            type="text"
+            placeholder="Feedback for AI..."
+            value={feedbackText}
+            onChange={(e) => setFeedbackText(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                handleSubmitFeedback();
+              } else if (e.key === "Escape") {
+                e.preventDefault();
+                setFeedbackVisible(false);
+                setFeedbackText("");
+              }
+            }}
+          />
+          <button
+            className="permission-inline-btn permission-inline-allow"
+            disabled={feedbackText.trim().length === 0}
+            onClick={handleSubmitFeedback}
+          >
+            Send
+          </button>
+        </div>
+      ) : (
+        <div className="permission-inline-actions">
+          <button className="permission-inline-btn permission-inline-deny" onClick={onDeny}>
+            Deny <kbd>C-x d</kbd>
+          </button>
+          {onDenyWithFeedback && (
+            <button
+              className="permission-inline-btn permission-inline-feedback"
+              onClick={() => setFeedbackVisible(true)}
+            >
+              Deny with feedback <kbd>C-x f</kbd>
+            </button>
+          )}
+          <button className="permission-inline-btn permission-inline-allow" onClick={onAllow}>
+            Allow <kbd>C-x a</kbd>
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -187,9 +249,11 @@ interface StreamingMessageProps {
   pendingPermission?: PermissionRequest | null;
   onPermissionAllow?: () => void;
   onPermissionDeny?: () => void;
+  onPermissionDenyWithFeedback?: (feedback: string) => void;
+  showFeedbackInput?: boolean;
 }
 
-export function StreamingMessage({ convId, pendingPermission, onPermissionAllow, onPermissionDeny }: StreamingMessageProps) {
+export function StreamingMessage({ convId, pendingPermission, onPermissionAllow, onPermissionDeny, onPermissionDenyWithFeedback, showFeedbackInput }: StreamingMessageProps) {
   const parts = useStreamingParts(convId);
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -229,6 +293,8 @@ export function StreamingMessage({ convId, pendingPermission, onPermissionAllow,
               permission={pendingPermission}
               onAllow={onPermissionAllow}
               onDeny={onPermissionDeny}
+              onDenyWithFeedback={onPermissionDenyWithFeedback}
+              showFeedbackInput={showFeedbackInput}
             />
           )}
           {!pendingPermission && !hasContent && !hasThinking && (
