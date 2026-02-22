@@ -36,9 +36,11 @@ describe("Auth flow", () => {
     const submitBtn = await $("button.auth-submit");
     await submitBtn.click();
 
-    // Verify modal is gone first
-    const overlay = await $(".auth-overlay");
-    await overlay.waitForDisplayed({ reverse: true, timeout: 5000 });
+    // Wait until auth overlay is fully gone from the DOM
+    await browser.waitUntil(
+      async () => !(await $(".auth-overlay").isExisting()),
+      { timeout: 10000, timeoutMsg: "Auth modal did not close after registration" },
+    );
 
     // Open sidebar to check user name
     await menuBtn.click();
@@ -60,6 +62,12 @@ describe("Auth flow", () => {
     await emailInput.setValue(TEST_EMAIL);
     await passwordInput.setValue(TEST_PASSWORD);
     await submitBtn.click();
+
+    // Wait until auth overlay is fully gone from the DOM
+    await browser.waitUntil(
+      async () => !(await $(".auth-overlay").isExisting()),
+      { timeout: 10000, timeoutMsg: "Auth modal did not close after login" },
+    );
 
     // 8. Open sidebar, verify user is logged in again
     await menuBtn.click();
