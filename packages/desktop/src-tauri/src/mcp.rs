@@ -1,4 +1,4 @@
-use crate::config::load_config;
+use crate::config::{load_config, McpServerConfig};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -70,11 +70,48 @@ fn shell_escape(s: &str) -> String {
 
 // -- McpClient: manages a single MCP server --
 
+enum Transport {
+    Stdio {
+        child: Child,
+        stdin: Option<std::process::ChildStdin>,
+        stdout: BufReader<std::process::ChildStdout>,
+    },
+    Http {
+        client: reqwest::blocking::Client,
+        url: String,
+        session_id: Option<String>,
+    },
+}
+
 struct McpClient {
-    child: Child,
-    stdin: Option<std::process::ChildStdin>,
-    stdout: BufReader<std::process::ChildStdout>,
+    transport: Transport,
     next_id: AtomicU64,
+}
+
+/// Extract a JSON-RPC response from an SSE body.
+/// Scans `data:` lines, parses as JsonRpcResponse, returns the result for the matching ID.
+fn parse_sse_response(body: &str, expected_id: u64) -> Result<Value, String> {
+    for line in body.lines() {
+        let line = line.trim();
+        if let Some(data) = line.strip_prefix("data:") {
+            let data = data.trim();
+            if data.is_empty() {
+                continue;
+            }
+            if let Ok(resp) = serde_json::from_str::<JsonRpcResponse>(data) {
+                if resp.id == Some(expected_id) {
+                    if let Some(err) = resp.error {
+                        return Err(format!("MCP error: {}", err.message));
+                    }
+                    return Ok(resp.result.unwrap_or(Value::Null));
+                }
+            }
+        }
+    }
+    Err(format!(
+        "No JSON-RPC response with id={} found in SSE stream",
+        expected_id
+    ))
 }
 
 impl McpClient {
@@ -122,9 +159,39 @@ impl McpClient {
             .ok_or_else(|| "Failed to open stdout for MCP server".to_string())?;
 
         Ok(McpClient {
-            child,
-            stdin: Some(stdin),
-            stdout: BufReader::new(stdout),
+            transport: Transport::Stdio {
+                child,
+                stdin: Some(stdin),
+                stdout: BufReader::new(stdout),
+            },
+            next_id: AtomicU64::new(1),
+        })
+    }
+
+    fn connect_http(url: &str, headers: &HashMap<String, String>) -> Result<Self, String> {
+        use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
+
+        let mut default_headers = HeaderMap::new();
+        for (k, v) in headers {
+            let name = HeaderName::from_bytes(k.as_bytes())
+                .map_err(|e| format!("Invalid header name '{}': {}", k, e))?;
+            let value = HeaderValue::from_str(v)
+                .map_err(|e| format!("Invalid header value for '{}': {}", k, e))?;
+            default_headers.insert(name, value);
+        }
+
+        let client = reqwest::blocking::Client::builder()
+            .default_headers(default_headers)
+            .timeout(std::time::Duration::from_secs(30))
+            .build()
+            .map_err(|e| format!("Failed to build HTTP client: {}", e))?;
+
+        Ok(McpClient {
+            transport: Transport::Http {
+                client,
+                url: url.to_string(),
+                session_id: None,
+            },
             next_id: AtomicU64::new(1),
         })
     }
@@ -138,50 +205,110 @@ impl McpClient {
             params,
         };
 
-        let mut line = serde_json::to_string(&request)
-            .map_err(|e| format!("Failed to serialize request: {}", e))?;
-        line.push('\n');
-        let stdin = self
-            .stdin
-            .as_mut()
-            .ok_or_else(|| "MCP server stdin is closed".to_string())?;
-        stdin
-            .write_all(line.as_bytes())
-            .map_err(|e| format!("Failed to write to MCP server stdin: {}", e))?;
-        stdin
-            .flush()
-            .map_err(|e| format!("Failed to flush MCP server stdin: {}", e))?;
+        match &mut self.transport {
+            Transport::Stdio { stdin, stdout, .. } => {
+                let mut line = serde_json::to_string(&request)
+                    .map_err(|e| format!("Failed to serialize request: {}", e))?;
+                line.push('\n');
+                let stdin = stdin
+                    .as_mut()
+                    .ok_or_else(|| "MCP server stdin is closed".to_string())?;
+                stdin
+                    .write_all(line.as_bytes())
+                    .map_err(|e| format!("Failed to write to MCP server stdin: {}", e))?;
+                stdin
+                    .flush()
+                    .map_err(|e| format!("Failed to flush MCP server stdin: {}", e))?;
 
-        // Read lines until we find a response with our ID
-        loop {
-            let mut buf = String::new();
-            let bytes_read = self
-                .stdout
-                .read_line(&mut buf)
-                .map_err(|e| format!("Failed to read from MCP server stdout: {}", e))?;
-            if bytes_read == 0 {
-                return Err("MCP server closed stdout unexpectedly".into());
+                // Read lines until we find a response with our ID
+                loop {
+                    let mut buf = String::new();
+                    let bytes_read = stdout
+                        .read_line(&mut buf)
+                        .map_err(|e| format!("Failed to read from MCP server stdout: {}", e))?;
+                    if bytes_read == 0 {
+                        return Err("MCP server closed stdout unexpectedly".into());
+                    }
+
+                    let buf = buf.trim();
+                    if buf.is_empty() {
+                        continue;
+                    }
+
+                    let resp: JsonRpcResponse = match serde_json::from_str(buf) {
+                        Ok(r) => r,
+                        Err(_) => continue, // skip non-JSON lines (e.g. logging)
+                    };
+
+                    // Skip notifications (no id)
+                    if resp.id != Some(id) {
+                        continue;
+                    }
+
+                    if let Some(err) = resp.error {
+                        return Err(format!("MCP error: {}", err.message));
+                    }
+                    return Ok(resp.result.unwrap_or(Value::Null));
+                }
             }
+            Transport::Http {
+                client,
+                url,
+                session_id,
+            } => {
+                let body = serde_json::to_string(&request)
+                    .map_err(|e| format!("Failed to serialize request: {}", e))?;
 
-            let buf = buf.trim();
-            if buf.is_empty() {
-                continue;
+                let mut req = client
+                    .post(url.as_str())
+                    .header("Content-Type", "application/json")
+                    .header("Accept", "application/json, text/event-stream");
+
+                if let Some(sid) = session_id.as_deref() {
+                    req = req.header("Mcp-Session-Id", sid);
+                }
+
+                let response = req
+                    .body(body)
+                    .send()
+                    .map_err(|e| format!("HTTP request failed: {}", e))?;
+
+                // Capture session ID from response
+                if let Some(sid) = response.headers().get("mcp-session-id") {
+                    if let Ok(s) = sid.to_str() {
+                        *session_id = Some(s.to_string());
+                    }
+                }
+
+                let status = response.status();
+                if !status.is_success() {
+                    let text = response.text().unwrap_or_default();
+                    return Err(format!("HTTP {} from MCP server: {}", status, text));
+                }
+
+                let content_type = response
+                    .headers()
+                    .get("content-type")
+                    .and_then(|v| v.to_str().ok())
+                    .unwrap_or("")
+                    .to_string();
+
+                let text = response
+                    .text()
+                    .map_err(|e| format!("Failed to read HTTP response body: {}", e))?;
+
+                if content_type.contains("text/event-stream") {
+                    parse_sse_response(&text, id)
+                } else {
+                    // application/json — direct JSON-RPC response
+                    let resp: JsonRpcResponse = serde_json::from_str(&text)
+                        .map_err(|e| format!("Failed to parse JSON-RPC response: {}", e))?;
+                    if let Some(err) = resp.error {
+                        return Err(format!("MCP error: {}", err.message));
+                    }
+                    Ok(resp.result.unwrap_or(Value::Null))
+                }
             }
-
-            let resp: JsonRpcResponse = match serde_json::from_str(buf) {
-                Ok(r) => r,
-                Err(_) => continue, // skip non-JSON lines (e.g. logging)
-            };
-
-            // Skip notifications (no id)
-            if resp.id != Some(id) {
-                continue;
-            }
-
-            if let Some(err) = resp.error {
-                return Err(format!("MCP error: {}", err.message));
-            }
-            return Ok(resp.result.unwrap_or(Value::Null));
         }
     }
 
@@ -192,25 +319,48 @@ impl McpClient {
             params,
         };
 
-        let mut line = serde_json::to_string(&notification)
-            .map_err(|e| format!("Failed to serialize notification: {}", e))?;
-        line.push('\n');
-        let stdin = self
-            .stdin
-            .as_mut()
-            .ok_or_else(|| "MCP server stdin is closed".to_string())?;
-        stdin
-            .write_all(line.as_bytes())
-            .map_err(|e| format!("Failed to write to MCP server stdin: {}", e))?;
-        stdin
-            .flush()
-            .map_err(|e| format!("Failed to flush MCP server stdin: {}", e))?;
-        Ok(())
+        match &mut self.transport {
+            Transport::Stdio { stdin, .. } => {
+                let mut line = serde_json::to_string(&notification)
+                    .map_err(|e| format!("Failed to serialize notification: {}", e))?;
+                line.push('\n');
+                let stdin = stdin
+                    .as_mut()
+                    .ok_or_else(|| "MCP server stdin is closed".to_string())?;
+                stdin
+                    .write_all(line.as_bytes())
+                    .map_err(|e| format!("Failed to write to MCP server stdin: {}", e))?;
+                stdin
+                    .flush()
+                    .map_err(|e| format!("Failed to flush MCP server stdin: {}", e))?;
+                Ok(())
+            }
+            Transport::Http {
+                client,
+                url,
+                session_id,
+            } => {
+                let body = serde_json::to_string(&notification)
+                    .map_err(|e| format!("Failed to serialize notification: {}", e))?;
+
+                let mut req = client
+                    .post(url.as_str())
+                    .header("Content-Type", "application/json");
+
+                if let Some(sid) = session_id.as_deref() {
+                    req = req.header("Mcp-Session-Id", sid);
+                }
+
+                // Fire-and-forget: ignore response
+                let _ = req.body(body).send();
+                Ok(())
+            }
+        }
     }
 
     fn initialize(&mut self) -> Result<(), String> {
         let params = json!({
-            "protocolVersion": "2024-11-05",
+            "protocolVersion": "2025-03-26",
             "capabilities": {},
             "clientInfo": {
                 "name": "thechat",
@@ -273,11 +423,28 @@ impl McpClient {
     }
 
     fn shutdown(&mut self) {
-        // Drop stdin to signal EOF
-        self.stdin.take();
-        // Kill the process and wait for it
-        let _ = self.child.kill();
-        let _ = self.child.wait();
+        match &mut self.transport {
+            Transport::Stdio { stdin, child, .. } => {
+                // Drop stdin to signal EOF
+                stdin.take();
+                // Kill the process and wait for it
+                let _ = child.kill();
+                let _ = child.wait();
+            }
+            Transport::Http {
+                client,
+                url,
+                session_id,
+            } => {
+                // Send DELETE to terminate the session, ignore errors
+                if let Some(sid) = session_id.as_deref() {
+                    let _ = client
+                        .delete(url.as_str())
+                        .header("Mcp-Session-Id", sid)
+                        .send();
+                }
+            }
+        }
     }
 }
 
@@ -299,15 +466,19 @@ impl McpManager {
 
 // -- Tauri commands --
 
-/// Initialize a single MCP server: spawn, handshake, list tools.
+/// Initialize a single MCP server: connect (stdio or HTTP), handshake, list tools.
 /// Returns the client and discovered tools, or an error.
 fn init_server(
     server_name: &str,
-    command: &str,
-    args: &[String],
-    env: &HashMap<String, String>,
+    config: &McpServerConfig,
 ) -> Result<(McpClient, Vec<McpToolInfo>), String> {
-    let mut client = McpClient::spawn(command, args, env)?;
+    let mut client = if let Some(url) = &config.url {
+        McpClient::connect_http(url, &config.headers)?
+    } else if let Some(command) = &config.command {
+        McpClient::spawn(command, &config.args, &config.env)?
+    } else {
+        return Err("MCP server must have either 'command' (stdio) or 'url' (HTTP)".into());
+    };
 
     if let Err(e) = client.initialize() {
         client.shutdown();
@@ -379,12 +550,7 @@ pub fn mcp_initialize<R: tauri::Runtime>(
         std::thread::spawn(move || {
             log::info!("Initializing MCP server: {}", server_name);
 
-            match init_server(
-                &server_name,
-                &server_config.command,
-                &server_config.args,
-                &server_config.env,
-            ) {
+            match init_server(&server_name, &server_config) {
                 Ok((client, tools)) => {
                     log::info!(
                         "MCP server '{}' ready with {} tools",
@@ -576,5 +742,39 @@ mod tests {
     fn shell_quoted_escapes_spaces_in_args() {
         let cmd = McpClient::shell_quoted("node", &["my script.js".into()]);
         assert_eq!(cmd, "node 'my script.js'");
+    }
+
+    #[test]
+    fn parse_sse_single_data_line() {
+        let body = "event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"tools\":[]}}\n\n";
+        let result = parse_sse_response(body, 1).unwrap();
+        assert_eq!(result, json!({"tools": []}));
+    }
+
+    #[test]
+    fn parse_sse_multiple_data_lines() {
+        // Two SSE events, only the second matches our ID
+        let body = "\
+            data: {\"jsonrpc\":\"2.0\",\"id\":99,\"result\":\"wrong\"}\n\n\
+            data: {\"jsonrpc\":\"2.0\",\"id\":2,\"result\":{\"ok\":true}}\n\n";
+        let result = parse_sse_response(body, 2).unwrap();
+        assert_eq!(result, json!({"ok": true}));
+    }
+
+    #[test]
+    fn parse_sse_no_matching_id() {
+        let body = "data: {\"jsonrpc\":\"2.0\",\"id\":5,\"result\":null}\n\n";
+        let result = parse_sse_response(body, 999);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("id=999"));
+    }
+
+    #[test]
+    fn parse_sse_error_response() {
+        let body =
+            "data: {\"jsonrpc\":\"2.0\",\"id\":1,\"error\":{\"code\":-32600,\"message\":\"Bad request\"}}\n\n";
+        let result = parse_sse_response(body, 1);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Bad request"));
     }
 }

@@ -5,11 +5,14 @@ use std::path::PathBuf;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct McpServerConfig {
-    pub command: String,
+    pub command: Option<String>,
     #[serde(default)]
     pub args: Vec<String>,
     #[serde(default)]
     pub env: HashMap<String, String>,
+    pub url: Option<String>,
+    #[serde(default)]
+    pub headers: HashMap<String, String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -93,5 +96,47 @@ mod tests {
         assert_eq!(config.model, "m");
 
         std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn parse_stdio_mcp_server() {
+        let json = r#"{
+            "api_key": "k", "model": "m",
+            "mcpServers": {
+                "fs": { "command": "npx", "args": ["-y", "server"], "env": {} }
+            }
+        }"#;
+        let config: AppConfig = serde_json::from_str(json).unwrap();
+        let srv = &config.mcp_servers["fs"];
+        assert_eq!(srv.command.as_deref(), Some("npx"));
+        assert!(srv.url.is_none());
+    }
+
+    #[test]
+    fn parse_http_mcp_server() {
+        let json = r#"{
+            "api_key": "k", "model": "m",
+            "mcpServers": {
+                "remote": { "url": "https://example.com/mcp", "headers": {"Authorization": "Bearer tok"} }
+            }
+        }"#;
+        let config: AppConfig = serde_json::from_str(json).unwrap();
+        let srv = &config.mcp_servers["remote"];
+        assert!(srv.command.is_none());
+        assert_eq!(srv.url.as_deref(), Some("https://example.com/mcp"));
+        assert_eq!(srv.headers.get("Authorization").unwrap(), "Bearer tok");
+    }
+
+    #[test]
+    fn parse_mcp_server_no_transport_deserializes() {
+        // Deserialization succeeds — validation happens at init time
+        let json = r#"{
+            "api_key": "k", "model": "m",
+            "mcpServers": { "bad": {} }
+        }"#;
+        let config: AppConfig = serde_json::from_str(json).unwrap();
+        let srv = &config.mcp_servers["bad"];
+        assert!(srv.command.is_none());
+        assert!(srv.url.is_none());
     }
 }
