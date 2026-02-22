@@ -1,5 +1,7 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import type { QuestionRequest } from "../core/types";
+
+const CUSTOM = "__custom__";
 
 interface QuestionOverlayProps {
   request: QuestionRequest;
@@ -8,101 +10,120 @@ interface QuestionOverlayProps {
 }
 
 export function QuestionOverlay({ request, onSubmit, onCancel }: QuestionOverlayProps) {
-  const [answers, setAnswers] = useState<string[][]>(
+  const [selections, setSelections] = useState<string[][]>(
     request.questions.map(() => []),
   );
-  const [customInputs, setCustomInputs] = useState<string[]>(
+  const [customText, setCustomText] = useState<string[]>(
     request.questions.map(() => ""),
   );
+  const inputRefs = useRef<(HTMLInputElement | null)[]>([]);
 
-  const toggleOption = (qIndex: number, label: string) => {
-    setAnswers((prev) => {
+  const toggleOption = (qIndex: number, value: string) => {
+    setSelections((prev) => {
       const updated = [...prev];
       const current = updated[qIndex] ?? [];
       const isMultiple = request.questions[qIndex]?.multiple;
 
       if (isMultiple) {
-        if (current.includes(label)) {
-          updated[qIndex] = current.filter((a) => a !== label);
-        } else {
-          updated[qIndex] = [...current, label];
-        }
+        updated[qIndex] = current.includes(value)
+          ? current.filter((v) => v !== value)
+          : [...current, value];
       } else {
-        updated[qIndex] = [label];
+        updated[qIndex] = current[0] === value ? [] : [value];
       }
       return updated;
     });
   };
 
-  const submitCustomAnswer = (qIndex: number) => {
-    const text = customInputs[qIndex]?.trim();
-    if (!text) return;
-    setAnswers((prev) => {
+  const activateCustom = (qIndex: number) => {
+    const isMultiple = request.questions[qIndex]?.multiple;
+    setSelections((prev) => {
       const updated = [...prev];
-      const isMultiple = request.questions[qIndex]?.multiple;
+      const current = updated[qIndex] ?? [];
       if (isMultiple) {
-        updated[qIndex] = [...(updated[qIndex] ?? []), text];
+        if (!current.includes(CUSTOM)) {
+          updated[qIndex] = [...current, CUSTOM];
+        }
       } else {
-        updated[qIndex] = [text];
+        updated[qIndex] = [CUSTOM];
       }
       return updated;
     });
-    setCustomInputs((prev) => {
-      const updated = [...prev];
-      updated[qIndex] = "";
-      return updated;
+  };
+
+  const handleSubmit = () => {
+    const final = selections.map((sel, i) => {
+      return sel
+        .map((v) => (v === CUSTOM ? customText[i]?.trim() ?? "" : v))
+        .filter(Boolean);
     });
+    onSubmit(final);
   };
 
   return (
     <div className="question-overlay">
       <div className="question-card">
-        {request.questions.map((q, qIndex) => (
-          <div key={qIndex} className="question-block">
-            <div className="question-header">{q.header}</div>
-            <div className="question-text">{q.question}</div>
-            <div className="question-options">
-              {q.options.map((opt) => {
-                const selected = (answers[qIndex] ?? []).includes(opt.label);
-                return (
+        {request.questions.map((q, qIndex) => {
+          const current = selections[qIndex] ?? [];
+          const customActive = current.includes(CUSTOM);
+
+          return (
+            <div key={qIndex} className="question-block">
+              <div className="question-header">{q.header}</div>
+              <div className="question-text">{q.question}</div>
+              <div className="question-options">
+                {q.options.map((opt) => (
                   <button
                     key={opt.label}
-                    className={`question-option ${selected ? "question-option-selected" : ""}`}
+                    className={`question-option ${current.includes(opt.label) ? "question-option-selected" : ""}`}
                     onClick={() => toggleOption(qIndex, opt.label)}
                   >
                     <span className="question-option-label">{opt.label}</span>
                     <span className="question-option-desc">{opt.description}</span>
                   </button>
-                );
-              })}
+                ))}
+                <div
+                  className={`question-option question-option-custom ${customActive ? "question-option-selected" : ""}`}
+                  onClick={() => {
+                    toggleOption(qIndex, CUSTOM);
+                    if (!customActive) {
+                      inputRefs.current[qIndex]?.focus();
+                    }
+                  }}
+                >
+                  <input
+                    ref={(el) => { inputRefs.current[qIndex] = el; }}
+                    type="text"
+                    placeholder="Type your own answer..."
+                    value={customText[qIndex] ?? ""}
+                    onClick={(e) => e.stopPropagation()}
+                    onFocus={() => activateCustom(qIndex)}
+                    onChange={(e) => {
+                      const value = e.target.value;
+                      setCustomText((prev) => {
+                        const updated = [...prev];
+                        updated[qIndex] = value;
+                        return updated;
+                      });
+                      activateCustom(qIndex);
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        handleSubmit();
+                      }
+                    }}
+                  />
+                </div>
+              </div>
             </div>
-            <div className="question-custom">
-              <input
-                type="text"
-                placeholder="Type your own answer..."
-                value={customInputs[qIndex] ?? ""}
-                onChange={(e) =>
-                  setCustomInputs((prev) => {
-                    const updated = [...prev];
-                    updated[qIndex] = e.target.value;
-                    return updated;
-                  })
-                }
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    e.preventDefault();
-                    submitCustomAnswer(qIndex);
-                  }
-                }}
-              />
-            </div>
-          </div>
-        ))}
+          );
+        })}
         <div className="question-actions">
           <button className="question-btn question-btn-cancel" onClick={onCancel}>
             Cancel
           </button>
-          <button className="question-btn question-btn-submit" onClick={() => onSubmit(answers)}>
+          <button className="question-btn question-btn-submit" onClick={handleSubmit}>
             Submit
           </button>
         </div>
