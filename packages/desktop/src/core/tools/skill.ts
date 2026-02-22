@@ -74,10 +74,13 @@ ${skillsXml}`,
           });
           newToolNames = toolInfos.map((t) => `${t.server}__${t.name}`);
 
-          // Add tools to the current session (not globally)
+          // Add tools to the active conversation's session (not globally)
           if (toolInfos.length > 0) {
             const { useToolsStore } = await import("../../stores/tools");
-            useToolsStore.getState().addSessionMcpTools(toolInfos);
+            const activeConvId = useToolsStore.getState().activeConvId;
+            if (activeConvId) {
+              useToolsStore.getState().addSessionMcpTools(activeConvId, toolInfos);
+            }
           }
         } catch (e) {
           // Non-fatal: skill content is still useful even if MCP servers fail

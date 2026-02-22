@@ -71,6 +71,7 @@ export function AgentChatRoute() {
         if (conv) {
           loadConversation(conv);
           useConversationsStore.getState().markAgentChatRead(conv.id);
+          useToolsStore.getState().setActiveConversation(conv.id);
         }
       });
     } else if (!routeId && loadedIdRef.current !== null) {
@@ -78,7 +79,7 @@ export function AgentChatRoute() {
       startNewConversation();
       resetTodos();
       setTodosState([]);
-      useToolsStore.getState().clearSessionMcpTools();
+      useToolsStore.getState().setActiveConversation(null);
     }
   }, [routeId, loadConversation, startNewConversation]);
 
@@ -89,6 +90,8 @@ export function AgentChatRoute() {
       prevConvId.current = conversation.id;
       loadedIdRef.current = conversation.id;
       navigate({ to: "/chat/$id", params: { id: conversation.id }, replace: true });
+      // New conversation just created — no tools to load, but set active conv for future skill calls
+      useToolsStore.getState().setActiveConversation(conversation.id);
     } else {
       prevConvId.current = conversation?.id;
     }
@@ -162,7 +165,7 @@ export function AgentChatRoute() {
     onNewChat: () => {
       resetTodos();
       setTodosState([]);
-      useToolsStore.getState().clearSessionMcpTools();
+      useToolsStore.getState().setActiveConversation(null);
       navigate({ to: "/chat" });
     },
     onPaletteToggle: togglePalette,

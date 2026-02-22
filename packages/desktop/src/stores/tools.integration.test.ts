@@ -1,10 +1,12 @@
 /**
- * Integration test for session tool isolation via dynamic MCP loading.
+ * Integration test for per-conversation session tool persistence.
  *
  * Verifies the core user scenario:
- *   1. Skill activates → MCP tools discovered from the real backend → added as session tools
- *   2. User starts a new chat → session tools are cleared
- *   3. New chat does NOT have the previously loaded tools
+ *   1. Skill activates in Chat A → MCP tools added to conv-a's session
+ *   2. User switches to Chat B → conv-a's tools disappear, conv-b has none
+ *   3. User returns to Chat A → conv-a's tools are restored
+ *   4. New chat (null) → no session tools
+ *   5. Persistence: kv_set is called with correct key
  *
  * Requires:
  *  - API server running on port 3000 (with PostgreSQL)
@@ -13,6 +15,7 @@
  *   INTEGRATION=true pnpm --filter @thechat/desktop vitest run src/stores/tools.integration.test.ts
  */
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from "vitest";
+import { mockIPC } from "@tauri-apps/api/mocks";
 import { treaty } from "@elysiajs/eden";
 import type { App } from "@thechat/api";
 import { useToolsStore } from "./tools";
@@ -28,10 +31,6 @@ const api = treaty<App>(API_URL);
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-function auth(token: string) {
-  return { headers: { authorization: `Bearer ${token}` } };
-}
 
 let emailCounter = 0;
 function uniqueEmail() {
@@ -135,7 +134,7 @@ async function discoverMcpTools(token: string): Promise<McpToolInfo[]> {
   const listBody = await parseMcpResponse(listRes);
   const tools = ((listBody.result as Record<string, unknown>)?.tools as unknown[]) ?? [];
 
-  return tools.map((t: { name: string; description?: string; inputSchema?: Record<string, unknown> }) => ({
+  return (tools as { name: string; description?: string; inputSchema?: Record<string, unknown> }[]).map((t) => ({
     server: "thechat",
     name: t.name,
     description: t.description ?? "",
@@ -147,9 +146,13 @@ async function discoverMcpTools(token: string): Promise<McpToolInfo[]> {
 // Test suite — skipped unless INTEGRATION=true
 // ---------------------------------------------------------------------------
 
-describe.skipIf(!INTEGRATION)("Session tool isolation (integration)", () => {
+describe.skipIf(!INTEGRATION)("Per-conversation session tool persistence (integration)", () => {
   let user: { token: string; user: { id: string; name: string } };
   let mcpTools: McpToolInfo[];
+
+  // Track kv_store calls
+  const kvStore: Record<string, string> = {};
+  const kvSetCalls: { key: string; value: string }[] = [];
 
   beforeAll(async () => {
     // Verify the API server is reachable
@@ -179,15 +182,38 @@ describe.skipIf(!INTEGRATION)("Session tool isolation (integration)", () => {
     }
   });
 
-  beforeEach(() => {
-    // Reset store to a clean state before each test
+  beforeEach(async () => {
+    // Clear tracking
+    Object.keys(kvStore).forEach((k) => delete kvStore[k]);
+    kvSetCalls.length = 0;
+
+    // Mock Tauri IPC for kv_get, kv_set, and mcp_initialize_servers
+    mockIPC((cmd, args) => {
+      if (cmd === "kv_get") {
+        const key = (args as { key: string }).key;
+        return kvStore[key] ?? null;
+      }
+      if (cmd === "kv_set") {
+        const { key, value } = args as { key: string; value: string };
+        kvStore[key] = value;
+        kvSetCalls.push({ key, value });
+        return null;
+      }
+      if (cmd === "mcp_initialize_servers") {
+        return [];
+      }
+      return null;
+    });
+
+    // Reset store to a clean state (including recomputed tools)
     useToolsStore.setState({
       mcpTools: [],
-      sessionMcpTools: [],
+      sessionToolsByConv: {},
+      activeConvId: null,
       skills: [],
     });
-    // Recompute tools with empty state
-    useToolsStore.getState().clearSessionMcpTools();
+    // Recompute tools by switching to null conversation
+    await useToolsStore.getState().setActiveConversation(null);
   });
 
   test("MCP server exposes expected tools", () => {
@@ -198,96 +224,121 @@ describe.skipIf(!INTEGRATION)("Session tool isolation (integration)", () => {
     expect(toolNames).toContain("send_message");
   });
 
-  test("tools loaded via skill appear in session, then disappear on new chat", () => {
-    const store = useToolsStore.getState();
-    const initialToolCount = store.tools.length;
-    const initialToolNames = new Set(store.tools.map((t) => t.name));
+  test("tools loaded in conv-a are isolated from conv-b", async () => {
+    const initialToolCount = useToolsStore.getState().tools.length;
 
-    // Verify no MCP tools are present initially
-    expect(store.sessionMcpTools).toHaveLength(0);
-    expect(store.mcpTools).toHaveLength(0);
+    // Set active conversation to conv-a
+    await useToolsStore.getState().setActiveConversation("conv-a");
 
-    // --- Simulate: skill activates and loads MCP tools ---
-    useToolsStore.getState().addSessionMcpTools(mcpTools);
+    // Simulate: skill activates and loads MCP tools in conv-a
+    useToolsStore.getState().addSessionMcpTools("conv-a", mcpTools);
 
-    // Session tools should now be present
+    // Session tools should be present
     const afterSkill = useToolsStore.getState();
-    expect(afterSkill.sessionMcpTools.length).toBe(mcpTools.length);
-
-    // Each MCP tool should be in the combined tools list with prefixed name
-    for (const mcp of mcpTools) {
-      const prefixed = `thechat__${mcp.name}`;
-      const found = afterSkill.tools.find((t) => t.name === prefixed);
-      expect(found, `Expected tool ${prefixed} to be available`).toBeDefined();
-    }
-
-    // Total tool count should have increased
     expect(afterSkill.tools.length).toBe(initialToolCount + mcpTools.length);
-
-    // --- Simulate: user creates a new chat ---
-    useToolsStore.getState().clearSessionMcpTools();
-
-    // Session tools should be gone
-    const afterNewChat = useToolsStore.getState();
-    expect(afterNewChat.sessionMcpTools).toHaveLength(0);
-    expect(afterNewChat.tools.length).toBe(initialToolCount);
-
-    // No MCP tool names should remain
     for (const mcp of mcpTools) {
       const prefixed = `thechat__${mcp.name}`;
-      expect(
-        afterNewChat.tools.find((t) => t.name === prefixed),
-        `Tool ${prefixed} should NOT be present after new chat`,
-      ).toBeUndefined();
+      expect(afterSkill.tools.find((t) => t.name === prefixed)).toBeDefined();
     }
 
-    // Original builtin tools should still be present
-    for (const name of initialToolNames) {
-      expect(
-        afterNewChat.tools.find((t) => t.name === name),
-        `Builtin tool ${name} should still be present`,
-      ).toBeDefined();
+    // Switch to conv-b — should have NO session tools
+    await useToolsStore.getState().setActiveConversation("conv-b");
+    const afterSwitch = useToolsStore.getState();
+    expect(afterSwitch.tools.length).toBe(initialToolCount);
+    for (const mcp of mcpTools) {
+      const prefixed = `thechat__${mcp.name}`;
+      expect(afterSwitch.tools.find((t) => t.name === prefixed)).toBeUndefined();
+    }
+
+    // Return to conv-a — tools restored from in-memory cache
+    await useToolsStore.getState().setActiveConversation("conv-a");
+    const afterReturn = useToolsStore.getState();
+    expect(afterReturn.tools.length).toBe(initialToolCount + mcpTools.length);
+    for (const mcp of mcpTools) {
+      const prefixed = `thechat__${mcp.name}`;
+      expect(afterReturn.tools.find((t) => t.name === prefixed)).toBeDefined();
     }
   });
 
-  test("getTools callback reflects session tool changes dynamically", () => {
-    // This simulates how the chat loop uses getTools to get fresh tools each iteration
+  test("new chat (null) clears session tools", async () => {
+    const initialToolCount = useToolsStore.getState().tools.length;
+
+    await useToolsStore.getState().setActiveConversation("conv-a");
+    useToolsStore.getState().addSessionMcpTools("conv-a", mcpTools);
+    expect(useToolsStore.getState().tools.length).toBe(initialToolCount + mcpTools.length);
+
+    // Start new chat
+    await useToolsStore.getState().setActiveConversation(null);
+    expect(useToolsStore.getState().tools.length).toBe(initialToolCount);
+    expect(useToolsStore.getState().activeConvId).toBeNull();
+  });
+
+  test("kv_set is called with correct key when adding session tools", async () => {
+    await useToolsStore.getState().setActiveConversation("conv-persist");
+    useToolsStore.getState().addSessionMcpTools("conv-persist", mcpTools);
+
+    // Wait a tick for the fire-and-forget kv_set to complete
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(kvSetCalls.length).toBeGreaterThan(0);
+    const call = kvSetCalls.find((c) => c.key === "session_tools:conv-persist");
+    expect(call).toBeDefined();
+
+    const stored = JSON.parse(call!.value) as McpToolInfo[];
+    expect(stored.length).toBe(mcpTools.length);
+    expect(stored[0].server).toBe("thechat");
+  });
+
+  test("tools loaded from kv_store on setActiveConversation", async () => {
+    const initialToolCount = useToolsStore.getState().tools.length;
+
+    // Pre-populate kv_store (simulating app restart)
+    kvStore["session_tools:conv-restored"] = JSON.stringify(mcpTools);
+
+    // Switch to the conversation — should load from kv_store
+    await useToolsStore.getState().setActiveConversation("conv-restored");
+
+    const state = useToolsStore.getState();
+    expect(state.tools.length).toBe(initialToolCount + mcpTools.length);
+    expect(state.sessionToolsByConv["conv-restored"]?.length).toBe(mcpTools.length);
+  });
+
+  test("getTools callback reflects session tool changes dynamically", async () => {
     const getTools = () => useToolsStore.getState().tools;
 
     // Before skill activation
     const toolsBefore = getTools();
-    const hasAnyMcpTool = toolsBefore.some((t) => t.name.startsWith("thechat__"));
-    expect(hasAnyMcpTool).toBe(false);
+    expect(toolsBefore.some((t) => t.name.startsWith("thechat__"))).toBe(false);
 
-    // Activate skill → add session tools
-    useToolsStore.getState().addSessionMcpTools(mcpTools);
+    // Activate skill in conv-a
+    await useToolsStore.getState().setActiveConversation("conv-a");
+    useToolsStore.getState().addSessionMcpTools("conv-a", mcpTools);
     const toolsDuring = getTools();
-    const mcpToolsDuring = toolsDuring.filter((t) => t.name.startsWith("thechat__"));
-    expect(mcpToolsDuring.length).toBe(mcpTools.length);
+    expect(toolsDuring.filter((t) => t.name.startsWith("thechat__")).length).toBe(mcpTools.length);
 
-    // New chat → clear session tools
-    useToolsStore.getState().clearSessionMcpTools();
+    // Switch to conv-b (no tools)
+    await useToolsStore.getState().setActiveConversation("conv-b");
     const toolsAfter = getTools();
-    const mcpToolsAfter = toolsAfter.filter((t) => t.name.startsWith("thechat__"));
-    expect(mcpToolsAfter.length).toBe(0);
+    expect(toolsAfter.filter((t) => t.name.startsWith("thechat__")).length).toBe(0);
   });
 
-  test("session tools do not leak into mcpTools (global)", () => {
-    useToolsStore.getState().addSessionMcpTools(mcpTools);
+  test("session tools do not leak into mcpTools (global)", async () => {
+    await useToolsStore.getState().setActiveConversation("conv-a");
+    useToolsStore.getState().addSessionMcpTools("conv-a", mcpTools);
 
     const state = useToolsStore.getState();
-    // Session tools should be in sessionMcpTools, NOT in mcpTools
-    expect(state.sessionMcpTools.length).toBeGreaterThan(0);
+    expect(state.sessionToolsByConv["conv-a"]!.length).toBeGreaterThan(0);
     expect(state.mcpTools).toHaveLength(0);
   });
 
-  test("adding same tools twice deduplicates", () => {
-    useToolsStore.getState().addSessionMcpTools(mcpTools);
-    const countAfterFirst = useToolsStore.getState().sessionMcpTools.length;
+  test("adding same tools twice deduplicates", async () => {
+    await useToolsStore.getState().setActiveConversation("conv-a");
+    useToolsStore.getState().addSessionMcpTools("conv-a", mcpTools);
+    const countAfterFirst = useToolsStore.getState().sessionToolsByConv["conv-a"]!.length;
 
     // Adding the same tools again should be a no-op
-    useToolsStore.getState().addSessionMcpTools(mcpTools);
-    const countAfterSecond = useToolsStore.getState().sessionMcpTools.length;
+    useToolsStore.getState().addSessionMcpTools("conv-a", mcpTools);
+    const countAfterSecond = useToolsStore.getState().sessionToolsByConv["conv-a"]!.length;
 
     expect(countAfterSecond).toBe(countAfterFirst);
   });
