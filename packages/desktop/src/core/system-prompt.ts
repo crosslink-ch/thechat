@@ -52,6 +52,12 @@ Use the **task** tool to delegate complex, independent subtasks to a sub-agent. 
 ## Questions
 Use the **question** tool when you need clarification, preferences, or decisions from the user. Provide clear options to make it easy for them to respond.
 
+## Credentials
+Use **list_credentials** to discover available credentials (API tokens, keys).
+Use **get_credential** to request one — the user will be prompted for permission.
+Always provide a reason explaining why the credential is needed.
+Never log, display, or include credential values in file contents.
+
 Recommended approach:
 1. Use todowrite to plan the task into steps
 2. Read relevant files to understand context
