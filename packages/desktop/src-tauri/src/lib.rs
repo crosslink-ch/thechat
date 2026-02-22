@@ -69,11 +69,21 @@ fn kv_delete(key: String, db: State<DbState>) -> Result<(), String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let db_path = dirs::data_dir()
-        .unwrap_or_else(|| std::path::PathBuf::from("."))
-        .join("thechat");
-    std::fs::create_dir_all(&db_path).expect("Failed to create data directory");
-    let db_path = db_path.join("thechat.db");
+    let db_path = if let Ok(dir) = std::env::var("THECHAT_DATA_DIR") {
+        // Explicit override (used by E2E tests for isolation)
+        let dir = std::path::PathBuf::from(dir);
+        std::fs::create_dir_all(&dir).expect("Failed to create data directory");
+        dir.join("thechat.db")
+    } else if cfg!(debug_assertions) {
+        // In development, store the database inside the project directory
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("dev.db")
+    } else {
+        let dir = dirs::data_dir()
+            .unwrap_or_else(|| std::path::PathBuf::from("."))
+            .join("thechat");
+        std::fs::create_dir_all(&dir).expect("Failed to create data directory");
+        dir.join("thechat.db")
+    };
 
     let database =
         Database::new(db_path.to_str().unwrap()).expect("Failed to initialize database");

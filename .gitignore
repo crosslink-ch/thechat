@@ -26,6 +26,11 @@ dist-ssr
 # App config (contains API keys)
 config.json
 
+# Development database
+dev.db
+dev.db-journal
+dev.db-wal
+
 # Environment variables
 .env
 .env.local
