@@ -21,6 +21,8 @@ The exact tools available are discovered dynamically from the MCP server — ins
 - DM creation is idempotent — calling it twice returns the same conversation.
 - To add users to a workspace, use \`thechat__invite_to_workspace\` with their email address. Only workspace owners and admins can invite.
 - Users cannot join workspaces directly — they must be invited.
+- Use \`thechat__update_member_role\` to promote a member to admin or demote an admin to member. Only owners can manage admin roles.
+- Use \`thechat__remove_member\` to remove a user from a workspace.
 
 ## Important
 

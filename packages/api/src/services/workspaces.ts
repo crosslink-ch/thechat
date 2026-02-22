@@ -236,3 +236,165 @@ export async function joinWorkspace(workspaceId: string, userId: string) {
 
   return { success: true };
 }
+
+export async function updateMemberRole(
+  workspaceId: string,
+  actorUserId: string,
+  targetUserId: string,
+  newRole: string
+) {
+  if (newRole !== "member" && newRole !== "admin") {
+    throw new ServiceError("Role must be 'member' or 'admin'", 400);
+  }
+
+  // Check workspace exists
+  const [workspace] = await db
+    .select({ id: workspaces.id })
+    .from(workspaces)
+    .where(eq(workspaces.id, workspaceId))
+    .limit(1);
+
+  if (!workspace) {
+    throw new ServiceError("Workspace not found", 404);
+  }
+
+  // Check actor is owner or admin
+  const [actor] = await db
+    .select({ role: workspaceMembers.role })
+    .from(workspaceMembers)
+    .where(
+      and(
+        eq(workspaceMembers.workspaceId, workspaceId),
+        eq(workspaceMembers.userId, actorUserId)
+      )
+    )
+    .limit(1);
+
+  if (!actor || (actor.role !== "owner" && actor.role !== "admin")) {
+    throw new ServiceError("Only owners and admins can change roles", 403);
+  }
+
+  // Check target is a member
+  const [target] = await db
+    .select({ role: workspaceMembers.role })
+    .from(workspaceMembers)
+    .where(
+      and(
+        eq(workspaceMembers.workspaceId, workspaceId),
+        eq(workspaceMembers.userId, targetUserId)
+      )
+    )
+    .limit(1);
+
+  if (!target) {
+    throw new ServiceError("Target user is not a member of this workspace", 404);
+  }
+
+  if (target.role === "owner") {
+    throw new ServiceError("Cannot change the owner's role", 403);
+  }
+
+  // Admins can only manage regular members
+  if (actor.role === "admin" && target.role !== "member") {
+    throw new ServiceError("Admins can only manage regular members", 403);
+  }
+
+  await db
+    .update(workspaceMembers)
+    .set({ role: newRole })
+    .where(
+      and(
+        eq(workspaceMembers.workspaceId, workspaceId),
+        eq(workspaceMembers.userId, targetUserId)
+      )
+    );
+
+  return { success: true };
+}
+
+export async function removeMember(
+  workspaceId: string,
+  actorUserId: string,
+  targetUserId: string
+) {
+  // Check workspace exists
+  const [workspace] = await db
+    .select({ id: workspaces.id })
+    .from(workspaces)
+    .where(eq(workspaces.id, workspaceId))
+    .limit(1);
+
+  if (!workspace) {
+    throw new ServiceError("Workspace not found", 404);
+  }
+
+  // Check actor is owner or admin
+  const [actor] = await db
+    .select({ role: workspaceMembers.role })
+    .from(workspaceMembers)
+    .where(
+      and(
+        eq(workspaceMembers.workspaceId, workspaceId),
+        eq(workspaceMembers.userId, actorUserId)
+      )
+    )
+    .limit(1);
+
+  if (!actor || (actor.role !== "owner" && actor.role !== "admin")) {
+    throw new ServiceError("Only owners and admins can remove members", 403);
+  }
+
+  // Check target is a member
+  const [target] = await db
+    .select({ role: workspaceMembers.role })
+    .from(workspaceMembers)
+    .where(
+      and(
+        eq(workspaceMembers.workspaceId, workspaceId),
+        eq(workspaceMembers.userId, targetUserId)
+      )
+    )
+    .limit(1);
+
+  if (!target) {
+    throw new ServiceError("Target user is not a member of this workspace", 404);
+  }
+
+  if (target.role === "owner") {
+    throw new ServiceError("Cannot remove the workspace owner", 403);
+  }
+
+  // Admins can only remove regular members
+  if (actor.role === "admin" && target.role !== "member") {
+    throw new ServiceError("Admins can only remove regular members", 403);
+  }
+
+  // Remove from workspace members
+  await db
+    .delete(workspaceMembers)
+    .where(
+      and(
+        eq(workspaceMembers.workspaceId, workspaceId),
+        eq(workspaceMembers.userId, targetUserId)
+      )
+    );
+
+  // Remove from all workspace channels
+  const channels = await db
+    .select({ id: conversations.id })
+    .from(conversations)
+    .where(eq(conversations.workspaceId, workspaceId));
+
+  for (const channel of channels) {
+    await db
+      .delete(conversationParticipants)
+      .where(
+        and(
+          eq(conversationParticipants.conversationId, channel.id),
+          eq(conversationParticipants.userId, targetUserId)
+        )
+      );
+  }
+
+  return { success: true };
+}

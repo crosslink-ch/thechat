@@ -1,11 +1,13 @@
 import { create } from "zustand";
-import type { WsClientEvent, WsServerEvent, ChatMessage, WorkspaceMember, WorkspaceInvite } from "@thechat/shared";
+import type { WsClientEvent, WsServerEvent, ChatMessage, WorkspaceMember, WorkspaceMemberRole, WorkspaceInvite } from "@thechat/shared";
 
 const WS_URL = __BACKEND_URL__.replace(/^http/, "ws");
 
 type MessageCallback = (msg: ChatMessage, type: "direct" | "group") => void;
 type TypingCallback = (conversationId: string, userId: string, userName: string) => void;
 type MemberJoinedCallback = (workspaceId: string, member: WorkspaceMember) => void;
+type MemberRoleChangedCallback = (workspaceId: string, userId: string, newRole: WorkspaceMemberRole) => void;
+type MemberRemovedCallback = (workspaceId: string, userId: string) => void;
 type InviteReceivedCallback = (invite: WorkspaceInvite) => void;
 
 interface WebSocketStore {
@@ -17,6 +19,8 @@ interface WebSocketStore {
   subscribeToMessages: (cb: MessageCallback) => () => void;
   subscribeToTyping: (cb: TypingCallback) => () => void;
   subscribeToMemberJoined: (cb: MemberJoinedCallback) => () => void;
+  subscribeToMemberRoleChanged: (cb: MemberRoleChangedCallback) => () => void;
+  subscribeToMemberRemoved: (cb: MemberRemovedCallback) => () => void;
   subscribeToInviteReceived: (cb: InviteReceivedCallback) => () => void;
 }
 
@@ -28,6 +32,8 @@ let currentToken: string | null = null;
 const messageListeners = new Set<MessageCallback>();
 const typingListeners = new Set<TypingCallback>();
 const memberJoinedListeners = new Set<MemberJoinedCallback>();
+const memberRoleChangedListeners = new Set<MemberRoleChangedCallback>();
+const memberRemovedListeners = new Set<MemberRemovedCallback>();
 const inviteReceivedListeners = new Set<InviteReceivedCallback>();
 
 function doConnect() {
@@ -65,6 +71,14 @@ function doConnect() {
     } else if (event.type === "member_joined") {
       for (const cb of memberJoinedListeners) {
         cb(event.workspaceId, event.member);
+      }
+    } else if (event.type === "member_role_changed") {
+      for (const cb of memberRoleChangedListeners) {
+        cb(event.workspaceId, event.userId, event.newRole);
+      }
+    } else if (event.type === "member_removed") {
+      for (const cb of memberRemovedListeners) {
+        cb(event.workspaceId, event.userId);
       }
     } else if (event.type === "invite_received") {
       for (const cb of inviteReceivedListeners) {
@@ -147,6 +161,20 @@ export const useWebSocketStore = create<WebSocketStore>()(() => ({
     memberJoinedListeners.add(cb);
     return () => {
       memberJoinedListeners.delete(cb);
+    };
+  },
+
+  subscribeToMemberRoleChanged: (cb: MemberRoleChangedCallback) => {
+    memberRoleChangedListeners.add(cb);
+    return () => {
+      memberRoleChangedListeners.delete(cb);
+    };
+  },
+
+  subscribeToMemberRemoved: (cb: MemberRemovedCallback) => {
+    memberRemovedListeners.add(cb);
+    return () => {
+      memberRemovedListeners.delete(cb);
     };
   },
 

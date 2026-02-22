@@ -89,6 +89,52 @@ export function RootLayout() {
     return unsub;
   }, []);
 
+  // WebSocket member_role_changed listener — update active workspace members list
+  useEffect(() => {
+    const unsub = useWebSocketStore.getState().subscribeToMemberRoleChanged(
+      (workspaceId, userId, newRole) => {
+        const { activeWorkspace } = useWorkspacesStore.getState();
+        if (!activeWorkspace || activeWorkspace.id !== workspaceId) return;
+        useWorkspacesStore.setState({
+          activeWorkspace: {
+            ...activeWorkspace,
+            members: activeWorkspace.members.map((m) =>
+              m.userId === userId ? { ...m, role: newRole } : m
+            ),
+          },
+        });
+      },
+    );
+    return unsub;
+  }, []);
+
+  // WebSocket member_removed listener — remove from workspace or navigate away
+  useEffect(() => {
+    const unsub = useWebSocketStore.getState().subscribeToMemberRemoved(
+      (workspaceId, userId) => {
+        const { activeWorkspace } = useWorkspacesStore.getState();
+        if (!activeWorkspace || activeWorkspace.id !== workspaceId) return;
+
+        // If the removed user is the current user, leave the workspace
+        if (userId === userRef.current?.id) {
+          useWorkspacesStore.setState({ activeWorkspace: null });
+          useWorkspacesStore.getState().initialize();
+          navigate({ to: "/chat" });
+          return;
+        }
+
+        // Otherwise just remove from the members list
+        useWorkspacesStore.setState({
+          activeWorkspace: {
+            ...activeWorkspace,
+            members: activeWorkspace.members.filter((m) => m.userId !== userId),
+          },
+        });
+      },
+    );
+    return unsub;
+  }, [navigate]);
+
   // WebSocket invite_received listener — add notification + fire OS notification
   useEffect(() => {
     const unsub = useWebSocketStore.getState().subscribeToInviteReceived(

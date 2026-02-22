@@ -262,5 +262,7 @@ export type WsServerEvent =
   | { type: "new_message"; message: ChatMessage; conversationType: "direct" | "group" }
   | { type: "typing"; conversationId: string; userId: string; userName: string }
   | { type: "member_joined"; workspaceId: string; member: WorkspaceMember }
+  | { type: "member_role_changed"; workspaceId: string; userId: string; newRole: WorkspaceMemberRole }
+  | { type: "member_removed"; workspaceId: string; userId: string }
   | { type: "invite_received"; invite: WorkspaceInvite }
   | { type: "error"; message: string };

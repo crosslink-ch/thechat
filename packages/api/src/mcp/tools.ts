@@ -4,6 +4,8 @@ import {
   listUserWorkspaces,
   getWorkspaceDetail,
   createWorkspace,
+  updateMemberRole,
+  removeMember,
 } from "../services/workspaces";
 import { createInvite } from "../services/invites";
 import {
@@ -129,6 +131,52 @@ export function registerTools(server: McpServer) {
       const user = getUser(extra);
       return withService(() =>
         createInvite(workspaceId as string, user.id, email as string)
+      );
+    }
+  );
+
+  // --- update_member_role ---
+  server.registerTool(
+    "update_member_role",
+    {
+      description:
+        "Change a workspace member's role. Owners can promote members to admin or demote admins to member. Admins can only manage regular members.",
+      inputSchema: {
+        workspaceId: z.string().min(1).describe("The workspace ID"),
+        userId: z.string().uuid().describe("The target user's ID"),
+        role: z
+          .enum(["member", "admin"])
+          .describe("The new role: 'member' or 'admin'"),
+      },
+    },
+    async ({ workspaceId, userId, role }, extra) => {
+      const user = getUser(extra);
+      return withService(() =>
+        updateMemberRole(
+          workspaceId as string,
+          user.id,
+          userId as string,
+          role as string
+        )
+      );
+    }
+  );
+
+  // --- remove_member ---
+  server.registerTool(
+    "remove_member",
+    {
+      description:
+        "Remove a user from a workspace. Owners can remove any non-owner. Admins can only remove regular members.",
+      inputSchema: {
+        workspaceId: z.string().min(1).describe("The workspace ID"),
+        userId: z.string().uuid().describe("The user ID to remove"),
+      },
+    },
+    async ({ workspaceId, userId }, extra) => {
+      const user = getUser(extra);
+      return withService(() =>
+        removeMember(workspaceId as string, user.id, userId as string)
       );
     }
   );
