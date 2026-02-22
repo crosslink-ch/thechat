@@ -17,7 +17,9 @@
     "db:generate": "pnpm --filter @thechat/api db:generate",
     "db:migrate": "pnpm --filter @thechat/api db:migrate",
     "db:push": "pnpm --filter @thechat/api db:push",
-    "db:studio": "pnpm --filter @thechat/api db:studio"
+    "db:studio": "pnpm --filter @thechat/api db:studio",
+    "test:e2e": "pnpm --filter @thechat/desktop test:e2e",
+    "test:e2e:headless": "pnpm --filter @thechat/desktop test:e2e:headless"
   },
   "devDependencies": {
     "concurrently": "^9.2.1"

@@ -153,6 +153,24 @@ All API calls from the desktop app to the backend **must** use [Eden Treaty](htt
 - Tests mock the Tauri IPC layer and OpenRouter API responses
 - Tool tests live alongside their source in `packages/desktop/src/core/tools/*.test.ts`
 
+### E2E Tests
+
+E2E tests use **tauri-driver + WebdriverIO v9** to drive the real compiled Tauri binary. Linux/WSL only (tauri-driver uses WebKitWebDriver).
+
+**System dependencies:**
+- `webkit2gtk-driver` (system package)
+- `tauri-driver` (`cargo install tauri-driver --locked`)
+- `xvfb` (for headless mode)
+
+**Commands:**
+```bash
+pnpm test:e2e              # Run E2E tests (requires display server)
+pnpm test:e2e:headless     # Run E2E tests headless via xvfb
+SKIP_BUILD=1 pnpm test:e2e # Skip Tauri binary rebuild (use existing binary)
+```
+
+**Requirements:** API server + PostgreSQL must be running (`pnpm dev:api`)
+
 ## OpenCode as best practice
 
 For things related to the core chat loop, managing subagents, skills, preventing doom loops, having good system prompts, you can reference OpenCode when it makes sense.

@@ -11,7 +11,9 @@
     "test": "vitest run --exclude '**/*.integration.test.ts' && INTEGRATION=true vitest run integration",
     "test:unit": "vitest run --exclude '**/*.integration.test.ts'",
     "test:integration": "INTEGRATION=true vitest run integration",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "test:e2e": "wdio run e2e/wdio.conf.js",
+    "test:e2e:headless": "xvfb-run -a wdio run e2e/wdio.conf.js"
   },
   "dependencies": {
     "@elysiajs/eden": "^1.2.0",
@@ -46,6 +48,10 @@
     "typescript": "~5.8.3",
     "vite": "^7.0.4",
     "vitest": "^4.0.18",
-    "ws": "^8.19.0"
+    "ws": "^8.19.0",
+    "@wdio/cli": "^9",
+    "@wdio/local-runner": "^9",
+    "@wdio/mocha-framework": "^9",
+    "@wdio/spec-reporter": "^9"
   }
 }
