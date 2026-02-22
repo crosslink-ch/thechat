@@ -16,6 +16,8 @@ import {
   taskTool,
   todoReadTool,
   todoWriteTool,
+  listCredentialsTool,
+  getCredentialTool,
   invalidTool,
   createSkillTool,
 } from "../core/tools/index";
@@ -40,6 +42,8 @@ const builtinTools: ToolDefinition[] = [
   taskTool,
   todoReadTool,
   todoWriteTool,
+  listCredentialsTool,
+  getCredentialTool,
   invalidTool,
 ];
 
