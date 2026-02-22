@@ -1,10 +1,11 @@
 import { create } from "zustand";
-import type { WsClientEvent, WsServerEvent, ChatMessage } from "@thechat/shared";
+import type { WsClientEvent, WsServerEvent, ChatMessage, WorkspaceMember } from "@thechat/shared";
 
 const WS_URL = __BACKEND_URL__.replace(/^http/, "ws");
 
 type MessageCallback = (msg: ChatMessage, type: "direct" | "group") => void;
 type TypingCallback = (conversationId: string, userId: string, userName: string) => void;
+type MemberJoinedCallback = (workspaceId: string, member: WorkspaceMember) => void;
 
 interface WebSocketStore {
   connected: boolean;
@@ -14,6 +15,7 @@ interface WebSocketStore {
   sendTyping: (conversationId: string) => void;
   subscribeToMessages: (cb: MessageCallback) => () => void;
   subscribeToTyping: (cb: TypingCallback) => () => void;
+  subscribeToMemberJoined: (cb: MemberJoinedCallback) => () => void;
 }
 
 let ws: WebSocket | null = null;
@@ -23,6 +25,7 @@ let currentToken: string | null = null;
 
 const messageListeners = new Set<MessageCallback>();
 const typingListeners = new Set<TypingCallback>();
+const memberJoinedListeners = new Set<MemberJoinedCallback>();
 
 function doConnect() {
   if (!currentToken) return;
@@ -55,6 +58,10 @@ function doConnect() {
     } else if (event.type === "typing") {
       for (const cb of typingListeners) {
         cb(event.conversationId, event.userId, event.userName);
+      }
+    } else if (event.type === "member_joined") {
+      for (const cb of memberJoinedListeners) {
+        cb(event.workspaceId, event.member);
       }
     }
   };
@@ -126,6 +133,13 @@ export const useWebSocketStore = create<WebSocketStore>()(() => ({
     typingListeners.add(cb);
     return () => {
       typingListeners.delete(cb);
+    };
+  },
+
+  subscribeToMemberJoined: (cb: MemberJoinedCallback) => {
+    memberJoinedListeners.add(cb);
+    return () => {
+      memberJoinedListeners.delete(cb);
     };
   },
 }));

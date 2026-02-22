@@ -67,6 +67,25 @@ export function RootLayout() {
     return unsubMessages;
   }, []);
 
+  // WebSocket member_joined listener — update active workspace members list
+  useEffect(() => {
+    const unsub = useWebSocketStore.getState().subscribeToMemberJoined(
+      (workspaceId, member) => {
+        const { activeWorkspace } = useWorkspacesStore.getState();
+        if (!activeWorkspace || activeWorkspace.id !== workspaceId) return;
+        // Guard against duplicates (idempotent)
+        if (activeWorkspace.members.some((m) => m.userId === member.userId)) return;
+        useWorkspacesStore.setState({
+          activeWorkspace: {
+            ...activeWorkspace,
+            members: [...activeWorkspace.members, member],
+          },
+        });
+      },
+    );
+    return unsub;
+  }, []);
+
   // Keybindings
   const handleNewConversation = () => {
     resetTodos();
