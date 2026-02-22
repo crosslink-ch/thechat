@@ -422,6 +422,14 @@ impl McpClient {
         }
     }
 
+    #[cfg(test)]
+    fn session_id(&self) -> Option<&str> {
+        match &self.transport {
+            Transport::Http { session_id, .. } => session_id.as_deref(),
+            _ => None,
+        }
+    }
+
     fn shutdown(&mut self) {
         match &mut self.transport {
             Transport::Stdio { stdin, child, .. } => {
@@ -776,5 +784,311 @@ mod tests {
         let result = parse_sse_response(body, 1);
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("Bad request"));
+    }
+
+    // ---------------------------------------------------------------
+    // Integration tests — spawn real MCP servers via npx
+    // ---------------------------------------------------------------
+
+    use std::net::TcpListener;
+    use tempfile::TempDir;
+
+    /// RAII guard that kills a child process on drop (even on panic).
+    struct ChildGuard(Option<Child>);
+
+    impl Drop for ChildGuard {
+        fn drop(&mut self) {
+            if let Some(ref mut child) = self.0 {
+                let _ = child.kill();
+                let _ = child.wait();
+            }
+        }
+    }
+
+    /// Spawn `@modelcontextprotocol/server-filesystem` over stdio.
+    /// Returns the connected+initialized client and a TempDir it's scoped to.
+    fn spawn_stdio_test_server() -> (McpClient, TempDir) {
+        let tmp = TempDir::new().expect("create temp dir");
+        let mut client = McpClient::spawn(
+            "npx",
+            &[
+                "-y".into(),
+                "@modelcontextprotocol/server-filesystem".into(),
+                tmp.path().to_str().unwrap().into(),
+            ],
+            &HashMap::new(),
+        )
+        .expect("spawn stdio MCP server");
+        client.initialize().expect("initialize stdio server");
+        (client, tmp)
+    }
+
+    /// Bind to port 0 to let the OS assign a free port, then return it.
+    fn find_free_port() -> u16 {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind to port 0");
+        listener.local_addr().unwrap().port()
+    }
+
+    /// Poll until `port` is accepting TCP connections (or timeout).
+    fn wait_for_port(port: u16, timeout: std::time::Duration) -> Result<(), String> {
+        let start = std::time::Instant::now();
+        while start.elapsed() < timeout {
+            if std::net::TcpStream::connect(("127.0.0.1", port)).is_ok() {
+                return Ok(());
+            }
+            std::thread::sleep(std::time::Duration::from_millis(200));
+        }
+        Err(format!(
+            "Port {} not ready after {:?}",
+            port, timeout
+        ))
+    }
+
+    /// Spawn `@modelcontextprotocol/server-everything streamableHttp`
+    /// listening on a free port. Returns the process guard and the port.
+    fn spawn_http_test_server() -> (ChildGuard, u16) {
+        let port = find_free_port();
+        let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into());
+        let child = Command::new(&shell)
+            .args([
+                "-l",
+                "-c",
+                &format!(
+                    "npx -y @modelcontextprotocol/server-everything streamableHttp"
+                ),
+            ])
+            .env("PORT", port.to_string())
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn HTTP MCP server");
+
+        wait_for_port(port, std::time::Duration::from_secs(30))
+            .expect("HTTP server should become ready");
+
+        (ChildGuard(Some(child)), port)
+    }
+
+    // -- Stdio transport integration tests --
+
+    #[test]
+    fn stdio_spawn_and_initialize() {
+        let (mut client, _tmp) = spawn_stdio_test_server();
+        // If we got here, spawn + initialize succeeded
+        client.shutdown();
+    }
+
+    #[test]
+    fn stdio_list_tools() {
+        let (mut client, _tmp) = spawn_stdio_test_server();
+        let tools = client.list_tools().expect("list_tools");
+        let names: Vec<String> = tools
+            .iter()
+            .filter_map(|t| t.get("name").and_then(|n| n.as_str()).map(String::from))
+            .collect();
+        assert!(names.contains(&"read_file".into()), "expected read_file in {names:?}");
+        assert!(names.contains(&"write_file".into()), "expected write_file in {names:?}");
+        assert!(
+            names.contains(&"list_directory".into()),
+            "expected list_directory in {names:?}"
+        );
+        client.shutdown();
+    }
+
+    #[test]
+    fn stdio_call_tool_list_directory() {
+        let (mut client, tmp) = spawn_stdio_test_server();
+        let result = client.call_tool(
+            "list_directory",
+            json!({"path": tmp.path().to_str().unwrap()}),
+        );
+        assert!(result.is_ok(), "list_directory failed: {:?}", result.err());
+        client.shutdown();
+    }
+
+    #[test]
+    fn stdio_call_tool_read_write_roundtrip() {
+        let (mut client, tmp) = spawn_stdio_test_server();
+        let file_path = tmp.path().join("test.txt");
+        let content = "hello from integration test";
+
+        client
+            .call_tool(
+                "write_file",
+                json!({
+                    "path": file_path.to_str().unwrap(),
+                    "content": content,
+                }),
+            )
+            .expect("write_file");
+
+        let read_result = client
+            .call_tool("read_file", json!({"path": file_path.to_str().unwrap()}))
+            .expect("read_file");
+
+        assert!(
+            read_result.contains(content),
+            "read_file result should contain written content, got: {read_result}"
+        );
+        client.shutdown();
+    }
+
+    #[test]
+    fn stdio_call_tool_error() {
+        let (mut client, _tmp) = spawn_stdio_test_server();
+        let result = client.call_tool(
+            "read_file",
+            json!({"path": "/nonexistent/path/that/does/not/exist.txt"}),
+        );
+        assert!(result.is_err(), "expected error for nonexistent file");
+        client.shutdown();
+    }
+
+    #[test]
+    fn stdio_shutdown() {
+        let (mut client, _tmp) = spawn_stdio_test_server();
+        client.shutdown();
+        // After shutdown, stdin is closed so send_request should fail
+        let result = client.send_request("tools/list", None);
+        assert!(result.is_err(), "expected error after shutdown");
+    }
+
+    #[test]
+    fn stdio_init_server_lifecycle() {
+        let tmp = TempDir::new().expect("create temp dir");
+        let config = McpServerConfig {
+            command: Some("npx".into()),
+            args: vec![
+                "-y".into(),
+                "@modelcontextprotocol/server-filesystem".into(),
+                tmp.path().to_str().unwrap().into(),
+            ],
+            env: HashMap::new(),
+            url: None,
+            headers: HashMap::new(),
+        };
+
+        let (mut client, tools) = init_server("test-stdio", &config).expect("init_server");
+        assert!(!tools.is_empty(), "should discover at least one tool");
+        assert!(
+            tools.iter().all(|t| t.server == "test-stdio"),
+            "all tools should have server='test-stdio'"
+        );
+        assert!(
+            tools.iter().any(|t| t.name == "read_file"),
+            "should include read_file tool"
+        );
+        client.shutdown();
+    }
+
+    // -- HTTP transport integration tests --
+
+    #[test]
+    fn http_connect_and_initialize() {
+        let (_guard, port) = spawn_http_test_server();
+        let url = format!("http://127.0.0.1:{}/mcp", port);
+        let mut client =
+            McpClient::connect_http(&url, &HashMap::new()).expect("connect_http");
+        client.initialize().expect("initialize HTTP server");
+        client.shutdown();
+    }
+
+    #[test]
+    fn http_list_tools() {
+        let (_guard, port) = spawn_http_test_server();
+        let url = format!("http://127.0.0.1:{}/mcp", port);
+        let mut client =
+            McpClient::connect_http(&url, &HashMap::new()).expect("connect_http");
+        client.initialize().expect("initialize");
+        let tools = client.list_tools().expect("list_tools");
+        assert!(
+            tools.len() >= 5,
+            "server-everything should expose many tools, got {}",
+            tools.len()
+        );
+        client.shutdown();
+    }
+
+    #[test]
+    fn http_call_tool_echo() {
+        let (_guard, port) = spawn_http_test_server();
+        let url = format!("http://127.0.0.1:{}/mcp", port);
+        let mut client =
+            McpClient::connect_http(&url, &HashMap::new()).expect("connect_http");
+        client.initialize().expect("initialize");
+        let result = client
+            .call_tool("echo", json!({"message": "hello"}))
+            .expect("echo tool");
+        assert!(
+            result.contains("hello"),
+            "echo result should contain 'hello', got: {result}"
+        );
+        client.shutdown();
+    }
+
+    #[test]
+    fn http_session_id_captured() {
+        let (_guard, port) = spawn_http_test_server();
+        let url = format!("http://127.0.0.1:{}/mcp", port);
+        let mut client =
+            McpClient::connect_http(&url, &HashMap::new()).expect("connect_http");
+        client.initialize().expect("initialize");
+        assert!(
+            client.session_id().is_some(),
+            "session_id should be captured after initialize"
+        );
+        client.shutdown();
+    }
+
+    #[test]
+    fn http_init_server_lifecycle() {
+        let (_guard, port) = spawn_http_test_server();
+        let url = format!("http://127.0.0.1:{}/mcp", port);
+        let config = McpServerConfig {
+            command: None,
+            args: vec![],
+            env: HashMap::new(),
+            url: Some(url),
+            headers: HashMap::new(),
+        };
+
+        let (mut client, tools) = init_server("test-http", &config).expect("init_server");
+        assert!(!tools.is_empty(), "should discover at least one tool");
+        assert!(
+            tools.iter().all(|t| t.server == "test-http"),
+            "all tools should have server='test-http'"
+        );
+        client.shutdown();
+    }
+
+    #[test]
+    fn http_connect_to_dead_server_fails() {
+        // Port 1 is almost certainly not running an MCP server
+        let mut client = McpClient::connect_http("http://127.0.0.1:1/mcp", &HashMap::new())
+            .expect("connect_http should succeed (no connection yet)");
+        let result = client.initialize();
+        assert!(result.is_err(), "initialize should fail against dead server");
+    }
+
+    // -- Error handling --
+
+    #[test]
+    fn init_server_no_transport_fails() {
+        let config = McpServerConfig {
+            command: None,
+            args: vec![],
+            env: HashMap::new(),
+            url: None,
+            headers: HashMap::new(),
+        };
+        let result = init_server("no-transport", &config);
+        match result {
+            Ok(_) => panic!("expected error for config with no transport"),
+            Err(e) => assert!(
+                e.contains("must have either"),
+                "error should mention 'must have either', got: {e}"
+            ),
+        }
     }
 }
