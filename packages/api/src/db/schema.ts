@@ -30,6 +30,11 @@ export const workspaceMemberRoleEnum = pgEnum("workspace_member_role", [
   "admin",
   "owner",
 ]);
+export const inviteStatusEnum = pgEnum("invite_status", [
+  "pending",
+  "accepted",
+  "declined",
+]);
 
 // -- Tables --
 
@@ -90,6 +95,40 @@ export const workspaceMembers = pgTable(
     primaryKey({ columns: [t.workspaceId, t.userId] }),
     index("wm_workspace_id_idx").on(t.workspaceId),
     index("wm_user_id_idx").on(t.userId),
+  ]
+);
+
+export const workspaceInvites = pgTable(
+  "workspace_invites",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    workspaceId: varchar("workspace_id", { length: 100 })
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    inviterId: uuid("inviter_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    inviteeId: uuid("invitee_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    status: inviteStatusEnum("status").notNull().default("pending"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull()
+      .$onUpdate(() => new Date()),
+  },
+  (t) => [
+    index("wi_workspace_id_idx").on(t.workspaceId),
+    index("wi_invitee_id_idx").on(t.inviteeId),
+    index("wi_inviter_id_idx").on(t.inviterId),
+    uniqueIndex("wi_workspace_invitee_status_idx").on(
+      t.workspaceId,
+      t.inviteeId,
+      t.status
+    ),
   ]
 );
 
@@ -256,6 +295,26 @@ export const workspaceMembersRelations = relations(
     user: one(users, {
       fields: [workspaceMembers.userId],
       references: [users.id],
+    }),
+  })
+);
+
+export const workspaceInvitesRelations = relations(
+  workspaceInvites,
+  ({ one }) => ({
+    workspace: one(workspaces, {
+      fields: [workspaceInvites.workspaceId],
+      references: [workspaces.id],
+    }),
+    inviter: one(users, {
+      fields: [workspaceInvites.inviterId],
+      references: [users.id],
+      relationName: "inviter",
+    }),
+    invitee: one(users, {
+      fields: [workspaceInvites.inviteeId],
+      references: [users.id],
+      relationName: "invitee",
     }),
   })
 );

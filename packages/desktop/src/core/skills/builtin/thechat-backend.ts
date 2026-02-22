@@ -3,7 +3,7 @@ import type { SkillInfo } from "../types";
 export const theChatBackendSkill: SkillInfo = {
   name: "thechat-backend",
   description:
-    "Interact with TheChat backend — manage workspaces, channels, DMs, and messages",
+    "Interact with TheChat backend — manage workspaces, invite users, channels, DMs, and messages",
   location: "builtin",
   mcpServers: ["thechat"],
   content: `# TheChat Backend Skill
@@ -19,6 +19,10 @@ The exact tools available are discovered dynamically from the MCP server — ins
 - Pagination: message fetching supports \`limit\` (max 100) and \`before\` (ISO timestamp) for fetching older messages.
 - Channel creation adds all workspace members automatically.
 - DM creation is idempotent — calling it twice returns the same conversation.
+- To add users to a workspace, use \`thechat__invite_to_workspace\` with their email address. Only workspace owners and admins can invite.
+- Users cannot join workspaces directly — they must be invited.
+- Use \`thechat__update_member_role\` to promote a member to admin or demote an admin to member. Only owners can manage admin roles.
+- Use \`thechat__remove_member\` to remove a user from a workspace.
 
 ## Important
 

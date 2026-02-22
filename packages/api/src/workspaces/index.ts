@@ -1,25 +1,22 @@
 import { Elysia } from "elysia";
 import { z } from "zod";
-import { eq, and, ne } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { resolveTokenToUser } from "../auth/middleware";
 import { ServiceError } from "../services/errors";
 import {
   listUserWorkspaces,
   getWorkspaceDetail,
   createWorkspace,
-  joinWorkspace,
+  updateMemberRole,
+  removeMember,
 } from "../services/workspaces";
 import { broadcastToUser } from "../ws";
 import { db } from "../db";
-import { workspaceMembers, users } from "../db/schema";
-import type { WsServerEvent } from "@thechat/shared";
+import { workspaceMembers } from "../db/schema";
+import type { WsServerEvent, WorkspaceMemberRole } from "@thechat/shared";
 
 const createSchema = z.object({
   name: z.string().trim().min(1, "Workspace name is required"),
-});
-
-const joinSchema = z.object({
-  workspaceId: z.string().trim().min(1, "Workspace ID is required"),
 });
 
 export const workspaceRoutes = new Elysia({ prefix: "/workspaces" })
@@ -60,42 +57,53 @@ export const workspaceRoutes = new Elysia({ prefix: "/workspaces" })
     }
   })
 
-  // Join workspace
-  .post("/join", async ({ body, user, set }) => {
-    const parsed = joinSchema.safeParse(body);
+  // List my workspaces
+  .get("/list", async ({ user }) => {
+    return await listUserWorkspaces(user.id);
+  })
+
+  // Get workspace detail
+  .get("/:id", async ({ params, user, set }) => {
+    try {
+      return await getWorkspaceDetail(params.id, user.id);
+    } catch (e) {
+      if (e instanceof ServiceError) {
+        set.status = e.status;
+        return { error: e.message };
+      }
+      throw e;
+    }
+  })
+
+  // Change member role
+  .post("/:id/members/:userId/role", async ({ params, body, user, set }) => {
+    const parsed = z
+      .object({ role: z.enum(["member", "admin"]) })
+      .safeParse(body);
     if (!parsed.success) {
       set.status = 400;
       return { error: parsed.error.issues[0]?.message ?? "Invalid input" };
     }
 
     try {
-      const result = await joinWorkspace(parsed.data.workspaceId, user.id);
+      const result = await updateMemberRole(
+        params.id,
+        user.id,
+        params.userId,
+        parsed.data.role
+      );
 
-      // Broadcast member_joined to existing workspace members
+      // Broadcast to all workspace members
       const members = await db
         .select({ userId: workspaceMembers.userId })
         .from(workspaceMembers)
-        .where(
-          and(
-            eq(workspaceMembers.workspaceId, parsed.data.workspaceId),
-            ne(workspaceMembers.userId, user.id),
-          ),
-        );
+        .where(eq(workspaceMembers.workspaceId, params.id));
 
       const event: WsServerEvent = {
-        type: "member_joined",
-        workspaceId: parsed.data.workspaceId,
-        member: {
-          userId: user.id,
-          role: "member",
-          joinedAt: new Date().toISOString(),
-          user: {
-            id: user.id,
-            name: user.name,
-            email: user.email,
-            avatar: user.avatar,
-          },
-        },
+        type: "member_role_changed",
+        workspaceId: params.id,
+        userId: params.userId,
+        newRole: parsed.data.role as WorkspaceMemberRole,
       };
 
       for (const m of members) {
@@ -112,15 +120,29 @@ export const workspaceRoutes = new Elysia({ prefix: "/workspaces" })
     }
   })
 
-  // List my workspaces
-  .get("/list", async ({ user }) => {
-    return await listUserWorkspaces(user.id);
-  })
-
-  // Get workspace detail
-  .get("/:id", async ({ params, user, set }) => {
+  // Remove member
+  .delete("/:id/members/:userId", async ({ params, user, set }) => {
     try {
-      return await getWorkspaceDetail(params.id, user.id);
+      // Get all members before removal (so we can broadcast to removed user too)
+      const membersBefore = await db
+        .select({ userId: workspaceMembers.userId })
+        .from(workspaceMembers)
+        .where(eq(workspaceMembers.workspaceId, params.id));
+
+      const result = await removeMember(params.id, user.id, params.userId);
+
+      // Broadcast to all workspace members including the removed user
+      const event: WsServerEvent = {
+        type: "member_removed",
+        workspaceId: params.id,
+        userId: params.userId,
+      };
+
+      for (const m of membersBefore) {
+        broadcastToUser(m.userId, event);
+      }
+
+      return result;
     } catch (e) {
       if (e instanceof ServiceError) {
         set.status = e.status;

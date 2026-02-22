@@ -5,6 +5,7 @@ import { db } from "../db";
 import { users, workspaces } from "../db/schema";
 import { authRoutes } from "../auth";
 import { workspaceRoutes } from "../workspaces";
+import { inviteRoutes } from "../invites";
 import { conversationRoutes } from "../conversations";
 import { messageRoutes } from "../messages";
 import crypto from "crypto";
@@ -12,6 +13,7 @@ import crypto from "crypto";
 const app = new Elysia()
   .use(authRoutes)
   .use(workspaceRoutes)
+  .use(inviteRoutes)
   .use(conversationRoutes)
   .use(messageRoutes);
 
@@ -96,14 +98,21 @@ describe("Channel message visibility", () => {
     const workspaceId = createRes.body.id;
     createdWorkspaceIds.push(workspaceId);
 
-    // 3. User B joins the workspace
-    const joinRes = await req(
+    // 3. User A invites User B, User B accepts
+    const inviteRes = await req(
       "POST",
-      "/workspaces/join",
-      { workspaceId },
+      "/invites/create",
+      { workspaceId, email: userB.user.email },
+      userA.token,
+    );
+    expect(inviteRes.status).toBe(200);
+    const acceptRes = await req(
+      "POST",
+      "/invites/accept",
+      { inviteId: inviteRes.body.id },
       userB.token,
     );
-    expect(joinRes.status).toBe(200);
+    expect(acceptRes.status).toBe(200);
 
     // 4. Get the General channel ID
     const detailRes = await req(
@@ -197,10 +206,16 @@ describe("Channel message visibility", () => {
     );
     createdWorkspaceIds.push(createRes.body.id);
 
+    const invRes = await req(
+      "POST",
+      "/invites/create",
+      { workspaceId: createRes.body.id, email: userB.user.email },
+      userA.token,
+    );
     await req(
       "POST",
-      "/workspaces/join",
-      { workspaceId: createRes.body.id },
+      "/invites/accept",
+      { inviteId: invRes.body.id },
       userB.token,
     );
 

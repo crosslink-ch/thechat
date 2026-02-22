@@ -8,6 +8,7 @@ import { conversationRoutes } from "./conversations";
 import { messageRoutes } from "./messages";
 import { wsRoutes } from "./ws";
 import { botRoutes } from "./bots";
+import { inviteRoutes } from "./invites";
 import { mcpRoutes } from "./mcp";
 
 const app = new Elysia()
@@ -19,6 +20,7 @@ const app = new Elysia()
   .use(messageRoutes)
   .use(wsRoutes)
   .use(botRoutes)
+  .use(inviteRoutes)
   .use(mcpRoutes)
   .get("/", () => "TheChat API")
   .get("/health", async ({ db }) => {

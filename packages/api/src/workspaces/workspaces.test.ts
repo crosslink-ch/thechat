@@ -1,6 +1,6 @@
 import { describe, test, expect, afterAll } from "bun:test";
 import { Elysia } from "elysia";
-import { eq } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
 import { db } from "../db";
 import {
   users,
@@ -8,12 +8,15 @@ import {
   workspaceMembers,
   conversations,
   conversationParticipants,
+  workspaceInvites,
 } from "../db/schema";
 import { authRoutes } from "../auth";
 import { workspaceRoutes } from "./index";
+import { inviteRoutes } from "../invites";
+import { joinWorkspace } from "../services/workspaces";
 import crypto from "crypto";
 
-const app = new Elysia().use(authRoutes).use(workspaceRoutes);
+const app = new Elysia().use(authRoutes).use(workspaceRoutes).use(inviteRoutes);
 
 function uniqueEmail() {
   return `test-${crypto.randomUUID()}@test.com`;
@@ -23,7 +26,7 @@ const createdUserEmails: string[] = [];
 const createdWorkspaceIds: string[] = [];
 
 async function cleanup() {
-  // Clean up workspaces (cascades to members, channels, participants)
+  // Clean up workspaces (cascades to members, channels, participants, invites)
   for (const id of createdWorkspaceIds) {
     await db.delete(workspaces).where(eq(workspaces.id, id));
   }
@@ -193,138 +196,6 @@ describe("Workspaces: Creation", () => {
   });
 });
 
-describe("Workspaces: Join", () => {
-  test("joins existing workspace by ID", async () => {
-    const owner = await registerAndGetToken("Owner");
-    const joiner = await registerAndGetToken("Joiner");
-
-    const createRes = await req(
-      "POST",
-      "/workspaces/create",
-      { name: "Join Target" },
-      owner.token
-    );
-    createdWorkspaceIds.push(createRes.body.id);
-
-    const joinRes = await req(
-      "POST",
-      "/workspaces/join",
-      { workspaceId: createRes.body.id },
-      joiner.token
-    );
-
-    expect(joinRes.status).toBe(200);
-    expect(joinRes.body.success).toBe(true);
-
-    // Verify membership
-    const detailRes = await req(
-      "GET",
-      `/workspaces/${createRes.body.id}`,
-      undefined,
-      joiner.token
-    );
-
-    expect(detailRes.body.members).toHaveLength(2);
-  });
-
-  test("new member is added to all existing channels", async () => {
-    const owner = await registerAndGetToken("Owner");
-    const joiner = await registerAndGetToken("Joiner");
-
-    const createRes = await req(
-      "POST",
-      "/workspaces/create",
-      { name: "Channel Join" },
-      owner.token
-    );
-    createdWorkspaceIds.push(createRes.body.id);
-
-    await req(
-      "POST",
-      "/workspaces/join",
-      { workspaceId: createRes.body.id },
-      joiner.token
-    );
-
-    // Check joiner is in the General channel
-    const detailRes = await req(
-      "GET",
-      `/workspaces/${createRes.body.id}`,
-      undefined,
-      joiner.token
-    );
-
-    const channelId = detailRes.body.channels[0].id;
-    const participants = await db
-      .select()
-      .from(conversationParticipants)
-      .where(eq(conversationParticipants.conversationId, channelId));
-
-    const joinerParticipant = participants.find(
-      (p) => p.userId === joiner.user.id
-    );
-    expect(joinerParticipant).toBeDefined();
-  });
-
-  test("joining same workspace twice is idempotent", async () => {
-    const owner = await registerAndGetToken("Owner");
-    const joiner = await registerAndGetToken("Joiner");
-
-    const createRes = await req(
-      "POST",
-      "/workspaces/create",
-      { name: "Idempotent" },
-      owner.token
-    );
-    createdWorkspaceIds.push(createRes.body.id);
-
-    await req(
-      "POST",
-      "/workspaces/join",
-      { workspaceId: createRes.body.id },
-      joiner.token
-    );
-
-    const joinRes2 = await req(
-      "POST",
-      "/workspaces/join",
-      { workspaceId: createRes.body.id },
-      joiner.token
-    );
-
-    expect(joinRes2.status).toBe(200);
-
-    // Still only 2 members
-    const detailRes = await req(
-      "GET",
-      `/workspaces/${createRes.body.id}`,
-      undefined,
-      owner.token
-    );
-    expect(detailRes.body.members).toHaveLength(2);
-  });
-
-  test("rejects nonexistent workspace ID", async () => {
-    const { token } = await registerAndGetToken();
-
-    const res = await req(
-      "POST",
-      "/workspaces/join",
-      { workspaceId: "nonexistent-99999" },
-      token
-    );
-
-    expect(res.status).toBe(404);
-  });
-
-  test("rejects unauthenticated request", async () => {
-    const res = await req("POST", "/workspaces/join", {
-      workspaceId: "any-id",
-    });
-    expect(res.status).toBe(401);
-  });
-});
-
 describe("Workspaces: List", () => {
   test("lists all workspaces user belongs to", async () => {
     const { token } = await registerAndGetToken();
@@ -364,7 +235,7 @@ describe("Workspaces: List", () => {
     expect(listRes.body).toEqual([]);
   });
 
-  test("includes role in response", async () => {
+  test("includes role via invite flow", async () => {
     const owner = await registerAndGetToken("Owner");
     const member = await registerAndGetToken("Member");
 
@@ -376,10 +247,17 @@ describe("Workspaces: List", () => {
     );
     createdWorkspaceIds.push(createRes.body.id);
 
+    // Invite + accept flow
+    const inviteRes = await req(
+      "POST",
+      "/invites/create",
+      { workspaceId: createRes.body.id, email: member.user.email },
+      owner.token
+    );
     await req(
       "POST",
-      "/workspaces/join",
-      { workspaceId: createRes.body.id },
+      "/invites/accept",
+      { inviteId: inviteRes.body.id },
       member.token
     );
 
@@ -468,5 +346,309 @@ describe("Workspaces: Detail", () => {
     );
 
     expect(detailRes.status).toBe(404);
+  });
+});
+
+describe("Workspaces: Member Management", () => {
+  // Helper: create workspace + add a member directly via service (bypasses invite flow)
+  async function setupWorkspaceWithMember() {
+    const owner = await registerAndGetToken("Owner");
+    const member = await registerAndGetToken("Member");
+
+    const createRes = await req(
+      "POST",
+      "/workspaces/create",
+      { name: "Mgmt Test" },
+      owner.token
+    );
+    createdWorkspaceIds.push(createRes.body.id);
+    const workspaceId = createRes.body.id;
+
+    // Add member directly via service
+    await joinWorkspace(workspaceId, member.user.id);
+
+    return { owner, member, workspaceId };
+  }
+
+  // Helper: add user to workspace as a member via service
+  async function addMember(workspaceId: string, userId: string) {
+    await joinWorkspace(workspaceId, userId);
+  }
+
+  test("owner changes member → admin", async () => {
+    const { owner, member, workspaceId } = await setupWorkspaceWithMember();
+
+    const res = await req(
+      "POST",
+      `/workspaces/${workspaceId}/members/${member.user.id}/role`,
+      { role: "admin" },
+      owner.token
+    );
+    expect(res.status).toBe(200);
+
+    // Verify role changed
+    const detail = await req("GET", `/workspaces/${workspaceId}`, undefined, owner.token);
+    const updated = detail.body.members.find((m: any) => m.userId === member.user.id);
+    expect(updated.role).toBe("admin");
+  });
+
+  test("owner demotes admin → member", async () => {
+    const { owner, member, workspaceId } = await setupWorkspaceWithMember();
+
+    // Promote first
+    await req(
+      "POST",
+      `/workspaces/${workspaceId}/members/${member.user.id}/role`,
+      { role: "admin" },
+      owner.token
+    );
+
+    // Demote
+    const res = await req(
+      "POST",
+      `/workspaces/${workspaceId}/members/${member.user.id}/role`,
+      { role: "member" },
+      owner.token
+    );
+    expect(res.status).toBe(200);
+
+    const detail = await req("GET", `/workspaces/${workspaceId}`, undefined, owner.token);
+    const updated = detail.body.members.find((m: any) => m.userId === member.user.id);
+    expect(updated.role).toBe("member");
+  });
+
+  test("admin cannot change another admin's role", async () => {
+    const owner = await registerAndGetToken("Owner");
+    const admin1 = await registerAndGetToken("Admin1");
+    const admin2 = await registerAndGetToken("Admin2");
+
+    const createRes = await req(
+      "POST",
+      "/workspaces/create",
+      { name: "Admin Conflict" },
+      owner.token
+    );
+    createdWorkspaceIds.push(createRes.body.id);
+    const workspaceId = createRes.body.id;
+
+    await addMember(workspaceId, admin1.user.id);
+    await addMember(workspaceId, admin2.user.id);
+
+    // Promote both to admin
+    await req(
+      "POST",
+      `/workspaces/${workspaceId}/members/${admin1.user.id}/role`,
+      { role: "admin" },
+      owner.token
+    );
+    await req(
+      "POST",
+      `/workspaces/${workspaceId}/members/${admin2.user.id}/role`,
+      { role: "admin" },
+      owner.token
+    );
+
+    // Admin1 tries to change Admin2's role
+    const res = await req(
+      "POST",
+      `/workspaces/${workspaceId}/members/${admin2.user.id}/role`,
+      { role: "member" },
+      admin1.token
+    );
+    expect(res.status).toBe(403);
+  });
+
+  test("member cannot change roles", async () => {
+    const { member, owner, workspaceId } = await setupWorkspaceWithMember();
+
+    const res = await req(
+      "POST",
+      `/workspaces/${workspaceId}/members/${owner.user.id}/role`,
+      { role: "member" },
+      member.token
+    );
+    expect(res.status).toBe(403);
+  });
+
+  test("cannot change owner's role", async () => {
+    const { owner, workspaceId } = await setupWorkspaceWithMember();
+
+    const res = await req(
+      "POST",
+      `/workspaces/${workspaceId}/members/${owner.user.id}/role`,
+      { role: "admin" },
+      owner.token
+    );
+    expect(res.status).toBe(403);
+  });
+
+  test("cannot set role to 'owner'", async () => {
+    const { owner, member, workspaceId } = await setupWorkspaceWithMember();
+
+    const res = await req(
+      "POST",
+      `/workspaces/${workspaceId}/members/${member.user.id}/role`,
+      { role: "owner" },
+      owner.token
+    );
+    expect(res.status).toBe(400);
+  });
+
+  test("owner removes a member", async () => {
+    const { owner, member, workspaceId } = await setupWorkspaceWithMember();
+
+    const res = await req(
+      "DELETE",
+      `/workspaces/${workspaceId}/members/${member.user.id}`,
+      undefined,
+      owner.token
+    );
+    expect(res.status).toBe(200);
+
+    // Verify member is gone
+    const detail = await req("GET", `/workspaces/${workspaceId}`, undefined, owner.token);
+    const found = detail.body.members.find((m: any) => m.userId === member.user.id);
+    expect(found).toBeUndefined();
+  });
+
+  test("admin removes a member", async () => {
+    const owner = await registerAndGetToken("Owner");
+    const admin = await registerAndGetToken("Admin");
+    const member = await registerAndGetToken("Member");
+
+    const createRes = await req(
+      "POST",
+      "/workspaces/create",
+      { name: "Admin Remove" },
+      owner.token
+    );
+    createdWorkspaceIds.push(createRes.body.id);
+    const workspaceId = createRes.body.id;
+
+    await addMember(workspaceId, admin.user.id);
+    await addMember(workspaceId, member.user.id);
+
+    // Promote to admin
+    await req(
+      "POST",
+      `/workspaces/${workspaceId}/members/${admin.user.id}/role`,
+      { role: "admin" },
+      owner.token
+    );
+
+    // Admin removes member
+    const res = await req(
+      "DELETE",
+      `/workspaces/${workspaceId}/members/${member.user.id}`,
+      undefined,
+      admin.token
+    );
+    expect(res.status).toBe(200);
+  });
+
+  test("admin cannot remove another admin", async () => {
+    const owner = await registerAndGetToken("Owner");
+    const admin1 = await registerAndGetToken("Admin1");
+    const admin2 = await registerAndGetToken("Admin2");
+
+    const createRes = await req(
+      "POST",
+      "/workspaces/create",
+      { name: "Admin No Remove" },
+      owner.token
+    );
+    createdWorkspaceIds.push(createRes.body.id);
+    const workspaceId = createRes.body.id;
+
+    await addMember(workspaceId, admin1.user.id);
+    await addMember(workspaceId, admin2.user.id);
+
+    await req(
+      "POST",
+      `/workspaces/${workspaceId}/members/${admin1.user.id}/role`,
+      { role: "admin" },
+      owner.token
+    );
+    await req(
+      "POST",
+      `/workspaces/${workspaceId}/members/${admin2.user.id}/role`,
+      { role: "admin" },
+      owner.token
+    );
+
+    const res = await req(
+      "DELETE",
+      `/workspaces/${workspaceId}/members/${admin2.user.id}`,
+      undefined,
+      admin1.token
+    );
+    expect(res.status).toBe(403);
+  });
+
+  test("cannot remove owner", async () => {
+    const { member, owner, workspaceId } = await setupWorkspaceWithMember();
+
+    // Promote member to admin so they can attempt removal
+    await req(
+      "POST",
+      `/workspaces/${workspaceId}/members/${member.user.id}/role`,
+      { role: "admin" },
+      owner.token
+    );
+
+    const res = await req(
+      "DELETE",
+      `/workspaces/${workspaceId}/members/${owner.user.id}`,
+      undefined,
+      member.token
+    );
+    expect(res.status).toBe(403);
+  });
+
+  test("member cannot remove anyone", async () => {
+    const owner = await registerAndGetToken("Owner");
+    const member1 = await registerAndGetToken("Member1");
+    const member2 = await registerAndGetToken("Member2");
+
+    const createRes = await req(
+      "POST",
+      "/workspaces/create",
+      { name: "Member No Remove" },
+      owner.token
+    );
+    createdWorkspaceIds.push(createRes.body.id);
+    const workspaceId = createRes.body.id;
+
+    await addMember(workspaceId, member1.user.id);
+    await addMember(workspaceId, member2.user.id);
+
+    const res = await req(
+      "DELETE",
+      `/workspaces/${workspaceId}/members/${member2.user.id}`,
+      undefined,
+      member1.token
+    );
+    expect(res.status).toBe(403);
+  });
+
+  test("removed user loses access", async () => {
+    const { owner, member, workspaceId } = await setupWorkspaceWithMember();
+
+    // Remove member
+    await req(
+      "DELETE",
+      `/workspaces/${workspaceId}/members/${member.user.id}`,
+      undefined,
+      owner.token
+    );
+
+    // Member tries to access workspace
+    const res = await req(
+      "GET",
+      `/workspaces/${workspaceId}`,
+      undefined,
+      member.token
+    );
+    expect(res.status).toBe(403);
   });
 });
