@@ -1,10 +1,7 @@
 import { create } from "zustand";
 import type { WsClientEvent, WsServerEvent, ChatMessage } from "@thechat/shared";
 
-const WS_URL = (import.meta.env.VITE_API_URL || "http://localhost:3000").replace(
-  /^http/,
-  "ws",
-);
+const WS_URL = __BACKEND_URL__.replace(/^http/, "ws");
 
 type MessageCallback = (msg: ChatMessage, type: "direct" | "group") => void;
 type TypingCallback = (conversationId: string, userId: string, userName: string) => void;

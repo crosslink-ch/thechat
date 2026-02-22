@@ -13,7 +13,13 @@ export default defineConfig(async () => {
   // Load .env from monorepo root ('' prefix = all vars, not just VITE_)
   const env = loadEnv("test", monorepoRoot, "");
 
+  const backendUrl =
+    process.env.THECHAT_BACKEND_URL || "http://localhost:3000";
+
   return {
+    define: {
+      __BACKEND_URL__: JSON.stringify(backendUrl),
+    },
     plugins: [react()],
 
     test: {

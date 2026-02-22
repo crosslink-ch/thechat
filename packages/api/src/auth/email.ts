@@ -59,7 +59,7 @@ export async function sendEmail(options: SendEmailOptions) {
 }
 
 export async function sendVerificationEmail(email: string, token: string) {
-  const baseUrl = process.env.API_URL || "http://localhost:3000";
+  const baseUrl = process.env.THECHAT_BACKEND_URL || "http://localhost:3000";
   const verifyUrl = `${baseUrl}/auth/verify-email?token=${token}`;
 
   await sendEmail({

@@ -379,11 +379,24 @@ pub fn mcp_initialize<R: tauri::Runtime>(
         std::thread::spawn(move || {
             log::info!("Initializing MCP server: {}", server_name);
 
+            let (command, args, env) = match &server_config {
+                crate::config::McpServerConfig::Stdio { command, args, env } => {
+                    (command.clone(), args.clone(), env.clone())
+                }
+                crate::config::McpServerConfig::Http { url, .. } => {
+                    log::warn!(
+                        "MCP server '{}' uses HTTP transport ({}), which is not yet supported — skipping",
+                        server_name, url
+                    );
+                    return;
+                }
+            };
+
             match init_server(
                 &server_name,
-                &server_config.command,
-                &server_config.args,
-                &server_config.env,
+                &command,
+                &args,
+                &env,
             ) {
                 Ok((client, tools)) => {
                     log::info!(
