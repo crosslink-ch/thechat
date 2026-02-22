@@ -584,6 +584,10 @@ pub fn mcp_initialize<R: tauri::Runtime>(
             log::info!("Skipping MCP server '{}' (requires auth)", server_name);
             continue;
         }
+        if server_config.lazy {
+            log::info!("Skipping MCP server '{}' (lazy, will load on demand)", server_name);
+            continue;
+        }
 
         let manager = Arc::clone(&manager);
         let app = app.clone();
@@ -690,6 +694,69 @@ pub fn mcp_initialize_authed<R: tauri::Runtime>(
     }
 
     Ok(())
+}
+
+/// Initialize specific MCP servers by name (blocking).
+/// Used by the skill tool to lazily load MCP servers on demand.
+/// Skips servers that are already initialized. Returns all discovered tools.
+#[tauri::command]
+pub fn mcp_initialize_servers<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    names: Vec<String>,
+    manager: tauri::State<'_, Arc<McpManager>>,
+) -> Result<Vec<McpToolInfo>, String> {
+    use tauri::Emitter;
+
+    let config = load_config()?;
+    let mut all_tools: Vec<McpToolInfo> = Vec::new();
+
+    for name in &names {
+        // Skip already-initialized servers
+        {
+            let clients = manager
+                .clients
+                .lock()
+                .map_err(|e| format!("Lock error: {}", e))?;
+            if clients.contains_key(name) {
+                log::info!("MCP server '{}' already initialized, skipping", name);
+                continue;
+            }
+        }
+
+        let server_config = config
+            .mcp_servers
+            .get(name)
+            .ok_or_else(|| format!("MCP server '{}' not found in config", name))?;
+
+        log::info!("Lazily initializing MCP server: {}", name);
+
+        match init_server(name, server_config, None) {
+            Ok((client, tools)) => {
+                log::info!(
+                    "MCP server '{}' ready with {} tools",
+                    name,
+                    tools.len()
+                );
+
+                if let Ok(mut clients) = manager.clients.lock() {
+                    clients.insert(name.clone(), Arc::new(Mutex::new(client)));
+                }
+
+                // Emit to frontend so the tools store picks them up
+                if let Err(e) = app.emit("mcp-tools-ready", &tools) {
+                    log::error!("Failed to emit mcp-tools-ready for '{}': {}", name, e);
+                }
+
+                all_tools.extend(tools);
+            }
+            Err(e) => {
+                log::error!("Failed to initialize MCP server '{}': {}", name, e);
+                return Err(format!("Failed to initialize MCP server '{}': {}", name, e));
+            }
+        }
+    }
+
+    Ok(all_tools)
 }
 
 #[tauri::command]
@@ -1074,6 +1141,7 @@ mod tests {
             url: None,
             headers: HashMap::new(),
             requires_auth: false,
+            lazy: false,
         };
 
         let (mut client, tools) = init_server("test-stdio", &config, None).expect("init_server");
@@ -1159,6 +1227,7 @@ mod tests {
             url: Some(url),
             headers: HashMap::new(),
             requires_auth: false,
+            lazy: false,
         };
 
         let (mut client, tools) = init_server("test-http", &config, None).expect("init_server");
@@ -1190,6 +1259,7 @@ mod tests {
             url: None,
             headers: HashMap::new(),
             requires_auth: false,
+            lazy: false,
         };
         let result = init_server("no-transport", &config, None);
         match result {

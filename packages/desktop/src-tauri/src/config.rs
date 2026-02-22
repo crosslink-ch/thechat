@@ -15,6 +15,8 @@ pub struct McpServerConfig {
     pub headers: HashMap<String, String>,
     #[serde(default, rename = "requiresAuth")]
     pub requires_auth: bool,
+    #[serde(default)]
+    pub lazy: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -46,6 +48,7 @@ fn default_config(backend_url: &str) -> AppConfig {
             url: Some(format!("{}/mcp", backend_url)),
             headers: HashMap::new(),
             requires_auth: true,
+            lazy: false,
         },
     );
     AppConfig {
@@ -188,6 +191,32 @@ mod tests {
         let srv = &config.mcp_servers["bad"];
         assert!(srv.command.is_none());
         assert!(srv.url.is_none());
+    }
+
+    #[test]
+    fn parse_lazy_mcp_server() {
+        let json = r#"{
+            "api_key": "k", "model": "m",
+            "mcpServers": {
+                "kubectl": { "command": "npx", "args": ["-y", "@kubectl/mcp"], "lazy": true }
+            }
+        }"#;
+        let config: AppConfig = serde_json::from_str(json).unwrap();
+        let srv = &config.mcp_servers["kubectl"];
+        assert!(srv.lazy, "kubectl server should be lazy");
+    }
+
+    #[test]
+    fn lazy_defaults_to_false() {
+        let json = r#"{
+            "api_key": "k", "model": "m",
+            "mcpServers": {
+                "fs": { "command": "npx", "args": ["-y", "server"] }
+            }
+        }"#;
+        let config: AppConfig = serde_json::from_str(json).unwrap();
+        let srv = &config.mcp_servers["fs"];
+        assert!(!srv.lazy, "lazy should default to false");
     }
 
     #[test]

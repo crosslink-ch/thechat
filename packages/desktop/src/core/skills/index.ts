@@ -106,10 +106,21 @@ export async function discoverSkills(): Promise<SkillMeta[]> {
       const { data } = parseFrontmatter(raw);
       if (!data.name || !data.description) continue;
 
-      skills.set(data.name, {
-        name: data.name,
-        description: data.description,
+      const name = typeof data.name === "string" ? data.name : data.name[0];
+      const description =
+        typeof data.description === "string" ? data.description : data.description[0];
+
+      const mcpServers = Array.isArray(data.mcpServers)
+        ? data.mcpServers
+        : typeof data.mcpServers === "string"
+          ? [data.mcpServers]
+          : undefined;
+
+      skills.set(name, {
+        name,
+        description,
         location: filePath,
+        ...(mcpServers && mcpServers.length > 0 ? { mcpServers } : {}),
       });
     }
   }

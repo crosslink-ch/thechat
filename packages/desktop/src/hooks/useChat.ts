@@ -62,6 +62,7 @@ function messageToDbFields(msg: Message): { content: string; reasoningContent: s
 
 interface UseChatOptions {
   tools?: ToolDefinition[];
+  getTools?: () => ToolDefinition[];
   params?: ChatParams;
   systemPrompt?: string;
   onStreamComplete?: (convId: string, convTitle: string) => void;
@@ -219,6 +220,7 @@ export function useChat(options?: UseChatOptions) {
           systemPrompt: options?.systemPrompt,
           params: options?.params,
           tools: options?.tools,
+          getTools: options?.getTools,
           signal: controller.signal,
           onEvent,
         });
@@ -263,7 +265,7 @@ export function useChat(options?: UseChatOptions) {
         }
       }
     },
-    [conversation, options?.params, options?.tools],
+    [conversation, options?.params, options?.tools, options?.getTools],
   );
 
   const stopStreaming = useCallback(() => {

@@ -25,7 +25,7 @@ export function AgentChatRoute() {
   const lastMatch = matches[matches.length - 1];
   const routeId = (lastMatch?.params as Record<string, string>)?.id as string | undefined;
 
-  const tools = useToolsStore((s) => s.tools);
+  const getTools = useCallback(() => useToolsStore.getState().tools, []);
   const systemPrompt = useMemo(() => buildSystemPrompt(), []);
 
   const activeAgentConvIdRef = useRef<string | null>(null);
@@ -39,7 +39,7 @@ export function AgentChatRoute() {
     loadConversation,
     startNewConversation,
   } = useChat({
-    tools,
+    getTools,
     systemPrompt,
     onStreamComplete: (convId: string, convTitle: string) => {
       useConversationsStore.getState().fetchConversations();
