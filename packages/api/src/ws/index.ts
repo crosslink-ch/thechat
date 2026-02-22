@@ -1,14 +1,11 @@
 import { Elysia } from "elysia";
-import { eq, and } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { db } from "../db";
-import {
-  messages,
-  conversations,
-  conversationParticipants,
-} from "../db/schema";
+import { conversations, conversationParticipants } from "../db/schema";
 import type { WsClientEvent, WsServerEvent } from "@thechat/shared";
 import { resolveTokenToUser } from "../auth/middleware";
-import { processMessageMentions } from "../bots/webhooks";
+import { sendMessage } from "../services/messages";
+import { ServiceError } from "../services/errors";
 
 // Connection tracking
 const userSockets = new Map<string, Set<WebSocket>>();
@@ -66,47 +63,29 @@ async function handleSendMessage(
   conversationId: string,
   content: string
 ) {
-  // Validate user is a participant
-  const [participant] = await db
-    .select()
-    .from(conversationParticipants)
-    .where(
-      and(
-        eq(conversationParticipants.conversationId, conversationId),
-        eq(conversationParticipants.userId, userId)
-      )
-    )
-    .limit(1);
-
-  if (!participant) {
-    sendTo(ws, { type: "error", message: "Not a participant of this conversation" });
-    return;
+  let msg;
+  try {
+    msg = await sendMessage(conversationId, userId, userName, content);
+  } catch (e) {
+    if (e instanceof ServiceError) {
+      sendTo(ws, { type: "error", message: e.message });
+      return;
+    }
+    throw e;
   }
 
-  // Insert message
-  const [msg] = await db
-    .insert(messages)
-    .values({
-      conversationId,
-      senderId: userId,
-      content,
-    })
-    .returning();
-
-  // Get conversation type
+  // Get conversation type for broadcast event
   const [conv] = await db
     .select({ type: conversations.type })
     .from(conversations)
     .where(eq(conversations.id, conversationId))
     .limit(1);
 
-  // Get all participant IDs
+  // Get all participant IDs for broadcasting
   const participants = await db
     .select({ userId: conversationParticipants.userId })
     .from(conversationParticipants)
     .where(eq(conversationParticipants.conversationId, conversationId));
-
-  const createdAt = msg.createdAt.toISOString();
 
   const event: WsServerEvent = {
     type: "new_message",
@@ -114,27 +93,16 @@ async function handleSendMessage(
       id: msg.id,
       conversationId: msg.conversationId,
       senderId: msg.senderId,
-      senderName: userName,
+      senderName: msg.senderName,
       content: msg.content,
-      createdAt,
+      createdAt: msg.createdAt,
     },
     conversationType: conv?.type ?? "group",
   };
 
-  // Broadcast to all connected participants
   for (const p of participants) {
     broadcastToUser(p.userId, event);
   }
-
-  // Fire-and-forget webhook notifications for @mentioned bots
-  processMessageMentions({
-    id: msg.id,
-    content: msg.content,
-    conversationId: msg.conversationId,
-    senderId: msg.senderId,
-    senderName: userName,
-    createdAt,
-  });
 }
 
 async function handleTyping(
@@ -143,7 +111,6 @@ async function handleTyping(
   userName: string,
   conversationId: string
 ) {
-  // Get all participant IDs
   const participants = await db
     .select({ userId: conversationParticipants.userId })
     .from(conversationParticipants)
@@ -156,7 +123,6 @@ async function handleTyping(
     userName,
   };
 
-  // Broadcast to all participants except sender
   for (const p of participants) {
     if (p.userId !== userId) {
       broadcastToUser(p.userId, event);
@@ -174,7 +140,7 @@ export const wsRoutes = new Elysia().ws("/ws", {
       event =
         typeof rawMessage === "string"
           ? JSON.parse(rawMessage)
-          : rawMessage as WsClientEvent;
+          : (rawMessage as WsClientEvent);
     } catch {
       sendTo(ws.raw as unknown as WebSocket, {
         type: "error",
@@ -188,7 +154,10 @@ export const wsRoutes = new Elysia().ws("/ws", {
     if (event.type === "auth") {
       const user = await validateToken(event.token);
       if (!user) {
-        sendTo(socket, { type: "auth_error", message: "Invalid or expired token" });
+        sendTo(socket, {
+          type: "auth_error",
+          message: "Invalid or expired token",
+        });
         ws.close();
         return;
       }
@@ -213,7 +182,12 @@ export const wsRoutes = new Elysia().ws("/ws", {
         event.content
       );
     } else if (event.type === "typing") {
-      await handleTyping(socket, socketUser.id, socketUser.name, event.conversationId);
+      await handleTyping(
+        socket,
+        socketUser.id,
+        socketUser.name,
+        event.conversationId
+      );
     }
   },
   close(ws) {
