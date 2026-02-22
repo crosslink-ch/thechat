@@ -105,6 +105,25 @@ export const useAuthStore = create<AuthStore>()((set) => ({
         });
 
         if (data && !error && "user" in data) {
+          // Access token is valid — also verify the refresh token (session)
+          if (refreshToken) {
+            const sessionRes = await api.auth["verify-session"].post({ refreshToken });
+            if (sessionRes.error || !sessionRes.data || !("valid" in sessionRes.data)) {
+              // Refresh token is invalid — clear everything
+              await kvDelete(KV_ACCESS_TOKEN);
+              await kvDelete(KV_REFRESH_TOKEN);
+              await kvDelete(KV_USER);
+              set({ loading: false });
+              return;
+            }
+          } else {
+            // No refresh token stored — can't maintain session
+            await kvDelete(KV_ACCESS_TOKEN);
+            await kvDelete(KV_USER);
+            set({ loading: false });
+            return;
+          }
+
           set({ user: data.user, token: accessToken });
           await kvSet(KV_USER, JSON.stringify(data.user));
           scheduleRefresh(accessToken);

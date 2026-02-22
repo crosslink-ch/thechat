@@ -277,3 +277,54 @@ describe("Auth: Refresh", () => {
     expect(res.status).toBe(401);
   });
 });
+
+describe("Auth: Verify Session", () => {
+  test("valid refresh token returns valid: true", async () => {
+    const email = uniqueEmail();
+    createdUserEmails.push(email);
+
+    const reg = await req("POST", "/auth/register", {
+      name: "Verify Session Test",
+      email,
+      password: "password123",
+    });
+
+    const res = await req("POST", "/auth/verify-session", {
+      refreshToken: reg.body.refreshToken,
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.valid).toBe(true);
+  });
+
+  test("invalid refresh token returns 401", async () => {
+    const res = await req("POST", "/auth/verify-session", {
+      refreshToken: "invalid-token",
+    });
+    expect(res.status).toBe(401);
+  });
+
+  test("returns 401 after logout", async () => {
+    const email = uniqueEmail();
+    createdUserEmails.push(email);
+
+    const reg = await req("POST", "/auth/register", {
+      name: "Verify After Logout",
+      email,
+      password: "password123",
+    });
+
+    // Logout invalidates the session
+    await req(
+      "POST",
+      "/auth/logout",
+      { refreshToken: reg.body.refreshToken },
+      reg.body.accessToken
+    );
+
+    const res = await req("POST", "/auth/verify-session", {
+      refreshToken: reg.body.refreshToken,
+    });
+    expect(res.status).toBe(401);
+  });
+});

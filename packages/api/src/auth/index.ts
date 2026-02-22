@@ -326,6 +326,32 @@ export const authRoutes = new Elysia({ prefix: "/auth" })
     return { accessToken };
   })
 
+  // ── Verify session (public — checks refresh token validity without issuing new tokens) ──
+  .post("/verify-session", async ({ body, set }) => {
+    const parsed = refreshSchema.safeParse(body);
+    if (!parsed.success) {
+      set.status = 400;
+      return { error: formatZodError(parsed.error) };
+    }
+
+    const { refreshToken } = parsed.data;
+
+    const [session] = await db
+      .select({ id: sessions.id })
+      .from(sessions)
+      .where(
+        and(eq(sessions.token, refreshToken), gt(sessions.expiresAt, new Date()))
+      )
+      .limit(1);
+
+    if (!session) {
+      set.status = 401;
+      return { error: "Invalid or expired session" };
+    }
+
+    return { valid: true };
+  })
+
   // ── Authenticated routes ──
   .derive(async ({ headers }) => {
     const authHeader = headers.authorization;
