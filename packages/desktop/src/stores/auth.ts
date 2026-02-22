@@ -133,21 +133,10 @@ export const useAuthStore = create<AuthStore>()((set) => ({
         }
       }
 
-      // Both failed - try cached user as offline fallback
-      const cached = await kvGet(KV_USER);
-      if (cached && accessToken) {
-        try {
-          set({ user: JSON.parse(cached), token: accessToken });
-        } catch {
-          await kvDelete(KV_ACCESS_TOKEN);
-          await kvDelete(KV_REFRESH_TOKEN);
-          await kvDelete(KV_USER);
-        }
-      } else {
-        await kvDelete(KV_ACCESS_TOKEN);
-        await kvDelete(KV_REFRESH_TOKEN);
-        await kvDelete(KV_USER);
-      }
+      // Both failed (server reachable but tokens invalid) - clear everything
+      await kvDelete(KV_ACCESS_TOKEN);
+      await kvDelete(KV_REFRESH_TOKEN);
+      await kvDelete(KV_USER);
     } catch {
       // Server unreachable - fall back to cached user
       const storedToken = await kvGet(KV_ACCESS_TOKEN);
