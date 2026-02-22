@@ -5,6 +5,9 @@ import { ServiceError } from "../services/errors";
 import {
   createBot,
   listBots,
+  getBot,
+  updateBot,
+  deleteBot,
   addBotToWorkspace,
   removeBotFromWorkspace,
   regenerateBotKey,
@@ -13,6 +16,11 @@ import {
 
 const createSchema = z.object({
   name: z.string().trim().min(1, "Bot name is required"),
+  webhookUrl: z.string().url().nullish(),
+});
+
+const updateSchema = z.object({
+  name: z.string().trim().min(1, "Bot name is required").optional(),
   webhookUrl: z.string().url().nullish(),
 });
 
@@ -66,6 +74,52 @@ export const botRoutes = new Elysia({ prefix: "/bots" })
   .get("/list", async ({ user, set }) => {
     try {
       return await listBots(user.id);
+    } catch (e: any) {
+      set.status = e instanceof ServiceError ? e.status : 500;
+      return { error: e.message ?? "Unknown error" };
+    }
+  })
+
+  // Get bot by ID (owner only)
+  .get("/:botId", async ({ params, user, set }) => {
+    try {
+      return await getBot(params.botId, user.id);
+    } catch (e: any) {
+      set.status = e instanceof ServiceError ? e.status : 500;
+      return { error: e.message ?? "Unknown error" };
+    }
+  })
+
+  // Update bot (owner only)
+  .patch("/:botId", async ({ params, body, user, set }) => {
+    const parsed = updateSchema.safeParse(body);
+    if (!parsed.success) {
+      set.status = 400;
+      return { error: parsed.error.issues[0]?.message ?? "Invalid input" };
+    }
+
+    const updates: { name?: string; webhookUrl?: string | null } = {};
+    if (parsed.data.name !== undefined) updates.name = parsed.data.name;
+    if (parsed.data.webhookUrl !== undefined)
+      updates.webhookUrl = parsed.data.webhookUrl ?? null;
+
+    if (Object.keys(updates).length === 0) {
+      set.status = 400;
+      return { error: "No fields to update" };
+    }
+
+    try {
+      return await updateBot(params.botId, user.id, updates);
+    } catch (e: any) {
+      set.status = e instanceof ServiceError ? e.status : 500;
+      return { error: e.message ?? "Unknown error" };
+    }
+  })
+
+  // Delete bot (owner only)
+  .delete("/:botId", async ({ params, user, set }) => {
+    try {
+      return await deleteBot(params.botId, user.id);
     } catch (e: any) {
       set.status = e instanceof ServiceError ? e.status : 500;
       return { error: e.message ?? "Unknown error" };

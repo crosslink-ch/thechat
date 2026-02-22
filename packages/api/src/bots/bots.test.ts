@@ -411,6 +411,182 @@ describe("Bots: DM with bot", () => {
   });
 });
 
+describe("Bots: Get bot", () => {
+  test("owner can get bot details", async () => {
+    const human = await registerUser("GetOwner");
+
+    const botRes = await createBot(human.token, "GetBot", "https://example.com/hook");
+
+    const res = await req("GET", `/bots/${botRes.body.id}`, undefined, human.token);
+
+    expect(res.status).toBe(200);
+    expect(res.body.name).toBe("GetBot");
+    expect(res.body.webhookUrl).toBe("https://example.com/hook");
+    expect(res.body.webhookSecret).toBeDefined();
+    expect(res.body.id).toBe(botRes.body.id);
+  });
+
+  test("non-owner cannot get bot details → 403", async () => {
+    const owner = await registerUser("GetBotOwner");
+    const stranger = await registerUser("GetStranger");
+
+    const botRes = await createBot(owner.token, "SecretBot");
+
+    const res = await req("GET", `/bots/${botRes.body.id}`, undefined, stranger.token);
+
+    expect(res.status).toBe(403);
+  });
+
+  test("non-existent bot → 404", async () => {
+    const human = await registerUser("Get404");
+
+    const res = await req(
+      "GET",
+      "/bots/00000000-0000-0000-0000-000000000000",
+      undefined,
+      human.token
+    );
+
+    expect(res.status).toBe(404);
+  });
+});
+
+describe("Bots: Update bot", () => {
+  test("owner can update bot name", async () => {
+    const human = await registerUser("UpdOwner");
+
+    const botRes = await createBot(human.token, "OldName");
+
+    const res = await req(
+      "PATCH",
+      `/bots/${botRes.body.id}`,
+      { name: "NewName" },
+      human.token
+    );
+
+    expect(res.status).toBe(200);
+    expect(res.body.name).toBe("NewName");
+  });
+
+  test("owner can update webhook URL", async () => {
+    const human = await registerUser("UpdHookOwner");
+
+    const botRes = await createBot(human.token, "HookBot");
+
+    const res = await req(
+      "PATCH",
+      `/bots/${botRes.body.id}`,
+      { webhookUrl: "https://new-hook.example.com/webhook" },
+      human.token
+    );
+
+    expect(res.status).toBe(200);
+    expect(res.body.webhookUrl).toBe("https://new-hook.example.com/webhook");
+  });
+
+  test("owner can clear webhook URL by passing null", async () => {
+    const human = await registerUser("ClearHookOwner");
+
+    const botRes = await createBot(human.token, "ClearBot", "https://example.com/hook");
+
+    const res = await req(
+      "PATCH",
+      `/bots/${botRes.body.id}`,
+      { webhookUrl: null },
+      human.token
+    );
+
+    expect(res.status).toBe(200);
+    expect(res.body.webhookUrl).toBeNull();
+  });
+
+  test("owner can update both name and webhookUrl", async () => {
+    const human = await registerUser("UpdBothOwner");
+
+    const botRes = await createBot(human.token, "BothBot");
+
+    const res = await req(
+      "PATCH",
+      `/bots/${botRes.body.id}`,
+      { name: "UpdatedBoth", webhookUrl: "https://both.example.com/hook" },
+      human.token
+    );
+
+    expect(res.status).toBe(200);
+    expect(res.body.name).toBe("UpdatedBoth");
+    expect(res.body.webhookUrl).toBe("https://both.example.com/hook");
+  });
+
+  test("non-owner cannot update bot → 403", async () => {
+    const owner = await registerUser("UpdBotOwner");
+    const stranger = await registerUser("UpdStranger");
+
+    const botRes = await createBot(owner.token, "NoUpdBot");
+
+    const res = await req(
+      "PATCH",
+      `/bots/${botRes.body.id}`,
+      { name: "Hacked" },
+      stranger.token
+    );
+
+    expect(res.status).toBe(403);
+  });
+});
+
+describe("Bots: Delete bot", () => {
+  test("owner can delete bot — bot disappears from list + API key stops working", async () => {
+    const human = await registerUser("DelOwner");
+
+    const botRes = await createBot(human.token, "DelBot");
+    const apiKey = botRes.body.apiKey;
+    const botUserId = botRes.body.userId;
+
+    // Verify bot works before deletion
+    const meRes = await req("GET", "/auth/me", undefined, apiKey);
+    expect(meRes.status).toBe(200);
+
+    // Delete the bot
+    const delRes = await req(
+      "DELETE",
+      `/bots/${botRes.body.id}`,
+      undefined,
+      human.token
+    );
+    expect(delRes.status).toBe(200);
+    expect(delRes.body.success).toBe(true);
+
+    // API key should no longer work
+    const meRes2 = await req("GET", "/auth/me", undefined, apiKey);
+    expect(meRes2.status).toBe(401);
+
+    // Bot should not appear in list
+    const listRes = await req("GET", "/bots/list", undefined, human.token);
+    const ids = listRes.body.map((b: any) => b.id);
+    expect(ids).not.toContain(botRes.body.id);
+
+    // Remove from cleanup list since we already deleted it
+    const idx = createdBotUserIds.indexOf(botUserId);
+    if (idx !== -1) createdBotUserIds.splice(idx, 1);
+  });
+
+  test("non-owner cannot delete bot → 403", async () => {
+    const owner = await registerUser("DelBotOwner");
+    const stranger = await registerUser("DelStranger");
+
+    const botRes = await createBot(owner.token, "NoDelBot");
+
+    const res = await req(
+      "DELETE",
+      `/bots/${botRes.body.id}`,
+      undefined,
+      stranger.token
+    );
+
+    expect(res.status).toBe(403);
+  });
+});
+
 describe("Bots: @mention webhook", () => {
   test("webhook receives payload with valid signature when bot is @mentioned", async () => {
     const human = await registerUser("WebhookOwner");

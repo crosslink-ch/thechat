@@ -39,7 +39,7 @@ function sendTo(ws: WebSocket, event: WsServerEvent) {
   }
 }
 
-function broadcastToUser(userId: string, event: WsServerEvent) {
+export function broadcastToUser(userId: string, event: WsServerEvent) {
   const sockets = userSockets.get(userId);
   if (!sockets) return;
   const data = JSON.stringify(event);

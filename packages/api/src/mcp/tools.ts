@@ -15,6 +15,9 @@ import { getMessages, sendMessage } from "../services/messages";
 import {
   createBot,
   listBots,
+  getBot,
+  updateBot,
+  deleteBot,
   addBotToWorkspace,
   removeBotFromWorkspace,
   regenerateBotKey,
@@ -290,6 +293,68 @@ export function registerTools(server: McpServer) {
     async (_args, extra) => {
       const user = getUser(extra);
       return withService(() => listBots(user.id));
+    }
+  );
+
+  // --- get_bot ---
+  server.registerTool(
+    "get_bot",
+    {
+      description:
+        "Get a bot's details including webhook URL and secret. Only the bot owner can view these.",
+      inputSchema: {
+        botId: z.string().uuid().describe("The bot ID"),
+      },
+    },
+    async ({ botId }, extra) => {
+      const user = getUser(extra);
+      return withService(() => getBot(botId as string, user.id));
+    }
+  );
+
+  // --- update_bot ---
+  server.registerTool(
+    "update_bot",
+    {
+      description:
+        "Update a bot's name and/or webhook URL. Only the bot owner can do this.",
+      inputSchema: {
+        botId: z.string().uuid().describe("The bot ID"),
+        name: z.string().min(1).optional().describe("New bot name"),
+        webhookUrl: z
+          .string()
+          .url()
+          .nullish()
+          .describe(
+            "New webhook URL for @mention notifications. Pass null to remove."
+          ),
+      },
+    },
+    async ({ botId, name, webhookUrl }, extra) => {
+      const user = getUser(extra);
+      const updates: { name?: string; webhookUrl?: string | null } = {};
+      if (name !== undefined) updates.name = name as string;
+      if (webhookUrl !== undefined)
+        updates.webhookUrl = (webhookUrl as string | null | undefined) ?? null;
+      return withService(() =>
+        updateBot(botId as string, user.id, updates)
+      );
+    }
+  );
+
+  // --- delete_bot ---
+  server.registerTool(
+    "delete_bot",
+    {
+      description:
+        "Permanently delete a bot. Only the bot owner can do this. The bot's API key will stop working immediately.",
+      inputSchema: {
+        botId: z.string().uuid().describe("The bot ID"),
+      },
+    },
+    async ({ botId }, extra) => {
+      const user = getUser(extra);
+      return withService(() => deleteBot(botId as string, user.id));
     }
   );
 

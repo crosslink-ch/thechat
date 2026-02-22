@@ -247,4 +247,5 @@ export type WsServerEvent =
   | { type: "auth_error"; message: string }
   | { type: "new_message"; message: ChatMessage; conversationType: "direct" | "group" }
   | { type: "typing"; conversationId: string; userId: string; userName: string }
+  | { type: "member_joined"; workspaceId: string; member: WorkspaceMember }
   | { type: "error"; message: string };

@@ -221,6 +221,98 @@ export async function removeBotFromWorkspace(
   return { success: true };
 }
 
+export async function getBot(botId: string, ownerId: string) {
+  const [row] = await db
+    .select({
+      id: bots.id,
+      userId: bots.userId,
+      webhookUrl: bots.webhookUrl,
+      webhookSecret: bots.webhookSecret,
+      createdAt: bots.createdAt,
+      ownerId: bots.ownerId,
+      name: users.name,
+    })
+    .from(bots)
+    .innerJoin(users, eq(bots.userId, users.id))
+    .where(eq(bots.id, botId))
+    .limit(1);
+
+  if (!row) {
+    throw new ServiceError("Bot not found", 404);
+  }
+
+  if (row.ownerId !== ownerId) {
+    throw new ServiceError("Only the bot owner can view bot details", 403);
+  }
+
+  return {
+    id: row.id,
+    userId: row.userId,
+    name: row.name,
+    webhookUrl: row.webhookUrl,
+    webhookSecret: row.webhookSecret,
+    createdAt: row.createdAt.toISOString(),
+  };
+}
+
+export async function updateBot(
+  botId: string,
+  ownerId: string,
+  updates: { name?: string; webhookUrl?: string | null }
+) {
+  const [bot] = await db
+    .select({ id: bots.id, ownerId: bots.ownerId, userId: bots.userId })
+    .from(bots)
+    .where(eq(bots.id, botId))
+    .limit(1);
+
+  if (!bot) {
+    throw new ServiceError("Bot not found", 404);
+  }
+
+  if (bot.ownerId !== ownerId) {
+    throw new ServiceError("Only the bot owner can update the bot", 403);
+  }
+
+  if (updates.name !== undefined) {
+    await db
+      .update(users)
+      .set({ name: updates.name })
+      .where(eq(users.id, bot.userId));
+  }
+
+  if (updates.webhookUrl !== undefined) {
+    await db
+      .update(bots)
+      .set({ webhookUrl: updates.webhookUrl })
+      .where(eq(bots.id, botId));
+  }
+
+  return getBot(botId, ownerId);
+}
+
+export async function deleteBot(botId: string, ownerId: string) {
+  const [bot] = await db
+    .select({ id: bots.id, ownerId: bots.ownerId, userId: bots.userId })
+    .from(bots)
+    .where(eq(bots.id, botId))
+    .limit(1);
+
+  if (!bot) {
+    throw new ServiceError("Bot not found", 404);
+  }
+
+  if (bot.ownerId !== ownerId) {
+    throw new ServiceError("Only the bot owner can delete the bot", 403);
+  }
+
+  // Delete bot record first (references user), then the user record
+  await db.delete(bots).where(eq(bots.id, botId));
+  await db.delete(users).where(eq(users.id, bot.userId));
+
+  return { success: true };
+}
+
 export async function regenerateBotKey(botId: string, ownerId: string) {
   const [bot] = await db
     .select({ id: bots.id, ownerId: bots.ownerId })
