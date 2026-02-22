@@ -43,7 +43,7 @@ describe("Auth flow", () => {
 
     // Sidebar was already open — wait for user name to populate
     await browser.waitUntil(
-      async () => (await $(".sidebar-user-name").getText()) === TEST_NAME,
+      async () => await browser.execute(() => document.querySelector(".sidebar-user-name")?.textContent) === TEST_NAME,
       { timeout: 10000, timeoutMsg: `Expected sidebar to show "${TEST_NAME}"` },
     );
 
@@ -69,7 +69,7 @@ describe("Auth flow", () => {
 
     // 8. Sidebar still open — wait for user name to populate again
     await browser.waitUntil(
-      async () => (await $(".sidebar-user-name").getText()) === TEST_NAME,
+      async () => await browser.execute(() => document.querySelector(".sidebar-user-name")?.textContent) === TEST_NAME,
       { timeout: 10000, timeoutMsg: `Expected sidebar to show "${TEST_NAME}" after login` },
     );
   });

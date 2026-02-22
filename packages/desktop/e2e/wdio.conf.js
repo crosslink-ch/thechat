@@ -11,6 +11,7 @@ const TAURI_DRIVER_PORT = 4444;
 
 let tauriDriver;
 let tmpDataDir;
+let originalXdgDataHome;
 
 export const config = {
   specs: [path.resolve(__dirname, "specs/**/*.e2e.js")],
@@ -44,14 +45,15 @@ export const config = {
   },
 
   async beforeSession(_config, capabilities) {
-    // Create isolated data directory so each run gets a fresh SQLite DB
+    // Create isolated data directory so each run gets a fresh SQLite DB.
+    // Set XDG_DATA_HOME on the process env so tauri-driver (and the app it
+    // spawns) inherit it. dirs::data_dir() on Linux reads this variable.
     tmpDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "thechat-e2e-"));
+    originalXdgDataHome = process.env.XDG_DATA_HOME;
+    process.env.XDG_DATA_HOME = tmpDataDir;
 
     capabilities["tauri:options"] = {
       application: path.resolve(packageDir, "src-tauri/target/debug/thechat"),
-      env: {
-        XDG_DATA_HOME: tmpDataDir,
-      },
     };
 
     tauriDriver = spawn("tauri-driver", ["--port", String(TAURI_DRIVER_PORT)], {
@@ -92,6 +94,12 @@ export const config = {
     if (tauriDriver) {
       tauriDriver.kill("SIGTERM");
       tauriDriver = null;
+    }
+    // Restore original XDG_DATA_HOME
+    if (originalXdgDataHome !== undefined) {
+      process.env.XDG_DATA_HOME = originalXdgDataHome;
+    } else {
+      delete process.env.XDG_DATA_HOME;
     }
     if (tmpDataDir) {
       fs.rmSync(tmpDataDir, { recursive: true, force: true });
