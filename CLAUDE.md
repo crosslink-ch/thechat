@@ -37,7 +37,7 @@ thechat/
 │   ├── desktop/              # Tauri 2 desktop app (@thechat/desktop)
 │   │   ├── src/              # React/TypeScript frontend
 │   │   └── src-tauri/        # Rust backend
-│   ├── api/                  # ElysiaJS + GraphQL server (@thechat/api, runs on Bun)
+│   ├── api/                  # ElysiaJS REST + MCP server (@thechat/api, runs on Bun)
 │   │   └── src/
 │   └── shared/               # Shared TypeScript types (@thechat/shared)
 │       └── src/
@@ -81,9 +81,18 @@ thechat/
 
 ### API Server (`packages/api/`)
 
-- **ElysiaJS + GraphQL Yoga** running on **Bun**
-- GraphQL playground at `http://localhost:3000/graphql`
+- **ElysiaJS** running on **Bun**
 - Exports `App` type (`typeof app`) from `src/index.ts` for Eden Treaty type inference
+- **`src/services/`** — Shared business logic used by REST routes, MCP tools, and WebSocket handlers:
+  - `errors.ts` — `ServiceError` class (message + HTTP status code), thrown by services and caught by callers
+  - `workspaces.ts` — `listUserWorkspaces`, `getWorkspaceDetail`, `createWorkspace`, `joinWorkspace`
+  - `conversations.ts` — `createOrGetDm`, `listUserDms`, `createChannel`
+  - `messages.ts` — `getMessages`, `sendMessage`
+- **`src/mcp/`** — Built-in MCP server (Streamable HTTP transport) at `/mcp`, via `elysia-mcp` plugin:
+  - `index.ts` — Plugin setup, mounts at `/mcp`
+  - `auth.ts` — Bridges existing `resolveTokenToUser()` for MCP authentication (JWT + bot API keys)
+  - `tools.ts` — 10 tools (`get_me`, `list_workspaces`, `get_workspace`, `create_workspace`, `join_workspace`, `list_dms`, `create_dm`, `create_channel`, `get_messages`, `send_message`) — thin wrappers over services
+- REST route handlers (`workspaces/`, `conversations/`, `messages/`) are thin wrappers: Zod input validation → service call → `ServiceError` catch for HTTP status codes
 
 ### Desktop ↔ API Communication
 
