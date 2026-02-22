@@ -14,12 +14,13 @@ pnpm build                # Build all packages
 pnpm build:desktop        # TypeScript check + Vite production build (desktop)
 pnpm build:api            # Bun build (API)
 pnpm tauri:build          # Full production build (frontend + Rust)
-pnpm test                 # Run tests across all packages
-pnpm test:unit            # Run only unit tests
-pnpm test:integration     # Run integration tests (requires pnpm dev to be running)
+pnpm test                 # Run all test suites in parallel (desktop, api, rust, integration)
+python3 scripts/test.py desktop rust  # Run specific suites only
 ```
 
-Run a single test file: `pnpm --filter @thechat/desktop vitest run src/core/loop.test.ts`
+Run a single test file:
+- Desktop: `pnpm --filter @thechat/desktop vitest run src/core/loop.test.ts`
+- API: `pnpm --filter @thechat/api test -- src/auth/auth.test.ts`
 
 Rust backend tests: `cd packages/desktop/src-tauri && cargo test`
 
