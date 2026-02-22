@@ -80,6 +80,7 @@ enum Transport {
         client: reqwest::blocking::Client,
         url: String,
         session_id: Option<String>,
+        auth_token: Option<String>,
     },
 }
 
@@ -191,6 +192,7 @@ impl McpClient {
                 client,
                 url: url.to_string(),
                 session_id: None,
+                auth_token: None,
             },
             next_id: AtomicU64::new(1),
         })
@@ -255,6 +257,7 @@ impl McpClient {
                 client,
                 url,
                 session_id,
+                auth_token,
             } => {
                 let body = serde_json::to_string(&request)
                     .map_err(|e| format!("Failed to serialize request: {}", e))?;
@@ -266,6 +269,10 @@ impl McpClient {
 
                 if let Some(sid) = session_id.as_deref() {
                     req = req.header("Mcp-Session-Id", sid);
+                }
+
+                if let Some(token) = auth_token.as_deref() {
+                    req = req.header("Authorization", format!("Bearer {}", token));
                 }
 
                 let response = req
@@ -339,6 +346,7 @@ impl McpClient {
                 client,
                 url,
                 session_id,
+                auth_token,
             } => {
                 let body = serde_json::to_string(&notification)
                     .map_err(|e| format!("Failed to serialize notification: {}", e))?;
@@ -349,6 +357,10 @@ impl McpClient {
 
                 if let Some(sid) = session_id.as_deref() {
                     req = req.header("Mcp-Session-Id", sid);
+                }
+
+                if let Some(token) = auth_token.as_deref() {
+                    req = req.header("Authorization", format!("Bearer {}", token));
                 }
 
                 // Fire-and-forget: ignore response
@@ -422,6 +434,12 @@ impl McpClient {
         }
     }
 
+    fn set_auth_token(&mut self, token: &str) {
+        if let Transport::Http { auth_token, .. } = &mut self.transport {
+            *auth_token = Some(token.to_string());
+        }
+    }
+
     #[cfg(test)]
     fn session_id(&self) -> Option<&str> {
         match &self.transport {
@@ -443,13 +461,17 @@ impl McpClient {
                 client,
                 url,
                 session_id,
+                auth_token,
             } => {
                 // Send DELETE to terminate the session, ignore errors
                 if let Some(sid) = session_id.as_deref() {
-                    let _ = client
+                    let mut req = client
                         .delete(url.as_str())
-                        .header("Mcp-Session-Id", sid)
-                        .send();
+                        .header("Mcp-Session-Id", sid);
+                    if let Some(token) = auth_token.as_deref() {
+                        req = req.header("Authorization", format!("Bearer {}", token));
+                    }
+                    let _ = req.send();
                 }
             }
         }
@@ -476,12 +498,18 @@ impl McpManager {
 
 /// Initialize a single MCP server: connect (stdio or HTTP), handshake, list tools.
 /// Returns the client and discovered tools, or an error.
+/// If `auth_token` is provided, it will be set on HTTP transports for authentication.
 fn init_server(
     server_name: &str,
     config: &McpServerConfig,
+    auth_token: Option<&str>,
 ) -> Result<(McpClient, Vec<McpToolInfo>), String> {
     let mut client = if let Some(url) = &config.url {
-        McpClient::connect_http(url, &config.headers)?
+        let mut c = McpClient::connect_http(url, &config.headers)?;
+        if let Some(token) = auth_token {
+            c.set_auth_token(token);
+        }
+        c
     } else if let Some(command) = &config.command {
         McpClient::spawn(command, &config.args, &config.env)?
     } else {
@@ -552,13 +580,18 @@ pub fn mcp_initialize<R: tauri::Runtime>(
     let manager = Arc::clone(&manager);
 
     for (server_name, server_config) in config.mcp_servers {
+        if server_config.requires_auth {
+            log::info!("Skipping MCP server '{}' (requires auth)", server_name);
+            continue;
+        }
+
         let manager = Arc::clone(&manager);
         let app = app.clone();
 
         std::thread::spawn(move || {
             log::info!("Initializing MCP server: {}", server_name);
 
-            match init_server(&server_name, &server_config) {
+            match init_server(&server_name, &server_config, None) {
                 Ok((client, tools)) => {
                     log::info!(
                         "MCP server '{}' ready with {} tools",
@@ -578,6 +611,79 @@ pub fn mcp_initialize<R: tauri::Runtime>(
                 }
                 Err(e) => {
                     log::error!("Failed to initialize MCP server '{}': {}", server_name, e);
+                }
+            }
+        });
+    }
+
+    Ok(())
+}
+
+/// Initialize MCP servers that require authentication, or update the token for
+/// already-initialized auth servers. Called when the user logs in or when the JWT
+/// refreshes (every ~15 minutes).
+#[tauri::command]
+pub fn mcp_initialize_authed<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    token: String,
+    manager: tauri::State<'_, Arc<McpManager>>,
+) -> Result<(), String> {
+    use tauri::Emitter;
+
+    let config = load_config()?;
+
+    for (server_name, server_config) in config.mcp_servers {
+        if !server_config.requires_auth {
+            continue;
+        }
+
+        // If already initialized, just update the token
+        {
+            let clients = manager
+                .clients
+                .lock()
+                .map_err(|e| format!("Lock error: {}", e))?;
+            if let Some(client_arc) = clients.get(&server_name) {
+                if let Ok(mut client) = client_arc.lock() {
+                    client.set_auth_token(&token);
+                }
+                log::info!("Updated auth token for MCP server '{}'", server_name);
+                continue;
+            }
+        }
+
+        // Not yet initialized — initialize with the auth token
+        let token = token.clone();
+        let manager = Arc::clone(&manager);
+        let app = app.clone();
+
+        std::thread::spawn(move || {
+            log::info!("Initializing auth MCP server: {}", server_name);
+
+            match init_server(&server_name, &server_config, Some(&token)) {
+                Ok((client, tools)) => {
+                    log::info!(
+                        "Auth MCP server '{}' ready with {} tools",
+                        server_name,
+                        tools.len()
+                    );
+
+                    if let Ok(mut clients) = manager.clients.lock() {
+                        clients.insert(server_name.clone(), Arc::new(Mutex::new(client)));
+                    }
+
+                    if let Err(e) = app.emit("mcp-tools-ready", &tools) {
+                        log::error!(
+                            "Failed to emit mcp-tools-ready for '{}': {}",
+                            server_name, e
+                        );
+                    }
+                }
+                Err(e) => {
+                    log::error!(
+                        "Failed to initialize auth MCP server '{}': {}",
+                        server_name, e
+                    );
                 }
             }
         });
@@ -967,9 +1073,10 @@ mod tests {
             env: HashMap::new(),
             url: None,
             headers: HashMap::new(),
+            requires_auth: false,
         };
 
-        let (mut client, tools) = init_server("test-stdio", &config).expect("init_server");
+        let (mut client, tools) = init_server("test-stdio", &config, None).expect("init_server");
         assert!(!tools.is_empty(), "should discover at least one tool");
         assert!(
             tools.iter().all(|t| t.server == "test-stdio"),
@@ -1051,9 +1158,10 @@ mod tests {
             env: HashMap::new(),
             url: Some(url),
             headers: HashMap::new(),
+            requires_auth: false,
         };
 
-        let (mut client, tools) = init_server("test-http", &config).expect("init_server");
+        let (mut client, tools) = init_server("test-http", &config, None).expect("init_server");
         assert!(!tools.is_empty(), "should discover at least one tool");
         assert!(
             tools.iter().all(|t| t.server == "test-http"),
@@ -1081,8 +1189,9 @@ mod tests {
             env: HashMap::new(),
             url: None,
             headers: HashMap::new(),
+            requires_auth: false,
         };
-        let result = init_server("no-transport", &config);
+        let result = init_server("no-transport", &config, None);
         match result {
             Ok(_) => panic!("expected error for config with no transport"),
             Err(e) => assert!(

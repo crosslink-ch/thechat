@@ -109,6 +109,7 @@ pub fn run() {
             kv_set,
             kv_delete,
             mcp::mcp_initialize,
+            mcp::mcp_initialize_authed,
             mcp::mcp_call_tool,
             mcp::mcp_shutdown,
             shell::execute_shell_command,

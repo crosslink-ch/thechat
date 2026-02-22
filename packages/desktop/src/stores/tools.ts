@@ -52,6 +52,7 @@ interface ToolsStore {
   skills: SkillMeta[];
   tools: ToolDefinition[];
   initializeMcp: () => void;
+  initializeAuthMcp: (token: string) => void;
   discoverSkills: () => Promise<void>;
   initializeTaskRunner: () => Promise<void>;
 }
@@ -106,6 +107,12 @@ export const useToolsStore = create<ToolsStore>()((set, get) => ({
 
     invoke("mcp_initialize").catch((e) =>
       console.error("MCP initialization failed:", e),
+    );
+  },
+
+  initializeAuthMcp: (token: string) => {
+    invoke("mcp_initialize_authed", { token }).catch((e) =>
+      console.error("Auth MCP initialization failed:", e),
     );
   },
 

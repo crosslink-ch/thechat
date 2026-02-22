@@ -31,11 +31,12 @@ export function RootLayout() {
     useConversationsStore.getState().fetchConversations();
   }, []);
 
-  // React to token changes: connect/disconnect WebSocket, initialize workspaces
+  // React to token changes: connect/disconnect WebSocket, initialize workspaces, auth MCP
   useEffect(() => {
     if (token && token !== prevTokenRef.current) {
       useWebSocketStore.getState().connect(token);
       useWorkspacesStore.getState().initialize();
+      useToolsStore.getState().initializeAuthMcp(token);
     } else if (!token && prevTokenRef.current) {
       useWebSocketStore.getState().disconnect();
       useWorkspacesStore.getState().reset();

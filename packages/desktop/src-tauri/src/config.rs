@@ -13,6 +13,8 @@ pub struct McpServerConfig {
     pub url: Option<String>,
     #[serde(default)]
     pub headers: HashMap<String, String>,
+    #[serde(default, rename = "requiresAuth")]
+    pub requires_auth: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -43,6 +45,7 @@ fn default_config(backend_url: &str) -> AppConfig {
             env: HashMap::new(),
             url: Some(format!("{}/mcp", backend_url)),
             headers: HashMap::new(),
+            requires_auth: true,
         },
     );
     AppConfig {
@@ -195,6 +198,7 @@ mod tests {
         let srv = &config.mcp_servers["thechat"];
         assert_eq!(srv.url.as_deref(), Some("http://localhost:3000/mcp"));
         assert!(srv.command.is_none());
+        assert!(srv.requires_auth, "thechat MCP server should require auth");
     }
 
     #[test]

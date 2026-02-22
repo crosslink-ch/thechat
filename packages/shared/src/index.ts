@@ -40,6 +40,7 @@ export interface McpServerConfig {
   env?: Record<string, string>;
   url?: string;
   headers?: Record<string, string>;
+  requiresAuth?: boolean;
 }
 
 export interface AppConfig {
