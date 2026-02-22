@@ -34,9 +34,13 @@ export interface Conversation {
   updated_at: string;
 }
 
-export type McpServerConfig =
-  | { url: string; headers?: Record<string, string> }
-  | { command: string; args?: string[]; env?: Record<string, string> };
+export interface McpServerConfig {
+  command?: string;
+  args?: string[];
+  env?: Record<string, string>;
+  url?: string;
+  headers?: Record<string, string>;
+}
 
 export interface AppConfig {
   api_key: string;

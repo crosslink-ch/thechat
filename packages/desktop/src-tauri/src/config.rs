@@ -4,20 +4,15 @@ use std::fs;
 use std::path::PathBuf;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(untagged)]
-pub enum McpServerConfig {
-    Http {
-        url: String,
-        #[serde(default)]
-        headers: HashMap<String, String>,
-    },
-    Stdio {
-        command: String,
-        #[serde(default)]
-        args: Vec<String>,
-        #[serde(default)]
-        env: HashMap<String, String>,
-    },
+pub struct McpServerConfig {
+    pub command: Option<String>,
+    #[serde(default)]
+    pub args: Vec<String>,
+    #[serde(default)]
+    pub env: HashMap<String, String>,
+    pub url: Option<String>,
+    #[serde(default)]
+    pub headers: HashMap<String, String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -42,8 +37,11 @@ fn default_config(backend_url: &str) -> AppConfig {
     let mut mcp_servers = HashMap::new();
     mcp_servers.insert(
         "thechat".to_string(),
-        McpServerConfig::Http {
-            url: format!("{}/mcp", backend_url),
+        McpServerConfig {
+            command: None,
+            args: vec![],
+            env: HashMap::new(),
+            url: Some(format!("{}/mcp", backend_url)),
             headers: HashMap::new(),
         },
     );
@@ -150,88 +148,43 @@ mod tests {
     #[test]
     fn parse_stdio_mcp_server() {
         let json = r#"{
-            "api_key": "key",
-            "model": "m",
+            "api_key": "k", "model": "m",
             "mcpServers": {
-                "exa": {
-                    "command": "npx",
-                    "args": ["-y", "exa-mcp-server"],
-                    "env": {"EXA_API_KEY": "abc"}
-                }
+                "fs": { "command": "npx", "args": ["-y", "server"], "env": {} }
             }
         }"#;
         let config: AppConfig = serde_json::from_str(json).unwrap();
-        match &config.mcp_servers["exa"] {
-            McpServerConfig::Stdio { command, args, env } => {
-                assert_eq!(command, "npx");
-                assert_eq!(args, &["-y", "exa-mcp-server"]);
-                assert_eq!(env["EXA_API_KEY"], "abc");
-            }
-            _ => panic!("Expected Stdio variant"),
-        }
+        let srv = &config.mcp_servers["fs"];
+        assert_eq!(srv.command.as_deref(), Some("npx"));
+        assert!(srv.url.is_none());
     }
 
     #[test]
     fn parse_http_mcp_server() {
         let json = r#"{
-            "api_key": "key",
-            "model": "m",
+            "api_key": "k", "model": "m",
             "mcpServers": {
-                "thechat": {
-                    "url": "http://localhost:3000/mcp"
-                }
+                "remote": { "url": "https://example.com/mcp", "headers": {"Authorization": "Bearer tok"} }
             }
         }"#;
         let config: AppConfig = serde_json::from_str(json).unwrap();
-        match &config.mcp_servers["thechat"] {
-            McpServerConfig::Http { url, headers } => {
-                assert_eq!(url, "http://localhost:3000/mcp");
-                assert!(headers.is_empty());
-            }
-            _ => panic!("Expected Http variant"),
-        }
+        let srv = &config.mcp_servers["remote"];
+        assert!(srv.command.is_none());
+        assert_eq!(srv.url.as_deref(), Some("https://example.com/mcp"));
+        assert_eq!(srv.headers.get("Authorization").unwrap(), "Bearer tok");
     }
 
     #[test]
-    fn parse_http_mcp_server_with_headers() {
+    fn parse_mcp_server_no_transport_deserializes() {
+        // Deserialization succeeds — validation happens at init time
         let json = r#"{
-            "api_key": "key",
-            "model": "m",
-            "mcpServers": {
-                "thechat": {
-                    "url": "http://localhost:3000/mcp",
-                    "headers": {"authorization": "Bearer tok123"}
-                }
-            }
+            "api_key": "k", "model": "m",
+            "mcpServers": { "bad": {} }
         }"#;
         let config: AppConfig = serde_json::from_str(json).unwrap();
-        match &config.mcp_servers["thechat"] {
-            McpServerConfig::Http { url, headers } => {
-                assert_eq!(url, "http://localhost:3000/mcp");
-                assert_eq!(headers["authorization"], "Bearer tok123");
-            }
-            _ => panic!("Expected Http variant"),
-        }
-    }
-
-    #[test]
-    fn parse_mixed_mcp_servers() {
-        let json = r#"{
-            "api_key": "key",
-            "model": "m",
-            "mcpServers": {
-                "thechat": {
-                    "url": "http://localhost:3000/mcp"
-                },
-                "exa": {
-                    "command": "npx",
-                    "args": ["-y", "exa-mcp-server"]
-                }
-            }
-        }"#;
-        let config: AppConfig = serde_json::from_str(json).unwrap();
-        assert!(matches!(config.mcp_servers["thechat"], McpServerConfig::Http { .. }));
-        assert!(matches!(config.mcp_servers["exa"], McpServerConfig::Stdio { .. }));
+        let srv = &config.mcp_servers["bad"];
+        assert!(srv.command.is_none());
+        assert!(srv.url.is_none());
     }
 
     #[test]
@@ -239,23 +192,16 @@ mod tests {
         let config = default_config(DEFAULT_BACKEND_URL);
         assert_eq!(config.api_key, "");
         assert_eq!(config.model, "openai/gpt-4.1");
-        match &config.mcp_servers["thechat"] {
-            McpServerConfig::Http { url, .. } => {
-                assert_eq!(url, "http://localhost:3000/mcp");
-            }
-            _ => panic!("Expected Http variant"),
-        }
+        let srv = &config.mcp_servers["thechat"];
+        assert_eq!(srv.url.as_deref(), Some("http://localhost:3000/mcp"));
+        assert!(srv.command.is_none());
     }
 
     #[test]
     fn default_config_uses_custom_backend_url() {
         let config = default_config("https://api.thechat.app");
-        match &config.mcp_servers["thechat"] {
-            McpServerConfig::Http { url, .. } => {
-                assert_eq!(url, "https://api.thechat.app/mcp");
-            }
-            _ => panic!("Expected Http variant"),
-        }
+        let srv = &config.mcp_servers["thechat"];
+        assert_eq!(srv.url.as_deref(), Some("https://api.thechat.app/mcp"));
     }
 
     #[test]
@@ -265,6 +211,9 @@ mod tests {
         let parsed: AppConfig = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed.api_key, "");
         assert_eq!(parsed.model, "openai/gpt-4.1");
-        assert!(matches!(parsed.mcp_servers["thechat"], McpServerConfig::Http { .. }));
+        assert_eq!(
+            parsed.mcp_servers["thechat"].url.as_deref(),
+            Some("http://localhost:3000/mcp")
+        );
     }
 }
