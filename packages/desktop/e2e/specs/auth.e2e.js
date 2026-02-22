@@ -12,7 +12,7 @@ describe("Auth flow", () => {
     const loginBtn = await $(".sidebar-login-btn");
     await loginBtn.waitForDisplayed({ timeout: 5000 });
 
-    // 2. Click login → auth modal opens
+    // 2. Click login → auth modal opens (sidebar stays open behind it)
     await loginBtn.click();
     const title = await $("h2.auth-title");
     await title.waitForDisplayed();
@@ -32,29 +32,28 @@ describe("Auth flow", () => {
     await emailInput.setValue(TEST_EMAIL);
     await passwordInput.setValue(TEST_PASSWORD);
 
-    // 5. Submit registration → modal closes, user name appears in sidebar
+    // 5. Submit registration → modal closes, sidebar is still open
     const submitBtn = await $("button.auth-submit");
     await submitBtn.click();
 
-    // Wait until auth overlay is fully gone from the DOM
     await browser.waitUntil(
       async () => !(await $(".auth-overlay").isExisting()),
       { timeout: 10000, timeoutMsg: "Auth modal did not close after registration" },
     );
 
-    // Open sidebar to check user name
-    await menuBtn.click();
-    const userName = await $(".sidebar-user-name");
-    await userName.waitForDisplayed({ timeout: 10000 });
-    await expect(userName).toHaveText(TEST_NAME);
+    // Sidebar was already open — wait for user name to populate
+    await browser.waitUntil(
+      async () => (await $(".sidebar-user-name").getText()) === TEST_NAME,
+      { timeout: 10000, timeoutMsg: `Expected sidebar to show "${TEST_NAME}"` },
+    );
 
-    // 6. Logout (sidebar already open from step 5) → login button reappears
+    // 6. Logout → login button reappears (sidebar still open)
     const logoutBtn = await $(".sidebar-logout-btn");
     await logoutBtn.waitForDisplayed({ timeout: 5000 });
     await logoutBtn.click();
     await loginBtn.waitForDisplayed({ timeout: 5000 });
 
-    // 7. Log back in with same credentials
+    // 7. Log back in with same credentials (sidebar still open)
     await loginBtn.click();
     await title.waitForDisplayed();
     await expect(title).toHaveText("Log in");
@@ -63,15 +62,15 @@ describe("Auth flow", () => {
     await passwordInput.setValue(TEST_PASSWORD);
     await submitBtn.click();
 
-    // Wait until auth overlay is fully gone from the DOM
     await browser.waitUntil(
       async () => !(await $(".auth-overlay").isExisting()),
       { timeout: 10000, timeoutMsg: "Auth modal did not close after login" },
     );
 
-    // 8. Open sidebar, verify user is logged in again
-    await menuBtn.click();
-    await userName.waitForDisplayed({ timeout: 10000 });
-    await expect(userName).toHaveText(TEST_NAME);
+    // 8. Sidebar still open — wait for user name to populate again
+    await browser.waitUntil(
+      async () => (await $(".sidebar-user-name").getText()) === TEST_NAME,
+      { timeout: 10000, timeoutMsg: `Expected sidebar to show "${TEST_NAME}" after login` },
+    );
   });
 });

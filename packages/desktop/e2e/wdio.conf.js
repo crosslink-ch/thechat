@@ -1,5 +1,6 @@
-import { spawn } from "node:child_process";
-import { execSync } from "node:child_process";
+import { spawn, execSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -9,20 +10,12 @@ const packageDir = path.resolve(__dirname, "..");
 const TAURI_DRIVER_PORT = 4444;
 
 let tauriDriver;
+let tmpDataDir;
 
 export const config = {
   specs: [path.resolve(__dirname, "specs/**/*.e2e.js")],
   maxInstances: 1,
-  capabilities: [
-    {
-      "tauri:options": {
-        application: path.resolve(
-          packageDir,
-          "src-tauri/target/debug/thechat",
-        ),
-      },
-    },
-  ],
+  capabilities: [{}],
   logLevel: "warn",
   waitforTimeout: 10000,
   connectionRetryTimeout: 30000,
@@ -50,7 +43,17 @@ export const config = {
     }
   },
 
-  async beforeSession() {
+  async beforeSession(_config, capabilities) {
+    // Create isolated data directory so each run gets a fresh SQLite DB
+    tmpDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "thechat-e2e-"));
+
+    capabilities["tauri:options"] = {
+      application: path.resolve(packageDir, "src-tauri/target/debug/thechat"),
+      env: {
+        XDG_DATA_HOME: tmpDataDir,
+      },
+    };
+
     tauriDriver = spawn("tauri-driver", ["--port", String(TAURI_DRIVER_PORT)], {
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -90,6 +93,10 @@ export const config = {
       tauriDriver.kill("SIGTERM");
       tauriDriver = null;
     }
+    if (tmpDataDir) {
+      fs.rmSync(tmpDataDir, { recursive: true, force: true });
+      tmpDataDir = null;
+    }
   },
 };
 
@@ -99,6 +106,10 @@ for (const sig of ["SIGINT", "SIGTERM"]) {
     if (tauriDriver) {
       tauriDriver.kill("SIGTERM");
       tauriDriver = null;
+    }
+    if (tmpDataDir) {
+      fs.rmSync(tmpDataDir, { recursive: true, force: true });
+      tmpDataDir = null;
     }
     process.exit(1);
   });
