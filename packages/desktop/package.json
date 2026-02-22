@@ -13,7 +13,7 @@
     "test:integration": "INTEGRATION=true vitest run integration",
     "test:watch": "vitest",
     "test:e2e": "wdio run e2e/wdio.conf.js",
-    "test:e2e:headless": "xvfb-run -a wdio run e2e/wdio.conf.js"
+    "test:e2e:headless": "env -u WAYLAND_DISPLAY GDK_BACKEND=x11 xvfb-run -a wdio run e2e/wdio.conf.js"
   },
   "dependencies": {
     "@elysiajs/eden": "^1.2.0",
