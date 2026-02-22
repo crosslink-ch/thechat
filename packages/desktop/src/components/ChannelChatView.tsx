@@ -1,5 +1,6 @@
 import { useRef, useEffect, useCallback } from "react";
 import { InputBar } from "./InputBar";
+import { Markdown } from "./Markdown";
 import type { ChatMessage } from "@thechat/shared";
 
 const noop = () => {};
@@ -56,7 +57,7 @@ export function ChannelChatView({
                 <span className="channel-message-sender">{msg.senderName}</span>
                 <span className="channel-message-time">{formatTime(msg.createdAt)}</span>
               </div>
-              <div className="channel-message-text">{msg.content}</div>
+              <Markdown content={msg.content} />
             </div>
           </div>
         ))}

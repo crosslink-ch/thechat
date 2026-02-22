@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import { parseTextSegments } from "../core/ui-blocks";
 import { DynamicUiBlock } from "./DynamicUiBlock";
+import { Markdown } from "./Markdown";
 import { PendingUiBlock } from "./PendingUiBlock";
 
 export function TextWithUiBlocks({ text }: { text: string }) {
@@ -11,11 +12,7 @@ export function TextWithUiBlocks({ text }: { text: string }) {
       {segments.map((segment, i) => {
         switch (segment.type) {
           case "text":
-            return (
-              <div key={i} className="message-text">
-                {segment.content}
-              </div>
-            );
+            return <Markdown key={i} content={segment.content} />;
           case "ui":
             return <DynamicUiBlock key={i} code={segment.code} />;
           case "ui-pending":
