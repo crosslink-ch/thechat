@@ -640,6 +640,13 @@ pub fn mcp_initialize_authed<R: tauri::Runtime>(
         if !server_config.requires_auth {
             continue;
         }
+        if server_config.lazy {
+            log::info!(
+                "Skipping auth MCP server '{}' (lazy, will load on demand)",
+                server_name
+            );
+            continue;
+        }
 
         // If already initialized, just update the token
         {
@@ -698,27 +705,44 @@ pub fn mcp_initialize_authed<R: tauri::Runtime>(
 
 /// Initialize specific MCP servers by name (blocking).
 /// Used by the skill tool to lazily load MCP servers on demand.
-/// Skips servers that are already initialized. Returns all discovered tools.
+/// For already-initialized servers, re-lists their tools and returns them.
+/// The caller manages adding tools to the session — no event is emitted.
 #[tauri::command]
-pub fn mcp_initialize_servers<R: tauri::Runtime>(
-    app: tauri::AppHandle<R>,
+pub fn mcp_initialize_servers(
     names: Vec<String>,
+    token: Option<String>,
     manager: tauri::State<'_, Arc<McpManager>>,
 ) -> Result<Vec<McpToolInfo>, String> {
-    use tauri::Emitter;
-
     let config = load_config()?;
     let mut all_tools: Vec<McpToolInfo> = Vec::new();
 
     for name in &names {
-        // Skip already-initialized servers
+        // If already initialized, re-list tools from the existing client
         {
             let clients = manager
                 .clients
                 .lock()
                 .map_err(|e| format!("Lock error: {}", e))?;
-            if clients.contains_key(name) {
-                log::info!("MCP server '{}' already initialized, skipping", name);
+            if let Some(client_arc) = clients.get(name) {
+                log::info!("MCP server '{}' already initialized, re-listing tools", name);
+                let mut client = client_arc
+                    .lock()
+                    .map_err(|e| format!("Client lock error: {}", e))?;
+                // Update auth token if provided
+                if let Some(ref t) = token {
+                    client.set_auth_token(t);
+                }
+                let raw_tools = client.list_tools()?;
+                let tools: Vec<McpToolInfo> = raw_tools
+                    .into_iter()
+                    .map(|tool| McpToolInfo {
+                        server: name.clone(),
+                        name: tool.get("name").and_then(|n| n.as_str()).unwrap_or("unknown").to_string(),
+                        description: tool.get("description").and_then(|d| d.as_str()).unwrap_or("").to_string(),
+                        input_schema: tool.get("inputSchema").cloned().unwrap_or(json!({"type": "object", "properties": {}})),
+                    })
+                    .collect();
+                all_tools.extend(tools);
                 continue;
             }
         }
@@ -728,9 +752,16 @@ pub fn mcp_initialize_servers<R: tauri::Runtime>(
             .get(name)
             .ok_or_else(|| format!("MCP server '{}' not found in config", name))?;
 
+        // Use provided token for auth servers, or None
+        let auth_token = if server_config.requires_auth {
+            token.as_deref()
+        } else {
+            None
+        };
+
         log::info!("Lazily initializing MCP server: {}", name);
 
-        match init_server(name, server_config, None) {
+        match init_server(name, server_config, auth_token) {
             Ok((client, tools)) => {
                 log::info!(
                     "MCP server '{}' ready with {} tools",
@@ -740,11 +771,6 @@ pub fn mcp_initialize_servers<R: tauri::Runtime>(
 
                 if let Ok(mut clients) = manager.clients.lock() {
                     clients.insert(name.clone(), Arc::new(Mutex::new(client)));
-                }
-
-                // Emit to frontend so the tools store picks them up
-                if let Err(e) = app.emit("mcp-tools-ready", &tools) {
-                    log::error!("Failed to emit mcp-tools-ready for '{}': {}", name, e);
                 }
 
                 all_tools.extend(tools);

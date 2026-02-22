@@ -64,10 +64,21 @@ ${skillsXml}`,
       let newToolNames: string[] = [];
       if (skill.mcpServers && skill.mcpServers.length > 0) {
         try {
-          const tools = await invoke<McpToolInfo[]>("mcp_initialize_servers", {
+          // Get auth token if available (lazy import to avoid circular deps)
+          const { useAuthStore } = await import("../../stores/auth");
+          const token = useAuthStore.getState().token;
+
+          const toolInfos = await invoke<McpToolInfo[]>("mcp_initialize_servers", {
             names: skill.mcpServers,
+            token,
           });
-          newToolNames = tools.map((t) => `${t.server}__${t.name}`);
+          newToolNames = toolInfos.map((t) => `${t.server}__${t.name}`);
+
+          // Add tools to the current session (not globally)
+          if (toolInfos.length > 0) {
+            const { useToolsStore } = await import("../../stores/tools");
+            useToolsStore.getState().addSessionMcpTools(toolInfos);
+          }
         } catch (e) {
           // Non-fatal: skill content is still useful even if MCP servers fail
           console.error("Failed to initialize MCP servers for skill:", e);

@@ -78,6 +78,7 @@ export function AgentChatRoute() {
       startNewConversation();
       resetTodos();
       setTodosState([]);
+      useToolsStore.getState().clearSessionMcpTools();
     }
   }, [routeId, loadConversation, startNewConversation]);
 
@@ -161,6 +162,7 @@ export function AgentChatRoute() {
     onNewChat: () => {
       resetTodos();
       setTodosState([]);
+      useToolsStore.getState().clearSessionMcpTools();
       navigate({ to: "/chat" });
     },
     onPaletteToggle: togglePalette,

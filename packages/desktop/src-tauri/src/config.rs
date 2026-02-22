@@ -48,7 +48,7 @@ fn default_config(backend_url: &str) -> AppConfig {
             url: Some(format!("{}/mcp", backend_url)),
             headers: HashMap::new(),
             requires_auth: true,
-            lazy: false,
+            lazy: true,
         },
     );
     AppConfig {
@@ -228,6 +228,7 @@ mod tests {
         assert_eq!(srv.url.as_deref(), Some("http://localhost:3000/mcp"));
         assert!(srv.command.is_none());
         assert!(srv.requires_auth, "thechat MCP server should require auth");
+        assert!(srv.lazy, "thechat MCP server should be lazy");
     }
 
     #[test]
