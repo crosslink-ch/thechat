@@ -3,9 +3,28 @@ import type { Message, MessagePart } from "./core/types";
 import type { PermissionRequest } from "./core/permission";
 import { useStreamingParts } from "./stores/streaming";
 import { TextWithUiBlocks } from "./components/TextWithUiBlocks";
+import { DiffPreview } from "./components/DiffPreview";
+import { WritePreview } from "./components/WritePreview";
 
 type ToolCallPart = Extract<MessagePart, { type: "tool-call" }>;
 type ToolResultPart = Extract<MessagePart, { type: "tool-result" }>;
+
+const PREVIEW_TOOLS = new Set(["edit", "multiedit", "write"]);
+
+function basename(path: string): string {
+  const parts = path.split(/[/\\]/);
+  return parts[parts.length - 1] || path;
+}
+
+function getFilePath(call: ToolCallPart): string | undefined {
+  const fp = call.args.file_path;
+  return typeof fp === "string" ? fp : undefined;
+}
+
+interface ToolPreviewInfo {
+  toolName: string;
+  args: Record<string, unknown>;
+}
 
 function formatArgs(args: Record<string, unknown>): string {
   const entries = Object.entries(args);
@@ -19,6 +38,44 @@ function formatResult(result: unknown): string {
   return text.length > 500 ? text.slice(0, 500) + "..." : text;
 }
 
+function ToolInlinePreview({ toolName, args }: ToolPreviewInfo) {
+  if (toolName === "edit") {
+    const oldStr = typeof args.old_string === "string" ? args.old_string : "";
+    const newStr = typeof args.new_string === "string" ? args.new_string : "";
+    if (!oldStr && !newStr) return null;
+    return <DiffPreview oldStr={oldStr} newStr={newStr} />;
+  }
+
+  if (toolName === "multiedit") {
+    const edits = Array.isArray(args.edits) ? args.edits : [];
+    if (edits.length === 0) return null;
+    return (
+      <>
+        {edits.map((edit: Record<string, unknown>, i: number) => {
+          const oldStr = typeof edit.old_string === "string" ? edit.old_string : "";
+          const newStr = typeof edit.new_string === "string" ? edit.new_string : "";
+          return (
+            <DiffPreview
+              key={i}
+              oldStr={oldStr}
+              newStr={newStr}
+              label={`Edit ${i + 1} of ${edits.length}`}
+            />
+          );
+        })}
+      </>
+    );
+  }
+
+  if (toolName === "write") {
+    const content = typeof args.content === "string" ? args.content : "";
+    if (!content) return null;
+    return <WritePreview content={content} />;
+  }
+
+  return null;
+}
+
 function ToolActivityBlock({
   call,
   result,
@@ -30,17 +87,25 @@ function ToolActivityBlock({
 
   const status = !result ? "Running..." : result.isError ? "Error" : "Done";
   const statusClass = result?.isError ? "tool-status-error" : "";
+  const hasPreview = PREVIEW_TOOLS.has(call.toolName);
+  const filePath = getFilePath(call);
 
   return (
     <div className="tool-activity">
       <button className="tool-activity-toggle" onClick={() => setOpen(!open)}>
         <span className="tool-activity-chevron">{open ? "▾" : "▸"}</span>
         <span className="tool-activity-name">{call.toolName}</span>
+        {filePath && <span className="tool-activity-path">{basename(filePath)}</span>}
         <span className={`tool-activity-status ${statusClass}`}>{status}</span>
       </button>
+      {hasPreview && (
+        <div className="tool-activity-preview">
+          <ToolInlinePreview toolName={call.toolName} args={call.args} />
+        </div>
+      )}
       {open && (
         <div className="tool-activity-details">
-          {Object.keys(call.args).length > 0 && (
+          {!hasPreview && Object.keys(call.args).length > 0 && (
             <div className="tool-detail-section">
               <div className="tool-detail-label">Args</div>
               <pre className="tool-detail-content">{formatArgs(call.args)}</pre>
@@ -114,18 +179,27 @@ function ThinkingSection({
   );
 }
 
+function permissionHeader(toolArgs?: ToolPreviewInfo): string {
+  if (!toolArgs) return "Run command?";
+  if (toolArgs.toolName === "write") return "Write file?";
+  if (toolArgs.toolName === "edit" || toolArgs.toolName === "multiedit") return "Edit file?";
+  return "Run command?";
+}
+
 function PermissionPromptBlock({
   permission,
   onAllow,
   onDeny,
   onDenyWithFeedback,
   showFeedbackInput,
+  toolArgs,
 }: {
   permission: PermissionRequest;
   onAllow: () => void;
   onDeny: () => void;
   onDenyWithFeedback?: (feedback: string) => void;
   showFeedbackInput?: boolean;
+  toolArgs?: ToolPreviewInfo;
 }) {
   const [feedbackVisible, setFeedbackVisible] = useState(showFeedbackInput ?? false);
   const [feedbackText, setFeedbackText] = useState("");
@@ -149,9 +223,10 @@ function PermissionPromptBlock({
 
   return (
     <div className="permission-inline">
-      <div className="permission-inline-header">Run command?</div>
+      <div className="permission-inline-header">{permissionHeader(toolArgs)}</div>
       <code className="permission-inline-command">{permission.command}</code>
-      {permission.description && (
+      {toolArgs && <ToolInlinePreview toolName={toolArgs.toolName} args={toolArgs.args} />}
+      {permission.description && !toolArgs && (
         <div className="permission-inline-desc">{permission.description}</div>
       )}
       {feedbackVisible ? (
@@ -295,6 +370,19 @@ export function StreamingMessage({ convId, pendingPermission, onPermissionAllow,
               onDeny={onPermissionDeny}
               onDenyWithFeedback={onPermissionDenyWithFeedback}
               showFeedbackInput={showFeedbackInput}
+              toolArgs={(() => {
+                // Match permission command prefix to the last unresolved tool call
+                const cmd = pendingPermission.command;
+                for (const name of PREVIEW_TOOLS) {
+                  if (cmd.startsWith(name + " ")) {
+                    const pending = [...toolCalls].reverse().find(
+                      (tc) => tc.toolName === name && !toolResults.some((tr) => tr.toolCallId === tc.toolCallId),
+                    );
+                    if (pending) return { toolName: pending.toolName, args: pending.args };
+                  }
+                }
+                return undefined;
+              })()}
             />
           )}
           {!pendingPermission && !hasContent && !hasThinking && (

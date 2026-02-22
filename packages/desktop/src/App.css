@@ -388,6 +388,103 @@
   animation: pulse 1.5s infinite;
 }
 
+/* Tool activity file path */
+.tool-activity-path {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--color-text-dimmed);
+}
+
+/* Tool activity inline preview */
+.tool-activity-preview {
+  padding: 0 10px 6px;
+}
+
+/* Diff preview */
+.diff-preview {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  border-radius: 4px;
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  margin: 4px 0;
+}
+
+.diff-line-remove,
+.diff-line-add {
+  display: flex;
+  padding: 0 8px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.diff-line-remove {
+  background: var(--color-error-bg);
+  color: var(--color-error-light);
+}
+
+.diff-line-add {
+  background: var(--color-success-bg);
+  color: var(--color-success-light);
+}
+
+.diff-line-marker {
+  flex-shrink: 0;
+  width: 16px;
+  user-select: none;
+  color: inherit;
+  opacity: 0.6;
+}
+
+/* Write preview */
+.write-preview {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  border-radius: 4px;
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-base);
+  margin: 4px 0;
+}
+
+.write-preview-line {
+  display: flex;
+  padding: 0 8px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  color: var(--color-text-secondary);
+}
+
+.write-preview-lineno {
+  flex-shrink: 0;
+  width: 32px;
+  text-align: right;
+  padding-right: 8px;
+  user-select: none;
+  color: var(--color-text-dimmed);
+}
+
+/* Shared truncation indicator */
+.diff-truncated {
+  padding: 4px 8px;
+  font-size: 11px;
+  color: var(--color-text-dimmed);
+  font-style: italic;
+  background: var(--color-bg-raised);
+}
+
+/* Multiedit label */
+.multiedit-label {
+  padding: 4px 8px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--color-text-muted);
+  background: var(--color-bg-raised);
+  border-bottom: 1px solid var(--color-border);
+}
+
 .typing-indicator {
   color: var(--color-text-dimmed);
   animation: pulse 1.5s infinite;
