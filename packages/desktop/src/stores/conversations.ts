@@ -13,7 +13,7 @@ interface ConversationsStore {
   markChannelUnread: (id: string) => void;
 }
 
-export const useConversationsStore = create<ConversationsStore>((set) => ({
+export const useConversationsStore = create<ConversationsStore>()((set) => ({
   conversations: [],
   unreadAgentChats: new Set(),
   unreadChannels: new Set(),

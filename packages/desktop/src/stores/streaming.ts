@@ -11,7 +11,7 @@ interface StreamingStore {
   stopStreaming: (convId: string) => void;
 }
 
-export const useStreamingStore = create<StreamingStore>((set) => ({
+export const useStreamingStore = create<StreamingStore>()((set) => ({
   streams: {},
   streamingConvIds: new Set(),
 

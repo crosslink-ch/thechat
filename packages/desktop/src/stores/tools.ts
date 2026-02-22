@@ -59,7 +59,7 @@ function computeTools(skills: SkillMeta[], mcpTools: ToolDefinition[]): ToolDefi
 
 let mcpUnlisten: (() => void) | null = null;
 
-export const useToolsStore = create<ToolsStore>((set, get) => ({
+export const useToolsStore = create<ToolsStore>()((set, get) => ({
   mcpTools: [],
   skills: [],
   tools: [...builtinTools],

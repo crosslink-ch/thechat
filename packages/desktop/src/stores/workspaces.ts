@@ -43,7 +43,7 @@ async function fetchWorkspacesList(token: string): Promise<WorkspaceListItem[]> 
   }
 }
 
-export const useWorkspacesStore = create<WorkspacesStore>((set) => ({
+export const useWorkspacesStore = create<WorkspacesStore>()((set) => ({
   workspaces: [],
   activeWorkspace: null,
   loading: false,

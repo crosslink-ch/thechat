@@ -79,7 +79,7 @@ function doConnect() {
   };
 }
 
-export const useWebSocketStore = create<WebSocketStore>(() => ({
+export const useWebSocketStore = create<WebSocketStore>()(() => ({
   connected: false,
 
   connect: (token: string) => {

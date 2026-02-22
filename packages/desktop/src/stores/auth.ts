@@ -83,7 +83,7 @@ async function doRefresh() {
   }
 }
 
-export const useAuthStore = create<AuthStore>((set) => ({
+export const useAuthStore = create<AuthStore>()((set) => ({
   user: null,
   token: null,
   loading: true,
