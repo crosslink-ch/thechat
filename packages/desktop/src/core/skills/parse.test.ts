@@ -68,4 +68,45 @@ Just content.
     expect(result.data).toEqual({});
     expect(result.content).toBe("Just content.\n");
   });
+
+  it("parses inline YAML list for mcpServers", () => {
+    const raw = `---
+name: k8s
+description: Kubernetes skill
+mcpServers: [kubectl-mcp, helm-mcp]
+---
+Use kubectl tools.
+`;
+    const result = parseFrontmatter(raw);
+    expect(result.data.name).toBe("k8s");
+    expect(result.data.mcpServers).toEqual(["kubectl-mcp", "helm-mcp"]);
+  });
+
+  it("parses multi-line YAML list for mcpServers", () => {
+    const raw = `---
+name: k8s
+description: Kubernetes skill
+mcpServers:
+  - kubectl-mcp
+  - helm-mcp
+---
+Use kubectl tools.
+`;
+    const result = parseFrontmatter(raw);
+    expect(result.data.name).toBe("k8s");
+    expect(result.data.mcpServers).toEqual(["kubectl-mcp", "helm-mcp"]);
+  });
+
+  it("parses single-item multi-line list", () => {
+    const raw = `---
+name: test
+description: Test
+mcpServers:
+  - only-one
+---
+Content.
+`;
+    const result = parseFrontmatter(raw);
+    expect(result.data.mcpServers).toEqual(["only-one"]);
+  });
 });

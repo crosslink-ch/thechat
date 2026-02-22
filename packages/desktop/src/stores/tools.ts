@@ -48,24 +48,65 @@ const builtinTools: ToolDefinition[] = [
 ];
 
 interface ToolsStore {
+  /** MCP tools loaded eagerly at startup (always available) */
   mcpTools: ToolDefinition[];
+  /** Per-conversation session MCP tool infos (lazy-populated from DB) */
+  sessionToolsByConv: Record<string, McpToolInfo[]>;
+  /** Currently active conversation ID (whose session tools are active) */
+  activeConvId: string | null;
   skills: SkillMeta[];
   tools: ToolDefinition[];
   initializeMcp: () => void;
   initializeAuthMcp: (token: string) => void;
   discoverSkills: () => Promise<void>;
   initializeTaskRunner: () => Promise<void>;
+  /** Set the active conversation, loading its session tools from DB if needed. */
+  setActiveConversation: (convId: string | null) => Promise<void>;
+  /** Add MCP tools to a specific conversation's session (loaded by a skill). */
+  addSessionMcpTools: (convId: string, infos: McpToolInfo[]) => void;
 }
 
-function computeTools(skills: SkillMeta[], mcpTools: ToolDefinition[]): ToolDefinition[] {
+function mcpInfoToToolDef(info: McpToolInfo): ToolDefinition {
+  return {
+    name: `${info.server}__${info.name}`,
+    description: info.description,
+    parameters: info.input_schema as Record<string, unknown>,
+    execute: (args: Record<string, unknown>) =>
+      invoke<string>("mcp_call_tool", {
+        server: info.server,
+        tool: info.name,
+        args,
+      }),
+  };
+}
+
+function computeTools(
+  skills: SkillMeta[],
+  mcpTools: ToolDefinition[],
+  sessionMcpInfos: McpToolInfo[],
+): ToolDefinition[] {
   const skillTool = skills.length > 0 ? createSkillTool(skills) : null;
-  return [...builtinTools, ...(skillTool ? [skillTool] : []), ...mcpTools];
+  const sessionToolDefs = sessionMcpInfos.map(mcpInfoToToolDef);
+  return [
+    ...builtinTools,
+    ...(skillTool ? [skillTool] : []),
+    ...mcpTools,
+    ...sessionToolDefs,
+  ];
+}
+
+/** Get the active conversation's session tool infos from the store state. */
+function getActiveSessionInfos(state: ToolsStore): McpToolInfo[] {
+  if (!state.activeConvId) return [];
+  return state.sessionToolsByConv[state.activeConvId] ?? [];
 }
 
 let mcpUnlisten: (() => void) | null = null;
 
 export const useToolsStore = create<ToolsStore>()((set, get) => ({
   mcpTools: [],
+  sessionToolsByConv: {},
+  activeConvId: null,
   skills: [],
   tools: [...builtinTools],
 
@@ -79,24 +120,14 @@ export const useToolsStore = create<ToolsStore>()((set, get) => ({
     set({ mcpTools: [] });
 
     const unlistenPromise = listen<McpToolInfo[]>("mcp-tools-ready", (event) => {
-      const newTools: ToolDefinition[] = event.payload.map((info) => ({
-        name: `${info.server}__${info.name}`,
-        description: info.description,
-        parameters: info.input_schema as Record<string, unknown>,
-        execute: (args: Record<string, unknown>) =>
-          invoke<string>("mcp_call_tool", {
-            server: info.server,
-            tool: info.name,
-            args,
-          }),
-      }));
+      const newTools: ToolDefinition[] = event.payload.map(mcpInfoToToolDef);
 
       set((state) => {
         const existing = new Set(state.mcpTools.map((t) => t.name));
         const unique = newTools.filter((t) => !existing.has(t.name));
         if (unique.length === 0) return state;
         const mcpTools = [...state.mcpTools, ...unique];
-        const tools = computeTools(state.skills, mcpTools);
+        const tools = computeTools(state.skills, mcpTools, getActiveSessionInfos(state));
         return { mcpTools, tools };
       });
     });
@@ -120,7 +151,7 @@ export const useToolsStore = create<ToolsStore>()((set, get) => ({
     try {
       const skills = await discoverSkills();
       set((state) => {
-        const tools = computeTools(skills, state.mcpTools);
+        const tools = computeTools(skills, state.mcpTools, getActiveSessionInfos(state));
         return { skills, tools };
       });
     } catch {
@@ -142,5 +173,79 @@ export const useToolsStore = create<ToolsStore>()((set, get) => ({
     } catch {
       // ignore
     }
+  },
+
+  setActiveConversation: async (convId: string | null) => {
+    set((state) => {
+      const tools = computeTools(
+        state.skills,
+        state.mcpTools,
+        convId ? (state.sessionToolsByConv[convId] ?? []) : [],
+      );
+      return { activeConvId: convId, tools };
+    });
+
+    if (!convId) return;
+
+    // If already cached, try to re-initialize MCP servers in the background
+    const state = get();
+    const cached = state.sessionToolsByConv[convId];
+    if (cached && cached.length > 0) {
+      // Fire-and-forget: re-initialize MCP servers for these tools
+      const serverNames = [...new Set(cached.map((t) => t.server))];
+      invoke("mcp_initialize_servers", { names: serverNames, token: null }).catch(() => {});
+      return;
+    }
+
+    // Not cached — try loading from kv_store
+    try {
+      const json = await invoke<string | null>("kv_get", {
+        key: `session_tools:${convId}`,
+      });
+      if (!json) return;
+
+      const infos: McpToolInfo[] = JSON.parse(json);
+      if (infos.length === 0) return;
+
+      set((state) => {
+        const sessionToolsByConv = {
+          ...state.sessionToolsByConv,
+          [convId]: infos,
+        };
+        // Only recompute if this is still the active conversation
+        if (state.activeConvId !== convId) return { sessionToolsByConv };
+        const tools = computeTools(state.skills, state.mcpTools, infos);
+        return { sessionToolsByConv, tools };
+      });
+
+      // Fire-and-forget: re-initialize MCP servers
+      const serverNames = [...new Set(infos.map((t) => t.server))];
+      invoke("mcp_initialize_servers", { names: serverNames, token: null }).catch(() => {});
+    } catch {
+      // DB load failed — not fatal
+    }
+  },
+
+  addSessionMcpTools: (convId: string, infos: McpToolInfo[]) => {
+    set((state) => {
+      const existing = state.sessionToolsByConv[convId] ?? [];
+      const existingNames = new Set(existing.map((t) => `${t.server}__${t.name}`));
+      const unique = infos.filter((t) => !existingNames.has(`${t.server}__${t.name}`));
+      if (unique.length === 0) return state;
+
+      const merged = [...existing, ...unique];
+      const sessionToolsByConv = { ...state.sessionToolsByConv, [convId]: merged };
+
+      // Persist to kv_store (fire-and-forget)
+      invoke("kv_set", {
+        key: `session_tools:${convId}`,
+        value: JSON.stringify(merged),
+      }).catch(() => {});
+
+      // Only recompute tools if this is the active conversation
+      if (state.activeConvId !== convId) return { sessionToolsByConv };
+      const tools = computeTools(state.skills, state.mcpTools, merged);
+      return { sessionToolsByConv, tools };
+    });
   },
 }));

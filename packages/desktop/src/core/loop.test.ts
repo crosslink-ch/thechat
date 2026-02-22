@@ -411,6 +411,79 @@ describe("runChatLoop", () => {
     expect(readTool.execute).toHaveBeenCalledTimes(3);
   });
 
+  it("picks up new tools via getTools between iterations", async () => {
+    const initialTool: ToolDefinition = {
+      name: "skill",
+      description: "Load a skill",
+      parameters: { type: "object", properties: {} },
+      execute: vi.fn().mockResolvedValue({ success: true }),
+    };
+
+    const dynamicTool: ToolDefinition = {
+      name: "kubectl__get_pods",
+      description: "List pods",
+      parameters: { type: "object", properties: {} },
+      execute: vi.fn().mockResolvedValue({ pods: ["pod-1"] }),
+    };
+
+    // getTools returns only initialTool on first call, then both on second
+    let callCount = 0;
+    const getTools = vi.fn(() => {
+      callCount++;
+      if (callCount <= 1) return [initialTool];
+      return [initialTool, dynamicTool];
+    });
+
+    // Round 1: model calls skill tool
+    mockStreamCompletion.mockResolvedValueOnce({
+      text: "",
+      reasoning: "",
+      toolCalls: [{ id: "call_1", name: "skill", args: { name: "k8s" } }],
+    });
+
+    // Round 2: model calls the dynamically-loaded tool
+    mockStreamCompletion.mockResolvedValueOnce({
+      text: "",
+      reasoning: "",
+      toolCalls: [{ id: "call_2", name: "kubectl__get_pods", args: {} }],
+    });
+
+    // Round 3: text response
+    mockStreamCompletion.mockResolvedValueOnce({
+      text: "Here are your pods",
+      reasoning: "",
+      toolCalls: [],
+      usage: { prompt_tokens: 30, completion_tokens: 10, total_tokens: 40 },
+    });
+
+    const events: StreamEvent[] = [];
+    await runChatLoop({
+      apiKey: "key",
+      model: "model",
+      messages: [{ role: "user", content: "list pods" }],
+      getTools,
+      onEvent: (e) => events.push(e),
+    });
+
+    // getTools called at start of each iteration (3 iterations)
+    expect(getTools).toHaveBeenCalledTimes(3);
+
+    // Both tools were executed successfully
+    expect(initialTool.execute).toHaveBeenCalledWith({ name: "k8s" });
+    expect(dynamicTool.execute).toHaveBeenCalledWith({});
+
+    // The dynamic tool result should not be an error
+    const dynamicResult = events.find(
+      (e) => e.type === "tool-result" && e.toolName === "kubectl__get_pods",
+    );
+    expect(dynamicResult).toMatchObject({ isError: false });
+
+    // The second streamCompletion call should include both tools
+    const secondCallTools = mockStreamCompletion.mock.calls[1][0].tools;
+    expect(secondCallTools).toHaveLength(2);
+    expect(secondCallTools!.map((t: ToolDefinition) => t.name)).toContain("kubectl__get_pods");
+  });
+
   it("handles streamCompletion error", async () => {
     mockStreamCompletion.mockRejectedValueOnce(new Error("API failed"));
 

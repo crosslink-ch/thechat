@@ -26,6 +26,13 @@ function isDoomLoop(history: ToolCallRecord[]): boolean {
   );
 }
 
+/**
+ * Resolve the current set of tools, preferring the dynamic getTools() provider.
+ */
+function resolveTools(options: ChatLoopOptions): ToolDefinition[] {
+  return options.getTools?.() ?? options.tools ?? [];
+}
+
 export async function runChatLoop(options: ChatLoopOptions): Promise<void> {
   const {
     apiKey,
@@ -33,7 +40,6 @@ export async function runChatLoop(options: ChatLoopOptions): Promise<void> {
     messages,
     systemPrompt,
     params,
-    tools,
     maxToolRoundtrips = Infinity,
     signal,
     onEvent,
@@ -43,17 +49,18 @@ export async function runChatLoop(options: ChatLoopOptions): Promise<void> {
     { role: "system", content: systemPrompt ?? DEFAULT_SYSTEM_PROMPT },
     ...messages,
   ];
-  const toolMap = new Map<string, ToolDefinition>();
-  if (tools) {
-    for (const t of tools) {
-      toolMap.set(t.name, t);
-    }
-  }
 
   const toolCallHistory: ToolCallRecord[] = [];
 
   for (let round = 0; round <= maxToolRoundtrips; round++) {
     if (signal?.aborted) return;
+
+    // Rebuild tool map each iteration so newly-loaded MCP tools are picked up
+    const currentTools = resolveTools(options);
+    const toolMap = new Map<string, ToolDefinition>();
+    for (const t of currentTools) {
+      toolMap.set(t.name, t);
+    }
 
     // Doom loop detected — do one final text-only call so the model can respond
     if (isDoomLoop(toolCallHistory)) {
@@ -94,7 +101,7 @@ export async function runChatLoop(options: ChatLoopOptions): Promise<void> {
         model,
         messages: workingMessages,
         params,
-        tools,
+        tools: currentTools.length > 0 ? currentTools : undefined,
         signal,
         onEvent,
       });

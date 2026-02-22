@@ -25,7 +25,7 @@ export function AgentChatRoute() {
   const lastMatch = matches[matches.length - 1];
   const routeId = (lastMatch?.params as Record<string, string>)?.id as string | undefined;
 
-  const tools = useToolsStore((s) => s.tools);
+  const getTools = useCallback(() => useToolsStore.getState().tools, []);
   const systemPrompt = useMemo(() => buildSystemPrompt(), []);
 
   const activeAgentConvIdRef = useRef<string | null>(null);
@@ -39,7 +39,7 @@ export function AgentChatRoute() {
     loadConversation,
     startNewConversation,
   } = useChat({
-    tools,
+    getTools,
     systemPrompt,
     onStreamComplete: (convId: string, convTitle: string) => {
       useConversationsStore.getState().fetchConversations();
@@ -71,6 +71,7 @@ export function AgentChatRoute() {
         if (conv) {
           loadConversation(conv);
           useConversationsStore.getState().markAgentChatRead(conv.id);
+          useToolsStore.getState().setActiveConversation(conv.id);
         }
       });
     } else if (!routeId && loadedIdRef.current !== null) {
@@ -78,6 +79,7 @@ export function AgentChatRoute() {
       startNewConversation();
       resetTodos();
       setTodosState([]);
+      useToolsStore.getState().setActiveConversation(null);
     }
   }, [routeId, loadConversation, startNewConversation]);
 
@@ -88,6 +90,8 @@ export function AgentChatRoute() {
       prevConvId.current = conversation.id;
       loadedIdRef.current = conversation.id;
       navigate({ to: "/chat/$id", params: { id: conversation.id }, replace: true });
+      // New conversation just created — no tools to load, but set active conv for future skill calls
+      useToolsStore.getState().setActiveConversation(conversation.id);
     } else {
       prevConvId.current = conversation?.id;
     }
@@ -161,6 +165,7 @@ export function AgentChatRoute() {
     onNewChat: () => {
       resetTodos();
       setTodosState([]);
+      useToolsStore.getState().setActiveConversation(null);
       navigate({ to: "/chat" });
     },
     onPaletteToggle: togglePalette,

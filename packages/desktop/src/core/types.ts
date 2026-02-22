@@ -62,6 +62,7 @@ export interface ChatLoopOptions {
   systemPrompt?: string;
   params?: ChatParams;
   tools?: ToolDefinition[];
+  getTools?: () => ToolDefinition[];
   maxToolRoundtrips?: number;
   signal?: AbortSignal;
   onEvent: (event: StreamEvent) => void;
