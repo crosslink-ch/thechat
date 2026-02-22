@@ -1,16 +1,24 @@
 import { useState, useEffect, useRef, type FormEvent } from "react";
+import { create } from "zustand";
+import { useWorkspacesStore } from "../stores/workspaces";
 
-interface WorkspaceModalProps {
-  onCreateWorkspace: (name: string) => Promise<void>;
-  onJoinWorkspace: (id: string) => Promise<void>;
-  onClose: () => void;
+// Colocated visibility store
+const useWorkspaceModalState = create(() => ({ open: false }));
+export const openWorkspaceModal = () =>
+  useWorkspaceModalState.setState({ open: true });
+const closeWorkspaceModal = () =>
+  useWorkspaceModalState.setState({ open: false });
+
+export function WorkspaceModal() {
+  const open = useWorkspaceModalState((s) => s.open);
+  if (!open) return null;
+  return <WorkspaceModalInner />;
 }
 
-export function WorkspaceModal({
-  onCreateWorkspace,
-  onJoinWorkspace,
-  onClose,
-}: WorkspaceModalProps) {
+function WorkspaceModalInner() {
+  const createWorkspace = useWorkspacesStore((s) => s.createWorkspace);
+  const joinWorkspace = useWorkspacesStore((s) => s.joinWorkspace);
+
   const [mode, setMode] = useState<"create" | "join">("create");
   const [name, setName] = useState("");
   const [workspaceId, setWorkspaceId] = useState("");
@@ -24,11 +32,11 @@ export function WorkspaceModal({
 
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape") closeWorkspaceModal();
     };
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
-  }, [onClose]);
+  }, []);
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -42,16 +50,16 @@ export function WorkspaceModal({
           setSubmitting(false);
           return;
         }
-        await onCreateWorkspace(name.trim());
+        await createWorkspace(name.trim());
       } else {
         if (!workspaceId.trim()) {
           setError("Workspace ID is required");
           setSubmitting(false);
           return;
         }
-        await onJoinWorkspace(workspaceId.trim());
+        await joinWorkspace(workspaceId.trim());
       }
-      onClose();
+      closeWorkspaceModal();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong");
     } finally {
@@ -60,7 +68,7 @@ export function WorkspaceModal({
   };
 
   return (
-    <div className="auth-overlay" onClick={onClose}>
+    <div className="auth-overlay" onClick={closeWorkspaceModal}>
       <div className="auth-card" onClick={(e) => e.stopPropagation()}>
         <h2 className="auth-title">
           {mode === "create" ? "Create workspace" : "Join workspace"}
@@ -114,14 +122,24 @@ export function WorkspaceModal({
           {mode === "create" ? (
             <>
               Have an invite?{" "}
-              <button onClick={() => { setMode("join"); setError(""); }}>
+              <button
+                onClick={() => {
+                  setMode("join");
+                  setError("");
+                }}
+              >
                 Join workspace
               </button>
             </>
           ) : (
             <>
               Start fresh?{" "}
-              <button onClick={() => { setMode("create"); setError(""); }}>
+              <button
+                onClick={() => {
+                  setMode("create");
+                  setError("");
+                }}
+              >
                 Create workspace
               </button>
             </>

@@ -1,12 +1,23 @@
-import { describe, it, expect } from "vitest";
-import { render, screen } from "@testing-library/react";
-import { Sidebar } from "./Sidebar";
+import { describe, it, expect, beforeEach } from "vitest";
+import { render, screen, act } from "@testing-library/react";
+import {
+  RouterProvider,
+  createMemoryHistory,
+  createRouter,
+  createRootRoute,
+  createRoute,
+} from "@tanstack/react-router";
+import { useAuthStore } from "../stores/auth";
+import { useWorkspacesStore } from "../stores/workspaces";
+import { useConversationsStore } from "../stores/conversations";
 import type { Conversation } from "../core/types";
 import type {
   AuthUser,
   WorkspaceListItem,
   WorkspaceWithDetails,
 } from "@thechat/shared";
+
+import { Sidebar } from "./Sidebar";
 
 const conversations: Conversation[] = [
   { id: "c1", title: "Chat 1", created_at: "2026-01-01", updated_at: "2026-01-01" },
@@ -56,27 +67,42 @@ const activeWorkspace: WorkspaceWithDetails = {
   ],
 };
 
-const noop = () => {};
+async function renderWithRouter(component: React.ReactNode) {
+  const rootRoute = createRootRoute({
+    component: () => component,
+  });
+  const indexRoute = createRoute({
+    getParentRoute: () => rootRoute,
+    path: "/",
+    component: () => null,
+  });
+  const routeTree = rootRoute.addChildren([indexRoute]);
+  const memoryHistory = createMemoryHistory({ initialEntries: ["/"] });
+  const router = createRouter({ routeTree, history: memoryHistory });
+
+  let result!: ReturnType<typeof render>;
+  await act(async () => {
+    result = render(<RouterProvider router={router as any} />);
+  });
+  return result;
+}
+
+beforeEach(() => {
+  // Reset stores to default state
+  useAuthStore.setState({ user: null, token: null, loading: false });
+  useWorkspacesStore.setState({ workspaces: [], activeWorkspace: null, loading: false });
+  useConversationsStore.setState({
+    conversations: [],
+    unreadAgentChats: new Set(),
+    unreadChannels: new Set(),
+  });
+});
 
 describe("Sidebar", () => {
-  it("renders correctly when not logged in", () => {
-    render(
-      <Sidebar
-        open={true}
-        conversations={conversations}
-        currentId={undefined}
-        user={null}
-        workspaces={[]}
-        activeWorkspace={null}
-        onClose={noop}
-        onNewChat={noop}
-        onSelectConversation={noop}
-        onLoginClick={noop}
-        onLogout={noop}
-        onSelectWorkspace={noop}
-        onOpenWorkspaceModal={noop}
-      />
-    );
+  it("renders correctly when not logged in", async () => {
+    useConversationsStore.setState({ conversations });
+
+    await renderWithRouter(<Sidebar />);
 
     expect(screen.getByText("Log in")).toBeInTheDocument();
     expect(screen.getByText("+ New Chat")).toBeInTheDocument();
@@ -86,48 +112,24 @@ describe("Sidebar", () => {
     expect(screen.queryByText("Select workspace")).not.toBeInTheDocument();
   });
 
-  it("renders workspace switcher when logged in", () => {
-    render(
-      <Sidebar
-        open={true}
-        conversations={conversations}
-        currentId={undefined}
-        user={user}
-        workspaces={workspaceList}
-        activeWorkspace={null}
-        onClose={noop}
-        onNewChat={noop}
-        onSelectConversation={noop}
-        onLoginClick={noop}
-        onLogout={noop}
-        onSelectWorkspace={noop}
-        onOpenWorkspaceModal={noop}
-      />
-    );
+  it("renders workspace switcher when logged in", async () => {
+    useAuthStore.setState({ user, token: "test-token" });
+    useWorkspacesStore.setState({ workspaces: workspaceList });
+    useConversationsStore.setState({ conversations });
+
+    await renderWithRouter(<Sidebar />);
 
     expect(screen.getByText("Select workspace")).toBeInTheDocument();
     expect(screen.getByText("Test User")).toBeInTheDocument();
     expect(screen.getByText("Log out")).toBeInTheDocument();
   });
 
-  it("renders channels and members when workspace is active", () => {
-    render(
-      <Sidebar
-        open={true}
-        conversations={conversations}
-        currentId={undefined}
-        user={user}
-        workspaces={workspaceList}
-        activeWorkspace={activeWorkspace}
-        onClose={noop}
-        onNewChat={noop}
-        onSelectConversation={noop}
-        onLoginClick={noop}
-        onLogout={noop}
-        onSelectWorkspace={noop}
-        onOpenWorkspaceModal={noop}
-      />
-    );
+  it("renders channels and members when workspace is active", async () => {
+    useAuthStore.setState({ user, token: "test-token" });
+    useWorkspacesStore.setState({ workspaces: workspaceList, activeWorkspace });
+    useConversationsStore.setState({ conversations });
+
+    await renderWithRouter(<Sidebar />);
 
     // Workspace name shown in switcher
     expect(screen.getByText("Team Alpha")).toBeInTheDocument();
@@ -141,67 +143,24 @@ describe("Sidebar", () => {
     expect(screen.getByText("Agent Chats")).toBeInTheDocument();
   });
 
-  it("shows Agent Chats section in all modes", () => {
+  it("shows Agent Chats section in all modes", async () => {
+    useConversationsStore.setState({ conversations });
+
     // Not logged in
-    const { unmount } = render(
-      <Sidebar
-        open={true}
-        conversations={conversations}
-        currentId={undefined}
-        user={null}
-        workspaces={[]}
-        activeWorkspace={null}
-        onClose={noop}
-        onNewChat={noop}
-        onSelectConversation={noop}
-        onLoginClick={noop}
-        onLogout={noop}
-        onSelectWorkspace={noop}
-        onOpenWorkspaceModal={noop}
-      />
-    );
+    const { unmount } = await renderWithRouter(<Sidebar />);
     expect(screen.getByText("Agent Chats")).toBeInTheDocument();
     unmount();
 
     // Logged in, no workspace
-    const { unmount: unmount2 } = render(
-      <Sidebar
-        open={true}
-        conversations={conversations}
-        currentId={undefined}
-        user={user}
-        workspaces={workspaceList}
-        activeWorkspace={null}
-        onClose={noop}
-        onNewChat={noop}
-        onSelectConversation={noop}
-        onLoginClick={noop}
-        onLogout={noop}
-        onSelectWorkspace={noop}
-        onOpenWorkspaceModal={noop}
-      />
-    );
+    useAuthStore.setState({ user, token: "test-token" });
+    useWorkspacesStore.setState({ workspaces: workspaceList });
+    const { unmount: unmount2 } = await renderWithRouter(<Sidebar />);
     expect(screen.getByText("Agent Chats")).toBeInTheDocument();
     unmount2();
 
     // Logged in, with workspace
-    render(
-      <Sidebar
-        open={true}
-        conversations={conversations}
-        currentId={undefined}
-        user={user}
-        workspaces={workspaceList}
-        activeWorkspace={activeWorkspace}
-        onClose={noop}
-        onNewChat={noop}
-        onSelectConversation={noop}
-        onLoginClick={noop}
-        onLogout={noop}
-        onSelectWorkspace={noop}
-        onOpenWorkspaceModal={noop}
-      />
-    );
+    useWorkspacesStore.setState({ activeWorkspace });
+    await renderWithRouter(<Sidebar />);
     expect(screen.getByText("Agent Chats")).toBeInTheDocument();
   });
 });

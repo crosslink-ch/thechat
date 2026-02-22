@@ -1,17 +1,33 @@
 import { useState, useDeferredValue, useMemo, useRef, useEffect } from "react";
-import type { Conversation } from "./core/types";
+import { create } from "zustand";
+import { useNavigate, useMatches } from "@tanstack/react-router";
+import { useConversationsStore } from "./stores/conversations";
 import { useStreamingConvIds } from "./stores/streaming";
+import { closeSidebar } from "./components/Sidebar";
 
-interface CommandPaletteProps {
-  conversations: Conversation[];
-  currentId: string | undefined;
-  onSelect: (conv: Conversation) => void;
-  onClose: () => void;
-  unreadAgentChats?: Set<string>;
+// Colocated visibility store
+const usePaletteState = create(() => ({ open: false }));
+export const togglePalette = () =>
+  usePaletteState.setState((s) => ({ open: !s.open }));
+export const closePalette = () => usePaletteState.setState({ open: false });
+
+export function CommandPalette() {
+  const { open } = usePaletteState();
+  if (!open) return null;
+  return <CommandPaletteInner />;
 }
 
-export function CommandPalette({ conversations, currentId, onSelect, onClose, unreadAgentChats }: CommandPaletteProps) {
+function CommandPaletteInner() {
+  const navigate = useNavigate();
+  const matches = useMatches();
+  const lastMatch = matches[matches.length - 1];
+  const routeParams = (lastMatch?.params ?? {}) as Record<string, string>;
+  const currentId = routeParams.id;
+
+  const conversations = useConversationsStore((s) => s.conversations);
+  const unreadAgentChats = useConversationsStore((s) => s.unreadAgentChats);
   const streamingConvIds = useStreamingConvIds();
+
   const [query, setQuery] = useState("");
   const deferredQuery = useDeferredValue(query);
   const isStale = query !== deferredQuery;
@@ -20,9 +36,10 @@ export function CommandPalette({ conversations, currentId, onSelect, onClose, un
   const listRef = useRef<HTMLDivElement>(null);
 
   const filtered = useMemo(
-    () => conversations.filter((c) =>
-      c.title.toLowerCase().includes(deferredQuery.toLowerCase())
-    ),
+    () =>
+      conversations.filter((c) =>
+        c.title.toLowerCase().includes(deferredQuery.toLowerCase()),
+      ),
     [conversations, deferredQuery],
   );
 
@@ -35,6 +52,13 @@ export function CommandPalette({ conversations, currentId, onSelect, onClose, un
     item?.scrollIntoView({ block: "nearest" });
   }, [highlightIndex]);
 
+  const handleSelect = (conv: { id: string }) => {
+    navigate({ to: "/chat/$id", params: { id: conv.id } });
+    useConversationsStore.getState().markAgentChatRead(conv.id);
+    closeSidebar();
+    closePalette();
+  };
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "ArrowDown") {
       e.preventDefault();
@@ -45,15 +69,15 @@ export function CommandPalette({ conversations, currentId, onSelect, onClose, un
     } else if (e.key === "Enter") {
       e.preventDefault();
       if (filtered[highlightIndex]) {
-        onSelect(filtered[highlightIndex]);
+        handleSelect(filtered[highlightIndex]);
       }
     } else if (e.key === "Escape") {
-      onClose();
+      closePalette();
     }
   };
 
   return (
-    <div className="palette-overlay" onClick={onClose}>
+    <div className="palette-overlay" onClick={closePalette}>
       <div className="palette-panel" onClick={(e) => e.stopPropagation()}>
         <input
           ref={inputRef}
@@ -64,7 +88,11 @@ export function CommandPalette({ conversations, currentId, onSelect, onClose, un
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={handleKeyDown}
         />
-        <div className="palette-list" ref={listRef} style={{ opacity: isStale ? 0.6 : 1 }}>
+        <div
+          className="palette-list"
+          ref={listRef}
+          style={{ opacity: isStale ? 0.6 : 1 }}
+        >
           {filtered.map((conv, i) => {
             const isStreamingBg = streamingConvIds?.has(conv.id);
             const isUnread = unreadAgentChats?.has(conv.id);
@@ -72,7 +100,7 @@ export function CommandPalette({ conversations, currentId, onSelect, onClose, un
               <button
                 key={conv.id}
                 className={`palette-item${i === highlightIndex ? " palette-item-highlighted" : ""}${conv.id === currentId ? " palette-item-active" : ""}`}
-                onClick={() => onSelect(conv)}
+                onClick={() => handleSelect(conv)}
                 onMouseEnter={() => setHighlightIndex(i)}
               >
                 <span className="palette-item-title">{conv.title}</span>

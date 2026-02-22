@@ -1,11 +1,12 @@
 import { useState, useEffect, useRef, type FormEvent } from "react";
+import { create } from "zustand";
 import { z } from "zod";
+import { useAuthStore } from "../stores/auth";
 
-interface AuthModalProps {
-  onLogin: (email: string, password: string) => Promise<void>;
-  onRegister: (name: string, email: string, password: string) => Promise<string | null>;
-  onClose: () => void;
-}
+// Colocated visibility store
+const useAuthModalState = create(() => ({ open: false }));
+export const openAuthModal = () => useAuthModalState.setState({ open: true });
+const closeAuthModal = () => useAuthModalState.setState({ open: false });
 
 const registerSchema = z.object({
   name: z.string().trim().min(1, "Name is required"),
@@ -18,7 +19,16 @@ const loginSchema = z.object({
   password: z.string().min(1, "Password is required"),
 });
 
-export function AuthModal({ onLogin, onRegister, onClose }: AuthModalProps) {
+export function AuthModal() {
+  const open = useAuthModalState((s) => s.open);
+  if (!open) return null;
+  return <AuthModalInner />;
+}
+
+function AuthModalInner() {
+  const login = useAuthStore((s) => s.login);
+  const register = useAuthStore((s) => s.register);
+
   const [mode, setMode] = useState<"login" | "register">("login");
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -34,11 +44,11 @@ export function AuthModal({ onLogin, onRegister, onClose }: AuthModalProps) {
 
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape") closeAuthModal();
     };
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
-  }, [onClose]);
+  }, []);
 
   const reset = () => {
     setError("");
@@ -57,9 +67,10 @@ export function AuthModal({ onLogin, onRegister, onClose }: AuthModalProps) {
     e.preventDefault();
     reset();
 
-    const parsed = mode === "register"
-      ? registerSchema.safeParse({ name, email, password })
-      : loginSchema.safeParse({ email, password });
+    const parsed =
+      mode === "register"
+        ? registerSchema.safeParse({ name, email, password })
+        : loginSchema.safeParse({ email, password });
 
     if (!parsed.success) {
       setError(parsed.error.issues[0]?.message ?? "Invalid input");
@@ -71,15 +82,15 @@ export function AuthModal({ onLogin, onRegister, onClose }: AuthModalProps) {
     try {
       if (mode === "login") {
         const data = parsed.data as z.infer<typeof loginSchema>;
-        await onLogin(data.email, data.password);
-        onClose();
+        await login(data.email, data.password);
+        closeAuthModal();
       } else {
         const data = parsed.data as z.infer<typeof registerSchema>;
-        const message = await onRegister(data.name, data.email, data.password);
+        const message = await register(data.name, data.email, data.password);
         if (message) {
           setSuccess(message);
         } else {
-          onClose();
+          closeAuthModal();
         }
       }
     } catch (err) {
@@ -90,7 +101,7 @@ export function AuthModal({ onLogin, onRegister, onClose }: AuthModalProps) {
   };
 
   return (
-    <div className="auth-overlay" onClick={onClose}>
+    <div className="auth-overlay" onClick={closeAuthModal}>
       <div className="auth-card" onClick={(e) => e.stopPropagation()}>
         <h2 className="auth-title">
           {mode === "login" ? "Log in" : "Create account"}
@@ -99,7 +110,9 @@ export function AuthModal({ onLogin, onRegister, onClose }: AuthModalProps) {
         <form onSubmit={handleSubmit} noValidate>
           {mode === "register" && (
             <div className="auth-field">
-              <label className="auth-label" htmlFor="auth-name">Name</label>
+              <label className="auth-label" htmlFor="auth-name">
+                Name
+              </label>
               <input
                 ref={mode === "register" ? firstInputRef : undefined}
                 id="auth-name"
@@ -112,7 +125,9 @@ export function AuthModal({ onLogin, onRegister, onClose }: AuthModalProps) {
             </div>
           )}
           <div className="auth-field">
-            <label className="auth-label" htmlFor="auth-email">Email</label>
+            <label className="auth-label" htmlFor="auth-email">
+              Email
+            </label>
             <input
               ref={mode === "login" ? firstInputRef : undefined}
               id="auth-email"
@@ -124,7 +139,9 @@ export function AuthModal({ onLogin, onRegister, onClose }: AuthModalProps) {
             />
           </div>
           <div className="auth-field">
-            <label className="auth-label" htmlFor="auth-password">Password</label>
+            <label className="auth-label" htmlFor="auth-password">
+              Password
+            </label>
             <input
               id="auth-password"
               className="auth-input"
