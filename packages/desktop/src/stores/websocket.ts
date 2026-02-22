@@ -1,11 +1,12 @@
 import { create } from "zustand";
-import type { WsClientEvent, WsServerEvent, ChatMessage, WorkspaceMember } from "@thechat/shared";
+import type { WsClientEvent, WsServerEvent, ChatMessage, WorkspaceMember, WorkspaceInvite } from "@thechat/shared";
 
 const WS_URL = __BACKEND_URL__.replace(/^http/, "ws");
 
 type MessageCallback = (msg: ChatMessage, type: "direct" | "group") => void;
 type TypingCallback = (conversationId: string, userId: string, userName: string) => void;
 type MemberJoinedCallback = (workspaceId: string, member: WorkspaceMember) => void;
+type InviteReceivedCallback = (invite: WorkspaceInvite) => void;
 
 interface WebSocketStore {
   connected: boolean;
@@ -16,6 +17,7 @@ interface WebSocketStore {
   subscribeToMessages: (cb: MessageCallback) => () => void;
   subscribeToTyping: (cb: TypingCallback) => () => void;
   subscribeToMemberJoined: (cb: MemberJoinedCallback) => () => void;
+  subscribeToInviteReceived: (cb: InviteReceivedCallback) => () => void;
 }
 
 let ws: WebSocket | null = null;
@@ -26,6 +28,7 @@ let currentToken: string | null = null;
 const messageListeners = new Set<MessageCallback>();
 const typingListeners = new Set<TypingCallback>();
 const memberJoinedListeners = new Set<MemberJoinedCallback>();
+const inviteReceivedListeners = new Set<InviteReceivedCallback>();
 
 function doConnect() {
   if (!currentToken) return;
@@ -62,6 +65,10 @@ function doConnect() {
     } else if (event.type === "member_joined") {
       for (const cb of memberJoinedListeners) {
         cb(event.workspaceId, event.member);
+      }
+    } else if (event.type === "invite_received") {
+      for (const cb of inviteReceivedListeners) {
+        cb(event.invite);
       }
     }
   };
@@ -140,6 +147,13 @@ export const useWebSocketStore = create<WebSocketStore>()(() => ({
     memberJoinedListeners.add(cb);
     return () => {
       memberJoinedListeners.delete(cb);
+    };
+  },
+
+  subscribeToInviteReceived: (cb: InviteReceivedCallback) => {
+    inviteReceivedListeners.add(cb);
+    return () => {
+      inviteReceivedListeners.delete(cb);
     };
   },
 }));

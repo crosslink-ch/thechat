@@ -5,6 +5,7 @@ import { useAuthStore } from "../stores/auth";
 import { useWorkspacesStore } from "../stores/workspaces";
 import { useConversationsStore } from "../stores/conversations";
 import { useStreamingConvIds } from "../stores/streaming";
+import { useNotificationsStore } from "../stores/notifications";
 import { openAuthModal } from "./AuthModal";
 import { openWorkspaceModal } from "./WorkspaceModal";
 import { resetTodos } from "../core/todo";
@@ -36,6 +37,7 @@ export function Sidebar() {
   const unreadAgentChats = useConversationsStore((s) => s.unreadAgentChats);
   const unreadChannels = useConversationsStore((s) => s.unreadChannels);
   const streamingConvIds = useStreamingConvIds();
+  const notificationCount = useNotificationsStore((s) => s.notifications.length);
 
   // Determine current active IDs from route
   const isAgentChat = routePath.startsWith("/chat");
@@ -127,11 +129,29 @@ export function Sidebar() {
                     setDropdownOpen(false);
                   }}
                 >
-                  + Create or join
+                  + Create workspace
                 </button>
               </div>
             )}
           </div>
+        )}
+
+        {/* Notifications button */}
+        {user && (
+          <button
+            className="sidebar-notifications-btn"
+            onClick={() => {
+              navigate({ to: "/notifications" });
+              closeSidebar();
+            }}
+          >
+            <span>Notifications</span>
+            {notificationCount > 0 && (
+              <span className="sidebar-notifications-badge">
+                {notificationCount}
+              </span>
+            )}
+          </button>
         )}
 
         {/* Workspace content: channels + DMs */}

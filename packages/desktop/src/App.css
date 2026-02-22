@@ -1698,3 +1698,124 @@
   max-width: 100%;
   border-radius: 6px;
 }
+
+/* -- Notifications -- */
+
+.sidebar-notifications-btn {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 8px 12px;
+  background: none;
+  border: none;
+  color: var(--color-text-secondary);
+  font-size: 0.85rem;
+  cursor: pointer;
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+
+.sidebar-notifications-btn:hover {
+  background: var(--color-bg-hover);
+  color: var(--color-text);
+}
+
+.sidebar-notifications-badge {
+  background: var(--color-accent);
+  color: #fff;
+  font-size: 0.7rem;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 9px;
+  min-width: 18px;
+  text-align: center;
+}
+
+.notifications-view {
+  padding: 24px;
+  max-width: 600px;
+  margin: 0 auto;
+  overflow-y: auto;
+  height: 100%;
+}
+
+.notifications-title {
+  font-size: 1.2rem;
+  font-weight: 600;
+  color: var(--color-text);
+  margin: 0 0 16px;
+}
+
+.notifications-empty {
+  color: var(--color-text-muted);
+  font-size: 0.9rem;
+}
+
+.notifications-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.invite-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px;
+  background: var(--color-bg-raised);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+}
+
+.invite-card-workspace {
+  font-weight: 600;
+  color: var(--color-text);
+  font-size: 0.9rem;
+}
+
+.invite-card-inviter {
+  color: var(--color-text-muted);
+  font-size: 0.8rem;
+  margin-top: 2px;
+}
+
+.invite-card-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.invite-accept-btn,
+.invite-decline-btn {
+  padding: 6px 14px;
+  border: none;
+  border-radius: 6px;
+  font-size: 0.8rem;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.invite-accept-btn {
+  background: var(--color-accent);
+  color: #fff;
+}
+
+.invite-accept-btn:hover:not(:disabled) {
+  opacity: 0.9;
+}
+
+.invite-decline-btn {
+  background: var(--color-bg-button);
+  color: var(--color-text-secondary);
+}
+
+.invite-decline-btn:hover:not(:disabled) {
+  background: var(--color-bg-button-hover);
+}
+
+.invite-accept-btn:disabled,
+.invite-decline-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}

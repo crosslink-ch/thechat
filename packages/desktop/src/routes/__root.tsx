@@ -4,6 +4,7 @@ import { useAuthStore } from "../stores/auth";
 import { useToolsStore } from "../stores/tools";
 import { useWebSocketStore } from "../stores/websocket";
 import { useWorkspacesStore } from "../stores/workspaces";
+import { useNotificationsStore } from "../stores/notifications";
 import { useConversationsStore } from "../stores/conversations";
 import { useKeybindings } from "../hooks/useKeybindings";
 import { Sidebar } from "../components/Sidebar";
@@ -36,10 +37,12 @@ export function RootLayout() {
     if (token && token !== prevTokenRef.current) {
       useWebSocketStore.getState().connect(token);
       useWorkspacesStore.getState().initialize();
+      useNotificationsStore.getState().fetchNotifications();
       useToolsStore.getState().initializeAuthMcp(token);
     } else if (!token && prevTokenRef.current) {
       useWebSocketStore.getState().disconnect();
       useWorkspacesStore.getState().reset();
+      useNotificationsStore.getState().reset();
     }
     prevTokenRef.current = token;
   }, [token]);
@@ -81,6 +84,23 @@ export function RootLayout() {
             members: [...activeWorkspace.members, member],
           },
         });
+      },
+    );
+    return unsub;
+  }, []);
+
+  // WebSocket invite_received listener — add notification + fire OS notification
+  useEffect(() => {
+    const unsub = useWebSocketStore.getState().subscribeToInviteReceived(
+      (invite) => {
+        useNotificationsStore.getState().addNotification({
+          type: "workspace_invite",
+          invite,
+        });
+        fireNotification(
+          "Workspace Invite",
+          `${invite.inviterName} invited you to ${invite.workspaceName}`
+        );
       },
     );
     return unsub;

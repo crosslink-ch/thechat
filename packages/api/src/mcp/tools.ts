@@ -4,8 +4,8 @@ import {
   listUserWorkspaces,
   getWorkspaceDetail,
   createWorkspace,
-  joinWorkspace,
 } from "../services/workspaces";
+import { createInvite } from "../services/invites";
 import {
   createOrGetDm,
   listUserDms,
@@ -114,20 +114,21 @@ export function registerTools(server: McpServer) {
     }
   );
 
-  // --- join_workspace ---
+  // --- invite_to_workspace ---
   server.registerTool(
-    "join_workspace",
+    "invite_to_workspace",
     {
       description:
-        "Join an existing workspace. Idempotent — safe to call if already a member.",
+        "Invite a user to a workspace by their email address. Only workspace owners and admins can invite. The invited user will receive a notification and can accept or decline.",
       inputSchema: {
-        workspaceId: z.string().min(1).describe("The workspace ID to join"),
+        workspaceId: z.string().min(1).describe("The workspace ID"),
+        email: z.string().email().describe("Email address of the user to invite"),
       },
     },
-    async ({ workspaceId }, extra) => {
+    async ({ workspaceId, email }, extra) => {
       const user = getUser(extra);
       return withService(() =>
-        joinWorkspace(workspaceId as string, user.id)
+        createInvite(workspaceId as string, user.id, email as string)
       );
     }
   );

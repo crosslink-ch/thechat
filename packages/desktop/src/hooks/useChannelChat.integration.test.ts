@@ -94,8 +94,8 @@ function onWsMessage(ws: WS, callback: (event: any) => void) {
 // ---------------------------------------------------------------------------
 
 describe.skipIf(!INTEGRATION)("Channel message visibility (integration)", () => {
-  let userA: { token: string; user: { id: string; name: string } };
-  let userB: { token: string; user: { id: string; name: string } };
+  let userA: { token: string; user: { id: string; name: string; email: string | null } };
+  let userB: { token: string; user: { id: string; name: string; email: string | null } };
   let workspaceId: string;
   let generalChannelId: string;
   let dmConversationId: string;
@@ -121,8 +121,15 @@ describe.skipIf(!INTEGRATION)("Channel message visibility (integration)", () => 
     if (wsErr) throw new Error(`Workspace creation failed: ${JSON.stringify(wsErr)}`);
     workspaceId = (ws as any).id;
 
-    // User B joins
-    await api.workspaces.join.post({ workspaceId }, auth(userB.token));
+    // Invite User B and accept
+    const { data: invite } = await api.invites.create.post(
+      { workspaceId, email: userB.user.email! },
+      auth(userA.token),
+    );
+    await api.invites.accept.post(
+      { inviteId: (invite as any).id },
+      auth(userB.token),
+    );
 
     // Get general channel ID
     const { data: detail } = await api.workspaces({ id: workspaceId }).get(

@@ -240,6 +240,20 @@ export interface WebhookPayload {
   bot: { id: string; name: string };
 }
 
+// -- Workspace Invite Types --
+
+export interface WorkspaceInvite {
+  id: string;
+  workspaceId: string;
+  workspaceName: string;
+  inviterId: string;
+  inviterName: string;
+  createdAt: string;
+}
+
+export type AppNotification =
+  | { type: "workspace_invite"; invite: WorkspaceInvite };
+
 // -- WebSocket Event Types --
 
 export type WsServerEvent =
@@ -248,4 +262,5 @@ export type WsServerEvent =
   | { type: "new_message"; message: ChatMessage; conversationType: "direct" | "group" }
   | { type: "typing"; conversationId: string; userId: string; userName: string }
   | { type: "member_joined"; workspaceId: string; member: WorkspaceMember }
+  | { type: "invite_received"; invite: WorkspaceInvite }
   | { type: "error"; message: string };

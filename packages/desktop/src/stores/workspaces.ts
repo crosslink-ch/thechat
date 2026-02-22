@@ -29,7 +29,6 @@ interface WorkspacesStore {
   initialize: () => Promise<void>;
   selectWorkspace: (id: string) => Promise<void>;
   createWorkspace: (name: string) => Promise<void>;
-  joinWorkspace: (id: string) => Promise<void>;
   reset: () => void;
 }
 
@@ -108,28 +107,6 @@ export const useWorkspacesStore = create<WorkspacesStore>()((set) => ({
       if (!res.error) {
         set({ activeWorkspace: res.data as WorkspaceWithDetails });
         await kvSet(KV_ACTIVE_WORKSPACE, id);
-      }
-    } catch {
-      // ignore
-    }
-  },
-
-  joinWorkspace: async (workspaceId: string) => {
-    const token = useAuthStore.getState().token;
-    if (!token) return;
-
-    const { error } = await api.workspaces.join.post({ workspaceId }, auth(token));
-    if (error) throw new Error((error as any).error || "Request failed");
-
-    const list = await fetchWorkspacesList(token);
-    set({ workspaces: list });
-
-    // Select the joined workspace
-    try {
-      const res = await api.workspaces({ id: workspaceId }).get(auth(token));
-      if (!res.error) {
-        set({ activeWorkspace: res.data as WorkspaceWithDetails });
-        await kvSet(KV_ACTIVE_WORKSPACE, workspaceId);
       }
     } catch {
       // ignore

@@ -8,12 +8,14 @@ import {
   workspaceMembers,
   conversations,
   conversationParticipants,
+  workspaceInvites,
 } from "../db/schema";
 import { authRoutes } from "../auth";
 import { workspaceRoutes } from "./index";
+import { inviteRoutes } from "../invites";
 import crypto from "crypto";
 
-const app = new Elysia().use(authRoutes).use(workspaceRoutes);
+const app = new Elysia().use(authRoutes).use(workspaceRoutes).use(inviteRoutes);
 
 function uniqueEmail() {
   return `test-${crypto.randomUUID()}@test.com`;
@@ -23,7 +25,7 @@ const createdUserEmails: string[] = [];
 const createdWorkspaceIds: string[] = [];
 
 async function cleanup() {
-  // Clean up workspaces (cascades to members, channels, participants)
+  // Clean up workspaces (cascades to members, channels, participants, invites)
   for (const id of createdWorkspaceIds) {
     await db.delete(workspaces).where(eq(workspaces.id, id));
   }
@@ -193,138 +195,6 @@ describe("Workspaces: Creation", () => {
   });
 });
 
-describe("Workspaces: Join", () => {
-  test("joins existing workspace by ID", async () => {
-    const owner = await registerAndGetToken("Owner");
-    const joiner = await registerAndGetToken("Joiner");
-
-    const createRes = await req(
-      "POST",
-      "/workspaces/create",
-      { name: "Join Target" },
-      owner.token
-    );
-    createdWorkspaceIds.push(createRes.body.id);
-
-    const joinRes = await req(
-      "POST",
-      "/workspaces/join",
-      { workspaceId: createRes.body.id },
-      joiner.token
-    );
-
-    expect(joinRes.status).toBe(200);
-    expect(joinRes.body.success).toBe(true);
-
-    // Verify membership
-    const detailRes = await req(
-      "GET",
-      `/workspaces/${createRes.body.id}`,
-      undefined,
-      joiner.token
-    );
-
-    expect(detailRes.body.members).toHaveLength(2);
-  });
-
-  test("new member is added to all existing channels", async () => {
-    const owner = await registerAndGetToken("Owner");
-    const joiner = await registerAndGetToken("Joiner");
-
-    const createRes = await req(
-      "POST",
-      "/workspaces/create",
-      { name: "Channel Join" },
-      owner.token
-    );
-    createdWorkspaceIds.push(createRes.body.id);
-
-    await req(
-      "POST",
-      "/workspaces/join",
-      { workspaceId: createRes.body.id },
-      joiner.token
-    );
-
-    // Check joiner is in the General channel
-    const detailRes = await req(
-      "GET",
-      `/workspaces/${createRes.body.id}`,
-      undefined,
-      joiner.token
-    );
-
-    const channelId = detailRes.body.channels[0].id;
-    const participants = await db
-      .select()
-      .from(conversationParticipants)
-      .where(eq(conversationParticipants.conversationId, channelId));
-
-    const joinerParticipant = participants.find(
-      (p) => p.userId === joiner.user.id
-    );
-    expect(joinerParticipant).toBeDefined();
-  });
-
-  test("joining same workspace twice is idempotent", async () => {
-    const owner = await registerAndGetToken("Owner");
-    const joiner = await registerAndGetToken("Joiner");
-
-    const createRes = await req(
-      "POST",
-      "/workspaces/create",
-      { name: "Idempotent" },
-      owner.token
-    );
-    createdWorkspaceIds.push(createRes.body.id);
-
-    await req(
-      "POST",
-      "/workspaces/join",
-      { workspaceId: createRes.body.id },
-      joiner.token
-    );
-
-    const joinRes2 = await req(
-      "POST",
-      "/workspaces/join",
-      { workspaceId: createRes.body.id },
-      joiner.token
-    );
-
-    expect(joinRes2.status).toBe(200);
-
-    // Still only 2 members
-    const detailRes = await req(
-      "GET",
-      `/workspaces/${createRes.body.id}`,
-      undefined,
-      owner.token
-    );
-    expect(detailRes.body.members).toHaveLength(2);
-  });
-
-  test("rejects nonexistent workspace ID", async () => {
-    const { token } = await registerAndGetToken();
-
-    const res = await req(
-      "POST",
-      "/workspaces/join",
-      { workspaceId: "nonexistent-99999" },
-      token
-    );
-
-    expect(res.status).toBe(404);
-  });
-
-  test("rejects unauthenticated request", async () => {
-    const res = await req("POST", "/workspaces/join", {
-      workspaceId: "any-id",
-    });
-    expect(res.status).toBe(401);
-  });
-});
-
 describe("Workspaces: List", () => {
   test("lists all workspaces user belongs to", async () => {
     const { token } = await registerAndGetToken();
@@ -364,7 +234,7 @@ describe("Workspaces: List", () => {
     expect(listRes.body).toEqual([]);
   });
 
-  test("includes role in response", async () => {
+  test("includes role via invite flow", async () => {
     const owner = await registerAndGetToken("Owner");
     const member = await registerAndGetToken("Member");
 
@@ -376,10 +246,17 @@ describe("Workspaces: List", () => {
     );
     createdWorkspaceIds.push(createRes.body.id);
 
+    // Invite + accept flow
+    const inviteRes = await req(
+      "POST",
+      "/invites/create",
+      { workspaceId: createRes.body.id, email: member.user.email },
+      owner.token
+    );
     await req(
       "POST",
-      "/workspaces/join",
-      { workspaceId: createRes.body.id },
+      "/invites/accept",
+      { inviteId: inviteRes.body.id },
       member.token
     );
 
