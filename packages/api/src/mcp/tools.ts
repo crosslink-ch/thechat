@@ -12,6 +12,14 @@ import {
   createChannel,
 } from "../services/conversations";
 import { getMessages, sendMessage } from "../services/messages";
+import {
+  createBot,
+  listBots,
+  addBotToWorkspace,
+  removeBotFromWorkspace,
+  regenerateBotKey,
+  regenerateBotSecret,
+} from "../services/bots";
 import type { McpUser } from "./auth";
 
 function getUser(extra: { authInfo?: unknown }): McpUser {
@@ -238,6 +246,131 @@ export function registerTools(server: McpServer) {
           user.id,
           otherUserId as string
         )
+      );
+    }
+  );
+
+  // --- create_bot ---
+  server.registerTool(
+    "create_bot",
+    {
+      description:
+        "Create a new bot. Only human users can create bots. Returns the bot's API key and webhook secret.",
+      inputSchema: {
+        name: z.string().min(1).describe("Bot name"),
+        webhookUrl: z
+          .string()
+          .url()
+          .optional()
+          .describe("Optional webhook URL for @mention notifications"),
+      },
+    },
+    async ({ name, webhookUrl }, extra) => {
+      const user = getUser(extra);
+      if (user.type === "bot") {
+        return error("Bots cannot create other bots");
+      }
+      return withService(() =>
+        createBot(
+          name as string,
+          (webhookUrl as string | undefined) ?? null,
+          user.id
+        )
+      );
+    }
+  );
+
+  // --- list_bots ---
+  server.registerTool(
+    "list_bots",
+    {
+      description: "List bots owned by the authenticated user.",
+      inputSchema: {},
+    },
+    async (_args, extra) => {
+      const user = getUser(extra);
+      return withService(() => listBots(user.id));
+    }
+  );
+
+  // --- add_bot_to_workspace ---
+  server.registerTool(
+    "add_bot_to_workspace",
+    {
+      description:
+        "Add a bot to a workspace. The caller must be a workspace member. The bot is added to all channels.",
+      inputSchema: {
+        botId: z.string().uuid().describe("The bot ID"),
+        workspaceId: z.string().min(1).describe("The workspace ID"),
+      },
+    },
+    async ({ botId, workspaceId }, extra) => {
+      const user = getUser(extra);
+      return withService(() =>
+        addBotToWorkspace(
+          botId as string,
+          workspaceId as string,
+          user.id
+        )
+      );
+    }
+  );
+
+  // --- remove_bot_from_workspace ---
+  server.registerTool(
+    "remove_bot_from_workspace",
+    {
+      description:
+        "Remove a bot from a workspace. The caller must be a workspace member. The bot is removed from all channels.",
+      inputSchema: {
+        botId: z.string().uuid().describe("The bot ID"),
+        workspaceId: z.string().min(1).describe("The workspace ID"),
+      },
+    },
+    async ({ botId, workspaceId }, extra) => {
+      const user = getUser(extra);
+      return withService(() =>
+        removeBotFromWorkspace(
+          botId as string,
+          workspaceId as string,
+          user.id
+        )
+      );
+    }
+  );
+
+  // --- regenerate_bot_key ---
+  server.registerTool(
+    "regenerate_bot_key",
+    {
+      description:
+        "Regenerate a bot's API key. Only the bot owner can do this. The old key is immediately invalidated.",
+      inputSchema: {
+        botId: z.string().uuid().describe("The bot ID"),
+      },
+    },
+    async ({ botId }, extra) => {
+      const user = getUser(extra);
+      return withService(() =>
+        regenerateBotKey(botId as string, user.id)
+      );
+    }
+  );
+
+  // --- regenerate_bot_secret ---
+  server.registerTool(
+    "regenerate_bot_secret",
+    {
+      description:
+        "Regenerate a bot's webhook secret. Only the bot owner can do this.",
+      inputSchema: {
+        botId: z.string().uuid().describe("The bot ID"),
+      },
+    },
+    async ({ botId }, extra) => {
+      const user = getUser(extra);
+      return withService(() =>
+        regenerateBotSecret(botId as string, user.id)
       );
     }
   );

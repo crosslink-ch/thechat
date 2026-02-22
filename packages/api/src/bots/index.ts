@@ -1,24 +1,15 @@
 import { Elysia } from "elysia";
-import { eq, and } from "drizzle-orm";
 import { z } from "zod";
-import crypto from "crypto";
-import { db } from "../db";
-import {
-  users,
-  bots,
-  workspaceMembers,
-  conversations,
-  conversationParticipants,
-} from "../db/schema";
 import { resolveTokenToUser } from "../auth/middleware";
-
-function generateApiKey(): string {
-  return `bot_${crypto.randomBytes(32).toString("hex")}`;
-}
-
-function generateWebhookSecret(): string {
-  return `whsec_${crypto.randomBytes(32).toString("hex")}`;
-}
+import { ServiceError } from "../services/errors";
+import {
+  createBot,
+  listBots,
+  addBotToWorkspace,
+  removeBotFromWorkspace,
+  regenerateBotKey,
+  regenerateBotSecret,
+} from "../services/bots";
 
 const createSchema = z.object({
   name: z.string().trim().min(1, "Bot name is required"),
@@ -62,271 +53,75 @@ export const botRoutes = new Elysia({ prefix: "/bots" })
     }
 
     const { name, webhookUrl } = parsed.data;
-    const apiKey = generateApiKey();
-    const webhookSecret = generateWebhookSecret();
 
-    // Create the bot's user record
-    const [botUser] = await db
-      .insert(users)
-      .values({
-        name,
-        type: "bot",
-      })
-      .returning({ id: users.id, name: users.name });
-
-    // Create the bot record
-    const [bot] = await db
-      .insert(bots)
-      .values({
-        userId: botUser.id,
-        ownerId: user.id,
-        webhookUrl: webhookUrl ?? null,
-        webhookSecret,
-        apiKey,
-      })
-      .returning();
-
-    return {
-      id: bot.id,
-      userId: botUser.id,
-      name: botUser.name,
-      apiKey,
-      webhookUrl: bot.webhookUrl,
-      webhookSecret: bot.webhookSecret,
-      createdAt: bot.createdAt.toISOString(),
-    };
+    try {
+      return await createBot(name, webhookUrl ?? null, user.id);
+    } catch (e: any) {
+      set.status = e instanceof ServiceError ? e.status : 500;
+      return { error: e.message ?? "Unknown error" };
+    }
   })
 
   // List bots owned by current user
-  .get("/list", async ({ user }) => {
-    const rows = await db
-      .select({
-        id: bots.id,
-        userId: bots.userId,
-        webhookUrl: bots.webhookUrl,
-        webhookSecret: bots.webhookSecret,
-        createdAt: bots.createdAt,
-        name: users.name,
-      })
-      .from(bots)
-      .innerJoin(users, eq(bots.userId, users.id))
-      .where(eq(bots.ownerId, user.id));
-
-    return rows.map((r) => ({
-      id: r.id,
-      userId: r.userId,
-      name: r.name,
-      webhookUrl: r.webhookUrl,
-      webhookSecret: r.webhookSecret,
-      createdAt: r.createdAt.toISOString(),
-    }));
+  .get("/list", async ({ user, set }) => {
+    try {
+      return await listBots(user.id);
+    } catch (e: any) {
+      set.status = e instanceof ServiceError ? e.status : 500;
+      return { error: e.message ?? "Unknown error" };
+    }
   })
 
   // Add bot to workspace
   .post("/:botId/workspaces", async ({ params, body, user, set }) => {
-    const { botId } = params;
-
     const parsed = addToWorkspaceSchema.safeParse(body);
     if (!parsed.success) {
       set.status = 400;
       return { error: parsed.error.issues[0]?.message ?? "Invalid input" };
     }
 
-    const { workspaceId } = parsed.data;
-
-    // Verify bot exists
-    const [bot] = await db
-      .select({ userId: bots.userId, ownerId: bots.ownerId })
-      .from(bots)
-      .where(eq(bots.id, botId))
-      .limit(1);
-
-    if (!bot) {
-      set.status = 404;
-      return { error: "Bot not found" };
+    try {
+      return await addBotToWorkspace(
+        params.botId,
+        parsed.data.workspaceId,
+        user.id
+      );
+    } catch (e: any) {
+      set.status = e instanceof ServiceError ? e.status : 500;
+      return { error: e.message ?? "Unknown error" };
     }
-
-    // Caller must be a workspace member
-    const [callerMembership] = await db
-      .select()
-      .from(workspaceMembers)
-      .where(
-        and(
-          eq(workspaceMembers.workspaceId, workspaceId),
-          eq(workspaceMembers.userId, user.id)
-        )
-      )
-      .limit(1);
-
-    if (!callerMembership) {
-      set.status = 403;
-      return { error: "You are not a member of this workspace" };
-    }
-
-    // Add bot user as workspace member (idempotent)
-    const [existingMember] = await db
-      .select()
-      .from(workspaceMembers)
-      .where(
-        and(
-          eq(workspaceMembers.workspaceId, workspaceId),
-          eq(workspaceMembers.userId, bot.userId)
-        )
-      )
-      .limit(1);
-
-    if (!existingMember) {
-      await db.insert(workspaceMembers).values({
-        workspaceId,
-        userId: bot.userId,
-        role: "member",
-      });
-    }
-
-    // Add bot to all channels in the workspace
-    const channels = await db
-      .select({ id: conversations.id })
-      .from(conversations)
-      .where(eq(conversations.workspaceId, workspaceId));
-
-    for (const channel of channels) {
-      const [existingParticipant] = await db
-        .select()
-        .from(conversationParticipants)
-        .where(
-          and(
-            eq(conversationParticipants.conversationId, channel.id),
-            eq(conversationParticipants.userId, bot.userId)
-          )
-        )
-        .limit(1);
-
-      if (!existingParticipant) {
-        await db.insert(conversationParticipants).values({
-          conversationId: channel.id,
-          userId: bot.userId,
-          role: "member",
-        });
-      }
-    }
-
-    return { success: true };
   })
 
   // Remove bot from workspace
   .delete("/:botId/workspaces/:workspaceId", async ({ params, user, set }) => {
-    const { botId, workspaceId } = params;
-
-    // Verify bot exists
-    const [bot] = await db
-      .select({ userId: bots.userId, ownerId: bots.ownerId })
-      .from(bots)
-      .where(eq(bots.id, botId))
-      .limit(1);
-
-    if (!bot) {
-      set.status = 404;
-      return { error: "Bot not found" };
-    }
-
-    // Caller must be a workspace member
-    const [callerMembership] = await db
-      .select()
-      .from(workspaceMembers)
-      .where(
-        and(
-          eq(workspaceMembers.workspaceId, workspaceId),
-          eq(workspaceMembers.userId, user.id)
-        )
-      )
-      .limit(1);
-
-    if (!callerMembership) {
-      set.status = 403;
-      return { error: "You are not a member of this workspace" };
-    }
-
-    // Remove bot from all channels in the workspace
-    const channels = await db
-      .select({ id: conversations.id })
-      .from(conversations)
-      .where(eq(conversations.workspaceId, workspaceId));
-
-    for (const channel of channels) {
-      await db
-        .delete(conversationParticipants)
-        .where(
-          and(
-            eq(conversationParticipants.conversationId, channel.id),
-            eq(conversationParticipants.userId, bot.userId)
-          )
-        );
-    }
-
-    // Remove bot from workspace members
-    await db
-      .delete(workspaceMembers)
-      .where(
-        and(
-          eq(workspaceMembers.workspaceId, workspaceId),
-          eq(workspaceMembers.userId, bot.userId)
-        )
+    try {
+      return await removeBotFromWorkspace(
+        params.botId,
+        params.workspaceId,
+        user.id
       );
-
-    return { success: true };
+    } catch (e: any) {
+      set.status = e instanceof ServiceError ? e.status : 500;
+      return { error: e.message ?? "Unknown error" };
+    }
   })
 
   // Regenerate API key (owner only)
   .post("/:botId/regenerate-key", async ({ params, user, set }) => {
-    const { botId } = params;
-
-    const [bot] = await db
-      .select({ id: bots.id, ownerId: bots.ownerId })
-      .from(bots)
-      .where(eq(bots.id, botId))
-      .limit(1);
-
-    if (!bot) {
-      set.status = 404;
-      return { error: "Bot not found" };
+    try {
+      return await regenerateBotKey(params.botId, user.id);
+    } catch (e: any) {
+      set.status = e instanceof ServiceError ? e.status : 500;
+      return { error: e.message ?? "Unknown error" };
     }
-
-    if (bot.ownerId !== user.id) {
-      set.status = 403;
-      return { error: "Only the bot owner can regenerate the API key" };
-    }
-
-    const newApiKey = generateApiKey();
-    await db.update(bots).set({ apiKey: newApiKey }).where(eq(bots.id, botId));
-
-    return { apiKey: newApiKey };
   })
 
   // Regenerate webhook secret (owner only)
   .post("/:botId/regenerate-secret", async ({ params, user, set }) => {
-    const { botId } = params;
-
-    const [bot] = await db
-      .select({ id: bots.id, ownerId: bots.ownerId })
-      .from(bots)
-      .where(eq(bots.id, botId))
-      .limit(1);
-
-    if (!bot) {
-      set.status = 404;
-      return { error: "Bot not found" };
+    try {
+      return await regenerateBotSecret(params.botId, user.id);
+    } catch (e: any) {
+      set.status = e instanceof ServiceError ? e.status : 500;
+      return { error: e.message ?? "Unknown error" };
     }
-
-    if (bot.ownerId !== user.id) {
-      set.status = 403;
-      return { error: "Only the bot owner can regenerate the webhook secret" };
-    }
-
-    const newSecret = generateWebhookSecret();
-    await db
-      .update(bots)
-      .set({ webhookSecret: newSecret })
-      .where(eq(bots.id, botId));
-
-    return { webhookSecret: newSecret };
   });
