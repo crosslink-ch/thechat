@@ -8,7 +8,7 @@ This project has very limited documentation intentionally.
 
 Documentation rot is a real thing.
 
-Whatever you want to do, ask AI to give you instructions based on the source code.
+Source code + CLAUDE.md is documentation.
 
 ### PostgreSQL
 
