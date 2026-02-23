@@ -13,13 +13,18 @@ import { api } from "../lib/api";
 import type { WorkspaceChannel, WorkspaceMember } from "@thechat/shared";
 
 // Colocated visibility store
-const useSidebarState = create(() => ({ open: false }));
+export const useSidebarState = create(() => ({
+  open: false,
+  tab: "workspace" as "workspace" | "agent",
+}));
 export const toggleSidebar = () =>
   useSidebarState.setState((s) => ({ open: !s.open }));
 export const closeSidebar = () => useSidebarState.setState({ open: false });
 
 export function Sidebar() {
-  const { open } = useSidebarState();
+  const { open, tab } = useSidebarState();
+  const setTab = (t: "workspace" | "agent") =>
+    useSidebarState.setState({ tab: t });
   const navigate = useNavigate();
   const matches = useMatches();
   const lastMatch = matches[matches.length - 1];
@@ -49,7 +54,6 @@ export function Sidebar() {
 
   // Local UI state
   const [dropdownOpen, setDropdownOpen] = useState(false);
-  const [agentChatsCollapsed, setAgentChatsCollapsed] = useState(false);
 
   const handleNewChat = () => {
     resetTodos();
@@ -136,27 +140,49 @@ export function Sidebar() {
           </div>
         )}
 
-        {/* Notifications button */}
-        {user && (
-          <button
-            className="sidebar-notifications-btn"
-            onClick={() => {
-              navigate({ to: "/notifications" });
-              closeSidebar();
-            }}
-          >
-            <span>Notifications</span>
-            {notificationCount > 0 && (
-              <span className="sidebar-notifications-badge">
-                {notificationCount}
-              </span>
-            )}
-          </button>
+        {/* Tab toggle (only when workspace is active) */}
+        {user && activeWorkspace && (
+          <div className="sidebar-tabs">
+            <button
+              className={`sidebar-tab ${tab === "workspace" ? "sidebar-tab-active" : ""}`}
+              onClick={() => setTab("workspace")}
+            >
+              Workspace
+              {unreadChannels.size > 0 && tab !== "workspace" && (
+                <span className="sidebar-tab-badge" />
+              )}
+            </button>
+            <button
+              className={`sidebar-tab ${tab === "agent" ? "sidebar-tab-active" : ""}`}
+              onClick={() => setTab("agent")}
+            >
+              Agent Chats
+              {unreadAgentChats.size > 0 && tab !== "agent" && (
+                <span className="sidebar-tab-badge" />
+              )}
+            </button>
+          </div>
         )}
 
-        {/* Workspace content: channels + DMs */}
-        {user && activeWorkspace && (
+        {/* Workspace tab content */}
+        {user && activeWorkspace && tab === "workspace" && (
           <>
+            {/* Notifications button */}
+            <button
+              className="sidebar-notifications-btn"
+              onClick={() => {
+                navigate({ to: "/notifications" });
+                closeSidebar();
+              }}
+            >
+              <span>Notifications</span>
+              {notificationCount > 0 && (
+                <span className="sidebar-notifications-badge">
+                  {notificationCount}
+                </span>
+              )}
+            </button>
+
             <div className="sidebar-section">
               <div className="sidebar-section-header">Channels</div>
               <div className="sidebar-section-list">
@@ -199,53 +225,35 @@ export function Sidebar() {
                   })}
               </div>
             </div>
-
-            <div className="sidebar-divider" />
           </>
         )}
 
-        {/* Agent Chats section */}
-        <div className="sidebar-section sidebar-section-agent">
-          {user && activeWorkspace ? (
-            <button
-              className="sidebar-section-header sidebar-section-toggle"
-              onClick={() => setAgentChatsCollapsed(!agentChatsCollapsed)}
-            >
-              <span className="sidebar-section-chevron">
-                {agentChatsCollapsed ? "\u25B6" : "\u25BC"}
-              </span>
-              Agent Chats
+        {/* Agent Chats tab content (or full view when no workspace) */}
+        {(tab === "agent" || !activeWorkspace || !user) && (
+          <div className="sidebar-section sidebar-section-agent">
+            <button className="new-chat-btn" onClick={handleNewChat}>
+              + New Chat
             </button>
-          ) : (
-            <div className="sidebar-section-header">Agent Chats</div>
-          )}
-
-          {!agentChatsCollapsed && (
-            <>
-              <button className="new-chat-btn" onClick={handleNewChat}>
-                + New Chat
-              </button>
-              <div className="conversations-list">
-                {conversations.map((conv) => {
-                  const isActive = currentAgentChatId === conv.id;
-                  const isUnread = !isActive && unreadAgentChats.has(conv.id);
-                  const isStreamingBg = !isActive && streamingConvIds.has(conv.id);
-                  return (
-                    <button
-                      key={conv.id}
-                      className={`conv-item ${isActive ? "conv-active" : ""} ${isUnread ? "conv-unread" : ""}`}
-                      onClick={() => handleSelectConversation(conv)}
-                    >
-                      <span className="conv-title">{conv.title}</span>
-                      {isStreamingBg && <span className="conv-streaming-indicator" />}
-                      {!isStreamingBg && isUnread && <span className="conv-unread-dot" />}
-                    </button>
-                  );
-                })}
-              </div>
-            </>
-          )}
-        </div>
+            <div className="conversations-list">
+              {conversations.map((conv) => {
+                const isActive = currentAgentChatId === conv.id;
+                const isUnread = !isActive && unreadAgentChats.has(conv.id);
+                const isStreamingBg = !isActive && streamingConvIds.has(conv.id);
+                return (
+                  <button
+                    key={conv.id}
+                    className={`conv-item ${isActive ? "conv-active" : ""} ${isUnread ? "conv-unread" : ""}`}
+                    onClick={() => handleSelectConversation(conv)}
+                  >
+                    <span className="conv-title">{conv.title}</span>
+                    {isStreamingBg && <span className="conv-streaming-indicator" />}
+                    {!isStreamingBg && isUnread && <span className="conv-unread-dot" />}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         <div className="sidebar-footer">
           {user ? (

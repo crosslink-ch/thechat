@@ -17,7 +17,7 @@ import type {
   WorkspaceWithDetails,
 } from "@thechat/shared";
 
-import { Sidebar } from "./Sidebar";
+import { Sidebar, useSidebarState } from "./Sidebar";
 
 const conversations: Conversation[] = [
   { id: "c1", title: "Chat 1", created_at: "2026-01-01", updated_at: "2026-01-01" },
@@ -89,6 +89,7 @@ async function renderWithRouter(component: React.ReactNode) {
 
 beforeEach(() => {
   // Reset stores to default state
+  useSidebarState.setState({ open: false, tab: "workspace" });
   useAuthStore.setState({ user: null, token: null, loading: false });
   useWorkspacesStore.setState({ workspaces: [], activeWorkspace: null, loading: false });
   useConversationsStore.setState({
@@ -133,32 +134,34 @@ describe("Sidebar", () => {
 
     // Workspace name shown in switcher
     expect(screen.getByText("Team Alpha")).toBeInTheDocument();
-    // Channel shown
+    // Tab bar with Workspace and Agent Chats tabs
+    expect(screen.getByText("Workspace")).toBeInTheDocument();
+    expect(screen.getByText("Agent Chats")).toBeInTheDocument();
+    // Workspace tab active by default: channels and DMs shown
     expect(screen.getByText("Channels")).toBeInTheDocument();
     expect(screen.getByText(/general/)).toBeInTheDocument();
-    // DMs shown (other members only)
     expect(screen.getByText("Direct Messages")).toBeInTheDocument();
     expect(screen.getByText("Alice")).toBeInTheDocument();
-    // Agent Chats section
-    expect(screen.getByText("Agent Chats")).toBeInTheDocument();
   });
 
-  it("shows Agent Chats section in all modes", async () => {
+  it("shows agent chats in all modes", async () => {
     useConversationsStore.setState({ conversations });
 
-    // Not logged in
+    // Not logged in — agent chats shown directly (no tabs)
     const { unmount } = await renderWithRouter(<Sidebar />);
-    expect(screen.getByText("Agent Chats")).toBeInTheDocument();
+    expect(screen.getByText("+ New Chat")).toBeInTheDocument();
+    expect(screen.getByText("Chat 1")).toBeInTheDocument();
     unmount();
 
-    // Logged in, no workspace
+    // Logged in, no workspace — agent chats shown directly (no tabs)
     useAuthStore.setState({ user, token: "test-token" });
     useWorkspacesStore.setState({ workspaces: workspaceList });
     const { unmount: unmount2 } = await renderWithRouter(<Sidebar />);
-    expect(screen.getByText("Agent Chats")).toBeInTheDocument();
+    expect(screen.getByText("+ New Chat")).toBeInTheDocument();
+    expect(screen.getByText("Chat 1")).toBeInTheDocument();
     unmount2();
 
-    // Logged in, with workspace
+    // Logged in, with workspace — Agent Chats tab visible
     useWorkspacesStore.setState({ activeWorkspace });
     await renderWithRouter(<Sidebar />);
     expect(screen.getByText("Agent Chats")).toBeInTheDocument();
