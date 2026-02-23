@@ -1,8 +1,10 @@
+import { useState, useEffect } from "react";
 import { create } from "zustand";
 import { useMatches } from "@tanstack/react-router";
 import { useWebSocketStore } from "../stores/websocket";
 import { useWorkspacesStore } from "../stores/workspaces";
 import { toggleSidebar } from "./Sidebar";
+import { basename } from "../lib/path";
 
 // Mini-store for agent chat title & project dir (set by agent-chat route)
 const useAgentChatTitle = create(() => ({ title: "", projectDir: null as string | null }));
@@ -20,6 +22,16 @@ export function ChatHeader() {
   const lastMatch = matches[matches.length - 1];
   const routePath = lastMatch?.fullPath ?? "";
   const params = (lastMatch?.params ?? {}) as Record<string, string>;
+
+  const [projectName, setProjectName] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (agentProjectDir) {
+      basename(agentProjectDir).then(setProjectName);
+    } else {
+      setProjectName(null);
+    }
+  }, [agentProjectDir]);
 
   const isAgentChat = routePath.startsWith("/chat");
   const isChannel = routePath.startsWith("/channel");
@@ -50,9 +62,9 @@ export function ChatHeader() {
         </button>
       )}
       <span className="chat-title">{chatTitle}</span>
-      {isAgentChat && agentProjectDir && (
-        <span className="chat-header-project" title={agentProjectDir}>
-          {agentProjectDir.replace(/\/+$/, "").split("/").pop()}
+      {isAgentChat && projectName && (
+        <span className="chat-header-project" title={agentProjectDir!}>
+          {projectName}
         </span>
       )}
       {showWsStatus && <span className="ws-status ws-connected" />}

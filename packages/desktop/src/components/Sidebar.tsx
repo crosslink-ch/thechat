@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { create } from "zustand";
 import { useNavigate, useMatches } from "@tanstack/react-router";
 import { useAuthStore } from "../stores/auth";
@@ -10,7 +10,17 @@ import { openAuthModal } from "./AuthModal";
 import { openWorkspaceModal } from "./WorkspaceModal";
 import { resetTodos } from "../core/todo";
 import { api } from "../lib/api";
+import { basename } from "../lib/path";
 import type { WorkspaceChannel, WorkspaceMember } from "@thechat/shared";
+
+function ProjectDirLabel({ path }: { path: string }) {
+  const [name, setName] = useState<string | null>(null);
+  useEffect(() => {
+    basename(path).then(setName);
+  }, [path]);
+  if (!name) return null;
+  return <span className="conv-project">{name}</span>;
+}
 
 // Colocated visibility store
 export const useSidebarState = create(() => ({
@@ -247,9 +257,7 @@ export function Sidebar() {
                   >
                     <span className="conv-title">{conv.title}</span>
                     {conv.project_dir && (
-                      <span className="conv-project">
-                        {conv.project_dir.replace(/\/+$/, "").split("/").pop()}
-                      </span>
+                      <ProjectDirLabel path={conv.project_dir} />
                     )}
                     {isStreamingBg && <span className="conv-streaming-indicator" />}
                     {!isStreamingBg && isUnread && <span className="conv-unread-dot" />}

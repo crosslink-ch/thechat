@@ -1,4 +1,6 @@
+import { useState, useEffect } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
+import { basename } from "../lib/path";
 
 interface ProjectPickerProps {
   projectDir: string | null;
@@ -6,12 +8,17 @@ interface ProjectPickerProps {
   readOnly?: boolean;
 }
 
-function folderName(path: string): string {
-  const parts = path.replace(/[/\\]+$/, "").split(/[/\\]/);
-  return parts[parts.length - 1] || path;
-}
-
 export function ProjectPicker({ projectDir, onSelect, readOnly }: ProjectPickerProps) {
+  const [displayName, setDisplayName] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (projectDir) {
+      basename(projectDir).then(setDisplayName);
+    } else {
+      setDisplayName(null);
+    }
+  }, [projectDir]);
+
   const handleClick = async () => {
     if (readOnly) return;
     const selected = await open({ directory: true, multiple: false });
@@ -35,7 +42,7 @@ export function ProjectPicker({ projectDir, onSelect, readOnly }: ProjectPickerP
     >
       <span className="project-picker-icon">&#128193;</span>
       <span className="project-picker-label">
-        {projectDir ? folderName(projectDir) : "No project"}
+        {displayName ?? "No project"}
       </span>
       {projectDir && !readOnly && (
         <span className="project-picker-clear" onClick={handleClear}>

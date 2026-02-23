@@ -5,16 +5,12 @@ import { useStreamingParts } from "./stores/streaming";
 import { TextWithUiBlocks } from "./components/TextWithUiBlocks";
 import { DiffPreview } from "./components/DiffPreview";
 import { WritePreview } from "./components/WritePreview";
+import { basename } from "./lib/path";
 
 type ToolCallPart = Extract<MessagePart, { type: "tool-call" }>;
 type ToolResultPart = Extract<MessagePart, { type: "tool-result" }>;
 
 const PREVIEW_TOOLS = new Set(["edit", "multiedit", "write"]);
-
-function basename(path: string): string {
-  const parts = path.split(/[/\\]/);
-  return parts[parts.length - 1] || path;
-}
 
 function getFilePath(call: ToolCallPart): string | undefined {
   const fp = call.args.file_path;
@@ -84,18 +80,25 @@ function ToolActivityBlock({
   result?: ToolResultPart;
 }) {
   const [open, setOpen] = useState(false);
+  const filePath = getFilePath(call);
+  const [fileName, setFileName] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (filePath) {
+      basename(filePath).then(setFileName);
+    }
+  }, [filePath]);
 
   const status = !result ? "Running..." : result.isError ? "Error" : "Done";
   const statusClass = result?.isError ? "tool-status-error" : "";
   const hasPreview = PREVIEW_TOOLS.has(call.toolName);
-  const filePath = getFilePath(call);
 
   return (
     <div className="tool-activity">
       <button className="tool-activity-toggle" onClick={() => setOpen(!open)}>
         <span className="tool-activity-chevron">{open ? "▾" : "▸"}</span>
         <span className="tool-activity-name">{call.toolName}</span>
-        {filePath && <span className="tool-activity-path">{basename(filePath)}</span>}
+        {fileName && <span className="tool-activity-path">{fileName}</span>}
         <span className={`tool-activity-status ${statusClass}`}>{status}</span>
       </button>
       {hasPreview && (
