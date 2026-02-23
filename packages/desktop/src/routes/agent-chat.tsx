@@ -6,7 +6,6 @@ import { useIsStreaming } from "../stores/streaming";
 import { useToolsStore } from "../stores/tools";
 import { useConversationsStore } from "../stores/conversations";
 import { useKeybindings } from "../hooks/useKeybindings";
-import { togglePalette } from "../CommandPalette";
 import { setAgentChatTitle, setAgentChatProjectDir } from "../components/ChatHeader";
 import { ProjectPicker } from "../components/ProjectPicker";
 import { ChatMessage, StreamingMessage } from "../ChatMessage";
@@ -207,15 +206,6 @@ export function AgentChatRoute() {
 
   // Override keybindings for permission allow/deny
   useKeybindings({
-    onNewChat: () => {
-      resetTodos();
-      setTodosState([]);
-      setProjectDir(null);
-      setProjectInfo(null);
-      useToolsStore.getState().setActiveConversation(null);
-      navigate({ to: "/chat" });
-    },
-    onPaletteToggle: togglePalette,
     onPermissionAllow: pendingPermission ? handlePermissionAllow : null,
     onPermissionDeny: pendingPermission ? handlePermissionDeny : null,
     onPermissionDenyWithFeedback: pendingPermission ? () => setShowFeedbackInput(true) : null,

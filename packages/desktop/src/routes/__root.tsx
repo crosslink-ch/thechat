@@ -9,11 +9,11 @@ import { useConversationsStore } from "../stores/conversations";
 import { useKeybindings } from "../hooks/useKeybindings";
 import { Sidebar } from "../components/Sidebar";
 import { ChatHeader } from "../components/ChatHeader";
-import { CommandPalette, togglePalette } from "../CommandPalette";
+import { CommandPalette } from "../CommandPalette";
 import { AuthModal } from "../components/AuthModal";
 import { WorkspaceModal } from "../components/WorkspaceModal";
 import { registerGlobalWsHandlers } from "../lib/ws-global-handlers";
-import { resetTodos } from "../core/todo";
+import { createCommands, useCommandsStore } from "../commands";
 
 export function RootLayout() {
   const navigate = useNavigate();
@@ -54,18 +54,17 @@ export function RootLayout() {
     return registerGlobalWsHandlers(navigate);
   }, [navigate]);
 
-  // Keybindings
-  const handleNewConversation = () => {
-    resetTodos();
-    navigate({ to: "/chat" });
-  };
+  // Initialize command registry
+  useEffect(() => {
+    useCommandsStore.getState().setCommands(createCommands(navigate));
+  }, [navigate]);
 
+  // Keybindings
   useKeybindings({
-    onNewChat: handleNewConversation,
-    onPaletteToggle: togglePalette,
     onPermissionAllow: null,
     onPermissionDeny: null,
     onPermissionDenyWithFeedback: null,
+    handleRegistryCommands: true,
   });
 
   return (

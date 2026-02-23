@@ -1,11 +1,20 @@
 import { useEffect, useRef } from "react";
+import { useCommandsStore, type Keybinding } from "../commands";
 
 interface KeybindingActions {
-  onNewChat: () => void;
-  onPaletteToggle: () => void;
   onPermissionAllow: (() => void) | null;
   onPermissionDeny: (() => void) | null;
   onPermissionDenyWithFeedback: (() => void) | null;
+  handleRegistryCommands?: boolean;
+}
+
+function matchesKeybinding(e: KeyboardEvent, kb: Keybinding): boolean {
+  if (e.key.toLowerCase() !== kb.key.toLowerCase()) return false;
+  if (kb.ctrl && !(e.ctrlKey || e.metaKey)) return false;
+  if (!kb.ctrl && (e.ctrlKey || e.metaKey)) return false;
+  if (kb.shift && !e.shiftKey) return false;
+  if (!kb.shift && e.shiftKey) return false;
+  return true;
 }
 
 export function useKeybindings(actions: KeybindingActions) {
@@ -17,30 +26,39 @@ export function useKeybindings(actions: KeybindingActions) {
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      // Ctrl+P: toggle command palette
-      if ((e.ctrlKey || e.metaKey) && e.key === "p") {
-        e.preventDefault();
-        actionsRef.current.onPaletteToggle();
-        return;
-      }
+      const commands = useCommandsStore.getState().commands;
 
       // C-x prefix mode
       if (cxPrefixRef.current) {
         cxPrefixRef.current = false;
         clearTimeout(cxTimeoutRef.current);
-        if (e.key === "n") {
-          e.preventDefault();
-          actionsRef.current.onNewChat();
-        } else if (e.key === "a" && actionsRef.current.onPermissionAllow) {
+
+        // Permission actions take priority in C-x prefix
+        if (e.key === "a" && actionsRef.current.onPermissionAllow) {
           e.preventDefault();
           actionsRef.current.onPermissionAllow();
-        } else if (e.key === "d" && actionsRef.current.onPermissionDeny) {
+          return;
+        }
+        if (e.key === "d" && actionsRef.current.onPermissionDeny) {
           e.preventDefault();
           actionsRef.current.onPermissionDeny();
-        } else if (e.key === "f" && actionsRef.current.onPermissionDenyWithFeedback) {
+          return;
+        }
+        if (e.key === "f" && actionsRef.current.onPermissionDenyWithFeedback) {
           e.preventDefault();
           actionsRef.current.onPermissionDenyWithFeedback();
+          return;
         }
+
+        // Check registry for C-x prefixed commands
+        for (const cmd of commands) {
+          if (cmd.keybinding?.prefix === "C-x" && cmd.keybinding.key === e.key) {
+            e.preventDefault();
+            cmd.execute();
+            return;
+          }
+        }
+
         // Any other key: cancel prefix silently
         return;
       }
@@ -52,6 +70,18 @@ export function useKeybindings(actions: KeybindingActions) {
         cxTimeoutRef.current = setTimeout(() => {
           cxPrefixRef.current = false;
         }, 2000);
+        return;
+      }
+
+      // Non-prefix registry commands (only handled by root to avoid double-fire)
+      if (actionsRef.current.handleRegistryCommands) {
+        for (const cmd of commands) {
+          if (cmd.keybinding && !cmd.keybinding.prefix && matchesKeybinding(e, cmd.keybinding)) {
+            e.preventDefault();
+            cmd.execute();
+            return;
+          }
+        }
       }
     };
     window.addEventListener("keydown", handler);
