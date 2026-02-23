@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import type { ToolExecutionContext } from "../types";
 import { defineTool } from "./define";
 
 interface ListDirResult {
@@ -28,14 +29,14 @@ Use this tool instead of ls or tree shell commands.`,
     },
     required: [],
   },
-  execute: async (args) => {
+  execute: async (args, context?: ToolExecutionContext) => {
     const { path, ignore } = args as {
       path?: string;
       ignore?: string[];
     };
 
     const result = await invoke<ListDirResult>("fs_list_dir", {
-      path: path ?? undefined,
+      path: path ?? context?.cwd ?? undefined,
       ignore: ignore ?? undefined,
     });
 

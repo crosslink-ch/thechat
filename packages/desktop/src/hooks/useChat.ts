@@ -65,6 +65,7 @@ interface UseChatOptions {
   getTools?: () => ToolDefinition[];
   params?: ChatParams;
   systemPrompt?: string;
+  projectDir?: string | null;
   onStreamComplete?: (convId: string, convTitle: string) => void;
 }
 
@@ -76,6 +77,10 @@ export function useChat(options?: UseChatOptions) {
   const activeConvIdRef = useRef<string | null>(null);
   const onStreamCompleteRef = useRef(options?.onStreamComplete);
   onStreamCompleteRef.current = options?.onStreamComplete;
+  const systemPromptRef = useRef(options?.systemPrompt);
+  systemPromptRef.current = options?.systemPrompt;
+  const projectDirRef = useRef(options?.projectDir);
+  projectDirRef.current = options?.projectDir;
   const messagesRef = useRef(messages);
   messagesRef.current = messages;
 
@@ -114,7 +119,11 @@ export function useChat(options?: UseChatOptions) {
         if (!conv) {
           const title =
             userContent.length > 50 ? userContent.substring(0, 50) + "..." : userContent;
-          conv = await invoke<Conversation>("create_conversation", { title });
+          const pDir = projectDirRef.current ?? undefined;
+          conv = await invoke<Conversation>("create_conversation", {
+            title,
+            projectDir: pDir || null,
+          });
           setConversation(conv);
           activeConvIdRef.current = conv.id;
         }
@@ -213,15 +222,17 @@ export function useChat(options?: UseChatOptions) {
           }
         };
 
+        const convProjectDir = conv.project_dir ?? projectDirRef.current ?? undefined;
         await runChatLoop({
           apiKey: config.api_key,
           model: config.model,
           messages: apiMessages,
-          systemPrompt: options?.systemPrompt,
+          systemPrompt: systemPromptRef.current,
           params: options?.params,
           tools: options?.tools,
           getTools: options?.getTools,
           signal: controller.signal,
+          cwd: convProjectDir || undefined,
           onEvent,
         });
 

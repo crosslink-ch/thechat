@@ -4,15 +4,18 @@ import { useWebSocketStore } from "../stores/websocket";
 import { useWorkspacesStore } from "../stores/workspaces";
 import { toggleSidebar } from "./Sidebar";
 
-// Mini-store for agent chat title (set by agent-chat route)
-const useAgentChatTitle = create(() => ({ title: "" }));
+// Mini-store for agent chat title & project dir (set by agent-chat route)
+const useAgentChatTitle = create(() => ({ title: "", projectDir: null as string | null }));
 export const setAgentChatTitle = (title: string) =>
   useAgentChatTitle.setState({ title });
+export const setAgentChatProjectDir = (projectDir: string | null) =>
+  useAgentChatTitle.setState({ projectDir });
 
 export function ChatHeader() {
   const connected = useWebSocketStore((s) => s.connected);
   const activeWorkspace = useWorkspacesStore((s) => s.activeWorkspace);
   const agentChatTitle = useAgentChatTitle((s) => s.title);
+  const agentProjectDir = useAgentChatTitle((s) => s.projectDir);
   const matches = useMatches();
   const lastMatch = matches[matches.length - 1];
   const routePath = lastMatch?.fullPath ?? "";
@@ -47,6 +50,11 @@ export function ChatHeader() {
         </button>
       )}
       <span className="chat-title">{chatTitle}</span>
+      {isAgentChat && agentProjectDir && (
+        <span className="chat-header-project" title={agentProjectDir}>
+          {agentProjectDir.replace(/\/+$/, "").split("/").pop()}
+        </span>
+      )}
       {showWsStatus && <span className="ws-status ws-connected" />}
     </div>
   );

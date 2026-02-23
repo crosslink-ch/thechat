@@ -246,6 +246,11 @@ export function Sidebar() {
                     onClick={() => handleSelectConversation(conv)}
                   >
                     <span className="conv-title">{conv.title}</span>
+                    {conv.project_dir && (
+                      <span className="conv-project">
+                        {conv.project_dir.replace(/\/+$/, "").split("/").pop()}
+                      </span>
+                    )}
                     {isStreamingBg && <span className="conv-streaming-indicator" />}
                     {!isStreamingBg && isUnread && <span className="conv-unread-dot" />}
                   </button>

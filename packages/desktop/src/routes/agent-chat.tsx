@@ -7,7 +7,8 @@ import { useToolsStore } from "../stores/tools";
 import { useConversationsStore } from "../stores/conversations";
 import { useKeybindings } from "../hooks/useKeybindings";
 import { togglePalette } from "../CommandPalette";
-import { setAgentChatTitle } from "../components/ChatHeader";
+import { setAgentChatTitle, setAgentChatProjectDir } from "../components/ChatHeader";
+import { ProjectPicker } from "../components/ProjectPicker";
 import { ChatMessage, StreamingMessage } from "../ChatMessage";
 import { TodoPanel } from "../TodoPanel";
 import { InputBar } from "../components/InputBar";
@@ -15,7 +16,7 @@ import { QuestionOverlay } from "../components/QuestionOverlay";
 import { onPermissionRequest, type PermissionRequest } from "../core/permission";
 import { onQuestionRequest } from "../core/question";
 import { onTodoUpdate, resetTodos } from "../core/todo";
-import { buildSystemPrompt } from "../core/system-prompt";
+import { buildSystemPrompt, type ProjectInfo } from "../core/system-prompt";
 import { fireNotification } from "../lib/notifications";
 import type { Conversation, QuestionRequest, TodoItem } from "../core/types";
 
@@ -26,9 +27,19 @@ export function AgentChatRoute() {
   const routeId = (lastMatch?.params as Record<string, string>)?.id as string | undefined;
 
   const getTools = useCallback(() => useToolsStore.getState().tools, []);
-  const systemPrompt = useMemo(() => buildSystemPrompt(), []);
+
+  // Project mode state (for new chats before conversation is created)
+  const [projectDir, setProjectDir] = useState<string | null>(null);
+  const [projectInfo, setProjectInfo] = useState<ProjectInfo | null>(null);
 
   const activeAgentConvIdRef = useRef<string | null>(null);
+
+  // systemPrompt is initially computed with just projectDir (for new chats)
+  // It gets updated reactively below when conversation.project_dir is available
+  const systemPrompt = useMemo(
+    () => buildSystemPrompt(projectDir ?? undefined, projectInfo ?? undefined),
+    [projectDir, projectInfo],
+  );
 
   const {
     messages,
@@ -41,6 +52,7 @@ export function AgentChatRoute() {
   } = useChat({
     getTools,
     systemPrompt,
+    projectDir,
     onStreamComplete: (convId: string, convTitle: string) => {
       useConversationsStore.getState().fetchConversations();
       const isViewingThisChat = activeAgentConvIdRef.current === convId;
@@ -71,13 +83,16 @@ export function AgentChatRoute() {
         const conv = convs.find((c) => c.id === routeId);
         if (conv) {
           loadConversation(conv);
+          setProjectDir(conv.project_dir ?? null);
           useConversationsStore.getState().markAgentChatRead(conv.id);
-          useToolsStore.getState().setActiveConversation(conv.id);
+          useToolsStore.getState().setActiveConversation(conv.id, conv.project_dir);
         }
       });
     } else if (!routeId && loadedIdRef.current !== null) {
       loadedIdRef.current = null;
       startNewConversation();
+      setProjectDir(null);
+      setProjectInfo(null);
       resetTodos();
       setTodosState([]);
       useToolsStore.getState().setActiveConversation(null);
@@ -92,7 +107,7 @@ export function AgentChatRoute() {
       loadedIdRef.current = conversation.id;
       navigate({ to: "/chat/$id", params: { id: conversation.id }, replace: true });
       // New conversation just created — no tools to load, but set active conv for future skill calls
-      useToolsStore.getState().setActiveConversation(conversation.id);
+      useToolsStore.getState().setActiveConversation(conversation.id, conversation.project_dir);
     } else {
       prevConvId.current = conversation?.id;
     }
@@ -119,10 +134,26 @@ export function AgentChatRoute() {
     });
   }, []);
 
-  // Sync title to ChatHeader
+  // Fetch git info when projectDir changes
+  useEffect(() => {
+    if (projectDir) {
+      invoke<{ is_git: boolean; git_branch: string | null }>("get_project_info", {
+        path: projectDir,
+      })
+        .then((info) =>
+          setProjectInfo({ isGit: info.is_git, gitBranch: info.git_branch ?? undefined }),
+        )
+        .catch(() => setProjectInfo(null));
+    } else {
+      setProjectInfo(null);
+    }
+  }, [projectDir]);
+
+  // Sync title and project dir to ChatHeader
   useEffect(() => {
     setAgentChatTitle(conversation?.title || "New Chat");
-  }, [conversation?.title]);
+    setAgentChatProjectDir(projectDir);
+  }, [conversation?.title, projectDir]);
 
   // Auto-scroll
   useEffect(() => {
@@ -179,6 +210,8 @@ export function AgentChatRoute() {
     onNewChat: () => {
       resetTodos();
       setTodosState([]);
+      setProjectDir(null);
+      setProjectInfo(null);
       useToolsStore.getState().setActiveConversation(null);
       navigate({ to: "/chat" });
     },
@@ -194,7 +227,14 @@ export function AgentChatRoute() {
 
       <div className="messages-area">
         {messages.length === 0 && !isStreaming && (
-          <div className="empty-state">Send a message to start chatting</div>
+          <div className="empty-state">
+            <ProjectPicker
+              projectDir={projectDir}
+              onSelect={setProjectDir}
+              readOnly={!!conversation?.project_dir}
+            />
+            <div style={{ marginTop: 12 }}>Send a message to start chatting</div>
+          </div>
         )}
         {messages.map((msg) => (
           <ChatMessage key={msg.id} message={msg} />

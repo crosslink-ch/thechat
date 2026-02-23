@@ -20,8 +20,8 @@ import type {
 import { Sidebar, useSidebarState } from "./Sidebar";
 
 const conversations: Conversation[] = [
-  { id: "c1", title: "Chat 1", created_at: "2026-01-01", updated_at: "2026-01-01" },
-  { id: "c2", title: "Chat 2", created_at: "2026-01-02", updated_at: "2026-01-02" },
+  { id: "c1", title: "Chat 1", project_dir: null, created_at: "2026-01-01", updated_at: "2026-01-01" },
+  { id: "c2", title: "Chat 2", project_dir: null, created_at: "2026-01-02", updated_at: "2026-01-02" },
 ];
 
 const user: AuthUser = {

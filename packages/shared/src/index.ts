@@ -30,6 +30,7 @@ export interface DbMessage {
 export interface Conversation {
   id: string;
   title: string;
+  project_dir: string | null;
   created_at: string;
   updated_at: string;
 }

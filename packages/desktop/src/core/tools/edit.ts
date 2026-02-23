@@ -1,5 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { requestPermission } from "../permission";
+import type { ToolExecutionContext } from "../types";
+import { resolvePath } from "./resolve-path";
 import { defineTool } from "./define";
 
 interface EditFileResult {
@@ -20,7 +22,7 @@ Use this tool instead of sed or awk.`,
     properties: {
       file_path: {
         type: "string",
-        description: "Absolute path to the file to edit",
+        description: "Path to the file to edit. Can be relative to the project directory or absolute.",
       },
       old_string: {
         type: "string",
@@ -37,7 +39,7 @@ Use this tool instead of sed or awk.`,
     },
     required: ["file_path", "old_string", "new_string"],
   },
-  execute: async (args) => {
+  execute: async (args, context?: ToolExecutionContext) => {
     const { file_path, old_string, new_string, replace_all } = args as {
       file_path: string;
       old_string: string;
@@ -45,13 +47,15 @@ Use this tool instead of sed or awk.`,
       replace_all?: boolean;
     };
 
+    const resolvedPath = resolvePath(file_path, context?.cwd);
+
     await requestPermission({
-      command: `edit ${file_path}`,
-      description: `Edit file: replace string in ${file_path}`,
+      command: `edit ${resolvedPath}`,
+      description: `Edit file: replace string in ${resolvedPath}`,
     });
 
     const result = await invoke<EditFileResult>("fs_edit_file", {
-      filePath: file_path,
+      filePath: resolvedPath,
       oldString: old_string,
       newString: new_string,
       replaceAll: replace_all ?? undefined,

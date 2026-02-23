@@ -18,8 +18,12 @@ fn get_config() -> Result<config::AppConfig, String> {
 }
 
 #[tauri::command]
-fn create_conversation(title: String, db: State<DbState>) -> Result<Conversation, String> {
-    db.create_conversation(&title)
+fn create_conversation(
+    title: String,
+    project_dir: Option<String>,
+    db: State<DbState>,
+) -> Result<Conversation, String> {
+    db.create_conversation(&title, project_dir.as_deref())
 }
 
 #[tauri::command]
@@ -98,6 +102,7 @@ pub fn run() {
         .plugin(tauri_plugin_log::Builder::new().build())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_dialog::init())
         .manage(db_state)
         .manage(mcp_state)
         .manage(shell_state)
@@ -118,6 +123,7 @@ pub fn run() {
             mcp::mcp_shutdown,
             shell::execute_shell_command,
             shell::kill_shell_process,
+            fs::get_project_info,
             fs::get_cwd,
             fs::fs_read_file,
             fs::fs_write_file,
@@ -164,7 +170,8 @@ mod tests {
                 mcp::mcp_shutdown,
                 shell::execute_shell_command,
                 shell::kill_shell_process,
-                fs::get_cwd,
+                fs::get_project_info,
+            fs::get_cwd,
                 fs::fs_read_file,
                 fs::fs_write_file,
                 fs::fs_edit_file,
@@ -192,7 +199,7 @@ mod tests {
             .expect("failed to build app");
 
         let db = app.state::<DbState>();
-        let conv = db.create_conversation("Test").unwrap();
+        let conv = db.create_conversation("Test", None).unwrap();
         assert_eq!(conv.title, "Test");
 
         db.save_message(&conv.id, "user", "Hello", None).unwrap();

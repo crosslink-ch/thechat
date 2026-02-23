@@ -1,4 +1,4 @@
-import type { ToolDefinition } from "../types";
+import type { ToolDefinition, ToolExecutionContext } from "../types";
 import { defineTool } from "./define";
 
 let toolRegistry: Map<string, ToolDefinition> = new Map();
@@ -38,7 +38,7 @@ If any individual tool call fails, other calls still complete.`,
     },
     required: ["tool_calls"],
   },
-  execute: async (args) => {
+  execute: async (args, context?: ToolExecutionContext) => {
     const { tool_calls } = args as { tool_calls: BatchToolCall[] };
 
     const results = await Promise.all(
@@ -63,7 +63,7 @@ If any individual tool call fails, other calls still complete.`,
         }
 
         try {
-          const result = await tool.execute(call.args);
+          const result = await tool.execute(call.args, context);
           return { index, tool: call.tool, success: true, result };
         } catch (e) {
           return {

@@ -54,6 +54,8 @@ interface ToolsStore {
   sessionToolsByConv: Record<string, McpToolInfo[]>;
   /** Currently active conversation ID (whose session tools are active) */
   activeConvId: string | null;
+  /** CWD for the active conversation (from project_dir) */
+  activeCwd: string | null;
   skills: SkillMeta[];
   tools: ToolDefinition[];
   initializeMcp: () => void;
@@ -61,7 +63,7 @@ interface ToolsStore {
   discoverSkills: () => Promise<void>;
   initializeTaskRunner: () => Promise<void>;
   /** Set the active conversation, loading its session tools from DB if needed. */
-  setActiveConversation: (convId: string | null) => Promise<void>;
+  setActiveConversation: (convId: string | null, projectDir?: string | null) => Promise<void>;
   /** Add MCP tools to a specific conversation's session (loaded by a skill). */
   addSessionMcpTools: (convId: string, infos: McpToolInfo[]) => void;
 }
@@ -107,6 +109,7 @@ export const useToolsStore = create<ToolsStore>()((set, get) => ({
   mcpTools: [],
   sessionToolsByConv: {},
   activeConvId: null,
+  activeCwd: null,
   skills: [],
   tools: [...builtinTools],
 
@@ -160,7 +163,7 @@ export const useToolsStore = create<ToolsStore>()((set, get) => ({
   },
 
   initializeTaskRunner: async () => {
-    const { tools } = get();
+    const { tools, activeCwd } = get();
     setBatchToolRegistry(tools);
 
     try {
@@ -169,20 +172,21 @@ export const useToolsStore = create<ToolsStore>()((set, get) => ({
         apiKey: config.api_key,
         model: config.model,
         availableTools: tools,
+        cwd: activeCwd ?? undefined,
       });
     } catch {
       // ignore
     }
   },
 
-  setActiveConversation: async (convId: string | null) => {
+  setActiveConversation: async (convId: string | null, projectDir?: string | null) => {
     set((state) => {
       const tools = computeTools(
         state.skills,
         state.mcpTools,
         convId ? (state.sessionToolsByConv[convId] ?? []) : [],
       );
-      return { activeConvId: convId, tools };
+      return { activeConvId: convId, activeCwd: projectDir ?? null, tools };
     });
 
     if (!convId) return;

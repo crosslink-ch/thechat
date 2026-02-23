@@ -1,5 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { requestPermission } from "../permission";
+import type { ToolExecutionContext } from "../types";
+import { resolvePath } from "./resolve-path";
 import { defineTool } from "./define";
 
 interface EditFileResult {
@@ -24,7 +26,7 @@ Use this when you need to make several changes to the same file.`,
     properties: {
       file_path: {
         type: "string",
-        description: "Absolute path to the file to edit",
+        description: "Path to the file to edit. Can be relative to the project directory or absolute.",
       },
       edits: {
         type: "array",
@@ -42,15 +44,17 @@ Use this when you need to make several changes to the same file.`,
     },
     required: ["file_path", "edits"],
   },
-  execute: async (args) => {
+  execute: async (args, context?: ToolExecutionContext) => {
     const { file_path, edits } = args as {
       file_path: string;
       edits: EditOperation[];
     };
 
+    const resolvedPath = resolvePath(file_path, context?.cwd);
+
     await requestPermission({
-      command: `multiedit ${file_path}`,
-      description: `Apply ${edits.length} edits to ${file_path}`,
+      command: `multiedit ${resolvedPath}`,
+      description: `Apply ${edits.length} edits to ${resolvedPath}`,
     });
 
     const results: Array<{ index: number; success: boolean; error?: string }> = [];
@@ -59,7 +63,7 @@ Use this when you need to make several changes to the same file.`,
       const edit = edits[i];
       try {
         await invoke<EditFileResult>("fs_edit_file", {
-          filePath: file_path,
+          filePath: resolvedPath,
           oldString: edit.old_string,
           newString: edit.new_string,
           replaceAll: edit.replace_all ?? undefined,

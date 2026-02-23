@@ -1,4 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
+import type { ToolExecutionContext } from "../types";
+import { resolvePath } from "./resolve-path";
 import { defineTool } from "./define";
 
 interface ReadFileResult {
@@ -19,7 +21,7 @@ Use this tool instead of shell commands like cat, head, or tail.`,
     properties: {
       file_path: {
         type: "string",
-        description: "Absolute path to the file to read",
+        description: "Path to the file to read. Can be relative to the project directory or absolute.",
       },
       offset: {
         type: "number",
@@ -32,15 +34,17 @@ Use this tool instead of shell commands like cat, head, or tail.`,
     },
     required: ["file_path"],
   },
-  execute: async (args) => {
+  execute: async (args, context?: ToolExecutionContext) => {
     const { file_path, offset, limit } = args as {
       file_path: string;
       offset?: number;
       limit?: number;
     };
 
+    const resolvedPath = resolvePath(file_path, context?.cwd);
+
     const result = await invoke<ReadFileResult>("fs_read_file", {
-      filePath: file_path,
+      filePath: resolvedPath,
       offset: offset ?? undefined,
       limit: limit ?? undefined,
       lineNumbers: true,

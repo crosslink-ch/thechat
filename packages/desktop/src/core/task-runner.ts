@@ -5,6 +5,7 @@ interface TaskRunnerConfig {
   apiKey: string;
   model: string;
   availableTools: ToolDefinition[];
+  cwd?: string;
 }
 
 let config: TaskRunnerConfig | null = null;
@@ -41,16 +42,23 @@ export async function runTask(prompt: string, signal?: AbortSignal): Promise<str
     }
   };
 
+  const systemPromptParts = [
+    "You are a helpful sub-agent completing a specific task. Be concise and focused. " +
+      "Complete the task and report results clearly.",
+  ];
+  if (config.cwd) {
+    systemPromptParts.push(`Working directory: ${config.cwd}`);
+  }
+
   await runChatLoop({
     apiKey: config.apiKey,
     model: config.model,
     messages: [{ role: "user", content: prompt }],
-    systemPrompt:
-      "You are a helpful sub-agent completing a specific task. Be concise and focused. " +
-      "Complete the task and report results clearly.",
+    systemPrompt: systemPromptParts.join("\n"),
     tools,
     maxToolRoundtrips: Infinity,
     signal,
+    cwd: config.cwd,
     onEvent,
   });
 

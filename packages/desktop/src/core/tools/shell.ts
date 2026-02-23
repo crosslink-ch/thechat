@@ -69,10 +69,11 @@ The command has a default timeout of 120 seconds.`,
     context?.signal?.addEventListener("abort", abortHandler, { once: true });
 
     try {
+      const resolvedWorkdir = workdir ?? context?.cwd ?? undefined;
       const result = await invoke<ShellResult>("execute_shell_command", {
         command,
         timeout: timeout ?? undefined,
-        workdir: workdir ?? undefined,
+        workdir: resolvedWorkdir,
         processId,
       });
 

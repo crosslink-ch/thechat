@@ -72,7 +72,46 @@ const DEFAULT_IGNORES: &[&str] = &[
     ".DS_Store",
 ];
 
+#[derive(Debug, Serialize)]
+pub struct ProjectInfo {
+    pub is_git: bool,
+    pub git_branch: Option<String>,
+}
+
 // -- Commands --
+
+#[tauri::command]
+pub fn get_project_info(path: String) -> Result<ProjectInfo, String> {
+    let base = Path::new(&path);
+    if !base.exists() || !base.is_dir() {
+        return Err(format!("Not a valid directory: {}", path));
+    }
+
+    let git_dir = base.join(".git");
+    let is_git = git_dir.exists();
+
+    let git_branch = if is_git {
+        std::process::Command::new("git")
+            .args(["rev-parse", "--abbrev-ref", "HEAD"])
+            .current_dir(base)
+            .output()
+            .ok()
+            .and_then(|out| {
+                if out.status.success() {
+                    Some(String::from_utf8_lossy(&out.stdout).trim().to_string())
+                } else {
+                    None
+                }
+            })
+    } else {
+        None
+    };
+
+    Ok(ProjectInfo {
+        is_git,
+        git_branch,
+    })
+}
 
 #[tauri::command]
 pub fn get_cwd() -> Result<String, String> {

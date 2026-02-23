@@ -8,6 +8,7 @@ use uuid::Uuid;
 pub struct Conversation {
     pub id: String,
     pub title: String,
+    pub project_dir: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -53,26 +54,35 @@ impl Database {
         )
         .map_err(|e| format!("Failed to create tables: {}", e))?;
 
+        // Migrations
+        conn.execute_batch("ALTER TABLE conversations ADD COLUMN project_dir TEXT;")
+            .ok(); // Ignore error if column already exists
+
         Ok(Database {
             conn: Mutex::new(conn),
         })
     }
 
-    pub fn create_conversation(&self, title: &str) -> Result<Conversation, String> {
+    pub fn create_conversation(
+        &self,
+        title: &str,
+        project_dir: Option<&str>,
+    ) -> Result<Conversation, String> {
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
         let id = Uuid::new_v4().to_string();
         let now: DateTime<Utc> = Utc::now();
         let now_str = now.to_rfc3339();
 
         conn.execute(
-            "INSERT INTO conversations (id, title, created_at, updated_at) VALUES (?1, ?2, ?3, ?4)",
-            params![id, title, now_str, now_str],
+            "INSERT INTO conversations (id, title, project_dir, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![id, title, project_dir, now_str, now_str],
         )
         .map_err(|e| format!("Failed to create conversation: {}", e))?;
 
         Ok(Conversation {
             id,
             title: title.to_string(),
+            project_dir: project_dir.map(|s| s.to_string()),
             created_at: now_str.clone(),
             updated_at: now_str,
         })
@@ -81,7 +91,7 @@ impl Database {
     pub fn list_conversations(&self) -> Result<Vec<Conversation>, String> {
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
         let mut stmt = conn
-            .prepare("SELECT id, title, created_at, updated_at FROM conversations ORDER BY updated_at DESC")
+            .prepare("SELECT id, title, project_dir, created_at, updated_at FROM conversations ORDER BY updated_at DESC")
             .map_err(|e| e.to_string())?;
 
         let rows = stmt
@@ -89,8 +99,9 @@ impl Database {
                 Ok(Conversation {
                     id: row.get(0)?,
                     title: row.get(1)?,
-                    created_at: row.get(2)?,
-                    updated_at: row.get(3)?,
+                    project_dir: row.get(2)?,
+                    created_at: row.get(3)?,
+                    updated_at: row.get(4)?,
                 })
             })
             .map_err(|e| e.to_string())?;
@@ -217,7 +228,7 @@ mod tests {
     #[test]
     fn create_conversation() {
         let db = test_db();
-        let conv = db.create_conversation("Test Chat").unwrap();
+        let conv = db.create_conversation("Test Chat", None).unwrap();
         assert_eq!(conv.title, "Test Chat");
         assert!(!conv.id.is_empty());
         assert!(!conv.created_at.is_empty());
@@ -234,8 +245,8 @@ mod tests {
     #[test]
     fn list_conversations_ordered_by_updated_at() {
         let db = test_db();
-        let first = db.create_conversation("First").unwrap();
-        let second = db.create_conversation("Second").unwrap();
+        let first = db.create_conversation("First", None).unwrap();
+        let second = db.create_conversation("Second", None).unwrap();
 
         let convs = db.list_conversations().unwrap();
         assert_eq!(convs.len(), 2);
@@ -247,7 +258,7 @@ mod tests {
     #[test]
     fn update_conversation_title() {
         let db = test_db();
-        let conv = db.create_conversation("Old Title").unwrap();
+        let conv = db.create_conversation("Old Title", None).unwrap();
         db.update_conversation_title(&conv.id, "New Title").unwrap();
 
         let convs = db.list_conversations().unwrap();
@@ -258,7 +269,7 @@ mod tests {
     #[test]
     fn save_and_get_messages() {
         let db = test_db();
-        let conv = db.create_conversation("Chat").unwrap();
+        let conv = db.create_conversation("Chat", None).unwrap();
 
         db.save_message(&conv.id, "user", "Hello", None).unwrap();
         db.save_message(&conv.id, "assistant", "Hi there", Some("thinking..."))
@@ -277,7 +288,7 @@ mod tests {
     #[test]
     fn get_messages_empty() {
         let db = test_db();
-        let conv = db.create_conversation("Empty").unwrap();
+        let conv = db.create_conversation("Empty", None).unwrap();
         let msgs = db.get_messages(&conv.id).unwrap();
         assert!(msgs.is_empty());
     }
@@ -285,7 +296,7 @@ mod tests {
     #[test]
     fn save_message_updates_conversation_timestamp() {
         let db = test_db();
-        let conv = db.create_conversation("Chat").unwrap();
+        let conv = db.create_conversation("Chat", None).unwrap();
         let original_updated = conv.updated_at.clone();
 
         // Small sleep to ensure timestamp differs
@@ -299,7 +310,7 @@ mod tests {
     #[test]
     fn messages_ordered_by_created_at() {
         let db = test_db();
-        let conv = db.create_conversation("Chat").unwrap();
+        let conv = db.create_conversation("Chat", None).unwrap();
 
         db.save_message(&conv.id, "user", "First", None).unwrap();
         db.save_message(&conv.id, "assistant", "Second", None)
@@ -351,8 +362,8 @@ mod tests {
     #[test]
     fn messages_isolated_per_conversation() {
         let db = test_db();
-        let conv1 = db.create_conversation("Chat 1").unwrap();
-        let conv2 = db.create_conversation("Chat 2").unwrap();
+        let conv1 = db.create_conversation("Chat 1", None).unwrap();
+        let conv2 = db.create_conversation("Chat 2", None).unwrap();
 
         db.save_message(&conv1.id, "user", "In chat 1", None)
             .unwrap();

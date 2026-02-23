@@ -48,6 +48,7 @@ export interface QuestionRequest {
 
 export interface ToolExecutionContext {
   signal?: AbortSignal;
+  cwd?: string;
 }
 
 export interface ToolDefinition<TArgs = Record<string, unknown>> {
@@ -69,5 +70,6 @@ export interface ChatLoopOptions {
   getTools?: () => ToolDefinition[];
   maxToolRoundtrips?: number;
   signal?: AbortSignal;
+  cwd?: string;
   onEvent: (event: StreamEvent) => void;
 }

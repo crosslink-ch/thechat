@@ -1,4 +1,12 @@
-export function buildSystemPrompt(): string {
+export interface ProjectInfo {
+  isGit: boolean;
+  gitBranch?: string;
+}
+
+export function buildSystemPrompt(
+  projectDir?: string,
+  projectInfo?: ProjectInfo,
+): string {
   const platform = navigator.platform?.toLowerCase() ?? "";
   let os = "Unknown OS";
   if (platform.includes("win")) os = "Windows";
@@ -7,11 +15,23 @@ export function buildSystemPrompt(): string {
 
   const date = new Date().toISOString().split("T")[0];
 
+  let envSection = `# Environment
+- Platform: ${os}
+- Date: ${date}`;
+
+  if (projectDir) {
+    envSection += `\n- Working directory: ${projectDir}`;
+    if (projectInfo?.isGit) {
+      envSection += `\n- Git repository: yes (branch: ${projectInfo.gitBranch ?? "unknown"})`;
+    } else {
+      envSection += `\n- Git repository: no`;
+    }
+    envSection += `\n\nFile paths can be relative to the working directory. The glob, grep, list, and shell tools default to the working directory.`;
+  }
+
   return `You are an expert coding assistant running in a desktop application called TheChat. You help users using the tools available to you.
 
-# Environment
-- Platform: ${os}
-- Date: ${date}
+${envSection}
 
 # Tone and style
 - Be concise and direct.
