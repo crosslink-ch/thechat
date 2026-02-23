@@ -12,17 +12,14 @@ import { ChatHeader } from "../components/ChatHeader";
 import { CommandPalette, togglePalette } from "../CommandPalette";
 import { AuthModal } from "../components/AuthModal";
 import { WorkspaceModal } from "../components/WorkspaceModal";
-import { fireNotification } from "../lib/notifications";
+import { registerGlobalWsHandlers } from "../lib/ws-global-handlers";
 import { resetTodos } from "../core/todo";
 
 export function RootLayout() {
   const navigate = useNavigate();
   const token = useAuthStore((s) => s.token);
-  const user = useAuthStore((s) => s.user);
   const tools = useToolsStore((s) => s.tools);
   const prevTokenRef = useRef(token);
-  const userRef = useRef(user);
-  userRef.current = user;
 
   // Initialize auth on mount
   useEffect(() => {
@@ -52,105 +49,10 @@ export function RootLayout() {
     useToolsStore.getState().initializeTaskRunner();
   }, [tools]);
 
-  // WebSocket message listener for unread tracking + notifications (global)
+  // Global WebSocket event handlers
   useEffect(() => {
-    const unsubMessages = useWebSocketStore.getState().subscribeToMessages(
-      (msg, conversationType) => {
-        if (conversationType === "group") {
-          useConversationsStore.getState().markChannelUnread(msg.conversationId);
-        }
-        if (
-          conversationType === "direct" &&
-          msg.senderId !== userRef.current?.id
-        ) {
-          fireNotification(msg.senderName, msg.content);
-        }
-      },
-    );
-    return unsubMessages;
-  }, []);
-
-  // WebSocket member_joined listener — update active workspace members list
-  useEffect(() => {
-    const unsub = useWebSocketStore.getState().subscribeToMemberJoined(
-      (workspaceId, member) => {
-        const { activeWorkspace } = useWorkspacesStore.getState();
-        if (!activeWorkspace || activeWorkspace.id !== workspaceId) return;
-        // Guard against duplicates (idempotent)
-        if (activeWorkspace.members.some((m) => m.userId === member.userId)) return;
-        useWorkspacesStore.setState({
-          activeWorkspace: {
-            ...activeWorkspace,
-            members: [...activeWorkspace.members, member],
-          },
-        });
-      },
-    );
-    return unsub;
-  }, []);
-
-  // WebSocket member_role_changed listener — update active workspace members list
-  useEffect(() => {
-    const unsub = useWebSocketStore.getState().subscribeToMemberRoleChanged(
-      (workspaceId, userId, newRole) => {
-        const { activeWorkspace } = useWorkspacesStore.getState();
-        if (!activeWorkspace || activeWorkspace.id !== workspaceId) return;
-        useWorkspacesStore.setState({
-          activeWorkspace: {
-            ...activeWorkspace,
-            members: activeWorkspace.members.map((m) =>
-              m.userId === userId ? { ...m, role: newRole } : m
-            ),
-          },
-        });
-      },
-    );
-    return unsub;
-  }, []);
-
-  // WebSocket member_removed listener — remove from workspace or navigate away
-  useEffect(() => {
-    const unsub = useWebSocketStore.getState().subscribeToMemberRemoved(
-      (workspaceId, userId) => {
-        const { activeWorkspace } = useWorkspacesStore.getState();
-        if (!activeWorkspace || activeWorkspace.id !== workspaceId) return;
-
-        // If the removed user is the current user, leave the workspace
-        if (userId === userRef.current?.id) {
-          useWorkspacesStore.setState({ activeWorkspace: null });
-          useWorkspacesStore.getState().initialize();
-          navigate({ to: "/chat" });
-          return;
-        }
-
-        // Otherwise just remove from the members list
-        useWorkspacesStore.setState({
-          activeWorkspace: {
-            ...activeWorkspace,
-            members: activeWorkspace.members.filter((m) => m.userId !== userId),
-          },
-        });
-      },
-    );
-    return unsub;
+    return registerGlobalWsHandlers(navigate);
   }, [navigate]);
-
-  // WebSocket invite_received listener — add notification + fire OS notification
-  useEffect(() => {
-    const unsub = useWebSocketStore.getState().subscribeToInviteReceived(
-      (invite) => {
-        useNotificationsStore.getState().addNotification({
-          type: "workspace_invite",
-          invite,
-        });
-        fireNotification(
-          "Workspace Invite",
-          `${invite.inviterName} invited you to ${invite.workspaceName}`
-        );
-      },
-    );
-    return unsub;
-  }, []);
 
   // Keybindings
   const handleNewConversation = () => {

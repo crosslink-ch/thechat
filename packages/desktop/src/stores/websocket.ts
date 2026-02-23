@@ -1,14 +1,8 @@
 import { create } from "zustand";
-import type { WsClientEvent, WsServerEvent, ChatMessage, WorkspaceMember, WorkspaceMemberRole, WorkspaceInvite } from "@thechat/shared";
+import type { WsClientEvent, WsServerEvent } from "@thechat/shared";
+import { wsEvents } from "../lib/ws-events";
 
 const WS_URL = __BACKEND_URL__.replace(/^http/, "ws");
-
-type MessageCallback = (msg: ChatMessage, type: "direct" | "group") => void;
-type TypingCallback = (conversationId: string, userId: string, userName: string) => void;
-type MemberJoinedCallback = (workspaceId: string, member: WorkspaceMember) => void;
-type MemberRoleChangedCallback = (workspaceId: string, userId: string, newRole: WorkspaceMemberRole) => void;
-type MemberRemovedCallback = (workspaceId: string, userId: string) => void;
-type InviteReceivedCallback = (invite: WorkspaceInvite) => void;
 
 interface WebSocketStore {
   connected: boolean;
@@ -16,25 +10,12 @@ interface WebSocketStore {
   disconnect: () => void;
   sendMessage: (conversationId: string, content: string) => void;
   sendTyping: (conversationId: string) => void;
-  subscribeToMessages: (cb: MessageCallback) => () => void;
-  subscribeToTyping: (cb: TypingCallback) => () => void;
-  subscribeToMemberJoined: (cb: MemberJoinedCallback) => () => void;
-  subscribeToMemberRoleChanged: (cb: MemberRoleChangedCallback) => () => void;
-  subscribeToMemberRemoved: (cb: MemberRemovedCallback) => () => void;
-  subscribeToInviteReceived: (cb: InviteReceivedCallback) => () => void;
 }
 
 let ws: WebSocket | null = null;
 let reconnectAttempt = 0;
 let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
 let currentToken: string | null = null;
-
-const messageListeners = new Set<MessageCallback>();
-const typingListeners = new Set<TypingCallback>();
-const memberJoinedListeners = new Set<MemberJoinedCallback>();
-const memberRoleChangedListeners = new Set<MemberRoleChangedCallback>();
-const memberRemovedListeners = new Set<MemberRemovedCallback>();
-const inviteReceivedListeners = new Set<InviteReceivedCallback>();
 
 function doConnect() {
   if (!currentToken) return;
@@ -61,29 +42,36 @@ function doConnect() {
     } else if (event.type === "auth_error") {
       socket.close();
     } else if (event.type === "new_message") {
-      for (const cb of messageListeners) {
-        cb(event.message, event.conversationType);
-      }
+      wsEvents.emit("ws:new_message", {
+        message: event.message,
+        conversationType: event.conversationType,
+      });
     } else if (event.type === "typing") {
-      for (const cb of typingListeners) {
-        cb(event.conversationId, event.userId, event.userName);
-      }
+      wsEvents.emit("ws:typing", {
+        conversationId: event.conversationId,
+        userId: event.userId,
+        userName: event.userName,
+      });
     } else if (event.type === "member_joined") {
-      for (const cb of memberJoinedListeners) {
-        cb(event.workspaceId, event.member);
-      }
+      wsEvents.emit("ws:member_joined", {
+        workspaceId: event.workspaceId,
+        member: event.member,
+      });
     } else if (event.type === "member_role_changed") {
-      for (const cb of memberRoleChangedListeners) {
-        cb(event.workspaceId, event.userId, event.newRole);
-      }
+      wsEvents.emit("ws:member_role_changed", {
+        workspaceId: event.workspaceId,
+        userId: event.userId,
+        newRole: event.newRole,
+      });
     } else if (event.type === "member_removed") {
-      for (const cb of memberRemovedListeners) {
-        cb(event.workspaceId, event.userId);
-      }
+      wsEvents.emit("ws:member_removed", {
+        workspaceId: event.workspaceId,
+        userId: event.userId,
+      });
     } else if (event.type === "invite_received") {
-      for (const cb of inviteReceivedListeners) {
-        cb(event.invite);
-      }
+      wsEvents.emit("ws:invite_received", {
+        invite: event.invite,
+      });
     }
   };
 
@@ -141,47 +129,5 @@ export const useWebSocketStore = create<WebSocketStore>()(() => ({
       const event: WsClientEvent = { type: "typing", conversationId };
       ws.send(JSON.stringify(event));
     }
-  },
-
-  subscribeToMessages: (cb: MessageCallback) => {
-    messageListeners.add(cb);
-    return () => {
-      messageListeners.delete(cb);
-    };
-  },
-
-  subscribeToTyping: (cb: TypingCallback) => {
-    typingListeners.add(cb);
-    return () => {
-      typingListeners.delete(cb);
-    };
-  },
-
-  subscribeToMemberJoined: (cb: MemberJoinedCallback) => {
-    memberJoinedListeners.add(cb);
-    return () => {
-      memberJoinedListeners.delete(cb);
-    };
-  },
-
-  subscribeToMemberRoleChanged: (cb: MemberRoleChangedCallback) => {
-    memberRoleChangedListeners.add(cb);
-    return () => {
-      memberRoleChangedListeners.delete(cb);
-    };
-  },
-
-  subscribeToMemberRemoved: (cb: MemberRemovedCallback) => {
-    memberRemovedListeners.add(cb);
-    return () => {
-      memberRemovedListeners.delete(cb);
-    };
-  },
-
-  subscribeToInviteReceived: (cb: InviteReceivedCallback) => {
-    inviteReceivedListeners.add(cb);
-    return () => {
-      inviteReceivedListeners.delete(cb);
-    };
   },
 }));

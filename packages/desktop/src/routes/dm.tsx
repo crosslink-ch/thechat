@@ -5,6 +5,7 @@ import { useWebSocketStore } from "../stores/websocket";
 import { useChannelChat } from "../hooks/useChannelChat";
 import { ChannelChatView } from "../components/ChannelChatView";
 import { fireNotification } from "../lib/notifications";
+import { wsEvents, type WsEvents } from "../lib/ws-events";
 
 export function DmRoute() {
   const { id: conversationId } = useParams({ from: "/dm/$id" });
@@ -26,52 +27,58 @@ export function DmRoute() {
 
   // Subscribe to WebSocket messages for this DM
   useEffect(() => {
-    const unsubMessages = useWebSocketStore.getState().subscribeToMessages(
-      (msg, conversationType) => {
-        if (msg.conversationId === conversationId) {
-          channelChatRef.current.addMessage(msg);
-          // Clear typing indicator for this user
-          setTypingUsers((prev) => {
-            if (!prev.has(msg.senderId)) return prev;
-            const next = new Map(prev);
-            next.delete(msg.senderId);
-            return next;
-          });
-        } else if (conversationType === "direct" && msg.senderId !== user?.id) {
-          fireNotification(msg.senderName, msg.content);
-        }
-      },
-    );
-
-    const unsubTyping = useWebSocketStore.getState().subscribeToTyping(
-      (convId, userId, userName) => {
-        if (convId !== conversationId) return;
-
+    const onMessage = ({
+      message: msg,
+      conversationType,
+    }: WsEvents["ws:new_message"]) => {
+      if (msg.conversationId === conversationId) {
+        channelChatRef.current.addMessage(msg);
+        // Clear typing indicator for this user
         setTypingUsers((prev) => {
+          if (!prev.has(msg.senderId)) return prev;
           const next = new Map(prev);
-          next.set(userId, userName);
+          next.delete(msg.senderId);
           return next;
         });
+      } else if (conversationType === "direct" && msg.senderId !== user?.id) {
+        fireNotification(msg.senderName, msg.content);
+      }
+    };
 
-        const existing = typingTimers.current.get(userId);
-        if (existing) clearTimeout(existing);
-        typingTimers.current.set(
-          userId,
-          setTimeout(() => {
-            setTypingUsers((prev) => {
-              const next = new Map(prev);
-              next.delete(userId);
-              return next;
-            });
-            typingTimers.current.delete(userId);
-          }, 3000),
-        );
-      },
-    );
+    const onTyping = ({
+      conversationId: convId,
+      userId,
+      userName,
+    }: WsEvents["ws:typing"]) => {
+      if (convId !== conversationId) return;
+
+      setTypingUsers((prev) => {
+        const next = new Map(prev);
+        next.set(userId, userName);
+        return next;
+      });
+
+      const existing = typingTimers.current.get(userId);
+      if (existing) clearTimeout(existing);
+      typingTimers.current.set(
+        userId,
+        setTimeout(() => {
+          setTypingUsers((prev) => {
+            const next = new Map(prev);
+            next.delete(userId);
+            return next;
+          });
+          typingTimers.current.delete(userId);
+        }, 3000),
+      );
+    };
+
+    wsEvents.on("ws:new_message", onMessage);
+    wsEvents.on("ws:typing", onTyping);
 
     return () => {
-      unsubMessages();
-      unsubTyping();
+      wsEvents.off("ws:new_message", onMessage);
+      wsEvents.off("ws:typing", onTyping);
       for (const timer of typingTimers.current.values()) {
         clearTimeout(timer);
       }

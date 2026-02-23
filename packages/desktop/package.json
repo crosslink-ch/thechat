@@ -24,6 +24,7 @@
     "@tauri-apps/plugin-opener": "^2",
     "@thechat/shared": "workspace:*",
     "highlight.js": "^11.11.1",
+    "mitt": "^3.0.1",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "react-markdown": "^10.1.0",
@@ -43,15 +44,15 @@
     "@types/react-dom": "^19.1.6",
     "@types/ws": "^8.18.1",
     "@vitejs/plugin-react": "^4.6.0",
+    "@wdio/cli": "^9",
+    "@wdio/local-runner": "^9",
+    "@wdio/mocha-framework": "^9",
+    "@wdio/spec-reporter": "^9",
     "jsdom": "^28.1.0",
     "react-devtools": "^7.0.1",
     "typescript": "~5.8.3",
     "vite": "^7.0.4",
     "vitest": "^4.0.18",
-    "ws": "^8.19.0",
-    "@wdio/cli": "^9",
-    "@wdio/local-runner": "^9",
-    "@wdio/mocha-framework": "^9",
-    "@wdio/spec-reporter": "^9"
+    "ws": "^8.19.0"
   }
 }
