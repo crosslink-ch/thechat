@@ -8,7 +8,6 @@ import { useStreamingConvIds } from "../stores/streaming";
 import { useNotificationsStore } from "../stores/notifications";
 import { openAuthModal } from "./AuthModal";
 import { openWorkspaceModal } from "./WorkspaceModal";
-import { resetTodos } from "../core/todo";
 import { api } from "../lib/api";
 import { basename } from "../lib/path";
 import type { WorkspaceChannel, WorkspaceMember } from "@thechat/shared";
@@ -66,7 +65,6 @@ export function Sidebar() {
   const [dropdownOpen, setDropdownOpen] = useState(false);
 
   const handleNewChat = () => {
-    resetTodos();
     navigate({ to: "/chat" });
     closeSidebar();
   };

@@ -13,11 +13,11 @@ import { TodoPanel } from "../TodoPanel";
 import { InputBar } from "../components/InputBar";
 import { usePermissionStore } from "../core/permission";
 import { useQuestionStore } from "../core/question";
-import { onTodoUpdate, resetTodos } from "../core/todo";
+import { useTodoStore } from "../core/todo";
 import { consumePendingProjectDir } from "../commands";
 import { buildSystemPrompt, type ProjectInfo } from "../core/system-prompt";
 import { fireNotification } from "../lib/notifications";
-import type { Conversation, TodoItem } from "../core/types";
+import type { Conversation } from "../core/types";
 
 export function AgentChatRoute() {
   const navigate = useNavigate();
@@ -72,9 +72,9 @@ export function AgentChatRoute() {
   const convId = conversation?.id;
   const pendingPermission = usePermissionStore((s) => convId ? s.pending[convId] ?? null : null);
   const pendingQuestion = useQuestionStore((s) => convId ? s.pending[convId] ?? null : null);
+  const todosState = useTodoStore((s) => convId ? s.todos[convId] ?? [] : []);
 
   const [showFeedbackInput, setShowFeedbackInput] = useState(false);
-  const [todosState, setTodosState] = useState<TodoItem[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // Load conversation from route param
@@ -97,8 +97,6 @@ export function AgentChatRoute() {
       const inherited = consumePendingProjectDir();
       setProjectDir(inherited);
       setProjectInfo(null);
-      resetTodos();
-      setTodosState([]);
       useToolsStore.getState().setActiveConversation(null);
     }
   }, [routeId, loadConversation, startNewConversation]);
@@ -125,13 +123,6 @@ export function AgentChatRoute() {
       prevConvId.current = conversation?.id;
     }
   }, [conversation?.id, routeId, navigate]);
-
-  // Subscribe to todo updates
-  useEffect(() => {
-    return onTodoUpdate((todos) => {
-      setTodosState(todos);
-    });
-  }, []);
 
   // Fetch git info when projectDir changes
   useEffect(() => {

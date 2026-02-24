@@ -1,29 +1,31 @@
+import { create } from "zustand";
 import type { TodoItem } from "./types";
 
-type TodoListener = (todos: TodoItem[]) => void;
-
-let todos: TodoItem[] = [];
-let listener: TodoListener | null = null;
-
-export function getTodos(): TodoItem[] {
-  return [...todos];
+interface TodoStoreState {
+  todos: Record<string, TodoItem[]>;
 }
 
-export function setTodos(newTodos: TodoItem[]): void {
-  todos = [...newTodos];
-  listener?.(getTodos());
+export const useTodoStore = create<TodoStoreState>()(() => ({
+  todos: {},
+}));
+
+const DEFAULT_KEY = "_default";
+
+export function getTodos(convId?: string): TodoItem[] {
+  const key = convId ?? DEFAULT_KEY;
+  return [...(useTodoStore.getState().todos[key] ?? [])];
 }
 
-export function resetTodos(): void {
-  todos = [];
-  listener?.(getTodos());
+export function setTodos(newTodos: TodoItem[], convId?: string): void {
+  const key = convId ?? DEFAULT_KEY;
+  useTodoStore.setState((s) => ({
+    todos: { ...s.todos, [key]: [...newTodos] },
+  }));
 }
 
-export function onTodoUpdate(callback: TodoListener): () => void {
-  listener = callback;
-  return () => {
-    if (listener === callback) {
-      listener = null;
-    }
-  };
+export function clearTodos(convId: string): void {
+  useTodoStore.setState((s) => {
+    const { [convId]: _, ...rest } = s.todos;
+    return { todos: rest };
+  });
 }

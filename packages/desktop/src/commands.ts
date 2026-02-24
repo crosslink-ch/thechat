@@ -4,7 +4,6 @@ import { toggleSidebar } from "./components/Sidebar";
 import { openAuthModal } from "./components/AuthModal";
 import { openWorkspaceModal } from "./components/WorkspaceModal";
 import { getAgentChatProjectDir } from "./components/ChatHeader";
-import { resetTodos } from "./core/todo";
 import { openPermissionModePicker } from "./PermissionModePicker";
 
 let _pendingProjectDir: string | null = null;
@@ -51,7 +50,6 @@ export function createCommands(
       shortcut: "C-x n",
       keybinding: { prefix: "C-x", key: "n" },
       execute: () => {
-        resetTodos();
         navigate({ to: "/chat" });
         closePalette();
       },
@@ -63,7 +61,6 @@ export function createCommands(
       keybinding: { prefix: "C-x c", key: "n" },
       execute: () => {
         _pendingProjectDir = getAgentChatProjectDir();
-        resetTodos();
         navigate({ to: "/chat" });
         closePalette();
       },

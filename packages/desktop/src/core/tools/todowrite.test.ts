@@ -18,22 +18,32 @@ describe("todoWriteTool", () => {
     expect(todoWriteTool.name).toBe("todowrite");
   });
 
-  it("calls setTodos and returns counts", () => {
+  it("calls setTodos with convId and returns counts", () => {
     const todos = [
       { id: "1", content: "Task 1", status: "pending" as const },
       { id: "2", content: "Task 2", status: "completed" as const },
       { id: "3", content: "Task 3", status: "in_progress" as const },
     ];
 
-    const result = todoWriteTool.execute({ todos }) as {
+    const result = todoWriteTool.execute({ todos }, { convId: "conv-1" }) as {
       updated: boolean;
       total: number;
       remaining: number;
     };
 
-    expect(mockSetTodos).toHaveBeenCalledWith(todos);
+    expect(mockSetTodos).toHaveBeenCalledWith(todos, "conv-1");
     expect(result.updated).toBe(true);
     expect(result.total).toBe(3);
     expect(result.remaining).toBe(2); // pending + in_progress
+  });
+
+  it("passes undefined convId when no context", () => {
+    const todos = [
+      { id: "1", content: "Task 1", status: "pending" as const },
+    ];
+
+    todoWriteTool.execute({ todos });
+
+    expect(mockSetTodos).toHaveBeenCalledWith(todos, undefined);
   });
 });

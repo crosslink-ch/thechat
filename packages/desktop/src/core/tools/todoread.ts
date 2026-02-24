@@ -10,8 +10,8 @@ Use this to check progress and see what tasks remain.`,
     properties: {},
     required: [],
   },
-  execute: () => {
-    const todos = getTodos();
+  execute: (_args, context) => {
+    const todos = getTodos(context?.convId);
     return {
       todos,
       total: todos.length,

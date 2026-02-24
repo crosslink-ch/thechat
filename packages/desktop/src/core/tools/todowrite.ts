@@ -35,9 +35,9 @@ Use this to track multi-step tasks and show progress to the user.`,
     },
     required: ["todos"],
   },
-  execute: (args) => {
+  execute: (args, context) => {
     const { todos } = args as { todos: TodoItem[] };
-    setTodos(todos);
+    setTodos(todos, context?.convId);
     const remaining = todos.filter(
       (t) => t.status !== "completed" && t.status !== "cancelled",
     ).length;
