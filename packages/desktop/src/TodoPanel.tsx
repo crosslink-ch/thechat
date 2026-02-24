@@ -21,8 +21,6 @@ const priorityClasses: Record<string, string> = {
 export function TodoPanel({ todos }: TodoPanelProps) {
   const [expanded, setExpanded] = useState(true);
 
-  if (todos.length === 0) return null;
-
   const { pending, inProgress, completed, total } = useMemo(() => {
     let p = 0, ip = 0, c = 0;
     for (const t of todos) {
@@ -32,6 +30,8 @@ export function TodoPanel({ todos }: TodoPanelProps) {
     }
     return { pending: p, inProgress: ip, completed: c, total: todos.length };
   }, [todos]);
+
+  if (todos.length === 0) return null;
 
   return (
     <div className="border-b border-border bg-surface">
