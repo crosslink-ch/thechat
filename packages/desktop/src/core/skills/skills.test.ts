@@ -6,6 +6,7 @@ vi.mock("@tauri-apps/api/core", () => ({
 
 vi.mock("@tauri-apps/api/path", () => ({
   homeDir: vi.fn(),
+  join: vi.fn(async (...parts: string[]) => parts.join("/")),
 }));
 
 import { invoke } from "@tauri-apps/api/core";

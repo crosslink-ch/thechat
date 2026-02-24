@@ -91,7 +91,7 @@ ${skillsXml}`,
       const baseDir =
         skill.location === "builtin"
           ? "builtin"
-          : skill.location.replace(/\/[^/]*$/, "");
+          : skill.location.replace(/[/\\][^/\\]*$/, "");
 
       const outputParts = [
         `<skill_content name="${skill.name}">`,

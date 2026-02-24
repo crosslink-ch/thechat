@@ -220,6 +220,44 @@ pub fn fs_edit_file(
     let count = content.matches(&old_string).count();
 
     if count == 0 {
+        // Try CRLF-normalized matching as fallback (Windows line endings)
+        let normalized_content = content.replace("\r\n", "\n");
+        let normalized_old = old_string.replace("\r\n", "\n");
+        let normalized_count = normalized_content.matches(&normalized_old).count();
+
+        if normalized_count > 0 {
+            if normalized_count > 1 && !replace_all {
+                return Err(format!(
+                    "Found {} occurrences of the string (after line-ending normalization). \
+                     Use replace_all: true to replace all, \
+                     or provide more surrounding context to make the match unique.",
+                    normalized_count
+                ));
+            }
+
+            let new_content = if replace_all {
+                normalized_content.replace(&normalized_old, &new_string)
+            } else {
+                normalized_content.replacen(&normalized_old, &new_string, 1)
+            };
+
+            // Restore CRLF if the original file used it
+            let final_content = if content.contains("\r\n") {
+                new_content.replace('\n', "\r\n")
+            } else {
+                new_content
+            };
+
+            std::fs::write(path, &final_content)
+                .map_err(|e| format!("Failed to write file: {}", e))?;
+
+            let replacements = if replace_all { normalized_count } else { 1 };
+            return Ok(EditFileResult {
+                success: true,
+                replacements,
+            });
+        }
+
         // Try line-trimmed matching as fallback
         let trimmed_old = old_string
             .lines()
@@ -278,7 +316,7 @@ pub fn fs_glob(
     // Resolve the pattern relative to the base path
     let full_pattern = if let Some(ref base) = path {
         let base_path = PathBuf::from(base);
-        if pattern.starts_with('/') {
+        if Path::new(&pattern).is_absolute() {
             pattern.clone()
         } else {
             base_path.join(&pattern).to_string_lossy().to_string()

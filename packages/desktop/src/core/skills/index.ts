@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { homeDir } from "@tauri-apps/api/path";
+import { homeDir, join } from "@tauri-apps/api/path";
 import { builtinSkills } from "./builtin";
 import { parseFrontmatter } from "./parse";
 import type { SkillMeta, SkillInfo } from "./types";
@@ -83,17 +83,17 @@ export async function discoverSkills(): Promise<SkillMeta[]> {
 
   if (home) {
     searchPaths.push(
-      `${home}.config/thechat/skills`,
-      `${home}.agents/skills`,
-      `${home}.claude/skills`,
+      await join(home, ".config", "thechat", "skills"),
+      await join(home, ".agents", "skills"),
+      await join(home, ".claude", "skills"),
     );
   }
 
   if (cwd && cwd !== ".") {
     searchPaths.push(
-      `${cwd}/.thechat/skills`,
-      `${cwd}/.agents/skills`,
-      `${cwd}/.claude/skills`,
+      await join(cwd, ".thechat", "skills"),
+      await join(cwd, ".agents", "skills"),
+      await join(cwd, ".claude", "skills"),
     );
   }
 

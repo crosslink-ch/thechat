@@ -43,11 +43,23 @@ pub async fn execute_shell_command<R: tauri::Runtime>(
 ) -> Result<ShellResult, String> {
     let timeout_secs = timeout.unwrap_or(120);
     let process_id = process_id.unwrap_or_default();
-    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into());
+    let mut cmd;
 
-    let mut cmd = tokio::process::Command::new(&shell);
-    cmd.args(["-l", "-c", &command])
-        .stdout(std::process::Stdio::piped())
+    #[cfg(not(windows))]
+    {
+        let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into());
+        cmd = tokio::process::Command::new(&shell);
+        cmd.args(["-l", "-c", &command]);
+    }
+
+    #[cfg(windows)]
+    {
+        let shell = std::env::var("COMSPEC").unwrap_or_else(|_| "cmd.exe".into());
+        cmd = tokio::process::Command::new(&shell);
+        cmd.args(["/C", &command]);
+    }
+
+    cmd.stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .kill_on_drop(true);
 
@@ -60,6 +72,13 @@ pub async fn execute_shell_command<R: tauri::Runtime>(
             }
             Ok(())
         });
+    }
+
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NEW_PROCESS_GROUP: u32 = 0x00000200;
+        cmd.creation_flags(CREATE_NEW_PROCESS_GROUP);
     }
 
     if let Some(ref dir) = workdir {

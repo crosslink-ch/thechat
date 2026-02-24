@@ -130,24 +130,33 @@ impl McpClient {
         args: &[String],
         env: &HashMap<String, String>,
     ) -> Result<Self, String> {
-        // Spawn through the user's login shell so that profile scripts
-        // (nvm, fnm, volta, rbenv, pyenv, etc.) get sourced and PATH is set up.
-        let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into());
-        let shell_cmd = Self::shell_quoted(command, args);
+        let mut cmd;
 
-        let mut cmd = Command::new(&shell);
-        cmd.args(["-l", "-c", &shell_cmd])
-            .stdin(Stdio::piped())
+        // On Unix, spawn through the user's login shell so that profile scripts
+        // (nvm, fnm, volta, rbenv, pyenv, etc.) get sourced and PATH is set up.
+        #[cfg(not(windows))]
+        {
+            let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into());
+            let shell_cmd = Self::shell_quoted(command, args);
+            cmd = Command::new(&shell);
+            cmd.args(["-l", "-c", &shell_cmd]);
+        }
+
+        // On Windows, PATH is globally configured so we spawn the command directly.
+        #[cfg(windows)]
+        {
+            cmd = Command::new(command);
+            cmd.args(args);
+        }
+
+        cmd.stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         for (k, v) in env {
             cmd.env(k, v);
         }
         let mut child = cmd.spawn().map_err(|e| {
-            format!(
-                "Failed to spawn MCP server '{}' (via {}): {}",
-                command, shell, e
-            )
+            format!("Failed to spawn MCP server '{}': {}", command, e)
         })?;
 
         let stdin = child
@@ -1047,21 +1056,41 @@ mod tests {
     /// listening on a free port. Returns the process guard and the port.
     fn spawn_http_test_server() -> (ChildGuard, u16) {
         let port = find_free_port();
-        let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into());
-        let child = Command::new(&shell)
-            .args([
-                "-l",
-                "-c",
-                &format!(
-                    "npx -y @modelcontextprotocol/server-everything streamableHttp"
-                ),
-            ])
-            .env("PORT", port.to_string())
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .expect("spawn HTTP MCP server");
+
+        let child;
+
+        #[cfg(not(windows))]
+        {
+            let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into());
+            child = Command::new(&shell)
+                .args([
+                    "-l",
+                    "-c",
+                    "npx -y @modelcontextprotocol/server-everything streamableHttp",
+                ])
+                .env("PORT", port.to_string())
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .expect("spawn HTTP MCP server");
+        }
+
+        #[cfg(windows)]
+        {
+            let shell = std::env::var("COMSPEC").unwrap_or_else(|_| "cmd.exe".into());
+            child = Command::new(&shell)
+                .args([
+                    "/C",
+                    "npx -y @modelcontextprotocol/server-everything streamableHttp",
+                ])
+                .env("PORT", port.to_string())
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .expect("spawn HTTP MCP server");
+        }
 
         wait_for_port(port, std::time::Duration::from_secs(30))
             .expect("HTTP server should become ready");

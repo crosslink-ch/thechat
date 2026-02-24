@@ -7,6 +7,8 @@ export function buildSystemPrompt(
   projectDir?: string,
   projectInfo?: ProjectInfo,
 ): string {
+  // navigator.platform returns "Win32" on Windows (even 64-bit), "MacIntel"/"MacARM" on macOS,
+  // and "Linux x86_64" etc. on Linux. The includes() checks below handle all cases correctly.
   const platform = navigator.platform?.toLowerCase() ?? "";
   let os = "Unknown OS";
   if (platform.includes("win")) os = "Windows";
