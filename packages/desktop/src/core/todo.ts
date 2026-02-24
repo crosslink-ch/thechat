@@ -10,6 +10,7 @@ export const useTodoStore = create<TodoStoreState>()(() => ({
 }));
 
 const DEFAULT_KEY = "_default";
+export const EMPTY_TODOS: TodoItem[] = [];
 
 export function getTodos(convId?: string): TodoItem[] {
   const key = convId ?? DEFAULT_KEY;

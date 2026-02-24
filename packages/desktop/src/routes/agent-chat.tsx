@@ -13,7 +13,7 @@ import { TodoPanel } from "../TodoPanel";
 import { InputBar } from "../components/InputBar";
 import { usePermissionStore } from "../core/permission";
 import { useQuestionStore } from "../core/question";
-import { useTodoStore } from "../core/todo";
+import { useTodoStore, EMPTY_TODOS } from "../core/todo";
 import { consumePendingProjectDir } from "../commands";
 import { buildSystemPrompt, type ProjectInfo } from "../core/system-prompt";
 import { fireNotification } from "../lib/notifications";
@@ -72,7 +72,7 @@ export function AgentChatRoute() {
   const convId = conversation?.id;
   const pendingPermission = usePermissionStore((s) => convId ? s.pending[convId] ?? null : null);
   const pendingQuestion = useQuestionStore((s) => convId ? s.pending[convId] ?? null : null);
-  const todosState = useTodoStore((s) => convId ? s.todos[convId] ?? [] : []);
+  const todosState = useTodoStore((s) => convId ? s.todos[convId] ?? EMPTY_TODOS : EMPTY_TODOS);
 
   const [showFeedbackInput, setShowFeedbackInput] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
