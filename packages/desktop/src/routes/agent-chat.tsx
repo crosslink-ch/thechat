@@ -11,7 +11,6 @@ import { ProjectPicker } from "../components/ProjectPicker";
 import { ChatMessage, StreamingMessage } from "../ChatMessage";
 import { TodoPanel } from "../TodoPanel";
 import { InputBar } from "../components/InputBar";
-import { QuestionOverlay } from "../components/QuestionOverlay";
 import { onPermissionRequest, type PermissionRequest } from "../core/permission";
 import { onQuestionRequest } from "../core/question";
 import { onTodoUpdate, resetTodos } from "../core/todo";
@@ -248,18 +247,13 @@ export function AgentChatRoute() {
           onPermissionDeny={handlePermissionDeny}
           onPermissionDenyWithFeedback={handlePermissionDenyWithFeedback}
           showFeedbackInput={showFeedbackInput}
+          pendingQuestion={pendingQuestion}
+          onQuestionSubmit={handleQuestionSubmit}
+          onQuestionCancel={handleQuestionCancel}
         />
         {error && <div className="error-message">{error}</div>}
         <div ref={messagesEndRef} />
       </div>
-
-      {pendingQuestion && (
-        <QuestionOverlay
-          request={pendingQuestion}
-          onSubmit={handleQuestionSubmit}
-          onCancel={handleQuestionCancel}
-        />
-      )}
 
       <InputBar
         convId={conversation?.id}

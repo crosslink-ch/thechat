@@ -1,5 +1,5 @@
-import { useState, useEffect, useRef, useMemo } from "react";
-import type { Message, MessagePart } from "./core/types";
+import { useState, useEffect, useRef, useMemo, useCallback } from "react";
+import type { Message, MessagePart, QuestionRequest } from "./core/types";
 import type { PermissionRequest } from "./core/permission";
 import { useStreamingParts } from "./stores/streaming";
 import { TextWithUiBlocks } from "./components/TextWithUiBlocks";
@@ -282,6 +282,135 @@ function PermissionPromptBlock({
   );
 }
 
+const CUSTOM = "__custom__";
+
+interface QuestionPromptBlockProps {
+  request: QuestionRequest;
+  onSubmit: (answers: string[][]) => void;
+  onCancel: () => void;
+}
+
+export function QuestionPromptBlock({ request, onSubmit, onCancel }: QuestionPromptBlockProps) {
+  const [selections, setSelections] = useState<string[][]>(
+    request.questions.map(() => []),
+  );
+  const [customText, setCustomText] = useState<string[]>(
+    request.questions.map(() => ""),
+  );
+  const inputRefs = useRef<(HTMLInputElement | null)[]>([]);
+
+  const toggleOption = useCallback((qIndex: number, value: string) => {
+    setSelections((prev) => {
+      const updated = [...prev];
+      const current = updated[qIndex] ?? [];
+      const isMultiple = request.questions[qIndex]?.multiple;
+
+      if (isMultiple) {
+        updated[qIndex] = current.includes(value)
+          ? current.filter((v) => v !== value)
+          : [...current, value];
+      } else {
+        updated[qIndex] = current[0] === value ? [] : [value];
+      }
+      return updated;
+    });
+  }, [request.questions]);
+
+  const activateCustom = useCallback((qIndex: number) => {
+    const isMultiple = request.questions[qIndex]?.multiple;
+    setSelections((prev) => {
+      const updated = [...prev];
+      const current = updated[qIndex] ?? [];
+      if (isMultiple) {
+        if (!current.includes(CUSTOM)) {
+          updated[qIndex] = [...current, CUSTOM];
+        }
+      } else {
+        updated[qIndex] = [CUSTOM];
+      }
+      return updated;
+    });
+  }, [request.questions]);
+
+  const handleSubmit = useCallback(() => {
+    const final = selections.map((sel, i) => {
+      return sel
+        .map((v) => (v === CUSTOM ? customText[i]?.trim() ?? "" : v))
+        .filter(Boolean);
+    });
+    onSubmit(final);
+  }, [selections, customText, onSubmit]);
+
+  return (
+    <div className="question-inline">
+      {request.questions.map((q, qIndex) => {
+        const current = selections[qIndex] ?? [];
+        const customActive = current.includes(CUSTOM);
+
+        return (
+          <div key={qIndex} className="question-block">
+            <div className="question-header">{q.header}</div>
+            <div className="question-text">{q.question}</div>
+            <div className="question-options">
+              {q.options.map((opt) => (
+                <button
+                  key={opt.label}
+                  className={`question-option ${current.includes(opt.label) ? "question-option-selected" : ""}`}
+                  onClick={() => toggleOption(qIndex, opt.label)}
+                >
+                  <span className="question-option-label">{opt.label}</span>
+                  <span className="question-option-desc">{opt.description}</span>
+                </button>
+              ))}
+              <div
+                className={`question-option question-option-custom ${customActive ? "question-option-selected" : ""}`}
+                onClick={() => {
+                  toggleOption(qIndex, CUSTOM);
+                  if (!customActive) {
+                    inputRefs.current[qIndex]?.focus();
+                  }
+                }}
+              >
+                <input
+                  ref={(el) => { inputRefs.current[qIndex] = el; }}
+                  type="text"
+                  placeholder="Type your own answer..."
+                  value={customText[qIndex] ?? ""}
+                  onClick={(e) => e.stopPropagation()}
+                  onFocus={() => activateCustom(qIndex)}
+                  onChange={(e) => {
+                    const value = e.target.value;
+                    setCustomText((prev) => {
+                      const updated = [...prev];
+                      updated[qIndex] = value;
+                      return updated;
+                    });
+                    activateCustom(qIndex);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      handleSubmit();
+                    }
+                  }}
+                />
+              </div>
+            </div>
+          </div>
+        );
+      })}
+      <div className="question-actions">
+        <button className="question-btn question-btn-cancel" onClick={onCancel}>
+          Cancel
+        </button>
+        <button className="question-btn question-btn-submit" onClick={handleSubmit}>
+          Submit
+        </button>
+      </div>
+    </div>
+  );
+}
+
 interface ChatMessageProps {
   message: Message;
 }
@@ -329,9 +458,12 @@ interface StreamingMessageProps {
   onPermissionDeny?: () => void;
   onPermissionDenyWithFeedback?: (feedback: string) => void;
   showFeedbackInput?: boolean;
+  pendingQuestion?: QuestionRequest | null;
+  onQuestionSubmit?: (answers: string[][]) => void;
+  onQuestionCancel?: () => void;
 }
 
-export function StreamingMessage({ convId, pendingPermission, onPermissionAllow, onPermissionDeny, onPermissionDenyWithFeedback, showFeedbackInput }: StreamingMessageProps) {
+export function StreamingMessage({ convId, pendingPermission, onPermissionAllow, onPermissionDeny, onPermissionDenyWithFeedback, showFeedbackInput, pendingQuestion, onQuestionSubmit, onQuestionCancel }: StreamingMessageProps) {
   const parts = useStreamingParts(convId);
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -388,7 +520,14 @@ export function StreamingMessage({ convId, pendingPermission, onPermissionAllow,
               })()}
             />
           )}
-          {!pendingPermission && !hasContent && !hasThinking && (
+          {pendingQuestion && onQuestionSubmit && onQuestionCancel && (
+            <QuestionPromptBlock
+              request={pendingQuestion}
+              onSubmit={onQuestionSubmit}
+              onCancel={onQuestionCancel}
+            />
+          )}
+          {!pendingPermission && !pendingQuestion && !hasContent && !hasThinking && (
             <div className="message-text typing-indicator">...</div>
           )}
         </div>

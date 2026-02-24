@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
-import { QuestionOverlay } from "./QuestionOverlay";
+import { QuestionPromptBlock } from "../ChatMessage";
 import type { QuestionRequest } from "../core/types";
 
 function makeRequest(
@@ -24,11 +24,11 @@ function makeRequest(
   };
 }
 
-describe("QuestionOverlay", () => {
+describe("QuestionPromptBlock", () => {
   it("submits selected option", () => {
     const onSubmit = vi.fn();
     render(
-      <QuestionOverlay request={makeRequest()} onSubmit={onSubmit} onCancel={vi.fn()} />,
+      <QuestionPromptBlock request={makeRequest()} onSubmit={onSubmit} onCancel={vi.fn()} />,
     );
 
     fireEvent.click(screen.getByText("Alice"));
@@ -40,7 +40,7 @@ describe("QuestionOverlay", () => {
   it("submits custom text via Submit button", () => {
     const onSubmit = vi.fn();
     render(
-      <QuestionOverlay request={makeRequest()} onSubmit={onSubmit} onCancel={vi.fn()} />,
+      <QuestionPromptBlock request={makeRequest()} onSubmit={onSubmit} onCancel={vi.fn()} />,
     );
 
     const input = screen.getByPlaceholderText("Type your own answer...");
@@ -53,7 +53,7 @@ describe("QuestionOverlay", () => {
   it("submits custom text via Enter key", () => {
     const onSubmit = vi.fn();
     render(
-      <QuestionOverlay request={makeRequest()} onSubmit={onSubmit} onCancel={vi.fn()} />,
+      <QuestionPromptBlock request={makeRequest()} onSubmit={onSubmit} onCancel={vi.fn()} />,
     );
 
     const input = screen.getByPlaceholderText("Type your own answer...");
@@ -66,7 +66,7 @@ describe("QuestionOverlay", () => {
   it("selecting an option deactivates custom but preserves its text", () => {
     const onSubmit = vi.fn();
     render(
-      <QuestionOverlay request={makeRequest()} onSubmit={onSubmit} onCancel={vi.fn()} />,
+      <QuestionPromptBlock request={makeRequest()} onSubmit={onSubmit} onCancel={vi.fn()} />,
     );
 
     const input = screen.getByPlaceholderText("Type your own answer...");
@@ -82,7 +82,7 @@ describe("QuestionOverlay", () => {
   it("custom text replaces button selection for single-select", () => {
     const onSubmit = vi.fn();
     render(
-      <QuestionOverlay request={makeRequest()} onSubmit={onSubmit} onCancel={vi.fn()} />,
+      <QuestionPromptBlock request={makeRequest()} onSubmit={onSubmit} onCancel={vi.fn()} />,
     );
 
     fireEvent.click(screen.getByText("Alice"));
@@ -96,7 +96,7 @@ describe("QuestionOverlay", () => {
   it("includes custom inputs across multiple questions", () => {
     const onSubmit = vi.fn();
     render(
-      <QuestionOverlay
+      <QuestionPromptBlock
         request={makeRequest({
           questions: [
             {
@@ -137,7 +137,7 @@ describe("QuestionOverlay", () => {
   it("multi-select appends custom text to button selections", () => {
     const onSubmit = vi.fn();
     render(
-      <QuestionOverlay
+      <QuestionPromptBlock
         request={makeRequest({
           questions: [
             {
@@ -167,7 +167,7 @@ describe("QuestionOverlay", () => {
   it("multi-select allows deselecting custom after typing", () => {
     const onSubmit = vi.fn();
     render(
-      <QuestionOverlay
+      <QuestionPromptBlock
         request={makeRequest({
           questions: [
             {
@@ -201,7 +201,7 @@ describe("QuestionOverlay", () => {
   it("empty custom text is excluded from results", () => {
     const onSubmit = vi.fn();
     render(
-      <QuestionOverlay request={makeRequest()} onSubmit={onSubmit} onCancel={vi.fn()} />,
+      <QuestionPromptBlock request={makeRequest()} onSubmit={onSubmit} onCancel={vi.fn()} />,
     );
 
     const input = screen.getByPlaceholderText("Type your own answer...");
