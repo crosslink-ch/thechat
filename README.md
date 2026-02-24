@@ -1,6 +1,6 @@
 # TheChat
 
-Bot and human collaboration app.
+Facilitate collaboration between machines and humans.
 
 ## Development
 
