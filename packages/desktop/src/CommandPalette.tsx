@@ -58,6 +58,7 @@ function CommandPaletteInner() {
     () =>
       isCommandMode
         ? commands.filter((cmd) =>
+            !cmd.hidden &&
             cmd.label.toLowerCase().includes(deferredCommandQuery.toLowerCase()),
           )
         : [],

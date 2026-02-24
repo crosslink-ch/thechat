@@ -26,6 +26,7 @@ export interface Command {
   label: string;
   shortcut: string | null;
   keybinding: Keybinding | null;
+  hidden?: boolean;
   execute: () => void;
 }
 
@@ -71,6 +72,7 @@ export function createCommands(
       label: "Command Palette",
       shortcut: "Ctrl+P",
       keybinding: { key: "p", ctrl: true },
+      hidden: true,
       execute: () => {
         togglePalette();
       },
@@ -80,6 +82,7 @@ export function createCommands(
       label: "Command Mode",
       shortcut: "Ctrl+Shift+P",
       keybinding: { key: "p", ctrl: true, shift: true },
+      hidden: true,
       execute: () => {
         openPaletteInCommandMode();
       },
