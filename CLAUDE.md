@@ -1,7 +1,5 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
-
 ## Build & Development Commands
 
 ```bash
@@ -68,12 +66,6 @@ thechat/
 ### Rust Backend (`packages/desktop/src-tauri/`)
 
 - **Rust + Tauri 2** — exposes IPC commands invoked from frontend via `@tauri-apps/api`
-- **`db.rs`** — SQLite (rusqlite, bundled) with `Mutex<Connection>` for thread safety. Tables: `conversations`, `messages`
-- **`config.rs`** — Loads `config.json` (API key, model, MCP servers). Search order: CWD → parent → grandparent → great-grandparent → beside executable → `~/.config/thechat/config.json`
-- **`fs.rs`** — File system commands: `fs_read_file`, `fs_write_file`, `fs_edit_file`, `fs_glob`, `fs_grep`, `fs_list_dir`. Shared constants for line limits, result caps, and default ignores (node_modules, .git, dist, target, etc.)
-- **`shell.rs`** — `execute_shell_command` spawns via login shell with timeout (default 120s)
-- **`mcp.rs`** — Full MCP (Model Context Protocol) client: spawns external tool servers, JSON-RPC v2 handshake, tool discovery, tool invocation, graceful shutdown. `McpManager` holds multiple named `McpClient` instances.
-- **`lib.rs`** — Tauri command handlers and app setup. SQLite DB stored at `~/.local/share/thechat/thechat.db`
 
 ### Shared Types (`packages/shared/`)
 
@@ -86,14 +78,7 @@ thechat/
 - Exports `App` type (`typeof app`) from `src/index.ts` for Eden Treaty type inference
 - **`src/services/`** — Shared business logic used by REST routes, MCP tools, and WebSocket handlers:
   - `errors.ts` — `ServiceError` class (message + HTTP status code), thrown by services and caught by callers
-  - `workspaces.ts` — `listUserWorkspaces`, `getWorkspaceDetail`, `createWorkspace`, `joinWorkspace`
-  - `conversations.ts` — `createOrGetDm`, `listUserDms`, `createChannel`
-  - `messages.ts` — `getMessages`, `sendMessage`
 - **`src/mcp/`** — Built-in MCP server (Streamable HTTP transport) at `/mcp`, via `elysia-mcp` plugin:
-  - `index.ts` — Plugin setup, mounts at `/mcp`
-  - `auth.ts` — Bridges existing `resolveTokenToUser()` for MCP authentication (JWT + bot API keys)
-  - `tools.ts` — 10 tools (`get_me`, `list_workspaces`, `get_workspace`, `create_workspace`, `join_workspace`, `list_dms`, `create_dm`, `create_channel`, `get_messages`, `send_message`) — thin wrappers over services
-- REST route handlers (`workspaces/`, `conversations/`, `messages/`) are thin wrappers: Zod input validation → service call → `ServiceError` catch for HTTP status codes
 
 ### Desktop ↔ API Communication
 
@@ -120,38 +105,12 @@ All API calls from the desktop app to the backend **must** use [Eden Treaty](htt
   });
   ```
 
-### Data Flow (Desktop)
-
-1. User sends message → `useChat` saves to SQLite via Tauri IPC → calls `runChatLoop()`
-2. `runChatLoop()` streams from OpenRouter, emitting `StreamEvent`s that update React state in real-time
-3. If the model returns tool calls, the loop executes tools and continues automatically (with doom loop detection as a safety net)
-4. Tools that need user consent (write, edit, shell) pause via the permission system until the UI resolves
-5. Final assistant response is saved to SQLite
-
-### Configuration
-
-`config.json` at monorepo root (gitignored):
-```json
-{
-  "api_key": "sk-or-v1-...",
-  "model": "google/gemini-3.1-pro-preview",
-  "mcp_servers": {
-    "server-name": {
-      "command": "npx",
-      "args": ["-y", "@some/mcp-server"],
-      "env": {}
-    }
-  }
-}
-```
-
 ## Testing
 
 - Frontend: Vitest with jsdom, globals enabled, setup in `packages/desktop/src/test-setup.ts` (clears Tauri mocks after each test)
 - Backend: Rust inline `#[cfg(test)]` modules in `db.rs` and `config.rs`
 - API: Bun test runner
 - Tests mock the Tauri IPC layer and OpenRouter API responses
-- Tool tests live alongside their source in `packages/desktop/src/core/tools/*.test.ts`
 
 ### E2E Tests
 
