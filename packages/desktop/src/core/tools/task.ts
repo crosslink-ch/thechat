@@ -1,4 +1,5 @@
 import { runTask } from "../task-runner";
+import type { ToolExecutionContext } from "../types";
 import { defineTool } from "./define";
 
 export const taskTool = defineTool({
@@ -17,11 +18,11 @@ The sub-agent runs a full chat loop and returns its text output.`,
     },
     required: ["prompt"],
   },
-  execute: async (args) => {
+  execute: async (args, context?: ToolExecutionContext) => {
     const { prompt } = args as { prompt: string };
 
     try {
-      const result = await runTask(prompt);
+      const result = await runTask(prompt, context?.signal, context?.convId);
       return { success: true, output: result };
     } catch (e) {
       return { success: false, error: String(e) };

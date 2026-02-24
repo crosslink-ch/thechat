@@ -58,7 +58,7 @@ The command has a default timeout of 120 seconds.`,
       workdir?: string;
     };
 
-    await requestPermission({ command, description });
+    await requestPermission({ command, description, convId: context?.convId });
 
     const processId = crypto.randomUUID();
 

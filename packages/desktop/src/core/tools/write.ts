@@ -40,6 +40,7 @@ Use this tool instead of shell commands like echo, cat with redirects, or tee.`,
     await requestPermission({
       command: `write ${resolvedPath}`,
       description: `Write ${content.length} bytes to ${resolvedPath}`,
+      convId: context?.convId,
     });
 
     const result = await invoke<WriteFileResult>("fs_write_file", {

@@ -1,90 +1,99 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 let askQuestion: typeof import("./question").askQuestion;
-let onQuestionRequest: typeof import("./question").onQuestionRequest;
+let useQuestionStore: typeof import("./question").useQuestionStore;
 
 beforeEach(async () => {
   vi.resetModules();
   const mod = await import("./question");
   askQuestion = mod.askQuestion;
-  onQuestionRequest = mod.onQuestionRequest;
+  useQuestionStore = mod.useQuestionStore;
+  useQuestionStore.setState({ pending: {} });
 });
 
-describe("question bridge", () => {
-  it("resolves when the listener calls resolve", async () => {
-    onQuestionRequest((req) => {
-      req.resolve([["Option A"]]);
-    });
+const CONV_ID = "conv-1";
 
-    const result = await askQuestion([
-      {
-        question: "Pick one",
-        header: "Choice",
-        options: [
-          { label: "Option A", description: "First option" },
-          { label: "Option B", description: "Second option" },
-        ],
-      },
-    ]);
+describe("question store", () => {
+  it("resolves when the UI calls resolve", async () => {
+    const promise = askQuestion(
+      [
+        {
+          question: "Pick one",
+          header: "Choice",
+          options: [
+            { label: "Option A", description: "First option" },
+            { label: "Option B", description: "Second option" },
+          ],
+        },
+      ],
+      CONV_ID,
+    );
 
+    const pending = useQuestionStore.getState().pending[CONV_ID];
+    expect(pending).toBeDefined();
+    pending.resolve([["Option A"]]);
+
+    const result = await promise;
     expect(result).toEqual([["Option A"]]);
+    expect(useQuestionStore.getState().pending[CONV_ID]).toBeUndefined();
   });
 
-  it("rejects when the listener calls reject", async () => {
-    onQuestionRequest((req) => {
-      req.reject("User cancelled");
-    });
+  it("rejects when the UI calls reject", async () => {
+    const promise = askQuestion(
+      [{ question: "Pick one", header: "Choice", options: [{ label: "A", description: "a" }] }],
+      CONV_ID,
+    );
 
-    await expect(
-      askQuestion([
-        {
-          question: "Pick one",
-          header: "Choice",
-          options: [{ label: "A", description: "a" }],
-        },
-      ]),
-    ).rejects.toThrow("User cancelled");
+    useQuestionStore.getState().pending[CONV_ID].reject("User cancelled");
+
+    await expect(promise).rejects.toThrow("User cancelled");
+    expect(useQuestionStore.getState().pending[CONV_ID]).toBeUndefined();
   });
 
-  it("rejects if no listener is registered", async () => {
-    await expect(
-      askQuestion([
-        {
-          question: "Pick one",
-          header: "Choice",
-          options: [{ label: "A", description: "a" }],
-        },
-      ]),
-    ).rejects.toThrow("No question handler registered");
-  });
+  it("scopes pending requests by conversation ID", async () => {
+    const p1 = askQuestion(
+      [{ question: "Q1", header: "H", options: [{ label: "A", description: "a" }] }],
+      "conv-a",
+    );
+    const p2 = askQuestion(
+      [{ question: "Q2", header: "H", options: [{ label: "B", description: "b" }] }],
+      "conv-b",
+    );
 
-  it("unsubscribe removes the listener", async () => {
-    const unsub = onQuestionRequest((req) => {
-      req.resolve([["A"]]);
-    });
-    unsub();
+    const state = useQuestionStore.getState().pending;
+    expect(state["conv-a"]?.questions[0].question).toBe("Q1");
+    expect(state["conv-b"]?.questions[0].question).toBe("Q2");
 
-    await expect(
-      askQuestion([
-        {
-          question: "Pick one",
-          header: "Choice",
-          options: [{ label: "A", description: "a" }],
-        },
-      ]),
-    ).rejects.toThrow("No question handler registered");
+    state["conv-a"].resolve([["A"]]);
+    await p1;
+    expect(useQuestionStore.getState().pending["conv-a"]).toBeUndefined();
+    expect(useQuestionStore.getState().pending["conv-b"]).toBeDefined();
+
+    state["conv-b"].resolve([["B"]]);
+    await p2;
   });
 
   it("provides unique ids for each request", async () => {
     const ids: string[] = [];
-    onQuestionRequest((req) => {
-      ids.push(req.id);
-      req.resolve([[]]);
-    });
 
-    await askQuestion([{ question: "Q1", header: "H", options: [{ label: "A", description: "a" }] }]);
-    await askQuestion([{ question: "Q2", header: "H", options: [{ label: "A", description: "a" }] }]);
+    const p1 = askQuestion([{ question: "Q1", header: "H", options: [{ label: "A", description: "a" }] }], CONV_ID);
+    ids.push(useQuestionStore.getState().pending[CONV_ID].id);
+    useQuestionStore.getState().pending[CONV_ID].resolve([[]]);
+    await p1;
+
+    const p2 = askQuestion([{ question: "Q2", header: "H", options: [{ label: "A", description: "a" }] }], CONV_ID);
+    ids.push(useQuestionStore.getState().pending[CONV_ID].id);
+    useQuestionStore.getState().pending[CONV_ID].resolve([[]]);
+    await p2;
 
     expect(ids[0]).not.toBe(ids[1]);
+  });
+
+  it("uses _default key when no convId provided", async () => {
+    const promise = askQuestion([{ question: "Q", header: "H", options: [{ label: "A", description: "a" }] }]);
+
+    expect(useQuestionStore.getState().pending["_default"]).toBeDefined();
+    useQuestionStore.getState().pending["_default"].resolve([["A"]]);
+    await promise;
   });
 });

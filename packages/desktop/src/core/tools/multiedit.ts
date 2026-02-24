@@ -55,6 +55,7 @@ Use this when you need to make several changes to the same file.`,
     await requestPermission({
       command: `multiedit ${resolvedPath}`,
       description: `Apply ${edits.length} edits to ${resolvedPath}`,
+      convId: context?.convId,
     });
 
     const results: Array<{ index: number; success: boolean; error?: string }> = [];

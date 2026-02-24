@@ -1,5 +1,5 @@
 import { askQuestion } from "../question";
-import type { QuestionInfo } from "../types";
+import type { QuestionInfo, ToolExecutionContext } from "../types";
 import { defineTool } from "./define";
 
 export const questionTool = defineTool({
@@ -39,10 +39,10 @@ Returns the user's answers as an array of selected options per question.`,
     },
     required: ["questions"],
   },
-  execute: async (args) => {
+  execute: async (args, context?: ToolExecutionContext) => {
     const { questions } = args as { questions: QuestionInfo[] };
 
-    const answers = await askQuestion(questions);
+    const answers = await askQuestion(questions, context?.convId);
 
     // Format answers for display
     const formatted = questions.map((q, i) => ({

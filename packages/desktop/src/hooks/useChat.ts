@@ -235,6 +235,7 @@ export function useChat(options?: UseChatOptions) {
           getTools: options?.getTools,
           signal: controller.signal,
           cwd: convProjectDir || undefined,
+          convId: streamConvId!,
           onEvent,
         });
 

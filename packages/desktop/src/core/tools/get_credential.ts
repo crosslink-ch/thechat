@@ -21,7 +21,7 @@ You must provide a reason explaining why you need the credential.`,
     },
     required: ["name", "reason"],
   },
-  execute: async (args) => {
+  execute: async (args, context) => {
     const { name, reason } = args as { name: string; reason: string };
 
     // Validate credential exists before prompting user
@@ -35,6 +35,7 @@ You must provide a reason explaining why you need the credential.`,
     await requestPermission({
       command: `get_credential: ${name}`,
       description: reason,
+      convId: context?.convId,
     });
 
     return await resolveCredential(name);

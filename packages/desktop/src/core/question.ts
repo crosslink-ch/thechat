@@ -1,33 +1,42 @@
+import { create } from "zustand";
 import type { QuestionInfo, QuestionRequest } from "./types";
 
-type QuestionListener = (request: QuestionRequest) => void;
-
-let listener: QuestionListener | null = null;
-let nextId = 0;
-
-export function onQuestionRequest(callback: QuestionListener): () => void {
-  listener = callback;
-  return () => {
-    if (listener === callback) {
-      listener = null;
-    }
-  };
+interface QuestionStoreState {
+  /** Pending question requests keyed by conversation ID */
+  pending: Record<string, QuestionRequest>;
 }
 
-export function askQuestion(questions: QuestionInfo[]): Promise<string[][]> {
-  return new Promise<string[][]>((resolve, reject) => {
-    if (!listener) {
-      reject(new Error("No question handler registered"));
-      return;
-    }
+export const useQuestionStore = create<QuestionStoreState>()(() => ({
+  pending: {},
+}));
 
+let nextId = 0;
+
+export function askQuestion(questions: QuestionInfo[], convId?: string): Promise<string[][]> {
+  const key = convId ?? "_default";
+
+  return new Promise<string[][]>((resolve, reject) => {
     const request: QuestionRequest = {
       id: String(++nextId),
       questions,
-      resolve,
-      reject: (reason: string) => reject(new Error(reason)),
+      resolve: (answers: string[][]) => {
+        useQuestionStore.setState((s) => {
+          const { [key]: _, ...rest } = s.pending;
+          return { pending: rest };
+        });
+        resolve(answers);
+      },
+      reject: (reason: string) => {
+        useQuestionStore.setState((s) => {
+          const { [key]: _, ...rest } = s.pending;
+          return { pending: rest };
+        });
+        reject(new Error(reason));
+      },
     };
 
-    listener(request);
+    useQuestionStore.setState((s) => ({
+      pending: { ...s.pending, [key]: request },
+    }));
   });
 }

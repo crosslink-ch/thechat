@@ -246,6 +246,7 @@ describe("StreamingMessage", () => {
   it("renders permission prompt when pendingPermission is provided", () => {
     const permission: PermissionRequest = {
       id: "1",
+      convId: CONV_ID,
       command: "ls -la",
       description: "List files",
       resolve: vi.fn(),
@@ -271,6 +272,7 @@ describe("StreamingMessage", () => {
     const onAllow = vi.fn();
     const permission: PermissionRequest = {
       id: "1",
+      convId: CONV_ID,
       command: "echo hi",
       description: "",
       resolve: vi.fn(),
@@ -293,6 +295,7 @@ describe("StreamingMessage", () => {
     const onDeny = vi.fn();
     const permission: PermissionRequest = {
       id: "1",
+      convId: CONV_ID,
       command: "rm -rf /",
       description: "",
       resolve: vi.fn(),
@@ -318,6 +321,7 @@ describe("StreamingMessage", () => {
   it("shows keyboard shortcut hints C-x a, C-x d, and C-x f", () => {
     const permission: PermissionRequest = {
       id: "1",
+      convId: CONV_ID,
       command: "pwd",
       description: "",
       resolve: vi.fn(),
@@ -341,6 +345,7 @@ describe("StreamingMessage", () => {
   it("renders 'Deny with feedback' button with C-x f hint", () => {
     const permission: PermissionRequest = {
       id: "1",
+      convId: CONV_ID,
       command: "echo hi",
       description: "",
       resolve: vi.fn(),
@@ -363,6 +368,7 @@ describe("StreamingMessage", () => {
   it("clicking 'Deny with feedback' shows text input", () => {
     const permission: PermissionRequest = {
       id: "1",
+      convId: CONV_ID,
       command: "echo hi",
       description: "",
       resolve: vi.fn(),
@@ -386,6 +392,7 @@ describe("StreamingMessage", () => {
     const onDenyWithFeedback = vi.fn();
     const permission: PermissionRequest = {
       id: "1",
+      convId: CONV_ID,
       command: "echo hi",
       description: "",
       resolve: vi.fn(),
@@ -411,6 +418,7 @@ describe("StreamingMessage", () => {
   it("Escape hides the feedback input", () => {
     const permission: PermissionRequest = {
       id: "1",
+      convId: CONV_ID,
       command: "echo hi",
       description: "",
       resolve: vi.fn(),
@@ -436,6 +444,7 @@ describe("StreamingMessage", () => {
     const onDenyWithFeedback = vi.fn();
     const permission: PermissionRequest = {
       id: "1",
+      convId: CONV_ID,
       command: "echo hi",
       description: "",
       resolve: vi.fn(),
@@ -469,6 +478,7 @@ describe("StreamingMessage", () => {
   it("hides typing indicator when permission prompt is visible", () => {
     const permission: PermissionRequest = {
       id: "1",
+      convId: CONV_ID,
       command: "echo test",
       description: "",
       resolve: vi.fn(),

@@ -52,6 +52,7 @@ Use this tool instead of sed or awk.`,
     await requestPermission({
       command: `edit ${resolvedPath}`,
       description: `Edit file: replace string in ${resolvedPath}`,
+      convId: context?.convId,
     });
 
     const result = await invoke<EditFileResult>("fs_edit_file", {

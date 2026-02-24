@@ -44,6 +44,7 @@ export async function runChatLoop(options: ChatLoopOptions): Promise<void> {
     maxToolRoundtrips = Infinity,
     signal,
     cwd,
+    convId,
     onEvent,
   } = options;
 
@@ -148,7 +149,7 @@ export async function runChatLoop(options: ChatLoopOptions): Promise<void> {
               error: `Unknown tool "${tc.name}". Available tools: ${availableNames}`,
             };
             try {
-              const execResult = await invalidTool.execute(errorArgs, { signal, cwd });
+              const execResult = await invalidTool.execute(errorArgs, { signal, cwd, convId });
               onEvent({
                 type: "tool-result",
                 toolCallId: tc.id,
@@ -175,7 +176,7 @@ export async function runChatLoop(options: ChatLoopOptions): Promise<void> {
 
         try {
           logDebug(`[loop] Executing tool: ${tc.name}`);
-          const execResult = await tool.execute(tc.args, { signal, cwd });
+          const execResult = await tool.execute(tc.args, { signal, cwd, convId });
           onEvent({
             type: "tool-result",
             toolCallId: tc.id,

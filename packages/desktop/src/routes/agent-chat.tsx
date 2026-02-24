@@ -11,13 +11,13 @@ import { ProjectPicker } from "../components/ProjectPicker";
 import { ChatMessage, StreamingMessage } from "../ChatMessage";
 import { TodoPanel } from "../TodoPanel";
 import { InputBar } from "../components/InputBar";
-import { onPermissionRequest, type PermissionRequest } from "../core/permission";
-import { onQuestionRequest } from "../core/question";
+import { usePermissionStore } from "../core/permission";
+import { useQuestionStore } from "../core/question";
 import { onTodoUpdate, resetTodos } from "../core/todo";
 import { consumePendingProjectDir } from "../commands";
 import { buildSystemPrompt, type ProjectInfo } from "../core/system-prompt";
 import { fireNotification } from "../lib/notifications";
-import type { Conversation, QuestionRequest, TodoItem } from "../core/types";
+import type { Conversation, TodoItem } from "../core/types";
 
 export function AgentChatRoute() {
   const navigate = useNavigate();
@@ -68,9 +68,12 @@ export function AgentChatRoute() {
   // Keep ref in sync
   activeAgentConvIdRef.current = conversation?.id ?? null;
 
-  const [pendingPermission, setPendingPermission] = useState<PermissionRequest | null>(null);
+  // Pending permission/question state lives in global stores (survives route transitions)
+  const convId = conversation?.id;
+  const pendingPermission = usePermissionStore((s) => convId ? s.pending[convId] ?? null : null);
+  const pendingQuestion = useQuestionStore((s) => convId ? s.pending[convId] ?? null : null);
+
   const [showFeedbackInput, setShowFeedbackInput] = useState(false);
-  const [pendingQuestion, setPendingQuestion] = useState<QuestionRequest | null>(null);
   const [todosState, setTodosState] = useState<TodoItem[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -123,20 +126,6 @@ export function AgentChatRoute() {
     }
   }, [conversation?.id, routeId, navigate]);
 
-  // Subscribe to permission requests
-  useEffect(() => {
-    return onPermissionRequest((request) => {
-      setPendingPermission(request);
-    });
-  }, []);
-
-  // Subscribe to question requests
-  useEffect(() => {
-    return onQuestionRequest((request) => {
-      setPendingQuestion(request);
-    });
-  }, []);
-
   // Subscribe to todo updates
   useEffect(() => {
     return onTodoUpdate((todos) => {
@@ -178,7 +167,6 @@ export function AgentChatRoute() {
   const handlePermissionAllow = useCallback(() => {
     if (pendingPermission) {
       pendingPermission.resolve();
-      setPendingPermission(null);
       setShowFeedbackInput(false);
     }
   }, [pendingPermission]);
@@ -186,7 +174,6 @@ export function AgentChatRoute() {
   const handlePermissionDeny = useCallback(() => {
     if (pendingPermission) {
       pendingPermission.reject("User denied permission");
-      setPendingPermission(null);
       setShowFeedbackInput(false);
     }
   }, [pendingPermission]);
@@ -195,7 +182,6 @@ export function AgentChatRoute() {
     (feedback: string) => {
       if (pendingPermission) {
         pendingPermission.reject(`User denied permission. User feedback: ${feedback}`);
-        setPendingPermission(null);
         setShowFeedbackInput(false);
       }
     },
@@ -205,14 +191,12 @@ export function AgentChatRoute() {
   const handleQuestionSubmit = useCallback(
     (answers: string[][]) => {
       pendingQuestion?.resolve(answers);
-      setPendingQuestion(null);
     },
     [pendingQuestion],
   );
 
   const handleQuestionCancel = useCallback(() => {
     pendingQuestion?.reject("User cancelled");
-    setPendingQuestion(null);
   }, [pendingQuestion]);
 
   // Override keybindings for permission allow/deny

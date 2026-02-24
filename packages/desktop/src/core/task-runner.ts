@@ -27,7 +27,7 @@ export function setTaskRunnerConfig(cfg: TaskRunnerConfig): void {
   config = cfg;
 }
 
-export async function runTask(prompt: string, signal?: AbortSignal): Promise<string> {
+export async function runTask(prompt: string, signal?: AbortSignal, convId?: string): Promise<string> {
   if (!config) {
     throw new Error("Task runner not configured. Call setTaskRunnerConfig first.");
   }
@@ -59,6 +59,7 @@ export async function runTask(prompt: string, signal?: AbortSignal): Promise<str
     maxToolRoundtrips: Infinity,
     signal,
     cwd: config.cwd,
+    convId,
     onEvent,
   });
 
