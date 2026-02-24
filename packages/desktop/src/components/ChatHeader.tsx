@@ -3,6 +3,7 @@ import { create } from "zustand";
 import { useMatches } from "@tanstack/react-router";
 import { useWebSocketStore } from "../stores/websocket";
 import { useWorkspacesStore } from "../stores/workspaces";
+import { usePermissionModeStore } from "../stores/permission-mode";
 import { toggleSidebar } from "./Sidebar";
 import { basename } from "../lib/path";
 
@@ -17,6 +18,7 @@ export const getAgentChatProjectDir = () => useAgentChatTitle.getState().project
 export function ChatHeader() {
   const connected = useWebSocketStore((s) => s.connected);
   const activeWorkspace = useWorkspacesStore((s) => s.activeWorkspace);
+  const permissionMode = usePermissionModeStore((s) => s.mode);
   const agentChatTitle = useAgentChatTitle((s) => s.title);
   const agentProjectDir = useAgentChatTitle((s) => s.projectDir);
   const matches = useMatches();
@@ -68,7 +70,17 @@ export function ChatHeader() {
           {projectName}
         </span>
       )}
-      {showWsStatus && <span className="ml-auto size-2 shrink-0 rounded-full bg-success" />}
+      {permissionMode === "allow-edits" && (
+        <span className="ml-auto rounded bg-warning-bg px-1.5 py-0.5 text-[11px] text-warning-text">
+          Allow Edits
+        </span>
+      )}
+      {permissionMode === "bypass" && (
+        <span className="ml-auto rounded bg-danger-bg px-1.5 py-0.5 text-[11px] text-error-bright">
+          Bypass Permissions
+        </span>
+      )}
+      {showWsStatus && <span className={`${permissionMode === "request" ? "ml-auto" : "ml-2"} size-2 shrink-0 rounded-full bg-success`} />}
     </div>
   );
 }

@@ -45,6 +45,10 @@
   --color-error-msg-bg: #2a1a1a;
   --color-error-msg-border: #4a2222;
 
+  /* Warning */
+  --color-warning-bg: #2a2218;
+  --color-warning-text: #d4a060;
+
   /* Danger */
   --color-danger-bg: #4a2020;
   --color-danger-bg-hover: #5a2828;

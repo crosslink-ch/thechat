@@ -4,9 +4,13 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 let requestPermission: typeof import("./permission").requestPermission;
 let onPermissionRequest: typeof import("./permission").onPermissionRequest;
+let usePermissionModeStore: typeof import("../stores/permission-mode").usePermissionModeStore;
 
 beforeEach(async () => {
   vi.resetModules();
+  const store = await import("../stores/permission-mode");
+  usePermissionModeStore = store.usePermissionModeStore;
+  usePermissionModeStore.setState({ mode: "request" });
   const mod = await import("./permission");
   requestPermission = mod.requestPermission;
   onPermissionRequest = mod.onPermissionRequest;
@@ -74,5 +78,73 @@ describe("permission bridge", () => {
     await requestPermission({ command: "b", description: "b" });
 
     expect(ids[0]).not.toBe(ids[1]);
+  });
+});
+
+describe("permission modes", () => {
+  it("bypass mode auto-allows all requests", async () => {
+    usePermissionModeStore.setState({ mode: "bypass" });
+    // No listener registered — would reject normally, but bypass skips it
+    await expect(
+      requestPermission({ command: "shell rm -rf /", description: "danger" }),
+    ).resolves.toBeUndefined();
+  });
+
+  it("allow-edits mode auto-allows write commands", async () => {
+    usePermissionModeStore.setState({ mode: "allow-edits" });
+    await expect(
+      requestPermission({ command: "write /tmp/foo.txt", description: "write file" }),
+    ).resolves.toBeUndefined();
+  });
+
+  it("allow-edits mode auto-allows edit commands", async () => {
+    usePermissionModeStore.setState({ mode: "allow-edits" });
+    await expect(
+      requestPermission({ command: "edit /tmp/foo.txt", description: "edit file" }),
+    ).resolves.toBeUndefined();
+  });
+
+  it("allow-edits mode auto-allows multiedit commands", async () => {
+    usePermissionModeStore.setState({ mode: "allow-edits" });
+    await expect(
+      requestPermission({ command: "multiedit /tmp/foo.txt", description: "multiedit file" }),
+    ).resolves.toBeUndefined();
+  });
+
+  it("allow-edits mode still prompts for shell commands", async () => {
+    usePermissionModeStore.setState({ mode: "allow-edits" });
+    const commands: string[] = [];
+    onPermissionRequest((req) => {
+      commands.push(req.command);
+      req.resolve();
+    });
+
+    await requestPermission({ command: "ls -la", description: "list files" });
+    expect(commands).toEqual(["ls -la"]);
+  });
+
+  it("allow-edits mode still prompts for get_credential", async () => {
+    usePermissionModeStore.setState({ mode: "allow-edits" });
+    const commands: string[] = [];
+    onPermissionRequest((req) => {
+      commands.push(req.command);
+      req.resolve();
+    });
+
+    await requestPermission({ command: "get_credential: API_KEY", description: "get key" });
+    expect(commands).toEqual(["get_credential: API_KEY"]);
+  });
+
+  it("request mode prompts for everything", async () => {
+    usePermissionModeStore.setState({ mode: "request" });
+    const commands: string[] = [];
+    onPermissionRequest((req) => {
+      commands.push(req.command);
+      req.resolve();
+    });
+
+    await requestPermission({ command: "write /tmp/foo.txt", description: "write file" });
+    await requestPermission({ command: "ls", description: "list" });
+    expect(commands).toEqual(["write /tmp/foo.txt", "ls"]);
   });
 });
