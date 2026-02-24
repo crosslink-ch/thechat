@@ -175,7 +175,7 @@ describe("CommandPalette", () => {
       await renderPalette();
       type(">");
 
-      const item = screen.getByText("Toggle Sidebar").closest(".palette-item");
+      const item = screen.getByText("Toggle Sidebar").closest("[data-testid='palette-item']");
       expect(item?.querySelector("kbd")).toBeNull();
     });
 
@@ -253,7 +253,7 @@ describe("CommandPalette", () => {
     it("clicking overlay closes the palette", async () => {
       await renderPalette();
 
-      const overlay = screen.getByPlaceholderText(/search chats/i).closest(".palette-panel")!.parentElement!;
+      const overlay = screen.getByTestId("palette-panel").parentElement!;
       fireEvent.click(overlay);
 
       expect(screen.queryByPlaceholderText(/search chats/i)).not.toBeInTheDocument();

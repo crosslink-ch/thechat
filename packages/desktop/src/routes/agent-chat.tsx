@@ -226,9 +226,9 @@ export function AgentChatRoute() {
     <>
       <TodoPanel todos={todosState} />
 
-      <div className="messages-area">
+      <div className="flex flex-1 flex-col overflow-y-auto">
         {messages.length === 0 && !isStreaming && (
-          <div className="empty-state">
+          <div className="flex flex-1 flex-col items-center justify-center text-base text-text-placeholder">
             <ProjectPicker
               projectDir={projectDir}
               onSelect={setProjectDir}
@@ -251,7 +251,7 @@ export function AgentChatRoute() {
           onQuestionSubmit={handleQuestionSubmit}
           onQuestionCancel={handleQuestionCancel}
         />
-        {error && <div className="error-message">{error}</div>}
+        {error && <div className="rounded-lg border border-error-msg-border bg-error-msg-bg px-3.5 py-2.5 text-[13px] text-error-bright">{error}</div>}
         <div ref={messagesEndRef} />
       </div>
 

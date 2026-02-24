@@ -101,22 +101,22 @@ function AuthModalInner() {
   };
 
   return (
-    <div className="auth-overlay" onClick={closeAuthModal}>
-      <div className="auth-card" onClick={(e) => e.stopPropagation()}>
-        <h2 className="auth-title">
+    <div className="fixed inset-0 z-20 flex items-center justify-center bg-overlay" onClick={closeAuthModal}>
+      <div className="w-full max-w-[400px] rounded-xl border border-border bg-surface p-6 shadow-card" onClick={(e) => e.stopPropagation()}>
+        <h2 className="mb-5 text-lg font-semibold text-text">
           {mode === "login" ? "Log in" : "Create account"}
         </h2>
 
         <form onSubmit={handleSubmit} noValidate>
           {mode === "register" && (
-            <div className="auth-field">
-              <label className="auth-label" htmlFor="auth-name">
+            <div className="mb-3.5">
+              <label className="mb-1.5 block text-[13px] font-medium text-text-secondary" htmlFor="auth-name">
                 Name
               </label>
               <input
                 ref={mode === "register" ? firstInputRef : undefined}
                 id="auth-name"
-                className="auth-input"
+                className="block w-full rounded-lg border border-border bg-base px-3.5 py-2.5 font-[inherit] text-sm text-text outline-none placeholder:text-text-placeholder focus:border-border-focus"
                 type="text"
                 placeholder="John Doe"
                 value={name}
@@ -124,27 +124,27 @@ function AuthModalInner() {
               />
             </div>
           )}
-          <div className="auth-field">
-            <label className="auth-label" htmlFor="auth-email">
+          <div className="mb-3.5">
+            <label className="mb-1.5 block text-[13px] font-medium text-text-secondary" htmlFor="auth-email">
               Email
             </label>
             <input
               ref={mode === "login" ? firstInputRef : undefined}
               id="auth-email"
-              className="auth-input"
+              className="block w-full rounded-lg border border-border bg-base px-3.5 py-2.5 font-[inherit] text-sm text-text outline-none placeholder:text-text-placeholder focus:border-border-focus"
               type="email"
               placeholder="you@example.com"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
             />
           </div>
-          <div className="auth-field">
-            <label className="auth-label" htmlFor="auth-password">
+          <div className="mb-3.5">
+            <label className="mb-1.5 block text-[13px] font-medium text-text-secondary" htmlFor="auth-password">
               Password
             </label>
             <input
               id="auth-password"
-              className="auth-input"
+              className="block w-full rounded-lg border border-border bg-base px-3.5 py-2.5 font-[inherit] text-sm text-text outline-none placeholder:text-text-placeholder focus:border-border-focus"
               type="password"
               placeholder={mode === "register" ? "At least 8 characters" : ""}
               value={password}
@@ -152,10 +152,10 @@ function AuthModalInner() {
             />
           </div>
 
-          {error && <div className="auth-error">{error}</div>}
-          {success && <div className="auth-success">{success}</div>}
+          {error && <div className="mb-3 rounded-md border border-error-msg-border bg-error-msg-bg px-3 py-2 text-[13px] text-error-bright">{error}</div>}
+          {success && <div className="mb-3 rounded-md border border-success-border bg-success-bg px-3 py-2 text-[13px] text-success-light">{success}</div>}
 
-          <button className="auth-submit" type="submit" disabled={submitting}>
+          <button className="mt-1 block w-full cursor-pointer rounded-lg border border-border-strong bg-elevated px-2.5 py-2.5 font-[inherit] text-sm font-medium text-text hover:not-disabled:bg-border-strong disabled:cursor-default disabled:opacity-40" type="submit" disabled={submitting}>
             {submitting
               ? "..."
               : mode === "login"
@@ -164,16 +164,16 @@ function AuthModalInner() {
           </button>
         </form>
 
-        <div className="auth-switch">
+        <div className="mt-4 text-center text-[13px] text-text-muted">
           {mode === "login" ? (
             <>
               Don't have an account?{" "}
-              <button onClick={() => switchMode("register")}>Register</button>
+              <button className="cursor-pointer border-none bg-none p-0 font-[inherit] text-[13px] text-accent underline hover:text-text" onClick={() => switchMode("register")}>Register</button>
             </>
           ) : (
             <>
               Already have an account?{" "}
-              <button onClick={() => switchMode("login")}>Log in</button>
+              <button className="cursor-pointer border-none bg-none p-0 font-[inherit] text-[13px] text-accent underline hover:text-text" onClick={() => switchMode("login")}>Log in</button>
             </>
           )}
         </div>

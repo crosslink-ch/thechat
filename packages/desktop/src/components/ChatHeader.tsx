@@ -53,22 +53,22 @@ export function ChatHeader() {
   const showWsStatus = !isAgentChat && connected;
 
   return (
-    <div className="chat-header">
-      <button className="menu-btn" onClick={toggleSidebar}>
+    <div className="flex items-center gap-3 border-b border-border bg-surface px-4 py-3">
+      <button className="cursor-pointer rounded border-none bg-none p-1 px-2 text-xl text-text-muted hover:bg-hover" onClick={toggleSidebar}>
         &#9776;
       </button>
       {showBackButton && (
-        <button className="back-btn" onClick={() => window.history.back()}>
+        <button className="cursor-pointer rounded border-none bg-none p-1 px-2 text-lg text-text-muted hover:bg-hover hover:text-text" onClick={() => window.history.back()}>
           &larr;
         </button>
       )}
-      <span className="chat-title">{chatTitle}</span>
+      <span className="overflow-hidden text-ellipsis whitespace-nowrap text-sm text-text-muted">{chatTitle}</span>
       {isAgentChat && projectName && (
-        <span className="chat-header-project" title={agentProjectDir!}>
+        <span className="ml-2 rounded bg-hover px-1.5 py-0.5 text-[11px] text-text-dimmed" title={agentProjectDir!}>
           {projectName}
         </span>
       )}
-      {showWsStatus && <span className="ws-status ws-connected" />}
+      {showWsStatus && <span className="ml-auto size-2 shrink-0 rounded-full bg-success" />}
     </div>
   );
 }

@@ -36,16 +36,16 @@ export function ProjectPicker({ projectDir, onSelect, readOnly }: ProjectPickerP
 
   return (
     <button
-      className={`project-picker ${readOnly ? "project-picker-readonly" : ""}`}
+      className={`inline-flex max-w-[200px] items-center gap-1.5 rounded-md border border-border bg-raised px-2.5 py-1 text-xs text-text-secondary transition-[background,border-color] duration-150 ${readOnly ? "cursor-default opacity-80" : "cursor-pointer hover:border-border-strong hover:bg-hover"}`}
       onClick={handleClick}
       title={projectDir ?? "No project selected"}
     >
-      <span className="project-picker-icon">&#128193;</span>
-      <span className="project-picker-label">
+      <span className="shrink-0 text-[13px]">&#128193;</span>
+      <span className="overflow-hidden text-ellipsis whitespace-nowrap">
         {displayName ?? "No project"}
       </span>
       {projectDir && !readOnly && (
-        <span className="project-picker-clear" onClick={handleClear}>
+        <span className="shrink-0 text-sm leading-none text-text-muted hover:text-text" onClick={handleClear}>
           &times;
         </span>
       )}

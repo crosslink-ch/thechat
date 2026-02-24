@@ -28,13 +28,13 @@ const components: Components = {
       );
     }
     return (
-      <code className="md-inline-code" {...props}>
+      <code className="rounded border border-border bg-elevated px-[0.4em] py-[0.15em] font-mono text-[0.9em]" {...props}>
         {children}
       </code>
     );
   },
   table: ({ children, ...props }) => (
-    <div className="md-table-wrapper">
+    <div className="my-2 overflow-x-auto">
       <table {...props}>{children}</table>
     </div>
   ),

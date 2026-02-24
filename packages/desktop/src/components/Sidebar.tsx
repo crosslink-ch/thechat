@@ -19,7 +19,7 @@ function ProjectDirLabel({ path }: { path: string }) {
     basename(path).then(setName);
   }, [path]);
   if (!name) return null;
-  return <span className="conv-project">{name}</span>;
+  return <span className="mt-0.5 overflow-hidden text-ellipsis whitespace-nowrap text-[10px] text-text-dimmed">{name}</span>;
 }
 
 // Colocated visibility store
@@ -102,31 +102,31 @@ export function Sidebar() {
 
   return (
     <>
-      {open && <div className="sidebar-overlay" onClick={closeSidebar} />}
-      <div className={`sidebar ${open ? "sidebar-open" : ""}`}>
+      {open && <div className="fixed inset-0 z-[9] bg-overlay" onClick={closeSidebar} />}
+      <div className={`absolute top-0 bottom-0 z-10 flex w-[260px] shrink-0 flex-col border-r border-border bg-surface transition-[margin-left] duration-200 ${open ? "ml-0" : "-ml-[260px]"}`}>
         {/* Workspace switcher (only when logged in) */}
         {user && (
-          <div className="workspace-switcher">
+          <div className="relative border-b border-border p-2">
             <button
-              className="workspace-switcher-btn"
+              className="flex w-full cursor-pointer items-center justify-between rounded-lg border border-border-strong bg-elevated px-3 py-2 font-[inherit] text-sm font-medium text-text hover:bg-border-strong"
               onClick={() => setDropdownOpen(!dropdownOpen)}
             >
-              <span className="workspace-switcher-name">
+              <span>
                 {activeWorkspace ? activeWorkspace.name : "Select workspace"}
               </span>
-              <span className="workspace-switcher-chevron">
+              <span className="text-[10px] text-text-muted">
                 {dropdownOpen ? "\u25B2" : "\u25BC"}
               </span>
             </button>
             {dropdownOpen && (
-              <div className="workspace-dropdown">
+              <div className="absolute top-full right-2 left-2 z-[15] mt-1 overflow-hidden rounded-lg border border-border-strong bg-surface shadow-card">
                 {workspaces.map((ws) => (
                   <button
                     key={ws.id}
-                    className={`workspace-dropdown-item ${
+                    className={`block w-full cursor-pointer border-none px-3 py-2 text-left font-[inherit] text-[13px] ${
                       activeWorkspace?.id === ws.id
-                        ? "workspace-dropdown-active"
-                        : ""
+                        ? "bg-elevated text-text"
+                        : "bg-none text-text-muted hover:bg-hover hover:text-text"
                     }`}
                     onClick={() => {
                       selectWorkspace(ws.id);
@@ -137,7 +137,7 @@ export function Sidebar() {
                   </button>
                 ))}
                 <button
-                  className="workspace-dropdown-item workspace-dropdown-action"
+                  className="block w-full cursor-pointer border-t border-border bg-none px-3 py-2 text-left font-[inherit] text-[13px] text-accent hover:bg-hover hover:text-text"
                   onClick={() => {
                     openWorkspaceModal();
                     setDropdownOpen(false);
@@ -152,23 +152,23 @@ export function Sidebar() {
 
         {/* Tab toggle (only when workspace is active) */}
         {user && activeWorkspace && (
-          <div className="sidebar-tabs">
+          <div className="flex gap-1 border-b border-border px-2 py-1.5">
             <button
-              className={`sidebar-tab ${tab === "workspace" ? "sidebar-tab-active" : ""}`}
+              className={`flex flex-1 cursor-pointer items-center justify-center gap-1.5 rounded-md border-none px-2 py-1.5 font-[inherit] text-xs font-medium ${tab === "workspace" ? "bg-elevated text-text" : "bg-none text-text-muted hover:bg-hover hover:text-text"}`}
               onClick={() => setTab("workspace")}
             >
               Workspace
               {unreadChannels.size > 0 && tab !== "workspace" && (
-                <span className="sidebar-tab-badge" />
+                <span className="size-1.5 shrink-0 rounded-full bg-accent" />
               )}
             </button>
             <button
-              className={`sidebar-tab ${tab === "agent" ? "sidebar-tab-active" : ""}`}
+              className={`flex flex-1 cursor-pointer items-center justify-center gap-1.5 rounded-md border-none px-2 py-1.5 font-[inherit] text-xs font-medium ${tab === "agent" ? "bg-elevated text-text" : "bg-none text-text-muted hover:bg-hover hover:text-text"}`}
               onClick={() => setTab("agent")}
             >
               Agent Chats
               {unreadAgentChats.size > 0 && tab !== "agent" && (
-                <span className="sidebar-tab-badge" />
+                <span className="size-1.5 shrink-0 rounded-full bg-accent" />
               )}
             </button>
           </div>
@@ -179,7 +179,8 @@ export function Sidebar() {
           <>
             {/* Notifications button */}
             <button
-              className="sidebar-notifications-btn"
+              className="flex w-full cursor-pointer items-center justify-between border-b border-border-subtle bg-none px-3 py-2 text-[0.85rem] text-text-secondary hover:bg-hover hover:text-text"
+              style={{ border: "none", borderBottom: "1px solid var(--color-border-subtle)" }}
               onClick={() => {
                 navigate({ to: "/notifications" });
                 closeSidebar();
@@ -187,35 +188,35 @@ export function Sidebar() {
             >
               <span>Notifications</span>
               {notificationCount > 0 && (
-                <span className="sidebar-notifications-badge">
+                <span className="min-w-[18px] rounded-[9px] bg-accent px-1.5 py-px text-center text-[0.7rem] font-semibold text-white">
                   {notificationCount}
                 </span>
               )}
             </button>
 
-            <div className="sidebar-section">
-              <div className="sidebar-section-header">Channels</div>
-              <div className="sidebar-section-list">
+            <div className="px-2">
+              <div className="px-3 pt-3 pb-1 text-[11px] font-semibold uppercase tracking-wide text-text-dimmed">Channels</div>
+              <div className="pb-1">
                 {activeWorkspace.channels.map((ch) => {
                   const isActive = activeChannelId === ch.id;
                   const isUnread = unreadChannels.has(ch.id);
                   return (
                     <button
                       key={ch.id}
-                      className={`channel-item ${isActive ? "channel-item-active" : ""} ${isUnread ? "channel-item-unread" : ""}`}
+                      className={`mb-px block w-full cursor-pointer rounded-md border-none px-3 py-1.5 text-left font-[inherit] text-[13px] ${isActive ? "bg-elevated text-text" : "bg-none text-text-muted hover:bg-hover hover:text-text"} ${isUnread ? "relative font-semibold text-text" : ""}`}
                       onClick={() => handleSelectChannel(ch)}
                     >
-                      <span className="channel-hash">#</span> {ch.name}
-                      {isUnread && <span className="channel-unread-dot" />}
+                      <span className="mr-0.5 text-text-dimmed">#</span> {ch.name}
+                      {isUnread && <span className="ml-auto inline-block size-1.5 shrink-0 rounded-full bg-accent" />}
                     </button>
                   );
                 })}
               </div>
             </div>
 
-            <div className="sidebar-section">
-              <div className="sidebar-section-header">Direct Messages</div>
-              <div className="sidebar-section-list">
+            <div className="px-2">
+              <div className="px-3 pt-3 pb-1 text-[11px] font-semibold uppercase tracking-wide text-text-dimmed">Direct Messages</div>
+              <div className="pb-1">
                 {activeWorkspace.members
                   .filter((m) => m.userId !== user.id)
                   .map((m) => {
@@ -223,13 +224,13 @@ export function Sidebar() {
                     return (
                       <button
                         key={m.userId}
-                        className={`dm-item ${isActive ? "dm-item-active" : ""}`}
+                        className={`mb-px flex w-full cursor-pointer items-center gap-2 rounded-md border-none px-3 py-1.5 text-left font-[inherit] text-[13px] ${isActive ? "bg-elevated text-text" : "bg-none text-text-muted hover:bg-hover hover:text-text"}`}
                         onClick={() => handleSelectDm(m)}
                       >
-                        <span className="dm-avatar">
+                        <span className="flex size-6 shrink-0 items-center justify-center rounded-full border border-border bg-elevated text-[11px] font-semibold text-text-muted">
                           {m.user.name.charAt(0).toUpperCase()}
                         </span>
-                        <span className="dm-name">{m.user.name}</span>
+                        <span className="overflow-hidden text-ellipsis whitespace-nowrap">{m.user.name}</span>
                       </button>
                     );
                   })}
@@ -240,11 +241,11 @@ export function Sidebar() {
 
         {/* Agent Chats tab content (or full view when no workspace) */}
         {(tab === "agent" || !activeWorkspace || !user) && (
-          <div className="sidebar-section sidebar-section-agent">
-            <button className="new-chat-btn" onClick={handleNewChat}>
+          <div className="flex min-h-0 flex-1 flex-col">
+            <button className="m-1 cursor-pointer rounded-lg border border-border-strong bg-elevated p-2.5 text-sm text-text hover:bg-border-strong" onClick={handleNewChat}>
               + New Chat
             </button>
-            <div className="conversations-list">
+            <div className="flex-1 overflow-y-auto px-2">
               {conversations.map((conv) => {
                 const isActive = currentAgentChatId === conv.id;
                 const isUnread = !isActive && unreadAgentChats.has(conv.id);
@@ -252,15 +253,15 @@ export function Sidebar() {
                 return (
                   <button
                     key={conv.id}
-                    className={`conv-item ${isActive ? "conv-active" : ""} ${isUnread ? "conv-unread" : ""}`}
+                    className={`mb-0.5 flex w-full cursor-pointer items-center gap-1.5 rounded-md border-none bg-none px-3 py-2.5 text-left text-[13px] ${isActive ? "bg-elevated text-text" : "text-text-muted hover:bg-hover"} ${isUnread ? "font-semibold text-text" : ""}`}
                     onClick={() => handleSelectConversation(conv)}
                   >
-                    <span className="conv-title">{conv.title}</span>
+                    <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap">{conv.title}</span>
                     {conv.project_dir && (
                       <ProjectDirLabel path={conv.project_dir} />
                     )}
-                    {isStreamingBg && <span className="conv-streaming-indicator" />}
-                    {!isStreamingBg && isUnread && <span className="conv-unread-dot" />}
+                    {isStreamingBg && <span className="size-1.5 shrink-0 animate-pulse rounded-full bg-accent" />}
+                    {!isStreamingBg && isUnread && <span className="size-1.5 shrink-0 rounded-full bg-accent" />}
                   </button>
                 );
               })}
@@ -268,16 +269,16 @@ export function Sidebar() {
           </div>
         )}
 
-        <div className="sidebar-footer">
+        <div className="border-t border-border p-3">
           {user ? (
-            <div className="sidebar-user-info">
-              <span className="sidebar-user-name">{user.name}</span>
-              <button className="sidebar-logout-btn" onClick={logout}>
+            <div className="flex items-center justify-between gap-2">
+              <span className="overflow-hidden text-ellipsis whitespace-nowrap text-[13px] text-text">{user.name}</span>
+              <button className="shrink-0 cursor-pointer rounded border-none bg-none px-2 py-1 font-[inherit] text-xs text-text-muted hover:bg-hover hover:text-text" onClick={logout}>
                 Log out
               </button>
             </div>
           ) : (
-            <button className="sidebar-login-btn" onClick={openAuthModal}>
+            <button className="block w-full cursor-pointer rounded-lg border border-border bg-none px-2 py-2 font-[inherit] text-[13px] text-text-muted hover:bg-hover hover:text-text" onClick={openAuthModal}>
               Log in
             </button>
           )}

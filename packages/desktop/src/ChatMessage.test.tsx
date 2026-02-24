@@ -64,24 +64,24 @@ describe("ChatMessage", () => {
     expect(screen.getByText("AI")).toBeInTheDocument();
   });
 
-  it("applies user class for user messages", () => {
-    const { container } = render(<ChatMessage message={userMsg} />);
-    expect(container.querySelector(".chat-message-user")).not.toBeNull();
+  it("applies user data-testid for user messages", () => {
+    render(<ChatMessage message={userMsg} />);
+    expect(screen.getByTestId("chat-message-user")).toBeInTheDocument();
   });
 
-  it("applies assistant class for assistant messages", () => {
-    const { container } = render(<ChatMessage message={assistantMsg} />);
-    expect(container.querySelector(".chat-message-assistant")).not.toBeNull();
+  it("applies assistant data-testid for assistant messages", () => {
+    render(<ChatMessage message={assistantMsg} />);
+    expect(screen.getByTestId("chat-message-assistant")).toBeInTheDocument();
   });
 
   it("does not show thinking section for user messages", () => {
-    const { container } = render(<ChatMessage message={userMsg} />);
-    expect(container.querySelector(".thinking-section")).toBeNull();
+    render(<ChatMessage message={userMsg} />);
+    expect(screen.queryByTestId("thinking-section")).toBeNull();
   });
 
   it("does not show thinking section for assistant without reasoning or tools", () => {
-    const { container } = render(<ChatMessage message={assistantMsgNoReasoning} />);
-    expect(container.querySelector(".thinking-section")).toBeNull();
+    render(<ChatMessage message={assistantMsgNoReasoning} />);
+    expect(screen.queryByTestId("thinking-section")).toBeNull();
   });
 
   it("shows thinking section for assistant messages with reasoning", () => {
@@ -193,13 +193,13 @@ describe("ChatMessage", () => {
 describe("StreamingMessage", () => {
   it("shows typing indicator when no content or reasoning", () => {
     setupStreaming([]);
-    const { container } = render(<StreamingMessage convId={CONV_ID} />);
-    expect(container.querySelector(".typing-indicator")).not.toBeNull();
+    render(<StreamingMessage convId={CONV_ID} />);
+    expect(screen.getByTestId("typing-indicator")).toBeInTheDocument();
   });
 
   it("returns null when not streaming", () => {
     const { container } = render(<StreamingMessage convId={CONV_ID} />);
-    expect(container.querySelector(".chat-message")).toBeNull();
+    expect(container.querySelector("[data-testid='chat-message-assistant']")).toBeNull();
   });
 
   it("shows AI label", () => {
@@ -229,8 +229,8 @@ describe("StreamingMessage", () => {
 
   it("hides typing indicator when reasoning is present", () => {
     setupStreaming([{ type: "reasoning", text: "Thinking..." }]);
-    const { container } = render(<StreamingMessage convId={CONV_ID} />);
-    expect(container.querySelector(".typing-indicator")).toBeNull();
+    render(<StreamingMessage convId={CONV_ID} />);
+    expect(screen.queryByTestId("typing-indicator")).toBeNull();
   });
 
   it("renders tool-call during streaming in open thinking section", () => {
@@ -460,10 +460,10 @@ describe("StreamingMessage", () => {
 
   it("does not render permission prompt when pendingPermission is null", () => {
     setupStreaming([{ type: "text", text: "Hello" }]);
-    const { container } = render(
+    render(
       <StreamingMessage convId={CONV_ID} pendingPermission={null} />,
     );
-    expect(container.querySelector(".permission-inline")).toBeNull();
+    expect(screen.queryByTestId("permission-inline")).toBeNull();
   });
 
   it("hides typing indicator when permission prompt is visible", () => {
@@ -475,7 +475,7 @@ describe("StreamingMessage", () => {
       reject: vi.fn(),
     };
     setupStreaming([]);
-    const { container } = render(
+    render(
       <StreamingMessage
         convId={CONV_ID}
         pendingPermission={permission}
@@ -483,6 +483,6 @@ describe("StreamingMessage", () => {
         onPermissionDeny={vi.fn()}
       />,
     );
-    expect(container.querySelector(".typing-indicator")).toBeNull();
+    expect(screen.queryByTestId("typing-indicator")).toBeNull();
   });
 });

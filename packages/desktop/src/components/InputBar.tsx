@@ -36,9 +36,10 @@ export function InputBar({ convId, onSend, onStop }: InputBarProps) {
   };
 
   return (
-    <div className="input-bar">
+    <div className="flex items-end gap-2 border-t border-border bg-surface px-4 py-3">
       <textarea
         ref={textareaRef}
+        className="max-h-[200px] flex-1 resize-none rounded-xl border border-border bg-base px-3.5 py-2.5 font-[inherit] text-[15px] leading-normal text-text outline-none placeholder:text-text-placeholder focus:border-border-focus"
         value={input}
         onChange={(e) => setInput(e.target.value)}
         onKeyDown={handleKeyDown}
@@ -47,12 +48,12 @@ export function InputBar({ convId, onSend, onStop }: InputBarProps) {
         disabled={isStreaming}
       />
       {isStreaming ? (
-        <button className="send-btn stop-btn" onClick={onStop}>
+        <button className="cursor-pointer whitespace-nowrap rounded-xl border-none bg-danger-bg px-5 py-2.5 text-sm font-medium text-text shadow-none hover:bg-danger-bg-hover" onClick={onStop}>
           Stop
         </button>
       ) : (
         <button
-          className="send-btn"
+          className="cursor-pointer whitespace-nowrap rounded-xl border-none bg-button px-5 py-2.5 text-sm font-medium text-text shadow-none hover:not-disabled:bg-button-hover disabled:cursor-default disabled:opacity-40"
           onClick={handleSend}
           disabled={!input.trim()}
         >

@@ -190,7 +190,7 @@ describe("QuestionPromptBlock", () => {
     const input = screen.getByPlaceholderText("Type your own answer...");
     fireEvent.change(input, { target: { value: "Logging" } });
     // Click the custom option row to deselect it
-    fireEvent.click(input.closest(".question-option-custom")!);
+    fireEvent.click(input.closest("[data-testid='question-option-custom']")!);
     fireEvent.click(screen.getByText("Submit"));
 
     // Custom deselected, text preserved in input but not submitted

@@ -56,19 +56,19 @@ function WorkspaceModalInner() {
   };
 
   return (
-    <div className="auth-overlay" onClick={closeWorkspaceModal}>
-      <div className="auth-card" onClick={(e) => e.stopPropagation()}>
-        <h2 className="auth-title">Create workspace</h2>
+    <div className="fixed inset-0 z-20 flex items-center justify-center bg-overlay" onClick={closeWorkspaceModal}>
+      <div className="w-full max-w-[400px] rounded-xl border border-border bg-surface p-6 shadow-card" onClick={(e) => e.stopPropagation()}>
+        <h2 className="mb-5 text-lg font-semibold text-text">Create workspace</h2>
 
         <form onSubmit={handleSubmit} noValidate>
-          <div className="auth-field">
-            <label className="auth-label" htmlFor="ws-name">
+          <div className="mb-3.5">
+            <label className="mb-1.5 block text-[13px] font-medium text-text-secondary" htmlFor="ws-name">
               Workspace name
             </label>
             <input
               ref={inputRef}
               id="ws-name"
-              className="auth-input"
+              className="block w-full rounded-lg border border-border bg-base px-3.5 py-2.5 font-[inherit] text-sm text-text outline-none placeholder:text-text-placeholder focus:border-border-focus"
               type="text"
               placeholder="My Team"
               value={name}
@@ -76,9 +76,9 @@ function WorkspaceModalInner() {
             />
           </div>
 
-          {error && <div className="auth-error">{error}</div>}
+          {error && <div className="mb-3 rounded-md border border-error-msg-border bg-error-msg-bg px-3 py-2 text-[13px] text-error-bright">{error}</div>}
 
-          <button className="auth-submit" type="submit" disabled={submitting}>
+          <button className="mt-1 block w-full cursor-pointer rounded-lg border border-border-strong bg-elevated px-2.5 py-2.5 font-[inherit] text-sm font-medium text-text hover:not-disabled:bg-border-strong disabled:cursor-default disabled:opacity-40" type="submit" disabled={submitting}>
             {submitting ? "..." : "Create"}
           </button>
         </form>

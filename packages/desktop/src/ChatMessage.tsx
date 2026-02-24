@@ -90,34 +90,33 @@ function ToolActivityBlock({
   }, [filePath]);
 
   const status = !result ? "Running..." : result.isError ? "Error" : "Done";
-  const statusClass = result?.isError ? "tool-status-error" : "";
   const hasPreview = PREVIEW_TOOLS.has(call.toolName);
 
   return (
-    <div className="tool-activity">
-      <button className="tool-activity-toggle" onClick={() => setOpen(!open)}>
-        <span className="tool-activity-chevron">{open ? "▾" : "▸"}</span>
-        <span className="tool-activity-name">{call.toolName}</span>
-        {fileName && <span className="tool-activity-path">{fileName}</span>}
-        <span className={`tool-activity-status ${statusClass}`}>{status}</span>
+    <div className="my-1 overflow-hidden rounded bg-raised">
+      <button className="flex w-full cursor-pointer items-center gap-1.5 border-none bg-none px-2.5 py-1.5 text-left text-xs text-text-muted shadow-none hover:bg-border-subtle" onClick={() => setOpen(!open)}>
+        <span className="w-3 text-[10px]">{open ? "▾" : "▸"}</span>
+        <span className="font-medium text-accent">{call.toolName}</span>
+        {fileName && <span className="font-mono text-[11px] text-text-dimmed">{fileName}</span>}
+        <span className={`ml-auto text-[11px] ${result?.isError ? "text-error" : "text-success"}`}>{status}</span>
       </button>
       {hasPreview && (
-        <div className="tool-activity-preview">
+        <div className="px-2.5 pb-1.5">
           <ToolInlinePreview toolName={call.toolName} args={call.args} />
         </div>
       )}
       {open && (
-        <div className="tool-activity-details">
+        <div className="px-2.5 pb-2">
           {!hasPreview && Object.keys(call.args).length > 0 && (
-            <div className="tool-detail-section">
-              <div className="tool-detail-label">Args</div>
-              <pre className="tool-detail-content">{formatArgs(call.args)}</pre>
+            <div className="mt-1.5">
+              <div className="mb-0.5 text-[11px] uppercase tracking-wide text-text-muted">Args</div>
+              <pre className="m-0 whitespace-pre-wrap font-mono text-xs text-text-secondary">{formatArgs(call.args)}</pre>
             </div>
           )}
           {result && (
-            <div className="tool-detail-section">
-              <div className="tool-detail-label">{result.isError ? "Error" : "Result"}</div>
-              <pre className="tool-detail-content">{formatResult(result.result)}</pre>
+            <div className="mt-1.5">
+              <div className="mb-0.5 text-[11px] uppercase tracking-wide text-text-muted">{result.isError ? "Error" : "Result"}</div>
+              <pre className="m-0 whitespace-pre-wrap font-mono text-xs text-text-secondary">{formatResult(result.result)}</pre>
             </div>
           )}
         </div>
@@ -160,15 +159,15 @@ function ThinkingSection({
   );
 
   return (
-    <div className="thinking-section">
-      <button className="thinking-toggle" onClick={() => setOpen(!open)}>
-        <span className="thinking-chevron">{open ? "▾" : "▸"}</span>
+    <div data-testid="thinking-section" className="mb-2">
+      <button className="flex items-center gap-1 border-none bg-none p-0 py-1 text-xs text-text-muted shadow-none hover:text-text-muted-hover" style={{ cursor: "pointer" }} onClick={() => setOpen(!open)}>
+        <span className="w-3 text-[10px]">{open ? "▾" : "▸"}</span>
         <span>{label}</span>
-        {isStreaming && <span className="thinking-indicator"> ...</span>}
+        {isStreaming && <span className="animate-pulse"> ...</span>}
       </button>
       {open && (
-        <div className="thinking-content">
-          {hasReasoning && <pre className="reasoning-text">{reasoningText}</pre>}
+        <div className="mt-1.5">
+          {hasReasoning && <pre className="mb-1.5 max-h-[400px] overflow-y-auto overflow-x-auto whitespace-pre-wrap rounded border-l-3 border-border-accent bg-raised px-3 py-2.5 font-[inherit] text-[13px] text-text-secondary">{reasoningText}</pre>}
           {toolCalls.map((call) => (
             <ToolActivityBlock
               key={call.toolCallId}
@@ -225,18 +224,18 @@ function PermissionPromptBlock({
   };
 
   return (
-    <div className="permission-inline">
-      <div className="permission-inline-header">{permissionHeader(toolArgs)}</div>
-      <code className="permission-inline-command">{permission.command}</code>
+    <div data-testid="permission-inline" className="my-2 rounded border-l-3 border-accent-border bg-raised p-3">
+      <div className="mb-2 text-[13px] font-semibold text-text-muted">{permissionHeader(toolArgs)}</div>
+      <code className="mb-2 block whitespace-pre-wrap break-all rounded border border-border bg-base px-2.5 py-2 font-mono text-[13px] text-text">{permission.command}</code>
       {toolArgs && <ToolInlinePreview toolName={toolArgs.toolName} args={toolArgs.args} />}
       {permission.description && !toolArgs && (
-        <div className="permission-inline-desc">{permission.description}</div>
+        <div className="mb-2.5 text-xs text-text-muted">{permission.description}</div>
       )}
       {feedbackVisible ? (
-        <div className="permission-feedback-input">
+        <div className="flex items-center gap-2">
           <input
             ref={inputRef}
-            className="permission-feedback-field"
+            className="flex-1 rounded border border-border bg-base px-2.5 py-1.5 font-[inherit] text-[13px] text-text outline-none placeholder:text-text-placeholder focus:border-accent-border"
             type="text"
             placeholder="Feedback for AI..."
             value={feedbackText}
@@ -253,7 +252,7 @@ function PermissionPromptBlock({
             }}
           />
           <button
-            className="permission-inline-btn permission-inline-allow"
+            className="inline-flex cursor-pointer items-center gap-1.5 rounded border-none bg-button px-3.5 py-1.5 text-[13px] font-medium text-text shadow-none hover:bg-button-hover"
             disabled={feedbackText.trim().length === 0}
             onClick={handleSubmitFeedback}
           >
@@ -261,20 +260,20 @@ function PermissionPromptBlock({
           </button>
         </div>
       ) : (
-        <div className="permission-inline-actions">
-          <button className="permission-inline-btn permission-inline-deny" onClick={onDeny}>
-            Deny <kbd>C-x d</kbd>
+        <div className="flex justify-end gap-2">
+          <button className="inline-flex cursor-pointer items-center gap-1.5 rounded border-none bg-none px-3.5 py-1.5 text-[13px] font-medium text-text-muted shadow-none hover:text-text" onClick={onDeny}>
+            Deny <kbd className="rounded border border-border bg-base px-1 py-px font-mono text-[11px] text-text-dimmed">C-x d</kbd>
           </button>
           {onDenyWithFeedback && (
             <button
-              className="permission-inline-btn permission-inline-feedback"
+              className="inline-flex cursor-pointer items-center gap-1.5 rounded border-none bg-none px-3.5 py-1.5 text-[13px] font-medium text-text-muted shadow-none hover:text-text"
               onClick={() => setFeedbackVisible(true)}
             >
-              Deny with feedback <kbd>C-x f</kbd>
+              Deny with feedback <kbd className="rounded border border-border bg-base px-1 py-px font-mono text-[11px] text-text-dimmed">C-x f</kbd>
             </button>
           )}
-          <button className="permission-inline-btn permission-inline-allow" onClick={onAllow}>
-            Allow <kbd>C-x a</kbd>
+          <button className="inline-flex cursor-pointer items-center gap-1.5 rounded border-none bg-button px-3.5 py-1.5 text-[13px] font-medium text-text shadow-none hover:bg-button-hover" onClick={onAllow}>
+            Allow <kbd className="rounded border border-border bg-base px-1 py-px font-mono text-[11px] text-text-dimmed">C-x a</kbd>
           </button>
         </div>
       )}
@@ -342,28 +341,29 @@ export function QuestionPromptBlock({ request, onSubmit, onCancel }: QuestionPro
   }, [selections, customText, onSubmit]);
 
   return (
-    <div className="question-inline">
+    <div className="my-2 rounded border-l-3 border-accent-secondary bg-raised p-3">
       {request.questions.map((q, qIndex) => {
         const current = selections[qIndex] ?? [];
         const customActive = current.includes(CUSTOM);
 
         return (
-          <div key={qIndex} className="question-block">
-            <div className="question-header">{q.header}</div>
-            <div className="question-text">{q.question}</div>
-            <div className="question-options">
+          <div key={qIndex} className="mb-3 last:mb-2.5">
+            <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-text-dimmed">{q.header}</div>
+            <div className="mb-2 text-[13px] text-text">{q.question}</div>
+            <div className="flex flex-col gap-1">
               {q.options.map((opt) => (
                 <button
                   key={opt.label}
-                  className={`question-option ${current.includes(opt.label) ? "question-option-selected" : ""}`}
+                  className={`flex cursor-pointer flex-col rounded border px-2.5 py-1.5 text-left font-[inherit] shadow-none transition-[border-color] duration-150 ${current.includes(opt.label) ? "border-accent-secondary bg-accent-secondary/8" : "border-border bg-base hover:border-border-strong hover:bg-hover"}`}
                   onClick={() => toggleOption(qIndex, opt.label)}
                 >
-                  <span className="question-option-label">{opt.label}</span>
-                  <span className="question-option-desc">{opt.description}</span>
+                  <span className="text-[13px] font-medium text-text">{opt.label}</span>
+                  <span className="mt-0.5 text-xs text-text-muted">{opt.description}</span>
                 </button>
               ))}
               <div
-                className={`question-option question-option-custom ${customActive ? "question-option-selected" : ""}`}
+                data-testid="question-option-custom"
+                className={`flex cursor-pointer flex-row items-center rounded border px-2.5 py-1.5 text-left font-[inherit] shadow-none transition-[border-color] duration-150 ${customActive ? "border-accent-secondary bg-accent-secondary/8" : "border-border bg-base hover:border-border-strong hover:bg-hover"}`}
                 onClick={() => {
                   toggleOption(qIndex, CUSTOM);
                   if (!customActive) {
@@ -375,6 +375,7 @@ export function QuestionPromptBlock({ request, onSubmit, onCancel }: QuestionPro
                   ref={(el) => { inputRefs.current[qIndex] = el; }}
                   type="text"
                   placeholder="Type your own answer..."
+                  className="w-full border-none bg-transparent p-0 font-[inherit] text-[13px] text-text outline-none placeholder:text-text-placeholder"
                   value={customText[qIndex] ?? ""}
                   onClick={(e) => e.stopPropagation()}
                   onFocus={() => activateCustom(qIndex)}
@@ -399,11 +400,11 @@ export function QuestionPromptBlock({ request, onSubmit, onCancel }: QuestionPro
           </div>
         );
       })}
-      <div className="question-actions">
-        <button className="question-btn question-btn-cancel" onClick={onCancel}>
+      <div className="flex justify-end gap-2">
+        <button className="cursor-pointer rounded border-none bg-none px-3.5 py-1.5 text-[13px] font-medium text-text-muted shadow-none hover:text-text" onClick={onCancel}>
           Cancel
         </button>
-        <button className="question-btn question-btn-submit" onClick={handleSubmit}>
+        <button className="cursor-pointer rounded border-none bg-button px-3.5 py-1.5 text-[13px] font-medium text-text shadow-none hover:bg-button-hover" onClick={handleSubmit}>
           Submit
         </button>
       </div>
@@ -430,11 +431,11 @@ export function ChatMessage({ message }: ChatMessageProps) {
   const hasThinking = !isUser && (reasoningText.length > 0 || toolCalls.length > 0);
 
   return (
-    <div className={`chat-message ${isUser ? "chat-message-user" : "chat-message-assistant"}`}>
-      <div className={`message-label ${isUser ? "label-user" : "label-ai"}`}>
+    <div data-testid={`chat-message-${isUser ? "user" : "assistant"}`} className="w-full border-b border-border-subtle px-4 py-3 hover:bg-raised">
+      <div className={`mb-1 text-[13px] font-semibold ${isUser ? "text-text-muted" : "text-accent"}`}>
         {isUser ? "You" : "AI"}
       </div>
-      <div className="message-body">
+      <div className="max-w-3xl">
         {hasThinking && (
           <ThinkingSection
             reasoningText={reasoningText}
@@ -483,9 +484,9 @@ export function StreamingMessage({ convId, pendingPermission, onPermissionAllow,
 
   return (
     <>
-      <div className="chat-message chat-message-assistant">
-        <div className="message-label label-ai">AI</div>
-        <div className="message-body">
+      <div data-testid="chat-message-assistant" className="w-full border-b border-border-subtle px-4 py-3 hover:bg-raised">
+        <div className="mb-1 text-[13px] font-semibold text-accent">AI</div>
+        <div className="max-w-3xl">
           {hasThinking && (
             <ThinkingSection
               reasoningText={reasoningText}
@@ -528,7 +529,7 @@ export function StreamingMessage({ convId, pendingPermission, onPermissionAllow,
             />
           )}
           {!pendingPermission && !pendingQuestion && !hasContent && !hasThinking && (
-            <div className="message-text typing-indicator">...</div>
+            <div data-testid="typing-indicator" className="animate-pulse leading-relaxed text-text-dimmed">...</div>
           )}
         </div>
       </div>
