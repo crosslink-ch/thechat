@@ -68,7 +68,9 @@ export function useKeybindings(actions: KeybindingActions) {
         // Check if any command's prefix extends the current sequence
         const extended = currentPrefix + " " + e.key;
         const hasExtension = commands.some(
-          (cmd) => cmd.keybinding?.prefix === extended,
+          (cmd) =>
+            cmd.keybinding?.prefix === extended ||
+            cmd.keybinding?.prefix?.startsWith(extended + " "),
         );
         if (hasExtension) {
           e.preventDefault();

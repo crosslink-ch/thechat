@@ -154,6 +154,19 @@ describe("useKeybindings", () => {
       expect(multiCmd.execute).toHaveBeenCalledOnce();
     });
 
+    it("dispatches a 3-level prefix command (C-x c b n)", () => {
+      const cmd = makeCommand({ id: "deep-3", keybinding: { prefix: "C-x c b", key: "n" } });
+      seedCommands([cmd]);
+
+      renderHook(() => useKeybindings({ ...noopActions }));
+      pressKey("x", { ctrlKey: true });
+      pressKey("c");
+      pressKey("b");
+      pressKey("n");
+
+      expect(cmd.execute).toHaveBeenCalledOnce();
+    });
+
     it("multi-key prefix times out if second key not pressed in time", () => {
       vi.useFakeTimers();
       const cmd = makeCommand({ id: "deep-cmd", keybinding: { prefix: "C-x c", key: "n" } });
