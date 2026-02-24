@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { loadSkill } from "../skills";
 import { defineTool } from "./define";
+import { warn as logWarn, formatError } from "../../log";
 import type { SkillMeta } from "../skills/types";
 import type { McpToolInfo, ToolDefinition } from "../types";
 
@@ -84,7 +85,7 @@ ${skillsXml}`,
           }
         } catch (e) {
           // Non-fatal: skill content is still useful even if MCP servers fail
-          console.error("Failed to initialize MCP servers for skill:", e);
+          logWarn(`[skill] Failed to initialize MCP servers for skill "${name}": ${formatError(e)}`);
         }
       }
 

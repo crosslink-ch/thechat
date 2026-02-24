@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { error as logError, warn as logWarn, info as logInfo, formatError } from "../log";
 import {
   getCurrentTimeTool,
   shellTool,
@@ -140,25 +141,26 @@ export const useToolsStore = create<ToolsStore>()((set, get) => ({
     });
 
     invoke("mcp_initialize").catch((e) =>
-      console.error("MCP initialization failed:", e),
+      logError(`[tools] MCP initialization failed: ${formatError(e)}`),
     );
   },
 
   initializeAuthMcp: (token: string) => {
     invoke("mcp_initialize_authed", { token }).catch((e) =>
-      console.error("Auth MCP initialization failed:", e),
+      logError(`[tools] Auth MCP initialization failed: ${formatError(e)}`),
     );
   },
 
   discoverSkills: async () => {
     try {
       const skills = await discoverSkills();
+      logInfo(`[tools] Discovered ${skills.length} skills`);
       set((state) => {
         const tools = computeTools(skills, state.mcpTools, getActiveSessionInfos(state));
         return { skills, tools };
       });
-    } catch {
-      // ignore
+    } catch (e) {
+      logWarn(`[tools] Skill discovery failed: ${formatError(e)}`);
     }
   },
 
@@ -174,8 +176,8 @@ export const useToolsStore = create<ToolsStore>()((set, get) => ({
         availableTools: tools,
         cwd: activeCwd ?? undefined,
       });
-    } catch {
-      // ignore
+    } catch (e) {
+      logWarn(`[tools] Task runner config failed: ${formatError(e)}`);
     }
   },
 
@@ -197,7 +199,9 @@ export const useToolsStore = create<ToolsStore>()((set, get) => ({
     if (cached && cached.length > 0) {
       // Fire-and-forget: re-initialize MCP servers for these tools
       const serverNames = [...new Set(cached.map((t) => t.server))];
-      invoke("mcp_initialize_servers", { names: serverNames, token: null }).catch(() => {});
+      invoke("mcp_initialize_servers", { names: serverNames, token: null }).catch((e) =>
+        logWarn(`[tools] MCP server re-init failed: ${formatError(e)}`),
+      );
       return;
     }
 
@@ -224,9 +228,11 @@ export const useToolsStore = create<ToolsStore>()((set, get) => ({
 
       // Fire-and-forget: re-initialize MCP servers
       const serverNames = [...new Set(infos.map((t) => t.server))];
-      invoke("mcp_initialize_servers", { names: serverNames, token: null }).catch(() => {});
-    } catch {
-      // DB load failed — not fatal
+      invoke("mcp_initialize_servers", { names: serverNames, token: null }).catch((e) =>
+        logWarn(`[tools] MCP server re-init failed: ${formatError(e)}`),
+      );
+    } catch (e) {
+      logWarn(`[tools] Session tools DB load failed for conv=${convId}: ${formatError(e)}`);
     }
   },
 
@@ -244,7 +250,7 @@ export const useToolsStore = create<ToolsStore>()((set, get) => ({
       invoke("kv_set", {
         key: `session_tools:${convId}`,
         value: JSON.stringify(merged),
-      }).catch(() => {});
+      }).catch((e) => logWarn(`[tools] Failed to persist session tools: ${formatError(e)}`));
 
       // Only recompute tools if this is the active conversation
       if (state.activeConvId !== convId) return { sessionToolsByConv };

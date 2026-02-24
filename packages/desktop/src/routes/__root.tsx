@@ -16,6 +16,8 @@ import { WorkspaceModal } from "../components/WorkspaceModal";
 import { registerGlobalWsHandlers } from "../lib/ws-global-handlers";
 import { createCommands, useCommandsStore } from "../commands";
 import { checkForUpdates } from "../lib/updater";
+import { ErrorBoundary } from "../components/ErrorBoundary";
+import { info as logInfo } from "../log";
 
 export function RootLayout() {
   const navigate = useNavigate();
@@ -25,6 +27,7 @@ export function RootLayout() {
 
   // Initialize auth on mount
   useEffect(() => {
+    logInfo("[root] Initializing app");
     useAuthStore.getState().initialize();
     useToolsStore.getState().initializeMcp();
     useToolsStore.getState().discoverSkills();
@@ -75,7 +78,9 @@ export function RootLayout() {
       <Sidebar />
       <div className="flex min-w-0 flex-1 flex-col">
         <ChatHeader />
-        <Outlet />
+        <ErrorBoundary name="Route">
+          <Outlet />
+        </ErrorBoundary>
       </div>
       <CommandPalette />
       <PermissionModePicker />

@@ -2,6 +2,7 @@ import { useState, useCallback, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { runChatLoop } from "../core/loop";
 import { useStreamingStore } from "../stores/streaming";
+import { error as logError, formatError } from "../log";
 import type {
   Message,
   MessagePart,
@@ -217,6 +218,7 @@ export function useChat(options?: UseChatOptions) {
               useStreamingStore.getState().updateParts(streamConvId!, [...streamingParts]);
               break;
             case "error":
+              logError(`[useChat] Stream error (conv=${streamConvId}): ${event.error}`);
               setError(event.error);
               break;
           }
@@ -264,7 +266,9 @@ export function useChat(options?: UseChatOptions) {
         if (e instanceof DOMException && e.name === "AbortError") {
           // User cancelled
         } else {
-          setError(String(e));
+          const msg = formatError(e);
+          logError(`[useChat] sendMessage failed (conv=${streamConvId}): ${msg}`);
+          setError(msg);
           if (streamConvId) {
             onStreamCompleteRef.current?.(streamConvId, streamConvTitle);
           }

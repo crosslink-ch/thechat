@@ -1,5 +1,6 @@
 import { streamCompletion } from "./openrouter";
 import { truncateToolResult } from "./truncate";
+import { error as logError, warn as logWarn, debug as logDebug, formatError } from "../log";
 import type { ChatLoopOptions, StreamResult, ToolDefinition } from "./types";
 
 const DEFAULT_SYSTEM_PROMPT = `\
@@ -65,6 +66,7 @@ export async function runChatLoop(options: ChatLoopOptions): Promise<void> {
 
     // Doom loop detected — do one final text-only call so the model can respond
     if (isDoomLoop(toolCallHistory)) {
+      logWarn(`[loop] Doom loop detected: ${toolCallHistory.slice(-1)[0]?.toolName} called 3x with same args`);
       onEvent({
         type: "error",
         error: "Doom loop detected: the same tool was called with identical arguments 3 times in a row. Requesting text-only response.",
@@ -90,7 +92,8 @@ export async function runChatLoop(options: ChatLoopOptions): Promise<void> {
         onEvent({ type: "finish", usage: finalResult.usage });
       } catch (e) {
         if (e instanceof DOMException && e.name === "AbortError") return;
-        onEvent({ type: "error", error: String(e) });
+        logError(`[loop] Doom loop recovery failed: ${formatError(e)}`);
+        onEvent({ type: "error", error: formatError(e) });
       }
       return;
     }
@@ -108,7 +111,8 @@ export async function runChatLoop(options: ChatLoopOptions): Promise<void> {
       });
     } catch (e) {
       if (e instanceof DOMException && e.name === "AbortError") return;
-      onEvent({ type: "error", error: String(e) });
+      logError(`[loop] API call failed (round ${round}): ${formatError(e)}`);
+      onEvent({ type: "error", error: formatError(e) });
       return;
     }
 
@@ -170,6 +174,7 @@ export async function runChatLoop(options: ChatLoopOptions): Promise<void> {
         }
 
         try {
+          logDebug(`[loop] Executing tool: ${tc.name}`);
           const execResult = await tool.execute(tc.args, { signal, cwd });
           onEvent({
             type: "tool-result",
@@ -180,7 +185,9 @@ export async function runChatLoop(options: ChatLoopOptions): Promise<void> {
           });
           return { toolCallId: tc.id, result: execResult, isError: false };
         } catch (e) {
-          const errorResult = { error: String(e) };
+          const errMsg = formatError(e);
+          logError(`[loop] Tool "${tc.name}" threw: ${errMsg}`);
+          const errorResult = { error: errMsg };
           onEvent({
             type: "tool-result",
             toolCallId: tc.id,

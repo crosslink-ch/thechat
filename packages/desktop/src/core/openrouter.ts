@@ -1,3 +1,4 @@
+import { error as logError, warn as logWarn } from "../log";
 import type { ChatParams, StreamEvent, StreamResult, ToolDefinition } from "./types";
 
 interface StreamCompletionOptions {
@@ -60,6 +61,7 @@ export async function streamCompletion(options: StreamCompletionOptions): Promis
 
   if (!response.ok) {
     const errBody = await response.text();
+    logError(`[openrouter] API error ${response.status}: ${errBody}`);
     throw new Error(`OpenRouter API error (${response.status}): ${errBody}`);
   }
 
@@ -148,8 +150,8 @@ export async function streamCompletion(options: StreamCompletionOptions): Promis
             }
           }
         }
-      } catch {
-        // Skip malformed JSON chunks
+      } catch (e) {
+        logWarn(`[openrouter] Skipping malformed SSE chunk: ${data.slice(0, 200)}`);
       }
     }
   }
@@ -160,7 +162,7 @@ export async function streamCompletion(options: StreamCompletionOptions): Promis
     try {
       parsedArgs = JSON.parse(tc.args);
     } catch {
-      // If args don't parse, keep empty object
+      logWarn(`[openrouter] Failed to parse tool args for ${tc.name}: ${tc.args.slice(0, 200)}`);
     }
     onEvent({
       type: "tool-call-complete",
