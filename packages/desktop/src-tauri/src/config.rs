@@ -78,24 +78,22 @@ fn create_default_config() -> Result<AppConfig, String> {
 }
 
 pub fn load_config() -> Result<AppConfig, String> {
-    // Try project root first (development), then app data dir
-    let paths: Vec<PathBuf> = vec![
-        // CWD (project root in production)
-        PathBuf::from("config.json"),
-        // Parent of CWD (dev mode CWD is src-tauri/, config is in packages/desktop/)
-        PathBuf::from("../config.json"),
-        // Monorepo root when CWD is packages/desktop/src-tauri/
-        PathBuf::from("../../config.json"),
-        // Extra safety net (monorepo root from deeper nesting)
-        PathBuf::from("../../../config.json"),
-        // Alongside the executable
-        std::env::current_exe()
-            .ok()
-            .and_then(|p| p.parent().map(|p| p.join("config.json")))
-            .unwrap_or_default(),
-        // App data directory
-        config_dir_path().unwrap_or_default(),
-    ];
+    let mut paths: Vec<PathBuf> = Vec::new();
+
+    // Dev-only: search CWD-relative paths for monorepo config.json
+    if cfg!(debug_assertions) {
+        paths.extend([
+            PathBuf::from("config.json"),
+            PathBuf::from("../config.json"),
+            PathBuf::from("../../config.json"),
+            PathBuf::from("../../../config.json"),
+        ]);
+    }
+
+    // App data directory (~/.config/thechat/config.json)
+    if let Some(p) = config_dir_path() {
+        paths.push(p);
+    }
 
     for path in &paths {
         if path.exists() {
