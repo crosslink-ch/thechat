@@ -12,6 +12,7 @@ export const setAgentChatTitle = (title: string) =>
   useAgentChatTitle.setState({ title });
 export const setAgentChatProjectDir = (projectDir: string | null) =>
   useAgentChatTitle.setState({ projectDir });
+export const getAgentChatProjectDir = () => useAgentChatTitle.getState().projectDir;
 
 export function ChatHeader() {
   const connected = useWebSocketStore((s) => s.connected);

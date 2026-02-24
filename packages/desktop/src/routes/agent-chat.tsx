@@ -15,6 +15,7 @@ import { QuestionOverlay } from "../components/QuestionOverlay";
 import { onPermissionRequest, type PermissionRequest } from "../core/permission";
 import { onQuestionRequest } from "../core/question";
 import { onTodoUpdate, resetTodos } from "../core/todo";
+import { consumePendingProjectDir } from "../commands";
 import { buildSystemPrompt, type ProjectInfo } from "../core/system-prompt";
 import { fireNotification } from "../lib/notifications";
 import type { Conversation, QuestionRequest, TodoItem } from "../core/types";
@@ -90,7 +91,8 @@ export function AgentChatRoute() {
     } else if (!routeId && loadedIdRef.current !== null) {
       loadedIdRef.current = null;
       startNewConversation();
-      setProjectDir(null);
+      const inherited = consumePendingProjectDir();
+      setProjectDir(inherited);
       setProjectInfo(null);
       resetTodos();
       setTodosState([]);

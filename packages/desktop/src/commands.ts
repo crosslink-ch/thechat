@@ -3,14 +3,22 @@ import { togglePalette, closePalette } from "./CommandPalette";
 import { toggleSidebar } from "./components/Sidebar";
 import { openAuthModal } from "./components/AuthModal";
 import { openWorkspaceModal } from "./components/WorkspaceModal";
+import { getAgentChatProjectDir } from "./components/ChatHeader";
 import { resetTodos } from "./core/todo";
+
+let _pendingProjectDir: string | null = null;
+export function consumePendingProjectDir(): string | null {
+  const dir = _pendingProjectDir;
+  _pendingProjectDir = null;
+  return dir;
+}
 
 export interface Keybinding {
   key: string;
   ctrl?: boolean;
   meta?: boolean;
   shift?: boolean;
-  prefix?: "C-x";
+  prefix?: string;
 }
 
 export interface Command {
@@ -41,6 +49,18 @@ export function createCommands(
       shortcut: "C-x n",
       keybinding: { prefix: "C-x", key: "n" },
       execute: () => {
+        resetTodos();
+        navigate({ to: "/chat" });
+        closePalette();
+      },
+    },
+    {
+      id: "new-chat-in-project",
+      label: "New Chat in Project",
+      shortcut: "C-x c n",
+      keybinding: { prefix: "C-x c", key: "n" },
+      execute: () => {
+        _pendingProjectDir = getAgentChatProjectDir();
         resetTodos();
         navigate({ to: "/chat" });
         closePalette();

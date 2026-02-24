@@ -127,6 +127,47 @@ describe("useKeybindings", () => {
       expect(cmd.execute).not.toHaveBeenCalled();
       vi.useRealTimers();
     });
+
+    it("dispatches a multi-key prefix command (C-x c n)", () => {
+      const cmd = makeCommand({ id: "deep-cmd", keybinding: { prefix: "C-x c", key: "n" } });
+      seedCommands([cmd]);
+
+      renderHook(() => useKeybindings({ ...noopActions }));
+      pressKey("x", { ctrlKey: true });
+      pressKey("c");
+      pressKey("n");
+
+      expect(cmd.execute).toHaveBeenCalledOnce();
+    });
+
+    it("multi-key prefix does not fire single-key command on intermediate key", () => {
+      const singleCmd = makeCommand({ id: "single", keybinding: { prefix: "C-x", key: "n" } });
+      const multiCmd = makeCommand({ id: "multi", keybinding: { prefix: "C-x c", key: "n" } });
+      seedCommands([singleCmd, multiCmd]);
+
+      renderHook(() => useKeybindings({ ...noopActions }));
+      pressKey("x", { ctrlKey: true });
+      pressKey("c"); // extends to "C-x c", not a match for singleCmd
+      pressKey("n"); // matches multiCmd
+
+      expect(singleCmd.execute).not.toHaveBeenCalled();
+      expect(multiCmd.execute).toHaveBeenCalledOnce();
+    });
+
+    it("multi-key prefix times out if second key not pressed in time", () => {
+      vi.useFakeTimers();
+      const cmd = makeCommand({ id: "deep-cmd", keybinding: { prefix: "C-x c", key: "n" } });
+      seedCommands([cmd]);
+
+      renderHook(() => useKeybindings({ ...noopActions }));
+      pressKey("x", { ctrlKey: true });
+      pressKey("c"); // extends to "C-x c"
+      vi.advanceTimersByTime(2100);
+      pressKey("n");
+
+      expect(cmd.execute).not.toHaveBeenCalled();
+      vi.useRealTimers();
+    });
   });
 
   describe("permission action priority", () => {

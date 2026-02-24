@@ -21,54 +21,75 @@ export function useKeybindings(actions: KeybindingActions) {
   const actionsRef = useRef(actions);
   actionsRef.current = actions;
 
-  const cxPrefixRef = useRef(false);
-  const cxTimeoutRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const prefixRef = useRef<string | null>(null);
+  const prefixTimeoutRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       const commands = useCommandsStore.getState().commands;
 
-      // C-x prefix mode
-      if (cxPrefixRef.current) {
-        cxPrefixRef.current = false;
-        clearTimeout(cxTimeoutRef.current);
+      // Prefix mode (C-x ...)
+      if (prefixRef.current !== null) {
+        clearTimeout(prefixTimeoutRef.current);
+        const currentPrefix = prefixRef.current;
 
-        // Permission actions take priority in C-x prefix
-        if (e.key === "a" && actionsRef.current.onPermissionAllow) {
-          e.preventDefault();
-          actionsRef.current.onPermissionAllow();
-          return;
-        }
-        if (e.key === "d" && actionsRef.current.onPermissionDeny) {
-          e.preventDefault();
-          actionsRef.current.onPermissionDeny();
-          return;
-        }
-        if (e.key === "f" && actionsRef.current.onPermissionDenyWithFeedback) {
-          e.preventDefault();
-          actionsRef.current.onPermissionDenyWithFeedback();
-          return;
-        }
-
-        // Check registry for C-x prefixed commands
-        for (const cmd of commands) {
-          if (cmd.keybinding?.prefix === "C-x" && cmd.keybinding.key === e.key) {
+        // Permission actions take priority when prefix is exactly "C-x"
+        if (currentPrefix === "C-x") {
+          if (e.key === "a" && actionsRef.current.onPermissionAllow) {
             e.preventDefault();
+            prefixRef.current = null;
+            actionsRef.current.onPermissionAllow();
+            return;
+          }
+          if (e.key === "d" && actionsRef.current.onPermissionDeny) {
+            e.preventDefault();
+            prefixRef.current = null;
+            actionsRef.current.onPermissionDeny();
+            return;
+          }
+          if (e.key === "f" && actionsRef.current.onPermissionDenyWithFeedback) {
+            e.preventDefault();
+            prefixRef.current = null;
+            actionsRef.current.onPermissionDenyWithFeedback();
+            return;
+          }
+        }
+
+        // Check for exact match: command with prefix === currentPrefix and key === e.key
+        for (const cmd of commands) {
+          if (cmd.keybinding?.prefix === currentPrefix && cmd.keybinding.key === e.key) {
+            e.preventDefault();
+            prefixRef.current = null;
             cmd.execute();
             return;
           }
         }
 
-        // Any other key: cancel prefix silently
+        // Check if any command's prefix extends the current sequence
+        const extended = currentPrefix + " " + e.key;
+        const hasExtension = commands.some(
+          (cmd) => cmd.keybinding?.prefix === extended,
+        );
+        if (hasExtension) {
+          e.preventDefault();
+          prefixRef.current = extended;
+          prefixTimeoutRef.current = setTimeout(() => {
+            prefixRef.current = null;
+          }, 2000);
+          return;
+        }
+
+        // No match — cancel prefix silently
+        prefixRef.current = null;
         return;
       }
 
       // Enter C-x prefix
       if (e.ctrlKey && e.key === "x") {
         e.preventDefault();
-        cxPrefixRef.current = true;
-        cxTimeoutRef.current = setTimeout(() => {
-          cxPrefixRef.current = false;
+        prefixRef.current = "C-x";
+        prefixTimeoutRef.current = setTimeout(() => {
+          prefixRef.current = null;
         }, 2000);
         return;
       }
@@ -87,7 +108,7 @@ export function useKeybindings(actions: KeybindingActions) {
     window.addEventListener("keydown", handler);
     return () => {
       window.removeEventListener("keydown", handler);
-      clearTimeout(cxTimeoutRef.current);
+      clearTimeout(prefixTimeoutRef.current);
     };
   }, []);
 }
