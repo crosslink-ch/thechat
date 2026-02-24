@@ -12,8 +12,9 @@ pnpm build                # Build all packages
 pnpm build:desktop        # TypeScript check + Vite production build (desktop)
 pnpm build:api            # Bun build (API)
 pnpm tauri:build          # Full production build (frontend + Rust)
-pnpm test                 # Run all test suites in parallel (desktop, api, rust, integration)
+pnpm test                 # Run all test suites in parallel (typecheck, desktop, api, rust, integration)
 python3 scripts/test.py desktop rust  # Run specific suites only
+python3 scripts/test.py typecheck     # Run only TypeScript type checking
 ```
 
 Run a single test file:

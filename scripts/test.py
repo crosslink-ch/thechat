@@ -13,6 +13,10 @@ ROOT = Path(__file__).resolve().parent.parent
 
 SUITES = [
     {
+        "name": "typecheck",
+        "cmd": ["pnpm", "-r", "exec", "tsc", "--noEmit"],
+    },
+    {
         "name": "desktop",
         "cmd": ["pnpm", "--filter", "@thechat/desktop", "test:unit"],
     },
