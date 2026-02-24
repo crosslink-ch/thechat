@@ -5,7 +5,7 @@ import { openAuthModal } from "./components/AuthModal";
 import { openWorkspaceModal } from "./components/WorkspaceModal";
 import { getAgentChatProjectDir } from "./components/ChatHeader";
 import { resetTodos } from "./core/todo";
-import { usePermissionModeStore, type PermissionMode } from "./stores/permission-mode";
+import { openPermissionModePicker } from "./PermissionModePicker";
 
 let _pendingProjectDir: string | null = null;
 export function consumePendingProjectDir(): string | null {
@@ -134,11 +134,8 @@ export function createCommands(
       shortcut: null,
       keybinding: null,
       execute: () => {
-        const cycle: PermissionMode[] = ["request", "allow-edits", "bypass"];
-        const current = usePermissionModeStore.getState().mode;
-        const next = cycle[(cycle.indexOf(current) + 1) % cycle.length];
-        usePermissionModeStore.getState().setMode(next);
         closePalette();
+        openPermissionModePicker();
       },
     },
   ];

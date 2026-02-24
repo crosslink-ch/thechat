@@ -10,6 +10,7 @@ import { useKeybindings } from "../hooks/useKeybindings";
 import { Sidebar } from "../components/Sidebar";
 import { ChatHeader } from "../components/ChatHeader";
 import { CommandPalette } from "../CommandPalette";
+import { PermissionModePicker } from "../PermissionModePicker";
 import { AuthModal } from "../components/AuthModal";
 import { WorkspaceModal } from "../components/WorkspaceModal";
 import { registerGlobalWsHandlers } from "../lib/ws-global-handlers";
@@ -77,6 +78,7 @@ export function RootLayout() {
         <Outlet />
       </div>
       <CommandPalette />
+      <PermissionModePicker />
       <AuthModal />
       <WorkspaceModal />
     </div>
