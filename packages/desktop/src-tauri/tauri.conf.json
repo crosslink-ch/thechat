@@ -24,6 +24,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "createUpdaterArtifacts": false,
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -31,5 +32,13 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ]
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEM5M0RGQjhCRkIyQzgzREQKUldUZGd5ejdpL3M5eVFXZU5HSFpXUVlFV0JQRUxBNjE1dUJBNzQzOUcxbmt3QlZCTlFiYks2S3YK",
+      "endpoints": [
+        "https://github.com/crosslink-ch/thechat/releases/latest/download/latest.json"
+      ]
+    }
   }
 }

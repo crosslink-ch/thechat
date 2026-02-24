@@ -14,6 +14,7 @@ import { AuthModal } from "../components/AuthModal";
 import { WorkspaceModal } from "../components/WorkspaceModal";
 import { registerGlobalWsHandlers } from "../lib/ws-global-handlers";
 import { createCommands, useCommandsStore } from "../commands";
+import { checkForUpdates } from "../lib/updater";
 
 export function RootLayout() {
   const navigate = useNavigate();
@@ -27,6 +28,7 @@ export function RootLayout() {
     useToolsStore.getState().initializeMcp();
     useToolsStore.getState().discoverSkills();
     useConversationsStore.getState().fetchConversations();
+    checkForUpdates();
   }, []);
 
   // React to token changes: connect/disconnect WebSocket, initialize workspaces, auth MCP

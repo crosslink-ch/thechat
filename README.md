@@ -33,7 +33,7 @@ This removes any existing `thechat-postgres` container and volume, starts a new 
 - [Node.js](https://nodejs.org/) >= 22
 - [pnpm](https://pnpm.io/) >= 9
 - [Rust](https://rustup.rs/) (stable)
-- Platform-specific dependencies (see below)
+- Platform-specific system libraries (see below)
 
 #### Linux (Debian/Ubuntu)
 
@@ -42,8 +42,6 @@ sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev 
 ```
 
 #### macOS
-
-Xcode Command Line Tools:
 
 ```bash
 xcode-select --install
@@ -57,11 +55,13 @@ xcode-select --install
 ### Build
 
 ```bash
+git clone https://github.com/crosslink-ch/thechat.git
+cd thechat
 pnpm install
 pnpm tauri:build
 ```
 
-Installers will be in `packages/desktop/src-tauri/target/release/bundle/`.
+Installers are written to `packages/desktop/src-tauri/target/release/bundle/` (`.deb`/`.rpm`/`.AppImage` on Linux, `.dmg` on macOS, `.msi`/`.exe` on Windows).
 
 ### Dev mode
 
@@ -69,4 +69,4 @@ Installers will be in `packages/desktop/src-tauri/target/release/bundle/`.
 pnpm tauri:dev
 ```
 
-This starts the Vite dev server and the Tauri app with hot reload.
+Starts the Vite dev server and the Tauri app with hot reload.

@@ -132,6 +132,13 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_process::init())
+        .setup(|app| {
+            #[cfg(desktop)]
+            app.handle()
+                .plugin(tauri_plugin_updater::Builder::new().build())?;
+            Ok(())
+        })
         .manage(db_state)
         .manage(mcp_state)
         .manage(shell_state)
@@ -182,6 +189,7 @@ mod tests {
         let app = tauri::test::mock_builder()
             .plugin(tauri_plugin_log::Builder::new().build())
             .plugin(tauri_plugin_notification::init())
+            .plugin(tauri_plugin_process::init())
             .manage(db_state)
             .manage(mcp_state)
             .manage(shell_state)
