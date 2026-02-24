@@ -70,7 +70,6 @@ Unless the user specifies otherwise, prefer using Bun and TypeScript for buildin
 
 ## Tips
 
-- The webhook URL must be publicly accessible. Use ngrok for local development.
 - Use the MCP tools to list workspaces, inspect bot details, or manage bot-workspace memberships — check the available \`thechat__\` tools after this skill loads.
 - If you're unsure about something (e.g. what to name the bot, webhook URL), ask the user for clarification
 `,
