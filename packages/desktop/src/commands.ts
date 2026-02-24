@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { togglePalette, closePalette } from "./CommandPalette";
+import { togglePalette, closePalette, openPaletteInCommandMode } from "./CommandPalette";
 import { toggleSidebar } from "./components/Sidebar";
 import { openAuthModal } from "./components/AuthModal";
 import { openWorkspaceModal } from "./components/WorkspaceModal";
@@ -73,6 +73,15 @@ export function createCommands(
       keybinding: { key: "p", ctrl: true },
       execute: () => {
         togglePalette();
+      },
+    },
+    {
+      id: "command-mode",
+      label: "Command Mode",
+      shortcut: "Ctrl+Shift+P",
+      keybinding: { key: "p", ctrl: true, shift: true },
+      execute: () => {
+        openPaletteInCommandMode();
       },
     },
     {

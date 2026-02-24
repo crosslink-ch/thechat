@@ -7,10 +7,13 @@ import { useCommandsStore } from "./commands";
 import { closeSidebar } from "./components/Sidebar";
 
 // Colocated visibility store
-const usePaletteState = create(() => ({ open: false }));
+const usePaletteState = create(() => ({ open: false, initialQuery: "" }));
 export const togglePalette = () =>
-  usePaletteState.setState((s) => ({ open: !s.open }));
-export const closePalette = () => usePaletteState.setState({ open: false });
+  usePaletteState.setState((s) => ({ open: !s.open, initialQuery: "" }));
+export const closePalette = () =>
+  usePaletteState.setState({ open: false, initialQuery: "" });
+export const openPaletteInCommandMode = () =>
+  usePaletteState.setState({ open: true, initialQuery: ">" });
 
 export function CommandPalette() {
   const { open } = usePaletteState();
@@ -29,8 +32,9 @@ function CommandPaletteInner() {
   const unreadAgentChats = useConversationsStore((s) => s.unreadAgentChats);
   const streamingConvIds = useStreamingConvIds();
   const commands = useCommandsStore((s) => s.commands);
+  const initialQuery = usePaletteState((s) => s.initialQuery);
 
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState(initialQuery);
   const deferredQuery = useDeferredValue(query);
   const isStale = query !== deferredQuery;
   const [highlightIndex, setHighlightIndex] = useState(0);
