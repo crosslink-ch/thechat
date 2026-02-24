@@ -33,6 +33,7 @@ export function AgentChatRoute() {
   const [projectInfo, setProjectInfo] = useState<ProjectInfo | null>(null);
 
   const activeAgentConvIdRef = useRef<string | null>(null);
+  const appliedInitialProjectDir = useRef(false);
 
   // systemPrompt is initially computed with just projectDir (for new chats)
   // It gets updated reactively below when conversation.project_dir is available
@@ -99,6 +100,15 @@ export function AgentChatRoute() {
       useToolsStore.getState().setActiveConversation(null);
     }
   }, [routeId, loadConversation, startNewConversation]);
+
+  // Apply CLI project dir for new chats (once per app session)
+  useEffect(() => {
+    if (routeId || appliedInitialProjectDir.current) return;
+    appliedInitialProjectDir.current = true;
+    invoke<string | null>("get_initial_project_dir").then((dir) => {
+      if (dir) setProjectDir(dir);
+    });
+  }, [routeId]);
 
   // Update URL when new conversation is created
   const prevConvId = useRef<string | undefined>(undefined);

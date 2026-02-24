@@ -12,6 +12,8 @@ use tauri::State;
 
 type DbState = Arc<Database>;
 
+pub struct InitialProjectDir(pub Option<String>);
+
 #[tauri::command]
 fn get_config() -> Result<config::AppConfig, String> {
     config::load_config()
@@ -72,8 +74,35 @@ fn kv_delete(key: String, db: State<DbState>) -> Result<(), String> {
     db.kv_delete(&key)
 }
 
+#[tauri::command]
+fn get_initial_project_dir(state: State<InitialProjectDir>) -> Option<String> {
+    state.0.clone()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let initial_project_dir = {
+        let args: Vec<String> = std::env::args().collect();
+        if let Some(arg) = args.get(1) {
+            if arg.starts_with('-') {
+                None
+            } else {
+                match std::fs::canonicalize(arg) {
+                    Ok(path) if path.is_dir() => Some(path.to_string_lossy().into_owned()),
+                    Ok(path) => {
+                        eprintln!("Warning: '{}' is not a directory", path.display());
+                        None
+                    }
+                    Err(e) => {
+                        eprintln!("Warning: cannot resolve '{}': {}", arg, e);
+                        None
+                    }
+                }
+            }
+        } else {
+            None
+        }
+    };
     let db_path = if let Ok(dir) = std::env::var("THECHAT_DATA_DIR") {
         // Explicit override (used by E2E tests for isolation)
         let dir = std::path::PathBuf::from(dir);
@@ -106,8 +135,10 @@ pub fn run() {
         .manage(db_state)
         .manage(mcp_state)
         .manage(shell_state)
+        .manage(InitialProjectDir(initial_project_dir))
         .invoke_handler(tauri::generate_handler![
             get_config,
+            get_initial_project_dir,
             create_conversation,
             list_conversations,
             update_conversation_title,
@@ -154,8 +185,10 @@ mod tests {
             .manage(db_state)
             .manage(mcp_state)
             .manage(shell_state)
+            .manage(InitialProjectDir(None))
             .invoke_handler(tauri::generate_handler![
                 get_config,
+                get_initial_project_dir,
                 create_conversation,
                 list_conversations,
                 update_conversation_title,
