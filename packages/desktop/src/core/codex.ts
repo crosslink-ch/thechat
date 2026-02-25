@@ -33,13 +33,7 @@ function messagesToResponsesInput(messages: Array<Record<string, unknown>>): unk
   for (const msg of messages) {
     const role = msg.role as string;
 
-    if (role === "system") {
-      input.push({
-        type: "message",
-        role: "developer",
-        content: [{ type: "input_text", text: msg.content as string }],
-      });
-    } else if (role === "user") {
+    if (role === "user") {
       input.push({
         type: "message",
         role: "user",
@@ -81,13 +75,27 @@ function messagesToResponsesInput(messages: Array<Record<string, unknown>>): unk
 export async function streamCodexCompletion(options: StreamCodexOptions): Promise<StreamResult> {
   const { accessToken, accountId, model, messages, params, tools, signal, onEvent } = options;
 
+  let instructions = "";
+  const nonSystemMessages: Array<Record<string, unknown>> = [];
+  for (const m of messages) {
+    if ((m.role as string) === "system") {
+      const c = (m.content as string) ?? "";
+      if (c) instructions = instructions ? `${instructions}\n\n${c}` : c;
+    } else {
+      nonSystemMessages.push(m);
+    }
+  }
+
   const body: Record<string, unknown> = {
     model: params?.model ?? model,
-    input: messagesToResponsesInput(messages),
+    instructions,
+    input: messagesToResponsesInput(nonSystemMessages),
     stream: true,
   };
 
   if (params?.max_tokens !== undefined) body.max_output_tokens = params.max_tokens;
+  const reasoningEffort = params?.reasoning_effort ?? "medium";
+  body.reasoning = { effort: reasoningEffort };
 
   // Add tools in Responses API format
   if (tools && tools.length > 0) {
