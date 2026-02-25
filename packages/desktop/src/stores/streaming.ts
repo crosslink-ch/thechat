@@ -9,17 +9,28 @@ import type { MessagePart } from "../core/types";
 const accumulatedParts = new Map<string, MessagePart[]>();
 const listeners = new Map<string, Set<(parts: MessagePart[] | null) => void>>();
 
-/** Called from useChat onEvents — updates the Map + notifies active listeners */
+/**
+ * Called from useChat onEvents — stores parts and notifies active listeners.
+ * Accepts the mutable array directly (no copy needed from caller).
+ * Only copies when there are active subscribers (foreground chat) so
+ * React sees a new reference. Background chats store the reference as-is,
+ * avoiding per-batch allocations.
+ */
 export function updateStreamParts(convId: string, parts: MessagePart[]) {
-  accumulatedParts.set(convId, parts);
   const subs = listeners.get(convId);
-  if (subs) {
-    for (const fn of subs) fn(parts);
+  if (subs && subs.size > 0) {
+    const snapshot = [...parts];
+    accumulatedParts.set(convId, snapshot);
+    for (const fn of subs) fn(snapshot);
+  } else {
+    accumulatedParts.set(convId, parts);
   }
 }
 
+/** Returns a snapshot copy (safe to use as React state when subscriber joins mid-stream) */
 export function getStreamParts(convId: string): MessagePart[] | null {
-  return accumulatedParts.get(convId) ?? null;
+  const parts = accumulatedParts.get(convId);
+  return parts ? [...parts] : null;
 }
 
 export function subscribeToStream(

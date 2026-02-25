@@ -227,9 +227,12 @@ export function useChat(options?: UseChatOptions) {
                 break;
             }
           }
-          // Single React update per batch instead of per event
+          // Single React update per batch instead of per event.
+          // Pass streamingParts directly — updateStreamParts copies only
+          // when there are active subscribers (foreground chat). Background
+          // chats skip the copy entirely.
           if (partsChanged) {
-            updateStreamParts(streamConvId!, [...streamingParts]);
+            updateStreamParts(streamConvId!, streamingParts);
           }
         };
 
