@@ -1,6 +1,13 @@
 import { create } from "zustand";
 import { usePermissionModeStore } from "../stores/permission-mode";
 
+export class PermissionDeniedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "PermissionDeniedError";
+  }
+}
+
 export interface PermissionRequest {
   id: string;
   convId: string;
@@ -53,7 +60,7 @@ export function requestPermission(info: {
       },
       reject: (reason: string) => {
         removeRequest(convId, id);
-        reject(new Error(reason));
+        reject(new PermissionDeniedError(reason));
       },
     };
 

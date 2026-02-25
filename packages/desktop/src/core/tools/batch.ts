@@ -1,4 +1,5 @@
 import type { ToolDefinition, ToolExecutionContext } from "../types";
+import { PermissionDeniedError } from "../permission";
 import { defineTool } from "./define";
 import { validateToolArgs } from "./validate";
 
@@ -94,7 +95,7 @@ If any individual tool call fails, other calls still complete.`,
             index,
             tool: call.tool,
             success: false,
-            error: String(e),
+            error: e instanceof PermissionDeniedError ? e.message : String(e),
           };
         }
       }),
@@ -103,6 +104,17 @@ If any individual tool call fails, other calls still complete.`,
     const successful = results.filter((r) => r.success).length;
     const failed = results.filter((r) => !r.success).length;
 
-    return { total: tool_calls.length, successful, failed, results };
+    // Surface permission denial feedback at the top level so the model sees it clearly
+    const permissionDenials = results
+      .filter((r) => !r.success && r.error?.includes("User feedback:"))
+      .map((r) => `${r.tool}: ${r.error}`);
+
+    return {
+      total: tool_calls.length,
+      successful,
+      failed,
+      ...(permissionDenials.length > 0 && { user_feedback: permissionDenials }),
+      results,
+    };
   },
 });

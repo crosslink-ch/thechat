@@ -266,6 +266,81 @@ describe("batch + permissions", () => {
     expect(result.results[1].success).toBe(true);
   });
 
+  it("surfaces user feedback at top level when permission is denied with feedback", async () => {
+    const shellTool = makePermissionTool("shell");
+    setBatchToolRegistry([shellTool]);
+
+    const batchPromise = batchTool.execute(
+      { tool_calls: [{ tool: "shell", args: { cmd: "rm -rf /" } }] },
+      { convId: CONV_ID },
+    ) as Promise<BatchResult>;
+
+    await vi.waitFor(() => expect(getQueue()).toHaveLength(1));
+    getQueue()[0].reject("User denied permission. User feedback: use git clean instead");
+
+    const result = await batchPromise;
+    expect(result.failed).toBe(1);
+
+    // Feedback should be in the individual result error
+    expect(result.results[0].error).toContain("use git clean instead");
+
+    // Feedback should ALSO be surfaced at the top level so the model sees it clearly
+    expect(result).toHaveProperty("user_feedback");
+    const feedback = (result as any).user_feedback as string[];
+    expect(feedback).toHaveLength(1);
+    expect(feedback[0]).toContain("shell");
+    expect(feedback[0]).toContain("use git clean instead");
+  });
+
+  it("surfaces feedback from multiple denied tools at top level", async () => {
+    const shellTool = makePermissionTool("shell");
+    const writeTool = makePermissionTool("write");
+    setBatchToolRegistry([shellTool, writeTool]);
+
+    const batchPromise = batchTool.execute(
+      {
+        tool_calls: [
+          { tool: "shell", args: { cmd: "dangerous" } },
+          { tool: "write", args: { cmd: "secret.txt" } },
+        ],
+      },
+      { convId: CONV_ID },
+    ) as Promise<BatchResult>;
+
+    await vi.waitFor(() => expect(getQueue()).toHaveLength(2));
+
+    getQueue()[0].reject("User denied permission. User feedback: don't run dangerous commands");
+    await vi.waitFor(() => expect(getQueue()).toHaveLength(1));
+    getQueue()[0].reject("User denied permission. User feedback: don't write to that file");
+
+    const result = await batchPromise;
+    expect(result.failed).toBe(2);
+
+    const feedback = (result as any).user_feedback as string[];
+    expect(feedback).toHaveLength(2);
+    expect(feedback[0]).toContain("don't run dangerous commands");
+    expect(feedback[1]).toContain("don't write to that file");
+  });
+
+  it("does not include user_feedback field when denied without feedback", async () => {
+    const shellTool = makePermissionTool("shell");
+    setBatchToolRegistry([shellTool]);
+
+    const batchPromise = batchTool.execute(
+      { tool_calls: [{ tool: "shell", args: { cmd: "ls" } }] },
+      { convId: CONV_ID },
+    ) as Promise<BatchResult>;
+
+    await vi.waitFor(() => expect(getQueue()).toHaveLength(1));
+    getQueue()[0].reject("User denied permission");
+
+    const result = await batchPromise;
+    expect(result.failed).toBe(1);
+    expect(result.results[0].error).toContain("User denied permission");
+    // No user_feedback field when there's no actual feedback text
+    expect(result).not.toHaveProperty("user_feedback");
+  });
+
   it("mixes permission-requiring tools with non-permission tools", async () => {
     const shellTool = makePermissionTool("shell");
     const readTool: ToolDefinition = {

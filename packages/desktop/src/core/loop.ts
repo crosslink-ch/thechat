@@ -219,9 +219,8 @@ export async function runChatLoop(options: ChatLoopOptions): Promise<void> {
           });
           return { toolCallId: tc.id, result: execResult, isError: false };
         } catch (e) {
-          const errMsg = formatError(e);
-          logError(`[loop] Tool "${tc.name}" threw: ${errMsg}`);
-          const errorResult = { error: errMsg };
+          logError(`[loop] Tool "${tc.name}" threw: ${formatError(e)}`);
+          const errorResult = { error: e instanceof Error ? e.message : String(e) };
           onEvent({
             type: "tool-result",
             toolCallId: tc.id,
