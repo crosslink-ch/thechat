@@ -106,7 +106,7 @@ describe("Sidebar", () => {
     await renderWithRouter(<Sidebar />);
 
     expect(screen.getByText("Log in")).toBeInTheDocument();
-    expect(screen.getByText("+ New Chat")).toBeInTheDocument();
+    expect(screen.getByText("New Chat")).toBeInTheDocument();
     expect(screen.getByText("Chat 1")).toBeInTheDocument();
     expect(screen.getByText("Chat 2")).toBeInTheDocument();
     // No workspace switcher
@@ -149,7 +149,7 @@ describe("Sidebar", () => {
 
     // Not logged in — agent chats shown directly (no tabs)
     const { unmount } = await renderWithRouter(<Sidebar />);
-    expect(screen.getByText("+ New Chat")).toBeInTheDocument();
+    expect(screen.getByText("New Chat")).toBeInTheDocument();
     expect(screen.getByText("Chat 1")).toBeInTheDocument();
     unmount();
 
@@ -157,7 +157,7 @@ describe("Sidebar", () => {
     useAuthStore.setState({ user, token: "test-token" });
     useWorkspacesStore.setState({ workspaces: workspaceList });
     const { unmount: unmount2 } = await renderWithRouter(<Sidebar />);
-    expect(screen.getByText("+ New Chat")).toBeInTheDocument();
+    expect(screen.getByText("New Chat")).toBeInTheDocument();
     expect(screen.getByText("Chat 1")).toBeInTheDocument();
     unmount2();
 

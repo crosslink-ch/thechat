@@ -59,9 +59,9 @@ describe("ChatMessage", () => {
     expect(screen.getByText("You")).toBeInTheDocument();
   });
 
-  it("shows 'AI' label for assistant messages", () => {
+  it("shows 'Assistant' label for assistant messages", () => {
     render(<ChatMessage message={assistantMsg} />);
-    expect(screen.getByText("AI")).toBeInTheDocument();
+    expect(screen.getByText("Assistant")).toBeInTheDocument();
   });
 
   it("applies user data-testid for user messages", () => {
@@ -202,10 +202,10 @@ describe("StreamingMessage", () => {
     expect(container.querySelector("[data-testid='chat-message-assistant']")).toBeNull();
   });
 
-  it("shows AI label", () => {
+  it("shows Assistant label", () => {
     setupStreaming([]);
     render(<StreamingMessage convId={CONV_ID} />);
-    expect(screen.getByText("AI")).toBeInTheDocument();
+    expect(screen.getByText("Assistant")).toBeInTheDocument();
   });
 
   it("shows content when available", () => {
