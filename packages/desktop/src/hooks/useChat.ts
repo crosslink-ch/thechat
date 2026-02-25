@@ -1,7 +1,7 @@
 import { useState, useCallback, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { runChatLoop } from "../core/loop";
-import { useStreamingStore } from "../stores/streaming";
+import { useStreamingStore, updateStreamParts } from "../stores/streaming";
 import { useCodexAuthStore } from "../stores/codex-auth";
 import { error as logError, formatError } from "../log";
 import type {
@@ -170,7 +170,7 @@ export function useChat(options?: UseChatOptions) {
               } else {
                 streamingParts.push({ type: "text", text: event.text });
               }
-              useStreamingStore.getState().updateParts(streamConvId!, [...streamingParts]);
+              updateStreamParts(streamConvId!, [...streamingParts]);
               break;
             }
             case "reasoning-delta": {
@@ -186,7 +186,7 @@ export function useChat(options?: UseChatOptions) {
                   streamingParts.splice(insertIdx, 0, { type: "reasoning", text: event.text });
                 }
               }
-              useStreamingStore.getState().updateParts(streamConvId!, [...streamingParts]);
+              updateStreamParts(streamConvId!, [...streamingParts]);
               break;
             }
             case "tool-call-start":
@@ -196,7 +196,7 @@ export function useChat(options?: UseChatOptions) {
                 toolName: event.toolName,
                 args: {},
               });
-              useStreamingStore.getState().updateParts(streamConvId!, [...streamingParts]);
+              updateStreamParts(streamConvId!, [...streamingParts]);
               break;
             case "tool-call-complete": {
               const tc = streamingParts.find(
@@ -205,7 +205,7 @@ export function useChat(options?: UseChatOptions) {
               if (tc && tc.type === "tool-call") {
                 tc.args = event.args;
               }
-              useStreamingStore.getState().updateParts(streamConvId!, [...streamingParts]);
+              updateStreamParts(streamConvId!, [...streamingParts]);
               break;
             }
             case "tool-result":
@@ -216,11 +216,13 @@ export function useChat(options?: UseChatOptions) {
                 result: event.result,
                 isError: event.isError,
               });
-              useStreamingStore.getState().updateParts(streamConvId!, [...streamingParts]);
+              updateStreamParts(streamConvId!, [...streamingParts]);
               break;
             case "error":
               logError(`[useChat] Stream error (conv=${streamConvId}): ${event.error}`);
-              setError(event.error);
+              if (activeConvIdRef.current === streamConvId) {
+                setError(event.error);
+              }
               break;
           }
         };

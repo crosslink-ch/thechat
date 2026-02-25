@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { ChatMessage, StreamingMessage } from "./ChatMessage";
-import { useStreamingStore } from "./stores/streaming";
+import { useStreamingStore, updateStreamParts } from "./stores/streaming";
 import type { Message, MessagePart } from "./core/types";
 import type { PermissionRequest } from "./core/permission";
 
@@ -11,7 +11,7 @@ function setupStreaming(parts: MessagePart[]) {
   const store = useStreamingStore.getState();
   store.startStreaming(CONV_ID);
   if (parts.length > 0) {
-    store.updateParts(CONV_ID, parts);
+    updateStreamParts(CONV_ID, parts);
   }
 }
 
