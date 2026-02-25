@@ -3,10 +3,12 @@ mod db;
 mod fs;
 mod mcp;
 mod shell;
+mod stream;
 
 use db::{Conversation, Database, Message};
 use mcp::McpManager;
 use shell::ShellProcesses;
+use stream::StreamCancellers;
 use std::sync::Arc;
 use tauri::State;
 
@@ -145,6 +147,7 @@ pub fn run() {
     let db_state: DbState = Arc::new(database);
     let mcp_state: Arc<McpManager> = Arc::new(McpManager::new());
     let shell_state: Arc<ShellProcesses> = Arc::new(ShellProcesses::new());
+    let stream_state: Arc<StreamCancellers> = Arc::new(StreamCancellers::new());
 
     log::info!("App started");
 
@@ -164,6 +167,7 @@ pub fn run() {
         .manage(db_state)
         .manage(mcp_state)
         .manage(shell_state)
+        .manage(stream_state)
         .manage(InitialProjectDir(initial_project_dir))
         .invoke_handler(tauri::generate_handler![
             get_config,
@@ -191,6 +195,8 @@ pub fn run() {
             fs::fs_glob,
             fs::fs_grep,
             fs::fs_list_dir,
+            stream::stream_completion,
+            stream::cancel_stream,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -207,6 +213,7 @@ mod tests {
         let db_state: DbState = Arc::new(database);
         let mcp_state: Arc<McpManager> = Arc::new(McpManager::new());
         let shell_state: Arc<ShellProcesses> = Arc::new(ShellProcesses::new());
+        let stream_state: Arc<StreamCancellers> = Arc::new(StreamCancellers::new());
 
         let app = tauri::test::mock_builder()
             .plugin(tauri_plugin_log::Builder::new().level(log_level_from_env()).build())
@@ -215,6 +222,7 @@ mod tests {
             .manage(db_state)
             .manage(mcp_state)
             .manage(shell_state)
+            .manage(stream_state)
             .manage(InitialProjectDir(None))
             .invoke_handler(tauri::generate_handler![
                 get_config,
@@ -234,13 +242,15 @@ mod tests {
                 shell::execute_shell_command,
                 shell::kill_shell_process,
                 fs::get_project_info,
-            fs::get_cwd,
+                fs::get_cwd,
                 fs::fs_read_file,
                 fs::fs_write_file,
                 fs::fs_edit_file,
                 fs::fs_glob,
                 fs::fs_grep,
                 fs::fs_list_dir,
+                stream::stream_completion,
+                stream::cancel_stream,
             ])
             .build(tauri::generate_context!())
             .expect("failed to build app with mock runtime");

@@ -1,5 +1,4 @@
-import { parseOpenRouterSSE } from "./sse-parse";
-import { error as logError, warn as logWarn } from "../log";
+import { invoke, Channel } from "@tauri-apps/api/core";
 import type { ChatParams, StreamEvent, StreamResult, ToolDefinition } from "./types";
 
 interface StreamCompletionOptions {
@@ -64,114 +63,35 @@ function buildRequest(options: StreamCompletionOptions): {
   };
 }
 
-/** Try to create a stream Worker. Returns null if Workers aren't available (e.g. test env). */
-function createStreamWorker(): Worker | null {
-  if (typeof Worker === "undefined") return null;
+export async function streamCompletion(options: StreamCompletionOptions): Promise<StreamResult> {
+  const req = buildRequest(options);
+  const streamId = `or_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+
+  const onEvent = new Channel<StreamEvent[]>();
+  onEvent.onmessage = (batch) => {
+    for (const event of batch) options.onEvent(event);
+  };
+
+  const onAbort = () => {
+    invoke("cancel_stream", { streamId }).catch(() => {});
+  };
+  options.signal?.addEventListener("abort", onAbort);
+
   try {
-    return new Worker(
-      new URL("./stream-worker.ts", import.meta.url),
-      { type: "module" },
-    );
-  } catch {
-    return null;
-  }
-}
-
-/** Stream via Web Worker — SSE parsing runs off the main thread. */
-function streamViaWorker(
-  worker: Worker,
-  req: { url: string; headers: Record<string, string>; body: string },
-  onEvent: (event: StreamEvent) => void,
-  signal?: AbortSignal,
-): Promise<StreamResult> {
-  return new Promise((resolve, reject) => {
-    const cleanup = () => worker.terminate();
-
-    const onAbort = () => {
-      worker.postMessage({ type: "cancel" });
-    };
-    signal?.addEventListener("abort", onAbort);
-
-    worker.onmessage = (e: MessageEvent) => {
-      const msg = e.data;
-      if (msg.type === "events") {
-        for (const event of msg.events) {
-          onEvent(event);
-        }
-      } else if (msg.type === "result") {
-        signal?.removeEventListener("abort", onAbort);
-        cleanup();
-        resolve(msg.result as StreamResult);
-      } else if (msg.type === "error") {
-        signal?.removeEventListener("abort", onAbort);
-        cleanup();
-        logError(`[openrouter] ${msg.error}`);
-        reject(new Error(msg.error));
-      } else if (msg.type === "aborted") {
-        signal?.removeEventListener("abort", onAbort);
-        cleanup();
-        reject(new DOMException("Aborted", "AbortError"));
-      }
-    };
-
-    worker.onerror = (err) => {
-      signal?.removeEventListener("abort", onAbort);
-      cleanup();
-      reject(new Error(err.message || "Worker error"));
-    };
-
-    worker.postMessage({
-      type: "start",
-      provider: "openrouter",
+    return await invoke<StreamResult>("stream_completion", {
       url: req.url,
       headers: req.headers,
       body: req.body,
+      provider: "openrouter",
+      streamId,
+      onEvent,
     });
-  });
-}
-
-/** Fallback: stream directly on the main thread (used when Worker is unavailable). */
-async function streamDirect(
-  req: { url: string; headers: Record<string, string>; body: string },
-  onEvent: (event: StreamEvent) => void,
-  signal?: AbortSignal,
-): Promise<StreamResult> {
-  const response = await fetch(req.url, {
-    method: "POST",
-    headers: req.headers,
-    body: req.body,
-    signal,
-  });
-
-  if (!response.ok) {
-    const errBody = await response.text();
-    logError(`[openrouter] API error ${response.status}: ${errBody}`);
-    throw new Error(`OpenRouter API error (${response.status}): ${errBody}`);
+  } catch (e) {
+    if (typeof e === "string" && e === "cancelled")
+      throw new DOMException("Aborted", "AbortError");
+    const msg = typeof e === "string" ? e : String(e);
+    throw new Error(msg);
+  } finally {
+    options.signal?.removeEventListener("abort", onAbort);
   }
-
-  const reader = response.body?.getReader();
-  if (!reader) throw new Error("No response body");
-
-  return parseOpenRouterSSE(reader, onEvent);
-}
-
-export async function streamCompletion(options: StreamCompletionOptions): Promise<StreamResult> {
-  const req = buildRequest(options);
-
-  const worker = createStreamWorker();
-  if (worker) {
-    try {
-      return await streamViaWorker(worker, req, options.onEvent, options.signal);
-    } catch (e) {
-      // Re-throw abort errors as-is
-      if (e instanceof DOMException && e.name === "AbortError") throw e;
-      // Re-throw API errors (Worker successfully ran but API returned error)
-      if (e instanceof Error && !e.message.includes("Worker")) throw e;
-      // Worker failed to initialize/run — fall back to direct streaming
-      logWarn(`[openrouter] Worker failed, falling back to direct streaming`);
-      return streamDirect(req, options.onEvent, options.signal);
-    }
-  }
-
-  return streamDirect(req, options.onEvent, options.signal);
 }

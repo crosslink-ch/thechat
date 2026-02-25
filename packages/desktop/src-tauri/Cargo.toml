@@ -34,7 +34,7 @@ dirs = "5"
 glob = "0.3"
 regex = "1"
 walkdir = "2"
-reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls", "stream"] }
 tokio = { version = "1", features = ["process", "time"] }
 libc = "0.2"
 
