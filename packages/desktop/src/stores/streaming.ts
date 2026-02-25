@@ -7,7 +7,7 @@ import type { MessagePart } from "../core/types";
 
 // Accumulated parts per conversation — plain JS Map, not in Zustand
 const accumulatedParts = new Map<string, MessagePart[]>();
-const listeners = new Map<string, Set<(parts: MessagePart[]) => void>>();
+const listeners = new Map<string, Set<(parts: MessagePart[] | null) => void>>();
 
 /** Called from useChat onEvent — updates the Map + notifies active listeners */
 export function updateStreamParts(convId: string, parts: MessagePart[]) {
@@ -24,7 +24,7 @@ export function getStreamParts(convId: string): MessagePart[] | null {
 
 export function subscribeToStream(
   convId: string,
-  listener: (parts: MessagePart[]) => void,
+  listener: (parts: MessagePart[] | null) => void,
 ): () => void {
   let subs = listeners.get(convId);
   if (!subs) {
@@ -59,8 +59,16 @@ export const useStreamingStore = create<StreamingStore>()((set) => ({
   },
 
   stopStreaming: (convId) => {
+    // Notify subscribers that streaming is done so React state clears
+    // and StreamingMessage unmounts. Don't delete listeners — the React
+    // useEffect cleanup handles that. Deleting here would break the next
+    // stream in the same conversation (convId unchanged → useEffect won't
+    // re-run → no new subscription).
+    const subs = listeners.get(convId);
+    if (subs) {
+      for (const fn of subs) fn(null);
+    }
     accumulatedParts.delete(convId);
-    listeners.delete(convId);
     set((state) => {
       const streamingConvIds = new Set(state.streamingConvIds);
       streamingConvIds.delete(convId);
