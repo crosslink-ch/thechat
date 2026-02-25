@@ -1,4 +1,4 @@
-import { fetch } from "@tauri-apps/plugin-http";
+import { parseCodexSSE } from "./sse-parse";
 import { error as logError, warn as logWarn, debug as logDebug } from "../log";
 import type { ChatParams, StreamEvent, StreamResult, ToolDefinition } from "./types";
 
@@ -89,11 +89,13 @@ function messagesToResponsesInput(messages: Array<Record<string, unknown>>): unk
   return input;
 }
 
-// No persistent response tracking required for Codex: function_call_output can
-// reference the function_call provided in the same input using matching call_id.
-
-export async function streamCodexCompletion(options: StreamCodexOptions): Promise<StreamResult> {
-  const { accessToken, accountId, model, messages, params, tools, signal, onEvent } = options;
+/** Build the fetch request for Codex Responses API. */
+function buildRequest(options: StreamCodexOptions): {
+  url: string;
+  headers: Record<string, string>;
+  body: string;
+} {
+  const { accessToken, accountId, model, messages, params, tools } = options;
 
   let instructions = "";
   const nonSystemMessages: Array<Record<string, unknown>> = [];
@@ -106,7 +108,7 @@ export async function streamCodexCompletion(options: StreamCodexOptions): Promis
     }
   }
 
-  const body: Record<string, unknown> = {
+  const bodyObj: Record<string, unknown> = {
     model: params?.model ?? model,
     instructions,
     input: messagesToResponsesInput(nonSystemMessages),
@@ -115,21 +117,18 @@ export async function streamCodexCompletion(options: StreamCodexOptions): Promis
   };
 
   try {
-    logDebug(`[codex] Request body: ${JSON.stringify(truncate(body))}`);
+    logDebug(`[codex] Request body: ${JSON.stringify(truncate(bodyObj))}`);
   } catch {
     // ignore stringify errors
   }
 
-  // Note: Codex endpoint rejects previous_response_id. We rely on echoing
-  // function_call items (with matching call_id) alongside function_call_output.
-
-  if (params?.max_tokens !== undefined) body.max_output_tokens = params.max_tokens;
+  if (params?.max_tokens !== undefined) bodyObj.max_output_tokens = params.max_tokens;
   const reasoningEffort = params?.reasoning_effort ?? "medium";
-  body.reasoning = { effort: reasoningEffort };
+  bodyObj.reasoning = { effort: reasoningEffort };
 
   // Add tools in Responses API format
   if (tools && tools.length > 0) {
-    body.tools = tools.map((t) => ({
+    bodyObj.tools = tools.map((t) => ({
       type: "function",
       name: t.name,
       description: t.description,
@@ -145,131 +144,121 @@ export async function streamCodexCompletion(options: StreamCodexOptions): Promis
     headers["ChatGPT-Account-Id"] = accountId;
   }
 
-  const response = await fetch(CODEX_API_ENDPOINT, {
-    method: "POST",
+  return {
+    url: CODEX_API_ENDPOINT,
     headers,
-    body: JSON.stringify(body),
+    body: JSON.stringify(bodyObj),
+  };
+}
+
+/** Try to create a stream Worker. Returns null if Workers aren't available (e.g. test env). */
+function createStreamWorker(): Worker | null {
+  if (typeof Worker === "undefined") return null;
+  try {
+    return new Worker(
+      new URL("./stream-worker.ts", import.meta.url),
+      { type: "module" },
+    );
+  } catch {
+    return null;
+  }
+}
+
+/** Stream via Web Worker — SSE parsing runs off the main thread. */
+function streamViaWorker(
+  worker: Worker,
+  req: { url: string; headers: Record<string, string>; body: string },
+  onEvent: (event: StreamEvent) => void,
+  signal?: AbortSignal,
+): Promise<StreamResult> {
+  return new Promise((resolve, reject) => {
+    const cleanup = () => worker.terminate();
+
+    const onAbort = () => {
+      worker.postMessage({ type: "cancel" });
+    };
+    signal?.addEventListener("abort", onAbort);
+
+    worker.onmessage = (e: MessageEvent) => {
+      const msg = e.data;
+      if (msg.type === "events") {
+        for (const event of msg.events) {
+          onEvent(event);
+        }
+      } else if (msg.type === "result") {
+        signal?.removeEventListener("abort", onAbort);
+        cleanup();
+        resolve(msg.result as StreamResult);
+      } else if (msg.type === "error") {
+        signal?.removeEventListener("abort", onAbort);
+        cleanup();
+        logError(`[codex] ${msg.error}`);
+        reject(new Error(msg.error));
+      } else if (msg.type === "aborted") {
+        signal?.removeEventListener("abort", onAbort);
+        cleanup();
+        reject(new DOMException("Aborted", "AbortError"));
+      }
+    };
+
+    worker.onerror = (err) => {
+      signal?.removeEventListener("abort", onAbort);
+      cleanup();
+      reject(new Error(err.message || "Worker error"));
+    };
+
+    worker.postMessage({
+      type: "start",
+      provider: "codex",
+      url: req.url,
+      headers: req.headers,
+      body: req.body,
+    });
+  });
+}
+
+/** Fallback: stream directly on the main thread (used when Worker is unavailable). */
+async function streamDirect(
+  req: { url: string; headers: Record<string, string>; body: string },
+  onEvent: (event: StreamEvent) => void,
+  signal?: AbortSignal,
+): Promise<StreamResult> {
+  const response = await fetch(req.url, {
+    method: "POST",
+    headers: req.headers,
+    body: req.body,
     signal,
   });
 
   if (!response.ok) {
     const errBody = await response.text();
     logError(`[codex] API error ${response.status}: ${errBody}`);
-    try {
-      logDebug(`[codex] Failing request body: ${JSON.stringify(truncate(body))}`);
-    } catch {}
     throw new Error(`Codex API error (${response.status}): ${errBody}`);
   }
 
   const reader = response.body?.getReader();
   if (!reader) throw new Error("No response body");
 
-  const decoder = new TextDecoder();
-  let buffer = "";
-  let accText = "";
-  let accReasoning = "";
-  let usage: StreamResult["usage"] = undefined;
+  return parseCodexSSE(reader, onEvent);
+}
 
-  // Track function calls by item_id
-  const funcCalls: Map<string, { id: string; callId: string; name: string; args: string }> = new Map();
+export async function streamCodexCompletion(options: StreamCodexOptions): Promise<StreamResult> {
+  const req = buildRequest(options);
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-
-    buffer += decoder.decode(value, { stream: true });
-
-    const lines = buffer.split("\n");
-    buffer = lines.pop() || "";
-
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed || !trimmed.startsWith("data: ")) continue;
-
-      const data = trimmed.slice(6);
-      if (data === "[DONE]") continue;
-
-      try {
-        const event = JSON.parse(data);
-        const type = event.type as string;
-
-        if (type === "response.output_text.delta") {
-          const delta = event.delta as string;
-          accText += delta;
-          onEvent({ type: "text-delta", text: delta });
-        } else if (type === "response.reasoning_summary_text.delta") {
-          const delta = event.delta as string;
-          accReasoning += delta;
-          onEvent({ type: "reasoning-delta", text: delta });
-        } else if (type === "response.output_item.added") {
-          const item = event.item as Record<string, unknown>;
-          if (item.type === "function_call") {
-            const itemId = item.id as string;
-            const callId = (item.call_id as string) || itemId;
-            const name = (item.name as string) || "";
-            funcCalls.set(itemId, { id: itemId, callId, name, args: "" });
-            if (name) {
-              onEvent({ type: "tool-call-start", toolCallId: callId, toolName: name });
-            }
-          }
-        } else if (type === "response.function_call_arguments.delta") {
-          const itemId = event.item_id as string;
-          const delta = event.delta as string;
-          const fc = funcCalls.get(itemId);
-          if (fc) {
-            fc.args += delta;
-            onEvent({ type: "tool-call-args-delta", toolCallId: fc.callId, args: delta });
-          }
-        } else if (type === "response.output_item.done") {
-          const item = event.item as Record<string, unknown>;
-          if (item.type === "function_call") {
-            const itemId = item.id as string;
-            const fc = funcCalls.get(itemId);
-            if (fc) {
-              // Use completed arguments from the item
-              fc.args = (item.arguments as string) || fc.args;
-            }
-          }
-        } else if (type === "response.completed" || type === "response.incomplete") {
-          const resp = event.response as Record<string, unknown> | undefined;
-          const u = resp?.usage as Record<string, unknown> | undefined;
-          if (u) {
-            const inputTokens = (u.input_tokens as number) || 0;
-            const outputTokens = (u.output_tokens as number) || 0;
-            usage = {
-              prompt_tokens: inputTokens,
-              completion_tokens: outputTokens,
-              total_tokens: inputTokens + outputTokens,
-            };
-          }
-          // No response id tracking necessary for Codex flow
-        } else if (type === "error") {
-          const msg = (event.message as string) || "Unknown Codex API error";
-          logError(`[codex] Stream error: ${msg}`);
-          onEvent({ type: "error", error: msg });
-        }
-      } catch (e) {
-        logWarn(`[codex] Skipping malformed SSE chunk: ${data.slice(0, 200)}`);
-      }
+  const worker = createStreamWorker();
+  if (worker) {
+    try {
+      return await streamViaWorker(worker, req, options.onEvent, options.signal);
+    } catch (e) {
+      // Re-throw abort errors as-is
+      if (e instanceof DOMException && e.name === "AbortError") throw e;
+      // Re-throw API errors (Worker successfully ran but API returned error)
+      if (e instanceof Error && !e.message.includes("Worker")) throw e;
+      // Worker failed to initialize/run — fall back to direct streaming
+      logWarn(`[codex] Worker failed, falling back to direct streaming`);
+      return streamDirect(req, options.onEvent, options.signal);
     }
   }
 
-  // Emit tool-call-complete events for all accumulated function calls
-  const toolCalls = Array.from(funcCalls.values()).map((fc) => {
-    let parsedArgs: Record<string, unknown> = {};
-    try {
-      parsedArgs = JSON.parse(fc.args);
-    } catch {
-      logWarn(`[codex] Failed to parse tool args for ${fc.name}: ${fc.args.slice(0, 200)}`);
-    }
-    onEvent({
-      type: "tool-call-complete",
-      toolCallId: fc.callId,
-      toolName: fc.name,
-      args: parsedArgs,
-    });
-    return { id: fc.callId, name: fc.name, args: parsedArgs };
-  });
-
-  return { text: accText, reasoning: accReasoning, toolCalls, usage };
+  return streamDirect(req, options.onEvent, options.signal);
 }
