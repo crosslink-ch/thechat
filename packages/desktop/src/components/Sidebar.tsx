@@ -7,7 +7,9 @@ import { useConversationsStore } from "../stores/conversations";
 import { useStreamingConvIds } from "../stores/streaming";
 import { useNotificationsStore } from "../stores/notifications";
 import { openAuthModal } from "./AuthModal";
+import { openCodexAuthModal } from "./CodexAuthModal";
 import { openWorkspaceModal } from "./WorkspaceModal";
+import { useCodexAuthStore } from "../stores/codex-auth";
 import { api } from "../lib/api";
 import { basename } from "../lib/path";
 import type { WorkspaceChannel, WorkspaceMember } from "@thechat/shared";
@@ -52,6 +54,7 @@ export function Sidebar() {
   const unreadChannels = useConversationsStore((s) => s.unreadChannels);
   const streamingConvIds = useStreamingConvIds();
   const notificationCount = useNotificationsStore((s) => s.notifications.length);
+  const codexStatus = useCodexAuthStore((s) => s.status);
 
   // Determine current active IDs from route
   const isAgentChat = routePath.startsWith("/chat");
@@ -268,6 +271,19 @@ export function Sidebar() {
         )}
 
         <div className="border-t border-border p-3">
+          <button
+            className="mb-2 flex w-full cursor-pointer items-center gap-2 rounded-lg border border-border bg-none px-2 py-2 font-[inherit] text-[13px] text-text-muted hover:bg-hover hover:text-text"
+            onClick={openCodexAuthModal}
+          >
+            {codexStatus === "authenticated" ? (
+              <>
+                <span className="size-2 shrink-0 rounded-full bg-green-500" />
+                <span>ChatGPT Connected</span>
+              </>
+            ) : (
+              <span>Connect ChatGPT Pro/Plus</span>
+            )}
+          </button>
           {user ? (
             <div className="flex items-center justify-between gap-2">
               <span className="overflow-hidden text-ellipsis whitespace-nowrap text-[13px] text-text">{user.name}</span>

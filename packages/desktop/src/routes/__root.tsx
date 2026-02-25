@@ -12,7 +12,9 @@ import { ChatHeader } from "../components/ChatHeader";
 import { CommandPalette } from "../CommandPalette";
 import { PermissionModePicker } from "../PermissionModePicker";
 import { AuthModal } from "../components/AuthModal";
+import { CodexAuthModal } from "../components/CodexAuthModal";
 import { WorkspaceModal } from "../components/WorkspaceModal";
+import { useCodexAuthStore } from "../stores/codex-auth";
 import { registerGlobalWsHandlers } from "../lib/ws-global-handlers";
 import { createCommands, useCommandsStore } from "../commands";
 import { checkForUpdates } from "../lib/updater";
@@ -31,6 +33,7 @@ export function RootLayout() {
     useAuthStore.getState().initialize();
     useToolsStore.getState().initializeMcp();
     useToolsStore.getState().discoverSkills();
+    useCodexAuthStore.getState().initialize();
     useConversationsStore.getState().fetchConversations();
     checkForUpdates();
   }, []);
@@ -85,6 +88,7 @@ export function RootLayout() {
       <CommandPalette />
       <PermissionModePicker />
       <AuthModal />
+      <CodexAuthModal />
       <WorkspaceModal />
     </div>
   );

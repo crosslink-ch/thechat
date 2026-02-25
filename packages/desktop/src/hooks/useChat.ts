@@ -2,6 +2,7 @@ import { useState, useCallback, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { runChatLoop } from "../core/loop";
 import { useStreamingStore } from "../stores/streaming";
+import { useCodexAuthStore } from "../stores/codex-auth";
 import { error as logError, formatError } from "../log";
 import type {
   Message,
@@ -224,6 +225,17 @@ export function useChat(options?: UseChatOptions) {
           }
         };
 
+        // Resolve provider and codex auth
+        const provider = config.provider ?? "openrouter";
+        let codexAuth: { accessToken: string; accountId: string } | undefined;
+        if (provider === "codex") {
+          try {
+            codexAuth = await useCodexAuthStore.getState().getValidToken();
+          } catch (e) {
+            logError(`[useChat] Codex auth failed, falling back to OpenRouter: ${formatError(e)}`);
+          }
+        }
+
         const convProjectDir = conv.project_dir ?? projectDirRef.current ?? undefined;
         await runChatLoop({
           apiKey: config.api_key,
@@ -236,6 +248,8 @@ export function useChat(options?: UseChatOptions) {
           signal: controller.signal,
           cwd: convProjectDir || undefined,
           convId: streamConvId!,
+          provider: codexAuth ? "codex" : "openrouter",
+          codexAuth,
           onEvent,
         });
 

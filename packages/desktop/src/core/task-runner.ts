@@ -1,11 +1,13 @@
 import { runChatLoop } from "./loop";
-import type { StreamEvent, ToolDefinition } from "./types";
+import type { CodexAuth, StreamEvent, ToolDefinition } from "./types";
 
 interface TaskRunnerConfig {
   apiKey: string;
   model: string;
   availableTools: ToolDefinition[];
   cwd?: string;
+  provider?: "openrouter" | "codex";
+  codexAuth?: CodexAuth;
 }
 
 let config: TaskRunnerConfig | null = null;
@@ -60,6 +62,8 @@ export async function runTask(prompt: string, signal?: AbortSignal, convId?: str
     signal,
     cwd: config.cwd,
     convId,
+    provider: config.provider,
+    codexAuth: config.codexAuth,
     onEvent,
   });
 

@@ -10,6 +10,13 @@
     "notification:default",
     "dialog:default",
     "updater:default",
-    "process:default"
+    "process:default",
+    {
+      "identifier": "http:default",
+      "allow": [
+        { "url": "https://auth.openai.com/**" },
+        { "url": "https://chatgpt.com/**" }
+      ]
+    }
   ]
 }

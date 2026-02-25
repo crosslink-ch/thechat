@@ -1,7 +1,8 @@
 import { streamCompletion } from "./openrouter";
+import { streamCodexCompletion } from "./codex";
 import { truncateToolResult } from "./truncate";
 import { error as logError, warn as logWarn, debug as logDebug, formatError } from "../log";
-import type { ChatLoopOptions, StreamResult, ToolDefinition } from "./types";
+import type { ChatLoopOptions, StreamResult, ToolDefinition, StreamEvent } from "./types";
 
 const DEFAULT_SYSTEM_PROMPT = `\
 You are a helpful assistant. \
@@ -34,13 +35,40 @@ function resolveTools(options: ChatLoopOptions): ToolDefinition[] {
   return options.getTools?.() ?? options.tools ?? [];
 }
 
+/** Dispatch streaming to the correct provider. */
+function callProvider(
+  options: ChatLoopOptions,
+  messages: Array<Record<string, unknown>>,
+  tools: ToolDefinition[] | undefined,
+  onEvent: (event: StreamEvent) => void,
+): Promise<StreamResult> {
+  if (options.provider === "codex" && options.codexAuth) {
+    return streamCodexCompletion({
+      accessToken: options.codexAuth.accessToken,
+      accountId: options.codexAuth.accountId,
+      model: options.params?.model ?? options.model,
+      messages,
+      params: options.params,
+      tools,
+      signal: options.signal,
+      onEvent,
+    });
+  }
+  return streamCompletion({
+    apiKey: options.apiKey,
+    model: options.model,
+    messages,
+    params: options.params,
+    tools,
+    signal: options.signal,
+    onEvent,
+  });
+}
+
 export async function runChatLoop(options: ChatLoopOptions): Promise<void> {
   const {
-    apiKey,
-    model,
     messages,
     systemPrompt,
-    params,
     maxToolRoundtrips = Infinity,
     signal,
     cwd,
@@ -81,15 +109,7 @@ export async function runChatLoop(options: ChatLoopOptions): Promise<void> {
       });
 
       try {
-        const finalResult = await streamCompletion({
-          apiKey,
-          model,
-          messages: workingMessages,
-          params,
-          tools: undefined, // no tools — force text-only
-          signal,
-          onEvent,
-        });
+        const finalResult = await callProvider(options, workingMessages, undefined, onEvent);
         onEvent({ type: "finish", usage: finalResult.usage });
       } catch (e) {
         if (e instanceof DOMException && e.name === "AbortError") return;
@@ -101,15 +121,12 @@ export async function runChatLoop(options: ChatLoopOptions): Promise<void> {
 
     let result: StreamResult;
     try {
-      result = await streamCompletion({
-        apiKey,
-        model,
-        messages: workingMessages,
-        params,
-        tools: currentTools.length > 0 ? currentTools : undefined,
-        signal,
+      result = await callProvider(
+        options,
+        workingMessages,
+        currentTools.length > 0 ? currentTools : undefined,
         onEvent,
-      });
+      );
     } catch (e) {
       if (e instanceof DOMException && e.name === "AbortError") return;
       logError(`[loop] API call failed (round ${round}): ${formatError(e)}`);

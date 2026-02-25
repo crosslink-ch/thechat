@@ -23,6 +23,8 @@ pub struct McpServerConfig {
 pub struct AppConfig {
     pub api_key: String,
     pub model: String,
+    #[serde(default)]
+    pub provider: Option<String>,
     #[serde(default, rename = "mcpServers")]
     pub mcp_servers: HashMap<String, McpServerConfig>,
 }
@@ -54,6 +56,7 @@ fn default_config(backend_url: &str) -> AppConfig {
     AppConfig {
         api_key: String::new(),
         model: "openai/gpt-4.1".to_string(),
+        provider: None,
         mcp_servers,
     }
 }

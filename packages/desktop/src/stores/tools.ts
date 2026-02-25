@@ -25,6 +25,7 @@ import {
 import { discoverSkills } from "../core/skills";
 import { setBatchToolRegistry } from "../core/tools/batch";
 import { setTaskRunnerConfig } from "../core/task-runner";
+import { useCodexAuthStore } from "./codex-auth";
 import type { ToolDefinition, McpToolInfo, AppConfig } from "../core/types";
 import type { SkillMeta } from "../core/skills/types";
 
@@ -170,11 +171,27 @@ export const useToolsStore = create<ToolsStore>()((set, get) => ({
 
     try {
       const config = await invoke<AppConfig>("get_config");
+      const provider = config.provider ?? "openrouter";
+      let codexAuth: { accessToken: string; accountId: string } | undefined;
+
+      if (provider === "codex") {
+        const codexState = useCodexAuthStore.getState();
+        if (codexState.status === "authenticated") {
+          try {
+            codexAuth = await codexState.getValidToken();
+          } catch {
+            // Fall back to openrouter if codex auth fails
+          }
+        }
+      }
+
       setTaskRunnerConfig({
         apiKey: config.api_key,
         model: config.model,
         availableTools: tools,
         cwd: activeCwd ?? undefined,
+        provider: codexAuth ? "codex" : "openrouter",
+        codexAuth,
       });
     } catch (e) {
       logWarn(`[tools] Task runner config failed: ${formatError(e)}`);
