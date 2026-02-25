@@ -482,11 +482,14 @@ interface StreamingMessageProps {
 
 export function StreamingMessage({ convId, pendingPermission, onPermissionAllow, onPermissionDeny, onPermissionDenyWithFeedback, showFeedbackInput, pendingQuestion, onQuestionSubmit, onQuestionCancel }: StreamingMessageProps) {
   const parts = useStreamingParts(convId);
-  const scrollRef = useRef<HTMLDivElement>(null);
+  const promptRef = useRef<HTMLDivElement>(null);
 
+  // Scroll to permission/question prompts when they appear (user needs to interact)
   useEffect(() => {
-    scrollRef.current?.scrollIntoView?.({ behavior: "smooth" });
-  }, [parts]);
+    if (pendingPermission || pendingQuestion) {
+      promptRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+    }
+  }, [pendingPermission, pendingQuestion]);
 
   if (!parts) return null;
 
@@ -515,35 +518,37 @@ export function StreamingMessage({ convId, pendingPermission, onPermissionAllow,
           {textParts.map((part, i) => (
             <TextWithUiBlocks key={i} text={part.text} />
           ))}
-          {pendingPermission && onPermissionAllow && onPermissionDeny && (
-            <PermissionPromptBlock
-              permission={pendingPermission}
-              onAllow={onPermissionAllow}
-              onDeny={onPermissionDeny}
-              onDenyWithFeedback={onPermissionDenyWithFeedback}
-              showFeedbackInput={showFeedbackInput}
-              toolArgs={(() => {
-                // Match permission command prefix to the last unresolved tool call
-                const cmd = pendingPermission.command;
-                for (const name of PREVIEW_TOOLS) {
-                  if (cmd.startsWith(name + " ")) {
-                    const pending = [...toolCalls].reverse().find(
-                      (tc) => tc.toolName === name && !toolResults.some((tr) => tr.toolCallId === tc.toolCallId),
-                    );
-                    if (pending) return { toolName: pending.toolName, args: pending.args };
+          <div ref={promptRef}>
+            {pendingPermission && onPermissionAllow && onPermissionDeny && (
+              <PermissionPromptBlock
+                permission={pendingPermission}
+                onAllow={onPermissionAllow}
+                onDeny={onPermissionDeny}
+                onDenyWithFeedback={onPermissionDenyWithFeedback}
+                showFeedbackInput={showFeedbackInput}
+                toolArgs={(() => {
+                  // Match permission command prefix to the last unresolved tool call
+                  const cmd = pendingPermission.command;
+                  for (const name of PREVIEW_TOOLS) {
+                    if (cmd.startsWith(name + " ")) {
+                      const pending = [...toolCalls].reverse().find(
+                        (tc) => tc.toolName === name && !toolResults.some((tr) => tr.toolCallId === tc.toolCallId),
+                      );
+                      if (pending) return { toolName: pending.toolName, args: pending.args };
+                    }
                   }
-                }
-                return undefined;
-              })()}
-            />
-          )}
-          {pendingQuestion && onQuestionSubmit && onQuestionCancel && (
-            <QuestionPromptBlock
-              request={pendingQuestion}
-              onSubmit={onQuestionSubmit}
-              onCancel={onQuestionCancel}
-            />
-          )}
+                  return undefined;
+                })()}
+              />
+            )}
+            {pendingQuestion && onQuestionSubmit && onQuestionCancel && (
+              <QuestionPromptBlock
+                request={pendingQuestion}
+                onSubmit={onQuestionSubmit}
+                onCancel={onQuestionCancel}
+              />
+            )}
+          </div>
           {!pendingPermission && !pendingQuestion && !hasContent && !hasThinking && (
             <div data-testid="typing-indicator" className="flex items-center gap-1 text-text-dimmed">
               <span className="inline-block size-1.5 animate-pulse rounded-full bg-text-dimmed" />
@@ -553,7 +558,6 @@ export function StreamingMessage({ convId, pendingPermission, onPermissionAllow,
           )}
         </div>
       </div>
-      <div ref={scrollRef} />
     </>
   );
 }

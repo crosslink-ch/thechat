@@ -145,10 +145,22 @@ export function AgentChatRoute() {
     setAgentChatProjectDir(projectDir);
   }, [conversation?.title, projectDir]);
 
-  // Auto-scroll
+  // Scroll to bottom on conversation load
+  const scrolledForConvRef = useRef<string | null>(null);
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, pendingPermission]);
+    if (conversation?.id && conversation.id !== scrolledForConvRef.current && messages.length > 0) {
+      scrolledForConvRef.current = conversation.id;
+      messagesEndRef.current?.scrollIntoView({ behavior: "instant" });
+    }
+  }, [conversation?.id, messages.length]);
+
+  // Scroll to bottom when user sends a message (shows their message + start of assistant response)
+  useEffect(() => {
+    const lastMsg = messages[messages.length - 1];
+    if (lastMsg?.role === "user") {
+      messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    }
+  }, [messages.length]);
 
   // Fetch conversations list when conversation changes
   useEffect(() => {
