@@ -41,6 +41,11 @@ fn get_config() -> Result<config::AppConfig, String> {
 }
 
 #[tauri::command]
+fn save_config(config: config::AppConfig) -> Result<(), String> {
+    config::save_config(&config)
+}
+
+#[tauri::command]
 fn create_conversation(
     title: String,
     project_dir: Option<String>,
@@ -171,6 +176,7 @@ pub fn run() {
         .manage(InitialProjectDir(initial_project_dir))
         .invoke_handler(tauri::generate_handler![
             get_config,
+            save_config,
             get_initial_project_dir,
             create_conversation,
             list_conversations,
@@ -226,6 +232,7 @@ mod tests {
             .manage(InitialProjectDir(None))
             .invoke_handler(tauri::generate_handler![
                 get_config,
+                save_config,
                 get_initial_project_dir,
                 create_conversation,
                 list_conversations,

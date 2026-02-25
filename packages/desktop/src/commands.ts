@@ -126,6 +126,16 @@ export function createCommands(
       },
     },
     {
+      id: "settings",
+      label: "Settings",
+      shortcut: "C-x ,",
+      keybinding: { prefix: "C-x", key: "," },
+      execute: () => {
+        navigate({ to: "/settings" });
+        closePalette();
+      },
+    },
+    {
       id: "switch-permission-mode",
       label: "Switch Permission Mode",
       shortcut: null,

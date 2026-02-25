@@ -39,9 +39,12 @@ export function ChatHeader() {
   const isAgentChat = routePath.startsWith("/chat");
   const isChannel = routePath.startsWith("/channel");
   const isDm = routePath.startsWith("/dm");
+  const isSettings = routePath === "/settings";
 
   let chatTitle = "New Chat";
-  if (isAgentChat) {
+  if (isSettings) {
+    chatTitle = "Settings";
+  } else if (isAgentChat) {
     chatTitle = agentChatTitle || "New Chat";
   } else if (isChannel) {
     const channelId = params.id;

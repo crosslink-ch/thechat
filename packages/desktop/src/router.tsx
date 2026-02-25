@@ -10,6 +10,7 @@ import { AgentChatRoute } from "./routes/agent-chat";
 import { ChannelRoute } from "./routes/channel";
 import { DmRoute } from "./routes/dm";
 import { NotificationsRoute } from "./routes/notifications";
+import { SettingsRoute } from "./routes/settings";
 
 const rootRoute = createRootRoute({
   component: RootLayout,
@@ -53,6 +54,12 @@ const notificationsRoute = createRoute({
   component: NotificationsRoute,
 });
 
+const settingsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/settings",
+  component: SettingsRoute,
+});
+
 const routeTree = rootRoute.addChildren([
   indexRoute,
   agentChatRoute,
@@ -60,6 +67,7 @@ const routeTree = rootRoute.addChildren([
   channelRoute,
   dmRoute,
   notificationsRoute,
+  settingsRoute,
 ]);
 
 const hashHistory = createHashHistory();

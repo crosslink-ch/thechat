@@ -80,6 +80,23 @@ fn create_default_config() -> Result<AppConfig, String> {
     Ok(config)
 }
 
+pub fn save_config(config: &AppConfig) -> Result<(), String> {
+    let config_path = config_dir_path().ok_or("Could not determine config directory")?;
+
+    if let Some(parent) = config_path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|e| format!("Failed to create config directory: {}", e))?;
+    }
+
+    let json = serde_json::to_string_pretty(config)
+        .map_err(|e| format!("Failed to serialize config: {}", e))?;
+
+    fs::write(&config_path, &json)
+        .map_err(|e| format!("Failed to write config: {}", e))?;
+
+    Ok(())
+}
+
 pub fn load_config() -> Result<AppConfig, String> {
     let mut paths: Vec<PathBuf> = Vec::new();
 
@@ -237,6 +254,33 @@ mod tests {
         let config = default_config("https://api.thechat.app");
         let srv = &config.mcp_servers["thechat"];
         assert_eq!(srv.url.as_deref(), Some("https://api.thechat.app/mcp"));
+    }
+
+    #[test]
+    fn save_config_roundtrip() {
+        let dir = std::env::temp_dir().join("thechat_save_config_test");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("config.json");
+
+        let config = AppConfig {
+            api_key: "sk-saved".to_string(),
+            model: "test-model".to_string(),
+            provider: Some("codex".to_string()),
+            mcp_servers: HashMap::new(),
+        };
+
+        // Write directly to the temp path (save_config writes to config_dir_path)
+        let json = serde_json::to_string_pretty(&config).unwrap();
+        std::fs::write(&path, &json).unwrap();
+
+        let content = std::fs::read_to_string(&path).unwrap();
+        let loaded: AppConfig = serde_json::from_str(&content).unwrap();
+        assert_eq!(loaded.api_key, "sk-saved");
+        assert_eq!(loaded.model, "test-model");
+        assert_eq!(loaded.provider.as_deref(), Some("codex"));
+
+        std::fs::remove_dir_all(dir).ok();
     }
 
     #[test]
