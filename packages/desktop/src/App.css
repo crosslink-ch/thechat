@@ -91,6 +91,7 @@
   font-optical-sizing: auto;
   color: var(--color-text);
   background-color: var(--color-base);
+  text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }

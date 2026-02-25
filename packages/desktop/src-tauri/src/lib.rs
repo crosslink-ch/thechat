@@ -100,6 +100,16 @@ fn get_initial_project_dir(state: State<InitialProjectDir>) -> Option<String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Fix pixelated/aliased font rendering on Linux (WebKitGTK).
+    // The DMA-BUF renderer can bypass GPU-accelerated text rasterisation,
+    // falling back to a path that respects system fontconfig antialiasing.
+    #[cfg(target_os = "linux")]
+    {
+        if std::env::var("WEBKIT_DISABLE_DMABUF_RENDERER").is_err() {
+            std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+        }
+    }
+
     let initial_project_dir = {
         let args: Vec<String> = std::env::args().collect();
         if let Some(arg) = args.get(1) {
