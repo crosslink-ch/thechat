@@ -1,6 +1,6 @@
 import type { ToolDefinition, ToolExecutionContext } from "../types";
 import { defineTool } from "./define";
-import { validateArgsAgainstSchema, formatValidationErrors } from "./validate";
+import { validateToolArgs } from "./validate";
 
 let toolRegistry: Map<string, ToolDefinition> = new Map();
 
@@ -76,13 +76,13 @@ If any individual tool call fails, other calls still complete.`,
         const callArgs = call.args as Record<string, unknown>;
 
         // Validate args against the tool's JSON schema
-        const v = validateArgsAgainstSchema(tool.parameters as any, callArgs);
-        if (v.valid === false) {
+        const validationError = validateToolArgs(tool.parameters as Record<string, any>, callArgs);
+        if (validationError) {
           return {
             index,
             tool: call.tool,
             success: false,
-            error: formatValidationErrors(v.errors),
+            error: validationError,
           };
         }
 

@@ -1,7 +1,6 @@
 import { streamCompletion } from "./openrouter";
 import { streamCodexCompletion } from "./codex";
 import { truncateToolResult } from "./truncate";
-import { validateArgsAgainstSchema, formatValidationErrors } from "./tools/validate";
 import { error as logError, warn as logWarn, debug as logDebug, formatError } from "../log";
 import type { ChatLoopOptions, StreamResult, ToolDefinition, StreamEvent } from "./types";
 
@@ -196,21 +195,18 @@ export async function runChatLoop(options: ChatLoopOptions): Promise<void> {
         try {
           logDebug(`[loop] Executing tool: ${tc.name}`);
           // Validate args against tool JSON schema before execution
-          const schema = tool.parameters as Record<string, unknown>;
-          if (schema && schema.type === "object") {
-            const { validateArgsAgainstSchema, formatValidationErrors } = await import("./tools/validate");
-            const v = validateArgsAgainstSchema(schema as any, tc.args);
-            if (v.valid === false) {
-              const errorResult = { error: formatValidationErrors(v.errors) };
-              onEvent({
-                type: "tool-result",
-                toolCallId: tc.id,
-                toolName: tc.name,
-                result: errorResult,
-                isError: true,
-              });
-              return { toolCallId: tc.id, result: errorResult, isError: true };
-            }
+          const { validateToolArgs } = await import("./tools/validate");
+          const validationError = validateToolArgs(tool.parameters as Record<string, any>, tc.args);
+          if (validationError) {
+            const errorResult = { error: validationError };
+            onEvent({
+              type: "tool-result",
+              toolCallId: tc.id,
+              toolName: tc.name,
+              result: errorResult,
+              isError: true,
+            });
+            return { toolCallId: tc.id, result: errorResult, isError: true };
           }
 
           const execResult = await tool.execute(tc.args, { signal, cwd, convId });
