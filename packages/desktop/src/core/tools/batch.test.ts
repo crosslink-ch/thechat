@@ -89,4 +89,28 @@ describe("batchTool", () => {
     expect(result.successful).toBe(1);
     expect(result.failed).toBe(1);
   });
+
+  it("rejects unknown fields in args with clear error", async () => {
+    const constrained: ToolDefinition = {
+      name: "constrained",
+      description: "Requires known args only",
+      parameters: {
+        type: "object",
+        properties: { path: { type: "string" } },
+        required: ["path"],
+        additionalProperties: false,
+      },
+      execute: vi.fn().mockResolvedValue({ ok: true }),
+    };
+
+    setBatchToolRegistry([constrained]);
+
+    const result = (await batchTool.execute({
+      tool_calls: [{ tool: "constrained", args: { path: ".", extra: true } }],
+    })) as { failed: number; results: Array<{ success: boolean; error: string }> };
+
+    expect(result.failed).toBe(1);
+    expect(result.results[0].success).toBe(false);
+    expect(result.results[0].error).toMatch(/Unknown property 'extra'/);
+  });
 });
