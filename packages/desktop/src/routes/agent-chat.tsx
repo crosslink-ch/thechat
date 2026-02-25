@@ -203,13 +203,13 @@ export function AgentChatRoute() {
 
       <div className="flex flex-1 flex-col overflow-y-auto">
         {messages.length === 0 && !isStreaming && (
-          <div className="flex flex-1 flex-col items-center justify-center text-base text-text-placeholder">
+          <div className="flex flex-1 flex-col items-center justify-center gap-3">
             <ProjectPicker
               projectDir={projectDir}
               onSelect={setProjectDir}
               readOnly={!!conversation?.project_dir}
             />
-            <div style={{ marginTop: 12 }}>Send a message to start chatting</div>
+            <div className="text-[13px] text-text-placeholder">Send a message to start chatting</div>
           </div>
         )}
         {messages.map((msg) => (
@@ -226,7 +226,7 @@ export function AgentChatRoute() {
           onQuestionSubmit={handleQuestionSubmit}
           onQuestionCancel={handleQuestionCancel}
         />
-        {error && <div className="rounded-lg border border-error-msg-border bg-error-msg-bg px-3.5 py-2.5 text-[13px] text-error-bright">{error}</div>}
+        {error && <div className="mx-5 rounded-lg border border-error-msg-border bg-error-msg-bg px-3.5 py-2.5 text-[12px] text-error-bright">{error}</div>}
         <div ref={messagesEndRef} />
       </div>
 

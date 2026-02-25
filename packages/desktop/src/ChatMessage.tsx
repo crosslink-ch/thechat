@@ -93,30 +93,33 @@ function ToolActivityBlock({
   const hasPreview = PREVIEW_TOOLS.has(call.toolName);
 
   return (
-    <div className="my-1 overflow-hidden rounded bg-raised">
-      <button className="flex w-full cursor-pointer items-center gap-1.5 border-none bg-none px-2.5 py-1.5 text-left text-xs text-text-muted shadow-none hover:bg-border-subtle" onClick={() => setOpen(!open)}>
-        <span className="w-3 text-[10px]">{open ? "▾" : "▸"}</span>
+    <div className="my-1 overflow-hidden rounded-lg border border-border-subtle bg-raised/50">
+      <button
+        className="flex w-full cursor-pointer items-center gap-2 border-none bg-none px-3 py-2 text-left text-[12px] text-text-muted shadow-none transition-colors duration-100 hover:bg-hover/50"
+        onClick={() => setOpen(!open)}
+      >
+        <span className="w-3 text-[10px] text-text-dimmed">{open ? "\u25BE" : "\u25B8"}</span>
         <span className="font-medium text-accent">{call.toolName}</span>
         {fileName && <span className="font-mono text-[11px] text-text-dimmed">{fileName}</span>}
         <span className={`ml-auto text-[11px] ${result?.isError ? "text-error" : "text-success"}`}>{status}</span>
       </button>
       {hasPreview && (
-        <div className="px-2.5 pb-1.5">
+        <div className="px-3 pb-2">
           <ToolInlinePreview toolName={call.toolName} args={call.args} />
         </div>
       )}
       {open && (
-        <div className="px-2.5 pb-2">
+        <div className="px-3 pb-2.5">
           {!hasPreview && Object.keys(call.args).length > 0 && (
-            <div className="mt-1.5">
-              <div className="mb-0.5 text-[11px] uppercase tracking-wide text-text-muted">Args</div>
-              <pre className="m-0 whitespace-pre-wrap font-mono text-xs text-text-secondary">{formatArgs(call.args)}</pre>
+            <div className="mt-1">
+              <div className="mb-0.5 text-[11px] uppercase tracking-wider text-text-dimmed">Args</div>
+              <pre className="m-0 whitespace-pre-wrap font-mono text-[12px] leading-relaxed text-text-secondary">{formatArgs(call.args)}</pre>
             </div>
           )}
           {result && (
             <div className="mt-1.5">
-              <div className="mb-0.5 text-[11px] uppercase tracking-wide text-text-muted">{result.isError ? "Error" : "Result"}</div>
-              <pre className="m-0 whitespace-pre-wrap font-mono text-xs text-text-secondary">{formatResult(result.result)}</pre>
+              <div className="mb-0.5 text-[11px] uppercase tracking-wider text-text-dimmed">{result.isError ? "Error" : "Result"}</div>
+              <pre className="m-0 whitespace-pre-wrap font-mono text-[12px] leading-relaxed text-text-secondary">{formatResult(result.result)}</pre>
             </div>
           )}
         </div>
@@ -160,14 +163,21 @@ function ThinkingSection({
 
   return (
     <div data-testid="thinking-section" className="mb-2">
-      <button className="flex items-center gap-1 border-none bg-none p-0 py-1 text-xs text-text-muted shadow-none hover:text-text-muted-hover" style={{ cursor: "pointer" }} onClick={() => setOpen(!open)}>
-        <span className="w-3 text-[10px]">{open ? "▾" : "▸"}</span>
+      <button
+        className="flex cursor-pointer items-center gap-1.5 border-none bg-none p-0 py-1 text-[12px] text-text-dimmed shadow-none transition-colors duration-150 hover:text-text-muted"
+        onClick={() => setOpen(!open)}
+      >
+        <span className="w-3 text-[10px]">{open ? "\u25BE" : "\u25B8"}</span>
         <span>{label}</span>
         {isStreaming && <span className="animate-pulse"> ...</span>}
       </button>
       {open && (
         <div className="mt-1.5">
-          {hasReasoning && <pre className="mb-1.5 max-h-[400px] overflow-y-auto overflow-x-auto whitespace-pre-wrap rounded border-l-3 border-border-accent bg-raised px-3 py-2.5 font-[inherit] text-[13px] text-text-secondary">{reasoningText}</pre>}
+          {hasReasoning && (
+            <pre className="mb-2 max-h-[400px] overflow-y-auto overflow-x-auto whitespace-pre-wrap rounded-lg border-l-2 border-border-accent bg-raised px-3 py-2.5 font-[inherit] text-[13px] leading-relaxed text-text-secondary">
+              {reasoningText}
+            </pre>
+          )}
           {toolCalls.map((call) => (
             <ToolActivityBlock
               key={call.toolCallId}
@@ -224,18 +234,18 @@ function PermissionPromptBlock({
   };
 
   return (
-    <div data-testid="permission-inline" className="my-2 rounded border-l-3 border-accent-border bg-raised p-3">
-      <div className="mb-2 text-[13px] font-semibold text-text-muted">{permissionHeader(toolArgs)}</div>
-      <code className="mb-2 block whitespace-pre-wrap break-all rounded border border-border bg-base px-2.5 py-2 font-mono text-[13px] text-text">{permission.command}</code>
+    <div data-testid="permission-inline" className="my-2 rounded-lg border border-accent-border/40 bg-raised p-3">
+      <div className="mb-2 text-[13px] font-medium text-text-secondary">{permissionHeader(toolArgs)}</div>
+      <code className="mb-2 block whitespace-pre-wrap break-all rounded-lg border border-border bg-base px-3 py-2 font-mono text-[12.5px] text-text">{permission.command}</code>
       {toolArgs && <ToolInlinePreview toolName={toolArgs.toolName} args={toolArgs.args} />}
       {permission.description && !toolArgs && (
-        <div className="mb-2.5 text-xs text-text-muted">{permission.description}</div>
+        <div className="mb-2.5 text-[12px] text-text-muted">{permission.description}</div>
       )}
       {feedbackVisible ? (
         <div className="flex items-center gap-2">
           <input
             ref={inputRef}
-            className="flex-1 rounded border border-border bg-base px-2.5 py-1.5 font-[inherit] text-[13px] text-text outline-none placeholder:text-text-placeholder focus:border-accent-border"
+            className="flex-1 rounded-lg border border-border bg-base px-3 py-1.5 font-[inherit] text-[13px] text-text outline-none placeholder:text-text-placeholder focus:border-border-focus"
             type="text"
             placeholder="Feedback for AI..."
             value={feedbackText}
@@ -252,7 +262,7 @@ function PermissionPromptBlock({
             }}
           />
           <button
-            className="inline-flex cursor-pointer items-center gap-1.5 rounded border-none bg-button px-3.5 py-1.5 text-[13px] font-medium text-text shadow-none hover:bg-button-hover"
+            className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border-none bg-button px-3.5 py-1.5 text-[13px] font-medium text-text shadow-none transition-colors duration-150 hover:bg-button-hover"
             disabled={feedbackText.trim().length === 0}
             onClick={handleSubmitFeedback}
           >
@@ -260,20 +270,26 @@ function PermissionPromptBlock({
           </button>
         </div>
       ) : (
-        <div className="flex justify-end gap-2">
-          <button className="inline-flex cursor-pointer items-center gap-1.5 rounded border-none bg-none px-3.5 py-1.5 text-[13px] font-medium text-text-muted shadow-none hover:text-text" onClick={onDeny}>
-            Deny <kbd className="rounded border border-border bg-base px-1 py-px font-mono text-[11px] text-text-dimmed">C-x d</kbd>
+        <div className="flex justify-end gap-1.5">
+          <button
+            className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border-none bg-none px-3 py-1.5 text-[12px] font-medium text-text-muted shadow-none transition-colors duration-150 hover:bg-hover hover:text-text"
+            onClick={onDeny}
+          >
+            Deny <kbd className="rounded border border-border bg-base px-1 py-px font-mono text-[10px] text-text-dimmed">C-x d</kbd>
           </button>
           {onDenyWithFeedback && (
             <button
-              className="inline-flex cursor-pointer items-center gap-1.5 rounded border-none bg-none px-3.5 py-1.5 text-[13px] font-medium text-text-muted shadow-none hover:text-text"
+              className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border-none bg-none px-3 py-1.5 text-[12px] font-medium text-text-muted shadow-none transition-colors duration-150 hover:bg-hover hover:text-text"
               onClick={() => setFeedbackVisible(true)}
             >
-              Deny with feedback <kbd className="rounded border border-border bg-base px-1 py-px font-mono text-[11px] text-text-dimmed">C-x f</kbd>
+              Deny with feedback <kbd className="rounded border border-border bg-base px-1 py-px font-mono text-[10px] text-text-dimmed">C-x f</kbd>
             </button>
           )}
-          <button className="inline-flex cursor-pointer items-center gap-1.5 rounded border-none bg-button px-3.5 py-1.5 text-[13px] font-medium text-text shadow-none hover:bg-button-hover" onClick={onAllow}>
-            Allow <kbd className="rounded border border-border bg-base px-1 py-px font-mono text-[11px] text-text-dimmed">C-x a</kbd>
+          <button
+            className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border-none bg-accent/15 px-3.5 py-1.5 text-[12px] font-medium text-accent shadow-none transition-colors duration-150 hover:bg-accent/25"
+            onClick={onAllow}
+          >
+            Allow <kbd className="rounded border border-accent/20 bg-accent/10 px-1 py-px font-mono text-[10px] text-accent/70">C-x a</kbd>
           </button>
         </div>
       )}
@@ -341,29 +357,29 @@ export function QuestionPromptBlock({ request, onSubmit, onCancel }: QuestionPro
   }, [selections, customText, onSubmit]);
 
   return (
-    <div className="my-2 rounded border-l-3 border-accent-secondary bg-raised p-3">
+    <div className="my-2 rounded-lg border border-accent-secondary/30 bg-raised p-3">
       {request.questions.map((q, qIndex) => {
         const current = selections[qIndex] ?? [];
         const customActive = current.includes(CUSTOM);
 
         return (
           <div key={qIndex} className="mb-3 last:mb-2.5">
-            <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-text-dimmed">{q.header}</div>
+            <div className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-text-dimmed">{q.header}</div>
             <div className="mb-2 text-[13px] text-text">{q.question}</div>
             <div className="flex flex-col gap-1">
               {q.options.map((opt) => (
                 <button
                   key={opt.label}
-                  className={`flex cursor-pointer flex-col rounded border px-2.5 py-1.5 text-left font-[inherit] shadow-none transition-[border-color] duration-150 ${current.includes(opt.label) ? "border-accent-secondary bg-accent-secondary/8" : "border-border bg-base hover:border-border-strong hover:bg-hover"}`}
+                  className={`flex cursor-pointer flex-col rounded-lg border px-3 py-2 text-left font-[inherit] shadow-none transition-all duration-150 ${current.includes(opt.label) ? "border-accent-secondary/50 bg-accent-secondary/8" : "border-border bg-base hover:border-border-strong hover:bg-hover"}`}
                   onClick={() => toggleOption(qIndex, opt.label)}
                 >
                   <span className="text-[13px] font-medium text-text">{opt.label}</span>
-                  <span className="mt-0.5 text-xs text-text-muted">{opt.description}</span>
+                  <span className="mt-0.5 text-[12px] text-text-muted">{opt.description}</span>
                 </button>
               ))}
               <div
                 data-testid="question-option-custom"
-                className={`flex cursor-pointer flex-row items-center rounded border px-2.5 py-1.5 text-left font-[inherit] shadow-none transition-[border-color] duration-150 ${customActive ? "border-accent-secondary bg-accent-secondary/8" : "border-border bg-base hover:border-border-strong hover:bg-hover"}`}
+                className={`flex cursor-pointer flex-row items-center rounded-lg border px-3 py-2 text-left font-[inherit] shadow-none transition-all duration-150 ${customActive ? "border-accent-secondary/50 bg-accent-secondary/8" : "border-border bg-base hover:border-border-strong hover:bg-hover"}`}
                 onClick={() => {
                   toggleOption(qIndex, CUSTOM);
                   if (!customActive) {
@@ -400,11 +416,11 @@ export function QuestionPromptBlock({ request, onSubmit, onCancel }: QuestionPro
           </div>
         );
       })}
-      <div className="flex justify-end gap-2">
-        <button className="cursor-pointer rounded border-none bg-none px-3.5 py-1.5 text-[13px] font-medium text-text-muted shadow-none hover:text-text" onClick={onCancel}>
+      <div className="flex justify-end gap-1.5">
+        <button className="cursor-pointer rounded-lg border-none bg-none px-3.5 py-1.5 text-[12px] font-medium text-text-muted shadow-none transition-colors duration-150 hover:bg-hover hover:text-text" onClick={onCancel}>
           Cancel
         </button>
-        <button className="cursor-pointer rounded border-none bg-button px-3.5 py-1.5 text-[13px] font-medium text-text shadow-none hover:bg-button-hover" onClick={handleSubmit}>
+        <button className="cursor-pointer rounded-lg border-none bg-button px-3.5 py-1.5 text-[12px] font-medium text-text shadow-none transition-colors duration-150 hover:bg-button-hover" onClick={handleSubmit}>
           Submit
         </button>
       </div>
@@ -431,9 +447,9 @@ export function ChatMessage({ message }: ChatMessageProps) {
   const hasThinking = !isUser && (reasoningText.length > 0 || toolCalls.length > 0);
 
   return (
-    <div data-testid={`chat-message-${isUser ? "user" : "assistant"}`} className="w-full border-b border-border-subtle px-4 py-3 hover:bg-raised">
-      <div className={`mb-1 text-[13px] font-semibold ${isUser ? "text-text-muted" : "text-accent"}`}>
-        {isUser ? "You" : "AI"}
+    <div data-testid={`chat-message-${isUser ? "user" : "assistant"}`} className="w-full px-5 py-4">
+      <div className={`mb-1.5 text-[11px] font-semibold uppercase tracking-wider ${isUser ? "text-text-dimmed" : "text-accent/80"}`}>
+        {isUser ? "You" : "Assistant"}
       </div>
       <div className="max-w-3xl">
         {hasThinking && (
@@ -484,8 +500,8 @@ export function StreamingMessage({ convId, pendingPermission, onPermissionAllow,
 
   return (
     <>
-      <div data-testid="chat-message-assistant" className="w-full border-b border-border-subtle px-4 py-3 hover:bg-raised">
-        <div className="mb-1 text-[13px] font-semibold text-accent">AI</div>
+      <div data-testid="chat-message-assistant" className="w-full px-5 py-4">
+        <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-accent/80">Assistant</div>
         <div className="max-w-3xl">
           {hasThinking && (
             <ThinkingSection
@@ -529,7 +545,11 @@ export function StreamingMessage({ convId, pendingPermission, onPermissionAllow,
             />
           )}
           {!pendingPermission && !pendingQuestion && !hasContent && !hasThinking && (
-            <div data-testid="typing-indicator" className="animate-pulse leading-relaxed text-text-dimmed">...</div>
+            <div data-testid="typing-indicator" className="flex items-center gap-1 text-text-dimmed">
+              <span className="inline-block size-1.5 animate-pulse rounded-full bg-text-dimmed" />
+              <span className="inline-block size-1.5 animate-pulse rounded-full bg-text-dimmed" style={{ animationDelay: "0.2s" }} />
+              <span className="inline-block size-1.5 animate-pulse rounded-full bg-text-dimmed" style={{ animationDelay: "0.4s" }} />
+            </div>
           )}
         </div>
       </div>

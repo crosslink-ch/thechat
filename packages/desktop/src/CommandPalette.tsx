@@ -108,17 +108,23 @@ function CommandPaletteInner() {
   };
 
   return (
-    <div className="fixed inset-0 z-20 flex items-start justify-center bg-overlay pt-20" onClick={closePalette}>
-      <div data-testid="palette-panel" className="w-full max-w-[500px] overflow-hidden rounded-xl border border-border bg-surface shadow-card" onClick={(e) => e.stopPropagation()}>
-        <input
-          ref={inputRef}
-          className="w-full border-b border-border bg-base px-4 py-3 font-[inherit] text-[15px] text-text outline-none placeholder:text-text-placeholder"
-          placeholder={isCommandMode ? "Type a command..." : "Search chats (type > for commands)"}
-          autoFocus
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          onKeyDown={handleKeyDown}
-        />
+    <div className="fixed inset-0 z-20 flex items-start justify-center bg-overlay pt-20 backdrop-blur-[2px] animate-fade-in" onClick={closePalette}>
+      <div data-testid="palette-panel" className="w-full max-w-[500px] overflow-hidden rounded-xl border border-border-strong bg-surface shadow-card animate-slide-up" onClick={(e) => e.stopPropagation()}>
+        <div className="relative">
+          <svg className="absolute top-1/2 left-3.5 -translate-y-1/2 text-text-dimmed" width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round">
+            <circle cx="6" cy="6" r="4.5" />
+            <path d="M9.5 9.5L12.5 12.5" />
+          </svg>
+          <input
+            ref={inputRef}
+            className="w-full border-b border-border bg-transparent py-3 pr-4 pl-10 font-[inherit] text-[14px] text-text outline-none placeholder:text-text-placeholder"
+            placeholder={isCommandMode ? "Type a command..." : "Search chats (type > for commands)"}
+            autoFocus
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={handleKeyDown}
+          />
+        </div>
         <div
           className="max-h-[300px] overflow-y-auto"
           ref={listRef}
@@ -130,18 +136,18 @@ function CommandPaletteInner() {
                 <button
                   key={cmd.id}
                   data-testid="palette-item"
-                  className={`flex w-full cursor-pointer items-center gap-1.5 border-none bg-none px-4 py-2.5 text-left font-[inherit] text-sm text-text-muted ${i === highlightIndex ? "bg-elevated text-text" : "hover:bg-elevated hover:text-text"}`}
+                  className={`flex w-full cursor-pointer items-center gap-1.5 border-none bg-none px-4 py-2.5 text-left font-[inherit] text-[13px] text-text-muted transition-colors duration-75 ${i === highlightIndex ? "bg-elevated text-text" : "hover:bg-hover hover:text-text"}`}
                   onClick={() => handleSelectCommand(i)}
                   onMouseEnter={() => setHighlightIndex(i)}
                 >
                   <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap">{cmd.label}</span>
                   {cmd.shortcut && (
-                    <kbd className="ml-auto rounded border border-border bg-base px-1.5 py-0.5 text-xs text-text-placeholder">{cmd.shortcut}</kbd>
+                    <kbd className="ml-auto rounded border border-border bg-base px-1.5 py-0.5 font-mono text-[10px] text-text-dimmed">{cmd.shortcut}</kbd>
                   )}
                 </button>
               ))}
               {filteredCommands.length === 0 && (
-                <div className="px-4 py-5 text-center text-sm text-text-placeholder">No matching commands</div>
+                <div className="px-4 py-5 text-center text-[13px] text-text-placeholder">No matching commands</div>
               )}
             </>
           ) : (
@@ -153,7 +159,7 @@ function CommandPaletteInner() {
                   <button
                     key={conv.id}
                     data-testid="palette-item"
-                    className={`flex w-full cursor-pointer items-center gap-1.5 border-none bg-none px-4 py-2.5 text-left font-[inherit] text-sm text-text-muted ${i === highlightIndex ? "bg-elevated text-text" : "hover:bg-elevated hover:text-text"} ${conv.id === currentId ? "text-accent" : ""}`}
+                    className={`flex w-full cursor-pointer items-center gap-1.5 border-none bg-none px-4 py-2.5 text-left font-[inherit] text-[13px] text-text-muted transition-colors duration-75 ${i === highlightIndex ? "bg-elevated text-text" : "hover:bg-hover hover:text-text"} ${conv.id === currentId ? "text-accent" : ""}`}
                     onClick={() => handleSelectConversation(conv)}
                     onMouseEnter={() => setHighlightIndex(i)}
                   >
@@ -164,7 +170,7 @@ function CommandPaletteInner() {
                 );
               })}
               {filteredConversations.length === 0 && (
-                <div className="px-4 py-5 text-center text-sm text-text-placeholder">No matching chats</div>
+                <div className="px-4 py-5 text-center text-[13px] text-text-placeholder">No matching chats</div>
               )}
             </>
           )}

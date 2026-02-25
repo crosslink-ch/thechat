@@ -42,27 +42,27 @@ export function ChannelChatView({
     <>
       <div className="flex flex-1 flex-col overflow-y-auto">
         {loading && (
-          <div className="flex flex-1 flex-col items-center justify-center text-base text-text-placeholder">Loading messages...</div>
+          <div className="flex flex-1 flex-col items-center justify-center text-[14px] text-text-placeholder">Loading messages...</div>
         )}
         {!loading && messages.length === 0 && (
-          <div className="flex flex-1 flex-col items-center justify-center text-base text-text-placeholder">No messages yet. Start the conversation!</div>
+          <div className="flex flex-1 flex-col items-center justify-center text-[14px] text-text-placeholder">No messages yet. Start the conversation!</div>
         )}
         {messages.map((msg) => (
-          <div key={msg.id} className="flex gap-2.5 px-4 py-2 hover:bg-raised">
-            <div className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-full border border-border bg-elevated text-[13px] font-semibold text-text-muted">
+          <div key={msg.id} className="flex gap-2.5 px-5 py-2.5 transition-colors duration-100 hover:bg-raised/50">
+            <div className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-full bg-elevated text-[12px] font-semibold text-text-muted">
               {msg.senderName.charAt(0).toUpperCase()}
             </div>
             <div className="min-w-0 flex-1">
               <div className="mb-0.5 flex items-baseline gap-2">
-                <span className="text-sm font-semibold text-text">{msg.senderName}</span>
-                <span className="text-[11px] text-text-dimmed">{formatTime(msg.createdAt)}</span>
+                <span className="text-[13px] font-semibold text-text">{msg.senderName}</span>
+                <span className="text-[10px] text-text-dimmed">{formatTime(msg.createdAt)}</span>
               </div>
               <Markdown content={msg.content} />
             </div>
           </div>
         ))}
         {typingNames.length > 0 && (
-          <div className="animate-pulse px-4 py-1 pb-2 text-xs text-text-dimmed">
+          <div className="animate-pulse px-5 py-1 pb-2 text-[11px] text-text-dimmed">
             {typingNames.join(", ")} {typingNames.length === 1 ? "is" : "are"} typing...
           </div>
         )}

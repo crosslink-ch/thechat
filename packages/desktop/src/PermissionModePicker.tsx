@@ -66,9 +66,9 @@ function PermissionModePickerInner() {
   }, [highlightIndex]);
 
   return (
-    <div className="fixed inset-0 z-20 flex items-start justify-center bg-overlay pt-20" onClick={closePicker} onKeyDown={handleKeyDown}>
-      <div className="w-full max-w-[400px] overflow-hidden rounded-xl border border-border bg-surface shadow-card" onClick={(e) => e.stopPropagation()}>
-        <div className="border-b border-border px-4 py-3 text-sm text-text-muted">
+    <div className="fixed inset-0 z-20 flex items-start justify-center bg-overlay pt-20 backdrop-blur-[2px] animate-fade-in" onClick={closePicker} onKeyDown={handleKeyDown}>
+      <div className="w-full max-w-[400px] overflow-hidden rounded-xl border border-border-strong bg-surface shadow-card animate-slide-up" onClick={(e) => e.stopPropagation()}>
+        <div className="border-b border-border px-4 py-3 text-[13px] font-medium text-text-secondary">
           Permission Mode
         </div>
         <div ref={listRef} tabIndex={-1} autoFocus>
@@ -76,17 +76,17 @@ function PermissionModePickerInner() {
             <button
               key={mode.id}
               autoFocus={i === highlightIndex}
-              className={`flex w-full cursor-pointer flex-col gap-0.5 border-none bg-none px-4 py-3 text-left font-[inherit] ${i === highlightIndex ? "bg-elevated" : "hover:bg-elevated"}`}
+              className={`flex w-full cursor-pointer flex-col gap-0.5 border-none bg-none px-4 py-3 text-left font-[inherit] transition-colors duration-75 ${i === highlightIndex ? "bg-elevated" : "hover:bg-hover"}`}
               onClick={() => handleSelect(mode.id)}
               onMouseEnter={() => setHighlightIndex(i)}
             >
-              <span className={`flex items-center gap-2 text-sm ${mode.style}`}>
+              <span className={`flex items-center gap-2 text-[13px] font-medium ${mode.style}`}>
                 {mode.label}
                 {mode.id === currentMode && (
-                  <span className="rounded bg-hover px-1.5 py-0.5 text-[10px] text-text-dimmed">current</span>
+                  <span className="rounded-md bg-elevated px-1.5 py-0.5 text-[10px] font-medium text-text-dimmed">current</span>
                 )}
               </span>
-              <span className="text-xs text-text-dimmed">{mode.description}</span>
+              <span className="text-[12px] text-text-dimmed">{mode.description}</span>
             </button>
           ))}
         </div>

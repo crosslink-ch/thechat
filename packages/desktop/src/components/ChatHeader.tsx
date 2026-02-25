@@ -55,32 +55,46 @@ export function ChatHeader() {
   const showWsStatus = !isAgentChat && connected;
 
   return (
-    <div className="flex items-center gap-3 border-b border-border bg-surface px-4 py-3">
-      <button className="cursor-pointer rounded border-none bg-none p-1 px-2 text-xl text-text-muted hover:bg-hover" onClick={toggleSidebar}>
-        &#9776;
+    <div className="flex h-12 items-center gap-2.5 border-b border-border-subtle bg-surface px-3">
+      <button
+        className="flex size-8 cursor-pointer items-center justify-center rounded-md border-none bg-none text-text-muted transition-colors duration-150 hover:bg-hover hover:text-text"
+        onClick={toggleSidebar}
+      >
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+          <path d="M2.5 4H13.5" />
+          <path d="M2.5 8H13.5" />
+          <path d="M2.5 12H13.5" />
+        </svg>
       </button>
       {showBackButton && (
-        <button className="cursor-pointer rounded border-none bg-none p-1 px-2 text-lg text-text-muted hover:bg-hover hover:text-text" onClick={() => window.history.back()}>
-          &larr;
+        <button
+          className="flex size-8 cursor-pointer items-center justify-center rounded-md border-none bg-none text-text-muted transition-colors duration-150 hover:bg-hover hover:text-text"
+          onClick={() => window.history.back()}
+        >
+          <svg width="15" height="15" viewBox="0 0 15 15" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M9 3L5 7.5L9 12" />
+          </svg>
         </button>
       )}
-      <span className="overflow-hidden text-ellipsis whitespace-nowrap text-sm text-text-muted">{chatTitle}</span>
+      <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-[13px] text-text-muted">{chatTitle}</span>
       {isAgentChat && projectName && (
-        <span className="ml-2 rounded bg-hover px-1.5 py-0.5 text-[11px] text-text-dimmed" title={agentProjectDir!}>
+        <span className="rounded-md bg-elevated px-2 py-0.5 text-[11px] text-text-dimmed" title={agentProjectDir!}>
           {projectName}
         </span>
       )}
       {permissionMode === "allow-edits" && (
-        <span className="ml-auto rounded bg-warning-bg px-1.5 py-0.5 text-[11px] text-warning-text">
+        <span className="rounded-md bg-warning-bg px-2 py-0.5 text-[11px] font-medium text-warning-text">
           Allow Edits
         </span>
       )}
       {permissionMode === "bypass" && (
-        <span className="ml-auto rounded bg-danger-bg px-1.5 py-0.5 text-[11px] text-error-bright">
-          Bypass Permissions
+        <span className="rounded-md bg-danger-bg px-2 py-0.5 text-[11px] font-medium text-error-bright">
+          Bypass
         </span>
       )}
-      {showWsStatus && <span className={`${permissionMode === "request" ? "ml-auto" : "ml-2"} size-2 shrink-0 rounded-full bg-success`} />}
+      {showWsStatus && (
+        <span className="size-1.5 shrink-0 rounded-full bg-success" title="Connected" />
+      )}
     </div>
   );
 }

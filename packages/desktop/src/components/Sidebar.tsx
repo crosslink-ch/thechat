@@ -104,27 +104,27 @@ export function Sidebar() {
   return (
     <>
       {open && <div className="fixed inset-0 z-[9] bg-overlay" onClick={closeSidebar} />}
-      <div className={`absolute top-0 bottom-0 z-10 flex w-[260px] shrink-0 flex-col border-r border-border bg-surface transition-[margin-left] duration-200 ${open ? "ml-0" : "-ml-[260px]"}`}>
+      <div className={`absolute top-0 bottom-0 z-10 flex w-[260px] shrink-0 flex-col border-r border-border bg-surface transition-[margin-left] duration-200 ease-out ${open ? "ml-0" : "-ml-[260px]"}`}>
         {/* Workspace switcher (only when logged in) */}
         {user && (
-          <div className="relative border-b border-border p-2">
+          <div className="relative border-b border-border-subtle p-2.5">
             <button
-              className="flex w-full cursor-pointer items-center justify-between rounded-lg border border-border-strong bg-elevated px-3 py-2 font-[inherit] text-sm font-medium text-text hover:bg-border-strong"
+              className="flex w-full cursor-pointer items-center justify-between rounded-lg border border-border bg-raised px-3 py-2 font-[inherit] text-[13px] font-medium text-text transition-colors duration-150 hover:bg-hover"
               onClick={() => setDropdownOpen(!dropdownOpen)}
             >
-              <span>
+              <span className="overflow-hidden text-ellipsis whitespace-nowrap">
                 {activeWorkspace ? activeWorkspace.name : "Select workspace"}
               </span>
-              <span className="text-[10px] text-text-muted">
-                {dropdownOpen ? "\u25B2" : "\u25BC"}
-              </span>
+              <svg className={`shrink-0 text-text-dimmed transition-transform duration-150 ${dropdownOpen ? "rotate-180" : ""}`} width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M3 4.5L6 7.5L9 4.5" />
+              </svg>
             </button>
             {dropdownOpen && (
-              <div className="absolute top-full right-2 left-2 z-[15] mt-1 overflow-hidden rounded-lg border border-border-strong bg-surface shadow-card">
+              <div className="absolute top-full right-2.5 left-2.5 z-[15] mt-1 overflow-hidden rounded-lg border border-border-strong bg-surface shadow-card animate-fade-in">
                 {workspaces.map((ws) => (
                   <button
                     key={ws.id}
-                    className={`block w-full cursor-pointer border-none px-3 py-2 text-left font-[inherit] text-[13px] ${
+                    className={`block w-full cursor-pointer border-none px-3 py-2 text-left font-[inherit] text-[13px] transition-colors duration-100 ${
                       activeWorkspace?.id === ws.id
                         ? "bg-elevated text-text"
                         : "bg-none text-text-muted hover:bg-hover hover:text-text"
@@ -138,7 +138,7 @@ export function Sidebar() {
                   </button>
                 ))}
                 <button
-                  className="block w-full cursor-pointer border-t border-border bg-none px-3 py-2 text-left font-[inherit] text-[13px] text-accent hover:bg-hover hover:text-text"
+                  className="block w-full cursor-pointer border-t border-border bg-none px-3 py-2 text-left font-[inherit] text-[13px] text-accent transition-colors duration-100 hover:bg-hover hover:text-text"
                   onClick={() => {
                     openWorkspaceModal();
                     setDropdownOpen(false);
@@ -153,9 +153,9 @@ export function Sidebar() {
 
         {/* Tab toggle (only when workspace is active) */}
         {user && activeWorkspace && (
-          <div className="flex gap-1 border-b border-border px-2 py-1.5">
+          <div className="flex gap-0.5 border-b border-border-subtle p-2">
             <button
-              className={`flex flex-1 cursor-pointer items-center justify-center gap-1.5 rounded-md border-none px-2 py-1.5 font-[inherit] text-xs font-medium ${tab === "workspace" ? "bg-elevated text-text" : "bg-none text-text-muted hover:bg-hover hover:text-text"}`}
+              className={`flex flex-1 cursor-pointer items-center justify-center gap-1.5 rounded-md border-none px-2 py-1.5 font-[inherit] text-[12px] font-medium transition-colors duration-150 ${tab === "workspace" ? "bg-elevated text-text" : "bg-none text-text-muted hover:bg-hover hover:text-text"}`}
               onClick={() => setTab("workspace")}
             >
               Workspace
@@ -164,7 +164,7 @@ export function Sidebar() {
               )}
             </button>
             <button
-              className={`flex flex-1 cursor-pointer items-center justify-center gap-1.5 rounded-md border-none px-2 py-1.5 font-[inherit] text-xs font-medium ${tab === "agent" ? "bg-elevated text-text" : "bg-none text-text-muted hover:bg-hover hover:text-text"}`}
+              className={`flex flex-1 cursor-pointer items-center justify-center gap-1.5 rounded-md border-none px-2 py-1.5 font-[inherit] text-[12px] font-medium transition-colors duration-150 ${tab === "agent" ? "bg-elevated text-text" : "bg-none text-text-muted hover:bg-hover hover:text-text"}`}
               onClick={() => setTab("agent")}
             >
               Agent Chats
@@ -177,26 +177,32 @@ export function Sidebar() {
 
         {/* Workspace tab content */}
         {user && activeWorkspace && tab === "workspace" && (
-          <>
+          <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
             {/* Notifications button */}
             <button
-              className="flex w-full cursor-pointer items-center justify-between border-b border-border-subtle bg-none px-3 py-2 text-[0.85rem] text-text-secondary hover:bg-hover hover:text-text"
-              style={{ border: "none", borderBottom: "1px solid var(--color-border-subtle)" }}
+              className="mx-2.5 mt-2 flex cursor-pointer items-center justify-between rounded-lg border-none bg-none px-2.5 py-2 text-[13px] text-text-secondary transition-colors duration-150 hover:bg-hover hover:text-text"
               onClick={() => {
                 navigate({ to: "/notifications" });
                 closeSidebar();
               }}
             >
-              <span>Notifications</span>
+              <span className="flex items-center gap-2">
+                <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M10.5 4.67a3.5 3.5 0 1 0-7 0c0 4.08-1.75 5.25-1.75 5.25h10.5s-1.75-1.17-1.75-5.25" />
+                  <path d="M8.01 11.67a1.17 1.17 0 0 1-2.02 0" />
+                </svg>
+                Notifications
+              </span>
               {notificationCount > 0 && (
-                <span className="min-w-[18px] rounded-[9px] bg-accent px-1.5 py-px text-center text-[0.7rem] font-semibold text-white">
+                <span className="min-w-[18px] rounded-full bg-accent px-1.5 py-px text-center text-[10px] font-semibold text-white">
                   {notificationCount}
                 </span>
               )}
             </button>
 
-            <div className="px-2">
-              <div className="px-3 pt-3 pb-1 text-[11px] font-semibold uppercase tracking-wide text-text-dimmed">Channels</div>
+            {/* Channels */}
+            <div className="mt-1 px-2.5">
+              <div className="px-2.5 pt-3 pb-1.5 text-[11px] font-semibold uppercase tracking-wider text-text-dimmed">Channels</div>
               <div className="pb-1">
                 {activeWorkspace.channels.map((ch) => {
                   const isActive = activeChannelId === ch.id;
@@ -204,19 +210,21 @@ export function Sidebar() {
                   return (
                     <button
                       key={ch.id}
-                      className={`mb-px block w-full cursor-pointer rounded-md border-none px-3 py-1.5 text-left font-[inherit] text-[13px] ${isActive ? "bg-elevated text-text" : "bg-none text-text-muted hover:bg-hover hover:text-text"} ${isUnread ? "relative font-semibold text-text" : ""}`}
+                      className={`mb-px flex w-full cursor-pointer items-center gap-1.5 rounded-md border-none px-2.5 py-1.5 text-left font-[inherit] text-[13px] transition-colors duration-100 ${isActive ? "bg-elevated text-text" : "bg-none text-text-muted hover:bg-hover hover:text-text"} ${isUnread ? "font-semibold text-text" : ""}`}
                       onClick={() => handleSelectChannel(ch)}
                     >
-                      <span className="mr-0.5 text-text-dimmed">#</span> {ch.name}
-                      {isUnread && <span className="ml-auto inline-block size-1.5 shrink-0 rounded-full bg-accent" />}
+                      <span className="text-text-dimmed">#</span>
+                      <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap">{ch.name}</span>
+                      {isUnread && <span className="size-1.5 shrink-0 rounded-full bg-accent" />}
                     </button>
                   );
                 })}
               </div>
             </div>
 
-            <div className="px-2">
-              <div className="px-3 pt-3 pb-1 text-[11px] font-semibold uppercase tracking-wide text-text-dimmed">Direct Messages</div>
+            {/* Direct Messages */}
+            <div className="px-2.5">
+              <div className="px-2.5 pt-3 pb-1.5 text-[11px] font-semibold uppercase tracking-wider text-text-dimmed">Direct Messages</div>
               <div className="pb-1">
                 {activeWorkspace.members
                   .filter((m) => m.userId !== user.id)
@@ -225,28 +233,37 @@ export function Sidebar() {
                     return (
                       <button
                         key={m.userId}
-                        className={`mb-px flex w-full cursor-pointer items-center gap-2 rounded-md border-none px-3 py-1.5 text-left font-[inherit] text-[13px] ${isActive ? "bg-elevated text-text" : "bg-none text-text-muted hover:bg-hover hover:text-text"}`}
+                        className={`mb-px flex w-full cursor-pointer items-center gap-2 rounded-md border-none px-2.5 py-1.5 text-left font-[inherit] text-[13px] transition-colors duration-100 ${isActive ? "bg-elevated text-text" : "bg-none text-text-muted hover:bg-hover hover:text-text"}`}
                         onClick={() => handleSelectDm(m)}
                       >
-                        <span className="flex size-6 shrink-0 items-center justify-center rounded-full border border-border bg-elevated text-[11px] font-semibold text-text-muted">
+                        <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-elevated text-[10px] font-semibold text-text-muted">
                           {m.user.name.charAt(0).toUpperCase()}
                         </span>
-                        <span className="overflow-hidden text-ellipsis whitespace-nowrap">{m.user.name}</span>
+                        <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap">{m.user.name}</span>
                       </button>
                     );
                   })}
               </div>
             </div>
-          </>
+          </div>
         )}
 
         {/* Agent Chats tab content (or full view when no workspace) */}
         {(tab === "agent" || !activeWorkspace || !user) && (
           <div className="flex min-h-0 flex-1 flex-col">
-            <button className="m-1 cursor-pointer rounded-lg border border-border-strong bg-elevated p-2.5 text-sm text-text hover:bg-border-strong" onClick={handleNewChat}>
-              + New Chat
-            </button>
-            <div className="flex-1 overflow-y-auto px-2">
+            <div className="p-2.5">
+              <button
+                className="flex w-full cursor-pointer items-center justify-center gap-2 rounded-lg border border-border bg-raised px-3 py-2 font-[inherit] text-[13px] font-medium text-text-secondary transition-colors duration-150 hover:bg-hover hover:text-text"
+                onClick={handleNewChat}
+              >
+                <svg width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+                  <path d="M6.5 2.5V10.5" />
+                  <path d="M2.5 6.5H10.5" />
+                </svg>
+                New Chat
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto px-2.5">
               {conversations.map((conv) => {
                 const isActive = currentAgentChatId === conv.id;
                 const isUnread = !isActive && unreadAgentChats.has(conv.id);
@@ -254,7 +271,7 @@ export function Sidebar() {
                 return (
                   <button
                     key={conv.id}
-                    className={`mb-0.5 flex w-full cursor-pointer items-center gap-1.5 rounded-md border-none bg-none px-3 py-2.5 text-left text-[13px] ${isActive ? "bg-elevated text-text" : "text-text-muted hover:bg-hover"} ${isUnread ? "font-semibold text-text" : ""}`}
+                    className={`mb-0.5 flex w-full cursor-pointer items-center gap-1.5 rounded-md border-none bg-none px-2.5 py-2 text-left font-[inherit] text-[13px] transition-colors duration-100 ${isActive ? "bg-elevated text-text" : "text-text-muted hover:bg-hover hover:text-text"} ${isUnread ? "font-semibold text-text" : ""}`}
                     onClick={() => handleSelectConversation(conv)}
                   >
                     <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap">{conv.title}</span>
@@ -270,14 +287,15 @@ export function Sidebar() {
           </div>
         )}
 
-        <div className="border-t border-border p-3">
+        {/* Footer */}
+        <div className="border-t border-border-subtle p-2.5">
           <button
-            className="mb-2 flex w-full cursor-pointer items-center gap-2 rounded-lg border border-border bg-none px-2 py-2 font-[inherit] text-[13px] text-text-muted hover:bg-hover hover:text-text"
+            className="mb-2 flex w-full cursor-pointer items-center gap-2 rounded-lg border border-border bg-none px-2.5 py-2 font-[inherit] text-[12px] text-text-dimmed transition-colors duration-150 hover:bg-hover hover:text-text-muted"
             onClick={openCodexAuthModal}
           >
             {codexStatus === "authenticated" ? (
               <>
-                <span className="size-2 shrink-0 rounded-full bg-green-500" />
+                <span className="size-1.5 shrink-0 rounded-full bg-success" />
                 <span>ChatGPT Connected</span>
               </>
             ) : (
@@ -285,14 +303,14 @@ export function Sidebar() {
             )}
           </button>
           {user ? (
-            <div className="flex items-center justify-between gap-2">
-              <span className="overflow-hidden text-ellipsis whitespace-nowrap text-[13px] text-text">{user.name}</span>
-              <button className="shrink-0 cursor-pointer rounded border-none bg-none px-2 py-1 font-[inherit] text-xs text-text-muted hover:bg-hover hover:text-text" onClick={logout}>
+            <div className="flex items-center justify-between gap-2 px-1">
+              <span className="overflow-hidden text-ellipsis whitespace-nowrap text-[12px] text-text-secondary">{user.name}</span>
+              <button className="shrink-0 cursor-pointer rounded border-none bg-none px-2 py-1 font-[inherit] text-[11px] text-text-dimmed transition-colors duration-150 hover:text-text-muted" onClick={logout}>
                 Log out
               </button>
             </div>
           ) : (
-            <button className="block w-full cursor-pointer rounded-lg border border-border bg-none px-2 py-2 font-[inherit] text-[13px] text-text-muted hover:bg-hover hover:text-text" onClick={openAuthModal}>
+            <button className="block w-full cursor-pointer rounded-lg border border-border bg-none px-2.5 py-2 font-[inherit] text-[12px] text-text-dimmed transition-colors duration-150 hover:bg-hover hover:text-text-muted" onClick={openAuthModal}>
               Log in
             </button>
           )}

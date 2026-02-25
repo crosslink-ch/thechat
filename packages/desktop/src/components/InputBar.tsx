@@ -35,31 +35,47 @@ export function InputBar({ convId, onSend, onStop }: InputBarProps) {
     }
   };
 
+  const canSend = input.trim().length > 0 && !isStreaming;
+
   return (
-    <div className="flex items-end gap-2 border-t border-border bg-surface px-4 py-3">
-      <textarea
-        ref={textareaRef}
-        className="max-h-[200px] flex-1 resize-none rounded-xl border border-border bg-base px-3.5 py-2.5 font-[inherit] text-[15px] leading-normal text-text outline-none placeholder:text-text-placeholder focus:border-border-focus"
-        value={input}
-        onChange={(e) => setInput(e.target.value)}
-        onKeyDown={handleKeyDown}
-        placeholder="Type a message..."
-        rows={1}
-        disabled={isStreaming}
-      />
-      {isStreaming ? (
-        <button className="cursor-pointer whitespace-nowrap rounded-xl border-none bg-danger-bg px-5 py-2.5 text-sm font-medium text-text shadow-none hover:bg-danger-bg-hover" onClick={onStop}>
-          Stop
-        </button>
-      ) : (
-        <button
-          className="cursor-pointer whitespace-nowrap rounded-xl border-none bg-button px-5 py-2.5 text-sm font-medium text-text shadow-none hover:not-disabled:bg-button-hover disabled:cursor-default disabled:opacity-40"
-          onClick={handleSend}
-          disabled={!input.trim()}
-        >
-          Send
-        </button>
-      )}
+    <div className="px-4 pb-4 pt-2">
+      <div className="relative rounded-xl border border-border bg-raised shadow-input transition-colors duration-150 focus-within:border-border-strong">
+        <textarea
+          ref={textareaRef}
+          className="block max-h-[200px] w-full resize-none bg-transparent px-4 pt-3 pb-11 font-[inherit] text-[14px] leading-relaxed text-text outline-none placeholder:text-text-placeholder"
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          onKeyDown={handleKeyDown}
+          placeholder="Send a message..."
+          rows={1}
+          disabled={isStreaming}
+        />
+        <div className="absolute right-2 bottom-2 flex items-center gap-1.5">
+          {isStreaming ? (
+            <button
+              className="flex size-8 cursor-pointer items-center justify-center rounded-lg border-none bg-error/15 text-error-bright shadow-none transition-colors duration-150 hover:bg-error/25"
+              onClick={onStop}
+              title="Stop generating"
+            >
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor">
+                <rect x="2" y="2" width="10" height="10" rx="1.5" />
+              </svg>
+            </button>
+          ) : (
+            <button
+              className="flex size-8 cursor-pointer items-center justify-center rounded-lg border-none shadow-none transition-all duration-150 disabled:cursor-default disabled:opacity-25 bg-accent/15 text-accent hover:not-disabled:bg-accent/25"
+              onClick={handleSend}
+              disabled={!canSend}
+              title="Send message"
+            >
+              <svg width="15" height="15" viewBox="0 0 15 15" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M7.5 12V3.5" />
+                <path d="M3.5 7L7.5 3L11.5 7" />
+              </svg>
+            </button>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

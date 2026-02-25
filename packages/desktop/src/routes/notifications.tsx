@@ -32,21 +32,21 @@ function InviteNotificationCard({ invite }: { invite: WorkspaceInvite }) {
   return (
     <div className="flex items-center justify-between gap-3 rounded-lg border border-border bg-raised px-4 py-3">
       <div>
-        <div className="text-[0.9rem] font-semibold text-text">{invite.workspaceName}</div>
-        <div className="mt-0.5 text-[0.8rem] text-text-muted">
+        <div className="text-[14px] font-semibold text-text">{invite.workspaceName}</div>
+        <div className="mt-0.5 text-[12px] text-text-muted">
           Invited by {invite.inviterName}
         </div>
       </div>
       <div className="flex shrink-0 gap-2">
         <button
-          className="cursor-pointer rounded-md border-none bg-accent px-3.5 py-1.5 text-[0.8rem] font-medium text-white hover:not-disabled:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+          className="cursor-pointer rounded-lg border-none bg-accent/15 px-3.5 py-1.5 text-[12px] font-medium text-accent transition-colors duration-150 hover:not-disabled:bg-accent/25 disabled:cursor-not-allowed disabled:opacity-50"
           onClick={handleAccept}
           disabled={loading !== null}
         >
           {loading === "accept" ? "..." : "Accept"}
         </button>
         <button
-          className="cursor-pointer rounded-md border-none bg-button px-3.5 py-1.5 text-[0.8rem] font-medium text-text-secondary hover:not-disabled:bg-button-hover disabled:cursor-not-allowed disabled:opacity-50"
+          className="cursor-pointer rounded-lg border-none bg-button px-3.5 py-1.5 text-[12px] font-medium text-text-secondary transition-colors duration-150 hover:not-disabled:bg-button-hover disabled:cursor-not-allowed disabled:opacity-50"
           onClick={handleDecline}
           disabled={loading !== null}
         >
@@ -63,11 +63,11 @@ export function NotificationsRoute() {
 
   return (
     <div className="mx-auto h-full max-w-[600px] overflow-y-auto p-6">
-      <h2 className="mb-4 text-[1.2rem] font-semibold text-text">Notifications</h2>
+      <h2 className="mb-4 text-[17px] font-semibold tracking-tight text-text">Notifications</h2>
       {loading && notifications.length === 0 ? (
-        <div className="text-[0.9rem] text-text-muted">Loading...</div>
+        <div className="text-[13px] text-text-muted">Loading...</div>
       ) : notifications.length === 0 ? (
-        <div className="text-[0.9rem] text-text-muted">No notifications</div>
+        <div className="text-[13px] text-text-muted">No notifications</div>
       ) : (
         <div className="flex flex-col gap-2">
           {notifications.map((n) => {
