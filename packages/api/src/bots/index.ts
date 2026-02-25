@@ -1,5 +1,7 @@
 import { Elysia } from "elysia";
 import { z } from "zod";
+import { eq, and, ne } from "drizzle-orm";
+import type { WsServerEvent } from "@thechat/shared";
 import { resolveTokenToUser } from "../auth/middleware";
 import { ServiceError } from "../services/errors";
 import {
@@ -13,6 +15,9 @@ import {
   regenerateBotKey,
   regenerateBotSecret,
 } from "../services/bots";
+import { db } from "../db";
+import { bots, users, workspaceMembers } from "../db/schema";
+import { broadcastToUser } from "../ws";
 
 const createSchema = z.object({
   name: z.string().trim().min(1, "Bot name is required"),
@@ -135,11 +140,53 @@ export const botRoutes = new Elysia({ prefix: "/bots" })
     }
 
     try {
-      return await addBotToWorkspace(
+      const result = await addBotToWorkspace(
         params.botId,
         parsed.data.workspaceId,
         user.id
       );
+
+      // Broadcast member_joined to existing workspace members
+      const [botInfo] = await db
+        .select({ userId: bots.userId, name: users.name })
+        .from(bots)
+        .innerJoin(users, eq(bots.userId, users.id))
+        .where(eq(bots.id, params.botId))
+        .limit(1);
+
+      if (botInfo) {
+        const members = await db
+          .select({ userId: workspaceMembers.userId })
+          .from(workspaceMembers)
+          .where(
+            and(
+              eq(workspaceMembers.workspaceId, parsed.data.workspaceId),
+              ne(workspaceMembers.userId, botInfo.userId)
+            )
+          );
+
+        const event: WsServerEvent = {
+          type: "member_joined",
+          workspaceId: parsed.data.workspaceId,
+          member: {
+            userId: botInfo.userId,
+            role: "member",
+            joinedAt: new Date().toISOString(),
+            user: {
+              id: botInfo.userId,
+              name: botInfo.name,
+              email: null,
+              avatar: null,
+            },
+          },
+        };
+
+        for (const m of members) {
+          broadcastToUser(m.userId, event);
+        }
+      }
+
+      return result;
     } catch (e: any) {
       set.status = e instanceof ServiceError ? e.status : 500;
       return { error: e.message ?? "Unknown error" };
