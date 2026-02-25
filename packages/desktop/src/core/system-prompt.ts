@@ -60,7 +60,7 @@ Use the todowrite/todoread tools frequently to plan and track multi-step tasks. 
 Reserve the **shell** tool for: git commands, running scripts, build commands, installing packages, and system tasks that don't have a dedicated tool.
 
 ## Parallel execution
-Call multiple tools in a single response when there are no dependencies between them. Use the **batch** tool for parallel independent operations. However, if tool calls depend on previous results, run them sequentially.
+Call multiple tools in a single response when there are no dependencies between them. Use the **batch** tool for parallel independent operations. For batch, each item must be an object with { tool, args } where args is an object — do not use an 'input' key. If tool calls depend on previous results, run them sequentially.
 
 ## File operations
 - Always read a file before editing it to understand the current content.

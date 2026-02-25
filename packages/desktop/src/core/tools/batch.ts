@@ -11,8 +11,7 @@ const DISALLOWED_TOOLS = new Set(["batch", "invalid"]);
 
 interface BatchToolCall {
   tool: string;
-  args?: Record<string, unknown>;
-  input?: Record<string, unknown>;
+  args: Record<string, unknown>;
 }
 
 export const batchTool = defineTool({
@@ -30,12 +29,13 @@ If any individual tool call fails, other calls still complete.`,
           type: "object",
           properties: {
             tool: { type: "string", description: "Name of the tool to call" },
-            args: { type: "object", description: "Arguments for the tool (alias: input)" },
-            input: { type: "object", description: "Alias of args; either is accepted" },
+            args: { type: "object", description: "Arguments for the tool (required)" },
           },
-          required: ["tool"],
+          required: ["tool", "args"],
+          additionalProperties: false,
         },
-        description: "Array of tool calls to execute in parallel",
+        description:
+          "Array of tool calls to execute in parallel. Each item must include a 'tool' and its 'args' object.",
       },
     },
     required: ["tool_calls"],
@@ -64,7 +64,15 @@ If any individual tool call fails, other calls still complete.`,
           };
         }
 
-        const callArgs = (call.args ?? call.input ?? {}) as Record<string, unknown>;
+        if (!call.args || typeof call.args !== "object") {
+          return {
+            index,
+            tool: call.tool,
+            success: false,
+            error: `Missing required 'args' object for tool "${call.tool}"`,
+          };
+        }
+        const callArgs = call.args as Record<string, unknown>;
 
         try {
           const result = await tool.execute(callArgs, context);
