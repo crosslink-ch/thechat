@@ -1,8 +1,19 @@
 import { fetch } from "@tauri-apps/plugin-http";
-import { error as logError, warn as logWarn } from "../log";
+import { error as logError, warn as logWarn, debug as logDebug } from "../log";
 import type { ChatParams, StreamEvent, StreamResult, ToolDefinition } from "./types";
 
 const CODEX_API_ENDPOINT = "https://chatgpt.com/backend-api/codex/responses";
+
+function truncate(value: unknown, max = 2000): unknown {
+  if (typeof value === "string" && value.length > max) return value.slice(0, max) + `…(+${value.length - max})`;
+  if (Array.isArray(value)) return value.map((v) => truncate(v, max));
+  if (value && typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value)) out[k] = truncate(v, max);
+    return out;
+  }
+  return value;
+}
 
 export const CODEX_MODELS = [
   { id: "gpt-5.3-codex", name: "GPT-5.3 Codex" },
@@ -22,6 +33,7 @@ interface StreamCodexOptions {
   tools?: ToolDefinition[];
   signal?: AbortSignal;
   onEvent: (event: StreamEvent) => void;
+  convId?: string;
 }
 
 /**
@@ -29,6 +41,14 @@ interface StreamCodexOptions {
  */
 function messagesToResponsesInput(messages: Array<Record<string, unknown>>): unknown[] {
   const input: unknown[] = [];
+
+  const normalizeFcId = (raw: unknown): string => {
+    const s = String(raw ?? "");
+    if (!s) return "fc_" + Math.random().toString(36).slice(2);
+    if (s.startsWith("fc")) return s;
+    const core = s.replace(/^(call[_-]?)/, "");
+    return "fc_" + core;
+  };
 
   for (const msg of messages) {
     const role = msg.role as string;
@@ -40,30 +60,27 @@ function messagesToResponsesInput(messages: Array<Record<string, unknown>>): unk
         content: [{ type: "input_text", text: msg.content as string }],
       });
     } else if (role === "assistant") {
-      // Assistant message might have text content and/or tool_calls
-      const parts: unknown[] = [];
+      // Assistant message might have text content and/or tool_calls.
       if (msg.content) {
-        parts.push({ type: "output_text", text: msg.content as string });
+        input.push({ type: "message", role: "assistant", content: [{ type: "output_text", text: msg.content as string }] });
       }
       if (Array.isArray(msg.tool_calls)) {
         for (const tc of msg.tool_calls as Array<Record<string, unknown>>) {
           const fn = tc.function as Record<string, unknown>;
+          const id = normalizeFcId(tc.id);
           input.push({
             type: "function_call",
-            id: tc.id,
-            call_id: tc.id,
+            id,
+            call_id: id,
             name: fn.name,
             arguments: fn.arguments as string,
           });
         }
       }
-      if (parts.length > 0) {
-        input.push({ type: "message", role: "assistant", content: parts });
-      }
     } else if (role === "tool") {
       input.push({
         type: "function_call_output",
-        call_id: msg.tool_call_id as string,
+        call_id: normalizeFcId(msg.tool_call_id as string),
         output: msg.content as string,
       });
     }
@@ -71,6 +88,9 @@ function messagesToResponsesInput(messages: Array<Record<string, unknown>>): unk
 
   return input;
 }
+
+// No persistent response tracking required for Codex: function_call_output can
+// reference the function_call provided in the same input using matching call_id.
 
 export async function streamCodexCompletion(options: StreamCodexOptions): Promise<StreamResult> {
   const { accessToken, accountId, model, messages, params, tools, signal, onEvent } = options;
@@ -91,7 +111,17 @@ export async function streamCodexCompletion(options: StreamCodexOptions): Promis
     instructions,
     input: messagesToResponsesInput(nonSystemMessages),
     stream: true,
+    store: false,
   };
+
+  try {
+    logDebug(`[codex] Request body: ${JSON.stringify(truncate(body))}`);
+  } catch {
+    // ignore stringify errors
+  }
+
+  // Note: Codex endpoint rejects previous_response_id. We rely on echoing
+  // function_call items (with matching call_id) alongside function_call_output.
 
   if (params?.max_tokens !== undefined) body.max_output_tokens = params.max_tokens;
   const reasoningEffort = params?.reasoning_effort ?? "medium";
@@ -125,6 +155,9 @@ export async function streamCodexCompletion(options: StreamCodexOptions): Promis
   if (!response.ok) {
     const errBody = await response.text();
     logError(`[codex] API error ${response.status}: ${errBody}`);
+    try {
+      logDebug(`[codex] Failing request body: ${JSON.stringify(truncate(body))}`);
+    } catch {}
     throw new Error(`Codex API error (${response.status}): ${errBody}`);
   }
 
@@ -209,6 +242,7 @@ export async function streamCodexCompletion(options: StreamCodexOptions): Promis
               total_tokens: inputTokens + outputTokens,
             };
           }
+          // No response id tracking necessary for Codex flow
         } else if (type === "error") {
           const msg = (event.message as string) || "Unknown Codex API error";
           logError(`[codex] Stream error: ${msg}`);

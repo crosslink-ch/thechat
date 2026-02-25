@@ -51,6 +51,7 @@ function callProvider(
       params: options.params,
       tools,
       signal: options.signal,
+      convId: options.convId,
       onEvent,
     });
   }
