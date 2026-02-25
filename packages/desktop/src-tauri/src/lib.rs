@@ -10,6 +10,25 @@ use shell::ShellProcesses;
 use std::sync::Arc;
 use tauri::State;
 
+fn log_level_from_env() -> log::LevelFilter {
+    let val = std::env::var("THECHAT_LOG_LEVEL").unwrap_or_default().to_lowercase();
+    match val.as_str() {
+        "trace" => log::LevelFilter::Trace,
+        "debug" => log::LevelFilter::Debug,
+        "info" => log::LevelFilter::Info,
+        "warn" | "warning" => log::LevelFilter::Warn,
+        "error" => log::LevelFilter::Error,
+        "off" | "none" => log::LevelFilter::Off,
+        _ => {
+            if cfg!(debug_assertions) {
+                log::LevelFilter::Debug
+            } else {
+                log::LevelFilter::Info
+            }
+        }
+    }
+}
+
 type DbState = Arc<Database>;
 
 pub struct InitialProjectDir(pub Option<String>);
@@ -128,7 +147,7 @@ pub fn run() {
     log::info!("App started");
 
     tauri::Builder::default()
-        .plugin(tauri_plugin_log::Builder::new().build())
+        .plugin(tauri_plugin_log::Builder::new().level(log_level_from_env()).build())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_dialog::init())
@@ -188,7 +207,7 @@ mod tests {
         let shell_state: Arc<ShellProcesses> = Arc::new(ShellProcesses::new());
 
         let app = tauri::test::mock_builder()
-            .plugin(tauri_plugin_log::Builder::new().build())
+            .plugin(tauri_plugin_log::Builder::new().level(log_level_from_env()).build())
             .plugin(tauri_plugin_notification::init())
             .plugin(tauri_plugin_process::init())
             .manage(db_state)

@@ -133,6 +133,7 @@ export const useToolsStore = create<ToolsStore>()((set, get) => ({
         if (unique.length === 0) return state;
         const mcpTools = [...state.mcpTools, ...unique];
         const tools = computeTools(state.skills, mcpTools, getActiveSessionInfos(state));
+        setBatchToolRegistry(tools);
         return { mcpTools, tools };
       });
     });
@@ -158,6 +159,7 @@ export const useToolsStore = create<ToolsStore>()((set, get) => ({
       logInfo(`[tools] Discovered ${skills.length} skills`);
       set((state) => {
         const tools = computeTools(skills, state.mcpTools, getActiveSessionInfos(state));
+        setBatchToolRegistry(tools);
         return { skills, tools };
       });
     } catch (e) {
@@ -205,6 +207,7 @@ export const useToolsStore = create<ToolsStore>()((set, get) => ({
         state.mcpTools,
         convId ? (state.sessionToolsByConv[convId] ?? []) : [],
       );
+      setBatchToolRegistry(tools);
       return { activeConvId: convId, activeCwd: projectDir ?? null, tools };
     });
 
@@ -213,9 +216,9 @@ export const useToolsStore = create<ToolsStore>()((set, get) => ({
     // If already cached, try to re-initialize MCP servers in the background
     const state = get();
     const cached = state.sessionToolsByConv[convId];
-    if (cached && cached.length > 0) {
-      // Fire-and-forget: re-initialize MCP servers for these tools
-      const serverNames = [...new Set(cached.map((t) => t.server))];
+      if (cached && cached.length > 0) {
+        // Fire-and-forget: re-initialize MCP servers for these tools
+        const serverNames = [...new Set(cached.map((t) => t.server))];
       invoke("mcp_initialize_servers", { names: serverNames, token: null }).catch((e) =>
         logWarn(`[tools] MCP server re-init failed: ${formatError(e)}`),
       );
@@ -240,6 +243,7 @@ export const useToolsStore = create<ToolsStore>()((set, get) => ({
         // Only recompute if this is still the active conversation
         if (state.activeConvId !== convId) return { sessionToolsByConv };
         const tools = computeTools(state.skills, state.mcpTools, infos);
+        setBatchToolRegistry(tools);
         return { sessionToolsByConv, tools };
       });
 
@@ -272,6 +276,7 @@ export const useToolsStore = create<ToolsStore>()((set, get) => ({
       // Only recompute tools if this is the active conversation
       if (state.activeConvId !== convId) return { sessionToolsByConv };
       const tools = computeTools(state.skills, state.mcpTools, merged);
+      setBatchToolRegistry(tools);
       return { sessionToolsByConv, tools };
     });
   },
