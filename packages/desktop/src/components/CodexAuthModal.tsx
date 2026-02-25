@@ -148,9 +148,9 @@ function CodexAuthModalInner() {
 
             <button
               className="block w-full cursor-pointer rounded-lg border border-border bg-none px-2.5 py-2.5 font-[inherit] text-[13px] text-text-muted hover:bg-hover hover:text-text"
-              onClick={handleDisconnect}
+              onClick={closeCodexAuthModal}
             >
-              Disconnect
+              Close
             </button>
           </>
         )}

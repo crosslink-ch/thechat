@@ -2,5 +2,7 @@ packages:
   - packages/*
 
 onlyBuiltDependencies:
+  - edgedriver
   - electron
   - esbuild
+  - geckodriver

@@ -46,15 +46,11 @@ export async function generatePKCE(): Promise<PKCECodes> {
 
 /** Start device authorization flow. Returns device_auth_id and user_code. */
 export async function startDeviceAuth(): Promise<DeviceAuthResponse> {
-  const pkce = await generatePKCE();
-
   const res = await fetch(`${ISSUER}/api/accounts/deviceauth/usercode`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       client_id: CLIENT_ID,
-      code_challenge: pkce.challenge,
-      code_challenge_method: "S256",
     }),
   });
 
@@ -110,7 +106,7 @@ export async function exchangeCodeForTokens(
   const body = new URLSearchParams({
     grant_type: "authorization_code",
     code: authCode,
-    redirect_uri: "http://localhost:1455/auth/callback",
+    redirect_uri: `${ISSUER}/deviceauth/callback`,
     client_id: CLIENT_ID,
     code_verifier: codeVerifier,
   });
