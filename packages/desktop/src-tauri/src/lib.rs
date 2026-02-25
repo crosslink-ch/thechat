@@ -110,28 +110,20 @@ pub fn run() {
         }
     }
 
-    let initial_project_dir = {
-        let args: Vec<String> = std::env::args().collect();
-        if let Some(arg) = args.get(1) {
-            if arg.starts_with('-') {
+    let initial_project_dir = std::env::args()
+        .skip(1)
+        .find(|a| !a.starts_with('-'))
+        .and_then(|arg| match std::fs::canonicalize(&arg) {
+            Ok(path) if path.is_dir() => Some(path.to_string_lossy().into_owned()),
+            Ok(path) => {
+                eprintln!("Warning: '{}' is not a directory", path.display());
                 None
-            } else {
-                match std::fs::canonicalize(arg) {
-                    Ok(path) if path.is_dir() => Some(path.to_string_lossy().into_owned()),
-                    Ok(path) => {
-                        eprintln!("Warning: '{}' is not a directory", path.display());
-                        None
-                    }
-                    Err(e) => {
-                        eprintln!("Warning: cannot resolve '{}': {}", arg, e);
-                        None
-                    }
-                }
             }
-        } else {
-            None
-        }
-    };
+            Err(e) => {
+                eprintln!("Warning: cannot resolve '{}': {}", arg, e);
+                None
+            }
+        });
     let db_path = if let Ok(dir) = std::env::var("THECHAT_DATA_DIR") {
         // Explicit override (used by E2E tests for isolation)
         let dir = std::path::PathBuf::from(dir);
