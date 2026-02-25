@@ -70,8 +70,8 @@ export function AgentChatRoute() {
 
   // Pending permission/question state lives in global stores (survives route transitions)
   const convId = conversation?.id;
-  const pendingPermission = usePermissionStore((s) => convId ? s.pending[convId] ?? null : null);
-  const pendingQuestion = useQuestionStore((s) => convId ? s.pending[convId] ?? null : null);
+  const pendingPermission = usePermissionStore((s) => convId ? s.pending[convId]?.[0] ?? null : null);
+  const pendingQuestion = useQuestionStore((s) => convId ? s.pending[convId]?.[0] ?? null : null);
   const todosState = useTodoStore((s) => convId ? s.todos[convId] ?? EMPTY_TODOS : EMPTY_TODOS);
 
   const [showFeedbackInput, setShowFeedbackInput] = useState(false);

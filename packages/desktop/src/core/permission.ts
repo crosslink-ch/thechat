@@ -11,8 +11,8 @@ export interface PermissionRequest {
 }
 
 interface PermissionStoreState {
-  /** Pending permission requests keyed by conversation ID */
-  pending: Record<string, PermissionRequest>;
+  /** Queue of pending permission requests per conversation */
+  pending: Record<string, PermissionRequest[]>;
 }
 
 export const usePermissionStore = create<PermissionStoreState>()(() => ({
@@ -39,31 +39,40 @@ export function requestPermission(info: {
   }
 
   const convId = info.convId ?? "_default";
+  const id = String(++nextId);
 
   return new Promise<void>((resolve, reject) => {
     const request: PermissionRequest = {
-      id: String(++nextId),
+      id,
       convId,
       command: info.command,
       description: info.description,
       resolve: () => {
-        usePermissionStore.setState((s) => {
-          const { [convId]: _, ...rest } = s.pending;
-          return { pending: rest };
-        });
+        removeRequest(convId, id);
         resolve();
       },
       reject: (reason: string) => {
-        usePermissionStore.setState((s) => {
-          const { [convId]: _, ...rest } = s.pending;
-          return { pending: rest };
-        });
+        removeRequest(convId, id);
         reject(new Error(reason));
       },
     };
 
     usePermissionStore.setState((s) => ({
-      pending: { ...s.pending, [convId]: request },
+      pending: {
+        ...s.pending,
+        [convId]: [...(s.pending[convId] ?? []), request],
+      },
     }));
+  });
+}
+
+function removeRequest(convId: string, id: string) {
+  usePermissionStore.setState((s) => {
+    const queue = (s.pending[convId] ?? []).filter((r) => r.id !== id);
+    if (queue.length === 0) {
+      const { [convId]: _, ...rest } = s.pending;
+      return { pending: rest };
+    }
+    return { pending: { ...s.pending, [convId]: queue } };
   });
 }
