@@ -12,7 +12,7 @@ export interface JwtPayload {
   name: string;
   email: string | null;
   avatar: string | null;
-  type: "human";
+  type: "human" | "bot";
 }
 
 export async function signAccessToken(payload: JwtPayload): Promise<string> {

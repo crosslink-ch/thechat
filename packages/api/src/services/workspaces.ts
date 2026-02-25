@@ -86,6 +86,7 @@ export async function getWorkspaceDetail(workspaceId: string, userId: string) {
       userName: users.name,
       userEmail: users.email,
       userAvatar: users.avatar,
+      userType: users.type,
     })
     .from(workspaceMembers)
     .innerJoin(users, eq(workspaceMembers.userId, users.id))
@@ -110,6 +111,7 @@ export async function getWorkspaceDetail(workspaceId: string, userId: string) {
         name: m.userName,
         email: m.userEmail,
         avatar: m.userAvatar,
+        type: m.userType,
       },
     })),
     channels: channels.map((c) => ({

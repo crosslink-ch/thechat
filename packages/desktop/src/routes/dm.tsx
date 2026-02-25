@@ -1,7 +1,8 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { useParams } from "@tanstack/react-router";
 import { useAuthStore } from "../stores/auth";
 import { useWebSocketStore } from "../stores/websocket";
+import { useWorkspacesStore } from "../stores/workspaces";
 import { useChannelChat } from "../hooks/useChannelChat";
 import { ChannelChatView } from "../components/ChannelChatView";
 import { fireNotification } from "../lib/notifications";
@@ -11,7 +12,16 @@ export function DmRoute() {
   const { id: conversationId } = useParams({ from: "/dm/$id" });
   const token = useAuthStore((s) => s.token);
   const user = useAuthStore((s) => s.user);
+  const members = useWorkspacesStore((s) => s.activeWorkspace?.members);
   const wsSendMessage = useWebSocketStore((s) => s.sendMessage);
+
+  const mentions = useMemo(
+    () =>
+      members
+        ?.filter((m) => m.userId !== user?.id)
+        .map((m) => ({ id: m.userId, label: m.user.name, type: m.user.type })),
+    [members, user?.id]
+  );
 
   const channelChat = useChannelChat({
     conversationId,
@@ -97,6 +107,7 @@ export function DmRoute() {
       loading={channelChat.loading}
       typingUsers={typingUsers}
       onSend={channelChat.sendMessage}
+      mentions={mentions}
     />
   );
 }

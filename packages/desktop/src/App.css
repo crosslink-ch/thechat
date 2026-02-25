@@ -240,6 +240,31 @@
   border-radius: 6px;
 }
 
+/* Tiptap editor */
+.ProseMirror {
+  outline: none;
+  min-height: 1.5em;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.ProseMirror p {
+  margin: 0;
+}
+
+.ProseMirror p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  float: left;
+  pointer-events: none;
+  height: 0;
+  color: var(--color-text-placeholder);
+}
+
+.ProseMirror .mention {
+  color: var(--color-accent);
+  font-weight: 500;
+}
+
 /* Code blocks — rehype-highlight adds its own classes to inner <code> */
 .md-code-block {
   background: var(--color-raised);

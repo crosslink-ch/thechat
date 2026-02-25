@@ -2,6 +2,7 @@ import { useRef, useEffect, useCallback } from "react";
 import { InputBar } from "./InputBar";
 import { Markdown } from "./Markdown";
 import type { ChatMessage } from "@thechat/shared";
+import type { MentionUser } from "./MentionList";
 
 const noop = () => {};
 
@@ -10,6 +11,7 @@ interface ChannelChatViewProps {
   loading: boolean;
   typingUsers: Map<string, string>; // userId -> userName
   onSend: (content: string) => void;
+  mentions?: MentionUser[];
 }
 
 function formatTime(iso: string) {
@@ -22,6 +24,7 @@ export function ChannelChatView({
   loading,
   typingUsers,
   onSend,
+  mentions,
 }: ChannelChatViewProps) {
   const endRef = useRef<HTMLDivElement>(null);
 
@@ -68,7 +71,7 @@ export function ChannelChatView({
         )}
         <div ref={endRef} />
       </div>
-      <InputBar convId={undefined} onSend={handleSend} onStop={noop} />
+      <InputBar convId={undefined} onSend={handleSend} onStop={noop} mentions={mentions} />
     </>
   );
 }

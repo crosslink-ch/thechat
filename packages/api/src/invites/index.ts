@@ -125,6 +125,7 @@ export const inviteRoutes = new Elysia({ prefix: "/invites" })
             name: user.name,
             email: user.email,
             avatar: user.avatar,
+            type: user.type,
           },
         },
       };

@@ -89,6 +89,7 @@ export const authRoutes = new Elysia({ prefix: "/auth" })
         name: users.name,
         email: users.email,
         avatar: users.avatar,
+        type: users.type,
       });
 
     if (requireEmailVerification) {
@@ -189,6 +190,7 @@ export const authRoutes = new Elysia({ prefix: "/auth" })
         name: user.name,
         email: user.email,
         avatar: user.avatar,
+        type: "human" as const,
       },
     };
   })

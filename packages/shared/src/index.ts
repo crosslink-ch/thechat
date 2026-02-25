@@ -83,6 +83,7 @@ export interface AuthUser {
   name: string;
   email: string | null;
   avatar: string | null;
+  type: "human" | "bot";
 }
 
 export interface LoginResponse {

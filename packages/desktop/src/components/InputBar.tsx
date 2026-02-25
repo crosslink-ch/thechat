@@ -1,54 +1,25 @@
-import { useState, useRef, useEffect } from "react";
 import { useIsStreaming } from "../stores/streaming";
+import { RichInput } from "./RichInput";
+import type { MentionUser } from "./MentionList";
 
 interface InputBarProps {
   convId: string | undefined;
   onSend: (content: string) => void;
   onStop: () => void;
+  mentions?: MentionUser[];
 }
 
-export function InputBar({ convId, onSend, onStop }: InputBarProps) {
+export function InputBar({ convId, onSend, onStop, mentions }: InputBarProps) {
   const isStreaming = useIsStreaming(convId);
-  const [input, setInput] = useState("");
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
-
-  // Auto-resize textarea
-  useEffect(() => {
-    const el = textareaRef.current;
-    if (el) {
-      el.style.height = "auto";
-      el.style.height = Math.min(el.scrollHeight, 200) + "px";
-    }
-  }, [input]);
-
-  const handleSend = () => {
-    if (!input.trim() || isStreaming) return;
-    const content = input;
-    setInput("");
-    onSend(content);
-  };
-
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      handleSend();
-    }
-  };
-
-  const canSend = input.trim().length > 0 && !isStreaming;
 
   return (
     <div className="px-4 pb-4 pt-2">
       <div className="relative rounded-xl border border-border bg-raised shadow-input transition-colors duration-150 focus-within:border-border-strong">
-        <textarea
-          ref={textareaRef}
-          className="block max-h-[200px] w-full resize-none bg-transparent px-4 pt-3 pb-11 font-[inherit] text-[14px] leading-relaxed text-text outline-none placeholder:text-text-placeholder"
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={handleKeyDown}
+        <RichInput
+          onSubmit={onSend}
           placeholder="Send a message..."
-          rows={1}
           disabled={isStreaming}
+          mentions={mentions}
         />
         <div className="absolute right-2 bottom-2 flex items-center gap-1.5">
           {isStreaming ? (
@@ -64,8 +35,7 @@ export function InputBar({ convId, onSend, onStop }: InputBarProps) {
           ) : (
             <button
               className="flex size-8 cursor-pointer items-center justify-center rounded-lg border-none shadow-none transition-all duration-150 disabled:cursor-default disabled:opacity-25 bg-accent/15 text-accent hover:not-disabled:bg-accent/25"
-              onClick={handleSend}
-              disabled={!canSend}
+              disabled
               title="Send message"
             >
               <svg width="15" height="15" viewBox="0 0 15 15" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">

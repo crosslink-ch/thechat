@@ -29,6 +29,7 @@ const user: AuthUser = {
   name: "Test User",
   email: "test@example.com",
   avatar: null,
+  type: "human",
 };
 
 const workspaceList: WorkspaceListItem[] = [
@@ -46,13 +47,13 @@ const activeWorkspace: WorkspaceWithDetails = {
       userId: "u1",
       role: "owner",
       joinedAt: "2026-01-01",
-      user: { id: "u1", name: "Test User", email: "test@example.com", avatar: null },
+      user: { id: "u1", name: "Test User", email: "test@example.com", avatar: null, type: "human" as const },
     },
     {
       userId: "u2",
       role: "member",
       joinedAt: "2026-01-02",
-      user: { id: "u2", name: "Alice", email: "alice@example.com", avatar: null },
+      user: { id: "u2", name: "Alice", email: "alice@example.com", avatar: null, type: "human" as const },
     },
   ],
   channels: [
