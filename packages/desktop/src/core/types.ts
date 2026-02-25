@@ -61,6 +61,11 @@ export interface ToolDefinition<TArgs = Record<string, unknown>> {
 
 // -- Chat Loop Options --
 
+export interface CodexAuth {
+  accessToken: string;
+  accountId: string;
+}
+
 export interface ChatLoopOptions {
   apiKey: string;
   model: string;
@@ -73,5 +78,7 @@ export interface ChatLoopOptions {
   signal?: AbortSignal;
   cwd?: string;
   convId?: string;
+  provider?: "openrouter" | "codex";
+  codexAuth?: CodexAuth;
   onEvent: (event: StreamEvent) => void;
 }
