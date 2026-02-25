@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { create } from "zustand";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { useCodexAuthStore } from "../stores/codex-auth";
@@ -22,6 +22,9 @@ function CodexAuthModalInner() {
   const startLogin = useCodexAuthStore((s) => s.startLogin);
   const cancelLogin = useCodexAuthStore((s) => s.cancelLogin);
   const logout = useCodexAuthStore((s) => s.logout);
+
+  // Track whether user was already authenticated when the modal opened
+  const wasAuthenticatedOnOpen = useRef(status === "authenticated");
 
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
@@ -48,11 +51,6 @@ function CodexAuthModalInner() {
     if (userCode) {
       navigator.clipboard.writeText(userCode);
     }
-  };
-
-  const handleDisconnect = async () => {
-    await logout();
-    closeCodexAuthModal();
   };
 
   return (
@@ -146,12 +144,32 @@ function CodexAuthModalInner() {
               Set <code className="rounded bg-base px-1 py-0.5 text-[12px]">"provider": "codex"</code> in your config.json to route messages through Codex.
             </p>
 
-            <button
-              className="block w-full cursor-pointer rounded-lg border border-border bg-none px-2.5 py-2.5 font-[inherit] text-[13px] text-text-muted hover:bg-hover hover:text-text"
-              onClick={closeCodexAuthModal}
-            >
-              Close
-            </button>
+            {wasAuthenticatedOnOpen.current ? (
+              <div className="flex gap-2">
+                <button
+                  className="block flex-1 cursor-pointer rounded-lg border border-border bg-none px-2.5 py-2.5 font-[inherit] text-[13px] text-text-muted hover:bg-hover hover:text-text"
+                  onClick={closeCodexAuthModal}
+                >
+                  Close
+                </button>
+                <button
+                  className="block flex-1 cursor-pointer rounded-lg border border-error-msg-border bg-none px-2.5 py-2.5 font-[inherit] text-[13px] text-error-bright hover:bg-error-msg-bg"
+                  onClick={async () => {
+                    await logout();
+                    closeCodexAuthModal();
+                  }}
+                >
+                  Disconnect
+                </button>
+              </div>
+            ) : (
+              <button
+                className="block w-full cursor-pointer rounded-lg border border-border bg-none px-2.5 py-2.5 font-[inherit] text-[13px] text-text-muted hover:bg-hover hover:text-text"
+                onClick={closeCodexAuthModal}
+              >
+                Close
+              </button>
+            )}
           </>
         )}
       </div>
