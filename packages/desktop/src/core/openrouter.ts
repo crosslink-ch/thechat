@@ -8,7 +8,7 @@ interface StreamCompletionOptions {
   params?: ChatParams;
   tools?: ToolDefinition[];
   signal?: AbortSignal;
-  onEvent: (event: StreamEvent) => void;
+  onEvents: (events: StreamEvent[]) => void;
 }
 
 /** Build the fetch request for OpenRouter Chat Completions API. */
@@ -69,7 +69,7 @@ export async function streamCompletion(options: StreamCompletionOptions): Promis
 
   const onEvent = new Channel<StreamEvent[]>();
   onEvent.onmessage = (batch) => {
-    for (const event of batch) options.onEvent(event);
+    options.onEvents(batch);
   };
 
   const onAbort = () => {

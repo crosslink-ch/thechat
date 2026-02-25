@@ -29,7 +29,7 @@ describe("runChatLoop integration", () => {
       messages: [{ role: "user", content: "What's the weather in Paris? Use the tool." }],
       tools: [weatherTool],
       params: { temperature: 0 },
-      onEvent: (e) => events.push(e),
+      onEvents: (batch) => events.push(...batch),
     });
 
     // Should have a tool-result event
@@ -78,9 +78,11 @@ describe("runChatLoop integration", () => {
           },
         },
       },
-      onEvent: (e) => {
-        events.push(e);
-        if (e.type === "text-delta") fullText += e.text;
+      onEvents: (batch) => {
+        for (const e of batch) {
+          events.push(e);
+          if (e.type === "text-delta") fullText += e.text;
+        }
       },
     });
 

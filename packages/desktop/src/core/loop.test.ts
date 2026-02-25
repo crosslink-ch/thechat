@@ -28,7 +28,7 @@ describe("runChatLoop", () => {
       apiKey: "key",
       model: "model",
       messages: [{ role: "user", content: "hi" }],
-      onEvent: (e) => events.push(e),
+      onEvents: (batch) => events.push(...batch),
     });
 
     expect(mockStreamCompletion).toHaveBeenCalledTimes(1);
@@ -67,7 +67,7 @@ describe("runChatLoop", () => {
       model: "model",
       messages: [{ role: "user", content: "weather in Paris?" }],
       tools: [mockTool],
-      onEvent: (e) => events.push(e),
+      onEvents: (batch) => events.push(...batch),
     });
 
     expect(mockTool.execute).toHaveBeenCalledWith({ city: "Paris" }, { signal: undefined });
@@ -113,7 +113,7 @@ describe("runChatLoop", () => {
       model: "model",
       messages: [{ role: "user", content: "do something" }],
       tools: [failingTool],
-      onEvent: (e) => events.push(e),
+      onEvents: (batch) => events.push(...batch),
     });
 
     const toolResult = events.find((e) => e.type === "tool-result");
@@ -159,7 +159,7 @@ describe("runChatLoop", () => {
       messages: [{ role: "user", content: "loop" }],
       tools: [infiniteTool],
       maxToolRoundtrips: 3,
-      onEvent: (e) => events.push(e),
+      onEvents: (batch) => events.push(...batch),
     });
 
     // 3 roundtrips + 1 initial = 4 calls total, then error on exceeding
@@ -181,7 +181,7 @@ describe("runChatLoop", () => {
       model: "model",
       messages: [{ role: "user", content: "hi" }],
       signal: controller.signal,
-      onEvent: (e) => events.push(e),
+      onEvents: (batch) => events.push(...batch),
     });
 
     expect(mockStreamCompletion).not.toHaveBeenCalled();
@@ -207,7 +207,7 @@ describe("runChatLoop", () => {
       model: "model",
       messages: [{ role: "user", content: "use unknown tool" }],
       tools: [],
-      onEvent: (e) => events.push(e),
+      onEvents: (batch) => events.push(...batch),
     });
 
     const toolResult = events.find((e) => e.type === "tool-result");
@@ -248,7 +248,7 @@ describe("runChatLoop", () => {
       model: "model",
       messages: [{ role: "user", content: "do something slow" }],
       tools: [asyncTool],
-      onEvent: (e) => events.push(e),
+      onEvents: (batch) => events.push(...batch),
     });
 
     expect(asyncTool.execute).toHaveBeenCalled();
@@ -288,7 +288,7 @@ describe("runChatLoop", () => {
       model: "model",
       messages: [{ role: "user", content: "run guarded" }],
       tools: [deniedTool],
-      onEvent: (e) => events.push(e),
+      onEvents: (batch) => events.push(...batch),
     });
 
     const toolResult = events.find((e) => e.type === "tool-result");
@@ -339,7 +339,7 @@ describe("runChatLoop", () => {
       model: "model",
       messages: [{ role: "user", content: "read foo" }],
       tools: [stubbornTool],
-      onEvent: (e) => events.push(e),
+      onEvents: (batch) => events.push(...batch),
     });
 
     // Tool was executed 3 times before doom loop was detected
@@ -397,7 +397,7 @@ describe("runChatLoop", () => {
       model: "model",
       messages: [{ role: "user", content: "read files" }],
       tools: [readTool],
-      onEvent: (e) => events.push(e),
+      onEvents: (batch) => events.push(...batch),
     });
 
     // No doom loop error
@@ -462,7 +462,7 @@ describe("runChatLoop", () => {
       model: "model",
       messages: [{ role: "user", content: "list pods" }],
       getTools,
-      onEvent: (e) => events.push(e),
+      onEvents: (batch) => events.push(...batch),
     });
 
     // getTools called at start of each iteration (3 iterations)
@@ -492,7 +492,7 @@ describe("runChatLoop", () => {
       apiKey: "key",
       model: "model",
       messages: [{ role: "user", content: "hi" }],
-      onEvent: (e) => events.push(e),
+      onEvents: (batch) => events.push(...batch),
     });
 
     const errorEvent = events.find((e) => e.type === "error");

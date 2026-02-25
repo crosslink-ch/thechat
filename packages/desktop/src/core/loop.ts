@@ -40,7 +40,7 @@ function callProvider(
   options: ChatLoopOptions,
   messages: Array<Record<string, unknown>>,
   tools: ToolDefinition[] | undefined,
-  onEvent: (event: StreamEvent) => void,
+  onEvents: (events: StreamEvent[]) => void,
 ): Promise<StreamResult> {
   if (options.provider === "codex" && options.codexAuth) {
     return streamCodexCompletion({
@@ -52,7 +52,7 @@ function callProvider(
       tools,
       signal: options.signal,
       convId: options.convId,
-      onEvent,
+      onEvents,
     });
   }
   return streamCompletion({
@@ -62,7 +62,7 @@ function callProvider(
     params: options.params,
     tools,
     signal: options.signal,
-    onEvent,
+    onEvents,
   });
 }
 
@@ -74,7 +74,7 @@ export async function runChatLoop(options: ChatLoopOptions): Promise<void> {
     signal,
     cwd,
     convId,
-    onEvent,
+    onEvents,
   } = options;
 
   const workingMessages: Array<Record<string, unknown>> = [
@@ -97,10 +97,10 @@ export async function runChatLoop(options: ChatLoopOptions): Promise<void> {
     // Doom loop detected — do one final text-only call so the model can respond
     if (isDoomLoop(toolCallHistory)) {
       logWarn(`[loop] Doom loop detected: ${toolCallHistory.slice(-1)[0]?.toolName} called 3x with same args`);
-      onEvent({
+      onEvents([{
         type: "error",
         error: "Doom loop detected: the same tool was called with identical arguments 3 times in a row. Requesting text-only response.",
-      });
+      }]);
 
       workingMessages.push({
         role: "user",
@@ -110,12 +110,12 @@ export async function runChatLoop(options: ChatLoopOptions): Promise<void> {
       });
 
       try {
-        const finalResult = await callProvider(options, workingMessages, undefined, onEvent);
-        onEvent({ type: "finish", usage: finalResult.usage });
+        const finalResult = await callProvider(options, workingMessages, undefined, onEvents);
+        onEvents([{ type: "finish", usage: finalResult.usage }]);
       } catch (e) {
         if (e instanceof DOMException && e.name === "AbortError") return;
         logError(`[loop] Doom loop recovery failed: ${formatError(e)}`);
-        onEvent({ type: "error", error: formatError(e) });
+        onEvents([{ type: "error", error: formatError(e) }]);
       }
       return;
     }
@@ -126,18 +126,18 @@ export async function runChatLoop(options: ChatLoopOptions): Promise<void> {
         options,
         workingMessages,
         currentTools.length > 0 ? currentTools : undefined,
-        onEvent,
+        onEvents,
       );
     } catch (e) {
       if (e instanceof DOMException && e.name === "AbortError") return;
       logError(`[loop] API call failed (round ${round}): ${formatError(e)}`);
-      onEvent({ type: "error", error: formatError(e) });
+      onEvents([{ type: "error", error: formatError(e) }]);
       return;
     }
 
     // No tool calls → we're done
     if (result.toolCalls.length === 0) {
-      onEvent({ type: "finish", usage: result.usage });
+      onEvents([{ type: "finish", usage: result.usage }]);
       return;
     }
 
@@ -168,13 +168,13 @@ export async function runChatLoop(options: ChatLoopOptions): Promise<void> {
             };
             try {
               const execResult = await invalidTool.execute(errorArgs, { signal, cwd, convId });
-              onEvent({
+              onEvents([{
                 type: "tool-result",
                 toolCallId: tc.id,
                 toolName: tc.name,
                 result: execResult,
                 isError: true,
-              });
+              }]);
               return { toolCallId: tc.id, result: execResult, isError: true };
             } catch {
               // Fall through to generic error
@@ -182,13 +182,13 @@ export async function runChatLoop(options: ChatLoopOptions): Promise<void> {
           }
 
           const errorResult = { error: `Unknown tool: ${tc.name}` };
-          onEvent({
+          onEvents([{
             type: "tool-result",
             toolCallId: tc.id,
             toolName: tc.name,
             result: errorResult,
             isError: true,
-          });
+          }]);
           return { toolCallId: tc.id, result: errorResult, isError: true };
         }
 
@@ -199,35 +199,35 @@ export async function runChatLoop(options: ChatLoopOptions): Promise<void> {
           const validationError = validateToolArgs(tool.parameters as Record<string, any>, tc.args);
           if (validationError) {
             const errorResult = { error: validationError };
-            onEvent({
+            onEvents([{
               type: "tool-result",
               toolCallId: tc.id,
               toolName: tc.name,
               result: errorResult,
               isError: true,
-            });
+            }]);
             return { toolCallId: tc.id, result: errorResult, isError: true };
           }
 
           const execResult = await tool.execute(tc.args, { signal, cwd, convId });
-          onEvent({
+          onEvents([{
             type: "tool-result",
             toolCallId: tc.id,
             toolName: tc.name,
             result: execResult,
             isError: false,
-          });
+          }]);
           return { toolCallId: tc.id, result: execResult, isError: false };
         } catch (e) {
           logError(`[loop] Tool "${tc.name}" threw: ${formatError(e)}`);
           const errorResult = { error: e instanceof Error ? e.message : String(e) };
-          onEvent({
+          onEvents([{
             type: "tool-result",
             toolCallId: tc.id,
             toolName: tc.name,
             result: errorResult,
             isError: true,
-          });
+          }]);
           return { toolCallId: tc.id, result: errorResult, isError: true };
         }
       }),
@@ -255,5 +255,5 @@ export async function runChatLoop(options: ChatLoopOptions): Promise<void> {
   }
 
   // Exceeded max roundtrips (only reachable if explicitly set)
-  onEvent({ type: "error", error: `Exceeded maximum tool roundtrips (${maxToolRoundtrips})` });
+  onEvents([{ type: "error", error: `Exceeded maximum tool roundtrips (${maxToolRoundtrips})` }]);
 }

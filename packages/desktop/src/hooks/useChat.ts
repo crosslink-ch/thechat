@@ -161,69 +161,75 @@ export function useChat(options?: UseChatOptions) {
 
         const streamingParts: MessagePart[] = [];
 
-        const onEvent = (event: StreamEvent) => {
-          switch (event.type) {
-            case "text-delta": {
-              const lastPart = streamingParts[streamingParts.length - 1];
-              if (lastPart && lastPart.type === "text") {
-                lastPart.text += event.text;
-              } else {
-                streamingParts.push({ type: "text", text: event.text });
-              }
-              updateStreamParts(streamConvId!, [...streamingParts]);
-              break;
-            }
-            case "reasoning-delta": {
-              const lastPart = streamingParts[streamingParts.length - 1];
-              if (lastPart && lastPart.type === "reasoning") {
-                lastPart.text += event.text;
-              } else {
-                // Insert reasoning before text parts
-                const insertIdx = streamingParts.findIndex((p) => p.type !== "reasoning");
-                if (insertIdx === -1) {
-                  streamingParts.push({ type: "reasoning", text: event.text });
+        const onEvents = (events: StreamEvent[]) => {
+          let partsChanged = false;
+          for (const event of events) {
+            switch (event.type) {
+              case "text-delta": {
+                const lastPart = streamingParts[streamingParts.length - 1];
+                if (lastPart && lastPart.type === "text") {
+                  lastPart.text += event.text;
                 } else {
-                  streamingParts.splice(insertIdx, 0, { type: "reasoning", text: event.text });
+                  streamingParts.push({ type: "text", text: event.text });
                 }
+                partsChanged = true;
+                break;
               }
-              updateStreamParts(streamConvId!, [...streamingParts]);
-              break;
+              case "reasoning-delta": {
+                const lastPart = streamingParts[streamingParts.length - 1];
+                if (lastPart && lastPart.type === "reasoning") {
+                  lastPart.text += event.text;
+                } else {
+                  const insertIdx = streamingParts.findIndex((p) => p.type !== "reasoning");
+                  if (insertIdx === -1) {
+                    streamingParts.push({ type: "reasoning", text: event.text });
+                  } else {
+                    streamingParts.splice(insertIdx, 0, { type: "reasoning", text: event.text });
+                  }
+                }
+                partsChanged = true;
+                break;
+              }
+              case "tool-call-start":
+                streamingParts.push({
+                  type: "tool-call",
+                  toolCallId: event.toolCallId,
+                  toolName: event.toolName,
+                  args: {},
+                });
+                partsChanged = true;
+                break;
+              case "tool-call-complete": {
+                const tc = streamingParts.find(
+                  (p) => p.type === "tool-call" && p.toolCallId === event.toolCallId,
+                );
+                if (tc && tc.type === "tool-call") {
+                  tc.args = event.args;
+                }
+                partsChanged = true;
+                break;
+              }
+              case "tool-result":
+                streamingParts.push({
+                  type: "tool-result",
+                  toolCallId: event.toolCallId,
+                  toolName: event.toolName,
+                  result: event.result,
+                  isError: event.isError,
+                });
+                partsChanged = true;
+                break;
+              case "error":
+                logError(`[useChat] Stream error (conv=${streamConvId}): ${event.error}`);
+                if (activeConvIdRef.current === streamConvId) {
+                  setError(event.error);
+                }
+                break;
             }
-            case "tool-call-start":
-              streamingParts.push({
-                type: "tool-call",
-                toolCallId: event.toolCallId,
-                toolName: event.toolName,
-                args: {},
-              });
-              updateStreamParts(streamConvId!, [...streamingParts]);
-              break;
-            case "tool-call-complete": {
-              const tc = streamingParts.find(
-                (p) => p.type === "tool-call" && p.toolCallId === event.toolCallId,
-              );
-              if (tc && tc.type === "tool-call") {
-                tc.args = event.args;
-              }
-              updateStreamParts(streamConvId!, [...streamingParts]);
-              break;
-            }
-            case "tool-result":
-              streamingParts.push({
-                type: "tool-result",
-                toolCallId: event.toolCallId,
-                toolName: event.toolName,
-                result: event.result,
-                isError: event.isError,
-              });
-              updateStreamParts(streamConvId!, [...streamingParts]);
-              break;
-            case "error":
-              logError(`[useChat] Stream error (conv=${streamConvId}): ${event.error}`);
-              if (activeConvIdRef.current === streamConvId) {
-                setError(event.error);
-              }
-              break;
+          }
+          // Single React update per batch instead of per event
+          if (partsChanged) {
+            updateStreamParts(streamConvId!, [...streamingParts]);
           }
         };
 
@@ -252,7 +258,7 @@ export function useChat(options?: UseChatOptions) {
           convId: streamConvId!,
           provider: codexAuth ? "codex" : "openrouter",
           codexAuth,
-          onEvent,
+          onEvents,
         });
 
         // Build final message from accumulated parts and save to DB

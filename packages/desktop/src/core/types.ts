@@ -80,5 +80,5 @@ export interface ChatLoopOptions {
   convId?: string;
   provider?: "openrouter" | "codex";
   codexAuth?: CodexAuth;
-  onEvent: (event: StreamEvent) => void;
+  onEvents: (events: StreamEvent[]) => void;
 }

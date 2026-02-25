@@ -38,9 +38,11 @@ export async function runTask(prompt: string, signal?: AbortSignal, convId?: str
 
   const textParts: string[] = [];
 
-  const onEvent = (event: StreamEvent) => {
-    if (event.type === "text-delta") {
-      textParts.push(event.text);
+  const onEvents = (events: StreamEvent[]) => {
+    for (const event of events) {
+      if (event.type === "text-delta") {
+        textParts.push(event.text);
+      }
     }
   };
 
@@ -64,7 +66,7 @@ export async function runTask(prompt: string, signal?: AbortSignal, convId?: str
     convId,
     provider: config.provider,
     codexAuth: config.codexAuth,
-    onEvent,
+    onEvents,
   });
 
   return textParts.join("") || "(Task completed with no text output)";

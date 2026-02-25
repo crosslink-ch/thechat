@@ -35,7 +35,7 @@ describe("streamCompletion", () => {
       apiKey: "test-key",
       model: "test-model",
       messages: [{ role: "user", content: "hi" }],
-      onEvent: () => {},
+      onEvents: () => {},
     });
 
     expect(mockInvoke).toHaveBeenCalledWith("stream_completion", expect.objectContaining({
@@ -63,7 +63,7 @@ describe("streamCompletion", () => {
       model: "test-model",
       messages: [{ role: "user", content: "hi" }],
       params: { temperature: 0.5, max_tokens: 100, seed: 42 },
-      onEvent: () => {},
+      onEvents: () => {},
     });
 
     const callArgs = mockInvoke.mock.calls[0][1] as Record<string, unknown>;
@@ -88,7 +88,7 @@ describe("streamCompletion", () => {
           execute: async () => "result",
         },
       ],
-      onEvent: () => {},
+      onEvents: () => {},
     });
 
     const callArgs = mockInvoke.mock.calls[0][1] as Record<string, unknown>;
@@ -117,7 +117,7 @@ describe("streamCompletion", () => {
       apiKey: "test-key",
       model: "test-model",
       messages: [{ role: "user", content: "hi" }],
-      onEvent: () => {},
+      onEvents: () => {},
     });
 
     expect(result).toEqual(resultWithUsage);
@@ -131,7 +131,7 @@ describe("streamCompletion", () => {
         apiKey: "test-key",
         model: "test-model",
         messages: [{ role: "user", content: "hi" }],
-        onEvent: () => {},
+        onEvents: () => {},
       }),
     ).rejects.toThrow("Aborted");
 
@@ -140,7 +140,7 @@ describe("streamCompletion", () => {
         apiKey: "test-key",
         model: "test-model",
         messages: [{ role: "user", content: "hi" }],
-        onEvent: () => {},
+        onEvents: () => {},
       });
     } catch (e) {
       expect(e).toBeInstanceOf(DOMException);
@@ -156,7 +156,7 @@ describe("streamCompletion", () => {
         apiKey: "test-key",
         model: "test-model",
         messages: [{ role: "user", content: "hi" }],
-        onEvent: () => {},
+        onEvents: () => {},
       }),
     ).rejects.toThrow("OpenRouter API error (400)");
   });
@@ -179,7 +179,7 @@ describe("streamCompletion", () => {
       model: "test-model",
       messages: [{ role: "user", content: "hi" }],
       signal: controller.signal,
-      onEvent: () => {},
+      onEvents: () => {},
     });
 
     // Trigger abort
@@ -202,7 +202,7 @@ describe("streamCompletion", () => {
       apiKey: "test-key",
       model: "test-model",
       messages: [{ role: "user", content: "hi" }],
-      onEvent: () => {},
+      onEvents: () => {},
     });
 
     const callArgs = mockInvoke.mock.calls[0][1] as Record<string, unknown>;
@@ -219,7 +219,7 @@ describe("streamCompletion", () => {
       model: "default-model",
       messages: [{ role: "user", content: "hi" }],
       params: { model: "override-model" },
-      onEvent: () => {},
+      onEvents: () => {},
     });
 
     const callArgs = mockInvoke.mock.calls[0][1] as Record<string, unknown>;

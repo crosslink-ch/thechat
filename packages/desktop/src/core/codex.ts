@@ -32,7 +32,7 @@ interface StreamCodexOptions {
   params?: ChatParams;
   tools?: ToolDefinition[];
   signal?: AbortSignal;
-  onEvent: (event: StreamEvent) => void;
+  onEvents: (events: StreamEvent[]) => void;
   convId?: string;
 }
 
@@ -157,7 +157,7 @@ export async function streamCodexCompletion(options: StreamCodexOptions): Promis
 
   const onEvent = new Channel<StreamEvent[]>();
   onEvent.onmessage = (batch) => {
-    for (const event of batch) options.onEvent(event);
+    options.onEvents(batch);
   };
 
   const onAbort = () => {

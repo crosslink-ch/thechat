@@ -9,7 +9,7 @@ import type { MessagePart } from "../core/types";
 const accumulatedParts = new Map<string, MessagePart[]>();
 const listeners = new Map<string, Set<(parts: MessagePart[] | null) => void>>();
 
-/** Called from useChat onEvent — updates the Map + notifies active listeners */
+/** Called from useChat onEvents — updates the Map + notifies active listeners */
 export function updateStreamParts(convId: string, parts: MessagePart[]) {
   accumulatedParts.set(convId, parts);
   const subs = listeners.get(convId);
