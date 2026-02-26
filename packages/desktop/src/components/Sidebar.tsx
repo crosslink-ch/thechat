@@ -60,6 +60,7 @@ export function Sidebar() {
   const isAgentChat = routePath.startsWith("/chat");
   const isChannel = routePath.startsWith("/channel");
   const isDm = routePath.startsWith("/dm");
+  const isSettings = routePath === "/settings";
   const currentAgentChatId = isAgentChat ? routeParams.id : undefined;
   const activeChannelId = isChannel ? routeParams.id : null;
   const activeDmUserId = isDm ? routeParams.id : null;
@@ -397,9 +398,43 @@ export function Sidebar() {
               )}
             </div>
           ) : (
-            <button className="block w-full cursor-pointer rounded-lg border border-border bg-none px-2.5 py-2 font-[inherit] text-[12px] text-text-dimmed transition-colors duration-150 hover:bg-hover hover:text-text-muted" onClick={openAuthModal}>
-              Log in
-            </button>
+            <div className="flex flex-col gap-1">
+              <button
+                className={`flex w-full cursor-pointer items-center gap-2 rounded-md border-none px-2.5 py-2 text-left font-[inherit] text-[12px] transition-colors duration-150 ${isSettings ? "bg-elevated text-text" : "bg-none text-text-secondary hover:bg-hover hover:text-text"}`}
+                onClick={() => navigate({ to: "/settings" })}
+              >
+                <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="7" cy="7" r="2.2" />
+                  <path d="M11.35 8.7a1.07 1.07 0 0 0 .21 1.18l.04.04a1.3 1.3 0 1 1-1.84 1.84l-.04-.04a1.07 1.07 0 0 0-1.18-.21 1.07 1.07 0 0 0-.65.98v.11a1.3 1.3 0 1 1-2.6 0v-.06a1.07 1.07 0 0 0-.7-.98 1.07 1.07 0 0 0-1.18.21l-.04.04a1.3 1.3 0 1 1-1.84-1.84l.04-.04a1.07 1.07 0 0 0 .21-1.18 1.07 1.07 0 0 0-.98-.65h-.11a1.3 1.3 0 1 1 0-2.6h.06a1.07 1.07 0 0 0 .98-.7 1.07 1.07 0 0 0-.21-1.18l-.04-.04a1.3 1.3 0 1 1 1.84-1.84l.04.04a1.07 1.07 0 0 0 1.18.21h.05a1.07 1.07 0 0 0 .65-.98v-.11a1.3 1.3 0 1 1 2.6 0v.06a1.07 1.07 0 0 0 .65.98 1.07 1.07 0 0 0 1.18-.21l.04-.04a1.3 1.3 0 1 1 1.84 1.84l-.04.04a1.07 1.07 0 0 0-.21 1.18v.05a1.07 1.07 0 0 0 .98.65h.11a1.3 1.3 0 1 1 0 2.6h-.06a1.07 1.07 0 0 0-.98.65Z" />
+                </svg>
+                Settings
+              </button>
+              <button
+                className="flex w-full cursor-pointer items-center justify-between rounded-md border-none bg-none px-2.5 py-2 text-left font-[inherit] text-[12px] text-text-secondary transition-colors duration-150 hover:bg-hover hover:text-text"
+                onClick={openCodexAuthModal}
+              >
+                <span className="flex items-center gap-2">
+                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M7 1.17 8.46 4.7l3.87.34-2.95 2.54.88 3.8L7 9.42l-3.26 1.96.88-3.8-2.95-2.54 3.87-.34Z" />
+                  </svg>
+                  ChatGPT
+                </span>
+                <span className={`text-[11px] ${codexStatus === "authenticated" ? "text-success" : "text-text-dimmed"}`}>
+                  {codexStatus === "authenticated" ? "Connected" : "Not connected"}
+                </span>
+              </button>
+              <button
+                className="mt-1 flex w-full cursor-pointer items-center justify-center gap-1.5 rounded-lg border border-border bg-raised px-2.5 py-2 font-[inherit] text-[12px] font-medium text-text-secondary transition-colors duration-150 hover:bg-hover hover:text-text"
+                onClick={openAuthModal}
+              >
+                <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M7.5 10.5v-1a2 2 0 0 0-2-2h-3a2 2 0 0 0-2 2v1" />
+                  <circle cx="4" cy="4" r="2" />
+                  <path d="M10 3.5v3M8.5 5h3" />
+                </svg>
+                Log in
+              </button>
+            </div>
           )}
         </div>
       </div>
