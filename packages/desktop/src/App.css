@@ -66,6 +66,18 @@
   --animate-pulse: pulse 1.5s infinite;
   --animate-fade-in: fadeIn 0.15s ease-out;
   --animate-slide-up: slideUp 0.2s ease-out;
+  --animate-spin: spin 1s linear infinite;
+  --animate-blink: blink 1s step-end infinite;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
 }
 
 @keyframes pulse {
