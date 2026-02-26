@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { relaunch } from "@tauri-apps/plugin-process";
 import type { AppConfig } from "@thechat/shared";
 
 export function SettingsRoute() {
@@ -122,13 +123,24 @@ export function SettingsRoute() {
           >
             {saving ? "Saving..." : "Save"}
           </button>
-          {status === "saved" && (
-            <span className="text-[12px] text-success">Settings saved</span>
-          )}
           {status === "error" && (
             <span className="text-[12px] text-error-bright">Failed to save</span>
           )}
         </div>
+
+        {/* Restart required banner */}
+        {status === "saved" && (
+          <div className="flex items-center justify-between rounded-lg border border-warning/30 bg-warning/10 px-4 py-3">
+            <span className="text-[13px] text-warning">Restart required to apply changes</span>
+            <button
+              type="button"
+              onClick={() => relaunch()}
+              className="cursor-pointer rounded-lg border-none bg-warning px-4 py-1.5 text-[12px] font-medium text-black transition-opacity hover:opacity-80"
+            >
+              Restart now
+            </button>
+          </div>
+        )}
       </div>
 
       {configPath && (

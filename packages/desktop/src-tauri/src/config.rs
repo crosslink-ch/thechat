@@ -39,6 +39,25 @@ pub fn config_dir_path() -> Option<PathBuf> {
     dirs::config_dir().map(|p| p.join("thechat").join("config.json"))
 }
 
+/// Resolve the config path: in dev mode, prefer a CWD-relative config.json if it exists;
+/// otherwise fall back to the global config directory.
+pub fn resolve_config_path() -> Option<PathBuf> {
+    if cfg!(debug_assertions) {
+        let dev_paths = [
+            PathBuf::from("config.json"),
+            PathBuf::from("../config.json"),
+            PathBuf::from("../../config.json"),
+            PathBuf::from("../../../config.json"),
+        ];
+        for path in &dev_paths {
+            if path.exists() {
+                return Some(path.clone());
+            }
+        }
+    }
+    config_dir_path()
+}
+
 fn default_config(backend_url: &str) -> AppConfig {
     let mut mcp_servers = HashMap::new();
     mcp_servers.insert(
@@ -81,7 +100,7 @@ fn create_default_config() -> Result<AppConfig, String> {
 }
 
 pub fn save_config(config: &AppConfig) -> Result<(), String> {
-    let config_path = config_dir_path().ok_or("Could not determine config directory")?;
+    let config_path = resolve_config_path().ok_or("Could not determine config directory")?;
 
     if let Some(parent) = config_path.parent() {
         fs::create_dir_all(parent)
@@ -98,26 +117,9 @@ pub fn save_config(config: &AppConfig) -> Result<(), String> {
 }
 
 pub fn load_config() -> Result<AppConfig, String> {
-    let mut paths: Vec<PathBuf> = Vec::new();
-
-    // Dev-only: search CWD-relative paths for monorepo config.json
-    if cfg!(debug_assertions) {
-        paths.extend([
-            PathBuf::from("config.json"),
-            PathBuf::from("../config.json"),
-            PathBuf::from("../../config.json"),
-            PathBuf::from("../../../config.json"),
-        ]);
-    }
-
-    // App data directory (~/.config/thechat/config.json)
-    if let Some(p) = config_dir_path() {
-        paths.push(p);
-    }
-
-    for path in &paths {
+    if let Some(path) = resolve_config_path() {
         if path.exists() {
-            let content = fs::read_to_string(path)
+            let content = fs::read_to_string(&path)
                 .map_err(|e| format!("Failed to read config at {}: {}", path.display(), e))?;
             let config: AppConfig = serde_json::from_str(&content)
                 .map_err(|e| format!("Failed to parse config: {}", e))?;

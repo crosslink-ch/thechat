@@ -42,7 +42,7 @@ fn get_config() -> Result<config::AppConfig, String> {
 
 #[tauri::command]
 fn get_config_path() -> Option<String> {
-    config::config_dir_path().map(|p| p.to_string_lossy().into_owned())
+    config::resolve_config_path().map(|p| p.to_string_lossy().into_owned())
 }
 
 #[tauri::command]
