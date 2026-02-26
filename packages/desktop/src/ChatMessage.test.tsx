@@ -74,19 +74,19 @@ describe("ChatMessage", () => {
     expect(screen.getByTestId("chat-message-assistant")).toBeInTheDocument();
   });
 
-  it("does not show thinking section for user messages", () => {
+  it("does not show reasoning block for user messages", () => {
     render(<ChatMessage message={userMsg} />);
-    expect(screen.queryByTestId("thinking-section")).toBeNull();
+    expect(screen.queryByText("Thought for a moment")).toBeNull();
   });
 
-  it("does not show thinking section for assistant without reasoning or tools", () => {
+  it("does not show reasoning block for assistant without reasoning", () => {
     render(<ChatMessage message={assistantMsgNoReasoning} />);
-    expect(screen.queryByTestId("thinking-section")).toBeNull();
+    expect(screen.queryByText("Thought for a moment")).toBeNull();
   });
 
-  it("shows thinking section for assistant messages with reasoning", () => {
+  it("shows reasoning block for assistant messages with reasoning", () => {
     render(<ChatMessage message={assistantMsg} />);
-    expect(screen.getByText("Thought")).toBeInTheDocument();
+    expect(screen.getByText("Thought for a moment")).toBeInTheDocument();
   });
 
   it("reasoning is collapsed by default", () => {
@@ -99,18 +99,18 @@ describe("ChatMessage", () => {
   it("toggles reasoning content on click", () => {
     render(<ChatMessage message={assistantMsg} />);
 
-    fireEvent.click(screen.getByText("Thought"));
+    fireEvent.click(screen.getByText("Thought for a moment"));
     expect(
       screen.getByText("Let me think about this..."),
     ).toBeInTheDocument();
 
-    fireEvent.click(screen.getByText("Thought"));
+    fireEvent.click(screen.getByText("Thought for a moment"));
     expect(
       screen.queryByText("Let me think about this..."),
     ).not.toBeInTheDocument();
   });
 
-  it("renders tool-call in collapsed thinking section", () => {
+  it("renders tool-call inline with status", () => {
     const msg: Message = {
       id: "4",
       conversation_id: "c1",
@@ -121,13 +121,11 @@ describe("ChatMessage", () => {
       created_at: "2026-01-01T00:00:03Z",
     };
     render(<ChatMessage message={msg} />);
-    // Thinking section shows "Used 1 tool"
-    expect(screen.getByText("Used 1 tool")).toBeInTheDocument();
-    // Tool details are not visible by default (section collapsed)
-    expect(screen.queryByText("get_weather")).not.toBeInTheDocument();
+    // Tool is visible inline (not hidden in collapsed section)
+    expect(screen.getByText("get_weather")).toBeInTheDocument();
   });
 
-  it("shows tool activity details when thinking section is expanded", () => {
+  it("shows success status for completed tool calls", () => {
     const msg: Message = {
       id: "4",
       conversation_id: "c1",
@@ -140,11 +138,9 @@ describe("ChatMessage", () => {
       created_at: "2026-01-01T00:00:03Z",
     };
     render(<ChatMessage message={msg} />);
-
-    // Expand thinking section
-    fireEvent.click(screen.getByText("Used 1 tool"));
     expect(screen.getByText("get_weather")).toBeInTheDocument();
     expect(screen.getByText("✓")).toBeInTheDocument();
+    expect(screen.getByText("It's 20 degrees in Paris.")).toBeInTheDocument();
   });
 
   it("shows error status for failed tool results", () => {
@@ -165,14 +161,12 @@ describe("ChatMessage", () => {
       created_at: "2026-01-01T00:00:05Z",
     };
     render(<ChatMessage message={msg} />);
-
-    // Expand thinking section
-    fireEvent.click(screen.getByText("Used 1 tool"));
+    // Error status and tool name visible inline (no need to expand)
     expect(screen.getByText("✕")).toBeInTheDocument();
     expect(screen.getByText("broken_tool")).toBeInTheDocument();
   });
 
-  it("shows combined label for reasoning and tools", () => {
+  it("renders reasoning and tool calls interleaved in order", () => {
     const msg: Message = {
       id: "7",
       conversation_id: "c1",
@@ -186,7 +180,10 @@ describe("ChatMessage", () => {
       created_at: "2026-01-01T00:00:06Z",
     };
     render(<ChatMessage message={msg} />);
-    expect(screen.getByText("Thought and used 1 tool")).toBeInTheDocument();
+    expect(screen.getByText("Thought for a moment")).toBeInTheDocument();
+    expect(screen.getByText("search")).toBeInTheDocument();
+    expect(screen.getByText("✓")).toBeInTheDocument();
+    expect(screen.getByText("Here you go.")).toBeInTheDocument();
   });
 });
 
