@@ -93,6 +93,7 @@ export async function runChatLoop(options: ChatLoopOptions): Promise<void> {
     for (const t of currentTools) {
       toolMap.set(t.name, t);
     }
+    logDebug(`[loop] Round ${round}: ${currentTools.length} tools available`);
 
     // Doom loop detected — do one final text-only call so the model can respond
     if (isDoomLoop(toolCallHistory)) {

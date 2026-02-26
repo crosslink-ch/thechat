@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 
 // -- JSON-RPC types --
 
@@ -492,6 +492,10 @@ impl McpClient {
 pub struct McpManager {
     clients: Mutex<HashMap<String, Arc<Mutex<McpClient>>>>,
     initialized: AtomicBool,
+    /// Per-server initialization lock to prevent concurrent init of the same server.
+    /// Each entry is an (is_done, condvar) pair. Waiters block on the condvar until
+    /// is_done becomes true, then read the client from `clients`.
+    initializing: Mutex<HashMap<String, Arc<(Mutex<bool>, Condvar)>>>,
 }
 
 impl McpManager {
@@ -499,6 +503,7 @@ impl McpManager {
         McpManager {
             clients: Mutex::new(HashMap::new()),
             initialized: AtomicBool::new(false),
+            initializing: Mutex::new(HashMap::new()),
         }
     }
 }
@@ -730,36 +735,91 @@ pub async fn mcp_initialize_servers(
         let mut all_tools: Vec<McpToolInfo> = Vec::new();
 
         for name in &names {
+            // Helper closure to list tools from an already-initialized client
+            let list_from_client = |name: &str, token: &Option<String>| -> Result<Vec<McpToolInfo>, String> {
+                let clients = manager
+                    .clients
+                    .lock()
+                    .map_err(|e| format!("Lock error: {}", e))?;
+                if let Some(client_arc) = clients.get(name) {
+                    let mut client = client_arc
+                        .lock()
+                        .map_err(|e| format!("Client lock error: {}", e))?;
+                    if let Some(ref t) = token {
+                        client.set_auth_token(t);
+                    }
+                    let raw_tools = client.list_tools()?;
+                    return Ok(raw_tools
+                        .into_iter()
+                        .map(|tool| McpToolInfo {
+                            server: name.to_string(),
+                            name: tool.get("name").and_then(|n| n.as_str()).unwrap_or("unknown").to_string(),
+                            description: tool.get("description").and_then(|d| d.as_str()).unwrap_or("").to_string(),
+                            input_schema: tool.get("inputSchema").cloned().unwrap_or(json!({"type": "object", "properties": {}})),
+                        })
+                        .collect());
+                }
+                Err(format!("Client '{}' not found after init", name))
+            };
+
             // If already initialized, re-list tools from the existing client
             {
                 let clients = manager
                     .clients
                     .lock()
                     .map_err(|e| format!("Lock error: {}", e))?;
-                if let Some(client_arc) = clients.get(name) {
+                if clients.contains_key(name) {
+                    drop(clients);
                     log::info!("MCP server '{}' already initialized, re-listing tools", name);
-                    let mut client = client_arc
-                        .lock()
-                        .map_err(|e| format!("Client lock error: {}", e))?;
-                    // Update auth token if provided
-                    if let Some(ref t) = &token {
-                        client.set_auth_token(t);
-                    }
-                    let raw_tools = client.list_tools()?;
-                    let tools: Vec<McpToolInfo> = raw_tools
-                        .into_iter()
-                        .map(|tool| McpToolInfo {
-                            server: name.clone(),
-                            name: tool.get("name").and_then(|n| n.as_str()).unwrap_or("unknown").to_string(),
-                            description: tool.get("description").and_then(|d| d.as_str()).unwrap_or("").to_string(),
-                            input_schema: tool.get("inputSchema").cloned().unwrap_or(json!({"type": "object", "properties": {}})),
-                        })
-                        .collect();
-                    all_tools.extend(tools);
+                    all_tools.extend(list_from_client(name, &token)?);
                     continue;
                 }
             }
 
+            // Check if another caller is already initializing this server
+            let wait_pair = {
+                let mut init_map = manager
+                    .initializing
+                    .lock()
+                    .map_err(|e| format!("Initializing lock error: {}", e))?;
+
+                if let Some(pair) = init_map.get(name) {
+                    // Another caller is initializing — wait for it
+                    Some(Arc::clone(pair))
+                } else {
+                    // We are the first caller — claim this server
+                    init_map.insert(
+                        name.clone(),
+                        Arc::new((Mutex::new(false), Condvar::new())),
+                    );
+                    None
+                }
+            };
+
+            if let Some(pair) = wait_pair {
+                // Wait for the other caller to finish initializing
+                log::info!(
+                    "MCP server '{}' is being initialized by another caller, waiting...",
+                    name
+                );
+                let (lock, cvar) = &*pair;
+                let guard = lock
+                    .lock()
+                    .map_err(|e| format!("Condvar lock error: {}", e))?;
+                let _guard = cvar
+                    .wait_while(guard, |done| !*done)
+                    .map_err(|e| format!("Condvar wait error: {}", e))?;
+
+                // The other caller finished — read tools from the now-initialized client
+                log::info!(
+                    "MCP server '{}' initialization completed by another caller, re-listing tools",
+                    name
+                );
+                all_tools.extend(list_from_client(name, &token)?);
+                continue;
+            }
+
+            // We are the initializer for this server
             let server_config = config
                 .mcp_servers
                 .get(name)
@@ -774,7 +834,23 @@ pub async fn mcp_initialize_servers(
 
             log::info!("Lazily initializing MCP server: {}", name);
 
-            match init_server(name, server_config, auth_token) {
+            let init_result = init_server(name, server_config, auth_token);
+
+            // Notify waiters regardless of success/failure, then clean up
+            {
+                let init_map = manager.initializing.lock();
+                if let Ok(mut map) = init_map {
+                    if let Some(pair) = map.remove(name) {
+                        let (lock, cvar) = &*pair;
+                        if let Ok(mut done) = lock.lock() {
+                            *done = true;
+                        }
+                        cvar.notify_all();
+                    }
+                }
+            }
+
+            match init_result {
                 Ok((client, tools)) => {
                     log::info!(
                         "MCP server '{}' ready with {} tools",

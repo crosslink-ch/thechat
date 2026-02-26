@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { loadSkill } from "../skills";
 import { defineTool } from "./define";
-import { warn as logWarn, formatError } from "../../log";
+import { warn as logWarn, debug as logDebug, formatError } from "../../log";
 import type { SkillMeta } from "../skills/types";
 import type { McpToolInfo, ToolDefinition } from "../types";
 
@@ -81,6 +81,9 @@ ${skillsXml}`,
             const activeConvId = useToolsStore.getState().activeConvId;
             if (activeConvId) {
               useToolsStore.getState().addSessionMcpTools(activeConvId, toolInfos);
+              logDebug(`[skill] Added ${newToolNames.length} MCP tools for conv ${activeConvId}`);
+            } else {
+              logWarn(`[skill] activeConvId is null — cannot add ${newToolNames.length} MCP tools to session`);
             }
           }
         } catch (e) {

@@ -7,7 +7,7 @@ VOLUME_NAME="thechat-postgres-data"
 POSTGRES_USER="user"
 POSTGRES_PASSWORD="password"
 POSTGRES_DB="thechat"
-POSTGRES_PORT="5432"
+POSTGRES_PORT="5435"
 
 echo "Stopping container '$CONTAINER_NAME' if running..."
 docker rm -f "$CONTAINER_NAME" 2>/dev/null || true
