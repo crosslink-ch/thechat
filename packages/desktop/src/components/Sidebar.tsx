@@ -25,8 +25,8 @@ function ProjectDirLabel({ path }: { path: string }) {
 
 // Colocated visibility store
 export const useSidebarState = create(() => ({
-  open: false,
-  tab: "workspace" as "workspace" | "agent",
+  open: true,
+  tab: "agent" as "workspace" | "agent",
 }));
 export const toggleSidebar = () =>
   useSidebarState.setState((s) => ({ open: !s.open }));
@@ -69,19 +69,16 @@ export function Sidebar() {
 
   const handleNewChat = () => {
     navigate({ to: "/chat" });
-    closeSidebar();
   };
 
   const handleSelectConversation = (conv: { id: string }) => {
     navigate({ to: "/chat/$id", params: { id: conv.id } });
     useConversationsStore.getState().markAgentChatRead(conv.id);
-    closeSidebar();
   };
 
   const handleSelectChannel = (channel: WorkspaceChannel) => {
     navigate({ to: "/channel/$id", params: { id: channel.id } });
     useConversationsStore.getState().markChannelRead(channel.id);
-    closeSidebar();
   };
 
   const handleSelectDm = async (member: WorkspaceMember) => {
@@ -94,7 +91,6 @@ export function Sidebar() {
       if (error) throw error;
       if (data && "id" in data) {
         navigate({ to: "/dm/$id", params: { id: data.id! } });
-        closeSidebar();
       }
     } catch {
       // Failed to create/get DM
@@ -102,9 +98,7 @@ export function Sidebar() {
   };
 
   return (
-    <>
-      {open && <div className="fixed inset-0 z-[9] bg-overlay" onClick={closeSidebar} />}
-      <div className={`absolute top-0 bottom-0 z-10 flex w-[260px] shrink-0 flex-col border-r border-border bg-surface transition-[margin-left] duration-200 ease-out ${open ? "ml-0" : "-ml-[260px]"}`}>
+      <div className={`flex h-full w-[260px] shrink-0 flex-col border-r border-border bg-surface transition-[margin-left] duration-200 ease-out ${open ? "ml-0" : "-ml-[260px]"}`}>
         {/* Workspace switcher (only when logged in) */}
         {user && (
           <div className="relative border-b border-border-subtle p-2.5">
@@ -155,20 +149,20 @@ export function Sidebar() {
         {user && activeWorkspace && (
           <div className="flex gap-0.5 border-b border-border-subtle p-2">
             <button
-              className={`flex flex-1 cursor-pointer items-center justify-center gap-1.5 rounded-md border-none px-2 py-1.5 font-[inherit] text-[12px] font-medium transition-colors duration-150 ${tab === "workspace" ? "bg-elevated text-text" : "bg-none text-text-muted hover:bg-hover hover:text-text"}`}
-              onClick={() => setTab("workspace")}
-            >
-              Workspace
-              {unreadChannels.size > 0 && tab !== "workspace" && (
-                <span className="size-1.5 shrink-0 rounded-full bg-accent" />
-              )}
-            </button>
-            <button
               className={`flex flex-1 cursor-pointer items-center justify-center gap-1.5 rounded-md border-none px-2 py-1.5 font-[inherit] text-[12px] font-medium transition-colors duration-150 ${tab === "agent" ? "bg-elevated text-text" : "bg-none text-text-muted hover:bg-hover hover:text-text"}`}
               onClick={() => setTab("agent")}
             >
               Agent Chats
               {unreadAgentChats.size > 0 && tab !== "agent" && (
+                <span className="size-1.5 shrink-0 rounded-full bg-accent" />
+              )}
+            </button>
+            <button
+              className={`flex flex-1 cursor-pointer items-center justify-center gap-1.5 rounded-md border-none px-2 py-1.5 font-[inherit] text-[12px] font-medium transition-colors duration-150 ${tab === "workspace" ? "bg-elevated text-text" : "bg-none text-text-muted hover:bg-hover hover:text-text"}`}
+              onClick={() => setTab("workspace")}
+            >
+              Workspace
+              {unreadChannels.size > 0 && tab !== "workspace" && (
                 <span className="size-1.5 shrink-0 rounded-full bg-accent" />
               )}
             </button>
@@ -183,7 +177,6 @@ export function Sidebar() {
               className="mx-2.5 mt-2 flex cursor-pointer items-center justify-between rounded-lg border-none bg-none px-2.5 py-2 text-[13px] text-text-secondary transition-colors duration-150 hover:bg-hover hover:text-text"
               onClick={() => {
                 navigate({ to: "/notifications" });
-                closeSidebar();
               }}
             >
               <span className="flex items-center gap-2">
@@ -223,28 +216,44 @@ export function Sidebar() {
             </div>
 
             {/* Direct Messages */}
-            <div className="px-2.5">
-              <div className="px-2.5 pt-3 pb-1.5 text-[11px] font-semibold uppercase tracking-wider text-text-dimmed">Direct Messages</div>
-              <div className="pb-1">
-                {activeWorkspace.members
-                  .filter((m) => m.userId !== user.id)
-                  .map((m) => {
-                    const isActive = activeDmUserId === m.userId;
-                    return (
-                      <button
-                        key={m.userId}
-                        className={`mb-px flex w-full cursor-pointer items-center gap-2 rounded-md border-none px-2.5 py-1.5 text-left font-[inherit] text-[13px] transition-colors duration-100 ${isActive ? "bg-elevated text-text" : "bg-none text-text-muted hover:bg-hover hover:text-text"}`}
-                        onClick={() => handleSelectDm(m)}
-                      >
-                        <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-elevated text-[10px] font-semibold text-text-muted">
-                          {m.user.name.charAt(0).toUpperCase()}
-                        </span>
-                        <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap">{m.user.name}</span>
-                      </button>
-                    );
-                  })}
-              </div>
-            </div>
+            {(() => {
+              const others = activeWorkspace.members.filter((m) => m.userId !== user.id);
+              const humans = others.filter((m) => m.user.type !== "bot");
+              const bots = others.filter((m) => m.user.type === "bot");
+
+              const renderMember = (m: WorkspaceMember) => {
+                const isActive = activeDmUserId === m.userId;
+                return (
+                  <button
+                    key={m.userId}
+                    className={`mb-px flex w-full cursor-pointer items-center gap-2 rounded-md border-none px-2.5 py-1.5 text-left font-[inherit] text-[13px] transition-colors duration-100 ${isActive ? "bg-elevated text-text" : "bg-none text-text-muted hover:bg-hover hover:text-text"}`}
+                    onClick={() => handleSelectDm(m)}
+                  >
+                    <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-elevated text-[10px] font-semibold text-text-muted">
+                      {m.user.name.charAt(0).toUpperCase()}
+                    </span>
+                    <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap">{m.user.name}</span>
+                  </button>
+                );
+              };
+
+              return (
+                <div className="px-2.5">
+                  {humans.length > 0 && (
+                    <>
+                      <div className="px-2.5 pt-3 pb-1.5 text-[11px] font-semibold uppercase tracking-wider text-text-dimmed">People</div>
+                      <div className="pb-1">{humans.map(renderMember)}</div>
+                    </>
+                  )}
+                  {bots.length > 0 && (
+                    <>
+                      <div className="px-2.5 pt-3 pb-1.5 text-[11px] font-semibold uppercase tracking-wider text-text-dimmed">Bots</div>
+                      <div className="pb-1">{bots.map(renderMember)}</div>
+                    </>
+                  )}
+                </div>
+              );
+            })()}
           </div>
         )}
 
@@ -316,6 +325,5 @@ export function Sidebar() {
           )}
         </div>
       </div>
-    </>
   );
 }

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { render, screen, act } from "@testing-library/react";
+import { render, screen, act, fireEvent } from "@testing-library/react";
 import {
   RouterProvider,
   createMemoryHistory,
@@ -90,7 +90,7 @@ async function renderWithRouter(component: React.ReactNode) {
 
 beforeEach(() => {
   // Reset stores to default state
-  useSidebarState.setState({ open: false, tab: "workspace" });
+  useSidebarState.setState({ open: true, tab: "agent" });
   useAuthStore.setState({ user: null, token: null, loading: false });
   useWorkspacesStore.setState({ workspaces: [], activeWorkspace: null, loading: false });
   useConversationsStore.setState({
@@ -135,13 +135,17 @@ describe("Sidebar", () => {
 
     // Workspace name shown in switcher
     expect(screen.getByText("Team Alpha")).toBeInTheDocument();
-    // Tab bar with Workspace and Agent Chats tabs
-    expect(screen.getByText("Workspace")).toBeInTheDocument();
+    // Tab bar with Agent Chats (default) and Workspace tabs
     expect(screen.getByText("Agent Chats")).toBeInTheDocument();
-    // Workspace tab active by default: channels and DMs shown
+    expect(screen.getByText("Workspace")).toBeInTheDocument();
+
+    // Switch to Workspace tab
+    fireEvent.click(screen.getByText("Workspace"));
+
+    // Channels and DMs shown
     expect(screen.getByText("Channels")).toBeInTheDocument();
     expect(screen.getByText(/general/)).toBeInTheDocument();
-    expect(screen.getByText("Direct Messages")).toBeInTheDocument();
+    expect(screen.getByText("People")).toBeInTheDocument();
     expect(screen.getByText("Alice")).toBeInTheDocument();
   });
 

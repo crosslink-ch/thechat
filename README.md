@@ -58,10 +58,10 @@ xcode-select --install
 git clone https://github.com/crosslink-ch/thechat.git
 cd thechat
 pnpm install
-pnpm tauri:build
+pnpm tauri build --no-bundle
 ```
 
-Installers are written to `packages/desktop/src-tauri/target/release/bundle/` (`.deb`/`.rpm`/`.AppImage` on Linux, `.dmg` on macOS, `.msi`/`.exe` on Windows).
+Executable is written to `packages/desktop/src-tauri/target/release/`
 
 ### Dev mode
 
