@@ -5,6 +5,7 @@ import { useWebSocketStore } from "../stores/websocket";
 import { useWorkspacesStore } from "../stores/workspaces";
 import { usePermissionModeStore } from "../stores/permission-mode";
 import { basename } from "../lib/path";
+import { useSidebarState } from "./Sidebar";
 
 // Mini-store for agent chat title & project dir (set by agent-chat route)
 const useAgentChatTitle = create(() => ({ title: "", projectDir: null as string | null }));
@@ -21,6 +22,7 @@ export function ChatHeader() {
   const agentChatTitle = useAgentChatTitle((s) => s.title);
   const agentProjectDir = useAgentChatTitle((s) => s.projectDir);
   const matches = useMatches();
+  const sidebarOpen = useSidebarState((s) => s.open);
   const lastMatch = matches[matches.length - 1];
   const routePath = lastMatch?.fullPath ?? "";
   const params = (lastMatch?.params ?? {}) as Record<string, string>;
@@ -57,7 +59,7 @@ export function ChatHeader() {
   const showWsStatus = !isAgentChat && connected;
 
   return (
-    <div className="flex h-12 items-center gap-2 border-b border-border-subtle bg-surface px-3">
+    <div className={`flex h-12 items-center gap-2 border-b border-border-subtle bg-surface px-3 ${sidebarOpen ? "" : "pl-12"}`}>
       {showBackButton && (
         <button
           className="flex size-8 cursor-pointer items-center justify-center rounded-md border-none bg-none text-text-muted transition-colors duration-150 hover:bg-hover hover:text-text"

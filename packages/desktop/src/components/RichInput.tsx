@@ -1,4 +1,4 @@
-import { useEffect, useRef, useMemo } from "react";
+import { useEffect, useRef, useMemo, forwardRef, useImperativeHandle } from "react";
 import { useEditor, EditorContent } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import Mention from "@tiptap/extension-mention";
@@ -12,19 +12,41 @@ interface RichInputProps {
   placeholder?: string;
   disabled?: boolean;
   mentions?: MentionUser[];
+  onCanSubmitChange?: (canSubmit: boolean) => void;
 }
 
-export function RichInput({
-  onSubmit,
-  placeholder = "Send a message...",
-  disabled = false,
-  mentions,
-}: RichInputProps) {
+export interface RichInputHandle {
+  submit: () => void;
+  focus: () => void;
+}
+
+export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function RichInput(
+  {
+    onSubmit,
+    placeholder = "Send a message...",
+    disabled = false,
+    mentions,
+    onCanSubmitChange,
+  }: RichInputProps,
+  ref,
+) {
   const onSubmitRef = useRef(onSubmit);
   onSubmitRef.current = onSubmit;
 
+  const onCanSubmitChangeRef = useRef(onCanSubmitChange);
+  onCanSubmitChangeRef.current = onCanSubmitChange;
+
   const mentionsRef = useRef(mentions);
   mentionsRef.current = mentions;
+
+  const submitIfNotEmpty = (text: string, clearContent: () => void) => {
+    const trimmed = text.trim();
+    if (!trimmed) return false;
+    onSubmitRef.current(trimmed);
+    clearContent();
+    onCanSubmitChangeRef.current?.(false);
+    return true;
+  };
 
   const submitExtension = useMemo(
     () =>
@@ -33,10 +55,7 @@ export function RichInput({
         addKeyboardShortcuts() {
           return {
             Enter: ({ editor }) => {
-              const text = editor.getText().trim();
-              if (!text) return true;
-              onSubmitRef.current(text);
-              editor.commands.clearContent();
+              submitIfNotEmpty(editor.getText(), () => editor.commands.clearContent());
               return true;
             },
             "Shift-Enter": ({ editor }) => {
@@ -46,7 +65,7 @@ export function RichInput({
           };
         },
       }),
-    []
+    [],
   );
 
   const suggestion = useMemo(() => {
@@ -75,7 +94,7 @@ export function RichInput({
           HTMLAttributes: { class: "mention" },
           renderText: ({ node }) => `@${node.attrs.label}`,
           suggestion,
-        })
+        }),
       );
     }
 
@@ -90,11 +109,31 @@ export function RichInput({
           "block max-h-[200px] w-full overflow-y-auto bg-transparent px-4 pt-3 pb-11 font-[inherit] text-[14px] leading-relaxed text-text outline-none",
       },
     },
+    onCreate: ({ editor: currentEditor }) => {
+      onCanSubmitChangeRef.current?.(currentEditor.getText().trim().length > 0);
+    },
+    onUpdate: ({ editor: currentEditor }) => {
+      onCanSubmitChangeRef.current?.(currentEditor.getText().trim().length > 0);
+    },
   });
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      submit: () => {
+        if (!editor) return;
+        submitIfNotEmpty(editor.getText(), () => editor.commands.clearContent());
+      },
+      focus: () => {
+        editor?.commands.focus("end");
+      },
+    }),
+    [editor],
+  );
 
   useEffect(() => {
     if (editor) editor.setEditable(!disabled);
   }, [editor, disabled]);
 
   return <EditorContent editor={editor} />;
-}
+});

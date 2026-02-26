@@ -246,6 +246,7 @@ export function AgentChatRoute() {
         convId={conversation?.id}
         onSend={sendMessage}
         onStop={stopStreaming}
+        autoFocusKey={routeId ?? "new-chat"}
       />
     </>
   );
