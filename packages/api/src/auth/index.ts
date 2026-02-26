@@ -18,8 +18,9 @@ function sessionExpiresAt(): Date {
   return d;
 }
 
-const requireEmailVerification =
-  process.env.REQUIRE_EMAIL_VERIFICATION === "true";
+function isEmailVerificationRequired() {
+  return process.env.REQUIRE_EMAIL_VERIFICATION === "true";
+}
 
 // ── Schemas ──
 
@@ -92,7 +93,7 @@ export const authRoutes = new Elysia({ prefix: "/auth" })
         type: users.type,
       });
 
-    if (requireEmailVerification) {
+    if (isEmailVerificationRequired()) {
       const token = generateRefreshToken();
       const expiresAt = new Date();
       expiresAt.setHours(expiresAt.getHours() + 24);
@@ -162,7 +163,7 @@ export const authRoutes = new Elysia({ prefix: "/auth" })
       return { error: "Invalid email or password" };
     }
 
-    if (requireEmailVerification && !user.emailVerifiedAt) {
+    if (isEmailVerificationRequired() && !user.emailVerifiedAt) {
       set.status = 403;
       return { error: "Please verify your email before logging in" };
     }

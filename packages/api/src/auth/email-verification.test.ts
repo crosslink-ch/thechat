@@ -1,6 +1,5 @@
-// Must set env BEFORE importing auth routes — requireEmailVerification is
-// captured as a module-level const at import time. Static imports are hoisted
-// above this assignment, so we use dynamic import() for authRoutes.
+// Enable email verification behavior for this file only.
+const previousRequireEmailVerification = process.env.REQUIRE_EMAIL_VERIFICATION;
 process.env.REQUIRE_EMAIL_VERIFICATION = "true";
 
 import { describe, test, expect, afterAll } from "bun:test";
@@ -32,7 +31,14 @@ async function cleanup() {
   }
 }
 
-afterAll(cleanup);
+afterAll(async () => {
+  await cleanup();
+  if (previousRequireEmailVerification === undefined) {
+    delete process.env.REQUIRE_EMAIL_VERIFICATION;
+  } else {
+    process.env.REQUIRE_EMAIL_VERIFICATION = previousRequireEmailVerification;
+  }
+});
 
 async function req(
   method: string,
