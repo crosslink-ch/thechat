@@ -19,11 +19,11 @@
 
   /* Text colors */
   --color-text: #e8eaef;
-  --color-text-secondary: #b0b6c4;
-  --color-text-muted: #8890a0;
-  --color-text-dimmed: #636b80;
-  --color-text-muted-hover: #b0b6c4;
-  --color-text-placeholder: #636b80;
+  --color-text-secondary: #c0c7d8;
+  --color-text-muted: #9fa8bb;
+  --color-text-dimmed: #7d879d;
+  --color-text-muted-hover: #c0c7d8;
+  --color-text-placeholder: #7d879d;
 
   /* Accent blue */
   --color-accent: #6a9df5;
