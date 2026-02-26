@@ -1,7 +1,8 @@
-import { useState, useEffect, useRef, type FormEvent } from "react";
+import { useState, useEffect, useRef, useCallback, type FormEvent } from "react";
 import { create } from "zustand";
 import { z } from "zod";
 import { useAuthStore } from "../stores/auth";
+import { api } from "../lib/api";
 
 // Colocated visibility store
 const useAuthModalState = create(() => ({ open: false }));
@@ -25,6 +26,75 @@ export function AuthModal() {
   return <AuthModalInner />;
 }
 
+function ResendButton({ email }: { email: string }) {
+  const [state, setState] = useState<"idle" | "sending" | "sent">("idle");
+  const [cooldown, setCooldown] = useState(0);
+
+  useEffect(() => {
+    if (cooldown <= 0) return;
+    const timer = setTimeout(() => setCooldown((c) => c - 1), 1000);
+    return () => clearTimeout(timer);
+  }, [cooldown]);
+
+  const handleResend = useCallback(async () => {
+    if (state === "sending" || cooldown > 0) return;
+    setState("sending");
+    try {
+      await api.auth["resend-verification"].post({ email });
+      setState("sent");
+      setCooldown(60);
+    } catch {
+      setState("idle");
+    }
+  }, [email, state, cooldown]);
+
+  return (
+    <button
+      className="cursor-pointer border-none bg-none p-0 font-[inherit] text-[13px] text-accent underline transition-colors duration-150 hover:text-text disabled:cursor-default disabled:opacity-40 disabled:no-underline"
+      onClick={handleResend}
+      disabled={state === "sending" || cooldown > 0}
+    >
+      {state === "sending"
+        ? "Sending..."
+        : cooldown > 0
+          ? `Resend in ${cooldown}s`
+          : "Resend verification email"}
+    </button>
+  );
+}
+
+function VerificationPendingView({ email, onBackToLogin }: { email: string; onBackToLogin: () => void }) {
+  return (
+    <div className="fixed inset-0 z-20 flex items-center justify-center bg-overlay backdrop-blur-[2px] animate-fade-in" onClick={closeAuthModal}>
+      <div className="w-full max-w-[400px] rounded-xl border border-border-strong bg-surface p-6 shadow-card animate-slide-up" onClick={(e) => e.stopPropagation()}>
+        <div className="flex flex-col items-center text-center">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="mb-4 h-12 w-12 text-accent">
+            <rect x="2" y="4" width="20" height="16" rx="2" />
+            <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7" />
+          </svg>
+
+          <h2 className="mb-2 text-[17px] font-semibold tracking-tight text-text">
+            Check your email
+          </h2>
+          <p className="mb-5 text-[13px] leading-relaxed text-text-muted">
+            We sent a verification link to{" "}
+            <span className="font-medium text-text">{email}</span>
+          </p>
+
+          <ResendButton email={email} />
+
+          <button
+            className="mt-4 cursor-pointer border-none bg-none p-0 font-[inherit] text-[12px] text-text-muted underline transition-colors duration-150 hover:text-text"
+            onClick={onBackToLogin}
+          >
+            Back to login
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function AuthModalInner() {
   const login = useAuthStore((s) => s.login);
   const register = useAuthStore((s) => s.register);
@@ -34,8 +104,8 @@ function AuthModalInner() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
-  const [success, setSuccess] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [verificationEmail, setVerificationEmail] = useState<string | null>(null);
   const firstInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -50,22 +120,18 @@ function AuthModalInner() {
     return () => window.removeEventListener("keydown", handleKey);
   }, []);
 
-  const reset = () => {
-    setError("");
-    setSuccess("");
-  };
-
   const switchMode = (newMode: "login" | "register") => {
     setMode(newMode);
     setName("");
     setEmail("");
     setPassword("");
-    reset();
+    setError("");
+    setVerificationEmail(null);
   };
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
-    reset();
+    setError("");
 
     const parsed =
       mode === "register"
@@ -88,7 +154,7 @@ function AuthModalInner() {
         const data = parsed.data as z.infer<typeof registerSchema>;
         const message = await register(data.name, data.email, data.password);
         if (message) {
-          setSuccess(message);
+          setVerificationEmail(data.email);
         } else {
           closeAuthModal();
         }
@@ -99,6 +165,15 @@ function AuthModalInner() {
       setSubmitting(false);
     }
   };
+
+  if (verificationEmail) {
+    return (
+      <VerificationPendingView
+        email={verificationEmail}
+        onBackToLogin={() => switchMode("login")}
+      />
+    );
+  }
 
   return (
     <div className="fixed inset-0 z-20 flex items-center justify-center bg-overlay backdrop-blur-[2px] animate-fade-in" onClick={closeAuthModal}>
@@ -153,7 +228,6 @@ function AuthModalInner() {
           </div>
 
           {error && <div className="mb-3 rounded-lg border border-error-msg-border bg-error-msg-bg px-3 py-2 text-[12px] text-error-bright">{error}</div>}
-          {success && <div className="mb-3 rounded-lg border border-success-border bg-success-bg px-3 py-2 text-[12px] text-success-light">{success}</div>}
 
           <button
             className="mt-1 block w-full cursor-pointer rounded-lg border border-border-strong bg-elevated px-3 py-2.5 font-[inherit] text-[13px] font-medium text-text transition-colors duration-150 hover:not-disabled:bg-button disabled:cursor-default disabled:opacity-40"
