@@ -14,7 +14,7 @@ export async function createInvite(
   workspaceId: string,
   inviterUserId: string,
   inviteeEmail: string
-): Promise<WorkspaceInvite> {
+): Promise<WorkspaceInvite & { inviteeId: string }> {
   // Check workspace exists
   const [workspace] = await db
     .select({ id: workspaces.id, name: workspaces.name })
@@ -118,6 +118,7 @@ export async function createInvite(
     workspaceName: workspace.name,
     inviterId: invite.inviterId,
     inviterName: inviter?.name ?? "Unknown",
+    inviteeId: invitee.id,
     createdAt: invite.createdAt.toISOString(),
   };
 }

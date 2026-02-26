@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { create } from "zustand";
 import { useNavigate, useMatches } from "@tanstack/react-router";
 import { useAuthStore } from "../stores/auth";
@@ -66,6 +66,24 @@ export function Sidebar() {
 
   // Local UI state
   const [dropdownOpen, setDropdownOpen] = useState(false);
+  const [profileMenuOpen, setProfileMenuOpen] = useState(false);
+  const profileMenuRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!profileMenuOpen) return;
+
+    const handleClickOutside = (event: MouseEvent) => {
+      if (!profileMenuRef.current) return;
+      if (!profileMenuRef.current.contains(event.target as Node)) {
+        setProfileMenuOpen(false);
+      }
+    };
+
+    window.addEventListener("mousedown", handleClickOutside);
+    return () => window.removeEventListener("mousedown", handleClickOutside);
+  }, [profileMenuOpen]);
+
+  const initials = user?.name?.trim().charAt(0).toUpperCase() ?? "?";
 
   const handleNewChat = () => {
     navigate({ to: "/chat" });
@@ -151,6 +169,7 @@ export function Sidebar() {
                       onClick={() => {
                         selectWorkspace(ws.id);
                         setDropdownOpen(false);
+                        setProfileMenuOpen(false);
                       }}
                     >
                       {ws.name}
@@ -161,6 +180,7 @@ export function Sidebar() {
                     onClick={() => {
                       openWorkspaceModal();
                       setDropdownOpen(false);
+                      setProfileMenuOpen(false);
                     }}
                   >
                     + Create workspace
@@ -197,27 +217,6 @@ export function Sidebar() {
         {/* Workspace tab content */}
         {user && activeWorkspace && tab === "workspace" && (
           <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
-            {/* Notifications button */}
-            <button
-              className="mx-2.5 mt-2 flex cursor-pointer items-center justify-between rounded-lg border-none bg-none px-2.5 py-2 text-[13px] text-text-secondary transition-colors duration-150 hover:bg-hover hover:text-text"
-              onClick={() => {
-                navigate({ to: "/notifications" });
-              }}
-            >
-              <span className="flex items-center gap-2">
-                <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M10.5 4.67a3.5 3.5 0 1 0-7 0c0 4.08-1.75 5.25-1.75 5.25h10.5s-1.75-1.17-1.75-5.25" />
-                  <path d="M8.01 11.67a1.17 1.17 0 0 1-2.02 0" />
-                </svg>
-                Notifications
-              </span>
-              {notificationCount > 0 && (
-                <span className="min-w-[18px] rounded-full bg-accent px-1.5 py-px text-center text-[10px] font-semibold text-white">
-                  {notificationCount}
-                </span>
-              )}
-            </button>
-
             {/* Channels */}
             <div className="mt-1 px-2.5">
               <div className="px-2.5 pt-3 pb-1.5 text-[11px] font-semibold uppercase tracking-wider text-text-dimmed">Channels</div>
@@ -310,26 +309,92 @@ export function Sidebar() {
         )}
 
         {/* Footer */}
-        <div className="border-t border-border-subtle p-2.5">
-          <button
-            className="mb-2 flex w-full cursor-pointer items-center gap-2 rounded-lg border border-border bg-none px-2.5 py-2 font-[inherit] text-[12px] text-text-dimmed transition-colors duration-150 hover:bg-hover hover:text-text-muted"
-            onClick={openCodexAuthModal}
-          >
-            {codexStatus === "authenticated" ? (
-              <>
-                <span className="size-1.5 shrink-0 rounded-full bg-success" />
-                <span>ChatGPT Connected</span>
-              </>
-            ) : (
-              <span>Connect ChatGPT Pro/Plus</span>
-            )}
-          </button>
+        <div className="border-t border-border-subtle px-2.5 py-2">
           {user ? (
-            <div className="flex items-center justify-between gap-2 px-1">
-              <span className="overflow-hidden text-ellipsis whitespace-nowrap text-[12px] text-text-secondary">{user.name}</span>
-              <button className="shrink-0 cursor-pointer rounded border-none bg-none px-2 py-1 font-[inherit] text-[11px] text-text-dimmed transition-colors duration-150 hover:text-text-muted" onClick={logout}>
-                Log out
+            <div className="relative" ref={profileMenuRef}>
+              <button
+                className="flex w-full cursor-pointer items-center justify-between gap-2 rounded-lg border border-border bg-raised px-2.5 py-2 text-left font-[inherit] transition-colors duration-150 hover:bg-hover"
+                onClick={() => setProfileMenuOpen((v) => !v)}
+              >
+                <span className="flex min-w-0 items-center gap-2">
+                  <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-elevated text-[12px] font-semibold text-text">
+                    {initials}
+                  </span>
+                  <span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap text-[12px] font-medium text-text-secondary">
+                    {user.name}
+                  </span>
+                </span>
+                <svg className={`shrink-0 text-text-dimmed transition-transform duration-150 ${profileMenuOpen ? "rotate-180" : ""}`} width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M3 4.5L6 7.5L9 4.5" />
+                </svg>
               </button>
+
+              <button
+                className="mt-1.5 flex w-full cursor-pointer items-center justify-between rounded-md border-none bg-none px-2.5 py-2 text-[12px] text-text-secondary transition-colors duration-150 hover:bg-hover hover:text-text"
+                onClick={() => navigate({ to: "/notifications" })}
+              >
+                <span className="flex items-center gap-2">
+                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M10.5 4.67a3.5 3.5 0 1 0-7 0c0 4.08-1.75 5.25-1.75 5.25h10.5s-1.75-1.17-1.75-5.25" />
+                    <path d="M8.01 11.67a1.17 1.17 0 0 1-2.02 0" />
+                  </svg>
+                  Notifications
+                </span>
+                {notificationCount > 0 && (
+                  <span className="min-w-[18px] rounded-full bg-accent px-1.5 py-px text-center text-[10px] font-semibold text-white">
+                    {notificationCount}
+                  </span>
+                )}
+              </button>
+
+              {profileMenuOpen && (
+                <div className="absolute right-0 bottom-[calc(100%+6px)] z-20 min-w-[220px] overflow-hidden rounded-lg border border-border-strong bg-surface shadow-card animate-fade-in">
+                  <button
+                    className="flex w-full cursor-pointer items-center justify-between gap-2 border-none bg-none px-3 py-2.5 text-left font-[inherit] text-[12px] text-text-secondary transition-colors duration-100 hover:bg-hover hover:text-text"
+                    onClick={() => {
+                      openCodexAuthModal();
+                      setProfileMenuOpen(false);
+                    }}
+                  >
+                    <span>ChatGPT</span>
+                    <span className={`text-[11px] ${codexStatus === "authenticated" ? "text-success" : "text-text-dimmed"}`}>
+                      {codexStatus === "authenticated" ? "Connected" : "Not connected"}
+                    </span>
+                  </button>
+                  <button
+                    className="flex w-full cursor-pointer items-center justify-between gap-2 border-none bg-none px-3 py-2.5 text-left font-[inherit] text-[12px] text-text-secondary transition-colors duration-100 hover:bg-hover hover:text-text"
+                    onClick={() => {
+                      navigate({ to: "/notifications" });
+                      setProfileMenuOpen(false);
+                    }}
+                  >
+                    <span>Notifications</span>
+                    {notificationCount > 0 && (
+                      <span className="min-w-[18px] rounded-full bg-accent px-1.5 py-px text-center text-[10px] font-semibold text-white">
+                        {notificationCount}
+                      </span>
+                    )}
+                  </button>
+                  <button
+                    className="block w-full cursor-pointer border-none bg-none px-3 py-2.5 text-left font-[inherit] text-[12px] text-text-secondary transition-colors duration-100 hover:bg-hover hover:text-text"
+                    onClick={() => {
+                      navigate({ to: "/settings" });
+                      setProfileMenuOpen(false);
+                    }}
+                  >
+                    Settings
+                  </button>
+                  <button
+                    className="block w-full cursor-pointer border-t border-border bg-none px-3 py-2.5 text-left font-[inherit] text-[12px] text-text-dimmed transition-colors duration-100 hover:bg-hover hover:text-text"
+                    onClick={() => {
+                      logout();
+                      setProfileMenuOpen(false);
+                    }}
+                  >
+                    Log out
+                  </button>
+                </div>
+              )}
             </div>
           ) : (
             <button className="block w-full cursor-pointer rounded-lg border border-border bg-none px-2.5 py-2 font-[inherit] text-[12px] text-text-dimmed transition-colors duration-150 hover:bg-hover hover:text-text-muted" onClick={openAuthModal}>

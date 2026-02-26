@@ -11,7 +11,7 @@ import {
 } from "../services/invites";
 import { broadcastToUser } from "../ws";
 import { db } from "../db";
-import { workspaceMembers, users } from "../db/schema";
+import { workspaceMembers } from "../db/schema";
 import type { WsServerEvent } from "@thechat/shared";
 
 const createInviteSchema = z.object({
@@ -62,19 +62,8 @@ export const inviteRoutes = new Elysia({ prefix: "/invites" })
         type: "invite_received",
         invite,
       };
-      // The invitee ID is needed — look it up from the invite's workspaceId + email
-      // The invite object has inviterId but we need inviteeId.
-      // We can derive it: the service looked up the user by email and inserted with their ID.
-      // We need to look up the invitee by email to get their userId for broadcasting.
-      const [invitee] = await db
-        .select({ id: users.id })
-        .from(users)
-        .where(eq(users.email, parsed.data.email))
-        .limit(1);
 
-      if (invitee) {
-        broadcastToUser(invitee.id, event);
-      }
+      broadcastToUser(invite.inviteeId, event);
 
       return invite;
     } catch (e) {

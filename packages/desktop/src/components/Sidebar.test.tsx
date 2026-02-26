@@ -123,6 +123,9 @@ describe("Sidebar", () => {
 
     expect(screen.getByText("Select workspace")).toBeInTheDocument();
     expect(screen.getByText("Test User")).toBeInTheDocument();
+    expect(screen.getByText("Notifications")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByText("Test User"));
     expect(screen.getByText("Log out")).toBeInTheDocument();
   });
 
@@ -147,6 +150,9 @@ describe("Sidebar", () => {
     expect(screen.getByText(/general/)).toBeInTheDocument();
     expect(screen.getByText("People")).toBeInTheDocument();
     expect(screen.getByText("Alice")).toBeInTheDocument();
+
+    // Notifications button remains available in footer
+    expect(screen.getByText("Notifications")).toBeInTheDocument();
   });
 
   it("shows agent chats in all modes", async () => {

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useNotificationsStore } from "../stores/notifications";
 import type { WorkspaceInvite } from "@thechat/shared";
 
@@ -32,7 +32,6 @@ function InviteNotificationCard({ invite }: { invite: WorkspaceInvite }) {
   return (
     <div className="flex items-center justify-between gap-3 rounded-lg border border-border bg-raised px-4 py-3">
       <div>
-        <div className="text-[14px] font-semibold text-text">{invite.workspaceName}</div>
         <div className="mt-0.5 text-[12px] text-text-muted">
           Invited by {invite.inviterName}
         </div>
@@ -61,26 +60,40 @@ export function NotificationsRoute() {
   const notifications = useNotificationsStore((s) => s.notifications);
   const loading = useNotificationsStore((s) => s.loading);
 
+  const groupedInvites = useMemo(() => {
+    const groups = new Map<string, WorkspaceInvite[]>();
+
+    notifications.forEach((n) => {
+      if (n.type !== "workspace_invite") return;
+      const existing = groups.get(n.invite.workspaceName) ?? [];
+      existing.push(n.invite);
+      groups.set(n.invite.workspaceName, existing);
+    });
+
+    return Array.from(groups.entries())
+      .map(([workspaceName, invites]) => ({ workspaceName, invites }))
+      .sort((a, b) => a.workspaceName.localeCompare(b.workspaceName));
+  }, [notifications]);
+
   return (
-    <div className="mx-auto h-full max-w-[600px] overflow-y-auto p-6">
+    <div className="mx-auto h-full max-w-[700px] overflow-y-auto p-6">
       <h2 className="mb-4 text-[17px] font-semibold tracking-tight text-text">Notifications</h2>
       {loading && notifications.length === 0 ? (
         <div className="text-[13px] text-text-muted">Loading...</div>
       ) : notifications.length === 0 ? (
         <div className="text-[13px] text-text-muted">No notifications</div>
       ) : (
-        <div className="flex flex-col gap-2">
-          {notifications.map((n) => {
-            switch (n.type) {
-              case "workspace_invite":
-                return (
-                  <InviteNotificationCard
-                    key={n.invite.id}
-                    invite={n.invite}
-                  />
-                );
-            }
-          })}
+        <div className="flex flex-col gap-4">
+          {groupedInvites.map((group) => (
+            <section key={group.workspaceName} className="rounded-xl border border-border bg-surface p-3">
+              <h3 className="mb-2 px-1 text-[13px] font-semibold text-text">{group.workspaceName}</h3>
+              <div className="flex flex-col gap-2">
+                {group.invites.map((invite) => (
+                  <InviteNotificationCard key={invite.id} invite={invite} />
+                ))}
+              </div>
+            </section>
+          ))}
         </div>
       )}
     </div>

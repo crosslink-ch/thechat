@@ -251,6 +251,7 @@ export interface WorkspaceInvite {
   workspaceName: string;
   inviterId: string;
   inviterName: string;
+  inviteeId?: string;
   createdAt: string;
 }
 
