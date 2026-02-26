@@ -144,7 +144,7 @@ describe("ChatMessage", () => {
     // Expand thinking section
     fireEvent.click(screen.getByText("Used 1 tool"));
     expect(screen.getByText("get_weather")).toBeInTheDocument();
-    expect(screen.getByText("Done")).toBeInTheDocument();
+    expect(screen.getByText("✓")).toBeInTheDocument();
   });
 
   it("shows error status for failed tool results", () => {
@@ -168,7 +168,7 @@ describe("ChatMessage", () => {
 
     // Expand thinking section
     fireEvent.click(screen.getByText("Used 1 tool"));
-    expect(screen.getByText("Error")).toBeInTheDocument();
+    expect(screen.getByText("✕")).toBeInTheDocument();
     expect(screen.getByText("broken_tool")).toBeInTheDocument();
   });
 

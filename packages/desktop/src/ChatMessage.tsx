@@ -4,35 +4,18 @@ import type { PermissionRequest } from "./core/permission";
 import { useStreamingParts } from "./stores/streaming";
 import { TextWithUiBlocks } from "./components/TextWithUiBlocks";
 import { ToolCallInline } from "./components/ToolCallInline";
+import { TruncatedOutput } from "./components/TruncatedOutput";
 import { DiffPreview } from "./components/DiffPreview";
 import { WritePreview } from "./components/WritePreview";
-import { basename } from "./lib/path";
-
+import { formatToolSummary } from "./lib/tool-summary";
 type ToolCallPart = Extract<MessagePart, { type: "tool-call" }>;
 type ToolResultPart = Extract<MessagePart, { type: "tool-result" }>;
 
 const PREVIEW_TOOLS = new Set(["edit", "multiedit", "write"]);
 
-function getFilePath(call: ToolCallPart): string | undefined {
-  const fp = call.args.file_path;
-  return typeof fp === "string" ? fp : undefined;
-}
-
 interface ToolPreviewInfo {
   toolName: string;
   args: Record<string, unknown>;
-}
-
-function formatArgs(args: Record<string, unknown>): string {
-  const entries = Object.entries(args);
-  if (entries.length === 0) return "";
-  return entries.map(([k, v]) => `${k}: ${typeof v === "string" ? v : JSON.stringify(v)}`).join(", ");
-}
-
-function formatResult(result: unknown): string {
-  if (typeof result === "string") return result;
-  const text = JSON.stringify(result, null, 2);
-  return text.length > 500 ? text.slice(0, 500) + "..." : text;
 }
 
 function ToolInlinePreview({ toolName, args }: ToolPreviewInfo) {
@@ -81,17 +64,15 @@ function ToolActivityBlock({
   result?: ToolResultPart;
 }) {
   const [open, setOpen] = useState(false);
-  const filePath = getFilePath(call);
-  const [fileName, setFileName] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (filePath) {
-      basename(filePath).then(setFileName);
-    }
-  }, [filePath]);
-
-  const status = !result ? "Running..." : result.isError ? "Error" : "Done";
+  const summary = formatToolSummary(call);
   const hasPreview = PREVIEW_TOOLS.has(call.toolName);
+  const hasResult = result && !hasPreview;
+
+  const statusIcon = result
+    ? result.isError
+      ? <span className="shrink-0 text-[12px] leading-none text-error">✕</span>
+      : <span className="shrink-0 text-[12px] leading-none text-success">✓</span>
+    : null;
 
   return (
     <div className="my-1 overflow-hidden rounded-lg border border-border-subtle bg-raised/50">
@@ -100,9 +81,8 @@ function ToolActivityBlock({
         onClick={() => setOpen(!open)}
       >
         <span className="w-3 text-[10px] text-text-dimmed">{open ? "\u25BE" : "\u25B8"}</span>
-        <span className="font-medium text-accent">{call.toolName}</span>
-        {fileName && <span className="font-mono text-[11px] text-text-dimmed">{fileName}</span>}
-        <span className={`ml-auto text-[11px] ${result?.isError ? "text-error" : "text-success"}`}>{status}</span>
+        {statusIcon}
+        <span className="min-w-0 flex-1 truncate">{summary}</span>
       </button>
       {hasPreview && (
         <div className="px-3 pb-2">
@@ -111,17 +91,11 @@ function ToolActivityBlock({
       )}
       {open && (
         <div className="px-3 pb-2.5">
-          {!hasPreview && Object.keys(call.args).length > 0 && (
-            <div className="mt-1">
-              <div className="mb-0.5 text-[11px] uppercase tracking-wider text-text-dimmed">Args</div>
-              <pre className="m-0 whitespace-pre-wrap font-mono text-[12px] leading-relaxed text-text-secondary">{formatArgs(call.args)}</pre>
-            </div>
-          )}
-          {result && (
-            <div className="mt-1.5">
-              <div className="mb-0.5 text-[11px] uppercase tracking-wider text-text-dimmed">{result.isError ? "Error" : "Result"}</div>
-              <pre className="m-0 whitespace-pre-wrap font-mono text-[12px] leading-relaxed text-text-secondary">{formatResult(result.result)}</pre>
-            </div>
+          {hasResult && (
+            <TruncatedOutput
+              text={typeof result.result === "string" ? result.result : JSON.stringify(result.result, null, 2)}
+              isError={result.isError}
+            />
           )}
         </div>
       )}
