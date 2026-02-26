@@ -4,8 +4,10 @@ import type { PermissionRequest } from "./core/permission";
 import { useStreamingParts } from "./stores/streaming";
 import { TextWithUiBlocks } from "./components/TextWithUiBlocks";
 import { ToolCallInline } from "./components/ToolCallInline";
+import { TruncatedOutput } from "./components/TruncatedOutput";
 import { DiffPreview } from "./components/DiffPreview";
 import { WritePreview } from "./components/WritePreview";
+import { formatToolSummary } from "./lib/tool-summary";
 type ToolCallPart = Extract<MessagePart, { type: "tool-call" }>;
 type ToolResultPart = Extract<MessagePart, { type: "tool-result" }>;
 
@@ -52,6 +54,116 @@ function ToolInlinePreview({ toolName, args }: ToolPreviewInfo) {
   }
 
   return null;
+}
+
+function ToolActivityBlock({
+  call,
+  result,
+}: {
+  call: ToolCallPart;
+  result?: ToolResultPart;
+}) {
+  const [open, setOpen] = useState(false);
+  const summary = formatToolSummary(call);
+  const hasPreview = PREVIEW_TOOLS.has(call.toolName);
+  const hasResult = result && !hasPreview;
+
+  const statusIcon = result
+    ? result.isError
+      ? <span className="shrink-0 text-[12px] leading-none text-error">✕</span>
+      : <span className="shrink-0 text-[12px] leading-none text-success">✓</span>
+    : null;
+
+  return (
+    <div className="my-1 overflow-hidden rounded-lg border border-border-subtle bg-raised/50">
+      <button
+        className="flex w-full cursor-pointer items-center gap-2 border-none bg-none px-3 py-2 text-left text-[12px] text-text-muted shadow-none transition-colors duration-100 hover:bg-hover/50"
+        onClick={() => setOpen(!open)}
+      >
+        <span className="w-3 text-[10px] text-text-dimmed">{open ? "\u25BE" : "\u25B8"}</span>
+        {statusIcon}
+        <span className="min-w-0 flex-1 truncate">{summary}</span>
+      </button>
+      {hasPreview && (
+        <div className="px-3 pb-2">
+          <ToolInlinePreview toolName={call.toolName} args={call.args} />
+        </div>
+      )}
+      {open && (
+        <div className="px-3 pb-2.5">
+          {hasResult && (
+            <TruncatedOutput
+              text={typeof result.result === "string" ? result.result : JSON.stringify(result.result, null, 2)}
+              isError={result.isError}
+            />
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function buildThinkingLabel(hasReasoning: boolean, toolCount: number): string {
+  if (hasReasoning && toolCount > 0) {
+    return `Thought and used ${toolCount} tool${toolCount > 1 ? "s" : ""}`;
+  }
+  if (hasReasoning) return "Thought";
+  return `Used ${toolCount} tool${toolCount > 1 ? "s" : ""}`;
+}
+
+function ThinkingSection({
+  reasoningText,
+  toolCalls,
+  toolResults,
+  defaultOpen,
+  isStreaming,
+}: {
+  reasoningText: string;
+  toolCalls: ToolCallPart[];
+  toolResults: ToolResultPart[];
+  defaultOpen: boolean;
+  isStreaming?: boolean;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+
+  const hasReasoning = reasoningText.length > 0;
+  const toolCount = toolCalls.length;
+  if (!hasReasoning && toolCount === 0) return null;
+
+  const label = buildThinkingLabel(hasReasoning, toolCount);
+  const resultMap = useMemo(
+    () => new Map(toolResults.map((r) => [r.toolCallId, r])),
+    [toolResults],
+  );
+
+  return (
+    <div data-testid="thinking-section" className="mb-2">
+      <button
+        className="flex cursor-pointer items-center gap-1.5 border-none bg-none p-0 py-1 text-[12px] text-text-dimmed shadow-none transition-colors duration-150 hover:text-text-muted"
+        onClick={() => setOpen(!open)}
+      >
+        <span className="w-3 text-[10px]">{open ? "\u25BE" : "\u25B8"}</span>
+        <span>{label}</span>
+        {isStreaming && <span className="animate-pulse"> ...</span>}
+      </button>
+      {open && (
+        <div className="mt-1.5">
+          {hasReasoning && (
+            <pre className="mb-2 max-h-[400px] overflow-y-auto overflow-x-auto whitespace-pre-wrap rounded-lg border-l-2 border-border-accent bg-raised px-3 py-2.5 font-[inherit] text-[13px] leading-relaxed text-text-secondary">
+              {reasoningText}
+            </pre>
+          )}
+          {toolCalls.map((call) => (
+            <ToolActivityBlock
+              key={call.toolCallId}
+              call={call}
+              result={resultMap.get(call.toolCallId)}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
 // -- Streaming inline blocks --
@@ -384,7 +496,17 @@ interface ChatMessageProps {
 
 export function ChatMessage({ message }: ChatMessageProps) {
   const isUser = message.role === "user";
-  const blocks = useMemo(() => buildStreamBlocks(message.parts), [message.parts]);
+
+  const { reasoningText, toolCalls, toolResults, textParts } = useMemo(() => {
+    const reasoning = message.parts.filter((p) => p.type === "reasoning");
+    return {
+      reasoningText: reasoning.map((p) => p.text).join(""),
+      toolCalls: message.parts.filter((p): p is ToolCallPart => p.type === "tool-call"),
+      toolResults: message.parts.filter((p): p is ToolResultPart => p.type === "tool-result"),
+      textParts: message.parts.filter((p): p is Extract<MessagePart, { type: "text" }> => p.type === "text"),
+    };
+  }, [message.parts]);
+  const hasThinking = !isUser && (reasoningText.length > 0 || toolCalls.length > 0);
 
   return (
     <div data-testid={`chat-message-${isUser ? "user" : "assistant"}`} className="w-full px-5 py-4">
@@ -392,28 +514,17 @@ export function ChatMessage({ message }: ChatMessageProps) {
         {isUser ? "You" : "Assistant"}
       </div>
       <div className="max-w-3xl">
-        {blocks.map((block) => {
-          switch (block.type) {
-            case "reasoning":
-              return (
-                <StreamingReasoningBlock
-                  key={block.key}
-                  text={block.text}
-                  isActive={false}
-                />
-              );
-            case "tool-call":
-              return (
-                <ToolCallInline
-                  key={block.key}
-                  call={block.call}
-                  result={block.result}
-                />
-              );
-            case "text":
-              return <TextWithUiBlocks key={block.key} text={block.text} />;
-          }
-        })}
+        {hasThinking && (
+          <ThinkingSection
+            reasoningText={reasoningText}
+            toolCalls={toolCalls}
+            toolResults={toolResults}
+            defaultOpen={false}
+          />
+        )}
+        {textParts.map((part, i) => (
+          <TextWithUiBlocks key={i} text={part.text} />
+        ))}
       </div>
     </div>
   );
