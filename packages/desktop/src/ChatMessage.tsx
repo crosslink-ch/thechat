@@ -593,7 +593,7 @@ export function StreamingMessage({ convId, pendingPermission, onPermissionAllow,
       <div data-testid="chat-message-assistant" className="w-full px-5 py-4">
         <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-accent/80">Assistant</div>
         <div className="max-w-3xl">
-          {blocks.map((block) => {
+          {blocks.map((block, idx) => {
             switch (block.type) {
               case "reasoning":
                 return (
@@ -611,8 +611,16 @@ export function StreamingMessage({ convId, pendingPermission, onPermissionAllow,
                     result={block.result}
                   />
                 );
-              case "text":
-                return <TextWithUiBlocks key={block.key} text={block.text} />;
+              case "text": {
+                const isLastText = idx === blocks.length - 1 && !pendingPermission && !pendingQuestion;
+                return isLastText ? (
+                  <div key={block.key} className="streaming-cursor">
+                    <TextWithUiBlocks text={block.text} />
+                  </div>
+                ) : (
+                  <TextWithUiBlocks key={block.key} text={block.text} />
+                );
+              }
             }
           })}
           <div ref={promptRef}>

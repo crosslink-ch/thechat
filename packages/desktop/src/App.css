@@ -277,6 +277,14 @@
   font-weight: 500;
 }
 
+/* Streaming text cursor — blinking pipe after last character */
+.streaming-cursor .md-content > *:last-child::after {
+  content: "|";
+  animation: blink 1s step-end infinite;
+  color: var(--color-text-dimmed);
+  font-weight: 300;
+}
+
 /* Code blocks — rehype-highlight adds its own classes to inner <code> */
 .md-code-block {
   background: var(--color-raised);

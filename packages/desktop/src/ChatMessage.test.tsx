@@ -478,6 +478,44 @@ describe("StreamingMessage", () => {
     expect(onDenyWithFeedback).not.toHaveBeenCalled();
   });
 
+  it("shows streaming cursor after last text block", () => {
+    setupStreaming([{ type: "text", text: "Hello streaming" }]);
+    render(<StreamingMessage convId={CONV_ID} />);
+    const cursor = document.querySelector(".streaming-cursor");
+    expect(cursor).not.toBeNull();
+    expect(cursor?.querySelector(".md-content")).not.toBeNull();
+  });
+
+  it("does not show streaming cursor when last block is a tool call", () => {
+    setupStreaming([
+      { type: "text", text: "Let me check..." },
+      { type: "tool-call", toolCallId: "tc1", toolName: "search", args: { q: "test" } },
+    ]);
+    render(<StreamingMessage convId={CONV_ID} />);
+    expect(document.querySelector(".streaming-cursor")).toBeNull();
+  });
+
+  it("does not show streaming cursor when permission prompt is visible", () => {
+    const permission: PermissionRequest = {
+      id: "1",
+      convId: CONV_ID,
+      command: "echo hi",
+      description: "",
+      resolve: vi.fn(),
+      reject: vi.fn(),
+    };
+    setupStreaming([{ type: "text", text: "Hello" }]);
+    render(
+      <StreamingMessage
+        convId={CONV_ID}
+        pendingPermission={permission}
+        onPermissionAllow={vi.fn()}
+        onPermissionDeny={vi.fn()}
+      />,
+    );
+    expect(document.querySelector(".streaming-cursor")).toBeNull();
+  });
+
   it("does not render permission prompt when pendingPermission is null", () => {
     setupStreaming([{ type: "text", text: "Hello" }]);
     render(
