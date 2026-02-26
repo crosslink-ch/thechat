@@ -136,8 +136,19 @@ export async function runChatLoop(options: ChatLoopOptions): Promise<void> {
       return;
     }
 
-    // No tool calls → we're done
+    // No tool calls → check for queued messages before finishing
     if (result.toolCalls.length === 0) {
+      const queued = options.getQueuedMessages?.() ?? [];
+      if (queued.length > 0) {
+        if (result.text) {
+          workingMessages.push({ role: "assistant", content: result.text });
+        }
+        for (const qm of queued) {
+          workingMessages.push({ role: "user", content: qm.content });
+          onEvents([{ type: "queued-message-consumed", id: qm.id, content: qm.content }]);
+        }
+        continue;
+      }
       onEvents([{ type: "finish", usage: result.usage }]);
       return;
     }
@@ -252,7 +263,16 @@ export async function runChatLoop(options: ChatLoopOptions): Promise<void> {
       });
     }
 
-    // Continue loop — model will see tool results
+    // Drain queued user messages into the conversation
+    const queued = options.getQueuedMessages?.() ?? [];
+    if (queued.length > 0) {
+      for (const qm of queued) {
+        workingMessages.push({ role: "user", content: qm.content });
+        onEvents([{ type: "queued-message-consumed", id: qm.id, content: qm.content }]);
+      }
+    }
+
+    // Continue loop — model will see tool results (and any queued messages)
   }
 
   // Exceeded max roundtrips (only reachable if explicitly set)

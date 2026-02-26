@@ -27,12 +27,23 @@ export function InputBar({ convId, onSend, onStop, mentions, autoFocusKey }: Inp
         <RichInput
           ref={inputRef}
           onSubmit={onSend}
-          placeholder="Send a message..."
-          disabled={isStreaming}
+          placeholder={isStreaming ? "Queue a message..." : "Send a message..."}
           mentions={mentions}
           onCanSubmitChange={setCanSubmit}
         />
         <div className="absolute right-2 bottom-2 flex items-center gap-1.5">
+          {isStreaming && canSubmit && (
+            <button
+              className="flex size-8 cursor-pointer items-center justify-center rounded-lg border-none shadow-none transition-all duration-150 bg-accent/15 text-accent hover:bg-accent/25"
+              onClick={() => inputRef.current?.submit()}
+              title="Queue message"
+            >
+              <svg width="15" height="15" viewBox="0 0 15 15" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M7.5 12V3.5" />
+                <path d="M3.5 7L7.5 3L11.5 7" />
+              </svg>
+            </button>
+          )}
           {isStreaming ? (
             <button
               className="flex size-8 cursor-pointer items-center justify-center rounded-lg border-none bg-error/15 text-error-bright shadow-none transition-colors duration-150 hover:bg-error/25"

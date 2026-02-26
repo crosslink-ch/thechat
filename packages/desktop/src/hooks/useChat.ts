@@ -75,7 +75,10 @@ export function useChat(options?: UseChatOptions) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [conversation, setConversation] = useState<Conversation | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [queuedMessages, setQueuedMessages] = useState<Array<{ id: string; content: string }>>([]);
+  const queuedMessagesRef = useRef<Array<{ id: string; content: string }>>([]);
   const abortControllersRef = useRef<Map<string, AbortController>>(new Map());
+  const sendMessageRef = useRef<(content: string) => Promise<void>>(null as any);
   const activeConvIdRef = useRef<string | null>(null);
   const onStreamCompleteRef = useRef(options?.onStreamComplete);
   onStreamCompleteRef.current = options?.onStreamComplete;
@@ -86,28 +89,40 @@ export function useChat(options?: UseChatOptions) {
   const messagesRef = useRef(messages);
   messagesRef.current = messages;
 
+  const clearQueue = useCallback(() => {
+    queuedMessagesRef.current = [];
+    setQueuedMessages([]);
+  }, []);
+
   const loadConversation = useCallback(async (conv: Conversation) => {
     activeConvIdRef.current = conv.id;
+    clearQueue();
     const dbMsgs = await invoke<DbMessage[]>("get_messages", {
       conversationId: conv.id,
     });
     setConversation(conv);
     setMessages(dbMsgs.map(dbMessageToMessage));
     setError(null);
-  }, []);
+  }, [clearQueue]);
 
   const startNewConversation = useCallback(() => {
     activeConvIdRef.current = null;
+    clearQueue();
     setConversation(null);
     setMessages([]);
     setError(null);
-  }, []);
+  }, [clearQueue]);
 
   const sendMessage = useCallback(
     async (userContent: string) => {
       if (!userContent.trim()) return;
-      // Don't allow sending in a conversation that's already streaming
-      if (conversation && useStreamingStore.getState().streamingConvIds.has(conversation.id)) return;
+      // Queue message if conversation is already streaming
+      if (conversation && useStreamingStore.getState().streamingConvIds.has(conversation.id)) {
+        const qm = { id: crypto.randomUUID(), content: userContent.trim() };
+        queuedMessagesRef.current = [...queuedMessagesRef.current, qm];
+        setQueuedMessages(queuedMessagesRef.current);
+        return;
+      }
 
       setError(null);
       let streamConvId: string | null = null;
@@ -219,6 +234,23 @@ export function useChat(options?: UseChatOptions) {
                 });
                 partsChanged = true;
                 break;
+              case "queued-message-consumed": {
+                const qmEvent = event;
+                invoke<DbMessage>("save_message", {
+                  conversationId: streamConvId!,
+                  role: "user",
+                  content: qmEvent.content,
+                  reasoningContent: null,
+                }).then((dbMsg) => {
+                  const msg = dbMessageToMessage(dbMsg);
+                  if (activeConvIdRef.current === streamConvId) {
+                    setMessages((prev) => [...prev, msg]);
+                  }
+                });
+                // Remove from queued messages UI state
+                setQueuedMessages((prev) => prev.filter((q) => q.id !== qmEvent.id));
+                break;
+              }
               case "error":
                 logError(`[useChat] Stream error (conv=${streamConvId}): ${event.error}`);
                 if (activeConvIdRef.current === streamConvId) {
@@ -247,6 +279,14 @@ export function useChat(options?: UseChatOptions) {
           }
         }
 
+        const getQueuedMessages = () => {
+          const msgs = queuedMessagesRef.current;
+          if (msgs.length === 0) return [];
+          queuedMessagesRef.current = [];
+          setQueuedMessages([]);
+          return msgs;
+        };
+
         const convProjectDir = conv.project_dir ?? projectDirRef.current ?? undefined;
         await runChatLoop({
           apiKey: config.api_key,
@@ -261,6 +301,7 @@ export function useChat(options?: UseChatOptions) {
           convId: streamConvId!,
           provider: codexAuth ? "codex" : "openrouter",
           codexAuth,
+          getQueuedMessages,
           onEvents,
         });
 
@@ -303,11 +344,22 @@ export function useChat(options?: UseChatOptions) {
         if (streamConvId) {
           useStreamingStore.getState().stopStreaming(streamConvId);
           abortControllersRef.current.delete(streamConvId);
+
+          // If there are remaining queued messages after streaming ends,
+          // auto-trigger a new sendMessage with combined content
+          const remaining = queuedMessagesRef.current;
+          if (remaining.length > 0) {
+            queuedMessagesRef.current = [];
+            setQueuedMessages([]);
+            const combined = remaining.map((q) => q.content).join("\n\n");
+            setTimeout(() => sendMessageRef.current?.(combined), 0);
+          }
         }
       }
     },
     [conversation, options?.params, options?.tools, options?.getTools],
   );
+  sendMessageRef.current = sendMessage;
 
   const stopStreaming = useCallback(() => {
     const convId = activeConvIdRef.current;
@@ -320,6 +372,7 @@ export function useChat(options?: UseChatOptions) {
     messages,
     conversation,
     error,
+    queuedMessages,
     sendMessage,
     stopStreaming,
     loadConversation,

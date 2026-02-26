@@ -24,6 +24,7 @@ vi.mock("../hooks/useChat", () => ({
     messages: [],
     conversation: null,
     error: null,
+    queuedMessages: [],
     sendMessage: vi.fn(),
     stopStreaming: vi.fn(),
     loadConversation: vi.fn(),
@@ -58,8 +59,9 @@ vi.mock("../lib/notifications", () => ({
   fireNotification: vi.fn(),
 }));
 
-// jsdom doesn't implement scrollIntoView
+// jsdom doesn't implement scrollIntoView or scrollTo
 Element.prototype.scrollIntoView = vi.fn();
+Element.prototype.scrollTo = vi.fn() as any;
 
 import { useChat } from "../hooks/useChat";
 import { AgentChatRoute } from "./agent-chat";
@@ -101,6 +103,7 @@ beforeEach(() => {
     messages: [],
     conversation: null,
     error: null,
+    queuedMessages: [],
     sendMessage: vi.fn(),
     stopStreaming: vi.fn(),
     loadConversation: vi.fn(),
@@ -125,6 +128,7 @@ describe("AgentChatRoute", () => {
       messages: [],
       conversation: { id: convId, title: "Test", project_dir: null, created_at: "", updated_at: "" },
       error: null,
+      queuedMessages: [],
       sendMessage: vi.fn(),
       stopStreaming: vi.fn(),
       loadConversation: vi.fn(),
@@ -144,6 +148,7 @@ describe("AgentChatRoute", () => {
       messages: [],
       conversation: { id: convId, title: "Test", project_dir: null, created_at: "", updated_at: "" },
       error: null,
+      queuedMessages: [],
       sendMessage: vi.fn(),
       stopStreaming: vi.fn(),
       loadConversation: vi.fn(),
@@ -164,6 +169,7 @@ describe("AgentChatRoute", () => {
       messages: [],
       conversation: { id: convId, title: "Test", project_dir: null, created_at: "", updated_at: "" },
       error: null,
+      queuedMessages: [],
       sendMessage: vi.fn(),
       stopStreaming: vi.fn(),
       loadConversation: vi.fn(),
@@ -182,12 +188,75 @@ describe("AgentChatRoute", () => {
     expect(screen.getByText("New task from tool")).toBeInTheDocument();
   });
 
+  it("renders queued messages with Queued badge", async () => {
+    const convId = "conv-123";
+    mockUseChat.mockReturnValue({
+      messages: [],
+      conversation: { id: convId, title: "Test", project_dir: null, created_at: "", updated_at: "" },
+      error: null,
+      queuedMessages: [
+        { id: "qm-1", content: "my queued question" },
+      ],
+      sendMessage: vi.fn(),
+      stopStreaming: vi.fn(),
+      loadConversation: vi.fn(),
+      startNewConversation: vi.fn(),
+    } as any);
+
+    await renderRoute();
+    expect(screen.getByText("my queued question")).toBeInTheDocument();
+    expect(screen.getByText("Queued")).toBeInTheDocument();
+    expect(screen.getByText("You")).toBeInTheDocument();
+  });
+
+  it("renders multiple queued messages in order", async () => {
+    const convId = "conv-456";
+    mockUseChat.mockReturnValue({
+      messages: [],
+      conversation: { id: convId, title: "Test", project_dir: null, created_at: "", updated_at: "" },
+      error: null,
+      queuedMessages: [
+        { id: "qm-1", content: "first queued" },
+        { id: "qm-2", content: "second queued" },
+      ],
+      sendMessage: vi.fn(),
+      stopStreaming: vi.fn(),
+      loadConversation: vi.fn(),
+      startNewConversation: vi.fn(),
+    } as any);
+
+    await renderRoute();
+    expect(screen.getByText("first queued")).toBeInTheDocument();
+    expect(screen.getByText("second queued")).toBeInTheDocument();
+    // Both should have Queued badges
+    const badges = screen.getAllByText("Queued");
+    expect(badges).toHaveLength(2);
+  });
+
+  it("does not render queued messages section when queue is empty", async () => {
+    const convId = "conv-789";
+    mockUseChat.mockReturnValue({
+      messages: [],
+      conversation: { id: convId, title: "Test", project_dir: null, created_at: "", updated_at: "" },
+      error: null,
+      queuedMessages: [],
+      sendMessage: vi.fn(),
+      stopStreaming: vi.fn(),
+      loadConversation: vi.fn(),
+      startNewConversation: vi.fn(),
+    } as any);
+
+    await renderRoute();
+    expect(screen.queryByText("Queued")).not.toBeInTheDocument();
+  });
+
   it("no infinite loop when convId is undefined (new chat)", async () => {
     // This was the original bug: useTodoStore selector returning a new [] each render
     mockUseChat.mockReturnValue({
       messages: [],
       conversation: null, // no conversation yet → convId is undefined
       error: null,
+      queuedMessages: [],
       sendMessage: vi.fn(),
       stopStreaming: vi.fn(),
       loadConversation: vi.fn(),

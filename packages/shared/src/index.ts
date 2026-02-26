@@ -166,6 +166,7 @@ export type StreamEvent =
   | { type: "tool-call-args-delta"; toolCallId: string; args: string }
   | { type: "tool-call-complete"; toolCallId: string; toolName: string; args: Record<string, unknown> }
   | { type: "tool-result"; toolCallId: string; toolName: string; result: unknown; isError: boolean }
+  | { type: "queued-message-consumed"; id: string; content: string }
   | { type: "finish"; usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number } }
   | { type: "error"; error: string };
 

@@ -46,6 +46,7 @@ export function AgentChatRoute() {
     messages,
     conversation,
     error,
+    queuedMessages,
     sendMessage,
     stopStreaming,
     loadConversation,
@@ -174,6 +175,13 @@ export function AgentChatRoute() {
     }
   }, [isStreaming, streamingParts, scrollToBottom]);
 
+  // Auto-scroll when queued messages change
+  useEffect(() => {
+    if (queuedMessages.length > 0) {
+      scrollToBottom({ force: true });
+    }
+  }, [queuedMessages.length, scrollToBottom]);
+
   // Fetch conversations list when conversation changes
   useEffect(() => {
     useConversationsStore.getState().fetchConversations();
@@ -251,6 +259,17 @@ export function AgentChatRoute() {
             onQuestionSubmit={handleQuestionSubmit}
             onQuestionCancel={handleQuestionCancel}
           />
+          {queuedMessages.map((qm) => (
+            <div key={qm.id} className="w-full px-5 py-4 opacity-60">
+              <div className="mb-1.5 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wider text-text-dimmed">
+                You
+                <span className="rounded-full bg-warning/15 px-1.5 py-0.5 text-[10px] font-medium normal-case tracking-normal text-warning">
+                  Queued
+                </span>
+              </div>
+              <div className="max-w-3xl text-[14px] text-text">{qm.content}</div>
+            </div>
+          ))}
           {error && <div className="mx-5 rounded-lg border border-error-msg-border bg-error-msg-bg px-3.5 py-2.5 text-[12px] text-error-bright">{error}</div>}
         </div>
         {!isAtBottom && isStreaming && (

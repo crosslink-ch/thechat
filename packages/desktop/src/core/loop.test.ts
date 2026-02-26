@@ -484,6 +484,483 @@ describe("runChatLoop", () => {
     expect(secondCallTools!.map((t: ToolDefinition) => t.name)).toContain("kubectl__get_pods");
   });
 
+  // -- Queued messages tests --
+
+  it("consumes a queued message when LLM finishes with no tool calls", async () => {
+    // Scenario: LLM responds with text, but user has typed a follow-up.
+    // The loop should inject the queued message and call the LLM again.
+    let getQueuedCallCount = 0;
+
+    // Round 1: LLM gives a text response (no tools)
+    mockStreamCompletion.mockResolvedValueOnce({
+      text: "Here's my answer.",
+      reasoning: "",
+      toolCalls: [],
+    });
+
+    // Round 2: LLM sees the queued user message and responds
+    mockStreamCompletion.mockResolvedValueOnce({
+      text: "And here's the follow-up answer.",
+      reasoning: "",
+      toolCalls: [],
+      usage: { prompt_tokens: 20, completion_tokens: 10, total_tokens: 30 },
+    });
+
+    const events: StreamEvent[] = [];
+    await runChatLoop({
+      apiKey: "key",
+      model: "model",
+      messages: [{ role: "user", content: "first question" }],
+      getQueuedMessages: () => {
+        getQueuedCallCount++;
+        // On first drain (when loop would finish after round 1), return a queued message
+        if (getQueuedCallCount === 1) {
+          return [{ id: "qm-1", content: "follow-up question" }];
+        }
+        return [];
+      },
+      onEvents: (batch) => events.push(...batch),
+    });
+
+    // LLM was called twice — once for original, once after queued message
+    expect(mockStreamCompletion).toHaveBeenCalledTimes(2);
+
+    // queued-message-consumed event was emitted
+    const consumedEvents = events.filter((e) => e.type === "queued-message-consumed");
+    expect(consumedEvents).toHaveLength(1);
+    expect(consumedEvents[0]).toEqual({
+      type: "queued-message-consumed",
+      id: "qm-1",
+      content: "follow-up question",
+    });
+
+    // The second LLM call should contain the assistant response + queued user message
+    const secondCallMessages = mockStreamCompletion.mock.calls[1][0].messages;
+    // Should have: system, user("first question"), assistant("Here's my answer."), user("follow-up question")
+    const assistantMsg = secondCallMessages.find(
+      (m: Record<string, unknown>) => m.role === "assistant" && m.content === "Here's my answer.",
+    );
+    expect(assistantMsg).toBeDefined();
+    const queuedUserMsg = secondCallMessages[secondCallMessages.length - 1];
+    expect(queuedUserMsg).toEqual({ role: "user", content: "follow-up question" });
+
+    // Finished successfully
+    expect(events.some((e) => e.type === "finish")).toBe(true);
+  });
+
+  it("injects queued message after tool results between roundtrips", async () => {
+    // Scenario: LLM calls a tool. While the tool runs, user types a message.
+    // After tool results are appended, the queued message is injected.
+    // The next LLM call sees both the tool result AND the user message.
+    const tool: ToolDefinition = {
+      name: "search",
+      description: "Search",
+      parameters: { type: "object", properties: {} },
+      execute: vi.fn().mockResolvedValue({ results: ["found it"] }),
+    };
+
+    let getQueuedCallCount = 0;
+
+    // Round 1: LLM calls the tool
+    mockStreamCompletion.mockResolvedValueOnce({
+      text: "Let me search for that.",
+      reasoning: "",
+      toolCalls: [{ id: "call_1", name: "search", args: { query: "test" } }],
+    });
+
+    // Round 2: LLM sees tool result + queued message, responds with text
+    mockStreamCompletion.mockResolvedValueOnce({
+      text: "Found the results, and addressing your follow-up.",
+      reasoning: "",
+      toolCalls: [],
+      usage: { prompt_tokens: 30, completion_tokens: 15, total_tokens: 45 },
+    });
+
+    const events: StreamEvent[] = [];
+    await runChatLoop({
+      apiKey: "key",
+      model: "model",
+      messages: [{ role: "user", content: "find something" }],
+      tools: [tool],
+      getQueuedMessages: () => {
+        getQueuedCallCount++;
+        // First drain happens after tool results. Return a queued message.
+        if (getQueuedCallCount === 1) {
+          return [{ id: "qm-1", content: "also check this" }];
+        }
+        return [];
+      },
+      onEvents: (batch) => events.push(...batch),
+    });
+
+    expect(mockStreamCompletion).toHaveBeenCalledTimes(2);
+
+    // The consumed event was emitted
+    const consumed = events.filter((e) => e.type === "queued-message-consumed");
+    expect(consumed).toHaveLength(1);
+    expect(consumed[0]).toMatchObject({ id: "qm-1", content: "also check this" });
+
+    // The second LLM call should have: system, user, assistant+tool_calls, tool result, queued user msg
+    const secondCallMessages = mockStreamCompletion.mock.calls[1][0].messages as Array<Record<string, unknown>>;
+    const toolResultMsg = secondCallMessages.find((m) => m.role === "tool");
+    expect(toolResultMsg).toBeDefined();
+    // The queued user message should come after the tool result
+    const toolResultIdx = secondCallMessages.indexOf(toolResultMsg!);
+    const queuedMsg = secondCallMessages[toolResultIdx + 1];
+    expect(queuedMsg).toEqual({ role: "user", content: "also check this" });
+
+    expect(events.some((e) => e.type === "finish")).toBe(true);
+  });
+
+  it("drains multiple queued messages at once", async () => {
+    // User types two messages while LLM is working. Both are consumed together.
+    mockStreamCompletion.mockResolvedValueOnce({
+      text: "First response.",
+      reasoning: "",
+      toolCalls: [],
+    });
+
+    mockStreamCompletion.mockResolvedValueOnce({
+      text: "Addressing both questions.",
+      reasoning: "",
+      toolCalls: [],
+      usage: { prompt_tokens: 30, completion_tokens: 10, total_tokens: 40 },
+    });
+
+    let drained = false;
+    const events: StreamEvent[] = [];
+    await runChatLoop({
+      apiKey: "key",
+      model: "model",
+      messages: [{ role: "user", content: "initial" }],
+      getQueuedMessages: () => {
+        if (!drained) {
+          drained = true;
+          return [
+            { id: "qm-1", content: "question two" },
+            { id: "qm-2", content: "question three" },
+          ];
+        }
+        return [];
+      },
+      onEvents: (batch) => events.push(...batch),
+    });
+
+    // Both queued messages consumed
+    const consumed = events.filter((e) => e.type === "queued-message-consumed");
+    expect(consumed).toHaveLength(2);
+    expect(consumed[0]).toMatchObject({ id: "qm-1", content: "question two" });
+    expect(consumed[1]).toMatchObject({ id: "qm-2", content: "question three" });
+
+    // Second call messages should contain both user messages after assistant
+    const secondCallMessages = mockStreamCompletion.mock.calls[1][0].messages as Array<Record<string, unknown>>;
+    const userMessages = secondCallMessages.filter((m) => m.role === "user");
+    expect(userMessages).toContainEqual({ role: "user", content: "question two" });
+    expect(userMessages).toContainEqual({ role: "user", content: "question three" });
+    // Order matters: question two before question three
+    const idxTwo = secondCallMessages.findIndex(
+      (m) => m.role === "user" && m.content === "question two",
+    );
+    const idxThree = secondCallMessages.findIndex(
+      (m) => m.role === "user" && m.content === "question three",
+    );
+    expect(idxTwo).toBeLessThan(idxThree);
+  });
+
+  it("finishes normally when getQueuedMessages always returns empty", async () => {
+    mockStreamCompletion.mockResolvedValueOnce({
+      text: "done",
+      reasoning: "",
+      toolCalls: [],
+      usage: { prompt_tokens: 5, completion_tokens: 3, total_tokens: 8 },
+    });
+
+    const events: StreamEvent[] = [];
+    const getQueuedMessages = vi.fn().mockReturnValue([]);
+    await runChatLoop({
+      apiKey: "key",
+      model: "model",
+      messages: [{ role: "user", content: "hi" }],
+      getQueuedMessages,
+      onEvents: (batch) => events.push(...batch),
+    });
+
+    expect(mockStreamCompletion).toHaveBeenCalledTimes(1);
+    expect(events.some((e) => e.type === "finish")).toBe(true);
+    // No consumed events
+    expect(events.filter((e) => e.type === "queued-message-consumed")).toHaveLength(0);
+    // getQueuedMessages was still called (at the finish check)
+    expect(getQueuedMessages).toHaveBeenCalled();
+  });
+
+  it("handles queued messages at both injection points in a multi-round conversation", async () => {
+    // Complex scenario: tool call roundtrip with queue + text-only finish with queue
+    // Round 1: tool call
+    // After tool results: user queued "msg-A"
+    // Round 2: text-only, but user queued "msg-B" → continue
+    // Round 3: text-only, no queue → finish
+    const tool: ToolDefinition = {
+      name: "lookup",
+      description: "Look up data",
+      parameters: { type: "object", properties: {} },
+      execute: vi.fn().mockResolvedValue("data-result"),
+    };
+
+    let drainCount = 0;
+
+    // Round 1: tool call
+    mockStreamCompletion.mockResolvedValueOnce({
+      text: "",
+      reasoning: "",
+      toolCalls: [{ id: "call_1", name: "lookup", args: { key: "x" } }],
+    });
+
+    // Round 2: text-only (but queue will have msg-B)
+    mockStreamCompletion.mockResolvedValueOnce({
+      text: "Here's the lookup result and msg-A response.",
+      reasoning: "",
+      toolCalls: [],
+    });
+
+    // Round 3: text-only, queue empty → finish
+    mockStreamCompletion.mockResolvedValueOnce({
+      text: "Final answer.",
+      reasoning: "",
+      toolCalls: [],
+      usage: { prompt_tokens: 50, completion_tokens: 20, total_tokens: 70 },
+    });
+
+    const events: StreamEvent[] = [];
+    await runChatLoop({
+      apiKey: "key",
+      model: "model",
+      messages: [{ role: "user", content: "start" }],
+      tools: [tool],
+      getQueuedMessages: () => {
+        drainCount++;
+        if (drainCount === 1) return [{ id: "qm-A", content: "msg-A" }]; // after tool results
+        if (drainCount === 2) return [{ id: "qm-B", content: "msg-B" }]; // at text-only finish check
+        return [];
+      },
+      onEvents: (batch) => events.push(...batch),
+    });
+
+    expect(mockStreamCompletion).toHaveBeenCalledTimes(3);
+
+    const consumed = events.filter((e) => e.type === "queued-message-consumed");
+    expect(consumed).toHaveLength(2);
+    expect(consumed[0]).toMatchObject({ id: "qm-A", content: "msg-A" });
+    expect(consumed[1]).toMatchObject({ id: "qm-B", content: "msg-B" });
+
+    // Round 2 messages should include msg-A after tool result
+    const round2Messages = mockStreamCompletion.mock.calls[1][0].messages as Array<Record<string, unknown>>;
+    const msgA = round2Messages.find(
+      (m) => m.role === "user" && m.content === "msg-A",
+    );
+    expect(msgA).toBeDefined();
+
+    // Round 3 messages should include assistant text + msg-B
+    const round3Messages = mockStreamCompletion.mock.calls[2][0].messages as Array<Record<string, unknown>>;
+    const assistantText = round3Messages.find(
+      (m) => m.role === "assistant" && m.content === "Here's the lookup result and msg-A response.",
+    );
+    expect(assistantText).toBeDefined();
+    const msgB = round3Messages.find(
+      (m) => m.role === "user" && m.content === "msg-B",
+    );
+    expect(msgB).toBeDefined();
+
+    expect(events.some((e) => e.type === "finish")).toBe(true);
+  });
+
+  it("preserves assistant text in workingMessages when queue continues the loop", async () => {
+    // When the LLM responds with text and no tool calls, and a queued message
+    // continues the loop, the assistant text must be preserved so the LLM
+    // sees its own previous response.
+    mockStreamCompletion.mockResolvedValueOnce({
+      text: "I think the answer is 42.",
+      reasoning: "",
+      toolCalls: [],
+    });
+
+    mockStreamCompletion.mockResolvedValueOnce({
+      text: "Yes, I'm sure about 42.",
+      reasoning: "",
+      toolCalls: [],
+      usage: { prompt_tokens: 20, completion_tokens: 10, total_tokens: 30 },
+    });
+
+    let drained = false;
+    const events: StreamEvent[] = [];
+    await runChatLoop({
+      apiKey: "key",
+      model: "model",
+      messages: [{ role: "user", content: "what's the answer?" }],
+      getQueuedMessages: () => {
+        if (!drained) {
+          drained = true;
+          return [{ id: "qm-1", content: "are you sure?" }];
+        }
+        return [];
+      },
+      onEvents: (batch) => events.push(...batch),
+    });
+
+    // Verify the second call has the assistant's previous response
+    const secondCallMessages = mockStreamCompletion.mock.calls[1][0].messages as Array<Record<string, unknown>>;
+
+    // Find the assistant message — should be present and before the queued user message
+    const assistantIdx = secondCallMessages.findIndex(
+      (m) => m.role === "assistant" && m.content === "I think the answer is 42.",
+    );
+    const userIdx = secondCallMessages.findIndex(
+      (m) => m.role === "user" && m.content === "are you sure?",
+    );
+    expect(assistantIdx).toBeGreaterThan(-1);
+    expect(userIdx).toBeGreaterThan(assistantIdx);
+  });
+
+  it("does not preserve empty assistant text when queue continues", async () => {
+    // Edge case: LLM returns empty text with no tool calls (unusual but possible)
+    mockStreamCompletion.mockResolvedValueOnce({
+      text: "",
+      reasoning: "",
+      toolCalls: [],
+    });
+
+    mockStreamCompletion.mockResolvedValueOnce({
+      text: "OK here you go.",
+      reasoning: "",
+      toolCalls: [],
+      usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
+    });
+
+    let drained = false;
+    await runChatLoop({
+      apiKey: "key",
+      model: "model",
+      messages: [{ role: "user", content: "hi" }],
+      getQueuedMessages: () => {
+        if (!drained) {
+          drained = true;
+          return [{ id: "qm-1", content: "hello?" }];
+        }
+        return [];
+      },
+      onEvents: () => {},
+    });
+
+    // Second call should NOT have an empty assistant message
+    const secondCallMessages = mockStreamCompletion.mock.calls[1][0].messages as Array<Record<string, unknown>>;
+    const emptyAssistant = secondCallMessages.find(
+      (m) => m.role === "assistant" && m.content === "",
+    );
+    expect(emptyAssistant).toBeUndefined();
+  });
+
+  it("queued messages do not interfere with doom loop detection", async () => {
+    // Doom loop detection tracks tool calls, not queued messages.
+    // A queued message injected between rounds shouldn't reset the doom counter.
+    const stubbornTool: ToolDefinition = {
+      name: "read_file",
+      description: "Read a file",
+      parameters: { type: "object", properties: {} },
+      execute: vi.fn().mockResolvedValue("contents"),
+    };
+
+    let drainCount = 0;
+
+    // 3 rounds of identical tool calls (triggers doom loop on round 4)
+    for (let i = 0; i < 3; i++) {
+      mockStreamCompletion.mockResolvedValueOnce({
+        text: "",
+        reasoning: "",
+        toolCalls: [{ id: `call_${i}`, name: "read_file", args: { path: "/same.txt" } }],
+      });
+    }
+
+    // Round 4 (doom loop recovery): text-only call
+    mockStreamCompletion.mockResolvedValueOnce({
+      text: "I'm stuck.",
+      reasoning: "",
+      toolCalls: [],
+    });
+
+    const events: StreamEvent[] = [];
+    await runChatLoop({
+      apiKey: "key",
+      model: "model",
+      messages: [{ role: "user", content: "read file" }],
+      tools: [stubbornTool],
+      getQueuedMessages: () => {
+        drainCount++;
+        // Inject a queued message after the first tool round
+        if (drainCount === 1) {
+          return [{ id: "qm-1", content: "try harder" }];
+        }
+        return [];
+      },
+      onEvents: (batch) => events.push(...batch),
+    });
+
+    // Doom loop was still detected despite the queued message
+    const doomError = events.find(
+      (e) => e.type === "error" && e.error.includes("Doom loop"),
+    );
+    expect(doomError).toBeDefined();
+    // The queued message was still consumed before doom detection
+    const consumed = events.filter((e) => e.type === "queued-message-consumed");
+    expect(consumed).toHaveLength(1);
+  });
+
+  it("respects maxToolRoundtrips even with queued messages extending the loop", async () => {
+    // Queued messages can extend the loop beyond what the user originally sent,
+    // but maxToolRoundtrips should still cap total iterations.
+    let round = 0;
+    mockStreamCompletion.mockImplementation(async () => {
+      round++;
+      if (round <= 3) {
+        return {
+          text: `Response ${round}`,
+          reasoning: "",
+          toolCalls: [{ id: `call_${round}`, name: "tool", args: { n: round } }],
+        };
+      }
+      return {
+        text: "Final",
+        reasoning: "",
+        toolCalls: [],
+        usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
+      };
+    });
+
+    const tool: ToolDefinition = {
+      name: "tool",
+      description: "A tool",
+      parameters: { type: "object", properties: {} },
+      execute: vi.fn().mockResolvedValue("ok"),
+    };
+
+    const events: StreamEvent[] = [];
+    await runChatLoop({
+      apiKey: "key",
+      model: "model",
+      messages: [{ role: "user", content: "go" }],
+      tools: [tool],
+      maxToolRoundtrips: 2,
+      // Keep feeding queued messages — should not bypass maxToolRoundtrips
+      getQueuedMessages: () => [{ id: `qm-${round}`, content: `extra ${round}` }],
+      onEvents: (batch) => events.push(...batch),
+    });
+
+    // Should hit max roundtrips error regardless of queued messages
+    const errorEvent = events.find((e) => e.type === "error");
+    expect(errorEvent).toBeDefined();
+    if (errorEvent && errorEvent.type === "error") {
+      expect(errorEvent.error).toContain("maximum tool roundtrips");
+    }
+  });
+
   it("handles streamCompletion error", async () => {
     mockStreamCompletion.mockRejectedValueOnce(new Error("API failed"));
 
