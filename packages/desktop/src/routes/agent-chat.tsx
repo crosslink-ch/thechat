@@ -158,20 +158,21 @@ export function AgentChatRoute() {
     }
   }, [conversation?.id, messages.length]);
 
-  // Scroll to bottom when user sends a message
+  // Scroll to bottom when user sends a message (always force)
   useEffect(() => {
     const lastMsg = messages[messages.length - 1];
     if (lastMsg?.role === "user") {
-      scrollToBottom();
+      scrollToBottom({ force: true });
     }
   }, [messages.length, scrollToBottom]);
 
-  // Auto-scroll during streaming when user is near the bottom
+  // Auto-scroll during streaming — scrollToBottom already checks
+  // whether the user has scrolled away and skips if so
   useEffect(() => {
-    if (isStreaming && isAtBottom) {
+    if (isStreaming) {
       scrollToBottom();
     }
-  }, [isStreaming, isAtBottom, streamingParts, scrollToBottom]);
+  }, [isStreaming, streamingParts, scrollToBottom]);
 
   // Fetch conversations list when conversation changes
   useEffect(() => {
@@ -255,7 +256,7 @@ export function AgentChatRoute() {
         {!isAtBottom && isStreaming && (
           <button
             type="button"
-            onClick={scrollToBottom}
+            onClick={() => scrollToBottom({ force: true })}
             className="absolute bottom-4 left-1/2 z-10 flex -translate-x-1/2 items-center gap-1.5 rounded-full bg-elevated/90 px-3 py-1.5 text-xs shadow-md"
           >
             ↓ Jump to bottom
