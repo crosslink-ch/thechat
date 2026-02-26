@@ -99,75 +99,100 @@ export function Sidebar() {
 
   return (
       <div className={`flex h-full w-[260px] shrink-0 flex-col border-r border-border bg-surface transition-[margin-left] duration-200 ease-out ${open ? "ml-0" : "-ml-[260px]"}`}>
-        {/* Workspace switcher (only when logged in) */}
-        {user && (
-          <div className="relative border-b border-border-subtle p-2.5">
+        <div className="border-b border-border-subtle p-2">
+          <div className="mb-2 flex items-center gap-1.5">
             <button
-              className="flex w-full cursor-pointer items-center justify-between rounded-lg border border-border bg-raised px-3 py-2 font-[inherit] text-[13px] font-medium text-text transition-colors duration-150 hover:bg-hover"
-              onClick={() => setDropdownOpen(!dropdownOpen)}
+              aria-label="Collapse sidebar"
+              className="flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-md border border-border bg-raised text-text-muted transition-colors duration-150 hover:bg-hover hover:text-text"
+              onClick={toggleSidebar}
             >
-              <span className="overflow-hidden text-ellipsis whitespace-nowrap">
-                {activeWorkspace ? activeWorkspace.name : "Select workspace"}
-              </span>
-              <svg className={`shrink-0 text-text-dimmed transition-transform duration-150 ${dropdownOpen ? "rotate-180" : ""}`} width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M3 4.5L6 7.5L9 4.5" />
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M3 2.5H11" />
+                <path d="M3 7H11" />
+                <path d="M3 11.5H11" />
+                <path d="M2.5 2.5V11.5" />
               </svg>
             </button>
-            {dropdownOpen && (
-              <div className="absolute top-full right-2.5 left-2.5 z-[15] mt-1 overflow-hidden rounded-lg border border-border-strong bg-surface shadow-card animate-fade-in">
-                {workspaces.map((ws) => (
+            <button
+              className="flex min-w-0 flex-1 cursor-pointer items-center justify-center gap-1.5 rounded-md border border-border bg-raised px-2.5 py-2 font-[inherit] text-[12px] font-medium text-text-secondary transition-colors duration-150 hover:bg-hover hover:text-text"
+              onClick={handleNewChat}
+            >
+              <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+                <path d="M6 2.5V9.5" />
+                <path d="M2.5 6H9.5" />
+              </svg>
+              <span>New Chat</span>
+            </button>
+          </div>
+
+          {user && (
+            <div className="relative">
+              <button
+                className="flex w-full cursor-pointer items-center justify-between rounded-md border border-border bg-raised px-2.5 py-2 font-[inherit] text-[12px] font-medium text-text transition-colors duration-150 hover:bg-hover"
+                onClick={() => setDropdownOpen(!dropdownOpen)}
+              >
+                <span className="overflow-hidden text-ellipsis whitespace-nowrap">
+                  {activeWorkspace ? activeWorkspace.name : "Select workspace"}
+                </span>
+                <svg className={`shrink-0 text-text-dimmed transition-transform duration-150 ${dropdownOpen ? "rotate-180" : ""}`} width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M3 4.5L6 7.5L9 4.5" />
+                </svg>
+              </button>
+              {dropdownOpen && (
+                <div className="absolute top-full right-0 left-0 z-[15] mt-1 overflow-hidden rounded-md border border-border-strong bg-surface shadow-card animate-fade-in">
+                  {workspaces.map((ws) => (
+                    <button
+                      key={ws.id}
+                      className={`block w-full cursor-pointer border-none px-2.5 py-2 text-left font-[inherit] text-[12px] transition-colors duration-100 ${
+                        activeWorkspace?.id === ws.id
+                          ? "bg-elevated text-text"
+                          : "bg-none text-text-muted hover:bg-hover hover:text-text"
+                      }`}
+                      onClick={() => {
+                        selectWorkspace(ws.id);
+                        setDropdownOpen(false);
+                      }}
+                    >
+                      {ws.name}
+                    </button>
+                  ))}
                   <button
-                    key={ws.id}
-                    className={`block w-full cursor-pointer border-none px-3 py-2 text-left font-[inherit] text-[13px] transition-colors duration-100 ${
-                      activeWorkspace?.id === ws.id
-                        ? "bg-elevated text-text"
-                        : "bg-none text-text-muted hover:bg-hover hover:text-text"
-                    }`}
+                    className="block w-full cursor-pointer border-t border-border bg-none px-2.5 py-2 text-left font-[inherit] text-[12px] text-accent transition-colors duration-100 hover:bg-hover hover:text-text"
                     onClick={() => {
-                      selectWorkspace(ws.id);
+                      openWorkspaceModal();
                       setDropdownOpen(false);
                     }}
                   >
-                    {ws.name}
+                    + Create workspace
                   </button>
-                ))}
-                <button
-                  className="block w-full cursor-pointer border-t border-border bg-none px-3 py-2 text-left font-[inherit] text-[13px] text-accent transition-colors duration-100 hover:bg-hover hover:text-text"
-                  onClick={() => {
-                    openWorkspaceModal();
-                    setDropdownOpen(false);
-                  }}
-                >
-                  + Create workspace
-                </button>
-              </div>
-            )}
-          </div>
-        )}
+                </div>
+              )}
+            </div>
+          )}
 
-        {/* Tab toggle (only when workspace is active) */}
-        {user && activeWorkspace && (
-          <div className="flex gap-0.5 border-b border-border-subtle p-2">
-            <button
-              className={`flex flex-1 cursor-pointer items-center justify-center gap-1.5 rounded-md border-none px-2 py-1.5 font-[inherit] text-[12px] font-medium transition-colors duration-150 ${tab === "agent" ? "bg-elevated text-text" : "bg-none text-text-muted hover:bg-hover hover:text-text"}`}
-              onClick={() => setTab("agent")}
-            >
-              Agent Chats
-              {unreadAgentChats.size > 0 && tab !== "agent" && (
-                <span className="size-1.5 shrink-0 rounded-full bg-accent" />
-              )}
-            </button>
-            <button
-              className={`flex flex-1 cursor-pointer items-center justify-center gap-1.5 rounded-md border-none px-2 py-1.5 font-[inherit] text-[12px] font-medium transition-colors duration-150 ${tab === "workspace" ? "bg-elevated text-text" : "bg-none text-text-muted hover:bg-hover hover:text-text"}`}
-              onClick={() => setTab("workspace")}
-            >
-              Workspace
-              {unreadChannels.size > 0 && tab !== "workspace" && (
-                <span className="size-1.5 shrink-0 rounded-full bg-accent" />
-              )}
-            </button>
-          </div>
-        )}
+          {user && activeWorkspace && (
+            <div className="mt-2 flex gap-1 rounded-lg bg-raised p-1">
+              <button
+                className={`flex flex-1 cursor-pointer items-center justify-center gap-1 rounded-md border-none px-2 py-1.5 font-[inherit] text-[11px] font-semibold transition-colors duration-150 ${tab === "agent" ? "bg-elevated text-text" : "bg-none text-text-muted hover:bg-hover hover:text-text"}`}
+                onClick={() => setTab("agent")}
+              >
+                Agent Chats
+                {unreadAgentChats.size > 0 && tab !== "agent" && (
+                  <span className="size-1.5 shrink-0 rounded-full bg-accent" />
+                )}
+              </button>
+              <button
+                className={`flex flex-1 cursor-pointer items-center justify-center gap-1 rounded-md border-none px-2 py-1.5 font-[inherit] text-[11px] font-semibold transition-colors duration-150 ${tab === "workspace" ? "bg-elevated text-text" : "bg-none text-text-muted hover:bg-hover hover:text-text"}`}
+                onClick={() => setTab("workspace")}
+              >
+                Workspace
+                {unreadChannels.size > 0 && tab !== "workspace" && (
+                  <span className="size-1.5 shrink-0 rounded-full bg-accent" />
+                )}
+              </button>
+            </div>
+          )}
+        </div>
 
         {/* Workspace tab content */}
         {user && activeWorkspace && tab === "workspace" && (
@@ -260,19 +285,7 @@ export function Sidebar() {
         {/* Agent Chats tab content (or full view when no workspace) */}
         {(tab === "agent" || !activeWorkspace || !user) && (
           <div className="flex min-h-0 flex-1 flex-col">
-            <div className="p-2.5">
-              <button
-                className="flex w-full cursor-pointer items-center justify-center gap-2 rounded-lg border border-border bg-raised px-3 py-2 font-[inherit] text-[13px] font-medium text-text-secondary transition-colors duration-150 hover:bg-hover hover:text-text"
-                onClick={handleNewChat}
-              >
-                <svg width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
-                  <path d="M6.5 2.5V10.5" />
-                  <path d="M2.5 6.5H10.5" />
-                </svg>
-                New Chat
-              </button>
-            </div>
-            <div className="flex-1 overflow-y-auto px-2.5">
+            <div className="flex-1 overflow-y-auto px-2.5 pt-2">
               {conversations.map((conv) => {
                 const isActive = currentAgentChatId === conv.id;
                 const isUnread = !isActive && unreadAgentChats.has(conv.id);

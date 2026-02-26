@@ -4,7 +4,6 @@ import { useMatches } from "@tanstack/react-router";
 import { useWebSocketStore } from "../stores/websocket";
 import { useWorkspacesStore } from "../stores/workspaces";
 import { usePermissionModeStore } from "../stores/permission-mode";
-import { toggleSidebar } from "./Sidebar";
 import { basename } from "../lib/path";
 
 // Mini-store for agent chat title & project dir (set by agent-chat route)
@@ -58,17 +57,7 @@ export function ChatHeader() {
   const showWsStatus = !isAgentChat && connected;
 
   return (
-    <div className="flex h-12 items-center gap-2.5 border-b border-border-subtle bg-surface px-3">
-      <button
-        className="flex size-8 cursor-pointer items-center justify-center rounded-md border-none bg-none text-text-muted transition-colors duration-150 hover:bg-hover hover:text-text"
-        onClick={toggleSidebar}
-      >
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
-          <path d="M2.5 4H13.5" />
-          <path d="M2.5 8H13.5" />
-          <path d="M2.5 12H13.5" />
-        </svg>
-      </button>
+    <div className="flex h-12 items-center gap-2 border-b border-border-subtle bg-surface px-3">
       {showBackButton && (
         <button
           className="flex size-8 cursor-pointer items-center justify-center rounded-md border-none bg-none text-text-muted transition-colors duration-150 hover:bg-hover hover:text-text"

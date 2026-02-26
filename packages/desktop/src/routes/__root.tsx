@@ -7,7 +7,7 @@ import { useWorkspacesStore } from "../stores/workspaces";
 import { useNotificationsStore } from "../stores/notifications";
 import { useConversationsStore } from "../stores/conversations";
 import { useKeybindings } from "../hooks/useKeybindings";
-import { Sidebar } from "../components/Sidebar";
+import { Sidebar, toggleSidebar, useSidebarState } from "../components/Sidebar";
 import { ChatHeader } from "../components/ChatHeader";
 import { CommandPalette } from "../CommandPalette";
 import { PermissionModePicker } from "../PermissionModePicker";
@@ -76,9 +76,25 @@ export function RootLayout() {
     handleRegistryCommands: true,
   });
 
+  const sidebarOpen = useSidebarState((s) => s.open);
+
   return (
-    <div className="flex h-screen overflow-hidden">
+    <div className="relative flex h-screen overflow-hidden">
       <Sidebar />
+      {!sidebarOpen && (
+        <button
+          aria-label="Open sidebar"
+          className="absolute top-3 left-3 z-20 flex size-8 cursor-pointer items-center justify-center rounded-md border border-border bg-raised text-text-muted transition-colors duration-150 hover:bg-hover hover:text-text"
+          onClick={toggleSidebar}
+        >
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M3 2.5H11" />
+            <path d="M3 7H11" />
+            <path d="M3 11.5H11" />
+            <path d="M2.5 2.5V11.5" />
+          </svg>
+        </button>
+      )}
       <div className="flex min-w-0 flex-1 flex-col">
         <ChatHeader />
         <ErrorBoundary name="Route">
