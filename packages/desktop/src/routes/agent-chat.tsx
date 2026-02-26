@@ -2,7 +2,8 @@ import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { useNavigate, useMatches } from "@tanstack/react-router";
 import { invoke } from "@tauri-apps/api/core";
 import { useChat } from "../hooks/useChat";
-import { useIsStreaming } from "../stores/streaming";
+import { useIsStreaming, useStreamingParts } from "../stores/streaming";
+import { useAutoScroll } from "../hooks/useAutoScroll";
 import { useToolsStore } from "../stores/tools";
 import { useConversationsStore } from "../stores/conversations";
 import { useKeybindings } from "../hooks/useKeybindings";
@@ -75,7 +76,9 @@ export function AgentChatRoute() {
   const todosState = useTodoStore((s) => convId ? s.todos[convId] ?? EMPTY_TODOS : EMPTY_TODOS);
 
   const [showFeedbackInput, setShowFeedbackInput] = useState(false);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const { isAtBottom, scrollToBottom } = useAutoScroll(scrollContainerRef);
+  const streamingParts = useStreamingParts(conversation?.id);
 
   // Load conversation from route param
   const loadedIdRef = useRef<string | null>(null);
@@ -145,22 +148,30 @@ export function AgentChatRoute() {
     setAgentChatProjectDir(projectDir);
   }, [conversation?.title, projectDir]);
 
-  // Scroll to bottom on conversation load
+  // Scroll to bottom on conversation load (instant, no smooth animation)
   const scrolledForConvRef = useRef<string | null>(null);
   useEffect(() => {
     if (conversation?.id && conversation.id !== scrolledForConvRef.current && messages.length > 0) {
       scrolledForConvRef.current = conversation.id;
-      messagesEndRef.current?.scrollIntoView({ behavior: "instant" });
+      const el = scrollContainerRef.current;
+      if (el) el.scrollTo({ top: el.scrollHeight, behavior: "instant" as ScrollBehavior });
     }
   }, [conversation?.id, messages.length]);
 
-  // Scroll to bottom when user sends a message (shows their message + start of assistant response)
+  // Scroll to bottom when user sends a message
   useEffect(() => {
     const lastMsg = messages[messages.length - 1];
     if (lastMsg?.role === "user") {
-      messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+      scrollToBottom();
     }
-  }, [messages.length]);
+  }, [messages.length, scrollToBottom]);
+
+  // Auto-scroll during streaming when user is near the bottom
+  useEffect(() => {
+    if (isStreaming && isAtBottom) {
+      scrollToBottom();
+    }
+  }, [isStreaming, isAtBottom, streamingParts, scrollToBottom]);
 
   // Fetch conversations list when conversation changes
   useEffect(() => {
@@ -213,33 +224,43 @@ export function AgentChatRoute() {
     <>
       <TodoPanel todos={todosState} />
 
-      <div className="flex flex-1 flex-col overflow-y-auto">
-        {messages.length === 0 && !isStreaming && (
-          <div className="flex flex-1 flex-col items-center justify-center gap-3">
-            <ProjectPicker
-              projectDir={projectDir}
-              onSelect={setProjectDir}
-              readOnly={!!conversation?.project_dir}
-            />
-            <div className="text-[13px] text-text-placeholder">Send a message to start chatting</div>
-          </div>
+      <div className="relative flex flex-1 flex-col overflow-hidden">
+        <div ref={scrollContainerRef} className="flex flex-1 flex-col overflow-y-auto">
+          {messages.length === 0 && !isStreaming && (
+            <div className="flex flex-1 flex-col items-center justify-center gap-3">
+              <ProjectPicker
+                projectDir={projectDir}
+                onSelect={setProjectDir}
+                readOnly={!!conversation?.project_dir}
+              />
+              <div className="text-[13px] text-text-placeholder">Send a message to start chatting</div>
+            </div>
+          )}
+          {messages.map((msg) => (
+            <ChatMessage key={msg.id} message={msg} />
+          ))}
+          <StreamingMessage
+            convId={conversation?.id}
+            pendingPermission={pendingPermission}
+            onPermissionAllow={handlePermissionAllow}
+            onPermissionDeny={handlePermissionDeny}
+            onPermissionDenyWithFeedback={handlePermissionDenyWithFeedback}
+            showFeedbackInput={showFeedbackInput}
+            pendingQuestion={pendingQuestion}
+            onQuestionSubmit={handleQuestionSubmit}
+            onQuestionCancel={handleQuestionCancel}
+          />
+          {error && <div className="mx-5 rounded-lg border border-error-msg-border bg-error-msg-bg px-3.5 py-2.5 text-[12px] text-error-bright">{error}</div>}
+        </div>
+        {!isAtBottom && isStreaming && (
+          <button
+            type="button"
+            onClick={scrollToBottom}
+            className="absolute bottom-4 left-1/2 z-10 flex -translate-x-1/2 items-center gap-1.5 rounded-full bg-elevated/90 px-3 py-1.5 text-xs shadow-md"
+          >
+            ↓ Jump to bottom
+          </button>
         )}
-        {messages.map((msg) => (
-          <ChatMessage key={msg.id} message={msg} />
-        ))}
-        <StreamingMessage
-          convId={conversation?.id}
-          pendingPermission={pendingPermission}
-          onPermissionAllow={handlePermissionAllow}
-          onPermissionDeny={handlePermissionDeny}
-          onPermissionDenyWithFeedback={handlePermissionDenyWithFeedback}
-          showFeedbackInput={showFeedbackInput}
-          pendingQuestion={pendingQuestion}
-          onQuestionSubmit={handleQuestionSubmit}
-          onQuestionCancel={handleQuestionCancel}
-        />
-        {error && <div className="mx-5 rounded-lg border border-error-msg-border bg-error-msg-bg px-3.5 py-2.5 text-[12px] text-error-bright">{error}</div>}
-        <div ref={messagesEndRef} />
       </div>
 
       <InputBar
