@@ -59,7 +59,7 @@ export function ChatHeader() {
   const showWsStatus = !isAgentChat && connected;
 
   return (
-    <div className={`flex h-12 items-center gap-2 border-b border-border-subtle bg-surface px-3 ${sidebarOpen ? "" : "pl-12"}`}>
+    <div className={`flex h-12 items-center gap-2 border-b border-border-subtle bg-surface px-3 ${sidebarOpen ? "" : "pl-18"}`}>
       {showBackButton && (
         <button
           className="flex size-8 cursor-pointer items-center justify-center rounded-md border-none bg-none text-text-muted transition-colors duration-150 hover:bg-hover hover:text-text"
