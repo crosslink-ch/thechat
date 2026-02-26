@@ -214,17 +214,29 @@ describe("StreamingMessage", () => {
     expect(screen.getByText("Responding...")).toBeInTheDocument();
   });
 
-  it("shows reasoning when available (thinking section open by default)", () => {
+  it("shows 'Thinking...' indicator when reasoning is active", () => {
     setupStreaming([{ type: "reasoning", text: "Thinking hard..." }]);
     render(<StreamingMessage convId={CONV_ID} />);
-    expect(screen.getByText("Thinking hard...")).toBeInTheDocument();
+    expect(screen.getByText("Thinking...")).toBeInTheDocument();
+    // Reasoning text is collapsed by default
+    expect(screen.queryByText("Thinking hard...")).not.toBeInTheDocument();
   });
 
-  it("thinking section is open by default during streaming", () => {
+  it("clicking 'Thinking...' expands to show reasoning text", () => {
     setupStreaming([{ type: "reasoning", text: "Working on it..." }]);
     render(<StreamingMessage convId={CONV_ID} />);
+    fireEvent.click(screen.getByText("Thinking..."));
     expect(screen.getByText("Working on it...")).toBeInTheDocument();
-    expect(screen.getByText("Thought")).toBeInTheDocument();
+  });
+
+  it("shows 'Thought for a moment' when reasoning is followed by other parts", () => {
+    setupStreaming([
+      { type: "reasoning", text: "Let me think..." },
+      { type: "text", text: "Here is the answer." },
+    ]);
+    render(<StreamingMessage convId={CONV_ID} />);
+    expect(screen.getByText("Thought for a moment")).toBeInTheDocument();
+    expect(screen.getByText("Here is the answer.")).toBeInTheDocument();
   });
 
   it("hides typing indicator when reasoning is present", () => {
@@ -233,14 +245,13 @@ describe("StreamingMessage", () => {
     expect(screen.queryByTestId("typing-indicator")).toBeNull();
   });
 
-  it("renders tool-call during streaming in open thinking section", () => {
+  it("renders tool-call inline during streaming via ToolCallInline", () => {
     setupStreaming([
       { type: "tool-call", toolCallId: "tc1", toolName: "search", args: { q: "test" } },
     ]);
     render(<StreamingMessage convId={CONV_ID} />);
-    // Thinking section open by default during streaming, showing tool name
+    // ToolCallInline shows the tool name via formatToolSummary (unknown tool = raw name)
     expect(screen.getByText("search")).toBeInTheDocument();
-    expect(screen.getByText("Running...")).toBeInTheDocument();
   });
 
   it("renders permission prompt when pendingPermission is provided", () => {

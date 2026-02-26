@@ -3,6 +3,7 @@ import type { Message, MessagePart, QuestionRequest } from "./core/types";
 import type { PermissionRequest } from "./core/permission";
 import { useStreamingParts } from "./stores/streaming";
 import { TextWithUiBlocks } from "./components/TextWithUiBlocks";
+import { ToolCallInline } from "./components/ToolCallInline";
 import { DiffPreview } from "./components/DiffPreview";
 import { WritePreview } from "./components/WritePreview";
 import { basename } from "./lib/path";
@@ -186,6 +187,93 @@ function ThinkingSection({
             />
           ))}
         </div>
+      )}
+    </div>
+  );
+}
+
+// -- Streaming inline blocks --
+
+type StreamBlock =
+  | { type: "reasoning"; text: string; isActive: boolean; key: string }
+  | { type: "tool-call"; call: ToolCallPart; result?: ToolResultPart; key: string }
+  | { type: "text"; text: string; key: string };
+
+function buildStreamBlocks(parts: MessagePart[]): StreamBlock[] {
+  const resultMap = new Map<string, ToolResultPart>();
+  for (const p of parts) {
+    if (p.type === "tool-result") {
+      resultMap.set(p.toolCallId, p as ToolResultPart);
+    }
+  }
+
+  const blocks: StreamBlock[] = [];
+  let i = 0;
+
+  while (i < parts.length) {
+    const part = parts[i];
+
+    if (part.type === "reasoning") {
+      const startIdx = i;
+      let text = "";
+      while (i < parts.length && parts[i].type === "reasoning") {
+        text += (parts[i] as Extract<MessagePart, { type: "reasoning" }>).text;
+        i++;
+      }
+      // Reasoning is "active" if nothing follows it yet
+      const isActive = i >= parts.length;
+      blocks.push({ type: "reasoning", text, isActive, key: `r-${startIdx}` });
+    } else if (part.type === "tool-call") {
+      const call = part as ToolCallPart;
+      blocks.push({
+        type: "tool-call",
+        call,
+        result: resultMap.get(call.toolCallId),
+        key: `tc-${call.toolCallId}`,
+      });
+      i++;
+    } else if (part.type === "text") {
+      if (part.text !== "") {
+        blocks.push({ type: "text", text: part.text, key: `t-${i}` });
+      }
+      i++;
+    } else {
+      // Skip tool-result parts (rendered via ToolCallInline)
+      i++;
+    }
+  }
+
+  return blocks;
+}
+
+function StreamingReasoningBlock({ text, isActive }: { text: string; isActive: boolean }) {
+  const [expanded, setExpanded] = useState(false);
+  const wasActive = useRef(isActive);
+
+  useEffect(() => {
+    // Auto-collapse when reasoning finishes
+    if (wasActive.current && !isActive) {
+      setExpanded(false);
+    }
+    wasActive.current = isActive;
+  }, [isActive]);
+
+  const label = isActive ? "Thinking..." : "Thought for a moment";
+
+  return (
+    <div className="py-0.5">
+      <button
+        type="button"
+        className="flex cursor-pointer items-center gap-1.5 border-none bg-none p-0 py-1 text-[12px] text-text-dimmed shadow-none transition-colors duration-150 hover:text-text-muted"
+        onClick={() => setExpanded((v) => !v)}
+      >
+        <span className="w-3 text-[10px]">{expanded ? "\u25BE" : "\u25B8"}</span>
+        <span className={isActive ? "animate-pulse" : ""}>{label}</span>
+      </button>
+      {expanded && (
+        <pre className="mt-1 max-h-[400px] overflow-y-auto overflow-x-auto whitespace-pre-wrap rounded-lg border-l-2 border-border-accent bg-raised px-3 py-2.5 font-[inherit] text-[13px] leading-relaxed text-text-secondary">
+          {text}
+        </pre>
       )}
     </div>
   );
@@ -493,31 +581,40 @@ export function StreamingMessage({ convId, pendingPermission, onPermissionAllow,
 
   if (!parts) return null;
 
-  const reasoningParts = parts.filter((p) => p.type === "reasoning");
-  const reasoningText = reasoningParts.map((p) => p.text).join("");
+  const blocks = buildStreamBlocks(parts);
+  const hasContent = blocks.length > 0;
+
+  // Still need flat tool lists for permission prompt matching
   const toolCalls = parts.filter((p): p is ToolCallPart => p.type === "tool-call");
   const toolResults = parts.filter((p): p is ToolResultPart => p.type === "tool-result");
-  const textParts = parts.filter((p): p is Extract<MessagePart, { type: "text" }> => p.type === "text" && p.text !== "");
-  const hasThinking = reasoningText.length > 0 || toolCalls.length > 0;
-  const hasContent = textParts.length > 0;
 
   return (
     <>
       <div data-testid="chat-message-assistant" className="w-full px-5 py-4">
         <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-accent/80">Assistant</div>
         <div className="max-w-3xl">
-          {hasThinking && (
-            <ThinkingSection
-              reasoningText={reasoningText}
-              toolCalls={toolCalls}
-              toolResults={toolResults}
-              defaultOpen={true}
-              isStreaming={true}
-            />
-          )}
-          {textParts.map((part, i) => (
-            <TextWithUiBlocks key={i} text={part.text} />
-          ))}
+          {blocks.map((block) => {
+            switch (block.type) {
+              case "reasoning":
+                return (
+                  <StreamingReasoningBlock
+                    key={block.key}
+                    text={block.text}
+                    isActive={block.isActive}
+                  />
+                );
+              case "tool-call":
+                return (
+                  <ToolCallInline
+                    key={block.key}
+                    call={block.call}
+                    result={block.result}
+                  />
+                );
+              case "text":
+                return <TextWithUiBlocks key={block.key} text={block.text} />;
+            }
+          })}
           <div ref={promptRef}>
             {pendingPermission && onPermissionAllow && onPermissionDeny && (
               <PermissionPromptBlock
@@ -527,7 +624,6 @@ export function StreamingMessage({ convId, pendingPermission, onPermissionAllow,
                 onDenyWithFeedback={onPermissionDenyWithFeedback}
                 showFeedbackInput={showFeedbackInput}
                 toolArgs={(() => {
-                  // Match permission command prefix to the last unresolved tool call
                   const cmd = pendingPermission.command;
                   for (const name of PREVIEW_TOOLS) {
                     if (cmd.startsWith(name + " ")) {
@@ -549,7 +645,7 @@ export function StreamingMessage({ convId, pendingPermission, onPermissionAllow,
               />
             )}
           </div>
-          {!pendingPermission && !pendingQuestion && !hasContent && !hasThinking && (
+          {!pendingPermission && !pendingQuestion && !hasContent && (
             <div data-testid="typing-indicator" className="flex items-center gap-1 text-text-dimmed">
               <span className="inline-block size-1.5 animate-pulse rounded-full bg-text-dimmed" />
               <span className="inline-block size-1.5 animate-pulse rounded-full bg-text-dimmed" style={{ animationDelay: "0.2s" }} />
