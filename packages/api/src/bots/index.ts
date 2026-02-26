@@ -177,6 +177,7 @@ export const botRoutes = new Elysia({ prefix: "/bots" })
               name: botInfo.name,
               email: null,
               avatar: null,
+              type: "bot",
             },
           },
         };

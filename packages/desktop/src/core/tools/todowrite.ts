@@ -6,7 +6,8 @@ export const todoWriteTool = defineTool({
   name: "todowrite",
   description: `Update the todo list. Pass the complete list of todos — this replaces the current list.
 Each todo has an id, content, status (pending/in_progress/completed/cancelled), and optional priority.
-Use this to track multi-step tasks and show progress to the user.`,
+Use this to track multi-step tasks and show progress to the user.
+IMPORTANT: Always mark the final todo as completed before giving your response to the user. Never leave the last task as in_progress when you are done working.`,
   parameters: {
     type: "object",
     properties: {

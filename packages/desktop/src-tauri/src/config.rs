@@ -35,7 +35,7 @@ pub fn backend_url() -> String {
     std::env::var("THECHAT_BACKEND_URL").unwrap_or_else(|_| DEFAULT_BACKEND_URL.to_string())
 }
 
-fn config_dir_path() -> Option<PathBuf> {
+pub fn config_dir_path() -> Option<PathBuf> {
     dirs::config_dir().map(|p| p.join("thechat").join("config.json"))
 }
 

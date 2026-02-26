@@ -18,7 +18,7 @@
  *   # or:
  *   INTEGRATION=true pnpm test:desktop -- src/hooks/workspace-chat-flow.integration.test.tsx
  */
-import { describe, test, expect, afterAll, beforeAll } from "vitest";
+import { describe, test, expect, afterAll } from "vitest";
 import {
   render,
   within,
@@ -62,10 +62,11 @@ function uniqueEmail() {
  * Unwrap an Eden Treaty response, throwing on error.
  * Eliminates `(data as any)` casts throughout the test.
  */
-function unwrap<T>(result: { data: T; error: unknown }): NonNullable<T> {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function unwrap(result: { data: any; error: unknown }): any {
   if (result.error)
     throw new Error(`API error: ${JSON.stringify(result.error)}`);
-  return result.data as NonNullable<T>;
+  return result.data;
 }
 
 const createdEmails: string[] = [];
@@ -285,8 +286,8 @@ describe.skipIf(!INTEGRATION)(
       const refA = { current: null as TestChannelViewHandle | null };
       const refB = { current: null as TestChannelViewHandle | null };
 
-      const wsSendA = (convId: string, content: string) => {};
-      const wsSendB = (convId: string, content: string) => {};
+      const wsSendA = (_convId: string, _content: string) => {};
+      const wsSendB = (_convId: string, _content: string) => {};
 
       const viewA = render(
         <TestChannelView

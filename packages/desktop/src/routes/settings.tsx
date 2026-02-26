@@ -10,6 +10,7 @@ export function SettingsRoute() {
   const [showKey, setShowKey] = useState(false);
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState<"idle" | "saved" | "error">("idle");
+  const [configPath, setConfigPath] = useState<string | null>(null);
 
   useEffect(() => {
     invoke<AppConfig>("get_config").then((cfg) => {
@@ -18,6 +19,7 @@ export function SettingsRoute() {
       setProvider(cfg.provider ?? "openrouter");
       setModel(cfg.model);
     });
+    invoke<string | null>("get_config_path").then(setConfigPath);
   }, []);
 
   const handleSave = async () => {
@@ -129,9 +131,11 @@ export function SettingsRoute() {
         </div>
       </div>
 
-      <p className="mt-8 text-[11px] text-text-dimmed">
-        Settings are stored in ~/.config/thechat/config.json. You can also edit this file directly.
-      </p>
+      {configPath && (
+        <p className="mt-8 text-[11px] text-text-dimmed">
+          Settings are stored in <code className="rounded bg-raised px-1 py-0.5">{configPath}</code>. You can also edit this file directly.
+        </p>
+      )}
     </div>
   );
 }

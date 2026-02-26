@@ -41,6 +41,11 @@ fn get_config() -> Result<config::AppConfig, String> {
 }
 
 #[tauri::command]
+fn get_config_path() -> Option<String> {
+    config::config_dir_path().map(|p| p.to_string_lossy().into_owned())
+}
+
+#[tauri::command]
 fn save_config(config: config::AppConfig) -> Result<(), String> {
     config::save_config(&config)
 }
@@ -176,6 +181,7 @@ pub fn run() {
         .manage(InitialProjectDir(initial_project_dir))
         .invoke_handler(tauri::generate_handler![
             get_config,
+            get_config_path,
             save_config,
             get_initial_project_dir,
             create_conversation,
