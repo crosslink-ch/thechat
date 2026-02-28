@@ -11,8 +11,11 @@ const BOTTOM_THRESHOLD = 150;
 export function useAutoScroll(containerRef: RefObject<HTMLElement | null>) {
   const [isAtBottom, setIsAtBottom] = useState(true);
   // Tracks whether the user has intentionally scrolled away from the bottom.
-  // Set on wheel/touch-up events, cleared when user scrolls back to bottom.
+  // Set on wheel/touch events, cleared when user scrolls back to bottom.
   const userScrolledAwayRef = useRef(false);
+  // Timestamp of the last wheel-up event, used to debounce the scroll handler
+  // so it doesn't immediately re-enable auto-scroll after the user wheels up.
+  const lastWheelUpRef = useRef(0);
 
   useEffect(() => {
     const el = containerRef.current;
@@ -24,16 +27,20 @@ export function useAutoScroll(containerRef: RefObject<HTMLElement | null>) {
     const handleScroll = () => {
       const atBottom = checkAtBottom();
       setIsAtBottom(atBottom);
-      // User scrolled back to the bottom — re-enable auto-scroll
-      if (atBottom) {
+      // Re-enable auto-scroll when user reaches the bottom, but not
+      // immediately after a wheel-up event. Without this debounce the
+      // scroll event that fires right after wheel-up (while still within
+      // the threshold) would clear userScrolledAwayRef and snap back.
+      if (atBottom && Date.now() - lastWheelUpRef.current > 200) {
         userScrolledAwayRef.current = false;
       }
     };
 
     const handleWheel = (e: WheelEvent) => {
-      // User scrolling up → disable auto-scroll
       if (e.deltaY < 0) {
+        // User scrolling up → disable auto-scroll
         userScrolledAwayRef.current = true;
+        lastWheelUpRef.current = Date.now();
       }
     };
 
@@ -60,6 +67,9 @@ export function useAutoScroll(containerRef: RefObject<HTMLElement | null>) {
       if (!el) return;
       // Skip if user has scrolled away, unless forced
       if (userScrolledAwayRef.current && !opts?.force) return;
+      if (opts?.force) {
+        userScrolledAwayRef.current = false;
+      }
       el.scrollTo({ top: el.scrollHeight, behavior: "instant" });
     },
     [containerRef],
