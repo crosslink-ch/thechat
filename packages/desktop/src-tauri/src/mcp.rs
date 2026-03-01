@@ -126,6 +126,7 @@ impl McpClient {
     }
 
     fn spawn(
+        server_name: &str,
         command: &str,
         args: &[String],
         env: &HashMap<String, String>,
@@ -167,6 +168,24 @@ impl McpClient {
             .stdout
             .take()
             .ok_or_else(|| "Failed to open stdout for MCP server".to_string())?;
+
+        // Drain stderr in a background thread to prevent pipe buffer deadlock
+        // and log server errors for debugging.
+        if let Some(stderr) = child.stderr.take() {
+            let name = server_name.to_string();
+            std::thread::spawn(move || {
+                let reader = BufReader::new(stderr);
+                for line in reader.lines() {
+                    match line {
+                        Ok(line) if !line.is_empty() => {
+                            log::warn!("MCP server '{}' stderr: {}", name, line);
+                        }
+                        Err(_) => break,
+                        _ => {}
+                    }
+                }
+            });
+        }
 
         Ok(McpClient {
             transport: Transport::Stdio {
@@ -510,10 +529,40 @@ impl McpManager {
 
 // -- Tauri commands --
 
+const MCP_INIT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
+
 /// Initialize a single MCP server: connect (stdio or HTTP), handshake, list tools.
 /// Returns the client and discovered tools, or an error.
 /// If `auth_token` is provided, it will be set on HTTP transports for authentication.
+/// The work runs in a background thread with a 20s timeout to prevent hangs from
+/// slow or unresponsive servers.
 fn init_server(
+    server_name: &str,
+    config: &McpServerConfig,
+    auth_token: Option<&str>,
+) -> Result<(McpClient, Vec<McpToolInfo>), String> {
+    let (tx, rx) = std::sync::mpsc::channel();
+
+    let name = server_name.to_string();
+    let cfg = config.clone();
+    let token = auth_token.map(|s| s.to_string());
+
+    std::thread::spawn(move || {
+        let result = init_server_inner(&name, &cfg, token.as_deref());
+        // If the receiver timed out and dropped, send will fail — that's fine.
+        let _ = tx.send(result);
+    });
+
+    rx.recv_timeout(MCP_INIT_TIMEOUT).map_err(|_| {
+        format!(
+            "MCP server '{}' initialization timed out after {}s",
+            server_name,
+            MCP_INIT_TIMEOUT.as_secs()
+        )
+    })?
+}
+
+fn init_server_inner(
     server_name: &str,
     config: &McpServerConfig,
     auth_token: Option<&str>,
@@ -525,7 +574,7 @@ fn init_server(
         }
         c
     } else if let Some(command) = &config.command {
-        McpClient::spawn(command, &config.args, &config.env)?
+        McpClient::spawn(server_name, command, &config.args, &config.env)?
     } else {
         return Err("MCP server must have either 'command' (stdio) or 'url' (HTTP)".into());
     };
@@ -1106,6 +1155,7 @@ mod tests {
     fn spawn_stdio_test_server() -> (McpClient, TempDir) {
         let tmp = TempDir::new().expect("create temp dir");
         let mut client = McpClient::spawn(
+            "test-fs-server",
             "npx",
             &[
                 "-y".into(),
