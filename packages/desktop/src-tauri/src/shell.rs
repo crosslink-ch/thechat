@@ -40,6 +40,7 @@ pub async fn execute_shell_command<R: tauri::Runtime>(
     process_id: Option<String>,
     app: tauri::AppHandle<R>,
     processes: tauri::State<'_, Arc<ShellProcesses>>,
+    shell_env: tauri::State<'_, Arc<crate::env::ShellEnv>>,
 ) -> Result<ShellResult, String> {
     let timeout_secs = timeout.unwrap_or(120);
     let process_id = process_id.unwrap_or_default();
@@ -47,9 +48,13 @@ pub async fn execute_shell_command<R: tauri::Runtime>(
 
     #[cfg(not(windows))]
     {
-        let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into());
+        let shell = shell_env
+            .vars
+            .get("SHELL")
+            .cloned()
+            .unwrap_or_else(|| "/bin/bash".into());
         cmd = tokio::process::Command::new(&shell);
-        cmd.args(["-l", "-c", &command]);
+        cmd.args(["-c", &command]);
     }
 
     #[cfg(windows)]
@@ -62,6 +67,12 @@ pub async fn execute_shell_command<R: tauri::Runtime>(
     cmd.stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .kill_on_drop(true);
+
+    // Apply the resolved shell environment
+    #[cfg(not(windows))]
+    for (k, v) in &shell_env.vars {
+        cmd.env(k, v);
+    }
 
     // Create a new process group so we can kill the entire tree
     #[cfg(unix)]

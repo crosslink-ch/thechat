@@ -129,18 +129,23 @@ impl McpClient {
         server_name: &str,
         command: &str,
         args: &[String],
-        env: &HashMap<String, String>,
+        shell_env: &HashMap<String, String>,
+        config_env: &HashMap<String, String>,
     ) -> Result<Self, String> {
         let mut cmd;
 
-        // On Unix, spawn through the user's login shell so that profile scripts
-        // (nvm, fnm, volta, rbenv, pyenv, etc.) get sourced and PATH is set up.
+        // On Unix, spawn through a shell so it uses the resolved PATH for
+        // command lookup. The resolved env (captured at startup from a login
+        // shell) is applied via cmd.env(), so we don't need `-l` here.
         #[cfg(not(windows))]
         {
-            let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into());
+            let shell = shell_env
+                .get("SHELL")
+                .cloned()
+                .unwrap_or_else(|| "/bin/bash".into());
             let shell_cmd = Self::shell_quoted(command, args);
             cmd = Command::new(&shell);
-            cmd.args(["-l", "-c", &shell_cmd]);
+            cmd.args(["-c", &shell_cmd]);
         }
 
         // On Windows, PATH is globally configured so we spawn the command directly.
@@ -153,7 +158,11 @@ impl McpClient {
         cmd.stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        for (k, v) in env {
+        // Apply resolved shell environment first, then config overrides
+        for (k, v) in shell_env {
+            cmd.env(k, v);
+        }
+        for (k, v) in config_env {
             cmd.env(k, v);
         }
         let mut child = cmd.spawn().map_err(|e| {
@@ -540,15 +549,17 @@ fn init_server(
     server_name: &str,
     config: &McpServerConfig,
     auth_token: Option<&str>,
+    shell_env: &HashMap<String, String>,
 ) -> Result<(McpClient, Vec<McpToolInfo>), String> {
     let (tx, rx) = std::sync::mpsc::channel();
 
     let name = server_name.to_string();
     let cfg = config.clone();
     let token = auth_token.map(|s| s.to_string());
+    let env = shell_env.clone();
 
     std::thread::spawn(move || {
-        let result = init_server_inner(&name, &cfg, token.as_deref());
+        let result = init_server_inner(&name, &cfg, token.as_deref(), &env);
         // If the receiver timed out and dropped, send will fail — that's fine.
         let _ = tx.send(result);
     });
@@ -566,6 +577,7 @@ fn init_server_inner(
     server_name: &str,
     config: &McpServerConfig,
     auth_token: Option<&str>,
+    shell_env: &HashMap<String, String>,
 ) -> Result<(McpClient, Vec<McpToolInfo>), String> {
     let mut client = if let Some(url) = &config.url {
         let mut c = McpClient::connect_http(url, &config.headers)?;
@@ -574,7 +586,7 @@ fn init_server_inner(
         }
         c
     } else if let Some(command) = &config.command {
-        McpClient::spawn(server_name, command, &config.args, &config.env)?
+        McpClient::spawn(server_name, command, &config.args, shell_env, &config.env)?
     } else {
         return Err("MCP server must have either 'command' (stdio) or 'url' (HTTP)".into());
     };
@@ -626,6 +638,7 @@ fn init_server_inner(
 pub fn mcp_initialize<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     manager: tauri::State<'_, Arc<McpManager>>,
+    shell_env: tauri::State<'_, Arc<crate::env::ShellEnv>>,
 ) -> Result<(), String> {
     use tauri::Emitter;
 
@@ -641,6 +654,7 @@ pub fn mcp_initialize<R: tauri::Runtime>(
     }
 
     let manager = Arc::clone(&manager);
+    let env_vars = shell_env.vars.clone();
 
     for (server_name, server_config) in config.mcp_servers {
         if server_config.requires_auth {
@@ -654,11 +668,12 @@ pub fn mcp_initialize<R: tauri::Runtime>(
 
         let manager = Arc::clone(&manager);
         let app = app.clone();
+        let env = env_vars.clone();
 
         std::thread::spawn(move || {
             log::info!("Initializing MCP server: {}", server_name);
 
-            match init_server(&server_name, &server_config, None) {
+            match init_server(&server_name, &server_config, None, &env) {
                 Ok((client, tools)) => {
                     log::info!(
                         "MCP server '{}' ready with {} tools",
@@ -694,10 +709,12 @@ pub fn mcp_initialize_authed<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     token: String,
     manager: tauri::State<'_, Arc<McpManager>>,
+    shell_env: tauri::State<'_, Arc<crate::env::ShellEnv>>,
 ) -> Result<(), String> {
     use tauri::Emitter;
 
     let config = load_config()?;
+    let env_vars = shell_env.vars.clone();
 
     for (server_name, server_config) in config.mcp_servers {
         if !server_config.requires_auth {
@@ -730,11 +747,12 @@ pub fn mcp_initialize_authed<R: tauri::Runtime>(
         let token = token.clone();
         let manager = Arc::clone(&manager);
         let app = app.clone();
+        let env = env_vars.clone();
 
         std::thread::spawn(move || {
             log::info!("Initializing auth MCP server: {}", server_name);
 
-            match init_server(&server_name, &server_config, Some(&token)) {
+            match init_server(&server_name, &server_config, Some(&token), &env) {
                 Ok((client, tools)) => {
                     log::info!(
                         "Auth MCP server '{}' ready with {} tools",
@@ -775,9 +793,11 @@ pub async fn mcp_initialize_servers(
     names: Vec<String>,
     token: Option<String>,
     manager: tauri::State<'_, Arc<McpManager>>,
+    shell_env: tauri::State<'_, Arc<crate::env::ShellEnv>>,
 ) -> Result<Vec<McpToolInfo>, String> {
     let config = load_config()?;
     let manager = Arc::clone(&manager);
+    let env_vars = shell_env.vars.clone();
 
     // Run blocking I/O (process spawn, handshake, list_tools) off the main thread.
     tokio::task::spawn_blocking(move || {
@@ -883,7 +903,7 @@ pub async fn mcp_initialize_servers(
 
             log::info!("Lazily initializing MCP server: {}", name);
 
-            let init_result = init_server(name, server_config, auth_token);
+            let init_result = init_server(name, server_config, auth_token, &env_vars);
 
             // Notify waiters regardless of success/failure, then clean up
             {
@@ -1154,6 +1174,7 @@ mod tests {
     /// Returns the connected+initialized client and a TempDir it's scoped to.
     fn spawn_stdio_test_server() -> (McpClient, TempDir) {
         let tmp = TempDir::new().expect("create temp dir");
+        let process_env: HashMap<String, String> = std::env::vars().collect();
         let mut client = McpClient::spawn(
             "test-fs-server",
             "npx",
@@ -1162,6 +1183,7 @@ mod tests {
                 "@modelcontextprotocol/server-filesystem".into(),
                 tmp.path().to_str().unwrap().into(),
             ],
+            &process_env,
             &HashMap::new(),
         )
         .expect("spawn stdio MCP server");
@@ -1337,7 +1359,8 @@ mod tests {
             lazy: false,
         };
 
-        let (mut client, tools) = init_server("test-stdio", &config, None).expect("init_server");
+        let process_env: HashMap<String, String> = std::env::vars().collect();
+        let (mut client, tools) = init_server("test-stdio", &config, None, &process_env).expect("init_server");
         assert!(!tools.is_empty(), "should discover at least one tool");
         assert!(
             tools.iter().all(|t| t.server == "test-stdio"),
@@ -1423,7 +1446,8 @@ mod tests {
             lazy: false,
         };
 
-        let (mut client, tools) = init_server("test-http", &config, None).expect("init_server");
+        let process_env: HashMap<String, String> = std::env::vars().collect();
+        let (mut client, tools) = init_server("test-http", &config, None, &process_env).expect("init_server");
         assert!(!tools.is_empty(), "should discover at least one tool");
         assert!(
             tools.iter().all(|t| t.server == "test-http"),
@@ -1454,7 +1478,8 @@ mod tests {
             requires_auth: false,
             lazy: false,
         };
-        let result = init_server("no-transport", &config, None);
+        let process_env: HashMap<String, String> = std::env::vars().collect();
+        let result = init_server("no-transport", &config, None, &process_env);
         match result {
             Ok(_) => panic!("expected error for config with no transport"),
             Err(e) => assert!(

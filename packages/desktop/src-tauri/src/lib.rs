@@ -1,5 +1,6 @@
 mod config;
 mod db;
+mod env;
 mod fs;
 mod mcp;
 mod shell;
@@ -155,6 +156,7 @@ pub fn run() {
     let database =
         Database::new(db_path.to_str().unwrap()).expect("Failed to initialize database");
     let db_state: DbState = Arc::new(database);
+    let shell_env: Arc<env::ShellEnv> = Arc::new(env::ShellEnv::resolve());
     let mcp_state: Arc<McpManager> = Arc::new(McpManager::new());
     let shell_state: Arc<ShellProcesses> = Arc::new(ShellProcesses::new());
     let stream_state: Arc<StreamCancellers> = Arc::new(StreamCancellers::new());
@@ -175,6 +177,7 @@ pub fn run() {
             Ok(())
         })
         .manage(db_state)
+        .manage(shell_env)
         .manage(mcp_state)
         .manage(shell_state)
         .manage(stream_state)
@@ -223,6 +226,9 @@ mod tests {
     fn app_builds_with_mock_runtime() {
         let database = Database::new(":memory:").unwrap();
         let db_state: DbState = Arc::new(database);
+        let shell_env: Arc<env::ShellEnv> = Arc::new(env::ShellEnv {
+            vars: std::env::vars().collect(),
+        });
         let mcp_state: Arc<McpManager> = Arc::new(McpManager::new());
         let shell_state: Arc<ShellProcesses> = Arc::new(ShellProcesses::new());
         let stream_state: Arc<StreamCancellers> = Arc::new(StreamCancellers::new());
@@ -232,6 +238,7 @@ mod tests {
             .plugin(tauri_plugin_notification::init())
             .plugin(tauri_plugin_process::init())
             .manage(db_state)
+            .manage(shell_env)
             .manage(mcp_state)
             .manage(shell_state)
             .manage(stream_state)
