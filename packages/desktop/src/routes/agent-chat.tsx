@@ -86,8 +86,7 @@ export function AgentChatRoute() {
   useEffect(() => {
     if (routeId && routeId !== loadedIdRef.current) {
       loadedIdRef.current = routeId;
-      invoke<Conversation[]>("list_conversations").then((convs) => {
-        const conv = convs.find((c) => c.id === routeId);
+      invoke<Conversation | null>("get_conversation", { id: routeId }).then((conv) => {
         if (conv) {
           loadConversation(conv);
           setProjectDir(conv.project_dir ?? null);

@@ -88,6 +88,25 @@ impl Database {
         })
     }
 
+    pub fn get_conversation(&self, id: &str) -> Result<Option<Conversation>, String> {
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        let mut stmt = conn
+            .prepare("SELECT id, title, project_dir, created_at, updated_at FROM conversations WHERE id = ?1")
+            .map_err(|e| e.to_string())?;
+
+        stmt.query_row(params![id], |row| {
+            Ok(Conversation {
+                id: row.get(0)?,
+                title: row.get(1)?,
+                project_dir: row.get(2)?,
+                created_at: row.get(3)?,
+                updated_at: row.get(4)?,
+            })
+        })
+        .optional()
+        .map_err(|e| e.to_string())
+    }
+
     pub fn list_conversations(&self) -> Result<Vec<Conversation>, String> {
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
         let mut stmt = conn

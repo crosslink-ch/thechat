@@ -61,6 +61,11 @@ fn create_conversation(
 }
 
 #[tauri::command]
+fn get_conversation(id: String, db: State<DbState>) -> Result<Option<Conversation>, String> {
+    db.get_conversation(&id)
+}
+
+#[tauri::command]
 fn list_conversations(db: State<DbState>) -> Result<Vec<Conversation>, String> {
     db.list_conversations()
 }
@@ -188,6 +193,7 @@ pub fn run() {
             save_config,
             get_initial_project_dir,
             create_conversation,
+            get_conversation,
             list_conversations,
             update_conversation_title,
             save_message,
@@ -248,6 +254,7 @@ mod tests {
                 save_config,
                 get_initial_project_dir,
                 create_conversation,
+                get_conversation,
                 list_conversations,
                 update_conversation_title,
                 save_message,
