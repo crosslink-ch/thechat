@@ -5,6 +5,8 @@ import { openAuthModal } from "./components/AuthModal";
 import { openWorkspaceModal } from "./components/WorkspaceModal";
 import { getAgentChatProjectDir } from "./components/ChatHeader";
 import { openPermissionModePicker } from "./PermissionModePicker";
+import { openSelectProjectPicker } from "./SelectProjectPicker";
+import { useConversationsStore } from "./stores/conversations";
 
 let _pendingProjectDir: string | null = null;
 export function consumePendingProjectDir(): string | null {
@@ -40,6 +42,25 @@ export const useCommandsStore = create<CommandsStore>()((set) => ({
   setCommands: (commands) => set({ commands }),
 }));
 
+function getRecentProjects(): string[] {
+  const conversations = useConversationsStore.getState().conversations;
+  const seen = new Set<string>();
+  const projects: string[] = [];
+
+  for (const conv of conversations) {
+    if (!conv.project_dir || seen.has(conv.project_dir)) continue;
+    seen.add(conv.project_dir);
+    projects.push(conv.project_dir);
+  }
+
+  const currentProject = getAgentChatProjectDir();
+  if (currentProject && !seen.has(currentProject)) {
+    projects.unshift(currentProject);
+  }
+
+  return projects;
+}
+
 export function createCommands(
   navigate: (opts: { to: string; params?: Record<string, string> }) => void,
 ): Command[] {
@@ -63,6 +84,19 @@ export function createCommands(
         _pendingProjectDir = getAgentChatProjectDir();
         navigate({ to: "/chat" });
         closePalette();
+      },
+    },
+    {
+      id: "select-project",
+      label: "Select Project",
+      shortcut: "C-x c s",
+      keybinding: { prefix: "C-x c", key: "s" },
+      execute: () => {
+        closePalette();
+        openSelectProjectPicker(getRecentProjects(), (projectDir) => {
+          _pendingProjectDir = projectDir;
+          navigate({ to: "/chat" });
+        });
       },
     },
     {

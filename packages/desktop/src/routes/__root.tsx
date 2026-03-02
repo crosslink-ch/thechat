@@ -11,6 +11,7 @@ import { Sidebar, toggleSidebar, useSidebarState } from "../components/Sidebar";
 import { ChatHeader } from "../components/ChatHeader";
 import { CommandPalette } from "../CommandPalette";
 import { PermissionModePicker } from "../PermissionModePicker";
+import { SelectProjectPicker } from "../SelectProjectPicker";
 import { AuthModal } from "../components/AuthModal";
 import { CodexAuthModal } from "../components/CodexAuthModal";
 import { WorkspaceModal } from "../components/WorkspaceModal";
@@ -103,6 +104,7 @@ export function RootLayout() {
       </div>
       <CommandPalette />
       <PermissionModePicker />
+      <SelectProjectPicker />
       <AuthModal />
       <CodexAuthModal />
       <WorkspaceModal />
