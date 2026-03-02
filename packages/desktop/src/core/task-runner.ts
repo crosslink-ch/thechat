@@ -29,7 +29,7 @@ export function setTaskRunnerConfig(cfg: TaskRunnerConfig): void {
   config = cfg;
 }
 
-export async function runTask(prompt: string, signal?: AbortSignal, convId?: string): Promise<string> {
+export async function runTask(prompt: string, signal?: AbortSignal, convId?: string, cwd?: string): Promise<string> {
   if (!config) {
     throw new Error("Task runner not configured. Call setTaskRunnerConfig first.");
   }
@@ -46,12 +46,14 @@ export async function runTask(prompt: string, signal?: AbortSignal, convId?: str
     }
   };
 
+  const resolvedCwd = cwd ?? config.cwd;
+
   const systemPromptParts = [
     "You are a helpful sub-agent completing a specific task. Be concise and focused. " +
       "Complete the task and report results clearly.",
   ];
-  if (config.cwd) {
-    systemPromptParts.push(`Working directory: ${config.cwd}`);
+  if (resolvedCwd) {
+    systemPromptParts.push(`Working directory: ${resolvedCwd}`);
   }
 
   await runChatLoop({
@@ -62,7 +64,7 @@ export async function runTask(prompt: string, signal?: AbortSignal, convId?: str
     tools,
     maxToolRoundtrips: Infinity,
     signal,
-    cwd: config.cwd,
+    cwd: resolvedCwd,
     convId,
     provider: config.provider,
     codexAuth: config.codexAuth,
