@@ -22,7 +22,7 @@ The sub-agent runs a full chat loop and returns its text output.`,
     const { prompt } = args as { prompt: string };
 
     try {
-      const result = await runTask(prompt, context?.signal, context?.convId, context?.cwd);
+      const result = await runTask(prompt, context?.signal, context?.convId);
       return { success: true, output: result };
     } catch (e) {
       return { success: false, error: String(e) };
