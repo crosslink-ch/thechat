@@ -29,7 +29,9 @@ export function AgentChatRoute() {
   const getTools = useCallback(() => useToolsStore.getState().tools, []);
 
   // Project mode state (for new chats before conversation is created)
-  const [projectDir, setProjectDir] = useState<string | null>(null);
+  // undefined = not resolved yet (startup project still loading)
+  // null = explicitly no project
+  const [projectDir, setProjectDir] = useState<string | null | undefined>(undefined);
   const [projectInfo, setProjectInfo] = useState<ProjectInfo | null>(null);
 
   const activeAgentConvIdRef = useRef<string | null>(null);
@@ -99,7 +101,11 @@ export function AgentChatRoute() {
       loadedIdRef.current = null;
       startNewConversation();
       const inherited = consumePendingProjectDir();
-      setProjectDir(inherited);
+      if (inherited !== null) {
+        setProjectDir(inherited);
+      } else {
+        setProjectDir(undefined);
+      }
       setProjectInfo(null);
       useToolsStore.getState().setActiveConversation(null);
     }
@@ -146,7 +152,7 @@ export function AgentChatRoute() {
   // Sync title and project dir to ChatHeader
   useEffect(() => {
     setAgentChatTitle(conversation?.title || "New Chat");
-    setAgentChatProjectDir(projectDir);
+    setAgentChatProjectDir(projectDir ?? null);
   }, [conversation?.title, projectDir]);
 
   // Scroll to bottom on conversation load (instant, no smooth animation)
@@ -238,7 +244,7 @@ export function AgentChatRoute() {
           {messages.length === 0 && !isStreaming && (
             <div className="flex flex-1 flex-col items-center justify-center gap-3">
               <ProjectPicker
-                projectDir={projectDir}
+                projectDir={projectDir ?? null}
                 onSelect={setProjectDir}
                 readOnly={!!conversation?.project_dir}
               />

@@ -67,7 +67,7 @@ interface UseChatOptions {
   getTools?: () => ToolDefinition[];
   params?: ChatParams;
   systemPrompt?: string;
-  projectDir?: string | null;
+  projectDir?: string | null | undefined;
   onStreamComplete?: (convId: string, convTitle: string) => void;
 }
 
@@ -84,8 +84,9 @@ export function useChat(options?: UseChatOptions) {
   onStreamCompleteRef.current = options?.onStreamComplete;
   const systemPromptRef = useRef(options?.systemPrompt);
   systemPromptRef.current = options?.systemPrompt;
-  const projectDirRef = useRef(options?.projectDir);
+  const projectDirRef = useRef<string | null | undefined>(options?.projectDir);
   projectDirRef.current = options?.projectDir;
+  const initialProjectDirRef = useRef<string | null | undefined>(undefined);
   const messagesRef = useRef(messages);
   messagesRef.current = messages;
 
@@ -136,10 +137,22 @@ export function useChat(options?: UseChatOptions) {
         if (!conv) {
           const title =
             userContent.length > 50 ? userContent.substring(0, 50) + "..." : userContent;
-          const pDir = projectDirRef.current ?? undefined;
+          let pDir = projectDirRef.current;
+          // If projectDir is not resolved yet (undefined), lazily pull startup dir from backend.
+          // Preserve explicit null (user chose no project).
+          if (pDir === undefined) {
+            if (initialProjectDirRef.current === undefined) {
+              try {
+                initialProjectDirRef.current = await invoke<string | null>("get_initial_project_dir");
+              } catch {
+                initialProjectDirRef.current = null;
+              }
+            }
+            pDir = initialProjectDirRef.current;
+          }
           conv = await invoke<Conversation>("create_conversation", {
             title,
-            projectDir: pDir || null,
+            projectDir: pDir ?? null,
           });
           setConversation(conv);
           activeConvIdRef.current = conv.id;
