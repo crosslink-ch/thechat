@@ -35,7 +35,7 @@ Use this tool instead of shell commands like echo, cat with redirects, or tee.`,
       content: string;
     };
 
-    const resolvedPath = resolvePath(file_path, context?.cwd);
+    const resolvedPath = await resolvePath(file_path, context?.cwd);
 
     await requestPermission({
       command: `write ${resolvedPath}`,

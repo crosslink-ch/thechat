@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { ToolExecutionContext } from "../types";
+import { resolvePath } from "./resolve-path";
 import { defineTool } from "./define";
 
 interface GrepMatch {
@@ -47,7 +48,7 @@ Use this tool instead of grep or rg shell commands.`,
 
     const result = await invoke<GrepResult>("fs_grep", {
       pattern,
-      path: path ?? context?.cwd ?? undefined,
+      path: path ? await resolvePath(path, context?.cwd) : context?.cwd ?? undefined,
       include: include ?? undefined,
     });
 

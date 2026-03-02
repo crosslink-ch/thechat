@@ -47,7 +47,7 @@ Use this tool instead of sed or awk.`,
       replace_all?: boolean;
     };
 
-    const resolvedPath = resolvePath(file_path, context?.cwd);
+    const resolvedPath = await resolvePath(file_path, context?.cwd);
 
     await requestPermission({
       command: `edit ${resolvedPath}`,

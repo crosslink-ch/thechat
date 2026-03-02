@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { ToolExecutionContext } from "../types";
+import { resolvePath } from "./resolve-path";
 import { defineTool } from "./define";
 
 interface ListDirResult {
@@ -36,7 +37,7 @@ Use this tool instead of ls or tree shell commands.`,
     };
 
     const result = await invoke<ListDirResult>("fs_list_dir", {
-      path: path ?? context?.cwd ?? undefined,
+      path: path ? await resolvePath(path, context?.cwd) : context?.cwd ?? undefined,
       ignore: ignore ?? undefined,
     });
 

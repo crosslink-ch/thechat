@@ -50,7 +50,7 @@ Use this when you need to make several changes to the same file.`,
       edits: EditOperation[];
     };
 
-    const resolvedPath = resolvePath(file_path, context?.cwd);
+    const resolvedPath = await resolvePath(file_path, context?.cwd);
 
     await requestPermission({
       command: `multiedit ${resolvedPath}`,

@@ -41,7 +41,7 @@ Use this tool instead of shell commands like cat, head, or tail.`,
       limit?: number;
     };
 
-    const resolvedPath = resolvePath(file_path, context?.cwd);
+    const resolvedPath = await resolvePath(file_path, context?.cwd);
 
     const result = await invoke<ReadFileResult>("fs_read_file", {
       filePath: resolvedPath,

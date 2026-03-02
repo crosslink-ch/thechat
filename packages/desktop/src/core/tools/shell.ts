@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { requestPermission } from "../permission";
 import type { ToolExecutionContext } from "../types";
+import { resolvePath } from "./resolve-path";
 import { defineTool } from "./define";
 
 interface ShellResult {
@@ -69,7 +70,7 @@ The command has a default timeout of 120 seconds.`,
     context?.signal?.addEventListener("abort", abortHandler, { once: true });
 
     try {
-      const resolvedWorkdir = workdir ?? context?.cwd ?? undefined;
+      const resolvedWorkdir = workdir ? await resolvePath(workdir, context?.cwd) : context?.cwd ?? undefined;
       const result = await invoke<ShellResult>("execute_shell_command", {
         command,
         timeout: timeout ?? undefined,

@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { ToolExecutionContext } from "../types";
+import { resolvePath } from "./resolve-path";
 import { defineTool } from "./define";
 
 interface GlobResult {
@@ -36,7 +37,7 @@ Use this tool instead of find or ls for locating files.`,
 
     const result = await invoke<GlobResult>("fs_glob", {
       pattern,
-      path: path ?? context?.cwd ?? undefined,
+      path: path ? await resolvePath(path, context?.cwd) : context?.cwd ?? undefined,
     });
 
     return result;
