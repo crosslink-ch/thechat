@@ -12,6 +12,7 @@ impl ShellEnv {
     /// Resolve the full interactive login shell environment.
     /// On Unix: runs `$SHELL -lic 'env -0'` with a 5s timeout and parses output.
     /// On Windows / on failure: falls back to the current process env.
+    #[tracing::instrument]
     pub fn resolve() -> Self {
         #[cfg(unix)]
         {
@@ -25,28 +26,28 @@ impl ShellEnv {
 
             match rx.recv_timeout(Duration::from_secs(5)) {
                 Ok(Ok(vars)) => {
-                    log::info!(
-                        "Resolved shell environment ({} vars) from login shell",
-                        vars.len()
+                    tracing::info!(
+                        var_count = vars.len(),
+                        "resolved shell environment from login shell"
                     );
                     return ShellEnv { vars };
                 }
                 Ok(Err(e)) => {
-                    log::warn!(
-                        "Failed to resolve shell environment, using process env: {}",
-                        e
+                    tracing::warn!(
+                        error = %e,
+                        "failed to resolve shell environment, using process env"
                     );
                 }
                 Err(_) => {
-                    log::warn!(
-                        "Shell environment resolution timed out after 5s, using process env"
+                    tracing::warn!(
+                        "shell environment resolution timed out after 5s, using process env"
                     );
                 }
             }
         }
 
         let vars: HashMap<String, String> = std::env::vars().collect();
-        log::info!("Using process environment ({} vars)", vars.len());
+        tracing::info!(var_count = vars.len(), "using process environment");
         ShellEnv { vars }
     }
 }

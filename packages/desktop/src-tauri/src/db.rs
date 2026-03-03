@@ -2,6 +2,7 @@ use chrono::{DateTime, Utc};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
+use tracing::instrument;
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -28,6 +29,7 @@ pub struct Database {
 }
 
 impl Database {
+    #[instrument]
     pub fn new(db_path: &str) -> Result<Self, String> {
         let conn = Connection::open(db_path).map_err(|e| format!("Failed to open DB: {}", e))?;
 
@@ -63,6 +65,7 @@ impl Database {
         })
     }
 
+    #[instrument(skip(self))]
     pub fn create_conversation(
         &self,
         title: &str,
@@ -88,6 +91,7 @@ impl Database {
         })
     }
 
+    #[instrument(skip(self))]
     pub fn get_conversation(&self, id: &str) -> Result<Option<Conversation>, String> {
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
         let mut stmt = conn
@@ -107,6 +111,7 @@ impl Database {
         .map_err(|e| e.to_string())
     }
 
+    #[instrument(skip(self))]
     pub fn list_conversations(&self) -> Result<Vec<Conversation>, String> {
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
         let mut stmt = conn
@@ -132,6 +137,7 @@ impl Database {
         Ok(conversations)
     }
 
+    #[instrument(skip(self))]
     pub fn update_conversation_title(&self, id: &str, title: &str) -> Result<(), String> {
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
         let now: DateTime<Utc> = Utc::now();
@@ -143,6 +149,7 @@ impl Database {
         Ok(())
     }
 
+    #[instrument(skip(self, content, reasoning_content))]
     pub fn save_message(
         &self,
         conversation_id: &str,
@@ -178,6 +185,7 @@ impl Database {
         })
     }
 
+    #[instrument(skip(self))]
     pub fn kv_get(&self, key: &str) -> Result<Option<String>, String> {
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
         let mut stmt = conn
@@ -190,6 +198,7 @@ impl Database {
         Ok(result)
     }
 
+    #[instrument(skip(self, value))]
     pub fn kv_set(&self, key: &str, value: &str) -> Result<(), String> {
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
         conn.execute(
@@ -200,6 +209,7 @@ impl Database {
         Ok(())
     }
 
+    #[instrument(skip(self))]
     pub fn kv_delete(&self, key: &str) -> Result<(), String> {
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
         conn.execute("DELETE FROM kv_store WHERE key = ?1", params![key])
@@ -207,6 +217,7 @@ impl Database {
         Ok(())
     }
 
+    #[instrument(skip(self))]
     pub fn get_messages(&self, conversation_id: &str) -> Result<Vec<Message>, String> {
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
         let mut stmt = conn

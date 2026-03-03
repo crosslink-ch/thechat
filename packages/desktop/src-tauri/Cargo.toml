@@ -14,6 +14,12 @@ edition = "2021"
 name = "thechat_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+[features]
+default = []
+tracy = ["dep:tracing-tracy"]
+tokio-console = ["dep:console-subscriber", "tokio/tracing"]
+profile-all = ["tracy", "tokio-console"]
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
@@ -36,6 +42,10 @@ walkdir = "2"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls", "stream"] }
 tokio = { version = "1", features = ["process", "time", "rt", "macros"] }
 libc = "0.2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "registry"] }
+tracing-tracy = { version = "0.11", optional = true, default-features = false, features = ["enable", "ondemand"] }
+console-subscriber = { version = "0.4", optional = true }
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-updater = "2"

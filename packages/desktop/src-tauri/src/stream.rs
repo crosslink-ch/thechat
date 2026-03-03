@@ -113,7 +113,7 @@ fn parse_openrouter_data(
     let parsed: serde_json::Value = match serde_json::from_str(data) {
         Ok(v) => v,
         Err(e) => {
-            log::warn!("Skipping malformed SSE chunk: {}: {}", &data[..data.len().min(200)], e);
+            tracing::warn!(error = %e, "skipping malformed SSE chunk: {}", &data[..data.len().min(200)]);
             return;
         }
     };
@@ -213,7 +213,7 @@ fn parse_codex_data(
     let parsed: serde_json::Value = match serde_json::from_str(data) {
         Ok(v) => v,
         Err(e) => {
-            log::warn!("Skipping malformed SSE chunk: {}: {}", &data[..data.len().min(200)], e);
+            tracing::warn!(error = %e, "skipping malformed SSE chunk: {}", &data[..data.len().min(200)]);
             return;
         }
     };
@@ -332,7 +332,7 @@ fn finalize_openrouter_tools(
         .map(|(_, tc)| {
             let parsed_args: serde_json::Value = serde_json::from_str(&tc.args)
                 .unwrap_or_else(|_| {
-                    log::warn!("Failed to parse tool args for {}: {}", tc.name, &tc.args[..tc.args.len().min(200)]);
+                    tracing::warn!(tool = %tc.name, "failed to parse tool args: {}", &tc.args[..tc.args.len().min(200)]);
                     serde_json::Value::Object(serde_json::Map::new())
                 });
             events.push(StreamEvent::ToolCallComplete {
@@ -358,7 +358,7 @@ fn finalize_codex_tools(
         .map(|fc| {
             let parsed_args: serde_json::Value = serde_json::from_str(&fc.args)
                 .unwrap_or_else(|_| {
-                    log::warn!("Failed to parse tool args for {}: {}", fc.name, &fc.args[..fc.args.len().min(200)]);
+                    tracing::warn!(tool = %fc.name, "failed to parse tool args: {}", &fc.args[..fc.args.len().min(200)]);
                     serde_json::Value::Object(serde_json::Map::new())
                 });
             events.push(StreamEvent::ToolCallComplete {
@@ -380,6 +380,7 @@ fn finalize_codex_tools(
 // ---------------------------------------------------------------------------
 
 #[tauri::command]
+#[tracing::instrument(skip(headers, body, on_event, cancellers))]
 pub async fn stream_completion(
     url: String,
     headers: HashMap<String, String>,
@@ -405,6 +406,7 @@ pub async fn stream_completion(
 }
 
 #[tauri::command]
+#[tracing::instrument(skip(cancellers))]
 pub async fn cancel_stream(
     stream_id: String,
     cancellers: tauri::State<'_, Arc<StreamCancellers>>,
@@ -419,6 +421,7 @@ pub async fn cancel_stream(
 // Core streaming loop
 // ---------------------------------------------------------------------------
 
+#[tracing::instrument(skip(headers, body, cancel_flag, on_event))]
 async fn run_stream(
     url: String,
     headers: HashMap<String, String>,

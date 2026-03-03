@@ -81,6 +81,7 @@ pub struct ProjectInfo {
 // -- Commands --
 
 #[tauri::command]
+#[tracing::instrument]
 pub async fn get_project_info(path: String) -> Result<ProjectInfo, String> {
     tokio::task::spawn_blocking(move || {
         let base = Path::new(&path);
@@ -118,6 +119,7 @@ pub async fn get_project_info(path: String) -> Result<ProjectInfo, String> {
 }
 
 #[tauri::command]
+#[tracing::instrument]
 pub async fn get_cwd() -> Result<String, String> {
     tokio::task::spawn_blocking(move || {
         std::env::current_dir()
@@ -129,6 +131,7 @@ pub async fn get_cwd() -> Result<String, String> {
 }
 
 #[tauri::command]
+#[tracing::instrument]
 pub async fn fs_read_file(
     file_path: String,
     offset: Option<usize>,
@@ -193,6 +196,7 @@ pub async fn fs_read_file(
 }
 
 #[tauri::command]
+#[tracing::instrument(skip(content))]
 pub async fn fs_write_file(file_path: String, content: String) -> Result<WriteFileResult, String> {
     tokio::task::spawn_blocking(move || {
         let path = Path::new(&file_path);
@@ -216,6 +220,7 @@ pub async fn fs_write_file(file_path: String, content: String) -> Result<WriteFi
 }
 
 #[tauri::command]
+#[tracing::instrument(skip(old_string, new_string))]
 pub async fn fs_edit_file(
     file_path: String,
     old_string: String,
@@ -326,6 +331,7 @@ pub async fn fs_edit_file(
 }
 
 #[tauri::command]
+#[tracing::instrument]
 pub async fn fs_glob(
     pattern: String,
     path: Option<String>,
@@ -385,6 +391,7 @@ pub async fn fs_glob(
 }
 
 #[tauri::command]
+#[tracing::instrument]
 pub async fn fs_grep(
     pattern: String,
     path: Option<String>,
@@ -478,6 +485,7 @@ pub async fn fs_grep(
 }
 
 #[tauri::command]
+#[tracing::instrument]
 pub async fn fs_list_dir(
     path: Option<String>,
     ignore: Option<Vec<String>>,

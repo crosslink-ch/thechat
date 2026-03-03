@@ -188,7 +188,7 @@ impl McpClient {
                 for line in reader.lines() {
                     match line {
                         Ok(line) if !line.is_empty() => {
-                            log::warn!("MCP server '{}' stderr: {}", name, line);
+                            tracing::warn!(server = %name, "MCP server stderr: {}", line);
                         }
                         Err(_) => break,
                         _ => {}
@@ -636,6 +636,7 @@ fn init_server_inner(
 }
 
 #[tauri::command]
+#[tracing::instrument(skip(app, manager, shell_env))]
 pub async fn mcp_initialize<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     manager: tauri::State<'_, Arc<McpManager>>,
@@ -644,7 +645,7 @@ pub async fn mcp_initialize<R: tauri::Runtime>(
     use tauri::Emitter;
 
     if manager.initialized.swap(true, Ordering::SeqCst) {
-        log::info!("MCP servers already initialized, skipping");
+        tracing::info!("MCP servers already initialized, skipping");
         return Ok(());
     }
 
@@ -662,11 +663,11 @@ pub async fn mcp_initialize<R: tauri::Runtime>(
 
     for (server_name, server_config) in config.mcp_servers {
         if server_config.requires_auth {
-            log::info!("Skipping MCP server '{}' (requires auth)", server_name);
+            tracing::info!(server = %server_name, "skipping MCP server (requires auth)");
             continue;
         }
         if server_config.lazy {
-            log::info!("Skipping MCP server '{}' (lazy, will load on demand)", server_name);
+            tracing::info!(server = %server_name, "skipping MCP server (lazy, will load on demand)");
             continue;
         }
 
@@ -675,14 +676,14 @@ pub async fn mcp_initialize<R: tauri::Runtime>(
         let env = env_vars.clone();
 
         std::thread::spawn(move || {
-            log::info!("Initializing MCP server: {}", server_name);
+            tracing::info!(server = %server_name, "initializing MCP server");
 
             match init_server(&server_name, &server_config, None, &env) {
                 Ok((client, tools)) => {
-                    log::info!(
-                        "MCP server '{}' ready with {} tools",
-                        server_name,
-                        tools.len()
+                    tracing::info!(
+                        server = %server_name,
+                        tool_count = tools.len(),
+                        "MCP server ready"
                     );
 
                     // Register the client
@@ -692,11 +693,11 @@ pub async fn mcp_initialize<R: tauri::Runtime>(
 
                     // Emit tools to the frontend
                     if let Err(e) = app.emit("mcp-tools-ready", &tools) {
-                        log::error!("Failed to emit mcp-tools-ready for '{}': {}", server_name, e);
+                        tracing::error!(server = %server_name, error = %e, "failed to emit mcp-tools-ready");
                     }
                 }
                 Err(e) => {
-                    log::error!("Failed to initialize MCP server '{}': {}", server_name, e);
+                    tracing::error!(server = %server_name, error = %e, "failed to initialize MCP server");
                 }
             }
         });
@@ -709,6 +710,7 @@ pub async fn mcp_initialize<R: tauri::Runtime>(
 /// already-initialized auth servers. Called when the user logs in or when the JWT
 /// refreshes (every ~15 minutes).
 #[tauri::command]
+#[tracing::instrument(skip(app, token, manager, shell_env))]
 pub async fn mcp_initialize_authed<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     token: String,
@@ -728,9 +730,9 @@ pub async fn mcp_initialize_authed<R: tauri::Runtime>(
             continue;
         }
         if server_config.lazy {
-            log::info!(
-                "Skipping auth MCP server '{}' (lazy, will load on demand)",
-                server_name
+            tracing::info!(
+                server = %server_name,
+                "skipping auth MCP server (lazy, will load on demand)"
             );
             continue;
         }
@@ -745,7 +747,7 @@ pub async fn mcp_initialize_authed<R: tauri::Runtime>(
                 if let Ok(mut client) = client_arc.lock() {
                     client.set_auth_token(&token);
                 }
-                log::info!("Updated auth token for MCP server '{}'", server_name);
+                tracing::info!(server = %server_name, "updated auth token for MCP server");
                 continue;
             }
         }
@@ -757,14 +759,14 @@ pub async fn mcp_initialize_authed<R: tauri::Runtime>(
         let env = env_vars.clone();
 
         std::thread::spawn(move || {
-            log::info!("Initializing auth MCP server: {}", server_name);
+            tracing::info!(server = %server_name, "initializing auth MCP server");
 
             match init_server(&server_name, &server_config, Some(&token), &env) {
                 Ok((client, tools)) => {
-                    log::info!(
-                        "Auth MCP server '{}' ready with {} tools",
-                        server_name,
-                        tools.len()
+                    tracing::info!(
+                        server = %server_name,
+                        tool_count = tools.len(),
+                        "auth MCP server ready"
                     );
 
                     if let Ok(mut clients) = manager.clients.lock() {
@@ -772,16 +774,16 @@ pub async fn mcp_initialize_authed<R: tauri::Runtime>(
                     }
 
                     if let Err(e) = app.emit("mcp-tools-ready", &tools) {
-                        log::error!(
-                            "Failed to emit mcp-tools-ready for '{}': {}",
-                            server_name, e
+                        tracing::error!(
+                            server = %server_name, error = %e,
+                            "failed to emit mcp-tools-ready"
                         );
                     }
                 }
                 Err(e) => {
-                    log::error!(
-                        "Failed to initialize auth MCP server '{}': {}",
-                        server_name, e
+                    tracing::error!(
+                        server = %server_name, error = %e,
+                        "failed to initialize auth MCP server"
                     );
                 }
             }
@@ -796,6 +798,7 @@ pub async fn mcp_initialize_authed<R: tauri::Runtime>(
 /// For already-initialized servers, re-lists their tools and returns them.
 /// The caller manages adding tools to the session — no event is emitted.
 #[tauri::command]
+#[tracing::instrument(skip(app, token, manager, shell_env))]
 pub async fn mcp_initialize_servers<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     names: Vec<String>,
@@ -848,7 +851,7 @@ pub async fn mcp_initialize_servers<R: tauri::Runtime>(
                     .map_err(|e| format!("Lock error: {}", e))?;
                 if clients.contains_key(name) {
                     drop(clients);
-                    log::info!("MCP server '{}' already initialized, re-listing tools", name);
+                    tracing::info!(server = %name, "MCP server already initialized, re-listing tools");
                     all_tools.extend(list_from_client(name, &token)?);
                     continue;
                 }
@@ -876,9 +879,9 @@ pub async fn mcp_initialize_servers<R: tauri::Runtime>(
 
             if let Some(pair) = wait_pair {
                 // Wait for the other caller to finish initializing
-                log::info!(
-                    "MCP server '{}' is being initialized by another caller, waiting...",
-                    name
+                tracing::info!(
+                    server = %name,
+                    "MCP server is being initialized by another caller, waiting"
                 );
                 let (lock, cvar) = &*pair;
                 let guard = lock
@@ -889,9 +892,9 @@ pub async fn mcp_initialize_servers<R: tauri::Runtime>(
                     .map_err(|e| format!("Condvar wait error: {}", e))?;
 
                 // The other caller finished — read tools from the now-initialized client
-                log::info!(
-                    "MCP server '{}' initialization completed by another caller, re-listing tools",
-                    name
+                tracing::info!(
+                    server = %name,
+                    "MCP server initialization completed by another caller, re-listing tools"
                 );
                 all_tools.extend(list_from_client(name, &token)?);
                 continue;
@@ -910,7 +913,7 @@ pub async fn mcp_initialize_servers<R: tauri::Runtime>(
                 None
             };
 
-            log::info!("Lazily initializing MCP server: {}", name);
+            tracing::info!(server = %name, "lazily initializing MCP server");
 
             let init_result = init_server(name, server_config, auth_token, &env_vars);
 
@@ -930,10 +933,10 @@ pub async fn mcp_initialize_servers<R: tauri::Runtime>(
 
             match init_result {
                 Ok((client, tools)) => {
-                    log::info!(
-                        "MCP server '{}' ready with {} tools",
-                        name,
-                        tools.len()
+                    tracing::info!(
+                        server = %name,
+                        tool_count = tools.len(),
+                        "MCP server ready"
                     );
 
                     if let Ok(mut clients) = manager.clients.lock() {
@@ -943,7 +946,7 @@ pub async fn mcp_initialize_servers<R: tauri::Runtime>(
                     all_tools.extend(tools);
                 }
                 Err(e) => {
-                    log::error!("Failed to initialize MCP server '{}': {}", name, e);
+                    tracing::error!(server = %name, error = %e, "failed to initialize MCP server");
                     return Err(format!("Failed to initialize MCP server '{}': {}", name, e));
                 }
             }
@@ -956,6 +959,7 @@ pub async fn mcp_initialize_servers<R: tauri::Runtime>(
 }
 
 #[tauri::command]
+#[tracing::instrument(skip(args, manager))]
 pub async fn mcp_call_tool(
     server: String,
     tool: String,
@@ -988,6 +992,7 @@ pub async fn mcp_call_tool(
 }
 
 #[tauri::command]
+#[tracing::instrument(skip(manager))]
 pub async fn mcp_shutdown(manager: tauri::State<'_, Arc<McpManager>>) -> Result<(), String> {
     let manager = Arc::clone(&manager);
     tokio::task::spawn_blocking(move || {
@@ -997,7 +1002,7 @@ pub async fn mcp_shutdown(manager: tauri::State<'_, Arc<McpManager>>) -> Result<
             .map_err(|e| format!("Lock error: {}", e))?;
 
         for (name, client_arc) in clients.drain() {
-            log::info!("Shutting down MCP server: {}", name);
+            tracing::info!(server = %name, "shutting down MCP server");
             if let Ok(mut client) = client_arc.lock() {
                 client.shutdown();
             }

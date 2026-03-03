@@ -33,6 +33,7 @@ pub struct ShellResult {
 }
 
 #[tauri::command]
+#[tracing::instrument(skip(app, processes, shell_env))]
 pub async fn execute_shell_command<R: tauri::Runtime>(
     command: String,
     timeout: Option<u64>,
@@ -212,6 +213,7 @@ pub async fn execute_shell_command<R: tauri::Runtime>(
 }
 
 #[tauri::command]
+#[tracing::instrument(skip(processes))]
 pub async fn kill_shell_process(
     process_id: String,
     processes: tauri::State<'_, Arc<ShellProcesses>>,

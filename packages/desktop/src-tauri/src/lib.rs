@@ -12,24 +12,48 @@ use shell::ShellProcesses;
 use stream::StreamCancellers;
 use std::sync::Arc;
 use tauri::{Manager, State};
+use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
-fn log_level_from_env() -> log::LevelFilter {
-    let val = std::env::var("THECHAT_LOG_LEVEL").unwrap_or_default().to_lowercase();
-    match val.as_str() {
-        "trace" => log::LevelFilter::Trace,
-        "debug" => log::LevelFilter::Debug,
-        "info" => log::LevelFilter::Info,
-        "warn" | "warning" => log::LevelFilter::Warn,
-        "error" => log::LevelFilter::Error,
-        "off" | "none" => log::LevelFilter::Off,
-        _ => {
+/// Initialize the tracing subscriber stack.
+///
+/// Log level is controlled by the `THECHAT_LOG` env var using `tracing` EnvFilter
+/// syntax: `target=level` pairs separated by commas. The target is typically the
+/// crate name. A bare level (no target) sets the default for all crates.
+///
+/// Examples:
+///   THECHAT_LOG=thechat=trace          — our code at trace, others at default
+///   THECHAT_LOG=thechat=trace,warn     — our code at trace, everything else at warn
+///   THECHAT_LOG=thechat=debug,reqwest=info,warn  — per-crate control
+///   THECHAT_LOG=trace                  — everything at trace (very noisy)
+///
+/// If unset, defaults to `thechat=debug,info` in dev and `info` in release.
+fn init_tracing() {
+    let env_filter = EnvFilter::try_from_env("THECHAT_LOG")
+        .unwrap_or_else(|_| {
             if cfg!(debug_assertions) {
-                log::LevelFilter::Debug
+                // Our crate at debug, all other crates (tokio, reqwest, ...) at info
+                EnvFilter::new("thechat=debug,info")
             } else {
-                log::LevelFilter::Info
+                EnvFilter::new("info")
             }
-        }
-    }
+        });
+
+    let fmt_layer = fmt::layer()
+        .with_target(true)
+        .with_thread_ids(true)
+        .with_span_events(fmt::format::FmtSpan::CLOSE);
+
+    let registry = tracing_subscriber::registry()
+        .with(env_filter)
+        .with(fmt_layer);
+
+    #[cfg(feature = "tracy")]
+    let registry = registry.with(tracing_tracy::TracyLayer::default());
+
+    #[cfg(feature = "tokio-console")]
+    let registry = registry.with(console_subscriber::spawn());
+
+    registry.init();
 }
 
 type DbState = Arc<Database>;
@@ -37,6 +61,7 @@ type DbState = Arc<Database>;
 pub struct InitialProjectDir(pub Option<String>);
 
 #[tauri::command]
+#[tracing::instrument(skip(app))]
 async fn get_config(app: tauri::AppHandle) -> Result<config::AppConfig, String> {
     let config_dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
     tokio::task::spawn_blocking(move || config::load_config(&config_dir))
@@ -45,12 +70,14 @@ async fn get_config(app: tauri::AppHandle) -> Result<config::AppConfig, String> 
 }
 
 #[tauri::command]
+#[tracing::instrument(skip(app))]
 fn get_config_path(app: tauri::AppHandle) -> Result<String, String> {
     let config_dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
     Ok(config::resolve_config_path(&config_dir).to_string_lossy().into_owned())
 }
 
 #[tauri::command]
+#[tracing::instrument(skip(config, app))]
 async fn save_config(config: config::AppConfig, app: tauri::AppHandle) -> Result<(), String> {
     let config_dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
     tokio::task::spawn_blocking(move || config::save_config(&config, &config_dir))
@@ -59,12 +86,14 @@ async fn save_config(config: config::AppConfig, app: tauri::AppHandle) -> Result
 }
 
 #[tauri::command]
+#[tracing::instrument(skip(app))]
 fn get_app_config_dir(app: tauri::AppHandle) -> Result<String, String> {
     let config_dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
     Ok(config_dir.to_string_lossy().into_owned())
 }
 
 #[tauri::command]
+#[tracing::instrument(skip(db))]
 async fn create_conversation(
     title: String,
     project_dir: Option<String>,
@@ -77,6 +106,7 @@ async fn create_conversation(
 }
 
 #[tauri::command]
+#[tracing::instrument(skip(db))]
 async fn get_conversation(id: String, db: State<'_, DbState>) -> Result<Option<Conversation>, String> {
     let db = Arc::clone(&db);
     tokio::task::spawn_blocking(move || db.get_conversation(&id))
@@ -85,6 +115,7 @@ async fn get_conversation(id: String, db: State<'_, DbState>) -> Result<Option<C
 }
 
 #[tauri::command]
+#[tracing::instrument(skip(db))]
 async fn list_conversations(db: State<'_, DbState>) -> Result<Vec<Conversation>, String> {
     let db = Arc::clone(&db);
     tokio::task::spawn_blocking(move || db.list_conversations())
@@ -93,6 +124,7 @@ async fn list_conversations(db: State<'_, DbState>) -> Result<Vec<Conversation>,
 }
 
 #[tauri::command]
+#[tracing::instrument(skip(db))]
 async fn update_conversation_title(id: String, title: String, db: State<'_, DbState>) -> Result<(), String> {
     let db = Arc::clone(&db);
     tokio::task::spawn_blocking(move || db.update_conversation_title(&id, &title))
@@ -101,6 +133,7 @@ async fn update_conversation_title(id: String, title: String, db: State<'_, DbSt
 }
 
 #[tauri::command]
+#[tracing::instrument(skip(db, content, reasoning_content))]
 async fn save_message(
     conversation_id: String,
     role: String,
@@ -122,6 +155,7 @@ async fn save_message(
 }
 
 #[tauri::command]
+#[tracing::instrument(skip(db))]
 async fn get_messages(conversation_id: String, db: State<'_, DbState>) -> Result<Vec<Message>, String> {
     let db = Arc::clone(&db);
     tokio::task::spawn_blocking(move || db.get_messages(&conversation_id))
@@ -130,6 +164,7 @@ async fn get_messages(conversation_id: String, db: State<'_, DbState>) -> Result
 }
 
 #[tauri::command]
+#[tracing::instrument(skip(db))]
 async fn kv_get(key: String, db: State<'_, DbState>) -> Result<Option<String>, String> {
     let db = Arc::clone(&db);
     tokio::task::spawn_blocking(move || db.kv_get(&key))
@@ -138,6 +173,7 @@ async fn kv_get(key: String, db: State<'_, DbState>) -> Result<Option<String>, S
 }
 
 #[tauri::command]
+#[tracing::instrument(skip(db, value))]
 async fn kv_set(key: String, value: String, db: State<'_, DbState>) -> Result<(), String> {
     let db = Arc::clone(&db);
     tokio::task::spawn_blocking(move || db.kv_set(&key, &value))
@@ -146,6 +182,7 @@ async fn kv_set(key: String, value: String, db: State<'_, DbState>) -> Result<()
 }
 
 #[tauri::command]
+#[tracing::instrument(skip(db))]
 async fn kv_delete(key: String, db: State<'_, DbState>) -> Result<(), String> {
     let db = Arc::clone(&db);
     tokio::task::spawn_blocking(move || db.kv_delete(&key))
@@ -184,15 +221,17 @@ pub fn run() {
                 None
             }
         });
+    init_tracing();
+
     let shell_env: Arc<env::ShellEnv> = Arc::new(env::ShellEnv::resolve());
     let mcp_state: Arc<McpManager> = Arc::new(McpManager::new());
     let shell_state: Arc<ShellProcesses> = Arc::new(ShellProcesses::new());
     let stream_state: Arc<StreamCancellers> = Arc::new(StreamCancellers::new());
 
-    log::info!("App started");
+    tracing::info!("app started");
 
     tauri::Builder::default()
-        .plugin(tauri_plugin_log::Builder::new().level(log_level_from_env()).build())
+        .plugin(tauri_plugin_log::Builder::new().build())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_dialog::init())
@@ -281,7 +320,7 @@ mod tests {
         let stream_state: Arc<StreamCancellers> = Arc::new(StreamCancellers::new());
 
         let app = tauri::test::mock_builder()
-            .plugin(tauri_plugin_log::Builder::new().level(log_level_from_env()).build())
+            .plugin(tauri_plugin_log::Builder::new().build())
             .plugin(tauri_plugin_notification::init())
             .plugin(tauri_plugin_process::init())
             .manage(db_state)
