@@ -41,7 +41,7 @@ vi.mock("./SelectProjectPicker", () => ({
   openSelectProjectPicker: (...args: unknown[]) => openSelectProjectPickerMock(...args),
 }));
 
-import { createCommands, consumePendingProjectDir } from "./commands";
+import { createCommands } from "./commands";
 import { useConversationsStore } from "./stores/conversations";
 
 describe("createCommands - Select Project", () => {
@@ -52,8 +52,6 @@ describe("createCommands - Select Project", () => {
       unreadAgentChats: new Set(),
       unreadChannels: new Set(),
     });
-    // Ensure pending value from previous tests does not leak
-    consumePendingProjectDir();
     getAgentChatProjectDirMock.mockReturnValue(null);
   });
 
@@ -85,9 +83,7 @@ describe("createCommands - Select Project", () => {
 
     onSelect("/repo/custom");
 
-    expect(navigate).toHaveBeenCalledWith({ to: "/chat" });
-    expect(consumePendingProjectDir()).toBe("/repo/custom");
-    expect(consumePendingProjectDir()).toBeNull();
+    expect(navigate).toHaveBeenCalledWith({ to: "/chat", search: { projectDir: "/repo/custom" } });
   });
 
   it("does not duplicate current project when it already exists in recents", () => {

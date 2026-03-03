@@ -4,7 +4,6 @@ import { useNavigate, useMatches } from "@tanstack/react-router";
 import { useConversationsStore } from "./stores/conversations";
 import { useStreamingConvIds } from "./stores/streaming";
 import { useCommandsStore } from "./commands";
-import { closeSidebar } from "./components/Sidebar";
 
 // Colocated visibility store
 const usePaletteState = create(() => ({ open: false, initialQuery: "" }));

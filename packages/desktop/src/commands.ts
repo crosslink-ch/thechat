@@ -8,13 +8,6 @@ import { openPermissionModePicker } from "./PermissionModePicker";
 import { openSelectProjectPicker } from "./SelectProjectPicker";
 import { useConversationsStore } from "./stores/conversations";
 
-let _pendingProjectDir: string | null = null;
-export function consumePendingProjectDir(): string | null {
-  const dir = _pendingProjectDir;
-  _pendingProjectDir = null;
-  return dir;
-}
-
 export interface Keybinding {
   key: string;
   ctrl?: boolean;
@@ -62,7 +55,11 @@ function getRecentProjects(): string[] {
 }
 
 export function createCommands(
-  navigate: (opts: { to: string; params?: Record<string, string> }) => void,
+  navigate: (opts: {
+    to: string;
+    params?: Record<string, string>;
+    search?: Record<string, string | undefined>;
+  }) => void,
 ): Command[] {
   return [
     {
@@ -81,8 +78,8 @@ export function createCommands(
       shortcut: "C-x c n",
       keybinding: { prefix: "C-x c", key: "n" },
       execute: () => {
-        _pendingProjectDir = getAgentChatProjectDir();
-        navigate({ to: "/chat" });
+        const dir = getAgentChatProjectDir();
+        navigate({ to: "/chat", search: dir ? { projectDir: dir } : {} });
         closePalette();
       },
     },
@@ -94,8 +91,7 @@ export function createCommands(
       execute: () => {
         closePalette();
         openSelectProjectPicker(getRecentProjects(), (projectDir) => {
-          _pendingProjectDir = projectDir;
-          navigate({ to: "/chat" });
+          navigate({ to: "/chat", search: { projectDir } });
         });
       },
     },

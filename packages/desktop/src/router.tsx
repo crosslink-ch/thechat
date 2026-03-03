@@ -28,6 +28,9 @@ const agentChatRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/chat",
   component: AgentChatRoute,
+  validateSearch: (search: Record<string, unknown>): { projectDir?: string } => ({
+    projectDir: (search.projectDir as string) || undefined,
+  }),
 });
 
 const agentChatIdRoute = createRoute({

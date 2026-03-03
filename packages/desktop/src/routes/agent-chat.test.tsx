@@ -75,6 +75,9 @@ async function renderRoute(path = "/chat") {
     getParentRoute: () => rootRoute,
     path: "/chat",
     component: AgentChatRoute,
+    validateSearch: (search: Record<string, unknown>) => ({
+      projectDir: (search.projectDir as string) || undefined,
+    }),
   });
   const chatIdRoute = createRoute({
     getParentRoute: () => rootRoute,

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from "react";
-import { useNavigate, useMatches } from "@tanstack/react-router";
+import { useNavigate, useMatches, useRouterState } from "@tanstack/react-router";
 import { invoke } from "@tauri-apps/api/core";
 import { useChat } from "../hooks/useChat";
 import { useIsStreaming, useStreamingParts } from "../stores/streaming";
@@ -15,7 +15,6 @@ import { InputBar } from "../components/InputBar";
 import { usePermissionStore } from "../core/permission";
 import { useQuestionStore } from "../core/question";
 import { useTodoStore, EMPTY_TODOS } from "../core/todo";
-import { consumePendingProjectDir } from "../commands";
 import { buildSystemPrompt, type ProjectInfo } from "../core/system-prompt";
 import { fireNotification } from "../lib/notifications";
 import type { Conversation } from "../core/types";
@@ -25,6 +24,9 @@ export function AgentChatRoute() {
   const matches = useMatches();
   const lastMatch = matches[matches.length - 1];
   const routeId = (lastMatch?.params as Record<string, string>)?.id as string | undefined;
+  const searchProjectDir = useRouterState({
+    select: (s) => (s.location.search as Record<string, unknown>).projectDir as string | undefined,
+  });
 
   const getTools = useCallback(() => useToolsStore.getState().tools, []);
 
@@ -97,12 +99,23 @@ export function AgentChatRoute() {
     } else if (!routeId && loadedIdRef.current !== null) {
       loadedIdRef.current = null;
       startNewConversation();
-      const inherited = consumePendingProjectDir();
-      setProjectDir(inherited);
+      setProjectDir(null);
       setProjectInfo(null);
       useToolsStore.getState().setActiveConversation(null);
     }
   }, [routeId, loadConversation, startNewConversation]);
+
+  // Handle projectDir from search params (e.g., select-project / new-chat-in-project commands)
+  useEffect(() => {
+    if (searchProjectDir) {
+      startNewConversation();
+      setProjectDir(searchProjectDir);
+      setProjectInfo(null);
+      loadedIdRef.current = null;
+      useToolsStore.getState().setActiveConversation(null);
+      navigate({ to: "/chat", search: { projectDir: undefined }, replace: true });
+    }
+  }, [searchProjectDir, startNewConversation, navigate]);
 
   // Apply CLI project dir for new chats (once per app session)
   useEffect(() => {
