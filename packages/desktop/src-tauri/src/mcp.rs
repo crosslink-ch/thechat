@@ -1,4 +1,5 @@
 use crate::config::{load_config, McpServerConfig};
+use tauri::Manager;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -647,7 +648,8 @@ pub fn mcp_initialize<R: tauri::Runtime>(
         return Ok(());
     }
 
-    let config = load_config()?;
+    let config_dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
+    let config = load_config(&config_dir)?;
 
     if config.mcp_servers.is_empty() {
         return Ok(());
@@ -713,7 +715,8 @@ pub fn mcp_initialize_authed<R: tauri::Runtime>(
 ) -> Result<(), String> {
     use tauri::Emitter;
 
-    let config = load_config()?;
+    let config_dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
+    let config = load_config(&config_dir)?;
     let env_vars = shell_env.vars.clone();
 
     for (server_name, server_config) in config.mcp_servers {
@@ -789,13 +792,15 @@ pub fn mcp_initialize_authed<R: tauri::Runtime>(
 /// For already-initialized servers, re-lists their tools and returns them.
 /// The caller manages adding tools to the session — no event is emitted.
 #[tauri::command]
-pub async fn mcp_initialize_servers(
+pub async fn mcp_initialize_servers<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     names: Vec<String>,
     token: Option<String>,
     manager: tauri::State<'_, Arc<McpManager>>,
     shell_env: tauri::State<'_, Arc<crate::env::ShellEnv>>,
 ) -> Result<Vec<McpToolInfo>, String> {
-    let config = load_config()?;
+    let config_dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
+    let config = load_config(&config_dir)?;
     let manager = Arc::clone(&manager);
     let env_vars = shell_env.vars.clone();
 

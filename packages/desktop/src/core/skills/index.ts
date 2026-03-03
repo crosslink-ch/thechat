@@ -77,13 +77,23 @@ export async function discoverSkills(): Promise<SkillMeta[]> {
     home = "";
   }
 
+  let appConfigDir: string;
+  try {
+    appConfigDir = await invoke<string>("get_app_config_dir");
+  } catch {
+    appConfigDir = "";
+  }
+
   const cwd = (await getCwd()).trim();
 
   const searchPaths: string[] = [];
 
+  if (appConfigDir) {
+    searchPaths.push(await join(appConfigDir, "skills"));
+  }
+
   if (home) {
     searchPaths.push(
-      await join(home, ".config", "thechat", "skills"),
       await join(home, ".agents", "skills"),
       await join(home, ".claude", "skills"),
     );

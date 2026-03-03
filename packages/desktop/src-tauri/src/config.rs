@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct McpServerConfig {
@@ -35,13 +35,13 @@ pub fn backend_url() -> String {
     std::env::var("THECHAT_BACKEND_URL").unwrap_or_else(|_| DEFAULT_BACKEND_URL.to_string())
 }
 
-pub fn config_dir_path() -> Option<PathBuf> {
-    dirs::config_dir().map(|p| p.join("thechat").join("config.json"))
+pub fn config_file_path(base: &Path) -> PathBuf {
+    base.join("config.json")
 }
 
 /// Resolve the config path: in dev mode, prefer a CWD-relative config.json if it exists;
-/// otherwise fall back to the global config directory.
-pub fn resolve_config_path() -> Option<PathBuf> {
+/// otherwise fall back to the provided base config directory.
+pub fn resolve_config_path(base: &Path) -> PathBuf {
     if cfg!(debug_assertions) {
         let dev_paths = [
             PathBuf::from("config.json"),
@@ -51,11 +51,11 @@ pub fn resolve_config_path() -> Option<PathBuf> {
         ];
         for path in &dev_paths {
             if path.exists() {
-                return Some(path.clone());
+                return path.clone();
             }
         }
     }
-    config_dir_path()
+    config_file_path(base)
 }
 
 fn default_config(backend_url: &str) -> AppConfig {
@@ -80,9 +80,8 @@ fn default_config(backend_url: &str) -> AppConfig {
     }
 }
 
-fn create_default_config() -> Result<AppConfig, String> {
-    let config_path = config_dir_path()
-        .ok_or("Could not determine config directory")?;
+fn create_default_config(base: &Path) -> Result<AppConfig, String> {
+    let config_path = config_file_path(base);
 
     if let Some(parent) = config_path.parent() {
         fs::create_dir_all(parent)
@@ -99,8 +98,8 @@ fn create_default_config() -> Result<AppConfig, String> {
     Ok(config)
 }
 
-pub fn save_config(config: &AppConfig) -> Result<(), String> {
-    let config_path = resolve_config_path().ok_or("Could not determine config directory")?;
+pub fn save_config(config: &AppConfig, base: &Path) -> Result<(), String> {
+    let config_path = resolve_config_path(base);
 
     if let Some(parent) = config_path.parent() {
         fs::create_dir_all(parent)
@@ -116,19 +115,18 @@ pub fn save_config(config: &AppConfig) -> Result<(), String> {
     Ok(())
 }
 
-pub fn load_config() -> Result<AppConfig, String> {
-    if let Some(path) = resolve_config_path() {
-        if path.exists() {
-            let content = fs::read_to_string(&path)
-                .map_err(|e| format!("Failed to read config at {}: {}", path.display(), e))?;
-            let config: AppConfig = serde_json::from_str(&content)
-                .map_err(|e| format!("Failed to parse config: {}", e))?;
-            return Ok(config);
-        }
+pub fn load_config(base: &Path) -> Result<AppConfig, String> {
+    let path = resolve_config_path(base);
+    if path.exists() {
+        let content = fs::read_to_string(&path)
+            .map_err(|e| format!("Failed to read config at {}: {}", path.display(), e))?;
+        let config: AppConfig = serde_json::from_str(&content)
+            .map_err(|e| format!("Failed to parse config: {}", e))?;
+        return Ok(config);
     }
 
-    // No config found — create default at ~/.config/thechat/config.json
-    create_default_config()
+    // No config found — create default
+    create_default_config(base)
 }
 
 #[cfg(test)]

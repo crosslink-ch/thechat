@@ -20,7 +20,7 @@ export function SettingsRoute() {
       setProvider(cfg.provider ?? "openrouter");
       setModel(cfg.model);
     });
-    invoke<string | null>("get_config_path").then(setConfigPath);
+    invoke<string>("get_config_path").then(setConfigPath);
   }, []);
 
   const handleSave = async () => {

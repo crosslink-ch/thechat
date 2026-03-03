@@ -11,7 +11,7 @@ use mcp::McpManager;
 use shell::ShellProcesses;
 use stream::StreamCancellers;
 use std::sync::Arc;
-use tauri::State;
+use tauri::{Manager, State};
 
 fn log_level_from_env() -> log::LevelFilter {
     let val = std::env::var("THECHAT_LOG_LEVEL").unwrap_or_default().to_lowercase();
@@ -37,18 +37,27 @@ type DbState = Arc<Database>;
 pub struct InitialProjectDir(pub Option<String>);
 
 #[tauri::command]
-fn get_config() -> Result<config::AppConfig, String> {
-    config::load_config()
+fn get_config(app: tauri::AppHandle) -> Result<config::AppConfig, String> {
+    let config_dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
+    config::load_config(&config_dir)
 }
 
 #[tauri::command]
-fn get_config_path() -> Option<String> {
-    config::resolve_config_path().map(|p| p.to_string_lossy().into_owned())
+fn get_config_path(app: tauri::AppHandle) -> Result<String, String> {
+    let config_dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
+    Ok(config::resolve_config_path(&config_dir).to_string_lossy().into_owned())
 }
 
 #[tauri::command]
-fn save_config(config: config::AppConfig) -> Result<(), String> {
-    config::save_config(&config)
+fn save_config(config: config::AppConfig, app: tauri::AppHandle) -> Result<(), String> {
+    let config_dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
+    config::save_config(&config, &config_dir)
+}
+
+#[tauri::command]
+fn get_app_config_dir(app: tauri::AppHandle) -> Result<String, String> {
+    let config_dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
+    Ok(config_dir.to_string_lossy().into_owned())
 }
 
 #[tauri::command]
@@ -142,25 +151,6 @@ pub fn run() {
                 None
             }
         });
-    let db_path = if let Ok(dir) = std::env::var("THECHAT_DATA_DIR") {
-        // Explicit override (used by E2E tests for isolation)
-        let dir = std::path::PathBuf::from(dir);
-        std::fs::create_dir_all(&dir).expect("Failed to create data directory");
-        dir.join("thechat.db")
-    } else if cfg!(debug_assertions) {
-        // In development, store the database inside the project directory
-        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("dev.db")
-    } else {
-        let dir = dirs::data_dir()
-            .unwrap_or_else(|| std::path::PathBuf::from("."))
-            .join("thechat");
-        std::fs::create_dir_all(&dir).expect("Failed to create data directory");
-        dir.join("thechat.db")
-    };
-
-    let database =
-        Database::new(db_path.to_str().unwrap()).expect("Failed to initialize database");
-    let db_state: DbState = Arc::new(database);
     let shell_env: Arc<env::ShellEnv> = Arc::new(env::ShellEnv::resolve());
     let mcp_state: Arc<McpManager> = Arc::new(McpManager::new());
     let shell_state: Arc<ShellProcesses> = Arc::new(ShellProcesses::new());
@@ -179,9 +169,27 @@ pub fn run() {
             #[cfg(desktop)]
             app.handle()
                 .plugin(tauri_plugin_updater::Builder::new().build())?;
+
+            let db_path = if let Ok(dir) = std::env::var("THECHAT_DATA_DIR") {
+                // Explicit override (used by E2E tests for isolation)
+                let dir = std::path::PathBuf::from(dir);
+                std::fs::create_dir_all(&dir).expect("Failed to create data directory");
+                dir.join("thechat.db")
+            } else if cfg!(debug_assertions) {
+                // In development, store the database inside the project directory
+                std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("dev.db")
+            } else {
+                let dir = app.path().app_data_dir().expect("Failed to resolve app data dir");
+                std::fs::create_dir_all(&dir).expect("Failed to create data directory");
+                dir.join("thechat.db")
+            };
+
+            let database = Database::new(db_path.to_str().unwrap())
+                .expect("Failed to initialize database");
+            app.manage(Arc::new(database) as DbState);
+
             Ok(())
         })
-        .manage(db_state)
         .manage(shell_env)
         .manage(mcp_state)
         .manage(shell_state)
@@ -191,6 +199,7 @@ pub fn run() {
             get_config,
             get_config_path,
             save_config,
+            get_app_config_dir,
             get_initial_project_dir,
             create_conversation,
             get_conversation,
@@ -226,7 +235,6 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tauri::Manager;
 
     #[test]
     fn app_builds_with_mock_runtime() {
@@ -250,8 +258,8 @@ mod tests {
             .manage(stream_state)
             .manage(InitialProjectDir(None))
             .invoke_handler(tauri::generate_handler![
-                get_config,
-                save_config,
+                // Note: get_config, get_config_path, save_config, get_app_config_dir
+                // are excluded because they use AppHandle which isn't supported by MockRuntime
                 get_initial_project_dir,
                 create_conversation,
                 get_conversation,
