@@ -77,12 +77,12 @@ The Rust backend uses `tracing` for instrumentation, with optional Tracy and tok
 
 #### Log levels
 
-Controlled by the `THECHAT_LOG` env var using `tracing` [EnvFilter](https://docs.rs/tracing-subscriber/latest/tracing_subscriber/filter/struct.EnvFilter.html) syntax — comma-separated `target=level` pairs where the target is typically the crate name:
+Controlled by the `THECHAT_TRACING` env var using `tracing` [EnvFilter](https://docs.rs/tracing-subscriber/latest/tracing_subscriber/filter/struct.EnvFilter.html) syntax — comma-separated `target=level` pairs where the target is typically the crate name:
 
 ```bash
-THECHAT_LOG=thechat=trace pnpm tauri:dev                       # our code at trace, others at default
-THECHAT_LOG=thechat=trace,reqwest=debug,warn pnpm tauri:dev     # per-crate control
-THECHAT_LOG=trace pnpm tauri:dev                                # everything at trace (very noisy)
+THECHAT_TRACING=thechat=trace pnpm tauri:dev                       # our code at trace, others at default
+THECHAT_TRACING=thechat=trace,reqwest=debug,warn pnpm tauri:dev     # per-crate control
+THECHAT_TRACING=trace pnpm tauri:dev                                # everything at trace (very noisy)
 ```
 
 If unset, defaults to `thechat=debug,info` in dev builds, `info` in release.

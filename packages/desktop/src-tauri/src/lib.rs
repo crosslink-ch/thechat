@@ -14,19 +14,6 @@ use std::sync::Arc;
 use tauri::{Manager, State};
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
-/// Initialize the tracing subscriber stack.
-///
-/// Log level is controlled by the `THECHAT_LOG` env var using `tracing` EnvFilter
-/// syntax: `target=level` pairs separated by commas. The target is typically the
-/// crate name. A bare level (no target) sets the default for all crates.
-///
-/// Examples:
-///   THECHAT_LOG=thechat=trace          — our code at trace, others at default
-///   THECHAT_LOG=thechat=trace,warn     — our code at trace, everything else at warn
-///   THECHAT_LOG=thechat=debug,reqwest=info,warn  — per-crate control
-///   THECHAT_LOG=trace                  — everything at trace (very noisy)
-///
-/// If unset, defaults to `thechat=debug,info` in dev and `info` in release.
 fn log_level_from_env() -> log::LevelFilter {
     let val = std::env::var("THECHAT_LOG_LEVEL").unwrap_or_default().to_lowercase();
     match val.as_str() {
@@ -46,8 +33,21 @@ fn log_level_from_env() -> log::LevelFilter {
     }
 }
 
+/// Initialize the tracing subscriber stack.
+///
+/// Controlled by the `THECHAT_TRACING` env var using `tracing` EnvFilter syntax:
+/// `target=level` pairs separated by commas. The target is typically the crate name.
+/// A bare level (no target) sets the default for all crates.
+///
+/// Examples:
+///   THECHAT_TRACING=thechat=trace          — our code at trace, others at default
+///   THECHAT_TRACING=thechat=trace,warn     — our code at trace, everything else at warn
+///   THECHAT_TRACING=thechat=debug,reqwest=info,warn  — per-crate control
+///   THECHAT_TRACING=trace                  — everything at trace (very noisy)
+///
+/// If unset, defaults to `thechat=debug,info` in dev and `info` in release.
 fn init_tracing() {
-    let env_filter = EnvFilter::try_from_env("THECHAT_LOG")
+    let env_filter = EnvFilter::try_from_env("THECHAT_TRACING")
         .unwrap_or_else(|_| {
             if cfg!(debug_assertions) {
                 // Our crate at debug, all other crates (tokio, reqwest, ...) at info
