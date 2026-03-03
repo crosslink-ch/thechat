@@ -70,3 +70,52 @@ pnpm tauri:dev
 ```
 
 Starts the Vite dev server and the Tauri app with hot reload.
+
+### Rust profiling
+
+The Rust backend uses `tracing` for instrumentation, with optional Tracy and tokio-console backends behind cargo feature flags. Release builds have zero overhead.
+
+#### Log levels
+
+Controlled by the `THECHAT_LOG` env var using `tracing` [EnvFilter](https://docs.rs/tracing-subscriber/latest/tracing_subscriber/filter/struct.EnvFilter.html) syntax — comma-separated `target=level` pairs where the target is typically the crate name:
+
+```bash
+THECHAT_LOG=thechat=trace pnpm tauri:dev                       # our code at trace, others at default
+THECHAT_LOG=thechat=trace,reqwest=debug,warn pnpm tauri:dev     # per-crate control
+THECHAT_LOG=trace pnpm tauri:dev                                # everything at trace (very noisy)
+```
+
+If unset, defaults to `thechat=debug,info` in dev builds, `info` in release.
+
+#### Tracy (real-time visual profiler)
+
+```bash
+pnpm tauri dev --features tracy
+# Then connect the Tracy profiler GUI (https://github.com/wolfpld/tracy)
+```
+
+#### tokio-console (async task introspection)
+
+```bash
+pnpm tauri dev --features tokio-console
+# In another terminal:
+tokio-console                                # connects to localhost:6669
+```
+
+Requires `tokio-console` CLI: `cargo install tokio-console`
+
+#### Both at once
+
+```bash
+pnpm tauri dev --features profile-all
+```
+
+#### Standalone debug build (no Vite)
+
+To build a standalone binary with debug symbols and bundled frontend (no Vite dev server):
+
+```bash
+pnpm tauri build --debug --features tracy
+```
+
+Binary is written to `packages/desktop/src-tauri/target/debug/thechat`.
