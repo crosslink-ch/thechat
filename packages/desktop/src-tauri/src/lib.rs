@@ -53,7 +53,11 @@ fn init_tracing() {
     #[cfg(feature = "tokio-console")]
     let registry = registry.with(console_subscriber::spawn());
 
-    registry.init();
+    // Use set_global_default instead of .init() to avoid calling
+    // tracing_log::LogTracer::init(), which would conflict with tauri-plugin-log
+    // setting the global `log` logger.
+    tracing::subscriber::set_global_default(registry)
+        .expect("failed to set tracing subscriber");
 }
 
 type DbState = Arc<Database>;
