@@ -79,7 +79,6 @@ function CommandPaletteInner() {
   const handleSelectConversation = (conv: { id: string }) => {
     navigate({ to: "/chat/$id", params: { id: conv.id } });
     useConversationsStore.getState().markAgentChatRead(conv.id);
-    closeSidebar();
     closePalette();
   };
 
