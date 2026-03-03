@@ -16,10 +16,8 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 
 [features]
 default = []
-tracy = ["dep:tracing-tracy"]
 tokio-console = ["dep:console-subscriber", "tokio/tracing"]
 otel = ["dep:opentelemetry", "dep:opentelemetry_sdk", "dep:opentelemetry-otlp", "dep:tracing-opentelemetry"]
-profile-all = ["tracy", "tokio-console"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
@@ -45,7 +43,6 @@ tokio = { version = "1", features = ["process", "time", "rt", "macros"] }
 libc = "0.2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "registry"] }
-tracing-tracy = { version = "0.11", optional = true, default-features = false, features = ["enable", "ondemand"] }
 console-subscriber = { version = "0.4", optional = true }
 opentelemetry = { version = "0.31", optional = true }
 opentelemetry_sdk = { version = "0.31", optional = true, features = ["rt-tokio"] }

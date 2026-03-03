@@ -39,8 +39,8 @@ fn log_level_from_env() -> log::LevelFilter {
 /// Initialize the tracing subscriber stack.
 ///
 /// The stderr fmt layer is only enabled when `THECHAT_TRACING` is explicitly set,
-/// so the app can detach from the console during normal usage. Tracy and
-/// tokio-console layers are always active when their features are enabled.
+/// so the app can detach from the console during normal usage. tokio-console
+/// and OTel layers are always active when their features are enabled.
 ///
 /// `THECHAT_TRACING` uses `tracing` EnvFilter syntax: `target=level` pairs
 /// separated by commas. The target is typically the crate name. A bare level
@@ -64,9 +64,6 @@ fn init_tracing() {
 
     let registry = tracing_subscriber::registry()
         .with(fmt_layer);
-
-    #[cfg(feature = "tracy")]
-    let registry = registry.with(tracing_tracy::TracyLayer::default());
 
     #[cfg(feature = "tokio-console")]
     let registry = registry.with(console_subscriber::spawn());

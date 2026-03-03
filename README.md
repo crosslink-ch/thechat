@@ -73,7 +73,7 @@ Starts the Vite dev server and the Tauri app with hot reload.
 
 ### Rust profiling
 
-The Rust backend uses `tracing` for instrumentation, with optional Tracy and tokio-console backends behind cargo feature flags. Release builds have zero overhead.
+The Rust backend uses `tracing` for instrumentation, with optional backends behind cargo feature flags. Release builds have zero overhead.
 
 #### Log levels
 
@@ -86,13 +86,6 @@ THECHAT_TRACING=trace pnpm tauri:dev                                # everything
 ```
 
 If unset, defaults to `thechat=debug,info` in dev builds, `info` in release.
-
-#### Tracy (real-time visual profiler)
-
-```bash
-pnpm tauri dev --features tracy
-# Then connect the Tracy profiler GUI (https://github.com/wolfpld/tracy)
-```
 
 #### tokio-console (async task introspection)
 
@@ -120,8 +113,3 @@ pnpm tauri dev --features otel
 
 Open http://localhost:16686, select "thechat" service, click "Find Traces".
 
-#### Both at once
-
-```bash
-pnpm tauri dev --features profile-all
-```
