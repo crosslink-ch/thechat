@@ -35,34 +35,31 @@ fn log_level_from_env() -> log::LevelFilter {
 
 /// Initialize the tracing subscriber stack.
 ///
-/// Controlled by the `THECHAT_TRACING` env var using `tracing` EnvFilter syntax:
-/// `target=level` pairs separated by commas. The target is typically the crate name.
-/// A bare level (no target) sets the default for all crates.
+/// The stderr fmt layer is only enabled when `THECHAT_TRACING` is explicitly set,
+/// so the app can detach from the console during normal usage. Tracy and
+/// tokio-console layers are always active when their features are enabled.
+///
+/// `THECHAT_TRACING` uses `tracing` EnvFilter syntax: `target=level` pairs
+/// separated by commas. The target is typically the crate name. A bare level
+/// (no target) sets the default for all crates.
 ///
 /// Examples:
 ///   THECHAT_TRACING=thechat=trace          — our code at trace, others at default
 ///   THECHAT_TRACING=thechat=trace,warn     — our code at trace, everything else at warn
 ///   THECHAT_TRACING=thechat=debug,reqwest=info,warn  — per-crate control
 ///   THECHAT_TRACING=trace                  — everything at trace (very noisy)
-///
-/// If unset, defaults to `thechat=debug,info` in dev and `info` in release.
 fn init_tracing() {
-    let env_filter = EnvFilter::try_from_env("THECHAT_TRACING")
-        .unwrap_or_else(|_| {
-            if cfg!(debug_assertions) {
-                // Our crate at debug, all other crates (tokio, reqwest, ...) at info
-                EnvFilter::new("thechat=debug,info")
-            } else {
-                EnvFilter::new("info")
-            }
-        });
-
-    let fmt_layer = fmt::layer()
-        .with_target(true)
-        .with_thread_ids(true);
+    // Only enable the stderr fmt layer when THECHAT_TRACING is explicitly set.
+    // This lets the app detach from the console during normal usage.
+    let fmt_layer = std::env::var("THECHAT_TRACING").ok().map(|val| {
+        let env_filter = EnvFilter::new(val);
+        let fmt = fmt::layer()
+            .with_target(true)
+            .with_thread_ids(true);
+        fmt.with_filter(env_filter)
+    });
 
     let registry = tracing_subscriber::registry()
-        .with(env_filter)
         .with(fmt_layer);
 
     #[cfg(feature = "tracy")]
