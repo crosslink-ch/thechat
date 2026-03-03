@@ -27,6 +27,25 @@ use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 ///   THECHAT_LOG=trace                  — everything at trace (very noisy)
 ///
 /// If unset, defaults to `thechat=debug,info` in dev and `info` in release.
+fn log_level_from_env() -> log::LevelFilter {
+    let val = std::env::var("THECHAT_LOG_LEVEL").unwrap_or_default().to_lowercase();
+    match val.as_str() {
+        "trace" => log::LevelFilter::Trace,
+        "debug" => log::LevelFilter::Debug,
+        "info" => log::LevelFilter::Info,
+        "warn" | "warning" => log::LevelFilter::Warn,
+        "error" => log::LevelFilter::Error,
+        "off" | "none" => log::LevelFilter::Off,
+        _ => {
+            if cfg!(debug_assertions) {
+                log::LevelFilter::Debug
+            } else {
+                log::LevelFilter::Info
+            }
+        }
+    }
+}
+
 fn init_tracing() {
     let env_filter = EnvFilter::try_from_env("THECHAT_LOG")
         .unwrap_or_else(|_| {
@@ -40,8 +59,7 @@ fn init_tracing() {
 
     let fmt_layer = fmt::layer()
         .with_target(true)
-        .with_thread_ids(true)
-        .with_span_events(fmt::format::FmtSpan::CLOSE);
+        .with_thread_ids(true);
 
     let registry = tracing_subscriber::registry()
         .with(env_filter)
@@ -235,7 +253,7 @@ pub fn run() {
     tracing::info!("app started");
 
     tauri::Builder::default()
-        .plugin(tauri_plugin_log::Builder::new().build())
+        .plugin(tauri_plugin_log::Builder::new().level(log_level_from_env()).build())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_dialog::init())
