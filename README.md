@@ -104,6 +104,22 @@ tokio-console                                # connects to localhost:6669
 
 Requires `tokio-console` CLI: `cargo install tokio-console`
 
+#### OpenTelemetry + Jaeger (trace exploration)
+
+Start Jaeger:
+
+```bash
+docker run --rm --name jaeger -p 16686:16686 -p 4318:4318 jaegertracing/all-in-one:latest
+```
+
+Run the app:
+
+```bash
+pnpm tauri dev --features otel
+```
+
+Open http://localhost:16686, select "thechat" service, click "Find Traces".
+
 #### Both at once
 
 ```bash

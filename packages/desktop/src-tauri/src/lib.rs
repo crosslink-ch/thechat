@@ -14,6 +14,9 @@ use std::sync::Arc;
 use tauri::{Manager, State};
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
+#[cfg(feature = "otel")]
+static OTEL_PROVIDER: std::sync::OnceLock<opentelemetry_sdk::trace::SdkTracerProvider> = std::sync::OnceLock::new();
+
 fn log_level_from_env() -> log::LevelFilter {
     let val = std::env::var("THECHAT_LOG_LEVEL").unwrap_or_default().to_lowercase();
     match val.as_str() {
@@ -67,6 +70,32 @@ fn init_tracing() {
 
     #[cfg(feature = "tokio-console")]
     let registry = registry.with(console_subscriber::spawn());
+
+    #[cfg(feature = "otel")]
+    let registry = {
+        use opentelemetry::trace::TracerProvider as _;
+        use opentelemetry_otlp::SpanExporter;
+        use opentelemetry_sdk::trace::SdkTracerProvider;
+        use opentelemetry_sdk::Resource;
+
+        let exporter = SpanExporter::builder()
+            .with_http()
+            .build()
+            .expect("failed to create OTLP span exporter");
+
+        let provider = SdkTracerProvider::builder()
+            .with_resource(Resource::builder().with_service_name("thechat").build())
+            .with_batch_exporter(exporter)
+            .build();
+
+        opentelemetry::global::set_tracer_provider(provider.clone());
+        let tracer = provider.tracer("thechat");
+        let otel_layer = tracing_opentelemetry::layer().with_tracer(tracer);
+
+        OTEL_PROVIDER.set(provider).expect("OTel provider already set");
+
+        registry.with(otel_layer)
+    };
 
     // Use set_global_default instead of .init() to avoid calling
     // tracing_log::LogTracer::init(), which would conflict with tauri-plugin-log
@@ -321,6 +350,13 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+
+    #[cfg(feature = "otel")]
+    if let Some(provider) = OTEL_PROVIDER.get() {
+        if let Err(e) = provider.shutdown() {
+            eprintln!("OTel shutdown error: {e}");
+        }
+    }
 }
 
 #[cfg(test)]
