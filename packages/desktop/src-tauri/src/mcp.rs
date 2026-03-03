@@ -636,7 +636,7 @@ fn init_server_inner(
 }
 
 #[tauri::command]
-pub fn mcp_initialize<R: tauri::Runtime>(
+pub async fn mcp_initialize<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     manager: tauri::State<'_, Arc<McpManager>>,
     shell_env: tauri::State<'_, Arc<crate::env::ShellEnv>>,
@@ -649,7 +649,9 @@ pub fn mcp_initialize<R: tauri::Runtime>(
     }
 
     let config_dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
-    let config = load_config(&config_dir)?;
+    let config = tokio::task::spawn_blocking(move || load_config(&config_dir))
+        .await
+        .map_err(|e| format!("Task join error: {}", e))??;
 
     if config.mcp_servers.is_empty() {
         return Ok(());
@@ -707,7 +709,7 @@ pub fn mcp_initialize<R: tauri::Runtime>(
 /// already-initialized auth servers. Called when the user logs in or when the JWT
 /// refreshes (every ~15 minutes).
 #[tauri::command]
-pub fn mcp_initialize_authed<R: tauri::Runtime>(
+pub async fn mcp_initialize_authed<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     token: String,
     manager: tauri::State<'_, Arc<McpManager>>,
@@ -716,7 +718,9 @@ pub fn mcp_initialize_authed<R: tauri::Runtime>(
     use tauri::Emitter;
 
     let config_dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
-    let config = load_config(&config_dir)?;
+    let config = tokio::task::spawn_blocking(move || load_config(&config_dir))
+        .await
+        .map_err(|e| format!("Task join error: {}", e))??;
     let env_vars = shell_env.vars.clone();
 
     for (server_name, server_config) in config.mcp_servers {
@@ -984,22 +988,27 @@ pub async fn mcp_call_tool(
 }
 
 #[tauri::command]
-pub fn mcp_shutdown(manager: tauri::State<'_, Arc<McpManager>>) -> Result<(), String> {
-    let mut clients = manager
-        .clients
-        .lock()
-        .map_err(|e| format!("Lock error: {}", e))?;
+pub async fn mcp_shutdown(manager: tauri::State<'_, Arc<McpManager>>) -> Result<(), String> {
+    let manager = Arc::clone(&manager);
+    tokio::task::spawn_blocking(move || {
+        let mut clients = manager
+            .clients
+            .lock()
+            .map_err(|e| format!("Lock error: {}", e))?;
 
-    for (name, client_arc) in clients.drain() {
-        log::info!("Shutting down MCP server: {}", name);
-        if let Ok(mut client) = client_arc.lock() {
-            client.shutdown();
+        for (name, client_arc) in clients.drain() {
+            log::info!("Shutting down MCP server: {}", name);
+            if let Ok(mut client) = client_arc.lock() {
+                client.shutdown();
+            }
         }
-    }
 
-    manager.initialized.store(false, Ordering::SeqCst);
+        manager.initialized.store(false, Ordering::SeqCst);
 
-    Ok(())
+        Ok(())
+    })
+    .await
+    .map_err(|e| format!("Task join error: {}", e))?
 }
 
 #[cfg(test)]

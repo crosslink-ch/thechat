@@ -37,9 +37,11 @@ type DbState = Arc<Database>;
 pub struct InitialProjectDir(pub Option<String>);
 
 #[tauri::command]
-fn get_config(app: tauri::AppHandle) -> Result<config::AppConfig, String> {
+async fn get_config(app: tauri::AppHandle) -> Result<config::AppConfig, String> {
     let config_dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
-    config::load_config(&config_dir)
+    tokio::task::spawn_blocking(move || config::load_config(&config_dir))
+        .await
+        .map_err(|e| format!("Task join error: {}", e))?
 }
 
 #[tauri::command]
@@ -49,9 +51,11 @@ fn get_config_path(app: tauri::AppHandle) -> Result<String, String> {
 }
 
 #[tauri::command]
-fn save_config(config: config::AppConfig, app: tauri::AppHandle) -> Result<(), String> {
+async fn save_config(config: config::AppConfig, app: tauri::AppHandle) -> Result<(), String> {
     let config_dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
-    config::save_config(&config, &config_dir)
+    tokio::task::spawn_blocking(move || config::save_config(&config, &config_dir))
+        .await
+        .map_err(|e| format!("Task join error: {}", e))?
 }
 
 #[tauri::command]
@@ -61,63 +65,92 @@ fn get_app_config_dir(app: tauri::AppHandle) -> Result<String, String> {
 }
 
 #[tauri::command]
-fn create_conversation(
+async fn create_conversation(
     title: String,
     project_dir: Option<String>,
-    db: State<DbState>,
+    db: State<'_, DbState>,
 ) -> Result<Conversation, String> {
-    db.create_conversation(&title, project_dir.as_deref())
+    let db = Arc::clone(&db);
+    tokio::task::spawn_blocking(move || db.create_conversation(&title, project_dir.as_deref()))
+        .await
+        .map_err(|e| format!("Task join error: {}", e))?
 }
 
 #[tauri::command]
-fn get_conversation(id: String, db: State<DbState>) -> Result<Option<Conversation>, String> {
-    db.get_conversation(&id)
+async fn get_conversation(id: String, db: State<'_, DbState>) -> Result<Option<Conversation>, String> {
+    let db = Arc::clone(&db);
+    tokio::task::spawn_blocking(move || db.get_conversation(&id))
+        .await
+        .map_err(|e| format!("Task join error: {}", e))?
 }
 
 #[tauri::command]
-fn list_conversations(db: State<DbState>) -> Result<Vec<Conversation>, String> {
-    db.list_conversations()
+async fn list_conversations(db: State<'_, DbState>) -> Result<Vec<Conversation>, String> {
+    let db = Arc::clone(&db);
+    tokio::task::spawn_blocking(move || db.list_conversations())
+        .await
+        .map_err(|e| format!("Task join error: {}", e))?
 }
 
 #[tauri::command]
-fn update_conversation_title(id: String, title: String, db: State<DbState>) -> Result<(), String> {
-    db.update_conversation_title(&id, &title)
+async fn update_conversation_title(id: String, title: String, db: State<'_, DbState>) -> Result<(), String> {
+    let db = Arc::clone(&db);
+    tokio::task::spawn_blocking(move || db.update_conversation_title(&id, &title))
+        .await
+        .map_err(|e| format!("Task join error: {}", e))?
 }
 
 #[tauri::command]
-fn save_message(
+async fn save_message(
     conversation_id: String,
     role: String,
     content: String,
     reasoning_content: Option<String>,
-    db: State<DbState>,
+    db: State<'_, DbState>,
 ) -> Result<Message, String> {
-    db.save_message(
-        &conversation_id,
-        &role,
-        &content,
-        reasoning_content.as_deref(),
-    )
+    let db = Arc::clone(&db);
+    tokio::task::spawn_blocking(move || {
+        db.save_message(
+            &conversation_id,
+            &role,
+            &content,
+            reasoning_content.as_deref(),
+        )
+    })
+    .await
+    .map_err(|e| format!("Task join error: {}", e))?
 }
 
 #[tauri::command]
-fn get_messages(conversation_id: String, db: State<DbState>) -> Result<Vec<Message>, String> {
-    db.get_messages(&conversation_id)
+async fn get_messages(conversation_id: String, db: State<'_, DbState>) -> Result<Vec<Message>, String> {
+    let db = Arc::clone(&db);
+    tokio::task::spawn_blocking(move || db.get_messages(&conversation_id))
+        .await
+        .map_err(|e| format!("Task join error: {}", e))?
 }
 
 #[tauri::command]
-fn kv_get(key: String, db: State<DbState>) -> Result<Option<String>, String> {
-    db.kv_get(&key)
+async fn kv_get(key: String, db: State<'_, DbState>) -> Result<Option<String>, String> {
+    let db = Arc::clone(&db);
+    tokio::task::spawn_blocking(move || db.kv_get(&key))
+        .await
+        .map_err(|e| format!("Task join error: {}", e))?
 }
 
 #[tauri::command]
-fn kv_set(key: String, value: String, db: State<DbState>) -> Result<(), String> {
-    db.kv_set(&key, &value)
+async fn kv_set(key: String, value: String, db: State<'_, DbState>) -> Result<(), String> {
+    let db = Arc::clone(&db);
+    tokio::task::spawn_blocking(move || db.kv_set(&key, &value))
+        .await
+        .map_err(|e| format!("Task join error: {}", e))?
 }
 
 #[tauri::command]
-fn kv_delete(key: String, db: State<DbState>) -> Result<(), String> {
-    db.kv_delete(&key)
+async fn kv_delete(key: String, db: State<'_, DbState>) -> Result<(), String> {
+    let db = Arc::clone(&db);
+    tokio::task::spawn_blocking(move || db.kv_delete(&key))
+        .await
+        .map_err(|e| format!("Task join error: {}", e))?
 }
 
 #[tauri::command]
