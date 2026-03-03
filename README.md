@@ -109,13 +109,3 @@ Requires `tokio-console` CLI: `cargo install tokio-console`
 ```bash
 pnpm tauri dev --features profile-all
 ```
-
-#### Standalone debug build (no Vite)
-
-To build a standalone binary with debug symbols and bundled frontend (no Vite dev server):
-
-```bash
-pnpm tauri build --debug --no-bundle --features tracy
-```
-
-Binary is written to `packages/desktop/src-tauri/target/debug/thechat`.
