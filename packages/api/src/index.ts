@@ -1,5 +1,6 @@
 import { Elysia } from "elysia";
 import { cors } from "@elysiajs/cors";
+import { logger } from "@bogeychan/elysia-logger";
 import { sql } from "drizzle-orm";
 import { db } from "./db";
 import { authRoutes } from "./auth";
@@ -13,6 +14,11 @@ import { mcpRoutes } from "./mcp";
 
 const app = new Elysia()
   .use(cors())
+  .use(
+    logger({
+      level: process.env.LOG_LEVEL ?? "info",
+    })
+  )
   .decorate("db", db)
   .use(authRoutes)
   .use(workspaceRoutes)

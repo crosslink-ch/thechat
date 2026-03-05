@@ -20,6 +20,7 @@
     "db:studio": "bun run --env-file ../../.env drizzle-kit studio"
   },
   "dependencies": {
+    "@bogeychan/elysia-logger": "^0.1.10",
     "@elysiajs/cors": "^1.2.0",
     "@modelcontextprotocol/sdk": "^1.26.0",
     "@thechat/shared": "workspace:*",
