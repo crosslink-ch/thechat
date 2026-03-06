@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { runChatLoop } from "../core/loop";
 import { useStreamingStore, updateStreamParts } from "../stores/streaming";
 import { useCodexAuthStore } from "../stores/codex-auth";
+import { useAnthropicAuthStore } from "../stores/anthropic-auth";
 import { error as logError, formatError } from "../log";
 import type {
   Message,
@@ -271,11 +272,20 @@ export function useChat(options?: UseChatOptions) {
         // Resolve provider and codex auth
         const provider = config.provider ?? "openrouter";
         let codexAuth: { accessToken: string; accountId: string } | undefined;
+        let anthropicAuth: { accessToken: string } | undefined;
         if (provider === "codex") {
           try {
             codexAuth = await useCodexAuthStore.getState().getValidToken();
           } catch (e) {
             logError(`[useChat] Codex auth failed, falling back to OpenRouter: ${formatError(e)}`);
+          }
+        }
+        // Try Anthropic OAuth if provider is anthropic and OAuth is available
+        if (provider === "anthropic" && useAnthropicAuthStore.getState().status === "authenticated") {
+          try {
+            anthropicAuth = await useAnthropicAuthStore.getState().getValidToken();
+          } catch (e) {
+            logError(`[useChat] Anthropic OAuth refresh failed, falling back to API key: ${formatError(e)}`);
           }
         }
 
@@ -299,8 +309,9 @@ export function useChat(options?: UseChatOptions) {
           signal: controller.signal,
           cwd: convProjectDir || undefined,
           convId: streamConvId!,
-          provider: codexAuth ? "codex" : "openrouter",
+          provider: codexAuth ? "codex" : provider === "anthropic" ? "anthropic" : "openrouter",
           codexAuth,
+          anthropicAuth,
           getQueuedMessages,
           onEvents,
         });

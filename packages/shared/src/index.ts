@@ -47,7 +47,7 @@ export interface McpServerConfig {
 export interface AppConfig {
   api_key: string;
   model: string;
-  provider?: "openrouter" | "codex";
+  provider?: "openrouter" | "codex" | "anthropic";
   mcpServers?: Record<string, McpServerConfig>;
 }
 

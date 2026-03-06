@@ -8,8 +8,10 @@ import { useStreamingConvIds } from "../stores/streaming";
 import { useNotificationsStore } from "../stores/notifications";
 import { openAuthModal } from "./AuthModal";
 import { openCodexAuthModal } from "./CodexAuthModal";
+import { openAnthropicAuthModal } from "./AnthropicAuthModal";
 import { openWorkspaceModal } from "./WorkspaceModal";
 import { useCodexAuthStore } from "../stores/codex-auth";
+import { useAnthropicAuthStore } from "../stores/anthropic-auth";
 import { api } from "../lib/api";
 import { basename } from "../lib/path";
 import type { WorkspaceChannel, WorkspaceMember } from "@thechat/shared";
@@ -55,6 +57,7 @@ export function Sidebar() {
   const streamingConvIds = useStreamingConvIds();
   const notificationCount = useNotificationsStore((s) => s.notifications.length);
   const codexStatus = useCodexAuthStore((s) => s.status);
+  const anthropicStatus = useAnthropicAuthStore((s) => s.status);
 
   // Determine current active IDs from route
   const isAgentChat = routePath.startsWith("/chat");
@@ -365,6 +368,18 @@ export function Sidebar() {
                   <button
                     className="flex w-full cursor-pointer items-center justify-between gap-2 border-none bg-none px-3 py-2.5 text-left font-[inherit] text-[12px] text-text-secondary transition-colors duration-100 hover:bg-hover hover:text-text"
                     onClick={() => {
+                      openAnthropicAuthModal();
+                      setProfileMenuOpen(false);
+                    }}
+                  >
+                    <span>Claude</span>
+                    <span className={`text-[11px] ${anthropicStatus === "authenticated" ? "text-success" : "text-text-dimmed"}`}>
+                      {anthropicStatus === "authenticated" ? "Connected" : "Not connected"}
+                    </span>
+                  </button>
+                  <button
+                    className="flex w-full cursor-pointer items-center justify-between gap-2 border-none bg-none px-3 py-2.5 text-left font-[inherit] text-[12px] text-text-secondary transition-colors duration-100 hover:bg-hover hover:text-text"
+                    onClick={() => {
                       navigate({ to: "/notifications" });
                       setProfileMenuOpen(false);
                     }}
@@ -421,6 +436,20 @@ export function Sidebar() {
                 </span>
                 <span className={`text-[11px] ${codexStatus === "authenticated" ? "text-success" : "text-text-dimmed"}`}>
                   {codexStatus === "authenticated" ? "Connected" : "Not connected"}
+                </span>
+              </button>
+              <button
+                className="flex w-full cursor-pointer items-center justify-between rounded-md border-none bg-none px-2.5 py-2 text-left font-[inherit] text-[12px] text-text-secondary transition-colors duration-150 hover:bg-hover hover:text-text"
+                onClick={openAnthropicAuthModal}
+              >
+                <span className="flex items-center gap-2">
+                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M7 1.17 8.46 4.7l3.87.34-2.95 2.54.88 3.8L7 9.42l-3.26 1.96.88-3.8-2.95-2.54 3.87-.34Z" />
+                  </svg>
+                  Claude
+                </span>
+                <span className={`text-[11px] ${anthropicStatus === "authenticated" ? "text-success" : "text-text-dimmed"}`}>
+                  {anthropicStatus === "authenticated" ? "Connected" : "Not connected"}
                 </span>
               </button>
               <button

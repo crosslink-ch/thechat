@@ -6,7 +6,7 @@ import type { AppConfig } from "@thechat/shared";
 export function SettingsRoute() {
   const [config, setConfig] = useState<AppConfig | null>(null);
   const [apiKey, setApiKey] = useState("");
-  const [provider, setProvider] = useState<"openrouter" | "codex">("openrouter");
+  const [provider, setProvider] = useState<"openrouter" | "codex" | "anthropic">("openrouter");
   const [model, setModel] = useState("");
   const [showKey, setShowKey] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -83,7 +83,7 @@ export function SettingsRoute() {
         <div className="flex flex-col gap-1.5">
           <span className="text-[13px] font-medium text-text-secondary">Provider</span>
           <div className="flex gap-1">
-            {(["openrouter", "codex"] as const).map((p) => (
+            {(["openrouter", "codex", "anthropic"] as const).map((p) => (
               <button
                 key={p}
                 type="button"
@@ -94,7 +94,7 @@ export function SettingsRoute() {
                     : "border-border bg-raised text-text-muted hover:bg-hover"
                 }`}
               >
-                {p === "openrouter" ? "OpenRouter" : "Codex"}
+                {p === "openrouter" ? "OpenRouter" : p === "codex" ? "Codex" : "Anthropic"}
               </button>
             ))}
           </div>

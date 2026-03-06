@@ -1,5 +1,6 @@
 import { streamCompletion } from "./openrouter";
 import { streamCodexCompletion } from "./codex";
+import { streamAnthropicCompletion } from "./anthropic";
 import { truncateToolResult } from "./truncate";
 import { error as logError, warn as logWarn, debug as logDebug, formatError } from "../log";
 import type { ChatLoopOptions, StreamResult, ToolDefinition, StreamEvent } from "./types";
@@ -53,6 +54,18 @@ function callProvider(
       signal: options.signal,
       convId: options.convId,
       onEvents,
+    });
+  }
+  if (options.provider === "anthropic") {
+    return streamAnthropicCompletion({
+      apiKey: options.apiKey,
+      model: options.model,
+      messages,
+      params: options.params,
+      tools,
+      signal: options.signal,
+      onEvents,
+      oauthToken: options.anthropicAuth?.accessToken,
     });
   }
   return streamCompletion({
