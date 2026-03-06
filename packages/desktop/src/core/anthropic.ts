@@ -5,9 +5,9 @@ const ANTHROPIC_API_ENDPOINT = "https://api.anthropic.com/v1/messages";
 const ANTHROPIC_VERSION = "2023-06-01";
 
 export const ANTHROPIC_MODELS = [
-  { id: "claude-sonnet-4-20250514", name: "Claude Sonnet 4" },
-  { id: "claude-opus-4-20250514", name: "Claude Opus 4" },
-  { id: "claude-haiku-4-20250506", name: "Claude Haiku 4" },
+  { id: "claude-opus-4-6", name: "Claude Opus 4.6" },
+  { id: "claude-sonnet-4-6", name: "Claude Sonnet 4.6" },
+  { id: "claude-haiku-4-5-20251001", name: "Claude Haiku 4.5" },
 ];
 
 interface StreamAnthropicOptions {
