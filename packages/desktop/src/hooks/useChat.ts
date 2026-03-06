@@ -274,19 +274,10 @@ export function useChat(options?: UseChatOptions) {
         let codexAuth: { accessToken: string; accountId: string } | undefined;
         let anthropicAuth: { accessToken: string } | undefined;
         if (provider === "codex") {
-          try {
-            codexAuth = await useCodexAuthStore.getState().getValidToken();
-          } catch (e) {
-            logError(`[useChat] Codex auth failed, falling back to OpenRouter: ${formatError(e)}`);
-          }
+          codexAuth = await useCodexAuthStore.getState().getValidToken();
         }
-        // Try Anthropic OAuth if provider is anthropic and OAuth is available
         if (provider === "anthropic" && useAnthropicAuthStore.getState().status === "authenticated") {
-          try {
-            anthropicAuth = await useAnthropicAuthStore.getState().getValidToken();
-          } catch (e) {
-            logError(`[useChat] Anthropic OAuth refresh failed, falling back to API key: ${formatError(e)}`);
-          }
+          anthropicAuth = await useAnthropicAuthStore.getState().getValidToken();
         }
 
         const getQueuedMessages = () => {
