@@ -152,7 +152,7 @@ export interface ChatParams {
     json_schema: { name: string; strict?: boolean; schema: Record<string, unknown> };
   };
   reasoning_effort?: "low" | "medium" | "high";
-  thinking?: { type: "enabled"; budget_tokens: number };
+  effort?: "low" | "medium" | "high" | "max";
   seed?: number;
   provider?: { allow_fallbacks?: boolean; order?: string[] };
 }

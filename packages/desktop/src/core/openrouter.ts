@@ -37,7 +37,6 @@ function buildRequest(options: StreamCompletionOptions): {
   if (params?.tool_choice !== undefined) bodyObj.tool_choice = params.tool_choice;
   if (params?.response_format !== undefined) bodyObj.response_format = params.response_format;
   if (params?.reasoning_effort !== undefined) bodyObj.reasoning_effort = params.reasoning_effort;
-  if (params?.thinking !== undefined) bodyObj.thinking = params.thinking;
   if (params?.seed !== undefined) bodyObj.seed = params.seed;
   if (params?.provider !== undefined) bodyObj.provider = params.provider;
 

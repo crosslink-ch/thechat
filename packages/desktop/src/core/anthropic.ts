@@ -135,10 +135,9 @@ function buildRequest(options: StreamAnthropicOptions): {
   if (params?.top_k !== undefined) bodyObj.top_k = params.top_k;
   if (params?.stop !== undefined) bodyObj.stop_sequences = params.stop;
 
-  // Thinking support (adaptive for latest models)
-  if (params?.thinking) {
-    bodyObj.thinking = params.thinking;
-  }
+  // Adaptive thinking (Claude 4.6+)
+  bodyObj.thinking = { type: "adaptive" };
+  bodyObj.output_config = { effort: params?.effort ?? "high" };
 
   // Add tool definitions in Anthropic format
   if (tools && tools.length > 0) {
