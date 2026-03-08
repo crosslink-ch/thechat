@@ -1,6 +1,5 @@
 import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { relaunch } from "@tauri-apps/plugin-process";
 import type { AppConfig } from "@thechat/shared";
 import { ANTHROPIC_MODELS } from "../core/anthropic";
 import { CODEX_MODELS } from "../core/codex";
@@ -251,18 +250,8 @@ export function SettingsRoute() {
           )}
         </div>
 
-        {/* Restart required banner */}
         {status === "saved" && (
-          <div className="flex items-center justify-between rounded-lg border border-warning/30 bg-warning/10 px-4 py-3">
-            <span className="text-[13px] text-warning">Restart required to apply changes</span>
-            <button
-              type="button"
-              onClick={() => relaunch()}
-              className="cursor-pointer rounded-lg border-none bg-warning px-4 py-1.5 text-[12px] font-medium text-black transition-opacity hover:opacity-80"
-            >
-              Restart now
-            </button>
-          </div>
+          <span className="text-[12px] text-green-400">Settings saved</span>
         )}
       </div>
 

@@ -25,8 +25,7 @@ import {
 import { discoverSkills } from "../core/skills";
 import { setBatchToolRegistry } from "../core/tools/batch";
 import { setTaskRunnerConfig } from "../core/task-runner";
-import { useCodexAuthStore } from "./codex-auth";
-import type { ToolDefinition, McpToolInfo, AppConfig } from "../core/types";
+import type { ToolDefinition, McpToolInfo } from "../core/types";
 import type { SkillMeta } from "../core/skills/types";
 
 const builtinTools: ToolDefinition[] = [
@@ -63,7 +62,7 @@ interface ToolsStore {
   initializeMcp: () => void;
   initializeAuthMcp: (token: string) => void;
   discoverSkills: () => Promise<void>;
-  initializeTaskRunner: () => Promise<void>;
+  initializeTaskRunner: () => void;
   /** Set the active conversation, loading its session tools from DB if needed. */
   setActiveConversation: (convId: string | null, projectDir?: string | null) => Promise<void>;
   /** Add MCP tools to a specific conversation's session (loaded by a skill). */
@@ -167,37 +166,13 @@ export const useToolsStore = create<ToolsStore>()((set, get) => ({
     }
   },
 
-  initializeTaskRunner: async () => {
+  initializeTaskRunner: () => {
     const { tools, activeCwd } = get();
     setBatchToolRegistry(tools);
-
-    try {
-      const config = await invoke<AppConfig>("get_config");
-      const provider = config.provider ?? "openrouter";
-      let codexAuth: { accessToken: string; accountId: string } | undefined;
-
-      if (provider === "codex") {
-        const codexState = useCodexAuthStore.getState();
-        if (codexState.status === "authenticated") {
-          try {
-            codexAuth = await codexState.getValidToken();
-          } catch {
-            // Fall back to openrouter if codex auth fails
-          }
-        }
-      }
-
-      setTaskRunnerConfig({
-        apiKey: config.api_key,
-        model: config.model,
-        availableTools: tools,
-        cwd: activeCwd ?? undefined,
-        provider: codexAuth ? "codex" : "openrouter",
-        codexAuth,
-      });
-    } catch (e) {
-      logWarn(`[tools] Task runner config failed: ${formatError(e)}`);
-    }
+    setTaskRunnerConfig({
+      availableTools: tools,
+      cwd: activeCwd ?? undefined,
+    });
   },
 
   setActiveConversation: async (convId: string | null, projectDir?: string | null) => {

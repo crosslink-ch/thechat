@@ -1,13 +1,13 @@
+import { invoke } from "@tauri-apps/api/core";
 import { runChatLoop } from "./loop";
-import type { CodexAuth, StreamEvent, ToolDefinition } from "./types";
+import { useCodexAuthStore } from "../stores/codex-auth";
+import { useAnthropicAuthStore } from "../stores/anthropic-auth";
+import type { AppConfig } from "@thechat/shared";
+import type { StreamEvent, ToolDefinition } from "./types";
 
 interface TaskRunnerConfig {
-  apiKey: string;
-  model: string;
   availableTools: ToolDefinition[];
   cwd?: string;
-  provider?: "openrouter" | "codex";
-  codexAuth?: CodexAuth;
 }
 
 let config: TaskRunnerConfig | null = null;
@@ -34,6 +34,19 @@ export async function runTask(prompt: string, signal?: AbortSignal, convId?: str
     throw new Error("Task runner not configured. Call setTaskRunnerConfig first.");
   }
 
+  const appConfig = await invoke<AppConfig>("get_config");
+  const provider = appConfig.provider ?? "openrouter";
+
+  let codexAuth: { accessToken: string; accountId: string } | undefined;
+  let anthropicAuth: { accessToken: string } | undefined;
+
+  if (provider === "codex") {
+    codexAuth = await useCodexAuthStore.getState().getValidToken();
+  }
+  if (provider === "anthropic") {
+    anthropicAuth = await useAnthropicAuthStore.getState().getValidToken();
+  }
+
   const tools = config.availableTools.filter((t) => ALLOWED_TASK_TOOLS.has(t.name));
 
   const textParts: string[] = [];
@@ -57,8 +70,8 @@ export async function runTask(prompt: string, signal?: AbortSignal, convId?: str
   }
 
   await runChatLoop({
-    apiKey: config.apiKey,
-    model: config.model,
+    apiKey: appConfig.api_key,
+    model: appConfig.model,
     messages: [{ role: "user", content: prompt }],
     systemPrompt: systemPromptParts.join("\n"),
     tools,
@@ -66,8 +79,9 @@ export async function runTask(prompt: string, signal?: AbortSignal, convId?: str
     signal,
     cwd: resolvedCwd,
     convId,
-    provider: config.provider,
-    codexAuth: config.codexAuth,
+    provider: codexAuth ? "codex" : provider === "anthropic" ? "anthropic" : "openrouter",
+    codexAuth,
+    anthropicAuth,
     onEvents,
   });
 

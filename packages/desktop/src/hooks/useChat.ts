@@ -269,14 +269,14 @@ export function useChat(options?: UseChatOptions) {
           }
         };
 
-        // Resolve provider and codex auth
+        // Resolve provider auth
         const provider = config.provider ?? "openrouter";
         let codexAuth: { accessToken: string; accountId: string } | undefined;
         let anthropicAuth: { accessToken: string } | undefined;
         if (provider === "codex") {
           codexAuth = await useCodexAuthStore.getState().getValidToken();
         }
-        if (provider === "anthropic" && useAnthropicAuthStore.getState().status === "authenticated") {
+        if (provider === "anthropic") {
           anthropicAuth = await useAnthropicAuthStore.getState().getValidToken();
         }
 
