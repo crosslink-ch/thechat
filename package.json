@@ -21,6 +21,7 @@
     "test:e2e": "pnpm --filter @thechat/desktop test:e2e",
     "test:e2e:headless": "pnpm --filter @thechat/desktop test:e2e:headless"
   },
+  "packageManager": "pnpm@10.28.2",
   "devDependencies": {
     "concurrently": "^9.2.1",
     "dotenv-cli": "^11.0.0"
