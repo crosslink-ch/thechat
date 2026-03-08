@@ -32,7 +32,11 @@ pub struct AppConfig {
 pub const DEFAULT_BACKEND_URL: &str = "http://localhost:3000";
 
 pub fn backend_url() -> String {
-    std::env::var("THECHAT_BACKEND_URL").unwrap_or_else(|_| DEFAULT_BACKEND_URL.to_string())
+    std::env::var("THECHAT_BACKEND_URL").unwrap_or_else(|_| {
+        option_env!("THECHAT_BACKEND_URL")
+            .unwrap_or(DEFAULT_BACKEND_URL)
+            .to_string()
+    })
 }
 
 pub fn config_file_path(base: &Path) -> PathBuf {
