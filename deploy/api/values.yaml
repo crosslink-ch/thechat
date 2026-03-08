@@ -5,6 +5,11 @@ image:
   tag: latest
   pullPolicy: IfNotPresent
 
+migrateImage:
+  repository: ghcr.io/crosslink-ch/thechat-api-migrate
+  tag: latest
+  pullPolicy: IfNotPresent
+
 # Name of an existing Kubernetes Secret containing DATABASE_URL
 # The secret must have a key called DATABASE_URL
 databaseSecret: thechat-db

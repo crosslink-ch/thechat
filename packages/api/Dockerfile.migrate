@@ -1,0 +1,24 @@
+FROM node:22-slim
+
+RUN corepack enable && corepack prepare pnpm@latest --activate
+RUN npm i -g bun
+
+WORKDIR /app
+
+# Copy workspace root files
+COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
+
+# Copy package manifests for dependency resolution
+COPY packages/api/package.json packages/api/
+COPY packages/shared/package.json packages/shared/
+
+# Install dependencies (need drizzle-kit which is a devDependency)
+RUN pnpm install --frozen-lockfile
+
+# Copy source and migration files
+COPY packages/shared/ packages/shared/
+COPY packages/api/ packages/api/
+
+WORKDIR /app/packages/api
+
+CMD ["bunx", "drizzle-kit", "migrate"]

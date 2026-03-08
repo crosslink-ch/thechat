@@ -29,6 +29,19 @@ kubectl create secret generic thechat-smtp \
 kubectl create secret generic thechat-postmark --from-literal=POSTMARK_API_TOKEN='your-token'
 ```
 
+## Migrations
+
+Database migrations run automatically via an init container before the API starts. The init container uses a separate image (`thechat-api-migrate`) that contains `drizzle-kit` and the migration files from `packages/api/drizzle/`.
+
+Migration files must be generated and committed to git before building the image:
+
+```bash
+cd packages/api
+pnpm db:generate   # generates SQL migration files in drizzle/
+```
+
+Run this whenever you change `src/db/schema.ts`, then commit the resulting files in `drizzle/`.
+
 ## Install
 
 ```bash
