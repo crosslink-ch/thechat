@@ -28,6 +28,7 @@ spec:
       tolerations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+      serviceAccountName: {{ include "thechat-api.fullname" . }}
       initContainers:
         - name: migrate
           image: "{{ .Values.migrateImage.repository }}:{{ .Values.migrateImage.tag }}"

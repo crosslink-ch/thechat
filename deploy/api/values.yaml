@@ -1,3 +1,7 @@
+serviceAccount:
+  # Annotations to add (e.g., eks.amazonaws.com/role-arn for IRSA)
+  annotations: {}
+
 replicaCount: 1
 
 image:
