@@ -1,0 +1,9 @@
+node_modules
+.git
+*.md
+.env
+.env.*
+!.env.example
+packages/desktop/src-tauri/target
+dist
+packages/api/dist

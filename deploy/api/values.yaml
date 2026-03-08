@@ -1,0 +1,64 @@
+replicaCount: 1
+
+image:
+  repository: ghcr.io/crosslink-ch/thechat-api
+  tag: latest
+  pullPolicy: IfNotPresent
+
+# Name of an existing Kubernetes Secret containing DATABASE_URL
+# The secret must have a key called DATABASE_URL
+databaseSecret: thechat-db
+
+# Name of an existing Kubernetes Secret containing JWT_SECRET
+jwtSecret: thechat-jwt
+
+# Name of an existing Kubernetes Secret for SMTP credentials (optional)
+# Expected keys: SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS
+# Set to "" to disable
+smtpSecret: ""
+
+# Name of an existing Kubernetes Secret for Postmark (optional)
+# Expected key: POSTMARK_API_TOKEN
+# Set to "" to disable
+postmarkSecret: ""
+
+env:
+  THECHAT_BACKEND_PORT: "3000"
+  THECHAT_BACKEND_URL: "https://api.thechat.app"
+  EMAIL_PROVIDER: "smtp"
+  EMAIL_FROM: "noreply@thechat.app"
+  REQUIRE_EMAIL_VERIFICATION: "false"
+  LOG_LEVEL: "info"
+
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 3000
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: api.thechat.app
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    memory: 512Mi
+
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 80
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
