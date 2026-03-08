@@ -2,6 +2,7 @@
 """Run all test suites in parallel, only showing output from failures."""
 
 import os
+import socket
 import subprocess
 import sys
 import time
@@ -10,6 +11,49 @@ from dataclasses import dataclass
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+
+
+def load_dotenv() -> None:
+    """Load .env file into os.environ (without overriding existing vars)."""
+    env_file = ROOT / ".env"
+    if not env_file.exists():
+        return
+    for line in env_file.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key = key.strip()
+        value = value.strip()
+        if key and key not in os.environ:
+            os.environ[key] = value
+
+
+load_dotenv()
+
+BACKEND_PORT = int(os.environ.get("THECHAT_BACKEND_PORT", 3000))
+
+
+def is_backend_running() -> bool:
+    """Check if there's a process listening on the backend port."""
+    try:
+        with socket.create_connection(("localhost", BACKEND_PORT), timeout=1):
+            return True
+    except OSError:
+        return False
+
+
+def rust_cmd(include_ignored: bool) -> list[str]:
+    cmd = [
+        "cargo",
+        "test",
+        "--manifest-path",
+        "packages/desktop/src-tauri/Cargo.toml",
+    ]
+    if include_ignored:
+        cmd += ["--", "--include-ignored"]
+    return cmd
+
 
 SUITES = [
     {
@@ -26,12 +70,7 @@ SUITES = [
     },
     {
         "name": "rust",
-        "cmd": [
-            "cargo",
-            "test",
-            "--manifest-path",
-            "packages/desktop/src-tauri/Cargo.toml",
-        ],
+        "cmd_fn": rust_cmd,
     },
     {
         "name": "integration",
@@ -74,9 +113,12 @@ def run_suite(suite: dict) -> Result:
 def main():
     start = time.monotonic()
 
+    args = sys.argv[1:]
+    run_all = "--all" in args
+    names = {a for a in args if not a.startswith("-")}
+
     suites = SUITES
-    if len(sys.argv) > 1:
-        names = set(sys.argv[1:])
+    if names:
         unknown = names - {s["name"] for s in SUITES}
         if unknown:
             print(f"Unknown suites: {', '.join(unknown)}")
@@ -84,7 +126,24 @@ def main():
             sys.exit(1)
         suites = [s for s in SUITES if s["name"] in names]
 
+    # Skip integration tests if backend is not running
+    if any(s["name"] == "integration" for s in suites) and not is_backend_running():
+        print(
+            f"\033[33mSkipping integration tests: "
+            f"backend not running on localhost:{BACKEND_PORT}\033[0m"
+        )
+        suites = [s for s in suites if s["name"] != "integration"]
+        if not suites:
+            sys.exit(0)
+
+    # Resolve cmd_fn (used by rust suite to toggle --include-ignored)
+    for s in suites:
+        if "cmd_fn" in s:
+            s["cmd"] = s["cmd_fn"](run_all)
+
     print(f"Running {len(suites)} test suite(s): {', '.join(s['name'] for s in suites)}")
+    if not run_all:
+        print("  (skipping slow tests — pass --all to include them)")
     print()
 
     results: list[Result] = []

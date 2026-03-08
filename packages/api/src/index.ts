@@ -43,6 +43,6 @@ const app = new Elysia()
 
 export type App = typeof app;
 
-app.listen(3000);
+app.listen(Number(process.env.THECHAT_BACKEND_PORT) || 3000);
 
 console.log(`TheChat API running at http://localhost:${app.server!.port}`);

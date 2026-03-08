@@ -1278,8 +1278,11 @@ mod tests {
     }
 
     // -- Stdio transport integration tests --
+    // These spawn real MCP servers and are slow (~6s). Skipped by default;
+    // run with `cargo test -- --ignored` to include them.
 
     #[test]
+    #[ignore]
     fn stdio_spawn_and_initialize() {
         let (mut client, _tmp) = spawn_stdio_test_server();
         // If we got here, spawn + initialize succeeded
@@ -1287,6 +1290,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn stdio_list_tools() {
         let (mut client, _tmp) = spawn_stdio_test_server();
         let tools = client.list_tools().expect("list_tools");
@@ -1304,6 +1308,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn stdio_call_tool_list_directory() {
         let (mut client, tmp) = spawn_stdio_test_server();
         let result = client.call_tool(
@@ -1315,6 +1320,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn stdio_call_tool_read_write_roundtrip() {
         let (mut client, tmp) = spawn_stdio_test_server();
         let file_path = tmp.path().join("test.txt");
@@ -1342,6 +1348,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn stdio_call_tool_error() {
         let (mut client, _tmp) = spawn_stdio_test_server();
         let result = client.call_tool(
@@ -1353,6 +1360,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn stdio_shutdown() {
         let (mut client, _tmp) = spawn_stdio_test_server();
         client.shutdown();
@@ -1362,6 +1370,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn stdio_init_server_lifecycle() {
         let tmp = TempDir::new().expect("create temp dir");
         let config = McpServerConfig {
@@ -1395,6 +1404,7 @@ mod tests {
     // -- HTTP transport integration tests --
 
     #[test]
+    #[ignore]
     fn http_connect_and_initialize() {
         let (_guard, port) = spawn_http_test_server();
         let url = format!("http://127.0.0.1:{}/mcp", port);
@@ -1405,6 +1415,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn http_list_tools() {
         let (_guard, port) = spawn_http_test_server();
         let url = format!("http://127.0.0.1:{}/mcp", port);
@@ -1421,6 +1432,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn http_call_tool_echo() {
         let (_guard, port) = spawn_http_test_server();
         let url = format!("http://127.0.0.1:{}/mcp", port);
@@ -1438,6 +1450,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn http_session_id_captured() {
         let (_guard, port) = spawn_http_test_server();
         let url = format!("http://127.0.0.1:{}/mcp", port);
@@ -1452,6 +1465,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn http_init_server_lifecycle() {
         let (_guard, port) = spawn_http_test_server();
         let url = format!("http://127.0.0.1:{}/mcp", port);
@@ -1476,6 +1490,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn http_connect_to_dead_server_fails() {
         // Port 1 is almost certainly not running an MCP server
         let mut client = McpClient::connect_http("http://127.0.0.1:1/mcp", &HashMap::new())
