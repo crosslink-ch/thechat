@@ -151,6 +151,11 @@ export const wsRoutes = new Elysia().ws("/ws", {
 
     const socket = ws.raw as unknown as WebSocket;
 
+    if (event.type === "ping") {
+      sendTo(ws.raw as unknown as WebSocket, { type: "pong" });
+      return;
+    }
+
     if (event.type === "auth") {
       const user = await validateToken(event.token);
       if (!user) {

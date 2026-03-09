@@ -17,6 +17,7 @@ export const getAgentChatProjectDir = () => useAgentChatTitle.getState().project
 
 export function ChatHeader() {
   const connected = useWebSocketStore((s) => s.connected);
+  const reconnecting = useWebSocketStore((s) => s.reconnecting);
   const activeWorkspace = useWorkspacesStore((s) => s.activeWorkspace);
   const permissionMode = usePermissionModeStore((s) => s.mode);
   const agentChatTitle = useAgentChatTitle((s) => s.title);
@@ -56,7 +57,7 @@ export function ChatHeader() {
   }
 
   const showBackButton = !isAgentChat;
-  const showWsStatus = !isAgentChat && connected;
+  const showWsStatus = !isAgentChat && (connected || reconnecting);
 
   return (
     <div className={`flex h-12 items-center gap-2 border-b border-border-subtle bg-surface px-3 ${sidebarOpen ? "" : "pl-18"}`}>
@@ -87,7 +88,11 @@ export function ChatHeader() {
         </span>
       )}
       {showWsStatus && (
-        <span className="size-1.5 shrink-0 rounded-full bg-success" title="Connected" />
+        reconnecting ? (
+          <span className="size-1.5 shrink-0 animate-pulse rounded-full bg-warning-text" title="Reconnecting..." />
+        ) : (
+          <span className="size-1.5 shrink-0 rounded-full bg-success" title="Connected" />
+        )
       )}
     </div>
   );

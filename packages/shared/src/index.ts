@@ -207,7 +207,8 @@ export interface DirectConversation {
 export type WsClientEvent =
   | { type: "auth"; token: string }
   | { type: "send_message"; conversationId: string; content: string }
-  | { type: "typing"; conversationId: string };
+  | { type: "typing"; conversationId: string }
+  | { type: "ping" };
 
 // -- Bot Types --
 
@@ -270,4 +271,5 @@ export type WsServerEvent =
   | { type: "member_role_changed"; workspaceId: string; userId: string; newRole: WorkspaceMemberRole }
   | { type: "member_removed"; workspaceId: string; userId: string }
   | { type: "invite_received"; invite: WorkspaceInvite }
+  | { type: "pong" }
   | { type: "error"; message: string };
