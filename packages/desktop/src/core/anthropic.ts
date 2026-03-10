@@ -122,7 +122,7 @@ function buildRequest(options: StreamAnthropicOptions): {
   const bodyObj: Record<string, unknown> = {
     model: params?.model ?? model,
     messages: anthropicMessages,
-    max_tokens: params?.max_tokens ?? 16384,
+    max_tokens: params?.max_tokens ?? 32000,
     stream: true,
   };
 
