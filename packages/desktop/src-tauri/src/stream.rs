@@ -77,6 +77,9 @@ pub struct StreamResult {
     #[serde(rename = "toolCalls")]
     pub tool_calls: Vec<ToolCallResult>,
     pub usage: Option<Usage>,
+    /// Normalized finish reason: "stop", "tool_calls", "length", or "unknown".
+    #[serde(rename = "stopReason")]
+    pub stop_reason: String,
 }
 
 // ---------------------------------------------------------------------------
@@ -110,6 +113,7 @@ fn parse_openrouter_data(
     acc_text: &mut String,
     acc_reasoning: &mut String,
     usage: &mut Option<Usage>,
+    stop_reason: &mut String,
     tool_calls: &mut HashMap<usize, ToolCallAccum>,
     events: &mut Vec<StreamEvent>,
 ) {
@@ -137,6 +141,17 @@ fn parse_openrouter_data(
                 total_tokens: tt,
             });
         }
+    }
+
+    // Finish reason: normalize OpenAI-style values
+    if let Some(reason) = parsed.pointer("/choices/0/finish_reason").and_then(|v| v.as_str()) {
+        *stop_reason = match reason {
+            "stop" => "stop".to_string(),
+            "tool_calls" => "tool_calls".to_string(),
+            "length" | "max_tokens" => "length".to_string(),
+            "content_filter" => "content_filter".to_string(),
+            other => other.to_string(),
+        };
     }
 
     let delta = match parsed.pointer("/choices/0/delta") {
@@ -210,6 +225,7 @@ fn parse_codex_data(
     acc_text: &mut String,
     acc_reasoning: &mut String,
     usage: &mut Option<Usage>,
+    stop_reason: &mut String,
     func_calls: &mut HashMap<String, CodexFuncCall>,
     events: &mut Vec<StreamEvent>,
 ) {
@@ -300,6 +316,11 @@ fn parse_codex_data(
             }
         }
         "response.completed" | "response.incomplete" => {
+            *stop_reason = if event_type == "response.incomplete" {
+                "length".to_string()
+            } else {
+                "stop".to_string()
+            };
             if let Some(resp) = parsed.get("response") {
                 if let Some(u) = resp.get("usage") {
                     let input = u.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
@@ -330,6 +351,7 @@ fn parse_anthropic_data(
     acc_text: &mut String,
     acc_reasoning: &mut String,
     usage: &mut Option<Usage>,
+    stop_reason: &mut String,
     tool_uses: &mut HashMap<usize, AnthropicToolUse>,
     events: &mut Vec<StreamEvent>,
 ) {
@@ -417,6 +439,15 @@ fn parse_anthropic_data(
             }
         }
         "message_delta" => {
+            // Normalize Anthropic stop_reason to our standard values
+            if let Some(reason) = parsed.pointer("/delta/stop_reason").and_then(|v| v.as_str()) {
+                *stop_reason = match reason {
+                    "end_turn" => "stop".to_string(),
+                    "tool_use" => "tool_calls".to_string(),
+                    "max_tokens" => "length".to_string(),
+                    other => other.to_string(),
+                };
+            }
             // Final usage update (output tokens)
             if let Some(u) = parsed.get("usage") {
                 let output = u.get("output_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
@@ -449,11 +480,15 @@ fn finalize_anthropic_tools(
     sorted
         .into_iter()
         .map(|(_, tu)| {
-            let parsed_args: serde_json::Value = serde_json::from_str(&tu.args)
-                .unwrap_or_else(|_| {
+            let parsed_args: serde_json::Value = if tu.args.is_empty() {
+                tracing::warn!(tool = %tu.name, "tool call has empty args (response likely truncated by max_tokens)");
+                serde_json::Value::Object(serde_json::Map::new())
+            } else {
+                serde_json::from_str(&tu.args).unwrap_or_else(|_| {
                     tracing::warn!(tool = %tu.name, "failed to parse Anthropic tool args: {}", &tu.args[..tu.args.len().min(200)]);
                     serde_json::Value::Object(serde_json::Map::new())
-                });
+                })
+            };
             events.push(StreamEvent::ToolCallComplete {
                 tool_call_id: tu.id.clone(),
                 tool_name: tu.name.clone(),
@@ -606,6 +641,7 @@ async fn run_stream(
     let mut acc_text = String::new();
     let mut acc_reasoning = String::new();
     let mut usage: Option<Usage> = None;
+    let mut stop_reason = String::from("unknown");
     let mut or_tool_calls: HashMap<usize, ToolCallAccum> = HashMap::new();
     let mut codex_func_calls: HashMap<String, CodexFuncCall> = HashMap::new();
     let mut anthropic_tool_uses: HashMap<usize, AnthropicToolUse> = HashMap::new();
@@ -656,6 +692,7 @@ async fn run_stream(
                     &mut acc_text,
                     &mut acc_reasoning,
                     &mut usage,
+                    &mut stop_reason,
                     &mut or_tool_calls,
                     &mut line_events,
                 ),
@@ -664,6 +701,7 @@ async fn run_stream(
                     &mut acc_text,
                     &mut acc_reasoning,
                     &mut usage,
+                    &mut stop_reason,
                     &mut codex_func_calls,
                     &mut line_events,
                 ),
@@ -672,6 +710,7 @@ async fn run_stream(
                     &mut acc_text,
                     &mut acc_reasoning,
                     &mut usage,
+                    &mut stop_reason,
                     &mut anthropic_tool_uses,
                     &mut line_events,
                 ),
@@ -726,6 +765,7 @@ async fn run_stream(
         reasoning: acc_reasoning,
         tool_calls,
         usage,
+        stop_reason,
     })
 }
 
@@ -742,9 +782,10 @@ mod tests {
         let mut text = String::new();
         let mut reasoning = String::new();
         let mut usage = None;
+        let mut stop_reason = String::from("unknown");
         let mut tool_calls = HashMap::new();
         let mut events = Vec::new();
-        parse_openrouter_data(data, &mut text, &mut reasoning, &mut usage, &mut tool_calls, &mut events);
+        parse_openrouter_data(data, &mut text, &mut reasoning, &mut usage, &mut stop_reason, &mut tool_calls, &mut events);
         (text, reasoning, usage, tool_calls, events)
     }
 
@@ -752,9 +793,10 @@ mod tests {
         let mut text = String::new();
         let mut reasoning = String::new();
         let mut usage = None;
+        let mut stop_reason = String::from("unknown");
         let mut func_calls = HashMap::new();
         let mut events = Vec::new();
-        parse_codex_data(data, &mut text, &mut reasoning, &mut usage, &mut func_calls, &mut events);
+        parse_codex_data(data, &mut text, &mut reasoning, &mut usage, &mut stop_reason, &mut func_calls, &mut events);
         (text, reasoning, usage, func_calls, events)
     }
 
@@ -804,23 +846,24 @@ mod tests {
         let mut text = String::new();
         let mut reasoning = String::new();
         let mut usage = None;
+        let mut stop_reason = String::from("unknown");
         let mut tool_calls: HashMap<usize, ToolCallAccum> = HashMap::new();
         let mut events = Vec::new();
 
         // First chunk: tool call start
         parse_openrouter_data(
             r#"{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"get_weather","arguments":""}}]}}]}"#,
-            &mut text, &mut reasoning, &mut usage, &mut tool_calls, &mut events,
+            &mut text, &mut reasoning, &mut usage, &mut stop_reason, &mut tool_calls, &mut events,
         );
         // Second chunk: args delta
         parse_openrouter_data(
             r#"{"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"city\""}}]}}]}"#,
-            &mut text, &mut reasoning, &mut usage, &mut tool_calls, &mut events,
+            &mut text, &mut reasoning, &mut usage, &mut stop_reason, &mut tool_calls, &mut events,
         );
         // Third chunk: more args
         parse_openrouter_data(
             r#"{"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":": \"Paris\"}"}}]}}]}"#,
-            &mut text, &mut reasoning, &mut usage, &mut tool_calls, &mut events,
+            &mut text, &mut reasoning, &mut usage, &mut stop_reason, &mut tool_calls, &mut events,
         );
 
         assert_eq!(tool_calls.len(), 1);
@@ -868,28 +911,29 @@ mod tests {
         let mut text = String::new();
         let mut reasoning = String::new();
         let mut usage = None;
+        let mut stop_reason = String::from("unknown");
         let mut func_calls: HashMap<String, CodexFuncCall> = HashMap::new();
         let mut events = Vec::new();
 
         // 1. Item added
         parse_codex_data(
             r#"{"type":"response.output_item.added","item":{"type":"function_call","id":"fc_1","call_id":"fc_1","name":"read"}}"#,
-            &mut text, &mut reasoning, &mut usage, &mut func_calls, &mut events,
+            &mut text, &mut reasoning, &mut usage, &mut stop_reason, &mut func_calls, &mut events,
         );
         // 2. Args delta
         parse_codex_data(
             r#"{"type":"response.function_call_arguments.delta","item_id":"fc_1","delta":"{\"path\":"}"#,
-            &mut text, &mut reasoning, &mut usage, &mut func_calls, &mut events,
+            &mut text, &mut reasoning, &mut usage, &mut stop_reason, &mut func_calls, &mut events,
         );
         // 3. More args
         parse_codex_data(
             r#"{"type":"response.function_call_arguments.delta","item_id":"fc_1","delta":"\"foo\"}"}"#,
-            &mut text, &mut reasoning, &mut usage, &mut func_calls, &mut events,
+            &mut text, &mut reasoning, &mut usage, &mut stop_reason, &mut func_calls, &mut events,
         );
         // 4. Item done (with final arguments)
         parse_codex_data(
             r#"{"type":"response.output_item.done","item":{"type":"function_call","id":"fc_1","arguments":"{\"path\":\"foo\"}"}}"#,
-            &mut text, &mut reasoning, &mut usage, &mut func_calls, &mut events,
+            &mut text, &mut reasoning, &mut usage, &mut stop_reason, &mut func_calls, &mut events,
         );
 
         assert_eq!(func_calls.len(), 1);
@@ -977,9 +1021,10 @@ mod tests {
         let mut text = String::new();
         let mut reasoning = String::new();
         let mut usage = None;
+        let mut stop_reason = String::from("unknown");
         let mut tool_uses = HashMap::new();
         let mut events = Vec::new();
-        parse_anthropic_data(data, &mut text, &mut reasoning, &mut usage, &mut tool_uses, &mut events);
+        parse_anthropic_data(data, &mut text, &mut reasoning, &mut usage, &mut stop_reason, &mut tool_uses, &mut events);
         (text, reasoning, usage, tool_uses, events)
     }
 
@@ -1007,23 +1052,24 @@ mod tests {
         let mut text = String::new();
         let mut reasoning = String::new();
         let mut usage = None;
+        let mut stop_reason = String::from("unknown");
         let mut tool_uses: HashMap<usize, AnthropicToolUse> = HashMap::new();
         let mut events = Vec::new();
 
         // 1. content_block_start with tool_use
         parse_anthropic_data(
             r#"{"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_abc","name":"read"}}"#,
-            &mut text, &mut reasoning, &mut usage, &mut tool_uses, &mut events,
+            &mut text, &mut reasoning, &mut usage, &mut stop_reason, &mut tool_uses, &mut events,
         );
         // 2. input_json_delta
         parse_anthropic_data(
             r#"{"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"path\":"}}"#,
-            &mut text, &mut reasoning, &mut usage, &mut tool_uses, &mut events,
+            &mut text, &mut reasoning, &mut usage, &mut stop_reason, &mut tool_uses, &mut events,
         );
         // 3. more input_json_delta
         parse_anthropic_data(
             r#"{"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"\"foo.txt\"}"}}"#,
-            &mut text, &mut reasoning, &mut usage, &mut tool_uses, &mut events,
+            &mut text, &mut reasoning, &mut usage, &mut stop_reason, &mut tool_uses, &mut events,
         );
 
         assert_eq!(tool_uses.len(), 1);
@@ -1042,21 +1088,23 @@ mod tests {
         let mut text = String::new();
         let mut reasoning = String::new();
         let mut usage = None;
+        let mut stop_reason = String::from("unknown");
         let mut tool_uses = HashMap::new();
         let mut events = Vec::new();
 
         // message_start with input usage
         parse_anthropic_data(
             r#"{"type":"message_start","message":{"usage":{"input_tokens":100,"output_tokens":0}}}"#,
-            &mut text, &mut reasoning, &mut usage, &mut tool_uses, &mut events,
+            &mut text, &mut reasoning, &mut usage, &mut stop_reason, &mut tool_uses, &mut events,
         );
         assert_eq!(usage.as_ref().unwrap().prompt_tokens, 100);
 
         // message_delta with output usage
         parse_anthropic_data(
             r#"{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":50}}"#,
-            &mut text, &mut reasoning, &mut usage, &mut tool_uses, &mut events,
+            &mut text, &mut reasoning, &mut usage, &mut stop_reason, &mut tool_uses, &mut events,
         );
+        assert_eq!(stop_reason, "stop");
         let u = usage.unwrap();
         assert_eq!(u.prompt_tokens, 100);
         assert_eq!(u.completion_tokens, 50);

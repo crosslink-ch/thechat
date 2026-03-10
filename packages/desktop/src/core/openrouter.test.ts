@@ -26,6 +26,7 @@ describe("streamCompletion", () => {
     reasoning: "",
     toolCalls: [],
     usage: undefined,
+    stopReason: "stop",
   };
 
   it("passes correct URL, headers, and body to invoke", async () => {
@@ -110,6 +111,7 @@ describe("streamCompletion", () => {
       reasoning: "Thinking...",
       toolCalls: [{ id: "call_1", name: "read", args: { path: "foo" } }],
       usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
+      stopReason: "tool_calls",
     };
     mockInvoke.mockResolvedValue(resultWithUsage);
 

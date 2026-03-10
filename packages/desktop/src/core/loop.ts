@@ -149,6 +149,38 @@ export async function runChatLoop(options: ChatLoopOptions): Promise<void> {
       return;
     }
 
+    // Response truncated due to max_tokens — return errors for incomplete tool calls
+    // so the model gets another turn and can recover
+    if (result.stopReason === "length" && result.toolCalls.length > 0) {
+      logWarn(`[loop] Response truncated (max_tokens) with ${result.toolCalls.length} incomplete tool call(s)`);
+
+      const assistantMessage: Record<string, unknown> = { role: "assistant" };
+      if (result.text) assistantMessage.content = result.text;
+      assistantMessage.tool_calls = result.toolCalls.map((tc) => ({
+        id: tc.id,
+        type: "function",
+        function: { name: tc.name, arguments: JSON.stringify(tc.args) },
+      }));
+      workingMessages.push(assistantMessage);
+
+      for (const tc of result.toolCalls) {
+        const errorResult = { error: "Tool execution aborted: your response was truncated due to max_tokens. Break your work into smaller steps." };
+        onEvents([{
+          type: "tool-result",
+          toolCallId: tc.id,
+          toolName: tc.name,
+          result: errorResult,
+          isError: true,
+        }]);
+        workingMessages.push({
+          role: "tool",
+          tool_call_id: tc.id,
+          content: JSON.stringify(errorResult),
+        });
+      }
+      continue;
+    }
+
     // No tool calls → check for queued messages before finishing
     if (result.toolCalls.length === 0) {
       const queued = options.getQueuedMessages?.() ?? [];

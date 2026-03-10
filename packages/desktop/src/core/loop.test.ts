@@ -21,6 +21,7 @@ describe("runChatLoop", () => {
       reasoning: "",
       toolCalls: [],
       usage: { prompt_tokens: 5, completion_tokens: 3, total_tokens: 8 },
+      stopReason: "stop",
     });
 
     const events: StreamEvent[] = [];
@@ -51,6 +52,7 @@ describe("runChatLoop", () => {
       text: "",
       reasoning: "",
       toolCalls: [{ id: "call_1", name: "get_weather", args: { city: "Paris" } }],
+      stopReason: "tool_calls",
     });
 
     // Second call: returns text (no tool calls)
@@ -59,6 +61,7 @@ describe("runChatLoop", () => {
       reasoning: "",
       toolCalls: [],
       usage: { prompt_tokens: 20, completion_tokens: 10, total_tokens: 30 },
+      stopReason: "stop",
     });
 
     const events: StreamEvent[] = [];
@@ -98,6 +101,7 @@ describe("runChatLoop", () => {
       text: "",
       reasoning: "",
       toolCalls: [{ id: "call_1", name: "broken_tool", args: {} }],
+      stopReason: "tool_calls",
     });
 
     // Second call: model responds after seeing the error
@@ -105,6 +109,7 @@ describe("runChatLoop", () => {
       text: "Sorry, the tool failed",
       reasoning: "",
       toolCalls: [],
+      stopReason: "stop",
     });
 
     const events: StreamEvent[] = [];
@@ -149,6 +154,7 @@ describe("runChatLoop", () => {
         text: "",
         reasoning: "",
         toolCalls: [{ id: `call_${callCount}`, name: "infinite_tool", args: { attempt: callCount } }],
+        stopReason: "tool_calls",
       };
     });
 
@@ -193,12 +199,14 @@ describe("runChatLoop", () => {
       text: "",
       reasoning: "",
       toolCalls: [{ id: "call_1", name: "nonexistent_tool", args: {} }],
+      stopReason: "tool_calls",
     });
 
     mockStreamCompletion.mockResolvedValueOnce({
       text: "I don't know that tool",
       reasoning: "",
       toolCalls: [],
+      stopReason: "stop",
     });
 
     const events: StreamEvent[] = [];
@@ -234,12 +242,14 @@ describe("runChatLoop", () => {
       text: "",
       reasoning: "",
       toolCalls: [{ id: "call_1", name: "slow_tool", args: {} }],
+      stopReason: "tool_calls",
     });
 
     mockStreamCompletion.mockResolvedValueOnce({
       text: "Done",
       reasoning: "",
       toolCalls: [],
+      stopReason: "stop",
     });
 
     const events: StreamEvent[] = [];
@@ -274,12 +284,14 @@ describe("runChatLoop", () => {
       text: "",
       reasoning: "",
       toolCalls: [{ id: "call_1", name: "guarded_tool", args: {} }],
+      stopReason: "tool_calls",
     });
 
     mockStreamCompletion.mockResolvedValueOnce({
       text: "Permission was denied",
       reasoning: "",
       toolCalls: [],
+      stopReason: "stop",
     });
 
     const events: StreamEvent[] = [];
@@ -322,6 +334,7 @@ describe("runChatLoop", () => {
         text: "",
         reasoning: "",
         toolCalls: [{ id: `call_${i}`, name: "read_file", args: { path: "/foo.txt" } }],
+        stopReason: "tool_calls",
       });
     }
 
@@ -331,6 +344,7 @@ describe("runChatLoop", () => {
       reasoning: "",
       toolCalls: [],
       usage: { prompt_tokens: 50, completion_tokens: 20, total_tokens: 70 },
+      stopReason: "stop",
     });
 
     const events: StreamEvent[] = [];
@@ -373,22 +387,26 @@ describe("runChatLoop", () => {
       text: "",
       reasoning: "",
       toolCalls: [{ id: "call_1", name: "read_file", args: { path: "/a.txt" } }],
+      stopReason: "tool_calls",
     });
     mockStreamCompletion.mockResolvedValueOnce({
       text: "",
       reasoning: "",
       toolCalls: [{ id: "call_2", name: "read_file", args: { path: "/b.txt" } }],
+      stopReason: "tool_calls",
     });
     mockStreamCompletion.mockResolvedValueOnce({
       text: "",
       reasoning: "",
       toolCalls: [{ id: "call_3", name: "read_file", args: { path: "/c.txt" } }],
+      stopReason: "tool_calls",
     });
     mockStreamCompletion.mockResolvedValueOnce({
       text: "Done reading all files",
       reasoning: "",
       toolCalls: [],
       usage: { prompt_tokens: 30, completion_tokens: 10, total_tokens: 40 },
+      stopReason: "stop",
     });
 
     const events: StreamEvent[] = [];
@@ -439,6 +457,7 @@ describe("runChatLoop", () => {
       text: "",
       reasoning: "",
       toolCalls: [{ id: "call_1", name: "skill", args: { name: "k8s" } }],
+      stopReason: "tool_calls",
     });
 
     // Round 2: model calls the dynamically-loaded tool
@@ -446,6 +465,7 @@ describe("runChatLoop", () => {
       text: "",
       reasoning: "",
       toolCalls: [{ id: "call_2", name: "kubectl__get_pods", args: {} }],
+      stopReason: "tool_calls",
     });
 
     // Round 3: text response
@@ -454,6 +474,7 @@ describe("runChatLoop", () => {
       reasoning: "",
       toolCalls: [],
       usage: { prompt_tokens: 30, completion_tokens: 10, total_tokens: 40 },
+      stopReason: "stop",
     });
 
     const events: StreamEvent[] = [];
@@ -496,6 +517,7 @@ describe("runChatLoop", () => {
       text: "Here's my answer.",
       reasoning: "",
       toolCalls: [],
+      stopReason: "stop",
     });
 
     // Round 2: LLM sees the queued user message and responds
@@ -504,6 +526,7 @@ describe("runChatLoop", () => {
       reasoning: "",
       toolCalls: [],
       usage: { prompt_tokens: 20, completion_tokens: 10, total_tokens: 30 },
+      stopReason: "stop",
     });
 
     const events: StreamEvent[] = [];
@@ -566,6 +589,7 @@ describe("runChatLoop", () => {
       text: "Let me search for that.",
       reasoning: "",
       toolCalls: [{ id: "call_1", name: "search", args: { query: "test" } }],
+      stopReason: "tool_calls",
     });
 
     // Round 2: LLM sees tool result + queued message, responds with text
@@ -574,6 +598,7 @@ describe("runChatLoop", () => {
       reasoning: "",
       toolCalls: [],
       usage: { prompt_tokens: 30, completion_tokens: 15, total_tokens: 45 },
+      stopReason: "stop",
     });
 
     const events: StreamEvent[] = [];
@@ -618,6 +643,7 @@ describe("runChatLoop", () => {
       text: "First response.",
       reasoning: "",
       toolCalls: [],
+      stopReason: "stop",
     });
 
     mockStreamCompletion.mockResolvedValueOnce({
@@ -625,6 +651,7 @@ describe("runChatLoop", () => {
       reasoning: "",
       toolCalls: [],
       usage: { prompt_tokens: 30, completion_tokens: 10, total_tokens: 40 },
+      stopReason: "stop",
     });
 
     let drained = false;
@@ -673,6 +700,7 @@ describe("runChatLoop", () => {
       reasoning: "",
       toolCalls: [],
       usage: { prompt_tokens: 5, completion_tokens: 3, total_tokens: 8 },
+      stopReason: "stop",
     });
 
     const events: StreamEvent[] = [];
@@ -713,6 +741,7 @@ describe("runChatLoop", () => {
       text: "",
       reasoning: "",
       toolCalls: [{ id: "call_1", name: "lookup", args: { key: "x" } }],
+      stopReason: "tool_calls",
     });
 
     // Round 2: text-only (but queue will have msg-B)
@@ -720,6 +749,7 @@ describe("runChatLoop", () => {
       text: "Here's the lookup result and msg-A response.",
       reasoning: "",
       toolCalls: [],
+      stopReason: "stop",
     });
 
     // Round 3: text-only, queue empty → finish
@@ -728,6 +758,7 @@ describe("runChatLoop", () => {
       reasoning: "",
       toolCalls: [],
       usage: { prompt_tokens: 50, completion_tokens: 20, total_tokens: 70 },
+      stopReason: "stop",
     });
 
     const events: StreamEvent[] = [];
@@ -781,6 +812,7 @@ describe("runChatLoop", () => {
       text: "I think the answer is 42.",
       reasoning: "",
       toolCalls: [],
+      stopReason: "stop",
     });
 
     mockStreamCompletion.mockResolvedValueOnce({
@@ -788,6 +820,7 @@ describe("runChatLoop", () => {
       reasoning: "",
       toolCalls: [],
       usage: { prompt_tokens: 20, completion_tokens: 10, total_tokens: 30 },
+      stopReason: "stop",
     });
 
     let drained = false;
@@ -826,6 +859,7 @@ describe("runChatLoop", () => {
       text: "",
       reasoning: "",
       toolCalls: [],
+      stopReason: "stop",
     });
 
     mockStreamCompletion.mockResolvedValueOnce({
@@ -833,6 +867,7 @@ describe("runChatLoop", () => {
       reasoning: "",
       toolCalls: [],
       usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
+      stopReason: "stop",
     });
 
     let drained = false;
@@ -876,6 +911,7 @@ describe("runChatLoop", () => {
         text: "",
         reasoning: "",
         toolCalls: [{ id: `call_${i}`, name: "read_file", args: { path: "/same.txt" } }],
+        stopReason: "tool_calls",
       });
     }
 
@@ -884,6 +920,7 @@ describe("runChatLoop", () => {
       text: "I'm stuck.",
       reasoning: "",
       toolCalls: [],
+      stopReason: "stop",
     });
 
     const events: StreamEvent[] = [];
@@ -924,6 +961,7 @@ describe("runChatLoop", () => {
           text: `Response ${round}`,
           reasoning: "",
           toolCalls: [{ id: `call_${round}`, name: "tool", args: { n: round } }],
+          stopReason: "tool_calls",
         };
       }
       return {
@@ -931,6 +969,7 @@ describe("runChatLoop", () => {
         reasoning: "",
         toolCalls: [],
         usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
+        stopReason: "stop",
       };
     });
 
@@ -977,5 +1016,67 @@ describe("runChatLoop", () => {
     if (errorEvent && errorEvent.type === "error") {
       expect(errorEvent.error).toContain("API failed");
     }
+  });
+
+  it("returns error results for truncated tool calls and lets the model recover", async () => {
+    const batchTool: ToolDefinition = {
+      name: "batch",
+      description: "Batch tool",
+      parameters: { type: "object", properties: {} },
+      execute: vi.fn(),
+    };
+
+    // First call: truncated response with incomplete tool call
+    mockStreamCompletion.mockResolvedValueOnce({
+      text: "",
+      reasoning: "",
+      toolCalls: [{ id: "call_1", name: "batch", args: {} }],
+      stopReason: "length",
+    });
+
+    // Second call: model recovers after seeing the error
+    mockStreamCompletion.mockResolvedValueOnce({
+      text: "Let me try a simpler approach.",
+      reasoning: "",
+      toolCalls: [],
+      usage: { prompt_tokens: 30, completion_tokens: 10, total_tokens: 40 },
+      stopReason: "stop",
+    });
+
+    const events: StreamEvent[] = [];
+    await runChatLoop({
+      apiKey: "key",
+      model: "model",
+      messages: [{ role: "user", content: "do many things" }],
+      tools: [batchTool],
+      onEvents: (batch) => events.push(...batch),
+    });
+
+    // Tool should NOT have been executed
+    expect(batchTool.execute).not.toHaveBeenCalled();
+
+    // Error tool result should be emitted back
+    const toolResults = events.filter((e) => e.type === "tool-result");
+    expect(toolResults).toHaveLength(1);
+    expect(toolResults[0]).toMatchObject({
+      type: "tool-result",
+      toolCallId: "call_1",
+      isError: true,
+    });
+    if (toolResults[0].type === "tool-result") {
+      expect(toolResults[0].result).toHaveProperty("error");
+    }
+
+    // Model got a second turn to recover
+    expect(mockStreamCompletion).toHaveBeenCalledTimes(2);
+
+    // The second call should contain the tool error in messages
+    const secondCallMessages = mockStreamCompletion.mock.calls[1][0].messages as Array<Record<string, unknown>>;
+    const toolMsg = secondCallMessages.find((m) => m.role === "tool");
+    expect(toolMsg).toBeDefined();
+    expect(JSON.parse(toolMsg!.content as string).error).toContain("truncated");
+
+    // Should finish successfully
+    expect(events.some((e) => e.type === "finish")).toBe(true);
   });
 });

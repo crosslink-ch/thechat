@@ -183,6 +183,8 @@ export interface StreamResult {
   reasoning: string;
   toolCalls: ToolCallResult[];
   usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number };
+  /** Normalized finish reason: "stop", "tool_calls", "length", "content_filter", or "unknown". */
+  stopReason: string;
 }
 
 // -- Human-to-Human Chat Types --
