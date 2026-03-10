@@ -1,6 +1,6 @@
 import { invoke, Channel } from "@tauri-apps/api/core";
 import type { ChatParams, StreamEvent, StreamResult, ToolDefinition } from "./types";
-import { ANTHROPIC_MODELS, getMaxOutputTokens } from "./models";
+import { ANTHROPIC_MODELS, DEFAULT_REASONING_EFFORT, getMaxOutputTokens } from "./models";
 
 export { ANTHROPIC_MODELS };
 
@@ -134,7 +134,7 @@ function buildRequest(options: StreamAnthropicOptions): {
 
   // Adaptive thinking (Claude 4.6+)
   bodyObj.thinking = { type: "adaptive" };
-  bodyObj.output_config = { effort: params?.effort ?? "high" };
+  bodyObj.output_config = { effort: params?.effort ?? DEFAULT_REASONING_EFFORT };
 
   // Add tool definitions in Anthropic format
   if (tools && tools.length > 0) {

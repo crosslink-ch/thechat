@@ -1,7 +1,7 @@
 import { invoke, Channel } from "@tauri-apps/api/core";
 import { debug as logDebug } from "../log";
 import type { ChatParams, StreamEvent, StreamResult, ToolDefinition } from "./types";
-import { CODEX_MODELS } from "./models";
+import { CODEX_MODELS, DEFAULT_REASONING_EFFORT } from "./models";
 
 export { CODEX_MODELS };
 
@@ -117,7 +117,7 @@ function buildRequest(options: StreamCodexOptions): {
     // ignore stringify errors
   }
 
-  const reasoningEffort = params?.reasoning_effort ?? "medium";
+  const reasoningEffort = params?.reasoning_effort ?? DEFAULT_REASONING_EFFORT;
   bodyObj.reasoning = { effort: reasoningEffort };
 
   // Add tools in Responses API format

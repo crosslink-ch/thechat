@@ -2,6 +2,7 @@ import { streamCompletion } from "./openrouter";
 import { streamCodexCompletion } from "./codex";
 import { streamAnthropicCompletion } from "./anthropic";
 import { truncateToolResult } from "./truncate";
+import { isOverflow, compactMessages } from "./compaction";
 import { error as logError, warn as logWarn, debug as logDebug, formatError } from "../log";
 import type { ChatLoopOptions, StreamResult, ToolDefinition, StreamEvent } from "./types";
 
@@ -306,6 +307,24 @@ export async function runChatLoop(options: ChatLoopOptions): Promise<void> {
         tool_call_id: tr.toolCallId,
         content: truncateToolResult(content),
       });
+    }
+
+    // Check for context overflow and compact if needed.
+    // Uses total_tokens (prompt + completion) as a proxy for the next call's
+    // input size, since the current output becomes part of the next input.
+    if (
+      result.usage &&
+      isOverflow(result.usage.prompt_tokens + result.usage.completion_tokens, options.model)
+    ) {
+      logWarn(`[loop] Context overflow detected (${result.usage.prompt_tokens + result.usage.completion_tokens} tokens), compacting...`);
+      const compacted = await compactMessages(
+        workingMessages,
+        (msgs) => callProvider(options, msgs, undefined, () => {}),
+        onEvents,
+      );
+      if (compacted) {
+        toolCallHistory.length = 0;
+      }
     }
 
     // Drain queued user messages into the conversation
