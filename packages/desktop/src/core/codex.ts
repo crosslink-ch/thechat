@@ -1,7 +1,7 @@
 import { invoke, Channel } from "@tauri-apps/api/core";
 import { debug as logDebug } from "../log";
 import type { ChatParams, StreamEvent, StreamResult, ToolDefinition } from "./types";
-import { CODEX_MODELS, getMaxOutputTokens } from "./models";
+import { CODEX_MODELS } from "./models";
 
 export { CODEX_MODELS };
 
@@ -117,7 +117,6 @@ function buildRequest(options: StreamCodexOptions): {
     // ignore stringify errors
   }
 
-  bodyObj.max_output_tokens = params?.max_tokens ?? getMaxOutputTokens(params?.model ?? model);
   const reasoningEffort = params?.reasoning_effort ?? "medium";
   bodyObj.reasoning = { effort: reasoningEffort };
 
