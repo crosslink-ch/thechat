@@ -1,8 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { AppConfig } from "@thechat/shared";
-import { ANTHROPIC_MODELS } from "../core/anthropic";
-import { CODEX_MODELS } from "../core/codex";
+import { ANTHROPIC_MODELS, CODEX_MODELS } from "../core/models";
 
 function ModelCombobox({
   value,

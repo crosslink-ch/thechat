@@ -1,14 +1,11 @@
 import { invoke, Channel } from "@tauri-apps/api/core";
 import type { ChatParams, StreamEvent, StreamResult, ToolDefinition } from "./types";
+import { ANTHROPIC_MODELS, getMaxOutputTokens } from "./models";
+
+export { ANTHROPIC_MODELS };
 
 const ANTHROPIC_API_ENDPOINT = "https://api.anthropic.com/v1/messages";
 const ANTHROPIC_VERSION = "2023-06-01";
-
-export const ANTHROPIC_MODELS = [
-  { id: "claude-opus-4-6", name: "Claude Opus 4.6" },
-  { id: "claude-sonnet-4-6", name: "Claude Sonnet 4.6" },
-  { id: "claude-haiku-4-5-20251001", name: "Claude Haiku 4.5" },
-];
 
 interface StreamAnthropicOptions {
   apiKey: string;
@@ -122,7 +119,7 @@ function buildRequest(options: StreamAnthropicOptions): {
   const bodyObj: Record<string, unknown> = {
     model: params?.model ?? model,
     messages: anthropicMessages,
-    max_tokens: params?.max_tokens ?? 32000,
+    max_tokens: params?.max_tokens ?? getMaxOutputTokens(params?.model ?? model),
     stream: true,
   };
 

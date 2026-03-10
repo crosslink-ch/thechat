@@ -1,5 +1,6 @@
 import { invoke, Channel } from "@tauri-apps/api/core";
 import type { ChatParams, StreamEvent, StreamResult, ToolDefinition } from "./types";
+import { getMaxOutputTokens } from "./models";
 
 interface StreamCompletionOptions {
   apiKey: string;
@@ -30,7 +31,7 @@ function buildRequest(options: StreamCompletionOptions): {
   if (params?.temperature !== undefined) bodyObj.temperature = params.temperature;
   if (params?.top_p !== undefined) bodyObj.top_p = params.top_p;
   if (params?.top_k !== undefined) bodyObj.top_k = params.top_k;
-  if (params?.max_tokens !== undefined) bodyObj.max_tokens = params.max_tokens;
+  bodyObj.max_tokens = params?.max_tokens ?? getMaxOutputTokens(params?.model ?? model);
   if (params?.frequency_penalty !== undefined) bodyObj.frequency_penalty = params.frequency_penalty;
   if (params?.presence_penalty !== undefined) bodyObj.presence_penalty = params.presence_penalty;
   if (params?.stop !== undefined) bodyObj.stop = params.stop;

@@ -1,6 +1,9 @@
 import { invoke, Channel } from "@tauri-apps/api/core";
 import { debug as logDebug } from "../log";
 import type { ChatParams, StreamEvent, StreamResult, ToolDefinition } from "./types";
+import { CODEX_MODELS, getMaxOutputTokens } from "./models";
+
+export { CODEX_MODELS };
 
 const CODEX_API_ENDPOINT = "https://chatgpt.com/backend-api/codex/responses";
 
@@ -15,14 +18,6 @@ function truncate(value: unknown, max = 2000): unknown {
   return value;
 }
 
-export const CODEX_MODELS = [
-  { id: "gpt-5.3-codex", name: "GPT-5.3 Codex" },
-  { id: "gpt-5.2-codex", name: "GPT-5.2 Codex" },
-  { id: "gpt-5.2", name: "GPT-5.2" },
-  { id: "gpt-5.1-codex-max", name: "GPT-5.1 Codex Max" },
-  { id: "gpt-5.1-codex-mini", name: "GPT-5.1 Codex Mini" },
-  { id: "gpt-5.1-codex", name: "GPT-5.1 Codex" },
-];
 
 interface StreamCodexOptions {
   accessToken: string;
@@ -122,7 +117,7 @@ function buildRequest(options: StreamCodexOptions): {
     // ignore stringify errors
   }
 
-  if (params?.max_tokens !== undefined) bodyObj.max_output_tokens = params.max_tokens;
+  bodyObj.max_output_tokens = params?.max_tokens ?? getMaxOutputTokens(params?.model ?? model);
   const reasoningEffort = params?.reasoning_effort ?? "medium";
   bodyObj.reasoning = { effort: reasoningEffort };
 
