@@ -108,18 +108,18 @@ function convertMessages(msgs: Array<Record<string, unknown>>): {
 }
 
 /** Build the fetch request for Anthropic Messages API. */
-function buildRequest(options: StreamAnthropicOptions): {
+async function buildRequest(options: StreamAnthropicOptions): Promise<{
   url: string;
   headers: Record<string, string>;
   body: string;
-} {
+}> {
   const { apiKey, model, messages, params, tools, oauthToken } = options;
   const { system, messages: anthropicMessages } = convertMessages(messages);
 
   const bodyObj: Record<string, unknown> = {
     model: params?.model ?? model,
     messages: anthropicMessages,
-    max_tokens: params?.max_tokens ?? getMaxOutputTokens(params?.model ?? model),
+    max_tokens: params?.max_tokens ?? await getMaxOutputTokens(params?.model ?? model),
     stream: true,
   };
 
@@ -164,7 +164,7 @@ function buildRequest(options: StreamAnthropicOptions): {
 }
 
 export async function streamAnthropicCompletion(options: StreamAnthropicOptions): Promise<StreamResult> {
-  const req = buildRequest(options);
+  const req = await buildRequest(options);
   const streamId = `an_${Date.now()}_${Math.random().toString(36).slice(2)}`;
 
   const onEvent = new Channel<StreamEvent[]>();

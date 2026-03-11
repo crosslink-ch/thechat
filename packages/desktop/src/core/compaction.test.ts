@@ -3,39 +3,39 @@ import { isOverflow, pruneToolResults, compactMessages } from "./compaction";
 import type { StreamResult, StreamEvent } from "./types";
 
 describe("isOverflow", () => {
-  it("returns true when tokens exceed the usable context limit", () => {
+  it("returns true when tokens exceed the usable context limit", async () => {
     // claude-sonnet-4-6: contextWindow=200K, maxOutput=min(64K,64K)=64K
     // usable = 200K - 64K - 20K(buffer) = 116K
-    expect(isOverflow(116_000, "claude-sonnet-4-6")).toBe(true);
-    expect(isOverflow(120_000, "claude-sonnet-4-6")).toBe(true);
+    expect(await isOverflow(116_000, "claude-sonnet-4-6")).toBe(true);
+    expect(await isOverflow(120_000, "claude-sonnet-4-6")).toBe(true);
   });
 
-  it("returns false when tokens are below the limit", () => {
-    expect(isOverflow(100_000, "claude-sonnet-4-6")).toBe(false);
-    expect(isOverflow(50_000, "claude-sonnet-4-6")).toBe(false);
+  it("returns false when tokens are below the limit", async () => {
+    expect(await isOverflow(100_000, "claude-sonnet-4-6")).toBe(false);
+    expect(await isOverflow(50_000, "claude-sonnet-4-6")).toBe(false);
   });
 
-  it("returns false for unknown models", () => {
-    expect(isOverflow(999_999, "unknown-model-xyz")).toBe(false);
+  it("returns false for unknown models", async () => {
+    expect(await isOverflow(999_999, "unknown-model-xyz")).toBe(false);
   });
 
-  it("accounts for model-specific maxOutputTokens", () => {
+  it("accounts for model-specific maxOutputTokens", async () => {
     // claude-haiku-4-5: contextWindow=200K, maxOutput=min(64K,64K)=64K, no inputLimit
     // usable = (200K - 64K) - 20K = 116K (same as Sonnet)
-    expect(isOverflow(116_000, "claude-haiku-4-5-20251001")).toBe(true);
-    expect(isOverflow(100_000, "claude-haiku-4-5-20251001")).toBe(false);
+    expect(await isOverflow(116_000, "claude-haiku-4-5-20251001")).toBe(true);
+    expect(await isOverflow(100_000, "claude-haiku-4-5-20251001")).toBe(false);
   });
 
-  it("uses inputLimit when available (GPT-5.x Codex models)", () => {
+  it("uses inputLimit when available (GPT-5.x Codex models)", async () => {
     // gpt-5.3-codex: contextWindow=400K, inputLimit=272K, maxOutput=min(128K,64K)=64K
     // usable = inputLimit - 20K = 252K
-    expect(isOverflow(252_000, "gpt-5.3-codex")).toBe(true);
-    expect(isOverflow(250_000, "gpt-5.3-codex")).toBe(false);
+    expect(await isOverflow(252_000, "gpt-5.3-codex")).toBe(true);
+    expect(await isOverflow(250_000, "gpt-5.3-codex")).toBe(false);
 
     // gpt-5.4: contextWindow=1.05M, inputLimit=922K, maxOutput=min(128K,64K)=64K
     // usable = inputLimit - 20K = 902K
-    expect(isOverflow(902_000, "gpt-5.4")).toBe(true);
-    expect(isOverflow(900_000, "gpt-5.4")).toBe(false);
+    expect(await isOverflow(902_000, "gpt-5.4")).toBe(true);
+    expect(await isOverflow(900_000, "gpt-5.4")).toBe(false);
   });
 });
 

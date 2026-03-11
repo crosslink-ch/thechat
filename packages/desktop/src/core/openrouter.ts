@@ -13,11 +13,11 @@ interface StreamCompletionOptions {
 }
 
 /** Build the fetch request for OpenRouter Chat Completions API. */
-function buildRequest(options: StreamCompletionOptions): {
+async function buildRequest(options: StreamCompletionOptions): Promise<{
   url: string;
   headers: Record<string, string>;
   body: string;
-} {
+}> {
   const { apiKey, model, messages, params, tools } = options;
 
   const bodyObj: Record<string, unknown> = {
@@ -31,7 +31,7 @@ function buildRequest(options: StreamCompletionOptions): {
   if (params?.temperature !== undefined) bodyObj.temperature = params.temperature;
   if (params?.top_p !== undefined) bodyObj.top_p = params.top_p;
   if (params?.top_k !== undefined) bodyObj.top_k = params.top_k;
-  bodyObj.max_tokens = params?.max_tokens ?? getMaxOutputTokens(params?.model ?? model);
+  bodyObj.max_tokens = params?.max_tokens ?? await getMaxOutputTokens(params?.model ?? model);
   if (params?.frequency_penalty !== undefined) bodyObj.frequency_penalty = params.frequency_penalty;
   if (params?.presence_penalty !== undefined) bodyObj.presence_penalty = params.presence_penalty;
   if (params?.stop !== undefined) bodyObj.stop = params.stop;
@@ -64,7 +64,7 @@ function buildRequest(options: StreamCompletionOptions): {
 }
 
 export async function streamCompletion(options: StreamCompletionOptions): Promise<StreamResult> {
-  const req = buildRequest(options);
+  const req = await buildRequest(options);
   const streamId = `or_${Date.now()}_${Math.random().toString(36).slice(2)}`;
 
   const onEvent = new Channel<StreamEvent[]>();

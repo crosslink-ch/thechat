@@ -314,7 +314,7 @@ export async function runChatLoop(options: ChatLoopOptions): Promise<void> {
     // input size, since the current output becomes part of the next input.
     if (
       result.usage &&
-      isOverflow(result.usage.prompt_tokens + result.usage.completion_tokens, options.model)
+      await isOverflow(result.usage.prompt_tokens + result.usage.completion_tokens, options.model)
     ) {
       logWarn(`[loop] Context overflow detected (${result.usage.prompt_tokens + result.usage.completion_tokens} tokens), compacting...`);
       const compacted = await compactMessages(

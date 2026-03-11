@@ -59,11 +59,11 @@ When constructing the summary, use this template:
  *
  * Returns false for unknown models (no context window info available).
  */
-export function isOverflow(totalTokens: number, modelId: string): boolean {
-  const model = getModelInfo(modelId);
+export async function isOverflow(totalTokens: number, modelId: string): Promise<boolean> {
+  const model = await getModelInfo(modelId);
   if (!model) return false;
 
-  const maxOutput = getMaxOutputTokens(modelId);
+  const maxOutput = await getMaxOutputTokens(modelId);
   const maxInput = model.inputLimit ?? model.contextWindow - maxOutput;
   const usable = maxInput - COMPACTION_BUFFER;
   return totalTokens >= usable;
