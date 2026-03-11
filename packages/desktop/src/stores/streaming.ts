@@ -62,6 +62,14 @@ export const useStreamingStore = create<StreamingStore>()((set) => ({
 
   startStreaming: (convId) => {
     accumulatedParts.set(convId, []);
+    // Notify existing subscribers so the typing indicator shows on
+    // subsequent messages in the same conversation (convId unchanged →
+    // useEffect won't re-run → subscribers from the previous stream
+    // are still active but holding stale null state from stopStreaming).
+    const subs = listeners.get(convId);
+    if (subs) {
+      for (const fn of subs) fn([]);
+    }
     set((state) => {
       const streamingConvIds = new Set(state.streamingConvIds);
       streamingConvIds.add(convId);
