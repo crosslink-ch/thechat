@@ -5,6 +5,7 @@ import { router } from "./router";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { error as logError, formatError } from "./log";
 import "highlight.js/styles/github-dark.css";
+import "katex/dist/katex.min.css";
 import "./App.css";
 
 // Global handlers for uncaught errors — these log to the Tauri log file

@@ -285,6 +285,23 @@
   font-weight: 300;
 }
 
+/* KaTeX math */
+.md-content .katex {
+  font-size: 1.05em;
+}
+
+.md-content .katex-display {
+  overflow-x: auto;
+  overflow-y: hidden;
+  margin: 0.75em 0;
+  padding: 0.2em 0;
+}
+
+.md-content .katex-display > .katex {
+  display: inline-block;
+  min-width: max-content;
+}
+
 /* Code blocks — rehype-highlight adds its own classes to inner <code> */
 .md-code-block {
   background: var(--color-raised);

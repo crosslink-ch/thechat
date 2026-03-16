@@ -1,10 +1,21 @@
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import remarkMath from "remark-math";
 import rehypeHighlight from "rehype-highlight";
+import rehypeKatex from "rehype-katex";
 import type { Components } from "react-markdown";
+import type { ComponentProps } from "react";
 
-const remarkPlugins = [remarkGfm];
-const rehypePlugins = [rehypeHighlight];
+type ReactMarkdownProps = ComponentProps<typeof ReactMarkdown>;
+
+const remarkPlugins: NonNullable<ReactMarkdownProps["remarkPlugins"]> = [
+  remarkGfm,
+  [remarkMath, { singleDollarTextMath: false }],
+];
+const rehypePlugins: NonNullable<ReactMarkdownProps["rehypePlugins"]> = [
+  rehypeKatex,
+  rehypeHighlight,
+];
 
 const components: Components = {
   a: ({ children, ...props }) => (
