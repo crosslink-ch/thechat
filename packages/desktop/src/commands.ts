@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { togglePalette, closePalette, openPaletteInCommandMode } from "./CommandPalette";
+import { togglePalette, closePalette, closePaletteAndRefocus, openPaletteInCommandMode } from "./CommandPalette";
 import { toggleSidebar } from "./components/Sidebar";
 import { openAuthModal } from "./components/AuthModal";
 import { openWorkspaceModal } from "./components/WorkspaceModal";
@@ -69,7 +69,7 @@ export function createCommands(
       keybinding: { prefix: "C-x", key: "n" },
       execute: () => {
         navigate({ to: "/chat" });
-        closePalette();
+        closePaletteAndRefocus();
       },
     },
     {
@@ -80,7 +80,7 @@ export function createCommands(
       execute: () => {
         const dir = getAgentChatProjectDir();
         navigate({ to: "/chat", search: dir ? { projectDir: dir } : {} });
-        closePalette();
+        closePaletteAndRefocus();
       },
     },
     {
@@ -122,7 +122,7 @@ export function createCommands(
       keybinding: null,
       execute: () => {
         toggleSidebar();
-        closePalette();
+        closePaletteAndRefocus();
       },
     },
     {
@@ -152,7 +152,7 @@ export function createCommands(
       keybinding: null,
       execute: () => {
         navigate({ to: "/notifications" });
-        closePalette();
+        closePaletteAndRefocus();
       },
     },
     {
@@ -162,7 +162,7 @@ export function createCommands(
       keybinding: { prefix: "C-x", key: "," },
       execute: () => {
         navigate({ to: "/settings" });
-        closePalette();
+        closePaletteAndRefocus();
       },
     },
     {

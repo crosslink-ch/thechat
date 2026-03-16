@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useIsStreaming } from "../stores/streaming";
+import { useInputFocusStore } from "../stores/input-focus";
 import { RichInput, type RichInputHandle } from "./RichInput";
 import type { MentionUser } from "./MentionList";
 
@@ -20,6 +21,14 @@ export function InputBar({ convId, onSend, onStop, mentions, autoFocusKey }: Inp
     if (!autoFocusKey) return;
     inputRef.current?.focus();
   }, [autoFocusKey]);
+
+  // Re-focus when another UI surface (command palette, picker, etc.) requests it
+  const focusTick = useInputFocusStore((s) => s.focusTick);
+  useEffect(() => {
+    if (focusTick > 0) {
+      inputRef.current?.focus();
+    }
+  }, [focusTick]);
 
   return (
     <div className="px-4 pb-4 pt-2">

@@ -4,6 +4,7 @@ import { useNavigate, useMatches } from "@tanstack/react-router";
 import { useConversationsStore } from "./stores/conversations";
 import { useStreamingConvIds } from "./stores/streaming";
 import { useCommandsStore } from "./commands";
+import { requestInputBarFocus } from "./stores/input-focus";
 
 // Colocated visibility store
 const usePaletteState = create(() => ({ open: false, initialQuery: "" }));
@@ -11,6 +12,12 @@ export const togglePalette = () =>
   usePaletteState.setState((s) => ({ open: !s.open, initialQuery: "" }));
 export const closePalette = () =>
   usePaletteState.setState({ open: false, initialQuery: "" });
+
+/** Close the palette and request the input bar to re-focus. */
+export function closePaletteAndRefocus() {
+  closePalette();
+  requestInputBarFocus();
+}
 export const openPaletteInCommandMode = () =>
   usePaletteState.setState({ open: true, initialQuery: ">" });
 
@@ -78,12 +85,13 @@ function CommandPaletteInner() {
   const handleSelectConversation = (conv: { id: string }) => {
     navigate({ to: "/chat/$id", params: { id: conv.id } });
     useConversationsStore.getState().markAgentChatRead(conv.id);
-    closePalette();
+    closePaletteAndRefocus();
   };
 
   const handleSelectCommand = (index: number) => {
     const cmd = filteredCommands[index];
-    if (cmd) cmd.execute();
+    if (!cmd) return;
+    cmd.execute();
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -101,12 +109,12 @@ function CommandPaletteInner() {
         handleSelectConversation(filteredConversations[highlightIndex]);
       }
     } else if (e.key === "Escape") {
-      closePalette();
+      closePaletteAndRefocus();
     }
   };
 
   return (
-    <div className="fixed inset-0 z-20 flex items-start justify-center bg-overlay pt-20 backdrop-blur-[2px] animate-fade-in" onClick={closePalette}>
+    <div className="fixed inset-0 z-20 flex items-start justify-center bg-overlay pt-20 backdrop-blur-[2px] animate-fade-in" onClick={closePaletteAndRefocus}>
       <div data-testid="palette-panel" className="w-full max-w-[500px] overflow-hidden rounded-xl border border-border-strong bg-surface shadow-card animate-slide-up" onClick={(e) => e.stopPropagation()}>
         <div className="relative">
           <svg className="absolute top-1/2 left-3.5 -translate-y-1/2 text-text-dimmed" width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round">

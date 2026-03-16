@@ -3,11 +3,15 @@ import { create } from "zustand";
 import { z } from "zod";
 import { useAuthStore } from "../stores/auth";
 import { api } from "../lib/api";
+import { requestInputBarFocus } from "../stores/input-focus";
 
 // Colocated visibility store
 const useAuthModalState = create(() => ({ open: false }));
 export const openAuthModal = () => useAuthModalState.setState({ open: true });
-const closeAuthModal = () => useAuthModalState.setState({ open: false });
+const closeAuthModal = () => {
+  useAuthModalState.setState({ open: false });
+  requestInputBarFocus();
+};
 
 const registerSchema = z.object({
   name: z.string().trim().min(1, "Name is required"),

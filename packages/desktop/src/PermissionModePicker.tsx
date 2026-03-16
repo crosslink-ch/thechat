@@ -1,10 +1,14 @@
 import { useState, useRef, useEffect } from "react";
 import { create } from "zustand";
 import { usePermissionModeStore, type PermissionMode } from "./stores/permission-mode";
+import { requestInputBarFocus } from "./stores/input-focus";
 
 const usePickerState = create(() => ({ open: false }));
 export const openPermissionModePicker = () => usePickerState.setState({ open: true });
-const closePicker = () => usePickerState.setState({ open: false });
+const closePicker = () => {
+  usePickerState.setState({ open: false });
+  requestInputBarFocus();
+};
 
 const modes: { id: PermissionMode; label: string; description: string; style: string }[] = [
   {

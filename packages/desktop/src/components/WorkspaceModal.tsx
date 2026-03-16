@@ -1,13 +1,16 @@
 import { useState, useEffect, useRef, type FormEvent } from "react";
 import { create } from "zustand";
 import { useWorkspacesStore } from "../stores/workspaces";
+import { requestInputBarFocus } from "../stores/input-focus";
 
 // Colocated visibility store
 const useWorkspaceModalState = create(() => ({ open: false }));
 export const openWorkspaceModal = () =>
   useWorkspaceModalState.setState({ open: true });
-const closeWorkspaceModal = () =>
+const closeWorkspaceModal = () => {
   useWorkspaceModalState.setState({ open: false });
+  requestInputBarFocus();
+};
 
 export function WorkspaceModal() {
   const open = useWorkspaceModalState((s) => s.open);
