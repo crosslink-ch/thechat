@@ -3,10 +3,11 @@ import { requestPermission } from "../permission";
 import type { ToolExecutionContext } from "../types";
 import { resolvePath } from "./resolve-path";
 import { defineTool } from "./define";
+import { replace } from "./replace";
 
-interface EditFileResult {
+interface WriteFileResult {
   success: boolean;
-  replacements: number;
+  bytes_written: number;
 }
 
 interface EditOperation {
@@ -58,26 +59,33 @@ Use this when you need to make several changes to the same file.`,
       convId: context?.convId,
     });
 
+    let content = await invoke<string>("fs_read_file_raw", {
+      filePath: resolvedPath,
+    });
+
     const results: Array<{ index: number; success: boolean; error?: string }> = [];
 
     for (let i = 0; i < edits.length; i++) {
       const edit = edits[i];
       try {
-        await invoke<EditFileResult>("fs_edit_file", {
-          filePath: resolvedPath,
-          oldString: edit.old_string,
-          newString: edit.new_string,
-          replaceAll: edit.replace_all ?? undefined,
-        });
+        content = replace(content, edit.old_string, edit.new_string, edit.replace_all);
         results.push({ index: i, success: true });
       } catch (e) {
         results.push({ index: i, success: false, error: String(e) });
-        break; // Stop on first failure
+        break;
       }
     }
 
     const successful = results.filter((r) => r.success).length;
     const failed = results.filter((r) => !r.success).length;
+
+    // Only write if at least one edit succeeded
+    if (successful > 0) {
+      await invoke<WriteFileResult>("fs_write_file", {
+        filePath: resolvedPath,
+        content,
+      });
+    }
 
     return {
       total: edits.length,

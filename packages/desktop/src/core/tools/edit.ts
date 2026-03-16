@@ -3,10 +3,11 @@ import { requestPermission } from "../permission";
 import type { ToolExecutionContext } from "../types";
 import { resolvePath } from "./resolve-path";
 import { defineTool } from "./define";
+import { replace } from "./replace";
 
-interface EditFileResult {
+interface WriteFileResult {
   success: boolean;
-  replacements: number;
+  bytes_written: number;
 }
 
 export const editTool = defineTool({
@@ -55,13 +56,17 @@ Use this tool instead of sed or awk.`,
       convId: context?.convId,
     });
 
-    const result = await invoke<EditFileResult>("fs_edit_file", {
+    const content = await invoke<string>("fs_read_file_raw", {
       filePath: resolvedPath,
-      oldString: old_string,
-      newString: new_string,
-      replaceAll: replace_all ?? undefined,
     });
 
-    return result;
+    const newContent = replace(content, old_string, new_string, replace_all);
+
+    await invoke<WriteFileResult>("fs_write_file", {
+      filePath: resolvedPath,
+      content: newContent,
+    });
+
+    return { success: true, replacements: replace_all ? undefined : 1 };
   },
 });

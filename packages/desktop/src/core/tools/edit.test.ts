@@ -26,7 +26,11 @@ describe("editTool", () => {
 
   it("requests permission before editing", async () => {
     mockRequestPermission.mockResolvedValueOnce(undefined);
-    mockInvoke.mockResolvedValueOnce({ success: true, replacements: 1 });
+    mockInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "fs_read_file_raw") return "hello world";
+      if (cmd === "fs_write_file") return { success: true, bytes_written: 13 };
+      return undefined;
+    });
 
     await editTool.execute({
       file_path: "/tmp/test.txt",
@@ -34,25 +38,30 @@ describe("editTool", () => {
       new_string: "goodbye",
     });
 
-    expect(mockRequestPermission).toHaveBeenCalledBefore(mockInvoke);
+    expect(mockRequestPermission).toHaveBeenCalledTimes(1);
+    // First invoke should be the read
+    expect(mockInvoke).toHaveBeenNthCalledWith(1, "fs_read_file_raw", {
+      filePath: "/tmp/test.txt",
+    });
   });
 
-  it("calls fs_edit_file with correct params", async () => {
+  it("reads file, applies replace, and writes back", async () => {
     mockRequestPermission.mockResolvedValueOnce(undefined);
-    mockInvoke.mockResolvedValueOnce({ success: true, replacements: 1 });
+    mockInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "fs_read_file_raw") return "hello world";
+      if (cmd === "fs_write_file") return { success: true, bytes_written: 13 };
+      return undefined;
+    });
 
     const result = await editTool.execute({
       file_path: "/tmp/test.txt",
       old_string: "hello",
       new_string: "goodbye",
-      replace_all: true,
     });
 
-    expect(mockInvoke).toHaveBeenCalledWith("fs_edit_file", {
+    expect(mockInvoke).toHaveBeenCalledWith("fs_write_file", {
       filePath: "/tmp/test.txt",
-      oldString: "hello",
-      newString: "goodbye",
-      replaceAll: true,
+      content: "goodbye world",
     });
     expect(result).toEqual({ success: true, replacements: 1 });
   });
@@ -69,5 +78,21 @@ describe("editTool", () => {
     ).rejects.toThrow("User denied");
 
     expect(mockInvoke).not.toHaveBeenCalled();
+  });
+
+  it("throws when old_string is not found", async () => {
+    mockRequestPermission.mockResolvedValueOnce(undefined);
+    mockInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "fs_read_file_raw") return "hello world";
+      return undefined;
+    });
+
+    await expect(
+      editTool.execute({
+        file_path: "/tmp/test.txt",
+        old_string: "nonexistent",
+        new_string: "replacement",
+      }),
+    ).rejects.toThrow("Could not find oldString");
   });
 });

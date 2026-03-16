@@ -132,6 +132,23 @@ pub async fn get_cwd() -> Result<String, String> {
 
 #[tauri::command]
 #[tracing::instrument]
+pub async fn fs_read_file_raw(file_path: String) -> Result<String, String> {
+    tokio::task::spawn_blocking(move || {
+        let path = Path::new(&file_path);
+        if !path.exists() {
+            return Err(format!("File not found: {}", file_path));
+        }
+        if !path.is_file() {
+            return Err(format!("Not a file: {}", file_path));
+        }
+        std::fs::read_to_string(path).map_err(|e| format!("Failed to read file: {}", e))
+    })
+    .await
+    .map_err(|e| format!("Task join error: {}", e))?
+}
+
+#[tauri::command]
+#[tracing::instrument]
 pub async fn fs_read_file(
     file_path: String,
     offset: Option<usize>,
