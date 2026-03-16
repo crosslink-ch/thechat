@@ -184,7 +184,10 @@ describe("streamCompletion", () => {
       onEvents: () => {},
     });
 
-    // Trigger abort
+    // Let streamCompletion progress past `await buildRequest()` so the
+    // abort listener is registered before we trigger abort.
+    await new Promise((r) => setTimeout(r, 0));
+
     controller.abort();
 
     // cancel_stream should have been invoked
