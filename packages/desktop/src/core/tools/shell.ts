@@ -28,7 +28,9 @@ Use shell for: git commands, running scripts, installing packages, build command
 
 Always provide a short description of what the command does.
 Prefer simple, single commands. For multi-step tasks, call the tool multiple times.
-The command has a default timeout of 120 seconds.`,
+The command has a default timeout of 120 seconds.
+
+The working directory defaults to the project root, so there is no need to \`cd\` into the project before running commands. Use the \`workdir\` parameter only when you need to run a command in a different directory.`,
   parameters: {
     type: "object",
     properties: {
