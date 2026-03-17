@@ -8,6 +8,20 @@ import "highlight.js/styles/github-dark.css";
 import "katex/dist/katex.min.css";
 import "./App.css";
 
+// Connect to standalone React DevTools in development (non-blocking).
+// Vite tree-shakes this entire block out of production builds.
+if (import.meta.env.DEV) {
+  const controller = new AbortController();
+  setTimeout(() => controller.abort(), 300);
+  fetch("http://localhost:8097", { signal: controller.signal, mode: "no-cors" })
+    .then(() => {
+      const s = document.createElement("script");
+      s.src = "http://localhost:8097";
+      document.head.appendChild(s);
+    })
+    .catch(() => {});
+}
+
 // Global handlers for uncaught errors — these log to the Tauri log file
 // so production crashes are diagnosable.
 window.addEventListener("error", (event) => {
