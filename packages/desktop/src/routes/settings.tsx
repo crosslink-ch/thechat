@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { AppConfig } from "@thechat/shared";
 import { ANTHROPIC_MODELS, CODEX_MODELS } from "../core/models";
+import { useUpdaterStore } from "../stores/updater";
 
 function ModelCombobox({
   value,
@@ -125,6 +126,11 @@ export function SettingsRoute() {
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState<"idle" | "saved" | "error">("idle");
   const [configPath, setConfigPath] = useState<string | null>(null);
+  const checkingForUpdates = useUpdaterStore((s) => s.checking);
+  const updaterError = useUpdaterStore((s) => s.error);
+  const updaterStatusMessage = useUpdaterStore((s) => s.statusMessage);
+  const runUpdateCheck = useUpdaterStore((s) => s.checkForUpdates);
+  const clearUpdaterStatusMessage = useUpdaterStore((s) => s.clearStatusMessage);
 
   useEffect(() => {
     invoke<AppConfig>("get_config").then((cfg) => {
@@ -135,6 +141,16 @@ export function SettingsRoute() {
     });
     invoke<string>("get_config_path").then(setConfigPath);
   }, []);
+
+  useEffect(() => {
+    if (!updaterStatusMessage) return;
+
+    const timeout = window.setTimeout(() => {
+      clearUpdaterStatusMessage();
+    }, 4000);
+
+    return () => window.clearTimeout(timeout);
+  }, [clearUpdaterStatusMessage, updaterStatusMessage]);
 
   const handleSave = async () => {
     if (!config) return;
@@ -234,8 +250,8 @@ export function SettingsRoute() {
           )}
         </div>
 
-        {/* Save */}
-        <div className="flex items-center gap-3">
+        {/* Actions */}
+        <div className="flex flex-wrap items-center gap-3">
           <button
             type="button"
             onClick={handleSave}
@@ -244,6 +260,16 @@ export function SettingsRoute() {
           >
             {saving ? "Saving..." : "Save"}
           </button>
+          <button
+            type="button"
+            onClick={() => {
+              void runUpdateCheck();
+            }}
+            disabled={checkingForUpdates}
+            className="cursor-pointer rounded-lg border border-border bg-raised px-4 py-2 text-[13px] font-medium text-text transition-colors hover:not-disabled:bg-hover disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {checkingForUpdates ? "Checking..." : "Check for updates"}
+          </button>
           {status === "error" && (
             <span className="text-[12px] text-error-bright">Failed to save</span>
           )}
@@ -251,6 +277,12 @@ export function SettingsRoute() {
 
         {status === "saved" && (
           <span className="text-[12px] text-green-400">Settings saved</span>
+        )}
+        {updaterStatusMessage && (
+          <span className="text-[12px] text-text-muted">{updaterStatusMessage}</span>
+        )}
+        {updaterError && !checkingForUpdates && (
+          <span className="text-[12px] text-error-bright">{updaterError}</span>
         )}
       </div>
 

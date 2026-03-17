@@ -20,8 +20,9 @@ import { useCodexAuthStore } from "../stores/codex-auth";
 import { useAnthropicAuthStore } from "../stores/anthropic-auth";
 import { registerGlobalWsHandlers } from "../lib/ws-global-handlers";
 import { createCommands, useCommandsStore } from "../commands";
-import { checkForUpdates } from "../lib/updater";
 import { ErrorBoundary } from "../components/ErrorBoundary";
+import { UpdateToast } from "../components/UpdateToast";
+import { useUpdaterStore } from "../stores/updater";
 import { info as logInfo } from "../log";
 
 export function RootLayout() {
@@ -39,7 +40,11 @@ export function RootLayout() {
     useCodexAuthStore.getState().initialize();
     useAnthropicAuthStore.getState().initialize();
     useConversationsStore.getState().fetchConversations();
-    checkForUpdates();
+    void useUpdaterStore.getState().checkForUpdates();
+
+    return () => {
+      void useUpdaterStore.getState().reset();
+    };
   }, []);
 
   // React to token changes: connect/disconnect WebSocket, initialize workspaces, auth MCP
@@ -112,6 +117,7 @@ export function RootLayout() {
       <CodexAuthModal />
       <AnthropicAuthModal />
       <WorkspaceModal />
+      <UpdateToast />
     </div>
   );
 }

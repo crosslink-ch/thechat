@@ -1,21 +1,60 @@
-export async function checkForUpdates(silent = true) {
+import type { DownloadEvent, Update } from "@tauri-apps/plugin-updater";
+import { error as logError, formatError, info as logInfo } from "../log";
+
+export async function checkForUpdates(): Promise<Update | null> {
   try {
     const { check } = await import("@tauri-apps/plugin-updater");
-    const { relaunch } = await import("@tauri-apps/plugin-process");
-    const { ask } = await import("@tauri-apps/plugin-dialog");
-
     const update = await check();
-    if (!update) return;
 
-    const confirmed = await ask(
-      `Version ${update.version} is available. Do you want to update and restart?`,
-      { title: "Update Available", kind: "info" },
-    );
-    if (!confirmed) return;
+    if (update) {
+      logInfo(`[updater] Update available ${update.currentVersion} -> ${update.version}`);
+    } else {
+      logInfo("[updater] No update available");
+    }
 
-    await update.downloadAndInstall();
+    return update;
+  } catch (error) {
+    logError(`[updater] Update check failed: ${formatError(error)}`);
+    throw error instanceof Error ? error : new Error("Update check failed");
+  }
+}
+
+export async function installUpdate(
+  update: Update,
+  onEvent?: (event: DownloadEvent) => void,
+): Promise<void> {
+  try {
+    const { relaunch } = await import("@tauri-apps/plugin-process");
+
+    logInfo(`[updater] Installing update ${update.currentVersion} -> ${update.version}`);
+    await update.downloadAndInstall((event) => {
+      if (event.event === "Started") {
+        logInfo(
+          `[updater] Download started for ${update.version} (${event.data.contentLength ?? "unknown"} bytes)`,
+        );
+      }
+
+      if (event.event === "Finished") {
+        logInfo(`[updater] Download finished for ${update.version}`);
+      }
+
+      onEvent?.(event);
+    });
+
+    logInfo(`[updater] Update ${update.version} installed, relaunching app`);
     await relaunch();
-  } catch {
-    if (!silent) throw new Error("Update check failed");
+  } catch (error) {
+    logError(`[updater] Update install failed: ${formatError(error)}`);
+    throw error instanceof Error ? error : new Error("Update install failed");
+  }
+}
+
+export async function disposeUpdate(update: Update | null): Promise<void> {
+  if (!update) return;
+
+  try {
+    await update.close();
+  } catch (error) {
+    logError(`[updater] Failed to close update handle: ${formatError(error)}`);
   }
 }
