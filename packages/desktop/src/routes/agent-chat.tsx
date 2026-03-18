@@ -12,6 +12,7 @@ import { ProjectPicker } from "../components/ProjectPicker";
 import { ChatMessage, StreamingMessage } from "../ChatMessage";
 import { TodoPanel } from "../TodoPanel";
 import { InputBar } from "../components/InputBar";
+import { ActivityStatusBar } from "../components/ActivityStatusBar";
 import { usePermissionStore } from "../core/permission";
 import { useQuestionStore } from "../core/question";
 import { useTodoStore, EMPTY_TODOS } from "../core/todo";
@@ -294,6 +295,8 @@ export function AgentChatRoute() {
           </button>
         )}
       </div>
+
+      <ActivityStatusBar convId={conversation?.id} hasPendingPermission={!!pendingPermission} />
 
       <InputBar
         convId={conversation?.id}

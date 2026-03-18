@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import type { Message, MessagePart, QuestionRequest } from "./core/types";
 import type { PermissionRequest } from "./core/permission";
-import { useStreamingParts } from "./stores/streaming";
+import { useStreamingParts, getToolCallStartTime } from "./stores/streaming";
 import { TextWithUiBlocks } from "./components/TextWithUiBlocks";
 import { ToolCallInline } from "./components/ToolCallInline";
 import { TruncatedOutput } from "./components/TruncatedOutput";
@@ -583,6 +583,7 @@ export function StreamingMessage({ convId, pendingPermission, onPermissionAllow,
                     key={block.key}
                     call={block.call}
                     result={block.result}
+                    startTime={convId ? getToolCallStartTime(convId, block.call.toolCallId) ?? undefined : undefined}
                   />
                 );
               case "text": {

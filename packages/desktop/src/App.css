@@ -68,6 +68,7 @@
   --animate-slide-up: slideUp 0.2s ease-out;
   --animate-spin: spin 1s linear infinite;
   --animate-blink: blink 1s step-end infinite;
+  --animate-shimmer: shimmer 2s linear infinite;
 }
 
 @keyframes spin {
@@ -78,6 +79,11 @@
 @keyframes blink {
   0%, 100% { opacity: 1; }
   50% { opacity: 0; }
+}
+
+@keyframes shimmer {
+  0% { background-position: -200% center; }
+  100% { background-position: 200% center; }
 }
 
 @keyframes pulse {

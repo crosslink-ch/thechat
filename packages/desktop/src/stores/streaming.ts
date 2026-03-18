@@ -9,6 +9,29 @@ import type { MessagePart } from "../core/types";
 const accumulatedParts = new Map<string, MessagePart[]>();
 const listeners = new Map<string, Set<(parts: MessagePart[] | null) => void>>();
 
+// Timestamp tracking — plain JS, no React involvement
+const streamStartTimes = new Map<string, number>();
+const toolCallTimestamps = new Map<string, Map<string, number>>();
+
+export function getStreamStartTime(convId: string): number | null {
+  return streamStartTimes.get(convId) ?? null;
+}
+
+export function getToolCallStartTime(convId: string, toolCallId: string): number | null {
+  return toolCallTimestamps.get(convId)?.get(toolCallId) ?? null;
+}
+
+export function recordToolCallStart(convId: string, toolCallId: string): void {
+  let convMap = toolCallTimestamps.get(convId);
+  if (!convMap) {
+    convMap = new Map();
+    toolCallTimestamps.set(convId, convMap);
+  }
+  if (!convMap.has(toolCallId)) {
+    convMap.set(toolCallId, Date.now());
+  }
+}
+
 /**
  * Called from useChat onEvents — stores parts and notifies active listeners.
  * Accepts the mutable array directly (no copy needed from caller).
@@ -62,6 +85,7 @@ export const useStreamingStore = create<StreamingStore>()((set) => ({
 
   startStreaming: (convId) => {
     accumulatedParts.set(convId, []);
+    streamStartTimes.set(convId, Date.now());
     // Notify existing subscribers so the typing indicator shows on
     // subsequent messages in the same conversation (convId unchanged →
     // useEffect won't re-run → subscribers from the previous stream
@@ -88,6 +112,8 @@ export const useStreamingStore = create<StreamingStore>()((set) => ({
       for (const fn of subs) fn(null);
     }
     accumulatedParts.delete(convId);
+    streamStartTimes.delete(convId);
+    toolCallTimestamps.delete(convId);
     set((state) => {
       const streamingConvIds = new Set(state.streamingConvIds);
       streamingConvIds.delete(convId);

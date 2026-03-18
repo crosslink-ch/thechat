@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { MessagePart } from "@thechat/shared";
 import { formatToolSummary } from "../lib/tool-summary";
+import { useElapsedTime } from "../hooks/useElapsedTime";
 import { TruncatedOutput } from "./TruncatedOutput";
 import { DiffPreview } from "./DiffPreview";
 import { WritePreview } from "./WritePreview";
@@ -69,15 +70,18 @@ function StatusIcon({ result }: { result?: ToolResultPart }) {
 export function ToolCallInline({
   call,
   result,
+  startTime,
 }: {
   call: ToolCallPart;
   result?: ToolResultPart;
+  startTime?: number;
 }) {
   const [expanded, setExpanded] = useState(false);
   const summary = formatToolSummary(call);
   const hasPreview = PREVIEW_TOOLS.has(call.toolName);
   const hasResult = result && !hasPreview;
   const canExpand = hasPreview || hasResult;
+  const elapsed = useElapsedTime(!result && startTime ? startTime : null);
 
   return (
     <div className="py-1.5 px-0">
@@ -89,6 +93,11 @@ export function ToolCallInline({
       >
         <StatusIcon result={result} />
         <span className="min-w-0 flex-1 truncate">{summary}</span>
+        {elapsed && (
+          <span className="shrink-0 tabular-nums text-[11px] text-text-dimmed">
+            {elapsed}
+          </span>
+        )}
         {canExpand && (
           <span className="shrink-0 text-[10px] text-text-dimmed">
             {expanded ? "▾" : "▸"}

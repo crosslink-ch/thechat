@@ -1,7 +1,7 @@
 import { useState, useCallback, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { runChatLoop } from "../core/loop";
-import { useStreamingStore, updateStreamParts } from "../stores/streaming";
+import { useStreamingStore, updateStreamParts, recordToolCallStart } from "../stores/streaming";
 import { useCodexAuthStore } from "../stores/codex-auth";
 import { useAnthropicAuthStore } from "../stores/anthropic-auth";
 import { error as logError, formatError } from "../log";
@@ -213,6 +213,7 @@ export function useChat(options?: UseChatOptions) {
                   toolName: event.toolName,
                   args: {},
                 });
+                recordToolCallStart(streamConvId!, event.toolCallId);
                 partsChanged = true;
                 break;
               case "tool-call-complete": {
