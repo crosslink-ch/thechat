@@ -9,8 +9,8 @@ mod stream;
 use db::{Conversation, Database, Message};
 use mcp::McpManager;
 use shell::ShellProcesses;
-use stream::StreamCancellers;
 use std::sync::Arc;
+use stream::{CodexTransportSessions, StreamCancellers};
 use tauri::{Manager, State};
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
@@ -272,6 +272,8 @@ pub fn run() {
     let mcp_state: Arc<McpManager> = Arc::new(McpManager::new());
     let shell_state: Arc<ShellProcesses> = Arc::new(ShellProcesses::new());
     let stream_state: Arc<StreamCancellers> = Arc::new(StreamCancellers::new());
+    let codex_transport_state: Arc<CodexTransportSessions> =
+        Arc::new(CodexTransportSessions::new());
 
     tracing::info!("app started");
 
@@ -311,6 +313,7 @@ pub fn run() {
         .manage(mcp_state)
         .manage(shell_state)
         .manage(stream_state)
+        .manage(codex_transport_state)
         .manage(InitialProjectDir(initial_project_dir))
         .invoke_handler(tauri::generate_handler![
             get_config,

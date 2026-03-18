@@ -1,13 +1,16 @@
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use tauri::ipc::Channel;
+use tokio::sync::Mutex as AsyncMutex;
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
-use tokio_tungstenite::tungstenite::http::{HeaderName, HeaderValue};
+use tokio_tungstenite::tungstenite::http::{HeaderName, HeaderValue, StatusCode};
 use tokio_tungstenite::tungstenite::protocol::Message;
+use tokio_tungstenite::MaybeTlsStream;
 
 // ---------------------------------------------------------------------------
 // Public state — managed by Tauri
@@ -22,6 +25,25 @@ impl StreamCancellers {
         Self {
             map: Mutex::new(HashMap::new()),
         }
+    }
+}
+
+pub struct CodexTransportSessions {
+    map: Mutex<HashMap<String, Arc<AsyncMutex<CodexTransportSession>>>>,
+}
+
+impl CodexTransportSessions {
+    pub fn new() -> Self {
+        Self {
+            map: Mutex::new(HashMap::new()),
+        }
+    }
+
+    fn get(&self, session_key: &str) -> Arc<AsyncMutex<CodexTransportSession>> {
+        let mut map = self.map.lock().unwrap();
+        map.entry(session_key.to_string())
+            .or_insert_with(|| Arc::new(AsyncMutex::new(CodexTransportSession::default())))
+            .clone()
     }
 }
 
@@ -109,9 +131,72 @@ struct AnthropicToolUse {
     args: String,
 }
 
+type CodexWebSocket = tokio_tungstenite::WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+struct CodexRequestPayload {
+    model: String,
+    instructions: String,
+    #[serde(default)]
+    input: Vec<Value>,
+    #[serde(default)]
+    tools: Vec<Value>,
+    tool_choice: String,
+    parallel_tool_calls: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reasoning: Option<Value>,
+    store: bool,
+    stream: bool,
+    #[serde(default)]
+    include: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    service_tier: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    prompt_cache_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    text: Option<Value>,
+}
+
+impl CodexRequestPayload {
+    fn same_non_input_fields(&self, other: &Self) -> bool {
+        let mut lhs = self.clone();
+        lhs.input.clear();
+        let mut rhs = other.clone();
+        rhs.input.clear();
+        lhs == rhs
+    }
+}
+
+#[derive(Debug, Clone)]
+struct CodexLastResponse {
+    response_id: String,
+    items_added: Vec<Value>,
+}
+
+#[derive(Default)]
+struct CodexTransportSession {
+    websocket: Option<CodexWebSocket>,
+    websocket_url: Option<String>,
+    last_request: Option<CodexRequestPayload>,
+    last_response: Option<CodexLastResponse>,
+    http_only: bool,
+}
+
+impl CodexTransportSession {
+    fn reset_websocket(&mut self) {
+        self.websocket = None;
+        self.websocket_url = None;
+    }
+
+    fn reset_request_chain(&mut self) {
+        self.last_request = None;
+        self.last_response = None;
+    }
+}
+
 enum CodexWebsocketError {
     Cancelled,
-    Fallback(String),
+    Fallback { reason: String, http_only: bool },
     Fatal(String),
 }
 
@@ -241,6 +326,7 @@ fn parse_codex_data(
     acc_text: &mut String,
     acc_reasoning: &mut String,
     usage: &mut Option<Usage>,
+    response_id: &mut Option<String>,
     stop_reason: &mut String,
     func_calls: &mut HashMap<String, CodexFuncCall>,
     events: &mut Vec<StreamEvent>,
@@ -346,6 +432,11 @@ fn parse_codex_data(
                 "stop".to_string()
             };
             if let Some(resp) = parsed.get("response") {
+                if event_type == "response.completed" {
+                    if let Some(id) = resp.get("id").and_then(|v| v.as_str()) {
+                        *response_id = Some(id.to_string());
+                    }
+                }
                 if let Some(u) = resp.get("usage") {
                     let input = u.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
                     let output = u.get("output_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
@@ -597,6 +688,119 @@ fn finalize_codex_tools(
         .collect()
 }
 
+fn codex_session_key(headers: &HashMap<String, String>) -> Option<String> {
+    headers
+        .iter()
+        .find(|(name, _)| name.eq_ignore_ascii_case("session_id"))
+        .map(|(_, value)| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn parse_codex_request_payload(body: &str) -> Result<CodexRequestPayload, String> {
+    serde_json::from_str(body).map_err(|e| format!("invalid Codex request JSON: {}", e))
+}
+
+fn build_codex_ws_request_body(
+    request: &CodexRequestPayload,
+    previous_response_id: Option<&str>,
+    input_override: Option<Vec<Value>>,
+) -> Result<String, String> {
+    let mut payload = serde_json::to_value(request)
+        .map_err(|e| format!("failed to encode Codex websocket request: {}", e))?;
+    let object = payload
+        .as_object_mut()
+        .ok_or_else(|| "Codex request body must be a JSON object".to_string())?;
+
+    if let Some(previous_response_id) = previous_response_id {
+        object.insert(
+            "previous_response_id".to_string(),
+            Value::String(previous_response_id.to_string()),
+        );
+    }
+    if let Some(input) = input_override {
+        object.insert("input".to_string(), Value::Array(input));
+    }
+    object.insert(
+        "type".to_string(),
+        Value::String("response.create".to_string()),
+    );
+
+    serde_json::to_string(&payload)
+        .map_err(|e| format!("failed to encode Codex websocket request: {}", e))
+}
+
+fn codex_incremental_input(
+    current: &CodexRequestPayload,
+    previous_request: &CodexRequestPayload,
+    previous_response: &CodexLastResponse,
+) -> Option<Vec<Value>> {
+    if !previous_request.same_non_input_fields(current) {
+        return None;
+    }
+
+    let mut baseline = previous_request.input.clone();
+    baseline.extend(previous_response.items_added.clone());
+
+    if current.input.starts_with(&baseline) {
+        Some(current.input[baseline.len()..].to_vec())
+    } else {
+        None
+    }
+}
+
+fn codex_items_added_from_result(result: &StreamResult) -> Vec<Value> {
+    let mut items = Vec::new();
+
+    if !result.text.is_empty() {
+        items.push(json!({
+            "type": "message",
+            "role": "assistant",
+            "content": [
+                {
+                    "type": "output_text",
+                    "text": result.text,
+                }
+            ],
+        }));
+    }
+
+    for tool_call in &result.tool_calls {
+        items.push(json!({
+            "type": "function_call",
+            "id": tool_call.id,
+            "call_id": tool_call.id,
+            "name": tool_call.name,
+            "arguments": serde_json::to_string(&tool_call.args).unwrap_or_else(|_| "{}".to_string()),
+        }));
+    }
+
+    items
+}
+
+async fn update_codex_transport_session(
+    session: Option<&Arc<AsyncMutex<CodexTransportSession>>>,
+    websocket_url: Option<&str>,
+    request: &CodexRequestPayload,
+    response_id: Option<String>,
+    result: &StreamResult,
+) {
+    let Some(session) = session else {
+        return;
+    };
+
+    let mut session = session.lock().await;
+    if let Some(websocket_url) = websocket_url {
+        session.websocket_url = Some(websocket_url.to_string());
+    }
+    session.last_request = Some(request.clone());
+    session.last_response = response_id
+        .filter(|response_id| !response_id.is_empty())
+        .map(|response_id| CodexLastResponse {
+            response_id,
+            items_added: codex_items_added_from_result(result),
+        });
+}
+
 fn codex_ws_url_from_api_url(url: &str) -> Result<String, String> {
     let mut parsed = reqwest::Url::parse(url)
         .map_err(|e| format!("invalid Codex API URL for websocket transport: {}", e))?;
@@ -618,20 +822,6 @@ fn codex_ws_url_from_api_url(url: &str) -> Result<String, String> {
     }
 
     Ok(parsed.to_string())
-}
-
-fn build_codex_ws_request_body(body: &str) -> Result<String, String> {
-    let mut value: serde_json::Value =
-        serde_json::from_str(body).map_err(|e| format!("invalid Codex request JSON: {}", e))?;
-    let object = value
-        .as_object_mut()
-        .ok_or_else(|| "Codex request body must be a JSON object".to_string())?;
-    object.insert(
-        "type".to_string(),
-        serde_json::Value::String("response.create".to_string()),
-    );
-    serde_json::to_string(&value)
-        .map_err(|e| format!("failed to encode Codex websocket request: {}", e))
 }
 
 fn apply_codex_ws_headers(
@@ -659,7 +849,7 @@ fn apply_codex_ws_headers(
 }
 
 fn is_codex_terminal_event(data: &str) -> bool {
-    serde_json::from_str::<serde_json::Value>(data)
+    serde_json::from_str::<Value>(data)
         .ok()
         .and_then(|parsed| {
             parsed
@@ -675,35 +865,45 @@ fn is_codex_terminal_event(data: &str) -> bool {
         })
 }
 
-async fn try_codex_websocket_stream(
-    url: String,
-    headers: HashMap<String, String>,
-    body: String,
-    cancel_flag: Arc<AtomicBool>,
-    on_event: &Channel<Vec<StreamEvent>>,
-) -> Result<StreamResult, CodexWebsocketError> {
-    let ws_url = codex_ws_url_from_api_url(&url).map_err(CodexWebsocketError::Fallback)?;
-    let ws_body = build_codex_ws_request_body(&body).map_err(CodexWebsocketError::Fatal)?;
-
-    let mut request = ws_url.into_client_request().map_err(|e| {
-        CodexWebsocketError::Fallback(format!("failed to build websocket request: {}", e))
-    })?;
-    apply_codex_ws_headers(&mut request, &headers);
-
-    let (mut socket, _) = connect_async(request).await.map_err(|e| {
-        CodexWebsocketError::Fallback(format!("Codex websocket connect failed: {}", e))
-    })?;
-
-    socket
-        .send(Message::Text(ws_body.into()))
-        .await
-        .map_err(|e| {
-            CodexWebsocketError::Fallback(format!("Codex websocket send failed: {}", e))
+async fn connect_codex_websocket(
+    ws_url: &str,
+    headers: &HashMap<String, String>,
+) -> Result<CodexWebSocket, CodexWebsocketError> {
+    let mut request = ws_url
+        .into_client_request()
+        .map_err(|e| CodexWebsocketError::Fallback {
+            reason: format!("failed to build websocket request: {}", e),
+            http_only: false,
         })?;
+    apply_codex_ws_headers(&mut request, headers);
 
+    let (socket, _) = connect_async(request).await.map_err(|e| match e {
+        tokio_tungstenite::tungstenite::Error::Http(response)
+            if response.status() == StatusCode::UPGRADE_REQUIRED =>
+        {
+            CodexWebsocketError::Fallback {
+                reason: "Codex websocket transport is not supported by this endpoint".to_string(),
+                http_only: true,
+            }
+        }
+        other => CodexWebsocketError::Fallback {
+            reason: format!("Codex websocket connect failed: {}", other),
+            http_only: false,
+        },
+    })?;
+
+    Ok(socket)
+}
+
+async fn read_codex_websocket_response(
+    socket: &mut CodexWebSocket,
+    cancel_flag: &Arc<AtomicBool>,
+    on_event: &Channel<Vec<StreamEvent>>,
+) -> Result<(StreamResult, Option<String>), CodexWebsocketError> {
     let mut acc_text = String::new();
     let mut acc_reasoning = String::new();
     let mut usage: Option<Usage> = None;
+    let mut response_id = None;
     let mut stop_reason = String::from("unknown");
     let mut codex_func_calls: HashMap<String, CodexFuncCall> = HashMap::new();
     let mut event_batch: Vec<StreamEvent> = Vec::new();
@@ -738,6 +938,7 @@ async fn try_codex_websocket_stream(
                     &mut acc_text,
                     &mut acc_reasoning,
                     &mut usage,
+                    &mut response_id,
                     &mut stop_reason,
                     &mut codex_func_calls,
                     &mut line_events,
@@ -777,6 +978,7 @@ async fn try_codex_websocket_stream(
                     &mut acc_text,
                     &mut acc_reasoning,
                     &mut usage,
+                    &mut response_id,
                     &mut stop_reason,
                     &mut codex_func_calls,
                     &mut line_events,
@@ -827,22 +1029,129 @@ async fn try_codex_websocket_stream(
 
     if !saw_terminal {
         if !received_payload {
-            return Err(CodexWebsocketError::Fallback(
-                "Codex websocket closed before streaming any events".to_string(),
-            ));
+            return Err(CodexWebsocketError::Fallback {
+                reason: "Codex websocket closed before streaming any events".to_string(),
+                http_only: false,
+            });
         }
         return Err(CodexWebsocketError::Fatal(
             "Codex websocket closed before response.completed".to_string(),
         ));
     }
 
-    Ok(StreamResult {
-        text: acc_text,
-        reasoning: acc_reasoning,
-        tool_calls,
-        usage,
-        stop_reason,
-    })
+    Ok((
+        StreamResult {
+            text: acc_text,
+            reasoning: acc_reasoning,
+            tool_calls,
+            usage,
+            stop_reason,
+        },
+        response_id,
+    ))
+}
+
+async fn try_codex_websocket_stream(
+    url: String,
+    headers: HashMap<String, String>,
+    request: CodexRequestPayload,
+    session: Option<Arc<AsyncMutex<CodexTransportSession>>>,
+    cancel_flag: Arc<AtomicBool>,
+    on_event: &Channel<Vec<StreamEvent>>,
+) -> Result<StreamResult, CodexWebsocketError> {
+    let ws_url =
+        codex_ws_url_from_api_url(&url).map_err(|reason| CodexWebsocketError::Fallback {
+            reason,
+            http_only: false,
+        })?;
+
+    if let Some(session) = session {
+        let mut session = session.lock().await;
+        if session.http_only {
+            return Err(CodexWebsocketError::Fallback {
+                reason: "Codex websocket transport disabled for this conversation".to_string(),
+                http_only: true,
+            });
+        }
+
+        if session.websocket_url.as_deref() != Some(ws_url.as_str()) {
+            session.reset_websocket();
+            session.reset_request_chain();
+            session.websocket_url = Some(ws_url.clone());
+        }
+
+        let mut previous_response_id = None;
+        let mut input_override = None;
+        if let (Some(previous_request), Some(previous_response)) = (
+            session.last_request.as_ref(),
+            session.last_response.as_ref(),
+        ) {
+            if let Some(incremental_input) =
+                codex_incremental_input(&request, previous_request, previous_response)
+            {
+                previous_response_id = Some(previous_response.response_id.as_str());
+                input_override = Some(incremental_input);
+            }
+        }
+
+        let ws_body = build_codex_ws_request_body(&request, previous_response_id, input_override)
+            .map_err(CodexWebsocketError::Fatal)?;
+
+        if session.websocket.is_none() {
+            session.websocket = Some(connect_codex_websocket(&ws_url, &headers).await?);
+        }
+
+        let socket = session.websocket.as_mut().expect("websocket missing");
+        if let Err(err) = socket.send(Message::Text(ws_body.into())).await {
+            session.reset_websocket();
+            return Err(CodexWebsocketError::Fallback {
+                reason: format!("Codex websocket send failed: {}", err),
+                http_only: false,
+            });
+        }
+
+        match read_codex_websocket_response(socket, &cancel_flag, on_event).await {
+            Ok((result, response_id)) => {
+                session.last_request = Some(request);
+                session.last_response = response_id
+                    .filter(|response_id| !response_id.is_empty())
+                    .map(|response_id| CodexLastResponse {
+                        response_id,
+                        items_added: codex_items_added_from_result(&result),
+                    });
+                Ok(result)
+            }
+            Err(CodexWebsocketError::Cancelled) => {
+                session.reset_websocket();
+                Err(CodexWebsocketError::Cancelled)
+            }
+            Err(CodexWebsocketError::Fallback { reason, http_only }) => {
+                session.reset_websocket();
+                if http_only {
+                    session.http_only = true;
+                }
+                Err(CodexWebsocketError::Fallback { reason, http_only })
+            }
+            Err(CodexWebsocketError::Fatal(reason)) => {
+                session.reset_websocket();
+                Err(CodexWebsocketError::Fatal(reason))
+            }
+        }
+    } else {
+        let ws_body = build_codex_ws_request_body(&request, None, None)
+            .map_err(CodexWebsocketError::Fatal)?;
+        let mut socket = connect_codex_websocket(&ws_url, &headers).await?;
+        socket
+            .send(Message::Text(ws_body.into()))
+            .await
+            .map_err(|e| CodexWebsocketError::Fallback {
+                reason: format!("Codex websocket send failed: {}", e),
+                http_only: false,
+            })?;
+        let (result, _) =
+            read_codex_websocket_response(&mut socket, &cancel_flag, on_event).await?;
+        Ok(result)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -850,7 +1159,7 @@ async fn try_codex_websocket_stream(
 // ---------------------------------------------------------------------------
 
 #[tauri::command]
-#[tracing::instrument(skip(headers, body, on_event, cancellers))]
+#[tracing::instrument(skip(headers, body, on_event, cancellers, codex_sessions))]
 pub async fn stream_completion(
     url: String,
     headers: HashMap<String, String>,
@@ -859,6 +1168,7 @@ pub async fn stream_completion(
     stream_id: String,
     on_event: Channel<Vec<StreamEvent>>,
     cancellers: tauri::State<'_, Arc<StreamCancellers>>,
+    codex_sessions: tauri::State<'_, Arc<CodexTransportSessions>>,
 ) -> Result<StreamResult, String> {
     let cancel_flag = Arc::new(AtomicBool::new(false));
     cancellers
@@ -874,6 +1184,7 @@ pub async fn stream_completion(
         &provider,
         cancel_flag.clone(),
         &on_event,
+        Arc::clone(codex_sessions.inner()),
     )
     .await;
 
@@ -899,7 +1210,7 @@ pub async fn cancel_stream(
 // Core streaming loop
 // ---------------------------------------------------------------------------
 
-#[tracing::instrument(skip(headers, body, cancel_flag, on_event))]
+#[tracing::instrument(skip(headers, body, cancel_flag, on_event, codex_sessions))]
 async fn run_stream(
     url: String,
     headers: HashMap<String, String>,
@@ -907,12 +1218,25 @@ async fn run_stream(
     provider: &str,
     cancel_flag: Arc<AtomicBool>,
     on_event: &Channel<Vec<StreamEvent>>,
+    codex_sessions: Arc<CodexTransportSessions>,
 ) -> Result<StreamResult, String> {
+    let codex_request = if provider == "codex" {
+        Some(parse_codex_request_payload(&body)?)
+    } else {
+        None
+    };
+    let codex_session = if provider == "codex" {
+        codex_session_key(&headers).map(|session_key| codex_sessions.get(&session_key))
+    } else {
+        None
+    };
+
     if provider == "codex" {
         match try_codex_websocket_stream(
             url.clone(),
             headers.clone(),
-            body.clone(),
+            codex_request.clone().expect("codex request payload"),
+            codex_session.clone(),
             Arc::clone(&cancel_flag),
             on_event,
         )
@@ -921,16 +1245,26 @@ async fn run_stream(
             Ok(result) => return Ok(result),
             Err(CodexWebsocketError::Cancelled) => return Err("cancelled".to_string()),
             Err(CodexWebsocketError::Fatal(err)) => return Err(err),
-            Err(CodexWebsocketError::Fallback(reason)) => {
+            Err(CodexWebsocketError::Fallback { reason, .. }) => {
                 tracing::info!(reason = %reason, "falling back to Codex HTTP SSE");
             }
         }
     }
 
-    run_http_stream(url, headers, body, provider, cancel_flag, on_event).await
+    run_http_stream(
+        url,
+        headers,
+        body,
+        provider,
+        cancel_flag,
+        on_event,
+        codex_request.as_ref(),
+        codex_session.as_ref(),
+    )
+    .await
 }
 
-#[tracing::instrument(skip(headers, body, cancel_flag, on_event))]
+#[tracing::instrument(skip(headers, body, cancel_flag, on_event, codex_request, codex_session))]
 async fn run_http_stream(
     url: String,
     headers: HashMap<String, String>,
@@ -938,6 +1272,8 @@ async fn run_http_stream(
     provider: &str,
     cancel_flag: Arc<AtomicBool>,
     on_event: &Channel<Vec<StreamEvent>>,
+    codex_request: Option<&CodexRequestPayload>,
+    codex_session: Option<&Arc<AsyncMutex<CodexTransportSession>>>,
 ) -> Result<StreamResult, String> {
     let client = reqwest::Client::new();
 
@@ -971,6 +1307,7 @@ async fn run_http_stream(
     let mut acc_text = String::new();
     let mut acc_reasoning = String::new();
     let mut usage: Option<Usage> = None;
+    let mut codex_response_id = None;
     let mut stop_reason = String::from("unknown");
     let mut or_tool_calls: HashMap<usize, ToolCallAccum> = HashMap::new();
     let mut codex_func_calls: HashMap<String, CodexFuncCall> = HashMap::new();
@@ -1031,6 +1368,7 @@ async fn run_http_stream(
                     &mut acc_text,
                     &mut acc_reasoning,
                     &mut usage,
+                    &mut codex_response_id,
                     &mut stop_reason,
                     &mut codex_func_calls,
                     &mut line_events,
@@ -1090,13 +1428,28 @@ async fn run_http_stream(
         let _ = on_event.send(final_events);
     }
 
-    Ok(StreamResult {
+    let result = StreamResult {
         text: acc_text,
         reasoning: acc_reasoning,
         tool_calls,
         usage,
         stop_reason,
-    })
+    };
+
+    if provider == "codex" {
+        if let Some(codex_request) = codex_request {
+            update_codex_transport_session(
+                codex_session,
+                None,
+                codex_request,
+                codex_response_id,
+                &result,
+            )
+            .await;
+        }
+    }
+
+    Ok(result)
 }
 
 // ---------------------------------------------------------------------------
@@ -1147,6 +1500,7 @@ mod tests {
         let mut text = String::new();
         let mut reasoning = String::new();
         let mut usage = None;
+        let mut response_id = None;
         let mut stop_reason = String::from("unknown");
         let mut func_calls = HashMap::new();
         let mut events = Vec::new();
@@ -1155,6 +1509,7 @@ mod tests {
             &mut text,
             &mut reasoning,
             &mut usage,
+            &mut response_id,
             &mut stop_reason,
             &mut func_calls,
             &mut events,
@@ -1177,17 +1532,159 @@ mod tests {
 
     #[test]
     fn build_codex_ws_request_body_wraps_response_create() {
+        let request = parse_codex_request_payload(
+            r#"{"model":"gpt-5.4","instructions":"","stream":true,"store":false,"tool_choice":"auto","parallel_tool_calls":true,"input":[{"type":"message"}],"include":[]}"#,
+        )
+        .expect("request payload");
         let body = build_codex_ws_request_body(
-            r#"{"model":"gpt-5.4","stream":true,"input":[{"type":"message"}]}"#,
+            &request,
+            Some("resp_123"),
+            Some(vec![json!({"type":"message","role":"user"})]),
         )
         .expect("wrapped request");
-        let value: serde_json::Value = serde_json::from_str(&body).expect("json body");
+        let value: Value = serde_json::from_str(&body).expect("json body");
+        assert_eq!(value["type"], Value::String("response.create".into()));
+        assert_eq!(value["model"], Value::String("gpt-5.4".into()));
+        assert_eq!(value["stream"], Value::Bool(true));
         assert_eq!(
-            value["type"],
-            serde_json::Value::String("response.create".into())
+            value["previous_response_id"],
+            Value::String("resp_123".into())
         );
-        assert_eq!(value["model"], serde_json::Value::String("gpt-5.4".into()));
-        assert_eq!(value["stream"], serde_json::Value::Bool(true));
+        assert_eq!(value["input"][0]["role"], Value::String("user".into()));
+    }
+
+    #[test]
+    fn codex_incremental_input_uses_previous_response_prefix() {
+        let previous_request = parse_codex_request_payload(
+            r#"{
+                "model":"gpt-5.4",
+                "instructions":"system",
+                "tool_choice":"auto",
+                "parallel_tool_calls":true,
+                "stream":true,
+                "store":false,
+                "include":["reasoning.encrypted_content"],
+                "input":[
+                    {"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]}
+                ]
+            }"#,
+        )
+        .expect("previous request");
+        let current_request = parse_codex_request_payload(
+            r#"{
+                "model":"gpt-5.4",
+                "instructions":"system",
+                "tool_choice":"auto",
+                "parallel_tool_calls":true,
+                "stream":true,
+                "store":false,
+                "include":["reasoning.encrypted_content"],
+                "input":[
+                    {"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]},
+                    {"type":"message","role":"assistant","content":[{"type":"output_text","text":"I will read that file."}]},
+                    {"type":"function_call","id":"fc_1","call_id":"fc_1","name":"read_file","arguments":"{\"path\":\"foo.txt\"}"},
+                    {"type":"function_call_output","call_id":"fc_1","output":"{\"content\":\"ok\"}"}
+                ]
+            }"#,
+        )
+        .expect("current request");
+        let previous_response = CodexLastResponse {
+            response_id: "resp_1".to_string(),
+            items_added: vec![
+                json!({
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": "I will read that file."}],
+                }),
+                json!({
+                    "type": "function_call",
+                    "id": "fc_1",
+                    "call_id": "fc_1",
+                    "name": "read_file",
+                    "arguments": "{\"path\":\"foo.txt\"}",
+                }),
+            ],
+        };
+
+        let incremental =
+            codex_incremental_input(&current_request, &previous_request, &previous_response)
+                .expect("incremental input");
+        assert_eq!(
+            incremental,
+            vec![json!({
+                "type": "function_call_output",
+                "call_id": "fc_1",
+                "output": "{\"content\":\"ok\"}",
+            })]
+        );
+    }
+
+    #[test]
+    fn codex_incremental_input_requires_matching_non_input_fields() {
+        let previous_request = parse_codex_request_payload(
+            r#"{
+                "model":"gpt-5.4",
+                "instructions":"system one",
+                "tool_choice":"auto",
+                "parallel_tool_calls":true,
+                "stream":true,
+                "store":false,
+                "include":[],
+                "input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]}]
+            }"#,
+        )
+        .expect("previous request");
+        let current_request = parse_codex_request_payload(
+            r#"{
+                "model":"gpt-5.4",
+                "instructions":"system two",
+                "tool_choice":"auto",
+                "parallel_tool_calls":true,
+                "stream":true,
+                "store":false,
+                "include":[],
+                "input":[
+                    {"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]},
+                    {"type":"message","role":"user","content":[{"type":"input_text","text":"second"}]}
+                ]
+            }"#,
+        )
+        .expect("current request");
+        let previous_response = CodexLastResponse {
+            response_id: "resp_1".to_string(),
+            items_added: Vec::new(),
+        };
+
+        assert_eq!(
+            codex_incremental_input(&current_request, &previous_request, &previous_response),
+            None
+        );
+    }
+
+    #[test]
+    fn parse_codex_completed_captures_response_id() {
+        let mut text = String::new();
+        let mut reasoning = String::new();
+        let mut usage = None;
+        let mut response_id = None;
+        let mut stop_reason = String::from("unknown");
+        let mut func_calls = HashMap::new();
+        let mut events = Vec::new();
+
+        parse_codex_data(
+            r#"{"type":"response.completed","response":{"id":"resp_done","usage":{"input_tokens":3,"output_tokens":5}}}"#,
+            &mut text,
+            &mut reasoning,
+            &mut usage,
+            &mut response_id,
+            &mut stop_reason,
+            &mut func_calls,
+            &mut events,
+        );
+
+        assert_eq!(response_id.as_deref(), Some("resp_done"));
+        assert_eq!(stop_reason, "stop");
+        assert_eq!(usage.expect("usage").total_tokens, 8);
     }
 
     #[test]
@@ -1317,6 +1814,7 @@ mod tests {
         let mut text = String::new();
         let mut reasoning = String::new();
         let mut usage = None;
+        let mut response_id = None;
         let mut stop_reason = String::from("unknown");
         let mut func_calls: HashMap<String, CodexFuncCall> = HashMap::new();
         let mut events = Vec::new();
@@ -1327,6 +1825,7 @@ mod tests {
             &mut text,
             &mut reasoning,
             &mut usage,
+            &mut response_id,
             &mut stop_reason,
             &mut func_calls,
             &mut events,
@@ -1337,6 +1836,7 @@ mod tests {
             &mut text,
             &mut reasoning,
             &mut usage,
+            &mut response_id,
             &mut stop_reason,
             &mut func_calls,
             &mut events,
@@ -1347,6 +1847,7 @@ mod tests {
             &mut text,
             &mut reasoning,
             &mut usage,
+            &mut response_id,
             &mut stop_reason,
             &mut func_calls,
             &mut events,
@@ -1357,6 +1858,7 @@ mod tests {
             &mut text,
             &mut reasoning,
             &mut usage,
+            &mut response_id,
             &mut stop_reason,
             &mut func_calls,
             &mut events,
