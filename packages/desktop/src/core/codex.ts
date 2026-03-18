@@ -18,6 +18,28 @@ function truncate(value: unknown, max = 2000): unknown {
   return value;
 }
 
+function buildTextControls(params?: ChatParams): Record<string, unknown> | undefined {
+  const verbosity = params?.verbosity;
+  const responseFormat = params?.response_format;
+  if (!verbosity && !responseFormat) return undefined;
+
+  const text: Record<string, unknown> = {};
+  if (verbosity) {
+    text.verbosity = verbosity;
+  }
+
+  if (responseFormat?.type === "json_schema") {
+    text.format = {
+      type: "json_schema",
+      name: responseFormat.json_schema.name,
+      strict: responseFormat.json_schema.strict ?? true,
+      schema: responseFormat.json_schema.schema,
+    };
+  }
+
+  return text;
+}
+
 
 interface StreamCodexOptions {
   accessToken: string;
@@ -107,8 +129,11 @@ function buildRequest(options: StreamCodexOptions): {
     model: params?.model ?? model,
     instructions,
     input: messagesToResponsesInput(nonSystemMessages),
+    tool_choice: "auto",
+    parallel_tool_calls: true,
     stream: true,
     store: false,
+    include: ["reasoning.encrypted_content"],
   };
 
   try {
@@ -119,6 +144,10 @@ function buildRequest(options: StreamCodexOptions): {
 
   const reasoningEffort = params?.reasoning_effort ?? DEFAULT_REASONING_EFFORT;
   bodyObj.reasoning = { effort: reasoningEffort };
+  if (options.convId) bodyObj.prompt_cache_key = options.convId;
+  if (params?.service_tier) bodyObj.service_tier = params.service_tier;
+  const text = buildTextControls(params);
+  if (text) bodyObj.text = text;
 
   // Add tools in Responses API format
   if (tools && tools.length > 0) {
@@ -132,10 +161,15 @@ function buildRequest(options: StreamCodexOptions): {
 
   const headers: Record<string, string> = {
     Authorization: `Bearer ${accessToken}`,
+    Accept: "text/event-stream",
     "Content-Type": "application/json",
   };
   if (accountId) {
     headers["ChatGPT-Account-Id"] = accountId;
+  }
+  if (options.convId) {
+    headers["x-client-request-id"] = options.convId;
+    headers["session_id"] = options.convId;
   }
 
   return {

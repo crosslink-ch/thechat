@@ -1,8 +1,13 @@
+use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use tauri::ipc::Channel;
+use tokio_tungstenite::connect_async;
+use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+use tokio_tungstenite::tungstenite::http::{HeaderName, HeaderValue};
+use tokio_tungstenite::tungstenite::protocol::Message;
 
 // ---------------------------------------------------------------------------
 // Public state — managed by Tauri
@@ -104,6 +109,14 @@ struct AnthropicToolUse {
     args: String,
 }
 
+enum CodexWebsocketError {
+    Cancelled,
+    Fallback(String),
+    Fatal(String),
+}
+
+const RESPONSES_WEBSOCKETS_BETA_VALUE: &str = "responses_websockets=2026-02-06";
+
 // ---------------------------------------------------------------------------
 // SSE line parsers
 // ---------------------------------------------------------------------------
@@ -144,7 +157,10 @@ fn parse_openrouter_data(
     }
 
     // Finish reason: normalize OpenAI-style values
-    if let Some(reason) = parsed.pointer("/choices/0/finish_reason").and_then(|v| v.as_str()) {
+    if let Some(reason) = parsed
+        .pointer("/choices/0/finish_reason")
+        .and_then(|v| v.as_str())
+    {
         *stop_reason = match reason {
             "stop" => "stop".to_string(),
             "tool_calls" => "tool_calls".to_string(),
@@ -265,13 +281,21 @@ fn parse_codex_data(
         "response.output_item.added" => {
             if let Some(item) = parsed.get("item") {
                 if item.get("type").and_then(|v| v.as_str()) == Some("function_call") {
-                    let item_id = item.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    let item_id = item
+                        .get("id")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
                     let call_id = item
                         .get("call_id")
                         .and_then(|v| v.as_str())
                         .unwrap_or(&item_id)
                         .to_string();
-                    let name = item.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    let name = item
+                        .get("name")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
 
                     func_calls.insert(
                         item_id,
@@ -386,13 +410,24 @@ fn parse_anthropic_data(
             if let Some(block) = parsed.get("content_block") {
                 let block_type = block.get("type").and_then(|v| v.as_str()).unwrap_or("");
                 if block_type == "tool_use" {
-                    let id = block.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                    let name = block.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                    tool_uses.insert(index, AnthropicToolUse {
-                        id: id.clone(),
-                        name: name.clone(),
-                        args: String::new(),
-                    });
+                    let id = block
+                        .get("id")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let name = block
+                        .get("name")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    tool_uses.insert(
+                        index,
+                        AnthropicToolUse {
+                            id: id.clone(),
+                            name: name.clone(),
+                            args: String::new(),
+                        },
+                    );
                     if !name.is_empty() {
                         events.push(StreamEvent::ToolCallStart {
                             tool_call_id: id,
@@ -440,7 +475,10 @@ fn parse_anthropic_data(
         }
         "message_delta" => {
             // Normalize Anthropic stop_reason to our standard values
-            if let Some(reason) = parsed.pointer("/delta/stop_reason").and_then(|v| v.as_str()) {
+            if let Some(reason) = parsed
+                .pointer("/delta/stop_reason")
+                .and_then(|v| v.as_str())
+            {
                 *stop_reason = match reason {
                     "end_turn" => "stop".to_string(),
                     "tool_use" => "tool_calls".to_string(),
@@ -559,6 +597,254 @@ fn finalize_codex_tools(
         .collect()
 }
 
+fn codex_ws_url_from_api_url(url: &str) -> Result<String, String> {
+    let mut parsed = reqwest::Url::parse(url)
+        .map_err(|e| format!("invalid Codex API URL for websocket transport: {}", e))?;
+
+    match parsed.scheme() {
+        "https" => parsed
+            .set_scheme("wss")
+            .map_err(|_| "failed to switch Codex transport to wss".to_string())?,
+        "http" => parsed
+            .set_scheme("ws")
+            .map_err(|_| "failed to switch Codex transport to ws".to_string())?,
+        "wss" | "ws" => {}
+        scheme => {
+            return Err(format!(
+                "unsupported URL scheme for Codex websocket transport: {}",
+                scheme
+            ));
+        }
+    }
+
+    Ok(parsed.to_string())
+}
+
+fn build_codex_ws_request_body(body: &str) -> Result<String, String> {
+    let mut value: serde_json::Value =
+        serde_json::from_str(body).map_err(|e| format!("invalid Codex request JSON: {}", e))?;
+    let object = value
+        .as_object_mut()
+        .ok_or_else(|| "Codex request body must be a JSON object".to_string())?;
+    object.insert(
+        "type".to_string(),
+        serde_json::Value::String("response.create".to_string()),
+    );
+    serde_json::to_string(&value)
+        .map_err(|e| format!("failed to encode Codex websocket request: {}", e))
+}
+
+fn apply_codex_ws_headers(
+    request: &mut tokio_tungstenite::tungstenite::http::Request<()>,
+    headers: &HashMap<String, String>,
+) {
+    for (name, value) in headers {
+        if name.eq_ignore_ascii_case("content-type") || name.eq_ignore_ascii_case("accept") {
+            continue;
+        }
+
+        let Ok(header_name) = name.parse::<HeaderName>() else {
+            continue;
+        };
+        let Ok(header_value) = HeaderValue::from_str(value) else {
+            continue;
+        };
+        request.headers_mut().insert(header_name, header_value);
+    }
+
+    request.headers_mut().insert(
+        HeaderName::from_static("openai-beta"),
+        HeaderValue::from_static(RESPONSES_WEBSOCKETS_BETA_VALUE),
+    );
+}
+
+fn is_codex_terminal_event(data: &str) -> bool {
+    serde_json::from_str::<serde_json::Value>(data)
+        .ok()
+        .and_then(|parsed| {
+            parsed
+                .get("type")
+                .and_then(|v| v.as_str())
+                .map(str::to_string)
+        })
+        .is_some_and(|event_type| {
+            matches!(
+                event_type.as_str(),
+                "response.completed" | "response.incomplete"
+            )
+        })
+}
+
+async fn try_codex_websocket_stream(
+    url: String,
+    headers: HashMap<String, String>,
+    body: String,
+    cancel_flag: Arc<AtomicBool>,
+    on_event: &Channel<Vec<StreamEvent>>,
+) -> Result<StreamResult, CodexWebsocketError> {
+    let ws_url = codex_ws_url_from_api_url(&url).map_err(CodexWebsocketError::Fallback)?;
+    let ws_body = build_codex_ws_request_body(&body).map_err(CodexWebsocketError::Fatal)?;
+
+    let mut request = ws_url.into_client_request().map_err(|e| {
+        CodexWebsocketError::Fallback(format!("failed to build websocket request: {}", e))
+    })?;
+    apply_codex_ws_headers(&mut request, &headers);
+
+    let (mut socket, _) = connect_async(request).await.map_err(|e| {
+        CodexWebsocketError::Fallback(format!("Codex websocket connect failed: {}", e))
+    })?;
+
+    socket
+        .send(Message::Text(ws_body.into()))
+        .await
+        .map_err(|e| {
+            CodexWebsocketError::Fallback(format!("Codex websocket send failed: {}", e))
+        })?;
+
+    let mut acc_text = String::new();
+    let mut acc_reasoning = String::new();
+    let mut usage: Option<Usage> = None;
+    let mut stop_reason = String::from("unknown");
+    let mut codex_func_calls: HashMap<String, CodexFuncCall> = HashMap::new();
+    let mut event_batch: Vec<StreamEvent> = Vec::new();
+    let mut last_flush = std::time::Instant::now();
+    let mut saw_terminal = false;
+    let mut received_payload = false;
+
+    loop {
+        if cancel_flag.load(Ordering::Relaxed) {
+            let _ = socket.close(None).await;
+            return Err(CodexWebsocketError::Cancelled);
+        }
+
+        let message = match socket.next().await {
+            Some(Ok(message)) => message,
+            Some(Err(err)) => {
+                return Err(CodexWebsocketError::Fatal(format!(
+                    "Codex websocket read error: {}",
+                    err
+                )));
+            }
+            None => break,
+        };
+
+        match message {
+            Message::Text(text) => {
+                let payload = text.to_string();
+                received_payload = true;
+                let mut line_events = Vec::new();
+                parse_codex_data(
+                    &payload,
+                    &mut acc_text,
+                    &mut acc_reasoning,
+                    &mut usage,
+                    &mut stop_reason,
+                    &mut codex_func_calls,
+                    &mut line_events,
+                );
+                if is_codex_terminal_event(&payload) {
+                    saw_terminal = true;
+                }
+
+                let has_structural = line_events.iter().any(|e| {
+                    matches!(
+                        e,
+                        StreamEvent::ToolCallStart { .. }
+                            | StreamEvent::ToolCallComplete { .. }
+                            | StreamEvent::Error { .. }
+                    )
+                });
+
+                event_batch.extend(line_events);
+                if has_structural || last_flush.elapsed() >= std::time::Duration::from_millis(16) {
+                    if !event_batch.is_empty() {
+                        let batch = std::mem::take(&mut event_batch);
+                        let _ = on_event.send(batch);
+                        last_flush = std::time::Instant::now();
+                    }
+                }
+            }
+            Message::Binary(data) => {
+                let payload = String::from_utf8(data.to_vec()).map_err(|_| {
+                    CodexWebsocketError::Fatal(
+                        "unexpected binary Codex websocket event".to_string(),
+                    )
+                })?;
+                received_payload = true;
+                let mut line_events = Vec::new();
+                parse_codex_data(
+                    &payload,
+                    &mut acc_text,
+                    &mut acc_reasoning,
+                    &mut usage,
+                    &mut stop_reason,
+                    &mut codex_func_calls,
+                    &mut line_events,
+                );
+                if is_codex_terminal_event(&payload) {
+                    saw_terminal = true;
+                }
+
+                let has_structural = line_events.iter().any(|e| {
+                    matches!(
+                        e,
+                        StreamEvent::ToolCallStart { .. }
+                            | StreamEvent::ToolCallComplete { .. }
+                            | StreamEvent::Error { .. }
+                    )
+                });
+
+                event_batch.extend(line_events);
+                if has_structural || last_flush.elapsed() >= std::time::Duration::from_millis(16) {
+                    if !event_batch.is_empty() {
+                        let batch = std::mem::take(&mut event_batch);
+                        let _ = on_event.send(batch);
+                        last_flush = std::time::Instant::now();
+                    }
+                }
+            }
+            Message::Ping(payload) => {
+                socket.send(Message::Pong(payload)).await.map_err(|e| {
+                    CodexWebsocketError::Fatal(format!("Codex websocket pong failed: {}", e))
+                })?;
+            }
+            Message::Pong(_) => {}
+            Message::Close(_) => break,
+            _ => {}
+        }
+    }
+
+    if !event_batch.is_empty() {
+        let batch = std::mem::take(&mut event_batch);
+        let _ = on_event.send(batch);
+    }
+
+    let mut final_events = Vec::new();
+    let tool_calls = finalize_codex_tools(codex_func_calls, &mut final_events);
+    if !final_events.is_empty() {
+        let _ = on_event.send(final_events);
+    }
+
+    if !saw_terminal {
+        if !received_payload {
+            return Err(CodexWebsocketError::Fallback(
+                "Codex websocket closed before streaming any events".to_string(),
+            ));
+        }
+        return Err(CodexWebsocketError::Fatal(
+            "Codex websocket closed before response.completed".to_string(),
+        ));
+    }
+
+    Ok(StreamResult {
+        text: acc_text,
+        reasoning: acc_reasoning,
+        tool_calls,
+        usage,
+        stop_reason,
+    })
+}
+
 // ---------------------------------------------------------------------------
 // Tauri commands
 // ---------------------------------------------------------------------------
@@ -581,7 +867,15 @@ pub async fn stream_completion(
         .unwrap()
         .insert(stream_id.clone(), cancel_flag.clone());
 
-    let result = run_stream(url, headers, body, &provider, cancel_flag.clone(), &on_event).await;
+    let result = run_stream(
+        url,
+        headers,
+        body,
+        &provider,
+        cancel_flag.clone(),
+        &on_event,
+    )
+    .await;
 
     // Always clean up
     cancellers.map.lock().unwrap().remove(&stream_id);
@@ -614,6 +908,37 @@ async fn run_stream(
     cancel_flag: Arc<AtomicBool>,
     on_event: &Channel<Vec<StreamEvent>>,
 ) -> Result<StreamResult, String> {
+    if provider == "codex" {
+        match try_codex_websocket_stream(
+            url.clone(),
+            headers.clone(),
+            body.clone(),
+            Arc::clone(&cancel_flag),
+            on_event,
+        )
+        .await
+        {
+            Ok(result) => return Ok(result),
+            Err(CodexWebsocketError::Cancelled) => return Err("cancelled".to_string()),
+            Err(CodexWebsocketError::Fatal(err)) => return Err(err),
+            Err(CodexWebsocketError::Fallback(reason)) => {
+                tracing::info!(reason = %reason, "falling back to Codex HTTP SSE");
+            }
+        }
+    }
+
+    run_http_stream(url, headers, body, provider, cancel_flag, on_event).await
+}
+
+#[tracing::instrument(skip(headers, body, cancel_flag, on_event))]
+async fn run_http_stream(
+    url: String,
+    headers: HashMap<String, String>,
+    body: String,
+    provider: &str,
+    cancel_flag: Arc<AtomicBool>,
+    on_event: &Channel<Vec<StreamEvent>>,
+) -> Result<StreamResult, String> {
     let client = reqwest::Client::new();
 
     let mut req_builder = client.post(&url).body(body);
@@ -634,7 +959,12 @@ async fn run_stream(
             "anthropic" => "Anthropic",
             _ => "OpenRouter",
         };
-        return Err(format!("{} API error ({}): {}", label, status.as_u16(), err_body));
+        return Err(format!(
+            "{} API error ({}): {}",
+            label,
+            status.as_u16(),
+            err_body
+        ));
     }
 
     // Accumulators
@@ -778,32 +1108,91 @@ mod tests {
     use super::*;
 
     // Helper to run the openrouter parser on a single data line
-    fn parse_or(data: &str) -> (String, String, Option<Usage>, HashMap<usize, ToolCallAccum>, Vec<StreamEvent>) {
+    fn parse_or(
+        data: &str,
+    ) -> (
+        String,
+        String,
+        Option<Usage>,
+        HashMap<usize, ToolCallAccum>,
+        Vec<StreamEvent>,
+    ) {
         let mut text = String::new();
         let mut reasoning = String::new();
         let mut usage = None;
         let mut stop_reason = String::from("unknown");
         let mut tool_calls = HashMap::new();
         let mut events = Vec::new();
-        parse_openrouter_data(data, &mut text, &mut reasoning, &mut usage, &mut stop_reason, &mut tool_calls, &mut events);
+        parse_openrouter_data(
+            data,
+            &mut text,
+            &mut reasoning,
+            &mut usage,
+            &mut stop_reason,
+            &mut tool_calls,
+            &mut events,
+        );
         (text, reasoning, usage, tool_calls, events)
     }
 
-    fn parse_cx(data: &str) -> (String, String, Option<Usage>, HashMap<String, CodexFuncCall>, Vec<StreamEvent>) {
+    fn parse_cx(
+        data: &str,
+    ) -> (
+        String,
+        String,
+        Option<Usage>,
+        HashMap<String, CodexFuncCall>,
+        Vec<StreamEvent>,
+    ) {
         let mut text = String::new();
         let mut reasoning = String::new();
         let mut usage = None;
         let mut stop_reason = String::from("unknown");
         let mut func_calls = HashMap::new();
         let mut events = Vec::new();
-        parse_codex_data(data, &mut text, &mut reasoning, &mut usage, &mut stop_reason, &mut func_calls, &mut events);
+        parse_codex_data(
+            data,
+            &mut text,
+            &mut reasoning,
+            &mut usage,
+            &mut stop_reason,
+            &mut func_calls,
+            &mut events,
+        );
         (text, reasoning, usage, func_calls, events)
     }
 
     #[test]
+    fn codex_ws_url_rewrites_http_schemes() {
+        assert_eq!(
+            codex_ws_url_from_api_url("https://chatgpt.com/backend-api/codex/responses")
+                .expect("wss url"),
+            "wss://chatgpt.com/backend-api/codex/responses"
+        );
+        assert_eq!(
+            codex_ws_url_from_api_url("http://localhost:8080/v1/responses").expect("ws url"),
+            "ws://localhost:8080/v1/responses"
+        );
+    }
+
+    #[test]
+    fn build_codex_ws_request_body_wraps_response_create() {
+        let body = build_codex_ws_request_body(
+            r#"{"model":"gpt-5.4","stream":true,"input":[{"type":"message"}]}"#,
+        )
+        .expect("wrapped request");
+        let value: serde_json::Value = serde_json::from_str(&body).expect("json body");
+        assert_eq!(
+            value["type"],
+            serde_json::Value::String("response.create".into())
+        );
+        assert_eq!(value["model"], serde_json::Value::String("gpt-5.4".into()));
+        assert_eq!(value["stream"], serde_json::Value::Bool(true));
+    }
+
+    #[test]
     fn test_parse_openrouter_text_delta() {
-        let (text, _, _, _, events) =
-            parse_or(r#"{"choices":[{"delta":{"content":"Hello"}}]}"#);
+        let (text, _, _, _, events) = parse_or(r#"{"choices":[{"delta":{"content":"Hello"}}]}"#);
         assert_eq!(text, "Hello");
         assert_eq!(events.len(), 1);
         assert_eq!(
@@ -853,17 +1242,32 @@ mod tests {
         // First chunk: tool call start
         parse_openrouter_data(
             r#"{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"get_weather","arguments":""}}]}}]}"#,
-            &mut text, &mut reasoning, &mut usage, &mut stop_reason, &mut tool_calls, &mut events,
+            &mut text,
+            &mut reasoning,
+            &mut usage,
+            &mut stop_reason,
+            &mut tool_calls,
+            &mut events,
         );
         // Second chunk: args delta
         parse_openrouter_data(
             r#"{"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"city\""}}]}}]}"#,
-            &mut text, &mut reasoning, &mut usage, &mut stop_reason, &mut tool_calls, &mut events,
+            &mut text,
+            &mut reasoning,
+            &mut usage,
+            &mut stop_reason,
+            &mut tool_calls,
+            &mut events,
         );
         // Third chunk: more args
         parse_openrouter_data(
             r#"{"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":": \"Paris\"}"}}]}}]}"#,
-            &mut text, &mut reasoning, &mut usage, &mut stop_reason, &mut tool_calls, &mut events,
+            &mut text,
+            &mut reasoning,
+            &mut usage,
+            &mut stop_reason,
+            &mut tool_calls,
+            &mut events,
         );
 
         assert_eq!(tool_calls.len(), 1);
@@ -873,7 +1277,9 @@ mod tests {
         assert_eq!(tc.args, r#"{"city": "Paris"}"#);
 
         // Should have: start, args-delta (empty), args-delta, args-delta
-        assert!(events.iter().any(|e| matches!(e, StreamEvent::ToolCallStart { .. })));
+        assert!(events
+            .iter()
+            .any(|e| matches!(e, StreamEvent::ToolCallStart { .. })));
         let args_deltas: Vec<_> = events
             .iter()
             .filter(|e| matches!(e, StreamEvent::ToolCallArgsDelta { .. }))
@@ -918,22 +1324,42 @@ mod tests {
         // 1. Item added
         parse_codex_data(
             r#"{"type":"response.output_item.added","item":{"type":"function_call","id":"fc_1","call_id":"fc_1","name":"read"}}"#,
-            &mut text, &mut reasoning, &mut usage, &mut stop_reason, &mut func_calls, &mut events,
+            &mut text,
+            &mut reasoning,
+            &mut usage,
+            &mut stop_reason,
+            &mut func_calls,
+            &mut events,
         );
         // 2. Args delta
         parse_codex_data(
             r#"{"type":"response.function_call_arguments.delta","item_id":"fc_1","delta":"{\"path\":"}"#,
-            &mut text, &mut reasoning, &mut usage, &mut stop_reason, &mut func_calls, &mut events,
+            &mut text,
+            &mut reasoning,
+            &mut usage,
+            &mut stop_reason,
+            &mut func_calls,
+            &mut events,
         );
         // 3. More args
         parse_codex_data(
             r#"{"type":"response.function_call_arguments.delta","item_id":"fc_1","delta":"\"foo\"}"}"#,
-            &mut text, &mut reasoning, &mut usage, &mut stop_reason, &mut func_calls, &mut events,
+            &mut text,
+            &mut reasoning,
+            &mut usage,
+            &mut stop_reason,
+            &mut func_calls,
+            &mut events,
         );
         // 4. Item done (with final arguments)
         parse_codex_data(
             r#"{"type":"response.output_item.done","item":{"type":"function_call","id":"fc_1","arguments":"{\"path\":\"foo\"}"}}"#,
-            &mut text, &mut reasoning, &mut usage, &mut stop_reason, &mut func_calls, &mut events,
+            &mut text,
+            &mut reasoning,
+            &mut usage,
+            &mut stop_reason,
+            &mut func_calls,
+            &mut events,
         );
 
         assert_eq!(func_calls.len(), 1);
@@ -941,7 +1367,9 @@ mod tests {
         assert_eq!(fc.name, "read");
         assert_eq!(fc.args, r#"{"path":"foo"}"#);
 
-        assert!(events.iter().any(|e| matches!(e, StreamEvent::ToolCallStart { .. })));
+        assert!(events
+            .iter()
+            .any(|e| matches!(e, StreamEvent::ToolCallStart { .. })));
     }
 
     #[test]
@@ -1017,14 +1445,30 @@ mod tests {
 
     // --- Anthropic parser tests ---
 
-    fn parse_an(data: &str) -> (String, String, Option<Usage>, HashMap<usize, AnthropicToolUse>, Vec<StreamEvent>) {
+    fn parse_an(
+        data: &str,
+    ) -> (
+        String,
+        String,
+        Option<Usage>,
+        HashMap<usize, AnthropicToolUse>,
+        Vec<StreamEvent>,
+    ) {
         let mut text = String::new();
         let mut reasoning = String::new();
         let mut usage = None;
         let mut stop_reason = String::from("unknown");
         let mut tool_uses = HashMap::new();
         let mut events = Vec::new();
-        parse_anthropic_data(data, &mut text, &mut reasoning, &mut usage, &mut stop_reason, &mut tool_uses, &mut events);
+        parse_anthropic_data(
+            data,
+            &mut text,
+            &mut reasoning,
+            &mut usage,
+            &mut stop_reason,
+            &mut tool_uses,
+            &mut events,
+        );
         (text, reasoning, usage, tool_uses, events)
     }
 
@@ -1035,7 +1479,12 @@ mod tests {
         );
         assert_eq!(text, "Hello");
         assert_eq!(events.len(), 1);
-        assert_eq!(events[0], StreamEvent::TextDelta { text: "Hello".into() });
+        assert_eq!(
+            events[0],
+            StreamEvent::TextDelta {
+                text: "Hello".into()
+            }
+        );
     }
 
     #[test]
@@ -1044,7 +1493,12 @@ mod tests {
             r#"{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"Let me think..."}}"#,
         );
         assert_eq!(reasoning, "Let me think...");
-        assert_eq!(events[0], StreamEvent::ReasoningDelta { text: "Let me think...".into() });
+        assert_eq!(
+            events[0],
+            StreamEvent::ReasoningDelta {
+                text: "Let me think...".into()
+            }
+        );
     }
 
     #[test]
@@ -1059,17 +1513,32 @@ mod tests {
         // 1. content_block_start with tool_use
         parse_anthropic_data(
             r#"{"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_abc","name":"read"}}"#,
-            &mut text, &mut reasoning, &mut usage, &mut stop_reason, &mut tool_uses, &mut events,
+            &mut text,
+            &mut reasoning,
+            &mut usage,
+            &mut stop_reason,
+            &mut tool_uses,
+            &mut events,
         );
         // 2. input_json_delta
         parse_anthropic_data(
             r#"{"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"path\":"}}"#,
-            &mut text, &mut reasoning, &mut usage, &mut stop_reason, &mut tool_uses, &mut events,
+            &mut text,
+            &mut reasoning,
+            &mut usage,
+            &mut stop_reason,
+            &mut tool_uses,
+            &mut events,
         );
         // 3. more input_json_delta
         parse_anthropic_data(
             r#"{"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"\"foo.txt\"}"}}"#,
-            &mut text, &mut reasoning, &mut usage, &mut stop_reason, &mut tool_uses, &mut events,
+            &mut text,
+            &mut reasoning,
+            &mut usage,
+            &mut stop_reason,
+            &mut tool_uses,
+            &mut events,
         );
 
         assert_eq!(tool_uses.len(), 1);
@@ -1078,8 +1547,13 @@ mod tests {
         assert_eq!(tu.name, "read");
         assert_eq!(tu.args, r#"{"path":"foo.txt"}"#);
 
-        assert!(events.iter().any(|e| matches!(e, StreamEvent::ToolCallStart { .. })));
-        let args_deltas: Vec<_> = events.iter().filter(|e| matches!(e, StreamEvent::ToolCallArgsDelta { .. })).collect();
+        assert!(events
+            .iter()
+            .any(|e| matches!(e, StreamEvent::ToolCallStart { .. })));
+        let args_deltas: Vec<_> = events
+            .iter()
+            .filter(|e| matches!(e, StreamEvent::ToolCallArgsDelta { .. }))
+            .collect();
         assert_eq!(args_deltas.len(), 2);
     }
 
@@ -1095,14 +1569,24 @@ mod tests {
         // message_start with input usage
         parse_anthropic_data(
             r#"{"type":"message_start","message":{"usage":{"input_tokens":100,"output_tokens":0}}}"#,
-            &mut text, &mut reasoning, &mut usage, &mut stop_reason, &mut tool_uses, &mut events,
+            &mut text,
+            &mut reasoning,
+            &mut usage,
+            &mut stop_reason,
+            &mut tool_uses,
+            &mut events,
         );
         assert_eq!(usage.as_ref().unwrap().prompt_tokens, 100);
 
         // message_delta with output usage
         parse_anthropic_data(
             r#"{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":50}}"#,
-            &mut text, &mut reasoning, &mut usage, &mut stop_reason, &mut tool_uses, &mut events,
+            &mut text,
+            &mut reasoning,
+            &mut usage,
+            &mut stop_reason,
+            &mut tool_uses,
+            &mut events,
         );
         assert_eq!(stop_reason, "stop");
         let u = usage.unwrap();
@@ -1117,17 +1601,25 @@ mod tests {
             r#"{"type":"error","error":{"type":"rate_limit_error","message":"Rate limit exceeded"}}"#,
         );
         assert_eq!(events.len(), 1);
-        assert_eq!(events[0], StreamEvent::Error { error: "Rate limit exceeded".into() });
+        assert_eq!(
+            events[0],
+            StreamEvent::Error {
+                error: "Rate limit exceeded".into()
+            }
+        );
     }
 
     #[test]
     fn test_finalize_anthropic_tools_emits_complete() {
         let mut tool_uses = HashMap::new();
-        tool_uses.insert(0, AnthropicToolUse {
-            id: "toolu_abc".into(),
-            name: "read".into(),
-            args: r#"{"path":"foo"}"#.into(),
-        });
+        tool_uses.insert(
+            0,
+            AnthropicToolUse {
+                id: "toolu_abc".into(),
+                name: "read".into(),
+                args: r#"{"path":"foo"}"#.into(),
+            },
+        );
         let mut events = Vec::new();
         let results = finalize_anthropic_tools(tool_uses, &mut events);
 
@@ -1140,8 +1632,7 @@ mod tests {
 
     #[test]
     fn test_codex_error_event() {
-        let (_, _, _, _, events) =
-            parse_cx(r#"{"type":"error","message":"Rate limit exceeded"}"#);
+        let (_, _, _, _, events) = parse_cx(r#"{"type":"error","message":"Rate limit exceeded"}"#);
         assert_eq!(events.len(), 1);
         assert_eq!(
             events[0],

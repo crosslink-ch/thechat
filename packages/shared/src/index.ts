@@ -152,6 +152,8 @@ export interface ChatParams {
     json_schema: { name: string; strict?: boolean; schema: Record<string, unknown> };
   };
   reasoning_effort?: "low" | "medium" | "high";
+  verbosity?: "low" | "medium" | "high";
+  service_tier?: string;
   effort?: "low" | "medium" | "high" | "max";
   seed?: number;
   provider?: { allow_fallbacks?: boolean; order?: string[] };
