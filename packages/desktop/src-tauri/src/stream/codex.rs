@@ -286,6 +286,49 @@ pub(super) fn parse_codex_data(
                 error: msg.to_string(),
             });
         }
+        "codex.rate_limits" => {
+            if let Some(rl) = parsed.get("rate_limits") {
+                let allowed = rl.get("allowed").and_then(|v| v.as_bool()).unwrap_or(true);
+                let limit_reached = rl
+                    .get("limit_reached")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+
+                if !allowed || limit_reached {
+                    // Find the limit that was hit and its reset time
+                    let reset_msg = ["primary", "secondary"]
+                        .iter()
+                        .filter_map(|key| {
+                            let bucket = rl.get(key)?;
+                            let used = bucket.get("used_percent").and_then(|v| v.as_u64())?;
+                            if used >= 100 {
+                                let reset_secs = bucket
+                                    .get("reset_after_seconds")
+                                    .and_then(|v| v.as_u64())
+                                    .unwrap_or(0);
+                                let mins = reset_secs / 60;
+                                let hours = mins / 60;
+                                let remaining_mins = mins % 60;
+                                let time_str = if hours > 0 {
+                                    format!("{}h {}m", hours, remaining_mins)
+                                } else {
+                                    format!("{}m", mins)
+                                };
+                                Some(format!(
+                                    "Codex rate limit reached ({}). Resets in {}.",
+                                    key, time_str
+                                ))
+                            } else {
+                                None
+                            }
+                        })
+                        .next()
+                        .unwrap_or_else(|| "Codex rate limit reached.".to_string());
+
+                    events.push(StreamEvent::Error { error: reset_msg });
+                }
+            }
+        }
         _ => {} // Ignore unknown event types
     }
 }
@@ -1254,6 +1297,30 @@ mod tests {
                 text: "Thinking...".into()
             }
         );
+    }
+
+    #[test]
+    fn test_codex_rate_limit_reached_emits_error() {
+        let (_, _, _, _, events) = parse_cx(
+            r#"{"type":"codex.rate_limits","plan_type":"plus","rate_limits":{"allowed":false,"limit_reached":true,"primary":{"used_percent":100,"window_minutes":300,"reset_after_seconds":5400,"reset_at":1773878280},"secondary":{"used_percent":35,"window_minutes":10080,"reset_after_seconds":414762,"reset_at":1774283606}}}"#,
+        );
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            StreamEvent::Error { error } => {
+                assert!(error.contains("rate limit reached"), "got: {}", error);
+                assert!(error.contains("primary"), "got: {}", error);
+                assert!(error.contains("1h 30m"), "got: {}", error);
+            }
+            other => panic!("expected Error event, got: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_codex_rate_limit_not_reached_no_event() {
+        let (_, _, _, _, events) = parse_cx(
+            r#"{"type":"codex.rate_limits","plan_type":"plus","rate_limits":{"allowed":true,"limit_reached":false,"primary":{"used_percent":10,"window_minutes":300,"reset_after_seconds":9437,"reset_at":1773878280},"secondary":{"used_percent":35,"window_minutes":10080,"reset_after_seconds":414762,"reset_at":1774283606}}}"#,
+        );
+        assert!(events.is_empty(), "expected no events when not rate limited");
     }
 
     // -----------------------------------------------------------------------
