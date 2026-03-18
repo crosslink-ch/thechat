@@ -35,4 +35,8 @@ dev.db-wal
 .env
 .env.local
 
+# Test credentials (OAuth tokens from `python3 scripts/test.py init`)
+.test-credentials.json
+
 .claude
+__pycache__

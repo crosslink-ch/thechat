@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Run all test suites in parallel, only showing output from failures."""
 
+import base64
+import json
 import os
 import socket
 import subprocess
@@ -9,8 +11,16 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.request import Request, urlopen
+from urllib.parse import urlencode
 
 ROOT = Path(__file__).resolve().parent.parent
+CREDENTIALS_FILE = ROOT / ".test-credentials.json"
+
+# OpenAI device auth constants (same as packages/desktop/src/core/codex-auth.ts)
+CODEX_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
+CODEX_ISSUER = "https://auth.openai.com"
+CODEX_VERIFICATION_URL = "https://auth.openai.com/codex/device"
 
 
 def load_dotenv() -> None:
@@ -110,10 +120,176 @@ def run_suite(suite: dict) -> Result:
     )
 
 
+def _http_json(method: str, url: str, *, json_body: dict | None = None,
+                form_body: dict | None = None) -> dict:
+    """Minimal HTTP helper using only stdlib."""
+    if json_body is not None:
+        data = json.dumps(json_body).encode()
+        content_type = "application/json"
+    elif form_body is not None:
+        data = urlencode(form_body).encode()
+        content_type = "application/x-www-form-urlencoded"
+    else:
+        data = None
+        content_type = None
+    headers = {"User-Agent": "thechat-test/1.0"}
+    if content_type:
+        headers["Content-Type"] = content_type
+    req = Request(url, data=data, headers=headers, method=method)
+    with urlopen(req) as resp:
+        return json.loads(resp.read())
+
+
+def _parse_jwt_claims(token: str) -> dict:
+    """Decode JWT payload (no signature verification — we trust the issuer)."""
+    payload = token.split(".")[1]
+    # Restore base64url → base64
+    payload = payload.replace("-", "+").replace("_", "/")
+    payload += "=" * ((4 - len(payload) % 4) % 4)
+    return json.loads(base64.b64decode(payload))
+
+
+def _extract_account_id(tokens: dict) -> str:
+    """Extract chatgpt_account_id from id_token or access_token JWT claims."""
+    for key in ("id_token", "access_token"):
+        tok = tokens.get(key)
+        if not tok:
+            continue
+        try:
+            claims = _parse_jwt_claims(tok)
+            if isinstance(claims.get("chatgpt_account_id"), str):
+                return claims["chatgpt_account_id"]
+            orgs = claims.get("organizations")
+            if isinstance(orgs, list) and orgs and "id" in orgs[0]:
+                return orgs[0]["id"]
+        except Exception:
+            continue
+    return ""
+
+
+def _refresh_tokens(refresh_token: str) -> dict:
+    """Refresh access token using refresh_token grant."""
+    return _http_json("POST", f"{CODEX_ISSUER}/oauth/token", form_body={
+        "grant_type": "refresh_token",
+        "refresh_token": refresh_token,
+        "client_id": CODEX_CLIENT_ID,
+    })
+
+
+def load_codex_credentials() -> dict | None:
+    """Load and auto-refresh Codex credentials from .test-credentials.json.
+
+    Returns dict with access_token, account_id (ready to use) or None.
+    """
+    if not CREDENTIALS_FILE.exists():
+        return None
+    creds = json.loads(CREDENTIALS_FILE.read_text())
+    if not creds.get("access_token") or not creds.get("refresh_token"):
+        return None
+
+    # Refresh if within 60s of expiry
+    expires_at = creds.get("expires_at", 0)
+    if time.time() > expires_at - 60:
+        try:
+            tokens = _refresh_tokens(creds["refresh_token"])
+            account_id = _extract_account_id(tokens) or creds.get("account_id", "")
+            new_expires_at = time.time() + tokens.get("expires_in", 3600)
+            creds = {
+                "access_token": tokens["access_token"],
+                "refresh_token": tokens["refresh_token"],
+                "account_id": account_id,
+                "expires_at": new_expires_at,
+            }
+            CREDENTIALS_FILE.write_text(json.dumps(creds, indent=2) + "\n")
+        except Exception as e:
+            print(f"\033[31mFailed to refresh Codex token: {e}\033[0m")
+            print("Run 'python3 scripts/test.py init' to re-authenticate.")
+            return None
+
+    return creds
+
+
+def cmd_init():
+    """Run the OpenAI device auth flow and save credentials for testing."""
+    print("Starting OpenAI Codex device authentication...\n")
+
+    # Step 1: Request device code
+    device = _http_json("POST", f"{CODEX_ISSUER}/api/accounts/deviceauth/usercode",
+                        json_body={"client_id": CODEX_CLIENT_ID})
+    device_auth_id = device["device_auth_id"]
+    user_code = device["user_code"]
+    interval = max(int(device.get("interval", 5)), 5)
+
+    print(f"  Your code: \033[1;36m{user_code}\033[0m\n")
+    print(f"  Go to: \033[4m{CODEX_VERIFICATION_URL}\033[0m")
+    print(f"  Enter the code above and authorize the app.\n")
+
+    print("Waiting for authorization", end="", flush=True)
+
+    # Step 2: Poll until authorized
+    while True:
+        time.sleep(interval)
+        print(".", end="", flush=True)
+        try:
+            poll_result = _http_json(
+                "POST", f"{CODEX_ISSUER}/api/accounts/deviceauth/token",
+                json_body={
+                    "client_id": CODEX_CLIENT_ID,
+                    "device_auth_id": device_auth_id,
+                    "user_code": user_code,
+                })
+            # Success — got authorization_code
+            break
+        except Exception as e:
+            err_str = str(e)
+            # These are expected while waiting
+            if "authorization_pending" in err_str or "slow_down" in err_str or "403" in err_str:
+                continue
+            print(f"\n\033[31mPoll error: {e}\033[0m")
+            sys.exit(1)
+
+    print(" authorized!\n")
+
+    # Step 3: Exchange code for tokens
+    auth_code = poll_result["authorization_code"]
+    code_verifier = poll_result["code_verifier"]
+
+    tokens = _http_json("POST", f"{CODEX_ISSUER}/oauth/token", form_body={
+        "grant_type": "authorization_code",
+        "code": auth_code,
+        "redirect_uri": f"{CODEX_ISSUER}/deviceauth/callback",
+        "client_id": CODEX_CLIENT_ID,
+        "code_verifier": code_verifier,
+    })
+
+    account_id = _extract_account_id(tokens)
+    expires_at = time.time() + tokens.get("expires_in", 3600)
+
+    # Step 4: Save credentials
+    creds = {
+        "access_token": tokens["access_token"],
+        "refresh_token": tokens["refresh_token"],
+        "account_id": account_id,
+        "expires_at": expires_at,
+    }
+    CREDENTIALS_FILE.write_text(json.dumps(creds, indent=2) + "\n")
+
+    print(f"\033[32mAuthentication successful!\033[0m")
+    print(f"  Account ID: {account_id}")
+    print(f"  Credentials saved to: {CREDENTIALS_FILE.relative_to(ROOT)}")
+    print(f"\n  These credentials will auto-refresh when used by tests.")
+
+
 def main():
     start = time.monotonic()
 
     args = sys.argv[1:]
+
+    # Handle 'init' subcommand
+    if args and args[0] == "init":
+        cmd_init()
+        return
+
     run_all = "--all" in args
     names = {a for a in args if not a.startswith("-")}
 
