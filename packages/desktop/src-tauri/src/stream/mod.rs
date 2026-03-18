@@ -34,11 +34,18 @@ impl StreamCancellers {
     }
 }
 
-pub struct CodexTransportSessions {
+/// Maximum number of concurrent WebSocket sessions kept alive.
+/// When exceeded, the least-recently-used idle sessions are evicted.
+const CODEX_MAX_SESSIONS: usize = 4;
+
+/// Sessions with no requests for longer than this are eligible for eviction.
+const CODEX_SESSION_IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
+
+pub struct CodexTransport {
     map: Mutex<HashMap<String, Arc<AsyncMutex<CodexTransportSession>>>>,
 }
 
-impl CodexTransportSessions {
+impl CodexTransport {
     pub fn new() -> Self {
         Self {
             map: Mutex::new(HashMap::new()),
@@ -47,9 +54,40 @@ impl CodexTransportSessions {
 
     fn get(&self, session_key: &str) -> Arc<AsyncMutex<CodexTransportSession>> {
         let mut map = self.map.lock().unwrap();
+
+        // Opportunistically evict idle sessions when we're above the target.
+        if map.len() >= CODEX_MAX_SESSIONS {
+            Self::evict_idle(&mut map);
+        }
+
         map.entry(session_key.to_string())
             .or_insert_with(|| Arc::new(AsyncMutex::new(CodexTransportSession::default())))
             .clone()
+    }
+
+    /// Remove sessions that have been idle longer than the timeout and aren't
+    /// currently mid-stream.  This is best-effort — the pool is allowed to
+    /// grow beyond `CODEX_MAX_SESSIONS` temporarily; it will shrink back as
+    /// sessions go idle and get cleaned up on the next `get()` call.
+    fn evict_idle(map: &mut HashMap<String, Arc<AsyncMutex<CodexTransportSession>>>) {
+        let now = std::time::Instant::now();
+
+        let expired: Vec<String> = map
+            .iter()
+            .filter_map(|(key, session)| {
+                let guard = session.try_lock().ok()?;
+                if now.duration_since(guard.last_used) >= CODEX_SESSION_IDLE_TIMEOUT {
+                    Some(key.clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        for key in &expired {
+            tracing::debug!(session = %key, "evicting idle Codex session");
+            map.remove(key);
+        }
     }
 }
 
@@ -120,7 +158,7 @@ pub struct StreamResult {
 // ---------------------------------------------------------------------------
 
 #[tauri::command]
-#[tracing::instrument(skip(headers, body, on_event, cancellers, codex_sessions))]
+#[tracing::instrument(skip(headers, body, on_event, cancellers, codex_transport))]
 pub async fn stream_completion(
     url: String,
     headers: HashMap<String, String>,
@@ -129,7 +167,7 @@ pub async fn stream_completion(
     stream_id: String,
     on_event: Channel<Vec<StreamEvent>>,
     cancellers: tauri::State<'_, Arc<StreamCancellers>>,
-    codex_sessions: tauri::State<'_, Arc<CodexTransportSessions>>,
+    codex_transport: tauri::State<'_, Arc<CodexTransport>>,
 ) -> Result<StreamResult, String> {
     let cancel_flag = Arc::new(AtomicBool::new(false));
     cancellers
@@ -145,7 +183,7 @@ pub async fn stream_completion(
         &provider,
         cancel_flag.clone(),
         &on_event,
-        Arc::clone(codex_sessions.inner()),
+        Arc::clone(codex_transport.inner()),
     )
     .await;
 
@@ -171,7 +209,7 @@ pub async fn cancel_stream(
 // Core streaming orchestrator
 // ---------------------------------------------------------------------------
 
-#[tracing::instrument(skip(headers, body, cancel_flag, on_event, codex_sessions))]
+#[tracing::instrument(skip(headers, body, cancel_flag, on_event, codex_transport))]
 async fn run_stream(
     url: String,
     headers: HashMap<String, String>,
@@ -179,7 +217,7 @@ async fn run_stream(
     provider: &str,
     cancel_flag: Arc<AtomicBool>,
     on_event: &Channel<Vec<StreamEvent>>,
-    codex_sessions: Arc<CodexTransportSessions>,
+    codex_transport: Arc<CodexTransport>,
 ) -> Result<StreamResult, String> {
     let codex_request = if provider == "codex" {
         Some(parse_codex_request_payload(&body)?)
@@ -187,7 +225,7 @@ async fn run_stream(
         None
     };
     let codex_session = if provider == "codex" {
-        codex_session_key(&headers).map(|session_key| codex_sessions.get(&session_key))
+        codex_session_key(&headers).map(|session_key| codex_transport.get(&session_key))
     } else {
         None
     };

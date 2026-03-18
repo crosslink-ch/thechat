@@ -10,7 +10,7 @@ use db::{Conversation, Database, Message};
 use mcp::McpManager;
 use shell::ShellProcesses;
 use std::sync::Arc;
-use stream::{CodexTransportSessions, StreamCancellers};
+use stream::{CodexTransport, StreamCancellers};
 use tauri::{Manager, State};
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
@@ -285,8 +285,7 @@ pub fn run() {
     let mcp_state: Arc<McpManager> = Arc::new(McpManager::new());
     let shell_state: Arc<ShellProcesses> = Arc::new(ShellProcesses::new());
     let stream_state: Arc<StreamCancellers> = Arc::new(StreamCancellers::new());
-    let codex_transport_state: Arc<CodexTransportSessions> =
-        Arc::new(CodexTransportSessions::new());
+    let codex_transport_state: Arc<CodexTransport> = Arc::new(CodexTransport::new());
 
     tracing::info!("app started");
 

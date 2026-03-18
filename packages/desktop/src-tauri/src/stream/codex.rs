@@ -67,7 +67,10 @@ pub(super) struct CodexLastResponse {
     pub items_added: Vec<Value>,
 }
 
-#[derive(Default)]
+// ---------------------------------------------------------------------------
+// Per-conversation transport session (owns its own WebSocket)
+// ---------------------------------------------------------------------------
+
 pub(super) struct CodexTransportSession {
     websocket: Option<CodexWebSocket>,
     websocket_url: Option<String>,
@@ -76,6 +79,23 @@ pub(super) struct CodexTransportSession {
     pub last_request: Option<CodexRequestPayload>,
     pub last_response: Option<CodexLastResponse>,
     pub http_only: bool,
+    /// Last time a request was sent on this session (for idle eviction).
+    pub last_used: std::time::Instant,
+}
+
+impl Default for CodexTransportSession {
+    fn default() -> Self {
+        Self {
+            websocket: None,
+            websocket_url: None,
+            active_turn_id: None,
+            turn_state: None,
+            last_request: None,
+            last_response: None,
+            http_only: false,
+            last_used: std::time::Instant::now(),
+        }
+    }
 }
 
 impl CodexTransportSession {
@@ -108,6 +128,10 @@ impl CodexTransportSession {
         if self.turn_state.is_none() {
             self.turn_state = turn_state.filter(|value| !value.is_empty());
         }
+    }
+
+    pub fn touch(&mut self) {
+        self.last_used = std::time::Instant::now();
     }
 }
 
@@ -731,6 +755,8 @@ pub(super) async fn try_codex_websocket_stream(
             });
         }
 
+        session.touch();
+
         if session.websocket_url.as_deref() != Some(ws_url.as_str()) {
             session.reset_turn_scope();
             session.websocket_url = Some(ws_url.clone());
@@ -1021,7 +1047,6 @@ mod tests {
         .expect("request payload");
 
         let mut session = CodexTransportSession {
-            websocket: None,
             websocket_url: Some("wss://chatgpt.com/backend-api/codex/responses".to_string()),
             active_turn_id: Some("turn_1".to_string()),
             turn_state: Some("ts_1".to_string()),
@@ -1030,7 +1055,7 @@ mod tests {
                 response_id: "resp_1".to_string(),
                 items_added: vec![json!({"type":"message"})],
             }),
-            http_only: false,
+            ..Default::default()
         };
 
         session.sync_turn_scope(Some("turn_2"));
