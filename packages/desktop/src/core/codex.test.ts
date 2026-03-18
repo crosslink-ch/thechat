@@ -68,7 +68,7 @@ describe("streamCodexCompletion", () => {
       parallel_tool_calls: true,
       prompt_cache_key: "conv_123",
       include: ["reasoning.encrypted_content"],
-      reasoning: { effort: "high" },
+      reasoning: { effort: "xhigh" },
     });
     expect(body.input).toEqual([
       {

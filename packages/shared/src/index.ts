@@ -151,10 +151,10 @@ export interface ChatParams {
     type: "json_schema";
     json_schema: { name: string; strict?: boolean; schema: Record<string, unknown> };
   };
-  reasoning_effort?: "low" | "medium" | "high";
+  reasoning_effort?: "low" | "medium" | "high" | "xhigh";
   verbosity?: "low" | "medium" | "high";
   service_tier?: string;
-  effort?: "low" | "medium" | "high" | "max";
+  effort?: "low" | "medium" | "high" | "xhigh" | "max";
   seed?: number;
   provider?: { allow_fallbacks?: boolean; order?: string[] };
 }

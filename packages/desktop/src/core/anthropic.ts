@@ -132,9 +132,10 @@ async function buildRequest(options: StreamAnthropicOptions): Promise<{
   if (params?.top_k !== undefined) bodyObj.top_k = params.top_k;
   if (params?.stop !== undefined) bodyObj.stop_sequences = params.stop;
 
-  // Adaptive thinking (Claude 4.6+)
+  // Adaptive thinking (Claude 4.6+) — Anthropic supports up to "high"; clamp "xhigh" down.
   bodyObj.thinking = { type: "adaptive" };
-  bodyObj.output_config = { effort: params?.effort ?? DEFAULT_REASONING_EFFORT };
+  const rawEffort = params?.effort ?? DEFAULT_REASONING_EFFORT;
+  bodyObj.output_config = { effort: rawEffort === "xhigh" ? "high" : rawEffort };
 
   // Add tool definitions in Anthropic format
   if (tools && tools.length > 0) {
