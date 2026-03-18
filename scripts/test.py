@@ -87,6 +87,14 @@ SUITES = [
         "cmd": ["pnpm", "--filter", "@thechat/desktop", "test:integration"],
         "env": {"INTEGRATION": "true"},
     },
+    {
+        "name": "codex",
+        "cmd": [
+            "pnpm", "--filter", "@thechat/desktop",
+            "vitest", "run", "src/core/codex.live.test.ts",
+        ],
+        "opt_in": True,  # only runs when explicitly named or --all
+    },
 ]
 
 
@@ -301,6 +309,9 @@ def main():
             print(f"Available: {', '.join(s['name'] for s in SUITES)}")
             sys.exit(1)
         suites = [s for s in SUITES if s["name"] in names]
+    elif not run_all:
+        # Exclude opt-in suites unless explicitly named or --all
+        suites = [s for s in suites if not s.get("opt_in")]
 
     # Skip integration tests if backend is not running
     if any(s["name"] == "integration" for s in suites) and not is_backend_running():
@@ -311,6 +322,25 @@ def main():
         suites = [s for s in suites if s["name"] != "integration"]
         if not suites:
             sys.exit(0)
+
+    # Load Codex credentials for the codex suite
+    if any(s["name"] == "codex" for s in suites):
+        creds = load_codex_credentials()
+        if not creds:
+            print(
+                "\033[33mSkipping codex tests: "
+                "no credentials (run 'python3 scripts/test.py init' first)\033[0m"
+            )
+            suites = [s for s in suites if s["name"] != "codex"]
+            if not suites:
+                sys.exit(0)
+        else:
+            for s in suites:
+                if s["name"] == "codex":
+                    s["env"] = {
+                        "CODEX_ACCESS_TOKEN": creds["access_token"],
+                        "CODEX_ACCOUNT_ID": creds.get("account_id", ""),
+                    }
 
     # Resolve cmd_fn (used by rust suite to toggle --include-ignored)
     for s in suites:

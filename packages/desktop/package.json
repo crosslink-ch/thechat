@@ -9,7 +9,7 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "test": "vitest run --exclude '**/*.integration.test.ts' && INTEGRATION=true vitest run integration",
-    "test:unit": "vitest run --exclude '**/*.integration.test.ts'",
+    "test:unit": "vitest run --exclude '**/*.integration.test.ts' --exclude '**/*.live.test.ts'",
     "test:integration": "INTEGRATION=true vitest run integration",
     "test:watch": "vitest",
     "test:e2e": "wdio run e2e/wdio.conf.js",
