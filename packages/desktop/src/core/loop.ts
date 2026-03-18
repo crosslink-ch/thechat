@@ -43,6 +43,7 @@ function callProvider(
   messages: Array<Record<string, unknown>>,
   tools: ToolDefinition[] | undefined,
   onEvents: (events: StreamEvent[]) => void,
+  codexTurnId?: string,
 ): Promise<StreamResult> {
   if (options.provider === "codex" && options.codexAuth) {
     return streamCodexCompletion({
@@ -54,6 +55,7 @@ function callProvider(
       tools,
       signal: options.signal,
       convId: options.convId,
+      turnId: codexTurnId,
       onEvents,
     });
   }
@@ -95,6 +97,9 @@ export async function runChatLoop(options: ChatLoopOptions): Promise<void> {
     { role: "system", content: systemPrompt ?? DEFAULT_SYSTEM_PROMPT },
     ...messages,
   ];
+  const codexTurnId = options.provider === "codex"
+    ? `turn_${Date.now()}_${Math.random().toString(36).slice(2)}`
+    : undefined;
 
   const toolCallHistory: ToolCallRecord[] = [];
 
@@ -125,7 +130,13 @@ export async function runChatLoop(options: ChatLoopOptions): Promise<void> {
       });
 
       try {
-        const finalResult = await callProvider(options, workingMessages, undefined, onEvents);
+        const finalResult = await callProvider(
+          options,
+          workingMessages,
+          undefined,
+          onEvents,
+          codexTurnId,
+        );
         onEvents([{ type: "finish", usage: finalResult.usage }]);
       } catch (e) {
         if (e instanceof DOMException && e.name === "AbortError") return;
@@ -142,6 +153,7 @@ export async function runChatLoop(options: ChatLoopOptions): Promise<void> {
         workingMessages,
         currentTools.length > 0 ? currentTools : undefined,
         onEvents,
+        codexTurnId,
       );
     } catch (e) {
       if (e instanceof DOMException && e.name === "AbortError") return;
@@ -319,7 +331,7 @@ export async function runChatLoop(options: ChatLoopOptions): Promise<void> {
       logWarn(`[loop] Context overflow detected (${result.usage.prompt_tokens + result.usage.completion_tokens} tokens), compacting...`);
       const compacted = await compactMessages(
         workingMessages,
-        (msgs) => callProvider(options, msgs, undefined, () => {}),
+        (msgs) => callProvider(options, msgs, undefined, () => {}, codexTurnId),
         onEvents,
       );
       if (compacted) {

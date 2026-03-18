@@ -109,10 +109,7 @@ pub async fn get_project_info(path: String) -> Result<ProjectInfo, String> {
             None
         };
 
-        Ok(ProjectInfo {
-            is_git,
-            git_branch,
-        })
+        Ok(ProjectInfo { is_git, git_branch })
     })
     .await
     .map_err(|e| format!("Task join error: {}", e))?
@@ -426,7 +423,9 @@ pub async fn fs_grep(
         // Optional file extension filter
         let include_ext: Option<String> = include.map(|inc| {
             // Handle patterns like "*.rs" or "rs"
-            inc.trim_start_matches("*.").trim_start_matches('.').to_string()
+            inc.trim_start_matches("*.")
+                .trim_start_matches('.')
+                .to_string()
         });
 
         let mut matches = Vec::new();
@@ -853,10 +852,13 @@ mod tests {
             fs::write(dir.path().join(format!("file{}.txt", i)), "x").unwrap();
         }
 
-        let result =
-            fs_list_dir(Some(dir.path().to_string_lossy().to_string()), None, Some(5))
-                .await
-                .unwrap();
+        let result = fs_list_dir(
+            Some(dir.path().to_string_lossy().to_string()),
+            None,
+            Some(5),
+        )
+        .await
+        .unwrap();
 
         assert_eq!(result.count, 5);
         assert!(result.truncated);

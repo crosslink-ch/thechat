@@ -96,8 +96,7 @@ fn create_default_config(base: &Path) -> Result<AppConfig, String> {
     let json = serde_json::to_string_pretty(&config)
         .map_err(|e| format!("Failed to serialize default config: {}", e))?;
 
-    fs::write(&config_path, &json)
-        .map_err(|e| format!("Failed to write default config: {}", e))?;
+    fs::write(&config_path, &json).map_err(|e| format!("Failed to write default config: {}", e))?;
 
     Ok(config)
 }
@@ -113,8 +112,7 @@ pub fn save_config(config: &AppConfig, base: &Path) -> Result<(), String> {
     let json = serde_json::to_string_pretty(config)
         .map_err(|e| format!("Failed to serialize config: {}", e))?;
 
-    fs::write(&config_path, &json)
-        .map_err(|e| format!("Failed to write config: {}", e))?;
+    fs::write(&config_path, &json).map_err(|e| format!("Failed to write config: {}", e))?;
 
     Ok(())
 }
@@ -124,8 +122,8 @@ pub fn load_config(base: &Path) -> Result<AppConfig, String> {
     if path.exists() {
         let content = fs::read_to_string(&path)
             .map_err(|e| format!("Failed to read config at {}: {}", path.display(), e))?;
-        let config: AppConfig = serde_json::from_str(&content)
-            .map_err(|e| format!("Failed to parse config: {}", e))?;
+        let config: AppConfig =
+            serde_json::from_str(&content).map_err(|e| format!("Failed to parse config: {}", e))?;
         return Ok(config);
     }
 

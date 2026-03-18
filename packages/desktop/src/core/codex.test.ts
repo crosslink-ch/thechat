@@ -41,6 +41,7 @@ describe("streamCodexCompletion", () => {
         { role: "user", content: "hi" },
       ],
       convId: "conv_123",
+      turnId: "turn_123",
       onEvents: () => {},
     });
 
@@ -53,6 +54,7 @@ describe("streamCodexCompletion", () => {
         "ChatGPT-Account-Id": "acct_123",
         "x-client-request-id": "conv_123",
         "session_id": "conv_123",
+        "x-codex-turn-metadata": "{\"turn_id\":\"turn_123\"}",
       },
       provider: "codex",
     }));

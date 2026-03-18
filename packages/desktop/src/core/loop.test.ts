@@ -6,9 +6,14 @@ import type { StreamEvent, ToolDefinition } from "./types";
 vi.mock("./openrouter", () => ({
   streamCompletion: vi.fn(),
 }));
+vi.mock("./codex", () => ({
+  streamCodexCompletion: vi.fn(),
+}));
 
 import { streamCompletion } from "./openrouter";
+import { streamCodexCompletion } from "./codex";
 const mockStreamCompletion = vi.mocked(streamCompletion);
+const mockStreamCodexCompletion = vi.mocked(streamCodexCompletion);
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -226,6 +231,45 @@ describe("runChatLoop", () => {
     if (toolResult && toolResult.type === "tool-result") {
       expect(toolResult.result).toHaveProperty("error");
     }
+  });
+
+  it("reuses one codex turn id across tool roundtrips", async () => {
+    const mockTool: ToolDefinition = {
+      name: "get_weather",
+      description: "Get weather",
+      parameters: { type: "object", properties: {} },
+      execute: vi.fn().mockResolvedValue({ temp: 20 }),
+    };
+
+    mockStreamCodexCompletion.mockResolvedValueOnce({
+      text: "",
+      reasoning: "",
+      toolCalls: [{ id: "call_1", name: "get_weather", args: { city: "Paris" } }],
+      stopReason: "tool_calls",
+    });
+    mockStreamCodexCompletion.mockResolvedValueOnce({
+      text: "Sunny",
+      reasoning: "",
+      toolCalls: [],
+      stopReason: "stop",
+    });
+
+    await runChatLoop({
+      apiKey: "",
+      model: "gpt-5.4",
+      provider: "codex",
+      codexAuth: { accessToken: "token", accountId: "acct_123" },
+      convId: "conv_123",
+      messages: [{ role: "user", content: "weather?" }],
+      tools: [mockTool],
+      onEvents: () => {},
+    });
+
+    expect(mockStreamCodexCompletion).toHaveBeenCalledTimes(2);
+    const firstTurnId = mockStreamCodexCompletion.mock.calls[0][0].turnId;
+    const secondTurnId = mockStreamCodexCompletion.mock.calls[1][0].turnId;
+    expect(firstTurnId).toMatch(/^turn_/);
+    expect(firstTurnId).toBe(secondTurnId);
   });
 
   it("waits for async tool that resolves after a delay", async () => {

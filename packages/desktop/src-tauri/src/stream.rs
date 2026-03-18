@@ -177,6 +177,8 @@ struct CodexLastResponse {
 struct CodexTransportSession {
     websocket: Option<CodexWebSocket>,
     websocket_url: Option<String>,
+    active_turn_id: Option<String>,
+    turn_state: Option<String>,
     last_request: Option<CodexRequestPayload>,
     last_response: Option<CodexLastResponse>,
     http_only: bool,
@@ -192,6 +194,27 @@ impl CodexTransportSession {
         self.last_request = None;
         self.last_response = None;
     }
+
+    fn reset_turn_scope(&mut self) {
+        self.reset_websocket();
+        self.reset_request_chain();
+        self.turn_state = None;
+    }
+
+    fn sync_turn_scope(&mut self, turn_id: Option<&str>) {
+        if self.active_turn_id.as_deref() == turn_id {
+            return;
+        }
+
+        self.reset_turn_scope();
+        self.active_turn_id = turn_id.map(str::to_string);
+    }
+
+    fn remember_turn_state(&mut self, turn_state: Option<String>) {
+        if self.turn_state.is_none() {
+            self.turn_state = turn_state.filter(|value| !value.is_empty());
+        }
+    }
 }
 
 enum CodexWebsocketError {
@@ -201,6 +224,8 @@ enum CodexWebsocketError {
 }
 
 const RESPONSES_WEBSOCKETS_BETA_VALUE: &str = "responses_websockets=2026-02-06";
+const X_CODEX_TURN_METADATA_HEADER: &str = "x-codex-turn-metadata";
+const X_CODEX_TURN_STATE_HEADER: &str = "x-codex-turn-state";
 
 // ---------------------------------------------------------------------------
 // SSE line parsers
@@ -696,6 +721,20 @@ fn codex_session_key(headers: &HashMap<String, String>) -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
+fn codex_turn_id(headers: &HashMap<String, String>) -> Option<String> {
+    headers
+        .iter()
+        .find(|(name, _)| name.eq_ignore_ascii_case(X_CODEX_TURN_METADATA_HEADER))
+        .and_then(|(_, value)| serde_json::from_str::<Value>(value).ok())
+        .and_then(|metadata| {
+            metadata
+                .get("turn_id")
+                .and_then(|value| value.as_str())
+                .map(str::to_string)
+        })
+        .filter(|value| !value.is_empty())
+}
+
 fn parse_codex_request_payload(body: &str) -> Result<CodexRequestPayload, String> {
     serde_json::from_str(body).map_err(|e| format!("invalid Codex request JSON: {}", e))
 }
@@ -827,6 +866,7 @@ fn codex_ws_url_from_api_url(url: &str) -> Result<String, String> {
 fn apply_codex_ws_headers(
     request: &mut tokio_tungstenite::tungstenite::http::Request<()>,
     headers: &HashMap<String, String>,
+    turn_state: Option<&str>,
 ) {
     for (name, value) in headers {
         if name.eq_ignore_ascii_case("content-type") || name.eq_ignore_ascii_case("accept") {
@@ -840,6 +880,14 @@ fn apply_codex_ws_headers(
             continue;
         };
         request.headers_mut().insert(header_name, header_value);
+    }
+
+    if let Some(turn_state) = turn_state {
+        if let Ok(header_value) = HeaderValue::from_str(turn_state) {
+            request
+                .headers_mut()
+                .insert(HeaderName::from_static("x-codex-turn-state"), header_value);
+        }
     }
 
     request.headers_mut().insert(
@@ -868,16 +916,17 @@ fn is_codex_terminal_event(data: &str) -> bool {
 async fn connect_codex_websocket(
     ws_url: &str,
     headers: &HashMap<String, String>,
-) -> Result<CodexWebSocket, CodexWebsocketError> {
+    turn_state: Option<&str>,
+) -> Result<(CodexWebSocket, Option<String>), CodexWebsocketError> {
     let mut request = ws_url
         .into_client_request()
         .map_err(|e| CodexWebsocketError::Fallback {
             reason: format!("failed to build websocket request: {}", e),
             http_only: false,
         })?;
-    apply_codex_ws_headers(&mut request, headers);
+    apply_codex_ws_headers(&mut request, headers, turn_state);
 
-    let (socket, _) = connect_async(request).await.map_err(|e| match e {
+    let (socket, response) = connect_async(request).await.map_err(|e| match e {
         tokio_tungstenite::tungstenite::Error::Http(response)
             if response.status() == StatusCode::UPGRADE_REQUIRED =>
         {
@@ -892,7 +941,13 @@ async fn connect_codex_websocket(
         },
     })?;
 
-    Ok(socket)
+    let turn_state = response
+        .headers()
+        .get(X_CODEX_TURN_STATE_HEADER)
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_string);
+
+    Ok((socket, turn_state))
 }
 
 async fn read_codex_websocket_response(
@@ -1075,8 +1130,7 @@ async fn try_codex_websocket_stream(
         }
 
         if session.websocket_url.as_deref() != Some(ws_url.as_str()) {
-            session.reset_websocket();
-            session.reset_request_chain();
+            session.reset_turn_scope();
             session.websocket_url = Some(ws_url.clone());
         }
 
@@ -1098,7 +1152,10 @@ async fn try_codex_websocket_stream(
             .map_err(CodexWebsocketError::Fatal)?;
 
         if session.websocket.is_none() {
-            session.websocket = Some(connect_codex_websocket(&ws_url, &headers).await?);
+            let (socket, turn_state) =
+                connect_codex_websocket(&ws_url, &headers, session.turn_state.as_deref()).await?;
+            session.remember_turn_state(turn_state);
+            session.websocket = Some(socket);
         }
 
         let socket = session.websocket.as_mut().expect("websocket missing");
@@ -1140,7 +1197,7 @@ async fn try_codex_websocket_stream(
     } else {
         let ws_body = build_codex_ws_request_body(&request, None, None)
             .map_err(CodexWebsocketError::Fatal)?;
-        let mut socket = connect_codex_websocket(&ws_url, &headers).await?;
+        let (mut socket, _) = connect_codex_websocket(&ws_url, &headers, None).await?;
         socket
             .send(Message::Text(ws_body.into()))
             .await
@@ -1230,6 +1287,16 @@ async fn run_stream(
     } else {
         None
     };
+    let codex_turn_id = if provider == "codex" {
+        codex_turn_id(&headers)
+    } else {
+        None
+    };
+
+    if let Some(codex_session) = codex_session.as_ref() {
+        let mut session = codex_session.lock().await;
+        session.sync_turn_scope(codex_turn_id.as_deref());
+    }
 
     if provider == "codex" {
         match try_codex_websocket_stream(
@@ -1276,10 +1343,23 @@ async fn run_http_stream(
     codex_session: Option<&Arc<AsyncMutex<CodexTransportSession>>>,
 ) -> Result<StreamResult, String> {
     let client = reqwest::Client::new();
+    let codex_turn_state = if provider == "codex" {
+        if let Some(codex_session) = codex_session {
+            let session = codex_session.lock().await;
+            session.turn_state.clone()
+        } else {
+            None
+        }
+    } else {
+        None
+    };
 
     let mut req_builder = client.post(&url).body(body);
     for (k, v) in &headers {
         req_builder = req_builder.header(k, v);
+    }
+    if let Some(turn_state) = codex_turn_state {
+        req_builder = req_builder.header(X_CODEX_TURN_STATE_HEADER, turn_state);
     }
 
     let response = req_builder
@@ -1301,6 +1381,20 @@ async fn run_http_stream(
             status.as_u16(),
             err_body
         ));
+    }
+
+    let codex_response_turn_state = if provider == "codex" {
+        response
+            .headers()
+            .get(X_CODEX_TURN_STATE_HEADER)
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_string)
+    } else {
+        None
+    };
+    if let Some(codex_session) = codex_session {
+        let mut session = codex_session.lock().await;
+        session.remember_turn_state(codex_response_turn_state);
     }
 
     // Accumulators
@@ -1658,6 +1752,79 @@ mod tests {
         assert_eq!(
             codex_incremental_input(&current_request, &previous_request, &previous_response),
             None
+        );
+    }
+
+    #[test]
+    fn codex_turn_id_reads_turn_metadata_header() {
+        let headers = HashMap::from([(
+            "x-codex-turn-metadata".to_string(),
+            r#"{"turn_id":"turn_123"}"#.to_string(),
+        )]);
+
+        assert_eq!(codex_turn_id(&headers).as_deref(), Some("turn_123"));
+    }
+
+    #[test]
+    fn codex_transport_session_resets_turn_scope_on_turn_change() {
+        let request = parse_codex_request_payload(
+            r#"{
+                "model":"gpt-5.4",
+                "instructions":"system",
+                "tool_choice":"auto",
+                "parallel_tool_calls":true,
+                "stream":true,
+                "store":false,
+                "include":[],
+                "input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]}]
+            }"#,
+        )
+        .expect("request payload");
+
+        let mut session = CodexTransportSession {
+            websocket: None,
+            websocket_url: Some("wss://chatgpt.com/backend-api/codex/responses".to_string()),
+            active_turn_id: Some("turn_1".to_string()),
+            turn_state: Some("ts_1".to_string()),
+            last_request: Some(request),
+            last_response: Some(CodexLastResponse {
+                response_id: "resp_1".to_string(),
+                items_added: vec![json!({"type":"message"})],
+            }),
+            http_only: false,
+        };
+
+        session.sync_turn_scope(Some("turn_2"));
+
+        assert_eq!(session.active_turn_id.as_deref(), Some("turn_2"));
+        assert_eq!(session.turn_state, None);
+        assert_eq!(session.websocket_url, None);
+        assert!(session.last_request.is_none());
+        assert!(session.last_response.is_none());
+    }
+
+    #[test]
+    fn apply_codex_ws_headers_includes_turn_state() {
+        let mut request = "wss://chatgpt.com/backend-api/codex/responses"
+            .into_client_request()
+            .expect("request");
+        let headers = HashMap::from([("authorization".to_string(), "Bearer test".to_string())]);
+
+        apply_codex_ws_headers(&mut request, &headers, Some("ts_1"));
+
+        assert_eq!(
+            request
+                .headers()
+                .get(X_CODEX_TURN_STATE_HEADER)
+                .and_then(|value| value.to_str().ok()),
+            Some("ts_1")
+        );
+        assert_eq!(
+            request
+                .headers()
+                .get("authorization")
+                .and_then(|value| value.to_str().ok()),
+            Some("Bearer test")
         );
     }
 

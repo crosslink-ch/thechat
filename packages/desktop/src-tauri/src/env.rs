@@ -156,10 +156,7 @@ mod tests {
         let input = "MULTI=line1\nline2\nline3\0NEXT=val\0";
         let vars = parse_env_null(input);
 
-        assert_eq!(
-            vars.get("MULTI"),
-            Some(&"line1\nline2\nline3".to_string())
-        );
+        assert_eq!(vars.get("MULTI"), Some(&"line1\nline2\nline3".to_string()));
         assert_eq!(vars.get("NEXT"), Some(&"val".to_string()));
     }
 }

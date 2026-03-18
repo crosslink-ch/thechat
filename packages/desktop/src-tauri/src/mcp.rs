@@ -1,5 +1,4 @@
 use crate::config::{load_config, McpServerConfig};
-use tauri::Manager;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -7,6 +6,7 @@ use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
+use tauri::Manager;
 
 // -- JSON-RPC types --
 
@@ -62,7 +62,9 @@ fn shell_escape(s: &str) -> String {
         return "''".into();
     }
     // Safe characters that don't need quoting
-    if s.chars().all(|c| c.is_ascii_alphanumeric() || "-_=/.,:@".contains(c)) {
+    if s.chars()
+        .all(|c| c.is_ascii_alphanumeric() || "-_=/.,:@".contains(c))
+    {
         return s.into();
     }
     // Wrap in single quotes, escaping any embedded single quotes
@@ -166,9 +168,9 @@ impl McpClient {
         for (k, v) in config_env {
             cmd.env(k, v);
         }
-        let mut child = cmd.spawn().map_err(|e| {
-            format!("Failed to spawn MCP server '{}': {}", command, e)
-        })?;
+        let mut child = cmd
+            .spawn()
+            .map_err(|e| format!("Failed to spawn MCP server '{}': {}", command, e))?;
 
         let stdin = child
             .stdin
@@ -503,9 +505,7 @@ impl McpClient {
             } => {
                 // Send DELETE to terminate the session, ignore errors
                 if let Some(sid) = session_id.as_deref() {
-                    let mut req = client
-                        .delete(url.as_str())
-                        .header("Mcp-Session-Id", sid);
+                    let mut req = client.delete(url.as_str()).header("Mcp-Session-Id", sid);
                     if let Some(token) = auth_token.as_deref() {
                         req = req.header("Authorization", format!("Bearer {}", token));
                     }
@@ -1069,7 +1069,8 @@ mod tests {
 
     #[test]
     fn json_rpc_response_deserializes_error() {
-        let json = r#"{"jsonrpc":"2.0","id":2,"error":{"code":-32601,"message":"Method not found"}}"#;
+        let json =
+            r#"{"jsonrpc":"2.0","id":2,"error":{"code":-32601,"message":"Method not found"}}"#;
         let resp: JsonRpcResponse = serde_json::from_str(json).unwrap();
         assert_eq!(resp.id, Some(2));
         assert!(resp.result.is_none());
@@ -1101,7 +1102,10 @@ mod tests {
         assert_eq!(shell_escape("npx"), "npx");
         assert_eq!(shell_escape("/usr/bin/node"), "/usr/bin/node");
         assert_eq!(shell_escape("-y"), "-y");
-        assert_eq!(shell_escape("@modelcontextprotocol/server-filesystem"), "@modelcontextprotocol/server-filesystem");
+        assert_eq!(
+            shell_escape("@modelcontextprotocol/server-filesystem"),
+            "@modelcontextprotocol/server-filesystem"
+        );
     }
 
     #[test]
@@ -1122,11 +1126,14 @@ mod tests {
 
     #[test]
     fn shell_quoted_builds_full_command() {
-        let cmd = McpClient::shell_quoted("npx", &[
-            "-y".into(),
-            "@modelcontextprotocol/server-filesystem".into(),
-            "/tmp".into(),
-        ]);
+        let cmd = McpClient::shell_quoted(
+            "npx",
+            &[
+                "-y".into(),
+                "@modelcontextprotocol/server-filesystem".into(),
+                "/tmp".into(),
+            ],
+        );
         assert_eq!(cmd, "npx -y @modelcontextprotocol/server-filesystem /tmp");
     }
 
@@ -1138,7 +1145,8 @@ mod tests {
 
     #[test]
     fn parse_sse_single_data_line() {
-        let body = "event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"tools\":[]}}\n\n";
+        let body =
+            "event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"tools\":[]}}\n\n";
         let result = parse_sse_response(body, 1).unwrap();
         assert_eq!(result, json!({"tools": []}));
     }
@@ -1225,10 +1233,7 @@ mod tests {
             }
             std::thread::sleep(std::time::Duration::from_millis(200));
         }
-        Err(format!(
-            "Port {} not ready after {:?}",
-            port, timeout
-        ))
+        Err(format!("Port {} not ready after {:?}", port, timeout))
     }
 
     /// Spawn `@modelcontextprotocol/server-everything streamableHttp`
@@ -1298,8 +1303,14 @@ mod tests {
             .iter()
             .filter_map(|t| t.get("name").and_then(|n| n.as_str()).map(String::from))
             .collect();
-        assert!(names.contains(&"read_file".into()), "expected read_file in {names:?}");
-        assert!(names.contains(&"write_file".into()), "expected write_file in {names:?}");
+        assert!(
+            names.contains(&"read_file".into()),
+            "expected read_file in {names:?}"
+        );
+        assert!(
+            names.contains(&"write_file".into()),
+            "expected write_file in {names:?}"
+        );
         assert!(
             names.contains(&"list_directory".into()),
             "expected list_directory in {names:?}"
@@ -1388,7 +1399,8 @@ mod tests {
         };
 
         let process_env: HashMap<String, String> = std::env::vars().collect();
-        let (mut client, tools) = init_server("test-stdio", &config, None, &process_env).expect("init_server");
+        let (mut client, tools) =
+            init_server("test-stdio", &config, None, &process_env).expect("init_server");
         assert!(!tools.is_empty(), "should discover at least one tool");
         assert!(
             tools.iter().all(|t| t.server == "test-stdio"),
@@ -1408,8 +1420,7 @@ mod tests {
     fn http_connect_and_initialize() {
         let (_guard, port) = spawn_http_test_server();
         let url = format!("http://127.0.0.1:{}/mcp", port);
-        let mut client =
-            McpClient::connect_http(&url, &HashMap::new()).expect("connect_http");
+        let mut client = McpClient::connect_http(&url, &HashMap::new()).expect("connect_http");
         client.initialize().expect("initialize HTTP server");
         client.shutdown();
     }
@@ -1419,8 +1430,7 @@ mod tests {
     fn http_list_tools() {
         let (_guard, port) = spawn_http_test_server();
         let url = format!("http://127.0.0.1:{}/mcp", port);
-        let mut client =
-            McpClient::connect_http(&url, &HashMap::new()).expect("connect_http");
+        let mut client = McpClient::connect_http(&url, &HashMap::new()).expect("connect_http");
         client.initialize().expect("initialize");
         let tools = client.list_tools().expect("list_tools");
         assert!(
@@ -1436,8 +1446,7 @@ mod tests {
     fn http_call_tool_echo() {
         let (_guard, port) = spawn_http_test_server();
         let url = format!("http://127.0.0.1:{}/mcp", port);
-        let mut client =
-            McpClient::connect_http(&url, &HashMap::new()).expect("connect_http");
+        let mut client = McpClient::connect_http(&url, &HashMap::new()).expect("connect_http");
         client.initialize().expect("initialize");
         let result = client
             .call_tool("echo", json!({"message": "hello"}))
@@ -1454,8 +1463,7 @@ mod tests {
     fn http_session_id_captured() {
         let (_guard, port) = spawn_http_test_server();
         let url = format!("http://127.0.0.1:{}/mcp", port);
-        let mut client =
-            McpClient::connect_http(&url, &HashMap::new()).expect("connect_http");
+        let mut client = McpClient::connect_http(&url, &HashMap::new()).expect("connect_http");
         client.initialize().expect("initialize");
         assert!(
             client.session_id().is_some(),
@@ -1480,7 +1488,8 @@ mod tests {
         };
 
         let process_env: HashMap<String, String> = std::env::vars().collect();
-        let (mut client, tools) = init_server("test-http", &config, None, &process_env).expect("init_server");
+        let (mut client, tools) =
+            init_server("test-http", &config, None, &process_env).expect("init_server");
         assert!(!tools.is_empty(), "should discover at least one tool");
         assert!(
             tools.iter().all(|t| t.server == "test-http"),
@@ -1496,7 +1505,10 @@ mod tests {
         let mut client = McpClient::connect_http("http://127.0.0.1:1/mcp", &HashMap::new())
             .expect("connect_http should succeed (no connection yet)");
         let result = client.initialize();
-        assert!(result.is_err(), "initialize should fail against dead server");
+        assert!(
+            result.is_err(),
+            "initialize should fail against dead server"
+        );
     }
 
     // -- Error handling --

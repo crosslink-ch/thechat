@@ -15,10 +15,13 @@ use tauri::{Manager, State};
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
 #[cfg(feature = "otel")]
-static OTEL_PROVIDER: std::sync::OnceLock<opentelemetry_sdk::trace::SdkTracerProvider> = std::sync::OnceLock::new();
+static OTEL_PROVIDER: std::sync::OnceLock<opentelemetry_sdk::trace::SdkTracerProvider> =
+    std::sync::OnceLock::new();
 
 fn log_level_from_env() -> log::LevelFilter {
-    let val = std::env::var("THECHAT_LOG_LEVEL").unwrap_or_default().to_lowercase();
+    let val = std::env::var("THECHAT_LOG_LEVEL")
+        .unwrap_or_default()
+        .to_lowercase();
     match val.as_str() {
         "trace" => log::LevelFilter::Trace,
         "debug" => log::LevelFilter::Debug,
@@ -56,14 +59,11 @@ fn init_tracing() {
     // This lets the app detach from the console during normal usage.
     let fmt_layer = std::env::var("THECHAT_TRACING").ok().map(|val| {
         let env_filter = EnvFilter::new(val);
-        let fmt = fmt::layer()
-            .with_target(true)
-            .with_thread_ids(true);
+        let fmt = fmt::layer().with_target(true).with_thread_ids(true);
         fmt.with_filter(env_filter)
     });
 
-    let registry = tracing_subscriber::registry()
-        .with(fmt_layer);
+    let registry = tracing_subscriber::registry().with(fmt_layer);
 
     #[cfg(feature = "tokio-console")]
     let registry = registry.with(console_subscriber::spawn());
@@ -89,7 +89,9 @@ fn init_tracing() {
         let tracer = provider.tracer("thechat");
         let otel_layer = tracing_opentelemetry::layer().with_tracer(tracer);
 
-        OTEL_PROVIDER.set(provider).expect("OTel provider already set");
+        OTEL_PROVIDER
+            .set(provider)
+            .expect("OTel provider already set");
 
         registry.with(otel_layer)
     };
@@ -97,8 +99,7 @@ fn init_tracing() {
     // Use set_global_default instead of .init() to avoid calling
     // tracing_log::LogTracer::init(), which would conflict with tauri-plugin-log
     // setting the global `log` logger.
-    tracing::subscriber::set_global_default(registry)
-        .expect("failed to set tracing subscriber");
+    tracing::subscriber::set_global_default(registry).expect("failed to set tracing subscriber");
 }
 
 type DbState = Arc<Database>;
@@ -118,7 +119,9 @@ async fn get_config(app: tauri::AppHandle) -> Result<config::AppConfig, String> 
 #[tracing::instrument(skip(app))]
 fn get_config_path(app: tauri::AppHandle) -> Result<String, String> {
     let config_dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
-    Ok(config::resolve_config_path(&config_dir).to_string_lossy().into_owned())
+    Ok(config::resolve_config_path(&config_dir)
+        .to_string_lossy()
+        .into_owned())
 }
 
 #[tauri::command]
@@ -152,7 +155,10 @@ async fn create_conversation(
 
 #[tauri::command]
 #[tracing::instrument(skip(db))]
-async fn get_conversation(id: String, db: State<'_, DbState>) -> Result<Option<Conversation>, String> {
+async fn get_conversation(
+    id: String,
+    db: State<'_, DbState>,
+) -> Result<Option<Conversation>, String> {
     let db = Arc::clone(&db);
     tokio::task::spawn_blocking(move || db.get_conversation(&id))
         .await
@@ -170,7 +176,11 @@ async fn list_conversations(db: State<'_, DbState>) -> Result<Vec<Conversation>,
 
 #[tauri::command]
 #[tracing::instrument(skip(db))]
-async fn update_conversation_title(id: String, title: String, db: State<'_, DbState>) -> Result<(), String> {
+async fn update_conversation_title(
+    id: String,
+    title: String,
+    db: State<'_, DbState>,
+) -> Result<(), String> {
     let db = Arc::clone(&db);
     tokio::task::spawn_blocking(move || db.update_conversation_title(&id, &title))
         .await
@@ -201,7 +211,10 @@ async fn save_message(
 
 #[tauri::command]
 #[tracing::instrument(skip(db))]
-async fn get_messages(conversation_id: String, db: State<'_, DbState>) -> Result<Vec<Message>, String> {
+async fn get_messages(
+    conversation_id: String,
+    db: State<'_, DbState>,
+) -> Result<Vec<Message>, String> {
     let db = Arc::clone(&db);
     tokio::task::spawn_blocking(move || db.get_messages(&conversation_id))
         .await
@@ -278,7 +291,11 @@ pub fn run() {
     tracing::info!("app started");
 
     tauri::Builder::default()
-        .plugin(tauri_plugin_log::Builder::new().level(log_level_from_env()).build())
+        .plugin(
+            tauri_plugin_log::Builder::new()
+                .level(log_level_from_env())
+                .build(),
+        )
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_dialog::init())
@@ -298,13 +315,16 @@ pub fn run() {
                 // In development, store the database inside the project directory
                 std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("dev.db")
             } else {
-                let dir = app.path().app_data_dir().expect("Failed to resolve app data dir");
+                let dir = app
+                    .path()
+                    .app_data_dir()
+                    .expect("Failed to resolve app data dir");
                 std::fs::create_dir_all(&dir).expect("Failed to create data directory");
                 dir.join("thechat.db")
             };
 
-            let database = Database::new(db_path.to_str().unwrap())
-                .expect("Failed to initialize database");
+            let database =
+                Database::new(db_path.to_str().unwrap()).expect("Failed to initialize database");
             app.manage(Arc::new(database) as DbState);
 
             Ok(())

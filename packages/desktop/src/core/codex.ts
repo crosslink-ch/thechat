@@ -51,6 +51,7 @@ interface StreamCodexOptions {
   signal?: AbortSignal;
   onEvents: (events: StreamEvent[]) => void;
   convId?: string;
+  turnId?: string;
 }
 
 /**
@@ -170,6 +171,9 @@ function buildRequest(options: StreamCodexOptions): {
   if (options.convId) {
     headers["x-client-request-id"] = options.convId;
     headers["session_id"] = options.convId;
+  }
+  if (options.turnId) {
+    headers["x-codex-turn-metadata"] = JSON.stringify({ turn_id: options.turnId });
   }
 
   return {
