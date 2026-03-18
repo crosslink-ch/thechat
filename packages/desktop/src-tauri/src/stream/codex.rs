@@ -111,6 +111,7 @@ impl CodexTransportSession {
     }
 }
 
+#[derive(Debug)]
 pub(super) enum CodexWebsocketError {
     Cancelled,
     Fallback { reason: String, http_only: bool },
@@ -1216,6 +1217,188 @@ mod tests {
             StreamEvent::ReasoningDelta {
                 text: "Thinking...".into()
             }
+        );
+    }
+
+    fn live_headers() -> HashMap<String, String> {
+        let access_token =
+            std::env::var("CODEX_ACCESS_TOKEN").expect("CODEX_ACCESS_TOKEN env var required");
+        let account_id = std::env::var("CODEX_ACCOUNT_ID").unwrap_or_default();
+        let mut headers = HashMap::new();
+        headers.insert(
+            "Authorization".to_string(),
+            format!("Bearer {}", access_token),
+        );
+        if !account_id.is_empty() {
+            headers.insert("ChatGPT-Account-Id".to_string(), account_id);
+        }
+        headers
+    }
+
+    fn live_request() -> CodexRequestPayload {
+        parse_codex_request_payload(
+            &serde_json::json!({
+                "model": "gpt-5.3-codex",
+                "instructions": "You are a helpful assistant. Keep your response very short.",
+                "reasoning": { "effort": "low" },
+                "input": [{
+                    "type": "message",
+                    "role": "user",
+                    "content": [{ "type": "input_text", "text": "Say hello world" }],
+                }],
+                "tool_choice": "auto",
+                "parallel_tool_calls": true,
+                "stream": true,
+                "store": false,
+                "include": [],
+            })
+            .to_string(),
+        )
+        .expect("request payload")
+    }
+
+    /// Live test against the real Codex API (HTTP SSE).
+    /// Requires CODEX_ACCESS_TOKEN env var — run via `python3 scripts/test.py codex`.
+    #[tokio::test]
+    #[ignore]
+    async fn codex_live_http_hello_world() {
+        let headers = live_headers();
+        let request = live_request();
+
+        let client = reqwest::Client::new();
+        let mut req = client
+            .post("https://chatgpt.com/backend-api/codex/responses")
+            .header("Content-Type", "application/json")
+            .header("Accept", "text/event-stream");
+
+        for (k, v) in &headers {
+            req = req.header(k, v);
+        }
+
+        let response = req
+            .body(serde_json::to_string(&request).expect("serialize"))
+            .send()
+            .await
+            .expect("HTTP request failed");
+        assert!(
+            response.status().is_success(),
+            "Codex API returned {}",
+            response.status()
+        );
+
+        // Parse SSE stream using our actual parser
+        let mut acc_text = String::new();
+        let mut acc_reasoning = String::new();
+        let mut usage = None;
+        let mut response_id = None;
+        let mut stop_reason = String::from("unknown");
+        let mut func_calls: HashMap<String, CodexFuncCall> = HashMap::new();
+
+        let full_body = response.text().await.expect("failed to read response body");
+        for line in full_body.lines() {
+            let trimmed = line.trim();
+            if !trimmed.starts_with("data: ") {
+                continue;
+            }
+            let data = &trimmed[6..];
+            let mut events = Vec::new();
+            parse_codex_data(
+                data,
+                &mut acc_text,
+                &mut acc_reasoning,
+                &mut usage,
+                &mut response_id,
+                &mut stop_reason,
+                &mut func_calls,
+                &mut events,
+            );
+        }
+
+        assert_eq!(
+            stop_reason, "stop",
+            "expected stop reason 'stop', got '{stop_reason}'"
+        );
+        assert!(!acc_text.is_empty(), "expected non-empty text response");
+        assert!(
+            response_id.is_some(),
+            "expected response_id to be captured from response.completed"
+        );
+    }
+
+    /// Live test against the real Codex API (WebSocket transport).
+    /// Requires CODEX_ACCESS_TOKEN env var — run via `python3 scripts/test.py codex`.
+    #[tokio::test]
+    #[ignore]
+    async fn codex_live_websocket_hello_world() {
+        let headers = live_headers();
+        let request = live_request();
+
+        let api_url = "https://chatgpt.com/backend-api/codex/responses";
+        let ws_url = codex_ws_url_from_api_url(api_url).expect("ws url conversion");
+
+        // Connect
+        let (mut socket, _turn_state) = connect_codex_websocket(&ws_url, &headers, None)
+            .await
+            .expect("WebSocket connect failed");
+
+        // Build and send request
+        let ws_body =
+            build_codex_ws_request_body(&request, None, None).expect("build ws request body");
+        socket
+            .send(Message::Text(ws_body.into()))
+            .await
+            .expect("WebSocket send failed");
+
+        // Read and parse using our parser
+        let mut acc_text = String::new();
+        let mut acc_reasoning = String::new();
+        let mut usage = None;
+        let mut response_id = None;
+        let mut stop_reason = String::from("unknown");
+        let mut func_calls: HashMap<String, CodexFuncCall> = HashMap::new();
+
+        loop {
+            let message = socket
+                .next()
+                .await
+                .expect("stream ended unexpectedly")
+                .expect("WebSocket read error");
+
+            let payload = match message {
+                Message::Text(text) => text.to_string(),
+                Message::Binary(data) => {
+                    String::from_utf8(data.to_vec()).expect("invalid UTF-8 binary frame")
+                }
+                Message::Ping(_) | Message::Pong(_) => continue,
+                Message::Close(_) => break,
+                _ => continue,
+            };
+
+            let mut events = Vec::new();
+            parse_codex_data(
+                &payload,
+                &mut acc_text,
+                &mut acc_reasoning,
+                &mut usage,
+                &mut response_id,
+                &mut stop_reason,
+                &mut func_calls,
+                &mut events,
+            );
+
+            if is_codex_terminal_event(&payload) {
+                break;
+            }
+        }
+
+        assert_eq!(
+            stop_reason, "stop",
+            "expected stop reason 'stop', got '{stop_reason}'"
+        );
+        assert!(!acc_text.is_empty(), "expected non-empty text response");
+        assert!(
+            response_id.is_some(),
+            "expected response_id to be captured from response.completed"
         );
     }
 }

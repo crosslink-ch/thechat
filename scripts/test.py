@@ -90,8 +90,9 @@ SUITES = [
     {
         "name": "codex",
         "cmd": [
-            "pnpm", "--filter", "@thechat/desktop",
-            "vitest", "run", "src/core/codex.live.test.ts",
+            "cargo", "test",
+            "--manifest-path", "packages/desktop/src-tauri/Cargo.toml",
+            "codex_live", "--", "--ignored",
         ],
         "opt_in": True,  # only runs when explicitly named or --all
     },
