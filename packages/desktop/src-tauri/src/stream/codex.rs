@@ -606,6 +606,13 @@ async fn read_codex_websocket_response(
                         last_flush = std::time::Instant::now();
                     }
                 }
+
+                // Terminal event means the response is complete — break out
+                // immediately so we don't block on the persistent WebSocket
+                // waiting for a message that will never come.
+                if saw_terminal {
+                    break;
+                }
             }
             Message::Binary(data) => {
                 let payload = String::from_utf8(data.to_vec()).map_err(|_| {
@@ -645,6 +652,10 @@ async fn read_codex_websocket_response(
                         let _ = on_event.send(batch);
                         last_flush = std::time::Instant::now();
                     }
+                }
+
+                if saw_terminal {
+                    break;
                 }
             }
             Message::Ping(payload) => {
@@ -1220,6 +1231,12 @@ mod tests {
         );
     }
 
+    // -----------------------------------------------------------------------
+    // Live test helpers
+    // -----------------------------------------------------------------------
+
+    const CODEX_API_URL: &str = "https://chatgpt.com/backend-api/codex/responses";
+
     fn live_headers() -> HashMap<String, String> {
         let access_token =
             std::env::var("CODEX_ACCESS_TOKEN").expect("CODEX_ACCESS_TOKEN env var required");
@@ -1235,17 +1252,14 @@ mod tests {
         headers
     }
 
-    fn live_request() -> CodexRequestPayload {
+    fn make_request(input: Vec<Value>, tools: Vec<Value>) -> CodexRequestPayload {
         parse_codex_request_payload(
             &serde_json::json!({
                 "model": "gpt-5.3-codex",
                 "instructions": "You are a helpful assistant. Keep your response very short.",
                 "reasoning": { "effort": "low" },
-                "input": [{
-                    "type": "message",
-                    "role": "user",
-                    "content": [{ "type": "input_text", "text": "Say hello world" }],
-                }],
+                "input": input,
+                "tools": tools,
                 "tool_choice": "auto",
                 "parallel_tool_calls": true,
                 "stream": true,
@@ -1257,99 +1271,28 @@ mod tests {
         .expect("request payload")
     }
 
-    /// Live test against the real Codex API (HTTP SSE).
-    /// Requires CODEX_ACCESS_TOKEN env var — run via `python3 scripts/test.py codex`.
-    #[tokio::test]
-    #[ignore]
-    async fn codex_live_http_hello_world() {
-        let headers = live_headers();
-        let request = live_request();
-
-        let client = reqwest::Client::new();
-        let mut req = client
-            .post("https://chatgpt.com/backend-api/codex/responses")
-            .header("Content-Type", "application/json")
-            .header("Accept", "text/event-stream");
-
-        for (k, v) in &headers {
-            req = req.header(k, v);
-        }
-
-        let response = req
-            .body(serde_json::to_string(&request).expect("serialize"))
-            .send()
-            .await
-            .expect("HTTP request failed");
-        assert!(
-            response.status().is_success(),
-            "Codex API returned {}",
-            response.status()
-        );
-
-        // Parse SSE stream using our actual parser
-        let mut acc_text = String::new();
-        let mut acc_reasoning = String::new();
-        let mut usage = None;
-        let mut response_id = None;
-        let mut stop_reason = String::from("unknown");
-        let mut func_calls: HashMap<String, CodexFuncCall> = HashMap::new();
-
-        let full_body = response.text().await.expect("failed to read response body");
-        for line in full_body.lines() {
-            let trimmed = line.trim();
-            if !trimmed.starts_with("data: ") {
-                continue;
-            }
-            let data = &trimmed[6..];
-            let mut events = Vec::new();
-            parse_codex_data(
-                data,
-                &mut acc_text,
-                &mut acc_reasoning,
-                &mut usage,
-                &mut response_id,
-                &mut stop_reason,
-                &mut func_calls,
-                &mut events,
-            );
-        }
-
-        assert_eq!(
-            stop_reason, "stop",
-            "expected stop reason 'stop', got '{stop_reason}'"
-        );
-        assert!(!acc_text.is_empty(), "expected non-empty text response");
-        assert!(
-            response_id.is_some(),
-            "expected response_id to be captured from response.completed"
-        );
+    fn user_message(text: &str) -> Value {
+        json!({
+            "type": "message",
+            "role": "user",
+            "content": [{ "type": "input_text", "text": text }],
+        })
     }
 
-    /// Live test against the real Codex API (WebSocket transport).
-    /// Requires CODEX_ACCESS_TOKEN env var — run via `python3 scripts/test.py codex`.
-    #[tokio::test]
-    #[ignore]
-    async fn codex_live_websocket_hello_world() {
-        let headers = live_headers();
-        let request = live_request();
+    fn tool_output(call_id: &str, output: &str) -> Value {
+        json!({
+            "type": "function_call_output",
+            "call_id": call_id,
+            "output": output,
+        })
+    }
 
-        let api_url = "https://chatgpt.com/backend-api/codex/responses";
-        let ws_url = codex_ws_url_from_api_url(api_url).expect("ws url conversion");
-
-        // Connect
-        let (mut socket, _turn_state) = connect_codex_websocket(&ws_url, &headers, None)
-            .await
-            .expect("WebSocket connect failed");
-
-        // Build and send request
-        let ws_body =
-            build_codex_ws_request_body(&request, None, None).expect("build ws request body");
-        socket
-            .send(Message::Text(ws_body.into()))
-            .await
-            .expect("WebSocket send failed");
-
-        // Read and parse using our parser
+    /// Read a full response from a Codex WebSocket, parsing with our real parser.
+    /// Returns (StreamResult, response_id) — mirrors read_codex_websocket_response
+    /// but without needing a Tauri Channel.
+    async fn read_ws_response(
+        socket: &mut CodexWebSocket,
+    ) -> (super::StreamResult, Option<String>) {
         let mut acc_text = String::new();
         let mut acc_reasoning = String::new();
         let mut usage = None;
@@ -1361,16 +1304,16 @@ mod tests {
             let message = socket
                 .next()
                 .await
-                .expect("stream ended unexpectedly")
+                .expect("WebSocket stream ended before terminal event")
                 .expect("WebSocket read error");
 
             let payload = match message {
                 Message::Text(text) => text.to_string(),
                 Message::Binary(data) => {
-                    String::from_utf8(data.to_vec()).expect("invalid UTF-8 binary frame")
+                    String::from_utf8(data.to_vec()).expect("invalid UTF-8 in binary frame")
                 }
                 Message::Ping(_) | Message::Pong(_) => continue,
-                Message::Close(_) => break,
+                Message::Close(_) => panic!("WebSocket closed before terminal event"),
                 _ => continue,
             };
 
@@ -1391,14 +1334,321 @@ mod tests {
             }
         }
 
-        assert_eq!(
-            stop_reason, "stop",
-            "expected stop reason 'stop', got '{stop_reason}'"
-        );
-        assert!(!acc_text.is_empty(), "expected non-empty text response");
+        let mut final_events = Vec::new();
+        let tool_calls = finalize_codex_tools(func_calls, &mut final_events);
+
+        (
+            super::StreamResult {
+                text: acc_text,
+                reasoning: acc_reasoning,
+                tool_calls,
+                usage,
+                stop_reason,
+            },
+            response_id,
+        )
+    }
+
+    async fn send_ws_request(
+        socket: &mut CodexWebSocket,
+        request: &CodexRequestPayload,
+        previous_response_id: Option<&str>,
+        input_override: Option<Vec<Value>>,
+    ) {
+        let ws_body =
+            build_codex_ws_request_body(request, previous_response_id, input_override)
+                .expect("build ws request body");
+        socket
+            .send(Message::Text(ws_body.into()))
+            .await
+            .expect("WebSocket send failed");
+    }
+
+    // -----------------------------------------------------------------------
+    // Live tests — require CODEX_ACCESS_TOKEN, run via `python3 scripts/test.py codex`
+    // -----------------------------------------------------------------------
+
+    /// HTTP SSE: basic text response.
+    #[tokio::test]
+    #[ignore]
+    async fn codex_live_http_hello_world() {
+        let headers = live_headers();
+        let request = make_request(vec![user_message("Say hello world")], vec![]);
+
+        let client = reqwest::Client::new();
+        let mut req = client
+            .post(CODEX_API_URL)
+            .header("Content-Type", "application/json")
+            .header("Accept", "text/event-stream");
+
+        for (k, v) in &headers {
+            req = req.header(k, v);
+        }
+
+        let response = req
+            .body(serde_json::to_string(&request).expect("serialize"))
+            .send()
+            .await
+            .expect("HTTP request failed");
         assert!(
-            response_id.is_some(),
-            "expected response_id to be captured from response.completed"
+            response.status().is_success(),
+            "Codex API returned {}",
+            response.status()
         );
+
+        let mut acc_text = String::new();
+        let mut acc_reasoning = String::new();
+        let mut usage = None;
+        let mut response_id = None;
+        let mut stop_reason = String::from("unknown");
+        let mut func_calls: HashMap<String, CodexFuncCall> = HashMap::new();
+
+        let full_body = response.text().await.expect("failed to read response body");
+        for line in full_body.lines() {
+            let trimmed = line.trim();
+            if !trimmed.starts_with("data: ") {
+                continue;
+            }
+            let mut events = Vec::new();
+            parse_codex_data(
+                &trimmed[6..],
+                &mut acc_text,
+                &mut acc_reasoning,
+                &mut usage,
+                &mut response_id,
+                &mut stop_reason,
+                &mut func_calls,
+                &mut events,
+            );
+        }
+
+        assert_eq!(stop_reason, "stop");
+        assert!(!acc_text.is_empty(), "expected non-empty text response");
+        assert!(response_id.is_some(), "expected response_id");
+    }
+
+    /// WebSocket: basic text response.
+    #[tokio::test]
+    #[ignore]
+    async fn codex_live_websocket_hello_world() {
+        let headers = live_headers();
+        let request = make_request(vec![user_message("Say hello world")], vec![]);
+        let ws_url = codex_ws_url_from_api_url(CODEX_API_URL).unwrap();
+
+        let (mut socket, _) = connect_codex_websocket(&ws_url, &headers, None)
+            .await
+            .expect("connect failed");
+
+        send_ws_request(&mut socket, &request, None, None).await;
+        let (result, response_id) = read_ws_response(&mut socket).await;
+
+        assert_eq!(result.stop_reason, "stop");
+        assert!(!result.text.is_empty(), "expected non-empty text response");
+        assert!(response_id.is_some(), "expected response_id");
+    }
+
+    /// WebSocket: model calls a tool, verify we parse the tool call correctly.
+    #[tokio::test]
+    #[ignore]
+    async fn codex_live_websocket_tool_call() {
+        let headers = live_headers();
+        let tools = vec![json!({
+            "type": "function",
+            "name": "add_numbers",
+            "description": "Add two numbers together and return the result.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "a": { "type": "number", "description": "First number" },
+                    "b": { "type": "number", "description": "Second number" },
+                },
+                "required": ["a", "b"],
+                "additionalProperties": false,
+            },
+        })];
+
+        let request = make_request(
+            vec![user_message("What is 7 + 13? Use the add_numbers tool.")],
+            tools,
+        );
+        let ws_url = codex_ws_url_from_api_url(CODEX_API_URL).unwrap();
+
+        let (mut socket, _) = connect_codex_websocket(&ws_url, &headers, None)
+            .await
+            .expect("connect failed");
+
+        send_ws_request(&mut socket, &request, None, None).await;
+        let (result, response_id) = read_ws_response(&mut socket).await;
+
+        // The model should stop to make a tool call, not produce a final text answer
+        assert!(
+            !result.tool_calls.is_empty(),
+            "expected at least one tool call, got none"
+        );
+        let tc = &result.tool_calls[0];
+        assert_eq!(tc.name, "add_numbers");
+
+        // Verify parsed args are valid JSON with a and b
+        let args = tc.args.as_object().expect("args should be a JSON object");
+        assert!(args.contains_key("a"), "tool args missing 'a'");
+        assert!(args.contains_key("b"), "tool args missing 'b'");
+
+        assert!(response_id.is_some(), "expected response_id");
+    }
+
+    /// WebSocket: full tool-use roundtrip — model calls tool, we send result back,
+    /// model produces final text answer. Exercises multi-turn on a single WebSocket
+    /// connection with incremental input via previous_response_id.
+    #[tokio::test]
+    #[ignore]
+    async fn codex_live_websocket_tool_roundtrip() {
+        let headers = live_headers();
+        let tools = vec![json!({
+            "type": "function",
+            "name": "add_numbers",
+            "description": "Add two numbers together and return the result.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "a": { "type": "number", "description": "First number" },
+                    "b": { "type": "number", "description": "Second number" },
+                },
+                "required": ["a", "b"],
+                "additionalProperties": false,
+            },
+        })];
+
+        let user_msg = user_message("What is 7 + 13? Use the add_numbers tool.");
+        let request_1 = make_request(vec![user_msg.clone()], tools.clone());
+        let ws_url = codex_ws_url_from_api_url(CODEX_API_URL).unwrap();
+
+        let (mut socket, _) = connect_codex_websocket(&ws_url, &headers, None)
+            .await
+            .expect("connect failed");
+
+        // Turn 1: get tool call
+        send_ws_request(&mut socket, &request_1, None, None).await;
+        let (result_1, response_id_1) = read_ws_response(&mut socket).await;
+
+        assert!(
+            !result_1.tool_calls.is_empty(),
+            "turn 1: expected tool call"
+        );
+        let tc = &result_1.tool_calls[0];
+        assert_eq!(tc.name, "add_numbers");
+        let resp_id_1 = response_id_1.expect("turn 1: expected response_id");
+
+        // Build turn 2 input: original user msg + model's output + our tool result
+        let items_added = codex_items_added_from_result(&result_1);
+        let mut turn_2_input = vec![user_msg];
+        turn_2_input.extend(items_added.clone());
+        turn_2_input.push(tool_output(&tc.id, "20"));
+
+        let request_2 = make_request(turn_2_input, tools);
+
+        // Compute incremental input — only the tool result should be sent
+        let prev_response = CodexLastResponse {
+            response_id: resp_id_1.clone(),
+            items_added,
+        };
+        let incremental =
+            codex_incremental_input(&request_2, &request_1, &prev_response);
+        assert!(
+            incremental.is_some(),
+            "incremental input optimization should apply"
+        );
+        let delta = incremental.unwrap();
+        assert_eq!(
+            delta.len(),
+            1,
+            "incremental delta should contain only the tool result"
+        );
+
+        // Turn 2: send tool result with previous_response_id + incremental input
+        send_ws_request(
+            &mut socket,
+            &request_2,
+            Some(&resp_id_1),
+            Some(delta),
+        )
+        .await;
+        let (result_2, response_id_2) = read_ws_response(&mut socket).await;
+
+        assert_eq!(result_2.stop_reason, "stop");
+        assert!(
+            !result_2.text.is_empty(),
+            "turn 2: expected text response incorporating tool result"
+        );
+        assert!(
+            result_2.text.contains("20"),
+            "turn 2: expected response to mention the result '20', got: {}",
+            result_2.text
+        );
+        assert!(response_id_2.is_some(), "turn 2: expected response_id");
+    }
+
+    /// WebSocket: multi-turn conversation reusing the same connection.
+    /// Turn 1: ask a question. Turn 2: follow-up referencing previous answer.
+    /// Validates incremental input and previous_response_id across plain text turns.
+    #[tokio::test]
+    #[ignore]
+    async fn codex_live_websocket_multi_turn() {
+        let headers = live_headers();
+        let ws_url = codex_ws_url_from_api_url(CODEX_API_URL).unwrap();
+
+        let (mut socket, _) = connect_codex_websocket(&ws_url, &headers, None)
+            .await
+            .expect("connect failed");
+
+        // Turn 1
+        let msg_1 = user_message("What is the capital of France? Reply with just the city name.");
+        let request_1 = make_request(vec![msg_1.clone()], vec![]);
+
+        send_ws_request(&mut socket, &request_1, None, None).await;
+        let (result_1, response_id_1) = read_ws_response(&mut socket).await;
+
+        assert_eq!(result_1.stop_reason, "stop");
+        assert!(!result_1.text.is_empty(), "turn 1: expected text");
+        let resp_id_1 = response_id_1.expect("turn 1: expected response_id");
+
+        // Turn 2: follow-up that references the previous answer
+        let items_added = codex_items_added_from_result(&result_1);
+        let msg_2 = user_message("What country is that city in? Reply with just the country name.");
+        let mut turn_2_input = vec![msg_1];
+        turn_2_input.extend(items_added.clone());
+        turn_2_input.push(msg_2);
+
+        let request_2 = make_request(turn_2_input, vec![]);
+
+        // Verify incremental input optimization applies
+        let prev_response = CodexLastResponse {
+            response_id: resp_id_1.clone(),
+            items_added,
+        };
+        let incremental =
+            codex_incremental_input(&request_2, &request_1, &prev_response);
+        assert!(
+            incremental.is_some(),
+            "incremental input optimization should apply for multi-turn"
+        );
+        let delta = incremental.unwrap();
+        assert_eq!(
+            delta.len(),
+            1,
+            "incremental delta should contain only the new user message"
+        );
+
+        send_ws_request(
+            &mut socket,
+            &request_2,
+            Some(&resp_id_1),
+            Some(delta),
+        )
+        .await;
+        let (result_2, response_id_2) = read_ws_response(&mut socket).await;
+
+        assert_eq!(result_2.stop_reason, "stop");
+        assert!(!result_2.text.is_empty(), "turn 2: expected text");
+        assert!(response_id_2.is_some(), "turn 2: expected response_id");
     }
 }
