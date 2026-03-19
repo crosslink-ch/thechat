@@ -95,7 +95,12 @@ export async function getWorkspaceDetail(workspaceId: string, userId: string) {
   const channels = await db
     .select()
     .from(conversations)
-    .where(eq(conversations.workspaceId, workspaceId));
+    .where(
+      and(
+        eq(conversations.workspaceId, workspaceId),
+        eq(conversations.type, "group"),
+      ),
+    );
 
   return {
     id: workspace.id,
