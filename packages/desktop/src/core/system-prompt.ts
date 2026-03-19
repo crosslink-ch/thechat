@@ -76,6 +76,9 @@ Use the todowrite/todoread tools frequently to plan and track multi-step tasks. 
 
 Reserve the **shell** tool for: git commands, running scripts, build commands, installing packages, and system tasks that don't have a dedicated tool.
 
+## Web fetching
+Use **webfetch** to retrieve content from URLs. It converts HTML to markdown by default. Use this when you need to read documentation, web pages, or API responses. The user will be prompted for permission before any URL is fetched.
+
 ## Parallel execution
 Call multiple tools in a single response when there are no dependencies between them. Use the **batch** tool for parallel independent operations. For batch, each item must be an object with { tool, args } where args is an object — do not use an 'input' key. If tool calls depend on previous results, run them sequentially.
 

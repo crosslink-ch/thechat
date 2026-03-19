@@ -14,9 +14,8 @@
     {
       "identifier": "http:default",
       "allow": [
-        { "url": "https://auth.openai.com/**" },
-        { "url": "https://chatgpt.com/**" },
-        { "url": "https://console.anthropic.com/**" }
+        { "url": "http://**" },
+        { "url": "https://**" }
       ]
     }
   ]

@@ -19,6 +19,7 @@ import {
   todoWriteTool,
   listCredentialsTool,
   getCredentialTool,
+  webFetchTool,
   invalidTool,
   createSkillTool,
 } from "../core/tools/index";
@@ -45,6 +46,7 @@ const builtinTools: ToolDefinition[] = [
   todoWriteTool,
   listCredentialsTool,
   getCredentialTool,
+  webFetchTool,
   invalidTool,
 ];
 
