@@ -153,6 +153,35 @@ pub struct StreamResult {
     pub stop_reason: String,
 }
 
+/// Structured error returned by stream_completion to the JS side.
+/// Carries the HTTP status code so the frontend can branch on it directly
+/// instead of regex-parsing the error message.
+#[derive(Serialize, Clone, Debug)]
+pub struct StreamError {
+    pub message: String,
+    #[serde(rename = "statusCode")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status_code: Option<u16>,
+}
+
+impl StreamError {
+    pub fn cancelled() -> Self {
+        Self {
+            message: "cancelled".to_string(),
+            status_code: None,
+        }
+    }
+}
+
+impl From<String> for StreamError {
+    fn from(message: String) -> Self {
+        Self {
+            message,
+            status_code: None,
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Tauri commands
 // ---------------------------------------------------------------------------
@@ -168,7 +197,7 @@ pub async fn stream_completion(
     on_event: Channel<Vec<StreamEvent>>,
     cancellers: tauri::State<'_, Arc<StreamCancellers>>,
     codex_transport: tauri::State<'_, Arc<CodexTransport>>,
-) -> Result<StreamResult, String> {
+) -> Result<StreamResult, StreamError> {
     let cancel_flag = Arc::new(AtomicBool::new(false));
     cancellers
         .map
@@ -218,9 +247,9 @@ async fn run_stream(
     cancel_flag: Arc<AtomicBool>,
     on_event: &Channel<Vec<StreamEvent>>,
     codex_transport: Arc<CodexTransport>,
-) -> Result<StreamResult, String> {
+) -> Result<StreamResult, StreamError> {
     let codex_request = if provider == "codex" {
-        Some(parse_codex_request_payload(&body)?)
+        Some(parse_codex_request_payload(&body).map_err(StreamError::from)?)
     } else {
         None
     };
@@ -252,8 +281,8 @@ async fn run_stream(
         .await
         {
             Ok(result) => return Ok(result),
-            Err(CodexWebsocketError::Cancelled) => return Err("cancelled".to_string()),
-            Err(CodexWebsocketError::Fatal(err)) => return Err(err),
+            Err(CodexWebsocketError::Cancelled) => return Err(StreamError::cancelled()),
+            Err(CodexWebsocketError::Fatal(err)) => return Err(StreamError::from(err)),
             Err(CodexWebsocketError::Fallback { reason, .. }) => {
                 tracing::info!(reason = %reason, "falling back to Codex HTTP SSE");
             }
@@ -287,7 +316,7 @@ async fn run_http_stream(
     on_event: &Channel<Vec<StreamEvent>>,
     codex_request: Option<&CodexRequestPayload>,
     codex_session: Option<&Arc<AsyncMutex<CodexTransportSession>>>,
-) -> Result<StreamResult, String> {
+) -> Result<StreamResult, StreamError> {
     let client = reqwest::Client::new();
     let codex_turn_state = if provider == "codex" {
         if let Some(codex_session) = codex_session {
@@ -311,7 +340,7 @@ async fn run_http_stream(
     let response = req_builder
         .send()
         .await
-        .map_err(|e| format!("HTTP request failed: {}", e))?;
+        .map_err(|e| StreamError::from(format!("HTTP request failed: {}", e)))?;
 
     let status = response.status();
     if !status.is_success() {
@@ -321,12 +350,15 @@ async fn run_http_stream(
             "anthropic" => "Anthropic",
             _ => "OpenRouter",
         };
-        return Err(format!(
-            "{} API error ({}): {}",
-            label,
-            status.as_u16(),
-            err_body
-        ));
+        return Err(StreamError {
+            message: format!(
+                "{} API error ({}): {}",
+                label,
+                status.as_u16(),
+                err_body
+            ),
+            status_code: Some(status.as_u16()),
+        });
     }
 
     let codex_response_turn_state = if provider == "codex" {
@@ -364,13 +396,13 @@ async fn run_http_stream(
     // We iterate chunk by chunk using reqwest's chunk() method
     loop {
         if cancel_flag.load(Ordering::Relaxed) {
-            return Err("cancelled".to_string());
+            return Err(StreamError::cancelled());
         }
 
         let chunk = stream
             .chunk()
             .await
-            .map_err(|e| format!("Stream read error: {}", e))?;
+            .map_err(|e| StreamError::from(format!("Stream read error: {}", e)))?;
 
         let bytes = match chunk {
             Some(b) => b,
@@ -423,7 +455,7 @@ async fn run_http_stream(
                     &mut line_events,
                 ),
                 _ => {
-                    return Err(format!("Unknown provider: {}", provider));
+                    return Err(StreamError::from(format!("Unknown provider: {}", provider)));
                 }
             }
 

@@ -8,6 +8,7 @@ import {
   extractAccountId,
 } from "../core/codex-auth";
 import { error as logError, info as logInfo, formatError } from "../log";
+import { ProviderError } from "../core/errors";
 
 type CodexAuthStatus = "idle" | "awaiting_code" | "polling" | "authenticated" | "error";
 
@@ -178,7 +179,7 @@ export const useCodexAuthStore = create<CodexAuthState>()((set, get) => ({
   getValidToken: async () => {
     const state = get();
     if (!state.accessToken || !state.refreshToken) {
-      throw new Error("Not authenticated with Codex. Please connect your ChatGPT account.");
+      throw new ProviderError("Not authenticated with Codex. Please connect your ChatGPT account.", "codex", 401);
     }
 
     // Refresh if within 60s of expiry
@@ -210,7 +211,7 @@ export const useCodexAuthStore = create<CodexAuthState>()((set, get) => ({
         logError(`[codex-auth] Token refresh failed: ${formatError(e)}`);
         // Clear auth state on refresh failure
         set({ status: "error", error: "Session expired. Please reconnect." });
-        throw new Error("Codex token refresh failed. Please reconnect your ChatGPT account.");
+        throw new ProviderError("Codex token refresh failed. Please reconnect your ChatGPT account.", "codex", 401);
       }
     }
 

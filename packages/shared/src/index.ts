@@ -171,7 +171,7 @@ export type StreamEvent =
   | { type: "queued-message-consumed"; id: string; content: string }
   | { type: "compaction"; summary: string }
   | { type: "finish"; usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number } }
-  | { type: "error"; error: string };
+  | { type: "error"; error: string; provider?: "openrouter" | "codex" | "anthropic"; statusCode?: number };
 
 // -- Stream Result (returned from streamCompletion) --
 

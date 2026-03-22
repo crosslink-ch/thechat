@@ -5,6 +5,8 @@ import { useStreamingStore, updateStreamParts, recordToolCallStart } from "../st
 import { useCodexAuthStore } from "../stores/codex-auth";
 import { useAnthropicAuthStore } from "../stores/anthropic-auth";
 import { error as logError, formatError } from "../log";
+import { ProviderError } from "../core/errors";
+import type { Provider } from "../core/errors";
 import type {
   Message,
   MessagePart,
@@ -15,6 +17,29 @@ import type {
   ToolDefinition,
   StreamEvent,
 } from "../core/types";
+
+export interface ChatError {
+  message: string;
+  provider?: Provider;
+  isAuth: boolean;
+}
+
+/** Build a ChatError from a StreamEvent error. */
+function chatErrorFromEvent(event: StreamEvent & { type: "error" }): ChatError {
+  return {
+    message: event.error,
+    provider: event.provider,
+    isAuth: event.statusCode === 401 || event.statusCode === 403,
+  };
+}
+
+/** Build a ChatError from a caught exception. */
+function chatErrorFromException(e: unknown): ChatError {
+  if (e instanceof ProviderError) {
+    return { message: e.message, provider: e.provider, isAuth: e.isAuth };
+  }
+  return { message: formatError(e), isAuth: false };
+}
 
 // -- DbMessage ↔ Message conversion --
 
@@ -75,7 +100,7 @@ interface UseChatOptions {
 export function useChat(options?: UseChatOptions) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [conversation, setConversation] = useState<Conversation | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<ChatError | null>(null);
   const [queuedMessages, setQueuedMessages] = useState<Array<{ id: string; content: string }>>([]);
   const queuedMessagesRef = useRef<Array<{ id: string; content: string }>>([]);
   const abortControllersRef = useRef<Map<string, AbortController>>(new Map());
@@ -253,12 +278,19 @@ export function useChat(options?: UseChatOptions) {
                 setQueuedMessages((prev) => prev.filter((q) => q.id !== qmEvent.id));
                 break;
               }
-              case "error":
+              case "error": {
                 logError(`[useChat] Stream error (conv=${streamConvId}): ${event.error}`);
+                const chatErr = chatErrorFromEvent(event);
                 if (activeConvIdRef.current === streamConvId) {
-                  setError(event.error);
+                  setError(chatErr);
+                }
+                if (chatErr.isAuth && chatErr.provider === "anthropic") {
+                  useAnthropicAuthStore.setState({ status: "error", error: "Session expired. Please reconnect." });
+                } else if (chatErr.isAuth && chatErr.provider === "codex") {
+                  useCodexAuthStore.setState({ status: "error", error: "Session expired. Please reconnect." });
                 }
                 break;
+              }
             }
           }
           // Single React update per batch instead of per event.
@@ -336,9 +368,16 @@ export function useChat(options?: UseChatOptions) {
         if (e instanceof DOMException && e.name === "AbortError") {
           // User cancelled
         } else {
-          const msg = formatError(e);
-          logError(`[useChat] sendMessage failed (conv=${streamConvId}): ${msg}`);
-          setError(msg);
+          logError(`[useChat] sendMessage failed (conv=${streamConvId}): ${formatError(e)}`);
+
+          const chatErr = chatErrorFromException(e);
+          if (chatErr.isAuth && chatErr.provider === "anthropic") {
+            useAnthropicAuthStore.setState({ status: "error", error: "Session expired. Please reconnect." });
+          } else if (chatErr.isAuth && chatErr.provider === "codex") {
+            useCodexAuthStore.setState({ status: "error", error: "Session expired. Please reconnect." });
+          }
+
+          setError(chatErr);
           if (streamConvId) {
             onStreamCompleteRef.current?.(streamConvId, streamConvTitle);
           }

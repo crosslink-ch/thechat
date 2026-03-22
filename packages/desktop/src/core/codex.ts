@@ -2,6 +2,7 @@ import { invoke, Channel } from "@tauri-apps/api/core";
 import { debug as logDebug } from "../log";
 import type { ChatParams, StreamEvent, StreamResult, ToolDefinition } from "./types";
 import { CODEX_MODELS, DEFAULT_REASONING_EFFORT } from "./models";
+import { ProviderError } from "./errors";
 
 export { CODEX_MODELS };
 
@@ -206,11 +207,10 @@ export async function streamCodexCompletion(options: StreamCodexOptions): Promis
       streamId,
       onEvent,
     });
-  } catch (e) {
-    if (typeof e === "string" && e === "cancelled")
-      throw new DOMException("Aborted", "AbortError");
-    const msg = typeof e === "string" ? e : String(e);
-    throw new Error(msg);
+  } catch (e: any) {
+    const msg = e?.message ?? (typeof e === "string" ? e : String(e));
+    if (msg === "cancelled") throw new DOMException("Aborted", "AbortError");
+    throw new ProviderError(msg, "codex", e?.statusCode);
   } finally {
     options.signal?.removeEventListener("abort", onAbort);
   }

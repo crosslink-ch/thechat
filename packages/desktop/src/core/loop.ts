@@ -4,6 +4,7 @@ import { streamAnthropicCompletion } from "./anthropic";
 import { truncateToolResult } from "./truncate";
 import { isOverflow, compactMessages } from "./compaction";
 import { error as logError, warn as logWarn, debug as logDebug, formatError } from "../log";
+import { ProviderError } from "./errors";
 import type { ChatLoopOptions, StreamResult, ToolDefinition, StreamEvent } from "./types";
 
 const DEFAULT_SYSTEM_PROMPT = `\
@@ -45,7 +46,18 @@ function callProvider(
   onEvents: (events: StreamEvent[]) => void,
   codexTurnId?: string,
 ): Promise<StreamResult> {
-  if (options.provider === "codex" && options.codexAuth) {
+  const provider = options.provider === "codex" ? "codex" as const
+    : options.provider === "anthropic" ? "anthropic" as const
+    : "openrouter" as const;
+
+  // Tag any error events from the Rust streaming layer with the provider
+  const taggedOnEvents = (events: StreamEvent[]) => {
+    onEvents(events.map((e) =>
+      e.type === "error" ? { ...e, provider } : e,
+    ));
+  };
+
+  if (provider === "codex" && options.codexAuth) {
     return streamCodexCompletion({
       accessToken: options.codexAuth.accessToken,
       accountId: options.codexAuth.accountId,
@@ -56,10 +68,10 @@ function callProvider(
       signal: options.signal,
       convId: options.convId,
       turnId: codexTurnId,
-      onEvents,
+      onEvents: taggedOnEvents,
     });
   }
-  if (options.provider === "anthropic") {
+  if (provider === "anthropic") {
     return streamAnthropicCompletion({
       apiKey: options.apiKey,
       model: options.model,
@@ -67,7 +79,7 @@ function callProvider(
       params: options.params,
       tools,
       signal: options.signal,
-      onEvents,
+      onEvents: taggedOnEvents,
       oauthToken: options.anthropicAuth?.accessToken,
     });
   }
@@ -78,7 +90,7 @@ function callProvider(
     params: options.params,
     tools,
     signal: options.signal,
-    onEvents,
+    onEvents: taggedOnEvents,
   });
 }
 
@@ -141,7 +153,12 @@ export async function runChatLoop(options: ChatLoopOptions): Promise<void> {
       } catch (e) {
         if (e instanceof DOMException && e.name === "AbortError") return;
         logError(`[loop] Doom loop recovery failed: ${formatError(e)}`);
-        onEvents([{ type: "error", error: formatError(e) }]);
+        const errEvent: StreamEvent = { type: "error", error: formatError(e) };
+        if (e instanceof ProviderError) {
+          errEvent.provider = e.provider;
+          errEvent.statusCode = e.statusCode;
+        }
+        onEvents([errEvent]);
       }
       return;
     }
@@ -158,7 +175,12 @@ export async function runChatLoop(options: ChatLoopOptions): Promise<void> {
     } catch (e) {
       if (e instanceof DOMException && e.name === "AbortError") return;
       logError(`[loop] API call failed (round ${round}): ${formatError(e)}`);
-      onEvents([{ type: "error", error: formatError(e) }]);
+      const errEvent: StreamEvent = { type: "error", error: formatError(e) };
+      if (e instanceof ProviderError) {
+        errEvent.provider = e.provider;
+        errEvent.statusCode = e.statusCode;
+      }
+      onEvents([errEvent]);
       return;
     }
 

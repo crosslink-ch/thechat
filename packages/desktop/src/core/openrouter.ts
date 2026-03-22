@@ -1,6 +1,7 @@
 import { invoke, Channel } from "@tauri-apps/api/core";
 import type { ChatParams, StreamEvent, StreamResult, ToolDefinition } from "./types";
 import { getMaxOutputTokens } from "./models";
+import { ProviderError } from "./errors";
 
 interface StreamCompletionOptions {
   apiKey: string;
@@ -86,11 +87,10 @@ export async function streamCompletion(options: StreamCompletionOptions): Promis
       streamId,
       onEvent,
     });
-  } catch (e) {
-    if (typeof e === "string" && e === "cancelled")
-      throw new DOMException("Aborted", "AbortError");
-    const msg = typeof e === "string" ? e : String(e);
-    throw new Error(msg);
+  } catch (e: any) {
+    const msg = e?.message ?? (typeof e === "string" ? e : String(e));
+    if (msg === "cancelled") throw new DOMException("Aborted", "AbortError");
+    throw new ProviderError(msg, "openrouter", e?.statusCode);
   } finally {
     options.signal?.removeEventListener("abort", onAbort);
   }

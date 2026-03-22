@@ -8,6 +8,7 @@ import {
 } from "../core/anthropic-auth";
 import type { PKCECodes } from "../core/anthropic-auth";
 import { error as logError, info as logInfo, formatError } from "../log";
+import { ProviderError } from "../core/errors";
 
 type AnthropicAuthStatus = "idle" | "awaiting_code" | "authenticated" | "error";
 
@@ -145,7 +146,7 @@ export const useAnthropicAuthStore = create<AnthropicAuthState>()((set, get) => 
   getValidToken: async () => {
     const state = get();
     if (!state.accessToken || !state.refreshToken) {
-      throw new Error("Not authenticated with Anthropic. Please connect your Claude account.");
+      throw new ProviderError("Not authenticated with Anthropic. Please connect your Claude account.", "anthropic", 401);
     }
 
     // Refresh if within 60s of expiry
@@ -173,7 +174,7 @@ export const useAnthropicAuthStore = create<AnthropicAuthState>()((set, get) => 
       } catch (e) {
         logError(`[anthropic-auth] Token refresh failed: ${formatError(e)}`);
         set({ status: "error", error: "Session expired. Please reconnect." });
-        throw new Error("Anthropic token refresh failed. Please reconnect your Claude account.");
+        throw new ProviderError("Anthropic token refresh failed. Please reconnect your Claude account.", "anthropic", 401);
       }
     }
 

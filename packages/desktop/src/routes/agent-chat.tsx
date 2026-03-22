@@ -2,6 +2,8 @@ import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { useNavigate, useMatches, useRouterState } from "@tanstack/react-router";
 import { invoke } from "@tauri-apps/api/core";
 import { useChat } from "../hooks/useChat";
+import { openAnthropicAuthModal } from "../components/AnthropicAuthModal";
+import { openCodexAuthModal } from "../components/CodexAuthModal";
 import { useIsStreaming, useStreamingParts } from "../stores/streaming";
 import { useAutoScroll } from "../hooks/useAutoScroll";
 import { useToolsStore } from "../stores/tools";
@@ -283,7 +285,23 @@ export function AgentChatRoute() {
               <div className="max-w-3xl text-[14px] text-text">{qm.content}</div>
             </div>
           ))}
-          {error && <div className="mx-5 rounded-lg border border-error-msg-border bg-error-msg-bg px-3.5 py-2.5 text-[12px] text-error-bright">{error}</div>}
+          {error && (
+            <div className="mx-5 rounded-lg border border-error-msg-border bg-error-msg-bg px-3.5 py-2.5 text-[12px] text-error-bright">
+              <div>{error.message}</div>
+              {error.isAuth && error.provider && error.provider !== "openrouter" && (
+                <button
+                  type="button"
+                  className="mt-2 rounded bg-accent px-3 py-1 text-[12px] font-medium text-white hover:bg-accent/80"
+                  onClick={() => {
+                    if (error.provider === "anthropic") openAnthropicAuthModal();
+                    else openCodexAuthModal();
+                  }}
+                >
+                  Reconnect {error.provider === "anthropic" ? "Claude" : "ChatGPT"} Account
+                </button>
+              )}
+            </div>
+          )}
         </div>
         {!isAtBottom && isStreaming && (
           <button
