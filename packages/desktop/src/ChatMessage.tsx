@@ -8,6 +8,7 @@ import { TruncatedOutput } from "./components/TruncatedOutput";
 import { DiffPreview } from "./components/DiffPreview";
 import { WritePreview } from "./components/WritePreview";
 import { formatToolSummary } from "./lib/tool-summary";
+import type { BatchChildResult } from "./lib/batch";
 type ToolCallPart = Extract<MessagePart, { type: "tool-call" }>;
 type ToolResultPart = Extract<MessagePart, { type: "tool-result" }>;
 
@@ -73,6 +74,66 @@ function ToolActivityBlock({
       ? <span className="shrink-0 text-[12px] leading-none text-error">✕</span>
       : <span className="shrink-0 text-[12px] leading-none text-success">✓</span>
     : null;
+
+  const childResults = useMemo(
+    () => (result?.result as { results?: BatchChildResult[] } | null)?.results ?? null,
+    [result],
+  );
+
+  if (call.toolName === "batch") {
+    const toolCalls = Array.isArray(call.args.tool_calls)
+      ? (call.args.tool_calls as { tool: string; args: Record<string, unknown> }[])
+      : [];
+
+    return (
+      <div className="my-1 overflow-hidden rounded-lg border border-border-subtle bg-raised/50">
+        <button
+          className="flex w-full cursor-pointer items-center gap-2 border-none bg-none px-3 py-2 text-left text-[12px] text-text-muted shadow-none transition-colors duration-100 hover:bg-hover/50"
+          onClick={() => setOpen(!open)}
+        >
+          <span className="w-3 text-[10px] text-text-dimmed">{open ? "\u25BE" : "\u25B8"}</span>
+          {statusIcon}
+          <span className="min-w-0 flex-1 truncate">{summary}</span>
+        </button>
+        <div className="px-3 pb-2">
+          {toolCalls.map((tc, i) => {
+            const cr = childResults?.[i];
+            const childSummary = formatToolSummary({
+              type: "tool-call",
+              toolCallId: "",
+              toolName: tc.tool,
+              args: tc.args,
+            });
+            return (
+              <div key={i} className="flex items-center gap-2 py-0.5 pl-2 text-[12px] text-text-muted">
+                {cr && !cr.success ? (
+                  <span className="shrink-0 text-[12px] leading-none text-error">✕</span>
+                ) : cr ? (
+                  <span className="shrink-0 text-[12px] leading-none text-success">✓</span>
+                ) : null}
+                <span className="min-w-0 flex-1 truncate">{childSummary}</span>
+              </div>
+            );
+          })}
+        </div>
+        {open && childResults && (
+          <div className="px-3 pb-2.5">
+            {childResults.map((cr, i) => (
+              <div key={i} className="mb-2 last:mb-0">
+                <div className="mb-0.5 text-[11px] font-medium text-text-dimmed">
+                  {cr.tool} [{cr.index}]
+                </div>
+                <TruncatedOutput
+                  text={cr.error || (typeof cr.result === "string" ? cr.result : JSON.stringify(cr.result, null, 2))}
+                  isError={!cr.success}
+                />
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className="my-1 overflow-hidden rounded-lg border border-border-subtle bg-raised/50">

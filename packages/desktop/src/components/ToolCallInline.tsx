@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import type { MessagePart } from "@thechat/shared";
 import { formatToolSummary } from "../lib/tool-summary";
+import type { BatchChildResult } from "../lib/batch";
 import { useElapsedTime } from "../hooks/useElapsedTime";
 import { TruncatedOutput } from "./TruncatedOutput";
 import { DiffPreview } from "./DiffPreview";
@@ -10,6 +11,15 @@ type ToolCallPart = Extract<MessagePart, { type: "tool-call" }>;
 type ToolResultPart = Extract<MessagePart, { type: "tool-result" }>;
 
 const PREVIEW_TOOLS = new Set(["edit", "multiedit", "write"]);
+
+function batchChildSummary(tool: string, args: Record<string, unknown>): string {
+  return formatToolSummary({
+    type: "tool-call",
+    toolCallId: "",
+    toolName: tool,
+    args,
+  });
+}
 
 function ToolCallPreview({ call }: { call: ToolCallPart }) {
   const { toolName, args } = call;
@@ -82,6 +92,57 @@ export function ToolCallInline({
   const hasResult = result && !hasPreview;
   const canExpand = hasPreview || hasResult;
   const elapsed = useElapsedTime(!result && startTime ? startTime : null);
+
+  const childResults = useMemo(
+    () => (result?.result as { results?: BatchChildResult[] } | null)?.results ?? null,
+    [result],
+  );
+
+  if (call.toolName === "batch") {
+    const toolCalls = Array.isArray(call.args.tool_calls)
+      ? (call.args.tool_calls as { tool: string; args: Record<string, unknown> }[])
+      : [];
+    const isRunning = !result;
+
+    return (
+      <div className="py-1.5 px-0">
+        <div className="flex items-center gap-2 text-[12px] text-text-muted">
+          <StatusIcon result={result} />
+          <span className="min-w-0 flex-1 truncate">
+            Batch: {toolCalls.length} operation{toolCalls.length !== 1 ? "s" : ""}
+          </span>
+          {elapsed && (
+            <span className="shrink-0 tabular-nums text-[11px] text-text-dimmed">
+              {elapsed}
+            </span>
+          )}
+        </div>
+        {toolCalls.length > 0 && (
+          <div className="mt-0.5">
+            {toolCalls.map((tc, i) => {
+              const cr = childResults?.[i];
+              const childSummaryText = batchChildSummary(tc.tool, tc.args);
+              return (
+                <div key={i} className="flex items-center gap-2 py-0.5 pl-5 text-[12px] text-text-muted">
+                  {isRunning ? (
+                    <span
+                      className="inline-block size-3 shrink-0 rounded-full border-2 border-text-dimmed border-t-transparent"
+                      style={{ animation: "spin 1s linear infinite" }}
+                    />
+                  ) : cr && !cr.success ? (
+                    <span className="shrink-0 text-[12px] leading-none text-error">✕</span>
+                  ) : (
+                    <span className="shrink-0 text-[12px] leading-none text-success">✓</span>
+                  )}
+                  <span className="min-w-0 flex-1 truncate">{childSummaryText}</span>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className="py-1.5 px-0">
