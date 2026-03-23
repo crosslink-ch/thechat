@@ -365,6 +365,8 @@ pub fn run() {
             fs::fs_glob,
             fs::fs_grep,
             fs::fs_list_dir,
+            fs::save_image,
+            fs::load_image_base64,
             stream::stream_completion,
             stream::cancel_stream,
         ])

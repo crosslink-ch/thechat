@@ -56,6 +56,33 @@ interface StreamCodexOptions {
 }
 
 /**
+ * Convert user message content (string or OpenAI content array)
+ * to Codex Responses API content blocks.
+ */
+function convertUserContentToCodex(content: unknown): unknown[] {
+  // Plain string
+  if (typeof content === "string") {
+    return [{ type: "input_text", text: content }];
+  }
+
+  // Content array (OpenAI format)
+  if (Array.isArray(content)) {
+    return content.map((part: Record<string, unknown>) => {
+      if (part.type === "text") {
+        return { type: "input_text", text: part.text as string };
+      }
+      if (part.type === "image_url") {
+        const imageUrl = part.image_url as { url: string };
+        return { type: "input_image", image_url: imageUrl.url };
+      }
+      return part;
+    });
+  }
+
+  return [{ type: "input_text", text: String(content) }];
+}
+
+/**
  * Convert Chat Completions messages to Responses API input format.
  */
 function messagesToResponsesInput(messages: Array<Record<string, unknown>>): unknown[] {
@@ -76,7 +103,7 @@ function messagesToResponsesInput(messages: Array<Record<string, unknown>>): unk
       input.push({
         type: "message",
         role: "user",
-        content: [{ type: "input_text", text: msg.content as string }],
+        content: convertUserContentToCodex(msg.content),
       });
     } else if (role === "assistant") {
       // Assistant message might have text content and/or tool_calls.

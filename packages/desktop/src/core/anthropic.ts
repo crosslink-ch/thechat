@@ -21,12 +21,57 @@ interface StreamAnthropicOptions {
 }
 
 /**
+ * Convert user message content (string or OpenAI content array)
+ * to Anthropic content blocks.
+ */
+function convertUserContent(content: unknown): unknown[] {
+  // Plain string
+  if (typeof content === "string") {
+    return [{ type: "text", text: content }];
+  }
+
+  // Content array (OpenAI format with image_url parts)
+  if (Array.isArray(content)) {
+    return content.map((part: Record<string, unknown>) => {
+      if (part.type === "text") {
+        return { type: "text", text: part.text as string };
+      }
+      if (part.type === "image_url") {
+        const imageUrl = part.image_url as { url: string };
+        const url = imageUrl.url;
+        // Parse data URI: data:<mime>;base64,<data>
+        const match = url.match(/^data:([^;]+);base64,(.+)$/s);
+        if (match) {
+          return {
+            type: "image",
+            source: {
+              type: "base64",
+              media_type: match[1],
+              data: match[2],
+            },
+          };
+        }
+        // URL-based image
+        return {
+          type: "image",
+          source: { type: "url", url },
+        };
+      }
+      // Pass through unknown parts as-is
+      return part;
+    });
+  }
+
+  return [{ type: "text", text: String(content) }];
+}
+
+/**
  * Convert OpenAI-style messages (used internally by the chat loop)
  * to Anthropic Messages API format.
  *
  * Input format (from chat loop):
  *   { role: "system", content: "..." }
- *   { role: "user", content: "..." }
+ *   { role: "user", content: "..." | [{ type: "text", ... }, { type: "image_url", ... }] }
  *   { role: "assistant", content: "text", tool_calls: [...] }
  *   { role: "tool", tool_call_id: "...", content: "..." }
  *
@@ -49,7 +94,7 @@ function convertMessages(msgs: Array<Record<string, unknown>>): {
     }
 
     if (role === "user") {
-      const content = [{ type: "text", text: msg.content as string }];
+      const content = convertUserContent(msg.content);
       // Merge with previous user message if needed (Anthropic requires alternating roles)
       const last = anthropicMessages[anthropicMessages.length - 1];
       if (last && last.role === "user") {

@@ -1,5 +1,7 @@
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use serde::Serialize;
 use std::path::{Path, PathBuf};
+use tauri::Manager;
 
 // -- Result types --
 
@@ -574,6 +576,71 @@ pub async fn fs_list_dir(
             count: count.min(max),
             truncated,
         })
+    })
+    .await
+    .map_err(|e| format!("Task join error: {}", e))?
+}
+
+/// Determine file extension from MIME type.
+fn ext_for_mime(mime: &str) -> &str {
+    match mime {
+        "image/png" => "png",
+        "image/jpeg" | "image/jpg" => "jpg",
+        "image/gif" => "gif",
+        "image/webp" => "webp",
+        "image/svg+xml" => "svg",
+        "image/bmp" => "bmp",
+        _ => "bin",
+    }
+}
+
+#[tauri::command]
+#[tracing::instrument(skip(base64_data))]
+pub async fn save_image(
+    app: tauri::AppHandle,
+    conversation_id: String,
+    image_id: String,
+    mime_type: String,
+    base64_data: String,
+) -> Result<String, String> {
+    let data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("Failed to resolve app data dir: {}", e))?;
+
+    tokio::task::spawn_blocking(move || -> Result<String, String> {
+        let ext = ext_for_mime(&mime_type);
+        let images_dir = data_dir.join("images").join(&conversation_id);
+        std::fs::create_dir_all(&images_dir)
+            .map_err(|e| format!("Failed to create images dir: {}", e))?;
+
+        let file_name = format!("{}.{}", image_id, ext);
+        let file_path = images_dir.join(&file_name);
+
+        let bytes = BASE64
+            .decode(&base64_data)
+            .map_err(|e| format!("Invalid base64 data: {}", e))?;
+
+        std::fs::write(&file_path, &bytes)
+            .map_err(|e| format!("Failed to write image: {}", e))?;
+
+        Ok(file_path.to_string_lossy().into_owned())
+    })
+    .await
+    .map_err(|e| format!("Task join error: {}", e))?
+}
+
+#[tauri::command]
+#[tracing::instrument]
+pub async fn load_image_base64(file_path: String) -> Result<String, String> {
+    tokio::task::spawn_blocking(move || {
+        let path = Path::new(&file_path);
+        if !path.exists() {
+            return Err(format!("Image not found: {}", file_path));
+        }
+        let bytes =
+            std::fs::read(path).map_err(|e| format!("Failed to read image: {}", e))?;
+        Ok(BASE64.encode(&bytes))
     })
     .await
     .map_err(|e| format!("Task join error: {}", e))?

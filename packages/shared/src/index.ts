@@ -3,6 +3,7 @@
 export type MessagePart =
   | { type: "text"; text: string }
   | { type: "reasoning"; text: string }
+  | { type: "image"; path: string; mimeType: string }
   | { type: "tool-call"; toolCallId: string; toolName: string; args: Record<string, unknown> }
   | { type: "tool-result"; toolCallId: string; toolName: string; result: unknown; isError?: boolean };
 

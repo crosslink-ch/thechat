@@ -7,6 +7,8 @@ import { useAnthropicAuthStore } from "../stores/anthropic-auth";
 import { error as logError, formatError } from "../log";
 import { ProviderError } from "../core/errors";
 import type { Provider } from "../core/errors";
+import { saveImage, buildUserContent } from "../lib/images";
+import type { ImageAttachment, ImageRef } from "../lib/images";
 import type {
   Message,
   MessagePart,
@@ -79,13 +81,32 @@ function messageToDbFields(msg: Message): { content: string; reasoningContent: s
 
   const reasoningContent = reasoning.length > 0 ? reasoning.map((p) => p.text).join("") : null;
 
-  // If only text parts (no tool parts), store as plain text for backward compat
+  // If only text parts (no tool or image parts), store as plain text for backward compat
   const hasOnlyText = nonReasoning.every((p) => p.type === "text");
   const content = hasOnlyText
     ? nonReasoning.map((p) => (p as { text: string }).text).join("")
     : JSON.stringify(nonReasoning);
 
   return { content, reasoningContent };
+}
+
+/** Convert a stored Message to an API-ready message object. */
+async function messageToApiMessage(m: Message): Promise<Record<string, unknown>> {
+  const imageParts = m.parts.filter((p) => p.type === "image") as Array<{
+    type: "image";
+    path: string;
+    mimeType: string;
+  }>;
+  const textParts = m.parts.filter((p) => p.type === "text");
+  const text = textParts.map((p) => (p as { text: string }).text).join("");
+
+  if (imageParts.length === 0) {
+    return { role: m.role, content: text };
+  }
+
+  // Has images — build content array with inline base64
+  const refs: ImageRef[] = imageParts.map((p) => ({ path: p.path, mimeType: p.mimeType }));
+  return { role: m.role, content: await buildUserContent(text, refs) };
 }
 
 interface UseChatOptions {
@@ -140,8 +161,8 @@ export function useChat(options?: UseChatOptions) {
   }, [clearQueue]);
 
   const sendMessage = useCallback(
-    async (userContent: string) => {
-      if (!userContent.trim()) return;
+    async (userContent: string, images?: ImageAttachment[]) => {
+      if (!userContent.trim() && (!images || images.length === 0)) return;
       // Queue message if conversation is already streaming
       if (conversation && useStreamingStore.getState().streamingConvIds.has(conversation.id)) {
         const qm = { id: crypto.randomUUID(), content: userContent.trim() };
@@ -160,8 +181,9 @@ export function useChat(options?: UseChatOptions) {
         // Create conversation if needed
         let conv = conversation;
         if (!conv) {
+          const titleText = userContent.trim() || (images?.length ? "Image conversation" : "New conversation");
           const title =
-            userContent.length > 50 ? userContent.substring(0, 50) + "..." : userContent;
+            titleText.length > 50 ? titleText.substring(0, 50) + "..." : titleText;
           const pDir = projectDirRef.current ?? undefined;
           conv = await invoke<Conversation>("create_conversation", {
             title,
@@ -177,24 +199,50 @@ export function useChat(options?: UseChatOptions) {
         // Mark this conversation as streaming
         useStreamingStore.getState().startStreaming(streamConvId);
 
-        // Save user message to DB
+        // Save images to disk if present
+        let imageRefs: ImageRef[] | undefined;
+        if (images && images.length > 0) {
+          imageRefs = await Promise.all(
+            images.map(async (img) => {
+              const path = await saveImage(conv!.id, img);
+              return { path, mimeType: img.mimeType };
+            }),
+          );
+        }
+
+        // Build user message parts for DB (text + image file refs)
+        const userParts: MessagePart[] = [];
+        if (userContent.trim()) {
+          userParts.push({ type: "text", text: userContent });
+        }
+        if (imageRefs) {
+          for (const ref_ of imageRefs) {
+            userParts.push({ type: "image", path: ref_.path, mimeType: ref_.mimeType });
+          }
+        }
+
+        // Save user message to DB (images stored as file path refs, not base64)
+        const dbContent = userParts.length === 1 && userParts[0].type === "text"
+          ? userContent
+          : JSON.stringify(userParts);
         const userDbMsg = await invoke<DbMessage>("save_message", {
           conversationId: conv.id,
           role: "user",
-          content: userContent,
+          content: dbContent,
           reasoningContent: null,
         });
         const userMsg = dbMessageToMessage(userDbMsg);
         setMessages((prev) => [...prev, userMsg]);
 
         // Build API messages from current messages + new user message
-        const apiMessages = [
-          ...messagesRef.current.map((m) => {
-            const textParts = m.parts.filter((p) => p.type === "text");
-            return { role: m.role, content: textParts.map((p) => p.text).join("") };
-          }),
-          { role: "user" as const, content: userContent },
-        ];
+        const apiMessages: Array<Record<string, unknown>> = [];
+        for (const m of messagesRef.current) {
+          apiMessages.push(await messageToApiMessage(m));
+        }
+        apiMessages.push({
+          role: "user" as const,
+          content: await buildUserContent(userContent, imageRefs),
+        });
 
         // Start streaming
         const controller = new AbortController();
