@@ -9,6 +9,8 @@ import type { MentionUser } from "./MentionList";
 
 interface RichInputProps {
   onSubmit: (text: string) => void;
+  /** Called when user presses Enter with empty text. Return true if handled (e.g., images-only send). */
+  onEmptySubmitAttempt?: () => boolean;
   placeholder?: string;
   disabled?: boolean;
   mentions?: MentionUser[];
@@ -23,6 +25,7 @@ export interface RichInputHandle {
 export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function RichInput(
   {
     onSubmit,
+    onEmptySubmitAttempt,
     placeholder = "Send a message...",
     disabled = false,
     mentions,
@@ -33,6 +36,9 @@ export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function Ri
   const onSubmitRef = useRef(onSubmit);
   onSubmitRef.current = onSubmit;
 
+  const onEmptySubmitAttemptRef = useRef(onEmptySubmitAttempt);
+  onEmptySubmitAttemptRef.current = onEmptySubmitAttempt;
+
   const onCanSubmitChangeRef = useRef(onCanSubmitChange);
   onCanSubmitChangeRef.current = onCanSubmitChange;
 
@@ -41,7 +47,14 @@ export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function Ri
 
   const submitIfNotEmpty = (text: string, clearContent: () => void) => {
     const trimmed = text.trim();
-    if (!trimmed) return false;
+    if (!trimmed) {
+      // Allow empty-text submission when parent signals it's OK (e.g., images attached)
+      if (onEmptySubmitAttemptRef.current?.()) {
+        clearContent();
+        return true;
+      }
+      return false;
+    }
     onSubmitRef.current(trimmed);
     clearContent();
     onCanSubmitChangeRef.current?.(false);

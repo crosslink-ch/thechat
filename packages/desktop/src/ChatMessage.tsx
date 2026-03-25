@@ -9,6 +9,7 @@ import { DiffPreview } from "./components/DiffPreview";
 import { WritePreview } from "./components/WritePreview";
 import { formatToolSummary } from "./lib/tool-summary";
 import type { BatchChildResult } from "./lib/batch";
+import { MessageImages } from "./components/MessageImages";
 type ToolCallPart = Extract<MessagePart, { type: "tool-call" }>;
 type ToolResultPart = Extract<MessagePart, { type: "tool-result" }>;
 
@@ -558,13 +559,14 @@ interface ChatMessageProps {
 export function ChatMessage({ message }: ChatMessageProps) {
   const isUser = message.role === "user";
 
-  const { reasoningText, toolCalls, toolResults, textParts } = useMemo(() => {
+  const { reasoningText, toolCalls, toolResults, textParts, imageParts } = useMemo(() => {
     const reasoning = message.parts.filter((p) => p.type === "reasoning");
     return {
       reasoningText: reasoning.map((p) => p.text).join(""),
       toolCalls: message.parts.filter((p): p is ToolCallPart => p.type === "tool-call"),
       toolResults: message.parts.filter((p): p is ToolResultPart => p.type === "tool-result"),
       textParts: message.parts.filter((p): p is Extract<MessagePart, { type: "text" }> => p.type === "text"),
+      imageParts: message.parts.filter((p): p is Extract<MessagePart, { type: "image" }> => p.type === "image"),
     };
   }, [message.parts]);
   const hasThinking = !isUser && (reasoningText.length > 0 || toolCalls.length > 0);
@@ -583,6 +585,7 @@ export function ChatMessage({ message }: ChatMessageProps) {
             defaultOpen={false}
           />
         )}
+        {imageParts.length > 0 && <MessageImages images={imageParts} />}
         {textParts.map((part, i) => (
           <TextWithUiBlocks key={i} text={part.text} />
         ))}
