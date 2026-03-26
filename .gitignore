@@ -35,8 +35,9 @@ dev.db-wal
 .env
 .env.local
 
-# Test credentials (OAuth tokens from `python3 scripts/test.py init`)
+# Test credentials (OAuth tokens from `python3 scripts/test.py init` / `init-anthropic`)
 .test-credentials.json
+.test-credentials-anthropic.json
 
 .claude
 __pycache__

@@ -182,6 +182,7 @@ pub(super) fn finalize_anthropic_tools(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     fn parse_an(
         data: &str,
@@ -366,5 +367,206 @@ mod tests {
         assert_eq!(results[0].name, "read");
         assert_eq!(results[0].args, serde_json::json!({"path": "foo"}));
         assert!(matches!(&events[0], StreamEvent::ToolCallComplete { .. }));
+    }
+
+    // -----------------------------------------------------------------------
+    // Live test helpers
+    // -----------------------------------------------------------------------
+
+    const ANTHROPIC_API_URL: &str = "https://api.anthropic.com/v1/messages";
+    const ANTHROPIC_VERSION: &str = "2023-06-01";
+    // OAuth subscriptions may only have access to Haiku; override with
+    // ANTHROPIC_TEST_MODEL env var to test other models if your plan allows.
+    const DEFAULT_TEST_MODEL: &str = "claude-haiku-4-5-20251001";
+
+    fn live_headers() -> HashMap<String, String> {
+        let access_token = std::env::var("ANTHROPIC_ACCESS_TOKEN")
+            .expect("ANTHROPIC_ACCESS_TOKEN env var required");
+        let mut headers = HashMap::new();
+        headers.insert("Content-Type".to_string(), "application/json".to_string());
+        headers.insert(
+            "anthropic-version".to_string(),
+            ANTHROPIC_VERSION.to_string(),
+        );
+        headers.insert(
+            "Authorization".to_string(),
+            format!("Bearer {}", access_token),
+        );
+        headers.insert(
+            "anthropic-beta".to_string(),
+            "oauth-2025-04-20,interleaved-thinking-2025-05-14".to_string(),
+        );
+        headers
+    }
+
+    fn test_model() -> String {
+        std::env::var("ANTHROPIC_TEST_MODEL").unwrap_or(DEFAULT_TEST_MODEL.to_string())
+    }
+
+    fn make_request(messages: Vec<serde_json::Value>) -> serde_json::Value {
+        json!({
+            "model": test_model(),
+            "max_tokens": 1024,
+            "stream": true,
+            "messages": messages,
+        })
+    }
+
+    fn user_message(text: &str) -> serde_json::Value {
+        json!({
+            "role": "user",
+            "content": [{ "type": "text", "text": text }],
+        })
+    }
+
+    /// Send a request, return (status, body).
+    async fn send_request(
+        url: &str,
+        headers: &HashMap<String, String>,
+        body: &serde_json::Value,
+    ) -> (reqwest::StatusCode, String) {
+        let client = reqwest::Client::new();
+        let mut req = client.post(url).header("Accept", "text/event-stream");
+        for (k, v) in headers {
+            req = req.header(k, v);
+        }
+        let response = req
+            .body(serde_json::to_string(body).expect("serialize"))
+            .send()
+            .await
+            .expect("HTTP request failed");
+        let status = response.status();
+        let body = response.text().await.expect("read body");
+        (status, body)
+    }
+
+    /// Parse a full streamed SSE body into a StreamResult.
+    fn parse_sse_body(body: &str) -> super::super::StreamResult {
+        let mut acc_text = String::new();
+        let mut acc_reasoning = String::new();
+        let mut usage = None;
+        let mut stop_reason = String::from("unknown");
+        let mut tool_uses: HashMap<usize, AnthropicToolUse> = HashMap::new();
+        let mut events = Vec::new();
+
+        for line in body.lines() {
+            let trimmed = line.trim();
+            if !trimmed.starts_with("data: ") {
+                continue;
+            }
+            parse_anthropic_data(
+                &trimmed[6..],
+                &mut acc_text,
+                &mut acc_reasoning,
+                &mut usage,
+                &mut stop_reason,
+                &mut tool_uses,
+                &mut events,
+            );
+        }
+
+        let mut final_events = Vec::new();
+        let tool_calls = finalize_anthropic_tools(tool_uses, &mut final_events);
+
+        super::super::StreamResult {
+            text: acc_text,
+            reasoning: acc_reasoning,
+            tool_calls,
+            usage,
+            stop_reason,
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Live tests — require ANTHROPIC_ACCESS_TOKEN,
+    // run via `python3 scripts/test.py anthropic`
+    // -----------------------------------------------------------------------
+
+    /// Minimal request — no thinking, no tools.
+    /// Tests that OAuth auth + basic streaming works.
+    #[tokio::test]
+    #[ignore]
+    async fn anthropic_live_hello_world() {
+        let headers = live_headers();
+        let request = make_request(vec![user_message("Say hello world")]);
+        let url = format!("{}?beta=true", ANTHROPIC_API_URL);
+
+        let (status, body) = send_request(&url, &headers, &request).await;
+        assert!(
+            status.is_success(),
+            "Anthropic API returned {} — body: {}",
+            status,
+            &body[..body.len().min(500)]
+        );
+
+        let result = parse_sse_body(&body);
+        assert_eq!(result.stop_reason, "stop");
+        assert!(!result.text.is_empty(), "expected non-empty text response");
+        assert!(result.usage.is_some(), "expected usage data");
+    }
+
+    /// Request with extended thinking (budget-based, works on all models).
+    #[tokio::test]
+    #[ignore]
+    async fn anthropic_live_thinking() {
+        let headers = live_headers();
+        let mut request = make_request(vec![user_message("What is 2+2?")]);
+        request["thinking"] = json!({ "type": "enabled", "budget_tokens": 2048 });
+        let url = format!("{}?beta=true", ANTHROPIC_API_URL);
+
+        let (status, body) = send_request(&url, &headers, &request).await;
+        assert!(
+            status.is_success(),
+            "Thinking request returned {} — body: {}",
+            status,
+            &body[..body.len().min(500)]
+        );
+
+        let result = parse_sse_body(&body);
+        assert_eq!(result.stop_reason, "stop");
+        assert!(!result.text.is_empty(), "expected non-empty text response");
+    }
+
+    /// Tool call via OAuth.
+    #[tokio::test]
+    #[ignore]
+    async fn anthropic_live_tool_call() {
+        let headers = live_headers();
+        let mut request = make_request(vec![user_message(
+            "What is 7 + 13? Use the add_numbers tool.",
+        )]);
+        request["tools"] = json!([{
+            "name": "add_numbers",
+            "description": "Add two numbers together and return the result.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "a": { "type": "number", "description": "First number" },
+                    "b": { "type": "number", "description": "Second number" },
+                },
+                "required": ["a", "b"],
+            },
+        }]);
+        let url = format!("{}?beta=true", ANTHROPIC_API_URL);
+
+        let (status, body) = send_request(&url, &headers, &request).await;
+        assert!(
+            status.is_success(),
+            "Tool call request returned {} — body: {}",
+            status,
+            &body[..body.len().min(500)]
+        );
+
+        let result = parse_sse_body(&body);
+        assert!(
+            !result.tool_calls.is_empty(),
+            "expected at least one tool call, got none"
+        );
+        let tc = &result.tool_calls[0];
+        assert_eq!(tc.name, "add_numbers");
+
+        let args = tc.args.as_object().expect("args should be a JSON object");
+        assert!(args.contains_key("a"), "tool args missing 'a'");
+        assert!(args.contains_key("b"), "tool args missing 'b'");
     }
 }
