@@ -8,6 +8,21 @@ export { ANTHROPIC_MODELS };
 const ANTHROPIC_API_ENDPOINT = "https://api.anthropic.com/v1/messages";
 const ANTHROPIC_VERSION = "2023-06-01";
 
+// Session ID persists for the lifetime of the app (like Claude Code does)
+const SESSION_ID = crypto.randomUUID();
+
+const ANTHROPIC_BETA_FLAGS = [
+  "claude-code-20250219",
+  "oauth-2025-04-20",
+  "context-1m-2025-08-07",
+  "interleaved-thinking-2025-05-14",
+  "redact-thinking-2026-02-12",
+  "context-management-2025-06-27",
+  "prompt-caching-scope-2026-01-05",
+  "advanced-tool-use-2025-11-20",
+  "effort-2025-11-24",
+].join(",");
+
 interface StreamAnthropicOptions {
   apiKey: string;
   model: string;
@@ -192,16 +207,30 @@ async function buildRequest(options: StreamAnthropicOptions): Promise<{
     }));
   }
 
-  // OAuth uses Bearer token + beta headers; API key uses x-api-key
+  // Build headers matching Claude Code's request format
   const headers: Record<string, string> = {
-    "anthropic-version": ANTHROPIC_VERSION,
+    "Accept": "application/json",
     "Content-Type": "application/json",
+    "User-Agent": "claude-cli/2.1.86 (external, cli)",
+    "X-Claude-Code-Session-Id": SESSION_ID,
+    "X-Stainless-Arch": navigator.userAgent.includes("x86_64") || navigator.userAgent.includes("x64") ? "x64" : "arm64",
+    "X-Stainless-Lang": "js",
+    "X-Stainless-OS": navigator.userAgent.includes("Windows") ? "Windows" : navigator.userAgent.includes("Mac") ? "macOS" : "Linux",
+    "X-Stainless-Package-Version": "0.74.0",
+    "X-Stainless-Retry-Count": "0",
+    "X-Stainless-Runtime": "node",
+    "X-Stainless-Runtime-Version": "v22.0.0",
+    "X-Stainless-Timeout": "600",
+    "anthropic-beta": ANTHROPIC_BETA_FLAGS,
+    "anthropic-dangerous-direct-browser-access": "true",
+    "anthropic-version": ANTHROPIC_VERSION,
+    "x-app": "cli",
+    "x-client-request-id": crypto.randomUUID(),
   };
 
   let url = ANTHROPIC_API_ENDPOINT;
   if (oauthToken) {
     headers["Authorization"] = `Bearer ${oauthToken}`;
-    headers["anthropic-beta"] = "oauth-2025-04-20,interleaved-thinking-2025-05-14";
     url = `${ANTHROPIC_API_ENDPOINT}?beta=true`;
   } else {
     headers["x-api-key"] = apiKey;

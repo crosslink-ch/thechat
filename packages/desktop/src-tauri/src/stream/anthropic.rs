@@ -379,22 +379,50 @@ mod tests {
     // ANTHROPIC_TEST_MODEL env var to test other models if your plan allows.
     const DEFAULT_TEST_MODEL: &str = "claude-haiku-4-5-20251001";
 
+    const ANTHROPIC_BETA_FLAGS: &str = "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,prompt-caching-scope-2026-01-05,advanced-tool-use-2025-11-20,effort-2025-11-24";
+
     fn live_headers() -> HashMap<String, String> {
         let access_token = std::env::var("ANTHROPIC_ACCESS_TOKEN")
             .expect("ANTHROPIC_ACCESS_TOKEN env var required");
+        let session_id = uuid::Uuid::new_v4().to_string();
+        let request_id = uuid::Uuid::new_v4().to_string();
+
         let mut headers = HashMap::new();
+        headers.insert("Accept".to_string(), "application/json".to_string());
         headers.insert("Content-Type".to_string(), "application/json".to_string());
+        headers.insert(
+            "User-Agent".to_string(),
+            "claude-cli/2.1.86 (external, cli)".to_string(),
+        );
+        headers.insert(
+            "X-Claude-Code-Session-Id".to_string(),
+            session_id,
+        );
+        headers.insert("X-Stainless-Arch".to_string(), std::env::consts::ARCH.to_string());
+        headers.insert("X-Stainless-Lang".to_string(), "js".to_string());
+        headers.insert("X-Stainless-OS".to_string(), std::env::consts::OS.to_string());
+        headers.insert("X-Stainless-Package-Version".to_string(), "0.74.0".to_string());
+        headers.insert("X-Stainless-Retry-Count".to_string(), "0".to_string());
+        headers.insert("X-Stainless-Runtime".to_string(), "node".to_string());
+        headers.insert("X-Stainless-Runtime-Version".to_string(), "v22.0.0".to_string());
+        headers.insert("X-Stainless-Timeout".to_string(), "600".to_string());
+        headers.insert(
+            "anthropic-beta".to_string(),
+            ANTHROPIC_BETA_FLAGS.to_string(),
+        );
+        headers.insert(
+            "anthropic-dangerous-direct-browser-access".to_string(),
+            "true".to_string(),
+        );
         headers.insert(
             "anthropic-version".to_string(),
             ANTHROPIC_VERSION.to_string(),
         );
+        headers.insert("x-app".to_string(), "cli".to_string());
+        headers.insert("x-client-request-id".to_string(), request_id);
         headers.insert(
             "Authorization".to_string(),
             format!("Bearer {}", access_token),
-        );
-        headers.insert(
-            "anthropic-beta".to_string(),
-            "oauth-2025-04-20,interleaved-thinking-2025-05-14".to_string(),
         );
         headers
     }
