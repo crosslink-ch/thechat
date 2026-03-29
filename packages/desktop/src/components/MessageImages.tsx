@@ -29,7 +29,7 @@ function MessageImage({ image }: { image: ImagePart }) {
 
   if (error) {
     return (
-      <div className="flex size-20 items-center justify-center rounded-lg border border-border bg-raised text-[11px] text-text-dimmed">
+      <div className="flex size-20 items-center justify-center rounded-lg border border-border bg-raised text-[0.786rem] text-text-dimmed">
         Failed to load
       </div>
     );

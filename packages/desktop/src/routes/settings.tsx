@@ -87,7 +87,7 @@ function ModelCombobox({
           }
         }}
         placeholder="Search models..."
-        className="w-full rounded-lg border border-border bg-raised px-3 py-2 text-[13px] text-text outline-none transition-colors placeholder:text-text-dimmed focus:border-accent"
+        className="w-full rounded-lg border border-border bg-raised px-3 py-2 text-[0.929rem] text-text outline-none transition-colors placeholder:text-text-dimmed focus:border-accent"
         spellCheck={false}
       />
       {open && filtered.length > 0 && (
@@ -103,7 +103,7 @@ function ModelCombobox({
                 select(o.id);
               }}
               onMouseEnter={() => setActiveIdx(i)}
-              className={`cursor-pointer px-3 py-2 text-[13px] ${
+              className={`cursor-pointer px-3 py-2 text-[0.929rem] ${
                 i === activeIdx ? "bg-accent/15 text-accent" : "text-text hover:bg-hover"
               }`}
             >
@@ -176,32 +176,32 @@ export function SettingsRoute() {
   if (!config) {
     return (
       <div className="mx-auto h-full max-w-[600px] overflow-y-auto p-6">
-        <div className="text-[13px] text-text-muted">Loading...</div>
+        <div className="text-[0.929rem] text-text-muted">Loading...</div>
       </div>
     );
   }
 
   return (
     <div className="mx-auto h-full max-w-[600px] overflow-y-auto p-6">
-      <h2 className="mb-6 text-[17px] font-semibold tracking-tight text-text">Settings</h2>
+      <h2 className="mb-6 text-[1.214rem] font-semibold tracking-tight text-text">Settings</h2>
 
       <div className="flex flex-col gap-5">
         {/* API Key */}
         <label className="flex flex-col gap-1.5">
-          <span className="text-[13px] font-medium text-text-secondary">API Key</span>
+          <span className="text-[0.929rem] font-medium text-text-secondary">API Key</span>
           <div className="flex gap-2">
             <input
               type={showKey ? "text" : "password"}
               value={apiKey}
               onChange={(e) => setApiKey(e.target.value)}
               placeholder="sk-or-..."
-              className="min-w-0 flex-1 rounded-lg border border-border bg-raised px-3 py-2 text-[13px] text-text outline-none transition-colors placeholder:text-text-dimmed focus:border-accent"
+              className="min-w-0 flex-1 rounded-lg border border-border bg-raised px-3 py-2 text-[0.929rem] text-text outline-none transition-colors placeholder:text-text-dimmed focus:border-accent"
               spellCheck={false}
             />
             <button
               type="button"
               onClick={() => setShowKey((s) => !s)}
-              className="shrink-0 cursor-pointer rounded-lg border border-border bg-raised px-3 py-2 text-[12px] text-text-muted transition-colors hover:bg-hover"
+              className="shrink-0 cursor-pointer rounded-lg border border-border bg-raised px-3 py-2 text-[0.857rem] text-text-muted transition-colors hover:bg-hover"
             >
               {showKey ? "Hide" : "Show"}
             </button>
@@ -210,14 +210,14 @@ export function SettingsRoute() {
 
         {/* Provider */}
         <div className="flex flex-col gap-1.5">
-          <span className="text-[13px] font-medium text-text-secondary">Provider</span>
+          <span className="text-[0.929rem] font-medium text-text-secondary">Provider</span>
           <div className="flex gap-1">
             {(["openrouter", "codex", "anthropic"] as const).map((p) => (
               <button
                 key={p}
                 type="button"
                 onClick={() => setProvider(p)}
-                className={`cursor-pointer rounded-lg border px-4 py-2 text-[13px] font-medium transition-colors ${
+                className={`cursor-pointer rounded-lg border px-4 py-2 text-[0.929rem] font-medium transition-colors ${
                   provider === p
                     ? "border-accent bg-accent/15 text-accent"
                     : "border-border bg-raised text-text-muted hover:bg-hover"
@@ -231,14 +231,14 @@ export function SettingsRoute() {
 
         {/* Model */}
         <div className="flex flex-col gap-1.5">
-          <span className="text-[13px] font-medium text-text-secondary">Model</span>
+          <span className="text-[0.929rem] font-medium text-text-secondary">Model</span>
           {provider === "openrouter" ? (
             <input
               type="text"
               value={model}
               onChange={(e) => setModel(e.target.value)}
               placeholder="e.g. openai/gpt-4.1"
-              className="rounded-lg border border-border bg-raised px-3 py-2 text-[13px] text-text outline-none transition-colors placeholder:text-text-dimmed focus:border-accent"
+              className="rounded-lg border border-border bg-raised px-3 py-2 text-[0.929rem] text-text outline-none transition-colors placeholder:text-text-dimmed focus:border-accent"
               spellCheck={false}
             />
           ) : (
@@ -256,7 +256,7 @@ export function SettingsRoute() {
             type="button"
             onClick={handleSave}
             disabled={saving}
-            className="cursor-pointer rounded-lg border-none bg-accent px-5 py-2 text-[13px] font-medium text-white transition-colors hover:not-disabled:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-50"
+            className="cursor-pointer rounded-lg border-none bg-accent px-5 py-2 text-[0.929rem] font-medium text-white transition-colors hover:not-disabled:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-50"
           >
             {saving ? "Saving..." : "Save"}
           </button>
@@ -266,28 +266,28 @@ export function SettingsRoute() {
               void runUpdateCheck();
             }}
             disabled={checkingForUpdates}
-            className="cursor-pointer rounded-lg border border-border bg-raised px-4 py-2 text-[13px] font-medium text-text transition-colors hover:not-disabled:bg-hover disabled:cursor-not-allowed disabled:opacity-50"
+            className="cursor-pointer rounded-lg border border-border bg-raised px-4 py-2 text-[0.929rem] font-medium text-text transition-colors hover:not-disabled:bg-hover disabled:cursor-not-allowed disabled:opacity-50"
           >
             {checkingForUpdates ? "Checking..." : "Check for updates"}
           </button>
           {status === "error" && (
-            <span className="text-[12px] text-error-bright">Failed to save</span>
+            <span className="text-[0.857rem] text-error-bright">Failed to save</span>
           )}
         </div>
 
         {status === "saved" && (
-          <span className="text-[12px] text-green-400">Settings saved</span>
+          <span className="text-[0.857rem] text-green-400">Settings saved</span>
         )}
         {updaterStatusMessage && (
-          <span className="text-[12px] text-text-muted">{updaterStatusMessage}</span>
+          <span className="text-[0.857rem] text-text-muted">{updaterStatusMessage}</span>
         )}
         {updaterError && !checkingForUpdates && (
-          <span className="text-[12px] text-error-bright">{updaterError}</span>
+          <span className="text-[0.857rem] text-error-bright">{updaterError}</span>
         )}
       </div>
 
       {configPath && (
-        <p className="mt-8 text-[11px] text-text-dimmed">
+        <p className="mt-8 text-[0.786rem] text-text-dimmed">
           Settings are stored in <code className="rounded bg-raised px-1 py-0.5">{configPath}</code>. You can also edit this file directly.
         </p>
       )}

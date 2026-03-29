@@ -36,12 +36,12 @@ export function TodoPanel({ todos }: TodoPanelProps) {
   return (
     <div className="border-b border-border-subtle bg-surface">
       <button
-        className="flex w-full cursor-pointer items-center gap-2 border-none bg-none px-5 py-2.5 text-left text-[12px] text-text-muted shadow-none transition-colors duration-150 hover:bg-hover"
+        className="flex w-full cursor-pointer items-center gap-2 border-none bg-none px-5 py-2.5 text-left text-[0.857rem] text-text-muted shadow-none transition-colors duration-150 hover:bg-hover"
         onClick={() => setExpanded(!expanded)}
       >
-        <span className="w-3 text-[10px] text-text-dimmed">{expanded ? "\u25BE" : "\u25B8"}</span>
+        <span className="w-3 text-[0.714rem] text-text-dimmed">{expanded ? "\u25BE" : "\u25B8"}</span>
         <span className="font-semibold text-text-secondary">Tasks</span>
-        <span className="ml-auto text-[11px] text-text-dimmed">
+        <span className="ml-auto text-[0.786rem] text-text-dimmed">
           {completed}/{total} done
           {inProgress > 0 && ` \u00B7 ${inProgress} active`}
           {pending > 0 && ` \u00B7 ${pending} pending`}
@@ -52,13 +52,13 @@ export function TodoPanel({ todos }: TodoPanelProps) {
           {todos.map((todo) => {
             const isDone = todo.status === "completed" || todo.status === "cancelled";
             return (
-              <div key={todo.id} className="flex items-start gap-2 py-1 text-[13px] text-text-secondary">
+              <div key={todo.id} className="flex items-start gap-2 py-1 text-[0.929rem] text-text-secondary">
                 <span className={`w-4 shrink-0 text-center leading-normal ${todo.status === "in_progress" ? "animate-pulse" : ""}`}>
                   {STATUS_ICONS[todo.status] ?? "\u25CB"}
                 </span>
                 <span className={`flex-1 leading-normal ${isDone ? "text-text-dimmed line-through" : ""}`}>{todo.content}</span>
                 {todo.priority && (
-                  <span className={`shrink-0 rounded-md px-1.5 py-px text-[10px] font-medium uppercase tracking-wider ${priorityClasses[todo.priority] ?? ""}`}>
+                  <span className={`shrink-0 rounded-md px-1.5 py-px text-[0.714rem] font-medium uppercase tracking-wider ${priorityClasses[todo.priority] ?? ""}`}>
                     {todo.priority}
                   </span>
                 )}

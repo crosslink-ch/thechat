@@ -52,18 +52,18 @@ export const MentionList = forwardRef<
       {items.map((item, index) => (
         <button
           key={item.id}
-          className={`flex cursor-pointer items-center gap-2 border-none bg-transparent px-3 py-1.5 text-left text-[13px] text-text transition-colors duration-75 ${
+          className={`flex cursor-pointer items-center gap-2 border-none bg-transparent px-3 py-1.5 text-left text-[0.929rem] text-text transition-colors duration-75 ${
             index === selectedIndex ? "bg-hover" : ""
           }`}
           onClick={() => command(item)}
           onMouseEnter={() => setSelectedIndex(index)}
         >
-          <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-elevated text-[11px] font-semibold text-text-muted">
+          <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-elevated text-[0.786rem] font-semibold text-text-muted">
             {item.label.charAt(0).toUpperCase()}
           </span>
           <span className="flex-1 truncate">{item.label}</span>
           {item.type === "bot" && (
-            <span className="rounded bg-accent/15 px-1.5 py-0.5 text-[10px] font-medium text-accent">
+            <span className="rounded bg-accent/15 px-1.5 py-0.5 text-[0.714rem] font-medium text-accent">
               BOT
             </span>
           )}

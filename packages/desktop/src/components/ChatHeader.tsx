@@ -71,19 +71,19 @@ export function ChatHeader() {
           </svg>
         </button>
       )}
-      <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-[13px] text-text-muted">{chatTitle}</span>
+      <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-[0.929rem] text-text-muted">{chatTitle}</span>
       {isAgentChat && projectName && (
-        <span className="rounded-md bg-elevated px-2 py-0.5 text-[11px] text-text-dimmed" title={agentProjectDir!}>
+        <span className="rounded-md bg-elevated px-2 py-0.5 text-[0.786rem] text-text-dimmed" title={agentProjectDir!}>
           {projectName}
         </span>
       )}
       {permissionMode === "allow-edits" && (
-        <span className="rounded-md bg-warning-bg px-2 py-0.5 text-[11px] font-medium text-warning-text">
+        <span className="rounded-md bg-warning-bg px-2 py-0.5 text-[0.786rem] font-medium text-warning-text">
           Allow Edits
         </span>
       )}
       {permissionMode === "bypass" && (
-        <span className="rounded-md bg-danger-bg px-2 py-0.5 text-[11px] font-medium text-error-bright">
+        <span className="rounded-md bg-danger-bg px-2 py-0.5 text-[0.786rem] font-medium text-error-bright">
           Bypass
         </span>
       )}

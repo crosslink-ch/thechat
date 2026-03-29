@@ -56,26 +56,26 @@ function CodexAuthModalInner() {
   return (
     <div className="fixed inset-0 z-20 flex items-center justify-center bg-overlay backdrop-blur-[2px] animate-fade-in" onClick={closeCodexAuthModal}>
       <div className="w-full max-w-[420px] rounded-xl border border-border-strong bg-surface p-6 shadow-card animate-slide-up" onClick={(e) => e.stopPropagation()}>
-        <h2 className="mb-5 text-[17px] font-semibold tracking-tight text-text">
+        <h2 className="mb-5 text-[1.214rem] font-semibold tracking-tight text-text">
           ChatGPT Pro/Plus
         </h2>
 
         {/* Idle / Not connected state */}
         {(status === "idle" || status === "error") && (
           <>
-            <p className="mb-4 text-[13px] leading-relaxed text-text-muted">
+            <p className="mb-4 text-[0.929rem] leading-relaxed text-text-muted">
               Connect your ChatGPT Pro or Plus subscription to use Codex models for free.
               This uses OpenAI's device authorization flow.
             </p>
 
             {error && (
-              <div className="mb-3 rounded-lg border border-error-msg-border bg-error-msg-bg px-3 py-2 text-[12px] text-error-bright">
+              <div className="mb-3 rounded-lg border border-error-msg-border bg-error-msg-bg px-3 py-2 text-[0.857rem] text-error-bright">
                 {error}
               </div>
             )}
 
             <button
-              className="block w-full cursor-pointer rounded-lg border border-border-strong bg-elevated px-3 py-2.5 font-[inherit] text-[13px] font-medium text-text transition-colors duration-150 hover:bg-button"
+              className="block w-full cursor-pointer rounded-lg border border-border-strong bg-elevated px-3 py-2.5 font-[inherit] text-[0.929rem] font-medium text-text transition-colors duration-150 hover:bg-button"
               onClick={handleStartLogin}
             >
               Connect ChatGPT Account
@@ -87,12 +87,12 @@ function CodexAuthModalInner() {
         {(status === "awaiting_code" || status === "polling") && (
           <>
             {!userCode ? (
-              <p className="mb-4 text-center text-[13px] text-text-muted">
+              <p className="mb-4 text-center text-[0.929rem] text-text-muted">
                 Generating device code...
               </p>
             ) : (
               <>
-                <p className="mb-3 text-[13px] leading-relaxed text-text-muted">
+                <p className="mb-3 text-[0.929rem] leading-relaxed text-text-muted">
                   Enter this code at the OpenAI verification page:
                 </p>
 
@@ -102,24 +102,24 @@ function CodexAuthModalInner() {
                   title="Click to copy"
                 >
                   {userCode}
-                  <span className="text-[10px] font-normal tracking-normal text-text-dimmed">copy</span>
+                  <span className="text-[0.714rem] font-normal tracking-normal text-text-dimmed">copy</span>
                 </button>
 
                 <button
-                  className="mb-3 block w-full cursor-pointer rounded-lg border border-border-strong bg-elevated px-3 py-2.5 font-[inherit] text-[13px] font-medium text-text transition-colors duration-150 hover:bg-button"
+                  className="mb-3 block w-full cursor-pointer rounded-lg border border-border-strong bg-elevated px-3 py-2.5 font-[inherit] text-[0.929rem] font-medium text-text transition-colors duration-150 hover:bg-button"
                   onClick={handleOpenVerification}
                 >
                   Open Verification Page
                 </button>
 
-                <p className="mb-4 text-center text-[11px] text-text-dimmed">
+                <p className="mb-4 text-center text-[0.786rem] text-text-dimmed">
                   Waiting for authorization...
                 </p>
               </>
             )}
 
             <button
-              className="block w-full cursor-pointer rounded-lg border border-border bg-none px-3 py-2 font-[inherit] text-[12px] text-text-muted transition-colors duration-150 hover:bg-hover hover:text-text"
+              className="block w-full cursor-pointer rounded-lg border border-border bg-none px-3 py-2 font-[inherit] text-[0.857rem] text-text-muted transition-colors duration-150 hover:bg-hover hover:text-text"
               onClick={() => {
                 cancelLogin();
                 closeCodexAuthModal();
@@ -135,26 +135,26 @@ function CodexAuthModalInner() {
           <>
             <div className="mb-4 flex items-center gap-2 rounded-lg border border-success-border bg-success-bg px-3 py-2.5">
               <span className="size-1.5 shrink-0 rounded-full bg-success" />
-              <span className="text-[13px] font-medium text-success-light">Connected</span>
-              <span className="text-[11px] text-text-muted">
+              <span className="text-[0.929rem] font-medium text-success-light">Connected</span>
+              <span className="text-[0.786rem] text-text-muted">
                 Codex models are available
               </span>
             </div>
 
-            <p className="mb-4 text-[13px] leading-relaxed text-text-muted">
-              Set <code className="rounded-md bg-base px-1.5 py-0.5 text-[11px]">"provider": "codex"</code> in your config.json to route messages through Codex.
+            <p className="mb-4 text-[0.929rem] leading-relaxed text-text-muted">
+              Set <code className="rounded-md bg-base px-1.5 py-0.5 text-[0.786rem]">"provider": "codex"</code> in your config.json to route messages through Codex.
             </p>
 
             {wasAuthenticatedOnOpen.current ? (
               <div className="flex gap-2">
                 <button
-                  className="block flex-1 cursor-pointer rounded-lg border border-border bg-none px-3 py-2.5 font-[inherit] text-[13px] text-text-muted transition-colors duration-150 hover:bg-hover hover:text-text"
+                  className="block flex-1 cursor-pointer rounded-lg border border-border bg-none px-3 py-2.5 font-[inherit] text-[0.929rem] text-text-muted transition-colors duration-150 hover:bg-hover hover:text-text"
                   onClick={closeCodexAuthModal}
                 >
                   Close
                 </button>
                 <button
-                  className="block flex-1 cursor-pointer rounded-lg border border-error-msg-border bg-none px-3 py-2.5 font-[inherit] text-[13px] text-error-bright transition-colors duration-150 hover:bg-error-msg-bg"
+                  className="block flex-1 cursor-pointer rounded-lg border border-error-msg-border bg-none px-3 py-2.5 font-[inherit] text-[0.929rem] text-error-bright transition-colors duration-150 hover:bg-error-msg-bg"
                   onClick={async () => {
                     await logout();
                     closeCodexAuthModal();
@@ -165,7 +165,7 @@ function CodexAuthModalInner() {
               </div>
             ) : (
               <button
-                className="block w-full cursor-pointer rounded-lg border border-border bg-none px-3 py-2.5 font-[inherit] text-[13px] text-text-muted transition-colors duration-150 hover:bg-hover hover:text-text"
+                className="block w-full cursor-pointer rounded-lg border border-border bg-none px-3 py-2.5 font-[inherit] text-[0.929rem] text-text-muted transition-colors duration-150 hover:bg-hover hover:text-text"
                 onClick={closeCodexAuthModal}
               >
                 Close

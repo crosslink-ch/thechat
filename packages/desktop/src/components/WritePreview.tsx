@@ -17,7 +17,7 @@ export function WritePreview({ content }: WritePreviewProps) {
         </div>
       ))}
       {omitted > 0 && (
-        <div className="bg-raised px-2 py-1 text-[11px] italic text-text-dimmed">{omitted} more lines...</div>
+        <div className="bg-raised px-2 py-1 text-[0.786rem] italic text-text-dimmed">{omitted} more lines...</div>
       )}
     </div>
   );

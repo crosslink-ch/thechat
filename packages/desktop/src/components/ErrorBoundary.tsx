@@ -49,7 +49,7 @@ export class ErrorBoundary extends Component<Props, State> {
             borderRadius: 8,
             margin: 16,
             fontFamily: "monospace",
-            fontSize: 13,
+            fontSize: "0.929rem",
           }}
         >
           <div style={{ fontWeight: 600, marginBottom: 8 }}>
@@ -69,7 +69,7 @@ export class ErrorBoundary extends Component<Props, State> {
               borderRadius: 4,
               cursor: "pointer",
               fontFamily: "inherit",
-              fontSize: 13,
+              fontSize: "0.929rem",
             }}
           >
             Try again

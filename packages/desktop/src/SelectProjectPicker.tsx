@@ -107,11 +107,11 @@ function SelectProjectPickerInner() {
         className="w-full max-w-[560px] overflow-hidden rounded-xl border border-border-strong bg-surface shadow-card animate-slide-up"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="border-b border-border px-4 py-3 text-[13px] font-medium text-text-secondary">
+        <div className="border-b border-border px-4 py-3 text-[0.929rem] font-medium text-text-secondary">
           Select project
         </div>
         <input
-          className="w-full border-b border-border bg-transparent px-4 py-3 font-[inherit] text-[13px] text-text outline-none placeholder:text-text-placeholder"
+          className="w-full border-b border-border bg-transparent px-4 py-3 font-[inherit] text-[0.929rem] text-text outline-none placeholder:text-text-placeholder"
           placeholder="Search recent projects or type a project path..."
           autoFocus
           value={query}
@@ -129,17 +129,17 @@ function SelectProjectPickerInner() {
                 onClick={() => handleSelect(option)}
                 onMouseEnter={() => setHighlightIndex(i)}
               >
-                <span className="text-[13px] text-text">
+                <span className="text-[0.929rem] text-text">
                   {option.type === "typed" ? `Use path: ${option.path}` : projectName}
                 </span>
                 {option.type === "recent" && (
-                  <span className="truncate text-[11px] text-text-dimmed">{option.path}</span>
+                  <span className="truncate text-[0.786rem] text-text-dimmed">{option.path}</span>
                 )}
               </button>
             );
           })}
           {options.length === 0 && (
-            <div className="px-4 py-5 text-center text-[13px] text-text-placeholder">
+            <div className="px-4 py-5 text-center text-[0.929rem] text-text-placeholder">
               No recent projects. Type a project path and press Enter.
             </div>
           )}

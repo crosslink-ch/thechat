@@ -36,7 +36,7 @@ export function ProjectPicker({ projectDir, onSelect, readOnly }: ProjectPickerP
 
   return (
     <button
-      className={`inline-flex max-w-[220px] items-center gap-2 rounded-lg border border-border bg-raised px-3 py-1.5 text-[12px] text-text-secondary transition-all duration-150 ${readOnly ? "cursor-default opacity-70" : "cursor-pointer hover:border-border-strong hover:bg-hover"}`}
+      className={`inline-flex max-w-[220px] items-center gap-2 rounded-lg border border-border bg-raised px-3 py-1.5 text-[0.857rem] text-text-secondary transition-all duration-150 ${readOnly ? "cursor-default opacity-70" : "cursor-pointer hover:border-border-strong hover:bg-hover"}`}
       onClick={handleClick}
       title={projectDir ?? "No project selected"}
     >
@@ -47,7 +47,7 @@ export function ProjectPicker({ projectDir, onSelect, readOnly }: ProjectPickerP
         {displayName ?? "No project"}
       </span>
       {projectDir && !readOnly && (
-        <span className="shrink-0 text-[13px] leading-none text-text-dimmed transition-colors duration-150 hover:text-text-muted" onClick={handleClear}>
+        <span className="shrink-0 text-[0.929rem] leading-none text-text-dimmed transition-colors duration-150 hover:text-text-muted" onClick={handleClear}>
           &times;
         </span>
       )}

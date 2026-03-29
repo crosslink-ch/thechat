@@ -47,7 +47,7 @@ export function ActivityStatusBar({
 
         {/* Shimmer header text */}
         <span
-          className="flex-1 text-[12px] font-medium text-text-muted"
+          className="flex-1 text-[0.857rem] font-medium text-text-muted"
           style={{
             backgroundImage:
               "linear-gradient(90deg, var(--color-text-muted) 0%, var(--color-text) 50%, var(--color-text-muted) 100%)",
@@ -62,7 +62,7 @@ export function ActivityStatusBar({
 
         {/* Elapsed time */}
         {elapsed && (
-          <span className="shrink-0 text-[11px] tabular-nums text-text-dimmed">
+          <span className="shrink-0 text-[0.786rem] tabular-nums text-text-dimmed">
             {elapsed}
           </span>
         )}
@@ -72,7 +72,7 @@ export function ActivityStatusBar({
       {activity.details.length > 0 && (
         <div className="mt-1 flex flex-col gap-0.5 pl-4">
           {activity.details.map((detail, i) => (
-            <span key={i} className="truncate text-[11px] text-text-dimmed">
+            <span key={i} className="truncate text-[0.786rem] text-text-dimmed">
               {detail}
             </span>
           ))}

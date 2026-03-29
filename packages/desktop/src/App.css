@@ -324,7 +324,7 @@
 .md-code-block code {
   display: block;
   font-family: var(--font-mono);
-  font-size: 12.5px;
+  font-size: 0.893rem;
   line-height: 1.6;
   padding: 12px 14px;
   background: transparent;

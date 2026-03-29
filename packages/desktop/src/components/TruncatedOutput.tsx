@@ -18,7 +18,7 @@ export function TruncatedOutput({ text, maxLines = 10, isError }: TruncatedOutpu
     <div>
       <div className={expanded ? "max-h-[400px] overflow-y-auto" : undefined}>
         <pre
-          className={`m-0 whitespace-pre-wrap font-mono text-[12px] ${isError ? "text-error-light" : "text-text-secondary"}`}
+          className={`m-0 whitespace-pre-wrap font-mono text-[0.857rem] ${isError ? "text-error-light" : "text-text-secondary"}`}
         >
           {displayText}
         </pre>
@@ -27,7 +27,7 @@ export function TruncatedOutput({ text, maxLines = 10, isError }: TruncatedOutpu
         <button
           type="button"
           onClick={() => setExpanded((v) => !v)}
-          className="mt-1 cursor-pointer border-none bg-transparent p-0 font-mono text-[11px] text-text-muted hover:text-text-secondary"
+          className="mt-1 cursor-pointer border-none bg-transparent p-0 font-mono text-[0.786rem] text-text-muted hover:text-text-secondary"
         >
           {expanded ? "Show less" : `Show ${totalLines - maxLines} more lines...`}
         </button>

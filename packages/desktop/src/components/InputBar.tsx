@@ -168,7 +168,7 @@ export const InputBar = memo(function InputBar({ convId, onSend, onStop, mention
                 />
                 <button
                   type="button"
-                  className="absolute -top-1.5 -right-1.5 flex size-5 cursor-pointer items-center justify-center rounded-full border border-border bg-elevated text-[10px] text-text-muted opacity-0 shadow-sm transition-opacity duration-100 group-hover:opacity-100 hover:bg-hover hover:text-text"
+                  className="absolute -top-1.5 -right-1.5 flex size-5 cursor-pointer items-center justify-center rounded-full border border-border bg-elevated text-[0.714rem] text-text-muted opacity-0 shadow-sm transition-opacity duration-100 group-hover:opacity-100 hover:bg-hover hover:text-text"
                   onClick={() => removeImage(img.id)}
                   title="Remove image"
                 >

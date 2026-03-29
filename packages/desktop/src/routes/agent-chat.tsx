@@ -256,7 +256,7 @@ export function AgentChatRoute() {
                 onSelect={setProjectDir}
                 readOnly={!!conversation?.project_dir}
               />
-              <div className="text-[13px] text-text-placeholder">Send a message to start chatting</div>
+              <div className="text-[0.929rem] text-text-placeholder">Send a message to start chatting</div>
             </div>
           )}
           {messages.map((msg) => (
@@ -275,22 +275,22 @@ export function AgentChatRoute() {
           />
           {queuedMessages.map((qm) => (
             <div key={qm.id} className="w-full px-5 py-4 opacity-60">
-              <div className="mb-1.5 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wider text-text-dimmed">
+              <div className="mb-1.5 flex items-center gap-2 text-[0.786rem] font-semibold uppercase tracking-wider text-text-dimmed">
                 You
-                <span className="rounded-full bg-warning/15 px-1.5 py-0.5 text-[10px] font-medium normal-case tracking-normal text-warning">
+                <span className="rounded-full bg-warning/15 px-1.5 py-0.5 text-[0.714rem] font-medium normal-case tracking-normal text-warning">
                   Queued
                 </span>
               </div>
-              <div className="max-w-3xl text-[14px] text-text">{qm.content}</div>
+              <div className="max-w-3xl text-[1rem] text-text">{qm.content}</div>
             </div>
           ))}
           {error && (
-            <div className="mx-5 rounded-lg border border-error-msg-border bg-error-msg-bg px-3.5 py-2.5 text-[12px] text-error-bright">
+            <div className="mx-5 rounded-lg border border-error-msg-border bg-error-msg-bg px-3.5 py-2.5 text-[0.857rem] text-error-bright">
               <div>{error.message}</div>
               {error.isAuth && error.provider && error.provider !== "openrouter" && (
                 <button
                   type="button"
-                  className="mt-2 rounded bg-accent px-3 py-1 text-[12px] font-medium text-white hover:bg-accent/80"
+                  className="mt-2 rounded bg-accent px-3 py-1 text-[0.857rem] font-medium text-white hover:bg-accent/80"
                   onClick={() => {
                     if (error.provider === "anthropic") openAnthropicAuthModal();
                     else openCodexAuthModal();

@@ -24,10 +24,10 @@ export function UpdateToast() {
     <div className="pointer-events-none fixed right-4 bottom-4 z-50 flex max-w-[420px] animate-slide-up flex-col gap-3 rounded-xl border border-border-strong bg-surface p-4 shadow-card">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
-          <div className="text-[13px] font-semibold text-text">
+          <div className="text-[0.929rem] font-semibold text-text">
             Update available: {update.version}
           </div>
-          <div className="mt-1 text-[12px] text-text-muted">
+          <div className="mt-1 text-[0.857rem] text-text-muted">
             Current version: {update.currentVersion}
           </div>
         </div>
@@ -47,14 +47,14 @@ export function UpdateToast() {
       </div>
 
       {releaseNotes && (
-        <div className="rounded-lg border border-border bg-raised px-3 py-2 text-[12px] text-text-secondary">
+        <div className="rounded-lg border border-border bg-raised px-3 py-2 text-[0.857rem] text-text-secondary">
           {releaseNotes}
         </div>
       )}
 
       {installing && (
         <div className="flex flex-col gap-2">
-          <div className="flex items-center justify-between text-[12px] text-text-muted">
+          <div className="flex items-center justify-between text-[0.857rem] text-text-muted">
             <span>Downloading update...</span>
             <span>{progress == null ? "Preparing" : `${progress}%`}</span>
           </div>
@@ -68,7 +68,7 @@ export function UpdateToast() {
       )}
 
       {error && (
-        <div className="rounded-lg border border-error-border bg-error-bg px-3 py-2 text-[12px] text-error-light">
+        <div className="rounded-lg border border-error-border bg-error-bg px-3 py-2 text-[0.857rem] text-error-light">
           {error}
         </div>
       )}
@@ -77,7 +77,7 @@ export function UpdateToast() {
         {!installing && (
           <button
             type="button"
-            className="pointer-events-auto cursor-pointer rounded-lg border-none bg-button px-3.5 py-1.5 text-[12px] font-medium text-text-secondary transition-colors duration-150 hover:not-disabled:bg-button-hover disabled:cursor-not-allowed disabled:opacity-50"
+            className="pointer-events-auto cursor-pointer rounded-lg border-none bg-button px-3.5 py-1.5 text-[0.857rem] font-medium text-text-secondary transition-colors duration-150 hover:not-disabled:bg-button-hover disabled:cursor-not-allowed disabled:opacity-50"
             onClick={dismissUpdateToast}
           >
             Later
@@ -85,7 +85,7 @@ export function UpdateToast() {
         )}
         <button
           type="button"
-          className="pointer-events-auto cursor-pointer rounded-lg border-none bg-accent px-3.5 py-1.5 text-[12px] font-medium text-white transition-colors duration-150 hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+          className="pointer-events-auto cursor-pointer rounded-lg border-none bg-accent px-3.5 py-1.5 text-[0.857rem] font-medium text-white transition-colors duration-150 hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
           onClick={() => {
             void installAvailableUpdate();
           }}

@@ -72,9 +72,9 @@ function StatusIcon({ result }: { result?: ToolResultPart }) {
     );
   }
   if (result.isError) {
-    return <span className="shrink-0 text-[12px] leading-none text-error">✕</span>;
+    return <span className="shrink-0 text-[0.857rem] leading-none text-error">✕</span>;
   }
-  return <span className="shrink-0 text-[12px] leading-none text-success">✓</span>;
+  return <span className="shrink-0 text-[0.857rem] leading-none text-success">✓</span>;
 }
 
 export function ToolCallInline({
@@ -106,13 +106,13 @@ export function ToolCallInline({
 
     return (
       <div className="py-1.5 px-0">
-        <div className="flex items-center gap-2 text-[12px] text-text-muted">
+        <div className="flex items-center gap-2 text-[0.857rem] text-text-muted">
           <StatusIcon result={result} />
           <span className="min-w-0 flex-1 truncate">
             Batch: {toolCalls.length} operation{toolCalls.length !== 1 ? "s" : ""}
           </span>
           {elapsed && (
-            <span className="shrink-0 tabular-nums text-[11px] text-text-dimmed">
+            <span className="shrink-0 tabular-nums text-[0.786rem] text-text-dimmed">
               {elapsed}
             </span>
           )}
@@ -123,16 +123,16 @@ export function ToolCallInline({
               const cr = childResults?.[i];
               const childSummaryText = batchChildSummary(tc.tool, tc.args);
               return (
-                <div key={i} className="flex items-center gap-2 py-0.5 pl-5 text-[12px] text-text-muted">
+                <div key={i} className="flex items-center gap-2 py-0.5 pl-5 text-[0.857rem] text-text-muted">
                   {isRunning ? (
                     <span
                       className="inline-block size-3 shrink-0 rounded-full border-2 border-text-dimmed border-t-transparent"
                       style={{ animation: "spin 1s linear infinite" }}
                     />
                   ) : cr && !cr.success ? (
-                    <span className="shrink-0 text-[12px] leading-none text-error">✕</span>
+                    <span className="shrink-0 text-[0.857rem] leading-none text-error">✕</span>
                   ) : (
-                    <span className="shrink-0 text-[12px] leading-none text-success">✓</span>
+                    <span className="shrink-0 text-[0.857rem] leading-none text-success">✓</span>
                   )}
                   <span className="min-w-0 flex-1 truncate">{childSummaryText}</span>
                 </div>
@@ -148,19 +148,19 @@ export function ToolCallInline({
     <div className="py-1.5 px-0">
       <button
         type="button"
-        className="flex w-full cursor-pointer items-center gap-2 border-none bg-transparent p-0 text-left text-[12px] text-text-muted shadow-none hover:text-text-secondary"
+        className="flex w-full cursor-pointer items-center gap-2 border-none bg-transparent p-0 text-left text-[0.857rem] text-text-muted shadow-none hover:text-text-secondary"
         onClick={() => canExpand && setExpanded((v) => !v)}
         style={{ cursor: canExpand ? "pointer" : "default" }}
       >
         <StatusIcon result={result} />
         <span className="min-w-0 flex-1 truncate">{summary}</span>
         {elapsed && (
-          <span className="shrink-0 tabular-nums text-[11px] text-text-dimmed">
+          <span className="shrink-0 tabular-nums text-[0.786rem] text-text-dimmed">
             {elapsed}
           </span>
         )}
         {canExpand && (
-          <span className="shrink-0 text-[10px] text-text-dimmed">
+          <span className="shrink-0 text-[0.714rem] text-text-dimmed">
             {expanded ? "▾" : "▸"}
           </span>
         )}

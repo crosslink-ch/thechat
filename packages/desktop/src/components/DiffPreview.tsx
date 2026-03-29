@@ -12,7 +12,7 @@ export function DiffPreview({ oldStr, newStr, label }: DiffPreviewProps) {
 
   return (
     <div className="my-1 overflow-hidden rounded border border-border font-mono text-xs leading-normal">
-      {label && <div className="border-b border-border bg-raised px-2 py-1 text-[11px] font-medium text-text-muted">{label}</div>}
+      {label && <div className="border-b border-border bg-raised px-2 py-1 text-[0.786rem] font-medium text-text-muted">{label}</div>}
       {lines.map((line, i) => (
         <div
           key={i}
@@ -23,7 +23,7 @@ export function DiffPreview({ oldStr, newStr, label }: DiffPreviewProps) {
         </div>
       ))}
       {omitted > 0 && (
-        <div className="bg-raised px-2 py-1 text-[11px] italic text-text-dimmed">{omitted} more lines...</div>
+        <div className="bg-raised px-2 py-1 text-[0.786rem] italic text-text-dimmed">{omitted} more lines...</div>
       )}
     </div>
   );
