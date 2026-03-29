@@ -7,6 +7,7 @@ import { getAgentChatProjectDir } from "./components/ChatHeader";
 import { openPermissionModePicker } from "./PermissionModePicker";
 import { openSelectProjectPicker } from "./SelectProjectPicker";
 import { useConversationsStore } from "./stores/conversations";
+import { useFontSizeStore } from "./stores/font-size";
 
 export interface Keybinding {
   key: string;
@@ -174,6 +175,30 @@ export function createCommands(
         closePalette();
         openPermissionModePicker();
       },
+    },
+    {
+      id: "zoom-in",
+      label: "Increase Font Size",
+      shortcut: "Ctrl+=",
+      keybinding: { key: "=", ctrl: true },
+      hidden: true,
+      execute: () => useFontSizeStore.getState().increase(),
+    },
+    {
+      id: "zoom-out",
+      label: "Decrease Font Size",
+      shortcut: "Ctrl+-",
+      keybinding: { key: "-", ctrl: true },
+      hidden: true,
+      execute: () => useFontSizeStore.getState().decrease(),
+    },
+    {
+      id: "zoom-reset",
+      label: "Reset Font Size",
+      shortcut: "Ctrl+0",
+      keybinding: { key: "0", ctrl: true },
+      hidden: true,
+      execute: () => useFontSizeStore.getState().reset(),
     },
   ];
 }

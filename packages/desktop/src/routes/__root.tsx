@@ -23,6 +23,7 @@ import { createCommands, useCommandsStore } from "../commands";
 import { ErrorBoundary } from "../components/ErrorBoundary";
 import { UpdateToast } from "../components/UpdateToast";
 import { useUpdaterStore } from "../stores/updater";
+import { useFontSizeStore } from "../stores/font-size";
 import { info as logInfo } from "../log";
 
 export function RootLayout() {
@@ -40,6 +41,7 @@ export function RootLayout() {
     useCodexAuthStore.getState().initialize();
     useAnthropicAuthStore.getState().initialize();
     useConversationsStore.getState().fetchConversations();
+    useFontSizeStore.getState().initialize();
     void useUpdaterStore.getState().checkForUpdates();
 
     return () => {
