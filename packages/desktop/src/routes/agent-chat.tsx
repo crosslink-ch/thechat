@@ -4,7 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { useChat } from "../hooks/useChat";
 import { openAnthropicAuthModal } from "../components/AnthropicAuthModal";
 import { openCodexAuthModal } from "../components/CodexAuthModal";
-import { useIsStreaming, useStreamingParts } from "../stores/streaming";
+import { useIsStreaming, subscribeToStream } from "../stores/streaming";
 import { useAutoScroll } from "../hooks/useAutoScroll";
 import { useToolsStore } from "../stores/tools";
 import { useConversationsStore } from "../stores/conversations";
@@ -84,7 +84,6 @@ export function AgentChatRoute() {
   const [showFeedbackInput, setShowFeedbackInput] = useState(false);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const { isAtBottom, scrollToBottom } = useAutoScroll(scrollContainerRef);
-  const streamingParts = useStreamingParts(conversation?.id);
 
   // Load conversation from route param
   const loadedIdRef = useRef<string | null>(null);
@@ -182,13 +181,13 @@ export function AgentChatRoute() {
     }
   }, [messages.length, scrollToBottom]);
 
-  // Auto-scroll during streaming — scrollToBottom already checks
-  // whether the user has scrolled away and skips if so
+  // Auto-scroll during streaming — subscribe directly to stream updates
+  // to avoid re-rendering the entire route on every chunk
   useEffect(() => {
-    if (isStreaming) {
-      scrollToBottom();
-    }
-  }, [isStreaming, streamingParts, scrollToBottom]);
+    if (!isStreaming || !convId) return;
+    scrollToBottom();
+    return subscribeToStream(convId, () => scrollToBottom());
+  }, [isStreaming, convId, scrollToBottom]);
 
   // Auto-scroll when queued messages change
   useEffect(() => {
@@ -200,7 +199,7 @@ export function AgentChatRoute() {
   // Fetch conversations list when conversation changes
   useEffect(() => {
     useConversationsStore.getState().fetchConversations();
-  }, [conversation]);
+  }, [conversation?.id]);
 
   const handlePermissionAllow = useCallback(() => {
     if (pendingPermission) {

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback, type DragEvent } from "react";
+import { memo, useEffect, useRef, useState, useCallback, type DragEvent } from "react";
 import { useIsStreaming } from "../stores/streaming";
 import { useInputFocusStore } from "../stores/input-focus";
 import { RichInput, type RichInputHandle } from "./RichInput";
@@ -28,7 +28,7 @@ interface InputBarProps {
   autoFocusKey?: string;
 }
 
-export function InputBar({ convId, onSend, onStop, mentions, autoFocusKey }: InputBarProps) {
+export const InputBar = memo(function InputBar({ convId, onSend, onStop, mentions, autoFocusKey }: InputBarProps) {
   const isStreaming = useIsStreaming(convId);
   const inputRef = useRef<RichInputHandle>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -251,4 +251,4 @@ export function InputBar({ convId, onSend, onStop, mentions, autoFocusKey }: Inp
       </div>
     </div>
   );
-}
+});
