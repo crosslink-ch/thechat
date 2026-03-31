@@ -7,6 +7,41 @@ function basename(path: string): string {
   return parts[parts.length - 1] || path;
 }
 
+function truncateValue(value: unknown, maxLen: number): string {
+  if (typeof value === "string") {
+    return value.length > maxLen ? value.slice(0, maxLen - 3) + "..." : value;
+  }
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  if (Array.isArray(value)) {
+    return `[${value.length} items]`;
+  }
+  if (value && typeof value === "object") {
+    return "{...}";
+  }
+  return String(value);
+}
+
+function formatArgsSummary(args: Record<string, unknown>): string {
+  const entries = Object.entries(args);
+  if (entries.length === 0) return "";
+
+  const parts: string[] = [];
+  let totalLen = 0;
+  for (const [key, value] of entries) {
+    const valStr = truncateValue(value, 40);
+    const part = `${key}=${valStr}`;
+    if (totalLen + part.length > 80 && parts.length > 0) {
+      parts.push("…");
+      break;
+    }
+    parts.push(part);
+    totalLen += part.length + 2; // account for ", " separator
+  }
+  return parts.join(", ");
+}
+
 export function formatToolSummary(call: ToolCallPart): string {
   const { args } = call;
 
@@ -50,7 +85,9 @@ export function formatToolSummary(call: ToolCallPart): string {
       const count = Array.isArray(toolCalls) ? toolCalls.length : 0;
       return `Batch: ${count} operations`;
     }
-    default:
-      return call.toolName;
+    default: {
+      const argsSummary = formatArgsSummary(args);
+      return argsSummary ? `${call.toolName}: ${argsSummary}` : call.toolName;
+    }
   }
 }

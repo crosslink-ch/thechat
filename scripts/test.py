@@ -60,6 +60,22 @@ def is_backend_running() -> bool:
         return False
 
 
+def is_postgres_running() -> bool:
+    """Check if PostgreSQL is reachable using DATABASE_URL from env."""
+    from urllib.parse import urlparse
+    db_url = os.environ.get("DATABASE_URL", "")
+    if not db_url:
+        return False
+    parsed = urlparse(db_url)
+    host = parsed.hostname or "localhost"
+    port = parsed.port or 5432
+    try:
+        with socket.create_connection((host, port), timeout=1):
+            return True
+    except OSError:
+        return False
+
+
 def rust_cmd(include_ignored: bool) -> list[str]:
     cmd = [
         "cargo",
@@ -458,6 +474,16 @@ def main():
             f"backend not running on localhost:{BACKEND_PORT}\033[0m"
         )
         suites = [s for s in suites if s["name"] != "integration"]
+        if not suites:
+            sys.exit(0)
+
+    # Skip API tests if PostgreSQL is not reachable
+    if any(s["name"] == "api" for s in suites) and not is_postgres_running():
+        print(
+            "\033[33mSkipping API tests: "
+            "PostgreSQL is not reachable\033[0m"
+        )
+        suites = [s for s in suites if s["name"] != "api"]
         if not suites:
             sys.exit(0)
 
