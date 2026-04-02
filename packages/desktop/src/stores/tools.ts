@@ -69,6 +69,8 @@ interface ToolsStore {
   setActiveConversation: (convId: string | null, projectDir?: string | null) => Promise<void>;
   /** Add MCP tools to a specific conversation's session (loaded by a skill). */
   addSessionMcpTools: (convId: string, infos: McpToolInfo[]) => void;
+  /** Add MCP tools to the global (non-session) tool set. Used when configuring new MCP servers. */
+  addGlobalMcpTools: (infos: McpToolInfo[]) => void;
 }
 
 function mcpInfoToToolDef(info: McpToolInfo): ToolDefinition {
@@ -255,6 +257,20 @@ export const useToolsStore = create<ToolsStore>()((set, get) => ({
       const tools = computeTools(state.skills, state.mcpTools, merged);
       setBatchToolRegistry(tools);
       return { sessionToolsByConv, tools };
+    });
+  },
+
+  addGlobalMcpTools: (infos: McpToolInfo[]) => {
+    const newTools: ToolDefinition[] = infos.map(mcpInfoToToolDef);
+
+    set((state) => {
+      const existing = new Set(state.mcpTools.map((t) => t.name));
+      const unique = newTools.filter((t) => !existing.has(t.name));
+      if (unique.length === 0) return state;
+      const mcpTools = [...state.mcpTools, ...unique];
+      const tools = computeTools(state.skills, mcpTools, getActiveSessionInfos(state));
+      setBatchToolRegistry(tools);
+      return { mcpTools, tools };
     });
   },
 }));

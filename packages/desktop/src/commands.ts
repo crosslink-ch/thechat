@@ -6,6 +6,7 @@ import { openWorkspaceModal } from "./components/WorkspaceModal";
 import { getAgentChatProjectDir } from "./components/ChatHeader";
 import { openPermissionModePicker } from "./PermissionModePicker";
 import { openSelectProjectPicker } from "./SelectProjectPicker";
+import { openMcpConfigDialog } from "./McpConfigDialog";
 import { useConversationsStore } from "./stores/conversations";
 import { useFontSizeStore } from "./stores/font-size";
 
@@ -164,6 +165,16 @@ export function createCommands(
       execute: () => {
         navigate({ to: "/settings" });
         closePaletteAndRefocus();
+      },
+    },
+    {
+      id: "configure-mcp",
+      label: "Configure MCP Server",
+      shortcut: null,
+      keybinding: null,
+      execute: () => {
+        closePalette();
+        openMcpConfigDialog();
       },
     },
     {

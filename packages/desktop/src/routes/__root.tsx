@@ -16,6 +16,7 @@ import { AuthModal } from "../components/AuthModal";
 import { CodexAuthModal } from "../components/CodexAuthModal";
 import { AnthropicAuthModal } from "../components/AnthropicAuthModal";
 import { WorkspaceModal } from "../components/WorkspaceModal";
+import { McpConfigDialog } from "../McpConfigDialog";
 import { useCodexAuthStore } from "../stores/codex-auth";
 import { useAnthropicAuthStore } from "../stores/anthropic-auth";
 import { registerGlobalWsHandlers } from "../lib/ws-global-handlers";
@@ -119,6 +120,7 @@ export function RootLayout() {
       <CodexAuthModal />
       <AnthropicAuthModal />
       <WorkspaceModal />
+      <McpConfigDialog />
       <UpdateToast />
     </div>
   );

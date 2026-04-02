@@ -3,11 +3,13 @@ mod db;
 mod env;
 mod fs;
 mod mcp;
+mod oauth;
 mod shell;
 mod stream;
 
 use db::{Conversation, Database, Message};
 use mcp::McpManager;
+use oauth::OAuthCallbackServer;
 use shell::ShellProcesses;
 use std::sync::Arc;
 use stream::{CodexTransport, StreamCancellers};
@@ -286,6 +288,7 @@ pub fn run() {
     let shell_state: Arc<ShellProcesses> = Arc::new(ShellProcesses::new());
     let stream_state: Arc<StreamCancellers> = Arc::new(StreamCancellers::new());
     let codex_transport_state: Arc<CodexTransport> = Arc::new(CodexTransport::new());
+    let oauth_state: Arc<OAuthCallbackServer> = Arc::new(OAuthCallbackServer::new());
 
     tracing::info!("app started");
 
@@ -333,6 +336,7 @@ pub fn run() {
         .manage(shell_state)
         .manage(stream_state)
         .manage(codex_transport_state)
+        .manage(oauth_state)
         .manage(InitialProjectDir(initial_project_dir))
         .invoke_handler(tauri::generate_handler![
             get_config,
@@ -369,6 +373,9 @@ pub fn run() {
             fs::load_image_base64,
             stream::stream_completion,
             stream::cancel_stream,
+            oauth::mcp_oauth_start,
+            oauth::mcp_oauth_await,
+            oauth::mcp_oauth_cancel,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -396,6 +403,8 @@ mod tests {
         let shell_state: Arc<ShellProcesses> = Arc::new(ShellProcesses::new());
         let stream_state: Arc<StreamCancellers> = Arc::new(StreamCancellers::new());
 
+        let oauth_state: Arc<OAuthCallbackServer> = Arc::new(OAuthCallbackServer::new());
+
         let app = tauri::test::mock_builder()
             .plugin(tauri_plugin_log::Builder::new().build())
             .plugin(tauri_plugin_notification::init())
@@ -405,6 +414,7 @@ mod tests {
             .manage(mcp_state)
             .manage(shell_state)
             .manage(stream_state)
+            .manage(oauth_state)
             .manage(InitialProjectDir(None))
             .invoke_handler(tauri::generate_handler![
                 // Note: get_config, get_config_path, save_config, get_app_config_dir
