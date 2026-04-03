@@ -143,7 +143,7 @@ describe("ChatMessage", () => {
 
     // Expand thinking section
     fireEvent.click(screen.getByText("Used 1 tool"));
-    expect(screen.getByText("get_weather")).toBeInTheDocument();
+    expect(screen.getByText("get_weather: city=Paris")).toBeInTheDocument();
     expect(screen.getByText("✓")).toBeInTheDocument();
   });
 
@@ -250,8 +250,8 @@ describe("StreamingMessage", () => {
       { type: "tool-call", toolCallId: "tc1", toolName: "search", args: { q: "test" } },
     ]);
     render(<StreamingMessage convId={CONV_ID} />);
-    // ToolCallInline shows the tool name via formatToolSummary (unknown tool = raw name)
-    expect(screen.getByText("search")).toBeInTheDocument();
+    // ToolCallInline shows the tool name via formatToolSummary (unknown tool = name: args)
+    expect(screen.getByText("search: q=test")).toBeInTheDocument();
   });
 
   it("renders permission prompt when pendingPermission is provided", () => {
