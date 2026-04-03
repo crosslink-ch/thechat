@@ -71,7 +71,7 @@ export async function runTask(prompt: string, signal?: AbortSignal, convId?: str
 
   await runChatLoop({
     apiKey: appConfig.api_key,
-    model: appConfig.model,
+    model: appConfig.providers[provider].model,
     messages: [{ role: "user", content: prompt }],
     systemPrompt: systemPromptParts.join("\n"),
     tools,

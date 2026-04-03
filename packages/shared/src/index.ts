@@ -45,10 +45,24 @@ export interface McpServerConfig {
   requiresAuth?: boolean;
 }
 
+export type Provider = "openrouter" | "codex" | "anthropic";
+export type ReasoningEffort = "low" | "medium" | "high" | "xhigh";
+
+export interface ProviderConfig {
+  model: string;
+}
+
+export interface ProvidersConfig {
+  openrouter: ProviderConfig;
+  codex: ProviderConfig;
+  anthropic: ProviderConfig;
+}
+
 export interface AppConfig {
   api_key: string;
-  model: string;
-  provider?: "openrouter" | "codex" | "anthropic";
+  provider?: Provider;
+  reasoningEffort?: ReasoningEffort;
+  providers: ProvidersConfig;
   mcpServers?: Record<string, McpServerConfig>;
 }
 

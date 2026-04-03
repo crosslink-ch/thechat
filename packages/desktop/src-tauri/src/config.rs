@@ -20,11 +20,45 @@ pub struct McpServerConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProviderConfig {
+    pub model: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProvidersConfig {
+    pub openrouter: ProviderConfig,
+    pub codex: ProviderConfig,
+    pub anthropic: ProviderConfig,
+}
+
+impl Default for ProvidersConfig {
+    fn default() -> Self {
+        Self {
+            openrouter: ProviderConfig {
+                model: "openai/gpt-4.1".to_string(),
+            },
+            codex: ProviderConfig {
+                model: "gpt-5.4".to_string(),
+            },
+            anthropic: ProviderConfig {
+                model: "claude-sonnet-4-6".to_string(),
+            },
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
     pub api_key: String,
-    pub model: String,
+    /// Legacy field — migrated into `providers` on load. Not written back.
+    #[serde(default, skip_serializing)]
+    pub model: Option<String>,
     #[serde(default)]
     pub provider: Option<String>,
+    #[serde(default, rename = "reasoningEffort")]
+    pub reasoning_effort: Option<String>,
+    #[serde(default)]
+    pub providers: ProvidersConfig,
     #[serde(default, rename = "mcpServers")]
     pub mcp_servers: HashMap<String, McpServerConfig>,
 }
@@ -78,8 +112,10 @@ fn default_config(backend_url: &str) -> AppConfig {
     );
     AppConfig {
         api_key: String::new(),
-        model: "openai/gpt-4.1".to_string(),
+        model: None,
         provider: None,
+        reasoning_effort: None,
+        providers: ProvidersConfig::default(),
         mcp_servers,
     }
 }
@@ -122,8 +158,19 @@ pub fn load_config(base: &Path) -> Result<AppConfig, String> {
     if path.exists() {
         let content = fs::read_to_string(&path)
             .map_err(|e| format!("Failed to read config at {}: {}", path.display(), e))?;
-        let config: AppConfig =
+        let mut config: AppConfig =
             serde_json::from_str(&content).map_err(|e| format!("Failed to parse config: {}", e))?;
+
+        // Migrate legacy `model` field into per-provider config
+        if let Some(model) = config.model.take() {
+            let provider = config.provider.as_deref().unwrap_or("openrouter");
+            match provider {
+                "codex" => config.providers.codex.model = model,
+                "anthropic" => config.providers.anthropic.model = model,
+                _ => config.providers.openrouter.model = model,
+            }
+        }
+
         return Ok(config);
     }
 
@@ -136,11 +183,31 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parse_valid_config() {
-        let json = r#"{"api_key": "sk-test-123", "model": "gpt-4"}"#;
+    fn parse_new_config_format() {
+        let json = r#"{
+            "api_key": "sk-test-123",
+            "provider": "openrouter",
+            "providers": {
+                "openrouter": { "model": "openai/gpt-4.1" },
+                "codex": { "model": "gpt-5.4" },
+                "anthropic": { "model": "claude-sonnet-4-6" }
+            }
+        }"#;
         let config: AppConfig = serde_json::from_str(json).unwrap();
         assert_eq!(config.api_key, "sk-test-123");
-        assert_eq!(config.model, "gpt-4");
+        assert_eq!(config.providers.openrouter.model, "openai/gpt-4.1");
+        assert_eq!(config.providers.codex.model, "gpt-5.4");
+    }
+
+    #[test]
+    fn parse_legacy_config_with_model_field() {
+        // Old configs have a top-level "model" — should deserialize and be available for migration
+        let json = r#"{"api_key": "sk-test", "model": "gpt-4"}"#;
+        let config: AppConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(config.api_key, "sk-test");
+        assert_eq!(config.model, Some("gpt-4".to_string()));
+        // providers should have defaults since they weren't in the JSON
+        assert_eq!(config.providers.openrouter.model, "openai/gpt-4.1");
     }
 
     #[test]
@@ -150,10 +217,51 @@ mod tests {
     }
 
     #[test]
-    fn parse_missing_fields() {
-        let json = r#"{"api_key": "sk-test"}"#;
+    fn parse_missing_api_key() {
+        let json = r#"{"providers": {"openrouter": {"model": "m"}, "codex": {"model": "m"}, "anthropic": {"model": "m"}}}"#;
         let result = serde_json::from_str::<AppConfig>(json);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn legacy_config_migration() {
+        // Simulate loading a legacy config with model field
+        let json = r#"{"api_key": "key", "model": "my-model", "provider": "anthropic"}"#;
+        let mut config: AppConfig = serde_json::from_str(json).unwrap();
+
+        // Apply the same migration as load_config
+        if let Some(model) = config.model.take() {
+            let provider = config.provider.as_deref().unwrap_or("openrouter");
+            match provider {
+                "codex" => config.providers.codex.model = model,
+                "anthropic" => config.providers.anthropic.model = model,
+                _ => config.providers.openrouter.model = model,
+            }
+        }
+
+        assert_eq!(config.providers.anthropic.model, "my-model");
+        // Other providers keep defaults
+        assert_eq!(config.providers.openrouter.model, "openai/gpt-4.1");
+    }
+
+    #[test]
+    fn top_level_model_field_not_serialized() {
+        let config = default_config(DEFAULT_BACKEND_URL);
+        let json = serde_json::to_string_pretty(&config).unwrap();
+        // Parse back as generic JSON and check there's no top-level "model" key
+        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert!(
+            value.get("model").is_none(),
+            "top-level model field should not be serialized"
+        );
+    }
+
+    #[test]
+    fn reasoning_effort_serialized() {
+        let mut config = default_config(DEFAULT_BACKEND_URL);
+        config.reasoning_effort = Some("high".to_string());
+        let json = serde_json::to_string_pretty(&config).unwrap();
+        assert!(json.contains("\"reasoningEffort\": \"high\""));
     }
 
     #[test]
@@ -161,12 +269,20 @@ mod tests {
         let dir = std::env::temp_dir().join("thechat_config_test");
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("config.json");
-        std::fs::write(&path, r#"{"api_key": "key", "model": "m"}"#).unwrap();
+        std::fs::write(
+            &path,
+            r#"{"api_key": "key", "model": "m", "provider": "openrouter"}"#,
+        )
+        .unwrap();
 
         let content = std::fs::read_to_string(&path).unwrap();
-        let config: AppConfig = serde_json::from_str(&content).unwrap();
+        let mut config: AppConfig = serde_json::from_str(&content).unwrap();
+        // Apply migration
+        if let Some(model) = config.model.take() {
+            config.providers.openrouter.model = model;
+        }
         assert_eq!(config.api_key, "key");
-        assert_eq!(config.model, "m");
+        assert_eq!(config.providers.openrouter.model, "m");
 
         std::fs::remove_dir_all(dir).ok();
     }
@@ -174,7 +290,7 @@ mod tests {
     #[test]
     fn parse_stdio_mcp_server() {
         let json = r#"{
-            "api_key": "k", "model": "m",
+            "api_key": "k",
             "mcpServers": {
                 "fs": { "command": "npx", "args": ["-y", "server"], "env": {} }
             }
@@ -188,7 +304,7 @@ mod tests {
     #[test]
     fn parse_http_mcp_server() {
         let json = r#"{
-            "api_key": "k", "model": "m",
+            "api_key": "k",
             "mcpServers": {
                 "remote": { "url": "https://example.com/mcp", "headers": {"Authorization": "Bearer tok"} }
             }
@@ -202,9 +318,8 @@ mod tests {
 
     #[test]
     fn parse_mcp_server_no_transport_deserializes() {
-        // Deserialization succeeds — validation happens at init time
         let json = r#"{
-            "api_key": "k", "model": "m",
+            "api_key": "k",
             "mcpServers": { "bad": {} }
         }"#;
         let config: AppConfig = serde_json::from_str(json).unwrap();
@@ -216,7 +331,7 @@ mod tests {
     #[test]
     fn parse_lazy_mcp_server() {
         let json = r#"{
-            "api_key": "k", "model": "m",
+            "api_key": "k",
             "mcpServers": {
                 "kubectl": { "command": "npx", "args": ["-y", "@kubectl/mcp"], "lazy": true }
             }
@@ -229,7 +344,7 @@ mod tests {
     #[test]
     fn lazy_defaults_to_false() {
         let json = r#"{
-            "api_key": "k", "model": "m",
+            "api_key": "k",
             "mcpServers": {
                 "fs": { "command": "npx", "args": ["-y", "server"] }
             }
@@ -243,7 +358,9 @@ mod tests {
     fn default_config_has_thechat_mcp() {
         let config = default_config(DEFAULT_BACKEND_URL);
         assert_eq!(config.api_key, "");
-        assert_eq!(config.model, "openai/gpt-4.1");
+        assert_eq!(config.providers.openrouter.model, "openai/gpt-4.1");
+        assert_eq!(config.providers.codex.model, "gpt-5.4");
+        assert_eq!(config.providers.anthropic.model, "claude-sonnet-4-6");
         let srv = &config.mcp_servers["thechat"];
         assert_eq!(srv.url.as_deref(), Some("http://localhost:3000/mcp"));
         assert!(srv.command.is_none());
@@ -265,21 +382,18 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("config.json");
 
-        let config = AppConfig {
-            api_key: "sk-saved".to_string(),
-            model: "test-model".to_string(),
-            provider: Some("codex".to_string()),
-            mcp_servers: HashMap::new(),
-        };
+        let mut config = default_config(DEFAULT_BACKEND_URL);
+        config.api_key = "sk-saved".to_string();
+        config.provider = Some("codex".to_string());
+        config.providers.codex.model = "gpt-5.3-codex".to_string();
 
-        // Write directly to the temp path (save_config writes to config_dir_path)
         let json = serde_json::to_string_pretty(&config).unwrap();
         std::fs::write(&path, &json).unwrap();
 
         let content = std::fs::read_to_string(&path).unwrap();
         let loaded: AppConfig = serde_json::from_str(&content).unwrap();
         assert_eq!(loaded.api_key, "sk-saved");
-        assert_eq!(loaded.model, "test-model");
+        assert_eq!(loaded.providers.codex.model, "gpt-5.3-codex");
         assert_eq!(loaded.provider.as_deref(), Some("codex"));
 
         std::fs::remove_dir_all(dir).ok();
@@ -291,7 +405,7 @@ mod tests {
         let json = serde_json::to_string_pretty(&config).unwrap();
         let parsed: AppConfig = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed.api_key, "");
-        assert_eq!(parsed.model, "openai/gpt-4.1");
+        assert_eq!(parsed.providers.openrouter.model, "openai/gpt-4.1");
         assert_eq!(
             parsed.mcp_servers["thechat"].url.as_deref(),
             Some("http://localhost:3000/mcp")

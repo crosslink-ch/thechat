@@ -370,12 +370,17 @@ export function useChat(options?: UseChatOptions) {
         };
 
         const convProjectDir = conv.project_dir ?? projectDirRef.current ?? undefined;
+        const activeModel = config.providers[provider].model;
+        const re = config.reasoningEffort;
         await runChatLoop({
           apiKey: config.api_key,
-          model: config.model,
+          model: activeModel,
           messages: apiMessages,
           systemPrompt: systemPromptRef.current,
-          params: options?.params,
+          params: {
+            ...(re ? { reasoning_effort: re, effort: re } : {}),
+            ...options?.params,
+          },
           tools: options?.tools,
           getTools: options?.getTools,
           signal: controller.signal,

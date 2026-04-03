@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import type { AppConfig } from "@thechat/shared";
+import type { AppConfig, Provider, ProvidersConfig, ReasoningEffort } from "@thechat/shared";
 import { ANTHROPIC_MODELS, CODEX_MODELS } from "../core/models";
 import { useUpdaterStore } from "../stores/updater";
 
@@ -117,11 +117,31 @@ function ModelCombobox({
   );
 }
 
+const PROVIDER_LABELS: Record<Provider, string> = {
+  openrouter: "OpenRouter",
+  codex: "Codex",
+  anthropic: "Anthropic",
+};
+
+const REASONING_EFFORTS: { value: ReasoningEffort; label: string }[] = [
+  { value: "low", label: "Low" },
+  { value: "medium", label: "Medium" },
+  { value: "high", label: "High" },
+  { value: "xhigh", label: "Max" },
+];
+
+const DEFAULT_PROVIDERS: ProvidersConfig = {
+  openrouter: { model: "openai/gpt-4.1" },
+  codex: { model: "gpt-5.4" },
+  anthropic: { model: "claude-sonnet-4-6" },
+};
+
 export function SettingsRoute() {
   const [config, setConfig] = useState<AppConfig | null>(null);
   const [apiKey, setApiKey] = useState("");
-  const [provider, setProvider] = useState<"openrouter" | "codex" | "anthropic">("openrouter");
-  const [model, setModel] = useState("");
+  const [provider, setProvider] = useState<Provider>("openrouter");
+  const [providers, setProviders] = useState<ProvidersConfig>(DEFAULT_PROVIDERS);
+  const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffort>("xhigh");
   const [showKey, setShowKey] = useState(false);
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState<"idle" | "saved" | "error">("idle");
@@ -137,7 +157,8 @@ export function SettingsRoute() {
       setConfig(cfg);
       setApiKey(cfg.api_key);
       setProvider(cfg.provider ?? "openrouter");
-      setModel(cfg.model);
+      setProviders(cfg.providers ?? DEFAULT_PROVIDERS);
+      setReasoningEffort(cfg.reasoningEffort ?? "xhigh");
     });
     invoke<string>("get_config_path").then(setConfigPath);
   }, []);
@@ -152,6 +173,13 @@ export function SettingsRoute() {
     return () => window.clearTimeout(timeout);
   }, [clearUpdaterStatusMessage, updaterStatusMessage]);
 
+  const setProviderModel = (model: string) => {
+    setProviders((prev) => ({
+      ...prev,
+      [provider]: { ...prev[provider], model },
+    }));
+  };
+
   const handleSave = async () => {
     if (!config) return;
     setSaving(true);
@@ -161,7 +189,8 @@ export function SettingsRoute() {
         ...config,
         api_key: apiKey,
         provider,
-        model,
+        reasoningEffort,
+        providers,
       };
       await invoke("save_config", { config: updated });
       setConfig(updated);
@@ -181,33 +210,13 @@ export function SettingsRoute() {
     );
   }
 
+  const currentModel = providers[provider].model;
+
   return (
     <div className="mx-auto h-full max-w-[600px] overflow-y-auto p-6">
       <h2 className="mb-6 text-[1.214rem] font-semibold tracking-tight text-text">Settings</h2>
 
       <div className="flex flex-col gap-5">
-        {/* API Key */}
-        <label className="flex flex-col gap-1.5">
-          <span className="text-[0.929rem] font-medium text-text-secondary">API Key</span>
-          <div className="flex gap-2">
-            <input
-              type={showKey ? "text" : "password"}
-              value={apiKey}
-              onChange={(e) => setApiKey(e.target.value)}
-              placeholder="sk-or-..."
-              className="min-w-0 flex-1 rounded-lg border border-border bg-raised px-3 py-2 text-[0.929rem] text-text outline-none transition-colors placeholder:text-text-dimmed focus:border-accent"
-              spellCheck={false}
-            />
-            <button
-              type="button"
-              onClick={() => setShowKey((s) => !s)}
-              className="shrink-0 cursor-pointer rounded-lg border border-border bg-raised px-3 py-2 text-[0.857rem] text-text-muted transition-colors hover:bg-hover"
-            >
-              {showKey ? "Hide" : "Show"}
-            </button>
-          </div>
-        </label>
-
         {/* Provider */}
         <div className="flex flex-col gap-1.5">
           <span className="text-[0.929rem] font-medium text-text-secondary">Provider</span>
@@ -223,31 +232,83 @@ export function SettingsRoute() {
                     : "border-border bg-raised text-text-muted hover:bg-hover"
                 }`}
               >
-                {p === "openrouter" ? "OpenRouter" : p === "codex" ? "Codex" : "Anthropic"}
+                {PROVIDER_LABELS[p]}
               </button>
             ))}
           </div>
         </div>
 
-        {/* Model */}
-        <div className="flex flex-col gap-1.5">
-          <span className="text-[0.929rem] font-medium text-text-secondary">Model</span>
-          {provider === "openrouter" ? (
-            <input
-              type="text"
-              value={model}
-              onChange={(e) => setModel(e.target.value)}
-              placeholder="e.g. openai/gpt-4.1"
-              className="rounded-lg border border-border bg-raised px-3 py-2 text-[0.929rem] text-text outline-none transition-colors placeholder:text-text-dimmed focus:border-accent"
-              spellCheck={false}
-            />
-          ) : (
-            <ModelCombobox
-              value={model}
-              onChange={setModel}
-              options={provider === "anthropic" ? ANTHROPIC_MODELS : CODEX_MODELS}
-            />
+        {/* Per-provider config */}
+        <div className="flex flex-col gap-4 rounded-lg border border-border bg-raised/50 p-4">
+          <span className="text-[0.857rem] font-medium uppercase tracking-wider text-text-dimmed">
+            {PROVIDER_LABELS[provider]} Settings
+          </span>
+
+          {/* API Key — only for OpenRouter */}
+          {provider === "openrouter" && (
+            <label className="flex flex-col gap-1.5">
+              <span className="text-[0.929rem] font-medium text-text-secondary">API Key</span>
+              <div className="flex gap-2">
+                <input
+                  type={showKey ? "text" : "password"}
+                  value={apiKey}
+                  onChange={(e) => setApiKey(e.target.value)}
+                  placeholder="sk-or-..."
+                  className="min-w-0 flex-1 rounded-lg border border-border bg-raised px-3 py-2 text-[0.929rem] text-text outline-none transition-colors placeholder:text-text-dimmed focus:border-accent"
+                  spellCheck={false}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowKey((s) => !s)}
+                  className="shrink-0 cursor-pointer rounded-lg border border-border bg-raised px-3 py-2 text-[0.857rem] text-text-muted transition-colors hover:bg-hover"
+                >
+                  {showKey ? "Hide" : "Show"}
+                </button>
+              </div>
+            </label>
           )}
+
+          {/* Model */}
+          <div className="flex flex-col gap-1.5">
+            <span className="text-[0.929rem] font-medium text-text-secondary">Model</span>
+            {provider === "openrouter" ? (
+              <input
+                type="text"
+                value={currentModel}
+                onChange={(e) => setProviderModel(e.target.value)}
+                placeholder="e.g. openai/gpt-4.1"
+                className="rounded-lg border border-border bg-raised px-3 py-2 text-[0.929rem] text-text outline-none transition-colors placeholder:text-text-dimmed focus:border-accent"
+                spellCheck={false}
+              />
+            ) : (
+              <ModelCombobox
+                value={currentModel}
+                onChange={setProviderModel}
+                options={provider === "anthropic" ? ANTHROPIC_MODELS : CODEX_MODELS}
+              />
+            )}
+          </div>
+        </div>
+
+        {/* Reasoning Effort */}
+        <div className="flex flex-col gap-1.5">
+          <span className="text-[0.929rem] font-medium text-text-secondary">Reasoning Effort</span>
+          <div className="flex gap-1">
+            {REASONING_EFFORTS.map((re) => (
+              <button
+                key={re.value}
+                type="button"
+                onClick={() => setReasoningEffort(re.value)}
+                className={`cursor-pointer rounded-lg border px-4 py-2 text-[0.929rem] font-medium transition-colors ${
+                  reasoningEffort === re.value
+                    ? "border-accent bg-accent/15 text-accent"
+                    : "border-border bg-raised text-text-muted hover:bg-hover"
+                }`}
+              >
+                {re.label}
+              </button>
+            ))}
+          </div>
         </div>
 
         {/* Actions */}
