@@ -70,22 +70,11 @@ impl OAuthCallbackServer {
 
 /// Parse query string parameters from a URL path (e.g., "/callback?code=X&state=Y").
 fn parse_query_params(path: &str) -> std::collections::HashMap<String, String> {
-    let mut params = std::collections::HashMap::new();
-    if let Some(query) = path.split('?').nth(1) {
-        for pair in query.split('&') {
-            let mut kv = pair.splitn(2, '=');
-            if let (Some(k), Some(v)) = (kv.next(), kv.next()) {
-                // URL-decode the value (basic: just handle %XX and +)
-                let decoded = v
-                    .replace('+', " ")
-                    .replace("%20", " ")
-                    .replace("%3D", "=")
-                    .replace("%26", "&");
-                params.insert(k.to_string(), decoded);
-            }
-        }
+    let base = format!("http://localhost{}", path);
+    match url::Url::parse(&base) {
+        Ok(url) => url.query_pairs().into_owned().collect(),
+        Err(_) => std::collections::HashMap::new(),
     }
-    params
 }
 
 /// Start the OAuth callback server. Returns the port it's listening on.
