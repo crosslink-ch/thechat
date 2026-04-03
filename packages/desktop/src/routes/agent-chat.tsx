@@ -182,11 +182,16 @@ export function AgentChatRoute() {
   }, [messages.length, scrollToBottom]);
 
   // Auto-scroll during streaming — subscribe directly to stream updates
-  // to avoid re-rendering the entire route on every chunk
+  // to avoid re-rendering the entire route on every chunk.
+  // Stop auto-scrolling once the agent starts outputting its text response
+  // so the user can read at their own pace.
   useEffect(() => {
     if (!isStreaming || !convId) return;
     scrollToBottom();
-    return subscribeToStream(convId, () => scrollToBottom());
+    return subscribeToStream(convId, (parts) => {
+      if (parts && parts.length > 0 && parts[parts.length - 1].type === "text") return;
+      scrollToBottom();
+    });
   }, [isStreaming, convId, scrollToBottom]);
 
   // Auto-scroll when queued messages change
