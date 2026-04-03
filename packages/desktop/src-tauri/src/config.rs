@@ -50,9 +50,6 @@ impl Default for ProvidersConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
     pub api_key: String,
-    /// Legacy field — migrated into `providers` on load. Not written back.
-    #[serde(default, skip_serializing)]
-    pub model: Option<String>,
     #[serde(default)]
     pub provider: Option<String>,
     #[serde(default, rename = "reasoningEffort")]
@@ -112,7 +109,6 @@ fn default_config(backend_url: &str) -> AppConfig {
     );
     AppConfig {
         api_key: String::new(),
-        model: None,
         provider: None,
         reasoning_effort: None,
         providers: ProvidersConfig::default(),
@@ -158,18 +154,8 @@ pub fn load_config(base: &Path) -> Result<AppConfig, String> {
     if path.exists() {
         let content = fs::read_to_string(&path)
             .map_err(|e| format!("Failed to read config at {}: {}", path.display(), e))?;
-        let mut config: AppConfig =
+        let config: AppConfig =
             serde_json::from_str(&content).map_err(|e| format!("Failed to parse config: {}", e))?;
-
-        // Migrate legacy `model` field into per-provider config
-        if let Some(model) = config.model.take() {
-            let provider = config.provider.as_deref().unwrap_or("openrouter");
-            match provider {
-                "codex" => config.providers.codex.model = model,
-                "anthropic" => config.providers.anthropic.model = model,
-                _ => config.providers.openrouter.model = model,
-            }
-        }
 
         return Ok(config);
     }
@@ -200,17 +186,6 @@ mod tests {
     }
 
     #[test]
-    fn parse_legacy_config_with_model_field() {
-        // Old configs have a top-level "model" — should deserialize and be available for migration
-        let json = r#"{"api_key": "sk-test", "model": "gpt-4"}"#;
-        let config: AppConfig = serde_json::from_str(json).unwrap();
-        assert_eq!(config.api_key, "sk-test");
-        assert_eq!(config.model, Some("gpt-4".to_string()));
-        // providers should have defaults since they weren't in the JSON
-        assert_eq!(config.providers.openrouter.model, "openai/gpt-4.1");
-    }
-
-    #[test]
     fn parse_invalid_json() {
         let result = serde_json::from_str::<AppConfig>("not json");
         assert!(result.is_err());
@@ -224,67 +199,11 @@ mod tests {
     }
 
     #[test]
-    fn legacy_config_migration() {
-        // Simulate loading a legacy config with model field
-        let json = r#"{"api_key": "key", "model": "my-model", "provider": "anthropic"}"#;
-        let mut config: AppConfig = serde_json::from_str(json).unwrap();
-
-        // Apply the same migration as load_config
-        if let Some(model) = config.model.take() {
-            let provider = config.provider.as_deref().unwrap_or("openrouter");
-            match provider {
-                "codex" => config.providers.codex.model = model,
-                "anthropic" => config.providers.anthropic.model = model,
-                _ => config.providers.openrouter.model = model,
-            }
-        }
-
-        assert_eq!(config.providers.anthropic.model, "my-model");
-        // Other providers keep defaults
-        assert_eq!(config.providers.openrouter.model, "openai/gpt-4.1");
-    }
-
-    #[test]
-    fn top_level_model_field_not_serialized() {
-        let config = default_config(DEFAULT_BACKEND_URL);
-        let json = serde_json::to_string_pretty(&config).unwrap();
-        // Parse back as generic JSON and check there's no top-level "model" key
-        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
-        assert!(
-            value.get("model").is_none(),
-            "top-level model field should not be serialized"
-        );
-    }
-
-    #[test]
     fn reasoning_effort_serialized() {
         let mut config = default_config(DEFAULT_BACKEND_URL);
         config.reasoning_effort = Some("high".to_string());
         let json = serde_json::to_string_pretty(&config).unwrap();
         assert!(json.contains("\"reasoningEffort\": \"high\""));
-    }
-
-    #[test]
-    fn load_config_from_temp_file() {
-        let dir = std::env::temp_dir().join("thechat_config_test");
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("config.json");
-        std::fs::write(
-            &path,
-            r#"{"api_key": "key", "model": "m", "provider": "openrouter"}"#,
-        )
-        .unwrap();
-
-        let content = std::fs::read_to_string(&path).unwrap();
-        let mut config: AppConfig = serde_json::from_str(&content).unwrap();
-        // Apply migration
-        if let Some(model) = config.model.take() {
-            config.providers.openrouter.model = model;
-        }
-        assert_eq!(config.api_key, "key");
-        assert_eq!(config.providers.openrouter.model, "m");
-
-        std::fs::remove_dir_all(dir).ok();
     }
 
     #[test]
