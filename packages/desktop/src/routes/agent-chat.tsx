@@ -189,7 +189,8 @@ export function AgentChatRoute() {
     if (!isStreaming || !convId) return;
     scrollToBottom();
     return subscribeToStream(convId, (parts) => {
-      if (parts && parts.length > 0 && parts[parts.length - 1].type === "text") return;
+      // Skip scroll when stream ends (null) or when showing final text response
+      if (!parts || (parts.length > 0 && parts[parts.length - 1].type === "text")) return;
       scrollToBottom();
     });
   }, [isStreaming, convId, scrollToBottom]);
