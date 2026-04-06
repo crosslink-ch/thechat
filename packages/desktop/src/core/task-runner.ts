@@ -1,8 +1,7 @@
-import { invoke } from "@tauri-apps/api/core";
 import { runChatLoop } from "./loop";
 import { useCodexAuthStore } from "../stores/codex-auth";
 import { useAnthropicAuthStore } from "../stores/anthropic-auth";
-import type { AppConfig } from "@thechat/shared";
+import { getEffectiveConfig } from "../lib/effective-config";
 import type { StreamEvent, ToolDefinition } from "./types";
 
 interface TaskRunnerConfig {
@@ -34,7 +33,7 @@ export async function runTask(prompt: string, signal?: AbortSignal, convId?: str
     throw new Error("Task runner not configured. Call setTaskRunnerConfig first.");
   }
 
-  const appConfig = await invoke<AppConfig>("get_config");
+  const { config: appConfig } = await getEffectiveConfig();
   const provider = appConfig.provider ?? "openrouter";
 
   let codexAuth: { accessToken: string; accountId: string } | undefined;

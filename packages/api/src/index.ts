@@ -5,6 +5,7 @@ import { sql } from "drizzle-orm";
 import { db } from "./db";
 import { authRoutes } from "./auth";
 import { workspaceRoutes } from "./workspaces";
+import { workspaceConfigRoutes } from "./workspaces/config";
 import { conversationRoutes } from "./conversations";
 import { messageRoutes } from "./messages";
 import { wsRoutes } from "./ws";
@@ -22,6 +23,7 @@ const app = new Elysia()
   .decorate("db", db)
   .use(authRoutes)
   .use(workspaceRoutes)
+  .use(workspaceConfigRoutes)
   .use(conversationRoutes)
   .use(messageRoutes)
   .use(wsRoutes)

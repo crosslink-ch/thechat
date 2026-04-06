@@ -58,12 +58,22 @@ export interface ProvidersConfig {
   anthropic: ProviderConfig;
 }
 
+export interface LocalOverrides {
+  provider?: boolean;
+  apiKey?: boolean;
+  openrouterModel?: boolean;
+  codexModel?: boolean;
+  reasoningEffort?: boolean;
+}
+
 export interface AppConfig {
   api_key: string;
   provider?: Provider;
   reasoningEffort?: ReasoningEffort;
   providers: ProvidersConfig;
   mcpServers?: Record<string, McpServerConfig>;
+  inheritWorkspaceId?: string;
+  localOverrides?: LocalOverrides;
 }
 
 // -- Todo Items --
@@ -279,6 +289,20 @@ export interface WorkspaceInvite {
 
 export type AppNotification =
   | { type: "workspace_invite"; invite: WorkspaceInvite };
+
+// -- Workspace Config Types --
+
+export type WorkspaceProvider = "openrouter" | "codex";
+
+export interface WorkspaceConfig {
+  workspaceId: string;
+  provider: WorkspaceProvider | null;
+  openrouter: { apiKey: string } | null;
+  openrouterModel: string | null;
+  codexModel: string | null;
+  reasoningEffort: ReasoningEffort | null;
+  updatedAt: string;
+}
 
 // -- WebSocket Event Types --
 

@@ -8,13 +8,13 @@ import { error as logError, formatError } from "../log";
 import { ProviderError } from "../core/errors";
 import type { Provider } from "../core/errors";
 import { saveImage, buildUserContent } from "../lib/images";
+import { getEffectiveConfig } from "../lib/effective-config";
 import type { ImageAttachment, ImageRef } from "../lib/images";
 import type {
   Message,
   MessagePart,
   DbMessage,
   Conversation,
-  AppConfig,
   ChatParams,
   ToolDefinition,
   StreamEvent,
@@ -176,7 +176,7 @@ export function useChat(options?: UseChatOptions) {
       let streamConvTitle = "";
 
       try {
-        const config = await invoke<AppConfig>("get_config");
+        const { config } = await getEffectiveConfig();
 
         // Create conversation if needed
         let conv = conversation;

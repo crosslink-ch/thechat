@@ -249,6 +249,29 @@ export const sessions = pgTable(
   (t) => [uniqueIndex("sessions_token_idx").on(t.token)]
 );
 
+export const workspaceProviderEnum = pgEnum("workspace_provider", [
+  "openrouter",
+  "codex",
+]);
+
+export const workspaceConfigs = pgTable("workspace_configs", {
+  workspaceId: varchar("workspace_id", { length: 100 })
+    .primaryKey()
+    .references(() => workspaces.id, { onDelete: "cascade" }),
+  provider: workspaceProviderEnum("provider"),
+  openrouterApiKey: text("openrouter_api_key"),
+  openrouterModel: text("openrouter_model"),
+  codexModel: text("codex_model"),
+  reasoningEffort: varchar("reasoning_effort", { length: 20 }),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .defaultNow()
+    .notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .defaultNow()
+    .notNull()
+    .$onUpdate(() => new Date()),
+});
+
 export const emailVerifications = pgTable(
   "email_verifications",
   {
@@ -283,7 +306,21 @@ export const workspacesRelations = relations(workspaces, ({ one, many }) => ({
   }),
   members: many(workspaceMembers),
   conversations: many(conversations),
+  config: one(workspaceConfigs, {
+    fields: [workspaces.id],
+    references: [workspaceConfigs.workspaceId],
+  }),
 }));
+
+export const workspaceConfigsRelations = relations(
+  workspaceConfigs,
+  ({ one }) => ({
+    workspace: one(workspaces, {
+      fields: [workspaceConfigs.workspaceId],
+      references: [workspaces.id],
+    }),
+  })
+);
 
 export const workspaceMembersRelations = relations(
   workspaceMembers,

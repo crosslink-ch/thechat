@@ -47,6 +47,20 @@ impl Default for ProvidersConfig {
     }
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct LocalOverrides {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider: Option<bool>,
+    #[serde(default, rename = "apiKey", skip_serializing_if = "Option::is_none")]
+    pub api_key: Option<bool>,
+    #[serde(default, rename = "openrouterModel", skip_serializing_if = "Option::is_none")]
+    pub openrouter_model: Option<bool>,
+    #[serde(default, rename = "codexModel", skip_serializing_if = "Option::is_none")]
+    pub codex_model: Option<bool>,
+    #[serde(default, rename = "reasoningEffort", skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<bool>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
     pub api_key: String,
@@ -58,6 +72,10 @@ pub struct AppConfig {
     pub providers: ProvidersConfig,
     #[serde(default, rename = "mcpServers")]
     pub mcp_servers: HashMap<String, McpServerConfig>,
+    #[serde(default, rename = "inheritWorkspaceId", skip_serializing_if = "Option::is_none")]
+    pub inherit_workspace_id: Option<String>,
+    #[serde(default, rename = "localOverrides", skip_serializing_if = "Option::is_none")]
+    pub local_overrides: Option<LocalOverrides>,
 }
 
 pub const DEFAULT_BACKEND_URL: &str = "http://localhost:3000";
@@ -113,6 +131,8 @@ fn default_config(backend_url: &str) -> AppConfig {
         reasoning_effort: None,
         providers: ProvidersConfig::default(),
         mcp_servers,
+        inherit_workspace_id: None,
+        local_overrides: None,
     }
 }
 

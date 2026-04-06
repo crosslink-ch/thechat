@@ -8,6 +8,13 @@
       "when": 1772973909224,
       "tag": "0000_good_maestro",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1775489061358,
+      "tag": "0001_famous_thunderbolts",
+      "breakpoints": true
     }
   ]
 }

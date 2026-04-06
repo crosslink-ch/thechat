@@ -11,6 +11,7 @@ import { ChannelRoute } from "./routes/channel";
 import { DmRoute } from "./routes/dm";
 import { NotificationsRoute } from "./routes/notifications";
 import { SettingsRoute } from "./routes/settings";
+import { WorkspaceManageRoute } from "./routes/workspace-manage";
 
 const rootRoute = createRootRoute({
   component: RootLayout,
@@ -63,6 +64,12 @@ const settingsRoute = createRoute({
   component: SettingsRoute,
 });
 
+const workspaceManageRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/workspace/manage",
+  component: WorkspaceManageRoute,
+});
+
 const routeTree = rootRoute.addChildren([
   indexRoute,
   agentChatRoute,
@@ -71,6 +78,7 @@ const routeTree = rootRoute.addChildren([
   dmRoute,
   notificationsRoute,
   settingsRoute,
+  workspaceManageRoute,
 ]);
 
 const hashHistory = createHashHistory();

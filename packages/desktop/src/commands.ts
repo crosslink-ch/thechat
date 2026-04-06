@@ -8,6 +8,7 @@ import { openPermissionModePicker } from "./PermissionModePicker";
 import { openSelectProjectPicker } from "./SelectProjectPicker";
 import { openMcpConfigDialog } from "./McpConfigDialog";
 import { useConversationsStore } from "./stores/conversations";
+import { useWorkspacesStore } from "./stores/workspaces";
 import { useFontSizeStore } from "./stores/font-size";
 
 export interface Keybinding {
@@ -145,6 +146,19 @@ export function createCommands(
       execute: () => {
         openWorkspaceModal();
         closePalette();
+      },
+    },
+    {
+      id: "manage-workspace",
+      label: "Manage Workspace",
+      shortcut: null,
+      keybinding: null,
+      execute: () => {
+        const ws = useWorkspacesStore.getState().activeWorkspace;
+        if (ws) {
+          navigate({ to: "/workspace/manage" });
+          closePaletteAndRefocus();
+        }
       },
     },
     {
