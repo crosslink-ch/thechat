@@ -16,7 +16,7 @@ export interface EffectiveConfig {
 
 /** Cache workspace config for a short period to avoid re-fetching on every message. */
 let wsConfigCache: { id: string; config: WorkspaceConfig; ts: number } | null = null;
-const CACHE_TTL = 30_000; // 30 seconds
+const CACHE_TTL = 600_000; // 10 minutes
 
 async function fetchWorkspaceConfig(
   workspaceId: string,

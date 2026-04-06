@@ -1,125 +1,11 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import type { WorkspaceConfig, WorkspaceProvider, ReasoningEffort } from "@thechat/shared";
 import { CODEX_MODELS } from "../core/models";
 import { useAuthStore } from "../stores/auth";
 import { useWorkspacesStore } from "../stores/workspaces";
 import { api } from "../lib/api";
-
-// ---------------------------------------------------------------------------
-// Model Combobox (reused from settings pattern)
-// ---------------------------------------------------------------------------
-
-function ModelCombobox({
-  value,
-  onChange,
-  options,
-}: {
-  value: string;
-  onChange: (v: string) => void;
-  options: { id: string; name: string }[];
-}) {
-  const [open, setOpen] = useState(false);
-  const [query, setQuery] = useState("");
-  const ref = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
-  const listRef = useRef<HTMLUListElement>(null);
-  const [activeIdx, setActiveIdx] = useState(0);
-
-  const filtered = options.filter((o) => {
-    const q = query.toLowerCase();
-    return o.id.toLowerCase().includes(q) || o.name.toLowerCase().includes(q);
-  });
-
-  const displayValue = open
-    ? query
-    : options.find((o) => o.id === value)?.name ?? value;
-
-  useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, []);
-
-  useEffect(() => {
-    setActiveIdx(0);
-  }, [query]);
-
-  useEffect(() => {
-    if (!open || !listRef.current) return;
-    const item = listRef.current.children[activeIdx] as HTMLElement | undefined;
-    item?.scrollIntoView({ block: "nearest" });
-  }, [activeIdx, open]);
-
-  const select = (id: string) => {
-    onChange(id);
-    setQuery("");
-    setOpen(false);
-  };
-
-  return (
-    <div ref={ref} className="relative">
-      <input
-        ref={inputRef}
-        type="text"
-        value={displayValue}
-        onFocus={() => {
-          setOpen(true);
-          setQuery("");
-        }}
-        onChange={(e) => {
-          setQuery(e.target.value);
-          if (!open) setOpen(true);
-        }}
-        onKeyDown={(e) => {
-          if (!open) return;
-          if (e.key === "ArrowDown") {
-            e.preventDefault();
-            setActiveIdx((i) => Math.min(i + 1, filtered.length - 1));
-          } else if (e.key === "ArrowUp") {
-            e.preventDefault();
-            setActiveIdx((i) => Math.max(i - 1, 0));
-          } else if (e.key === "Enter") {
-            e.preventDefault();
-            if (filtered[activeIdx]) select(filtered[activeIdx].id);
-          } else if (e.key === "Escape") {
-            setOpen(false);
-            setQuery("");
-            inputRef.current?.blur();
-          }
-        }}
-        placeholder="Search models..."
-        className="w-full rounded-lg border border-border bg-raised px-3 py-2 text-[0.929rem] text-text outline-none transition-colors placeholder:text-text-dimmed focus:border-accent"
-        spellCheck={false}
-      />
-      {open && filtered.length > 0 && (
-        <ul
-          ref={listRef}
-          className="absolute z-50 mt-1 max-h-[200px] w-full overflow-y-auto rounded-lg border border-border bg-raised shadow-lg"
-        >
-          {filtered.map((o, i) => (
-            <li
-              key={o.id}
-              onMouseDown={(e) => {
-                e.preventDefault();
-                select(o.id);
-              }}
-              onMouseEnter={() => setActiveIdx(i)}
-              className={`cursor-pointer px-3 py-2 text-[0.929rem] ${
-                i === activeIdx ? "bg-accent/15 text-accent" : "text-text hover:bg-hover"
-              }`}
-            >
-              <span className="font-medium">{o.name}</span>
-              <span className="ml-2 text-text-dimmed">{o.id}</span>
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
-  );
-}
+import { ModelCombobox } from "../components/ModelCombobox";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -321,9 +207,13 @@ export function WorkspaceManageRoute() {
             {PROVIDER_LABELS[provider]} Settings
           </span>
 
-          {/* OpenRouter settings */}
-          {provider === "openrouter" && (
-            <>
+          {/* Both panels rendered in the same grid cell so the container
+              always keeps the height of the taller one, preventing layout shift. */}
+          <div className="grid">
+            {/* OpenRouter settings */}
+            <div className={`col-start-1 row-start-1 flex flex-col gap-4 ${
+              provider !== "openrouter" ? "invisible pointer-events-none" : ""
+            }`}>
               <label className="flex flex-col gap-1.5">
                 <span className="text-[0.929rem] font-medium text-text-secondary">API Key</span>
                 <div className="flex gap-2">
@@ -335,11 +225,13 @@ export function WorkspaceManageRoute() {
                     disabled={!isAdmin}
                     className="min-w-0 flex-1 rounded-lg border border-border bg-raised px-3 py-2 text-[0.929rem] text-text outline-none transition-colors placeholder:text-text-dimmed focus:border-accent disabled:cursor-not-allowed disabled:opacity-50"
                     spellCheck={false}
+                    tabIndex={provider !== "openrouter" ? -1 : undefined}
                   />
                   <button
                     type="button"
                     onClick={() => setShowKey((s) => !s)}
                     className="shrink-0 cursor-pointer rounded-lg border border-border bg-raised px-3 py-2 text-[0.857rem] text-text-muted transition-colors hover:bg-hover"
+                    tabIndex={provider !== "openrouter" ? -1 : undefined}
                   >
                     {showKey ? "Hide" : "Show"}
                   </button>
@@ -356,25 +248,27 @@ export function WorkspaceManageRoute() {
                   disabled={!isAdmin}
                   className="rounded-lg border border-border bg-raised px-3 py-2 text-[0.929rem] text-text outline-none transition-colors placeholder:text-text-dimmed focus:border-accent disabled:cursor-not-allowed disabled:opacity-50"
                   spellCheck={false}
+                  tabIndex={provider !== "openrouter" ? -1 : undefined}
                 />
               </div>
-            </>
-          )}
+            </div>
 
-          {/* Codex settings */}
-          {provider === "codex" && (
-            <div className="flex flex-col gap-1.5">
+            {/* Codex settings */}
+            <div className={`col-start-1 row-start-1 flex flex-col gap-1.5 ${
+              provider !== "codex" ? "invisible pointer-events-none" : ""
+            }`}>
               <span className="text-[0.929rem] font-medium text-text-secondary">Model</span>
               <ModelCombobox
                 value={codexModel}
                 onChange={setCodexModel}
                 options={CODEX_MODELS}
+                disabled={provider !== "codex"}
               />
               <p className="text-[0.786rem] text-text-dimmed">
                 Each user must connect their own ChatGPT account from their local settings.
               </p>
             </div>
-          )}
+          </div>
         </div>
 
         {/* Reasoning Effort */}
