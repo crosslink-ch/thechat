@@ -9,7 +9,7 @@ import { db } from "../db";
 import { users, emailVerifications } from "../db/schema";
 import crypto from "crypto";
 
-const { authRoutes } = await import("./index");
+const { authRoutes, __resetCleanupThrottleForTests } = await import("./index");
 const app = new Elysia().use(authRoutes);
 
 function uniqueEmail() {
@@ -354,5 +354,123 @@ describe("Email Verification: Resend", () => {
       .limit(1);
 
     expect(verification).toBeUndefined();
+  });
+});
+
+// ── Opportunistic cleanup of expired rows ──
+
+describe("Email Verification: Opportunistic cleanup", () => {
+  test("registering a new user purges other users' expired verification rows", async () => {
+    // Stale user with an expired verification row.
+    const staleEmail = uniqueEmail();
+    await registerUser(staleEmail);
+
+    const [staleUser] = await db
+      .select({ id: users.id })
+      .from(users)
+      .where(eq(users.email, staleEmail))
+      .limit(1);
+
+    const [staleVerification] = await db
+      .select()
+      .from(emailVerifications)
+      .where(eq(emailVerifications.userId, staleUser.id))
+      .limit(1);
+
+    await db
+      .update(emailVerifications)
+      .set({ expiresAt: new Date(Date.now() - 1000) })
+      .where(eq(emailVerifications.id, staleVerification.id));
+
+    // Bypass the 15-min throttle so the next register triggers a real sweep.
+    __resetCleanupThrottleForTests();
+
+    // A fresh registration should sweep the expired row away.
+    await registerUser(uniqueEmail());
+
+    const [shouldBeGone] = await db
+      .select()
+      .from(emailVerifications)
+      .where(eq(emailVerifications.id, staleVerification.id))
+      .limit(1);
+
+    expect(shouldBeGone).toBeUndefined();
+  });
+
+  test("resending verification purges other users' expired rows", async () => {
+    // Stale user with an expired verification row.
+    const staleEmail = uniqueEmail();
+    await registerUser(staleEmail);
+
+    const [staleUser] = await db
+      .select({ id: users.id })
+      .from(users)
+      .where(eq(users.email, staleEmail))
+      .limit(1);
+
+    const [staleVerification] = await db
+      .select()
+      .from(emailVerifications)
+      .where(eq(emailVerifications.userId, staleUser.id))
+      .limit(1);
+
+    await db
+      .update(emailVerifications)
+      .set({ expiresAt: new Date(Date.now() - 1000) })
+      .where(eq(emailVerifications.id, staleVerification.id));
+
+    // A different user resending should sweep the expired row away.
+    const liveEmail = uniqueEmail();
+    await registerUser(liveEmail);
+    __resetCleanupThrottleForTests();
+    await req("POST", "/auth/resend-verification", { email: liveEmail });
+
+    const [shouldBeGone] = await db
+      .select()
+      .from(emailVerifications)
+      .where(eq(emailVerifications.id, staleVerification.id))
+      .limit(1);
+
+    expect(shouldBeGone).toBeUndefined();
+  });
+
+  test("cleanup is throttled — back-to-back registers within the window do not re-sweep", async () => {
+    // Stale user A with an expired verification row.
+    const staleEmail = uniqueEmail();
+    await registerUser(staleEmail);
+
+    const [staleUser] = await db
+      .select({ id: users.id })
+      .from(users)
+      .where(eq(users.email, staleEmail))
+      .limit(1);
+
+    const [staleVerification] = await db
+      .select()
+      .from(emailVerifications)
+      .where(eq(emailVerifications.userId, staleUser.id))
+      .limit(1);
+
+    // First register triggers a real sweep and arms the throttle.
+    __resetCleanupThrottleForTests();
+    await registerUser(uniqueEmail());
+
+    // Now expire user A's row AFTER the throttle is armed.
+    await db
+      .update(emailVerifications)
+      .set({ expiresAt: new Date(Date.now() - 1000) })
+      .where(eq(emailVerifications.id, staleVerification.id));
+
+    // A second register inside the 15-min window must NOT sweep — the
+    // expired row should still be there.
+    await registerUser(uniqueEmail());
+
+    const [stillThere] = await db
+      .select()
+      .from(emailVerifications)
+      .where(eq(emailVerifications.id, staleVerification.id))
+      .limit(1);
+
+    expect(stillThere).toBeDefined();
   });
 });

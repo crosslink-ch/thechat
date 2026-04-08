@@ -1,5 +1,5 @@
 import { Elysia } from "elysia";
-import { eq, and, gt, isNull } from "drizzle-orm";
+import { eq, and, gt, isNull, lt } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "../db";
 import { users, sessions, emailVerifications } from "../db/schema";
@@ -20,6 +20,29 @@ function sessionExpiresAt(): Date {
 
 function isEmailVerificationRequired() {
   return process.env.REQUIRE_EMAIL_VERIFICATION === "true";
+}
+
+// Opportunistic cleanup: piggyback on writes to the email_verifications table
+// to garbage-collect rows whose 24h window has passed. Throttled to at most
+// once every 15 minutes per process so a burst of registrations doesn't run
+// the same DELETE over and over. Cheap, and avoids a background scheduler.
+const CLEANUP_THROTTLE_MS = 15 * 60 * 1000;
+let lastCleanupAt = 0;
+
+async function cleanupExpiredVerifications() {
+  const now = Date.now();
+  if (now - lastCleanupAt < CLEANUP_THROTTLE_MS) return;
+  lastCleanupAt = now;
+
+  await db
+    .delete(emailVerifications)
+    .where(lt(emailVerifications.expiresAt, new Date()));
+}
+
+// Test-only: reset the throttle so cleanup tests can trigger consecutive
+// sweeps within the same process. Not used by production code.
+export function __resetCleanupThrottleForTests() {
+  lastCleanupAt = 0;
 }
 
 // ── Schemas ──
@@ -94,6 +117,8 @@ export const authRoutes = new Elysia({ prefix: "/auth" })
       });
 
     if (isEmailVerificationRequired()) {
+      await cleanupExpiredVerifications();
+
       const token = generateRefreshToken();
       const expiresAt = new Date();
       expiresAt.setHours(expiresAt.getHours() + 24);
@@ -259,6 +284,8 @@ export const authRoutes = new Elysia({ prefix: "/auth" })
       .limit(1);
 
     if (user && !user.emailVerifiedAt) {
+      await cleanupExpiredVerifications();
+
       await db
         .delete(emailVerifications)
         .where(eq(emailVerifications.userId, user.id));
