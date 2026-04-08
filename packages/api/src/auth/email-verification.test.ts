@@ -162,14 +162,51 @@ describe("Email Verification: GET /verify-email", () => {
 
     expect(updatedUser.emailVerifiedAt).toBeTruthy();
 
-    // Verification record should be deleted
-    const [deleted] = await db
+    // Verification record is intentionally NOT deleted on success — it ages
+    // out via expiresAt so that email scanners pre-fetching the link don't
+    // burn the token before the user clicks.
+    const [stillThere] = await db
       .select()
       .from(emailVerifications)
       .where(eq(emailVerifications.userId, user.id))
       .limit(1);
 
-    expect(deleted).toBeUndefined();
+    expect(stillThere).toBeDefined();
+  });
+
+  test("re-clicking the same valid link still succeeds (scanner pre-fetch safe)", async () => {
+    const email = uniqueEmail();
+    await registerUser(email);
+
+    const [user] = await db
+      .select({ id: users.id })
+      .from(users)
+      .where(eq(users.email, email))
+      .limit(1);
+
+    const [verification] = await db
+      .select()
+      .from(emailVerifications)
+      .where(eq(emailVerifications.userId, user.id))
+      .limit(1);
+
+    // Simulate the scanner hitting the link first…
+    const first = await req("GET", `/auth/verify-email?token=${verification.token}`);
+    expect(first.status).toBe(200);
+    expect(first.body).toContain("verified successfully");
+
+    // …then the actual user clicking it.
+    const second = await req("GET", `/auth/verify-email?token=${verification.token}`);
+    expect(second.status).toBe(200);
+    expect(second.body).toContain("verified successfully");
+
+    // User remains verified.
+    const [updatedUser] = await db
+      .select({ emailVerifiedAt: users.emailVerifiedAt })
+      .from(users)
+      .where(eq(users.id, user.id))
+      .limit(1);
+    expect(updatedUser.emailVerifiedAt).toBeTruthy();
   });
 
   test("invalid token returns 400", async () => {

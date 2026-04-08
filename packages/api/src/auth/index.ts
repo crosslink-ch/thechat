@@ -1,5 +1,5 @@
 import { Elysia } from "elysia";
-import { eq, and, gt } from "drizzle-orm";
+import { eq, and, gt, isNull } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "../db";
 import { users, sessions, emailVerifications } from "../db/schema";
@@ -197,6 +197,12 @@ export const authRoutes = new Elysia({ prefix: "/auth" })
   })
 
   // ── Verify email (public) ──
+  // Note: this handler is intentionally idempotent and does NOT delete the
+  // verification row on success. Many email security scanners (Outlook Safe
+  // Links, Mimecast, ProofPoint, etc.) pre-fetch links in incoming mail; if
+  // we deleted the row on first GET, the user's actual click would then look
+  // like an "expired" token. The row is allowed to age out via its 24h
+  // expiresAt instead, and re-clicking the same link is a no-op success.
   .get("/verify-email", async ({ query, set }) => {
     const { token } = query;
     if (!token) {
@@ -225,11 +231,9 @@ export const authRoutes = new Elysia({ prefix: "/auth" })
     await db
       .update(users)
       .set({ emailVerifiedAt: new Date() })
-      .where(eq(users.id, verification.userId));
-
-    await db
-      .delete(emailVerifications)
-      .where(eq(emailVerifications.id, verification.id));
+      .where(
+        and(eq(users.id, verification.userId), isNull(users.emailVerifiedAt))
+      );
 
     set.headers["content-type"] = "text/html";
     return "<h1>Email verified successfully!</h1><p>You can now log in.</p>";
