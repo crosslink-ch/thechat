@@ -1,15 +1,29 @@
 import { Elysia } from "elysia";
-import { eq, and, gt, isNull, lt } from "drizzle-orm";
+import { eq, and, gt, lt, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "../db";
 import { users, sessions, emailVerifications } from "../db/schema";
-import { sendVerificationEmail } from "./email";
+import { sendVerificationCode } from "./email";
 import { resolveTokenToUser } from "./middleware";
 import { signAccessToken } from "./jwt";
 import crypto from "crypto";
 
 function generateRefreshToken(): string {
   return crypto.randomBytes(32).toString("hex"); // 64 hex chars
+}
+
+// Cryptographically uniform 6-digit numeric code, zero-padded.
+// Uses crypto.randomInt to avoid the modulo bias that `Math.random()` and
+// `crypto.randomBytes(...) % 1000000` would introduce.
+function generateVerificationCode(): string {
+  return crypto.randomInt(0, 1_000_000).toString().padStart(6, "0");
+}
+
+const VERIFICATION_CODE_TTL_MS = 15 * 60 * 1000; // 15 minutes
+const MAX_VERIFICATION_ATTEMPTS = 5;
+
+function verificationExpiresAt(): Date {
+  return new Date(Date.now() + VERIFICATION_CODE_TTL_MS);
 }
 
 function sessionExpiresAt(): Date {
@@ -23,7 +37,7 @@ function isEmailVerificationRequired() {
 }
 
 // Opportunistic cleanup: piggyback on writes to the email_verifications table
-// to garbage-collect rows whose 24h window has passed. Throttled to at most
+// to garbage-collect rows whose 15-min window has passed. Throttled to at most
 // once every 15 minutes per process so a burst of registrations doesn't run
 // the same DELETE over and over. Cheap, and avoids a background scheduler.
 const CLEANUP_THROTTLE_MS = 15 * 60 * 1000;
@@ -45,6 +59,43 @@ export function __resetCleanupThrottleForTests() {
   lastCleanupAt = 0;
 }
 
+// Mints a session row + access JWT for a user. Shared by /login and the
+// successful branch of /verify-email-otp so OTP-verified users are logged in
+// immediately without a separate /login round-trip.
+async function issueSessionTokens(user: {
+  id: string;
+  name: string;
+  email: string | null;
+  avatar: string | null;
+}) {
+  const refreshToken = generateRefreshToken();
+  await db.insert(sessions).values({
+    userId: user.id,
+    token: refreshToken,
+    expiresAt: sessionExpiresAt(),
+  });
+
+  const accessToken = await signAccessToken({
+    sub: user.id,
+    name: user.name,
+    email: user.email,
+    avatar: user.avatar,
+    type: "human",
+  });
+
+  return {
+    accessToken,
+    refreshToken,
+    user: {
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      avatar: user.avatar,
+      type: "human" as const,
+    },
+  };
+}
+
 // ── Schemas ──
 
 const registerSchema = z.object({
@@ -60,6 +111,14 @@ const loginSchema = z.object({
 
 const resendVerificationSchema = z.object({
   email: z.email("Please enter a valid email address"),
+});
+
+const verifyEmailOtpSchema = z.object({
+  email: z.email("Please enter a valid email address"),
+  code: z
+    .string()
+    .trim()
+    .regex(/^\d{6}$/, "Verification code must be 6 digits"),
 });
 
 const refreshSchema = z.object({
@@ -119,25 +178,23 @@ export const authRoutes = new Elysia({ prefix: "/auth" })
     if (isEmailVerificationRequired()) {
       await cleanupExpiredVerifications();
 
-      const token = generateRefreshToken();
-      const expiresAt = new Date();
-      expiresAt.setHours(expiresAt.getHours() + 24);
+      const code = generateVerificationCode();
 
       await db.insert(emailVerifications).values({
         userId: user.id,
-        token,
-        expiresAt,
+        code,
+        expiresAt: verificationExpiresAt(),
       });
 
       try {
-        await sendVerificationEmail(email, token);
+        await sendVerificationCode(email, code);
       } catch {
         // Don't fail registration if email fails
       }
 
       return {
         message:
-          "Registration successful. Please check your email to verify your account.",
+          "Registration successful. Check your email for a 6-digit verification code.",
       };
     }
 
@@ -221,19 +278,52 @@ export const authRoutes = new Elysia({ prefix: "/auth" })
     };
   })
 
-  // ── Verify email (public) ──
-  // Note: this handler is intentionally idempotent and does NOT delete the
-  // verification row on success. Many email security scanners (Outlook Safe
-  // Links, Mimecast, ProofPoint, etc.) pre-fetch links in incoming mail; if
-  // we deleted the row on first GET, the user's actual click would then look
-  // like an "expired" token. The row is allowed to age out via its 24h
-  // expiresAt instead, and re-clicking the same link is a no-op success.
-  .get("/verify-email", async ({ query, set }) => {
-    const { token } = query;
-    if (!token) {
+  // ── Verify email via OTP code (public) ──
+  // Code-based verification is immune to email-scanner pre-fetch (no URL to
+  // consume). On success we issue tokens so the user is logged in immediately
+  // without a separate login round-trip.
+  .post("/verify-email-otp", async ({ body, set }) => {
+    const parsed = verifyEmailOtpSchema.safeParse(body);
+    if (!parsed.success) {
       set.status = 400;
-      set.headers["content-type"] = "text/html";
-      return "<h1>Invalid verification link</h1>";
+      return { error: formatZodError(parsed.error) };
+    }
+
+    const email = parsed.data.email.toLowerCase();
+    const submittedCode = parsed.data.code;
+
+    const [user] = await db
+      .select()
+      .from(users)
+      .where(eq(users.email, email))
+      .limit(1);
+
+    // Generic error for both "no such user" and "no/expired/blown row" so we
+    // don't leak whether the email is registered.
+    const genericError = { error: "Invalid or expired verification code" };
+
+    if (!user) {
+      set.status = 400;
+      return genericError;
+    }
+
+    // Already verified — treat as success and return fresh tokens. This makes
+    // the endpoint idempotent for the legitimate user without leaking that
+    // the row would have been valid; an attacker hitting it without the
+    // matching code still gets the genericError branch first because we
+    // require the row to exist.
+    if (user.emailVerifiedAt) {
+      const [verification] = await db
+        .select()
+        .from(emailVerifications)
+        .where(eq(emailVerifications.userId, user.id))
+        .limit(1);
+      if (verification) {
+        await db
+          .delete(emailVerifications)
+          .where(eq(emailVerifications.userId, user.id));
+      }
+      return await issueSessionTokens(user);
     }
 
     const [verification] = await db
@@ -241,7 +331,7 @@ export const authRoutes = new Elysia({ prefix: "/auth" })
       .from(emailVerifications)
       .where(
         and(
-          eq(emailVerifications.token, token),
+          eq(emailVerifications.userId, user.id),
           gt(emailVerifications.expiresAt, new Date())
         )
       )
@@ -249,19 +339,55 @@ export const authRoutes = new Elysia({ prefix: "/auth" })
 
     if (!verification) {
       set.status = 400;
-      set.headers["content-type"] = "text/html";
-      return "<h1>Invalid or expired verification link</h1>";
+      return genericError;
     }
 
-    await db
-      .update(users)
-      .set({ emailVerifiedAt: new Date() })
-      .where(
-        and(eq(users.id, verification.userId), isNull(users.emailVerifiedAt))
-      );
+    // Already burned by too many wrong attempts — force a resend.
+    if (verification.attempts >= MAX_VERIFICATION_ATTEMPTS) {
+      await db
+        .delete(emailVerifications)
+        .where(eq(emailVerifications.id, verification.id));
+      set.status = 400;
+      return {
+        error:
+          "Too many incorrect attempts. Request a new code and try again.",
+      };
+    }
 
-    set.headers["content-type"] = "text/html";
-    return "<h1>Email verified successfully!</h1><p>You can now log in.</p>";
+    // Constant-time-ish comparison via timingSafeEqual on equal-length buffers.
+    // The submitted code is regex-validated to 6 digits and the stored code
+    // is always 6 digits, so the lengths match.
+    const a = Buffer.from(submittedCode, "utf8");
+    const b = Buffer.from(verification.code, "utf8");
+    const matches = a.length === b.length && crypto.timingSafeEqual(a, b);
+
+    if (!matches) {
+      // Increment attempts atomically. If this push takes us to the limit,
+      // the next call will hit the burn-out branch above.
+      await db
+        .update(emailVerifications)
+        .set({ attempts: sql`${emailVerifications.attempts} + 1` })
+        .where(eq(emailVerifications.id, verification.id));
+      set.status = 400;
+      return genericError;
+    }
+
+    // Success — flip the verified flag and consume the row in a single
+    // transaction so the row cannot survive past the moment of verification.
+    // With OTP we can safely delete on success because there is no
+    // scanner-prefetch concern.
+    await db.transaction(async (tx) => {
+      await tx
+        .update(users)
+        .set({ emailVerifiedAt: new Date() })
+        .where(eq(users.id, user.id));
+
+      await tx
+        .delete(emailVerifications)
+        .where(eq(emailVerifications.userId, user.id));
+    });
+
+    return await issueSessionTokens(user);
   })
 
   // ── Resend verification ──
@@ -269,7 +395,7 @@ export const authRoutes = new Elysia({ prefix: "/auth" })
     const parsed = resendVerificationSchema.safeParse(body);
     // Always return same message to prevent email enumeration
     const message =
-      "If that email is registered, a verification link has been sent.";
+      "If that email is registered and unverified, a new code has been sent.";
 
     if (!parsed.success) {
       return { message };
@@ -290,18 +416,16 @@ export const authRoutes = new Elysia({ prefix: "/auth" })
         .delete(emailVerifications)
         .where(eq(emailVerifications.userId, user.id));
 
-      const token = generateRefreshToken();
-      const expiresAt = new Date();
-      expiresAt.setHours(expiresAt.getHours() + 24);
+      const code = generateVerificationCode();
 
       await db.insert(emailVerifications).values({
         userId: user.id,
-        token,
-        expiresAt,
+        code,
+        expiresAt: verificationExpiresAt(),
       });
 
       try {
-        await sendVerificationEmail(email, token);
+        await sendVerificationCode(email, code);
       } catch {
         // Silent failure
       }

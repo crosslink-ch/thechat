@@ -62,12 +62,40 @@ function ResendButton({ email }: { email: string }) {
         ? "Sending..."
         : cooldown > 0
           ? `Resend in ${cooldown}s`
-          : "Resend verification email"}
+          : "Send a new code"}
     </button>
   );
 }
 
 function VerificationPendingView({ email, onBackToLogin }: { email: string; onBackToLogin: () => void }) {
+  const verifyEmailOtp = useAuthStore((s) => s.verifyEmailOtp);
+  const [code, setCode] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
+  const codeInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    codeInputRef.current?.focus();
+  }, []);
+
+  const handleSubmit = async (e: FormEvent) => {
+    e.preventDefault();
+    setError("");
+    if (!/^\d{6}$/.test(code)) {
+      setError("Enter the 6-digit code from your email");
+      return;
+    }
+    setSubmitting(true);
+    try {
+      await verifyEmailOtp(email, code);
+      closeAuthModal();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Verification failed");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   return (
     <div className="fixed inset-0 z-20 flex items-center justify-center bg-overlay backdrop-blur-[2px] animate-fade-in" onClick={closeAuthModal}>
       <div className="w-full max-w-[400px] rounded-xl border border-border-strong bg-surface p-6 shadow-card animate-slide-up" onClick={(e) => e.stopPropagation()}>
@@ -81,11 +109,37 @@ function VerificationPendingView({ email, onBackToLogin }: { email: string; onBa
             Check your email
           </h2>
           <p className="mb-5 text-[0.929rem] leading-relaxed text-text-muted">
-            We sent a verification link to{" "}
+            We sent a 6-digit code to{" "}
             <span className="font-medium text-text">{email}</span>
           </p>
 
-          <ResendButton email={email} />
+          <form onSubmit={handleSubmit} className="w-full" noValidate>
+            <input
+              ref={codeInputRef}
+              className="block w-full rounded-lg border border-border bg-base px-3.5 py-2.5 text-center font-mono text-[1.5rem] tracking-[0.4em] text-text outline-none transition-colors duration-150 placeholder:text-text-placeholder focus:border-border-focus"
+              type="text"
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              maxLength={6}
+              placeholder="000000"
+              value={code}
+              onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+            />
+
+            {error && <div className="mt-3 rounded-lg border border-error-msg-border bg-error-msg-bg px-3 py-2 text-[0.857rem] text-error-bright">{error}</div>}
+
+            <button
+              className="mt-3 block w-full cursor-pointer rounded-lg border border-border-strong bg-elevated px-3 py-2.5 font-[inherit] text-[0.929rem] font-medium text-text transition-colors duration-150 hover:not-disabled:bg-button disabled:cursor-default disabled:opacity-40"
+              type="submit"
+              disabled={submitting || code.length !== 6}
+            >
+              {submitting ? "..." : "Verify"}
+            </button>
+          </form>
+
+          <div className="mt-4">
+            <ResendButton email={email} />
+          </div>
 
           <button
             className="mt-4 cursor-pointer border-none bg-none p-0 font-[inherit] text-[0.857rem] text-text-muted underline transition-colors duration-150 hover:text-text"

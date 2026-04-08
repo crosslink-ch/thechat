@@ -6,6 +6,7 @@ import {
   text,
   timestamp,
   jsonb,
+  integer,
   primaryKey,
   index,
   uniqueIndex,
@@ -279,13 +280,15 @@ export const emailVerifications = pgTable(
     userId: uuid("user_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
-    token: varchar("token", { length: 64 }).notNull(),
+    code: varchar("code", { length: 6 }).notNull(),
+    attempts: integer("attempts").notNull().default(0),
     expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
       .notNull(),
   },
-  (t) => [uniqueIndex("email_verifications_token_idx").on(t.token)]
+  // One outstanding code per user — resends delete the previous row first.
+  (t) => [uniqueIndex("email_verifications_user_id_idx").on(t.userId)]
 );
 
 // -- Relations --

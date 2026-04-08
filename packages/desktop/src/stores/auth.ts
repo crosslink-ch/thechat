@@ -38,6 +38,7 @@ interface AuthStore {
   initialize: () => Promise<void>;
   login: (email: string, password: string) => Promise<void>;
   register: (name: string, email: string, password: string) => Promise<string | null>;
+  verifyEmailOtp: (email: string, code: string) => Promise<void>;
   logout: () => Promise<void>;
 }
 
@@ -206,6 +207,19 @@ export const useAuthStore = create<AuthStore>()((set) => ({
       scheduleRefresh(data.accessToken!);
     }
     return null;
+  },
+
+  verifyEmailOtp: async (email: string, code: string) => {
+    const { data, error } = await api.auth["verify-email-otp"].post({ email, code });
+
+    if (error) throw new Error((error as any).error || "Verification failed");
+    if (!data || !("accessToken" in data)) throw new Error("Verification failed");
+
+    await kvSet(KV_ACCESS_TOKEN, data.accessToken!);
+    await kvSet(KV_REFRESH_TOKEN, data.refreshToken!);
+    await kvSet(KV_USER, JSON.stringify(data.user!));
+    set({ token: data.accessToken!, user: data.user! });
+    scheduleRefresh(data.accessToken!);
   },
 
   logout: async () => {

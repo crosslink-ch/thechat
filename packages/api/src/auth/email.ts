@@ -58,18 +58,20 @@ export async function sendEmail(options: SendEmailOptions) {
   return sendViaSMTP(options);
 }
 
-export async function sendVerificationEmail(email: string, token: string) {
-  const baseUrl = process.env.THECHAT_BACKEND_URL || "http://localhost:3000";
-  const verifyUrl = `${baseUrl}/auth/verify-email?token=${token}`;
-
+export async function sendVerificationCode(email: string, code: string) {
+  // Code-only email — no clickable URL. This prevents email security scanners
+  // (Outlook Safe Links, Mimecast, ProofPoint, etc.) from silently consuming
+  // the verification on behalf of the user. The recipient must read the code
+  // and type it into the app.
   await sendEmail({
     to: email,
-    subject: "Verify your email - TheChat",
+    subject: "Your TheChat verification code",
     html: `
       <h2>Welcome to TheChat!</h2>
-      <p>Click the link below to verify your email address:</p>
-      <p><a href="${verifyUrl}">${verifyUrl}</a></p>
-      <p>This link expires in 24 hours.</p>
+      <p>Your verification code is:</p>
+      <p style="font-size: 28px; font-weight: 700; letter-spacing: 4px; font-family: monospace;">${code}</p>
+      <p>Enter this code in the app to verify your email. The code expires in 15 minutes.</p>
+      <p>If you didn't request this, you can safely ignore this email — your address will not be verified.</p>
     `,
   });
 }
