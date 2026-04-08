@@ -94,7 +94,14 @@ pub fn config_file_path(base: &Path) -> PathBuf {
 
 /// Resolve the config path: in dev mode, prefer a CWD-relative config.json if it exists;
 /// otherwise fall back to the provided base config directory.
+///
+/// E2E tests set `THECHAT_DATA_DIR` for isolation; in that case we skip the
+/// dev-mode CWD lookup so the test never accidentally reads or writes a
+/// developer's local `config.json` next to the binary.
 pub fn resolve_config_path(base: &Path) -> PathBuf {
+    if std::env::var_os("THECHAT_DATA_DIR").is_some() {
+        return config_file_path(base);
+    }
     if cfg!(debug_assertions) {
         let dev_paths = [
             PathBuf::from("config.json"),

@@ -108,10 +108,26 @@ type DbState = Arc<Database>;
 
 pub struct InitialProjectDir(pub Option<String>);
 
+/// Resolve the directory used for config.json, skills lookup, etc.
+///
+/// E2E tests set `THECHAT_DATA_DIR` to a tmp path so each run is isolated
+/// and never touches the developer's real `~/.config/com.bruno.thechat/`.
+/// When the env var is set we use it directly (creating it if needed);
+/// otherwise we fall back to Tauri's platform-specific app config dir.
+fn resolve_config_dir(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
+    if let Ok(dir) = std::env::var("THECHAT_DATA_DIR") {
+        let dir = std::path::PathBuf::from(dir);
+        std::fs::create_dir_all(&dir)
+            .map_err(|e| format!("Failed to create THECHAT_DATA_DIR: {}", e))?;
+        return Ok(dir);
+    }
+    app.path().app_config_dir().map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 #[tracing::instrument(skip(app))]
 async fn get_config(app: tauri::AppHandle) -> Result<config::AppConfig, String> {
-    let config_dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
+    let config_dir = resolve_config_dir(&app)?;
     tokio::task::spawn_blocking(move || config::load_config(&config_dir))
         .await
         .map_err(|e| format!("Task join error: {}", e))?
@@ -120,7 +136,7 @@ async fn get_config(app: tauri::AppHandle) -> Result<config::AppConfig, String> 
 #[tauri::command]
 #[tracing::instrument(skip(app))]
 fn get_config_path(app: tauri::AppHandle) -> Result<String, String> {
-    let config_dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
+    let config_dir = resolve_config_dir(&app)?;
     Ok(config::resolve_config_path(&config_dir)
         .to_string_lossy()
         .into_owned())
@@ -129,7 +145,7 @@ fn get_config_path(app: tauri::AppHandle) -> Result<String, String> {
 #[tauri::command]
 #[tracing::instrument(skip(config, app))]
 async fn save_config(config: config::AppConfig, app: tauri::AppHandle) -> Result<(), String> {
-    let config_dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
+    let config_dir = resolve_config_dir(&app)?;
     tokio::task::spawn_blocking(move || config::save_config(&config, &config_dir))
         .await
         .map_err(|e| format!("Task join error: {}", e))?
@@ -138,7 +154,7 @@ async fn save_config(config: config::AppConfig, app: tauri::AppHandle) -> Result
 #[tauri::command]
 #[tracing::instrument(skip(app))]
 fn get_app_config_dir(app: tauri::AppHandle) -> Result<String, String> {
-    let config_dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
+    let config_dir = resolve_config_dir(&app)?;
     Ok(config_dir.to_string_lossy().into_owned())
 }
 
