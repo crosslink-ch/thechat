@@ -662,6 +662,10 @@ pub async fn mcp_initialize<R: tauri::Runtime>(
     let env_vars = shell_env.vars.clone();
 
     for (server_name, server_config) in config.mcp_servers {
+        if server_config.disabled {
+            tracing::info!(server = %server_name, "skipping MCP server (disabled)");
+            continue;
+        }
         if server_config.requires_auth {
             tracing::info!(server = %server_name, "skipping MCP server (requires auth)");
             continue;
@@ -726,6 +730,10 @@ pub async fn mcp_initialize_authed<R: tauri::Runtime>(
     let env_vars = shell_env.vars.clone();
 
     for (server_name, server_config) in config.mcp_servers {
+        if server_config.disabled {
+            tracing::info!(server = %server_name, "skipping auth MCP server (disabled)");
+            continue;
+        }
         if !server_config.requires_auth {
             continue;
         }
@@ -1396,6 +1404,7 @@ mod tests {
             headers: HashMap::new(),
             requires_auth: false,
             lazy: false,
+            disabled: false,
         };
 
         let process_env: HashMap<String, String> = std::env::vars().collect();
@@ -1485,6 +1494,7 @@ mod tests {
             headers: HashMap::new(),
             requires_auth: false,
             lazy: false,
+            disabled: false,
         };
 
         let process_env: HashMap<String, String> = std::env::vars().collect();
@@ -1523,6 +1533,7 @@ mod tests {
             headers: HashMap::new(),
             requires_auth: false,
             lazy: false,
+            disabled: false,
         };
         let process_env: HashMap<String, String> = std::env::vars().collect();
         let result = init_server("no-transport", &config, None, &process_env);

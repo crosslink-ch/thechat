@@ -17,6 +17,8 @@ pub struct McpServerConfig {
     pub requires_auth: bool,
     #[serde(default)]
     pub lazy: bool,
+    #[serde(default)]
+    pub disabled: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -130,6 +132,7 @@ fn default_config(backend_url: &str) -> AppConfig {
             headers: HashMap::new(),
             requires_auth: true,
             lazy: true,
+            disabled: false,
         },
     );
     AppConfig {

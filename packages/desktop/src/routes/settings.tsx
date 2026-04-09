@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type {
   AppConfig,
+  McpServerConfig,
   Provider,
   ProvidersConfig,
   ReasoningEffort,
@@ -15,6 +16,7 @@ import { useWorkspacesStore } from "../stores/workspaces";
 import { api } from "../lib/api";
 import { invalidateWorkspaceConfigCache } from "../lib/effective-config";
 import { ModelCombobox } from "../components/ModelCombobox";
+import { openMcpConfigDialog } from "../McpConfigDialog";
 
 // ---------------------------------------------------------------------------
 // SourceToggle — "Workspace" / "Custom" switch for each field
@@ -55,6 +57,152 @@ function SourceToggle({
       >
         Custom
       </button>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// McpServersSection — manage configured MCP servers
+// ---------------------------------------------------------------------------
+
+function McpServersSection({
+  config,
+  onConfigChange,
+}: {
+  config: AppConfig;
+  onConfigChange: (config: AppConfig) => void;
+}) {
+  const [confirmRemove, setConfirmRemove] = useState<string | null>(null);
+  const servers = config.mcpServers ?? {};
+  const entries = Object.entries(servers);
+
+  const saveConfig = async (updated: AppConfig) => {
+    await invoke("save_config", { config: updated });
+    onConfigChange(updated);
+  };
+
+  const toggleServer = async (name: string) => {
+    const server = servers[name];
+    if (!server) return;
+    const updated: AppConfig = {
+      ...config,
+      mcpServers: {
+        ...servers,
+        [name]: { ...server, disabled: !server.disabled },
+      },
+    };
+    await saveConfig(updated);
+  };
+
+  const removeServer = async (name: string) => {
+    const { [name]: _, ...rest } = servers;
+    const updated: AppConfig = { ...config, mcpServers: rest };
+    await saveConfig(updated);
+    setConfirmRemove(null);
+  };
+
+  const serverType = (s: McpServerConfig): string =>
+    s.url ? "HTTP" : s.command ? "Stdio" : "Unknown";
+
+  const serverDetail = (s: McpServerConfig): string => {
+    if (s.url) return s.url;
+    if (s.command) return [s.command, ...(s.args ?? [])].join(" ");
+    return "—";
+  };
+
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="flex items-center justify-between">
+        <span className="text-[0.929rem] font-medium text-text-secondary">MCP Servers</span>
+        <button
+          type="button"
+          onClick={() => openMcpConfigDialog()}
+          className="cursor-pointer rounded-lg border border-border bg-raised px-3 py-1.5 text-[0.786rem] font-medium text-text-muted transition-colors hover:bg-hover"
+        >
+          + Add Server
+        </button>
+      </div>
+
+      {entries.length === 0 ? (
+        <div className="rounded-lg border border-border bg-raised/50 px-4 py-3 text-[0.857rem] text-text-dimmed">
+          No MCP servers configured.
+        </div>
+      ) : (
+        <div className="flex flex-col gap-1.5">
+          {entries.map(([name, server]) => (
+            <div
+              key={name}
+              className={`flex items-center gap-3 rounded-lg border border-border bg-raised/50 px-4 py-3 transition-opacity ${server.disabled ? "opacity-50" : ""}`}
+            >
+              {/* Info */}
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2">
+                  <span className="text-[0.929rem] font-medium text-text">{name}</span>
+                  <span className="rounded bg-base px-1.5 py-0.5 text-[0.714rem] font-medium text-text-dimmed">
+                    {serverType(server)}
+                  </span>
+                  {server.requiresAuth && (
+                    <span className="rounded bg-base px-1.5 py-0.5 text-[0.714rem] font-medium text-text-dimmed">
+                      Auth
+                    </span>
+                  )}
+                  {server.lazy && (
+                    <span className="rounded bg-base px-1.5 py-0.5 text-[0.714rem] font-medium text-text-dimmed">
+                      Lazy
+                    </span>
+                  )}
+                  {server.disabled && (
+                    <span className="rounded bg-error-msg-bg px-1.5 py-0.5 text-[0.714rem] font-medium text-error-bright">
+                      Disabled
+                    </span>
+                  )}
+                </div>
+                <div className="mt-0.5 truncate text-[0.786rem] text-text-dimmed">
+                  {serverDetail(server)}
+                </div>
+              </div>
+
+              {/* Actions */}
+              <div className="flex shrink-0 items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => toggleServer(name)}
+                  className="cursor-pointer rounded-md border border-border bg-base px-2.5 py-1 text-[0.786rem] text-text-muted transition-colors hover:bg-hover"
+                  title={server.disabled ? "Enable server" : "Disable server"}
+                >
+                  {server.disabled ? "Enable" : "Disable"}
+                </button>
+                {confirmRemove === name ? (
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => removeServer(name)}
+                      className="cursor-pointer rounded-md border border-error-msg-border bg-error-msg-bg px-2.5 py-1 text-[0.786rem] font-medium text-error-bright transition-colors hover:brightness-110"
+                    >
+                      Confirm
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setConfirmRemove(null)}
+                      className="cursor-pointer rounded-md border border-border bg-base px-2.5 py-1 text-[0.786rem] text-text-muted transition-colors hover:bg-hover"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setConfirmRemove(name)}
+                    className="cursor-pointer rounded-md border border-border bg-base px-2.5 py-1 text-[0.786rem] text-error-bright transition-colors hover:bg-hover"
+                  >
+                    Remove
+                  </button>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -440,6 +588,9 @@ export function SettingsRoute() {
             </div>
           )}
         </div>
+
+        {/* MCP Servers */}
+        <McpServersSection config={config} onConfigChange={setConfig} />
 
         {/* Actions */}
         <div className="flex flex-wrap items-center gap-3">

@@ -43,6 +43,8 @@ export interface McpServerConfig {
   url?: string;
   headers?: Record<string, string>;
   requiresAuth?: boolean;
+  lazy?: boolean;
+  disabled?: boolean;
 }
 
 export type Provider = "openrouter" | "codex";
