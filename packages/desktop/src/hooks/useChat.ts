@@ -3,7 +3,6 @@ import { invoke } from "@tauri-apps/api/core";
 import { runChatLoop } from "../core/loop";
 import { useStreamingStore, updateStreamParts, recordToolCallStart } from "../stores/streaming";
 import { useCodexAuthStore } from "../stores/codex-auth";
-import { useAnthropicAuthStore } from "../stores/anthropic-auth";
 import { error as logError, formatError } from "../log";
 import { ProviderError } from "../core/errors";
 import type { Provider } from "../core/errors";
@@ -332,9 +331,7 @@ export function useChat(options?: UseChatOptions) {
                 if (activeConvIdRef.current === streamConvId) {
                   setError(chatErr);
                 }
-                if (chatErr.isAuth && chatErr.provider === "anthropic") {
-                  useAnthropicAuthStore.setState({ status: "error", error: "Session expired. Please reconnect." });
-                } else if (chatErr.isAuth && chatErr.provider === "codex") {
+                if (chatErr.isAuth && chatErr.provider === "codex") {
                   useCodexAuthStore.setState({ status: "error", error: "Session expired. Please reconnect." });
                 }
                 break;
@@ -353,12 +350,8 @@ export function useChat(options?: UseChatOptions) {
         // Resolve provider auth
         const provider = config.provider ?? "openrouter";
         let codexAuth: { accessToken: string; accountId: string } | undefined;
-        let anthropicAuth: { accessToken: string } | undefined;
         if (provider === "codex") {
           codexAuth = await useCodexAuthStore.getState().getValidToken();
-        }
-        if (provider === "anthropic") {
-          anthropicAuth = await useAnthropicAuthStore.getState().getValidToken();
         }
 
         const getQueuedMessages = () => {
@@ -386,9 +379,8 @@ export function useChat(options?: UseChatOptions) {
           signal: controller.signal,
           cwd: convProjectDir || undefined,
           convId: streamConvId!,
-          provider: codexAuth ? "codex" : provider === "anthropic" ? "anthropic" : "openrouter",
+          provider: codexAuth ? "codex" : "openrouter",
           codexAuth,
-          anthropicAuth,
           getQueuedMessages,
           onEvents,
         });
@@ -424,9 +416,7 @@ export function useChat(options?: UseChatOptions) {
           logError(`[useChat] sendMessage failed (conv=${streamConvId}): ${formatError(e)}`);
 
           const chatErr = chatErrorFromException(e);
-          if (chatErr.isAuth && chatErr.provider === "anthropic") {
-            useAnthropicAuthStore.setState({ status: "error", error: "Session expired. Please reconnect." });
-          } else if (chatErr.isAuth && chatErr.provider === "codex") {
+          if (chatErr.isAuth && chatErr.provider === "codex") {
             useCodexAuthStore.setState({ status: "error", error: "Session expired. Please reconnect." });
           }
 

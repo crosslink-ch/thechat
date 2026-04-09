@@ -8,7 +8,7 @@ import type {
   LocalOverrides,
   WorkspaceConfig,
 } from "@thechat/shared";
-import { ANTHROPIC_MODELS, CODEX_MODELS } from "../core/models";
+import { CODEX_MODELS } from "../core/models";
 import { useUpdaterStore } from "../stores/updater";
 import { useAuthStore } from "../stores/auth";
 import { useWorkspacesStore } from "../stores/workspaces";
@@ -66,7 +66,6 @@ function SourceToggle({
 const PROVIDER_LABELS: Record<Provider, string> = {
   openrouter: "OpenRouter",
   codex: "Codex",
-  anthropic: "Anthropic",
 };
 
 const REASONING_EFFORTS: { value: ReasoningEffort; label: string }[] = [
@@ -79,7 +78,6 @@ const REASONING_EFFORTS: { value: ReasoningEffort; label: string }[] = [
 const DEFAULT_PROVIDERS: ProvidersConfig = {
   openrouter: { model: "openai/gpt-4.1" },
   codex: { model: "gpt-5.4" },
-  anthropic: { model: "claude-sonnet-4-6" },
 };
 
 function authHeader(token: string) {
@@ -286,7 +284,7 @@ export function SettingsRoute() {
           </div>
           {wsHasProvider && !localOverrides.provider ? (
             <div className="flex gap-1">
-              {(["openrouter", "codex", "anthropic"] as const).map((p) => (
+              {(["openrouter", "codex"] as const).map((p) => (
                 <div
                   key={p}
                   className={`rounded-lg border px-4 py-2 text-[0.929rem] font-medium ${
@@ -301,7 +299,7 @@ export function SettingsRoute() {
             </div>
           ) : (
             <div className="flex gap-1">
-              {(["openrouter", "codex", "anthropic"] as const).map((p) => (
+              {(["openrouter", "codex"] as const).map((p) => (
                 <button
                   key={p}
                   type="button"
@@ -391,7 +389,7 @@ export function SettingsRoute() {
               <ModelCombobox
                 value={currentModel}
                 onChange={setProviderModel}
-                options={effectiveProvider === "anthropic" ? ANTHROPIC_MODELS : CODEX_MODELS}
+                options={CODEX_MODELS}
               />
             )}
           </div>

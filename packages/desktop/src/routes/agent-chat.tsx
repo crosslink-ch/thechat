@@ -2,7 +2,6 @@ import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { useNavigate, useMatches, useRouterState } from "@tanstack/react-router";
 import { invoke } from "@tauri-apps/api/core";
 import { useChat } from "../hooks/useChat";
-import { openAnthropicAuthModal } from "../components/AnthropicAuthModal";
 import { openCodexAuthModal } from "../components/CodexAuthModal";
 import { useIsStreaming, subscribeToStream } from "../stores/streaming";
 import { useAutoScroll } from "../hooks/useAutoScroll";
@@ -297,12 +296,9 @@ export function AgentChatRoute() {
                 <button
                   type="button"
                   className="mt-2 rounded bg-accent px-3 py-1 text-[0.857rem] font-medium text-white hover:bg-accent/80"
-                  onClick={() => {
-                    if (error.provider === "anthropic") openAnthropicAuthModal();
-                    else openCodexAuthModal();
-                  }}
+                  onClick={() => openCodexAuthModal()}
                 >
-                  Reconnect {error.provider === "anthropic" ? "Claude" : "ChatGPT"} Account
+                  Reconnect ChatGPT Account
                 </button>
               )}
             </div>

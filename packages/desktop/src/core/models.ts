@@ -26,16 +26,6 @@ export interface ModelInfo {
 }
 
 // ---------------------------------------------------------------------------
-// Anthropic models
-// ---------------------------------------------------------------------------
-
-export const ANTHROPIC_MODELS: ModelInfo[] = [
-  { id: "claude-opus-4-6", name: "Claude Opus 4.6", maxOutputTokens: 128_000, contextWindow: 200_000 },
-  { id: "claude-sonnet-4-6", name: "Claude Sonnet 4.6", maxOutputTokens: 64_000, contextWindow: 200_000 },
-  { id: "claude-haiku-4-5-20251001", name: "Claude Haiku 4.5", maxOutputTokens: 64_000, contextWindow: 200_000 },
-];
-
-// ---------------------------------------------------------------------------
 // Codex (OpenAI) models
 // ---------------------------------------------------------------------------
 
@@ -50,7 +40,7 @@ export const CODEX_MODELS: ModelInfo[] = [
 
 /** Hardcoded models only — used for UI dropdowns (settings page). */
 const MODEL_INDEX = new Map<string, ModelInfo>();
-for (const m of [...ANTHROPIC_MODELS, ...CODEX_MODELS]) {
+for (const m of CODEX_MODELS) {
   MODEL_INDEX.set(m.id, m);
 }
 

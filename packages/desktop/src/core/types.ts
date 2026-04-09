@@ -66,10 +66,6 @@ export interface CodexAuth {
   accountId: string;
 }
 
-export interface AnthropicAuth {
-  accessToken: string;
-}
-
 export interface ChatLoopOptions {
   apiKey: string;
   model: string;
@@ -82,9 +78,8 @@ export interface ChatLoopOptions {
   signal?: AbortSignal;
   cwd?: string;
   convId?: string;
-  provider?: "openrouter" | "codex" | "anthropic";
+  provider?: "openrouter" | "codex";
   codexAuth?: CodexAuth;
-  anthropicAuth?: AnthropicAuth;
   getQueuedMessages?: () => Array<{ id: string; content: string }>;
   onEvents: (events: StreamEvent[]) => void;
 }

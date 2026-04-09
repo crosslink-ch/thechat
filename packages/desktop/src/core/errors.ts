@@ -1,4 +1,4 @@
-export type Provider = "openrouter" | "codex" | "anthropic";
+export type Provider = "openrouter" | "codex";
 
 /**
  * Error thrown by provider streaming wrappers.

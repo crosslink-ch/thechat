@@ -1,6 +1,5 @@
 import { runChatLoop } from "./loop";
 import { useCodexAuthStore } from "../stores/codex-auth";
-import { useAnthropicAuthStore } from "../stores/anthropic-auth";
 import { getEffectiveConfig } from "../lib/effective-config";
 import type { StreamEvent, ToolDefinition } from "./types";
 
@@ -37,13 +36,9 @@ export async function runTask(prompt: string, signal?: AbortSignal, convId?: str
   const provider = appConfig.provider ?? "openrouter";
 
   let codexAuth: { accessToken: string; accountId: string } | undefined;
-  let anthropicAuth: { accessToken: string } | undefined;
 
   if (provider === "codex") {
     codexAuth = await useCodexAuthStore.getState().getValidToken();
-  }
-  if (provider === "anthropic") {
-    anthropicAuth = await useAnthropicAuthStore.getState().getValidToken();
   }
 
   const tools = config.availableTools.filter((t) => ALLOWED_TASK_TOOLS.has(t.name));
@@ -78,9 +73,8 @@ export async function runTask(prompt: string, signal?: AbortSignal, convId?: str
     signal,
     cwd: resolvedCwd,
     convId,
-    provider: codexAuth ? "codex" : provider === "anthropic" ? "anthropic" : "openrouter",
+    provider: codexAuth ? "codex" : "openrouter",
     codexAuth,
-    anthropicAuth,
     onEvents,
   });
 

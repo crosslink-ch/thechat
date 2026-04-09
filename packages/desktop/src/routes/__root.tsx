@@ -14,11 +14,9 @@ import { PermissionModePicker } from "../PermissionModePicker";
 import { SelectProjectPicker } from "../SelectProjectPicker";
 import { AuthModal } from "../components/AuthModal";
 import { CodexAuthModal } from "../components/CodexAuthModal";
-import { AnthropicAuthModal } from "../components/AnthropicAuthModal";
 import { WorkspaceModal } from "../components/WorkspaceModal";
 import { McpConfigDialog } from "../McpConfigDialog";
 import { useCodexAuthStore } from "../stores/codex-auth";
-import { useAnthropicAuthStore } from "../stores/anthropic-auth";
 import { registerGlobalWsHandlers } from "../lib/ws-global-handlers";
 import { createCommands, useCommandsStore } from "../commands";
 import { ErrorBoundary } from "../components/ErrorBoundary";
@@ -40,7 +38,6 @@ export function RootLayout() {
     useToolsStore.getState().initializeMcp();
     useToolsStore.getState().discoverSkills();
     useCodexAuthStore.getState().initialize();
-    useAnthropicAuthStore.getState().initialize();
     useConversationsStore.getState().fetchConversations();
     useFontSizeStore.getState().initialize();
     void useUpdaterStore.getState().checkForUpdates();
@@ -118,7 +115,6 @@ export function RootLayout() {
       <SelectProjectPicker />
       <AuthModal />
       <CodexAuthModal />
-      <AnthropicAuthModal />
       <WorkspaceModal />
       <McpConfigDialog />
       <UpdateToast />

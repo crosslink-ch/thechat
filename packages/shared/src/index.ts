@@ -45,7 +45,7 @@ export interface McpServerConfig {
   requiresAuth?: boolean;
 }
 
-export type Provider = "openrouter" | "codex" | "anthropic";
+export type Provider = "openrouter" | "codex";
 export type ReasoningEffort = "low" | "medium" | "high" | "xhigh";
 
 export interface ProviderConfig {
@@ -55,7 +55,6 @@ export interface ProviderConfig {
 export interface ProvidersConfig {
   openrouter: ProviderConfig;
   codex: ProviderConfig;
-  anthropic: ProviderConfig;
 }
 
 export interface LocalOverrides {
@@ -196,7 +195,7 @@ export type StreamEvent =
   | { type: "queued-message-consumed"; id: string; content: string }
   | { type: "compaction"; summary: string }
   | { type: "finish"; usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number } }
-  | { type: "error"; error: string; provider?: "openrouter" | "codex" | "anthropic"; statusCode?: number };
+  | { type: "error"; error: string; provider?: "openrouter" | "codex"; statusCode?: number };
 
 // -- Stream Result (returned from streamCompletion) --
 

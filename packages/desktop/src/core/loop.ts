@@ -1,6 +1,5 @@
 import { streamCompletion } from "./openrouter";
 import { streamCodexCompletion } from "./codex";
-import { streamAnthropicCompletion } from "./anthropic";
 import { truncateToolResult } from "./truncate";
 import { isOverflow, compactMessages } from "./compaction";
 import { error as logError, warn as logWarn, debug as logDebug, formatError } from "../log";
@@ -47,7 +46,6 @@ function callProvider(
   codexTurnId?: string,
 ): Promise<StreamResult> {
   const provider = options.provider === "codex" ? "codex" as const
-    : options.provider === "anthropic" ? "anthropic" as const
     : "openrouter" as const;
 
   // Tag any error events from the Rust streaming layer with the provider
@@ -69,18 +67,6 @@ function callProvider(
       convId: options.convId,
       turnId: codexTurnId,
       onEvents: taggedOnEvents,
-    });
-  }
-  if (provider === "anthropic") {
-    return streamAnthropicCompletion({
-      apiKey: options.apiKey,
-      model: options.model,
-      messages,
-      params: options.params,
-      tools,
-      signal: options.signal,
-      onEvents: taggedOnEvents,
-      oauthToken: options.anthropicAuth?.accessToken,
     });
   }
   return streamCompletion({
