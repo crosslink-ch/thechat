@@ -132,6 +132,7 @@ function McpServersSection({
           {entries.map(([name, server]) => (
             <div
               key={name}
+              data-testid={`mcp-server-${name}`}
               className={`flex items-center gap-3 rounded-lg border border-border bg-raised/50 px-4 py-3 transition-opacity ${server.disabled ? "opacity-50" : ""}`}
             >
               {/* Info */}
