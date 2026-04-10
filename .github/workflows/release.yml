@@ -52,6 +52,51 @@ jobs:
       - name: Install dependencies
         run: pnpm install
 
+      - name: Bundle Node.js runtime
+        shell: bash
+        run: |
+          NODE_VERSION=24.14.1
+          RESOURCES_DIR=packages/desktop/src-tauri/resources/node
+
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz" \
+              | tar xJ --strip-components=1 -C "$RESOURCES_DIR"
+          elif [ "$RUNNER_OS" = "macOS" ]; then
+            if echo "${{ matrix.args }}" | grep -q "aarch64"; then
+              ARCH=arm64
+            else
+              ARCH=x64
+            fi
+            curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-darwin-${ARCH}.tar.gz" \
+              | tar xz --strip-components=1 -C "$RESOURCES_DIR"
+          elif [ "$RUNNER_OS" = "Windows" ]; then
+            curl -fsSLo "$RUNNER_TEMP/node.zip" \
+              "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-win-x64.zip"
+            7z x "$RUNNER_TEMP/node.zip" -o"$RUNNER_TEMP/node-extract" -y > /dev/null
+            mv "$RUNNER_TEMP/node-extract/node-v${NODE_VERSION}-win-x64/"* "$RESOURCES_DIR/"
+          fi
+
+          # Remove files not needed at runtime
+          rm -rf "$RESOURCES_DIR/include" "$RESOURCES_DIR/share" \
+                 "$RESOURCES_DIR/CHANGELOG.md" "$RESOURCES_DIR/README.md" "$RESOURCES_DIR/LICENSE"
+
+          # On Unix, npm/npx are symlinks that may not survive bundling.
+          # Replace them with small wrapper scripts that invoke the bundled node.
+          if [ "$RUNNER_OS" != "Windows" ]; then
+            for cmd in npm npx; do
+              LINK="$RESOURCES_DIR/bin/$cmd"
+              if [ -L "$LINK" ]; then
+                TARGET=$(readlink "$LINK")
+                rm "$LINK"
+                printf '#!/bin/sh\nexec "$(dirname "$0")/node" "$(dirname "$0")/%s" "$@"\n' "$TARGET" > "$LINK"
+                chmod +x "$LINK"
+              fi
+            done
+            # corepack is not needed
+            rm -f "$RESOURCES_DIR/bin/corepack"
+            rm -rf "$RESOURCES_DIR/lib/node_modules/corepack"
+          fi
+
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
