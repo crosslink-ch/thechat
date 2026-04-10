@@ -70,6 +70,7 @@ export const config = {
 
     tauriDriver = spawn("tauri-driver", ["--port", String(TAURI_DRIVER_PORT)], {
       stdio: ["ignore", "pipe", "pipe"],
+      detached: true,
     });
 
     tauriDriver.stderr.on("data", (data) => {
@@ -104,8 +105,14 @@ export const config = {
 
   async afterSession() {
     if (tauriDriver) {
-      tauriDriver.kill("SIGTERM");
+      const proc = tauriDriver;
       tauriDriver = null;
+      // Kill the entire process group (tauri-driver + Tauri binary).
+      try { process.kill(-proc.pid, "SIGTERM"); } catch {}
+      await new Promise((resolve) => {
+        proc.on("close", resolve);
+        setTimeout(resolve, 5000);
+      });
     }
     delete process.env.THECHAT_DATA_DIR;
     if (tmpDataDir) {
@@ -119,7 +126,7 @@ export const config = {
 for (const sig of ["SIGINT", "SIGTERM"]) {
   process.on(sig, () => {
     if (tauriDriver) {
-      tauriDriver.kill("SIGTERM");
+      try { process.kill(-tauriDriver.pid, "SIGTERM"); } catch {}
       tauriDriver = null;
     }
     if (tmpDataDir) {
