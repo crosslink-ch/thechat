@@ -117,7 +117,7 @@ function McpServersSection({
         <span className="text-[0.929rem] font-medium text-text-secondary">MCP Servers</span>
         <button
           type="button"
-          onClick={() => openMcpConfigDialog()}
+          onClick={() => openMcpConfigDialog(onConfigChange)}
           className="cursor-pointer rounded-lg border border-border bg-raised px-3 py-1.5 text-[0.786rem] font-medium text-text-muted transition-colors hover:bg-hover"
         >
           + Add Server

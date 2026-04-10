@@ -149,15 +149,7 @@ describe("MCP server management", function () {
     // Phase 3: Verify both servers appear in settings
     // ──────────────────────────────────────────────────────
 
-    // The config dialog saves directly via invoke("save_config") without
-    // notifying the SettingsRoute component. Re-navigate to force a fresh
-    // config load.
-    await browser.execute(() => {
-      window.location.hash = "#/chat";
-    });
-    await browser.execute(() => {
-      window.location.hash = "#/settings";
-    });
+    // Servers should appear immediately — no re-navigation needed.
 
     // Wait for HTTP server row
     await browser.waitUntil(

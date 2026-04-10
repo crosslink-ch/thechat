@@ -12,11 +12,14 @@ import type { McpToolInfo } from "./core/types";
 import { useToolsStore } from "./stores/tools";
 import { error as logError, info as logInfo } from "./log";
 
-const useDialogState = create(() => ({ open: false }));
-export const openMcpConfigDialog = () =>
-  useDialogState.setState({ open: true });
+const useDialogState = create(() => ({
+  open: false,
+  onServerAdded: null as ((config: AppConfig) => void) | null,
+}));
+export const openMcpConfigDialog = (onServerAdded?: (config: AppConfig) => void) =>
+  useDialogState.setState({ open: true, onServerAdded: onServerAdded ?? null });
 const closeDialog = () => {
-  useDialogState.setState({ open: false });
+  useDialogState.setState({ open: false, onServerAdded: null });
   requestInputBarFocus();
 };
 
@@ -183,6 +186,10 @@ function McpConfigDialogInner() {
       };
       await invoke("save_config", { config: updatedConfig });
       logInfo(`[mcp-config] Saved MCP server "${serverName}" to config`);
+
+      // Notify caller (e.g. settings page) so UI updates immediately,
+      // even if initialization below fails.
+      useDialogState.getState().onServerAdded?.(updatedConfig);
 
       // Initialize and register tools
       const toolInfos = await invoke<McpToolInfo[]>("mcp_initialize_servers", {
