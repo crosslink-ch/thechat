@@ -5,6 +5,7 @@ import { ServiceError } from "../services/errors";
 import {
   getWorkspaceConfig,
   setOpenRouterConfig,
+  setGlmConfig,
   setActiveProvider,
   updateWorkspaceSettings,
   deleteWorkspaceConfig,
@@ -14,13 +15,18 @@ const openrouterSchema = z.object({
   apiKey: z.string().min(1, "API key is required"),
 });
 
+const glmSchema = z.object({
+  apiKey: z.string().min(1, "API key is required"),
+});
+
 const providerSchema = z.object({
-  provider: z.enum(["openrouter", "codex"]),
+  provider: z.enum(["openrouter", "codex", "glm"]),
 });
 
 const settingsSchema = z.object({
   openrouterModel: z.string().nullable().optional(),
   codexModel: z.string().nullable().optional(),
+  glmModel: z.string().nullable().optional(),
   reasoningEffort: z.enum(["low", "medium", "high", "xhigh"]).nullable().optional(),
 });
 
@@ -67,6 +73,25 @@ export const workspaceConfigRoutes = new Elysia({
 
     try {
       return await setOpenRouterConfig(params.id, user.id, parsed.data.apiKey);
+    } catch (e) {
+      if (e instanceof ServiceError) {
+        set.status = e.status;
+        return { error: e.message };
+      }
+      throw e;
+    }
+  })
+
+  // Set GLM API key
+  .put("/:id/config/glm", async ({ params, body, user, set }) => {
+    const parsed = glmSchema.safeParse(body);
+    if (!parsed.success) {
+      set.status = 400;
+      return { error: parsed.error.issues[0]?.message ?? "Invalid input" };
+    }
+
+    try {
+      return await setGlmConfig(params.id, user.id, parsed.data.apiKey);
     } catch (e) {
       if (e instanceof ServiceError) {
         set.status = e.status;

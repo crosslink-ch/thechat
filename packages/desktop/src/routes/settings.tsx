@@ -6,10 +6,11 @@ import type {
   Provider,
   ProvidersConfig,
   ReasoningEffort,
+  GlmPlanType,
   LocalOverrides,
   WorkspaceConfig,
 } from "@thechat/shared";
-import { CODEX_MODELS } from "../core/models";
+import { CODEX_MODELS, GLM_MODELS } from "../core/models";
 import { useUpdaterStore } from "../stores/updater";
 import { useAuthStore } from "../stores/auth";
 import { useWorkspacesStore } from "../stores/workspaces";
@@ -215,6 +216,7 @@ function McpServersSection({
 const PROVIDER_LABELS: Record<Provider, string> = {
   openrouter: "OpenRouter",
   codex: "Codex",
+  glm: "GLM",
 };
 
 const REASONING_EFFORTS: { value: ReasoningEffort; label: string }[] = [
@@ -227,6 +229,7 @@ const REASONING_EFFORTS: { value: ReasoningEffort; label: string }[] = [
 const DEFAULT_PROVIDERS: ProvidersConfig = {
   openrouter: { model: "openai/gpt-4.1" },
   codex: { model: "gpt-5.4" },
+  glm: { model: "glm-5.1" },
 };
 
 function authHeader(token: string) {
@@ -244,7 +247,10 @@ export function SettingsRoute() {
   const [provider, setProvider] = useState<Provider>("openrouter");
   const [providers, setProviders] = useState<ProvidersConfig>(DEFAULT_PROVIDERS);
   const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffort>("xhigh");
+  const [glmApiKey, setGlmApiKey] = useState("");
+  const [glmPlanType, setGlmPlanType] = useState<GlmPlanType>("standard");
   const [showKey, setShowKey] = useState(false);
+  const [showGlmKey, setShowGlmKey] = useState(false);
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState<"idle" | "saved" | "error">("idle");
   const [configPath, setConfigPath] = useState<string | null>(null);
@@ -271,6 +277,8 @@ export function SettingsRoute() {
     invoke<AppConfig>("get_config").then((cfg) => {
       setConfig(cfg);
       setApiKey(cfg.api_key);
+      setGlmApiKey(cfg.glm_api_key ?? "");
+      setGlmPlanType(cfg.glmPlanType ?? "standard");
       setProvider(cfg.provider ?? "openrouter");
       setProviders(cfg.providers ?? DEFAULT_PROVIDERS);
       setReasoningEffort(cfg.reasoningEffort ?? "xhigh");
@@ -327,6 +335,8 @@ export function SettingsRoute() {
       const updated: AppConfig = {
         ...config,
         api_key: apiKey,
+        glm_api_key: glmApiKey || undefined,
+        glmPlanType,
         provider,
         reasoningEffort,
         providers,
@@ -360,6 +370,8 @@ export function SettingsRoute() {
   const wsHasApiKey = wsActive && !!wsConfig.openrouter?.apiKey;
   const wsHasOpenrouterModel = wsActive && !!wsConfig.openrouterModel;
   const wsHasCodexModel = wsActive && !!wsConfig.codexModel;
+  const wsHasGlmApiKey = wsActive && !!wsConfig.glm?.apiKey;
+  const wsHasGlmModel = wsActive && !!wsConfig.glmModel;
   const wsHasReasoningEffort = wsActive && !!wsConfig.reasoningEffort;
 
   // Effective values for display (workspace or local)
@@ -373,14 +385,27 @@ export function SettingsRoute() {
   const wsModelForCurrentProvider =
     effectiveProvider === "openrouter" ? wsConfig?.openrouterModel
     : effectiveProvider === "codex" ? wsConfig?.codexModel
+    : effectiveProvider === "glm" ? wsConfig?.glmModel
     : null;
   const wsHasModelForProvider =
     effectiveProvider === "openrouter" ? wsHasOpenrouterModel
     : effectiveProvider === "codex" ? wsHasCodexModel
+    : effectiveProvider === "glm" ? wsHasGlmModel
     : false;
   const modelOverrideKey: keyof LocalOverrides =
-    effectiveProvider === "openrouter" ? "openrouterModel" : "codexModel";
+    effectiveProvider === "glm" ? "glmModel"
+    : effectiveProvider === "codex" ? "codexModel"
+    : "openrouterModel";
   const isModelCustom = !!localOverrides[modelOverrideKey];
+
+  // For API key field: determine if workspace has an API key for current provider
+  const wsHasApiKeyForProvider =
+    effectiveProvider === "openrouter" ? wsHasApiKey
+    : effectiveProvider === "glm" ? wsHasGlmApiKey
+    : false;
+  const apiKeyOverrideKey: keyof LocalOverrides =
+    effectiveProvider === "glm" ? "glmApiKey" : "apiKey";
+  const isApiKeyCustom = !!localOverrides[apiKeyOverrideKey];
 
   return (
     <div className="mx-auto h-full max-w-[600px] overflow-y-auto p-6">
@@ -433,7 +458,7 @@ export function SettingsRoute() {
           </div>
           {wsHasProvider && !localOverrides.provider ? (
             <div className="flex gap-1">
-              {(["openrouter", "codex"] as const).map((p) => (
+              {(["openrouter", "codex", "glm"] as const).map((p) => (
                 <div
                   key={p}
                   className={`rounded-lg border px-4 py-2 text-[0.929rem] font-medium ${
@@ -448,7 +473,7 @@ export function SettingsRoute() {
             </div>
           ) : (
             <div className="flex gap-1">
-              {(["openrouter", "codex"] as const).map((p) => (
+              {(["openrouter", "codex", "glm"] as const).map((p) => (
                 <button
                   key={p}
                   type="button"
@@ -472,42 +497,75 @@ export function SettingsRoute() {
             {PROVIDER_LABELS[effectiveProvider]} Settings
           </span>
 
-          {/* API Key — only for OpenRouter */}
-          {effectiveProvider === "openrouter" && (
+          {/* API Key — for OpenRouter and GLM */}
+          {(effectiveProvider === "openrouter" || effectiveProvider === "glm") && (
             <label className="flex flex-col gap-1.5">
               <div className="flex items-center gap-2">
                 <span className="text-[0.929rem] font-medium text-text-secondary">API Key</span>
-                {wsHasApiKey && (
+                {wsHasApiKeyForProvider && (
                   <SourceToggle
-                    isCustom={!!localOverrides.apiKey}
-                    onToggle={(c) => toggleOverride("apiKey", c)}
+                    isCustom={isApiKeyCustom}
+                    onToggle={(c) => toggleOverride(apiKeyOverrideKey, c)}
                   />
                 )}
               </div>
-              {wsHasApiKey && !localOverrides.apiKey ? (
+              {wsHasApiKeyForProvider && !isApiKeyCustom ? (
                 <div className="rounded-lg border border-border bg-raised px-3 py-2 text-[0.929rem] text-text-dimmed">
-                  {wsConfig!.openrouter!.apiKey.slice(0, 8)}{"..."}
+                  {effectiveProvider === "openrouter"
+                    ? wsConfig!.openrouter!.apiKey.slice(0, 8)
+                    : wsConfig!.glm!.apiKey.slice(0, 8)}{"..."}
                 </div>
               ) : (
                 <div className="flex gap-2">
                   <input
-                    type={showKey ? "text" : "password"}
-                    value={apiKey}
-                    onChange={(e) => setApiKey(e.target.value)}
-                    placeholder="sk-or-..."
+                    type={(effectiveProvider === "openrouter" ? showKey : showGlmKey) ? "text" : "password"}
+                    value={effectiveProvider === "openrouter" ? apiKey : glmApiKey}
+                    onChange={(e) => effectiveProvider === "openrouter" ? setApiKey(e.target.value) : setGlmApiKey(e.target.value)}
+                    placeholder={effectiveProvider === "openrouter" ? "sk-or-..." : "Z.ai API key"}
                     className="min-w-0 flex-1 rounded-lg border border-border bg-raised px-3 py-2 text-[0.929rem] text-text outline-none transition-colors placeholder:text-text-dimmed focus:border-accent"
                     spellCheck={false}
                   />
                   <button
                     type="button"
-                    onClick={() => setShowKey((s) => !s)}
+                    onClick={() => effectiveProvider === "openrouter" ? setShowKey((s) => !s) : setShowGlmKey((s) => !s)}
                     className="shrink-0 cursor-pointer rounded-lg border border-border bg-raised px-3 py-2 text-[0.857rem] text-text-muted transition-colors hover:bg-hover"
                   >
-                    {showKey ? "Hide" : "Show"}
+                    {(effectiveProvider === "openrouter" ? showKey : showGlmKey) ? "Hide" : "Show"}
                   </button>
                 </div>
               )}
             </label>
+          )}
+
+          {/* Plan Type — GLM only */}
+          {effectiveProvider === "glm" && (
+            <div className="flex flex-col gap-1.5">
+              <span className="text-[0.929rem] font-medium text-text-secondary">Plan Type</span>
+              <div className="flex gap-1">
+                {([
+                  { value: "coding" as const, label: "Coding Plan" },
+                  { value: "standard" as const, label: "Standard" },
+                ]).map((pt) => (
+                  <button
+                    key={pt.value}
+                    type="button"
+                    onClick={() => setGlmPlanType(pt.value)}
+                    className={`cursor-pointer rounded-lg border px-4 py-2 text-[0.929rem] font-medium transition-colors ${
+                      glmPlanType === pt.value
+                        ? "border-accent bg-accent/15 text-accent"
+                        : "border-border bg-raised text-text-muted hover:bg-hover"
+                    }`}
+                  >
+                    {pt.label}
+                  </button>
+                ))}
+              </div>
+              <span className="text-[0.786rem] text-text-dimmed">
+                {glmPlanType === "coding"
+                  ? "Subscription-based endpoint with prompt-based quotas."
+                  : "Pay-as-you-go endpoint with per-token pricing."}
+              </span>
+            </div>
           )}
 
           {/* Model */}
@@ -533,6 +591,12 @@ export function SettingsRoute() {
                 placeholder="e.g. openai/gpt-4.1"
                 className="rounded-lg border border-border bg-raised px-3 py-2 text-[0.929rem] text-text outline-none transition-colors placeholder:text-text-dimmed focus:border-accent"
                 spellCheck={false}
+              />
+            ) : effectiveProvider === "glm" ? (
+              <ModelCombobox
+                value={currentModel}
+                onChange={setProviderModel}
+                options={GLM_MODELS}
               />
             ) : (
               <ModelCombobox

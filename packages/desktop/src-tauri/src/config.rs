@@ -31,6 +31,7 @@ pub struct ProvidersConfig {
     pub openrouter: ProviderConfig,
     pub codex: ProviderConfig,
     pub anthropic: ProviderConfig,
+    pub glm: ProviderConfig,
 }
 
 impl Default for ProvidersConfig {
@@ -44,6 +45,9 @@ impl Default for ProvidersConfig {
             },
             anthropic: ProviderConfig {
                 model: "claude-sonnet-4-6".to_string(),
+            },
+            glm: ProviderConfig {
+                model: "glm-5.1".to_string(),
             },
         }
     }
@@ -59,6 +63,10 @@ pub struct LocalOverrides {
     pub openrouter_model: Option<bool>,
     #[serde(default, rename = "codexModel", skip_serializing_if = "Option::is_none")]
     pub codex_model: Option<bool>,
+    #[serde(default, rename = "glmApiKey", skip_serializing_if = "Option::is_none")]
+    pub glm_api_key: Option<bool>,
+    #[serde(default, rename = "glmModel", skip_serializing_if = "Option::is_none")]
+    pub glm_model: Option<bool>,
     #[serde(default, rename = "reasoningEffort", skip_serializing_if = "Option::is_none")]
     pub reasoning_effort: Option<bool>,
 }
@@ -66,6 +74,10 @@ pub struct LocalOverrides {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
     pub api_key: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub glm_api_key: Option<String>,
+    #[serde(default, rename = "glmPlanType", skip_serializing_if = "Option::is_none")]
+    pub glm_plan_type: Option<String>,
     #[serde(default)]
     pub provider: Option<String>,
     #[serde(default, rename = "reasoningEffort")]
@@ -131,6 +143,8 @@ fn default_config(backend_url: &str) -> AppConfig {
     );
     AppConfig {
         api_key: String::new(),
+        glm_api_key: None,
+        glm_plan_type: None,
         provider: None,
         reasoning_effort: None,
         providers: ProvidersConfig::default(),
@@ -200,13 +214,15 @@ mod tests {
             "providers": {
                 "openrouter": { "model": "openai/gpt-4.1" },
                 "codex": { "model": "gpt-5.4" },
-                "anthropic": { "model": "claude-sonnet-4-6" }
+                "anthropic": { "model": "claude-sonnet-4-6" },
+                "glm": { "model": "glm-5.1" }
             }
         }"#;
         let config: AppConfig = serde_json::from_str(json).unwrap();
         assert_eq!(config.api_key, "sk-test-123");
         assert_eq!(config.providers.openrouter.model, "openai/gpt-4.1");
         assert_eq!(config.providers.codex.model, "gpt-5.4");
+        assert_eq!(config.providers.glm.model, "glm-5.1");
     }
 
     #[test]
@@ -217,7 +233,7 @@ mod tests {
 
     #[test]
     fn parse_missing_api_key() {
-        let json = r#"{"providers": {"openrouter": {"model": "m"}, "codex": {"model": "m"}, "anthropic": {"model": "m"}}}"#;
+        let json = r#"{"providers": {"openrouter": {"model": "m"}, "codex": {"model": "m"}, "anthropic": {"model": "m"}, "glm": {"model": "m"}}}"#;
         let result = serde_json::from_str::<AppConfig>(json);
         assert!(result.is_err());
     }
@@ -304,6 +320,7 @@ mod tests {
         assert_eq!(config.providers.openrouter.model, "openai/gpt-4.1");
         assert_eq!(config.providers.codex.model, "gpt-5.4");
         assert_eq!(config.providers.anthropic.model, "claude-sonnet-4-6");
+        assert_eq!(config.providers.glm.model, "glm-5.1");
         let srv = &config.mcp_servers["thechat"];
         assert_eq!(srv.url.as_deref(), Some("http://localhost:3000/mcp"));
         assert!(srv.command.is_none());

@@ -1,5 +1,6 @@
 import { streamCompletion } from "./openrouter";
 import { streamCodexCompletion } from "./codex";
+import { streamGlmCompletion } from "./glm";
 import { truncateToolResult } from "./truncate";
 import { isOverflow, compactMessages } from "./compaction";
 import { error as logError, warn as logWarn, debug as logDebug, formatError } from "../log";
@@ -46,6 +47,7 @@ function callProvider(
   codexTurnId?: string,
 ): Promise<StreamResult> {
   const provider = options.provider === "codex" ? "codex" as const
+    : options.provider === "glm" ? "glm" as const
     : "openrouter" as const;
 
   // Tag any error events from the Rust streaming layer with the provider
@@ -67,6 +69,18 @@ function callProvider(
       convId: options.convId,
       turnId: codexTurnId,
       onEvents: taggedOnEvents,
+    });
+  }
+  if (provider === "glm") {
+    return streamGlmCompletion({
+      apiKey: options.glmApiKey ?? options.apiKey,
+      model: options.model,
+      messages,
+      params: options.params,
+      tools,
+      signal: options.signal,
+      onEvents: taggedOnEvents,
+      planType: options.glmPlanType,
     });
   }
   return streamCompletion({

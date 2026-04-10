@@ -78,8 +78,10 @@ export interface ChatLoopOptions {
   signal?: AbortSignal;
   cwd?: string;
   convId?: string;
-  provider?: "openrouter" | "codex";
+  provider?: "openrouter" | "codex" | "glm";
   codexAuth?: CodexAuth;
+  glmApiKey?: string;
+  glmPlanType?: "coding" | "standard";
   getQueuedMessages?: () => Array<{ id: string; content: string }>;
   onEvents: (events: StreamEvent[]) => void;
 }

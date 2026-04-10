@@ -47,8 +47,9 @@ export interface McpServerConfig {
   disabled?: boolean;
 }
 
-export type Provider = "openrouter" | "codex";
+export type Provider = "openrouter" | "codex" | "glm";
 export type ReasoningEffort = "low" | "medium" | "high" | "xhigh";
+export type GlmPlanType = "coding" | "standard";
 
 export interface ProviderConfig {
   model: string;
@@ -57,6 +58,7 @@ export interface ProviderConfig {
 export interface ProvidersConfig {
   openrouter: ProviderConfig;
   codex: ProviderConfig;
+  glm: ProviderConfig;
 }
 
 export interface LocalOverrides {
@@ -64,11 +66,15 @@ export interface LocalOverrides {
   apiKey?: boolean;
   openrouterModel?: boolean;
   codexModel?: boolean;
+  glmApiKey?: boolean;
+  glmModel?: boolean;
   reasoningEffort?: boolean;
 }
 
 export interface AppConfig {
   api_key: string;
+  glm_api_key?: string;
+  glmPlanType?: GlmPlanType;
   provider?: Provider;
   reasoningEffort?: ReasoningEffort;
   providers: ProvidersConfig;
@@ -197,7 +203,7 @@ export type StreamEvent =
   | { type: "queued-message-consumed"; id: string; content: string }
   | { type: "compaction"; summary: string }
   | { type: "finish"; usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number } }
-  | { type: "error"; error: string; provider?: "openrouter" | "codex"; statusCode?: number };
+  | { type: "error"; error: string; provider?: "openrouter" | "codex" | "glm"; statusCode?: number };
 
 // -- Stream Result (returned from streamCompletion) --
 
@@ -293,7 +299,7 @@ export type AppNotification =
 
 // -- Workspace Config Types --
 
-export type WorkspaceProvider = "openrouter" | "codex";
+export type WorkspaceProvider = "openrouter" | "codex" | "glm";
 
 export interface WorkspaceConfig {
   workspaceId: string;
@@ -301,6 +307,8 @@ export interface WorkspaceConfig {
   openrouter: { apiKey: string } | null;
   openrouterModel: string | null;
   codexModel: string | null;
+  glm: { apiKey: string } | null;
+  glmModel: string | null;
   reasoningEffort: ReasoningEffort | null;
   updatedAt: string;
 }

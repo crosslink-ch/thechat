@@ -35,12 +35,23 @@ export const CODEX_MODELS: ModelInfo[] = [
 ];
 
 // ---------------------------------------------------------------------------
+// GLM (Z.ai) models
+// ---------------------------------------------------------------------------
+
+export const GLM_MODELS: ModelInfo[] = [
+  { id: "glm-5.1", name: "GLM-5.1", maxOutputTokens: 131_072, contextWindow: 128_000 },
+  { id: "glm-5-turbo", name: "GLM-5 Turbo", maxOutputTokens: 16_384, contextWindow: 128_000 },
+  { id: "glm-4.7", name: "GLM-4.7", maxOutputTokens: 16_384, contextWindow: 128_000 },
+  { id: "glm-4.5-air", name: "GLM-4.5 Air", maxOutputTokens: 16_384, contextWindow: 128_000 },
+];
+
+// ---------------------------------------------------------------------------
 // Lookup
 // ---------------------------------------------------------------------------
 
 /** Hardcoded models only — used for UI dropdowns (settings page). */
 const MODEL_INDEX = new Map<string, ModelInfo>();
-for (const m of CODEX_MODELS) {
+for (const m of [...CODEX_MODELS, ...GLM_MODELS]) {
   MODEL_INDEX.set(m.id, m);
 }
 

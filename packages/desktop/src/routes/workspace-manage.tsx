@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import type { WorkspaceConfig, WorkspaceProvider, ReasoningEffort } from "@thechat/shared";
-import { CODEX_MODELS } from "../core/models";
+import { CODEX_MODELS, GLM_MODELS } from "../core/models";
 import { useAuthStore } from "../stores/auth";
 import { useWorkspacesStore } from "../stores/workspaces";
 import { api } from "../lib/api";
@@ -14,6 +14,7 @@ import { ModelCombobox } from "../components/ModelCombobox";
 const PROVIDER_LABELS: Record<WorkspaceProvider, string> = {
   openrouter: "OpenRouter",
   codex: "Codex",
+  glm: "GLM",
 };
 
 const REASONING_EFFORTS: { value: ReasoningEffort; label: string }[] = [
@@ -43,6 +44,9 @@ export function WorkspaceManageRoute() {
   const [showKey, setShowKey] = useState(false);
   const [openrouterModel, setOpenrouterModel] = useState("openai/gpt-4.1");
   const [codexModel, setCodexModel] = useState("gpt-5.4");
+  const [glmApiKey, setGlmApiKey] = useState("");
+  const [glmModel, setGlmModel] = useState("glm-5.1");
+  const [showGlmKey, setShowGlmKey] = useState(false);
   const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffort>("xhigh");
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState<"idle" | "saved" | "error">("idle");
@@ -65,6 +69,8 @@ export function WorkspaceManageRoute() {
         if (cfg.openrouter) setApiKey(cfg.openrouter.apiKey);
         if (cfg.openrouterModel) setOpenrouterModel(cfg.openrouterModel);
         if (cfg.codexModel) setCodexModel(cfg.codexModel);
+        if (cfg.glm) setGlmApiKey(cfg.glm.apiKey);
+        if (cfg.glmModel) setGlmModel(cfg.glmModel);
         if (cfg.reasoningEffort) setReasoningEffort(cfg.reasoningEffort);
       } catch {
         // Config doesn't exist yet, use defaults
@@ -115,11 +121,21 @@ export function WorkspaceManageRoute() {
         if (error) throw new Error((error as any).error || "Failed to save OpenRouter config");
       }
 
+      // Save GLM API key if present
+      if (glmApiKey.trim()) {
+        const { error } = await api.workspaces({ id: activeWorkspace.id }).config.glm.put(
+          { apiKey: glmApiKey.trim() },
+          auth(token),
+        );
+        if (error) throw new Error((error as any).error || "Failed to save GLM config");
+      }
+
       // Save model + reasoning settings
       const { error } = await api.workspaces({ id: activeWorkspace.id }).config.settings.put(
         {
           openrouterModel: openrouterModel || null,
           codexModel: codexModel || null,
+          glmModel: glmModel || null,
           reasoningEffort,
         },
         auth(token),
@@ -183,7 +199,7 @@ export function WorkspaceManageRoute() {
         <div className="flex flex-col gap-1.5">
           <span className="text-[0.929rem] font-medium text-text-secondary">Provider</span>
           <div className="flex gap-1">
-            {(["openrouter", "codex"] as const).map((p) => (
+            {(["openrouter", "codex", "glm"] as const).map((p) => (
               <button
                 key={p}
                 type="button"
@@ -267,6 +283,45 @@ export function WorkspaceManageRoute() {
               <p className="text-[0.786rem] text-text-dimmed">
                 Each user must connect their own ChatGPT account from their local settings.
               </p>
+            </div>
+
+            {/* GLM settings */}
+            <div className={`col-start-1 row-start-1 flex flex-col gap-4 ${
+              provider !== "glm" ? "invisible pointer-events-none" : ""
+            }`}>
+              <label className="flex flex-col gap-1.5">
+                <span className="text-[0.929rem] font-medium text-text-secondary">API Key</span>
+                <div className="flex gap-2">
+                  <input
+                    type={showGlmKey ? "text" : "password"}
+                    value={glmApiKey}
+                    onChange={(e) => setGlmApiKey(e.target.value)}
+                    placeholder="Z.ai API key"
+                    disabled={!isAdmin}
+                    className="min-w-0 flex-1 rounded-lg border border-border bg-raised px-3 py-2 text-[0.929rem] text-text outline-none transition-colors placeholder:text-text-dimmed focus:border-accent disabled:cursor-not-allowed disabled:opacity-50"
+                    spellCheck={false}
+                    tabIndex={provider !== "glm" ? -1 : undefined}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowGlmKey((s) => !s)}
+                    className="shrink-0 cursor-pointer rounded-lg border border-border bg-raised px-3 py-2 text-[0.857rem] text-text-muted transition-colors hover:bg-hover"
+                    tabIndex={provider !== "glm" ? -1 : undefined}
+                  >
+                    {showGlmKey ? "Hide" : "Show"}
+                  </button>
+                </div>
+              </label>
+
+              <div className="flex flex-col gap-1.5">
+                <span className="text-[0.929rem] font-medium text-text-secondary">Model</span>
+                <ModelCombobox
+                  value={glmModel}
+                  onChange={setGlmModel}
+                  options={GLM_MODELS}
+                  disabled={provider !== "glm"}
+                />
+              </div>
             </div>
           </div>
         </div>

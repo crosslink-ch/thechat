@@ -77,6 +77,11 @@ export async function getEffectiveConfig(): Promise<EffectiveConfig> {
     effective.api_key = wsConfig.openrouter.apiKey;
   }
 
+  // Merge GLM API key
+  if (!overrides.glmApiKey && wsConfig.glm?.apiKey) {
+    effective.glm_api_key = wsConfig.glm.apiKey;
+  }
+
   // Merge models
   effective.providers = { ...effective.providers };
   if (!overrides.openrouterModel && wsConfig.openrouterModel) {
@@ -84,6 +89,9 @@ export async function getEffectiveConfig(): Promise<EffectiveConfig> {
   }
   if (!overrides.codexModel && wsConfig.codexModel) {
     effective.providers.codex = { ...effective.providers.codex, model: wsConfig.codexModel };
+  }
+  if (!overrides.glmModel && wsConfig.glmModel) {
+    effective.providers.glm = { ...effective.providers.glm, model: wsConfig.glmModel };
   }
 
   // Merge reasoning effort

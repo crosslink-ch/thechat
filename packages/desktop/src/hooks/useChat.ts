@@ -353,6 +353,8 @@ export function useChat(options?: UseChatOptions) {
         if (provider === "codex") {
           codexAuth = await useCodexAuthStore.getState().getValidToken();
         }
+        const glmApiKey = provider === "glm" ? config.glm_api_key : undefined;
+        const glmPlanType = provider === "glm" ? config.glmPlanType : undefined;
 
         const getQueuedMessages = () => {
           const msgs = queuedMessagesRef.current;
@@ -379,8 +381,10 @@ export function useChat(options?: UseChatOptions) {
           signal: controller.signal,
           cwd: convProjectDir || undefined,
           convId: streamConvId!,
-          provider: codexAuth ? "codex" : "openrouter",
+          provider: codexAuth ? "codex" : provider,
           codexAuth,
+          glmApiKey,
+          glmPlanType,
           getQueuedMessages,
           onEvents,
         });
