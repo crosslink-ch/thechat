@@ -162,13 +162,28 @@ export function AgentChatRoute() {
     setAgentChatProjectDir(projectDir);
   }, [conversation?.title, projectDir]);
 
-  // Scroll to bottom on conversation load (instant, no smooth animation)
+  // Scroll to the start of the last assistant message on conversation load
+  // (instant, no smooth animation). Falls back to bottom if there are no
+  // assistant messages yet.
   const scrolledForConvRef = useRef<string | null>(null);
   useEffect(() => {
     if (conversation?.id && conversation.id !== scrolledForConvRef.current && messages.length > 0) {
       scrolledForConvRef.current = conversation.id;
       const el = scrollContainerRef.current;
-      if (el) el.scrollTo({ top: el.scrollHeight, behavior: "instant" as ScrollBehavior });
+      if (!el) return;
+      const assistantEls = el.querySelectorAll<HTMLElement>(
+        '[data-testid="chat-message-assistant"]',
+      );
+      const lastAssistant = assistantEls[assistantEls.length - 1];
+      if (lastAssistant) {
+        const top =
+          el.scrollTop +
+          lastAssistant.getBoundingClientRect().top -
+          el.getBoundingClientRect().top;
+        el.scrollTo({ top, behavior: "instant" as ScrollBehavior });
+      } else {
+        el.scrollTo({ top: el.scrollHeight, behavior: "instant" as ScrollBehavior });
+      }
     }
   }, [conversation?.id, messages.length]);
 
