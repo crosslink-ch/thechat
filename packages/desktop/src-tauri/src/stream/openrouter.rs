@@ -62,8 +62,16 @@ pub(super) fn parse_openrouter_data(
         None => return,
     };
 
-    // Reasoning (delta.reasoning)
+    // Reasoning (delta.reasoning — OpenRouter format)
     if let Some(r) = delta.get("reasoning").and_then(|v| v.as_str()) {
+        acc_reasoning.push_str(r);
+        events.push(StreamEvent::ReasoningDelta {
+            text: r.to_string(),
+        });
+    }
+
+    // Reasoning (delta.reasoning_content — GLM format)
+    if let Some(r) = delta.get("reasoning_content").and_then(|v| v.as_str()) {
         acc_reasoning.push_str(r);
         events.push(StreamEvent::ReasoningDelta {
             text: r.to_string(),
@@ -206,6 +214,19 @@ mod tests {
             events[0],
             StreamEvent::ReasoningDelta {
                 text: "Think".into()
+            }
+        );
+    }
+
+    #[test]
+    fn test_parse_glm_reasoning_content() {
+        let (_, reasoning, _, _, events) =
+            parse_or(r#"{"choices":[{"delta":{"reasoning_content":"GLM thinks"}}]}"#);
+        assert_eq!(reasoning, "GLM thinks");
+        assert_eq!(
+            events[0],
+            StreamEvent::ReasoningDelta {
+                text: "GLM thinks".into()
             }
         );
     }

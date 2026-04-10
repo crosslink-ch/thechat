@@ -608,7 +608,8 @@ export function SettingsRoute() {
           </div>
         </div>
 
-        {/* Reasoning Effort */}
+        {/* Reasoning Effort — GLM only supports binary on/off (always on), so hide for GLM */}
+        {provider !== "glm" && (
         <div className="flex flex-col gap-1.5">
           <div className="flex items-center gap-2">
             <span className="text-[0.929rem] font-medium text-text-secondary">Reasoning Effort</span>
@@ -653,6 +654,7 @@ export function SettingsRoute() {
             </div>
           )}
         </div>
+        )}
 
         {/* MCP Servers */}
         <McpServersSection config={config} onConfigChange={setConfig} />

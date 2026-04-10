@@ -326,7 +326,8 @@ export function WorkspaceManageRoute() {
           </div>
         </div>
 
-        {/* Reasoning Effort */}
+        {/* Reasoning Effort — hidden for GLM (always-on thinking, no levels) */}
+        {provider !== "glm" && (
         <div className="flex flex-col gap-1.5">
           <span className="text-[0.929rem] font-medium text-text-secondary">Reasoning Effort</span>
           <div className="flex gap-1">
@@ -347,6 +348,7 @@ export function WorkspaceManageRoute() {
             ))}
           </div>
         </div>
+        )}
 
         {/* Actions */}
         {isAdmin && (
