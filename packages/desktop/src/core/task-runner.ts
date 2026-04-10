@@ -63,6 +63,8 @@ export async function runTask(prompt: string, signal?: AbortSignal, convId?: str
     systemPromptParts.push(`Working directory: ${resolvedCwd}`);
   }
 
+  const resolvedProvider = codexAuth ? "codex" as const : provider === "glm" ? "glm" as const : "openrouter" as const;
+
   await runChatLoop({
     apiKey: appConfig.api_key,
     model: appConfig.providers[provider].model,
@@ -73,8 +75,10 @@ export async function runTask(prompt: string, signal?: AbortSignal, convId?: str
     signal,
     cwd: resolvedCwd,
     convId,
-    provider: codexAuth ? "codex" : "openrouter",
+    provider: resolvedProvider,
     codexAuth,
+    glmApiKey: provider === "glm" ? appConfig.glm_api_key : undefined,
+    glmPlanType: provider === "glm" ? appConfig.glmPlanType : undefined,
     onEvents,
   });
 
