@@ -12,8 +12,10 @@
 // inheritance → send chat) goes through the real UI.
 
 const API_URL = "http://localhost:3000";
-const OPENROUTER_API_KEY =
-  "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";
+const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
+if (!OPENROUTER_API_KEY) {
+  throw new Error("OPENROUTER_API_KEY env var is required — set it in .env");
+}
 const MODEL = "qwen/qwen3.5-35b-a3b";
 
 describe("Workspace shared config", function () {

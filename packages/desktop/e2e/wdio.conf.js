@@ -7,6 +7,21 @@ import { fileURLToPath } from "node:url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const packageDir = path.resolve(__dirname, "..");
 
+// Load .env from monorepo root (no dotenv dependency needed).
+// Existing env vars take precedence — this only fills in missing ones.
+const envFile = path.resolve(packageDir, "../../.env");
+if (fs.existsSync(envFile)) {
+  for (const line of fs.readFileSync(envFile, "utf8").split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    const eq = trimmed.indexOf("=");
+    if (eq === -1) continue;
+    const key = trimmed.slice(0, eq);
+    const val = trimmed.slice(eq + 1);
+    if (!process.env[key]) process.env[key] = val;
+  }
+}
+
 const TAURI_DRIVER_PORT = 4444;
 
 let tauriDriver;
