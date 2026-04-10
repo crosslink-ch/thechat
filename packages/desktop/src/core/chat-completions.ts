@@ -50,7 +50,12 @@ async function buildRequest(options: ChatCompletionsOptions): Promise<{
   if (params?.stop !== undefined) bodyObj.stop = params.stop;
   if (params?.tool_choice !== undefined) bodyObj.tool_choice = params.tool_choice;
   if (params?.response_format !== undefined) bodyObj.response_format = params.response_format;
-  if (params?.reasoning_effort !== undefined) bodyObj.reasoning_effort = params.reasoning_effort;
+  // GLM uses a binary `thinking` param; other providers use `reasoning_effort`
+  if (options.providerTag === "glm") {
+    bodyObj.thinking = { type: "enabled" };
+  } else {
+    if (params?.reasoning_effort !== undefined) bodyObj.reasoning_effort = params.reasoning_effort;
+  }
   if (params?.seed !== undefined) bodyObj.seed = params.seed;
   if (params?.provider !== undefined) bodyObj.provider = params.provider;
 
