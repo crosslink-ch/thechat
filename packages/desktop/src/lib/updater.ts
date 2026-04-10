@@ -19,15 +19,13 @@ export async function checkForUpdates(): Promise<Update | null> {
   }
 }
 
-export async function installUpdate(
+export async function downloadUpdate(
   update: Update,
   onEvent?: (event: DownloadEvent) => void,
 ): Promise<void> {
   try {
-    const { relaunch } = await import("@tauri-apps/plugin-process");
-
-    logInfo(`[updater] Installing update ${update.currentVersion} -> ${update.version}`);
-    await update.downloadAndInstall((event) => {
+    logInfo(`[updater] Downloading update ${update.currentVersion} -> ${update.version}`);
+    await update.download((event) => {
       if (event.event === "Started") {
         logInfo(
           `[updater] Download started for ${update.version} (${event.data.contentLength ?? "unknown"} bytes)`,
@@ -40,8 +38,18 @@ export async function installUpdate(
 
       onEvent?.(event);
     });
+  } catch (error) {
+    logError(`[updater] Update download failed: ${formatError(error)}`);
+    throw error instanceof Error ? error : new Error("Update download failed");
+  }
+}
 
-    logInfo(`[updater] Update ${update.version} installed, relaunching app`);
+export async function installAndRelaunch(update: Update): Promise<void> {
+  try {
+    const { relaunch } = await import("@tauri-apps/plugin-process");
+
+    logInfo(`[updater] Installing update ${update.version} and relaunching`);
+    await update.install();
     await relaunch();
   } catch (error) {
     logError(`[updater] Update install failed: ${formatError(error)}`);
