@@ -35,7 +35,7 @@ function McpConfigDialogInner() {
   // HTTP fields
   const [url, setUrl] = useState("");
   const [useOAuth, setUseOAuth] = useState(false);
-  const [authHeader, setAuthHeader] = useState("");
+  const [customHeaders, setCustomHeaders] = useState("");
 
   // Stdio fields
   const [command, setCommand] = useState("");
@@ -113,11 +113,23 @@ function McpConfigDialogInner() {
       };
       await saveAndInitialize(serverName, serverConfig, credentials.accessToken);
     } else {
-      // Direct HTTP — optional auth header
+      // Direct HTTP — optional custom headers
       const headers: Record<string, string> = {};
-      const trimmedAuth = authHeader.trim();
-      if (trimmedAuth) {
-        headers["Authorization"] = trimmedAuth;
+      for (const line of customHeaders.split("\n")) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        const colonIdx = trimmed.indexOf(":");
+        if (colonIdx === -1) {
+          setError(`Invalid header (missing ':'): ${trimmed}`);
+          return;
+        }
+        const key = trimmed.slice(0, colonIdx).trim();
+        const value = trimmed.slice(colonIdx + 1).trim();
+        if (!key) {
+          setError(`Invalid header (empty name): ${trimmed}`);
+          return;
+        }
+        headers[key] = value;
       }
       const serverConfig: McpServerConfig = { url: trimmedUrl, headers };
       await saveAndInitialize(serverName, serverConfig, null);
@@ -297,20 +309,20 @@ function McpConfigDialogInner() {
                 <div className="mb-3.5">
                   <label
                     className="mb-1.5 block text-[0.857rem] font-medium text-text-muted"
-                    htmlFor="mcp-auth-header"
+                    htmlFor="mcp-headers"
                   >
-                    Authorization Header
-                    <span className="ml-1 font-normal text-text-dimmed">(optional)</span>
+                    Headers
+                    <span className="ml-1 font-normal text-text-dimmed">(Name: value, one per line)</span>
                   </label>
-                  <input
-                    id="mcp-auth-header"
-                    className="block w-full rounded-lg border border-border bg-base px-3.5 py-2.5 font-[inherit] text-[0.929rem] text-text outline-none transition-colors duration-150 placeholder:text-text-placeholder focus:border-border-focus"
-                    type="text"
-                    placeholder="Bearer sk-..."
-                    value={authHeader}
-                    onChange={(e) => setAuthHeader(e.target.value)}
+                  <textarea
+                    id="mcp-headers"
+                    className="block max-h-[120px] min-h-[48px] w-full resize-y rounded-lg border border-border bg-base px-3.5 py-2.5 font-[inherit] text-[0.929rem] text-text outline-none transition-colors duration-150 placeholder:text-text-placeholder focus:border-border-focus"
+                    placeholder={"Authorization: Bearer sk-...\nx-api-key: your-key"}
+                    value={customHeaders}
+                    onChange={(e) => setCustomHeaders(e.target.value)}
                     disabled={isBusy}
                     spellCheck={false}
+                    rows={2}
                   />
                 </div>
               )}

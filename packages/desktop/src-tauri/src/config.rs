@@ -141,6 +141,19 @@ fn default_config(backend_url: &str) -> AppConfig {
             disabled: false,
         },
     );
+    mcp_servers.insert(
+        "exa".to_string(),
+        McpServerConfig {
+            command: None,
+            args: vec![],
+            env: HashMap::new(),
+            url: Some("https://mcp.exa.ai/mcp".to_string()),
+            headers: HashMap::new(),
+            requires_auth: false,
+            lazy: false,
+            disabled: false,
+        },
+    );
     AppConfig {
         api_key: String::new(),
         glm_api_key: None,
@@ -276,6 +289,20 @@ mod tests {
     }
 
     #[test]
+    fn parse_http_mcp_server_custom_headers() {
+        let json = r#"{
+            "api_key": "k",
+            "mcpServers": {
+                "exa": { "url": "https://mcp.exa.ai/mcp", "headers": {"x-api-key": "exa-key-123"} }
+            }
+        }"#;
+        let config: AppConfig = serde_json::from_str(json).unwrap();
+        let srv = &config.mcp_servers["exa"];
+        assert_eq!(srv.url.as_deref(), Some("https://mcp.exa.ai/mcp"));
+        assert_eq!(srv.headers.get("x-api-key").unwrap(), "exa-key-123");
+    }
+
+    #[test]
     fn parse_mcp_server_no_transport_deserializes() {
         let json = r#"{
             "api_key": "k",
@@ -326,6 +353,14 @@ mod tests {
         assert!(srv.command.is_none());
         assert!(srv.requires_auth, "thechat MCP server should require auth");
         assert!(srv.lazy, "thechat MCP server should be lazy");
+
+        let exa = &config.mcp_servers["exa"];
+        assert_eq!(exa.url.as_deref(), Some("https://mcp.exa.ai/mcp"));
+        assert!(exa.command.is_none());
+        assert!(!exa.requires_auth, "exa should not require auth");
+        assert!(!exa.lazy, "exa should not be lazy");
+        assert!(!exa.disabled, "exa should be enabled by default");
+        assert!(exa.headers.is_empty(), "exa should have no headers by default (free tier)");
     }
 
     #[test]
@@ -369,6 +404,10 @@ mod tests {
         assert_eq!(
             parsed.mcp_servers["thechat"].url.as_deref(),
             Some("http://localhost:3000/mcp")
+        );
+        assert_eq!(
+            parsed.mcp_servers["exa"].url.as_deref(),
+            Some("https://mcp.exa.ai/mcp")
         );
     }
 }
