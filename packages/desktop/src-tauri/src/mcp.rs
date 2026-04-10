@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
@@ -71,6 +72,34 @@ fn shell_escape(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
 }
 
+// -- Bundled Node.js resolution --
+
+/// Resolve the bundled Node.js bin directory from the app's resource directory.
+/// Returns `Some(path)` if the bundled `node` binary exists, `None` otherwise.
+pub fn bundled_node_bin_dir<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Option<PathBuf> {
+    let resource_dir = app.path().resource_dir().ok()?;
+    #[cfg(not(windows))]
+    let bin_dir = resource_dir.join("resources/node/bin");
+    #[cfg(windows)]
+    let bin_dir = resource_dir.join("resources/node");
+
+    #[cfg(not(windows))]
+    let node_bin = bin_dir.join("node");
+    #[cfg(windows)]
+    let node_bin = bin_dir.join("node.exe");
+
+    if node_bin.exists() {
+        tracing::debug!(path = %bin_dir.display(), "found bundled Node.js");
+        Some(bin_dir)
+    } else {
+        tracing::debug!(
+            expected = %node_bin.display(),
+            "bundled Node.js not found"
+        );
+        None
+    }
+}
+
 // -- McpClient: manages a single MCP server --
 
 enum Transport {
@@ -134,6 +163,7 @@ impl McpClient {
         args: &[String],
         shell_env: &HashMap<String, String>,
         config_env: &HashMap<String, String>,
+        bundled_node_bin: Option<&Path>,
     ) -> Result<Self, String> {
         let mut cmd;
 
@@ -168,6 +198,23 @@ impl McpClient {
         for (k, v) in config_env {
             cmd.env(k, v);
         }
+
+        // Append the bundled Node.js bin directory to PATH as a fallback.
+        // System-installed node/npx/npm (earlier in PATH) take precedence;
+        // the bundled copy is only used when nothing is found on the system.
+        if let Some(node_bin) = bundled_node_bin {
+            let effective_path = config_env
+                .get("PATH")
+                .or_else(|| shell_env.get("PATH"))
+                .cloned()
+                .unwrap_or_default();
+            let sep = if cfg!(windows) { ";" } else { ":" };
+            cmd.env(
+                "PATH",
+                format!("{}{}{}", effective_path, sep, node_bin.display()),
+            );
+        }
+
         let mut child = cmd
             .spawn()
             .map_err(|e| format!("Failed to spawn MCP server '{}': {}", command, e))?;
@@ -551,6 +598,7 @@ fn init_server(
     config: &McpServerConfig,
     auth_token: Option<&str>,
     shell_env: &HashMap<String, String>,
+    bundled_node_bin: Option<PathBuf>,
 ) -> Result<(McpClient, Vec<McpToolInfo>), String> {
     let (tx, rx) = std::sync::mpsc::channel();
 
@@ -560,7 +608,8 @@ fn init_server(
     let env = shell_env.clone();
 
     std::thread::spawn(move || {
-        let result = init_server_inner(&name, &cfg, token.as_deref(), &env);
+        let result =
+            init_server_inner(&name, &cfg, token.as_deref(), &env, bundled_node_bin.as_deref());
         // If the receiver timed out and dropped, send will fail — that's fine.
         let _ = tx.send(result);
     });
@@ -579,6 +628,7 @@ fn init_server_inner(
     config: &McpServerConfig,
     auth_token: Option<&str>,
     shell_env: &HashMap<String, String>,
+    bundled_node_bin: Option<&Path>,
 ) -> Result<(McpClient, Vec<McpToolInfo>), String> {
     let mut client = if let Some(url) = &config.url {
         let mut c = McpClient::connect_http(url, &config.headers)?;
@@ -587,7 +637,14 @@ fn init_server_inner(
         }
         c
     } else if let Some(command) = &config.command {
-        McpClient::spawn(server_name, command, &config.args, shell_env, &config.env)?
+        McpClient::spawn(
+            server_name,
+            command,
+            &config.args,
+            shell_env,
+            &config.env,
+            bundled_node_bin,
+        )?
     } else {
         return Err("MCP server must have either 'command' (stdio) or 'url' (HTTP)".into());
     };
@@ -660,6 +717,7 @@ pub async fn mcp_initialize<R: tauri::Runtime>(
 
     let manager = Arc::clone(&manager);
     let env_vars = shell_env.vars.clone();
+    let bundled_node = bundled_node_bin_dir(&app);
 
     for (server_name, server_config) in config.mcp_servers {
         if server_config.requires_auth {
@@ -674,11 +732,12 @@ pub async fn mcp_initialize<R: tauri::Runtime>(
         let manager = Arc::clone(&manager);
         let app = app.clone();
         let env = env_vars.clone();
+        let node = bundled_node.clone();
 
         std::thread::spawn(move || {
             tracing::info!(server = %server_name, "initializing MCP server");
 
-            match init_server(&server_name, &server_config, None, &env) {
+            match init_server(&server_name, &server_config, None, &env, node) {
                 Ok((client, tools)) => {
                     tracing::info!(
                         server = %server_name,
@@ -724,6 +783,7 @@ pub async fn mcp_initialize_authed<R: tauri::Runtime>(
         .await
         .map_err(|e| format!("Task join error: {}", e))??;
     let env_vars = shell_env.vars.clone();
+    let bundled_node = bundled_node_bin_dir(&app);
 
     for (server_name, server_config) in config.mcp_servers {
         if !server_config.requires_auth {
@@ -757,11 +817,12 @@ pub async fn mcp_initialize_authed<R: tauri::Runtime>(
         let manager = Arc::clone(&manager);
         let app = app.clone();
         let env = env_vars.clone();
+        let node = bundled_node.clone();
 
         std::thread::spawn(move || {
             tracing::info!(server = %server_name, "initializing auth MCP server");
 
-            match init_server(&server_name, &server_config, Some(&token), &env) {
+            match init_server(&server_name, &server_config, Some(&token), &env, node) {
                 Ok((client, tools)) => {
                     tracing::info!(
                         server = %server_name,
@@ -810,6 +871,7 @@ pub async fn mcp_initialize_servers<R: tauri::Runtime>(
     let config = load_config(&config_dir)?;
     let manager = Arc::clone(&manager);
     let env_vars = shell_env.vars.clone();
+    let bundled_node = bundled_node_bin_dir(&app);
 
     // Run blocking I/O (process spawn, handshake, list_tools) off the main thread.
     tokio::task::spawn_blocking(move || {
@@ -915,7 +977,8 @@ pub async fn mcp_initialize_servers<R: tauri::Runtime>(
 
             tracing::info!(server = %name, "lazily initializing MCP server");
 
-            let init_result = init_server(name, server_config, auth_token, &env_vars);
+            let init_result =
+                init_server(name, server_config, auth_token, &env_vars, bundled_node.clone());
 
             // Notify waiters regardless of success/failure, then clean up
             {
@@ -1212,6 +1275,7 @@ mod tests {
             ],
             &process_env,
             &HashMap::new(),
+            None,
         )
         .expect("spawn stdio MCP server");
         client.initialize().expect("initialize stdio server");
@@ -1400,7 +1464,7 @@ mod tests {
 
         let process_env: HashMap<String, String> = std::env::vars().collect();
         let (mut client, tools) =
-            init_server("test-stdio", &config, None, &process_env).expect("init_server");
+            init_server("test-stdio", &config, None, &process_env, None).expect("init_server");
         assert!(!tools.is_empty(), "should discover at least one tool");
         assert!(
             tools.iter().all(|t| t.server == "test-stdio"),
@@ -1489,7 +1553,7 @@ mod tests {
 
         let process_env: HashMap<String, String> = std::env::vars().collect();
         let (mut client, tools) =
-            init_server("test-http", &config, None, &process_env).expect("init_server");
+            init_server("test-http", &config, None, &process_env, None).expect("init_server");
         assert!(!tools.is_empty(), "should discover at least one tool");
         assert!(
             tools.iter().all(|t| t.server == "test-http"),
@@ -1525,7 +1589,7 @@ mod tests {
             lazy: false,
         };
         let process_env: HashMap<String, String> = std::env::vars().collect();
-        let result = init_server("no-transport", &config, None, &process_env);
+        let result = init_server("no-transport", &config, None, &process_env, None);
         match result {
             Ok(_) => panic!("expected error for config with no transport"),
             Err(e) => assert!(
