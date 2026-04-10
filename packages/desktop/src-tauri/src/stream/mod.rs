@@ -348,6 +348,7 @@ async fn run_http_stream(
         let label = match provider {
             "codex" => "Codex",
             "anthropic" => "Anthropic",
+            "glm" => "GLM",
             _ => "OpenRouter",
         };
         return Err(StreamError {
@@ -426,7 +427,7 @@ async fn run_http_stream(
 
             let mut line_events = Vec::new();
             match provider {
-                "openrouter" => parse_openrouter_data(
+                "openrouter" | "glm" => parse_openrouter_data(
                     data,
                     &mut acc_text,
                     &mut acc_reasoning,
@@ -490,7 +491,7 @@ async fn run_http_stream(
     // Finalize tool calls
     let mut final_events = Vec::new();
     let tool_calls = match provider {
-        "openrouter" => finalize_openrouter_tools(or_tool_calls, &mut final_events),
+        "openrouter" | "glm" => finalize_openrouter_tools(or_tool_calls, &mut final_events),
         "codex" => finalize_codex_tools(codex_func_calls, &mut final_events),
         "anthropic" => finalize_anthropic_tools(anthropic_tool_uses, &mut final_events),
         _ => Vec::new(),

@@ -253,6 +253,7 @@ export const sessions = pgTable(
 export const workspaceProviderEnum = pgEnum("workspace_provider", [
   "openrouter",
   "codex",
+  "glm",
 ]);
 
 export const workspaceConfigs = pgTable("workspace_configs", {
@@ -263,6 +264,8 @@ export const workspaceConfigs = pgTable("workspace_configs", {
   openrouterApiKey: text("openrouter_api_key"),
   openrouterModel: text("openrouter_model"),
   codexModel: text("codex_model"),
+  glmApiKey: text("glm_api_key"),
+  glmModel: text("glm_model"),
   reasoningEffort: varchar("reasoning_effort", { length: 20 }),
   createdAt: timestamp("created_at", { withTimezone: true })
     .defaultNow()

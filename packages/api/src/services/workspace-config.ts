@@ -52,6 +52,8 @@ function toWorkspaceConfig(
       openrouter: null,
       openrouterModel: null,
       codexModel: null,
+      glm: null,
+      glmModel: null,
       reasoningEffort: null,
       updatedAt: new Date().toISOString(),
     };
@@ -65,6 +67,8 @@ function toWorkspaceConfig(
       : null,
     openrouterModel: row.openrouterModel ?? null,
     codexModel: row.codexModel ?? null,
+    glm: row.glmApiKey ? { apiKey: row.glmApiKey } : null,
+    glmModel: row.glmModel ?? null,
     reasoningEffort: (row.reasoningEffort as ReasoningEffort) ?? null,
     updatedAt: row.updatedAt.toISOString(),
   };
@@ -120,6 +124,39 @@ export async function setOpenRouterConfig(
   return getWorkspaceConfig(workspaceId, userId);
 }
 
+export async function setGlmConfig(
+  workspaceId: string,
+  userId: string,
+  apiKey: string
+): Promise<WorkspaceConfig> {
+  const membership = await requireMembership(workspaceId, userId);
+  requireAdminOrOwner(membership.role);
+
+  const [existing] = await db
+    .select({ workspaceId: workspaceConfigs.workspaceId })
+    .from(workspaceConfigs)
+    .where(eq(workspaceConfigs.workspaceId, workspaceId))
+    .limit(1);
+
+  if (existing) {
+    await db
+      .update(workspaceConfigs)
+      .set({
+        provider: "glm",
+        glmApiKey: apiKey,
+      })
+      .where(eq(workspaceConfigs.workspaceId, workspaceId));
+  } else {
+    await db.insert(workspaceConfigs).values({
+      workspaceId,
+      provider: "glm",
+      glmApiKey: apiKey,
+    });
+  }
+
+  return getWorkspaceConfig(workspaceId, userId);
+}
+
 export async function setActiveProvider(
   workspaceId: string,
   userId: string,
@@ -145,6 +182,10 @@ export async function setActiveProvider(
     throw new ServiceError("OpenRouter API key not configured", 400);
   }
 
+  if (provider === "glm" && !existing.glmApiKey) {
+    throw new ServiceError("GLM API key not configured", 400);
+  }
+
   await db
     .update(workspaceConfigs)
     .set({ provider })
@@ -159,6 +200,7 @@ export async function updateWorkspaceSettings(
   settings: {
     openrouterModel?: string | null;
     codexModel?: string | null;
+    glmModel?: string | null;
     reasoningEffort?: ReasoningEffort | null;
   }
 ): Promise<WorkspaceConfig> {
@@ -174,6 +216,7 @@ export async function updateWorkspaceSettings(
   const updates: Record<string, unknown> = {};
   if ("openrouterModel" in settings) updates.openrouterModel = settings.openrouterModel ?? null;
   if ("codexModel" in settings) updates.codexModel = settings.codexModel ?? null;
+  if ("glmModel" in settings) updates.glmModel = settings.glmModel ?? null;
   if ("reasoningEffort" in settings) updates.reasoningEffort = settings.reasoningEffort ?? null;
 
   if (existing) {
