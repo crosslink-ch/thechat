@@ -1,3 +1,4 @@
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { Update, DownloadEvent } from "@tauri-apps/plugin-updater";
 import { useUpdaterStore } from "./updater";
 

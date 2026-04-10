@@ -4,15 +4,15 @@ import type { StreamResult, StreamEvent } from "./types";
 
 describe("isOverflow", () => {
   it("returns true when tokens exceed the usable context limit", async () => {
-    // claude-sonnet-4-6: contextWindow=200K, maxOutput=min(64K,64K)=64K
-    // usable = 200K - 64K - 20K(buffer) = 116K
-    expect(await isOverflow(116_000, "claude-sonnet-4-6")).toBe(true);
-    expect(await isOverflow(120_000, "claude-sonnet-4-6")).toBe(true);
+    // claude-sonnet-4-6: contextWindow=1M, maxOutput=min(64K,64K)=64K
+    // usable = 1M - 64K - 20K(buffer) = 916K
+    expect(await isOverflow(916_000, "claude-sonnet-4-6")).toBe(true);
+    expect(await isOverflow(950_000, "claude-sonnet-4-6")).toBe(true);
   });
 
   it("returns false when tokens are below the limit", async () => {
-    expect(await isOverflow(100_000, "claude-sonnet-4-6")).toBe(false);
-    expect(await isOverflow(50_000, "claude-sonnet-4-6")).toBe(false);
+    expect(await isOverflow(900_000, "claude-sonnet-4-6")).toBe(false);
+    expect(await isOverflow(500_000, "claude-sonnet-4-6")).toBe(false);
   });
 
   it("returns false for unknown models", async () => {
