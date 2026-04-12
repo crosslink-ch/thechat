@@ -92,22 +92,6 @@ export interface TodoItem {
   priority?: "high" | "medium" | "low";
 }
 
-// -- Credential Types --
-
-export type CredentialType = "bearer" | "api_key" | "secret";
-
-export interface CredentialInfo {
-  name: string;
-  description: string;
-  type: CredentialType;
-}
-
-export interface CredentialValue {
-  credential_name: string;
-  type: CredentialType;
-  value: string;
-}
-
 // -- Auth Types --
 
 export interface AuthUser {

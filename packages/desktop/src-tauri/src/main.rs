@@ -11,9 +11,27 @@ fn main() {
         println!("  [PROJECT_DIR]    Directory to open as project");
         println!();
         println!("Options:");
-        println!("  --foreground     Stay attached to the terminal");
-        println!("  -h, --help       Print this help message");
+        println!("  --foreground       Stay attached to the terminal");
+        println!("  --get-api-token    Print the API token and exit");
+        println!("  -h, --help         Print this help message");
         std::process::exit(0);
+    }
+
+    if args.iter().any(|a| a == "--get-api-token") {
+        match thechat_lib::get_api_token() {
+            Ok(Some(token)) => {
+                print!("{}", token);
+                std::process::exit(0);
+            }
+            Ok(None) => {
+                eprintln!("Not authenticated. Please log in through TheChat first.");
+                std::process::exit(1);
+            }
+            Err(e) => {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+        }
     }
 
     #[cfg(all(unix, not(debug_assertions)))]

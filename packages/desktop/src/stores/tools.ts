@@ -17,8 +17,6 @@ import {
   taskTool,
   todoReadTool,
   todoWriteTool,
-  listCredentialsTool,
-  getCredentialTool,
   webFetchTool,
   invalidTool,
   createSkillTool,
@@ -44,8 +42,6 @@ const builtinTools: ToolDefinition[] = [
   taskTool,
   todoReadTool,
   todoWriteTool,
-  listCredentialsTool,
-  getCredentialTool,
   webFetchTool,
   invalidTool,
 ];

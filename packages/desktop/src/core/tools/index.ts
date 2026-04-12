@@ -15,6 +15,4 @@ export { todoReadTool } from "./todoread";
 export { todoWriteTool } from "./todowrite";
 export { invalidTool } from "./invalid";
 export { createSkillTool } from "./skill";
-export { listCredentialsTool } from "./list_credentials";
-export { getCredentialTool } from "./get_credential";
 export { webFetchTool } from "./webfetch";

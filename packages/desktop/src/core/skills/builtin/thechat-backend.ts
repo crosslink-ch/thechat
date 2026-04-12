@@ -29,5 +29,15 @@ The exact tools available are discovered dynamically from the MCP server — ins
 - The user must be authenticated for these tools to work.
 - Only interact with workspaces/conversations the user has access to.
 - Do not send messages without the user's explicit instruction or approval.
+
+## Direct API Access
+
+For making direct HTTP requests to TheChat API (outside the MCP tools), get the bearer token:
+
+\`\`\`
+thechat --get-api-token
+\`\`\`
+
+Use it as: \`Authorization: Bearer <token>\`
 `,
 };

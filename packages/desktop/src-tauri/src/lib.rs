@@ -108,6 +108,29 @@ type DbState = Arc<Database>;
 
 pub struct InitialProjectDir(pub Option<String>);
 
+/// Resolve the DB path using the same logic as the Tauri setup.
+/// Used by CLI flags that need to read the DB without starting the app.
+pub fn resolve_db_path() -> std::path::PathBuf {
+    if let Ok(dir) = std::env::var("THECHAT_DATA_DIR") {
+        let dir = std::path::PathBuf::from(dir);
+        dir.join("thechat.db")
+    } else if cfg!(debug_assertions) {
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("dev.db")
+    } else {
+        let dir = dirs::data_dir()
+            .expect("Failed to resolve data directory")
+            .join("com.bruno.thechat");
+        dir.join("thechat.db")
+    }
+}
+
+/// Read the API token from the database without starting the Tauri app.
+pub fn get_api_token() -> Result<Option<String>, String> {
+    let db_path = resolve_db_path();
+    let db = Database::new(db_path.to_str().unwrap())?;
+    db.kv_get("auth_access_token")
+}
+
 /// Resolve the directory used for config.json, skills lookup, etc.
 ///
 /// E2E tests set `THECHAT_DATA_DIR` to a tmp path so each run is isolated
@@ -333,6 +356,7 @@ pub fn run() {
 
             let database =
                 Database::new(db_path.to_str().unwrap()).expect("Failed to initialize database");
+
             app.manage(Arc::new(database) as DbState);
 
             Ok(())
