@@ -52,6 +52,14 @@ jobs:
       - name: Install dependencies
         run: pnpm install
 
+      - name: Set version from tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          cd packages/desktop/src-tauri
+          jq --arg v "$VERSION" '.version = $v' tauri.conf.json > tmp.json && mv tmp.json tauri.conf.json
+
       - name: Bundle Node.js runtime
         shell: bash
         run: |
