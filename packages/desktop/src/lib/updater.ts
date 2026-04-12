@@ -2,6 +2,13 @@ import type { DownloadEvent, Update } from "@tauri-apps/plugin-updater";
 import { error as logError, formatError, info as logInfo } from "../log";
 
 export async function checkForUpdates(): Promise<Update | null> {
+  const { getVersion } = await import("@tauri-apps/api/app");
+  const version = await getVersion();
+  if (version.includes("dev")) {
+    logInfo("[updater] Updates disabled for dev build");
+    return null;
+  }
+
   try {
     const { check } = await import("@tauri-apps/plugin-updater");
     const update = await check();
