@@ -455,6 +455,9 @@ export function useChat(options?: UseChatOptions) {
     const convId = activeConvIdRef.current;
     if (convId) {
       abortControllersRef.current.get(convId)?.abort();
+      // Clear streaming UI state immediately so the abort feels responsive.
+      // The finally block in sendMessage will call stopStreaming again (safe/idempotent).
+      useStreamingStore.getState().stopStreaming(convId);
     }
   }, []);
 
