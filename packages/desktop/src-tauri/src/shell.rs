@@ -49,20 +49,21 @@ pub async fn execute_shell_command<R: tauri::Runtime>(
 
     #[cfg(not(windows))]
     {
-        let shell = shell_env
-            .vars
-            .get("SHELL")
-            .cloned()
-            .unwrap_or_else(|| "/bin/bash".into());
-        cmd = tokio::process::Command::new(&shell);
+        cmd = tokio::process::Command::new(&shell_env.shell);
         cmd.args(["-c", &command]);
     }
 
     #[cfg(windows)]
     {
-        let shell = std::env::var("COMSPEC").unwrap_or_else(|_| "cmd.exe".into());
-        cmd = tokio::process::Command::new(&shell);
-        cmd.args(["/C", &command]);
+        // cmd.exe doesn't follow MSVC C runtime escaping rules, so using
+        // `args(["/C", &command])` mangles quotes. Use raw_arg to pass the
+        // command string through without Rust's automatic escaping.
+        let mut std_cmd = std::process::Command::new(&shell_env.shell);
+        {
+            use std::os::windows::process::CommandExt as _;
+            std_cmd.raw_arg(format!("/C {command}"));
+        }
+        cmd = tokio::process::Command::from(std_cmd);
     }
 
     cmd.stdout(std::process::Stdio::piped())

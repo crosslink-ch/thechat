@@ -6,6 +6,9 @@ use std::collections::HashMap;
 /// correct PATH without needing `-l` on every spawn.
 pub struct ShellEnv {
     pub vars: HashMap<String, String>,
+    /// Resolved shell binary path.
+    /// Unix: $SHELL or /bin/bash. Windows: cmd.exe via %COMSPEC%.
+    pub shell: String,
 }
 
 impl ShellEnv {
@@ -30,7 +33,11 @@ impl ShellEnv {
                         var_count = vars.len(),
                         "resolved shell environment from login shell"
                     );
-                    return ShellEnv { vars };
+                    let shell = vars
+                        .get("SHELL")
+                        .cloned()
+                        .unwrap_or_else(|| "/bin/bash".into());
+                    return ShellEnv { vars, shell };
                 }
                 Ok(Err(e)) => {
                     tracing::warn!(
@@ -48,7 +55,21 @@ impl ShellEnv {
 
         let vars: HashMap<String, String> = std::env::vars().collect();
         tracing::info!(var_count = vars.len(), "using process environment");
-        ShellEnv { vars }
+
+        #[cfg(not(windows))]
+        let shell = vars
+            .get("SHELL")
+            .cloned()
+            .unwrap_or_else(|| "/bin/bash".into());
+
+        #[cfg(windows)]
+        let shell = vars
+            .get("COMSPEC")
+            .cloned()
+            .unwrap_or_else(|| "cmd.exe".into());
+
+        tracing::info!(shell = %shell, "resolved shell");
+        ShellEnv { vars, shell }
     }
 }
 

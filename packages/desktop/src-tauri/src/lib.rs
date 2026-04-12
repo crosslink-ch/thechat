@@ -404,6 +404,7 @@ mod tests {
         let db_state: DbState = Arc::new(database);
         let shell_env: Arc<env::ShellEnv> = Arc::new(env::ShellEnv {
             vars: std::env::vars().collect(),
+            shell: "/bin/bash".into(),
         });
         let mcp_state: Arc<McpManager> = Arc::new(McpManager::new());
         let shell_state: Arc<ShellProcesses> = Arc::new(ShellProcesses::new());
