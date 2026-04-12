@@ -54,6 +54,14 @@ pub struct McpToolInfo {
     pub input_schema: Value,
 }
 
+// -- MCP server error emitted to frontend --
+
+#[derive(Debug, Clone, Serialize)]
+pub struct McpServerError {
+    pub server: String,
+    pub error: String,
+}
+
 // -- Shell escaping --
 
 /// Single-quote a string for safe use in a shell command.
@@ -181,16 +189,26 @@ impl McpClient {
             cmd.args(["-c", &shell_cmd]);
         }
 
-        // On Windows, PATH is globally configured so we spawn the command directly.
+        // On Windows, spawn through `cmd.exe /C` so it resolves .cmd/.bat scripts
+        // (e.g. `npx.cmd`). Direct `Command::new("npx")` only finds `.exe` binaries.
         #[cfg(windows)]
         {
-            cmd = Command::new(command);
-            cmd.args(args);
+            cmd = Command::new("cmd.exe");
+            let mut cmd_args = vec!["/C".to_string(), command.to_string()];
+            cmd_args.extend(args.iter().cloned());
+            cmd.args(&cmd_args);
         }
 
         cmd.stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+
+        // On Windows, prevent cmd.exe from flashing a console window.
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+        }
         // Apply resolved shell environment first, then config overrides
         for (k, v) in shell_env {
             cmd.env(k, v);
@@ -761,6 +779,10 @@ pub async fn mcp_initialize<R: tauri::Runtime>(
                 }
                 Err(e) => {
                     tracing::error!(server = %server_name, error = %e, "failed to initialize MCP server");
+                    let _ = app.emit("mcp-server-error", McpServerError {
+                        server: server_name.clone(),
+                        error: e,
+                    });
                 }
             }
         });
@@ -854,6 +876,10 @@ pub async fn mcp_initialize_authed<R: tauri::Runtime>(
                         server = %server_name, error = %e,
                         "failed to initialize auth MCP server"
                     );
+                    let _ = app.emit("mcp-server-error", McpServerError {
+                        server: server_name.clone(),
+                        error: e,
+                    });
                 }
             }
         });

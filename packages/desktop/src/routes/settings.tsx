@@ -76,6 +76,7 @@ function McpServersSection({
   onConfigChange: (config: AppConfig) => void;
 }) {
   const [confirmRemove, setConfirmRemove] = useState<string | null>(null);
+  const mcpServerStatus = useToolsStore((s) => s.mcpServerStatus);
   const servers = config.mcpServers ?? {};
   const entries = Object.entries(servers);
 
@@ -175,10 +176,35 @@ function McpServersSection({
                       Disabled
                     </span>
                   )}
+                  {!server.disabled && (() => {
+                    const status = mcpServerStatus[name];
+                    if (!status) return null;
+                    if (status.state === "connected")
+                      return (
+                        <span className="rounded bg-green-500/15 px-1.5 py-0.5 text-[0.714rem] font-medium text-green-400">
+                          Connected · {status.toolCount} tool{status.toolCount !== 1 ? "s" : ""}
+                        </span>
+                      );
+                    if (status.state === "error")
+                      return (
+                        <span
+                          className="rounded bg-error-msg-bg px-1.5 py-0.5 text-[0.714rem] font-medium text-error-bright"
+                          title={status.error}
+                        >
+                          Error
+                        </span>
+                      );
+                    return null;
+                  })()}
                 </div>
                 <div className="mt-0.5 truncate text-[0.786rem] text-text-dimmed">
                   {serverDetail(server)}
                 </div>
+                {!server.disabled && mcpServerStatus[name]?.state === "error" && (
+                  <div className="mt-1 text-[0.714rem] text-error-bright">
+                    {(mcpServerStatus[name] as { state: "error"; error: string }).error}
+                  </div>
+                )}
               </div>
 
               {/* Actions */}

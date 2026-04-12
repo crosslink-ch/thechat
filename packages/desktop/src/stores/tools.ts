@@ -50,9 +50,21 @@ const builtinTools: ToolDefinition[] = [
   invalidTool,
 ];
 
+export type McpServerStatus =
+  | { state: "connecting" }
+  | { state: "connected"; toolCount: number }
+  | { state: "error"; error: string };
+
+interface McpServerError {
+  server: string;
+  error: string;
+}
+
 interface ToolsStore {
   /** MCP tools loaded eagerly at startup (always available) */
   mcpTools: ToolDefinition[];
+  /** Runtime status of each MCP server (connecting/connected/error) */
+  mcpServerStatus: Record<string, McpServerStatus>;
   /** Per-conversation session MCP tool infos (lazy-populated from DB) */
   sessionToolsByConv: Record<string, McpToolInfo[]>;
   /** Currently active conversation ID (whose session tools are active) */
@@ -110,10 +122,12 @@ function getActiveSessionInfos(state: ToolsStore): McpToolInfo[] {
   return state.sessionToolsByConv[state.activeConvId] ?? [];
 }
 
-let mcpUnlisten: (() => void) | null = null;
+let mcpUnlistenReady: (() => void) | null = null;
+let mcpUnlistenError: (() => void) | null = null;
 
 export const useToolsStore = create<ToolsStore>()((set, get) => ({
   mcpTools: [],
+  mcpServerStatus: {},
   sessionToolsByConv: {},
   activeConvId: null,
   activeCwd: null,
@@ -121,16 +135,22 @@ export const useToolsStore = create<ToolsStore>()((set, get) => ({
   tools: [...builtinTools],
 
   initializeMcp: () => {
-    // Clean up previous listener
-    if (mcpUnlisten) {
-      mcpUnlisten();
-      mcpUnlisten = null;
+    // Clean up previous listeners
+    if (mcpUnlistenReady) {
+      mcpUnlistenReady();
+      mcpUnlistenReady = null;
+    }
+    if (mcpUnlistenError) {
+      mcpUnlistenError();
+      mcpUnlistenError = null;
     }
 
-    set({ mcpTools: [] });
+    set({ mcpTools: [], mcpServerStatus: {} });
 
-    const unlistenPromise = listen<McpToolInfo[]>("mcp-tools-ready", (event) => {
+    listen<McpToolInfo[]>("mcp-tools-ready", (event) => {
       const newTools: ToolDefinition[] = event.payload.map(mcpInfoToToolDef);
+      // Derive the server name from the first tool in the batch
+      const serverName = event.payload[0]?.server;
 
       set((state) => {
         const existing = new Set(state.mcpTools.map((t) => t.name));
@@ -139,12 +159,24 @@ export const useToolsStore = create<ToolsStore>()((set, get) => ({
         const mcpTools = [...state.mcpTools, ...unique];
         const tools = computeTools(state.skills, mcpTools, getActiveSessionInfos(state));
         setBatchToolRegistry(tools);
-        return { mcpTools, tools };
+        const mcpServerStatus = serverName
+          ? { ...state.mcpServerStatus, [serverName]: { state: "connected" as const, toolCount: event.payload.length } }
+          : state.mcpServerStatus;
+        return { mcpTools, tools, mcpServerStatus };
       });
+    }).then((unlisten) => {
+      mcpUnlistenReady = unlisten;
     });
 
-    unlistenPromise.then((unlisten) => {
-      mcpUnlisten = unlisten;
+    listen<McpServerError>("mcp-server-error", (event) => {
+      const { server, error } = event.payload;
+      logError(`[tools] MCP server '${server}' failed: ${error}`);
+
+      set((state) => ({
+        mcpServerStatus: { ...state.mcpServerStatus, [server]: { state: "error" as const, error } },
+      }));
+    }).then((unlisten) => {
+      mcpUnlistenError = unlisten;
     });
 
     invoke("mcp_initialize").catch((e) =>
