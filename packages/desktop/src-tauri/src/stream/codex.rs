@@ -12,7 +12,7 @@ use tokio_tungstenite::tungstenite::http::{HeaderName, HeaderValue, StatusCode};
 use tokio_tungstenite::tungstenite::protocol::Message;
 use tokio_tungstenite::MaybeTlsStream;
 
-use super::{StreamEvent, StreamResult, ToolCallResult, Usage};
+use super::{await_cancellation, StreamEvent, StreamResult, ToolCallResult, Usage};
 
 // ---------------------------------------------------------------------------
 // Types
@@ -626,15 +626,22 @@ async fn read_codex_websocket_response(
             return Err(CodexWebsocketError::Cancelled);
         }
 
-        let message = match socket.next().await {
-            Some(Ok(message)) => message,
-            Some(Err(err)) => {
-                return Err(CodexWebsocketError::Fatal(format!(
-                    "Codex websocket read error: {}",
-                    err
-                )));
+        // Use select! so cancellation is responsive even while waiting for data
+        let message = tokio::select! {
+            msg = socket.next() => match msg {
+                Some(Ok(message)) => message,
+                Some(Err(err)) => {
+                    return Err(CodexWebsocketError::Fatal(format!(
+                        "Codex websocket read error: {}",
+                        err
+                    )));
+                }
+                None => break,
+            },
+            _ = await_cancellation(&cancel_flag) => {
+                let _ = socket.close(None).await;
+                return Err(CodexWebsocketError::Cancelled);
             }
-            None => break,
         };
 
         match message {

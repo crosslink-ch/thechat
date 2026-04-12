@@ -198,6 +198,11 @@ export function useChat(options?: UseChatOptions) {
         // Mark this conversation as streaming
         useStreamingStore.getState().startStreaming(streamConvId);
 
+        // Create abort controller immediately so the Stop button works
+        // during the setup phase (before runChatLoop starts)
+        const controller = new AbortController();
+        abortControllersRef.current.set(streamConvId, controller);
+
         // Save images to disk if present
         let imageRefs: ImageRef[] | undefined;
         if (images && images.length > 0) {
@@ -242,10 +247,6 @@ export function useChat(options?: UseChatOptions) {
           role: "user" as const,
           content: await buildUserContent(userContent, imageRefs),
         });
-
-        // Start streaming
-        const controller = new AbortController();
-        abortControllersRef.current.set(streamConvId, controller);
 
         const streamingParts: MessagePart[] = [];
 

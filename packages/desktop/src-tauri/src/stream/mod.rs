@@ -9,6 +9,15 @@ use std::sync::{Arc, Mutex};
 use tauri::ipc::Channel;
 use tokio::sync::Mutex as AsyncMutex;
 
+/// Polls the cancel flag every 100ms and returns when set.
+/// Used with `tokio::select!` to make blocking I/O (chunk reads,
+/// websocket reads) responsive to cancellation.
+pub(super) async fn await_cancellation(cancel_flag: &AtomicBool) {
+    while !cancel_flag.load(Ordering::Relaxed) {
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+}
+
 use anthropic::{finalize_anthropic_tools, parse_anthropic_data, AnthropicToolUse};
 use codex::{
     codex_session_key, codex_turn_id, finalize_codex_tools, parse_codex_data,
@@ -337,10 +346,14 @@ async fn run_http_stream(
         req_builder = req_builder.header(X_CODEX_TURN_STATE_HEADER, turn_state);
     }
 
-    let response = req_builder
-        .send()
-        .await
-        .map_err(|e| StreamError::from(format!("HTTP request failed: {}", e)))?;
+    let response = tokio::select! {
+        resp = req_builder.send() => {
+            resp.map_err(|e| StreamError::from(format!("HTTP request failed: {}", e)))?
+        }
+        _ = await_cancellation(&cancel_flag) => {
+            return Err(StreamError::cancelled());
+        }
+    };
 
     let status = response.status();
     if !status.is_success() {
@@ -394,16 +407,21 @@ async fn run_http_stream(
 
     let mut stream = response;
 
-    // We iterate chunk by chunk using reqwest's chunk() method
+    // We iterate chunk by chunk using reqwest's chunk() method.
+    // Use select! so cancellation is responsive even while waiting for data.
     loop {
         if cancel_flag.load(Ordering::Relaxed) {
             return Err(StreamError::cancelled());
         }
 
-        let chunk = stream
-            .chunk()
-            .await
-            .map_err(|e| StreamError::from(format!("Stream read error: {}", e)))?;
+        let chunk = tokio::select! {
+            chunk = stream.chunk() => {
+                chunk.map_err(|e| StreamError::from(format!("Stream read error: {}", e)))?
+            }
+            _ = await_cancellation(&cancel_flag) => {
+                return Err(StreamError::cancelled());
+            }
+        };
 
         let bytes = match chunk {
             Some(b) => b,

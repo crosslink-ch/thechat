@@ -72,7 +72,7 @@ export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function Ri
               return true;
             },
             "Shift-Enter": ({ editor }) => {
-              editor.commands.enter();
+              editor.commands.setHardBreak();
               return true;
             },
           };
