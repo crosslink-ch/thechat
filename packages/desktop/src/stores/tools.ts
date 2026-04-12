@@ -71,6 +71,8 @@ interface ToolsStore {
   addSessionMcpTools: (convId: string, infos: McpToolInfo[]) => void;
   /** Add MCP tools to the global (non-session) tool set. Used when configuring new MCP servers. */
   addGlobalMcpTools: (infos: McpToolInfo[]) => void;
+  /** Remove all global MCP tools belonging to a specific server (e.g. when disabling). */
+  removeGlobalMcpToolsByServer: (serverName: string) => void;
 }
 
 function mcpInfoToToolDef(info: McpToolInfo): ToolDefinition {
@@ -273,4 +275,18 @@ export const useToolsStore = create<ToolsStore>()((set, get) => ({
       return { mcpTools, tools };
     });
   },
+
+  removeGlobalMcpToolsByServer: (serverName: string) => {
+    const prefix = `${serverName}__`;
+    set((state) => {
+      const mcpTools = state.mcpTools.filter((t) => !t.name.startsWith(prefix));
+      if (mcpTools.length === state.mcpTools.length) return state;
+      const tools = computeTools(state.skills, mcpTools, getActiveSessionInfos(state));
+      setBatchToolRegistry(tools);
+      return { mcpTools, tools };
+    });
+  },
 }));
+
+// Expose store for E2E tests
+(window as any).__toolsStore = useToolsStore;

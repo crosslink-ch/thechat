@@ -18,6 +18,8 @@ import { api } from "../lib/api";
 import { invalidateWorkspaceConfigCache } from "../lib/effective-config";
 import { ModelCombobox } from "../components/ModelCombobox";
 import { openMcpConfigDialog } from "../McpConfigDialog";
+import { useToolsStore } from "../stores/tools";
+import type { McpToolInfo } from "../core/types";
 
 // ---------------------------------------------------------------------------
 // SourceToggle — "Workspace" / "Custom" switch for each field
@@ -85,14 +87,29 @@ function McpServersSection({
   const toggleServer = async (name: string) => {
     const server = servers[name];
     if (!server) return;
+    const nowDisabled = !server.disabled;
     const updated: AppConfig = {
       ...config,
       mcpServers: {
         ...servers,
-        [name]: { ...server, disabled: !server.disabled },
+        [name]: { ...server, disabled: nowDisabled },
       },
     };
     await saveConfig(updated);
+
+    if (nowDisabled) {
+      useToolsStore.getState().removeGlobalMcpToolsByServer(name);
+    } else {
+      try {
+        const toolInfos = await invoke<McpToolInfo[]>("mcp_initialize_servers", {
+          names: [name],
+          token: null,
+        });
+        useToolsStore.getState().addGlobalMcpTools(toolInfos);
+      } catch {
+        // Server may fail to re-init — tools will be absent until next restart
+      }
+    }
   };
 
   const removeServer = async (name: string) => {
