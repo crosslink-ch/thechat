@@ -2,7 +2,6 @@ use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tauri::ipc::Channel;
 use tokio::sync::Mutex as AsyncMutex;
@@ -12,7 +11,9 @@ use tokio_tungstenite::tungstenite::http::{HeaderName, HeaderValue, StatusCode};
 use tokio_tungstenite::tungstenite::protocol::Message;
 use tokio_tungstenite::MaybeTlsStream;
 
-use super::{await_cancellation, StreamEvent, StreamResult, ToolCallResult, Usage};
+use tokio_util::sync::CancellationToken;
+
+use super::{StreamEvent, StreamResult, ToolCallResult, Usage};
 
 // ---------------------------------------------------------------------------
 // Types
@@ -606,7 +607,7 @@ async fn connect_codex_websocket(
 
 async fn read_codex_websocket_response(
     socket: &mut CodexWebSocket,
-    cancel_flag: &Arc<AtomicBool>,
+    cancel: &CancellationToken,
     on_event: &Channel<Vec<StreamEvent>>,
 ) -> Result<(StreamResult, Option<String>), CodexWebsocketError> {
     let mut acc_text = String::new();
@@ -621,12 +622,6 @@ async fn read_codex_websocket_response(
     let mut received_payload = false;
 
     loop {
-        if cancel_flag.load(Ordering::Relaxed) {
-            let _ = socket.close(None).await;
-            return Err(CodexWebsocketError::Cancelled);
-        }
-
-        // Use select! so cancellation is responsive even while waiting for data
         let message = tokio::select! {
             msg = socket.next() => match msg {
                 Some(Ok(message)) => message,
@@ -638,7 +633,7 @@ async fn read_codex_websocket_response(
                 }
                 None => break,
             },
-            _ = await_cancellation(&cancel_flag) => {
+            _ = cancel.cancelled() => {
                 let _ = socket.close(None).await;
                 return Err(CodexWebsocketError::Cancelled);
             }
@@ -787,7 +782,7 @@ pub(super) async fn try_codex_websocket_stream(
     headers: HashMap<String, String>,
     request: CodexRequestPayload,
     session: Option<Arc<AsyncMutex<CodexTransportSession>>>,
-    cancel_flag: Arc<AtomicBool>,
+    cancel: CancellationToken,
     on_event: &Channel<Vec<StreamEvent>>,
 ) -> Result<StreamResult, CodexWebsocketError> {
     let ws_url =
@@ -845,7 +840,7 @@ pub(super) async fn try_codex_websocket_stream(
             });
         }
 
-        match read_codex_websocket_response(socket, &cancel_flag, on_event).await {
+        match read_codex_websocket_response(socket, &cancel, on_event).await {
             Ok((result, response_id)) => {
                 session.last_request = Some(request);
                 session.last_response = response_id
@@ -884,7 +879,7 @@ pub(super) async fn try_codex_websocket_stream(
                 http_only: false,
             })?;
         let (result, _) =
-            read_codex_websocket_response(&mut socket, &cancel_flag, on_event).await?;
+            read_codex_websocket_response(&mut socket, &cancel, on_event).await?;
         Ok(result)
     }
 }

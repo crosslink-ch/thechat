@@ -41,6 +41,7 @@ regex = "1"
 walkdir = "2"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls", "stream"] }
 tokio = { version = "1", features = ["process", "time", "rt", "macros", "net", "sync"] }
+tokio-util = "0.7"
 tokio-tungstenite = { version = "0.24", default-features = false, features = ["connect", "rustls-tls-webpki-roots"] }
 futures-util = "0.3"
 base64 = "0.22"

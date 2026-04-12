@@ -4,19 +4,10 @@ mod openrouter;
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use tauri::ipc::Channel;
 use tokio::sync::Mutex as AsyncMutex;
-
-/// Polls the cancel flag every 100ms and returns when set.
-/// Used with `tokio::select!` to make blocking I/O (chunk reads,
-/// websocket reads) responsive to cancellation.
-pub(super) async fn await_cancellation(cancel_flag: &AtomicBool) {
-    while !cancel_flag.load(Ordering::Relaxed) {
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-    }
-}
+use tokio_util::sync::CancellationToken;
 
 use anthropic::{finalize_anthropic_tools, parse_anthropic_data, AnthropicToolUse};
 use codex::{
@@ -32,7 +23,7 @@ use openrouter::{finalize_openrouter_tools, parse_openrouter_data, ToolCallAccum
 // ---------------------------------------------------------------------------
 
 pub struct StreamCancellers {
-    map: Mutex<HashMap<String, Arc<AtomicBool>>>,
+    map: Mutex<HashMap<String, CancellationToken>>,
 }
 
 impl StreamCancellers {
@@ -207,19 +198,19 @@ pub async fn stream_completion(
     cancellers: tauri::State<'_, Arc<StreamCancellers>>,
     codex_transport: tauri::State<'_, Arc<CodexTransport>>,
 ) -> Result<StreamResult, StreamError> {
-    let cancel_flag = Arc::new(AtomicBool::new(false));
+    let token = CancellationToken::new();
     cancellers
         .map
         .lock()
         .unwrap()
-        .insert(stream_id.clone(), cancel_flag.clone());
+        .insert(stream_id.clone(), token.clone());
 
     let result = run_stream(
         url,
         headers,
         body,
         &provider,
-        cancel_flag.clone(),
+        token.clone(),
         &on_event,
         Arc::clone(codex_transport.inner()),
     )
@@ -237,8 +228,8 @@ pub async fn cancel_stream(
     stream_id: String,
     cancellers: tauri::State<'_, Arc<StreamCancellers>>,
 ) -> Result<(), String> {
-    if let Some(flag) = cancellers.map.lock().unwrap().get(&stream_id) {
-        flag.store(true, Ordering::Relaxed);
+    if let Some(token) = cancellers.map.lock().unwrap().get(&stream_id) {
+        token.cancel();
     }
     Ok(())
 }
@@ -247,13 +238,13 @@ pub async fn cancel_stream(
 // Core streaming orchestrator
 // ---------------------------------------------------------------------------
 
-#[tracing::instrument(skip(headers, body, cancel_flag, on_event, codex_transport))]
+#[tracing::instrument(skip(headers, body, cancel, on_event, codex_transport))]
 async fn run_stream(
     url: String,
     headers: HashMap<String, String>,
     body: String,
     provider: &str,
-    cancel_flag: Arc<AtomicBool>,
+    cancel: CancellationToken,
     on_event: &Channel<Vec<StreamEvent>>,
     codex_transport: Arc<CodexTransport>,
 ) -> Result<StreamResult, StreamError> {
@@ -284,7 +275,7 @@ async fn run_stream(
             headers.clone(),
             codex_request.clone().expect("codex request payload"),
             codex_session.clone(),
-            Arc::clone(&cancel_flag),
+            cancel.clone(),
             on_event,
         )
         .await
@@ -303,7 +294,7 @@ async fn run_stream(
         headers,
         body,
         provider,
-        cancel_flag,
+        cancel,
         on_event,
         codex_request.as_ref(),
         codex_session.as_ref(),
@@ -315,13 +306,13 @@ async fn run_stream(
 // HTTP SSE streaming (shared across all providers)
 // ---------------------------------------------------------------------------
 
-#[tracing::instrument(skip(headers, body, cancel_flag, on_event, codex_request, codex_session))]
+#[tracing::instrument(skip(headers, body, cancel, on_event, codex_request, codex_session))]
 async fn run_http_stream(
     url: String,
     headers: HashMap<String, String>,
     body: String,
     provider: &str,
-    cancel_flag: Arc<AtomicBool>,
+    cancel: CancellationToken,
     on_event: &Channel<Vec<StreamEvent>>,
     codex_request: Option<&CodexRequestPayload>,
     codex_session: Option<&Arc<AsyncMutex<CodexTransportSession>>>,
@@ -350,7 +341,7 @@ async fn run_http_stream(
         resp = req_builder.send() => {
             resp.map_err(|e| StreamError::from(format!("HTTP request failed: {}", e)))?
         }
-        _ = await_cancellation(&cancel_flag) => {
+        _ = cancel.cancelled() => {
             return Err(StreamError::cancelled());
         }
     };
@@ -410,15 +401,11 @@ async fn run_http_stream(
     // We iterate chunk by chunk using reqwest's chunk() method.
     // Use select! so cancellation is responsive even while waiting for data.
     loop {
-        if cancel_flag.load(Ordering::Relaxed) {
-            return Err(StreamError::cancelled());
-        }
-
         let chunk = tokio::select! {
             chunk = stream.chunk() => {
                 chunk.map_err(|e| StreamError::from(format!("Stream read error: {}", e)))?
             }
-            _ = await_cancellation(&cancel_flag) => {
+            _ = cancel.cancelled() => {
                 return Err(StreamError::cancelled());
             }
         };
