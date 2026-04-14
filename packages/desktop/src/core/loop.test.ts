@@ -1123,4 +1123,52 @@ describe("runChatLoop", () => {
     // Should finish successfully
     expect(events.some((e) => e.type === "finish")).toBe(true);
   });
+
+  it("sends image tool results as image_url content parts", async () => {
+    const readTool: ToolDefinition = {
+      name: "read",
+      description: "Read a file",
+      parameters: { type: "object", properties: {} },
+      execute: vi.fn().mockResolvedValue({
+        __image: true,
+        mimeType: "image/png",
+        dataUrl: "data:image/png;base64,iVBORw0KGgo=",
+      }),
+    };
+
+    // First call: model asks to read an image
+    mockStreamCompletion.mockResolvedValueOnce({
+      text: "",
+      reasoning: "",
+      toolCalls: [{ id: "call_img", name: "read", args: { file_path: "/tmp/screenshot.png" } }],
+      stopReason: "tool_calls",
+    });
+
+    // Second call: model responds after seeing the image
+    mockStreamCompletion.mockResolvedValueOnce({
+      text: "I can see the screenshot.",
+      reasoning: "",
+      toolCalls: [],
+      usage: { prompt_tokens: 50, completion_tokens: 10, total_tokens: 60 },
+      stopReason: "stop",
+    });
+
+    const events: StreamEvent[] = [];
+    await runChatLoop({
+      apiKey: "key",
+      model: "model",
+      messages: [{ role: "user", content: "look at this image" }],
+      tools: [readTool],
+      onEvents: (batch) => events.push(...batch),
+    });
+
+    // The second API call should have an image_url content array in the tool message
+    const secondCallMessages = mockStreamCompletion.mock.calls[1][0].messages as Array<Record<string, unknown>>;
+    const toolMsg = secondCallMessages.find((m) => m.role === "tool");
+    expect(toolMsg).toBeDefined();
+    expect(toolMsg!.tool_call_id).toBe("call_img");
+    expect(toolMsg!.content).toEqual([
+      { type: "image_url", image_url: { url: "data:image/png;base64,iVBORw0KGgo=" } },
+    ]);
+  });
 });
