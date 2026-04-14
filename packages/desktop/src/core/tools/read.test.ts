@@ -67,4 +67,61 @@ describe("readTool", () => {
     await readTool.execute({ file_path: "/tmp/test.txt" });
     expect(mockInvoke).toHaveBeenCalled();
   });
+
+  it("returns image result for .png files", async () => {
+    mockInvoke.mockResolvedValueOnce("iVBORw0KGgo=");
+
+    const result = await readTool.execute({ file_path: "/tmp/screenshot.png" });
+
+    expect(mockInvoke).toHaveBeenCalledWith("load_image_base64", {
+      filePath: "/tmp/screenshot.png",
+    });
+    expect(result).toEqual({
+      __image: true,
+      mimeType: "image/png",
+      dataUrl: "data:image/png;base64,iVBORw0KGgo=",
+    });
+  });
+
+  it("returns image result for .jpg files", async () => {
+    mockInvoke.mockResolvedValueOnce("base64data");
+
+    const result = await readTool.execute({ file_path: "/tmp/photo.jpg" });
+
+    expect(mockInvoke).toHaveBeenCalledWith("load_image_base64", {
+      filePath: "/tmp/photo.jpg",
+    });
+    expect(result).toEqual({
+      __image: true,
+      mimeType: "image/jpeg",
+      dataUrl: "data:image/jpeg;base64,base64data",
+    });
+  });
+
+  it("returns image result for .webp files", async () => {
+    mockInvoke.mockResolvedValueOnce("webpdata");
+
+    const result = await readTool.execute({ file_path: "/tmp/image.webp" });
+
+    expect(result).toEqual({
+      __image: true,
+      mimeType: "image/webp",
+      dataUrl: "data:image/webp;base64,webpdata",
+    });
+  });
+
+  it("reads non-image files as text normally", async () => {
+    mockInvoke.mockResolvedValueOnce({
+      content: "     1\tsome code\n",
+      total_lines: 1,
+      lines_read: 1,
+      truncated: false,
+    });
+
+    const result = await readTool.execute({ file_path: "/tmp/code.rs" });
+
+    expect(mockInvoke).toHaveBeenCalledWith("fs_read_file", expect.any(Object));
+    expect(result).toHaveProperty("content");
+    expect(result).not.toHaveProperty("__image");
+  });
 });

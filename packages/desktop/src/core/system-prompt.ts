@@ -67,7 +67,7 @@ Use the todowrite/todoread tools frequently to plan and track multi-step tasks. 
 # Tool usage policy
 
 ## Prefer specialized tools over shell commands
-- Use **read** instead of cat, head, tail, or sed for reading files
+- Use **read** instead of cat, head, tail, or sed for reading files (also reads image files — PNG, JPEG, GIF, WebP, SVG — so you can see their contents)
 - Use **write** instead of echo, cat with redirects for creating files
 - Use **edit** instead of sed or awk for modifying files
 - Use **glob** instead of find or ls for locating files by pattern

@@ -136,6 +136,10 @@ function ToolActivityBlock({
     );
   }
 
+  const isImageResult = !!(result?.result &&
+    typeof result.result === "object" &&
+    (result.result as Record<string, unknown>).__image === true);
+
   return (
     <div className="my-1 overflow-hidden rounded-lg border border-border-subtle bg-raised/50">
       <button
@@ -151,9 +155,18 @@ function ToolActivityBlock({
           <ToolInlinePreview toolName={call.toolName} args={call.args} />
         </div>
       )}
+      {isImageResult && (
+        <div className="px-3 pb-2">
+          <img
+            src={(result!.result as { dataUrl: string }).dataUrl}
+            alt={String(call.args.file_path ?? "image")}
+            className="max-h-64 max-w-full rounded border border-border-subtle"
+          />
+        </div>
+      )}
       {open && (
         <div className="px-3 pb-2.5">
-          {hasResult && (
+          {hasResult && !isImageResult && (
             <TruncatedOutput
               text={typeof result.result === "string" ? result.result : JSON.stringify(result.result, null, 2)}
               isError={result.isError}
