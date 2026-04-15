@@ -23,7 +23,6 @@ const IMAGE_EXTENSIONS: Record<string, string> = {
   ".jpeg": "image/jpeg",
   ".gif": "image/gif",
   ".webp": "image/webp",
-  ".svg": "image/svg+xml",
 };
 
 function getImageMimeType(filePath: string): string | null {
@@ -39,7 +38,7 @@ export const readTool = defineTool({
   description: `Read the contents of a file. Returns the file content with line numbers in "cat -n" style format.
 By default reads up to 2000 lines. Use offset and limit for large files.
 Lines longer than 2000 characters are truncated.
-This tool can also read image files (PNG, JPEG, GIF, WebP, SVG) — the image will be displayed visually so you can see its contents.
+This tool can also read image files (PNG, JPEG, GIF, WebP) — the image will be displayed visually so you can see its contents. SVG files are read as text (XML markup).
 Use this tool instead of shell commands like cat, head, or tail.`,
   parameters: {
     type: "object",
@@ -68,7 +67,6 @@ Use this tool instead of shell commands like cat, head, or tail.`,
 
     const resolvedPath = await resolvePath(file_path, context?.cwd);
 
-    // Check if this is an image file
     const mimeType = getImageMimeType(resolvedPath);
     if (mimeType) {
       const base64 = await invoke<string>("load_image_base64", {

@@ -110,6 +110,26 @@ describe("readTool", () => {
     });
   });
 
+  it("reads SVG files as text, not as an image", async () => {
+    mockInvoke.mockResolvedValueOnce({
+      content: '     1\t<svg xmlns="http://www.w3.org/2000/svg"/>\n',
+      total_lines: 1,
+      lines_read: 1,
+      truncated: false,
+    });
+
+    const result = await readTool.execute({ file_path: "/tmp/icon.svg" });
+
+    expect(mockInvoke).toHaveBeenCalledWith("fs_read_file", {
+      filePath: "/tmp/icon.svg",
+      offset: undefined,
+      limit: undefined,
+      lineNumbers: true,
+    });
+    expect(result).toHaveProperty("content");
+    expect(result).not.toHaveProperty("__image");
+  });
+
   it("reads non-image files as text normally", async () => {
     mockInvoke.mockResolvedValueOnce({
       content: "     1\tsome code\n",
