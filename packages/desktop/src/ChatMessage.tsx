@@ -667,10 +667,10 @@ export function StreamingMessage({ convId, pendingPermission, onPermissionAllow,
                 const isLastText = idx === blocks.length - 1 && !pendingPermission && !pendingQuestion;
                 return isLastText ? (
                   <div key={block.key} className="streaming-cursor">
-                    <TextWithUiBlocks text={block.text} />
+                    <TextWithUiBlocks text={block.text} isStreaming />
                   </div>
                 ) : (
-                  <TextWithUiBlocks key={block.key} text={block.text} />
+                  <TextWithUiBlocks key={block.key} text={block.text} isStreaming />
                 );
               }
             }

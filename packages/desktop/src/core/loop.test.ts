@@ -1171,4 +1171,105 @@ describe("runChatLoop", () => {
       { type: "image_url", image_url: { url: "data:image/png;base64,iVBORw0KGgo=" } },
     ]);
   });
+
+  describe("UI block validation retry", () => {
+    it("retries silently when a ```tsx ui``` block fails to compile", async () => {
+      mockStreamCompletion.mockResolvedValueOnce({
+        text: "Here you go:\n```tsx ui\nfunction Component() { return <div>\n```\n",
+        reasoning: "",
+        toolCalls: [],
+        usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
+        stopReason: "stop",
+      });
+      mockStreamCompletion.mockResolvedValueOnce({
+        text: "Here you go:\n```tsx ui\nfunction Component() { return <div>ok</div>; }\n```\n",
+        reasoning: "",
+        toolCalls: [],
+        usage: { prompt_tokens: 20, completion_tokens: 10, total_tokens: 30 },
+        stopReason: "stop",
+      });
+
+      const events: StreamEvent[] = [];
+      await runChatLoop({
+        apiKey: "key",
+        model: "model",
+        messages: [{ role: "user", content: "show me a div" }],
+        onEvents: (batch) => events.push(...batch),
+      });
+
+      expect(mockStreamCompletion).toHaveBeenCalledTimes(2);
+
+      const retryEvent = events.find((e) => e.type === "ui-retry");
+      expect(retryEvent).toBeDefined();
+      if (retryEvent?.type === "ui-retry") {
+        expect(retryEvent.attempt).toBe(1);
+        expect(retryEvent.errors.length).toBeGreaterThan(0);
+      }
+
+      // Second call should include the broken assistant message and synthetic feedback
+      const secondCallMessages = mockStreamCompletion.mock.calls[1][0].messages as Array<Record<string, unknown>>;
+      expect(secondCallMessages.some((m) => m.role === "assistant" && typeof m.content === "string" && (m.content as string).includes("<div>"))).toBe(true);
+      const feedbackUserMsg = secondCallMessages.filter((m) => m.role === "user").pop();
+      expect(feedbackUserMsg).toBeDefined();
+      expect(feedbackUserMsg!.content).toContain("failed to render");
+
+      // Finish event should fire only after the successful retry
+      const finishEvent = events.find((e) => e.type === "finish");
+      expect(finishEvent).toBeDefined();
+
+      // The retry fired before the finish
+      const retryIdx = events.findIndex((e) => e.type === "ui-retry");
+      const finishIdx = events.findIndex((e) => e.type === "finish");
+      expect(retryIdx).toBeLessThan(finishIdx);
+    });
+
+    it("gives up after MAX_UI_RETRIES and emits finish with the last attempt", async () => {
+      const brokenResponse = {
+        text: "Try:\n```tsx ui\nfunction Component() { throw new Error('boom'); }\n```\n",
+        reasoning: "",
+        toolCalls: [],
+        usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
+        stopReason: "stop" as const,
+      };
+      mockStreamCompletion.mockResolvedValue(brokenResponse);
+
+      const events: StreamEvent[] = [];
+      await runChatLoop({
+        apiKey: "key",
+        model: "model",
+        messages: [{ role: "user", content: "component please" }],
+        onEvents: (batch) => events.push(...batch),
+      });
+
+      // initial attempt + 2 retries = 3 total calls
+      expect(mockStreamCompletion).toHaveBeenCalledTimes(3);
+      const retries = events.filter((e) => e.type === "ui-retry");
+      expect(retries).toHaveLength(2);
+
+      // Finish event still fires so the user sees the last (broken) attempt with its error box
+      expect(events.some((e) => e.type === "finish")).toBe(true);
+    });
+
+    it("does not retry when the response has no ui blocks", async () => {
+      mockStreamCompletion.mockResolvedValueOnce({
+        text: "Just plain text answer.",
+        reasoning: "",
+        toolCalls: [],
+        usage: { prompt_tokens: 5, completion_tokens: 3, total_tokens: 8 },
+        stopReason: "stop",
+      });
+
+      const events: StreamEvent[] = [];
+      await runChatLoop({
+        apiKey: "key",
+        model: "model",
+        messages: [{ role: "user", content: "hi" }],
+        onEvents: (batch) => events.push(...batch),
+      });
+
+      expect(mockStreamCompletion).toHaveBeenCalledTimes(1);
+      expect(events.some((e) => e.type === "ui-retry")).toBe(false);
+      expect(events.some((e) => e.type === "finish")).toBe(true);
+    });
+  });
 });

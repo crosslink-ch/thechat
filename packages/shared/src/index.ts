@@ -186,6 +186,7 @@ export type StreamEvent =
   | { type: "tool-result"; toolCallId: string; toolName: string; result: unknown; isError: boolean }
   | { type: "queued-message-consumed"; id: string; content: string }
   | { type: "compaction"; summary: string }
+  | { type: "ui-retry"; errors: Array<{ code: string; error: string }>; attempt: number }
   | { type: "finish"; usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number } }
   | { type: "error"; error: string; provider?: "openrouter" | "codex" | "glm"; statusCode?: number };
 

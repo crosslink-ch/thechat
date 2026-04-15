@@ -326,6 +326,13 @@ export function useChat(options?: UseChatOptions) {
                 setQueuedMessages((prev) => prev.filter((q) => q.id !== qmEvent.id));
                 break;
               }
+              case "ui-retry": {
+                // A rendered UI block failed validation — discard the in-flight
+                // attempt so the retry streams in cleanly in place of the broken one.
+                streamingParts.length = 0;
+                partsChanged = true;
+                break;
+              }
               case "error": {
                 logError(`[useChat] Stream error (conv=${streamConvId}): ${event.error}`);
                 const chatErr = chatErrorFromEvent(event);

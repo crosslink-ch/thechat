@@ -3,6 +3,7 @@ import { streamCodexCompletion } from "./codex";
 import { streamGlmCompletion } from "./glm";
 import { truncateToolResult } from "./truncate";
 import { isOverflow, compactMessages } from "./compaction";
+import { validateUiBlocks, formatUiErrorsForLlm } from "./ui-validation";
 import { error as logError, warn as logWarn, debug as logDebug, formatError } from "../log";
 import { ProviderError } from "./errors";
 import type { ChatLoopOptions, StreamResult, ToolDefinition, StreamEvent } from "./types";
@@ -13,6 +14,7 @@ Be concise and direct in your responses. \
 When using tools, explain what you're doing briefly.`;
 
 const DOOM_LOOP_THRESHOLD = 3;
+const MAX_UI_RETRIES = 2;
 
 interface ToolCallRecord {
   toolName: string;
@@ -114,6 +116,7 @@ export async function runChatLoop(options: ChatLoopOptions): Promise<void> {
     : undefined;
 
   const toolCallHistory: ToolCallRecord[] = [];
+  let uiRetries = 0;
 
   for (let round = 0; round <= maxToolRoundtrips; round++) {
     if (signal?.aborted) return;
@@ -216,8 +219,30 @@ export async function runChatLoop(options: ChatLoopOptions): Promise<void> {
       continue;
     }
 
-    // No tool calls → check for queued messages before finishing
+    // No tool calls → validate UI blocks, then check queued messages, then finish
     if (result.toolCalls.length === 0) {
+      // Silently retry if any ```tsx ui``` block failed to compile or render.
+      // The user sees the broken attempt clear (via ui-retry) and the corrected
+      // response stream in its place.
+      if (result.text && uiRetries < MAX_UI_RETRIES) {
+        const uiErrors = validateUiBlocks(result.text);
+        if (uiErrors.length > 0) {
+          uiRetries++;
+          logWarn(
+            `[loop] UI validation failed (attempt ${uiRetries}/${MAX_UI_RETRIES}): ${uiErrors.length} block(s)`,
+          );
+
+          workingMessages.push({ role: "assistant", content: result.text });
+          workingMessages.push({
+            role: "user",
+            content: formatUiErrorsForLlm(uiErrors),
+          });
+
+          onEvents([{ type: "ui-retry", errors: uiErrors, attempt: uiRetries }]);
+          continue;
+        }
+      }
+
       const queued = options.getQueuedMessages?.() ?? [];
       if (queued.length > 0) {
         if (result.text) {

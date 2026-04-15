@@ -4,7 +4,13 @@ import { DynamicUiBlock } from "./DynamicUiBlock";
 import { Markdown } from "./Markdown";
 import { PendingUiBlock } from "./PendingUiBlock";
 
-export function TextWithUiBlocks({ text }: { text: string }) {
+interface TextWithUiBlocksProps {
+  text: string;
+  /** Suppress component error UI (shows pending-style placeholder instead). */
+  isStreaming?: boolean;
+}
+
+export function TextWithUiBlocks({ text, isStreaming }: TextWithUiBlocksProps) {
   const segments = useMemo(() => parseTextSegments(text), [text]);
 
   return (
@@ -14,7 +20,7 @@ export function TextWithUiBlocks({ text }: { text: string }) {
           case "text":
             return <Markdown key={i} content={segment.content} />;
           case "ui":
-            return <DynamicUiBlock key={i} code={segment.code} />;
+            return <DynamicUiBlock key={i} code={segment.code} isStreaming={isStreaming} />;
           case "ui-pending":
             return <PendingUiBlock key={i} code={segment.code} />;
         }
