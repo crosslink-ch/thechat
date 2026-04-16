@@ -1,6 +1,7 @@
 import { streamCompletion } from "./openrouter";
 import { streamCodexCompletion } from "./codex";
 import { streamGlmCompletion } from "./glm";
+import { streamFeatherlessCompletion } from "./featherless";
 import { truncateToolResult } from "./truncate";
 import { isOverflow, compactMessages } from "./compaction";
 import { validateUiBlocks, formatUiErrorsForLlm } from "./ui-validation";
@@ -50,6 +51,7 @@ function callProvider(
 ): Promise<StreamResult> {
   const provider = options.provider === "codex" ? "codex" as const
     : options.provider === "glm" ? "glm" as const
+    : options.provider === "featherless" ? "featherless" as const
     : "openrouter" as const;
 
   // Tag any error events from the Rust streaming layer with the provider
@@ -83,6 +85,17 @@ function callProvider(
       signal: options.signal,
       onEvents: taggedOnEvents,
       planType: options.glmPlanType,
+    });
+  }
+  if (provider === "featherless") {
+    return streamFeatherlessCompletion({
+      apiKey: options.featherlessApiKey ?? options.apiKey,
+      model: options.model,
+      messages,
+      params: options.params,
+      tools,
+      signal: options.signal,
+      onEvents: taggedOnEvents,
     });
   }
   return streamCompletion({

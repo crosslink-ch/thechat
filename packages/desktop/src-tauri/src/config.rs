@@ -26,12 +26,20 @@ pub struct ProviderConfig {
     pub model: String,
 }
 
+fn default_featherless_provider() -> ProviderConfig {
+    ProviderConfig {
+        model: "zai-org/GLM-5.1".to_string(),
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProvidersConfig {
     pub openrouter: ProviderConfig,
     pub codex: ProviderConfig,
     pub anthropic: ProviderConfig,
     pub glm: ProviderConfig,
+    #[serde(default = "default_featherless_provider")]
+    pub featherless: ProviderConfig,
 }
 
 impl Default for ProvidersConfig {
@@ -49,6 +57,7 @@ impl Default for ProvidersConfig {
             glm: ProviderConfig {
                 model: "glm-5.1".to_string(),
             },
+            featherless: default_featherless_provider(),
         }
     }
 }
@@ -67,6 +76,10 @@ pub struct LocalOverrides {
     pub glm_api_key: Option<bool>,
     #[serde(default, rename = "glmModel", skip_serializing_if = "Option::is_none")]
     pub glm_model: Option<bool>,
+    #[serde(default, rename = "featherlessApiKey", skip_serializing_if = "Option::is_none")]
+    pub featherless_api_key: Option<bool>,
+    #[serde(default, rename = "featherlessModel", skip_serializing_if = "Option::is_none")]
+    pub featherless_model: Option<bool>,
     #[serde(default, rename = "reasoningEffort", skip_serializing_if = "Option::is_none")]
     pub reasoning_effort: Option<bool>,
 }
@@ -78,6 +91,8 @@ pub struct AppConfig {
     pub glm_api_key: Option<String>,
     #[serde(default, rename = "glmPlanType", skip_serializing_if = "Option::is_none")]
     pub glm_plan_type: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub featherless_api_key: Option<String>,
     #[serde(default)]
     pub provider: Option<String>,
     #[serde(default, rename = "reasoningEffort")]
@@ -158,6 +173,7 @@ fn default_config(backend_url: &str) -> AppConfig {
         api_key: String::new(),
         glm_api_key: None,
         glm_plan_type: None,
+        featherless_api_key: None,
         provider: None,
         reasoning_effort: None,
         providers: ProvidersConfig::default(),
@@ -348,6 +364,10 @@ mod tests {
         assert_eq!(config.providers.codex.model, "gpt-5.4");
         assert_eq!(config.providers.anthropic.model, "claude-sonnet-4-6");
         assert_eq!(config.providers.glm.model, "glm-5.1");
+        assert_eq!(
+            config.providers.featherless.model,
+            "zai-org/GLM-5.1"
+        );
         let srv = &config.mcp_servers["thechat"];
         assert_eq!(srv.url.as_deref(), Some("http://localhost:3000/mcp"));
         assert!(srv.command.is_none());

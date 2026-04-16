@@ -45,6 +45,10 @@ async function buildRequest(options: ChatCompletionsOptions): Promise<{
   if (params?.top_p !== undefined) bodyObj.top_p = params.top_p;
   if (params?.top_k !== undefined) bodyObj.top_k = params.top_k;
   bodyObj.max_tokens = params?.max_tokens ?? await getMaxOutputTokens(params?.model ?? model);
+  // Featherless rejects max_tokens above 32_768
+  if (options.providerTag === "featherless" && typeof bodyObj.max_tokens === "number" && bodyObj.max_tokens > 32_768) {
+    bodyObj.max_tokens = 32_768;
+  }
   if (params?.frequency_penalty !== undefined) bodyObj.frequency_penalty = params.frequency_penalty;
   if (params?.presence_penalty !== undefined) bodyObj.presence_penalty = params.presence_penalty;
   if (params?.stop !== undefined) bodyObj.stop = params.stop;

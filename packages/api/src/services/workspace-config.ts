@@ -54,6 +54,8 @@ function toWorkspaceConfig(
       codexModel: null,
       glm: null,
       glmModel: null,
+      featherless: null,
+      featherlessModel: null,
       reasoningEffort: null,
       updatedAt: new Date().toISOString(),
     };
@@ -69,6 +71,10 @@ function toWorkspaceConfig(
     codexModel: row.codexModel ?? null,
     glm: row.glmApiKey ? { apiKey: row.glmApiKey } : null,
     glmModel: row.glmModel ?? null,
+    featherless: row.featherlessApiKey
+      ? { apiKey: row.featherlessApiKey }
+      : null,
+    featherlessModel: row.featherlessModel ?? null,
     reasoningEffort: (row.reasoningEffort as ReasoningEffort) ?? null,
     updatedAt: row.updatedAt.toISOString(),
   };
@@ -157,6 +163,39 @@ export async function setGlmConfig(
   return getWorkspaceConfig(workspaceId, userId);
 }
 
+export async function setFeatherlessConfig(
+  workspaceId: string,
+  userId: string,
+  apiKey: string
+): Promise<WorkspaceConfig> {
+  const membership = await requireMembership(workspaceId, userId);
+  requireAdminOrOwner(membership.role);
+
+  const [existing] = await db
+    .select({ workspaceId: workspaceConfigs.workspaceId })
+    .from(workspaceConfigs)
+    .where(eq(workspaceConfigs.workspaceId, workspaceId))
+    .limit(1);
+
+  if (existing) {
+    await db
+      .update(workspaceConfigs)
+      .set({
+        provider: "featherless",
+        featherlessApiKey: apiKey,
+      })
+      .where(eq(workspaceConfigs.workspaceId, workspaceId));
+  } else {
+    await db.insert(workspaceConfigs).values({
+      workspaceId,
+      provider: "featherless",
+      featherlessApiKey: apiKey,
+    });
+  }
+
+  return getWorkspaceConfig(workspaceId, userId);
+}
+
 export async function setActiveProvider(
   workspaceId: string,
   userId: string,
@@ -186,6 +225,10 @@ export async function setActiveProvider(
     throw new ServiceError("GLM API key not configured", 400);
   }
 
+  if (provider === "featherless" && !existing.featherlessApiKey) {
+    throw new ServiceError("Featherless API key not configured", 400);
+  }
+
   await db
     .update(workspaceConfigs)
     .set({ provider })
@@ -201,6 +244,7 @@ export async function updateWorkspaceSettings(
     openrouterModel?: string | null;
     codexModel?: string | null;
     glmModel?: string | null;
+    featherlessModel?: string | null;
     reasoningEffort?: ReasoningEffort | null;
   }
 ): Promise<WorkspaceConfig> {
@@ -217,6 +261,7 @@ export async function updateWorkspaceSettings(
   if ("openrouterModel" in settings) updates.openrouterModel = settings.openrouterModel ?? null;
   if ("codexModel" in settings) updates.codexModel = settings.codexModel ?? null;
   if ("glmModel" in settings) updates.glmModel = settings.glmModel ?? null;
+  if ("featherlessModel" in settings) updates.featherlessModel = settings.featherlessModel ?? null;
   if ("reasoningEffort" in settings) updates.reasoningEffort = settings.reasoningEffort ?? null;
 
   if (existing) {

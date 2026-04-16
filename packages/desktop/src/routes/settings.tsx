@@ -260,7 +260,10 @@ const PROVIDER_LABELS: Record<Provider, string> = {
   openrouter: "OpenRouter",
   codex: "Codex",
   glm: "GLM",
+  featherless: "Featherless",
 };
+
+const PROVIDER_ORDER: readonly Provider[] = ["openrouter", "codex", "glm", "featherless"];
 
 const REASONING_EFFORTS: { value: ReasoningEffort; label: string }[] = [
   { value: "low", label: "Low" },
@@ -273,6 +276,7 @@ const DEFAULT_PROVIDERS: ProvidersConfig = {
   openrouter: { model: "openai/gpt-4.1" },
   codex: { model: "gpt-5.4" },
   glm: { model: "glm-5.1" },
+  featherless: { model: "zai-org/GLM-5.1" },
 };
 
 function authHeader(token: string) {
@@ -292,8 +296,10 @@ export function SettingsRoute() {
   const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffort>("xhigh");
   const [glmApiKey, setGlmApiKey] = useState("");
   const [glmPlanType, setGlmPlanType] = useState<GlmPlanType>("standard");
+  const [featherlessApiKey, setFeatherlessApiKey] = useState("");
   const [showKey, setShowKey] = useState(false);
   const [showGlmKey, setShowGlmKey] = useState(false);
+  const [showFeatherlessKey, setShowFeatherlessKey] = useState(false);
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState<"idle" | "saved" | "error">("idle");
   const [configPath, setConfigPath] = useState<string | null>(null);
@@ -322,6 +328,7 @@ export function SettingsRoute() {
       setApiKey(cfg.api_key);
       setGlmApiKey(cfg.glm_api_key ?? "");
       setGlmPlanType(cfg.glmPlanType ?? "standard");
+      setFeatherlessApiKey(cfg.featherless_api_key ?? "");
       setProvider(cfg.provider ?? "openrouter");
       setProviders(cfg.providers ?? DEFAULT_PROVIDERS);
       setReasoningEffort(cfg.reasoningEffort ?? "xhigh");
@@ -380,6 +387,7 @@ export function SettingsRoute() {
         api_key: apiKey,
         glm_api_key: glmApiKey || undefined,
         glmPlanType,
+        featherless_api_key: featherlessApiKey || undefined,
         provider,
         reasoningEffort,
         providers,
@@ -415,6 +423,8 @@ export function SettingsRoute() {
   const wsHasCodexModel = wsActive && !!wsConfig.codexModel;
   const wsHasGlmApiKey = wsActive && !!wsConfig.glm?.apiKey;
   const wsHasGlmModel = wsActive && !!wsConfig.glmModel;
+  const wsHasFeatherlessApiKey = wsActive && !!wsConfig.featherless?.apiKey;
+  const wsHasFeatherlessModel = wsActive && !!wsConfig.featherlessModel;
   const wsHasReasoningEffort = wsActive && !!wsConfig.reasoningEffort;
 
   // Effective values for display (workspace or local)
@@ -429,15 +439,18 @@ export function SettingsRoute() {
     effectiveProvider === "openrouter" ? wsConfig?.openrouterModel
     : effectiveProvider === "codex" ? wsConfig?.codexModel
     : effectiveProvider === "glm" ? wsConfig?.glmModel
+    : effectiveProvider === "featherless" ? wsConfig?.featherlessModel
     : null;
   const wsHasModelForProvider =
     effectiveProvider === "openrouter" ? wsHasOpenrouterModel
     : effectiveProvider === "codex" ? wsHasCodexModel
     : effectiveProvider === "glm" ? wsHasGlmModel
+    : effectiveProvider === "featherless" ? wsHasFeatherlessModel
     : false;
   const modelOverrideKey: keyof LocalOverrides =
     effectiveProvider === "glm" ? "glmModel"
     : effectiveProvider === "codex" ? "codexModel"
+    : effectiveProvider === "featherless" ? "featherlessModel"
     : "openrouterModel";
   const isModelCustom = !!localOverrides[modelOverrideKey];
 
@@ -445,9 +458,12 @@ export function SettingsRoute() {
   const wsHasApiKeyForProvider =
     effectiveProvider === "openrouter" ? wsHasApiKey
     : effectiveProvider === "glm" ? wsHasGlmApiKey
+    : effectiveProvider === "featherless" ? wsHasFeatherlessApiKey
     : false;
   const apiKeyOverrideKey: keyof LocalOverrides =
-    effectiveProvider === "glm" ? "glmApiKey" : "apiKey";
+    effectiveProvider === "glm" ? "glmApiKey"
+    : effectiveProvider === "featherless" ? "featherlessApiKey"
+    : "apiKey";
   const isApiKeyCustom = !!localOverrides[apiKeyOverrideKey];
 
   return (
@@ -500,8 +516,8 @@ export function SettingsRoute() {
             )}
           </div>
           {wsHasProvider && !localOverrides.provider ? (
-            <div className="flex gap-1">
-              {(["openrouter", "codex", "glm"] as const).map((p) => (
+            <div className="flex flex-wrap gap-1">
+              {PROVIDER_ORDER.map((p) => (
                 <div
                   key={p}
                   className={`rounded-lg border px-4 py-2 text-[0.929rem] font-medium ${
@@ -515,8 +531,8 @@ export function SettingsRoute() {
               ))}
             </div>
           ) : (
-            <div className="flex gap-1">
-              {(["openrouter", "codex", "glm"] as const).map((p) => (
+            <div className="flex flex-wrap gap-1">
+              {PROVIDER_ORDER.map((p) => (
                 <button
                   key={p}
                   type="button"
@@ -540,45 +556,53 @@ export function SettingsRoute() {
             {PROVIDER_LABELS[effectiveProvider]} Settings
           </span>
 
-          {/* API Key — for OpenRouter and GLM */}
-          {(effectiveProvider === "openrouter" || effectiveProvider === "glm") && (
-            <label className="flex flex-col gap-1.5">
-              <div className="flex items-center gap-2">
-                <span className="text-[0.929rem] font-medium text-text-secondary">API Key</span>
-                {wsHasApiKeyForProvider && (
-                  <SourceToggle
-                    isCustom={isApiKeyCustom}
-                    onToggle={(c) => toggleOverride(apiKeyOverrideKey, c)}
-                  />
+          {/* API Key — for OpenRouter, GLM, and Featherless */}
+          {(() => {
+            const keyField = effectiveProvider === "openrouter"
+              ? { value: apiKey, setValue: setApiKey, show: showKey, setShow: setShowKey, placeholder: "sk-or-...", wsKey: wsConfig?.openrouter?.apiKey }
+              : effectiveProvider === "glm"
+                ? { value: glmApiKey, setValue: setGlmApiKey, show: showGlmKey, setShow: setShowGlmKey, placeholder: "Z.ai API key", wsKey: wsConfig?.glm?.apiKey }
+                : effectiveProvider === "featherless"
+                  ? { value: featherlessApiKey, setValue: setFeatherlessApiKey, show: showFeatherlessKey, setShow: setShowFeatherlessKey, placeholder: "Featherless API key", wsKey: wsConfig?.featherless?.apiKey }
+                  : null;
+            if (!keyField) return null;
+            return (
+              <label className="flex flex-col gap-1.5">
+                <div className="flex items-center gap-2">
+                  <span className="text-[0.929rem] font-medium text-text-secondary">API Key</span>
+                  {wsHasApiKeyForProvider && (
+                    <SourceToggle
+                      isCustom={isApiKeyCustom}
+                      onToggle={(c) => toggleOverride(apiKeyOverrideKey, c)}
+                    />
+                  )}
+                </div>
+                {wsHasApiKeyForProvider && !isApiKeyCustom ? (
+                  <div className="rounded-lg border border-border bg-raised px-3 py-2 text-[0.929rem] text-text-dimmed">
+                    {keyField.wsKey!.slice(0, 8)}...
+                  </div>
+                ) : (
+                  <div className="flex gap-2">
+                    <input
+                      type={keyField.show ? "text" : "password"}
+                      value={keyField.value}
+                      onChange={(e) => keyField.setValue(e.target.value)}
+                      placeholder={keyField.placeholder}
+                      className="min-w-0 flex-1 rounded-lg border border-border bg-raised px-3 py-2 text-[0.929rem] text-text outline-none transition-colors placeholder:text-text-dimmed focus:border-accent"
+                      spellCheck={false}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => keyField.setShow((s) => !s)}
+                      className="shrink-0 cursor-pointer rounded-lg border border-border bg-raised px-3 py-2 text-[0.857rem] text-text-muted transition-colors hover:bg-hover"
+                    >
+                      {keyField.show ? "Hide" : "Show"}
+                    </button>
+                  </div>
                 )}
-              </div>
-              {wsHasApiKeyForProvider && !isApiKeyCustom ? (
-                <div className="rounded-lg border border-border bg-raised px-3 py-2 text-[0.929rem] text-text-dimmed">
-                  {effectiveProvider === "openrouter"
-                    ? wsConfig!.openrouter!.apiKey.slice(0, 8)
-                    : wsConfig!.glm!.apiKey.slice(0, 8)}{"..."}
-                </div>
-              ) : (
-                <div className="flex gap-2">
-                  <input
-                    type={(effectiveProvider === "openrouter" ? showKey : showGlmKey) ? "text" : "password"}
-                    value={effectiveProvider === "openrouter" ? apiKey : glmApiKey}
-                    onChange={(e) => effectiveProvider === "openrouter" ? setApiKey(e.target.value) : setGlmApiKey(e.target.value)}
-                    placeholder={effectiveProvider === "openrouter" ? "sk-or-..." : "Z.ai API key"}
-                    className="min-w-0 flex-1 rounded-lg border border-border bg-raised px-3 py-2 text-[0.929rem] text-text outline-none transition-colors placeholder:text-text-dimmed focus:border-accent"
-                    spellCheck={false}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => effectiveProvider === "openrouter" ? setShowKey((s) => !s) : setShowGlmKey((s) => !s)}
-                    className="shrink-0 cursor-pointer rounded-lg border border-border bg-raised px-3 py-2 text-[0.857rem] text-text-muted transition-colors hover:bg-hover"
-                  >
-                    {(effectiveProvider === "openrouter" ? showKey : showGlmKey) ? "Hide" : "Show"}
-                  </button>
-                </div>
-              )}
-            </label>
-          )}
+              </label>
+            );
+          })()}
 
           {/* Plan Type — GLM only */}
           {effectiveProvider === "glm" && (
@@ -632,6 +656,15 @@ export function SettingsRoute() {
                 value={currentModel}
                 onChange={(e) => setProviderModel(e.target.value)}
                 placeholder="e.g. openai/gpt-4.1"
+                className="rounded-lg border border-border bg-raised px-3 py-2 text-[0.929rem] text-text outline-none transition-colors placeholder:text-text-dimmed focus:border-accent"
+                spellCheck={false}
+              />
+            ) : effectiveProvider === "featherless" ? (
+              <input
+                type="text"
+                value={currentModel}
+                onChange={(e) => setProviderModel(e.target.value)}
+                placeholder="e.g. zai-org/GLM-5.1"
                 className="rounded-lg border border-border bg-raised px-3 py-2 text-[0.929rem] text-text outline-none transition-colors placeholder:text-text-dimmed focus:border-accent"
                 spellCheck={false}
               />

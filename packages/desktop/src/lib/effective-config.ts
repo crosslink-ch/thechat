@@ -82,6 +82,11 @@ export async function getEffectiveConfig(): Promise<EffectiveConfig> {
     effective.glm_api_key = wsConfig.glm.apiKey;
   }
 
+  // Merge Featherless API key
+  if (!overrides.featherlessApiKey && wsConfig.featherless?.apiKey) {
+    effective.featherless_api_key = wsConfig.featherless.apiKey;
+  }
+
   // Merge models
   effective.providers = { ...effective.providers };
   if (!overrides.openrouterModel && wsConfig.openrouterModel) {
@@ -92,6 +97,9 @@ export async function getEffectiveConfig(): Promise<EffectiveConfig> {
   }
   if (!overrides.glmModel && wsConfig.glmModel) {
     effective.providers.glm = { ...effective.providers.glm, model: wsConfig.glmModel };
+  }
+  if (!overrides.featherlessModel && wsConfig.featherlessModel) {
+    effective.providers.featherless = { ...effective.providers.featherless, model: wsConfig.featherlessModel };
   }
 
   // Merge reasoning effort

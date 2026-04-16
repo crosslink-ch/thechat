@@ -254,6 +254,7 @@ export const workspaceProviderEnum = pgEnum("workspace_provider", [
   "openrouter",
   "codex",
   "glm",
+  "featherless",
 ]);
 
 export const workspaceConfigs = pgTable("workspace_configs", {
@@ -266,6 +267,8 @@ export const workspaceConfigs = pgTable("workspace_configs", {
   codexModel: text("codex_model"),
   glmApiKey: text("glm_api_key"),
   glmModel: text("glm_model"),
+  featherlessApiKey: text("featherless_api_key"),
+  featherlessModel: text("featherless_model"),
   reasoningEffort: varchar("reasoning_effort", { length: 20 }),
   createdAt: timestamp("created_at", { withTimezone: true })
     .defaultNow()

@@ -29,6 +29,13 @@
       "when": 1797062400000,
       "tag": "0003_add_glm_provider",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1776340912774,
+      "tag": "0004_bright_frank_castle",
+      "breakpoints": true
     }
   ]
 }

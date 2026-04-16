@@ -15,7 +15,10 @@ const PROVIDER_LABELS: Record<WorkspaceProvider, string> = {
   openrouter: "OpenRouter",
   codex: "Codex",
   glm: "GLM",
+  featherless: "Featherless",
 };
+
+const PROVIDER_ORDER: readonly WorkspaceProvider[] = ["openrouter", "codex", "glm", "featherless"];
 
 const REASONING_EFFORTS: { value: ReasoningEffort; label: string }[] = [
   { value: "low", label: "Low" },
@@ -47,6 +50,9 @@ export function WorkspaceManageRoute() {
   const [glmApiKey, setGlmApiKey] = useState("");
   const [glmModel, setGlmModel] = useState("glm-5.1");
   const [showGlmKey, setShowGlmKey] = useState(false);
+  const [featherlessApiKey, setFeatherlessApiKey] = useState("");
+  const [featherlessModel, setFeatherlessModel] = useState("zai-org/GLM-5.1");
+  const [showFeatherlessKey, setShowFeatherlessKey] = useState(false);
   const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffort>("xhigh");
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState<"idle" | "saved" | "error">("idle");
@@ -71,6 +77,8 @@ export function WorkspaceManageRoute() {
         if (cfg.codexModel) setCodexModel(cfg.codexModel);
         if (cfg.glm) setGlmApiKey(cfg.glm.apiKey);
         if (cfg.glmModel) setGlmModel(cfg.glmModel);
+        if (cfg.featherless) setFeatherlessApiKey(cfg.featherless.apiKey);
+        if (cfg.featherlessModel) setFeatherlessModel(cfg.featherlessModel);
         if (cfg.reasoningEffort) setReasoningEffort(cfg.reasoningEffort);
       } catch {
         // Config doesn't exist yet, use defaults
@@ -130,12 +138,22 @@ export function WorkspaceManageRoute() {
         if (error) throw new Error((error as any).error || "Failed to save GLM config");
       }
 
+      // Save Featherless API key if present
+      if (featherlessApiKey.trim()) {
+        const { error } = await api.workspaces({ id: activeWorkspace.id }).config.featherless.put(
+          { apiKey: featherlessApiKey.trim() },
+          auth(token),
+        );
+        if (error) throw new Error((error as any).error || "Failed to save Featherless config");
+      }
+
       // Save model + reasoning settings
       const { error } = await api.workspaces({ id: activeWorkspace.id }).config.settings.put(
         {
           openrouterModel: openrouterModel || null,
           codexModel: codexModel || null,
           glmModel: glmModel || null,
+          featherlessModel: featherlessModel || null,
           reasoningEffort,
         },
         auth(token),
@@ -198,8 +216,8 @@ export function WorkspaceManageRoute() {
         {/* Provider */}
         <div className="flex flex-col gap-1.5">
           <span className="text-[0.929rem] font-medium text-text-secondary">Provider</span>
-          <div className="flex gap-1">
-            {(["openrouter", "codex", "glm"] as const).map((p) => (
+          <div className="flex flex-wrap gap-1">
+            {PROVIDER_ORDER.map((p) => (
               <button
                 key={p}
                 type="button"
@@ -320,6 +338,49 @@ export function WorkspaceManageRoute() {
                   onChange={setGlmModel}
                   options={GLM_MODELS}
                   disabled={provider !== "glm"}
+                />
+              </div>
+            </div>
+
+            {/* Featherless settings */}
+            <div className={`col-start-1 row-start-1 flex flex-col gap-4 ${
+              provider !== "featherless" ? "invisible pointer-events-none" : ""
+            }`}>
+              <label className="flex flex-col gap-1.5">
+                <span className="text-[0.929rem] font-medium text-text-secondary">API Key</span>
+                <div className="flex gap-2">
+                  <input
+                    type={showFeatherlessKey ? "text" : "password"}
+                    value={featherlessApiKey}
+                    onChange={(e) => setFeatherlessApiKey(e.target.value)}
+                    placeholder="Featherless API key"
+                    disabled={!isAdmin}
+                    className="min-w-0 flex-1 rounded-lg border border-border bg-raised px-3 py-2 text-[0.929rem] text-text outline-none transition-colors placeholder:text-text-dimmed focus:border-accent disabled:cursor-not-allowed disabled:opacity-50"
+                    spellCheck={false}
+                    tabIndex={provider !== "featherless" ? -1 : undefined}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowFeatherlessKey((s) => !s)}
+                    className="shrink-0 cursor-pointer rounded-lg border border-border bg-raised px-3 py-2 text-[0.857rem] text-text-muted transition-colors hover:bg-hover"
+                    tabIndex={provider !== "featherless" ? -1 : undefined}
+                  >
+                    {showFeatherlessKey ? "Hide" : "Show"}
+                  </button>
+                </div>
+              </label>
+
+              <div className="flex flex-col gap-1.5">
+                <span className="text-[0.929rem] font-medium text-text-secondary">Model</span>
+                <input
+                  type="text"
+                  value={featherlessModel}
+                  onChange={(e) => setFeatherlessModel(e.target.value)}
+                  placeholder="e.g. zai-org/GLM-5.1"
+                  disabled={!isAdmin}
+                  className="rounded-lg border border-border bg-raised px-3 py-2 text-[0.929rem] text-text outline-none transition-colors placeholder:text-text-dimmed focus:border-accent disabled:cursor-not-allowed disabled:opacity-50"
+                  spellCheck={false}
+                  tabIndex={provider !== "featherless" ? -1 : undefined}
                 />
               </div>
             </div>

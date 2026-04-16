@@ -11,7 +11,7 @@
 import { debug as logDebug, warn as logWarn } from "../log";
 
 /** Global ceiling for output tokens across all models. */
-export const OUTPUT_TOKEN_MAX = 64_000;
+export const OUTPUT_TOKEN_MAX = 32_768;
 
 /** Default reasoning effort used across all providers ("xhigh" enables extra-high reasoning depth). */
 export const DEFAULT_REASONING_EFFORT = "xhigh";

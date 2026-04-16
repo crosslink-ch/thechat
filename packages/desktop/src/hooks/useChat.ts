@@ -363,6 +363,7 @@ export function useChat(options?: UseChatOptions) {
         }
         const glmApiKey = provider === "glm" ? config.glm_api_key : undefined;
         const glmPlanType = provider === "glm" ? config.glmPlanType : undefined;
+        const featherlessApiKey = provider === "featherless" ? config.featherless_api_key : undefined;
 
         const getQueuedMessages = () => {
           const msgs = queuedMessagesRef.current;
@@ -393,6 +394,7 @@ export function useChat(options?: UseChatOptions) {
           codexAuth,
           glmApiKey,
           glmPlanType,
+          featherlessApiKey,
           getQueuedMessages,
           onEvents,
         });

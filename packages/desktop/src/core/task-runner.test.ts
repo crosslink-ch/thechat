@@ -48,6 +48,10 @@ const PROVIDER_EXPECTATIONS = {
     hasGlmApiKey: true,
     hasGlmPlanType: true,
   },
+  featherless: {
+    provider: "featherless",
+    hasFeatherlessApiKey: true,
+  },
 } satisfies Record<Provider, { provider: string; [k: string]: unknown }>;
 
 function makeAppConfig(provider: Provider) {
@@ -56,11 +60,13 @@ function makeAppConfig(provider: Provider) {
       api_key: "or-key",
       glm_api_key: "glm-key",
       glmPlanType: "coding" as const,
+      featherless_api_key: "fl-key",
       provider,
       providers: {
         openrouter: { model: "openrouter-model" },
         codex: { model: "codex-model" },
         glm: { model: "glm-model" },
+        featherless: { model: "featherless-model" },
       },
     },
   };
@@ -142,6 +148,9 @@ describe("runTask provider passthrough", () => {
       }
       if ("hasGlmPlanType" in expected) {
         expect(opts.glmPlanType).toBeDefined();
+      }
+      if ("hasFeatherlessApiKey" in expected) {
+        expect(opts.featherlessApiKey).toBeDefined();
       }
     },
   );

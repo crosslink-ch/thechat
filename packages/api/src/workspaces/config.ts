@@ -6,6 +6,7 @@ import {
   getWorkspaceConfig,
   setOpenRouterConfig,
   setGlmConfig,
+  setFeatherlessConfig,
   setActiveProvider,
   updateWorkspaceSettings,
   deleteWorkspaceConfig,
@@ -19,14 +20,19 @@ const glmSchema = z.object({
   apiKey: z.string().min(1, "API key is required"),
 });
 
+const featherlessSchema = z.object({
+  apiKey: z.string().min(1, "API key is required"),
+});
+
 const providerSchema = z.object({
-  provider: z.enum(["openrouter", "codex", "glm"]),
+  provider: z.enum(["openrouter", "codex", "glm", "featherless"]),
 });
 
 const settingsSchema = z.object({
   openrouterModel: z.string().nullable().optional(),
   codexModel: z.string().nullable().optional(),
   glmModel: z.string().nullable().optional(),
+  featherlessModel: z.string().nullable().optional(),
   reasoningEffort: z.enum(["low", "medium", "high", "xhigh"]).nullable().optional(),
 });
 
@@ -92,6 +98,25 @@ export const workspaceConfigRoutes = new Elysia({
 
     try {
       return await setGlmConfig(params.id, user.id, parsed.data.apiKey);
+    } catch (e) {
+      if (e instanceof ServiceError) {
+        set.status = e.status;
+        return { error: e.message };
+      }
+      throw e;
+    }
+  })
+
+  // Set Featherless API key
+  .put("/:id/config/featherless", async ({ params, body, user, set }) => {
+    const parsed = featherlessSchema.safeParse(body);
+    if (!parsed.success) {
+      set.status = 400;
+      return { error: parsed.error.issues[0]?.message ?? "Invalid input" };
+    }
+
+    try {
+      return await setFeatherlessConfig(params.id, user.id, parsed.data.apiKey);
     } catch (e) {
       if (e instanceof ServiceError) {
         set.status = e.status;

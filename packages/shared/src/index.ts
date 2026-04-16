@@ -47,7 +47,7 @@ export interface McpServerConfig {
   disabled?: boolean;
 }
 
-export type Provider = "openrouter" | "codex" | "glm";
+export type Provider = "openrouter" | "codex" | "glm" | "featherless";
 export type ReasoningEffort = "low" | "medium" | "high" | "xhigh";
 export type GlmPlanType = "coding" | "standard";
 
@@ -59,6 +59,7 @@ export interface ProvidersConfig {
   openrouter: ProviderConfig;
   codex: ProviderConfig;
   glm: ProviderConfig;
+  featherless: ProviderConfig;
 }
 
 export interface LocalOverrides {
@@ -68,6 +69,8 @@ export interface LocalOverrides {
   codexModel?: boolean;
   glmApiKey?: boolean;
   glmModel?: boolean;
+  featherlessApiKey?: boolean;
+  featherlessModel?: boolean;
   reasoningEffort?: boolean;
 }
 
@@ -75,6 +78,7 @@ export interface AppConfig {
   api_key: string;
   glm_api_key?: string;
   glmPlanType?: GlmPlanType;
+  featherless_api_key?: string;
   provider?: Provider;
   reasoningEffort?: ReasoningEffort;
   providers: ProvidersConfig;
@@ -188,7 +192,7 @@ export type StreamEvent =
   | { type: "compaction"; summary: string }
   | { type: "ui-retry"; errors: Array<{ code: string; error: string }>; attempt: number }
   | { type: "finish"; usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number } }
-  | { type: "error"; error: string; provider?: "openrouter" | "codex" | "glm"; statusCode?: number };
+  | { type: "error"; error: string; provider?: Provider; statusCode?: number };
 
 // -- Stream Result (returned from streamCompletion) --
 
@@ -284,7 +288,7 @@ export type AppNotification =
 
 // -- Workspace Config Types --
 
-export type WorkspaceProvider = "openrouter" | "codex" | "glm";
+export type WorkspaceProvider = "openrouter" | "codex" | "glm" | "featherless";
 
 export interface WorkspaceConfig {
   workspaceId: string;
@@ -294,6 +298,8 @@ export interface WorkspaceConfig {
   codexModel: string | null;
   glm: { apiKey: string } | null;
   glmModel: string | null;
+  featherless: { apiKey: string } | null;
+  featherlessModel: string | null;
   reasoningEffort: ReasoningEffort | null;
   updatedAt: string;
 }
