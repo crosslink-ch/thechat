@@ -37,22 +37,28 @@ describe("readTool", () => {
     expect(result).toHaveProperty("content");
   });
 
-  it("passes offset and limit", async () => {
+  it("passes 1-indexed offset and limit through", async () => {
     mockInvoke.mockResolvedValueOnce({
       content: "",
       total_lines: 100,
       lines_read: 10,
       truncated: true,
+      next_offset: 16,
     });
 
-    await readTool.execute({ file_path: "/tmp/test.txt", offset: 5, limit: 10 });
+    const result = await readTool.execute({
+      file_path: "/tmp/test.txt",
+      offset: 6,
+      limit: 10,
+    });
 
     expect(mockInvoke).toHaveBeenCalledWith("fs_read_file", {
       filePath: "/tmp/test.txt",
-      offset: 5,
+      offset: 6,
       limit: 10,
       lineNumbers: true,
     });
+    expect(result).toMatchObject({ truncated: true, next_offset: 16 });
   });
 
   it("does not require permission (read-only)", async () => {
@@ -63,7 +69,6 @@ describe("readTool", () => {
       truncated: false,
     });
 
-    // Should not throw even without permission handler
     await readTool.execute({ file_path: "/tmp/test.txt" });
     expect(mockInvoke).toHaveBeenCalled();
   });
@@ -110,6 +115,22 @@ describe("readTool", () => {
     });
   });
 
+  it("returns PDF result for .pdf files", async () => {
+    mockInvoke.mockResolvedValueOnce("JVBERi0xLjQK");
+
+    const result = await readTool.execute({ file_path: "/tmp/docs/report.pdf" });
+
+    expect(mockInvoke).toHaveBeenCalledWith("load_image_base64", {
+      filePath: "/tmp/docs/report.pdf",
+    });
+    expect(result).toEqual({
+      __pdf: true,
+      mimeType: "application/pdf",
+      filename: "report.pdf",
+      dataUrl: "data:application/pdf;base64,JVBERi0xLjQK",
+    });
+  });
+
   it("reads SVG files as text, not as an image", async () => {
     mockInvoke.mockResolvedValueOnce({
       content: '     1\t<svg xmlns="http://www.w3.org/2000/svg"/>\n',
@@ -143,5 +164,6 @@ describe("readTool", () => {
     expect(mockInvoke).toHaveBeenCalledWith("fs_read_file", expect.any(Object));
     expect(result).toHaveProperty("content");
     expect(result).not.toHaveProperty("__image");
+    expect(result).not.toHaveProperty("__pdf");
   });
 });

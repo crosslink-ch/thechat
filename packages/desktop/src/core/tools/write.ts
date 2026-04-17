@@ -3,6 +3,7 @@ import { requestPermission } from "../permission";
 import type { ToolExecutionContext } from "../types";
 import { resolvePath } from "./resolve-path";
 import { defineTool } from "./define";
+import { tryFormat } from "./format";
 
 interface WriteFileResult {
   success: boolean;
@@ -47,6 +48,8 @@ Use this tool instead of shell commands like echo, cat with redirects, or tee.`,
       filePath: resolvedPath,
       content,
     });
+
+    await tryFormat(resolvedPath);
 
     return result;
   },

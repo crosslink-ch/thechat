@@ -8,12 +8,21 @@ interface ReadFileResult {
   total_lines: number;
   lines_read: number;
   truncated: boolean;
+  next_offset?: number;
 }
 
 /** Image result marker — detected by the chat loop to send as image_url content. */
 export interface ImageReadResult {
   __image: true;
   mimeType: string;
+  dataUrl: string;
+}
+
+/** PDF result marker — detected by the chat loop to send as a file content part. */
+export interface PdfReadResult {
+  __pdf: true;
+  mimeType: "application/pdf";
+  filename: string;
   dataUrl: string;
 }
 
@@ -33,12 +42,25 @@ function getImageMimeType(filePath: string): string | null {
   return null;
 }
 
+function isPdf(filePath: string): boolean {
+  return filePath.toLowerCase().endsWith(".pdf");
+}
+
+function basename(filePath: string): string {
+  const parts = filePath.split(/[\\/]/);
+  return parts[parts.length - 1] || filePath;
+}
+
 export const readTool = defineTool({
   name: "read",
-  description: `Read the contents of a file. Returns the file content with line numbers in "cat -n" style format.
-By default reads up to 2000 lines. Use offset and limit for large files.
-Lines longer than 2000 characters are truncated.
-This tool can also read image files (PNG, JPEG, GIF, WebP) — the image will be displayed visually so you can see its contents. SVG files are read as text (XML markup).
+  description: `Read the contents of a file. Returns file content with line numbers in "cat -n" style.
+- By default reads up to 2000 lines or 50KB, whichever comes first. When the output is capped, the result includes a \`next_offset\` you can pass on a follow-up call to keep reading.
+- \`offset\` is 1-indexed: offset=1 starts at the first line.
+- Lines longer than 2000 characters are truncated.
+- Images (PNG, JPEG, GIF, WebP) are returned visually so you can see them. SVGs are read as text (XML).
+- PDFs are returned as document attachments so you can read their contents.
+- Binary files are rejected with a clear error — use a different tool for them.
+- When a path is missing, the error may include "Did you mean: …" suggestions based on nearby filenames.
 Use this tool instead of shell commands like cat, head, or tail.`,
   parameters: {
     type: "object",
@@ -49,7 +71,7 @@ Use this tool instead of shell commands like cat, head, or tail.`,
       },
       offset: {
         type: "number",
-        description: "Line number to start reading from (0-based). Default: 0",
+        description: "Line number to start reading from (1-indexed). Default: 1",
       },
       limit: {
         type: "number",
@@ -77,6 +99,18 @@ Use this tool instead of shell commands like cat, head, or tail.`,
         mimeType,
         dataUrl: `data:${mimeType};base64,${base64}`,
       } as ImageReadResult;
+    }
+
+    if (isPdf(resolvedPath)) {
+      const base64 = await invoke<string>("load_image_base64", {
+        filePath: resolvedPath,
+      });
+      return {
+        __pdf: true,
+        mimeType: "application/pdf",
+        filename: basename(resolvedPath),
+        dataUrl: `data:application/pdf;base64,${base64}`,
+      } as PdfReadResult;
     }
 
     const result = await invoke<ReadFileResult>("fs_read_file", {

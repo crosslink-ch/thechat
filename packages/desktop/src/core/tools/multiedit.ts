@@ -4,6 +4,7 @@ import type { ToolExecutionContext } from "../types";
 import { resolvePath } from "./resolve-path";
 import { defineTool } from "./define";
 import { replace } from "./replace";
+import { tryFormat } from "./format";
 
 interface WriteFileResult {
   success: boolean;
@@ -85,6 +86,7 @@ Use this when you need to make several changes to the same file.`,
         filePath: resolvedPath,
         content,
       });
+      await tryFormat(resolvedPath);
     }
 
     return {

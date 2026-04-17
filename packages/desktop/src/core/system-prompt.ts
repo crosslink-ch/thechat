@@ -86,7 +86,9 @@ Call multiple tools in a single response when there are no dependencies between 
 - Always read a file before editing it to understand the current content.
 - Prefer editing existing files over creating new ones.
 - For multiple edits to the same file, use **multiedit** to apply them in sequence.
+- For coordinated changes across several files in one shot (add + update + delete), use **apply_patch**.
 - The **write** tool completely overwrites file content — use **edit** for targeted changes.
+- When a tool output is truncated, it's saved to disk — follow the pointer in the truncation notice if you need the full content.
 
 ## Sub-tasks
 Use the **task** tool to delegate complex, independent subtasks to a sub-agent. The sub-agent has access to file operation tools but not to user interaction tools (question, todo).

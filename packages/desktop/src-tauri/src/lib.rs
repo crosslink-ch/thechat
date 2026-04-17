@@ -401,6 +401,9 @@ pub fn run() {
             fs::fs_list_dir,
             fs::save_image,
             fs::load_image_base64,
+            fs::fs_truncation_write,
+            fs::fs_format_file,
+            fs::fs_delete_file,
             stream::stream_completion,
             stream::cancel_stream,
             oauth::mcp_oauth_start,
@@ -475,6 +478,8 @@ mod tests {
                 fs::fs_glob,
                 fs::fs_grep,
                 fs::fs_list_dir,
+                fs::fs_format_file,
+                fs::fs_delete_file,
                 stream::stream_completion,
                 stream::cancel_stream,
             ])

@@ -16,3 +16,4 @@ export { todoWriteTool } from "./todowrite";
 export { invalidTool } from "./invalid";
 export { createSkillTool } from "./skill";
 export { webFetchTool } from "./webfetch";
+export { applyPatchTool } from "./apply_patch";

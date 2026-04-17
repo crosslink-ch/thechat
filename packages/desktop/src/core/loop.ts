@@ -373,12 +373,13 @@ export async function runChatLoop(options: ChatLoopOptions): Promise<void> {
 
     // Append tool result messages (with truncation)
     for (const tr of toolResults) {
+      const resultObj =
+        tr.result && typeof tr.result === "object"
+          ? (tr.result as Record<string, unknown>)
+          : null;
+
       // Image results get sent as image_url content parts so the model can see them
-      if (
-        tr.result &&
-        typeof tr.result === "object" &&
-        (tr.result as Record<string, unknown>).__image === true
-      ) {
+      if (resultObj?.__image === true) {
         const img = tr.result as { mimeType: string; dataUrl: string };
         workingMessages.push({
           role: "tool",
@@ -387,12 +388,27 @@ export async function runChatLoop(options: ChatLoopOptions): Promise<void> {
             { type: "image_url", image_url: { url: img.dataUrl } },
           ],
         });
+      } else if (resultObj?.__pdf === true) {
+        // PDF results go through OpenRouter's `file` content type with a
+        // base64 data URL — Anthropic/OpenAI-compatible models that support
+        // document inputs will read the file directly.
+        const pdf = tr.result as { filename: string; dataUrl: string };
+        workingMessages.push({
+          role: "tool",
+          tool_call_id: tr.toolCallId,
+          content: [
+            {
+              type: "file",
+              file: { filename: pdf.filename, file_data: pdf.dataUrl },
+            },
+          ],
+        });
       } else {
         const content = JSON.stringify(tr.result);
         workingMessages.push({
           role: "tool",
           tool_call_id: tr.toolCallId,
-          content: truncateToolResult(content),
+          content: await truncateToolResult(content),
         });
       }
     }

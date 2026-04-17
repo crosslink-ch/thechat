@@ -40,6 +40,10 @@ dirs = "5"
 glob = "0.3"
 regex = "1"
 walkdir = "2"
+ignore = "0.4"
+grep-regex = "0.1"
+grep-searcher = "0.1"
+globset = "0.4"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls", "stream"] }
 tokio = { version = "1", features = ["process", "time", "rt", "macros", "net", "sync"] }
 tokio-util = "0.7"

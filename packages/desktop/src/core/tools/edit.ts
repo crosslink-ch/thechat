@@ -4,6 +4,7 @@ import type { ToolExecutionContext } from "../types";
 import { resolvePath } from "./resolve-path";
 import { defineTool } from "./define";
 import { replace } from "./replace";
+import { tryFormat } from "./format";
 
 interface WriteFileResult {
   success: boolean;
@@ -66,6 +67,8 @@ Use this tool instead of sed or awk.`,
       filePath: resolvedPath,
       content: newContent,
     });
+
+    await tryFormat(resolvedPath);
 
     return { success: true, replacements: replace_all ? undefined : 1 };
   },
