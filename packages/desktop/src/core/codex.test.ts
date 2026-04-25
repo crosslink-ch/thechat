@@ -11,7 +11,7 @@ vi.mock("@tauri-apps/api/core", () => {
 });
 
 import { invoke } from "@tauri-apps/api/core";
-import { streamCodexCompletion } from "./codex";
+import { CODEX_MODELS, streamCodexCompletion } from "./codex";
 import type { StreamResult } from "./types";
 
 const mockInvoke = vi.mocked(invoke);
@@ -27,6 +27,12 @@ describe("streamCodexCompletion", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  it("includes GPT-5.5 in the Codex model list", () => {
+    expect(CODEX_MODELS).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "gpt-5.5", name: "GPT-5.5" }),
+    ]));
   });
 
   it("passes Codex responses headers and request shape to invoke", async () => {

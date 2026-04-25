@@ -55,6 +55,8 @@ interface StreamCodexOptions {
   turnId?: string;
 }
 
+type BuildCodexRequestOptions = Omit<StreamCodexOptions, "signal" | "onEvents">;
+
 /**
  * Convert user message content (string or OpenAI content array)
  * to Codex Responses API content blocks.
@@ -136,7 +138,7 @@ function messagesToResponsesInput(messages: Array<Record<string, unknown>>): unk
 }
 
 /** Build the fetch request for Codex Responses API. */
-function buildRequest(options: StreamCodexOptions): {
+export function buildCodexRequest(options: BuildCodexRequestOptions): {
   url: string;
   headers: Record<string, string>;
   body: string;
@@ -212,7 +214,7 @@ function buildRequest(options: StreamCodexOptions): {
 }
 
 export async function streamCodexCompletion(options: StreamCodexOptions): Promise<StreamResult> {
-  const req = buildRequest(options);
+  const req = buildCodexRequest(options);
   const streamId = `cx_${Date.now()}_${Math.random().toString(36).slice(2)}`;
 
   const onEvent = new Channel<StreamEvent[]>();
