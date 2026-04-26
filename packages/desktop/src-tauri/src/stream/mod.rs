@@ -1,4 +1,3 @@
-mod anthropic;
 mod codex;
 mod openrouter;
 
@@ -9,7 +8,6 @@ use tauri::ipc::Channel;
 use tokio::sync::Mutex as AsyncMutex;
 use tokio_util::sync::CancellationToken;
 
-use anthropic::{finalize_anthropic_tools, parse_anthropic_data, AnthropicToolUse};
 use codex::{
     codex_session_key, codex_turn_id, finalize_codex_tools, parse_codex_data,
     parse_codex_request_payload, try_codex_websocket_stream, update_codex_transport_session,
@@ -351,7 +349,6 @@ async fn run_http_stream(
         let err_body = response.text().await.unwrap_or_default();
         let label = match provider {
             "codex" => "Codex",
-            "anthropic" => "Anthropic",
             "glm" => "GLM",
             "featherless" => "Featherless",
             _ => "OpenRouter",
@@ -389,7 +386,6 @@ async fn run_http_stream(
     let mut stop_reason = String::from("unknown");
     let mut or_tool_calls: HashMap<usize, ToolCallAccum> = HashMap::new();
     let mut codex_func_calls: HashMap<String, CodexFuncCall> = HashMap::new();
-    let mut anthropic_tool_uses: HashMap<usize, AnthropicToolUse> = HashMap::new();
 
     // Line buffer for SSE parsing
     let mut line_buf = String::new();
@@ -452,15 +448,6 @@ async fn run_http_stream(
                     &mut codex_func_calls,
                     &mut line_events,
                 ),
-                "anthropic" => parse_anthropic_data(
-                    data,
-                    &mut acc_text,
-                    &mut acc_reasoning,
-                    &mut usage,
-                    &mut stop_reason,
-                    &mut anthropic_tool_uses,
-                    &mut line_events,
-                ),
                 _ => {
                     return Err(StreamError::from(format!("Unknown provider: {}", provider)));
                 }
@@ -499,7 +486,6 @@ async fn run_http_stream(
     let tool_calls = match provider {
         "openrouter" | "glm" | "featherless" => finalize_openrouter_tools(or_tool_calls, &mut final_events),
         "codex" => finalize_codex_tools(codex_func_calls, &mut final_events),
-        "anthropic" => finalize_anthropic_tools(anthropic_tool_uses, &mut final_events),
         _ => Vec::new(),
     };
 

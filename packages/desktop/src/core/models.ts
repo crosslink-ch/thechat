@@ -62,7 +62,7 @@ for (const m of [...CODEX_MODELS, ...GLM_MODELS]) {
  * Lookup order:
  *   1. Exact match in hardcoded models (MODEL_INDEX) — includes previously
  *      promoted registry models, so repeated lookups are instant.
- *   2. For prefixed IDs like "anthropic/claude-sonnet-4-6", try stripping the
+ *   2. For prefixed IDs like "openai/gpt-4.1", try stripping the
  *      provider prefix so OpenRouter model IDs find hardcoded entries
  *   3. On-demand lookup from the models.dev localStorage cache (parses JSON,
  *      promotes the single model into MODEL_INDEX, discards the rest).

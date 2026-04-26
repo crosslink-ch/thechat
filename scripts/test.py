@@ -16,18 +16,12 @@ from urllib.parse import urlencode
 
 ROOT = Path(__file__).resolve().parent.parent
 CREDENTIALS_FILE = ROOT / ".test-credentials.json"
-ANTHROPIC_CREDENTIALS_FILE = ROOT / ".test-credentials-anthropic.json"
 
 # OpenAI device auth constants (same as packages/desktop/src/core/codex-auth.ts)
 CODEX_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
 CODEX_ISSUER = "https://auth.openai.com"
 CODEX_VERIFICATION_URL = "https://auth.openai.com/codex/device"
 
-# Anthropic OAuth constants (same as packages/desktop/src/core/anthropic-auth.ts)
-ANTHROPIC_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
-ANTHROPIC_REDIRECT_URI = "https://console.anthropic.com/oauth/code/callback"
-ANTHROPIC_TOKEN_URL = "https://console.anthropic.com/v1/oauth/token"
-ANTHROPIC_AUTH_URL = "https://claude.ai/oauth/authorize"
 
 
 def load_dotenv() -> None:
@@ -77,7 +71,7 @@ def is_postgres_running() -> bool:
 
 
 def rust_cmd() -> list[str]:
-    """Rust unit tests only — ignored tests are handled by opt-in suites (mcp, codex, anthropic)."""
+    """Rust unit tests only — ignored tests are handled by opt-in suites (mcp, codex)."""
     return [
         "cargo",
         "test",
@@ -125,15 +119,6 @@ SUITES = [
             "codex_live", "--", "--ignored",
         ],
         "opt_in": True,  # needs CODEX_ACCESS_TOKEN credentials
-    },
-    {
-        "name": "anthropic",
-        "cmd": [
-            "cargo", "test",
-            "--manifest-path", "packages/desktop/src-tauri/Cargo.toml",
-            "anthropic_live", "--", "--ignored",
-        ],
-        "opt_in": True,
     },
 ]
 
@@ -257,124 +242,6 @@ def load_codex_credentials() -> dict | None:
     return creds
 
 
-def _generate_pkce() -> tuple[str, str]:
-    """Generate PKCE verifier and S256 challenge (matches anthropic-auth.ts)."""
-    import hashlib
-    import secrets
-    charset = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~"
-    verifier = "".join(secrets.choice(charset) for _ in range(43))
-    digest = hashlib.sha256(verifier.encode()).digest()
-    challenge = base64.urlsafe_b64encode(digest).rstrip(b"=").decode()
-    return verifier, challenge
-
-
-def _build_anthropic_auth_url(challenge: str, verifier: str) -> str:
-    """Build the Anthropic OAuth authorization URL."""
-    params = urlencode({
-        "code": "true",
-        "client_id": ANTHROPIC_CLIENT_ID,
-        "response_type": "code",
-        "redirect_uri": ANTHROPIC_REDIRECT_URI,
-        "scope": "org:create_api_key user:profile user:inference",
-        "code_challenge": challenge,
-        "code_challenge_method": "S256",
-        "state": verifier,
-    })
-    return f"{ANTHROPIC_AUTH_URL}?{params}"
-
-
-def _exchange_anthropic_code(code: str, verifier: str) -> dict:
-    """Exchange Anthropic authorization code for tokens."""
-    # The code from the callback page may contain a #state suffix
-    splits = code.split("#")
-    return _http_json("POST", ANTHROPIC_TOKEN_URL, json_body={
-        "code": splits[0],
-        "state": splits[1] if len(splits) > 1 else verifier,
-        "grant_type": "authorization_code",
-        "client_id": ANTHROPIC_CLIENT_ID,
-        "redirect_uri": ANTHROPIC_REDIRECT_URI,
-        "code_verifier": verifier,
-    })
-
-
-def _refresh_anthropic_token(refresh_token: str) -> dict:
-    """Refresh Anthropic access token."""
-    return _http_json("POST", ANTHROPIC_TOKEN_URL, json_body={
-        "grant_type": "refresh_token",
-        "refresh_token": refresh_token,
-        "client_id": ANTHROPIC_CLIENT_ID,
-    })
-
-
-def load_anthropic_credentials() -> dict | None:
-    """Load and auto-refresh Anthropic credentials.
-
-    Returns dict with access_token (ready to use) or None.
-    """
-    if not ANTHROPIC_CREDENTIALS_FILE.exists():
-        return None
-    creds = json.loads(ANTHROPIC_CREDENTIALS_FILE.read_text())
-    if not creds.get("access_token") or not creds.get("refresh_token"):
-        return None
-
-    # Refresh if within 60s of expiry
-    expires_at = creds.get("expires_at", 0)
-    if time.time() > expires_at - 60:
-        try:
-            tokens = _refresh_anthropic_token(creds["refresh_token"])
-            new_expires_at = time.time() + tokens.get("expires_in", 3600)
-            creds = {
-                "access_token": tokens["access_token"],
-                "refresh_token": tokens["refresh_token"],
-                "expires_at": new_expires_at,
-            }
-            ANTHROPIC_CREDENTIALS_FILE.write_text(json.dumps(creds, indent=2) + "\n")
-        except Exception as e:
-            print(f"\033[31mFailed to refresh Anthropic token: {e}\033[0m")
-            print("Run 'python3 scripts/test.py init-anthropic' to re-authenticate.")
-            return None
-
-    return creds
-
-
-def cmd_init_anthropic():
-    """Run the Anthropic PKCE OAuth flow and save credentials for testing."""
-    print("Starting Anthropic OAuth authentication...\n")
-
-    # Step 1: Generate PKCE codes
-    verifier, challenge = _generate_pkce()
-    auth_url = _build_anthropic_auth_url(challenge, verifier)
-
-    print(f"  Go to: \033[4m{auth_url}\033[0m\n")
-    print("  Authorize the app, then paste the code shown on the callback page.\n")
-
-    code = input("  Authorization code: ").strip()
-    if not code:
-        print("\033[31mNo code provided.\033[0m")
-        sys.exit(1)
-
-    # Step 2: Exchange code for tokens
-    try:
-        tokens = _exchange_anthropic_code(code, verifier)
-    except Exception as e:
-        print(f"\033[31mToken exchange failed: {e}\033[0m")
-        sys.exit(1)
-
-    expires_at = time.time() + tokens.get("expires_in", 3600)
-
-    # Step 3: Save credentials
-    creds = {
-        "access_token": tokens["access_token"],
-        "refresh_token": tokens["refresh_token"],
-        "expires_at": expires_at,
-    }
-    ANTHROPIC_CREDENTIALS_FILE.write_text(json.dumps(creds, indent=2) + "\n")
-
-    print(f"\n\033[32mAuthentication successful!\033[0m")
-    print(f"  Credentials saved to: {ANTHROPIC_CREDENTIALS_FILE.relative_to(ROOT)}")
-    print(f"\n  These credentials will auto-refresh when used by tests.")
-
-
 def cmd_init():
     """Run the OpenAI device auth flow and save credentials for testing."""
     print("Starting OpenAI Codex device authentication...\n")
@@ -455,10 +322,6 @@ def main():
     if args and args[0] == "init":
         cmd_init()
         return
-    if args and args[0] == "init-anthropic":
-        cmd_init_anthropic()
-        return
-
     run_all = "--all" in args
     names = {a for a in args if not a.startswith("-")}
 
@@ -513,27 +376,9 @@ def main():
                         "CODEX_ACCOUNT_ID": creds.get("account_id", ""),
                     }
 
-    # Load Anthropic credentials for the anthropic suite
-    if any(s["name"] == "anthropic" for s in suites):
-        creds = load_anthropic_credentials()
-        if not creds:
-            print(
-                "\033[33mSkipping anthropic tests: "
-                "no credentials (run 'python3 scripts/test.py init-anthropic' first)\033[0m"
-            )
-            suites = [s for s in suites if s["name"] != "anthropic"]
-            if not suites:
-                sys.exit(0)
-        else:
-            for s in suites:
-                if s["name"] == "anthropic":
-                    s["env"] = {
-                        "ANTHROPIC_ACCESS_TOKEN": creds["access_token"],
-                    }
-
     print(f"Running {len(suites)} test suite(s): {', '.join(s['name'] for s in suites)}")
     if not run_all:
-        print("  (pass --all to include opt-in suites: mcp, codex, anthropic)")
+        print("  (pass --all to include opt-in suites: mcp, codex)")
     print()
 
     results: list[Result] = []

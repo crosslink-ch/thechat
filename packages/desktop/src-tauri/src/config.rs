@@ -36,7 +36,6 @@ fn default_featherless_provider() -> ProviderConfig {
 pub struct ProvidersConfig {
     pub openrouter: ProviderConfig,
     pub codex: ProviderConfig,
-    pub anthropic: ProviderConfig,
     pub glm: ProviderConfig,
     #[serde(default = "default_featherless_provider")]
     pub featherless: ProviderConfig,
@@ -50,9 +49,6 @@ impl Default for ProvidersConfig {
             },
             codex: ProviderConfig {
                 model: "gpt-5.4".to_string(),
-            },
-            anthropic: ProviderConfig {
-                model: "claude-sonnet-4-6".to_string(),
             },
             glm: ProviderConfig {
                 model: "glm-5.1".to_string(),
@@ -243,7 +239,6 @@ mod tests {
             "providers": {
                 "openrouter": { "model": "openai/gpt-4.1" },
                 "codex": { "model": "gpt-5.4" },
-                "anthropic": { "model": "claude-sonnet-4-6" },
                 "glm": { "model": "glm-5.1" }
             }
         }"#;
@@ -262,7 +257,7 @@ mod tests {
 
     #[test]
     fn parse_missing_api_key() {
-        let json = r#"{"providers": {"openrouter": {"model": "m"}, "codex": {"model": "m"}, "anthropic": {"model": "m"}, "glm": {"model": "m"}}}"#;
+        let json = r#"{"providers": {"openrouter": {"model": "m"}, "codex": {"model": "m"}, "glm": {"model": "m"}}}"#;
         let result = serde_json::from_str::<AppConfig>(json);
         assert!(result.is_err());
     }
@@ -362,7 +357,6 @@ mod tests {
         assert_eq!(config.api_key, "");
         assert_eq!(config.providers.openrouter.model, "openai/gpt-4.1");
         assert_eq!(config.providers.codex.model, "gpt-5.4");
-        assert_eq!(config.providers.anthropic.model, "claude-sonnet-4-6");
         assert_eq!(config.providers.glm.model, "glm-5.1");
         assert_eq!(
             config.providers.featherless.model,
