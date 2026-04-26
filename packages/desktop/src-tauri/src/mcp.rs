@@ -1280,16 +1280,56 @@ mod tests {
     // ---------------------------------------------------------------
 
     use std::net::TcpListener;
+    #[cfg(unix)]
+    use std::os::unix::process::CommandExt;
     use tempfile::TempDir;
 
     /// RAII guard that kills a child process on drop (even on panic).
-    struct ChildGuard(Option<Child>);
+    #[cfg_attr(not(unix), allow(dead_code))]
+    struct ChildGuard {
+        child: Option<Child>,
+        #[cfg(unix)]
+        process_group_id: Option<libc::pid_t>,
+    }
+
+    impl ChildGuard {
+        fn new(child: Child) -> Self {
+            #[cfg(unix)]
+            {
+                let process_group_id = Some(child.id() as libc::pid_t);
+                Self {
+                    child: Some(child),
+                    process_group_id,
+                }
+            }
+            #[cfg(not(unix))]
+            {
+                Self { child: Some(child) }
+            }
+        }
+    }
 
     impl Drop for ChildGuard {
         fn drop(&mut self) {
-            if let Some(ref mut child) = self.0 {
+            #[cfg(unix)]
+            if let Some(process_group_id) = self.process_group_id {
+                // The HTTP MCP server is launched via a shell/npx wrapper. Kill the
+                // whole process group so grandchildren don't survive the test.
+                unsafe {
+                    let _ = libc::kill(-process_group_id, libc::SIGTERM);
+                }
+            }
+
+            if let Some(mut child) = self.child.take() {
                 let _ = child.kill();
                 let _ = child.wait();
+            }
+
+            #[cfg(unix)]
+            if let Some(process_group_id) = self.process_group_id {
+                unsafe {
+                    let _ = libc::kill(-process_group_id, libc::SIGKILL);
+                }
             }
         }
     }
@@ -1344,7 +1384,17 @@ mod tests {
         #[cfg(not(windows))]
         {
             let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into());
-            child = Command::new(&shell)
+            let mut command = Command::new(&shell);
+            unsafe {
+                command.pre_exec(|| {
+                    if libc::setsid() == -1 {
+                        Err(std::io::Error::last_os_error())
+                    } else {
+                        Ok(())
+                    }
+                });
+            }
+            child = command
                 .args([
                     "-l",
                     "-c",
@@ -1377,12 +1427,12 @@ mod tests {
         wait_for_port(port, std::time::Duration::from_secs(30))
             .expect("HTTP server should become ready");
 
-        (ChildGuard(Some(child)), port)
+        (ChildGuard::new(child), port)
     }
 
     // -- Stdio transport integration tests --
     // These spawn real MCP servers and are slow (~6s). Skipped by default;
-    // run with `cargo test -- --ignored` to include them.
+    // run with `python3 scripts/test.py mcp` or `python3 scripts/test.py --all`.
 
     #[test]
     #[ignore]

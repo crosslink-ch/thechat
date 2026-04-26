@@ -76,16 +76,14 @@ def is_postgres_running() -> bool:
         return False
 
 
-def rust_cmd(include_ignored: bool) -> list[str]:
-    cmd = [
+def rust_cmd() -> list[str]:
+    """Rust unit tests only — ignored tests are handled by opt-in suites (mcp, codex, anthropic)."""
+    return [
         "cargo",
         "test",
         "--manifest-path",
         "packages/desktop/src-tauri/Cargo.toml",
     ]
-    if include_ignored:
-        cmd += ["--", "--include-ignored"]
-    return cmd
 
 
 SUITES = [
@@ -103,12 +101,21 @@ SUITES = [
     },
     {
         "name": "rust",
-        "cmd_fn": rust_cmd,
+        "cmd": rust_cmd(),
     },
     {
         "name": "integration",
         "cmd": ["pnpm", "--filter", "@thechat/desktop", "test:integration"],
         "env": {"INTEGRATION": "true"},
+    },
+    {
+        "name": "mcp",
+        "cmd": [
+            "cargo", "test",
+            "--manifest-path", "packages/desktop/src-tauri/Cargo.toml",
+            "mcp::tests", "--", "--ignored",
+        ],
+        "opt_in": True,  # local MCP integration tests (slow, needs npx)
     },
     {
         "name": "codex",
@@ -117,7 +124,7 @@ SUITES = [
             "--manifest-path", "packages/desktop/src-tauri/Cargo.toml",
             "codex_live", "--", "--ignored",
         ],
-        "opt_in": True,  # only runs when explicitly named or --all
+        "opt_in": True,  # needs CODEX_ACCESS_TOKEN credentials
     },
     {
         "name": "anthropic",
@@ -524,14 +531,9 @@ def main():
                         "ANTHROPIC_ACCESS_TOKEN": creds["access_token"],
                     }
 
-    # Resolve cmd_fn (used by rust suite to toggle --include-ignored)
-    for s in suites:
-        if "cmd_fn" in s:
-            s["cmd"] = s["cmd_fn"](run_all)
-
     print(f"Running {len(suites)} test suite(s): {', '.join(s['name'] for s in suites)}")
     if not run_all:
-        print("  (skipping slow tests — pass --all to include them)")
+        print("  (pass --all to include opt-in suites: mcp, codex, anthropic)")
     print()
 
     results: list[Result] = []
