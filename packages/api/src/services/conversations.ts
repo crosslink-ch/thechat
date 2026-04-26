@@ -194,6 +194,7 @@ export async function listUserDms(workspaceId: string, userId: string) {
         content: messages.content,
         createdAt: messages.createdAt,
         senderName: users.name,
+        senderType: users.type,
       })
       .from(messages)
       .innerJoin(users, eq(messages.senderId, users.id))
@@ -210,6 +211,7 @@ export async function listUserDms(workspaceId: string, userId: string) {
             conversationId: lastMsg.conversationId,
             senderId: lastMsg.senderId,
             senderName: lastMsg.senderName,
+            senderType: lastMsg.senderType,
             content: lastMsg.content,
             createdAt: lastMsg.createdAt.toISOString(),
           }
