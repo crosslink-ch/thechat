@@ -131,6 +131,95 @@ import {
 The default export is the `defineChannelPluginEntry({...})` value and is
 what OpenClaw consumes when the plugin is installed.
 
+## Phase 2: Approvals & Operational Polish
+
+### Approval routing
+
+When OpenClaw needs human approval for a sensitive action (file writes, shell
+commands, etc.), the approval router posts a structured approval-request
+message directly into the TheChat conversation and waits for a human response.
+
+```ts
+import { createApprovalRouter } from "@thechat/openclaw-channel/approvals";
+
+const router = createApprovalRouter(config, { defaultTimeoutMs: 300_000 });
+
+// When a tool needs approval:
+const outcome = await router.requestApproval({
+  to: "channel:conv-1",
+  tool: "write /etc/config.yml",
+  description: "Overwrite production config with new TLS settings",
+});
+
+if (outcome.decision === "approved") {
+  // proceed with tool execution
+} else {
+  // denied or expired — abort
+}
+```
+
+The inbound webhook handler automatically intercepts approval responses when
+an `approvalRouter` is provided:
+
+```ts
+const outcome = handleInbound({
+  body,
+  headers,
+  config,
+  approvalRouter: router, // ← messages matching a pending approval are consumed here
+});
+```
+
+Humans respond in chat with natural language — `approve`, `yes`, `deny`,
+`reject`, emojis (`✅` / `❌`), or `lgtm`. When multiple approvals are
+pending, the user must reference the request id (e.g. `APR-abc123 approve`).
+
+Features:
+- Configurable timeout with auto-expiry (default 5 min)
+- Denial with optional feedback (`deny too risky`)
+- Bot-message rejection (only humans can approve)
+- Conversation-scoped matching
+- `dispose()` for clean shutdown
+
+### Doctor / health check
+
+Validate config, connectivity, and credentials in one call:
+
+```ts
+import { runDoctorChecks } from "@thechat/openclaw-channel/doctor";
+
+const result = await runDoctorChecks(config);
+// result.ok — true when no check returned "fail"
+// result.checks — array of { name, status, message, hint? }
+```
+
+Checks performed:
+
+| Check | What it validates |
+| --- | --- |
+| `required_fields` | All required config fields present and non-empty |
+| `base_url_format` | baseUrl is a valid http(s) URL |
+| `key_formats` | apiKey starts with `bot_`, webhookSecret with `whsec_` |
+| `connectivity` | TCP+HTTP roundtrip to the TheChat API |
+| `bot_credentials` | Bot API key accepted by `/auth/me` |
+
+Network checks are skipped when prerequisite checks fail (e.g. credentials
+check is skipped when connectivity fails). The `fetchImpl` option allows
+full unit-testing without a running server.
+
+### Phase 2 follow-ups (not yet implemented)
+
+- **WebSocket transport mode** — Connect to TheChat via WebSocket instead of
+  requiring a publicly reachable webhook URL. Needs bot API key → JWT token
+  exchange endpoint on the API side.
+- **Typing indicators** — Send `typing` events while the bot is processing.
+  Requires WebSocket transport (no REST endpoint for typing currently).
+- **Threaded replies** — Reply in-thread instead of top-level for busy channels.
+- **Rich message formatting** — Markdown, code blocks, structured cards.
+- **Multi-account support** — Multiple TheChat workspace accounts per OpenClaw
+  instance.
+- **Webhook retry / dead-letter queue** — Reliable delivery with backoff.
+
 ## Tests
 
 ```bash

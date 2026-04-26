@@ -1,6 +1,7 @@
 import { shouldDispatch } from "./gating.js";
 import { verifyWebhook, type VerifyResult } from "./signature.js";
 import { deriveSessionMapping, type SessionMapping } from "./session.js";
+import type { ApprovalRouter } from "./approvals.js";
 import type { TheChatChannelConfig, TheChatWebhookPayload } from "./types.js";
 
 export type SkipReason =
@@ -8,7 +9,8 @@ export type SkipReason =
   | "other_bot_blocked"
   | "sender_not_allowed"
   | "channel_mention_required"
-  | "unknown_event";
+  | "unknown_event"
+  | "approval_response";
 
 export type InboundOutcome =
   | { kind: "dispatched"; payload: TheChatWebhookPayload; mapping: SessionMapping }
@@ -24,6 +26,11 @@ export interface HandleInboundArgs {
   nowSeconds?: () => number;
   /** Optional structured logger. */
   log?: (level: "info" | "warn", msg: string, fields?: Record<string, unknown>) => void;
+  /** Optional approval router. When provided, inbound messages are checked
+   *  against pending approval requests before normal dispatch. If a message
+   *  matches a pending approval, it is consumed and NOT forwarded to the
+   *  OpenClaw runtime. */
+  approvalRouter?: ApprovalRouter;
 }
 
 function readHeader(
@@ -111,6 +118,18 @@ export function handleInbound(args: HandleInboundArgs): InboundOutcome {
       senderType: payload.message.senderType,
     });
     return { kind: "skipped", reason: decision.reason };
+  }
+
+  // Phase 2: check if this message is an approval response before forwarding
+  // to the OpenClaw runtime.  The approval router only consumes messages that
+  // match a pending request — everything else falls through.
+  if (args.approvalRouter?.handleInboundMessage(payload)) {
+    log?.("info", "thechat.inbound.approval_response", {
+      event: payload.event,
+      conversationId: payload.message.conversationId,
+      senderId: payload.message.senderId,
+    });
+    return { kind: "skipped", reason: "approval_response" };
   }
 
   const mapping = deriveSessionMapping(payload);

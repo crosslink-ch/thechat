@@ -31,10 +31,23 @@ import { deriveSessionMapping, parseTarget } from "./src/session.js";
 import { shouldDispatch } from "./src/gating.js";
 import { computeSignature, verifyWebhook } from "./src/signature.js";
 import { validateConfig } from "./src/config-schema.js";
+import {
+  createApprovalRouter,
+  formatApprovalMessage,
+  matchApprovalResponse,
+} from "./src/approvals.js";
+import { runDoctorChecks } from "./src/doctor.js";
 import type {
   TheChatChannelConfig,
   TheChatWebhookPayload,
 } from "./src/types.js";
+import type {
+  ApprovalRouter,
+  ApprovalRequest,
+  ApprovalDecision,
+  ApprovalOutcome,
+} from "./src/approvals.js";
+import type { DoctorResult, DoctorCheck, CheckStatus } from "./src/doctor.js";
 
 export {
   CHANNEL_ID,
@@ -48,8 +61,24 @@ export {
   verifyWebhook,
   validateConfig,
   resolveTheChatAccount,
+  // Phase 2
+  createApprovalRouter,
+  formatApprovalMessage,
+  matchApprovalResponse,
+  runDoctorChecks,
 };
-export type { TheChatChannelConfig, TheChatWebhookPayload };
+export type {
+  TheChatChannelConfig,
+  TheChatWebhookPayload,
+  // Phase 2
+  ApprovalRouter,
+  ApprovalRequest,
+  ApprovalDecision,
+  ApprovalOutcome,
+  DoctorResult,
+  DoctorCheck,
+  CheckStatus,
+};
 
 const WEBHOOK_PATH = "/thechat/webhook";
 

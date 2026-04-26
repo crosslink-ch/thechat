@@ -12,7 +12,9 @@
     "./outbound": "./src/outbound.ts",
     "./inbound": "./src/inbound.ts",
     "./types": "./src/types.ts",
-    "./config-schema": "./src/config-schema.ts"
+    "./config-schema": "./src/config-schema.ts",
+    "./approvals": "./src/approvals.ts",
+    "./doctor": "./src/doctor.ts"
   },
   "scripts": {
     "test": "bun test --env-file ../../.env",
