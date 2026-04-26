@@ -1,0 +1,48 @@
+{
+  "name": "@thechat/openclaw-channel",
+  "private": true,
+  "version": "0.1.0",
+  "description": "OpenClaw channel plugin that lets OpenClaw operate through TheChat workspaces (channels + DMs) over signed webhooks.",
+  "type": "module",
+  "exports": {
+    ".": "./index.ts",
+    "./signature": "./src/signature.ts",
+    "./gating": "./src/gating.ts",
+    "./session": "./src/session.ts",
+    "./outbound": "./src/outbound.ts",
+    "./inbound": "./src/inbound.ts",
+    "./types": "./src/types.ts",
+    "./config-schema": "./src/config-schema.ts"
+  },
+  "scripts": {
+    "test": "bun test --env-file ../../.env",
+    "build": "echo 'no build step (TS sources are loaded directly)'"
+  },
+  "openclaw": {
+    "extensions": ["./index.ts"],
+    "channel": {
+      "id": "thechat",
+      "label": "TheChat",
+      "selectionLabel": "TheChat (workspace bot)",
+      "detailLabel": "TheChat",
+      "blurb": "Connect OpenClaw to a TheChat workspace as a bot via signed webhooks.",
+      "docsPath": "./README.md"
+    },
+    "compat": {
+      "pluginApi": ">=2026.3.24-beta.2"
+    }
+  },
+  "peerDependencies": {
+    "openclaw": ">=2026.3.24-beta.2"
+  },
+  "peerDependenciesMeta": {
+    "openclaw": { "optional": true }
+  },
+  "dependencies": {
+    "@thechat/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "~5.8.3"
+  }
+}

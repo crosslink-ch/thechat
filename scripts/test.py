@@ -94,6 +94,10 @@ SUITES = [
         "cmd": ["pnpm", "--filter", "@thechat/api", "test"],
     },
     {
+        "name": "openclaw-channel",
+        "cmd": ["pnpm", "--filter", "@thechat/openclaw-channel", "test"],
+    },
+    {
         "name": "rust",
         "cmd": rust_cmd(),
     },
