@@ -31,8 +31,14 @@ describe("streamCodexCompletion", () => {
 
   it("includes GPT-5.5 in the Codex model list", () => {
     expect(CODEX_MODELS).toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: "gpt-5.5", name: "GPT-5.5" }),
+      expect.objectContaining({
+        id: "gpt-5.5",
+        name: "GPT-5.5",
+        maxOutputTokens: 128_000,
+        contextWindow: 272_000,
+      }),
     ]));
+    expect(CODEX_MODELS.find((model) => model.id === "gpt-5.5")).not.toHaveProperty("inputLimit");
   });
 
   it("passes Codex responses headers and request shape to invoke", async () => {

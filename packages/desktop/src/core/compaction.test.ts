@@ -4,14 +4,14 @@ import type { StreamResult, StreamEvent } from "./types";
 
 describe("isOverflow", () => {
   it("returns true when tokens exceed the usable context limit", async () => {
-    // claude-sonnet-4-6: contextWindow=1M, maxOutput=min(64K,64K)=64K
-    // usable = 1M - 64K - 20K(buffer) = 916K
-    expect(await isOverflow(916_000, "claude-sonnet-4-6")).toBe(true);
+    // claude-sonnet-4-6: contextWindow=1M, maxOutput=min(64K,32_768)=32_768
+    // usable = 1M - 32_768 - 20K(buffer) = 947_232
+    expect(await isOverflow(947_232, "claude-sonnet-4-6")).toBe(true);
     expect(await isOverflow(950_000, "claude-sonnet-4-6")).toBe(true);
   });
 
   it("returns false when tokens are below the limit", async () => {
-    expect(await isOverflow(900_000, "claude-sonnet-4-6")).toBe(false);
+    expect(await isOverflow(947_231, "claude-sonnet-4-6")).toBe(false);
     expect(await isOverflow(500_000, "claude-sonnet-4-6")).toBe(false);
   });
 
@@ -20,22 +20,31 @@ describe("isOverflow", () => {
   });
 
   it("accounts for model-specific maxOutputTokens", async () => {
-    // claude-haiku-4-5: contextWindow=200K, maxOutput=min(64K,64K)=64K, no inputLimit
-    // usable = (200K - 64K) - 20K = 116K (same as Sonnet)
-    expect(await isOverflow(116_000, "claude-haiku-4-5-20251001")).toBe(true);
-    expect(await isOverflow(100_000, "claude-haiku-4-5-20251001")).toBe(false);
+    // claude-haiku-4-5: contextWindow=200K, maxOutput=min(64K,32_768)=32_768, no inputLimit
+    // usable = (200K - 32_768) - 20K = 147_232
+    expect(await isOverflow(147_232, "claude-haiku-4-5-20251001")).toBe(true);
+    expect(await isOverflow(147_231, "claude-haiku-4-5-20251001")).toBe(false);
   });
 
   it("uses inputLimit when available (GPT-5.x Codex models)", async () => {
-    // gpt-5.3-codex: contextWindow=400K, inputLimit=272K, maxOutput=min(128K,64K)=64K
+    // gpt-5.3-codex: contextWindow=400K, inputLimit=272K
     // usable = inputLimit - 20K = 252K
     expect(await isOverflow(252_000, "gpt-5.3-codex")).toBe(true);
     expect(await isOverflow(250_000, "gpt-5.3-codex")).toBe(false);
 
-    // gpt-5.4: contextWindow=1.05M, inputLimit=922K, maxOutput=min(128K,64K)=64K
+    // gpt-5.4: contextWindow=1.05M, inputLimit=922K
     // usable = inputLimit - 20K = 902K
     expect(await isOverflow(902_000, "gpt-5.4")).toBe(true);
     expect(await isOverflow(900_000, "gpt-5.4")).toBe(false);
+  });
+
+  it("derives GPT-5.5 input budget from Codex context metadata", async () => {
+    // Upstream Codex lists gpt-5.5 with a 272K context window and no explicit inputLimit.
+    // TheChat therefore derives usable input as contextWindow - maxOutput - 20K buffer.
+    // maxOutput is capped by OUTPUT_TOKEN_MAX: min(128K, 32_768) = 32_768.
+    // usable = 272_000 - 32_768 - 20_000 = 219_232.
+    expect(await isOverflow(219_232, "gpt-5.5")).toBe(true);
+    expect(await isOverflow(219_231, "gpt-5.5")).toBe(false);
   });
 });
 
