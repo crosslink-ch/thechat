@@ -409,6 +409,9 @@ pub fn run() {
             oauth::mcp_oauth_start,
             oauth::mcp_oauth_await,
             oauth::mcp_oauth_cancel,
+            oauth::codex_oauth_start,
+            oauth::codex_oauth_await,
+            oauth::codex_oauth_cancel,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

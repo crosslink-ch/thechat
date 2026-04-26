@@ -1,16 +1,24 @@
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   startDeviceAuth,
   pollDeviceAuth,
   exchangeCodeForTokens,
   refreshAccessToken,
   extractAccountId,
+  createBrowserAuthRequest,
 } from "../core/codex-auth";
 import { error as logError, info as logInfo, formatError } from "../log";
 import { ProviderError } from "../core/errors";
 
-type CodexAuthStatus = "idle" | "awaiting_code" | "polling" | "authenticated" | "error";
+type CodexAuthStatus = "idle" | "opening_browser" | "waiting_browser" | "awaiting_code" | "polling" | "authenticated" | "error";
+type CodexLoginMethod = "browser" | "device";
+
+interface OAuthCallbackResult {
+  code: string;
+  state?: string | null;
+}
 
 interface CodexAuthState {
   accessToken: string | null;
@@ -20,10 +28,11 @@ interface CodexAuthState {
   status: CodexAuthStatus;
   userCode: string | null;
   verificationUrl: string;
+  browserAuthUrl: string | null;
   error: string | null;
 
   initialize: () => Promise<void>;
-  startLogin: () => Promise<void>;
+  startLogin: (method?: CodexLoginMethod) => Promise<void>;
   cancelLogin: () => void;
   logout: () => Promise<void>;
   getValidToken: () => Promise<{ accessToken: string; accountId: string }>;
@@ -36,6 +45,22 @@ const KV_REFRESH_TOKEN = "codex_refresh_token";
 const KV_ACCOUNT_ID = "codex_account_id";
 const KV_EXPIRES_AT = "codex_expires_at";
 
+async function persistTokens(tokens: Awaited<ReturnType<typeof exchangeCodeForTokens>>, fallbackAccountId?: string | null) {
+  const accountId = extractAccountId(tokens) || fallbackAccountId || "";
+  const expiresAt = tokens.expires_in
+    ? Date.now() + tokens.expires_in * 1000
+    : Date.now() + 3600 * 1000;
+
+  await Promise.all([
+    invoke("kv_set", { key: KV_ACCESS_TOKEN, value: tokens.access_token }),
+    invoke("kv_set", { key: KV_REFRESH_TOKEN, value: tokens.refresh_token }),
+    invoke("kv_set", { key: KV_ACCOUNT_ID, value: accountId }),
+    invoke("kv_set", { key: KV_EXPIRES_AT, value: String(expiresAt) }),
+  ]);
+
+  return { accountId, expiresAt };
+}
+
 export const useCodexAuthStore = create<CodexAuthState>()((set, get) => ({
   accessToken: null,
   refreshToken: null,
@@ -44,6 +69,7 @@ export const useCodexAuthStore = create<CodexAuthState>()((set, get) => ({
   status: "idle",
   userCode: null,
   verificationUrl: "https://auth.openai.com/codex/device",
+  browserAuthUrl: null,
   error: null,
 
   initialize: async () => {
@@ -71,11 +97,59 @@ export const useCodexAuthStore = create<CodexAuthState>()((set, get) => ({
     }
   },
 
-  startLogin: async () => {
+  startLogin: async (method = "browser") => {
     // Cancel any existing poll
     pollAbortController?.abort();
+    invoke("codex_oauth_cancel").catch(() => {});
 
-    set({ status: "awaiting_code", error: null, userCode: null });
+    if (method === "browser") {
+      set({ status: "opening_browser", error: null, userCode: null, browserAuthUrl: null });
+
+      try {
+        const port = await invoke<number>("codex_oauth_start");
+        const browserAuth = await createBrowserAuthRequest(port);
+        set({ status: "waiting_browser", browserAuthUrl: browserAuth.authUrl });
+
+        logInfo("[codex-auth] Opening browser login");
+        openUrl(browserAuth.authUrl).catch((openError) => {
+          logError(`[codex-auth] Failed to open browser automatically: ${formatError(openError)}`);
+        });
+
+        const callback = await invoke<OAuthCallbackResult>("codex_oauth_await");
+        if (callback.state !== browserAuth.state) {
+          throw new Error("Codex login state mismatch. Please try again.");
+        }
+
+        const tokens = await exchangeCodeForTokens(
+          callback.code,
+          browserAuth.verifier,
+          browserAuth.redirectUri,
+        );
+
+        const { accountId, expiresAt } = await persistTokens(tokens);
+
+        set({
+          accessToken: tokens.access_token,
+          refreshToken: tokens.refresh_token,
+          accountId,
+          expiresAt,
+          status: "authenticated",
+          userCode: null,
+          browserAuthUrl: null,
+        });
+
+        logInfo("[codex-auth] Browser authentication successful");
+        return;
+      } catch (e) {
+        const msg = formatError(e);
+        logError(`[codex-auth] Browser login failed: ${msg}`);
+        set({ status: "error", error: msg, userCode: null, browserAuthUrl: null });
+        invoke("codex_oauth_cancel").catch(() => {});
+        return;
+      }
+    }
+
+    set({ status: "awaiting_code", error: null, userCode: null, browserAuthUrl: null });
 
     try {
       const deviceAuth = await startDeviceAuth();
@@ -105,18 +179,7 @@ export const useCodexAuthStore = create<CodexAuthState>()((set, get) => ({
             pollResult.code_verifier,
           );
 
-          const accountId = extractAccountId(tokens);
-          const expiresAt = tokens.expires_in
-            ? Date.now() + tokens.expires_in * 1000
-            : Date.now() + 3600 * 1000;
-
-          // Persist to KV
-          await Promise.all([
-            invoke("kv_set", { key: KV_ACCESS_TOKEN, value: tokens.access_token }),
-            invoke("kv_set", { key: KV_REFRESH_TOKEN, value: tokens.refresh_token }),
-            invoke("kv_set", { key: KV_ACCOUNT_ID, value: accountId }),
-            invoke("kv_set", { key: KV_EXPIRES_AT, value: String(expiresAt) }),
-          ]);
+          const { accountId, expiresAt } = await persistTokens(tokens);
 
           set({
             accessToken: tokens.access_token,
@@ -125,6 +188,7 @@ export const useCodexAuthStore = create<CodexAuthState>()((set, get) => ({
             expiresAt,
             status: "authenticated",
             userCode: null,
+            browserAuthUrl: null,
           });
 
           logInfo("[codex-auth] Authentication successful");
@@ -143,14 +207,15 @@ export const useCodexAuthStore = create<CodexAuthState>()((set, get) => ({
       if (e instanceof DOMException && e.name === "AbortError") return;
       const msg = formatError(e);
       logError(`[codex-auth] Login failed: ${msg}`);
-      set({ status: "error", error: msg, userCode: null });
+      set({ status: "error", error: msg, userCode: null, browserAuthUrl: null });
     }
   },
 
   cancelLogin: () => {
     pollAbortController?.abort();
     pollAbortController = null;
-    set({ status: "idle", userCode: null, error: null });
+    invoke("codex_oauth_cancel").catch(() => {});
+    set({ status: "idle", userCode: null, browserAuthUrl: null, error: null });
   },
 
   logout: async () => {
@@ -172,6 +237,7 @@ export const useCodexAuthStore = create<CodexAuthState>()((set, get) => ({
       expiresAt: null,
       status: "idle",
       userCode: null,
+      browserAuthUrl: null,
       error: null,
     });
   },
@@ -187,17 +253,7 @@ export const useCodexAuthStore = create<CodexAuthState>()((set, get) => ({
       logInfo("[codex-auth] Token expired or expiring soon, refreshing...");
       try {
         const tokens = await refreshAccessToken(state.refreshToken);
-        const accountId = extractAccountId(tokens) || state.accountId || "";
-        const expiresAt = tokens.expires_in
-          ? Date.now() + tokens.expires_in * 1000
-          : Date.now() + 3600 * 1000;
-
-        await Promise.all([
-          invoke("kv_set", { key: KV_ACCESS_TOKEN, value: tokens.access_token }),
-          invoke("kv_set", { key: KV_REFRESH_TOKEN, value: tokens.refresh_token }),
-          invoke("kv_set", { key: KV_ACCOUNT_ID, value: accountId }),
-          invoke("kv_set", { key: KV_EXPIRES_AT, value: String(expiresAt) }),
-        ]);
+        const { accountId, expiresAt } = await persistTokens(tokens, state.accountId);
 
         set({
           accessToken: tokens.access_token,
