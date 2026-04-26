@@ -2,6 +2,7 @@ import { shouldDispatch } from "./gating.js";
 import { verifyWebhook, type VerifyResult } from "./signature.js";
 import { deriveSessionMapping, type SessionMapping } from "./session.js";
 import type { ApprovalRouter } from "./approvals.js";
+import type { IdempotencyStore } from "./idempotency.js";
 import type { TheChatChannelConfig, TheChatWebhookPayload } from "./types.js";
 
 export type SkipReason =
@@ -10,7 +11,8 @@ export type SkipReason =
   | "sender_not_allowed"
   | "channel_mention_required"
   | "unknown_event"
-  | "approval_response";
+  | "approval_response"
+  | "duplicate";
 
 export type InboundOutcome =
   | { kind: "dispatched"; payload: TheChatWebhookPayload; mapping: SessionMapping }
@@ -31,6 +33,9 @@ export interface HandleInboundArgs {
    *  matches a pending approval, it is consumed and NOT forwarded to the
    *  OpenClaw runtime. */
   approvalRouter?: ApprovalRouter;
+  /** Optional idempotency store for webhook deduplication (Phase 3). When
+   *  provided, messages whose id has already been processed are skipped. */
+  idempotencyStore?: IdempotencyStore;
 }
 
 function readHeader(
@@ -107,6 +112,18 @@ export function handleInbound(args: HandleInboundArgs): InboundOutcome {
       configuredBotId: config.botId,
     });
     return { kind: "rejected", status: 400, reason: "wrong_bot" };
+  }
+
+  // Phase 3: deduplicate webhook retries.  The TheChat message id is stable
+  // across retries of the same event, so checking it is sufficient.
+  if (args.idempotencyStore) {
+    if (args.idempotencyStore.check(payload.message.id)) {
+      log?.("info", "thechat.inbound.duplicate", {
+        messageId: payload.message.id,
+      });
+      return { kind: "skipped", reason: "duplicate" };
+    }
+    args.idempotencyStore.mark(payload.message.id);
   }
 
   const decision = shouldDispatch(payload, config);

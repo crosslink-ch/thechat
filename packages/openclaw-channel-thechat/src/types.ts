@@ -70,3 +70,41 @@ export interface TheChatChannelConfig {
   /** Whether to dispatch messages from other bots. Default false (loop prevention). */
   allowOtherBots?: boolean;
 }
+
+// ---------------------------------------------------------------------------
+// Rich message types (Phase 3)
+// ---------------------------------------------------------------------------
+
+/**
+ * Attachment metadata for outbound messages. The TheChat API stores
+ * attachment records alongside the message; the actual file is referenced
+ * by URL (pre-signed or public) rather than inline binary.
+ */
+export interface OutboundAttachment {
+  /** MIME type, e.g. `image/png`, `application/pdf`. */
+  mimeType: string;
+  /** URL where the file can be fetched. */
+  url: string;
+  /** Human-readable filename shown in the UI. */
+  filename: string;
+  /** File size in bytes (used for display; not validated server-side). */
+  sizeBytes?: number;
+  /** Alt text or summary for accessibility. */
+  alt?: string;
+}
+
+/**
+ * Structured outbound message. Extends plain text with optional
+ * attachments and formatting hints. The `content` field is always
+ * Markdown-formatted text — TheChat renders it with CommonMark.
+ */
+export interface OutboundRichMessage {
+  /** Markdown-formatted text body. */
+  content: string;
+  /** Optional attachments. */
+  attachments?: OutboundAttachment[];
+  /** If true, the message is only visible to the sender ("ephemeral"). */
+  ephemeral?: boolean;
+  /** Optional thread/reply-to message id. */
+  replyTo?: string;
+}

@@ -24,9 +24,13 @@
 import { defineChannelPluginEntry } from "openclaw/plugin-sdk/channel-core";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/channel-core";
 import { CHANNEL_ID, theChatChannelPlugin } from "./src/channel.js";
-import { resolveTheChatAccount } from "./src/accounts.js";
+import {
+  resolveTheChatAccount,
+  resolveAllTheChatAccounts,
+  findAccountByBotId,
+} from "./src/accounts.js";
 import { handleInbound } from "./src/inbound.js";
-import { sendText } from "./src/outbound.js";
+import { sendText, sendRichMessage, buildSendRichMessageRequest } from "./src/outbound.js";
 import { deriveSessionMapping, parseTarget } from "./src/session.js";
 import { shouldDispatch } from "./src/gating.js";
 import { computeSignature, verifyWebhook } from "./src/signature.js";
@@ -36,10 +40,13 @@ import {
   formatApprovalMessage,
   matchApprovalResponse,
 } from "./src/approvals.js";
-import { runDoctorChecks } from "./src/doctor.js";
+import { runDoctorChecks, runMultiAccountDoctorChecks } from "./src/doctor.js";
+import { createIdempotencyStore } from "./src/idempotency.js";
 import type {
   TheChatChannelConfig,
   TheChatWebhookPayload,
+  OutboundRichMessage,
+  OutboundAttachment,
 } from "./src/types.js";
 import type {
   ApprovalRouter,
@@ -47,7 +54,13 @@ import type {
   ApprovalDecision,
   ApprovalOutcome,
 } from "./src/approvals.js";
-import type { DoctorResult, DoctorCheck, CheckStatus } from "./src/doctor.js";
+import type {
+  DoctorResult,
+  DoctorCheck,
+  CheckStatus,
+  MultiAccountDoctorResult,
+} from "./src/doctor.js";
+import type { IdempotencyStore } from "./src/idempotency.js";
 
 export {
   CHANNEL_ID,
@@ -66,6 +79,13 @@ export {
   formatApprovalMessage,
   matchApprovalResponse,
   runDoctorChecks,
+  // Phase 3
+  resolveAllTheChatAccounts,
+  findAccountByBotId,
+  sendRichMessage,
+  buildSendRichMessageRequest,
+  runMultiAccountDoctorChecks,
+  createIdempotencyStore,
 };
 export type {
   TheChatChannelConfig,
@@ -78,6 +98,11 @@ export type {
   DoctorResult,
   DoctorCheck,
   CheckStatus,
+  // Phase 3
+  OutboundRichMessage,
+  OutboundAttachment,
+  MultiAccountDoctorResult,
+  IdempotencyStore,
 };
 
 const WEBHOOK_PATH = "/thechat/webhook";
@@ -121,6 +146,11 @@ export default defineChannelPluginEntry({
     "OpenClaw channel plugin that connects to a TheChat workspace via signed webhooks (inbound) and the TheChat REST API (outbound).",
   plugin: theChatChannelPlugin,
   registerFull(api: OpenClawPluginApi) {
+    // Phase 3: shared idempotency store — prevents duplicate dispatch across
+    // webhook retries.  Scoped to the plugin lifetime; dispose() is called in
+    // the unload hook if the runtime supports it.
+    const idempotencyStore = createIdempotencyStore();
+
     api.registerHttpRoute({
       path: WEBHOOK_PATH,
       auth: "plugin",
@@ -138,10 +168,25 @@ export default defineChannelPluginEntry({
           return true;
         }
 
-        const account = resolveTheChatAccount({
-          cfg: api.config,
-          accountId: null,
-        });
+        // Phase 3: try to identify the target account from the payload's
+        // botId when multi-account is configured, falling back to the
+        // default account for backward compat.
+        let account: ReturnType<typeof resolveTheChatAccount>;
+        try {
+          const parsed = JSON.parse(body) as { bot?: { id?: string } };
+          const botId = parsed?.bot?.id;
+          if (botId) {
+            const matched = findAccountByBotId(api.config, botId);
+            account = matched ?? resolveTheChatAccount({ cfg: api.config, accountId: null });
+          } else {
+            account = resolveTheChatAccount({ cfg: api.config, accountId: null });
+          }
+        } catch {
+          // JSON parse will fail again in handleInbound where it's properly
+          // reported — just fall back to default account for now.
+          account = resolveTheChatAccount({ cfg: api.config, accountId: null });
+        }
+
         if (!account.configured) {
           res.statusCode = 503;
           res.end("thechat channel not configured");
@@ -153,6 +198,7 @@ export default defineChannelPluginEntry({
           body,
           headers,
           config: account.config,
+          idempotencyStore,
           log: (level, msg, fields) => {
             const log = api.logger?.[level];
             if (typeof log === "function") {
