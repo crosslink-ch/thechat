@@ -7,7 +7,7 @@
  *      actual @thechat/openclaw-channel plugin code to:
  *        a. Receive and verify signed webhooks from TheChat.
  *        b. Parse inbound messages via `handleInbound()`.
- *        c. Call an LLM (OpenRouter) to generate a response.
+ *        c. Generate a deterministic response.
  *        d. Send the response back to TheChat via the plugin's `sendText()`.
  *   3. A human user sends a DM to the bot.
  *   4. The test polls until the bot's response message appears.
@@ -15,16 +15,12 @@
  * Prerequisites:
  *   - DATABASE_URL must be set (same Postgres used for dev/test).
  *   - Opt-in: set OPENCLAW_E2E=1 to run (skipped in normal test suite).
- *   - Optional: OPENROUTER_API_KEY for real LLM responses.
- *     Without the key, a deterministic canned reply is used and the webhook
- *     + auth round-trip is still exercised.
  *
  * Run:
- *   OPENCLAW_E2E=1 OPENROUTER_API_KEY=sk-or-... \
- *     bun test --env-file ../../.env --timeout 90000 src/e2e/openclaw-integration.test.ts
+ *   OPENCLAW_E2E=1 bun test --env-file ../../.env --timeout 90000 src/e2e/openclaw-integration.test.ts
  *
  * Or via the package script:
- *   OPENROUTER_API_KEY=sk-or-... pnpm --filter @thechat/api test:e2e:openclaw
+ *   pnpm --filter @thechat/api test:e2e:openclaw
  */
 
 import { describe, test, expect, afterAll } from "bun:test";
@@ -50,11 +46,10 @@ import type { TheChatChannelConfig } from "@thechat/openclaw-channel/types";
 // Configuration
 // ---------------------------------------------------------------------------
 
-const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY ?? "";
-const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL ?? "qwen/qwen3-32b";
 const TEST_TIMEOUT_MS = 90_000;
 const POLL_INTERVAL_MS = 250;
 const RESPONSE_TIMEOUT_MS = 60_000;
+const HUMAN_MESSAGE = "Hello bot, are you there?";
 
 // ---------------------------------------------------------------------------
 // HTTP helper
@@ -84,48 +79,6 @@ async function http(
     json = text;
   }
   return { status: res.status, body: json };
-}
-
-// ---------------------------------------------------------------------------
-// LLM helper
-// ---------------------------------------------------------------------------
-
-async function callOpenRouter(userMessage: string): Promise<string> {
-  const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${OPENROUTER_API_KEY}`,
-    },
-    body: JSON.stringify({
-      model: OPENROUTER_MODEL,
-      messages: [
-        {
-          role: "system",
-          content:
-            "You are a test bot. Reply with a single short sentence confirming you received the message. Do not use any special formatting.",
-        },
-        { role: "user", content: userMessage },
-      ],
-      max_tokens: 100,
-    }),
-  });
-
-  if (!res.ok) {
-    const errText = await res.text().catch(() => "");
-    throw new Error(
-      `OpenRouter ${res.status}: ${errText.slice(0, 200)}`,
-    );
-  }
-
-  const data = (await res.json()) as any;
-  const content = data?.choices?.[0]?.message?.content;
-  if (typeof content !== "string" || content.trim().length === 0) {
-    throw new Error(
-      `OpenRouter empty response: ${JSON.stringify(data).slice(0, 200)}`,
-    );
-  }
-  return content.trim();
 }
 
 // ---------------------------------------------------------------------------
@@ -281,20 +234,7 @@ suite("OpenClaw <-> TheChat E2E integration", () => {
           webhookVerified = true;
           const userMessage = outcome.payload.message.content;
 
-          // Generate response via LLM or canned fallback
-          let responseText: string;
-          if (OPENROUTER_API_KEY) {
-            try {
-              responseText = await callOpenRouter(userMessage);
-            } catch (err: any) {
-              console.warn(
-                `[bot-backend] LLM call failed, using fallback: ${err.message}`,
-              );
-              responseText = `Echo: ${userMessage}`;
-            }
-          } else {
-            responseText = `Echo: ${userMessage}`;
-          }
+          const responseText = `Echo: ${userMessage}`;
 
           // --- Use the channel plugin outbound to send the reply ---
           try {
@@ -355,7 +295,7 @@ suite("OpenClaw <-> TheChat E2E integration", () => {
       const sendRes = await http(
         `${theChatUrl}/messages/${conversationId}`,
         "POST",
-        { content: "Hello bot, are you there?" },
+        { content: HUMAN_MESSAGE },
         humanToken,
       );
       expect(sendRes.status).toBe(200);
@@ -394,17 +334,12 @@ suite("OpenClaw <-> TheChat E2E integration", () => {
       expect(botMessage).toBeTruthy();
       expect(typeof botMessage.content).toBe("string");
       expect(botMessage.content.length).toBeGreaterThan(0);
+      expect(botMessage.content).toBe(`Echo: ${HUMAN_MESSAGE}`);
       expect(botMessage.senderType).toBe("bot");
       expect(botMessage.senderId).toBe(bot.userId);
 
       console.log(`Bot responded: "${botMessage.content}"`);
-      if (OPENROUTER_API_KEY) {
-        console.log(`  (LLM model: ${OPENROUTER_MODEL})`);
-      } else {
-        console.log(
-          "  (canned response - set OPENROUTER_API_KEY for LLM)",
-        );
-      }
+      console.log("  (deterministic response)");
     },
     TEST_TIMEOUT_MS,
   );
