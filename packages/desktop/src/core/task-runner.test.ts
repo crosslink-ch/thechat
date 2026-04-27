@@ -52,6 +52,11 @@ const PROVIDER_EXPECTATIONS = {
     provider: "featherless",
     hasFeatherlessApiKey: true,
   },
+  azulai: {
+    provider: "azulai",
+    hasAzulaiApiUrl: true,
+    hasAzulaiApiKey: true,
+  },
 } satisfies Record<Provider, { provider: string; [k: string]: unknown }>;
 
 function makeAppConfig(provider: Provider) {
@@ -61,12 +66,15 @@ function makeAppConfig(provider: Provider) {
       glm_api_key: "glm-key",
       glmPlanType: "coding" as const,
       featherless_api_key: "fl-key",
+      azulai_api_url: "https://api.azulai.example.com",
+      azulai_api_key: "az-key",
       provider,
       providers: {
         openrouter: { model: "openrouter-model" },
         codex: { model: "codex-model" },
         glm: { model: "glm-model" },
         featherless: { model: "featherless-model" },
+        azulai: { model: "azulai-model" },
       },
     },
   };
@@ -151,6 +159,12 @@ describe("runTask provider passthrough", () => {
       }
       if ("hasFeatherlessApiKey" in expected) {
         expect(opts.featherlessApiKey).toBeDefined();
+      }
+      if ("hasAzulaiApiUrl" in expected) {
+        expect(opts.azulaiApiUrl).toBeDefined();
+      }
+      if ("hasAzulaiApiKey" in expected) {
+        expect(opts.azulaiApiKey).toBeDefined();
       }
     },
   );

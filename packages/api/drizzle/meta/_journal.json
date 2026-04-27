@@ -36,6 +36,13 @@
       "when": 1776340912774,
       "tag": "0004_bright_frank_castle",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1798243200000,
+      "tag": "0005_add_azulai_provider",
+      "breakpoints": true
     }
   ]
 }

@@ -261,9 +261,10 @@ const PROVIDER_LABELS: Record<Provider, string> = {
   codex: "Codex",
   glm: "GLM",
   featherless: "Featherless",
+  azulai: "AzulAI",
 };
 
-const PROVIDER_ORDER: readonly Provider[] = ["openrouter", "codex", "glm", "featherless"];
+const PROVIDER_ORDER: readonly Provider[] = ["openrouter", "codex", "glm", "featherless", "azulai"];
 
 const REASONING_EFFORTS: { value: ReasoningEffort; label: string }[] = [
   { value: "low", label: "Low" },
@@ -277,6 +278,7 @@ const DEFAULT_PROVIDERS: ProvidersConfig = {
   codex: { model: "gpt-5.4" },
   glm: { model: "glm-5.1" },
   featherless: { model: "zai-org/GLM-5.1" },
+  azulai: { model: "meta-llama/Meta-Llama-3.1-8B-Instruct" },
 };
 
 function authHeader(token: string) {
@@ -297,9 +299,12 @@ export function SettingsRoute() {
   const [glmApiKey, setGlmApiKey] = useState("");
   const [glmPlanType, setGlmPlanType] = useState<GlmPlanType>("standard");
   const [featherlessApiKey, setFeatherlessApiKey] = useState("");
+  const [azulaiApiUrl, setAzulaiApiUrl] = useState("");
+  const [azulaiApiKey, setAzulaiApiKey] = useState("");
   const [showKey, setShowKey] = useState(false);
   const [showGlmKey, setShowGlmKey] = useState(false);
   const [showFeatherlessKey, setShowFeatherlessKey] = useState(false);
+  const [showAzulaiKey, setShowAzulaiKey] = useState(false);
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState<"idle" | "saved" | "error">("idle");
   const [configPath, setConfigPath] = useState<string | null>(null);
@@ -329,6 +334,8 @@ export function SettingsRoute() {
       setGlmApiKey(cfg.glm_api_key ?? "");
       setGlmPlanType(cfg.glmPlanType ?? "standard");
       setFeatherlessApiKey(cfg.featherless_api_key ?? "");
+      setAzulaiApiUrl(cfg.azulai_api_url ?? "");
+      setAzulaiApiKey(cfg.azulai_api_key ?? "");
       setProvider(cfg.provider ?? "openrouter");
       setProviders(cfg.providers ?? DEFAULT_PROVIDERS);
       setReasoningEffort(cfg.reasoningEffort ?? "xhigh");
@@ -388,6 +395,8 @@ export function SettingsRoute() {
         glm_api_key: glmApiKey || undefined,
         glmPlanType,
         featherless_api_key: featherlessApiKey || undefined,
+        azulai_api_url: azulaiApiUrl || undefined,
+        azulai_api_key: azulaiApiKey || undefined,
         provider,
         reasoningEffort,
         providers,
@@ -425,6 +434,8 @@ export function SettingsRoute() {
   const wsHasGlmModel = wsActive && !!wsConfig.glmModel;
   const wsHasFeatherlessApiKey = wsActive && !!wsConfig.featherless?.apiKey;
   const wsHasFeatherlessModel = wsActive && !!wsConfig.featherlessModel;
+  const wsHasAzulaiConfig = wsActive && !!wsConfig.azulai?.apiUrl;
+  const wsHasAzulaiModel = wsActive && !!wsConfig.azulaiModel;
   const wsHasReasoningEffort = wsActive && !!wsConfig.reasoningEffort;
 
   // Effective values for display (workspace or local)
@@ -440,17 +451,20 @@ export function SettingsRoute() {
     : effectiveProvider === "codex" ? wsConfig?.codexModel
     : effectiveProvider === "glm" ? wsConfig?.glmModel
     : effectiveProvider === "featherless" ? wsConfig?.featherlessModel
+    : effectiveProvider === "azulai" ? wsConfig?.azulaiModel
     : null;
   const wsHasModelForProvider =
     effectiveProvider === "openrouter" ? wsHasOpenrouterModel
     : effectiveProvider === "codex" ? wsHasCodexModel
     : effectiveProvider === "glm" ? wsHasGlmModel
     : effectiveProvider === "featherless" ? wsHasFeatherlessModel
+    : effectiveProvider === "azulai" ? wsHasAzulaiModel
     : false;
   const modelOverrideKey: keyof LocalOverrides =
     effectiveProvider === "glm" ? "glmModel"
     : effectiveProvider === "codex" ? "codexModel"
     : effectiveProvider === "featherless" ? "featherlessModel"
+    : effectiveProvider === "azulai" ? "azulaiModel"
     : "openrouterModel";
   const isModelCustom = !!localOverrides[modelOverrideKey];
 
@@ -459,10 +473,12 @@ export function SettingsRoute() {
     effectiveProvider === "openrouter" ? wsHasApiKey
     : effectiveProvider === "glm" ? wsHasGlmApiKey
     : effectiveProvider === "featherless" ? wsHasFeatherlessApiKey
+    : effectiveProvider === "azulai" ? wsHasAzulaiConfig
     : false;
   const apiKeyOverrideKey: keyof LocalOverrides =
     effectiveProvider === "glm" ? "glmApiKey"
     : effectiveProvider === "featherless" ? "featherlessApiKey"
+    : effectiveProvider === "azulai" ? "azulaiApiKey"
     : "apiKey";
   const isApiKeyCustom = !!localOverrides[apiKeyOverrideKey];
 
@@ -564,7 +580,9 @@ export function SettingsRoute() {
                 ? { value: glmApiKey, setValue: setGlmApiKey, show: showGlmKey, setShow: setShowGlmKey, placeholder: "Z.ai API key", wsKey: wsConfig?.glm?.apiKey }
                 : effectiveProvider === "featherless"
                   ? { value: featherlessApiKey, setValue: setFeatherlessApiKey, show: showFeatherlessKey, setShow: setShowFeatherlessKey, placeholder: "Featherless API key", wsKey: wsConfig?.featherless?.apiKey }
-                  : null;
+                  : effectiveProvider === "azulai"
+                    ? { value: azulaiApiKey, setValue: setAzulaiApiKey, show: showAzulaiKey, setShow: setShowAzulaiKey, placeholder: "AzulAI API key", wsKey: wsConfig?.azulai?.apiKey }
+                    : null;
             if (!keyField) return null;
             return (
               <label className="flex flex-col gap-1.5">
@@ -603,6 +621,35 @@ export function SettingsRoute() {
               </label>
             );
           })()}
+
+          {/* API URL — AzulAI only */}
+          {effectiveProvider === "azulai" && (
+            <label className="flex flex-col gap-1.5">
+              <div className="flex items-center gap-2">
+                <span className="text-[0.929rem] font-medium text-text-secondary">API URL</span>
+                {wsHasAzulaiConfig && (
+                  <SourceToggle
+                    isCustom={!!localOverrides.azulaiApiUrl}
+                    onToggle={(c) => toggleOverride("azulaiApiUrl", c)}
+                  />
+                )}
+              </div>
+              {wsHasAzulaiConfig && !localOverrides.azulaiApiUrl ? (
+                <div className="rounded-lg border border-border bg-raised px-3 py-2 text-[0.929rem] text-text-dimmed">
+                  {wsConfig!.azulai!.apiUrl}
+                </div>
+              ) : (
+                <input
+                  type="text"
+                  value={azulaiApiUrl}
+                  onChange={(e) => setAzulaiApiUrl(e.target.value)}
+                  placeholder="https://api.azulai.com"
+                  className="rounded-lg border border-border bg-raised px-3 py-2 text-[0.929rem] text-text outline-none transition-colors placeholder:text-text-dimmed focus:border-accent"
+                  spellCheck={false}
+                />
+              )}
+            </label>
+          )}
 
           {/* Plan Type — GLM only */}
           {effectiveProvider === "glm" && (
@@ -665,6 +712,15 @@ export function SettingsRoute() {
                 value={currentModel}
                 onChange={(e) => setProviderModel(e.target.value)}
                 placeholder="e.g. zai-org/GLM-5.1"
+                className="rounded-lg border border-border bg-raised px-3 py-2 text-[0.929rem] text-text outline-none transition-colors placeholder:text-text-dimmed focus:border-accent"
+                spellCheck={false}
+              />
+            ) : effectiveProvider === "azulai" ? (
+              <input
+                type="text"
+                value={currentModel}
+                onChange={(e) => setProviderModel(e.target.value)}
+                placeholder="e.g. meta-llama/Meta-Llama-3.1-8B-Instruct"
                 className="rounded-lg border border-border bg-raised px-3 py-2 text-[0.929rem] text-text outline-none transition-colors placeholder:text-text-dimmed focus:border-accent"
                 spellCheck={false}
               />

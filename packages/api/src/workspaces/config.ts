@@ -7,6 +7,7 @@ import {
   setOpenRouterConfig,
   setGlmConfig,
   setFeatherlessConfig,
+  setAzulaiConfig,
   setActiveProvider,
   updateWorkspaceSettings,
   deleteWorkspaceConfig,
@@ -24,8 +25,13 @@ const featherlessSchema = z.object({
   apiKey: z.string().min(1, "API key is required"),
 });
 
+const azulaiSchema = z.object({
+  apiUrl: z.string().url("Valid URL is required"),
+  apiKey: z.string().min(1, "API key is required"),
+});
+
 const providerSchema = z.object({
-  provider: z.enum(["openrouter", "codex", "glm", "featherless"]),
+  provider: z.enum(["openrouter", "codex", "glm", "featherless", "azulai"]),
 });
 
 const settingsSchema = z.object({
@@ -33,6 +39,7 @@ const settingsSchema = z.object({
   codexModel: z.string().nullable().optional(),
   glmModel: z.string().nullable().optional(),
   featherlessModel: z.string().nullable().optional(),
+  azulaiModel: z.string().nullable().optional(),
   reasoningEffort: z.enum(["low", "medium", "high", "xhigh"]).nullable().optional(),
 });
 
@@ -117,6 +124,25 @@ export const workspaceConfigRoutes = new Elysia({
 
     try {
       return await setFeatherlessConfig(params.id, user.id, parsed.data.apiKey);
+    } catch (e) {
+      if (e instanceof ServiceError) {
+        set.status = e.status;
+        return { error: e.message };
+      }
+      throw e;
+    }
+  })
+
+  // Set AzulAI config
+  .put("/:id/config/azulai", async ({ params, body, user, set }) => {
+    const parsed = azulaiSchema.safeParse(body);
+    if (!parsed.success) {
+      set.status = 400;
+      return { error: parsed.error.issues[0]?.message ?? "Invalid input" };
+    }
+
+    try {
+      return await setAzulaiConfig(params.id, user.id, parsed.data.apiUrl, parsed.data.apiKey);
     } catch (e) {
       if (e instanceof ServiceError) {
         set.status = e.status;

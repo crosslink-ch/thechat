@@ -2,6 +2,7 @@ import { streamCompletion } from "./openrouter";
 import { streamCodexCompletion } from "./codex";
 import { streamGlmCompletion } from "./glm";
 import { streamFeatherlessCompletion } from "./featherless";
+import { streamAzulaiCompletion } from "./azulai";
 import { truncateToolResult } from "./truncate";
 import { isOverflow, compactMessages } from "./compaction";
 import { validateUiBlocks, formatUiErrorsForLlm } from "./ui-validation";
@@ -52,6 +53,7 @@ function callProvider(
   const provider = options.provider === "codex" ? "codex" as const
     : options.provider === "glm" ? "glm" as const
     : options.provider === "featherless" ? "featherless" as const
+    : options.provider === "azulai" ? "azulai" as const
     : "openrouter" as const;
 
   // Tag any error events from the Rust streaming layer with the provider
@@ -90,6 +92,18 @@ function callProvider(
   if (provider === "featherless") {
     return streamFeatherlessCompletion({
       apiKey: options.featherlessApiKey ?? options.apiKey,
+      model: options.model,
+      messages,
+      params: options.params,
+      tools,
+      signal: options.signal,
+      onEvents: taggedOnEvents,
+    });
+  }
+  if (provider === "azulai" && options.azulaiApiUrl) {
+    return streamAzulaiCompletion({
+      apiUrl: options.azulaiApiUrl,
+      apiKey: options.azulaiApiKey ?? options.apiKey,
       model: options.model,
       messages,
       params: options.params,

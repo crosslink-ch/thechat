@@ -69,7 +69,9 @@ export async function runTask(prompt: string, signal?: AbortSignal, convId?: str
       ? "glm" as const
       : provider === "featherless"
         ? "featherless" as const
-        : "openrouter" as const;
+        : provider === "azulai"
+          ? "azulai" as const
+          : "openrouter" as const;
 
   await runChatLoop({
     apiKey: appConfig.api_key,
@@ -86,6 +88,8 @@ export async function runTask(prompt: string, signal?: AbortSignal, convId?: str
     glmApiKey: provider === "glm" ? appConfig.glm_api_key : undefined,
     glmPlanType: provider === "glm" ? appConfig.glmPlanType : undefined,
     featherlessApiKey: provider === "featherless" ? appConfig.featherless_api_key : undefined,
+    azulaiApiUrl: provider === "azulai" ? appConfig.azulai_api_url : undefined,
+    azulaiApiKey: provider === "azulai" ? appConfig.azulai_api_key : undefined,
     onEvents,
   });
 

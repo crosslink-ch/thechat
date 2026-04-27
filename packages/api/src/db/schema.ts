@@ -255,6 +255,7 @@ export const workspaceProviderEnum = pgEnum("workspace_provider", [
   "codex",
   "glm",
   "featherless",
+  "azulai",
 ]);
 
 export const workspaceConfigs = pgTable("workspace_configs", {
@@ -269,6 +270,9 @@ export const workspaceConfigs = pgTable("workspace_configs", {
   glmModel: text("glm_model"),
   featherlessApiKey: text("featherless_api_key"),
   featherlessModel: text("featherless_model"),
+  azulaiApiUrl: text("azulai_api_url"),
+  azulaiApiKey: text("azulai_api_key"),
+  azulaiModel: text("azulai_model"),
   reasoningEffort: varchar("reasoning_effort", { length: 20 }),
   createdAt: timestamp("created_at", { withTimezone: true })
     .defaultNow()
