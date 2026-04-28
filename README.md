@@ -15,7 +15,7 @@ Source code + CLAUDE.md is documentation.
 Create `packages/api/.env`:
 
 ```
-DATABASE_URL=postgresql://user:password@localhost:5432/thechat
+DATABASE_URL=postgresql://user:password@localhost:5435/thechat
 ```
 
 Start a fresh PostgreSQL container and push the schema:
