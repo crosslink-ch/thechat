@@ -1,26 +1,33 @@
 /**
- * End-to-end integration test: TheChat API <-> OpenClaw channel plugin.
+ * Simulated channel-plugin integration test: TheChat API <-> @thechat/openclaw-channel.
  *
- * Validates the full round-trip:
- *   1. TheChat API runs on a real HTTP port.
- *   2. A "bot backend" server (simulating an OpenClaw instance) uses the
- *      actual @thechat/openclaw-channel plugin code to:
- *        a. Receive and verify signed webhooks from TheChat.
- *        b. Parse inbound messages via `handleInbound()`.
- *        c. Generate a deterministic response.
- *        d. Send the response back to TheChat via the plugin's `sendText()`.
- *   3. A human user sends a DM to the bot.
- *   4. The test polls until the bot's response message appears.
+ * This is NOT a full OpenClaw end-to-end test — there is no real OpenClaw
+ * runtime, no real LLM, and no real plugin install. The "bot backend" is an
+ * in-process Bun.serve() that exercises the same `handleInbound()` and
+ * `sendText()` helpers an OpenClaw deployment would use, then writes a
+ * deterministic `Echo: ...` reply back into TheChat.
+ *
+ * What this proves:
+ *   - TheChat fires signed webhooks correctly.
+ *   - The channel plugin verifies the signature and parses the payload.
+ *   - The plugin's outbound REST call lands in TheChat as a bot message.
+ *
+ * What it does NOT prove:
+ *   - That a real OpenClaw instance can route the inbound message to an
+ *     agent and produce a real LLM reply.
+ *
+ * For the real full-flow test see `scripts/openclaw_full_flow_e2e.py`,
+ * gated by `OPENCLAW_E2E_FULL=1` and requiring `OPENROUTER_API_KEY`.
  *
  * Prerequisites:
  *   - DATABASE_URL must be set (same Postgres used for dev/test).
  *   - Opt-in: set OPENCLAW_E2E=1 to run (skipped in normal test suite).
  *
  * Run:
- *   OPENCLAW_E2E=1 bun test --env-file ../../.env --timeout 90000 src/e2e/openclaw-integration.test.ts
+ *   OPENCLAW_E2E=1 bun test --env-file ../../.env --timeout 90000 src/e2e/openclaw-channel-simulated.test.ts
  *
  * Or via the package script:
- *   pnpm --filter @thechat/api test:e2e:openclaw
+ *   pnpm --filter @thechat/api test:e2e:openclaw-simulated
  */
 
 import { describe, test, expect, afterAll } from "bun:test";
@@ -121,9 +128,9 @@ afterAll(async () => {
 
 const suite = process.env.OPENCLAW_E2E === "1" ? describe : describe.skip;
 
-suite("OpenClaw <-> TheChat E2E integration", () => {
+suite("OpenClaw channel plugin <-> TheChat (simulated bot backend)", () => {
   test(
-    "human sends DM to bot -> webhook verified -> bot responds via channel plugin",
+    "human sends DM to bot -> webhook verified -> simulated bot replies via channel plugin",
     async () => {
       // Observability flags — asserted at the end.
       let webhookReceived = false;

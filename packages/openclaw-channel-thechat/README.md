@@ -222,6 +222,59 @@ full unit-testing without a running server.
 
 ## Tests
 
+Unit + simulated integration tests:
+
 ```bash
 pnpm --filter @thechat/openclaw-channel test
 ```
+
+There is also a simulated channel-plugin integration test that wires
+TheChat against an in-process Bun server using the real `handleInbound` /
+`sendText` helpers:
+
+```bash
+pnpm --filter @thechat/api test:e2e:openclaw-simulated
+```
+
+This test does **not** start a real OpenClaw runtime, so it cannot detect
+breakage in the OpenClaw plugin entry, the inbound dispatch seam, or the
+agent loop.
+
+For the real full round-trip — TheChat ↔ a freshly built OpenClaw ↔
+OpenRouter ↔ TheChat — use the orchestrator at
+`scripts/openclaw_full_flow_e2e.py`. It is opt-in:
+
+```bash
+OPENCLAW_E2E_FULL=1 \
+OPENROUTER_API_KEY=sk-or-... \
+DATABASE_URL=postgres://... \
+pnpm test:e2e:openclaw-full
+```
+
+The orchestrator:
+
+1. Clones `https://github.com/openclaw/openclaw.git` (override with
+   `OPENCLAW_E2E_OPENCLAW_REPO` / `OPENCLAW_E2E_OPENCLAW_REF`) into a
+   reusable cache (`OPENCLAW_E2E_CACHE_DIR`, default
+   `~/.cache/thechat/openclaw-e2e`).
+2. Runs `pnpm install` + `pnpm build` on first cache use.
+3. Starts a fresh TheChat API on an ephemeral port (or reuses
+   `THECHAT_API_URL` if set).
+4. Registers a human, creates a workspace, creates a bot.
+5. Writes an isolated OpenClaw config + state dir under
+   `OPENCLAW_HOME` / `OPENCLAW_CONFIG_PATH`, points the agent at OpenRouter
+   (`agents.defaults.model.primary` defaults to
+   `openrouter/qwen/qwen3.6-35b-a3b`; override with
+   `OPENCLAW_E2E_MODEL`).
+6. Installs *this* package via `openclaw plugins install -l ...`.
+7. Starts the OpenClaw gateway on an ephemeral port.
+8. PATCHes the bot's webhook URL, adds the bot to the workspace, opens a
+   DM, sends a human message.
+9. Polls `/messages/:id` for a real bot reply and asserts it is **not**
+   the simulated `Echo: ...` shape.
+
+The OpenRouter API key is forwarded only via the OpenClaw child process
+environment — it is never logged. `bot_...` API keys, `whsec_...` webhook
+secrets, and `sk-or-...` style OpenRouter keys are also redacted from
+diagnostic output. Set `OPENCLAW_E2E_KEEP_TEMP=1` to leave the per-run
+state dir behind for inspection.

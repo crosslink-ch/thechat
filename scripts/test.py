@@ -124,6 +124,11 @@ SUITES = [
         ],
         "opt_in": True,  # needs CODEX_ACCESS_TOKEN credentials
     },
+    {
+        "name": "openclaw-full-e2e",
+        "cmd": ["python3", "scripts/openclaw_full_flow_e2e.py"],
+        "opt_in": True,  # clones+builds OpenClaw, calls OpenRouter — needs OPENCLAW_E2E_FULL=1 + OPENROUTER_API_KEY
+    },
 ]
 
 
@@ -382,7 +387,7 @@ def main():
 
     print(f"Running {len(suites)} test suite(s): {', '.join(s['name'] for s in suites)}")
     if not run_all:
-        print("  (pass --all to include opt-in suites: mcp, codex)")
+        print("  (pass --all to include opt-in suites: mcp, codex, openclaw-full-e2e)")
     print()
 
     results: list[Result] = []
