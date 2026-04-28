@@ -18,6 +18,7 @@ function CodexAuthModalInner() {
   const status = useCodexAuthStore((s) => s.status);
   const userCode = useCodexAuthStore((s) => s.userCode);
   const verificationUrl = useCodexAuthStore((s) => s.verificationUrl);
+  const browserAuthUrl = useCodexAuthStore((s) => s.browserAuthUrl);
   const error = useCodexAuthStore((s) => s.error);
   const startLogin = useCodexAuthStore((s) => s.startLogin);
   const cancelLogin = useCodexAuthStore((s) => s.cancelLogin);
@@ -29,7 +30,7 @@ function CodexAuthModalInner() {
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
-        if (status === "polling" || status === "awaiting_code") {
+        if (status === "polling" || status === "awaiting_code" || status === "opening_browser" || status === "waiting_browser") {
           cancelLogin();
         }
         closeCodexAuthModal();
@@ -40,11 +41,19 @@ function CodexAuthModalInner() {
   }, [status, cancelLogin]);
 
   const handleStartLogin = () => {
-    startLogin();
+    startLogin("browser");
+  };
+
+  const handleStartDeviceLogin = () => {
+    startLogin("device");
   };
 
   const handleOpenVerification = () => {
     openUrl(verificationUrl);
+  };
+
+  const handleReopenBrowserLogin = () => {
+    if (browserAuthUrl) openUrl(browserAuthUrl);
   };
 
   const handleCopyCode = () => {
@@ -65,7 +74,7 @@ function CodexAuthModalInner() {
           <>
             <p className="mb-4 text-[0.929rem] leading-relaxed text-text-muted">
               Connect your ChatGPT Pro or Plus subscription to use Codex models for free.
-              This uses OpenAI's device authorization flow.
+              Browser login is recommended, with device code available as a fallback.
             </p>
 
             {error && (
@@ -78,7 +87,51 @@ function CodexAuthModalInner() {
               className="block w-full cursor-pointer rounded-lg border border-border-strong bg-elevated px-3 py-2.5 font-[inherit] text-[0.929rem] font-medium text-text transition-colors duration-150 hover:bg-button"
               onClick={handleStartLogin}
             >
-              Connect ChatGPT Account
+              Continue in Browser
+            </button>
+
+            <button
+              className="mt-2 block w-full cursor-pointer rounded-lg border border-border bg-none px-3 py-2.5 font-[inherit] text-[0.929rem] text-text-muted transition-colors duration-150 hover:bg-hover hover:text-text"
+              onClick={handleStartDeviceLogin}
+            >
+              Use Device Code Instead
+            </button>
+          </>
+        )}
+
+        {/* Browser login state */}
+        {(status === "opening_browser" || status === "waiting_browser") && (
+          <>
+            <p className="mb-4 text-[0.929rem] leading-relaxed text-text-muted">
+              {status === "opening_browser"
+                ? "Preparing secure browser login..."
+                : "Finish signing in with ChatGPT in your browser. TheChat will continue automatically when OpenAI redirects back."}
+            </p>
+
+            {browserAuthUrl && (
+              <button
+                className="mb-3 block w-full cursor-pointer rounded-lg border border-border-strong bg-elevated px-3 py-2.5 font-[inherit] text-[0.929rem] font-medium text-text transition-colors duration-150 hover:bg-button"
+                onClick={handleReopenBrowserLogin}
+              >
+                Reopen Browser Login
+              </button>
+            )}
+
+            <button
+              className="mb-2 block w-full cursor-pointer rounded-lg border border-border bg-none px-3 py-2 font-[inherit] text-[0.857rem] text-text-muted transition-colors duration-150 hover:bg-hover hover:text-text"
+              onClick={handleStartDeviceLogin}
+            >
+              Use Device Code Instead
+            </button>
+
+            <button
+              className="block w-full cursor-pointer rounded-lg border border-border bg-none px-3 py-2 font-[inherit] text-[0.857rem] text-text-muted transition-colors duration-150 hover:bg-hover hover:text-text"
+              onClick={() => {
+                cancelLogin();
+                closeCodexAuthModal();
+              }}
+            >
+              Cancel
             </button>
           </>
         )}

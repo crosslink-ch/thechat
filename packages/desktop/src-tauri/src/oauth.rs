@@ -4,7 +4,8 @@ use std::net::TcpListener;
 use std::sync::Mutex;
 use tokio::sync::oneshot;
 
-const CALLBACK_PORT: u16 = 19876;
+const MCP_CALLBACK_PORT: u16 = 19876;
+const CODEX_CALLBACK_PORT: u16 = 1455;
 const CALLBACK_TIMEOUT_SECS: u64 = 300; // 5 minutes
 
 const HTML_SUCCESS: &str = r#"<!DOCTYPE html>
@@ -85,6 +86,29 @@ fn parse_query_params(path: &str) -> std::collections::HashMap<String, String> {
 pub async fn mcp_oauth_start(
     server: tauri::State<'_, std::sync::Arc<OAuthCallbackServer>>,
 ) -> Result<u16, String> {
+    oauth_start_on_port(server.inner(), MCP_CALLBACK_PORT)
+}
+
+/// Start the Codex browser-login callback server.
+#[tauri::command]
+#[tracing::instrument(skip(server))]
+pub async fn codex_oauth_start(
+    server: tauri::State<'_, std::sync::Arc<OAuthCallbackServer>>,
+) -> Result<u16, String> {
+    oauth_start_on_port(server.inner(), CODEX_CALLBACK_PORT)
+}
+
+fn is_supported_callback_path(path: &str) -> bool {
+    path == "/callback"
+        || path.starts_with("/callback?")
+        || path == "/auth/callback"
+        || path.starts_with("/auth/callback?")
+}
+
+fn oauth_start_on_port(
+    server: &std::sync::Arc<OAuthCallbackServer>,
+    callback_port: u16,
+) -> Result<u16, String> {
     // Cancel any previous pending callback
     {
         let mut tx = server.result_tx.lock().map_err(|e| e.to_string())?;
@@ -103,8 +127,12 @@ pub async fn mcp_oauth_start(
     }
 
     // Bind the listener on the main thread so we know the port immediately
-    let listener = TcpListener::bind(format!("127.0.0.1:{}", CALLBACK_PORT))
-        .map_err(|e| format!("Failed to bind OAuth callback server on port {}: {}", CALLBACK_PORT, e))?;
+    let listener = TcpListener::bind(format!("127.0.0.1:{}", callback_port)).map_err(|e| {
+        format!(
+            "Failed to bind OAuth callback server on port {}: {}",
+            callback_port, e
+        )
+    })?;
 
     let port = listener.local_addr().map_err(|e| e.to_string())?.port();
 
@@ -113,16 +141,14 @@ pub async fn mcp_oauth_start(
         .set_nonblocking(false)
         .map_err(|e| format!("Failed to set blocking mode: {}", e))?;
 
-    let server = std::sync::Arc::clone(&server);
+    let server = std::sync::Arc::clone(server);
 
     std::thread::spawn(move || {
         // Set a deadline for accepting connections
-        let deadline = std::time::Instant::now()
-            + std::time::Duration::from_secs(CALLBACK_TIMEOUT_SECS);
+        let deadline =
+            std::time::Instant::now() + std::time::Duration::from_secs(CALLBACK_TIMEOUT_SECS);
 
-        listener
-            .set_nonblocking(true)
-            .ok();
+        listener.set_nonblocking(true).ok();
 
         loop {
             if std::time::Instant::now() > deadline {
@@ -147,9 +173,10 @@ pub async fn mcp_oauth_start(
                     let first_line = request.lines().next().unwrap_or("");
                     let path = first_line.split_whitespace().nth(1).unwrap_or("");
 
-                    // Only handle requests to /callback
-                    if !path.starts_with("/callback") {
-                        let response = "HTTP/1.1 404 Not Found\r\nContent-Length: 9\r\n\r\nNot Found";
+                    // Only handle callback paths used by MCP OAuth and Codex browser login.
+                    if !is_supported_callback_path(path) {
+                        let response =
+                            "HTTP/1.1 404 Not Found\r\nContent-Length: 9\r\n\r\nNot Found";
                         let _ = stream.write_all(response.as_bytes());
                         continue;
                     }
@@ -162,10 +189,7 @@ pub async fn mcp_oauth_start(
                     let tx = server.result_tx.lock().ok().and_then(|mut t| t.take());
 
                     if let Some(error) = error {
-                        let error_desc = params
-                            .get("error_description")
-                            .cloned()
-                            .unwrap_or(error);
+                        let error_desc = params.get("error_description").cloned().unwrap_or(error);
 
                         let body = HTML_ERROR;
                         let response = format!(
@@ -223,6 +247,24 @@ pub async fn mcp_oauth_start(
 
     tracing::info!(port = port, "OAuth callback server started");
     Ok(port)
+}
+
+/// Wait for the Codex browser-login OAuth callback.
+#[tauri::command]
+#[tracing::instrument(skip(server))]
+pub async fn codex_oauth_await(
+    server: tauri::State<'_, std::sync::Arc<OAuthCallbackServer>>,
+) -> Result<OAuthCallbackResult, String> {
+    mcp_oauth_await(server).await
+}
+
+/// Cancel any pending Codex browser-login OAuth callback.
+#[tauri::command]
+#[tracing::instrument(skip(server))]
+pub async fn codex_oauth_cancel(
+    server: tauri::State<'_, std::sync::Arc<OAuthCallbackServer>>,
+) -> Result<(), String> {
+    mcp_oauth_cancel(server).await
 }
 
 /// Wait for the OAuth callback. Returns the authorization code and state.
@@ -285,6 +327,13 @@ mod tests {
         let params = parse_query_params("/callback?code=abc");
         assert_eq!(params.get("code").unwrap(), "abc");
         assert!(params.get("state").is_none());
+    }
+
+    #[test]
+    fn supports_mcp_and_codex_callback_paths() {
+        assert!(is_supported_callback_path("/callback?code=abc"));
+        assert!(is_supported_callback_path("/auth/callback?code=abc"));
+        assert!(!is_supported_callback_path("/other?code=abc"));
     }
 
     #[test]

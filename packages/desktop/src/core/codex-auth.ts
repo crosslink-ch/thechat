@@ -2,6 +2,10 @@ import { fetch } from "@tauri-apps/plugin-http";
 
 export const CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
 export const ISSUER = "https://auth.openai.com";
+export const CODEX_BROWSER_LOGIN_PORT = 1455;
+export const CODEX_BROWSER_REDIRECT_PATH = "/auth/callback";
+export const CODEX_OAUTH_SCOPE = "openid profile email offline_access api.connectors.read api.connectors.invoke";
+export const CODEX_ORIGINATOR = "codex_cli_rs";
 
 const CHARSET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~";
 
@@ -28,6 +32,13 @@ interface DevicePollResult {
   code_verifier: string;
 }
 
+export interface BrowserAuthRequest {
+  authUrl: string;
+  redirectUri: string;
+  state: string;
+  verifier: string;
+}
+
 /** Generate PKCE verifier and S256 challenge. */
 export async function generatePKCE(): Promise<PKCECodes> {
   const array = new Uint8Array(43);
@@ -42,6 +53,47 @@ export async function generatePKCE(): Promise<PKCECodes> {
     .replace(/=+$/, "");
 
   return { verifier, challenge };
+}
+
+/** Generate an OAuth state token. */
+export function generateOAuthState(length = 32): string {
+  const array = new Uint8Array(length);
+  crypto.getRandomValues(array);
+  return btoa(String.fromCharCode(...array))
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
+}
+
+export function buildBrowserAuthUrl(redirectUri: string, pkce: PKCECodes, state: string): string {
+  const params = new URLSearchParams({
+    response_type: "code",
+    client_id: CLIENT_ID,
+    redirect_uri: redirectUri,
+    scope: CODEX_OAUTH_SCOPE,
+    code_challenge: pkce.challenge,
+    code_challenge_method: "S256",
+    id_token_add_organizations: "true",
+    codex_cli_simplified_flow: "true",
+    state,
+    originator: CODEX_ORIGINATOR,
+  });
+
+  return `${ISSUER}/oauth/authorize?${params.toString()}`;
+}
+
+/** Build the upstream-compatible browser login request. */
+export async function createBrowserAuthRequest(port = CODEX_BROWSER_LOGIN_PORT): Promise<BrowserAuthRequest> {
+  const pkce = await generatePKCE();
+  const state = generateOAuthState();
+  const redirectUri = `http://localhost:${port}${CODEX_BROWSER_REDIRECT_PATH}`;
+
+  return {
+    authUrl: buildBrowserAuthUrl(redirectUri, pkce, state),
+    redirectUri,
+    state,
+    verifier: pkce.verifier,
+  };
 }
 
 /** Start device authorization flow. Returns device_auth_id and user_code. */
@@ -102,11 +154,12 @@ export async function pollDeviceAuth(
 export async function exchangeCodeForTokens(
   authCode: string,
   codeVerifier: string,
+  redirectUri = `${ISSUER}/deviceauth/callback`,
 ): Promise<TokenResponse> {
   const body = new URLSearchParams({
     grant_type: "authorization_code",
     code: authCode,
-    redirect_uri: `${ISSUER}/deviceauth/callback`,
+    redirect_uri: redirectUri,
     client_id: CLIENT_ID,
     code_verifier: codeVerifier,
   });
