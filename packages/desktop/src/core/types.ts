@@ -78,11 +78,13 @@ export interface ChatLoopOptions {
   signal?: AbortSignal;
   cwd?: string;
   convId?: string;
-  provider?: "openrouter" | "codex" | "glm" | "featherless";
+  provider?: "openrouter" | "codex" | "glm" | "featherless" | "azulai";
   codexAuth?: CodexAuth;
   glmApiKey?: string;
   glmPlanType?: "coding" | "standard";
   featherlessApiKey?: string;
+  azulaiApiUrl?: string;
+  azulaiApiKey?: string;
   getQueuedMessages?: () => Array<{ id: string; content: string }>;
   onEvents: (events: StreamEvent[]) => void;
 }

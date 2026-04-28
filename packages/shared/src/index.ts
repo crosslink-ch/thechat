@@ -47,7 +47,7 @@ export interface McpServerConfig {
   disabled?: boolean;
 }
 
-export type Provider = "openrouter" | "codex" | "glm" | "featherless";
+export type Provider = "openrouter" | "codex" | "glm" | "featherless" | "azulai";
 export type ReasoningEffort = "low" | "medium" | "high" | "xhigh";
 export type GlmPlanType = "coding" | "standard";
 
@@ -60,6 +60,7 @@ export interface ProvidersConfig {
   codex: ProviderConfig;
   glm: ProviderConfig;
   featherless: ProviderConfig;
+  azulai: ProviderConfig;
 }
 
 export interface LocalOverrides {
@@ -71,6 +72,9 @@ export interface LocalOverrides {
   glmModel?: boolean;
   featherlessApiKey?: boolean;
   featherlessModel?: boolean;
+  azulaiApiUrl?: boolean;
+  azulaiApiKey?: boolean;
+  azulaiModel?: boolean;
   reasoningEffort?: boolean;
 }
 
@@ -79,6 +83,8 @@ export interface AppConfig {
   glm_api_key?: string;
   glmPlanType?: GlmPlanType;
   featherless_api_key?: string;
+  azulai_api_url?: string;
+  azulai_api_key?: string;
   provider?: Provider;
   reasoningEffort?: ReasoningEffort;
   providers: ProvidersConfig;
@@ -288,7 +294,7 @@ export type AppNotification =
 
 // -- Workspace Config Types --
 
-export type WorkspaceProvider = "openrouter" | "codex" | "glm" | "featherless";
+export type WorkspaceProvider = "openrouter" | "codex" | "glm" | "featherless" | "azulai";
 
 export interface WorkspaceConfig {
   workspaceId: string;
@@ -300,6 +306,8 @@ export interface WorkspaceConfig {
   glmModel: string | null;
   featherless: { apiKey: string } | null;
   featherlessModel: string | null;
+  azulai: { apiUrl: string; apiKey: string } | null;
+  azulaiModel: string | null;
   reasoningEffort: ReasoningEffort | null;
   updatedAt: string;
 }

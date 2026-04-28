@@ -1,4 +1,4 @@
-export type Provider = "openrouter" | "codex" | "glm" | "featherless";
+export type Provider = "openrouter" | "codex" | "glm" | "featherless" | "azulai";
 
 /**
  * Error thrown by provider streaming wrappers.

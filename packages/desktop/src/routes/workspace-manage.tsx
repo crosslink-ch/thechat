@@ -16,6 +16,7 @@ const PROVIDER_LABELS: Record<WorkspaceProvider, string> = {
   codex: "Codex",
   glm: "GLM",
   featherless: "Featherless",
+  azulai: "AzulAI",
 };
 
 const PROVIDER_ORDER: readonly WorkspaceProvider[] = ["openrouter", "codex", "glm", "featherless"];

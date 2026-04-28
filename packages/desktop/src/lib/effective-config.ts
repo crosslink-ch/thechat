@@ -87,6 +87,14 @@ export async function getEffectiveConfig(): Promise<EffectiveConfig> {
     effective.featherless_api_key = wsConfig.featherless.apiKey;
   }
 
+  // Merge AzulAI config
+  if (!overrides.azulaiApiUrl && wsConfig.azulai?.apiUrl) {
+    effective.azulai_api_url = wsConfig.azulai.apiUrl;
+  }
+  if (!overrides.azulaiApiKey && wsConfig.azulai?.apiKey) {
+    effective.azulai_api_key = wsConfig.azulai.apiKey;
+  }
+
   // Merge models
   effective.providers = { ...effective.providers };
   if (!overrides.openrouterModel && wsConfig.openrouterModel) {
@@ -100,6 +108,9 @@ export async function getEffectiveConfig(): Promise<EffectiveConfig> {
   }
   if (!overrides.featherlessModel && wsConfig.featherlessModel) {
     effective.providers.featherless = { ...effective.providers.featherless, model: wsConfig.featherlessModel };
+  }
+  if (!overrides.azulaiModel && wsConfig.azulaiModel) {
+    effective.providers.azulai = { ...effective.providers.azulai, model: wsConfig.azulaiModel };
   }
 
   // Merge reasoning effort

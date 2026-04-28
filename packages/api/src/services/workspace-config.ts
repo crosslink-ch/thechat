@@ -56,6 +56,8 @@ function toWorkspaceConfig(
       glmModel: null,
       featherless: null,
       featherlessModel: null,
+      azulai: null,
+      azulaiModel: null,
       reasoningEffort: null,
       updatedAt: new Date().toISOString(),
     };
@@ -75,6 +77,10 @@ function toWorkspaceConfig(
       ? { apiKey: row.featherlessApiKey }
       : null,
     featherlessModel: row.featherlessModel ?? null,
+    azulai: row.azulaiApiUrl && row.azulaiApiKey
+      ? { apiUrl: row.azulaiApiUrl, apiKey: row.azulaiApiKey }
+      : null,
+    azulaiModel: row.azulaiModel ?? null,
     reasoningEffort: (row.reasoningEffort as ReasoningEffort) ?? null,
     updatedAt: row.updatedAt.toISOString(),
   };
@@ -196,6 +202,42 @@ export async function setFeatherlessConfig(
   return getWorkspaceConfig(workspaceId, userId);
 }
 
+export async function setAzulaiConfig(
+  workspaceId: string,
+  userId: string,
+  apiUrl: string,
+  apiKey: string,
+): Promise<WorkspaceConfig> {
+  const membership = await requireMembership(workspaceId, userId);
+  requireAdminOrOwner(membership.role);
+
+  const [existing] = await db
+    .select({ workspaceId: workspaceConfigs.workspaceId })
+    .from(workspaceConfigs)
+    .where(eq(workspaceConfigs.workspaceId, workspaceId))
+    .limit(1);
+
+  if (existing) {
+    await db
+      .update(workspaceConfigs)
+      .set({
+        provider: "azulai",
+        azulaiApiUrl: apiUrl,
+        azulaiApiKey: apiKey,
+      })
+      .where(eq(workspaceConfigs.workspaceId, workspaceId));
+  } else {
+    await db.insert(workspaceConfigs).values({
+      workspaceId,
+      provider: "azulai",
+      azulaiApiUrl: apiUrl,
+      azulaiApiKey: apiKey,
+    });
+  }
+
+  return getWorkspaceConfig(workspaceId, userId);
+}
+
 export async function setActiveProvider(
   workspaceId: string,
   userId: string,
@@ -229,6 +271,10 @@ export async function setActiveProvider(
     throw new ServiceError("Featherless API key not configured", 400);
   }
 
+  if (provider === "azulai" && (!existing.azulaiApiUrl || !existing.azulaiApiKey)) {
+    throw new ServiceError("AzulAI API URL and key not configured", 400);
+  }
+
   await db
     .update(workspaceConfigs)
     .set({ provider })
@@ -245,6 +291,7 @@ export async function updateWorkspaceSettings(
     codexModel?: string | null;
     glmModel?: string | null;
     featherlessModel?: string | null;
+    azulaiModel?: string | null;
     reasoningEffort?: ReasoningEffort | null;
   }
 ): Promise<WorkspaceConfig> {
@@ -262,6 +309,7 @@ export async function updateWorkspaceSettings(
   if ("codexModel" in settings) updates.codexModel = settings.codexModel ?? null;
   if ("glmModel" in settings) updates.glmModel = settings.glmModel ?? null;
   if ("featherlessModel" in settings) updates.featherlessModel = settings.featherlessModel ?? null;
+  if ("azulaiModel" in settings) updates.azulaiModel = settings.azulaiModel ?? null;
   if ("reasoningEffort" in settings) updates.reasoningEffort = settings.reasoningEffort ?? null;
 
   if (existing) {

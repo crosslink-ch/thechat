@@ -32,6 +32,12 @@ fn default_featherless_provider() -> ProviderConfig {
     }
 }
 
+fn default_azulai_provider() -> ProviderConfig {
+    ProviderConfig {
+        model: "meta-llama/Meta-Llama-3.1-8B-Instruct".to_string(),
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProvidersConfig {
     pub openrouter: ProviderConfig,
@@ -39,6 +45,8 @@ pub struct ProvidersConfig {
     pub glm: ProviderConfig,
     #[serde(default = "default_featherless_provider")]
     pub featherless: ProviderConfig,
+    #[serde(default = "default_azulai_provider")]
+    pub azulai: ProviderConfig,
 }
 
 impl Default for ProvidersConfig {
@@ -54,6 +62,7 @@ impl Default for ProvidersConfig {
                 model: "glm-5.1".to_string(),
             },
             featherless: default_featherless_provider(),
+            azulai: default_azulai_provider(),
         }
     }
 }
@@ -76,6 +85,12 @@ pub struct LocalOverrides {
     pub featherless_api_key: Option<bool>,
     #[serde(default, rename = "featherlessModel", skip_serializing_if = "Option::is_none")]
     pub featherless_model: Option<bool>,
+    #[serde(default, rename = "azulaiApiUrl", skip_serializing_if = "Option::is_none")]
+    pub azulai_api_url: Option<bool>,
+    #[serde(default, rename = "azulaiApiKey", skip_serializing_if = "Option::is_none")]
+    pub azulai_api_key: Option<bool>,
+    #[serde(default, rename = "azulaiModel", skip_serializing_if = "Option::is_none")]
+    pub azulai_model: Option<bool>,
     #[serde(default, rename = "reasoningEffort", skip_serializing_if = "Option::is_none")]
     pub reasoning_effort: Option<bool>,
 }
@@ -89,6 +104,10 @@ pub struct AppConfig {
     pub glm_plan_type: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub featherless_api_key: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub azulai_api_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub azulai_api_key: Option<String>,
     #[serde(default)]
     pub provider: Option<String>,
     #[serde(default, rename = "reasoningEffort")]
@@ -170,6 +189,8 @@ fn default_config(backend_url: &str) -> AppConfig {
         glm_api_key: None,
         glm_plan_type: None,
         featherless_api_key: None,
+        azulai_api_url: None,
+        azulai_api_key: None,
         provider: None,
         reasoning_effort: None,
         providers: ProvidersConfig::default(),
@@ -247,6 +268,29 @@ mod tests {
         assert_eq!(config.providers.openrouter.model, "openai/gpt-4.1");
         assert_eq!(config.providers.codex.model, "gpt-5.4");
         assert_eq!(config.providers.glm.model, "glm-5.1");
+        // azulai defaults when not in JSON
+        assert_eq!(config.providers.azulai.model, "meta-llama/Meta-Llama-3.1-8B-Instruct");
+    }
+
+    #[test]
+    fn parse_azulai_provider() {
+        let json = r#"{
+            "api_key": "sk-test",
+            "provider": "azulai",
+            "azulai_api_url": "https://api.azulai.example.com",
+            "azulai_api_key": "az-key-123",
+            "providers": {
+                "openrouter": { "model": "openai/gpt-4.1" },
+                "codex": { "model": "gpt-5.4" },
+                "glm": { "model": "glm-5.1" },
+                "azulai": { "model": "custom-model" }
+            }
+        }"#;
+        let config: AppConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(config.provider.as_deref(), Some("azulai"));
+        assert_eq!(config.azulai_api_url.as_deref(), Some("https://api.azulai.example.com"));
+        assert_eq!(config.azulai_api_key.as_deref(), Some("az-key-123"));
+        assert_eq!(config.providers.azulai.model, "custom-model");
     }
 
     #[test]
@@ -362,6 +406,12 @@ mod tests {
             config.providers.featherless.model,
             "zai-org/GLM-5.1"
         );
+        assert_eq!(
+            config.providers.azulai.model,
+            "meta-llama/Meta-Llama-3.1-8B-Instruct"
+        );
+        assert!(config.azulai_api_url.is_none());
+        assert!(config.azulai_api_key.is_none());
         let srv = &config.mcp_servers["thechat"];
         assert_eq!(srv.url.as_deref(), Some("http://localhost:3000/mcp"));
         assert!(srv.command.is_none());
