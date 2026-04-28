@@ -1,5 +1,6 @@
 import crypto from "crypto";
 import { eq, and } from "drizzle-orm";
+import type { WsServerEvent } from "@thechat/shared";
 import { db } from "../db";
 import {
   users,
@@ -9,6 +10,7 @@ import {
   conversationParticipants,
 } from "../db/schema";
 import { ServiceError } from "./errors";
+import { broadcastToUser } from "../ws";
 
 export function generateApiKey(): string {
   return `bot_${crypto.randomBytes(32).toString("hex")}`;
@@ -84,8 +86,9 @@ export async function addBotToWorkspace(
 ) {
   // Verify bot exists
   const [bot] = await db
-    .select({ userId: bots.userId, ownerId: bots.ownerId })
+    .select({ userId: bots.userId, name: users.name })
     .from(bots)
+    .innerJoin(users, eq(bots.userId, users.id))
     .where(eq(bots.id, botId))
     .limit(1);
 
@@ -122,10 +125,20 @@ export async function addBotToWorkspace(
     .limit(1);
 
   if (!existingMember) {
-    await db.insert(workspaceMembers).values({
+    const [member] = await db
+      .insert(workspaceMembers)
+      .values({
+        workspaceId,
+        userId: bot.userId,
+        role: "member",
+      })
+      .returning({ joinedAt: workspaceMembers.joinedAt });
+
+    await broadcastBotJoinedWorkspace({
       workspaceId,
-      userId: bot.userId,
-      role: "member",
+      botUserId: bot.userId,
+      botName: bot.name,
+      joinedAt: member?.joinedAt ?? new Date(),
     });
   }
 
@@ -157,6 +170,46 @@ export async function addBotToWorkspace(
   }
 
   return { success: true };
+}
+
+async function broadcastBotJoinedWorkspace({
+  workspaceId,
+  botUserId,
+  botName,
+  joinedAt,
+}: {
+  workspaceId: string;
+  botUserId: string;
+  botName: string;
+  joinedAt: Date;
+}) {
+  const members = await db
+    .select({ userId: workspaceMembers.userId })
+    .from(workspaceMembers)
+    .where(eq(workspaceMembers.workspaceId, workspaceId));
+
+  const event: WsServerEvent = {
+    type: "member_joined",
+    workspaceId,
+    member: {
+      userId: botUserId,
+      role: "member",
+      joinedAt: joinedAt.toISOString(),
+      user: {
+        id: botUserId,
+        name: botName,
+        email: null,
+        avatar: null,
+        type: "bot",
+      },
+    },
+  };
+
+  for (const member of members) {
+    if (member.userId !== botUserId) {
+      broadcastToUser(member.userId, event);
+    }
+  }
 }
 
 export async function removeBotFromWorkspace(

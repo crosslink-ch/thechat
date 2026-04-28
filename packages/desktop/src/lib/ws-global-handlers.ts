@@ -4,9 +4,36 @@ import { useWorkspacesStore } from "../stores/workspaces";
 import { useNotificationsStore } from "../stores/notifications";
 import { useConversationsStore } from "../stores/conversations";
 import { fireNotification } from "./notifications";
+import { api } from "./api";
+import type { WorkspaceWithDetails } from "@thechat/shared";
 import type { WsEvents } from "./ws-events";
 
 type Navigate = (opts: { to: string }) => void;
+
+function auth(token: string) {
+  return { headers: { authorization: `Bearer ${token}` } };
+}
+
+async function refreshWorkspaceDetails(workspaceId: string) {
+  const token = useAuthStore.getState().token;
+  if (!token) return;
+
+  const current = useWorkspacesStore.getState().activeWorkspace;
+  if (!current || current.id !== workspaceId) return;
+
+  try {
+    const { data, error } = await api.workspaces({ id: workspaceId }).get(auth(token));
+    if (error || !data) return;
+
+    const latest = data as WorkspaceWithDetails;
+    const stillCurrent = useWorkspacesStore.getState().activeWorkspace;
+    if (!stillCurrent || stillCurrent.id !== workspaceId) return;
+
+    useWorkspacesStore.setState({ activeWorkspace: latest });
+  } catch {
+    // Keep optimistic state if refresh fails.
+  }
+}
 
 export function registerGlobalWsHandlers(navigate: Navigate): () => void {
   const onNewMessage = ({
@@ -28,13 +55,19 @@ export function registerGlobalWsHandlers(navigate: Navigate): () => void {
   }: WsEvents["ws:member_joined"]) => {
     const { activeWorkspace } = useWorkspacesStore.getState();
     if (!activeWorkspace || activeWorkspace.id !== workspaceId) return;
-    if (activeWorkspace.members.some((m) => m.userId === member.userId)) return;
+    if (activeWorkspace.members.some((m) => m.userId === member.userId)) {
+      void refreshWorkspaceDetails(workspaceId);
+      return;
+    }
+
     useWorkspacesStore.setState({
       activeWorkspace: {
         ...activeWorkspace,
         members: [...activeWorkspace.members, member],
       },
     });
+
+    void refreshWorkspaceDetails(workspaceId);
   };
 
   const onMemberRoleChanged = ({
