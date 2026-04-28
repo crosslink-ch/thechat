@@ -255,11 +255,13 @@ The orchestrator:
 
 1. Clones `https://github.com/openclaw/openclaw.git` (override with
    `OPENCLAW_E2E_OPENCLAW_REPO` / `OPENCLAW_E2E_OPENCLAW_REF`) into a
-   reusable cache (`OPENCLAW_E2E_CACHE_DIR`, default
-   `~/.cache/thechat/openclaw-e2e`). It resolves the requested ref as
-   branch/tag/sha and fails fast if fetch fails (set
-   `OPENCLAW_E2E_ALLOW_STALE_CACHE=1` to allow stale cached code).
-2. Runs `pnpm install` + `pnpm build` on first cache use.
+   reusable repo-local cache (`OPENCLAW_E2E_CACHE_DIR`, default
+   `.openclaw-e2e/cache`). It resolves the requested ref as branch/tag/sha
+   and fails fast if fetch fails (set `OPENCLAW_E2E_ALLOW_STALE_CACHE=1` to
+   allow stale cached code).
+2. Runs `pnpm install` + `pnpm build` on first cache use. Per-run scratch
+   state/logs default under `.openclaw-e2e/work` (override with
+   `OPENCLAW_E2E_WORK_DIR`) rather than `/tmp`.
 3. Starts a fresh TheChat API on an ephemeral port (or reuses
    `THECHAT_API_URL` if set).
 4. Registers a human, creates a workspace, creates a bot.

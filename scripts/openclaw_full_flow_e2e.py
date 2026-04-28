@@ -38,8 +38,12 @@ Optional environment:
       Branch/tag/sha to check out. Defaults to `main`.
   OPENCLAW_E2E_CACHE_DIR
       Persistent dir for the OpenClaw clone + build. Defaults to
-      `~/.cache/thechat/openclaw-e2e`. Reusing the cache skips a slow
+      `.openclaw-e2e/cache` under this repo. Reusing the cache skips a slow
       pnpm install + build on subsequent runs.
+  OPENCLAW_E2E_WORK_DIR
+      Parent directory for per-run isolated OpenClaw state, logs, and other
+      scratch data. Defaults to `.openclaw-e2e/work` under this repo. This
+      avoids using `/tmp` by default, which can be memory-backed on dev boxes.
   OPENCLAW_E2E_ALLOW_STALE_CACHE=1
       If fetching the requested OpenClaw ref fails, continue with the
       existing cached checkout instead of failing fast. Default is fail-fast
@@ -96,7 +100,8 @@ PLUGIN_DIR = ROOT / "packages" / "openclaw-channel-thechat"
 DEFAULT_MODEL = "openrouter/qwen/qwen3.6-35b-a3b"
 DEFAULT_REPO = "https://github.com/openclaw/openclaw.git"
 DEFAULT_REF = "main"
-DEFAULT_CACHE_DIR = Path.home() / ".cache" / "thechat" / "openclaw-e2e"
+DEFAULT_WORK_DIR = ROOT / ".openclaw-e2e" / "work"
+DEFAULT_CACHE_DIR = ROOT / ".openclaw-e2e" / "cache"
 WEBHOOK_PATH = "/thechat/webhook"
 
 
@@ -777,6 +782,9 @@ def main() -> int:
     cache_dir = Path(
         os.environ.get("OPENCLAW_E2E_CACHE_DIR", str(DEFAULT_CACHE_DIR))
     ).expanduser()
+    work_dir = Path(
+        os.environ.get("OPENCLAW_E2E_WORK_DIR", str(DEFAULT_WORK_DIR))
+    ).expanduser()
     skip_build = os.environ.get("OPENCLAW_E2E_SKIP_BUILD") == "1"
     keep_temp = os.environ.get("OPENCLAW_E2E_KEEP_TEMP") == "1"
     response_timeout = float(
@@ -785,7 +793,8 @@ def main() -> int:
     total_timeout = float(os.environ.get("OPENCLAW_E2E_TOTAL_TIMEOUT", "900"))
     overall_deadline = time.monotonic() + total_timeout
 
-    tmp_root = Path(tempfile.mkdtemp(prefix="openclaw-e2e-"))
+    work_dir.mkdir(parents=True, exist_ok=True)
+    tmp_root = Path(tempfile.mkdtemp(prefix="run-", dir=work_dir))
     log(f"temp state dir: {tmp_root} (KEEP_TEMP={keep_temp})")
 
     api_proc: Optional[subprocess.Popen] = None
