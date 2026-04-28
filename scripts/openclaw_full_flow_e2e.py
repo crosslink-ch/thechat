@@ -40,6 +40,10 @@ Optional environment:
       Persistent dir for the OpenClaw clone + build. Defaults to
       `~/.cache/thechat/openclaw-e2e`. Reusing the cache skips a slow
       pnpm install + build on subsequent runs.
+  OPENCLAW_E2E_ALLOW_STALE_CACHE=1
+      If fetching the requested OpenClaw ref fails, continue with the
+      existing cached checkout instead of failing fast. Default is fail-fast
+      so the suite does not silently run against stale OpenClaw code.
   OPENCLAW_E2E_SKIP_BUILD=1
       Skip `pnpm install` + `pnpm build` even when `dist/entry.js` is
       missing. Only useful when you have manually preloaded the cache.
@@ -236,31 +240,75 @@ def http(
 
 
 def ensure_openclaw_checkout(repo: str, ref: str, cache_dir: Path) -> Path:
+    allow_stale_cache = os.environ.get("OPENCLAW_E2E_ALLOW_STALE_CACHE") == "1"
+
+    def sync_to_ref(checkout_dir: Path) -> None:
+        fetch = subprocess.run(
+            ["git", "-C", str(checkout_dir), "fetch", "--depth=1", "origin", ref],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if fetch.returncode == 0:
+            subprocess.run(
+                ["git", "-C", str(checkout_dir), "checkout", "--force", "FETCH_HEAD"],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            return
+
+        warn(
+            "failed to fetch requested OpenClaw ref "
+            f"{ref!r}; fetch stderr follows:\n{fetch.stderr.strip() or fetch.stdout.strip()}"
+        )
+        if not allow_stale_cache:
+            raise SystemExit(
+                "unable to fetch requested OpenClaw ref; refusing to run on stale "
+                "cache. Set OPENCLAW_E2E_ALLOW_STALE_CACHE=1 to override."
+            )
+
+        warn(
+            "OPENCLAW_E2E_ALLOW_STALE_CACHE=1 set; continuing with existing cached "
+            "OpenClaw checkout."
+        )
+        local_checkout = subprocess.run(
+            ["git", "-C", str(checkout_dir), "checkout", "--force", ref],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if local_checkout.returncode != 0:
+            warn(
+                "requested ref is not present in local cache either; keeping current "
+                "HEAD unchanged."
+            )
+
     cache_dir.mkdir(parents=True, exist_ok=True)
     checkout = cache_dir / "openclaw"
     if (checkout / ".git").is_dir():
         log(f"reusing cached OpenClaw checkout at {checkout}")
-        # Best-effort fetch + checkout; ignore network errors so cached runs
-        # still work offline.
-        try:
-            subprocess.run(
-                ["git", "-C", str(checkout), "fetch", "--depth=1", "origin", ref],
-                check=False,
-                capture_output=True,
-            )
-            subprocess.run(
-                ["git", "-C", str(checkout), "checkout", "--force", "FETCH_HEAD"],
-                check=False,
-                capture_output=True,
-            )
-        except FileNotFoundError:
-            pass
-    else:
-        log(f"cloning {repo} (ref={ref}) into {checkout}")
         subprocess.run(
-            ["git", "clone", "--depth=1", "--branch", ref, repo, str(checkout)],
+            ["git", "-C", str(checkout), "remote", "set-url", "origin", repo],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        sync_to_ref(checkout)
+    else:
+        log(f"cloning {repo} into {checkout}")
+        subprocess.run(
+            ["git", "clone", "--depth=1", repo, str(checkout)],
             check=True,
         )
+        sync_to_ref(checkout)
+    rev = subprocess.run(
+        ["git", "-C", str(checkout), "rev-parse", "--short=12", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    log(f"OpenClaw checkout ready at commit {rev}")
     return checkout
 
 
@@ -427,6 +475,20 @@ def install_thechat_plugin(
             raise SystemExit(
                 f"openclaw plugins install failed (rc={res2.returncode})"
             )
+    installs_path = state_dir / "plugins" / "installs.json"
+    if not installs_path.exists():
+        raise SystemExit(
+            f"plugin install did not create expected state file: {installs_path}"
+        )
+    try:
+        installs_raw = installs_path.read_text(errors="replace")
+    except OSError as e:
+        raise SystemExit(f"failed reading plugin install state: {e}") from e
+    if str(PLUGIN_DIR) not in installs_raw:
+        raise SystemExit(
+            "plugin install state does not reference the local TheChat plugin "
+            f"path: {PLUGIN_DIR}"
+        )
 
 
 def start_openclaw_gateway(
@@ -670,25 +732,23 @@ def main() -> int:
     parser.add_argument(
         "--check-only",
         action="store_true",
-        help="Validate prerequisites and exit without running the test.",
+        help="Validate non-secret prerequisites and exit without running the test.",
     )
     args = parser.parse_args()
 
-    if os.environ.get("OPENCLAW_E2E_FULL") != "1":
+    thechat_url_override = os.environ.get("THECHAT_API_URL", "").strip().rstrip("/")
+    needs_local_thechat = not thechat_url_override
+    required_tools = ["git", "node", "pnpm"]
+    if needs_local_thechat:
+        required_tools.append("bun")
+
+    if not args.check_only and os.environ.get("OPENCLAW_E2E_FULL") != "1":
         log(
             "OPENCLAW_E2E_FULL is not set to 1 — skipping (this suite is opt-in)."
         )
         return 0
 
-    openrouter_key = os.environ.get("OPENROUTER_API_KEY", "").strip()
-    if not openrouter_key:
-        err("OPENROUTER_API_KEY is required for this test (never logged).")
-        return 2
-    register_secret(openrouter_key)
-
-    if not os.environ.get("DATABASE_URL", "").strip() and not os.environ.get(
-        "THECHAT_API_URL"
-    ):
+    if needs_local_thechat and not os.environ.get("DATABASE_URL", "").strip():
         err(
             "DATABASE_URL is required when THECHAT_API_URL is unset "
             "(the orchestrator must start its own TheChat API)."
@@ -696,7 +756,7 @@ def main() -> int:
         return 2
 
     # Tooling preflight.
-    for tool in ("git", "node", "pnpm", "bun"):
+    for tool in required_tools:
         if shutil.which(tool) is None:
             err(f"required tool not found on PATH: {tool}")
             return 2
@@ -704,6 +764,12 @@ def main() -> int:
     if args.check_only:
         log("preflight OK")
         return 0
+
+    openrouter_key = os.environ.get("OPENROUTER_API_KEY", "").strip()
+    if not openrouter_key:
+        err("OPENROUTER_API_KEY is required for this test (never logged).")
+        return 2
+    register_secret(openrouter_key)
 
     repo = os.environ.get("OPENCLAW_E2E_OPENCLAW_REPO", DEFAULT_REPO)
     ref = os.environ.get("OPENCLAW_E2E_OPENCLAW_REF", DEFAULT_REF)
@@ -737,7 +803,7 @@ def main() -> int:
         build_openclaw_if_needed(checkout, skip_build)
 
         # 2. TheChat API.
-        thechat_url = os.environ.get("THECHAT_API_URL")
+        thechat_url = thechat_url_override or None
         if thechat_url:
             log(f"using existing TheChat API at {thechat_url}")
         else:

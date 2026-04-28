@@ -256,7 +256,9 @@ The orchestrator:
 1. Clones `https://github.com/openclaw/openclaw.git` (override with
    `OPENCLAW_E2E_OPENCLAW_REPO` / `OPENCLAW_E2E_OPENCLAW_REF`) into a
    reusable cache (`OPENCLAW_E2E_CACHE_DIR`, default
-   `~/.cache/thechat/openclaw-e2e`).
+   `~/.cache/thechat/openclaw-e2e`). It resolves the requested ref as
+   branch/tag/sha and fails fast if fetch fails (set
+   `OPENCLAW_E2E_ALLOW_STALE_CACHE=1` to allow stale cached code).
 2. Runs `pnpm install` + `pnpm build` on first cache use.
 3. Starts a fresh TheChat API on an ephemeral port (or reuses
    `THECHAT_API_URL` if set).
@@ -277,4 +279,5 @@ The OpenRouter API key is forwarded only via the OpenClaw child process
 environment — it is never logged. `bot_...` API keys, `whsec_...` webhook
 secrets, and `sk-or-...` style OpenRouter keys are also redacted from
 diagnostic output. Set `OPENCLAW_E2E_KEEP_TEMP=1` to leave the per-run
-state dir behind for inspection.
+state dir behind for inspection. For non-secret preflight checks only:
+`python3 scripts/openclaw_full_flow_e2e.py --check-only`.
