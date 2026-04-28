@@ -174,7 +174,14 @@ def wait_for_http(url: str, timeout_s: float) -> bool:
             with urllib.request.urlopen(url, timeout=2) as resp:
                 if 200 <= resp.status < 500:
                     return True
-        except (urllib.error.URLError, urllib.error.HTTPError, ConnectionError):
+        except (
+            urllib.error.URLError,
+            urllib.error.HTTPError,
+            ConnectionError,
+            TimeoutError,
+            socket.timeout,
+            OSError,
+        ):
             pass
         time.sleep(0.5)
     return False
