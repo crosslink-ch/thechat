@@ -23,6 +23,7 @@
 
 import { defineChannelPluginEntry } from "openclaw/plugin-sdk/channel-core";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/channel-core";
+import { dispatchInboundDirectDmWithRuntime } from "openclaw/plugin-sdk/channel-inbound";
 import { CHANNEL_ID, theChatChannelPlugin } from "./src/channel.js";
 import {
   resolveTheChatAccount,
@@ -239,9 +240,60 @@ export default defineChannelPluginEntry({
             },
           });
         } else {
-          api.logger?.warn?.(
-            "[thechat] inbound dispatch helper not exposed by OpenClaw runtime; verified webhook ack'd but not routed to an agent"
-          );
+          if (outcome.mapping.chatType === "direct") {
+            const accountId = account.accountId ?? "default";
+            const createdAtMs = Date.parse(outcome.payload.message.createdAt);
+            await dispatchInboundDirectDmWithRuntime({
+              cfg: api.config,
+              runtime: (api as any).runtime,
+              channel: CHANNEL_ID,
+              channelLabel: "TheChat",
+              accountId,
+              peer: {
+                kind: "direct",
+                id: outcome.payload.message.senderId,
+              },
+              senderId: outcome.payload.message.senderId,
+              senderAddress: outcome.payload.message.senderId,
+              recipientAddress: outcome.payload.bot.userId,
+              conversationLabel:
+                outcome.payload.conversation.name ??
+                `DM ${outcome.payload.conversation.id}`,
+              rawBody: outcome.payload.message.content,
+              messageId: outcome.payload.message.id,
+              timestamp: Number.isFinite(createdAtMs)
+                ? createdAtMs
+                : Date.now(),
+              commandAuthorized: true,
+              deliver: async (payload) => {
+                const text = typeof payload.text === "string" ? payload.text : "";
+                if (!text.trim()) return;
+                await sendText({
+                  config: account.config,
+                  to: outcome.mapping.to,
+                  text,
+                });
+              },
+              onRecordError: (error) => {
+                api.logger?.warn?.("[thechat] failed to record inbound session", {
+                  error: String(error),
+                });
+              },
+              onDispatchError: (error, info) => {
+                api.logger?.warn?.(
+                  "[thechat] failed to dispatch inbound reply",
+                  {
+                    error: String(error),
+                    kind: info.kind,
+                  }
+                );
+              },
+            });
+          } else {
+            api.logger?.warn?.(
+              "[thechat] inbound dispatch helper not exposed by OpenClaw runtime; verified webhook ack'd but not routed to an agent"
+            );
+          }
         }
 
         res.statusCode = 200;

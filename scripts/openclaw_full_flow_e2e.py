@@ -365,6 +365,7 @@ def write_openclaw_config(
     bot_name: str,
     model_primary: str,
     openrouter_api_key: str,
+    include_thechat_channel: bool = True,
 ) -> Path:
     state_dir.mkdir(parents=True, exist_ok=True)
     workspace = state_dir / "workspace"
@@ -393,7 +394,9 @@ def write_openclaw_config(
             },
             "list": [{"id": "main", "default": True}],
         },
-        "channels": {
+    }
+    if include_thechat_channel:
+        cfg["channels"] = {
             "thechat": {
                 "baseUrl": thechat_base_url,
                 "botId": bot_id,
@@ -404,8 +407,7 @@ def write_openclaw_config(
                 "requireMentionInChannels": False,
                 "allowOtherBots": False,
             }
-        },
-    }
+        }
     config_path.write_text(json.dumps(cfg, indent=2))
     # Restrict permissions because the file contains the bot key + webhook
     # secret + OpenRouter key.
@@ -414,6 +416,44 @@ def write_openclaw_config(
     except OSError:
         pass
     return config_path
+
+
+def enable_thechat_channel_in_config(
+    config_path: Path,
+    *,
+    thechat_base_url: str,
+    bot_id: str,
+    bot_user_id: str,
+    bot_api_key: str,
+    bot_webhook_secret: str,
+    bot_name: str,
+) -> None:
+    try:
+        cfg = json.loads(config_path.read_text())
+    except (OSError, json.JSONDecodeError) as e:
+        raise SystemExit(f"failed to read OpenClaw config for channel wiring: {e}") from e
+
+    channels = cfg.setdefault("channels", {})
+    channels["thechat"] = {
+        "baseUrl": thechat_base_url,
+        "botId": bot_id,
+        "botUserId": bot_user_id,
+        "botName": bot_name,
+        "apiKey": bot_api_key,
+        "webhookSecret": bot_webhook_secret,
+        "requireMentionInChannels": False,
+        "allowOtherBots": False,
+    }
+
+    try:
+        config_path.write_text(json.dumps(cfg, indent=2))
+    except OSError as e:
+        raise SystemExit(f"failed to update OpenClaw config with TheChat channel: {e}") from e
+
+    try:
+        os.chmod(config_path, 0o600)
+    except OSError:
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -450,6 +490,14 @@ def install_thechat_plugin(
     openrouter_api_key: str,
 ) -> None:
     log("installing TheChat OpenClaw channel plugin (linked from local checkout)")
+    staged_plugin_dir = state_dir / "plugin-source" / "thechat-channel"
+    shutil.rmtree(staged_plugin_dir.parent, ignore_errors=True)
+    shutil.copytree(
+        PLUGIN_DIR,
+        staged_plugin_dir,
+        ignore=shutil.ignore_patterns("node_modules", ".git", ".turbo"),
+    )
+
     env = os.environ.copy()
     env["OPENCLAW_HOME"] = str(state_dir)
     env["OPENCLAW_STATE_DIR"] = str(state_dir)
@@ -464,7 +512,7 @@ def install_thechat_plugin(
         "plugins",
         "install",
         "-l",
-        str(PLUGIN_DIR),
+        str(staged_plugin_dir),
         "--force",
     ]
     res = subprocess.run(cmd, cwd=checkout, env=env, capture_output=True, text=True)
@@ -496,10 +544,10 @@ def install_thechat_plugin(
         installs_raw = installs_path.read_text(errors="replace")
     except OSError as e:
         raise SystemExit(f"failed reading plugin install state: {e}") from e
-    if str(PLUGIN_DIR) not in installs_raw:
+    if str(staged_plugin_dir) not in installs_raw:
         raise SystemExit(
             "plugin install state does not reference the local TheChat plugin "
-            f"path: {PLUGIN_DIR}"
+            f"path: {staged_plugin_dir}"
         )
 
 
@@ -854,10 +902,20 @@ def main() -> int:
             bot_name="OpenClaw E2E Bot",
             model_primary=model,
             openrouter_api_key=openrouter_key,
+            include_thechat_channel=False,
         )
 
         install_thechat_plugin(
             checkout, tmp_root / "openclaw-state", config_path, openrouter_key
+        )
+        enable_thechat_channel_in_config(
+            config_path,
+            thechat_base_url=thechat_url,
+            bot_id=state["bot_id"],
+            bot_user_id=state["bot_user_id"],
+            bot_api_key=state["bot_api_key"],
+            bot_webhook_secret=state["bot_webhook_secret"],
+            bot_name="OpenClaw E2E Bot",
         )
 
         if time.monotonic() > overall_deadline:
