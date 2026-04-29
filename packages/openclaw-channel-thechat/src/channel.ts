@@ -35,7 +35,12 @@ export const theChatChannelPlugin: ChannelPlugin<ResolvedTheChatAccount> =
     base: {
       id: CHANNEL_ID,
       meta: {
+        id: CHANNEL_ID,
         label: "TheChat",
+        selectionLabel: "TheChat (workspace bot)",
+        detailLabel: "TheChat",
+        docsPath: "./README.md",
+        blurb: "Connect OpenClaw to a TheChat workspace as a bot via signed webhooks.",
       },
       capabilities: {
         chatTypes: ["direct", "group"],

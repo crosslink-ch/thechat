@@ -52,21 +52,27 @@ interface OpenClawConfigShape {
   };
 }
 
+function asConfigShape(
+  cfg: unknown | null | undefined
+): OpenClawConfigShape | null | undefined {
+  return cfg as OpenClawConfigShape | null | undefined;
+}
+
 function isPopulatedString(v: unknown): v is string {
   return typeof v === "string" && v.length > 0;
 }
 
 function readFlatSection(
-  cfg: OpenClawConfigShape | null | undefined
+  cfg: unknown | null | undefined
 ): AccountSection {
-  return cfg?.channels?.thechat ?? {};
+  return asConfigShape(cfg)?.channels?.thechat ?? {};
 }
 
 function readNamedAccountSection(
-  cfg: OpenClawConfigShape | null | undefined,
+  cfg: unknown | null | undefined,
   accountId: string
 ): AccountSection {
-  return cfg?.channels?.thechat?.accounts?.[accountId] ?? {};
+  return asConfigShape(cfg)?.channels?.thechat?.accounts?.[accountId] ?? {};
 }
 
 function hasAnyRequiredField(section: AccountSection): boolean {
@@ -101,9 +107,10 @@ function sectionToConfig(section: AccountSection): TheChatChannelConfig {
  * Always includes `"default"` when flat config is present.
  */
 export function listTheChatAccountIds(
-  cfg: OpenClawConfigShape | null | undefined
+  cfg: unknown | null | undefined
 ): string[] {
   const ids: string[] = [];
+  const shaped = asConfigShape(cfg);
 
   // Flat → "default"
   const flat = readFlatSection(cfg);
@@ -112,7 +119,7 @@ export function listTheChatAccountIds(
   }
 
   // Named accounts under channels.thechat.accounts.*
-  const accounts = cfg?.channels?.thechat?.accounts;
+  const accounts = shaped?.channels?.thechat?.accounts;
   if (accounts && typeof accounts === "object") {
     for (const id of Object.keys(accounts)) {
       if (hasAnyRequiredField(accounts[id])) {
@@ -129,12 +136,13 @@ export function listTheChatAccountIds(
  * config, falls back to the first named account.
  */
 export function resolveDefaultTheChatAccountId(
-  cfg: OpenClawConfigShape | null | undefined
+  cfg: unknown | null | undefined
 ): string {
+  const shaped = asConfigShape(cfg);
   const flat = readFlatSection(cfg);
   if (hasAnyRequiredField(flat)) return DEFAULT_ACCOUNT_ID;
 
-  const accounts = cfg?.channels?.thechat?.accounts;
+  const accounts = shaped?.channels?.thechat?.accounts;
   if (accounts && typeof accounts === "object") {
     const first = Object.keys(accounts).find((id) =>
       hasAnyRequiredField(accounts[id])
@@ -152,7 +160,7 @@ export function resolveDefaultTheChatAccountId(
  * - Any other string → named account at `channels.thechat.accounts.<id>`
  */
 export function resolveTheChatAccount(params: {
-  cfg: OpenClawConfigShape | null | undefined;
+  cfg: unknown | null | undefined;
   accountId?: string | null;
 }): ResolvedTheChatAccount {
   const { cfg, accountId } = params;
@@ -180,7 +188,7 @@ export function resolveTheChatAccount(params: {
  * validate every account.
  */
 export function resolveAllTheChatAccounts(
-  cfg: OpenClawConfigShape | null | undefined
+  cfg: unknown | null | undefined
 ): ResolvedTheChatAccount[] {
   const ids = listTheChatAccountIds(cfg);
   return ids.map((id) => resolveTheChatAccount({ cfg, accountId: id }));
@@ -191,7 +199,7 @@ export function resolveAllTheChatAccounts(
  * handler to route payloads to the correct account in multi-account setups.
  */
 export function findAccountByBotId(
-  cfg: OpenClawConfigShape | null | undefined,
+  cfg: unknown | null | undefined,
   botId: string
 ): ResolvedTheChatAccount | null {
   const accounts = resolveAllTheChatAccounts(cfg);

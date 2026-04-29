@@ -143,6 +143,31 @@ function collectHeaders(
   return out;
 }
 
+function formatLogMessage(
+  message: string,
+  fields?: Record<string, unknown>
+): string {
+  if (!fields || Object.keys(fields).length === 0) return message;
+  try {
+    return `${message} ${JSON.stringify(fields)}`;
+  } catch {
+    return message;
+  }
+}
+
+function logPlugin(
+  api: OpenClawPluginApi,
+  level: "debug" | "info" | "warn" | "error",
+  message: string,
+  fields?: Record<string, unknown>
+): void {
+  const logger = api.logger as Record<string, unknown>;
+  const fn = logger[level];
+  if (typeof fn === "function") {
+    fn.call(api.logger, formatLogMessage(message, fields));
+  }
+}
+
 async function dispatchInboundOutcome({
   api,
   account,
@@ -157,7 +182,7 @@ async function dispatchInboundOutcome({
     (api as any).runtime?.channel?.deliverInbound;
   if (typeof dispatch === "function") {
     const startedAt = Date.now();
-    api.logger?.info?.("thechat.inbound.dispatch_runtime_start", {
+    logPlugin(api, "info", "thechat.inbound.dispatch_runtime_start", {
       event: outcome.payload.event,
       sessionKey: outcome.mapping.sessionKey,
       target: outcome.mapping.to,
@@ -177,7 +202,7 @@ async function dispatchInboundOutcome({
         wasMentioned: outcome.payload.event === "mention",
       },
     });
-    api.logger?.info?.("thechat.inbound.dispatch_runtime_done", {
+    logPlugin(api, "info", "thechat.inbound.dispatch_runtime_done", {
       event: outcome.payload.event,
       sessionKey: outcome.mapping.sessionKey,
       durationMs: Date.now() - startedAt,
@@ -189,7 +214,7 @@ async function dispatchInboundOutcome({
     const accountId = account.accountId ?? "default";
     const createdAtMs = Date.parse(outcome.payload.message.createdAt);
     const startedAt = Date.now();
-    api.logger?.info?.("thechat.inbound.direct_dispatch_start", {
+    logPlugin(api, "info", "thechat.inbound.direct_dispatch_start", {
       event: outcome.payload.event,
       accountId,
       sessionKey: outcome.mapping.sessionKey,
@@ -221,7 +246,7 @@ async function dispatchInboundOutcome({
         const text = typeof payload.text === "string" ? payload.text : "";
         if (!text.trim()) return;
         const deliverStartedAt = Date.now();
-        api.logger?.info?.("thechat.outbound.reply_send_start", {
+        logPlugin(api, "info", "thechat.outbound.reply_send_start", {
           target: outcome.mapping.to,
           textLength: text.length,
         });
@@ -230,27 +255,24 @@ async function dispatchInboundOutcome({
           to: outcome.mapping.to,
           text,
         });
-        api.logger?.info?.("thechat.outbound.reply_send_done", {
+        logPlugin(api, "info", "thechat.outbound.reply_send_done", {
           target: outcome.mapping.to,
           durationMs: Date.now() - deliverStartedAt,
         });
       },
       onRecordError: (error) => {
-        api.logger?.warn?.("[thechat] failed to record inbound session", {
+        logPlugin(api, "warn", "[thechat] failed to record inbound session", {
           error: String(error),
         });
       },
       onDispatchError: (error, info) => {
-        api.logger?.warn?.(
-          "[thechat] failed to dispatch inbound reply",
-          {
-            error: String(error),
-            kind: info.kind,
-          }
-        );
+        logPlugin(api, "warn", "[thechat] failed to dispatch inbound reply", {
+          error: String(error),
+          kind: info.kind,
+        });
       },
     });
-    api.logger?.info?.("thechat.inbound.direct_dispatch_done", {
+    logPlugin(api, "info", "thechat.inbound.direct_dispatch_done", {
       event: outcome.payload.event,
       sessionKey: outcome.mapping.sessionKey,
       durationMs: Date.now() - startedAt,
@@ -269,7 +291,7 @@ function runInboundDispatch(args: {
   outcome: DispatchedInboundOutcome;
 }): void {
   void dispatchInboundOutcome(args).catch((error) => {
-    args.api.logger?.warn?.("[thechat] asynchronous inbound dispatch failed", {
+    logPlugin(args.api, "warn", "[thechat] asynchronous inbound dispatch failed", {
       error: String(error),
     });
   });
@@ -366,10 +388,7 @@ export default defineChannelPluginEntry({
           config: account.config,
           idempotencyStore,
           log: (level, msg, fields) => {
-            const log = api.logger?.[level];
-            if (typeof log === "function") {
-              log.call(api.logger, msg, fields);
-            }
+            logPlugin(api, level, msg, fields);
           },
         });
 
