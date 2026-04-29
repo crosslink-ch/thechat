@@ -30,7 +30,7 @@ import {
   resolveAllTheChatAccounts,
   findAccountByBotId,
 } from "./src/accounts.js";
-import { handleInbound } from "./src/inbound.js";
+import { handleInbound, type InboundOutcome } from "./src/inbound.js";
 import { sendText, sendRichMessage, buildSendRichMessageRequest } from "./src/outbound.js";
 import { deriveSessionMapping, parseTarget } from "./src/session.js";
 import { shouldDispatch } from "./src/gating.js";
@@ -108,6 +108,9 @@ export type {
 
 const WEBHOOK_PATH = "/thechat/webhook";
 
+type TheChatAccount = ReturnType<typeof resolveTheChatAccount>;
+type DispatchedInboundOutcome = Extract<InboundOutcome, { kind: "dispatched" }>;
+
 function readNodeRequestBody(req: {
   on: (event: string, listener: (...args: unknown[]) => void) => void;
 }): Promise<string> {
@@ -138,6 +141,168 @@ function collectHeaders(
     }
   }
   return out;
+}
+
+async function dispatchInboundOutcome({
+  api,
+  account,
+  outcome,
+}: {
+  api: OpenClawPluginApi;
+  account: TheChatAccount;
+  outcome: DispatchedInboundOutcome;
+}): Promise<void> {
+  const dispatch =
+    (api as any).dispatchInbound ??
+    (api as any).runtime?.channel?.deliverInbound;
+  if (typeof dispatch === "function") {
+    const startedAt = Date.now();
+    api.logger?.info?.("thechat.inbound.dispatch_runtime_start", {
+      event: outcome.payload.event,
+      sessionKey: outcome.mapping.sessionKey,
+      target: outcome.mapping.to,
+    });
+    await dispatch({
+      channel: CHANNEL_ID,
+      accountId: account.accountId,
+      target: outcome.mapping.to,
+      sessionKey: outcome.mapping.sessionKey,
+      chatType: outcome.mapping.chatType,
+      message: {
+        id: outcome.payload.message.id,
+        text: outcome.payload.message.content,
+        from: outcome.payload.message.senderId,
+        fromName: outcome.payload.message.senderName,
+        timestamp: outcome.payload.message.createdAt,
+        wasMentioned: outcome.payload.event === "mention",
+      },
+    });
+    api.logger?.info?.("thechat.inbound.dispatch_runtime_done", {
+      event: outcome.payload.event,
+      sessionKey: outcome.mapping.sessionKey,
+      durationMs: Date.now() - startedAt,
+    });
+    return;
+  }
+
+  if (outcome.mapping.chatType === "direct") {
+    const accountId = account.accountId ?? "default";
+    const createdAtMs = Date.parse(outcome.payload.message.createdAt);
+    const startedAt = Date.now();
+    api.logger?.info?.("thechat.inbound.direct_dispatch_start", {
+      event: outcome.payload.event,
+      accountId,
+      sessionKey: outcome.mapping.sessionKey,
+      target: outcome.mapping.to,
+    });
+    await dispatchInboundDirectDmWithRuntime({
+      cfg: api.config,
+      runtime: (api as any).runtime,
+      channel: CHANNEL_ID,
+      channelLabel: "TheChat",
+      accountId,
+      peer: {
+        kind: "direct",
+        id: outcome.payload.message.senderId,
+      },
+      senderId: outcome.payload.message.senderId,
+      senderAddress: outcome.payload.message.senderId,
+      recipientAddress: outcome.payload.bot.userId,
+      conversationLabel:
+        outcome.payload.conversation.name ??
+        `DM ${outcome.payload.conversation.id}`,
+      rawBody: outcome.payload.message.content,
+      messageId: outcome.payload.message.id,
+      timestamp: Number.isFinite(createdAtMs)
+        ? createdAtMs
+        : Date.now(),
+      commandAuthorized: true,
+      deliver: async (payload) => {
+        const text = typeof payload.text === "string" ? payload.text : "";
+        if (!text.trim()) return;
+        const deliverStartedAt = Date.now();
+        api.logger?.info?.("thechat.outbound.reply_send_start", {
+          target: outcome.mapping.to,
+          textLength: text.length,
+        });
+        await sendText({
+          config: account.config,
+          to: outcome.mapping.to,
+          text,
+        });
+        api.logger?.info?.("thechat.outbound.reply_send_done", {
+          target: outcome.mapping.to,
+          durationMs: Date.now() - deliverStartedAt,
+        });
+      },
+      onRecordError: (error) => {
+        api.logger?.warn?.("[thechat] failed to record inbound session", {
+          error: String(error),
+        });
+      },
+      onDispatchError: (error, info) => {
+        api.logger?.warn?.(
+          "[thechat] failed to dispatch inbound reply",
+          {
+            error: String(error),
+            kind: info.kind,
+          }
+        );
+      },
+    });
+    api.logger?.info?.("thechat.inbound.direct_dispatch_done", {
+      event: outcome.payload.event,
+      sessionKey: outcome.mapping.sessionKey,
+      durationMs: Date.now() - startedAt,
+    });
+    return;
+  }
+
+  api.logger?.warn?.(
+    "[thechat] inbound dispatch helper not exposed by OpenClaw runtime; verified webhook ack'd but not routed to an agent"
+  );
+}
+
+function runInboundDispatch(args: {
+  api: OpenClawPluginApi;
+  account: TheChatAccount;
+  outcome: DispatchedInboundOutcome;
+}): void {
+  void dispatchInboundOutcome(args).catch((error) => {
+    args.api.logger?.warn?.("[thechat] asynchronous inbound dispatch failed", {
+      error: String(error),
+    });
+  });
+}
+
+function endAcceptedThenDispatch({
+  res,
+  dispatchArgs,
+}: {
+  res: any;
+  dispatchArgs: {
+    api: OpenClawPluginApi;
+    account: TheChatAccount;
+    outcome: DispatchedInboundOutcome;
+  };
+}): void {
+  let started = false;
+  const startDispatch = () => {
+    if (started) return;
+    started = true;
+    setTimeout(() => runInboundDispatch(dispatchArgs), 0);
+  };
+
+  res.statusCode = 202;
+  if (typeof res.once === "function") {
+    res.once("finish", startDispatch);
+  }
+  try {
+    res.end("accepted", startDispatch);
+  } catch {
+    res.end("accepted");
+    startDispatch();
+  }
 }
 
 export default defineChannelPluginEntry({
@@ -219,85 +384,13 @@ export default defineChannelPluginEntry({
           return true;
         }
 
-        // outcome.kind === "dispatched"
-        const dispatch =
-          (api as any).dispatchInbound ??
-          (api as any).runtime?.channel?.deliverInbound;
-        if (typeof dispatch === "function") {
-          await dispatch({
-            channel: CHANNEL_ID,
-            accountId: account.accountId,
-            target: outcome.mapping.to,
-            sessionKey: outcome.mapping.sessionKey,
-            chatType: outcome.mapping.chatType,
-            message: {
-              id: outcome.payload.message.id,
-              text: outcome.payload.message.content,
-              from: outcome.payload.message.senderId,
-              fromName: outcome.payload.message.senderName,
-              timestamp: outcome.payload.message.createdAt,
-              wasMentioned: outcome.payload.event === "mention",
-            },
-          });
-        } else {
-          if (outcome.mapping.chatType === "direct") {
-            const accountId = account.accountId ?? "default";
-            const createdAtMs = Date.parse(outcome.payload.message.createdAt);
-            await dispatchInboundDirectDmWithRuntime({
-              cfg: api.config,
-              runtime: (api as any).runtime,
-              channel: CHANNEL_ID,
-              channelLabel: "TheChat",
-              accountId,
-              peer: {
-                kind: "direct",
-                id: outcome.payload.message.senderId,
-              },
-              senderId: outcome.payload.message.senderId,
-              senderAddress: outcome.payload.message.senderId,
-              recipientAddress: outcome.payload.bot.userId,
-              conversationLabel:
-                outcome.payload.conversation.name ??
-                `DM ${outcome.payload.conversation.id}`,
-              rawBody: outcome.payload.message.content,
-              messageId: outcome.payload.message.id,
-              timestamp: Number.isFinite(createdAtMs)
-                ? createdAtMs
-                : Date.now(),
-              commandAuthorized: true,
-              deliver: async (payload) => {
-                const text = typeof payload.text === "string" ? payload.text : "";
-                if (!text.trim()) return;
-                await sendText({
-                  config: account.config,
-                  to: outcome.mapping.to,
-                  text,
-                });
-              },
-              onRecordError: (error) => {
-                api.logger?.warn?.("[thechat] failed to record inbound session", {
-                  error: String(error),
-                });
-              },
-              onDispatchError: (error, info) => {
-                api.logger?.warn?.(
-                  "[thechat] failed to dispatch inbound reply",
-                  {
-                    error: String(error),
-                    kind: info.kind,
-                  }
-                );
-              },
-            });
-          } else {
-            api.logger?.warn?.(
-              "[thechat] inbound dispatch helper not exposed by OpenClaw runtime; verified webhook ack'd but not routed to an agent"
-            );
-          }
-        }
-
-        res.statusCode = 200;
-        res.end("ok");
+        // A webhook ack must only mean "accepted for processing". Waiting for
+        // the agent/LLM turn here keeps TheChat's delivery request open long
+        // enough to hit its webhook timeout and abort the delivery.
+        endAcceptedThenDispatch({
+          res,
+          dispatchArgs: { api, account, outcome },
+        });
         return true;
       },
     });

@@ -16,30 +16,49 @@ prove the round-trip:
 It is opt-in. By default `python3 scripts/test.py` will not run this; set
 `OPENCLAW_E2E_FULL=1` (and provide the env vars listed below) to invoke it.
 
+The script loads `.env` from the repository root without overriding variables
+already present in the process environment.
+
 Required environment:
   OPENROUTER_API_KEY
       OpenRouter API key. Used by OpenClaw to call OpenRouter. NEVER logged
       or written to disk by this script. Forwarded only via the OpenClaw
       child process environment.
   DATABASE_URL
-      Postgres URL the TheChat API will use. Same shape as `.env`.
+      Postgres URL the TheChat API will use. Same shape as `.env`. Required
+      only when no existing TheChat API URL is configured.
 
 Optional environment:
   OPENCLAW_E2E_FULL=1
       Required to actually run the suite. When unset the script exits 0
       with a "skipped" message so it can be wired into `scripts/test.py`
       as an opt-in suite.
+  OPENCLAW_E2E_RUNTIME
+      OpenClaw runtime backend: `docker` (default) or `source`.
+      Docker uses the prebuilt OpenClaw image and does not clone/build
+      OpenClaw locally. Source keeps the older clone/build path for
+      debugging OpenClaw itself.
+  OPENCLAW_E2E_DOCKER_IMAGE
+      Docker image used when OPENCLAW_E2E_RUNTIME=docker. Defaults to
+      `ghcr.io/openclaw/openclaw:2026.4.26-slim`.
+  OPENCLAW_E2E_DOCKER_PULL
+      Docker image pull policy: `missing` (default), `always`, or `never`.
   OPENCLAW_E2E_MODEL
       Model id passed as `agents.defaults.model.primary`. Defaults to
-      `openrouter/qwen/qwen3.6-35b-a3b`.
+      `openrouter/openai/gpt-5.4-nano`. The full agent path requires a
+      tool-capable model; raw completion-only models can fail once OpenClaw
+      sends tools.
   OPENCLAW_E2E_OPENCLAW_REPO
       Git URL to clone. Defaults to `https://github.com/openclaw/openclaw.git`.
+      Used only when OPENCLAW_E2E_RUNTIME=source.
   OPENCLAW_E2E_OPENCLAW_REF
       Branch/tag/sha to check out. Defaults to `main`.
+      Used only when OPENCLAW_E2E_RUNTIME=source.
   OPENCLAW_E2E_CACHE_DIR
       Persistent dir for the OpenClaw clone + build. Defaults to
       `.openclaw-e2e/cache` under this repo. Reusing the cache skips a slow
       pnpm install + build on subsequent runs.
+      Used only when OPENCLAW_E2E_RUNTIME=source.
   OPENCLAW_E2E_WORK_DIR
       Parent directory for per-run isolated OpenClaw state, logs, and other
       scratch data. Defaults to `.openclaw-e2e/work` under this repo. This
@@ -57,12 +76,18 @@ Optional environment:
   OPENCLAW_E2E_RESPONSE_TIMEOUT
       Seconds to wait for a bot reply once the human message is sent.
       Defaults to 180.
+  OPENCLAW_E2E_GATEWAY_STARTUP_TIMEOUT
+      Seconds to wait for the OpenClaw gateway to become ready. Defaults to
+      300 because the slim Docker image stages runtime dependencies on first
+      boot.
   OPENCLAW_E2E_TOTAL_TIMEOUT
       Hard ceiling (seconds) for the full orchestration. Defaults to 900.
-  THECHAT_API_URL
+  THECHAT_BACKEND_URL
       If set, the script uses an already-running TheChat API at that URL
       and skips spawning its own. Otherwise a fresh API is started on an
       ephemeral port using the local source tree.
+  THECHAT_API_URL
+      Deprecated fallback for THECHAT_BACKEND_URL.
 
 Secrets handling:
   - The orchestrator never logs the OpenRouter key, the bot API key, or
@@ -89,6 +114,7 @@ import sys
 import tempfile
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 import uuid
 from pathlib import Path
@@ -97,12 +123,17 @@ from typing import Any, Optional
 ROOT = Path(__file__).resolve().parent.parent
 PLUGIN_DIR = ROOT / "packages" / "openclaw-channel-thechat"
 
-DEFAULT_MODEL = "openrouter/qwen/qwen3.6-35b-a3b"
+DEFAULT_RUNTIME = "docker"
+DEFAULT_DOCKER_IMAGE = "ghcr.io/openclaw/openclaw:2026.4.26-slim"
+DEFAULT_DOCKER_PULL = "missing"
+DEFAULT_MODEL = "openrouter/openai/gpt-5.4-nano"
 DEFAULT_REPO = "https://github.com/openclaw/openclaw.git"
 DEFAULT_REF = "main"
 DEFAULT_WORK_DIR = ROOT / ".openclaw-e2e" / "work"
 DEFAULT_CACHE_DIR = ROOT / ".openclaw-e2e" / "cache"
 WEBHOOK_PATH = "/thechat/webhook"
+DOCKER_OPENCLAW_HOME = "/home/node/.openclaw"
+DOCKER_GATEWAY_PORT = 18789
 
 
 # ---------------------------------------------------------------------------
@@ -110,6 +141,25 @@ WEBHOOK_PATH = "/thechat/webhook"
 # ---------------------------------------------------------------------------
 
 _REDACT_VALUES: list[str] = []
+
+
+def load_dotenv() -> None:
+    """Load repo-root .env into os.environ without overriding existing vars."""
+    env_file = ROOT / ".env"
+    if not env_file.exists():
+        return
+    for line in env_file.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key = key.strip()
+        value = value.strip().strip("\"'")
+        if key and key not in os.environ:
+            os.environ[key] = value
+
+
+load_dotenv()
 
 
 def register_secret(value: Optional[str]) -> None:
@@ -141,6 +191,67 @@ def err(msg: str) -> None:
 
 def warn(msg: str) -> None:
     print(_redact(f"[openclaw-e2e] WARN: {msg}"), file=sys.stderr, flush=True)
+
+
+def resolve_thechat_url_override() -> tuple[str, str]:
+    backend_url = os.environ.get("THECHAT_BACKEND_URL", "").strip().rstrip("/")
+    legacy_url = os.environ.get("THECHAT_API_URL", "").strip().rstrip("/")
+
+    if backend_url:
+        if legacy_url and legacy_url != backend_url:
+            warn(
+                "both THECHAT_BACKEND_URL and deprecated THECHAT_API_URL are set; "
+                "using THECHAT_BACKEND_URL"
+            )
+        return backend_url, "THECHAT_BACKEND_URL"
+
+    if legacy_url:
+        warn("THECHAT_API_URL is deprecated; use THECHAT_BACKEND_URL instead")
+        return legacy_url, "THECHAT_API_URL"
+
+    return "", ""
+
+
+def resolve_openclaw_runtime() -> str:
+    runtime = os.environ.get("OPENCLAW_E2E_RUNTIME", DEFAULT_RUNTIME).strip().lower()
+    if runtime not in ("docker", "source"):
+        raise SystemExit(
+            "OPENCLAW_E2E_RUNTIME must be either 'docker' or 'source' "
+            f"(got {runtime!r})"
+        )
+    return runtime
+
+
+def env_float(name: str, default: float) -> float:
+    raw = os.environ.get(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        return float(raw)
+    except ValueError as e:
+        raise SystemExit(f"{name} must be a number (got {raw!r})") from e
+
+
+def rewrite_localhost_url_for_docker(url: str) -> str:
+    """Return a host URL that is reachable from Docker bridge networking."""
+    parsed = urllib.parse.urlsplit(url)
+    if parsed.hostname not in ("localhost", "127.0.0.1", "::1"):
+        return url
+
+    hostname = "host.docker.internal"
+    if parsed.port is not None:
+        netloc = f"{hostname}:{parsed.port}"
+    else:
+        netloc = hostname
+    if parsed.username:
+        userinfo = urllib.parse.quote(parsed.username, safe="")
+        if parsed.password:
+            userinfo += f":{urllib.parse.quote(parsed.password, safe='')}"
+        netloc = f"{userinfo}@{netloc}"
+
+    return urllib.parse.urlunsplit(
+        (parsed.scheme, netloc, parsed.path, parsed.query, parsed.fragment)
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -177,6 +288,38 @@ def wait_for_http(url: str, timeout_s: float) -> bool:
         except (
             urllib.error.URLError,
             urllib.error.HTTPError,
+            ConnectionError,
+            TimeoutError,
+            socket.timeout,
+            OSError,
+        ):
+            pass
+        time.sleep(0.5)
+    return False
+
+
+def wait_for_webhook_responsive(url: str, timeout_s: float) -> bool:
+    """Wait until the plugin webhook route can reject an invalid request fast."""
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        req = urllib.request.Request(
+            url,
+            data=b"{}",
+            headers={
+                "Content-Type": "application/json",
+                "User-Agent": "thechat-openclaw-e2e/1.0",
+            },
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=2) as resp:
+                if 200 <= resp.status < 500:
+                    return True
+        except urllib.error.HTTPError as e:
+            if e.code in (400, 401, 403):
+                return True
+        except (
+            urllib.error.URLError,
             ConnectionError,
             TimeoutError,
             socket.timeout,
@@ -357,6 +500,8 @@ def write_openclaw_config(
     state_dir: Path,
     *,
     gateway_port: int,
+    gateway_bind: str = "loopback",
+    gateway_auth: str = "none",
     thechat_base_url: str,
     bot_id: str,
     bot_user_id: str,
@@ -365,18 +510,20 @@ def write_openclaw_config(
     bot_name: str,
     model_primary: str,
     openrouter_api_key: str,
+    workspace_path: Optional[str] = None,
     include_thechat_channel: bool = True,
 ) -> Path:
     state_dir.mkdir(parents=True, exist_ok=True)
     workspace = state_dir / "workspace"
     workspace.mkdir(exist_ok=True)
+    effective_workspace = workspace_path or str(workspace)
     config_path = state_dir / "openclaw.json"
     cfg: dict[str, Any] = {
         "gateway": {
             "mode": "local",
             "port": gateway_port,
-            "bind": "loopback",
-            "auth": {"mode": "none"},
+            "bind": gateway_bind,
+            "auth": {"mode": gateway_auth},
             "controlUi": {"enabled": False},
         },
         "env": {
@@ -386,13 +533,17 @@ def write_openclaw_config(
         },
         "agents": {
             "defaults": {
-                "workspace": str(workspace),
+                "workspace": effective_workspace,
                 "model": {"primary": model_primary},
                 "elevatedDefault": "off",
                 "thinkingDefault": "off",
                 "timeoutSeconds": 240,
+                # The channel e2e only needs a short natural-language reply.
+                # Loading every local OpenClaw skill makes first-turn prompt
+                # preparation noisy and slow, and can dominate this test.
+                "skills": [],
             },
-            "list": [{"id": "main", "default": True}],
+            "list": [{"id": "main", "default": True, "skills": []}],
         },
     }
     if include_thechat_channel:
@@ -483,13 +634,7 @@ def start_thechat_api(port: int, log_path: Path) -> subprocess.Popen:
 # ---------------------------------------------------------------------------
 
 
-def install_thechat_plugin(
-    checkout: Path,
-    state_dir: Path,
-    config_path: Path,
-    openrouter_api_key: str,
-) -> None:
-    log("installing TheChat OpenClaw channel plugin (linked from local checkout)")
+def stage_thechat_plugin(state_dir: Path) -> Path:
     staged_plugin_dir = state_dir / "plugin-source" / "thechat-channel"
     shutil.rmtree(staged_plugin_dir.parent, ignore_errors=True)
     shutil.copytree(
@@ -497,6 +642,17 @@ def install_thechat_plugin(
         staged_plugin_dir,
         ignore=shutil.ignore_patterns("node_modules", ".git", ".turbo"),
     )
+    return staged_plugin_dir
+
+
+def install_thechat_plugin_from_source(
+    checkout: Path,
+    state_dir: Path,
+    config_path: Path,
+    openrouter_api_key: str,
+) -> None:
+    log("installing TheChat OpenClaw channel plugin (linked from local checkout)")
+    staged_plugin_dir = stage_thechat_plugin(state_dir)
 
     env = os.environ.copy()
     env["OPENCLAW_HOME"] = str(state_dir)
@@ -587,6 +743,179 @@ def start_openclaw_gateway(
         start_new_session=True,
     )
     return proc
+
+
+def docker_openclaw_base_args(state_dir: Path) -> list[str]:
+    return [
+        "--add-host",
+        "host.docker.internal:host-gateway",
+        "-e",
+        f"OPENCLAW_HOME={DOCKER_OPENCLAW_HOME}",
+        "-e",
+        f"OPENCLAW_STATE_DIR={DOCKER_OPENCLAW_HOME}",
+        "-e",
+        f"OPENCLAW_CONFIG_PATH={DOCKER_OPENCLAW_HOME}/openclaw.json",
+        "-e",
+        "OPENROUTER_API_KEY",
+        "-e",
+        "OPENCLAW_DISABLE_BONJOUR=1",
+        "-v",
+        f"{state_dir.resolve()}:{DOCKER_OPENCLAW_HOME}",
+    ]
+
+
+def ensure_docker_image(image: str, pull_policy: str) -> None:
+    if pull_policy not in ("missing", "always", "never"):
+        raise SystemExit(
+            "OPENCLAW_E2E_DOCKER_PULL must be 'missing', 'always', or 'never' "
+            f"(got {pull_policy!r})"
+        )
+
+    inspect = subprocess.run(
+        ["docker", "image", "inspect", image],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    image_present = inspect.returncode == 0
+    if pull_policy == "never":
+        if not image_present:
+            raise SystemExit(
+                f"Docker image {image!r} is not present and "
+                "OPENCLAW_E2E_DOCKER_PULL=never"
+            )
+        log(f"using existing Docker image {image}")
+        return
+
+    if pull_policy == "always" or not image_present:
+        reason = (
+            "pull policy is always" if pull_policy == "always" else "image missing"
+        )
+        log(f"pulling OpenClaw Docker image {image} ({reason})")
+        subprocess.run(["docker", "pull", image], check=True)
+    else:
+        log(f"using existing Docker image {image}")
+
+
+def install_thechat_plugin_from_docker(
+    image: str,
+    state_dir: Path,
+    openrouter_api_key: str,
+) -> None:
+    log("installing TheChat OpenClaw channel plugin inside Docker image")
+    staged_plugin_dir = stage_thechat_plugin(state_dir)
+    staged_plugin_container_path = (
+        f"{DOCKER_OPENCLAW_HOME}/plugin-source/thechat-channel"
+    )
+
+    env = os.environ.copy()
+    env["OPENROUTER_API_KEY"] = openrouter_api_key
+
+    def run_install(extra_args: list[str]) -> subprocess.CompletedProcess[str]:
+        cmd = [
+            "docker",
+            "run",
+            "--rm",
+            *docker_openclaw_base_args(state_dir),
+            image,
+            "node",
+            "openclaw.mjs",
+            "plugins",
+            "install",
+            "-l",
+            staged_plugin_container_path,
+            *extra_args,
+        ]
+        return subprocess.run(cmd, env=env, capture_output=True, text=True)
+
+    res = run_install(["--force"])
+    if res.returncode != 0:
+        log(
+            "Docker linked install with --force failed; retrying without "
+            f"--force (rc={res.returncode})"
+        )
+        res = run_install([])
+    if res.returncode != 0:
+        err("plugin install failed; OpenClaw stdout:")
+        err(res.stdout)
+        err("OpenClaw stderr:")
+        err(res.stderr)
+        raise SystemExit(f"openclaw plugins install failed (rc={res.returncode})")
+
+    installs_path = state_dir / "plugins" / "installs.json"
+    if not installs_path.exists():
+        raise SystemExit(
+            f"plugin install did not create expected state file: {installs_path}"
+        )
+    try:
+        installs_raw = installs_path.read_text(errors="replace")
+    except OSError as e:
+        raise SystemExit(f"failed reading plugin install state: {e}") from e
+    if (
+        staged_plugin_container_path not in installs_raw
+        and str(staged_plugin_dir) not in installs_raw
+    ):
+        raise SystemExit(
+            "plugin install state does not reference the local TheChat plugin "
+            f"path: {staged_plugin_container_path}"
+        )
+
+
+def start_openclaw_gateway_docker(
+    image: str,
+    state_dir: Path,
+    openrouter_api_key: str,
+    gateway_token: str,
+    log_path: Path,
+    host_port: int,
+    container_name: str,
+) -> subprocess.Popen:
+    log(
+        f"starting OpenClaw Docker gateway {container_name} on host port "
+        f"{host_port}"
+    )
+    env = os.environ.copy()
+    env["OPENROUTER_API_KEY"] = openrouter_api_key
+    env["OPENCLAW_GATEWAY_TOKEN"] = gateway_token
+    log_fh = log_path.open("w")
+    proc = subprocess.Popen(
+        [
+            "docker",
+            "run",
+            "--rm",
+            "--name",
+            container_name,
+            "-p",
+            f"127.0.0.1:{host_port}:{DOCKER_GATEWAY_PORT}",
+            "-e",
+            "OPENCLAW_GATEWAY_TOKEN",
+            *docker_openclaw_base_args(state_dir),
+            image,
+            "node",
+            "openclaw.mjs",
+            "gateway",
+            "--bind",
+            "lan",
+            "--port",
+            str(DOCKER_GATEWAY_PORT),
+        ],
+        env=env,
+        stdout=log_fh,
+        stderr=subprocess.STDOUT,
+        start_new_session=True,
+    )
+    return proc
+
+
+def stop_docker_container(container_name: Optional[str]) -> None:
+    if not container_name:
+        return
+    subprocess.run(
+        ["docker", "rm", "-f", container_name],
+        check=False,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -780,6 +1109,18 @@ def tail_log(path: Path, max_lines: int = 80) -> str:
     return _redact("\n".join(lines))
 
 
+def wait_for_log(path: Path, needle: str, timeout_s: float) -> bool:
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        try:
+            if path.exists() and needle in path.read_text(errors="replace"):
+                return True
+        except OSError:
+            pass
+        time.sleep(0.5)
+    return False
+
+
 # ---------------------------------------------------------------------------
 # Main orchestration
 # ---------------------------------------------------------------------------
@@ -796,9 +1137,10 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    thechat_url_override = os.environ.get("THECHAT_API_URL", "").strip().rstrip("/")
+    runtime = resolve_openclaw_runtime()
+    thechat_url_override, thechat_url_source = resolve_thechat_url_override()
     needs_local_thechat = not thechat_url_override
-    required_tools = ["git", "node", "pnpm"]
+    required_tools = ["docker"] if runtime == "docker" else ["git", "node", "pnpm"]
     if needs_local_thechat:
         required_tools.append("bun")
 
@@ -810,7 +1152,8 @@ def main() -> int:
 
     if needs_local_thechat and not os.environ.get("DATABASE_URL", "").strip():
         err(
-            "DATABASE_URL is required when THECHAT_API_URL is unset "
+            "DATABASE_URL is required when neither THECHAT_BACKEND_URL nor "
+            "THECHAT_API_URL is set "
             "(the orchestrator must start its own TheChat API)."
         )
         return 2
@@ -831,6 +1174,8 @@ def main() -> int:
         return 2
     register_secret(openrouter_key)
 
+    docker_image = os.environ.get("OPENCLAW_E2E_DOCKER_IMAGE", DEFAULT_DOCKER_IMAGE)
+    docker_pull = os.environ.get("OPENCLAW_E2E_DOCKER_PULL", DEFAULT_DOCKER_PULL)
     repo = os.environ.get("OPENCLAW_E2E_OPENCLAW_REPO", DEFAULT_REPO)
     ref = os.environ.get("OPENCLAW_E2E_OPENCLAW_REF", DEFAULT_REF)
     model = os.environ.get("OPENCLAW_E2E_MODEL", DEFAULT_MODEL)
@@ -842,34 +1187,44 @@ def main() -> int:
     ).expanduser()
     skip_build = os.environ.get("OPENCLAW_E2E_SKIP_BUILD") == "1"
     keep_temp = os.environ.get("OPENCLAW_E2E_KEEP_TEMP") == "1"
-    response_timeout = float(
-        os.environ.get("OPENCLAW_E2E_RESPONSE_TIMEOUT", "180")
+    response_timeout = env_float("OPENCLAW_E2E_RESPONSE_TIMEOUT", 180.0)
+    gateway_startup_timeout = env_float(
+        "OPENCLAW_E2E_GATEWAY_STARTUP_TIMEOUT", 300.0
     )
-    total_timeout = float(os.environ.get("OPENCLAW_E2E_TOTAL_TIMEOUT", "900"))
+    total_timeout = env_float("OPENCLAW_E2E_TOTAL_TIMEOUT", 900.0)
     overall_deadline = time.monotonic() + total_timeout
 
     work_dir.mkdir(parents=True, exist_ok=True)
     tmp_root = Path(tempfile.mkdtemp(prefix="run-", dir=work_dir))
     log(f"temp state dir: {tmp_root} (KEEP_TEMP={keep_temp})")
+    log(f"OpenClaw runtime: {runtime}")
 
     api_proc: Optional[subprocess.Popen] = None
     gateway_proc: Optional[subprocess.Popen] = None
+    gateway_container: Optional[str] = None
 
     api_log = tmp_root / "thechat-api.log"
     gateway_log = tmp_root / "openclaw-gateway.log"
 
     try:
-        # 1. OpenClaw checkout + build.
-        checkout = ensure_openclaw_checkout(repo, ref, cache_dir)
-        if time.monotonic() > overall_deadline:
-            err("total timeout exceeded before OpenClaw build")
-            return 1
-        build_openclaw_if_needed(checkout, skip_build)
+        # 1. OpenClaw runtime preparation.
+        checkout: Optional[Path] = None
+        if runtime == "docker":
+            ensure_docker_image(docker_image, docker_pull)
+        else:
+            checkout = ensure_openclaw_checkout(repo, ref, cache_dir)
+            if time.monotonic() > overall_deadline:
+                err("total timeout exceeded before OpenClaw build")
+                return 1
+            build_openclaw_if_needed(checkout, skip_build)
 
         # 2. TheChat API.
         thechat_url = thechat_url_override or None
         if thechat_url:
-            log(f"using existing TheChat API at {thechat_url}")
+            log(
+                f"using existing TheChat API at {thechat_url} "
+                f"from {thechat_url_source}"
+            )
         else:
             api_port = free_port()
             api_proc = start_thechat_api(api_port, api_log)
@@ -890,11 +1245,24 @@ def main() -> int:
         state = setup_thechat_state(thechat_url)
 
         # 4. OpenClaw config + plugin install + gateway run.
+        openclaw_state_dir = tmp_root / "openclaw-state"
         gateway_port = free_port()
+        thechat_url_for_openclaw = (
+            rewrite_localhost_url_for_docker(thechat_url)
+            if runtime == "docker"
+            else thechat_url
+        )
+        if thechat_url_for_openclaw != thechat_url:
+            log(
+                "using Docker-reachable TheChat URL inside OpenClaw: "
+                f"{thechat_url_for_openclaw}"
+            )
         config_path = write_openclaw_config(
-            tmp_root / "openclaw-state",
-            gateway_port=gateway_port,
-            thechat_base_url=thechat_url,
+            openclaw_state_dir,
+            gateway_port=DOCKER_GATEWAY_PORT if runtime == "docker" else gateway_port,
+            gateway_bind="lan" if runtime == "docker" else "loopback",
+            gateway_auth="token" if runtime == "docker" else "none",
+            thechat_base_url=thechat_url_for_openclaw,
             bot_id=state["bot_id"],
             bot_user_id=state["bot_user_id"],
             bot_api_key=state["bot_api_key"],
@@ -902,15 +1270,26 @@ def main() -> int:
             bot_name="OpenClaw E2E Bot",
             model_primary=model,
             openrouter_api_key=openrouter_key,
+            workspace_path=(
+                f"{DOCKER_OPENCLAW_HOME}/workspace"
+                if runtime == "docker"
+                else None
+            ),
             include_thechat_channel=False,
         )
 
-        install_thechat_plugin(
-            checkout, tmp_root / "openclaw-state", config_path, openrouter_key
-        )
+        if runtime == "docker":
+            install_thechat_plugin_from_docker(
+                docker_image, openclaw_state_dir, openrouter_key
+            )
+        else:
+            assert checkout is not None
+            install_thechat_plugin_from_source(
+                checkout, openclaw_state_dir, config_path, openrouter_key
+            )
         enable_thechat_channel_in_config(
             config_path,
-            thechat_base_url=thechat_url,
+            thechat_base_url=thechat_url_for_openclaw,
             bot_id=state["bot_id"],
             bot_user_id=state["bot_user_id"],
             bot_api_key=state["bot_api_key"],
@@ -922,29 +1301,54 @@ def main() -> int:
             err("total timeout exceeded before gateway start")
             return 1
 
-        gateway_proc = start_openclaw_gateway(
-            checkout,
-            tmp_root / "openclaw-state",
-            config_path,
-            openrouter_key,
-            gateway_log,
-            gateway_port,
-        )
+        if runtime == "docker":
+            gateway_token = f"openclaw-e2e-{uuid.uuid4().hex}"
+            register_secret(gateway_token)
+            gateway_container = f"thechat-openclaw-e2e-{tmp_root.name}"
+            gateway_proc = start_openclaw_gateway_docker(
+                docker_image,
+                openclaw_state_dir,
+                openrouter_key,
+                gateway_token,
+                gateway_log,
+                gateway_port,
+                gateway_container,
+            )
+        else:
+            assert checkout is not None
+            gateway_proc = start_openclaw_gateway(
+                checkout,
+                openclaw_state_dir,
+                config_path,
+                openrouter_key,
+                gateway_log,
+                gateway_port,
+            )
 
         gateway_url = f"http://127.0.0.1:{gateway_port}"
         if not wait_for_port("127.0.0.1", gateway_port, timeout_s=60):
             err("OpenClaw gateway port did not open in time. Tail of log:")
             err(tail_log(gateway_log))
             return 1
-        # /healthz should respond quickly once the listener is up.
-        if not wait_for_http(f"{gateway_url}/healthz", timeout_s=30):
-            warn(
-                "OpenClaw /healthz did not respond — continuing anyway because some "
-                "OpenClaw versions only expose health over the WebSocket RPC."
+        if not wait_for_log(
+            gateway_log, "[gateway] ready", timeout_s=gateway_startup_timeout
+        ):
+            err("OpenClaw gateway did not become ready in time. Tail of log:")
+            err(tail_log(gateway_log))
+            return 1
+        if not wait_for_http(f"{gateway_url}/healthz", timeout_s=15):
+            warn("OpenClaw /healthz did not respond after the ready log.")
+
+        webhook_url = f"{gateway_url}{WEBHOOK_PATH}"
+        if not wait_for_webhook_responsive(webhook_url, timeout_s=60):
+            err(
+                "OpenClaw TheChat webhook route did not become responsive in "
+                "time. Tail of log:"
             )
+            err(tail_log(gateway_log))
+            return 1
 
         # 5. Webhook URL on the bot, then wire up DM and send the human message.
-        webhook_url = f"{gateway_url}{WEBHOOK_PATH}"
         configure_bot_webhook(
             thechat_url, state["bot_id"], webhook_url, state["human_token"]
         )
@@ -1026,6 +1430,7 @@ def main() -> int:
         return 0
 
     finally:
+        stop_docker_container(gateway_container)
         kill_proc(gateway_proc)
         kill_proc(api_proc)
         if not keep_temp:

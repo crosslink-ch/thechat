@@ -240,7 +240,7 @@ This test does **not** start a real OpenClaw runtime, so it cannot detect
 breakage in the OpenClaw plugin entry, the inbound dispatch seam, or the
 agent loop.
 
-For the real full round-trip — TheChat ↔ a freshly built OpenClaw ↔
+For the real full round-trip — TheChat ↔ an OpenClaw Docker gateway ↔
 OpenRouter ↔ TheChat — use the orchestrator at
 `scripts/openclaw_full_flow_e2e.py`. It is opt-in:
 
@@ -253,29 +253,36 @@ pnpm test:e2e:openclaw-full
 
 The orchestrator:
 
-1. Clones `https://github.com/openclaw/openclaw.git` (override with
-   `OPENCLAW_E2E_OPENCLAW_REPO` / `OPENCLAW_E2E_OPENCLAW_REF`) into a
-   reusable repo-local cache (`OPENCLAW_E2E_CACHE_DIR`, default
-   `.openclaw-e2e/cache`). It resolves the requested ref as branch/tag/sha
-   and fails fast if fetch fails (set `OPENCLAW_E2E_ALLOW_STALE_CACHE=1` to
-   allow stale cached code).
-2. Runs `pnpm install` + `pnpm build` on first cache use. Per-run scratch
-   state/logs default under `.openclaw-e2e/work` (override with
-   `OPENCLAW_E2E_WORK_DIR`) rather than `/tmp`.
+1. Uses the prebuilt OpenClaw Docker image
+   `ghcr.io/openclaw/openclaw:2026.4.26-slim` by default (override with
+   `OPENCLAW_E2E_DOCKER_IMAGE`; pull policy is
+   `OPENCLAW_E2E_DOCKER_PULL=missing|always|never`).
+2. Creates per-run scratch state/logs under `.openclaw-e2e/work` (override
+   with `OPENCLAW_E2E_WORK_DIR`) rather than `/tmp`. The state dir is mounted
+   into the container as `/home/node/.openclaw`.
 3. Starts a fresh TheChat API on an ephemeral port (or reuses
-   `THECHAT_API_URL` if set).
+   `THECHAT_BACKEND_URL` if set; `THECHAT_API_URL` remains a deprecated
+   fallback).
 4. Registers a human, creates a workspace, creates a bot.
 5. Writes an isolated OpenClaw config + state dir under
-   `OPENCLAW_HOME` / `OPENCLAW_CONFIG_PATH`, points the agent at OpenRouter
+   `/home/node/.openclaw`, points the agent at OpenRouter
    (`agents.defaults.model.primary` defaults to
-   `openrouter/qwen/qwen3.6-35b-a3b`; override with
-   `OPENCLAW_E2E_MODEL`).
-6. Installs *this* package via `openclaw plugins install -l ...`.
+   `openrouter/openai/gpt-5.4-nano`; override with
+   `OPENCLAW_E2E_MODEL`), and disables OpenClaw skills for the e2e agent so
+   the run exercises the channel round-trip rather than local skill loading.
+6. Installs *this* package inside the container via
+   `openclaw plugins install -l ...`.
 7. Starts the OpenClaw gateway on an ephemeral port.
 8. PATCHes the bot's webhook URL, adds the bot to the workspace, opens a
    DM, sends a human message.
 9. Polls `/messages/:id` for a real bot reply and asserts it is **not**
    the simulated `Echo: ...` shape.
+
+Set `OPENCLAW_E2E_RUNTIME=source` to use the older source checkout mode
+instead of Docker. That mode clones `https://github.com/openclaw/openclaw.git`
+(override with `OPENCLAW_E2E_OPENCLAW_REPO` / `OPENCLAW_E2E_OPENCLAW_REF`)
+into `OPENCLAW_E2E_CACHE_DIR`, then runs the local `pnpm install` + build
+path.
 
 The OpenRouter API key is forwarded only via the OpenClaw child process
 environment — it is never logged. `bot_...` API keys, `whsec_...` webhook
