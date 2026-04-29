@@ -1,6 +1,6 @@
 import { Elysia } from "elysia";
 import { cors } from "@elysiajs/cors";
-import { logger } from "@bogeychan/elysia-logger";
+import { wrap } from "@bogeychan/elysia-logger";
 import { sql } from "drizzle-orm";
 import { db } from "./db";
 import { authRoutes } from "./auth";
@@ -12,14 +12,11 @@ import { wsRoutes } from "./ws";
 import { botRoutes } from "./bots";
 import { inviteRoutes } from "./invites";
 import { mcpRoutes } from "./mcp";
+import { log, pinoLog } from "./lib/logger";
 
 const app = new Elysia()
   .use(cors())
-  .use(
-    logger({
-      level: process.env.LOG_LEVEL ?? "info",
-    })
-  )
+  .use(wrap(pinoLog))
   .decorate("db", db)
   .use(authRoutes)
   .use(workspaceRoutes)
@@ -47,4 +44,4 @@ export type App = typeof app;
 
 app.listen(Number(process.env.THECHAT_BACKEND_PORT) || 3000);
 
-console.log(`TheChat API running at http://localhost:${app.server!.port}`);
+log.info("api", "started", { port: app.server!.port });

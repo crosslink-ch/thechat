@@ -1,8 +1,11 @@
+import type { AuthInfo } from "@modelcontextprotocol/sdk/server/auth/types.js";
 import { resolveTokenToUser } from "../auth/middleware";
 
 export type McpUser = NonNullable<
   Awaited<ReturnType<typeof resolveTokenToUser>>
 >;
+
+export type TheChatMcpAuthInfo = AuthInfo & McpUser;
 
 /**
  * MCP authentication callback for elysia-mcp plugin.
@@ -11,7 +14,7 @@ export type McpUser = NonNullable<
  */
 export async function mcpAuthenticate(context: {
   request: Request;
-}): Promise<{ authInfo?: McpUser; response?: Response }> {
+}): Promise<{ authInfo?: TheChatMcpAuthInfo; response?: Response }> {
   const authHeader = context.request.headers.get("authorization");
   if (!authHeader?.startsWith("Bearer ")) {
     return {
@@ -31,5 +34,12 @@ export async function mcpAuthenticate(context: {
     };
   }
 
-  return { authInfo: user };
+  return {
+    authInfo: {
+      token,
+      clientId: user.id,
+      scopes: ["thechat:user"],
+      ...user,
+    },
+  };
 }
