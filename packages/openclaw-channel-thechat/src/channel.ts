@@ -52,7 +52,8 @@ export const theChatChannelPlugin: ChannelPlugin<ResolvedTheChatAccount> =
           resolveTheChatAccount({ cfg, accountId }),
         defaultAccountId: (cfg: OpenClawConfig) =>
           resolveDefaultTheChatAccountId(cfg),
-        isConfigured: (account: ResolvedTheChatAccount) => account.configured,
+        isConfigured: (account: ResolvedTheChatAccount) =>
+          account.enabled && account.configured,
         resolveAllowFrom: ({
           cfg,
           accountId,
@@ -90,6 +91,11 @@ export const theChatChannelPlugin: ChannelPlugin<ResolvedTheChatAccount> =
         channel: CHANNEL_ID,
         sendText: async ({ cfg, to, text, accountId }: OutboundSendTextCtx) => {
           const account = resolveTheChatAccount({ cfg, accountId });
+          if (!account.enabled) {
+            throw new Error(
+              `thechat outbound: account ${account.accountId} is disabled`
+            );
+          }
           if (!account.configured) {
             throw new Error(
               "thechat outbound: channel is not configured (cfg.channels.thechat is missing required fields)"

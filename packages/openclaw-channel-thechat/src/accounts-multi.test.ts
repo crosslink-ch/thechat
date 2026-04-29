@@ -153,6 +153,16 @@ describe("resolveTheChatAccount — named accounts", () => {
     expect(account.config.baseUrl).toBe("https://default.chat.example.com");
   });
 
+  test("null accountId resolves to first named account when no flat account exists", () => {
+    const account = resolveTheChatAccount({
+      cfg: namedOnlyCfg,
+      accountId: null,
+    });
+    expect(account.accountId).toBe("alpha");
+    expect(account.configured).toBe(true);
+    expect(account.config.baseUrl).toBe("https://alpha.example.com");
+  });
+
   test("'default' accountId resolves to flat account", () => {
     const account = resolveTheChatAccount({
       cfg: multiCfg,
@@ -194,6 +204,26 @@ describe("findAccountByBotId", () => {
 
   test("returns null when botId is not found", () => {
     expect(findAccountByBotId(multiCfg, "bot-nonexistent")).toBeNull();
+  });
+
+  test("does not match disabled accounts by botId", () => {
+    const cfg = {
+      channels: {
+        thechat: {
+          accounts: {
+            disabled: {
+              enabled: false,
+              baseUrl: "https://disabled.example.com",
+              botId: "bot-disabled",
+              botUserId: "user-bot-disabled",
+              apiKey: "bot_disabled_key",
+              webhookSecret: "whsec_disabled",
+            },
+          },
+        },
+      },
+    };
+    expect(findAccountByBotId(cfg, "bot-disabled")).toBeNull();
   });
 
   test("returns null on empty config", () => {
