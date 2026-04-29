@@ -125,9 +125,11 @@ SUITES = [
         "opt_in": True,  # needs CODEX_ACCESS_TOKEN credentials
     },
     {
-        "name": "openclaw-full-e2e",
+        "name": "e2e-openclaw",
+        "aliases": ["openclaw-full-e2e"],
         "cmd": ["python3", "scripts/openclaw_full_flow_e2e.py"],
-        "opt_in": True,  # clones+builds OpenClaw, calls OpenRouter — needs OPENCLAW_E2E_FULL=1 + OPENROUTER_API_KEY
+        "env": {"OPENCLAW_E2E_FULL": "1"},
+        "opt_in": True,  # starts OpenClaw Docker + calls OpenRouter; expects OPENROUTER_API_KEY in .env/env
     },
 ]
 
@@ -333,15 +335,25 @@ def main():
         return
     run_all = "--all" in args
     names = {a for a in args if not a.startswith("-")}
+    suite_selectors = {
+        selector
+        for s in SUITES
+        for selector in (s["name"], *s.get("aliases", []))
+    }
 
     suites = SUITES
     if names:
-        unknown = names - {s["name"] for s in SUITES}
+        unknown = names - suite_selectors
         if unknown:
             print(f"Unknown suites: {', '.join(unknown)}")
             print(f"Available: {', '.join(s['name'] for s in SUITES)}")
             sys.exit(1)
-        suites = [s for s in SUITES if s["name"] in names]
+        suites = [
+            s
+            for s in SUITES
+            if s["name"] in names
+            or any(alias in names for alias in s.get("aliases", []))
+        ]
     elif not run_all:
         # Exclude opt-in suites unless explicitly named or --all
         suites = [s for s in suites if not s.get("opt_in")]
@@ -387,7 +399,8 @@ def main():
 
     print(f"Running {len(suites)} test suite(s): {', '.join(s['name'] for s in suites)}")
     if not run_all:
-        print("  (pass --all to include opt-in suites: mcp, codex, openclaw-full-e2e)")
+        opt_in_names = ", ".join(s["name"] for s in SUITES if s.get("opt_in"))
+        print(f"  (pass --all to include opt-in suites: {opt_in_names})")
     print()
 
     results: list[Result] = []

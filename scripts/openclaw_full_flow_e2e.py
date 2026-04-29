@@ -15,6 +15,8 @@ prove the round-trip:
 
 It is opt-in. By default `python3 scripts/test.py` will not run this; set
 `OPENCLAW_E2E_FULL=1` (and provide the env vars listed below) to invoke it.
+The generic runner sets this flag for you when invoked as
+`pnpm test e2e-openclaw`.
 
 The script loads `.env` from the repository root without overriding variables
 already present in the process environment.
@@ -97,7 +99,7 @@ Secrets handling:
     is unavoidable for the agent to actually call OpenRouter). The temp
     state dir is cleaned up on exit unless `OPENCLAW_E2E_KEEP_TEMP=1`.
 
-Wired into `scripts/test.py` as the opt-in `openclaw-full-e2e` suite.
+Wired into `scripts/test.py` as the opt-in `e2e-openclaw` suite.
 """
 
 from __future__ import annotations

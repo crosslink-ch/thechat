@@ -241,15 +241,15 @@ breakage in the OpenClaw plugin entry, the inbound dispatch seam, or the
 agent loop.
 
 For the real full round-trip — TheChat ↔ an OpenClaw Docker gateway ↔
-OpenRouter ↔ TheChat — use the orchestrator at
-`scripts/openclaw_full_flow_e2e.py`. It is opt-in:
+OpenRouter ↔ TheChat — use the opt-in `e2e-openclaw` suite. With
+`OPENROUTER_API_KEY` and the usual backend/database settings in `.env`:
 
 ```bash
-OPENCLAW_E2E_FULL=1 \
-OPENROUTER_API_KEY=sk-or-... \
-DATABASE_URL=postgres://... \
-pnpm test:e2e:openclaw-full
+pnpm test e2e-openclaw
 ```
+
+This suite is not part of the default `pnpm test` run because it starts an
+OpenClaw gateway and calls OpenRouter.
 
 The orchestrator:
 
