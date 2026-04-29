@@ -1,8 +1,9 @@
 import { SignJWT, jwtVerify } from "jose";
+import { log } from "../lib/logger";
 
 const secret = new TextEncoder().encode(
   process.env.JWT_SECRET ?? (() => {
-    console.warn("JWT_SECRET not set — using insecure dev fallback");
+    log.warn("auth.jwt", "insecure_dev_secret_fallback");
     return "dev-insecure-jwt-secret-do-not-use-in-production";
   })()
 );
