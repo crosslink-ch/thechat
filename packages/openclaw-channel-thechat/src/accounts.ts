@@ -156,7 +156,8 @@ export function resolveDefaultTheChatAccountId(
 /**
  * Resolve a specific account by id.
  *
- * - `null` / `undefined` / `"default"` → flat config at `channels.thechat`
+ * - `null` / `undefined` → configured default account
+ * - `"default"` → flat config at `channels.thechat`
  * - Any other string → named account at `channels.thechat.accounts.<id>`
  */
 export function resolveTheChatAccount(params: {
@@ -164,18 +165,19 @@ export function resolveTheChatAccount(params: {
   accountId?: string | null;
 }): ResolvedTheChatAccount {
   const { cfg, accountId } = params;
-  const isDefault = !accountId || accountId === DEFAULT_ACCOUNT_ID;
+  const effectiveAccountId = accountId ?? resolveDefaultTheChatAccountId(cfg);
+  const isDefault = effectiveAccountId === DEFAULT_ACCOUNT_ID;
 
   const section = isDefault
     ? readFlatSection(cfg)
-    : readNamedAccountSection(cfg, accountId!);
+    : readNamedAccountSection(cfg, effectiveAccountId);
 
   const enabled = section.enabled !== false;
   const configured = isFullyConfigured(section);
   const config = sectionToConfig(section);
 
   return {
-    accountId: isDefault ? DEFAULT_ACCOUNT_ID : accountId!,
+    accountId: isDefault ? DEFAULT_ACCOUNT_ID : effectiveAccountId,
     enabled,
     configured,
     name: section.botName,
@@ -203,5 +205,9 @@ export function findAccountByBotId(
   botId: string
 ): ResolvedTheChatAccount | null {
   const accounts = resolveAllTheChatAccounts(cfg);
-  return accounts.find((a) => a.configured && a.config.botId === botId) ?? null;
+  return (
+    accounts.find(
+      (a) => a.enabled && a.configured && a.config.botId === botId
+    ) ?? null
+  );
 }
