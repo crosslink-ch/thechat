@@ -695,5 +695,192 @@ describe("Bots: @mention webhook", () => {
       .update(signedContent)
       .digest("hex");
     expect(receivedHeaders["x-webhook-signature"]).toBe(expectedSignature);
+
+    // New fields surfaced in the structured payload
+    expect(receivedPayload.message.senderType).toBe("human");
+    expect(receivedPayload.conversation.kind).toBe("channel");
+    expect(receivedPayload.bot.userId).toBeDefined();
+  });
+
+  test("DM to bot fires direct_message webhook (no @mention required)", async () => {
+    const human = await registerUser("DmHookOwner");
+
+    let receivedPayload: any = null;
+    const got = new Promise<void>((resolve) => {
+      const server = Bun.serve({
+        port: 0,
+        async fetch(request) {
+          const text = await request.text();
+          receivedPayload = JSON.parse(text);
+          resolve();
+          setTimeout(() => server.stop(), 0);
+          return new Response("ok");
+        },
+      });
+
+      const webhookUrl = `http://localhost:${server.port}/webhook`;
+      (async () => {
+        const wsRes = await req(
+          "POST",
+          "/workspaces/create",
+          { name: "DM hook WS" },
+          human.token
+        );
+        createdWorkspaceIds.push(wsRes.body.id);
+
+        const botRes = await createBot(human.token, "DmHookBot", webhookUrl);
+        await req(
+          "POST",
+          `/bots/${botRes.body.id}/workspaces`,
+          { workspaceId: wsRes.body.id },
+          human.token
+        );
+
+        const dmRes = await req(
+          "POST",
+          "/conversations/dm",
+          { workspaceId: wsRes.body.id, otherUserId: botRes.body.userId },
+          human.token
+        );
+        await req(
+          "POST",
+          `/messages/${dmRes.body.id}`,
+          { content: "no mention needed" },
+          human.token
+        );
+      })();
+    });
+
+    await Promise.race([
+      got,
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error("Webhook timeout")), 5000)
+      ),
+    ]);
+
+    expect(receivedPayload).not.toBeNull();
+    expect(receivedPayload.event).toBe("direct_message");
+    expect(receivedPayload.conversation.kind).toBe("dm");
+    expect(receivedPayload.message.content).toBe("no mention needed");
+  });
+
+  test("bot's own messages do not loop back to its webhook", async () => {
+    // Set up a bot with a webhook server, then have the bot send a DM to
+    // itself — wait briefly and assert the webhook was NOT hit.
+    const human = await registerUser("LoopOwner");
+
+    let webhookHits = 0;
+    const server = Bun.serve({
+      port: 0,
+      async fetch() {
+        webhookHits += 1;
+        return new Response("ok");
+      },
+    });
+    try {
+      const webhookUrl = `http://localhost:${server.port}/webhook`;
+
+      const wsRes = await req(
+        "POST",
+        "/workspaces/create",
+        { name: "Loop WS" },
+        human.token
+      );
+      createdWorkspaceIds.push(wsRes.body.id);
+
+      const botRes = await createBot(human.token, "LoopBot", webhookUrl);
+      await req(
+        "POST",
+        `/bots/${botRes.body.id}/workspaces`,
+        { workspaceId: wsRes.body.id },
+        human.token
+      );
+
+      const detailRes = await req(
+        "GET",
+        `/workspaces/${wsRes.body.id}`,
+        undefined,
+        human.token
+      );
+      const channelId = detailRes.body.channels[0].id;
+
+      // Bot mentions itself in the channel (using the bot API key as auth).
+      await req(
+        "POST",
+        `/messages/${channelId}`,
+        { content: "I am @LoopBot, hello me" },
+        botRes.body.apiKey
+      );
+
+      // Give the fire-and-forget delivery a moment.
+      await new Promise((r) => setTimeout(r, 250));
+
+      expect(webhookHits).toBe(0);
+    } finally {
+      server.stop();
+    }
+  });
+
+  test("messages from another bot do not fan out to peer bot webhooks", async () => {
+    const human = await registerUser("CrossBotOwner");
+
+    let webhookHits = 0;
+    const server = Bun.serve({
+      port: 0,
+      async fetch() {
+        webhookHits += 1;
+        return new Response("ok");
+      },
+    });
+    try {
+      const webhookUrl = `http://localhost:${server.port}/webhook`;
+
+      const wsRes = await req(
+        "POST",
+        "/workspaces/create",
+        { name: "CrossBot WS" },
+        human.token
+      );
+      createdWorkspaceIds.push(wsRes.body.id);
+
+      // Bot A has a webhook, Bot B is silent.
+      const botA = await createBot(human.token, "CrossBotA", webhookUrl);
+      const botB = await createBot(human.token, "CrossBotB");
+
+      await req(
+        "POST",
+        `/bots/${botA.body.id}/workspaces`,
+        { workspaceId: wsRes.body.id },
+        human.token
+      );
+      await req(
+        "POST",
+        `/bots/${botB.body.id}/workspaces`,
+        { workspaceId: wsRes.body.id },
+        human.token
+      );
+
+      const detailRes = await req(
+        "GET",
+        `/workspaces/${wsRes.body.id}`,
+        undefined,
+        human.token
+      );
+      const channelId = detailRes.body.channels[0].id;
+
+      // Bot B mentions Bot A — without bot-loop prevention, A would receive a
+      // webhook. With the new gating, A is skipped because the sender is a bot.
+      await req(
+        "POST",
+        `/messages/${channelId}`,
+        { content: "yo @CrossBotA" },
+        botB.body.apiKey
+      );
+
+      await new Promise((r) => setTimeout(r, 250));
+      expect(webhookHits).toBe(0);
+    } finally {
+      server.stop();
+    }
   });
 });

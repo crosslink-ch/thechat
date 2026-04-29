@@ -19,7 +19,10 @@
     "db:push": "pnpm --filter @thechat/api db:push",
     "db:studio": "pnpm --filter @thechat/api db:studio",
     "test:e2e": "pnpm --filter @thechat/desktop test:e2e",
-    "test:e2e:headless": "pnpm --filter @thechat/desktop test:e2e:headless"
+    "test:e2e:headless": "pnpm --filter @thechat/desktop test:e2e:headless",
+    "test:e2e:openclaw-simulated": "pnpm --filter @thechat/api test:e2e:openclaw-simulated",
+    "test:e2e:openclaw": "pnpm test e2e-openclaw",
+    "test:e2e:openclaw-full": "pnpm test e2e-openclaw"
   },
   "packageManager": "pnpm@10.28.2",
   "devDependencies": {

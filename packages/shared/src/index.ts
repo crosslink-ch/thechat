@@ -218,6 +218,8 @@ export interface ChatMessage {
   conversationId: string;
   senderId: string;
   senderName: string;
+  /** Type of the sender — "human" or "bot". Lets clients render bot badges. */
+  senderType: "human" | "bot";
   content: string;
   createdAt: string;
 }
@@ -251,24 +253,31 @@ export interface BotWithApiKey extends Bot {
   webhookSecret: string;
 }
 
+export type WebhookEventType = "mention" | "direct_message";
+
 export interface WebhookPayload {
-  event: "mention";
+  /** Discriminator describing why this event fired. */
+  event: WebhookEventType;
   message: {
     id: string;
     content: string;
     conversationId: string;
     senderId: string;
     senderName: string;
+    /** Whether the sender is a human user or another bot. */
+    senderType: "human" | "bot";
     createdAt: string;
   };
   conversation: {
     id: string;
     type: "direct" | "group";
+    /** Higher-level grouping: `dm` for direct messages, `channel` for group channels. */
+    kind: "dm" | "channel";
     name: string | null;
     workspaceId: string | null;
   };
   workspace: { id: string; name: string } | null;
-  bot: { id: string; name: string };
+  bot: { id: string; userId: string; name: string };
 }
 
 // -- Workspace Invite Types --

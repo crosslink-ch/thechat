@@ -1,0 +1,82 @@
+{
+  "id": "thechat",
+  "kind": "channel",
+  "channels": ["thechat"],
+  "name": "TheChat",
+  "description": "OpenClaw channel plugin that integrates with TheChat workspaces as a bot account using signed webhooks for inbound messages and the TheChat REST API for outbound replies.",
+  "channelEnvVars": {
+    "thechat": [
+      "THECHAT_BOT_API_KEY",
+      "THECHAT_BOT_WEBHOOK_SECRET",
+      "THECHAT_BOT_BASE_URL",
+      "THECHAT_BOT_ID",
+      "THECHAT_BOT_USER_ID"
+    ]
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  },
+  "channelConfigs": {
+    "thechat": {
+      "schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["baseUrl", "botId", "botUserId", "apiKey", "webhookSecret"],
+        "properties": {
+          "baseUrl": {
+            "type": "string",
+            "description": "Base URL of the TheChat API (e.g. https://thechat.example.com)."
+          },
+          "botId": {
+            "type": "string",
+            "description": "Bot row id (returned by POST /bots/create)."
+          },
+          "botUserId": {
+            "type": "string",
+            "description": "User id backing the bot — used for own-message loop prevention."
+          },
+          "botName": {
+            "type": "string",
+            "description": "Display name of the bot. Optional; only used in logs."
+          },
+          "apiKey": {
+            "type": "string",
+            "description": "Bot API key (Bearer token, prefixed with bot_) used for outbound message sends."
+          },
+          "webhookSecret": {
+            "type": "string",
+            "description": "HMAC shared secret used to verify inbound webhook signatures."
+          },
+          "maxClockSkewSeconds": {
+            "type": "integer",
+            "default": 300,
+            "minimum": 5,
+            "maximum": 3600,
+            "description": "Maximum allowed difference between webhook timestamp and now (replay protection window)."
+          },
+          "requireMentionInChannels": {
+            "type": "boolean",
+            "default": true,
+            "description": "If true, group-channel messages are only routed to OpenClaw when the bot is @mentioned. DMs always pass through."
+          },
+          "allowFrom": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Allowlist of TheChat user ids allowed to message the bot. Empty array means everyone is allowed."
+          },
+          "allowOtherBots": {
+            "type": "boolean",
+            "default": false,
+            "description": "If false (default), messages from other bot accounts are dropped to prevent bot-to-bot loops."
+          }
+        }
+      },
+      "uiHints": {
+        "apiKey": { "label": "Bot API key", "sensitive": true },
+        "webhookSecret": { "label": "Webhook secret", "sensitive": true }
+      }
+    }
+  }
+}

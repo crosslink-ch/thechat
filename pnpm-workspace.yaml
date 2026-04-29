@@ -6,3 +6,7 @@ onlyBuiltDependencies:
   - electron
   - esbuild
   - geckodriver
+  - koffi
+  - openclaw
+  - protobufjs
+  - sharp

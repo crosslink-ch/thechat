@@ -14,6 +14,7 @@
     "build": "bun build src/index.ts --outdir dist --target bun",
     "start": "bun run --env-file ../../.env dist/index.js",
     "test": "bun test --env-file ../../.env",
+    "test:e2e:openclaw-simulated": "OPENCLAW_E2E=1 bun test --env-file ../../.env --timeout 90000 src/e2e/openclaw-channel-simulated.test.ts",
     "db:generate": "bun run --env-file ../../.env drizzle-kit generate",
     "db:migrate": "bun run --env-file ../../.env drizzle-kit migrate",
     "db:push": "bun run --env-file ../../.env drizzle-kit push",
@@ -33,6 +34,7 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
+    "@thechat/openclaw-channel": "workspace:*",
     "@types/bun": "latest",
     "@types/nodemailer": "^6.4.0",
     "drizzle-kit": "^0.31.9",

@@ -5,7 +5,7 @@ import {
   conversationParticipants,
   users,
 } from "../db/schema";
-import { processMessageMentions } from "../bots/webhooks";
+import { processBotEvents } from "../bots/webhooks";
 import { ServiceError } from "./errors";
 
 export async function getMessages(
@@ -46,6 +46,7 @@ export async function getMessages(
       content: messages.content,
       createdAt: messages.createdAt,
       senderName: users.name,
+      senderType: users.type,
     })
     .from(messages)
     .innerJoin(users, eq(messages.senderId, users.id))
@@ -59,6 +60,7 @@ export async function getMessages(
     conversationId: r.conversationId,
     senderId: r.senderId,
     senderName: r.senderName,
+    senderType: r.senderType,
     content: r.content,
     createdAt: r.createdAt.toISOString(),
   }));
@@ -70,10 +72,13 @@ export async function sendMessage(
   userName: string,
   content: string
 ) {
-  // Validate user is a participant
+  // Validate user is a participant — also recover their type so we can include
+  // it in webhook/WS payloads (clients use it for bot badging, plugins use it
+  // for bot-loop prevention).
   const [participant] = await db
-    .select()
+    .select({ userType: users.type })
     .from(conversationParticipants)
+    .innerJoin(users, eq(users.id, conversationParticipants.userId))
     .where(
       and(
         eq(conversationParticipants.conversationId, conversationId),
@@ -89,6 +94,8 @@ export async function sendMessage(
     );
   }
 
+  const senderType = participant.userType;
+
   const [msg] = await db
     .insert(messages)
     .values({
@@ -100,13 +107,15 @@ export async function sendMessage(
 
   const createdAt = msg.createdAt.toISOString();
 
-  // Fire-and-forget webhook notifications for @mentioned bots
-  processMessageMentions({
+  // Fire-and-forget bot event delivery (mentions in channels, every message
+  // in DMs). Errors are logged inside processBotEvents and never bubble.
+  void processBotEvents({
     id: msg.id,
     content: msg.content,
     conversationId: msg.conversationId,
     senderId: msg.senderId,
     senderName: userName,
+    senderType,
     createdAt,
   });
 
@@ -115,6 +124,7 @@ export async function sendMessage(
     conversationId: msg.conversationId,
     senderId: msg.senderId,
     senderName: userName,
+    senderType,
     content: msg.content,
     createdAt,
   };

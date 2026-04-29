@@ -260,6 +260,7 @@ describe.skipIf(!INTEGRATION)("Channel message visibility (integration)", () => 
           conversationId: generalChannelId,
           senderId: userA.user.id,
           senderName: "Alice",
+          senderType: "human",
           content: "Real-time channel msg",
           createdAt: new Date().toISOString(),
         });
@@ -292,6 +293,7 @@ describe.skipIf(!INTEGRATION)("Channel message visibility (integration)", () => 
         conversationId: generalChannelId,
         senderId: userA.user.id,
         senderName: "Alice",
+        senderType: "human" as const,
         content: "Dup test",
         createdAt: new Date().toISOString(),
       };
@@ -323,6 +325,7 @@ describe.skipIf(!INTEGRATION)("Channel message visibility (integration)", () => 
           conversationId: "wrong-conversation-id",
           senderId: userA.user.id,
           senderName: "Alice",
+          senderType: "human",
           content: "Should be ignored",
           createdAt: new Date().toISOString(),
         });

@@ -94,6 +94,7 @@ async function handleSendMessage(
       conversationId: msg.conversationId,
       senderId: msg.senderId,
       senderName: msg.senderName,
+      senderType: msg.senderType,
       content: msg.content,
       createdAt: msg.createdAt,
     },

@@ -58,6 +58,11 @@ export function ChannelChatView({
             <div className="min-w-0 flex-1">
               <div className="mb-0.5 flex items-baseline gap-2">
                 <span className="text-[0.929rem] font-semibold text-text">{msg.senderName}</span>
+                {msg.senderType === "bot" && (
+                  <span className="rounded bg-accent/15 px-1.5 py-0.5 text-[0.643rem] font-semibold uppercase tracking-wide text-accent">
+                    Bot
+                  </span>
+                )}
                 <span className="text-[0.714rem] text-text-dimmed">{formatTime(msg.createdAt)}</span>
               </div>
               <Markdown content={msg.content} />

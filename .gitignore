@@ -39,4 +39,8 @@ dev.db-wal
 .test-credentials.json
 
 .claude
+.codex
 __pycache__
+
+# Full-flow e2e local clones, caches, logs, and isolated OpenClaw state
+.openclaw-e2e/
