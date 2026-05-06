@@ -9,6 +9,7 @@ import {
   workspaces,
 } from "../db/schema";
 import type { WebhookPayload } from "@thechat/shared";
+import { handleHermesMention } from "../services/hermes";
 
 /**
  * Sign a webhook payload with HMAC-SHA256.
@@ -28,7 +29,7 @@ export function signWebhookPayload(
 
 /**
  * After a message is created, check for @mentions of bots in the conversation
- * and fire webhooks to those bots.
+ * and dispatch either generic webhooks or native Hermes runs.
  */
 export async function processMessageMentions(msg: {
   id: string;
@@ -38,7 +39,6 @@ export async function processMessageMentions(msg: {
   senderName: string;
   createdAt: string;
 }) {
-  // Get all participants of the conversation
   const participants = await db
     .select({ userId: conversationParticipants.userId })
     .from(conversationParticipants)
@@ -47,27 +47,21 @@ export async function processMessageMentions(msg: {
   const participantIds = participants.map((p) => p.userId);
   if (participantIds.length === 0) return;
 
-  // Find bots among participants that have a webhookUrl
   const botRows = await db
     .select({
       botId: bots.id,
       botUserId: bots.userId,
+      kind: bots.kind,
       webhookUrl: bots.webhookUrl,
       webhookSecret: bots.webhookSecret,
       botName: users.name,
     })
     .from(bots)
-    .innerJoin(users, eq(bots.userId, users.id))
-    .where(eq(bots.webhookUrl, bots.webhookUrl)); // get all bots, filter in JS
+    .innerJoin(users, eq(bots.userId, users.id));
 
-  // Filter to only bots that are participants and have a webhook URL
-  const participantBots = botRows.filter(
-    (b) => b.webhookUrl && participantIds.includes(b.botUserId)
-  );
-
+  const participantBots = botRows.filter((b) => participantIds.includes(b.botUserId));
   if (participantBots.length === 0) return;
 
-  // Check which bots are @mentioned in the message content
   const mentionedBots = participantBots.filter((b) => {
     const escaped = b.botName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     const regex = new RegExp(`@${escaped}\\b`, "i");
@@ -76,7 +70,6 @@ export async function processMessageMentions(msg: {
 
   if (mentionedBots.length === 0) return;
 
-  // Get conversation details
   const [conv] = await db
     .select({
       id: conversations.id,
@@ -90,7 +83,6 @@ export async function processMessageMentions(msg: {
 
   if (!conv) return;
 
-  // Get workspace details if applicable
   let workspace: { id: string; name: string } | null = null;
   if (conv.workspaceId) {
     const [ws] = await db
@@ -101,8 +93,19 @@ export async function processMessageMentions(msg: {
     if (ws) workspace = ws;
   }
 
-  // Fire webhooks (fire-and-forget)
   for (const bot of mentionedBots) {
+    if (bot.kind === "hermes") {
+      handleHermesMention({
+        botId: bot.botId,
+        botUserId: bot.botUserId,
+        botName: bot.botName,
+        message: msg,
+        conversation: { id: conv.id, type: conv.type, workspaceId: conv.workspaceId },
+      }).catch(console.error);
+      continue;
+    }
+
+    if (!bot.webhookUrl) continue;
     const payload: WebhookPayload = {
       event: "mention",
       message: {
@@ -127,7 +130,7 @@ export async function processMessageMentions(msg: {
     const timestamp = Math.floor(Date.now() / 1000);
     const signature = signWebhookPayload(body, bot.webhookSecret, timestamp);
 
-    fetch(bot.webhookUrl!, {
+    fetch(bot.webhookUrl, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",

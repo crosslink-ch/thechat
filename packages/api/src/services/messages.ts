@@ -44,8 +44,10 @@ export async function getMessages(
       conversationId: messages.conversationId,
       senderId: messages.senderId,
       content: messages.content,
+      parts: messages.parts,
       createdAt: messages.createdAt,
       senderName: users.name,
+      senderType: users.type,
     })
     .from(messages)
     .innerJoin(users, eq(messages.senderId, users.id))
@@ -59,7 +61,9 @@ export async function getMessages(
     conversationId: r.conversationId,
     senderId: r.senderId,
     senderName: r.senderName,
+    senderType: r.senderType,
     content: r.content,
+    parts: r.parts ?? null,
     createdAt: r.createdAt.toISOString(),
   }));
 }
@@ -115,7 +119,9 @@ export async function sendMessage(
     conversationId: msg.conversationId,
     senderId: msg.senderId,
     senderName: userName,
+    senderType: "human" as const,
     content: msg.content,
+    parts: msg.parts ?? null,
     createdAt,
   };
 }

@@ -19,7 +19,8 @@
     "db:push": "pnpm --filter @thechat/api db:push",
     "db:studio": "pnpm --filter @thechat/api db:studio",
     "test:e2e": "pnpm --filter @thechat/desktop test:e2e",
-    "test:e2e:headless": "pnpm --filter @thechat/desktop test:e2e:headless"
+    "test:e2e:headless": "pnpm --filter @thechat/desktop test:e2e:headless",
+    "test:e2e:hermes": "python3 scripts/e2e/hermes-bot-flow.py"
   },
   "packageManager": "pnpm@10.28.2",
   "devDependencies": {

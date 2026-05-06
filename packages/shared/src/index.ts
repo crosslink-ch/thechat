@@ -218,7 +218,9 @@ export interface ChatMessage {
   conversationId: string;
   senderId: string;
   senderName: string;
+  senderType?: "human" | "bot";
   content: string;
+  parts?: MessagePart[] | null;
   createdAt: string;
 }
 
@@ -238,10 +240,13 @@ export type WsClientEvent =
 
 // -- Bot Types --
 
+export type BotKind = "webhook" | "hermes";
+
 export interface Bot {
   id: string;
   userId: string;
   name: string;
+  kind: BotKind;
   webhookUrl: string | null;
   createdAt: string;
 }
@@ -249,6 +254,19 @@ export interface Bot {
 export interface BotWithApiKey extends Bot {
   apiKey: string;
   webhookSecret: string;
+}
+
+export type HermesDefaultMode = "run" | "response";
+export type HermesSessionScope = "channel" | "thread" | "workspace";
+
+export interface HermesBotConfigPublic {
+  botId: string;
+  baseUrl: string;
+  defaultMode: HermesDefaultMode;
+  defaultInstructions: string | null;
+  defaultSessionScope: HermesSessionScope;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface WebhookPayload {

@@ -36,6 +36,7 @@ export const inviteStatusEnum = pgEnum("invite_status", [
   "accepted",
   "declined",
 ]);
+export const botKindEnum = pgEnum("bot_kind", ["webhook", "hermes"]);
 
 // -- Tables --
 
@@ -219,6 +220,7 @@ export const bots = pgTable(
     webhookUrl: text("webhook_url"),
     webhookSecret: varchar("webhook_secret", { length: 128 }).notNull(),
     apiKey: varchar("api_key", { length: 128 }).notNull(),
+    kind: botKindEnum("kind").notNull().default("webhook"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
       .notNull(),
@@ -233,6 +235,24 @@ export const bots = pgTable(
     index("bots_owner_id_idx").on(t.ownerId),
   ]
 );
+
+export const hermesBotConfigs = pgTable("hermes_bot_configs", {
+  botId: uuid("bot_id")
+    .primaryKey()
+    .references(() => bots.id, { onDelete: "cascade" }),
+  baseUrl: text("base_url").notNull(),
+  apiKeyEncrypted: text("api_key_encrypted").notNull(),
+  defaultMode: varchar("default_mode", { length: 20 }).notNull().default("run"),
+  defaultInstructions: text("default_instructions"),
+  defaultSessionScope: varchar("default_session_scope", { length: 20 }).notNull().default("channel"),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .defaultNow()
+    .notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .defaultNow()
+    .notNull()
+    .$onUpdate(() => new Date()),
+});
 
 export const sessions = pgTable(
   "sessions",

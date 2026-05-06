@@ -12,6 +12,7 @@ import { wsRoutes } from "./ws";
 import { botRoutes } from "./bots";
 import { inviteRoutes } from "./invites";
 import { mcpRoutes } from "./mcp";
+import { hermesRoutes } from "./hermes";
 
 const app = new Elysia()
   .use(cors())
@@ -28,6 +29,7 @@ const app = new Elysia()
   .use(messageRoutes)
   .use(wsRoutes)
   .use(botRoutes)
+  .use(hermesRoutes)
   .use(inviteRoutes)
   .use(mcpRoutes)
   .get("/", () => "TheChat API")

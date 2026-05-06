@@ -23,7 +23,8 @@ export function generateWebhookSecret(): string {
 export async function createBot(
   name: string,
   webhookUrl: string | null,
-  ownerId: string
+  ownerId: string,
+  kind: "webhook" | "hermes" = "webhook"
 ) {
   const apiKey = generateApiKey();
   const webhookSecret = generateWebhookSecret();
@@ -41,6 +42,7 @@ export async function createBot(
       webhookUrl,
       webhookSecret,
       apiKey,
+      kind,
     })
     .returning();
 
@@ -49,6 +51,7 @@ export async function createBot(
     userId: botUser.id,
     name: botUser.name,
     apiKey,
+    kind: bot.kind,
     webhookUrl: bot.webhookUrl,
     webhookSecret: bot.webhookSecret,
     createdAt: bot.createdAt.toISOString(),
@@ -62,6 +65,7 @@ export async function listBots(ownerId: string) {
       userId: bots.userId,
       webhookUrl: bots.webhookUrl,
       webhookSecret: bots.webhookSecret,
+      kind: bots.kind,
       createdAt: bots.createdAt,
       name: users.name,
     })
@@ -73,6 +77,7 @@ export async function listBots(ownerId: string) {
     id: r.id,
     userId: r.userId,
     name: r.name,
+    kind: r.kind,
     webhookUrl: r.webhookUrl,
     webhookSecret: r.webhookSecret,
     createdAt: r.createdAt.toISOString(),
@@ -281,6 +286,7 @@ export async function getBot(botId: string, ownerId: string) {
       userId: bots.userId,
       webhookUrl: bots.webhookUrl,
       webhookSecret: bots.webhookSecret,
+      kind: bots.kind,
       createdAt: bots.createdAt,
       ownerId: bots.ownerId,
       name: users.name,
@@ -302,6 +308,7 @@ export async function getBot(botId: string, ownerId: string) {
     id: row.id,
     userId: row.userId,
     name: row.name,
+    kind: row.kind,
     webhookUrl: row.webhookUrl,
     webhookSecret: row.webhookSecret,
     createdAt: row.createdAt.toISOString(),

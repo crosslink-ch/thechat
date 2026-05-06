@@ -13,10 +13,22 @@ import {
   regenerateBotKey,
   regenerateBotSecret,
 } from "../services/bots";
+import { createHermesBot } from "../services/hermes";
+
+const hermesConfigSchema = z.object({
+  baseUrl: z.string().url("Hermes base URL must be a URL"),
+  apiKey: z.string().min(1, "Hermes API key is required"),
+  defaultMode: z.enum(["run", "response"]).optional(),
+  defaultInstructions: z.string().nullish(),
+  defaultSessionScope: z.enum(["channel", "thread", "workspace"]).optional(),
+});
 
 const createSchema = z.object({
   name: z.string().trim().min(1, "Bot name is required"),
   webhookUrl: z.string().url().nullish(),
+  kind: z.enum(["webhook", "hermes"]).optional().default("webhook"),
+  workspaceId: z.string().trim().min(1, "Workspace ID is required").optional(),
+  hermes: hermesConfigSchema.optional(),
 });
 
 const updateSchema = z.object({
@@ -60,9 +72,31 @@ export const botRoutes = new Elysia({ prefix: "/bots" })
       return { error: parsed.error.issues[0]?.message ?? "Invalid input" };
     }
 
-    const { name, webhookUrl } = parsed.data;
+    const { name, webhookUrl, kind, workspaceId, hermes } = parsed.data;
 
     try {
+      if (kind === "hermes") {
+        if (!workspaceId) {
+          set.status = 400;
+          return { error: "Workspace ID is required for Hermes bots" };
+        }
+        if (!hermes) {
+          set.status = 400;
+          return { error: "Hermes configuration is required for Hermes bots" };
+        }
+        return await createHermesBot(
+          {
+            workspaceId,
+            name,
+            baseUrl: hermes.baseUrl,
+            apiKey: hermes.apiKey,
+            defaultMode: hermes.defaultMode,
+            defaultInstructions: hermes.defaultInstructions ?? null,
+            defaultSessionScope: hermes.defaultSessionScope,
+          },
+          user.id,
+        );
+      }
       return await createBot(name, webhookUrl ?? null, user.id);
     } catch (e: any) {
       set.status = e instanceof ServiceError ? e.status : 500;
