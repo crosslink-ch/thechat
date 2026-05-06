@@ -1,5 +1,5 @@
 import crypto from "crypto";
-import { and, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { db } from "../db";
 import {
   bots,
@@ -7,9 +7,7 @@ import {
   hermesBotConfigs,
   messages,
   users,
-  workspaceMembers,
 } from "../db/schema";
-import { createBot, addBotToWorkspace } from "./bots";
 import { ServiceError } from "./errors";
 import {
   getHermesCapabilities,
@@ -63,24 +61,6 @@ function toPublicConfig(row: typeof hermesBotConfigs.$inferSelect) {
   };
 }
 
-async function requireWorkspaceMember(workspaceId: string, userId: string) {
-  const [member] = await db
-    .select({ role: workspaceMembers.role })
-    .from(workspaceMembers)
-    .where(and(eq(workspaceMembers.workspaceId, workspaceId), eq(workspaceMembers.userId, userId)))
-    .limit(1);
-  if (!member) throw new ServiceError("You are not a member of this workspace", 403);
-  return member;
-}
-
-async function requireWorkspaceAdmin(workspaceId: string, userId: string) {
-  const member = await requireWorkspaceMember(workspaceId, userId);
-  if (!["admin", "owner"].includes(member.role)) {
-    throw new ServiceError("Only workspace admins can manage Hermes bots", 403);
-  }
-  return member;
-}
-
 async function requireBotOwner(botId: string, userId: string) {
   const [bot] = await db
     .select({ id: bots.id, userId: bots.userId, ownerId: bots.ownerId, kind: bots.kind, name: users.name })
@@ -100,39 +80,6 @@ async function getHermesConnection(botId: string): Promise<{ config: typeof herm
   return { config, connection: { baseUrl: config.baseUrl, apiKey: decryptSecret(config.apiKeyEncrypted) } };
 }
 
-export async function createHermesBot(input: {
-  workspaceId: string;
-  name: string;
-  baseUrl: string;
-  apiKey: string;
-  defaultMode?: HermesDefaultMode;
-  defaultInstructions?: string | null;
-  defaultSessionScope?: HermesSessionScope;
-}, ownerId: string) {
-  await requireWorkspaceAdmin(input.workspaceId, ownerId);
-  const bot = await createBot(input.name, null, ownerId, "hermes");
-  await db.insert(hermesBotConfigs).values({
-    botId: bot.id,
-    baseUrl: input.baseUrl.replace(/\/+$/, ""),
-    apiKeyEncrypted: encryptSecret(input.apiKey),
-    defaultMode: input.defaultMode ?? "run",
-    defaultInstructions: input.defaultInstructions ?? null,
-    defaultSessionScope: input.defaultSessionScope ?? "channel",
-  });
-  await addBotToWorkspace(bot.id, input.workspaceId, ownerId);
-  return {
-    bot: {
-      id: bot.id,
-      userId: bot.userId,
-      name: bot.name,
-      kind: "hermes" as const,
-      webhookUrl: null,
-      createdAt: bot.createdAt,
-    },
-    config: await getHermesBotConfig(bot.id, ownerId),
-  };
-}
-
 export async function getHermesBotConfig(botId: string, userId: string) {
   await requireBotOwner(botId, userId);
   const { config } = await getHermesConnection(botId);
@@ -147,13 +94,36 @@ export async function updateHermesBotConfig(botId: string, userId: string, updat
   defaultSessionScope?: HermesSessionScope;
 }) {
   await requireBotOwner(botId, userId);
+  const [existing] = await db
+    .select({ botId: hermesBotConfigs.botId })
+    .from(hermesBotConfigs)
+    .where(eq(hermesBotConfigs.botId, botId))
+    .limit(1);
+
+  if (!existing) {
+    if (!updates.baseUrl || !updates.apiKey) {
+      throw new ServiceError("Hermes base URL and API key are required to connect a Hermes bot", 400);
+    }
+    await db.insert(hermesBotConfigs).values({
+      botId,
+      baseUrl: updates.baseUrl.replace(/\/+$/, ""),
+      apiKeyEncrypted: encryptSecret(updates.apiKey),
+      defaultMode: updates.defaultMode ?? "run",
+      defaultInstructions: updates.defaultInstructions ?? null,
+      defaultSessionScope: updates.defaultSessionScope ?? "channel",
+    });
+    return getHermesBotConfig(botId, userId);
+  }
+
   const set: Partial<typeof hermesBotConfigs.$inferInsert> = {};
   if (updates.baseUrl !== undefined) set.baseUrl = updates.baseUrl.replace(/\/+$/, "");
   if (updates.apiKey !== undefined) set.apiKeyEncrypted = encryptSecret(updates.apiKey);
   if (updates.defaultMode !== undefined) set.defaultMode = updates.defaultMode;
   if (updates.defaultInstructions !== undefined) set.defaultInstructions = updates.defaultInstructions;
   if (updates.defaultSessionScope !== undefined) set.defaultSessionScope = updates.defaultSessionScope;
-  await db.update(hermesBotConfigs).set(set).where(eq(hermesBotConfigs.botId, botId));
+  if (Object.keys(set).length > 0) {
+    await db.update(hermesBotConfigs).set(set).where(eq(hermesBotConfigs.botId, botId));
+  }
   return getHermesBotConfig(botId, userId);
 }
 

@@ -1,5 +1,8 @@
 import { Elysia } from "elysia";
 import { z } from "zod";
+import { and, eq } from "drizzle-orm";
+import { db } from "../db";
+import { workspaceMembers } from "../db/schema";
 import { resolveTokenToUser } from "../auth/middleware";
 import { ServiceError } from "../services/errors";
 import {
@@ -13,22 +16,12 @@ import {
   regenerateBotKey,
   regenerateBotSecret,
 } from "../services/bots";
-import { createHermesBot } from "../services/hermes";
-
-const hermesConfigSchema = z.object({
-  baseUrl: z.string().url("Hermes base URL must be a URL"),
-  apiKey: z.string().min(1, "Hermes API key is required"),
-  defaultMode: z.enum(["run", "response"]).optional(),
-  defaultInstructions: z.string().nullish(),
-  defaultSessionScope: z.enum(["channel", "thread", "workspace"]).optional(),
-});
 
 const createSchema = z.object({
   name: z.string().trim().min(1, "Bot name is required"),
   webhookUrl: z.string().url().nullish(),
   kind: z.enum(["webhook", "hermes"]).optional().default("webhook"),
   workspaceId: z.string().trim().min(1, "Workspace ID is required").optional(),
-  hermes: hermesConfigSchema.optional(),
 });
 
 const updateSchema = z.object({
@@ -39,6 +32,18 @@ const updateSchema = z.object({
 const addToWorkspaceSchema = z.object({
   workspaceId: z.string().trim().min(1, "Workspace ID is required"),
 });
+
+async function requireWorkspaceAdmin(workspaceId: string, userId: string) {
+  const [member] = await db
+    .select({ role: workspaceMembers.role })
+    .from(workspaceMembers)
+    .where(and(eq(workspaceMembers.workspaceId, workspaceId), eq(workspaceMembers.userId, userId)))
+    .limit(1);
+  if (!member) throw new ServiceError("You are not a member of this workspace", 403);
+  if (!["admin", "owner"].includes(member.role)) {
+    throw new ServiceError("Only workspace admins can connect Hermes bots", 403);
+  }
+}
 
 export const botRoutes = new Elysia({ prefix: "/bots" })
   .derive(async ({ headers }) => {
@@ -66,13 +71,18 @@ export const botRoutes = new Elysia({ prefix: "/bots" })
       return { error: "Bots cannot create other bots" };
     }
 
+    if (body && typeof body === "object" && "hermes" in (body as Record<string, unknown>)) {
+      set.status = 400;
+      return { error: "Hermes connection settings must be sent to /bots/:botId/hermes" };
+    }
+
     const parsed = createSchema.safeParse(body);
     if (!parsed.success) {
       set.status = 400;
       return { error: parsed.error.issues[0]?.message ?? "Invalid input" };
     }
 
-    const { name, webhookUrl, kind, workspaceId, hermes } = parsed.data;
+    const { name, webhookUrl, kind, workspaceId } = parsed.data;
 
     try {
       if (kind === "hermes") {
@@ -80,22 +90,11 @@ export const botRoutes = new Elysia({ prefix: "/bots" })
           set.status = 400;
           return { error: "Workspace ID is required for Hermes bots" };
         }
-        if (!hermes) {
-          set.status = 400;
-          return { error: "Hermes configuration is required for Hermes bots" };
-        }
-        return await createHermesBot(
-          {
-            workspaceId,
-            name,
-            baseUrl: hermes.baseUrl,
-            apiKey: hermes.apiKey,
-            defaultMode: hermes.defaultMode,
-            defaultInstructions: hermes.defaultInstructions ?? null,
-            defaultSessionScope: hermes.defaultSessionScope,
-          },
-          user.id,
-        );
+        await requireWorkspaceAdmin(workspaceId, user.id);
+        const bot = await createBot(name, null, user.id, "hermes");
+        await addBotToWorkspace(bot.id, workspaceId, user.id);
+        const { apiKey: _apiKey, webhookSecret: _webhookSecret, ...publicBot } = bot;
+        return publicBot;
       }
       return await createBot(name, webhookUrl ?? null, user.id);
     } catch (e: any) {

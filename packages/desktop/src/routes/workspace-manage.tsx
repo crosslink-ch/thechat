@@ -197,22 +197,30 @@ export function WorkspaceManageRoute() {
     setHermesStatus("idle");
     setHermesErrorMsg(null);
     try {
-      const { error } = await api.bots.create.post(
+      const { data: bot, error: createError } = await api.bots.create.post(
         {
           kind: "hermes",
           workspaceId: activeWorkspace.id,
           name: hermesName.trim() || "Hermes",
-          hermes: {
-            baseUrl: hermesBaseUrl.trim(),
-            apiKey: hermesApiKey.trim(),
-            defaultMode: "run",
-            defaultInstructions: hermesInstructions.trim() || null,
-            defaultSessionScope: "channel",
-          },
         },
         auth(token),
       );
-      if (error) throw new Error((error as any).error || "Failed to create Hermes bot");
+      if (createError) throw new Error((createError as any).error || "Failed to create Hermes chat participant");
+      const botId = (bot as any)?.id;
+      if (!botId) throw new Error("Hermes chat participant was created without an ID");
+
+      const { error: connectError } = await api.bots({ botId }).hermes.patch(
+        {
+          baseUrl: hermesBaseUrl.trim(),
+          apiKey: hermesApiKey.trim(),
+          defaultMode: "run",
+          defaultInstructions: hermesInstructions.trim() || null,
+          defaultSessionScope: "channel",
+        },
+        auth(token),
+      );
+      if (connectError) throw new Error((connectError as any).error || "Failed to connect Hermes runtime");
+
       setHermesStatus("created");
       setHermesApiKey("");
       await selectWorkspace(activeWorkspace.id);
@@ -459,7 +467,7 @@ export function WorkspaceManageRoute() {
               Hermes Bot
             </span>
             <p className="text-[0.786rem] text-text-dimmed">
-              Add a Hermes Agent runtime to this workspace. The API key is encrypted server-side and is never shown again.
+              Connect an existing Hermes Agent runtime to this workspace. The API key is encrypted server-side and is never shown again.
             </p>
           </div>
 
@@ -519,14 +527,14 @@ export function WorkspaceManageRoute() {
                 disabled={creatingHermes || !hermesBaseUrl.trim() || !hermesApiKey.trim()}
                 className="cursor-pointer rounded-lg border border-border bg-raised px-4 py-2 text-[0.929rem] font-medium text-text-muted transition-colors hover:not-disabled:bg-hover hover:not-disabled:text-text disabled:cursor-not-allowed disabled:opacity-50"
               >
-                {creatingHermes ? "Adding Hermes..." : "Add Hermes Bot"}
+                {creatingHermes ? "Connecting Hermes..." : "Connect Hermes"}
               </button>
               {hermesStatus === "created" && (
-                <span className="text-[0.857rem] text-green-400">Hermes bot added. Mention it in a channel.</span>
+                <span className="text-[0.857rem] text-green-400">Hermes connected. Mention it in a channel.</span>
               )}
               {hermesStatus === "error" && (
                 <span className="text-[0.857rem] text-error-bright">
-                  {hermesErrorMsg || "Failed to add Hermes bot"}
+                  {hermesErrorMsg || "Failed to connect Hermes"}
                 </span>
               )}
             </div>

@@ -25,17 +25,17 @@ The only Hermes-specific table in the MVP is `hermes_bot_configs`, keyed by TheC
 
 ## API shape
 
-Use normal bot creation; Hermes is a bot kind/configuration, not a parallel creation universe.
+Use normal bot creation for the chat participant only. Connecting an existing Hermes runtime is a separate control-plane step on that bot.
 
 ```text
-POST   /bots/create                    # accepts kind: "webhook" | "hermes"
-GET    /bots/:botId/hermes             # config, without secret material
-PATCH  /bots/:botId/hermes             # update Hermes connection/defaults
+POST   /bots/create                    # creates bot participant; accepts kind: "webhook" | "hermes"
+GET    /bots/:botId/hermes             # connection/defaults, without secret material
+PATCH  /bots/:botId/hermes             # connect/update existing Hermes base URL, API key, defaults
 POST   /bots/:botId/hermes/test        # health + capabilities through backend
 GET    /bots/:botId/hermes/capabilities
 ```
 
-Do not add `POST /hermes/bots/create`.
+Do not put Hermes connection secrets in `POST /bots/create`, and do not add `POST /hermes/bots/create`.
 Do not add local `/hermes/runs` list/detail/event endpoints backed by TheChat tables. Browsing historical sessions/runs/jobs should proxy/query Hermes Gateway directly when that UI is built.
 
 ## Mention flow

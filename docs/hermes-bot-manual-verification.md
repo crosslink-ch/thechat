@@ -129,8 +129,13 @@ WORKSPACE_ID=$(curl -sS -X POST "$API/workspaces/create" \
 BOT_ID=$(curl -sS -X POST "$API/bots/create" \
   -H "Authorization: Bearer $TOKEN" \
   -H 'Content-Type: application/json' \
-  -d "{\"kind\":\"hermes\",\"workspaceId\":\"$WORKSPACE_ID\",\"name\":\"Hermes\",\"hermes\":{\"baseUrl\":\"http://localhost:18642\",\"apiKey\":\"$HERMES_API_KEY\",\"defaultInstructions\":\"Reply concisely.\"}}" \
-  | python3 -c 'import json,sys; print(json.load(sys.stdin)["bot"]["id"])')
+  -d "{\"kind\":\"hermes\",\"workspaceId\":\"$WORKSPACE_ID\",\"name\":\"Hermes\"}" \
+  | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')
+
+curl -sS -X PATCH "$API/bots/$BOT_ID/hermes" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d "{\"baseUrl\":\"http://localhost:18642\",\"apiKey\":\"$HERMES_API_KEY\",\"defaultInstructions\":\"Reply concisely.\"}"
 
 curl -sS -X POST "$API/bots/$BOT_ID/hermes/test" \
   -H "Authorization: Bearer $TOKEN" \

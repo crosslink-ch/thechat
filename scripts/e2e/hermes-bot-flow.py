@@ -243,17 +243,25 @@ def main():
                 "kind": "hermes",
                 "workspaceId": workspace_id,
                 "name": "Hermes",
-                "hermes": {
-                    "baseUrl": f"http://localhost:{HERMES_PORT}",
-                    "apiKey": HERMES_API_KEY,
-                    "defaultInstructions": "Reply with a short E2E confirmation.",
-                },
             },
             token,
         )
         assert status == 200, (status, bot)
-        assert bot["bot"]["kind"] == "hermes"
-        assert "apiKey" not in bot["bot"] and "apiKey" not in bot["config"]
+        assert bot["kind"] == "hermes"
+        assert "apiKey" not in bot
+
+        status, config = http_json(
+            "PATCH",
+            f"{base}/bots/{bot['id']}/hermes",
+            {
+                "baseUrl": f"http://localhost:{HERMES_PORT}",
+                "apiKey": HERMES_API_KEY,
+                "defaultInstructions": "Reply with a short E2E confirmation.",
+            },
+            token,
+        )
+        assert status == 200, (status, config)
+        assert "apiKey" not in config
 
         status, detail = http_json("GET", f"{base}/workspaces/{workspace_id}", token=token)
         assert status == 200, (status, detail)

@@ -117,6 +117,29 @@ async function waitFor<T>(fn: () => Promise<T | null>, timeoutMs = 5000): Promis
 }
 
 describe("Hermes bot routes and mention flow", () => {
+  test("rejects Hermes connection settings during generic bot creation", async () => {
+    const human = await registerUser("HermesConnectSeparate");
+    const workspace = await createWorkspace(human.token, "Hermes Connect Separate WS");
+
+    const createRes = await req(
+      "POST",
+      "/bots/create",
+      {
+        kind: "hermes",
+        workspaceId: workspace.id,
+        name: "Hermes",
+        hermes: {
+          baseUrl: "http://localhost:18642",
+          apiKey: "dev-hermes-key",
+        },
+      },
+      human.token,
+    );
+
+    expect(createRes.status).toBe(400);
+    expect(createRes.body.error).toContain("/bots/:botId/hermes");
+  });
+
   test("workspace admin creates and tests a Hermes bot without exposing API key", async () => {
     const hermes = startFakeHermes();
     try {
@@ -130,32 +153,39 @@ describe("Hermes bot routes and mention flow", () => {
           kind: "hermes",
           workspaceId: workspace.id,
           name: "Hermes",
-          hermes: {
-            baseUrl: hermes.baseUrl,
-            apiKey: "dev-hermes-key",
-            defaultInstructions: "Keep replies concise.",
-          },
         },
         human.token,
       );
 
       expect(createRes.status).toBe(200);
-      expect(createRes.body.bot.kind).toBe("hermes");
-      expect(createRes.body.bot.apiKey).toBeUndefined();
-      expect(createRes.body.config.apiKey).toBeUndefined();
-      createdBotUserIds.push(createRes.body.bot.userId);
+      expect(createRes.body.kind).toBe("hermes");
+      expect(createRes.body.apiKey).toBeUndefined();
+      createdBotUserIds.push(createRes.body.userId);
 
-      const [botRow] = await db.select({ kind: bots.kind }).from(bots).where(eq(bots.id, createRes.body.bot.id));
+      const connectRes = await req(
+        "PATCH",
+        `/bots/${createRes.body.id}/hermes`,
+        {
+          baseUrl: hermes.baseUrl,
+          apiKey: "dev-hermes-key",
+          defaultInstructions: "Keep replies concise.",
+        },
+        human.token,
+      );
+      expect(connectRes.status).toBe(200);
+      expect(connectRes.body.apiKey).toBeUndefined();
+
+      const [botRow] = await db.select({ kind: bots.kind }).from(bots).where(eq(bots.id, createRes.body.id));
       expect(botRow.kind).toBe("hermes");
 
       const [configRow] = await db
         .select({ baseUrl: hermesBotConfigs.baseUrl, apiKey: hermesBotConfigs.apiKeyEncrypted })
         .from(hermesBotConfigs)
-        .where(eq(hermesBotConfigs.botId, createRes.body.bot.id));
+        .where(eq(hermesBotConfigs.botId, createRes.body.id));
       expect(configRow.baseUrl).toBe(hermes.baseUrl);
       expect(configRow.apiKey).not.toBe("dev-hermes-key");
 
-      const testRes = await req("POST", `/bots/${createRes.body.bot.id}/hermes/test`, {}, human.token);
+      const testRes = await req("POST", `/bots/${createRes.body.id}/hermes/test`, {}, human.token);
       expect(testRes.status).toBe(200);
       expect(testRes.body.health.status).toBe("ok");
       expect(testRes.body.capabilities.capabilities).toContain("runs");
@@ -176,15 +206,22 @@ describe("Hermes bot routes and mention flow", () => {
           kind: "hermes",
           workspaceId: workspace.id,
           name: "Koda",
-          hermes: {
-            baseUrl: hermes.baseUrl,
-            apiKey: "dev-hermes-key",
-            defaultInstructions: "You are Koda in TheChat.",
-          },
         },
         human.token,
       );
-      createdBotUserIds.push(createRes.body.bot.userId);
+      expect(createRes.status).toBe(200);
+      createdBotUserIds.push(createRes.body.userId);
+      const connectRes = await req(
+        "PATCH",
+        `/bots/${createRes.body.id}/hermes`,
+        {
+          baseUrl: hermes.baseUrl,
+          apiKey: "dev-hermes-key",
+          defaultInstructions: "You are Koda in TheChat.",
+        },
+        human.token,
+      );
+      expect(connectRes.status).toBe(200);
 
       const detailRes = await req("GET", `/workspaces/${workspace.id}`, undefined, human.token);
       const channelId = detailRes.body.channels[0].id;
@@ -208,7 +245,7 @@ describe("Hermes bot routes and mention flow", () => {
       const runCall = hermes.calls.find((c) => c.path === "/v1/runs");
       expect(runCall?.auth).toBe("Bearer dev-hermes-key");
       expect((runCall?.body as any).input).toBe("say hello");
-      expect((runCall?.body as any).session_id).toContain(`thechat:workspace:${workspace.id}:conversation:${channelId}:bot:${createRes.body.bot.id}`);
+      expect((runCall?.body as any).session_id).toContain(`thechat:workspace:${workspace.id}:conversation:${channelId}:bot:${createRes.body.id}`);
     } finally {
       hermes.server.stop(true);
     }
