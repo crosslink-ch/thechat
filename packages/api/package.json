@@ -5,8 +5,10 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
+    "./async": "./src/async/index.ts",
     "./db": "./src/db/index.ts",
     "./db/schema": "./src/db/schema.ts",
+    "./realtime": "./src/realtime.ts",
     "./test-helpers": "./src/test-helpers.ts"
   },
   "scripts": {
@@ -23,10 +25,13 @@
     "@bogeychan/elysia-logger": "^0.1.10",
     "@elysiajs/cors": "^1.2.0",
     "@modelcontextprotocol/sdk": "^1.26.0",
+    "@opentelemetry/api": "^1.9.1",
     "@thechat/shared": "workspace:*",
+    "bullmq": "^5.76.6",
     "drizzle-orm": "^0.45.1",
     "elysia": "^1.2.0",
     "elysia-mcp": "^0.1.1",
+    "ioredis": "^5.10.1",
     "jose": "^6.1.3",
     "nodemailer": "^6.9.0",
     "postgres": "^3.4.8",

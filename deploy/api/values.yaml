@@ -21,6 +21,10 @@ databaseSecret: thechat-db
 # Name of an existing Kubernetes Secret containing JWT_SECRET
 jwtSecret: thechat-jwt
 
+# Name of an existing Kubernetes Secret containing REDIS_URL.
+# Required when REALTIME_DRIVER=redis or BullMQ workers are enabled.
+redisSecret: thechat-redis
+
 # Name of an existing Kubernetes Secret for SMTP credentials (optional)
 # Expected keys: SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS
 # Set to "" to disable
@@ -34,6 +38,9 @@ postmarkSecret: ""
 env:
   THECHAT_BACKEND_PORT: "3000"
   THECHAT_BACKEND_URL: "https://api.thechat.app"
+  REALTIME_DRIVER: "redis"
+  REDIS_KEY_PREFIX: "thechat"
+  ASYNC_WORKER_CONCURRENCY: "4"
   EMAIL_PROVIDER: "smtp"
   EMAIL_FROM: "noreply@thechat.app"
   REQUIRE_EMAIL_VERIFICATION: "false"
@@ -63,7 +70,6 @@ resources:
     memory: 1Gi
     cpu: 1500m
 
-# Don't use yet, websockets would break.
 autoscaling:
   enabled: false
   minReplicas: 1

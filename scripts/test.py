@@ -78,6 +78,20 @@ def is_postgres_running() -> bool:
         return False
 
 
+def is_redis_running() -> bool:
+    """Check if Redis is reachable using REDIS_URL from env or local compose defaults."""
+    from urllib.parse import urlparse
+    redis_url = os.environ.get("REDIS_URL", "redis://localhost:16380")
+    parsed = urlparse(redis_url)
+    host = parsed.hostname or "localhost"
+    port = parsed.port or 6379
+    try:
+        with socket.create_connection((host, port), timeout=1):
+            return True
+    except OSError:
+        return False
+
+
 def rust_cmd() -> list[str]:
     """Rust unit tests only — ignored tests are handled by opt-in suites (mcp, codex)."""
     return [
@@ -375,6 +389,17 @@ def main():
         print(
             "\033[33mSkipping API tests: "
             "PostgreSQL is not reachable\033[0m"
+        )
+        suites = [s for s in suites if s["name"] != "api"]
+        if not suites:
+            sys.exit(0)
+
+    # Skip API tests if Redis is not reachable. Redis backs BullMQ integration
+    # tests and the multi-pod websocket realtime bus.
+    if any(s["name"] == "api" for s in suites) and not is_redis_running():
+        print(
+            "\033[33mSkipping API tests: "
+            "Redis is not reachable\033[0m"
         )
         suites = [s for s in suites if s["name"] != "api"]
         if not suites:

@@ -6,6 +6,7 @@ import type { WsClientEvent, WsServerEvent } from "@thechat/shared";
 import { resolveTokenToUser } from "../auth/middleware";
 import { sendMessage } from "../services/messages";
 import { ServiceError } from "../services/errors";
+import { getRealtimeBus, publishWsEventToUsers } from "../realtime";
 
 // Connection tracking
 const userSockets = new Map<string, Set<WebSocket>>();
@@ -40,6 +41,24 @@ function sendTo(ws: WebSocket, event: WsServerEvent) {
 }
 
 export function broadcastToUser(userId: string, event: WsServerEvent) {
+  void publishWsEventToUsers([userId], event).catch((error) => {
+    console.error("Failed to publish websocket event", error);
+  });
+}
+
+export async function broadcastToUsers(userIds: string[], event: WsServerEvent) {
+  await publishWsEventToUsers(userIds, event);
+}
+
+async function tryBroadcastToUsers(userIds: string[], event: WsServerEvent) {
+  try {
+    await broadcastToUsers(userIds, event);
+  } catch (error) {
+    console.error("Failed to publish websocket event", error);
+  }
+}
+
+function deliverToLocalUser(userId: string, event: WsServerEvent) {
   const sockets = userSockets.get(userId);
   if (!sockets) return;
   const data = JSON.stringify(event);
@@ -49,6 +68,25 @@ export function broadcastToUser(userId: string, event: WsServerEvent) {
     }
   }
 }
+
+let realtimeSubscriptionStarted = false;
+
+function startRealtimeSubscription() {
+  if (realtimeSubscriptionStarted) return;
+  realtimeSubscriptionStarted = true;
+  void getRealtimeBus().subscribe(async (event) => {
+    if (event.type !== "ws.event") return;
+    for (const userId of event.targetUserIds) {
+      deliverToLocalUser(userId, event.event);
+    }
+  }).catch((error) => {
+    realtimeSubscriptionStarted = false;
+    console.error("Failed to subscribe to realtime events", error);
+    setTimeout(startRealtimeSubscription, 1_000);
+  });
+}
+
+startRealtimeSubscription();
 
 async function validateToken(token: string) {
   const user = await resolveTokenToUser(token);
@@ -94,15 +132,15 @@ async function handleSendMessage(
       conversationId: msg.conversationId,
       senderId: msg.senderId,
       senderName: msg.senderName,
+      senderType: msg.senderType,
       content: msg.content,
+      parts: msg.parts,
       createdAt: msg.createdAt,
     },
     conversationType: conv?.type ?? "group",
   };
 
-  for (const p of participants) {
-    broadcastToUser(p.userId, event);
-  }
+  await tryBroadcastToUsers(participants.map((p) => p.userId), event);
 }
 
 async function handleTyping(
@@ -123,11 +161,10 @@ async function handleTyping(
     userName,
   };
 
-  for (const p of participants) {
-    if (p.userId !== userId) {
-      broadcastToUser(p.userId, event);
-    }
-  }
+  await tryBroadcastToUsers(
+    participants.filter((p) => p.userId !== userId).map((p) => p.userId),
+    event,
+  );
 }
 
 export const wsRoutes = new Elysia().ws("/ws", {
