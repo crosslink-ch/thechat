@@ -2,7 +2,7 @@ import { describe, test, expect, afterAll } from "bun:test";
 import { Elysia } from "elysia";
 import { eq } from "drizzle-orm";
 import { db } from "../db";
-import { users, workspaces, bots } from "../db/schema";
+import { conversationParticipants, users, workspaces, bots } from "../db/schema";
 import { authRoutes } from "../auth";
 import { workspaceRoutes } from "../workspaces";
 import { conversationRoutes } from "../conversations";
@@ -410,6 +410,139 @@ describe("Bots: DM with bot", () => {
     expect(fetchRes.status).toBe(200);
     expect(fetchRes.body.length).toBeGreaterThanOrEqual(1);
     expect(fetchRes.body[0].content).toBe("Hey bot!");
+  });
+
+  test("adding another bot does not attach it to an existing bot DM", async () => {
+    const human = await registerUser("MultiBotDMOwner");
+
+    const wsRes = await req(
+      "POST",
+      "/workspaces/create",
+      { name: "Multi Bot DM WS" },
+      human.token
+    );
+    createdWorkspaceIds.push(wsRes.body.id);
+
+    const firstBotRes = await createBot(human.token, "FirstDMBot");
+    await req(
+      "POST",
+      `/bots/${firstBotRes.body.id}/workspaces`,
+      { workspaceId: wsRes.body.id },
+      human.token
+    );
+
+    const firstDmRes = await req(
+      "POST",
+      "/conversations/dm",
+      { workspaceId: wsRes.body.id, otherUserId: firstBotRes.body.userId },
+      human.token
+    );
+    expect(firstDmRes.status).toBe(200);
+
+    const secondBotRes = await createBot(human.token, "SecondDMBot");
+    await req(
+      "POST",
+      `/bots/${secondBotRes.body.id}/workspaces`,
+      { workspaceId: wsRes.body.id },
+      human.token
+    );
+
+    const firstDmParticipants = await db
+      .select({ userId: conversationParticipants.userId })
+      .from(conversationParticipants)
+      .where(eq(conversationParticipants.conversationId, firstDmRes.body.id));
+    expect(firstDmParticipants.map((p) => p.userId).sort()).toEqual(
+      [human.user.id, firstBotRes.body.userId].sort()
+    );
+
+    const secondDmRes = await req(
+      "POST",
+      "/conversations/dm",
+      { workspaceId: wsRes.body.id, otherUserId: secondBotRes.body.userId },
+      human.token
+    );
+    expect(secondDmRes.status).toBe(200);
+    expect(secondDmRes.body.id).not.toBe(firstDmRes.body.id);
+  });
+
+  test("corrupted DMs with extra participants are not reused for a different bot", async () => {
+    const human = await registerUser("CorruptDMOwner");
+
+    const wsRes = await req(
+      "POST",
+      "/workspaces/create",
+      { name: "Corrupt Bot DM WS" },
+      human.token
+    );
+    createdWorkspaceIds.push(wsRes.body.id);
+
+    const firstBotRes = await createBot(human.token, "CorruptFirstBot");
+    const secondBotRes = await createBot(human.token, "CorruptSecondBot");
+    await req(
+      "POST",
+      `/bots/${firstBotRes.body.id}/workspaces`,
+      { workspaceId: wsRes.body.id },
+      human.token
+    );
+    await req(
+      "POST",
+      `/bots/${secondBotRes.body.id}/workspaces`,
+      { workspaceId: wsRes.body.id },
+      human.token
+    );
+
+    const firstDmRes = await req(
+      "POST",
+      "/conversations/dm",
+      { workspaceId: wsRes.body.id, otherUserId: firstBotRes.body.userId },
+      human.token
+    );
+    expect(firstDmRes.status).toBe(200);
+
+    await db
+      .insert(conversationParticipants)
+      .values({
+        conversationId: firstDmRes.body.id,
+        userId: secondBotRes.body.userId,
+        role: "member",
+      })
+      .onConflictDoNothing();
+
+    const firstDmAgainRes = await req(
+      "POST",
+      "/conversations/dm",
+      { workspaceId: wsRes.body.id, otherUserId: firstBotRes.body.userId },
+      human.token
+    );
+    expect(firstDmAgainRes.status).toBe(200);
+    expect(firstDmAgainRes.body.id).toBe(firstDmRes.body.id);
+
+    const repairedFirstParticipants = await db
+      .select({ userId: conversationParticipants.userId })
+      .from(conversationParticipants)
+      .where(eq(conversationParticipants.conversationId, firstDmRes.body.id));
+    expect(repairedFirstParticipants.map((p) => p.userId).sort()).toEqual(
+      [human.user.id, firstBotRes.body.userId].sort()
+    );
+
+    const secondDmRes = await req(
+      "POST",
+      "/conversations/dm",
+      { workspaceId: wsRes.body.id, otherUserId: secondBotRes.body.userId },
+      human.token
+    );
+
+    expect(secondDmRes.status).toBe(200);
+    expect(secondDmRes.body.id).not.toBe(firstDmRes.body.id);
+
+    const secondDmParticipants = await db
+      .select({ userId: conversationParticipants.userId })
+      .from(conversationParticipants)
+      .where(eq(conversationParticipants.conversationId, secondDmRes.body.id));
+    expect(secondDmParticipants.map((p) => p.userId).sort()).toEqual(
+      [human.user.id, secondBotRes.body.userId].sort()
+    );
+
   });
 });
 

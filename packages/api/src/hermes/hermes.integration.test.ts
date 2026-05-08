@@ -2,7 +2,16 @@ import { describe, test, expect, afterAll } from "bun:test";
 import { Elysia } from "elysia";
 import { and, eq } from "drizzle-orm";
 import { db } from "../db";
-import { botInvocations, botSessions, users, workspaces, bots, hermesBotConfigs, messages } from "../db/schema";
+import {
+  botInvocations,
+  botSessions,
+  conversationParticipants,
+  users,
+  workspaces,
+  bots,
+  hermesBotConfigs,
+  messages,
+} from "../db/schema";
 import { authRoutes } from "../auth";
 import { workspaceRoutes } from "../workspaces";
 import { conversationRoutes } from "../conversations";
@@ -363,6 +372,14 @@ describe("Hermes bot routes and mention flow", () => {
       expect((runCall?.body as any).input).toBe("say hello from the DM");
       expect((runCall?.body as any).session_id).toContain(`thechat:workspace:${workspace.id}:conversation:${dmRes.body.id}:bot:${createRes.body.id}`);
 
+      const firstDmParticipants = await db
+        .select({ userId: conversationParticipants.userId })
+        .from(conversationParticipants)
+        .where(eq(conversationParticipants.conversationId, dmRes.body.id));
+      expect(firstDmParticipants.map((p) => p.userId).sort()).toEqual(
+        [human.user.id, createRes.body.userId].sort(),
+      );
+
       const followupRes = await req("POST", `/messages/${dmRes.body.id}`, { content: "what did I ask before?" }, human.token);
       expect(followupRes.status).toBe(200);
 
@@ -401,6 +418,37 @@ describe("Hermes bot routes and mention flow", () => {
           expect.objectContaining({ role: "assistant", content: "Hermes says hello from fake Docker runtime" }),
         ]),
       );
+
+      const novaDmRes = await req(
+        "POST",
+        "/conversations/dm",
+        { workspaceId: workspace.id, otherUserId: novaRes.body.userId },
+        human.token,
+      );
+      expect(novaDmRes.status).toBe(200);
+      expect(novaDmRes.body.id).not.toBe(dmRes.body.id);
+
+      const novaSendRes = await req("POST", `/messages/${novaDmRes.body.id}`, { content: "say hello from the Nova DM" }, human.token);
+      expect(novaSendRes.status).toBe(200);
+
+      await waitFor(async () => {
+        const rows = await db
+          .select({ id: messages.id })
+          .from(messages)
+          .where(
+            and(
+              eq(messages.conversationId, novaDmRes.body.id),
+              eq(messages.senderId, novaRes.body.userId),
+              eq(messages.content, "Hermes says hello from fake Docker runtime"),
+            ),
+          );
+        return rows[0] ?? null;
+      });
+
+      const novaMessagesRes = await req("GET", `/messages/${novaDmRes.body.id}`, undefined, human.token);
+      expect(novaMessagesRes.status).toBe(200);
+      expect(novaMessagesRes.body.some((m: any) => m.senderName === "NovaDirect")).toBe(true);
+      expect(novaMessagesRes.body.some((m: any) => m.senderName === "DirectKoda")).toBe(false);
     } finally {
       hermes.server.stop(true);
     }

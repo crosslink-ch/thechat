@@ -369,7 +369,10 @@ function createBotInvokeCommand(
 
 async function handleQueuedBotInvocation(invocationId: string, context: { setProgress(progress: number, detail?: unknown): Promise<void> }) {
   const loaded = await loadInvocationContext(invocationId);
-  if (!loaded) throw new Error(`Bot invocation not found: ${invocationId}`);
+  if (!loaded) {
+    await context.setProgress(100, { status: "missing" });
+    return;
+  }
   if (loaded.invocation.status === "completed") return;
   if (loaded.invocation.status === "running" && loaded.invocation.startedAt) {
     const ageMs = Date.now() - loaded.invocation.startedAt.getTime();

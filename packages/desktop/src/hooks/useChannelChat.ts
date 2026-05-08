@@ -28,18 +28,29 @@ export function useChannelChat({
     if (conversationId === prevConvId.current) return;
     prevConvId.current = conversationId;
 
+    let cancelled = false;
+    setMessages([]);
     setLoading(true);
     api.messages({ conversationId }).get({
       query: { limit: 50 },
       headers: { authorization: `Bearer ${token}` },
     })
       .then(({ data }) => {
+        if (cancelled || conversationId !== prevConvId.current) return;
         if (Array.isArray(data)) {
           setMessages(data as ChatMessage[]);
         }
       })
       .catch(() => {})
-      .finally(() => setLoading(false));
+      .finally(() => {
+        if (!cancelled && conversationId === prevConvId.current) {
+          setLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, [conversationId, token]);
 
   const addMessage = useCallback(

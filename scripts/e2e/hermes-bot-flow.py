@@ -361,19 +361,39 @@ def main():
         assert status == 200, (status, dm_messages)
         assert not any(m.get("senderName") == "Nova E2E" for m in dm_messages), dm_messages
 
+        status, nova_dm = http_json(
+            "POST",
+            f"{base}/conversations/dm",
+            {"workspaceId": workspace_id, "otherUserId": nova["userId"]},
+            token,
+        )
+        assert status == 200, (status, nova_dm)
+        assert nova_dm["id"] != dm_id, (dm_id, nova_dm)
+
+        status, sent = http_json("POST", f"{base}/messages/{nova_dm['id']}", {"content": "Answer this Nova direct message smoke test"}, token)
+        assert status == 200, (status, sent)
+        nova_dm_message = wait_for_bot_message(base, token, nova_dm["id"], "Nova E2E")
+        nova_dm_runtime = wait_for_completed_runtime_invocations(base, token, nova_dm["id"], "Nova E2E", 1)
+        status, nova_dm_messages = http_json("GET", f"{base}/messages/{nova_dm['id']}", token=token)
+        assert status == 200, (status, nova_dm_messages)
+        assert any(m.get("senderName") == "Nova E2E" for m in nova_dm_messages), nova_dm_messages
+        assert not any(m.get("senderName") == "Koda E2E" for m in nova_dm_messages), nova_dm_messages
+
         print(json.dumps({
             "ok": True,
             "workspaceId": workspace_id,
             "channelId": channel_id,
             "dmId": dm_id,
+            "novaDmId": nova_dm["id"],
             "bots": [koda["name"], nova["name"]],
             "channelMessages": [koda_channel, nova_channel],
-            "directMessage": koda_dm,
+            "directMessages": [koda_dm, nova_dm_message],
             "runtime": {
                 "kodaChannel": koda_channel_runtime,
                 "novaChannel": nova_channel_runtime,
                 "kodaDmStarted": koda_dm_runtime_started,
                 "kodaDm": koda_dm_runtime_followup,
+                "novaDm": nova_dm_runtime,
             },
         }, indent=2))
     finally:

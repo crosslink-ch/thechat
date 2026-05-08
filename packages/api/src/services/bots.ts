@@ -149,11 +149,17 @@ export async function addBotToWorkspace(
     });
   }
 
-  // Add bot to all channels in the workspace
+  // Add bot to all channels in the workspace. Direct conversations are owned
+  // by their participants and must not gain newly-added workspace bots.
   const channels = await db
     .select({ id: conversations.id })
     .from(conversations)
-    .where(eq(conversations.workspaceId, workspaceId));
+    .where(
+      and(
+        eq(conversations.workspaceId, workspaceId),
+        eq(conversations.type, "group")
+      )
+    );
 
   for (const channel of channels) {
     const [existingParticipant] = await db

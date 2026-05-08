@@ -1,4 +1,4 @@
-import { eq, and, desc } from "drizzle-orm";
+import { and, asc, desc, eq, inArray } from "drizzle-orm";
 import { db } from "../db";
 import {
   bots,
@@ -30,6 +30,8 @@ export async function createOrGetDm(
     throw new ServiceError("Both users must be workspace members", 403);
   }
 
+  await repairCorruptedDirectDms(workspaceId, userId);
+
   // Check if DM already exists between these two users in this workspace
   const myDmConvos = await db
     .select({ conversationId: conversationParticipants.conversationId })
@@ -51,19 +53,21 @@ export async function createOrGetDm(
 
     if (!conv) continue;
 
-    // Check if other user is also a participant
-    const [otherParticipant] = await db
-      .select()
+    // A direct conversation must be exactly this pair. Older builds could
+    // accidentally add workspace bots to existing DMs, so do not reuse a
+    // direct conversation that has extra participants.
+    const participants = await db
+      .select({ userId: conversationParticipants.userId })
       .from(conversationParticipants)
-      .where(
-        and(
-          eq(conversationParticipants.conversationId, conversationId),
-          eq(conversationParticipants.userId, otherUserId)
-        )
-      )
-      .limit(1);
+      .where(eq(conversationParticipants.conversationId, conversationId));
 
-    if (otherParticipant) {
+    const participantIds = new Set(participants.map((p) => p.userId));
+    const isExactDm =
+      participantIds.size === 2 &&
+      participantIds.has(userId) &&
+      participantIds.has(otherUserId);
+
+    if (isExactDm) {
       // DM already exists, return it
       const [otherUser] = await db
         .select({
@@ -190,9 +194,9 @@ export async function listUserDms(workspaceId: string, userId: string) {
       .from(conversationParticipants)
       .where(eq(conversationParticipants.conversationId, conversationId));
 
-    const otherUserId = otherParticipants.find(
-      (p) => p.userId !== userId
-    )?.userId;
+    if (otherParticipants.length !== 2) continue;
+
+    const otherUserId = otherParticipants.find((p) => p.userId !== userId)?.userId;
     if (!otherUserId) continue;
 
     const [otherUser] = await db
@@ -252,6 +256,66 @@ export async function listUserDms(workspaceId: string, userId: string) {
   }
 
   return results;
+}
+
+async function repairCorruptedDirectDms(workspaceId: string, userId: string) {
+  const directConversations = await db
+    .select({ conversationId: conversationParticipants.conversationId })
+    .from(conversationParticipants)
+    .innerJoin(conversations, eq(conversationParticipants.conversationId, conversations.id))
+    .where(
+      and(
+        eq(conversationParticipants.userId, userId),
+        eq(conversations.workspaceId, workspaceId),
+        eq(conversations.type, "direct"),
+      ),
+    );
+
+  for (const { conversationId } of directConversations) {
+    const participants = await db
+      .select({
+        userId: conversationParticipants.userId,
+        joinedAt: conversationParticipants.joinedAt,
+        userType: users.type,
+      })
+      .from(conversationParticipants)
+      .innerJoin(users, eq(conversationParticipants.userId, users.id))
+      .where(eq(conversationParticipants.conversationId, conversationId))
+      .orderBy(asc(conversationParticipants.joinedAt));
+
+    if (participants.length <= 2) continue;
+
+    const humans = participants.filter((p) => p.userType === "human");
+    const botParticipants = participants.filter((p) => p.userType === "bot");
+    let keepIds: string[] | null = null;
+
+    if (humans.length === 2) {
+      keepIds = humans.map((p) => p.userId);
+    } else if (humans.length === 1 && botParticipants.length > 0) {
+      const botUserIds = botParticipants.map((p) => p.userId);
+      const [oldestBotMessage] = await db
+        .select({ senderId: messages.senderId })
+        .from(messages)
+        .where(and(eq(messages.conversationId, conversationId), inArray(messages.senderId, botUserIds)))
+        .orderBy(asc(messages.createdAt))
+        .limit(1);
+      keepIds = [humans[0].userId, oldestBotMessage?.senderId ?? botParticipants[0].userId];
+    }
+
+    if (!keepIds) continue;
+    const keep = new Set(keepIds);
+    const removeIds = participants.map((p) => p.userId).filter((id) => !keep.has(id));
+    if (removeIds.length === 0) continue;
+
+    await db
+      .delete(conversationParticipants)
+      .where(
+        and(
+          eq(conversationParticipants.conversationId, conversationId),
+          inArray(conversationParticipants.userId, removeIds),
+        ),
+      );
+  }
 }
 
 export async function getConversationDetail(conversationId: string, userId: string) {
