@@ -5,7 +5,6 @@ import { useAuthStore } from "../stores/auth";
 import { requestInputBarFocus } from "../stores/input-focus";
 import { useWorkspacesStore } from "../stores/workspaces";
 
-const DEFAULT_BASE_URL = "http://localhost:18642";
 const DEFAULT_INSTRUCTIONS = "Reply concisely in TheChat.";
 
 const useHermesBotModalState = create(() => ({ open: false }));
@@ -34,8 +33,6 @@ function HermesBotModalInner() {
   const selectWorkspace = useWorkspacesStore((s) => s.selectWorkspace);
 
   const [name, setName] = useState("");
-  const [baseUrl, setBaseUrl] = useState(DEFAULT_BASE_URL);
-  const [apiKey, setApiKey] = useState("");
   const [instructions, setInstructions] = useState(DEFAULT_INSTRUCTIONS);
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -78,15 +75,6 @@ function HermesBotModalInner() {
       setError("Bot name is required.");
       return;
     }
-    if (!baseUrl.trim()) {
-      setError("Hermes base URL is required.");
-      return;
-    }
-    if (!apiKey.trim()) {
-      setError("Hermes API key is required.");
-      return;
-    }
-
     setSubmitting(true);
     try {
       const { data: bot, error: createError } = await api.bots.create.post(
@@ -106,8 +94,6 @@ function HermesBotModalInner() {
 
       const { error: connectError } = await api.bots({ botId }).hermes.patch(
         {
-          baseUrl: baseUrl.trim(),
-          apiKey: apiKey.trim(),
           defaultMode: "run",
           defaultInstructions: instructions.trim() || null,
           defaultSessionScope: "channel",
@@ -142,29 +128,6 @@ function HermesBotModalInner() {
               placeholder="Koda"
               value={name}
               onChange={(e) => setName(e.target.value)}
-            />
-          </label>
-
-          <label className="mb-3.5 block">
-            <span className="mb-1.5 block text-[0.857rem] font-medium text-text-muted">Hermes base URL</span>
-            <input
-              className="block w-full rounded-lg border border-border bg-base px-3.5 py-2.5 font-[inherit] text-[0.929rem] text-text outline-none transition-colors duration-150 placeholder:text-text-placeholder focus:border-border-focus"
-              type="url"
-              value={baseUrl}
-              onChange={(e) => setBaseUrl(e.target.value)}
-              spellCheck={false}
-            />
-          </label>
-
-          <label className="mb-3.5 block">
-            <span className="mb-1.5 block text-[0.857rem] font-medium text-text-muted">Hermes API key</span>
-            <input
-              className="block w-full rounded-lg border border-border bg-base px-3.5 py-2.5 font-[inherit] text-[0.929rem] text-text outline-none transition-colors duration-150 placeholder:text-text-placeholder focus:border-border-focus"
-              type="password"
-              placeholder="API_SERVER_KEY"
-              value={apiKey}
-              onChange={(e) => setApiKey(e.target.value)}
-              spellCheck={false}
             />
           </label>
 

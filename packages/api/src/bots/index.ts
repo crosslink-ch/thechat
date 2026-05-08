@@ -16,6 +16,7 @@ import {
   regenerateBotKey,
   regenerateBotSecret,
 } from "../services/bots";
+import { ensureHermesBotConfig } from "../services/hermes";
 
 const createSchema = z.object({
   name: z.string().trim().min(1, "Bot name is required"),
@@ -92,6 +93,7 @@ export const botRoutes = new Elysia({ prefix: "/bots" })
         }
         await requireWorkspaceAdmin(workspaceId, user.id);
         const bot = await createBot(name, null, user.id, "hermes");
+        await ensureHermesBotConfig(bot.id);
         await addBotToWorkspace(bot.id, workspaceId, user.id);
         const { apiKey: _apiKey, webhookSecret: _webhookSecret, ...publicBot } = bot;
         return publicBot;

@@ -14,7 +14,7 @@ This skill activates the TheChat MCP tools (prefixed with \`thechat__\`) — use
 
 Bots in thechat are special users that can be added to workspaces and channels. The two common bot types are:
 - **Webhook bots** — custom bots that receive a signed webhook when @mentioned, then post their own response.
-- **Hermes bots** — native bots wired to an existing Hermes Gateway/API runtime. TheChat starts Hermes runs server-side and posts the final Hermes output as the bot.
+- **Hermes bots** — native bots backed by a Hermes Gateway TheChat platform adapter. Hermes Gateway consumes TheChat messages as platform events and posts replies back as the bot.
 
 Webhook bots have:
 - A **name** — displayed in channels like any user
@@ -23,9 +23,8 @@ Webhook bots have:
 
 Hermes bots have:
 - A **name** — any user-facing bot name, not necessarily "Hermes"
-- A **Hermes base URL** — for example \`http://localhost:18642\`
-- A **Hermes API key** — the Hermes Gateway \`API_SERVER_KEY\`; TheChat stores it encrypted and never returns it
-- Optional default instructions/session settings for Hermes runs
+- Optional default instructions/session settings
+- A running Hermes Gateway configured with TheChat platform bridge credentials
 
 ## Steps
 
@@ -89,16 +88,19 @@ Unless the user specifies otherwise, prefer using Bun and TypeScript for buildin
 
 Use this flow when the user asks to add, connect, configure, or wire up a Hermes bot.
 
-### 1. Confirm the Hermes runtime
+### 1. Confirm the Hermes platform bridge
 
-The user needs a running Hermes Gateway/API endpoint and an API key. Common local defaults are:
+Hermes Gateway must be running with TheChat enabled as a messaging platform. TheChat does not call the Hermes run API for bot replies; Hermes Gateway polls TheChat for pending bot invocations and posts responses back through the TheChat platform endpoints.
+
+The gateway needs:
 
 \`\`\`
-Hermes base URL: http://localhost:18642
-Hermes API key:  <API_SERVER_KEY>
+THECHAT_BASE_URL=<TheChat API URL>
+THECHAT_HERMES_PLATFORM_TOKEN=<shared bridge token>
+THECHAT_ALLOW_ALL_USERS=true
 \`\`\`
 
-Do not assume how Hermes Gateway is deployed. Ask the user for the base URL and API key if they have not provided them.
+TheChat API must run with the same \`THECHAT_HERMES_PLATFORM_TOKEN\`.
 
 ### 2. Create a Hermes bot user
 
@@ -112,7 +114,7 @@ Create the chat participant as a normal bot with \`kind: "hermes"\`, a workspace
 }
 \`\`\`
 
-Do not put Hermes connection settings in generic bot creation. The Hermes base URL and API key must be sent in the separate Hermes config step.
+Do not put Hermes connection settings in generic bot creation. Runtime connectivity belongs to the Hermes Gateway TheChat platform adapter, not the bot record.
 
 If using HTTP directly:
 
@@ -124,23 +126,21 @@ Body: { "kind": "hermes", "workspaceId": "<workspace-id>", "name": "Koda" }
 
 Only workspace owners/admins can connect Hermes bots. Multiple Hermes bots can be added to the same workspace by repeating this flow with different names/configs.
 
-### 3. Connect the bot to Hermes Gateway
+### 3. Configure bot defaults
 
-Configure the created bot with the Hermes runtime details:
+Optionally configure TheChat-side defaults for the created Hermes bot:
 
 \`\`\`
 PATCH /bots/:botId/hermes
 Authorization: Bearer <human-user-token>
 Body: {
-  "baseUrl": "http://localhost:18642",
-  "apiKey": "<API_SERVER_KEY>",
   "defaultMode": "run",
   "defaultInstructions": "Reply concisely in TheChat.",
   "defaultSessionScope": "channel"
 }
 \`\`\`
 
-The response must not expose the Hermes API key. To validate the connection:
+To validate TheChat-side bot configuration:
 
 \`\`\`
 POST /bots/:botId/hermes/test
@@ -152,7 +152,7 @@ Body: {}
 
 - In channels/groups, users mention the specific bot name, for example \`@Koda summarize this thread\`.
 - In direct messages with a workspace Hermes bot, users can message the bot without an @mention and it should respond.
-- TheChat stores generic bot session, invocation, and event metadata for UI/history; Hermes Gateway still owns the actual model runtime.
-- TheChat sends recent conversation history to Hermes as \`conversation_history\`, streams Hermes run events into bot events, and posts the final Hermes output back into the conversation as the bot.
+- TheChat stores generic bot session, invocation, and event metadata for UI/history; Hermes Gateway owns the actual model runtime and session memory.
+- TheChat exposes queued invocations through \`/hermes-platform/events\`; the Hermes TheChat platform adapter consumes them and posts final messages through \`/hermes-platform/messages\`.
 `,
 };

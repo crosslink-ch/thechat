@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""End-to-end smoke test for TheChat's native Hermes bot flow.
+"""End-to-end smoke test for TheChat's native Hermes platform flow.
 
-This uses the real Nous Hermes Agent Docker image. It requires a provider key
-for the configured model, normally OPENROUTER_API_KEY from the repo root .env.
+This starts Hermes Gateway from a source checkout and enables the TheChat
+messaging platform adapter. It requires OPENROUTER_API_KEY from the repo root
+.env unless a different Hermes provider is configured through env vars.
 """
 
 from __future__ import annotations
@@ -10,6 +11,7 @@ from __future__ import annotations
 import json
 import os
 import signal
+import shutil
 import subprocess
 import sys
 import time
@@ -53,24 +55,21 @@ PNPM = os.environ.get("PNPM", "pnpm")
 API_PORT = int(explicit_env_or_default("THECHAT_E2E_API_PORT", "3338"))
 POSTGRES_PORT = int(explicit_env_or_default("THECHAT_E2E_POSTGRES_PORT", "15544"))
 REDIS_PORT = int(explicit_env_or_default("THECHAT_E2E_REDIS_PORT", "16381"))
-HERMES_PORT = int(explicit_env_or_default("THECHAT_E2E_HERMES_PORT", "18643"))
-HERMES_DASHBOARD_PORT = int(explicit_env_or_default("THECHAT_E2E_HERMES_DASHBOARD_PORT", "19120"))
 KEEP = os.environ.get("HERMES_E2E_KEEP") == "1"
 PG_CONTAINER = os.environ.get("THECHAT_E2E_PG_CONTAINER", "thechat-hermes-e2e-postgres")
 REDIS_CONTAINER = os.environ.get("THECHAT_E2E_REDIS_CONTAINER", "thechat-hermes-e2e-redis")
-HERMES_CONTAINER = os.environ.get("THECHAT_E2E_HERMES_CONTAINER", "thechat-hermes-e2e")
+HERMES_SOURCE_DIR = Path(os.environ.get("HERMES_E2E_SOURCE_DIR", "/home/bruno/projects/hermes2"))
+HERMES_HOME = Path(os.environ.get("HERMES_E2E_HOME", str(ROOT / ".tmp" / "hermes-e2e-home")))
+HERMES_LOG = Path(os.environ.get("HERMES_E2E_LOG", str(ROOT / ".tmp" / "hermes-e2e-gateway.log")))
+UV = os.environ.get("UV", "uv")
 DATABASE_URL = explicit_env_or_default(
     "THECHAT_E2E_DATABASE_URL",
     f"postgres://thechat:thechat@localhost:{POSTGRES_PORT}/thechat",
 )
 REDIS_URL = explicit_env_or_default("THECHAT_E2E_REDIS_URL", f"redis://localhost:{REDIS_PORT}")
-HERMES_API_KEY = (
-    os.environ.get("HERMES_E2E_API_KEY")
-    or os.environ.get("HERMES_API_KEY")
-    or "thechat-hermes-e2e-key"
-)
 HERMES_PROVIDER = os.environ.get("HERMES_E2E_PROVIDER") or os.environ.get("HERMES_PROVIDER") or "openrouter"
 HERMES_MODEL = os.environ.get("HERMES_E2E_MODEL") or os.environ.get("HERMES_MODEL") or "deepseek/deepseek-v4-pro"
+THECHAT_HERMES_PLATFORM_TOKEN = os.environ.get("THECHAT_E2E_HERMES_PLATFORM_TOKEN", "thechat-hermes-e2e-platform-token")
 
 
 def run(cmd: list[str], *, check: bool = True, env: dict[str, str] | None = None, cwd: Path = ROOT) -> subprocess.CompletedProcess:
@@ -162,22 +161,59 @@ def start_redis():
     )
 
 
-def start_hermes():
-    script = ROOT / "scripts" / "start-hermes-docker.sh"
-    env = os.environ.copy()
-    env.update({
-        "HERMES_CONTAINER": HERMES_CONTAINER,
-        "HERMES_PORT": str(HERMES_PORT),
-        "HERMES_DASHBOARD_PORT": str(HERMES_DASHBOARD_PORT),
-        "HERMES_API_KEY": HERMES_API_KEY,
-        "HERMES_PROVIDER": HERMES_PROVIDER,
-        "HERMES_MODEL": HERMES_MODEL,
-        "HERMES_DATA_DIR": os.environ.get("HERMES_E2E_DATA_DIR", str(Path.home() / ".hermes-thechat-e2e")),
-        "THECHAT_ENV_FILE": str(ROOT / ".env"),
-    })
-    if os.environ.get("HERMES_E2E_IMAGE"):
-        env["HERMES_IMAGE"] = os.environ["HERMES_E2E_IMAGE"]
-    run([str(script)], env=env)
+def start_hermes_gateway(env: dict[str, str], base: str) -> subprocess.Popen:
+    if not HERMES_SOURCE_DIR.exists():
+        raise RuntimeError(f"Hermes source checkout not found: {HERMES_SOURCE_DIR}")
+    if HERMES_PROVIDER == "openrouter" and not env.get("OPENROUTER_API_KEY", "").strip():
+        raise RuntimeError("OPENROUTER_API_KEY is required for the Hermes e2e provider openrouter")
+
+    if not KEEP and HERMES_HOME.exists():
+        shutil.rmtree(HERMES_HOME)
+    HERMES_HOME.mkdir(parents=True, exist_ok=True)
+    HERMES_LOG.parent.mkdir(parents=True, exist_ok=True)
+    (HERMES_HOME / "config.yaml").write_text(
+        "\n".join([
+            "model:",
+            f"  provider: {HERMES_PROVIDER}",
+            f"  default: {HERMES_MODEL}",
+            "streaming:",
+            "  enabled: false",
+            "",
+        ])
+    )
+
+    hermes_env = env | {
+        "HERMES_HOME": str(HERMES_HOME),
+        "HERMES_INFERENCE_PROVIDER": HERMES_PROVIDER,
+        "HERMES_INFERENCE_MODEL": HERMES_MODEL,
+        "THECHAT_BASE_URL": base,
+        "THECHAT_HERMES_PLATFORM_TOKEN": THECHAT_HERMES_PLATFORM_TOKEN,
+        "THECHAT_ALLOW_ALL_USERS": "true",
+        "THECHAT_POLL_INTERVAL": "0.5",
+        "LOG_LEVEL": "info",
+    }
+    log = HERMES_LOG.open("w")
+    proc = subprocess.Popen(
+        [UV, "run", "--frozen", "hermes", "gateway", "run", "--replace"],
+        cwd=HERMES_SOURCE_DIR,
+        env=hermes_env,
+        stdout=log,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+
+    def still_running():
+        if proc.poll() is not None:
+            try:
+                tail = HERMES_LOG.read_text(errors="replace")[-4000:]
+            except Exception:
+                tail = ""
+            raise RuntimeError(f"Hermes gateway exited with {proc.returncode}\n{tail}")
+        return True
+
+    time.sleep(3)
+    still_running()
+    return proc
 
 
 def start_api(env: dict[str, str]) -> subprocess.Popen:
@@ -189,6 +225,7 @@ def start_api(env: dict[str, str]) -> subprocess.Popen:
         "JWT_SECRET": "thechat-hermes-e2e-jwt-secret",
         "THECHAT_SECRET_KEY": "thechat-hermes-e2e-secret-key",
         "THECHAT_BACKEND_PORT": str(API_PORT),
+        "THECHAT_HERMES_PLATFORM_TOKEN": THECHAT_HERMES_PLATFORM_TOKEN,
         "LOG_LEVEL": "error",
     }
     proc = subprocess.Popen([BUN, "run", "packages/api/src/index.ts"], cwd=ROOT, env=api_env)
@@ -216,8 +253,6 @@ def create_hermes_bot(base: str, token: str, workspace_id: str, name: str, instr
         "PATCH",
         f"{base}/bots/{bot['id']}/hermes",
         {
-            "baseUrl": f"http://localhost:{HERMES_PORT}",
-            "apiKey": HERMES_API_KEY,
             "defaultInstructions": instructions,
         },
         token,
@@ -236,7 +271,12 @@ def wait_for_bot_message(base: str, token: str, conversation_id: str, sender_nam
             if message.get("senderName") != sender_name:
                 continue
             content = message.get("content", "").strip()
-            if content and not content.startswith("Hermes run failed:"):
+            if (
+                content
+                and not content.startswith("Hermes run failed:")
+                and not content.startswith("⚠️")
+                and not content.startswith("❌")
+            ):
                 return message
         return None
 
@@ -278,15 +318,17 @@ def main():
     env["DATABASE_URL"] = DATABASE_URL
 
     api_proc: subprocess.Popen | None = None
+    hermes_proc: subprocess.Popen | None = None
     try:
         start_postgres()
         start_redis()
-        start_hermes()
 
         run([PNPM, "--dir", "packages/api", "exec", "drizzle-kit", "migrate"], env=env)
         api_proc = start_api(env)
 
         base = f"http://localhost:{API_PORT}"
+        hermes_proc = start_hermes_gateway(env, base)
+
         email = f"hermes-e2e-{int(time.time())}@example.com"
         status, register = http_json("POST", f"{base}/auth/register", {"name": "Hermes E2E", "email": email, "password": "password123"})
         assert status == 200, (status, register)
@@ -322,13 +364,13 @@ def main():
 
         status, sent = http_json("POST", f"{base}/messages/{channel_id}", {"content": "@Koda E2E answer this channel smoke test"}, token)
         assert status == 200, (status, sent)
-        koda_channel_runtime = wait_for_runtime_invocations(base, token, channel_id, "Koda E2E", 1)
         koda_channel = wait_for_bot_message(base, token, channel_id, "Koda E2E")
+        koda_channel_runtime = wait_for_completed_runtime_invocations(base, token, channel_id, "Koda E2E", 1)
 
         status, sent = http_json("POST", f"{base}/messages/{channel_id}", {"content": "@Nova E2E answer this second channel smoke test"}, token)
         assert status == 200, (status, sent)
-        nova_channel_runtime = wait_for_runtime_invocations(base, token, channel_id, "Nova E2E", 1)
         nova_channel = wait_for_bot_message(base, token, channel_id, "Nova E2E")
+        nova_channel_runtime = wait_for_completed_runtime_invocations(base, token, channel_id, "Nova E2E", 1)
 
         status, dm = http_json(
             "POST",
@@ -397,6 +439,12 @@ def main():
             },
         }, indent=2))
     finally:
+        if hermes_proc:
+            hermes_proc.send_signal(signal.SIGTERM)
+            try:
+                hermes_proc.wait(timeout=15)
+            except subprocess.TimeoutExpired:
+                hermes_proc.kill()
         if api_proc:
             api_proc.send_signal(signal.SIGTERM)
             try:
@@ -404,11 +452,10 @@ def main():
             except subprocess.TimeoutExpired:
                 api_proc.kill()
         if not KEEP:
-            run(["docker", "rm", "-f", HERMES_CONTAINER], check=False)
             run(["docker", "rm", "-f", REDIS_CONTAINER], check=False)
             run(["docker", "rm", "-f", PG_CONTAINER], check=False)
         else:
-            print("Keeping Docker containers because HERMES_E2E_KEEP=1")
+            print(f"Keeping e2e resources because HERMES_E2E_KEEP=1; Hermes home: {HERMES_HOME}")
 
 
 if __name__ == "__main__":

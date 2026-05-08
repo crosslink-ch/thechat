@@ -240,8 +240,8 @@ export const hermesBotConfigs = pgTable("hermes_bot_configs", {
   botId: uuid("bot_id")
     .primaryKey()
     .references(() => bots.id, { onDelete: "cascade" }),
-  baseUrl: text("base_url").notNull(),
-  apiKeyEncrypted: text("api_key_encrypted").notNull(),
+  baseUrl: text("base_url"),
+  apiKeyEncrypted: text("api_key_encrypted"),
   defaultMode: varchar("default_mode", { length: 20 }).notNull().default("run"),
   defaultInstructions: text("default_instructions"),
   defaultSessionScope: varchar("default_session_scope", { length: 20 }).notNull().default("channel"),

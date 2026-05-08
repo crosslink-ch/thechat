@@ -280,7 +280,6 @@ export type HermesSessionScope = "channel" | "thread" | "workspace";
 
 export interface HermesBotConfigPublic {
   botId: string;
-  baseUrl: string;
   defaultMode: HermesDefaultMode;
   defaultInstructions: string | null;
   defaultSessionScope: HermesSessionScope;

@@ -1,5 +1,5 @@
 import crypto from "crypto";
-import { and, asc, desc, eq, inArray, lt } from "drizzle-orm";
+import { and, asc, desc, eq, inArray } from "drizzle-orm";
 import type {
   BotEventPublic,
   BotInvocationPublic,
@@ -26,8 +26,7 @@ import {
   workspaces,
 } from "../db/schema";
 import { publishWsEventToUsers } from "../realtime";
-import { getHermesConnection, stripBotMention } from "./hermes";
-import { startHermesRun, streamHermesRunEvents, type HermesRunEvent } from "./hermes-client";
+import { stripBotMention } from "./hermes";
 import { ServiceError } from "./errors";
 import { withSpan } from "../observability";
 
@@ -252,6 +251,10 @@ async function enqueueBotInvocation(input: {
   });
   await publishInvocationUpdate(invocation.id, event);
 
+  if (input.bot.kind === "hermes") {
+    return;
+  }
+
   const command = createBotInvokeCommand(invocation.id, input.conversation.workspaceId, input.message.id);
   await getAsyncBus().enqueue(command);
   if (process.env.BOT_WORKER_AUTOSTART !== "0") {
@@ -385,7 +388,7 @@ async function handleQueuedBotInvocation(invocationId: string, context: { setPro
 
   try {
     if (loaded.bot.kind === "hermes") {
-      await handleHermesInvocation(invocationId, context);
+      await context.setProgress(100, { status: "claimed_by_hermes_platform" });
     } else {
       await handleWebhookInvocation(invocationId);
     }
@@ -458,78 +461,151 @@ async function handleWebhookInvocation(invocationId: string) {
   );
 }
 
-async function handleHermesInvocation(
-  invocationId: string,
-  context: { setProgress(progress: number, detail?: unknown): Promise<void> },
-) {
-  const loaded = await loadInvocationContext(invocationId);
-  if (!loaded) throw new Error(`Bot invocation not found: ${invocationId}`);
-
-  const { config, connection } = await getHermesConnection(loaded.bot.id);
-  const prompt =
-    stripBotMention(loaded.triggerMessage.content, loaded.botName) ||
-    loaded.triggerMessage.content;
-  const sessionId = loaded.session?.externalSessionId ?? sessionKey(loaded.conversation.workspaceId, loaded.conversation.id, loaded.bot.id);
-  const conversationHistory = await buildConversationHistory({
-    conversationId: loaded.conversation.id,
-    before: loaded.triggerMessage.createdAt,
-    targetBotUserId: loaded.bot.userId,
-    conversationType: loaded.conversation.type,
-  });
-
-  const request = {
-    input: prompt,
-    session_id: sessionId,
-    instructions: config.defaultInstructions,
-    conversation_history: conversationHistory,
+export interface HermesPlatformEvent {
+  id: string;
+  invocationId: string;
+  chatId: string;
+  chatType: "dm" | "group";
+  text: string;
+  messageId: string;
+  instructions: string | null;
+  sender: { id: string; name: string };
+  bot: { id: string; userId: string; name: string };
+  conversation: {
+    id: string;
+    type: ConversationType;
+    name: string | null;
+    workspaceId: string | null;
   };
-  await db
-    .update(botInvocations)
-    .set({ requestJson: redactHermesRequest(request) })
-    .where(eq(botInvocations.id, invocationId));
+  session: { id: string; externalSessionId: string | null };
+}
 
-  const hermesRun = await startHermesRun(connection, request);
-  const hermesRunId = String(hermesRun.run_id ?? hermesRun.id);
-  await db
-    .update(botInvocations)
-    .set({ externalRunId: hermesRunId, responseJson: jsonObject(hermesRun) })
-    .where(eq(botInvocations.id, invocationId));
-  await publishInvocationUpdate(
-    invocationId,
-    await recordBotEvent(invocationId, "hermes.run_started", {
-      runId: hermesRunId,
-      sessionId,
-    }),
-  );
-  await context.setProgress(35, { runId: hermesRunId });
+export async function claimHermesPlatformEvents(limit = 10): Promise<HermesPlatformEvent[]> {
+  const cappedLimit = Math.max(1, Math.min(limit, 50));
+  const pending = await db
+    .select({ id: botInvocations.id })
+    .from(botInvocations)
+    .innerJoin(bots, eq(botInvocations.botId, bots.id))
+    .where(and(eq(botInvocations.status, "queued"), eq(botInvocations.adapterKind, "hermes"), eq(bots.kind, "hermes")))
+    .orderBy(asc(botInvocations.createdAt))
+    .limit(cappedLimit);
 
-  let finalOutput = "";
-  let partialOutput = "";
-  await streamHermesRunEvents(connection, hermesRunId, async (event) => {
-    const maybeDelta = deltaFromEvent(event);
-    if (maybeDelta) {
-      partialOutput += maybeDelta;
-      await db
-        .update(botInvocations)
-        .set({ responseJson: { runId: hermesRunId, partialOutput } })
-        .where(eq(botInvocations.id, invocationId));
+  const events: HermesPlatformEvent[] = [];
+  for (const row of pending) {
+    const now = new Date();
+    const [claimed] = await db
+      .update(botInvocations)
+      .set({
+        status: "running",
+        startedAt: now,
+        externalRunId: `thechat:${row.id}`,
+        error: null,
+        updatedAt: now,
+      })
+      .where(and(eq(botInvocations.id, row.id), eq(botInvocations.status, "queued")))
+      .returning({ id: botInvocations.id });
+    if (!claimed) continue;
+
+    const loaded = await loadInvocationContext(row.id);
+    if (!loaded || loaded.bot.kind !== "hermes" || !loaded.session) {
+      await failInvocation(row.id, new Error("Hermes invocation context is incomplete"));
+      continue;
     }
 
-    const maybeFinal = finalOutputFromEvent(event);
-    if (maybeFinal) finalOutput = String(maybeFinal);
+    const [config] = await db
+      .select({
+        defaultInstructions: hermesBotConfigs.defaultInstructions,
+        defaultSessionScope: hermesBotConfigs.defaultSessionScope,
+      })
+      .from(hermesBotConfigs)
+      .where(eq(hermesBotConfigs.botId, loaded.bot.id))
+      .limit(1);
 
-    const savedEvent = await recordBotEvent(invocationId, `hermes.${event.type}`, jsonObject(event.payload));
-    await publishInvocationUpdate(invocationId, savedEvent);
-  });
+    const text = stripBotMention(loaded.triggerMessage.content, loaded.botName) || loaded.triggerMessage.content;
+    await db
+      .update(botInvocations)
+      .set({
+        requestJson: {
+          platform: "thechat",
+          messageId: loaded.triggerMessage.id,
+          messageContent: loaded.triggerMessage.content,
+          text,
+          sessionId: loaded.session.externalSessionId,
+          defaultSessionScope: config?.defaultSessionScope ?? "channel",
+          triggeredAt: loaded.triggerMessage.createdAt.toISOString(),
+        },
+      })
+      .where(eq(botInvocations.id, row.id));
 
-  if (!finalOutput) finalOutput = partialOutput || "Hermes run completed without a final message.";
+    await publishInvocationUpdate(
+      row.id,
+      await recordBotEvent(row.id, "hermes.platform.claimed", {
+        sessionId: loaded.session.externalSessionId,
+      }),
+    );
+
+    events.push({
+      id: row.id,
+      invocationId: row.id,
+      chatId: loaded.session.externalSessionId ?? loaded.session.id,
+      chatType: loaded.conversation.type === "direct" ? "dm" : "group",
+      text,
+      messageId: loaded.triggerMessage.id,
+      instructions: config?.defaultInstructions ?? null,
+      sender: {
+        id: loaded.triggerMessage.senderId,
+        name: loaded.triggerSender.name,
+      },
+      bot: {
+        id: loaded.bot.id,
+        userId: loaded.bot.userId,
+        name: loaded.botName,
+      },
+      conversation: {
+        id: loaded.conversation.id,
+        type: loaded.conversation.type,
+        name: loaded.conversation.name,
+        workspaceId: loaded.conversation.workspaceId,
+      },
+      session: {
+        id: loaded.session.id,
+        externalSessionId: loaded.session.externalSessionId,
+      },
+    });
+  }
+
+  return events;
+}
+
+export async function completeHermesPlatformInvocation(input: {
+  invocationId: string;
+  content: string;
+  platformMessageId?: string | null;
+  botId?: string;
+  conversationId?: string;
+}) {
+  const content = input.content.trim();
+  if (!content) throw new ServiceError("Message content is required", 400);
+
+  const loaded = await loadInvocationContext(input.invocationId);
+  if (!loaded) throw new ServiceError("Invocation not found", 404);
+  if (loaded.bot.kind !== "hermes") throw new ServiceError("Invocation is not for a Hermes bot", 400);
+  if (input.botId && input.botId !== loaded.bot.id) throw new ServiceError("Bot does not match invocation", 400);
+  if (input.conversationId && input.conversationId !== loaded.conversation.id) {
+    throw new ServiceError("Conversation does not match invocation", 400);
+  }
+
+  if (loaded.invocation.responseMessageId && loaded.invocation.status === "completed") {
+    return { messageId: loaded.invocation.responseMessageId, duplicate: true };
+  }
+
   const [responseMessage] = await db
     .insert(messages)
     .values({
       conversationId: loaded.conversation.id,
       senderId: loaded.bot.userId,
-      content: finalOutput,
-      parts: [{ type: "text", text: finalOutput }],
+      content,
+      parts: [{ type: "text", text: content }],
     })
     .returning();
 
@@ -539,11 +615,15 @@ async function handleHermesInvocation(
     .set({
       status: "completed",
       responseMessageId: responseMessage.id,
-      responseJson: { runId: hermesRunId, output: finalOutput },
+      responseJson: {
+        platform: "thechat",
+        platformMessageId: input.platformMessageId ?? null,
+        output: content,
+      },
       completedAt,
       updatedAt: completedAt,
     })
-    .where(eq(botInvocations.id, invocationId));
+    .where(eq(botInvocations.id, input.invocationId));
   if (loaded.session) {
     await db
       .update(botSessions)
@@ -553,11 +633,47 @@ async function handleHermesInvocation(
 
   await publishBotMessage(responseMessage, loaded.botName, loaded.conversation.type);
   await publishInvocationUpdate(
-    invocationId,
-    await recordBotEvent(invocationId, "invocation.completed", {
+    input.invocationId,
+    await recordBotEvent(input.invocationId, "invocation.completed", {
       responseMessageId: responseMessage.id,
+      platformMessageId: input.platformMessageId ?? null,
     }),
   );
+  return { messageId: responseMessage.id, duplicate: false };
+}
+
+export async function failHermesPlatformInvocation(input: {
+  invocationId: string;
+  error: string;
+}) {
+  await failInvocation(input.invocationId, new Error(input.error));
+  return { ok: true };
+}
+
+export async function publishHermesPlatformTyping(input: {
+  invocationId: string;
+  botId?: string;
+  conversationId?: string;
+}) {
+  const loaded = await loadInvocationContext(input.invocationId);
+  if (!loaded) throw new ServiceError("Invocation not found", 404);
+  if (loaded.bot.kind !== "hermes") throw new ServiceError("Invocation is not for a Hermes bot", 400);
+  if (input.botId && input.botId !== loaded.bot.id) throw new ServiceError("Bot does not match invocation", 400);
+  if (input.conversationId && input.conversationId !== loaded.conversation.id) {
+    throw new ServiceError("Conversation does not match invocation", 400);
+  }
+
+  const participantRows = await db
+    .select({ userId: conversationParticipants.userId })
+    .from(conversationParticipants)
+    .where(eq(conversationParticipants.conversationId, loaded.conversation.id));
+  await publishWsEventToUsers(participantRows.map((p) => p.userId), {
+    type: "typing",
+    conversationId: loaded.conversation.id,
+    userId: loaded.bot.userId,
+    userName: loaded.botName,
+  });
+  return { ok: true };
 }
 
 async function failInvocation(invocationId: string, error: any) {
@@ -759,71 +875,10 @@ async function requireConversationParticipant(conversationId: string, userId: st
   if (!participant) throw new ServiceError("You are not a participant of this conversation", 403);
 }
 
-async function buildConversationHistory(input: {
-  conversationId: string;
-  before: Date;
-  targetBotUserId: string;
-  conversationType: ConversationType;
-}) {
-  const rows = await db
-    .select({
-      id: messages.id,
-      content: messages.content,
-      senderId: messages.senderId,
-      senderName: users.name,
-      senderType: users.type,
-      createdAt: messages.createdAt,
-    })
-    .from(messages)
-    .innerJoin(users, eq(messages.senderId, users.id))
-    .where(and(eq(messages.conversationId, input.conversationId), lt(messages.createdAt, input.before)))
-    .orderBy(desc(messages.createdAt))
-    .limit(40);
-
-  return rows.reverse().flatMap((row) => {
-    if (row.senderType === "bot" && row.senderId !== input.targetBotUserId) return [];
-    const role = row.senderType === "bot" ? "assistant" : "user";
-    const content =
-      input.conversationType === "group" && row.senderType === "human"
-        ? `${row.senderName}: ${row.content}`
-        : row.content;
-    return [{ role, content }];
-  });
-}
-
 function sessionKey(workspaceId: string | null, conversationId: string | null, botId: string) {
   const workspacePart = workspaceId ? `workspace:${workspaceId}` : "workspace:none";
   const conversationPart = conversationId ? `conversation:${conversationId}` : "conversation:workspace";
   return `thechat:${workspacePart}:${conversationPart}:bot:${botId}`;
-}
-
-function finalOutputFromEvent(event: HermesRunEvent): string | null {
-  const payload = event.payload as any;
-  if (!payload || typeof payload !== "object") return null;
-  return payload.final_output ?? payload.finalOutput ?? payload.output ?? payload.text ?? null;
-}
-
-function deltaFromEvent(event: HermesRunEvent): string {
-  if (!event.type.toLowerCase().includes("delta")) return "";
-  const payload = event.payload as any;
-  if (typeof payload === "string") return payload;
-  if (!payload || typeof payload !== "object") return "";
-  const delta = payload.delta ?? payload.text_delta ?? payload.text ?? payload.content ?? payload.output_text_delta;
-  return typeof delta === "string" ? delta : "";
-}
-
-function jsonObject(value: unknown): Record<string, unknown> {
-  if (value && typeof value === "object" && !Array.isArray(value)) return value as Record<string, unknown>;
-  return { value };
-}
-
-function redactHermesRequest(request: Record<string, unknown>): Record<string, unknown> {
-  return {
-    ...request,
-    conversation_history_count: Array.isArray(request.conversation_history)
-      ? request.conversation_history.length
-      : 0,
-  };
 }
 
 function getAsyncBus() {

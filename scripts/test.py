@@ -149,8 +149,6 @@ SUITES = [
             "THECHAT_E2E_API_PORT": explicit_env_or_default("THECHAT_E2E_API_PORT", "3338"),
             "THECHAT_E2E_POSTGRES_PORT": explicit_env_or_default("THECHAT_E2E_POSTGRES_PORT", "15544"),
             "THECHAT_E2E_REDIS_PORT": explicit_env_or_default("THECHAT_E2E_REDIS_PORT", "16381"),
-            "THECHAT_E2E_HERMES_PORT": explicit_env_or_default("THECHAT_E2E_HERMES_PORT", "18643"),
-            "THECHAT_E2E_HERMES_DASHBOARD_PORT": explicit_env_or_default("THECHAT_E2E_HERMES_DASHBOARD_PORT", "19120"),
             "THECHAT_E2E_DATABASE_URL": explicit_env_or_default(
                 "THECHAT_E2E_DATABASE_URL",
                 "postgres://thechat:thechat@localhost:15544/thechat",
@@ -159,8 +157,12 @@ SUITES = [
                 "THECHAT_E2E_REDIS_URL",
                 "redis://localhost:16381",
             ),
+            "HERMES_E2E_SOURCE_DIR": explicit_env_or_default(
+                "HERMES_E2E_SOURCE_DIR",
+                "/home/bruno/projects/hermes2",
+            ),
         },
-        "opt_in": True,  # real Docker Hermes Gateway + provider API key
+        "opt_in": True,  # real Hermes Gateway source checkout + provider API key
     },
 ]
 

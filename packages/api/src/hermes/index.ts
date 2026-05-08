@@ -13,8 +13,6 @@ const modeSchema = z.enum(["run", "response"]);
 const scopeSchema = z.enum(["channel", "thread", "workspace"]);
 
 const updateSchema = z.object({
-  baseUrl: z.string().url("Hermes base URL must be a URL").optional(),
-  apiKey: z.string().min(1, "Hermes API key is required").optional(),
   defaultMode: modeSchema.optional(),
   defaultInstructions: z.string().nullish(),
   defaultSessionScope: scopeSchema.optional(),
@@ -49,8 +47,6 @@ export const hermesRoutes = new Elysia({ prefix: "/bots" })
     }
     try {
       return await updateHermesBotConfig(params.botId, user.id, {
-        baseUrl: parsed.data.baseUrl,
-        apiKey: parsed.data.apiKey,
         defaultMode: parsed.data.defaultMode,
         defaultInstructions: parsed.data.defaultInstructions,
         defaultSessionScope: parsed.data.defaultSessionScope,
