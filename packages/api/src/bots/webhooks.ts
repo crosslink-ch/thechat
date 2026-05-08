@@ -62,14 +62,6 @@ export async function processMessageMentions(msg: {
   const participantBots = botRows.filter((b) => participantIds.includes(b.botUserId));
   if (participantBots.length === 0) return;
 
-  const mentionedBots = participantBots.filter((b) => {
-    const escaped = b.botName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const regex = new RegExp(`@${escaped}\\b`, "i");
-    return regex.test(msg.content);
-  });
-
-  if (mentionedBots.length === 0) return;
-
   const [conv] = await db
     .select({
       id: conversations.id,
@@ -83,6 +75,17 @@ export async function processMessageMentions(msg: {
 
   if (!conv) return;
 
+  const triggeredBots = participantBots.filter((b) => {
+    if (b.botUserId === msg.senderId) return false;
+    const escaped = b.botName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const regex = new RegExp(`@${escaped}\\b`, "i");
+    const isMentioned = regex.test(msg.content);
+    const isDirectHermesDm = conv.type === "direct" && b.kind === "hermes";
+    return isMentioned || isDirectHermesDm;
+  });
+
+  if (triggeredBots.length === 0) return;
+
   let workspace: { id: string; name: string } | null = null;
   if (conv.workspaceId) {
     const [ws] = await db
@@ -93,7 +96,7 @@ export async function processMessageMentions(msg: {
     if (ws) workspace = ws;
   }
 
-  for (const bot of mentionedBots) {
+  for (const bot of triggeredBots) {
     if (bot.kind === "hermes") {
       handleHermesMention({
         botId: bot.botId,

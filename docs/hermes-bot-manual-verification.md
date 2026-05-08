@@ -1,28 +1,20 @@
 # Hermes bot manual verification
 
-This guide verifies the native TheChat ↔ Hermes Agent integration without using default service ports. It assumes the feature branch/worktree is checked out at `/home/bruno/agent-worktrees/thechat-hermes-integration`.
+This guide verifies the native TheChat ↔ Hermes Agent integration. It assumes the feature branch/worktree is checked out at `/home/bruno/agent-worktrees/thechat-hermes-integration`.
 
 ## Ports used
 
-- TheChat API: `3337`
+- TheChat API for manual testing: `3337`
 - TheChat desktop dev/Vite: keep the repo default unless you override it
-- Postgres: `15543 -> 5432`
-- Hermes API server: `18642 -> 8642`
-- Optional Hermes dashboard: `19119 -> 9119`
+- Compose Postgres: `15543 -> 5432`
+- Manual Hermes API server: `18642 -> 8642`
+- Manual Hermes dashboard: `19119 -> 9119`
+- Automated Hermes e2e defaults: API `3338`, Postgres `15544`, Hermes API `18643`, dashboard `19120`
 
 ## 1. Start Postgres for TheChat
 
 ```bash
 cd /home/bruno/agent-worktrees/thechat-hermes-integration
-
-docker rm -f thechat-hermes-postgres 2>/dev/null || true
-docker run -d --name thechat-hermes-postgres \
-  -e POSTGRES_USER=thechat \
-  -e POSTGRES_PASSWORD=thechat \
-  -e POSTGRES_DB=thechat \
-  -p 127.0.0.1:15543:5432 \
-  postgres:16-alpine
-```
 
 Create a local `.env` (ignored by git):
 
@@ -36,32 +28,20 @@ LOG_LEVEL=info
 EOF
 ```
 
-Apply migrations:
+Start Postgres and apply migrations:
 
 ```bash
+docker compose up -d postgres
 PATH="$HOME/.bun/bin:$PATH" pnpm --filter @thechat/api db:migrate
 ```
 
 ## 2. Start Hermes Agent in Docker
 
-Use a key that is at least 8 characters. TheChat stores it encrypted and never returns it from the API.
+`scripts/start-hermes-docker.sh` reads `OPENROUTER_API_KEY` from the repo root `.env`, configures Hermes for `openrouter` / `deepseek/deepseek-v4-pro` by default, and prints the base URL/API key to use in TheChat. TheChat stores the Hermes API key encrypted and never returns it from the API.
 
 ```bash
-export HERMES_API_KEY="change-me-local-hermes-key"
-mkdir -p ~/.hermes-thechat-manual
-
-docker rm -f hermes-thechat-manual 2>/dev/null || true
-docker run -d --name hermes-thechat-manual \
-  -v ~/.hermes-thechat-manual:/opt/data \
-  -p 127.0.0.1:18642:8642 \
-  -p 127.0.0.1:19119:9119 \
-  -e API_SERVER_ENABLED=true \
-  -e API_SERVER_HOST=0.0.0.0 \
-  -e API_SERVER_PORT=8642 \
-  -e API_SERVER_KEY="$HERMES_API_KEY" \
-  -e API_SERVER_CORS_ORIGINS='*' \
-  -e HERMES_DASHBOARD=1 \
-  nousresearch/hermes-agent:latest gateway run
+export HERMES_API_KEY="${HERMES_API_KEY:-change-me-local-hermes-key}"
+./scripts/start-hermes-docker.sh
 ```
 
 Health check:
@@ -92,15 +72,14 @@ PATH="$HOME/.bun/bin:$PATH" pnpm dev:desktop
 1. Open TheChat desktop.
 2. Register or log in.
 3. Create a workspace, e.g. `Hermes Manual Test`.
-4. Open the workspace management/settings page and use the new **Hermes Bot** section.
-   - Name: `Hermes` or `Koda`
+4. Open the command palette and run **Add Hermes Bot**.
+   - Name: `Koda` or any bot name you want
    - Base URL: `http://localhost:18642`
    - API key: value of `$HERMES_API_KEY`
-   - Default mode: `run`
    - Optional instructions: `Reply concisely in TheChat.`
 5. Open the workspace's default channel.
 6. Send a message mentioning the bot, for example:
-   - `@Hermes say hello from TheChat`
+   - `@Koda say hello from TheChat`
 7. Expected result:
    - Hermes Gateway owns the canonical run/session state; TheChat only posts the final bot message into the channel.
    - Hermes receives `POST /v1/runs` and `GET /v1/runs/{id}/events`.
@@ -129,7 +108,7 @@ WORKSPACE_ID=$(curl -sS -X POST "$API/workspaces/create" \
 BOT_ID=$(curl -sS -X POST "$API/bots/create" \
   -H "Authorization: Bearer $TOKEN" \
   -H 'Content-Type: application/json' \
-  -d "{\"kind\":\"hermes\",\"workspaceId\":\"$WORKSPACE_ID\",\"name\":\"Hermes\"}" \
+  -d "{\"kind\":\"hermes\",\"workspaceId\":\"$WORKSPACE_ID\",\"name\":\"Koda\"}" \
   | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')
 
 curl -sS -X PATCH "$API/bots/$BOT_ID/hermes" \
@@ -149,7 +128,7 @@ CHANNEL_ID=$(curl -sS "$API/workspaces/$WORKSPACE_ID" \
 curl -sS -X POST "$API/messages/$CHANNEL_ID" \
   -H "Authorization: Bearer $TOKEN" \
   -H 'Content-Type: application/json' \
-  -d '{"content":"@Hermes say hello from the API-only manual test"}'
+  -d '{"content":"@Koda say hello from the API-only manual test"}'
 
 sleep 5
 curl -sS "$API/messages/$CHANNEL_ID" -H "Authorization: Bearer $TOKEN"
@@ -158,19 +137,11 @@ curl -sS "$API/messages/$CHANNEL_ID" -H "Authorization: Bearer $TOKEN"
 
 ## 6. Automated E2E smoke
 
-Deterministic Docker mock Hermes runtime:
+Real Hermes Agent Docker image:
 
 ```bash
-PATH="$HOME/.bun/bin:$PATH" pnpm test:e2e:hermes
+PATH="$HOME/.bun/bin:$PATH" HERMES_E2E_API_KEY="$HERMES_API_KEY" pnpm test:e2e:hermes
+PATH="$HOME/.bun/bin:$PATH" HERMES_E2E_API_KEY="$HERMES_API_KEY" python3 scripts/test.py hermes
 ```
 
-Real Hermes Agent Docker image (requires a configured Hermes runtime/provider):
-
-```bash
-PATH="$HOME/.bun/bin:$PATH" \
-HERMES_E2E_MODE=real \
-HERMES_E2E_API_KEY="$HERMES_API_KEY" \
-pnpm test:e2e:hermes
-```
-
-The E2E script starts its own Postgres and Hermes containers on the non-standard ports above, starts TheChat API on `3337`, creates a user/workspace/Hermes bot, sends a mention, polls for the final bot message, and cleans up containers unless `HERMES_E2E_KEEP=1` is set.
+The E2E script starts its own isolated Postgres and Hermes containers, starts TheChat API, creates a user/workspace, adds multiple named Hermes bots, verifies channel mentions and a direct-message reply, and cleans up containers unless `HERMES_E2E_KEEP=1` is set. Override ports with `THECHAT_E2E_API_PORT`, `THECHAT_E2E_POSTGRES_PORT`, `THECHAT_E2E_HERMES_PORT`, and `THECHAT_E2E_HERMES_DASHBOARD_PORT`.

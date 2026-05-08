@@ -1,38 +1,134 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-CONTAINER_NAME="thechat-postgres"
-VOLUME_NAME="thechat-postgres-data"
+ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+ENV_FILE="$ROOT_DIR/.env"
+COMPOSE_FILE="$ROOT_DIR/compose.yml"
+COMPOSE_SERVICE="postgres"
 
-POSTGRES_USER="user"
-POSTGRES_PASSWORD="password"
-POSTGRES_DB="thechat"
-POSTGRES_PORT="5435"
+LEGACY_CONTAINER_NAME="thechat-postgres"
+LEGACY_VOLUME_NAME="thechat-postgres-data"
 
-echo "Stopping container '$CONTAINER_NAME' if running..."
-docker rm -f "$CONTAINER_NAME" 2>/dev/null || true
+if [[ ! -f "$ENV_FILE" ]]; then
+  echo "Missing $ENV_FILE. Create it with DATABASE_URL=postgresql://thechat:thechat@localhost:15543/thechat" >&2
+  exit 1
+fi
 
-echo "Removing volume '$VOLUME_NAME' if exists..."
-docker volume rm "$VOLUME_NAME" 2>/dev/null || true
+if [[ ! -f "$COMPOSE_FILE" ]]; then
+  echo "Missing $COMPOSE_FILE" >&2
+  exit 1
+fi
 
-echo "Creating fresh container..."
-docker run -d \
-  --name "$CONTAINER_NAME" \
-  -e POSTGRES_USER="$POSTGRES_USER" \
-  -e POSTGRES_PASSWORD="$POSTGRES_PASSWORD" \
-  -e POSTGRES_DB="$POSTGRES_DB" \
-  -p "$POSTGRES_PORT":5432 \
-  -v "$VOLUME_NAME":/var/lib/postgresql/data \
-  postgres:17-alpine
+eval "$(
+  node - "$ENV_FILE" <<'NODE'
+const fs = require("node:fs");
+
+function fail(message) {
+  console.error(message);
+  process.exit(1);
+}
+
+function shellQuote(value) {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
+function readDatabaseUrl(envFile) {
+  const lines = fs.readFileSync(envFile, "utf8").split(/\r?\n/);
+  const line = lines.find((entry) =>
+    /^\s*(?:export\s+)?DATABASE_URL\s*=/.test(entry)
+  );
+
+  if (!line) {
+    fail(`Missing DATABASE_URL in ${envFile}`);
+  }
+
+  let value = line.replace(/^\s*(?:export\s+)?DATABASE_URL\s*=\s*/, "").trim();
+  const quote = value[0];
+
+  if (quote === '"' || quote === "'") {
+    const endQuote = value.indexOf(quote, 1);
+    if (endQuote === -1) {
+      fail(`DATABASE_URL in ${envFile} has an unterminated quote`);
+    }
+    value = value.slice(1, endQuote);
+  } else {
+    value = value.replace(/\s+#.*$/, "");
+  }
+
+  if (!value) {
+    fail(`DATABASE_URL in ${envFile} is empty`);
+  }
+
+  return value;
+}
+
+const databaseUrl = readDatabaseUrl(process.argv[2]);
+
+let parsed;
+try {
+  parsed = new URL(databaseUrl);
+} catch {
+  fail("DATABASE_URL must be a valid PostgreSQL connection URL");
+}
+
+if (parsed.protocol !== "postgres:" && parsed.protocol !== "postgresql:") {
+  fail("DATABASE_URL must use the postgres:// or postgresql:// protocol");
+}
+
+const user = decodeURIComponent(parsed.username);
+const password = decodeURIComponent(parsed.password);
+const database = decodeURIComponent(parsed.pathname.replace(/^\/+/, ""));
+const host = parsed.hostname;
+const port = parsed.port || "5432";
+
+if (!user) fail("DATABASE_URL must include a database username");
+if (!password) fail("DATABASE_URL must include a database password");
+if (!database) fail("DATABASE_URL must include a database name");
+if (!host) fail("DATABASE_URL must include a database host");
+
+for (const [key, value] of Object.entries({
+  POSTGRES_USER: user,
+  POSTGRES_PASSWORD: password,
+  POSTGRES_DB: database,
+  POSTGRES_HOST: host,
+  POSTGRES_PORT: port,
+})) {
+  console.log(`${key}=${shellQuote(value)}`);
+}
+NODE
+)"
+
+case "$POSTGRES_HOST" in
+  localhost|127.0.0.1|::1|"[::1]") ;;
+  *)
+    echo "DATABASE_URL host must point to localhost for this reset script; got '$POSTGRES_HOST'" >&2
+    exit 1
+    ;;
+esac
+
+export POSTGRES_USER POSTGRES_PASSWORD POSTGRES_DB POSTGRES_PORT
+
+cd "$ROOT_DIR"
+
+echo "Stopping Docker Compose services and removing database volumes..."
+docker compose down --volumes --remove-orphans
+
+echo "Removing legacy standalone container '$LEGACY_CONTAINER_NAME' if it exists..."
+docker rm -f "$LEGACY_CONTAINER_NAME" 2>/dev/null || true
+
+echo "Removing legacy standalone volume '$LEGACY_VOLUME_NAME' if it exists..."
+docker volume rm "$LEGACY_VOLUME_NAME" 2>/dev/null || true
+
+echo "Starting PostgreSQL with Docker Compose..."
+docker compose up -d "$COMPOSE_SERVICE"
 
 echo "Waiting for PostgreSQL to be ready..."
-until docker exec "$CONTAINER_NAME" pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB" >/dev/null 2>&1; do
+until docker compose exec -T "$COMPOSE_SERVICE" pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB" >/dev/null 2>&1; do
   sleep 0.5
 done
 
 echo "PostgreSQL is ready on port $POSTGRES_PORT"
-echo "Connection: postgresql://$POSTGRES_USER:$POSTGRES_PASSWORD@localhost:$POSTGRES_PORT/$POSTGRES_DB"
+echo "Connection: postgresql://$POSTGRES_USER:***@localhost:$POSTGRES_PORT/$POSTGRES_DB"
 
 echo "Pushing database schema..."
-cd "$(dirname "$0")/.."
 pnpm db:push

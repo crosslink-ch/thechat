@@ -39,7 +39,6 @@ export function WorkspaceManageRoute() {
   const navigate = useNavigate();
   const token = useAuthStore((s) => s.token);
   const activeWorkspace = useWorkspacesStore((s) => s.activeWorkspace);
-  const selectWorkspace = useWorkspacesStore((s) => s.selectWorkspace);
 
   const [, setConfig] = useState<WorkspaceConfig | null>(null);
   const [loading, setLoading] = useState(true);
@@ -58,13 +57,6 @@ export function WorkspaceManageRoute() {
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState<"idle" | "saved" | "error">("idle");
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const [hermesName, setHermesName] = useState("Hermes");
-  const [hermesBaseUrl, setHermesBaseUrl] = useState("http://localhost:18642");
-  const [hermesApiKey, setHermesApiKey] = useState("");
-  const [hermesInstructions, setHermesInstructions] = useState("Reply concisely in TheChat.");
-  const [creatingHermes, setCreatingHermes] = useState(false);
-  const [hermesStatus, setHermesStatus] = useState<"idle" | "created" | "error">("idle");
-  const [hermesErrorMsg, setHermesErrorMsg] = useState<string | null>(null);
 
   // Load config
   useEffect(() => {
@@ -188,47 +180,6 @@ export function WorkspaceManageRoute() {
       setErrorMsg(e instanceof Error ? e.message : String(e));
     } finally {
       setSaving(false);
-    }
-  };
-
-  const handleCreateHermesBot = async () => {
-    if (!token || !activeWorkspace) return;
-    setCreatingHermes(true);
-    setHermesStatus("idle");
-    setHermesErrorMsg(null);
-    try {
-      const { data: bot, error: createError } = await api.bots.create.post(
-        {
-          kind: "hermes",
-          workspaceId: activeWorkspace.id,
-          name: hermesName.trim() || "Hermes",
-        },
-        auth(token),
-      );
-      if (createError) throw new Error((createError as any).error || "Failed to create Hermes chat participant");
-      const botId = (bot as any)?.id;
-      if (!botId) throw new Error("Hermes chat participant was created without an ID");
-
-      const { error: connectError } = await api.bots({ botId }).hermes.patch(
-        {
-          baseUrl: hermesBaseUrl.trim(),
-          apiKey: hermesApiKey.trim(),
-          defaultMode: "run",
-          defaultInstructions: hermesInstructions.trim() || null,
-          defaultSessionScope: "channel",
-        },
-        auth(token),
-      );
-      if (connectError) throw new Error((connectError as any).error || "Failed to connect Hermes runtime");
-
-      setHermesStatus("created");
-      setHermesApiKey("");
-      await selectWorkspace(activeWorkspace.id);
-    } catch (e) {
-      setHermesStatus("error");
-      setHermesErrorMsg(e instanceof Error ? e.message : String(e));
-    } finally {
-      setCreatingHermes(false);
     }
   };
 
@@ -459,87 +410,6 @@ export function WorkspaceManageRoute() {
           </div>
         </div>
         )}
-
-        {/* Hermes bot */}
-        <div className="flex flex-col gap-4 rounded-lg border border-border bg-raised/50 p-4">
-          <div className="flex flex-col gap-1">
-            <span className="text-[0.857rem] font-medium uppercase tracking-wider text-text-dimmed">
-              Hermes Bot
-            </span>
-            <p className="text-[0.786rem] text-text-dimmed">
-              Connect an existing Hermes Agent runtime to this workspace. The API key is encrypted server-side and is never shown again.
-            </p>
-          </div>
-
-          <label className="flex flex-col gap-1.5">
-            <span className="text-[0.929rem] font-medium text-text-secondary">Bot Name</span>
-            <input
-              type="text"
-              value={hermesName}
-              onChange={(e) => setHermesName(e.target.value)}
-              disabled={!isAdmin}
-              className="rounded-lg border border-border bg-raised px-3 py-2 text-[0.929rem] text-text outline-none transition-colors placeholder:text-text-dimmed focus:border-accent disabled:cursor-not-allowed disabled:opacity-50"
-            />
-          </label>
-
-          <label className="flex flex-col gap-1.5">
-            <span className="text-[0.929rem] font-medium text-text-secondary">Hermes Base URL</span>
-            <input
-              type="url"
-              value={hermesBaseUrl}
-              onChange={(e) => setHermesBaseUrl(e.target.value)}
-              placeholder="http://localhost:18642"
-              disabled={!isAdmin}
-              className="rounded-lg border border-border bg-raised px-3 py-2 text-[0.929rem] text-text outline-none transition-colors placeholder:text-text-dimmed focus:border-accent disabled:cursor-not-allowed disabled:opacity-50"
-              spellCheck={false}
-            />
-          </label>
-
-          <label className="flex flex-col gap-1.5">
-            <span className="text-[0.929rem] font-medium text-text-secondary">Hermes API Key</span>
-            <input
-              type="password"
-              value={hermesApiKey}
-              onChange={(e) => setHermesApiKey(e.target.value)}
-              placeholder="API_SERVER_KEY"
-              disabled={!isAdmin}
-              className="rounded-lg border border-border bg-raised px-3 py-2 text-[0.929rem] text-text outline-none transition-colors placeholder:text-text-dimmed focus:border-accent disabled:cursor-not-allowed disabled:opacity-50"
-              spellCheck={false}
-            />
-          </label>
-
-          <label className="flex flex-col gap-1.5">
-            <span className="text-[0.929rem] font-medium text-text-secondary">Default Instructions</span>
-            <textarea
-              value={hermesInstructions}
-              onChange={(e) => setHermesInstructions(e.target.value)}
-              disabled={!isAdmin}
-              rows={3}
-              className="resize-y rounded-lg border border-border bg-raised px-3 py-2 text-[0.929rem] text-text outline-none transition-colors placeholder:text-text-dimmed focus:border-accent disabled:cursor-not-allowed disabled:opacity-50"
-            />
-          </label>
-
-          {isAdmin && (
-            <div className="flex flex-wrap items-center gap-3">
-              <button
-                type="button"
-                onClick={handleCreateHermesBot}
-                disabled={creatingHermes || !hermesBaseUrl.trim() || !hermesApiKey.trim()}
-                className="cursor-pointer rounded-lg border border-border bg-raised px-4 py-2 text-[0.929rem] font-medium text-text-muted transition-colors hover:not-disabled:bg-hover hover:not-disabled:text-text disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {creatingHermes ? "Connecting Hermes..." : "Connect Hermes"}
-              </button>
-              {hermesStatus === "created" && (
-                <span className="text-[0.857rem] text-green-400">Hermes connected. Mention it in a channel.</span>
-              )}
-              {hermesStatus === "error" && (
-                <span className="text-[0.857rem] text-error-bright">
-                  {hermesErrorMsg || "Failed to connect Hermes"}
-                </span>
-              )}
-            </div>
-          )}
-        </div>
 
         {/* Actions */}
         {isAdmin && (

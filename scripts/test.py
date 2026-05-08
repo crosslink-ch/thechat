@@ -16,6 +16,7 @@ from urllib.parse import urlencode
 
 ROOT = Path(__file__).resolve().parent.parent
 CREDENTIALS_FILE = ROOT / ".test-credentials.json"
+ENV_BEFORE_DOTENV = set(os.environ)
 
 # OpenAI device auth constants (same as packages/desktop/src/core/codex-auth.ts)
 CODEX_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
@@ -41,6 +42,13 @@ def load_dotenv() -> None:
 
 
 load_dotenv()
+
+
+def explicit_env_or_default(key: str, default: str) -> str:
+    value = os.environ.get(key, "")
+    if key in ENV_BEFORE_DOTENV and value:
+        return value
+    return default
 
 BACKEND_PORT = int(os.environ.get("THECHAT_BACKEND_PORT", 3000))
 
@@ -119,6 +127,21 @@ SUITES = [
             "codex_live", "--", "--ignored",
         ],
         "opt_in": True,  # needs CODEX_ACCESS_TOKEN credentials
+    },
+    {
+        "name": "hermes",
+        "cmd": ["python3", "scripts/e2e/hermes-bot-flow.py"],
+        "env": {
+            "THECHAT_E2E_API_PORT": explicit_env_or_default("THECHAT_E2E_API_PORT", "3338"),
+            "THECHAT_E2E_POSTGRES_PORT": explicit_env_or_default("THECHAT_E2E_POSTGRES_PORT", "15544"),
+            "THECHAT_E2E_HERMES_PORT": explicit_env_or_default("THECHAT_E2E_HERMES_PORT", "18643"),
+            "THECHAT_E2E_HERMES_DASHBOARD_PORT": explicit_env_or_default("THECHAT_E2E_HERMES_DASHBOARD_PORT", "19120"),
+            "THECHAT_E2E_DATABASE_URL": explicit_env_or_default(
+                "THECHAT_E2E_DATABASE_URL",
+                "postgres://thechat:thechat@localhost:15544/thechat",
+            ),
+        },
+        "opt_in": True,  # real Docker Hermes Gateway + provider API key
     },
 ]
 
@@ -378,7 +401,8 @@ def main():
 
     print(f"Running {len(suites)} test suite(s): {', '.join(s['name'] for s in suites)}")
     if not run_all:
-        print("  (pass --all to include opt-in suites: mcp, codex)")
+        opt_in_names = ", ".join(s["name"] for s in SUITES if s.get("opt_in"))
+        print(f"  (pass --all to include opt-in suites: {opt_in_names})")
     print()
 
     results: list[Result] = []

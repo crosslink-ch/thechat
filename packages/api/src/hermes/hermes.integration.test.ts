@@ -1,6 +1,6 @@
 import { describe, test, expect, afterAll } from "bun:test";
 import { Elysia } from "elysia";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { db } from "../db";
 import { users, workspaces, bots, hermesBotConfigs, messages } from "../db/schema";
 import { authRoutes } from "../auth";
@@ -233,7 +233,13 @@ describe("Hermes bot routes and mention flow", () => {
         const rows = await db
           .select({ id: messages.id })
           .from(messages)
-          .where(eq(messages.content, "Hermes says hello from fake Docker runtime"));
+          .where(
+            and(
+              eq(messages.conversationId, channelId),
+              eq(messages.senderId, createRes.body.userId),
+              eq(messages.content, "Hermes says hello from fake Docker runtime"),
+            ),
+          );
         return rows[0] ?? null;
       });
 
@@ -246,6 +252,102 @@ describe("Hermes bot routes and mention flow", () => {
       expect(runCall?.auth).toBe("Bearer dev-hermes-key");
       expect((runCall?.body as any).input).toBe("say hello");
       expect((runCall?.body as any).session_id).toContain(`thechat:workspace:${workspace.id}:conversation:${channelId}:bot:${createRes.body.id}`);
+    } finally {
+      hermes.server.stop(true);
+    }
+  });
+
+  test("direct messages to a workspace Hermes bot start a run without a mention", async () => {
+    const hermes = startFakeHermes();
+    try {
+      const human = await registerUser("DirectHermesOwner");
+      const workspace = await createWorkspace(human.token, "Hermes Direct WS");
+      const createRes = await req(
+        "POST",
+        "/bots/create",
+        {
+          kind: "hermes",
+          workspaceId: workspace.id,
+          name: "DirectKoda",
+        },
+        human.token,
+      );
+      expect(createRes.status).toBe(200);
+      createdBotUserIds.push(createRes.body.userId);
+
+      const novaRes = await req(
+        "POST",
+        "/bots/create",
+        {
+          kind: "hermes",
+          workspaceId: workspace.id,
+          name: "NovaDirect",
+        },
+        human.token,
+      );
+      expect(novaRes.status).toBe(200);
+      createdBotUserIds.push(novaRes.body.userId);
+
+      const connectNovaRes = await req(
+        "PATCH",
+        `/bots/${novaRes.body.id}/hermes`,
+        {
+          baseUrl: hermes.baseUrl,
+          apiKey: "dev-hermes-key",
+          defaultInstructions: "You are NovaDirect in TheChat.",
+        },
+        human.token,
+      );
+      expect(connectNovaRes.status).toBe(200);
+
+      const connectRes = await req(
+        "PATCH",
+        `/bots/${createRes.body.id}/hermes`,
+        {
+          baseUrl: hermes.baseUrl,
+          apiKey: "dev-hermes-key",
+          defaultInstructions: "You are DirectKoda in TheChat.",
+        },
+        human.token,
+      );
+      expect(connectRes.status).toBe(200);
+
+      const dmRes = await req(
+        "POST",
+        "/conversations/dm",
+        { workspaceId: workspace.id, otherUserId: createRes.body.userId },
+        human.token,
+      );
+      expect(dmRes.status).toBe(200);
+
+      const sendRes = await req("POST", `/messages/${dmRes.body.id}`, { content: "say hello from the DM" }, human.token);
+      expect(sendRes.status).toBe(200);
+
+      await waitFor(async () => {
+        const rows = await db
+          .select({ id: messages.id })
+          .from(messages)
+          .where(
+            and(
+              eq(messages.conversationId, dmRes.body.id),
+              eq(messages.senderId, createRes.body.userId),
+              eq(messages.content, "Hermes says hello from fake Docker runtime"),
+            ),
+          );
+        return rows[0] ?? null;
+      });
+
+      const messagesRes = await req("GET", `/messages/${dmRes.body.id}`, undefined, human.token);
+      const final = messagesRes.body.find((m: any) => m.senderName === "DirectKoda" && m.content.includes("Hermes says hello"));
+      expect(final).toBeDefined();
+      expect(messagesRes.body.some((m: any) => m.senderName === "NovaDirect")).toBe(false);
+
+      const runCalls = hermes.calls.filter((c) => c.path === "/v1/runs");
+      expect(runCalls).toHaveLength(1);
+      const runCall = runCalls[0];
+      expect(runCall?.auth).toBe("Bearer dev-hermes-key");
+      expect((runCall?.body as any).input).toBe("say hello from the DM");
+      expect((runCall?.body as any).session_id).toContain(`thechat:workspace:${workspace.id}:conversation:${dmRes.body.id}:bot:${createRes.body.id}`);
     } finally {
       hermes.server.stop(true);
     }

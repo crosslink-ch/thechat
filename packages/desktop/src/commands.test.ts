@@ -10,6 +10,7 @@ const openWorkspaceModalMock = vi.fn();
 const getAgentChatProjectDirMock = vi.fn<() => string | null>();
 const openPermissionModePickerMock = vi.fn();
 const openSelectProjectPickerMock = vi.fn();
+const openHermesBotModalMock = vi.fn();
 
 vi.mock("./CommandPalette", () => ({
   togglePalette: () => togglePaletteMock(),
@@ -27,6 +28,10 @@ vi.mock("./components/AuthModal", () => ({
 
 vi.mock("./components/WorkspaceModal", () => ({
   openWorkspaceModal: () => openWorkspaceModalMock(),
+}));
+
+vi.mock("./components/HermesBotModal", () => ({
+  openHermesBotModal: () => openHermesBotModalMock(),
 }));
 
 vi.mock("./components/ChatHeader", () => ({
@@ -101,5 +106,21 @@ describe("createCommands - Select Project", () => {
 
     const [recentProjects] = openSelectProjectPickerMock.mock.calls[0] as [string[], unknown];
     expect(recentProjects).toEqual(["/repo/current", "/repo/other"]);
+  });
+
+  it("opens the Add Hermes Bot flow from a dedicated command", () => {
+    const navigate = vi.fn();
+    const command = createCommands(navigate).find((c) => c.id === "add-hermes-bot");
+
+    expect(command).toMatchObject({
+      id: "add-hermes-bot",
+      label: "Add Hermes Bot",
+    });
+
+    command!.execute();
+
+    expect(closePaletteMock).toHaveBeenCalledOnce();
+    expect(openHermesBotModalMock).toHaveBeenCalledOnce();
+    expect(navigate).not.toHaveBeenCalled();
   });
 });

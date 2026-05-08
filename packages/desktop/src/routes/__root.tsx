@@ -15,6 +15,7 @@ import { SelectProjectPicker } from "../SelectProjectPicker";
 import { AuthModal } from "../components/AuthModal";
 import { CodexAuthModal } from "../components/CodexAuthModal";
 import { WorkspaceModal } from "../components/WorkspaceModal";
+import { HermesBotModal } from "../components/HermesBotModal";
 import { McpConfigDialog } from "../McpConfigDialog";
 import { useCodexAuthStore } from "../stores/codex-auth";
 import { registerGlobalWsHandlers } from "../lib/ws-global-handlers";
@@ -116,6 +117,7 @@ export function RootLayout() {
       <AuthModal />
       <CodexAuthModal />
       <WorkspaceModal />
+      <HermesBotModal />
       <McpConfigDialog />
       <UpdateToast />
     </div>

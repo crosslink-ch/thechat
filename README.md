@@ -12,13 +12,13 @@ Source code + CLAUDE.md is documentation.
 
 ### PostgreSQL
 
-Create `packages/api/.env`:
+Create `.env`:
 
 ```
-DATABASE_URL=postgresql://user:password@localhost:5432/thechat
+DATABASE_URL=postgresql://thechat:thechat@localhost:15543/thechat
 ```
 
-Start a fresh PostgreSQL container and push the schema:
+Reset the Docker Compose PostgreSQL service using that `DATABASE_URL` and push the schema:
 
 ```bash
 ./scripts/restart-db.sh
@@ -112,4 +112,3 @@ pnpm tauri dev --features otel
 ```
 
 Open http://localhost:16686, select "thechat" service, click "Find Traces".
-

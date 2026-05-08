@@ -3,6 +3,7 @@ import { togglePalette, closePalette, closePaletteAndRefocus, openPaletteInComma
 import { toggleSidebar } from "./components/Sidebar";
 import { openAuthModal } from "./components/AuthModal";
 import { openWorkspaceModal } from "./components/WorkspaceModal";
+import { openHermesBotModal } from "./components/HermesBotModal";
 import { getAgentChatProjectDir } from "./components/ChatHeader";
 import { openPermissionModePicker } from "./PermissionModePicker";
 import { openSelectProjectPicker } from "./SelectProjectPicker";
@@ -159,6 +160,16 @@ export function createCommands(
           navigate({ to: "/workspace/manage" });
           closePaletteAndRefocus();
         }
+      },
+    },
+    {
+      id: "add-hermes-bot",
+      label: "Add Hermes Bot",
+      shortcut: null,
+      keybinding: null,
+      execute: () => {
+        closePalette();
+        openHermesBotModal();
       },
     },
     {

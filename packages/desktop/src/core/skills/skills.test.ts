@@ -135,6 +135,22 @@ describe("loadSkill", () => {
     expect(skill!.location).toBe("builtin");
   });
 
+  it("documents Hermes bot wiring in the create-bot skill", async () => {
+    mockHomeDir.mockResolvedValue("/home/test/");
+    mockInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "get_cwd") return "/tmp/test";
+      if (cmd === "fs_glob") return { files: [], count: 0, truncated: false };
+      return null;
+    });
+
+    await discoverSkills();
+    const skill = await loadSkill("create-bot");
+    expect(skill!.content).toContain("Hermes bot wiring");
+    expect(skill!.content).toContain('"kind": "hermes"');
+    expect(skill!.content).toContain("PATCH /bots/:botId/hermes");
+    expect(skill!.content).toContain("direct messages");
+  });
+
   it("returns null for unknown skill name", async () => {
     mockHomeDir.mockResolvedValue("/home/test/");
     mockInvoke.mockImplementation(async (cmd: string) => {
