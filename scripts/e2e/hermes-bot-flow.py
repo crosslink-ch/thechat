@@ -52,15 +52,18 @@ BUN = os.environ.get("BUN", str(Path.home() / ".bun/bin/bun"))
 PNPM = os.environ.get("PNPM", "pnpm")
 API_PORT = int(explicit_env_or_default("THECHAT_E2E_API_PORT", "3338"))
 POSTGRES_PORT = int(explicit_env_or_default("THECHAT_E2E_POSTGRES_PORT", "15544"))
+REDIS_PORT = int(explicit_env_or_default("THECHAT_E2E_REDIS_PORT", "16381"))
 HERMES_PORT = int(explicit_env_or_default("THECHAT_E2E_HERMES_PORT", "18643"))
 HERMES_DASHBOARD_PORT = int(explicit_env_or_default("THECHAT_E2E_HERMES_DASHBOARD_PORT", "19120"))
 KEEP = os.environ.get("HERMES_E2E_KEEP") == "1"
 PG_CONTAINER = os.environ.get("THECHAT_E2E_PG_CONTAINER", "thechat-hermes-e2e-postgres")
+REDIS_CONTAINER = os.environ.get("THECHAT_E2E_REDIS_CONTAINER", "thechat-hermes-e2e-redis")
 HERMES_CONTAINER = os.environ.get("THECHAT_E2E_HERMES_CONTAINER", "thechat-hermes-e2e")
 DATABASE_URL = explicit_env_or_default(
     "THECHAT_E2E_DATABASE_URL",
     f"postgres://thechat:thechat@localhost:{POSTGRES_PORT}/thechat",
 )
+REDIS_URL = explicit_env_or_default("THECHAT_E2E_REDIS_URL", f"redis://localhost:{REDIS_PORT}")
 HERMES_API_KEY = (
     os.environ.get("HERMES_E2E_API_KEY")
     or os.environ.get("HERMES_API_KEY")
@@ -140,6 +143,25 @@ def start_postgres():
     )
 
 
+def start_redis():
+    run(["docker", "rm", "-f", REDIS_CONTAINER], check=False)
+    run([
+        "docker",
+        "run",
+        "-d",
+        "--name",
+        REDIS_CONTAINER,
+        "-p",
+        f"127.0.0.1:{REDIS_PORT}:6379",
+        "redis:7-alpine",
+    ])
+    wait_for(
+        lambda: run(["docker", "exec", REDIS_CONTAINER, "redis-cli", "ping"], check=False).returncode == 0,
+        timeout=30,
+        label="Redis readiness",
+    )
+
+
 def start_hermes():
     script = ROOT / "scripts" / "start-hermes-docker.sh"
     env = os.environ.copy()
@@ -161,6 +183,9 @@ def start_hermes():
 def start_api(env: dict[str, str]) -> subprocess.Popen:
     api_env = env | {
         "DATABASE_URL": DATABASE_URL,
+        "REDIS_URL": REDIS_URL,
+        "REALTIME_DRIVER": "redis",
+        "REDIS_KEY_PREFIX": "thechat-hermes-e2e",
         "JWT_SECRET": "thechat-hermes-e2e-jwt-secret",
         "THECHAT_SECRET_KEY": "thechat-hermes-e2e-secret-key",
         "THECHAT_BACKEND_PORT": str(API_PORT),
@@ -218,6 +243,35 @@ def wait_for_bot_message(base: str, token: str, conversation_id: str, sender_nam
     return wait_for(find_message, timeout=timeout, label=f"{sender_name} bot response")
 
 
+def wait_for_runtime_invocations(base: str, token: str, conversation_id: str, bot_name: str, count: int, *, timeout: int = 180):
+    def find_snapshot():
+        status, snapshot = http_json("GET", f"{base}/bot-runtime/conversations/{conversation_id}", token=token)
+        if status != 200:
+            return None
+        invocations = [i for i in snapshot.get("invocations", []) if i.get("botName") == bot_name]
+        if len(invocations) < count:
+            return None
+        if not all(i.get("status") in {"queued", "running", "completed", "failed"} for i in invocations):
+            return None
+        return snapshot
+
+    return wait_for(find_snapshot, timeout=timeout, label=f"{bot_name} runtime invocations")
+
+
+def wait_for_completed_runtime_invocations(base: str, token: str, conversation_id: str, bot_name: str, count: int, *, timeout: int = 180):
+    def find_snapshot():
+        status, snapshot = http_json("GET", f"{base}/bot-runtime/conversations/{conversation_id}", token=token)
+        if status != 200:
+            return None
+        completed = [
+            i for i in snapshot.get("invocations", [])
+            if i.get("botName") == bot_name and i.get("status") == "completed" and i.get("externalRunId")
+        ]
+        return snapshot if len(completed) >= count else None
+
+    return wait_for(find_snapshot, timeout=timeout, label=f"{bot_name} completed runtime invocations")
+
+
 def main():
     env = os.environ.copy()
     env["PATH"] = f"{Path(BUN).parent}:{env.get('PATH', '')}"
@@ -226,6 +280,7 @@ def main():
     api_proc: subprocess.Popen | None = None
     try:
         start_postgres()
+        start_redis()
         start_hermes()
 
         run([PNPM, "--dir", "packages/api", "exec", "drizzle-kit", "migrate"], env=env)
@@ -261,13 +316,18 @@ def main():
         channel_id = detail["channels"][0]["id"]
         bot_names = {m["user"]["name"] for m in detail["members"] if m["user"]["type"] == "bot"}
         assert {"Koda E2E", "Nova E2E"}.issubset(bot_names), bot_names
+        bot_kinds = {m["user"]["name"]: m.get("bot", {}).get("kind") for m in detail["members"] if m["user"]["type"] == "bot"}
+        assert bot_kinds["Koda E2E"] == "hermes", bot_kinds
+        assert bot_kinds["Nova E2E"] == "hermes", bot_kinds
 
         status, sent = http_json("POST", f"{base}/messages/{channel_id}", {"content": "@Koda E2E answer this channel smoke test"}, token)
         assert status == 200, (status, sent)
+        koda_channel_runtime = wait_for_runtime_invocations(base, token, channel_id, "Koda E2E", 1)
         koda_channel = wait_for_bot_message(base, token, channel_id, "Koda E2E")
 
         status, sent = http_json("POST", f"{base}/messages/{channel_id}", {"content": "@Nova E2E answer this second channel smoke test"}, token)
         assert status == 200, (status, sent)
+        nova_channel_runtime = wait_for_runtime_invocations(base, token, channel_id, "Nova E2E", 1)
         nova_channel = wait_for_bot_message(base, token, channel_id, "Nova E2E")
 
         status, dm = http_json(
@@ -281,7 +341,21 @@ def main():
 
         status, sent = http_json("POST", f"{base}/messages/{dm_id}", {"content": "Answer this direct message smoke test without an at mention"}, token)
         assert status == 200, (status, sent)
+        koda_dm_runtime_started = wait_for_runtime_invocations(base, token, dm_id, "Koda E2E", 1)
         koda_dm = wait_for_bot_message(base, token, dm_id, "Koda E2E")
+        koda_dm_runtime = wait_for_runtime_invocations(base, token, dm_id, "Koda E2E", 1)
+        koda_sessions = [s for s in koda_dm_runtime.get("sessions", []) if s.get("botName") == "Koda E2E"]
+        assert len(koda_sessions) == 1, koda_dm_runtime
+        assert f"conversation:{dm_id}" in (koda_sessions[0].get("externalSessionId") or ""), koda_sessions
+        assert any(i.get("status") == "completed" and i.get("externalRunId") for i in koda_dm_runtime.get("invocations", [])), koda_dm_runtime
+
+        status, sent = http_json("POST", f"{base}/messages/{dm_id}", {"content": "Answer this follow-up using the same session"}, token)
+        assert status == 200, (status, sent)
+        wait_for_runtime_invocations(base, token, dm_id, "Koda E2E", 2)
+        koda_dm_runtime_followup = wait_for_completed_runtime_invocations(base, token, dm_id, "Koda E2E", 2)
+        koda_completed = [i for i in koda_dm_runtime_followup.get("invocations", []) if i.get("botName") == "Koda E2E" and i.get("status") == "completed"]
+        assert len(koda_completed) >= 2, koda_dm_runtime_followup
+
         time.sleep(3)
         status, dm_messages = http_json("GET", f"{base}/messages/{dm_id}", token=token)
         assert status == 200, (status, dm_messages)
@@ -295,6 +369,12 @@ def main():
             "bots": [koda["name"], nova["name"]],
             "channelMessages": [koda_channel, nova_channel],
             "directMessage": koda_dm,
+            "runtime": {
+                "kodaChannel": koda_channel_runtime,
+                "novaChannel": nova_channel_runtime,
+                "kodaDmStarted": koda_dm_runtime_started,
+                "kodaDm": koda_dm_runtime_followup,
+            },
         }, indent=2))
     finally:
         if api_proc:
@@ -305,6 +385,7 @@ def main():
                 api_proc.kill()
         if not KEEP:
             run(["docker", "rm", "-f", HERMES_CONTAINER], check=False)
+            run(["docker", "rm", "-f", REDIS_CONTAINER], check=False)
             run(["docker", "rm", "-f", PG_CONTAINER], check=False)
         else:
             print("Keeping Docker containers because HERMES_E2E_KEEP=1")

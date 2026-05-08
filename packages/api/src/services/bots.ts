@@ -91,7 +91,7 @@ export async function addBotToWorkspace(
 ) {
   // Verify bot exists
   const [bot] = await db
-    .select({ userId: bots.userId, name: users.name })
+    .select({ id: bots.id, userId: bots.userId, kind: bots.kind, name: users.name })
     .from(bots)
     .innerJoin(users, eq(bots.userId, users.id))
     .where(eq(bots.id, botId))
@@ -141,6 +141,8 @@ export async function addBotToWorkspace(
 
     await broadcastBotJoinedWorkspace({
       workspaceId,
+      botId,
+      botKind: bot.kind,
       botUserId: bot.userId,
       botName: bot.name,
       joinedAt: member?.joinedAt ?? new Date(),
@@ -179,11 +181,15 @@ export async function addBotToWorkspace(
 
 async function broadcastBotJoinedWorkspace({
   workspaceId,
+  botId,
+  botKind,
   botUserId,
   botName,
   joinedAt,
 }: {
   workspaceId: string;
+  botId: string;
+  botKind: "webhook" | "hermes";
   botUserId: string;
   botName: string;
   joinedAt: Date;
@@ -207,6 +213,7 @@ async function broadcastBotJoinedWorkspace({
         avatar: null,
         type: "bot",
       },
+      bot: { id: botId, kind: botKind },
     },
   };
 

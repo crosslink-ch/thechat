@@ -1,5 +1,8 @@
 import mitt from "mitt";
 import type {
+  BotEventPublic,
+  BotInvocationPublic,
+  BotSessionPublic,
   ChatMessage,
   WorkspaceMember,
   WorkspaceMemberRole,
@@ -10,6 +13,12 @@ export type WsEvents = {
   "ws:new_message": {
     message: ChatMessage;
     conversationType: "direct" | "group";
+  };
+  "ws:bot_invocation_updated": {
+    conversationId: string;
+    session: BotSessionPublic | null;
+    invocation: BotInvocationPublic;
+    event: BotEventPublic | null;
   };
   "ws:typing": {
     conversationId: string;

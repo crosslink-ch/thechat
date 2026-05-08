@@ -13,6 +13,8 @@ import { botRoutes } from "./bots";
 import { inviteRoutes } from "./invites";
 import { mcpRoutes } from "./mcp";
 import { hermesRoutes } from "./hermes";
+import { botRuntimeRoutes } from "./bot-runtime";
+import { startBotWorker } from "./services/bot-runtime";
 
 const app = new Elysia()
   .use(cors())
@@ -30,6 +32,7 @@ const app = new Elysia()
   .use(wsRoutes)
   .use(botRoutes)
   .use(hermesRoutes)
+  .use(botRuntimeRoutes)
   .use(inviteRoutes)
   .use(mcpRoutes)
   .get("/", () => "TheChat API")
@@ -50,3 +53,9 @@ export type App = typeof app;
 app.listen(Number(process.env.THECHAT_BACKEND_PORT) || 3000);
 
 console.log(`TheChat API running at http://localhost:${app.server!.port}`);
+
+if (process.env.BOT_WORKER_ENABLED !== "0") {
+  startBotWorker().catch((error) => {
+    console.error("Failed to start bot worker", error);
+  });
+}

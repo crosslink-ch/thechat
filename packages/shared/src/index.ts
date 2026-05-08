@@ -135,6 +135,7 @@ export interface WorkspaceMember {
   role: WorkspaceMemberRole;
   joinedAt: string;
   user: AuthUser;
+  bot?: { id: string; kind: BotKind } | null;
 }
 
 export interface WorkspaceChannel {
@@ -227,7 +228,25 @@ export interface ChatMessage {
 export interface DirectConversation {
   id: string;
   otherUser: AuthUser;
+  otherBot?: { id: string; kind: BotKind } | null;
   lastMessage: ChatMessage | null;
+}
+
+export interface ConversationParticipantPublic {
+  userId: string;
+  role: WorkspaceMemberRole;
+  joinedAt: string;
+  user: AuthUser;
+  bot?: { id: string; kind: BotKind } | null;
+}
+
+export interface ConversationDetail {
+  id: string;
+  type: "direct" | "group";
+  workspaceId: string | null;
+  name: string | null;
+  title: string | null;
+  participants: ConversationParticipantPublic[];
 }
 
 // -- WebSocket Event Types --
@@ -289,6 +308,62 @@ export interface WebhookPayload {
   bot: { id: string; name: string };
 }
 
+export type BotSessionStatus = "active" | "archived";
+export type BotInvocationStatus = "queued" | "running" | "completed" | "failed";
+
+export interface BotSessionPublic {
+  id: string;
+  botId: string;
+  botUserId: string;
+  botName: string;
+  botKind: BotKind;
+  workspaceId: string | null;
+  conversationId: string | null;
+  scope: string;
+  externalSessionId: string | null;
+  title: string | null;
+  status: BotSessionStatus | string;
+  lastMessageId: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface BotInvocationPublic {
+  id: string;
+  botSessionId: string | null;
+  botId: string;
+  botUserId: string;
+  botName: string;
+  botKind: BotKind;
+  conversationId: string;
+  triggerMessageId: string;
+  responseMessageId: string | null;
+  adapterKind: BotKind | string;
+  status: BotInvocationStatus | string;
+  externalRunId: string | null;
+  requestJson: Record<string, unknown> | null;
+  responseJson: Record<string, unknown> | null;
+  error: string | null;
+  startedAt: string | null;
+  completedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface BotEventPublic {
+  id: string;
+  invocationId: string;
+  type: string;
+  payload: Record<string, unknown> | null;
+  createdAt: string;
+}
+
+export interface BotRuntimeSnapshot {
+  sessions: BotSessionPublic[];
+  invocations: BotInvocationPublic[];
+  events: BotEventPublic[];
+}
+
 // -- Workspace Invite Types --
 
 export interface WorkspaceInvite {
@@ -328,6 +403,13 @@ export type WsServerEvent =
   | { type: "auth_ok"; userId: string }
   | { type: "auth_error"; message: string }
   | { type: "new_message"; message: ChatMessage; conversationType: "direct" | "group" }
+  | {
+      type: "bot_invocation_updated";
+      conversationId: string;
+      session: BotSessionPublic | null;
+      invocation: BotInvocationPublic;
+      event: BotEventPublic | null;
+    }
   | { type: "typing"; conversationId: string; userId: string; userName: string }
   | { type: "member_joined"; workspaceId: string; member: WorkspaceMember }
   | { type: "member_role_changed"; workspaceId: string; userId: string; newRole: WorkspaceMemberRole }

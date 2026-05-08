@@ -74,7 +74,7 @@ async function requireBotOwner(botId: string, userId: string) {
   return bot;
 }
 
-async function getHermesConnection(botId: string): Promise<{ config: typeof hermesBotConfigs.$inferSelect; connection: HermesConnection }> {
+export async function getHermesConnection(botId: string): Promise<{ config: typeof hermesBotConfigs.$inferSelect; connection: HermesConnection }> {
   const [config] = await db.select().from(hermesBotConfigs).where(eq(hermesBotConfigs.botId, botId)).limit(1);
   if (!config) throw new ServiceError("Hermes config not found", 404);
   return { config, connection: { baseUrl: config.baseUrl, apiKey: decryptSecret(config.apiKeyEncrypted) } };

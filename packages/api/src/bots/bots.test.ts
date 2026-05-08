@@ -8,6 +8,7 @@ import { workspaceRoutes } from "../workspaces";
 import { conversationRoutes } from "../conversations";
 import { messageRoutes } from "../messages";
 import { botRoutes } from "./index";
+import { closeBotRuntimeForTests } from "../services/bot-runtime";
 import crypto from "crypto";
 
 const app = new Elysia()
@@ -26,6 +27,7 @@ const createdWorkspaceIds: string[] = [];
 const createdBotUserIds: string[] = [];
 
 afterAll(async () => {
+  await closeBotRuntimeForTests();
   // Clean up bots (cascade from user delete handles bot records)
   for (const id of createdBotUserIds) {
     await db.delete(users).where(eq(users.id, id));

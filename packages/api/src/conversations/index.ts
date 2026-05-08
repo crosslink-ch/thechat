@@ -4,6 +4,7 @@ import { resolveTokenToUser } from "../auth/middleware";
 import { ServiceError } from "../services/errors";
 import {
   createOrGetDm,
+  getConversationDetail,
   listUserDms,
   createChannel,
 } from "../services/conversations";
@@ -34,6 +35,19 @@ export const conversationRoutes = new Elysia({ prefix: "/conversations" })
     if (!user) {
       set.status = 401;
       return { error: "Authentication required" };
+    }
+  })
+
+  // Get a conversation and its participants
+  .get("/detail/:conversationId", async ({ params, user, set }) => {
+    try {
+      return await getConversationDetail(params.conversationId, user.id);
+    } catch (e) {
+      if (e instanceof ServiceError) {
+        set.status = e.status;
+        return { error: e.message };
+      }
+      throw e;
     }
   })
 

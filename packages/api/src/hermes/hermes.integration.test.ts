@@ -2,13 +2,15 @@ import { describe, test, expect, afterAll } from "bun:test";
 import { Elysia } from "elysia";
 import { and, eq } from "drizzle-orm";
 import { db } from "../db";
-import { users, workspaces, bots, hermesBotConfigs, messages } from "../db/schema";
+import { botInvocations, botSessions, users, workspaces, bots, hermesBotConfigs, messages } from "../db/schema";
 import { authRoutes } from "../auth";
 import { workspaceRoutes } from "../workspaces";
 import { conversationRoutes } from "../conversations";
 import { messageRoutes } from "../messages";
 import { botRoutes } from "../bots";
 import { hermesRoutes } from "./index";
+import { botRuntimeRoutes } from "../bot-runtime";
+import { closeBotRuntimeForTests } from "../services/bot-runtime";
 import crypto from "crypto";
 
 const app = new Elysia()
@@ -17,13 +19,15 @@ const app = new Elysia()
   .use(conversationRoutes)
   .use(messageRoutes)
   .use(botRoutes)
-  .use(hermesRoutes);
+  .use(hermesRoutes)
+  .use(botRuntimeRoutes);
 
 const createdUserEmails: string[] = [];
 const createdWorkspaceIds: string[] = [];
 const createdBotUserIds: string[] = [];
 
 afterAll(async () => {
+  await closeBotRuntimeForTests();
   for (const id of createdBotUserIds) {
     await db.delete(users).where(eq(users.id, id));
   }
@@ -73,6 +77,7 @@ async function createWorkspace(token: string, name: string) {
 
 function startFakeHermes() {
   const calls: Array<{ path: string; body?: unknown; auth: string | null }> = [];
+  let runCount = 0;
   const server = Bun.serve({
     port: 0,
     async fetch(request) {
@@ -85,9 +90,10 @@ function startFakeHermes() {
       if (url.pathname === "/health") return Response.json({ status: "ok" });
       if (url.pathname === "/v1/capabilities") return Response.json({ capabilities: ["runs", "responses"] });
       if (url.pathname === "/v1/runs" && request.method === "POST") {
-        return Response.json({ run_id: "fake-run-1", status: "queued" });
+        runCount += 1;
+        return Response.json({ run_id: `fake-run-${runCount}`, status: "queued" });
       }
-      if (url.pathname === "/v1/runs/fake-run-1/events") {
+      if (/^\/v1\/runs\/fake-run-\d+\/events$/.test(url.pathname)) {
         return new Response(
           [
             "event: run_started",
@@ -252,6 +258,14 @@ describe("Hermes bot routes and mention flow", () => {
       expect(runCall?.auth).toBe("Bearer dev-hermes-key");
       expect((runCall?.body as any).input).toBe("say hello");
       expect((runCall?.body as any).session_id).toContain(`thechat:workspace:${workspace.id}:conversation:${channelId}:bot:${createRes.body.id}`);
+
+      const runtimeRes = await req("GET", `/bot-runtime/conversations/${channelId}`, undefined, human.token);
+      expect(runtimeRes.status).toBe(200);
+      expect(runtimeRes.body.sessions).toHaveLength(1);
+      expect(runtimeRes.body.sessions[0].botName).toBe("Koda");
+      expect(runtimeRes.body.invocations[0].status).toBe("completed");
+      expect(runtimeRes.body.invocations[0].externalRunId).toBe("fake-run-1");
+      expect(runtimeRes.body.events.some((event: any) => event.type === "hermes.done")).toBe(true);
     } finally {
       hermes.server.stop(true);
     }
@@ -348,6 +362,45 @@ describe("Hermes bot routes and mention flow", () => {
       expect(runCall?.auth).toBe("Bearer dev-hermes-key");
       expect((runCall?.body as any).input).toBe("say hello from the DM");
       expect((runCall?.body as any).session_id).toContain(`thechat:workspace:${workspace.id}:conversation:${dmRes.body.id}:bot:${createRes.body.id}`);
+
+      const followupRes = await req("POST", `/messages/${dmRes.body.id}`, { content: "what did I ask before?" }, human.token);
+      expect(followupRes.status).toBe(200);
+
+      await waitFor(async () => {
+        const rows = await db
+          .select({ id: botInvocations.id })
+          .from(botInvocations)
+          .where(
+            and(
+              eq(botInvocations.conversationId, dmRes.body.id),
+              eq(botInvocations.botId, createRes.body.id),
+              eq(botInvocations.status, "completed"),
+            ),
+          );
+        return rows.length >= 2 ? rows : null;
+      });
+
+      const runtimeRes = await req("GET", `/bot-runtime/conversations/${dmRes.body.id}`, undefined, human.token);
+      expect(runtimeRes.status).toBe(200);
+      expect(runtimeRes.body.sessions).toHaveLength(1);
+      expect(runtimeRes.body.sessions[0].botName).toBe("DirectKoda");
+      expect(runtimeRes.body.invocations.filter((inv: any) => inv.botName === "DirectKoda")).toHaveLength(2);
+
+      const [sessionRow] = await db
+        .select({ externalSessionId: botSessions.externalSessionId, lastMessageId: botSessions.lastMessageId })
+        .from(botSessions)
+        .where(eq(botSessions.conversationId, dmRes.body.id));
+      expect(sessionRow.externalSessionId).toContain(`conversation:${dmRes.body.id}`);
+      expect(sessionRow.lastMessageId).toBeTruthy();
+
+      const secondRunCall = hermes.calls.filter((c) => c.path === "/v1/runs")[1];
+      expect((secondRunCall?.body as any).input).toBe("what did I ask before?");
+      expect((secondRunCall?.body as any).conversation_history).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ role: "user", content: "say hello from the DM" }),
+          expect.objectContaining({ role: "assistant", content: "Hermes says hello from fake Docker runtime" }),
+        ]),
+      );
     } finally {
       hermes.server.stop(true);
     }

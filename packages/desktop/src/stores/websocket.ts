@@ -91,6 +91,13 @@ function doConnect() {
         message: event.message,
         conversationType: event.conversationType,
       });
+    } else if (event.type === "bot_invocation_updated") {
+      wsEvents.emit("ws:bot_invocation_updated", {
+        conversationId: event.conversationId,
+        session: event.session,
+        invocation: event.invocation,
+        event: event.event,
+      });
     } else if (event.type === "typing") {
       wsEvents.emit("ws:typing", {
         conversationId: event.conversationId,

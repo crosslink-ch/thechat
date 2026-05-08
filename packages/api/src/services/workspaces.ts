@@ -5,6 +5,7 @@ import {
   workspaceMembers,
   conversations,
   conversationParticipants,
+  bots,
   users,
 } from "../db/schema";
 import { ServiceError } from "./errors";
@@ -87,9 +88,12 @@ export async function getWorkspaceDetail(workspaceId: string, userId: string) {
       userEmail: users.email,
       userAvatar: users.avatar,
       userType: users.type,
+      botId: bots.id,
+      botKind: bots.kind,
     })
     .from(workspaceMembers)
     .innerJoin(users, eq(workspaceMembers.userId, users.id))
+    .leftJoin(bots, eq(bots.userId, users.id))
     .where(eq(workspaceMembers.workspaceId, workspaceId));
 
   const channels = await db
@@ -118,6 +122,7 @@ export async function getWorkspaceDetail(workspaceId: string, userId: string) {
         avatar: m.userAvatar,
         type: m.userType,
       },
+      bot: m.botId ? { id: m.botId, kind: m.botKind! } : null,
     })),
     channels: channels.map((c) => ({
       id: c.id,

@@ -104,7 +104,7 @@ export async function sendMessage(
 
   const createdAt = msg.createdAt.toISOString();
 
-  // Fire-and-forget webhook notifications for @mentioned bots
+  // Fire-and-forget bot invocation detection for mentioned bots and Hermes DMs.
   processMessageMentions({
     id: msg.id,
     content: msg.content,
@@ -112,7 +112,7 @@ export async function sendMessage(
     senderId: msg.senderId,
     senderName: userName,
     createdAt,
-  });
+  }).catch((error) => console.error("Failed to enqueue bot invocation", error));
 
   return {
     id: msg.id,

@@ -42,8 +42,8 @@ export interface QueueCommand<TPayload = unknown> {
   attempts?: number;
   backoff?: AsyncBackoffOptions;
   delayMs?: number;
-  removeOnComplete?: boolean | number;
-  removeOnFail?: boolean | number;
+  removeOnComplete?: boolean | number | { age: number; count?: number; limit?: number };
+  removeOnFail?: boolean | number | { age: number; count?: number; limit?: number };
 }
 
 export interface QueuedJob {

@@ -1,6 +1,7 @@
 import { eq, and, desc } from "drizzle-orm";
 import { db } from "../db";
 import {
+  bots,
   conversations,
   conversationParticipants,
   messages,
@@ -70,14 +71,25 @@ export async function createOrGetDm(
           name: users.name,
           email: users.email,
           avatar: users.avatar,
+          type: users.type,
+          botId: bots.id,
+          botKind: bots.kind,
         })
         .from(users)
+        .leftJoin(bots, eq(bots.userId, users.id))
         .where(eq(users.id, otherUserId))
         .limit(1);
 
       return {
         id: conv.id,
-        otherUser: otherUser!,
+        otherUser: {
+          id: otherUser!.id,
+          name: otherUser!.name,
+          email: otherUser!.email,
+          avatar: otherUser!.avatar,
+          type: otherUser!.type,
+        },
+        otherBot: otherUser?.botId ? { id: otherUser.botId, kind: otherUser.botKind! } : null,
         lastMessage: null,
       };
     }
@@ -86,14 +98,18 @@ export async function createOrGetDm(
   // Create new DM conversation
   const [otherUser] = await db
     .select({
-      id: users.id,
-      name: users.name,
-      email: users.email,
-      avatar: users.avatar,
-    })
-    .from(users)
-    .where(eq(users.id, otherUserId))
-    .limit(1);
+    id: users.id,
+    name: users.name,
+    email: users.email,
+    avatar: users.avatar,
+    type: users.type,
+    botId: bots.id,
+    botKind: bots.kind,
+  })
+  .from(users)
+  .leftJoin(bots, eq(bots.userId, users.id))
+  .where(eq(users.id, otherUserId))
+  .limit(1);
 
   if (!otherUser) {
     throw new ServiceError("User not found", 404);
@@ -114,7 +130,14 @@ export async function createOrGetDm(
 
   return {
     id: conv.id,
-    otherUser,
+    otherUser: {
+      id: otherUser.id,
+      name: otherUser.name,
+      email: otherUser.email,
+      avatar: otherUser.avatar,
+      type: otherUser.type,
+    },
+    otherBot: otherUser.botId ? { id: otherUser.botId, kind: otherUser.botKind! } : null,
     lastMessage: null,
   };
 }
@@ -174,14 +197,18 @@ export async function listUserDms(workspaceId: string, userId: string) {
 
     const [otherUser] = await db
       .select({
-        id: users.id,
-        name: users.name,
-        email: users.email,
-        avatar: users.avatar,
-      })
-      .from(users)
-      .where(eq(users.id, otherUserId))
-      .limit(1);
+      id: users.id,
+      name: users.name,
+      email: users.email,
+      avatar: users.avatar,
+      type: users.type,
+      botId: bots.id,
+      botKind: bots.kind,
+    })
+    .from(users)
+    .leftJoin(bots, eq(bots.userId, users.id))
+    .where(eq(users.id, otherUserId))
+    .limit(1);
 
     if (!otherUser) continue;
 
@@ -203,7 +230,14 @@ export async function listUserDms(workspaceId: string, userId: string) {
 
     results.push({
       id: conv.id,
-      otherUser,
+      otherUser: {
+        id: otherUser.id,
+        name: otherUser.name,
+        email: otherUser.email,
+        avatar: otherUser.avatar,
+        type: otherUser.type,
+      },
+      otherBot: otherUser.botId ? { id: otherUser.botId, kind: otherUser.botKind! } : null,
       lastMessage: lastMsg
         ? {
             id: lastMsg.id,
@@ -218,6 +252,71 @@ export async function listUserDms(workspaceId: string, userId: string) {
   }
 
   return results;
+}
+
+export async function getConversationDetail(conversationId: string, userId: string) {
+  const [participant] = await db
+    .select({ userId: conversationParticipants.userId })
+    .from(conversationParticipants)
+    .where(
+      and(
+        eq(conversationParticipants.conversationId, conversationId),
+        eq(conversationParticipants.userId, userId),
+      ),
+    )
+    .limit(1);
+
+  if (!participant) {
+    throw new ServiceError("You are not a participant of this conversation", 403);
+  }
+
+  const [conv] = await db
+    .select()
+    .from(conversations)
+    .where(eq(conversations.id, conversationId))
+    .limit(1);
+
+  if (!conv) {
+    throw new ServiceError("Conversation not found", 404);
+  }
+
+  const participants = await db
+    .select({
+      userId: conversationParticipants.userId,
+      role: conversationParticipants.role,
+      joinedAt: conversationParticipants.joinedAt,
+      userName: users.name,
+      userEmail: users.email,
+      userAvatar: users.avatar,
+      userType: users.type,
+      botId: bots.id,
+      botKind: bots.kind,
+    })
+    .from(conversationParticipants)
+    .innerJoin(users, eq(conversationParticipants.userId, users.id))
+    .leftJoin(bots, eq(bots.userId, users.id))
+    .where(eq(conversationParticipants.conversationId, conversationId));
+
+  return {
+    id: conv.id,
+    type: conv.type,
+    workspaceId: conv.workspaceId,
+    name: conv.name,
+    title: conv.title,
+    participants: participants.map((p) => ({
+      userId: p.userId,
+      role: p.role,
+      joinedAt: p.joinedAt.toISOString(),
+      user: {
+        id: p.userId,
+        name: p.userName,
+        email: p.userEmail,
+        avatar: p.userAvatar,
+        type: p.userType,
+      },
+      bot: p.botId ? { id: p.botId, kind: p.botKind! } : null,
+    })),
+  };
 }
 
 export async function createChannel(

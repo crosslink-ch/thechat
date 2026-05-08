@@ -152,7 +152,7 @@ Body: {}
 
 - In channels/groups, users mention the specific bot name, for example \`@Koda summarize this thread\`.
 - In direct messages with a workspace Hermes bot, users can message the bot without an @mention and it should respond.
-- TheChat does not store Hermes run/session state as local canonical state; Hermes Gateway owns that runtime state.
-- TheChat posts only the final Hermes output back into the conversation as the bot.
+- TheChat stores generic bot session, invocation, and event metadata for UI/history; Hermes Gateway still owns the actual model runtime.
+- TheChat sends recent conversation history to Hermes as \`conversation_history\`, streams Hermes run events into bot events, and posts the final Hermes output back into the conversation as the bot.
 `,
 };

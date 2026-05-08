@@ -148,11 +148,16 @@ SUITES = [
         "env": {
             "THECHAT_E2E_API_PORT": explicit_env_or_default("THECHAT_E2E_API_PORT", "3338"),
             "THECHAT_E2E_POSTGRES_PORT": explicit_env_or_default("THECHAT_E2E_POSTGRES_PORT", "15544"),
+            "THECHAT_E2E_REDIS_PORT": explicit_env_or_default("THECHAT_E2E_REDIS_PORT", "16381"),
             "THECHAT_E2E_HERMES_PORT": explicit_env_or_default("THECHAT_E2E_HERMES_PORT", "18643"),
             "THECHAT_E2E_HERMES_DASHBOARD_PORT": explicit_env_or_default("THECHAT_E2E_HERMES_DASHBOARD_PORT", "19120"),
             "THECHAT_E2E_DATABASE_URL": explicit_env_or_default(
                 "THECHAT_E2E_DATABASE_URL",
                 "postgres://thechat:thechat@localhost:15544/thechat",
+            ),
+            "THECHAT_E2E_REDIS_URL": explicit_env_or_default(
+                "THECHAT_E2E_REDIS_URL",
+                "redis://localhost:16381",
             ),
         },
         "opt_in": True,  # real Docker Hermes Gateway + provider API key
