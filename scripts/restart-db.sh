@@ -110,8 +110,35 @@ export POSTGRES_USER POSTGRES_PASSWORD POSTGRES_DB POSTGRES_PORT
 
 cd "$ROOT_DIR"
 
-echo "Stopping Docker Compose services and removing database volumes..."
-docker compose down --volumes --remove-orphans
+POSTGRES_VOLUME_NAME="$(
+  docker compose config --format json | node -e '
+const fs = require("node:fs");
+
+function fail(message) {
+  console.error(message);
+  process.exit(1);
+}
+
+const config = JSON.parse(fs.readFileSync(0, "utf8"));
+const serviceName = process.argv[1] || "postgres";
+const service = config.services?.[serviceName];
+if (!service) fail(`Compose service ${serviceName} was not found`);
+
+const mount = (service.volumes || []).find(
+  (volume) => volume.type === "volume" && volume.target === "/var/lib/postgresql/data"
+);
+if (!mount?.source) fail(`Compose service ${serviceName} does not define a PostgreSQL data volume`);
+
+const volume = config.volumes?.[mount.source];
+process.stdout.write(volume?.name || `${config.name}_${mount.source}`);
+' "$COMPOSE_SERVICE"
+)"
+
+echo "Stopping PostgreSQL Compose service and removing only its database volume..."
+docker compose rm --force --stop "$COMPOSE_SERVICE"
+
+echo "Removing Docker Compose volume '$POSTGRES_VOLUME_NAME'..."
+docker volume rm "$POSTGRES_VOLUME_NAME" 2>/dev/null || true
 
 echo "Removing legacy standalone container '$LEGACY_CONTAINER_NAME' if it exists..."
 docker rm -f "$LEGACY_CONTAINER_NAME" 2>/dev/null || true

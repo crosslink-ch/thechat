@@ -24,7 +24,7 @@ Reset the Docker Compose PostgreSQL service using that `DATABASE_URL` and push t
 ./scripts/restart-db.sh
 ```
 
-This removes any existing `thechat-postgres` container and volume, starts a new PostgreSQL 17 instance, and runs `pnpm db:push`.
+This removes only the Docker Compose PostgreSQL service and its data volume, leaves other Compose services such as Redis running, starts a new PostgreSQL 17 instance, and runs `pnpm db:push`.
 
 ## Building the desktop app from source
 
