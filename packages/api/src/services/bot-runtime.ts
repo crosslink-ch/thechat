@@ -480,13 +480,18 @@ export interface HermesPlatformEvent {
   session: { id: string; externalSessionId: string | null };
 }
 
-export async function claimHermesPlatformEvents(limit = 10): Promise<HermesPlatformEvent[]> {
+export async function claimHermesPlatformEvents(botId: string, limit = 10): Promise<HermesPlatformEvent[]> {
   const cappedLimit = Math.max(1, Math.min(limit, 50));
   const pending = await db
     .select({ id: botInvocations.id })
     .from(botInvocations)
     .innerJoin(bots, eq(botInvocations.botId, bots.id))
-    .where(and(eq(botInvocations.status, "queued"), eq(botInvocations.adapterKind, "hermes"), eq(bots.kind, "hermes")))
+    .where(and(
+      eq(botInvocations.status, "queued"),
+      eq(botInvocations.adapterKind, "hermes"),
+      eq(botInvocations.botId, botId),
+      eq(bots.kind, "hermes"),
+    ))
     .orderBy(asc(botInvocations.createdAt))
     .limit(cappedLimit);
 
@@ -578,6 +583,7 @@ export async function claimHermesPlatformEvents(limit = 10): Promise<HermesPlatf
 }
 
 export async function completeHermesPlatformInvocation(input: {
+  authenticatedBotId: string;
   invocationId: string;
   content: string;
   platformMessageId?: string | null;
@@ -590,6 +596,7 @@ export async function completeHermesPlatformInvocation(input: {
   const loaded = await loadInvocationContext(input.invocationId);
   if (!loaded) throw new ServiceError("Invocation not found", 404);
   if (loaded.bot.kind !== "hermes") throw new ServiceError("Invocation is not for a Hermes bot", 400);
+  if (loaded.bot.id !== input.authenticatedBotId) throw new ServiceError("Bot token does not match invocation", 403);
   if (input.botId && input.botId !== loaded.bot.id) throw new ServiceError("Bot does not match invocation", 400);
   if (input.conversationId && input.conversationId !== loaded.conversation.id) {
     throw new ServiceError("Conversation does not match invocation", 400);
@@ -643,14 +650,20 @@ export async function completeHermesPlatformInvocation(input: {
 }
 
 export async function failHermesPlatformInvocation(input: {
+  authenticatedBotId: string;
   invocationId: string;
   error: string;
 }) {
+  const loaded = await loadInvocationContext(input.invocationId);
+  if (!loaded) throw new ServiceError("Invocation not found", 404);
+  if (loaded.bot.kind !== "hermes") throw new ServiceError("Invocation is not for a Hermes bot", 400);
+  if (loaded.bot.id !== input.authenticatedBotId) throw new ServiceError("Bot token does not match invocation", 403);
   await failInvocation(input.invocationId, new Error(input.error));
   return { ok: true };
 }
 
 export async function publishHermesPlatformTyping(input: {
+  authenticatedBotId: string;
   invocationId: string;
   botId?: string;
   conversationId?: string;
@@ -658,6 +671,7 @@ export async function publishHermesPlatformTyping(input: {
   const loaded = await loadInvocationContext(input.invocationId);
   if (!loaded) throw new ServiceError("Invocation not found", 404);
   if (loaded.bot.kind !== "hermes") throw new ServiceError("Invocation is not for a Hermes bot", 400);
+  if (loaded.bot.id !== input.authenticatedBotId) throw new ServiceError("Bot token does not match invocation", 403);
   if (input.botId && input.botId !== loaded.bot.id) throw new ServiceError("Bot does not match invocation", 400);
   if (input.conversationId && input.conversationId !== loaded.conversation.id) {
     throw new ServiceError("Conversation does not match invocation", 400);

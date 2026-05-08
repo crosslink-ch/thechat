@@ -1,5 +1,8 @@
 import { Elysia } from "elysia";
 import { z } from "zod";
+import { eq } from "drizzle-orm";
+import { db } from "../db";
+import { bots, users } from "../db/schema";
 import {
   claimHermesPlatformEvents,
   completeHermesPlatformInvocation,
@@ -26,40 +29,80 @@ const failedSchema = z.object({
   error: z.string().min(1),
 });
 
-function requirePlatformAuth(headers: Record<string, string | undefined> | Headers, set: { status?: any }) {
-  const token = process.env.THECHAT_HERMES_PLATFORM_TOKEN ?? process.env.THECHAT_PLATFORM_TOKEN;
-  if (!token) {
-    set.status = 503;
-    return { error: "TheChat Hermes platform token is not configured" };
-  }
+type HermesPlatformBot = {
+  id: string;
+  userId: string;
+  name: string;
+  kind: "webhook" | "hermes";
+};
+
+function authHeaderFrom(headers: Record<string, string | undefined> | Headers) {
   const authHeader =
     typeof (headers as Headers).get === "function"
       ? (headers as Headers).get("authorization")
       : (headers as Record<string, string | undefined>).authorization;
-  if (authHeader !== `Bearer ${token}`) {
+  return authHeader ?? "";
+}
+
+async function resolveHermesPlatformBot(headers: Record<string, string | undefined> | Headers): Promise<HermesPlatformBot | null> {
+  const authHeader = authHeaderFrom(headers);
+  if (!authHeader.startsWith("Bearer ")) return null;
+
+  const token = authHeader.slice(7);
+  if (!token.startsWith("bot_")) return null;
+
+  const [bot] = await db
+    .select({
+      id: bots.id,
+      userId: bots.userId,
+      kind: bots.kind,
+      name: users.name,
+    })
+    .from(bots)
+    .innerJoin(users, eq(bots.userId, users.id))
+    .where(eq(bots.apiKey, token))
+    .limit(1);
+
+  if (!bot) return null;
+  return bot;
+}
+
+function requireHermesBot(platformBot: HermesPlatformBot | null, set: { status?: any }) {
+  if (!platformBot) {
     set.status = 401;
-    return { error: "Invalid Hermes platform token" };
+    return { error: "Valid bot token is required" };
+  }
+  if (platformBot.kind !== "hermes") {
+    set.status = 403;
+    return { error: "Bot token is not for a Hermes bot" };
   }
   return null;
 }
 
 export const hermesPlatformRoutes = new Elysia({ prefix: "/hermes-platform" })
-  .onBeforeHandle(({ headers, set }) => {
-    const error = requirePlatformAuth(headers, set);
+  .derive(async ({ headers }) => ({
+    platformBot: await resolveHermesPlatformBot(headers),
+  }))
+  .onBeforeHandle(({ platformBot, set }) => {
+    const error = requireHermesBot(platformBot, set);
     if (error) return error;
   })
-  .get("/health", () => ({ ok: true, platform: "thechat" }))
-  .get("/events", async ({ query, set }) => {
+  .get("/health", ({ platformBot }) => ({
+    ok: true,
+    platform: "thechat",
+    bot: platformBot ? { id: platformBot.id, userId: platformBot.userId, name: platformBot.name } : null,
+  }))
+  .get("/events", async ({ query, platformBot, set }) => {
     try {
       const rawLimit = typeof query.limit === "string" ? Number.parseInt(query.limit, 10) : 10;
-      const events = await claimHermesPlatformEvents(Number.isFinite(rawLimit) ? rawLimit : 10);
+      const events = await claimHermesPlatformEvents(platformBot!.id, Number.isFinite(rawLimit) ? rawLimit : 10);
       return { events };
     } catch (e: any) {
       set.status = e instanceof ServiceError ? e.status : 500;
       return { error: e.message ?? "Unknown error" };
     }
   })
-  .post("/messages", async ({ body, set }) => {
+  .post("/messages", async ({ body, platformBot, set }) => {
     const parsed = completeSchema.safeParse(body);
     if (!parsed.success) {
       set.status = 400;
@@ -67,6 +110,7 @@ export const hermesPlatformRoutes = new Elysia({ prefix: "/hermes-platform" })
     }
     try {
       return await completeHermesPlatformInvocation({
+        authenticatedBotId: platformBot!.id,
         invocationId: parsed.data.invocationId,
         botId: parsed.data.botId,
         conversationId: parsed.data.conversationId,
@@ -78,20 +122,23 @@ export const hermesPlatformRoutes = new Elysia({ prefix: "/hermes-platform" })
       return { error: e.message ?? "Unknown error" };
     }
   })
-  .post("/typing", async ({ body, set }) => {
+  .post("/typing", async ({ body, platformBot, set }) => {
     const parsed = typingSchema.safeParse(body);
     if (!parsed.success) {
       set.status = 400;
       return { error: parsed.error.issues[0]?.message ?? "Invalid input" };
     }
     try {
-      return await publishHermesPlatformTyping(parsed.data);
+      return await publishHermesPlatformTyping({
+        authenticatedBotId: platformBot!.id,
+        ...parsed.data,
+      });
     } catch (e: any) {
       set.status = e instanceof ServiceError ? e.status : 500;
       return { error: e.message ?? "Unknown error" };
     }
   })
-  .post("/invocations/:invocationId/failed", async ({ params, body, set }) => {
+  .post("/invocations/:invocationId/failed", async ({ params, body, platformBot, set }) => {
     const parsed = failedSchema.safeParse(body);
     if (!parsed.success) {
       set.status = 400;
@@ -99,6 +146,7 @@ export const hermesPlatformRoutes = new Elysia({ prefix: "/hermes-platform" })
     }
     try {
       return await failHermesPlatformInvocation({
+        authenticatedBotId: platformBot!.id,
         invocationId: params.invocationId,
         error: parsed.data.error,
       });

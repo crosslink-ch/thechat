@@ -95,7 +95,7 @@ export const botRoutes = new Elysia({ prefix: "/bots" })
         const bot = await createBot(name, null, user.id, "hermes");
         await ensureHermesBotConfig(bot.id);
         await addBotToWorkspace(bot.id, workspaceId, user.id);
-        const { apiKey: _apiKey, webhookSecret: _webhookSecret, ...publicBot } = bot;
+        const { webhookSecret: _webhookSecret, ...publicBot } = bot;
         return publicBot;
       }
       return await createBot(name, webhookUrl ?? null, user.id);

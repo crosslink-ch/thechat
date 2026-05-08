@@ -23,8 +23,9 @@ Webhook bots have:
 
 Hermes bots have:
 - A **name** — any user-facing bot name, not necessarily "Hermes"
+- A **bot token** — the created bot's \`apiKey\`, prefixed with \`bot_\`, used by Hermes Gateway to connect as that bot
 - Optional default instructions/session settings
-- A running Hermes Gateway configured with TheChat platform bridge credentials
+- A running Hermes Gateway configured with TheChat platform adapter credentials for that specific bot
 
 ## Steps
 
@@ -88,21 +89,7 @@ Unless the user specifies otherwise, prefer using Bun and TypeScript for buildin
 
 Use this flow when the user asks to add, connect, configure, or wire up a Hermes bot.
 
-### 1. Confirm the Hermes platform bridge
-
-Hermes Gateway must be running with TheChat enabled as a messaging platform. TheChat does not call the Hermes run API for bot replies; Hermes Gateway polls TheChat for pending bot invocations and posts responses back through the TheChat platform endpoints.
-
-The gateway needs:
-
-\`\`\`
-THECHAT_BASE_URL=<TheChat API URL>
-THECHAT_HERMES_PLATFORM_TOKEN=<shared bridge token>
-THECHAT_ALLOW_ALL_USERS=true
-\`\`\`
-
-TheChat API must run with the same \`THECHAT_HERMES_PLATFORM_TOKEN\`.
-
-### 2. Create a Hermes bot user
+### 1. Create a Hermes bot user
 
 Create the chat participant as a normal bot with \`kind: "hermes"\`, a workspace ID, and the chosen display name.
 
@@ -114,8 +101,6 @@ Create the chat participant as a normal bot with \`kind: "hermes"\`, a workspace
 }
 \`\`\`
 
-Do not put Hermes connection settings in generic bot creation. Runtime connectivity belongs to the Hermes Gateway TheChat platform adapter, not the bot record.
-
 If using HTTP directly:
 
 \`\`\`
@@ -124,7 +109,23 @@ Authorization: Bearer <human-user-token>
 Body: { "kind": "hermes", "workspaceId": "<workspace-id>", "name": "Koda" }
 \`\`\`
 
-Only workspace owners/admins can connect Hermes bots. Multiple Hermes bots can be added to the same workspace by repeating this flow with different names/configs.
+Only workspace owners/admins can create Hermes bots. The create response includes the bot's \`apiKey\`; treat it as the bot token and show it to the user because it is needed by the Hermes Gateway process.
+
+### 2. Start Hermes Gateway for that bot
+
+Hermes Gateway must run with TheChat enabled as a messaging platform. TheChat does not call the Hermes run API for bot replies; Hermes Gateway polls TheChat for pending bot invocations and posts responses back through the TheChat platform endpoints.
+
+The gateway needs the per-bot token from the create response:
+
+\`\`\`
+THECHAT_BASE_URL=<TheChat API URL>
+THECHAT_BOT_TOKEN=<bot apiKey from /bots/create>
+THECHAT_ALLOW_ALL_USERS=true
+\`\`\`
+
+Each Hermes bot gets its own token. To run multiple Hermes bots, repeat the bot creation flow and run one Hermes Gateway process per bot token, each with its own Hermes home/config.
+
+Do not put Hermes connection settings in generic bot creation. Runtime connectivity belongs to the Hermes Gateway TheChat platform adapter, not the bot record.
 
 ### 3. Configure bot defaults
 

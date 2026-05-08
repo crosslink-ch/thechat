@@ -26,7 +26,6 @@ REDIS_URL=redis://localhost:16380
 JWT_SECRET=change-me-local-thechat-jwt-secret
 THECHAT_SECRET_KEY=change-me-local-thechat-secret-key
 THECHAT_BACKEND_PORT=3337
-THECHAT_HERMES_PLATFORM_TOKEN=change-me-local-thechat-hermes-token
 OPENROUTER_API_KEY=...
 LOG_LEVEL=info
 EOF
@@ -53,7 +52,20 @@ In another terminal, start desktop if you want to verify through UI:
 PATH="$HOME/.bun/bin:$PATH" pnpm dev:desktop
 ```
 
-## 3. Start Hermes Gateway with TheChat platform
+## 3. Add a Hermes bot and copy its token
+
+Open TheChat desktop, create or select a workspace, open the command palette,
+and run **Add Hermes Bot**.
+
+Use any bot name, for example `Koda`, and optional instructions such as
+`Reply concisely in TheChat.` After creation, TheChat shows a setup command
+containing a `THECHAT_BOT_TOKEN=bot_...` value. Keep that token for the next
+step.
+
+Each Hermes bot has its own token. To run two Hermes bots, create two bots and
+start one Hermes Gateway process per token, each with its own `HERMES_HOME`.
+
+## 4. Start Hermes Gateway with TheChat platform
 
 Use the Hermes checkout that contains the TheChat adapter:
 
@@ -77,7 +89,7 @@ streaming:
 EOF
 ```
 
-Run the gateway:
+Run the gateway, replacing `bot_...` with the bot token shown by TheChat:
 
 ```bash
 set -a
@@ -85,7 +97,7 @@ set -a
 set +a
 
 THECHAT_BASE_URL=http://localhost:3337 \
-THECHAT_HERMES_PLATFORM_TOKEN="$THECHAT_HERMES_PLATFORM_TOKEN" \
+THECHAT_BOT_TOKEN=bot_... \
 THECHAT_ALLOW_ALL_USERS=true \
 THECHAT_POLL_INTERVAL=0.5 \
 uv run --frozen hermes gateway run --replace
@@ -94,21 +106,15 @@ uv run --frozen hermes gateway run --replace
 Health check TheChat's platform bridge:
 
 ```bash
-curl -H "Authorization: Bearer $THECHAT_HERMES_PLATFORM_TOKEN" \
+curl -H "Authorization: Bearer bot_..." \
   http://localhost:3337/hermes-platform/health
 ```
 
-## 4. Manual UI flow
+## 5. Manual UI flow
 
-1. Open TheChat desktop.
-2. Register or log in.
-3. Create a workspace, e.g. `Hermes Manual Test`.
-4. Open the command palette and run **Add Hermes Bot**.
-   - Name: `Koda` or any bot name you want.
-   - Optional instructions: `Reply concisely in TheChat.`
-5. Open the workspace's default channel.
-6. Send `@Koda say hello from TheChat`.
-7. Open a direct message with `Koda` and send `say hello from DM`.
+1. Open the workspace's default channel.
+2. Send `@Koda say hello from TheChat`.
+3. Open a direct message with `Koda` and send `say hello from DM`.
 
 Expected result:
 
@@ -117,7 +123,7 @@ Expected result:
 - The bot responds in channels when mentioned and in direct messages without a mention.
 - The bot runtime panel shows session/activity state for the Hermes bot.
 
-## 5. API-only manual flow
+## 6. API-only manual flow
 
 These commands exercise the same flow without the desktop UI.
 
@@ -136,11 +142,13 @@ WORKSPACE_ID=$(curl -sS -X POST "$API/workspaces/create" \
   -d '{"name":"Hermes Manual Workspace"}' \
   | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')
 
-BOT_ID=$(curl -sS -X POST "$API/bots/create" \
+BOT_JSON=$(curl -sS -X POST "$API/bots/create" \
   -H "Authorization: Bearer $TOKEN" \
   -H 'Content-Type: application/json' \
-  -d "{\"kind\":\"hermes\",\"workspaceId\":\"$WORKSPACE_ID\",\"name\":\"Koda\"}" \
-  | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')
+  -d "{\"kind\":\"hermes\",\"workspaceId\":\"$WORKSPACE_ID\",\"name\":\"Koda\"}")
+
+BOT_ID=$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["id"])' "$BOT_JSON")
+THECHAT_BOT_TOKEN=$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["apiKey"])' "$BOT_JSON")
 
 curl -sS -X PATCH "$API/bots/$BOT_ID/hermes" \
   -H "Authorization: Bearer $TOKEN" \
@@ -150,7 +158,23 @@ curl -sS -X PATCH "$API/bots/$BOT_ID/hermes" \
 CHANNEL_ID=$(curl -sS "$API/workspaces/$WORKSPACE_ID" \
   -H "Authorization: Bearer $TOKEN" \
   | python3 -c 'import json,sys; print(json.load(sys.stdin)["channels"][0]["id"])')
+```
 
+Start Hermes with the API-created bot token before sending the message:
+
+```bash
+cd /home/bruno/projects/hermes2
+
+THECHAT_BASE_URL=http://localhost:3337 \
+THECHAT_BOT_TOKEN="$THECHAT_BOT_TOKEN" \
+THECHAT_ALLOW_ALL_USERS=true \
+THECHAT_POLL_INTERVAL=0.5 \
+uv run --frozen hermes gateway run --replace
+```
+
+Then send a message in another terminal:
+
+```bash
 curl -sS -X POST "$API/messages/$CHANNEL_ID" \
   -H "Authorization: Bearer $TOKEN" \
   -H 'Content-Type: application/json' \
@@ -160,7 +184,7 @@ sleep 10
 curl -sS "$API/messages/$CHANNEL_ID" -H "Authorization: Bearer $TOKEN"
 ```
 
-## 6. Automated E2E smoke
+## 7. Automated E2E smoke
 
 The Hermes suite is opt-in and is wired into the main test runner:
 
@@ -175,7 +199,7 @@ PATH="$HOME/.bun/bin:$PATH" python3 scripts/e2e/hermes-bot-flow.py
 ```
 
 The E2E script starts isolated Postgres and Redis containers, starts TheChat
-API, starts Hermes Gateway from `/home/bruno/projects/hermes2`, creates
-multiple named Hermes bots, verifies channel mentions and direct-message
-responses, checks session continuity, and cleans up unless `HERMES_E2E_KEEP=1`
-is set.
+API, creates multiple named Hermes bots, starts one Hermes Gateway process per
+bot token from `/home/bruno/projects/hermes2`, verifies channel mentions and
+direct-message responses, checks session continuity, and cleans up unless
+`HERMES_E2E_KEEP=1` is set.

@@ -87,8 +87,8 @@ export async function testHermesBot(botId: string, userId: string) {
   return {
     ok: true,
     platform: "thechat",
-    adapter: "Hermes Gateway must run with THECHAT_BASE_URL and THECHAT_HERMES_PLATFORM_TOKEN",
-    tokenConfigured: Boolean(process.env.THECHAT_HERMES_PLATFORM_TOKEN ?? process.env.THECHAT_PLATFORM_TOKEN),
+    adapter: "Hermes Gateway must run with THECHAT_BASE_URL and this bot's THECHAT_BOT_TOKEN",
+    tokenScope: "bot",
   };
 }
 

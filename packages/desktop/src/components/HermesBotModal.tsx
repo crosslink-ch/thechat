@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { create } from "zustand";
-import { api } from "../lib/api";
+import { API_URL, api } from "../lib/api";
 import { useAuthStore } from "../stores/auth";
 import { requestInputBarFocus } from "../stores/input-focus";
 import { useWorkspacesStore } from "../stores/workspaces";
@@ -36,6 +36,9 @@ function HermesBotModalInner() {
   const [instructions, setInstructions] = useState(DEFAULT_INSTRUCTIONS);
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [createdBotName, setCreatedBotName] = useState("");
+  const [botToken, setBotToken] = useState("");
+  const [copied, setCopied] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const currentRole = activeWorkspace?.members.find(
@@ -90,7 +93,9 @@ function HermesBotModalInner() {
       }
 
       const botId = (bot as any)?.id;
+      const apiKey = (bot as any)?.apiKey;
       if (!botId) throw new Error("Hermes bot was created without an ID");
+      if (!apiKey) throw new Error("Hermes bot was created without a bot token");
 
       const { error: connectError } = await api.bots({ botId }).hermes.patch(
         {
@@ -105,7 +110,8 @@ function HermesBotModalInner() {
       }
 
       await selectWorkspace(activeWorkspace.id);
-      closeHermesBotModal();
+      setCreatedBotName(name.trim());
+      setBotToken(apiKey);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong");
     } finally {
@@ -113,11 +119,57 @@ function HermesBotModalInner() {
     }
   };
 
+  const setupCommand = botToken
+    ? [
+        `THECHAT_BASE_URL=${API_URL} \\`,
+        `THECHAT_BOT_TOKEN=${botToken} \\`,
+        "THECHAT_ALLOW_ALL_USERS=true \\",
+        "THECHAT_POLL_INTERVAL=0.5 \\",
+        "uv run --frozen hermes gateway run --replace",
+      ].join("\n")
+    : "";
+
+  const copySetup = async () => {
+    if (!setupCommand) return;
+    await navigator.clipboard.writeText(setupCommand);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1500);
+  };
+
   return (
     <div className="fixed inset-0 z-20 flex items-center justify-center bg-overlay p-4 backdrop-blur-[2px] animate-fade-in" onClick={closeHermesBotModal}>
       <div className="w-full max-w-[460px] rounded-xl border border-border-strong bg-surface p-6 shadow-card animate-slide-up" onClick={(e) => e.stopPropagation()}>
         <h2 className="mb-5 text-[1.214rem] font-semibold tracking-tight text-text">Add Hermes Bot</h2>
 
+        {botToken ? (
+          <div>
+            <p className="mb-3 text-[0.929rem] leading-relaxed text-text-muted">
+              {createdBotName} was added. Start Hermes Gateway with this bot token:
+            </p>
+            <textarea
+              className="mb-3 block min-h-36 w-full resize-none rounded-lg border border-border bg-base px-3.5 py-2.5 font-mono text-[0.786rem] leading-relaxed text-text outline-none"
+              value={setupCommand}
+              readOnly
+              spellCheck={false}
+            />
+            <div className="mt-1 flex gap-2">
+              <button
+                className="block flex-1 cursor-pointer rounded-lg border border-border-strong bg-elevated px-3 py-2.5 font-[inherit] text-[0.929rem] font-medium text-text transition-colors duration-150 hover:bg-button"
+                type="button"
+                onClick={copySetup}
+              >
+                {copied ? "Copied" : "Copy Setup"}
+              </button>
+              <button
+                className="cursor-pointer rounded-lg border border-border bg-raised px-3 py-2.5 font-[inherit] text-[0.929rem] text-text-muted transition-colors duration-150 hover:bg-hover hover:text-text"
+                type="button"
+                onClick={closeHermesBotModal}
+              >
+                Done
+              </button>
+            </div>
+          </div>
+        ) : (
         <form onSubmit={handleSubmit} noValidate>
           <label className="mb-3.5 block">
             <span className="mb-1.5 block text-[0.857rem] font-medium text-text-muted">Bot name</span>
@@ -159,6 +211,7 @@ function HermesBotModalInner() {
             </button>
           </div>
         </form>
+        )}
       </div>
     </div>
   );
