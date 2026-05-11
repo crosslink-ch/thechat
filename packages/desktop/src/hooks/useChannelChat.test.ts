@@ -77,4 +77,45 @@ describe("useChannelChat", () => {
 
     expect(result.current.messages.map((m) => m.content)).toEqual(["second history"]);
   });
+
+  it("refetches on demand and ignores stale in-flight history", async () => {
+    const first = deferred<{ data: ChatMessage[] }>();
+    const second = deferred<{ data: ChatMessage[] }>();
+    let callCount = 0;
+    vi.mocked(api.messages).mockImplementation(() => {
+      callCount += 1;
+      return {
+        get: vi.fn(() => (callCount === 1 ? first.promise : second.promise)),
+      } as any;
+    });
+
+    const { result } = renderHook(
+      () =>
+        useChannelChat({
+          conversationId: "dm-refetch",
+          token: "test-token",
+          wsSendMessage: vi.fn(),
+        }),
+    );
+
+    await waitFor(() => expect(api.messages).toHaveBeenCalledTimes(1));
+
+    act(() => {
+      result.current.refetchMessages();
+    });
+
+    await waitFor(() => expect(api.messages).toHaveBeenCalledTimes(2));
+
+    act(() => {
+      first.resolve({ data: [message("dm-refetch", "stale refetch history")] });
+      second.resolve({ data: [message("dm-refetch", "current refetch history")] });
+    });
+
+    await waitFor(() => {
+      expect(result.current.loading).toBe(false);
+      expect(result.current.messages.map((m) => m.content)).toEqual([
+        "current refetch history",
+      ]);
+    });
+  });
 });

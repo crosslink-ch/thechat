@@ -15,20 +15,21 @@ export function useChannelChat({
 }: UseChannelChatOptions) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [loading, setLoading] = useState(false);
-  const prevConvId = useRef<string | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
+  const requestSeq = useRef(0);
 
   // Fetch messages when conversation changes
   useEffect(() => {
     if (!conversationId || !token) {
+      requestSeq.current += 1;
       setMessages([]);
-      prevConvId.current = null;
+      setLoading(false);
       return;
     }
 
-    if (conversationId === prevConvId.current) return;
-    prevConvId.current = conversationId;
-
     let cancelled = false;
+    const requestId = requestSeq.current + 1;
+    requestSeq.current = requestId;
     setMessages([]);
     setLoading(true);
     api.messages({ conversationId }).get({
@@ -36,14 +37,14 @@ export function useChannelChat({
       headers: { authorization: `Bearer ${token}` },
     })
       .then(({ data }) => {
-        if (cancelled || conversationId !== prevConvId.current) return;
+        if (cancelled || requestId !== requestSeq.current) return;
         if (Array.isArray(data)) {
           setMessages(data as ChatMessage[]);
         }
       })
       .catch(() => {})
       .finally(() => {
-        if (!cancelled && conversationId === prevConvId.current) {
+        if (!cancelled && requestId === requestSeq.current) {
           setLoading(false);
         }
       });
@@ -51,7 +52,7 @@ export function useChannelChat({
     return () => {
       cancelled = true;
     };
-  }, [conversationId, token]);
+  }, [conversationId, token, reloadKey]);
 
   const addMessage = useCallback(
     (msg: ChatMessage) => {
@@ -75,8 +76,7 @@ export function useChannelChat({
 
   const refetchMessages = useCallback(() => {
     if (!conversationId || !token) return;
-    prevConvId.current = null; // Force refetch
-    setMessages([]);
+    setReloadKey((key) => key + 1);
   }, [conversationId, token]);
 
   return { messages, loading, addMessage, sendMessage, refetchMessages };
