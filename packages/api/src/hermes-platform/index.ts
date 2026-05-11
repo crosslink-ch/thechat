@@ -4,8 +4,10 @@ import { eq } from "drizzle-orm";
 import { db } from "../db";
 import { bots, users } from "../db/schema";
 import {
+  cancelHermesPlatformInvocation,
   claimHermesPlatformEvents,
   completeHermesPlatformInvocation,
+  completeHermesPlatformInvocationSilently,
   failHermesPlatformInvocation,
   publishHermesPlatformTyping,
 } from "../services/bot-runtime";
@@ -27,6 +29,14 @@ const typingSchema = z.object({
 
 const failedSchema = z.object({
   error: z.string().min(1),
+});
+
+const silentCompleteSchema = z.object({
+  reason: z.string().optional(),
+});
+
+const cancelledSchema = z.object({
+  reason: z.string().optional(),
 });
 
 type HermesPlatformBot = {
@@ -149,6 +159,40 @@ export const hermesPlatformRoutes = new Elysia({ prefix: "/hermes-platform" })
         authenticatedBotId: platformBot!.id,
         invocationId: params.invocationId,
         error: parsed.data.error,
+      });
+    } catch (e: any) {
+      set.status = e instanceof ServiceError ? e.status : 500;
+      return { error: e.message ?? "Unknown error" };
+    }
+  })
+  .post("/invocations/:invocationId/completed", async ({ params, body, platformBot, set }) => {
+    const parsed = silentCompleteSchema.safeParse(body ?? {});
+    if (!parsed.success) {
+      set.status = 400;
+      return { error: parsed.error.issues[0]?.message ?? "Invalid input" };
+    }
+    try {
+      return await completeHermesPlatformInvocationSilently({
+        authenticatedBotId: platformBot!.id,
+        invocationId: params.invocationId,
+        reason: parsed.data.reason ?? null,
+      });
+    } catch (e: any) {
+      set.status = e instanceof ServiceError ? e.status : 500;
+      return { error: e.message ?? "Unknown error" };
+    }
+  })
+  .post("/invocations/:invocationId/cancelled", async ({ params, body, platformBot, set }) => {
+    const parsed = cancelledSchema.safeParse(body ?? {});
+    if (!parsed.success) {
+      set.status = 400;
+      return { error: parsed.error.issues[0]?.message ?? "Invalid input" };
+    }
+    try {
+      return await cancelHermesPlatformInvocation({
+        authenticatedBotId: platformBot!.id,
+        invocationId: params.invocationId,
+        reason: parsed.data.reason ?? null,
       });
     } catch (e: any) {
       set.status = e instanceof ServiceError ? e.status : 500;

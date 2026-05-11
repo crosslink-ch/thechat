@@ -123,6 +123,8 @@ function StatusPill({ status }: { status: string }) {
       ? "border-success-border bg-success-bg text-success"
       : status === "failed"
         ? "border-error-border bg-error-bg text-error-bright"
+        : status === "cancelled"
+          ? "border-border bg-raised text-text-muted"
         : status === "running"
           ? "border-accent/40 bg-accent/10 text-accent"
           : "border-border bg-raised text-text-muted";

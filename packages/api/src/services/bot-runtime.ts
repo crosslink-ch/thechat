@@ -35,7 +35,7 @@ export const BOT_INVOKE_JOB_NAME = "bot.invoke";
 
 type BotKind = "webhook" | "hermes";
 type ConversationType = "direct" | "group";
-type BotInvocationStatus = "queued" | "running" | "completed" | "failed";
+type BotInvocationStatus = "queued" | "running" | "completed" | "failed" | "cancelled";
 
 interface TriggerMessage {
   id: string;
@@ -649,6 +649,47 @@ export async function completeHermesPlatformInvocation(input: {
   return { messageId: responseMessage.id, duplicate: false };
 }
 
+export async function completeHermesPlatformInvocationSilently(input: {
+  authenticatedBotId: string;
+  invocationId: string;
+  reason?: string | null;
+}) {
+  const loaded = await loadInvocationContext(input.invocationId);
+  if (!loaded) throw new ServiceError("Invocation not found", 404);
+  if (loaded.bot.kind !== "hermes") throw new ServiceError("Invocation is not for a Hermes bot", 400);
+  if (loaded.bot.id !== input.authenticatedBotId) throw new ServiceError("Bot token does not match invocation", 403);
+
+  if (loaded.invocation.status === "completed") {
+    return { ok: true, duplicate: true };
+  }
+
+  const completedAt = new Date();
+  await db
+    .update(botInvocations)
+    .set({
+      status: "completed",
+      responseJson: {
+        platform: "thechat",
+        output: null,
+        silent: true,
+        reason: input.reason ?? null,
+      },
+      error: null,
+      completedAt,
+      updatedAt: completedAt,
+    })
+    .where(eq(botInvocations.id, input.invocationId));
+
+  await publishInvocationUpdate(
+    input.invocationId,
+    await recordBotEvent(input.invocationId, "invocation.completed", {
+      silent: true,
+      reason: input.reason ?? null,
+    }),
+  );
+  return { ok: true, duplicate: false };
+}
+
 export async function failHermesPlatformInvocation(input: {
   authenticatedBotId: string;
   invocationId: string;
@@ -660,6 +701,44 @@ export async function failHermesPlatformInvocation(input: {
   if (loaded.bot.id !== input.authenticatedBotId) throw new ServiceError("Bot token does not match invocation", 403);
   await failInvocation(input.invocationId, new Error(input.error));
   return { ok: true };
+}
+
+export async function cancelHermesPlatformInvocation(input: {
+  authenticatedBotId: string;
+  invocationId: string;
+  reason?: string | null;
+}) {
+  const loaded = await loadInvocationContext(input.invocationId);
+  if (!loaded) throw new ServiceError("Invocation not found", 404);
+  if (loaded.bot.kind !== "hermes") throw new ServiceError("Invocation is not for a Hermes bot", 400);
+  if (loaded.bot.id !== input.authenticatedBotId) throw new ServiceError("Bot token does not match invocation", 403);
+
+  if (loaded.invocation.status === "completed" || loaded.invocation.status === "cancelled") {
+    return { ok: true, duplicate: true };
+  }
+
+  const reason = input.reason?.trim() || "Hermes gateway cancelled the message";
+  const cancelledAt = new Date();
+  await db
+    .update(botInvocations)
+    .set({
+      status: "cancelled",
+      responseJson: {
+        platform: "thechat",
+        cancelled: true,
+        reason,
+      },
+      error: reason,
+      completedAt: cancelledAt,
+      updatedAt: cancelledAt,
+    })
+    .where(eq(botInvocations.id, input.invocationId));
+
+  await publishInvocationUpdate(
+    input.invocationId,
+    await recordBotEvent(input.invocationId, "invocation.cancelled", { reason }),
+  );
+  return { ok: true, duplicate: false };
 }
 
 export async function publishHermesPlatformTyping(input: {
