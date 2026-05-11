@@ -61,6 +61,7 @@ REDIS_CONTAINER = os.environ.get("THECHAT_E2E_REDIS_CONTAINER", "thechat-hermes-
 HERMES_SOURCE_DIR = Path(os.environ.get("HERMES_E2E_SOURCE_DIR", "/home/bruno/projects/hermes2"))
 HERMES_HOME_ROOT = Path(os.environ.get("HERMES_E2E_HOME", str(ROOT / ".tmp" / "hermes-e2e-home")))
 HERMES_LOG_ROOT = Path(os.environ.get("HERMES_E2E_LOG_DIR", str(ROOT / ".tmp")))
+HERMES_GATEWAY_RUNTIME = ROOT / "scripts" / "e2e" / "run-hermes-gateway-runtime.py"
 UV = os.environ.get("UV", "uv")
 DATABASE_URL = explicit_env_or_default(
     "THECHAT_E2E_DATABASE_URL",
@@ -200,7 +201,7 @@ def start_hermes_gateway(env: dict[str, str], base: str, bot_token: str, bot_nam
     }
     log = hermes_log.open("w")
     proc = subprocess.Popen(
-        [UV, "run", "--frozen", "hermes", "gateway", "run", "--replace"],
+        [UV, "run", "--frozen", "python", "-u", str(HERMES_GATEWAY_RUNTIME)],
         cwd=HERMES_SOURCE_DIR,
         env=hermes_env,
         stdout=log,

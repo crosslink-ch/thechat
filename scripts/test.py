@@ -125,6 +125,10 @@ SUITES = [
         "env": {"INTEGRATION": "true"},
     },
     {
+        "name": "e2e-unit",
+        "cmd": ["python3", "-m", "unittest", "scripts.e2e.test_hermes_bot_flow"],
+    },
+    {
         "name": "mcp",
         "cmd": [
             "cargo", "test",

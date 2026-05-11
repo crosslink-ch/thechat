@@ -77,7 +77,7 @@ uv sync --frozen
 Use an isolated Hermes home so local `~/.hermes` state is not touched:
 
 ```bash
-export HERMES_HOME=/tmp/hermes-thechat-manual
+export HERMES_HOME=/home/bruno/agent-worktrees/thechat-hermes-integration/.tmp/hermes-thechat-manual
 mkdir -p "$HERMES_HOME"
 
 cat > "$HERMES_HOME/config.yaml" <<'EOF'
@@ -89,7 +89,11 @@ streaming:
 EOF
 ```
 
-Run the gateway, replacing `bot_...` with the bot token shown by TheChat:
+Run the gateway, replacing `bot_...` with the bot token shown by TheChat. Use
+the runtime wrapper below instead of `hermes gateway run` when `HERMES_HOME` is
+pointing at a temporary test/manual directory; the CLI command may refresh an
+installed user service definition, while this wrapper starts the gateway runtime
+in the foreground only.
 
 ```bash
 set -a
@@ -100,7 +104,7 @@ THECHAT_BASE_URL=http://localhost:3337 \
 THECHAT_BOT_TOKEN=bot_... \
 THECHAT_ALLOW_ALL_USERS=true \
 THECHAT_POLL_INTERVAL=0.5 \
-uv run --frozen hermes gateway run --replace
+uv run --frozen python -u /home/bruno/agent-worktrees/thechat-hermes-integration/scripts/e2e/run-hermes-gateway-runtime.py
 ```
 
 Health check TheChat's platform bridge:
@@ -169,7 +173,7 @@ THECHAT_BASE_URL=http://localhost:3337 \
 THECHAT_BOT_TOKEN="$THECHAT_BOT_TOKEN" \
 THECHAT_ALLOW_ALL_USERS=true \
 THECHAT_POLL_INTERVAL=0.5 \
-uv run --frozen hermes gateway run --replace
+uv run --frozen python -u /home/bruno/agent-worktrees/thechat-hermes-integration/scripts/e2e/run-hermes-gateway-runtime.py
 ```
 
 Then send a message in another terminal:
