@@ -41,6 +41,7 @@ interface TriggerMessage {
   id: string;
   content: string;
   conversationId: string;
+  botSessionId?: string | null;
   senderId: string;
   senderName: string;
   createdAt: string;
@@ -208,6 +209,85 @@ export async function listConversationBotRuntime(conversationId: string, userId:
   };
 }
 
+export async function getDefaultHermesBotSessionForConversation(conversationId: string, userId: string) {
+  await requireConversationParticipant(conversationId, userId);
+  const conversation = await loadConversationRow(conversationId);
+  if (!conversation || conversation.type !== "direct") return null;
+
+  const hermesBots = await loadHermesBotsForConversation(conversationId);
+  if (hermesBots.length !== 1) return null;
+
+  return getOrCreateBotSession(hermesBots[0].botId, conversation);
+}
+
+export async function createHermesConversationSession(input: {
+  conversationId: string;
+  userId: string;
+  botId?: string | null;
+}) {
+  await requireConversationParticipant(input.conversationId, input.userId);
+  const conversation = await loadConversationRow(input.conversationId);
+  if (!conversation) throw new ServiceError("Conversation not found", 404);
+
+  const hermesBots = await loadHermesBotsForConversation(input.conversationId);
+  const bot = input.botId
+    ? hermesBots.find((candidate) => candidate.botId === input.botId)
+    : hermesBots[0];
+  if (!bot) throw new ServiceError("Hermes bot not found in this conversation", 404);
+  if (!input.botId && hermesBots.length > 1) {
+    throw new ServiceError("botId is required when multiple Hermes bots are present", 400);
+  }
+
+  const scope = await resolveBotSessionScope(bot.botId);
+  const baseSessionId = sessionKey(
+    conversation.workspaceId,
+    scope === "workspace" ? null : conversation.id,
+    bot.botId,
+  );
+  const existingSessions = await db
+    .select({ id: botSessions.id })
+    .from(botSessions)
+    .where(and(eq(botSessions.botId, bot.botId), eq(botSessions.conversationId, conversation.id)));
+  const title = `Session ${existingSessions.length + 1}`;
+  const [session] = await db
+    .insert(botSessions)
+    .values({
+      botId: bot.botId,
+      workspaceId: conversation.workspaceId,
+      conversationId: conversation.id,
+      scope,
+      externalSessionId: `${baseSessionId}:session:${crypto.randomUUID()}`,
+      title,
+      status: "active",
+    })
+    .returning();
+
+  const [sessionRow] = await db
+    .select({
+      id: botSessions.id,
+      botId: botSessions.botId,
+      botUserId: bots.userId,
+      botName: users.name,
+      botKind: bots.kind,
+      workspaceId: botSessions.workspaceId,
+      conversationId: botSessions.conversationId,
+      scope: botSessions.scope,
+      externalSessionId: botSessions.externalSessionId,
+      title: botSessions.title,
+      status: botSessions.status,
+      lastMessageId: botSessions.lastMessageId,
+      createdAt: botSessions.createdAt,
+      updatedAt: botSessions.updatedAt,
+    })
+    .from(botSessions)
+    .innerJoin(bots, eq(botSessions.botId, bots.id))
+    .innerJoin(users, eq(bots.userId, users.id))
+    .where(eq(botSessions.id, session.id))
+    .limit(1);
+  if (!sessionRow) throw new ServiceError("Failed to create Hermes session", 500);
+  return toPublicSession(sessionRow);
+}
+
 export async function startBotWorker(options: { concurrency?: number } = {}): Promise<AsyncWorkerRuntime> {
   if (botWorkerStartPromise) return botWorkerStartPromise;
   botWorkerStartPromise = (async () => {
@@ -244,7 +324,10 @@ async function enqueueBotInvocation(input: {
   conversation: ConversationRow;
   message: TriggerMessage;
 }) {
-  const session = await getOrCreateBotSession(input.bot.botId, input.conversation);
+  const session =
+    input.bot.kind === "hermes" && input.message.botSessionId
+      ? await loadBotSessionForInvocation(input.message.botSessionId, input.bot.botId, input.conversation.id)
+      : await getOrCreateBotSession(input.bot.botId, input.conversation);
   const invocation = await getOrCreateInvocation(input.bot, input.conversation, input.message, session.id);
   const event = await recordBotEvent(invocation.id, "invocation.queued", {
     triggerMessageId: input.message.id,
@@ -263,14 +346,22 @@ async function enqueueBotInvocation(input: {
 }
 
 async function getOrCreateBotSession(botId: string, conversation: ConversationRow) {
-  const [config] = await db
-    .select({ defaultSessionScope: hermesBotConfigs.defaultSessionScope })
-    .from(hermesBotConfigs)
-    .where(eq(hermesBotConfigs.botId, botId))
-    .limit(1);
-  const requestedScope = config?.defaultSessionScope ?? "channel";
-  const scope = requestedScope === "workspace" ? "workspace" : "conversation";
+  const scope = await resolveBotSessionScope(botId);
   const externalSessionId = sessionKey(conversation.workspaceId, scope === "workspace" ? null : conversation.id, botId);
+
+  const [existing] = await db
+    .select()
+    .from(botSessions)
+    .where(
+      and(
+        eq(botSessions.botId, botId),
+        eq(botSessions.conversationId, conversation.id),
+        eq(botSessions.scope, scope),
+        eq(botSessions.externalSessionId, externalSessionId),
+      ),
+    )
+    .limit(1);
+  if (existing) return existing;
 
   const inserted = await db
     .insert(botSessions)
@@ -283,13 +374,18 @@ async function getOrCreateBotSession(botId: string, conversation: ConversationRo
       title: conversation.name,
     })
     .onConflictDoNothing({
-      target: [botSessions.botId, botSessions.conversationId, botSessions.scope],
+      target: [
+        botSessions.botId,
+        botSessions.conversationId,
+        botSessions.scope,
+        botSessions.externalSessionId,
+      ],
     })
     .returning();
 
   if (inserted[0]) return inserted[0];
 
-  const [existing] = await db
+  const [conflicting] = await db
     .select()
     .from(botSessions)
     .where(
@@ -297,11 +393,65 @@ async function getOrCreateBotSession(botId: string, conversation: ConversationRo
         eq(botSessions.botId, botId),
         eq(botSessions.conversationId, conversation.id),
         eq(botSessions.scope, scope),
+        eq(botSessions.externalSessionId, externalSessionId),
       ),
     )
     .limit(1);
-  if (!existing) throw new Error("Failed to create bot session");
-  return existing;
+  if (!conflicting) throw new Error("Failed to create bot session");
+  return conflicting;
+}
+
+async function resolveBotSessionScope(botId: string) {
+  const [config] = await db
+    .select({ defaultSessionScope: hermesBotConfigs.defaultSessionScope })
+    .from(hermesBotConfigs)
+    .where(eq(hermesBotConfigs.botId, botId))
+    .limit(1);
+  const requestedScope = config?.defaultSessionScope ?? "channel";
+  return requestedScope === "workspace" ? "workspace" : "conversation";
+}
+
+async function loadBotSessionForInvocation(sessionId: string, botId: string, conversationId: string) {
+  const [session] = await db
+    .select()
+    .from(botSessions)
+    .where(
+      and(
+        eq(botSessions.id, sessionId),
+        eq(botSessions.botId, botId),
+        eq(botSessions.conversationId, conversationId),
+      ),
+    )
+    .limit(1);
+  if (!session) throw new ServiceError("Hermes session not found", 404);
+  return session;
+}
+
+async function loadConversationRow(conversationId: string): Promise<ConversationRow | null> {
+  const [conversation] = await db
+    .select({
+      id: conversations.id,
+      type: conversations.type,
+      name: conversations.name,
+      workspaceId: conversations.workspaceId,
+    })
+    .from(conversations)
+    .where(eq(conversations.id, conversationId))
+    .limit(1);
+  return conversation ?? null;
+}
+
+async function loadHermesBotsForConversation(conversationId: string) {
+  return db
+    .select({
+      botId: bots.id,
+      botUserId: bots.userId,
+      botName: users.name,
+    })
+    .from(conversationParticipants)
+    .innerJoin(bots, eq(conversationParticipants.userId, bots.userId))
+    .innerJoin(users, eq(bots.userId, users.id))
+    .where(and(eq(conversationParticipants.conversationId, conversationId), eq(bots.kind, "hermes")));
 }
 
 async function getOrCreateInvocation(
@@ -610,6 +760,7 @@ export async function completeHermesPlatformInvocation(input: {
     .insert(messages)
     .values({
       conversationId: loaded.conversation.id,
+      botSessionId: loaded.session?.id ?? null,
       senderId: loaded.bot.userId,
       content,
       parts: [{ type: "text", text: content }],
@@ -790,6 +941,7 @@ async function failInvocation(invocationId: string, error: any) {
       .insert(messages)
       .values({
         conversationId: loaded.conversation.id,
+        botSessionId: loaded.session?.id ?? null,
         senderId: loaded.bot.userId,
         content,
         parts: [{ type: "text", text: content }],
@@ -947,6 +1099,7 @@ async function publishBotMessage(
     message: {
       id: message.id,
       conversationId: message.conversationId,
+      botSessionId: message.botSessionId ?? null,
       senderId: message.senderId,
       senderName,
       senderType: "bot",

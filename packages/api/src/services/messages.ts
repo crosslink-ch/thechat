@@ -1,17 +1,21 @@
 import { eq, and, lt, desc } from "drizzle-orm";
 import { db } from "../db";
 import {
+  botSessions,
   messages,
   conversationParticipants,
   users,
 } from "../db/schema";
-import { processMessageMentions } from "../bots/webhooks";
+import {
+  getDefaultHermesBotSessionForConversation,
+  processMessageMentions,
+} from "./bot-runtime";
 import { ServiceError } from "./errors";
 
 export async function getMessages(
   conversationId: string,
   userId: string,
-  options?: { limit?: number; before?: string }
+  options?: { limit?: number; before?: string; botSessionId?: string | null }
 ) {
   // Validate user is a participant
   const [participant] = await db
@@ -34,6 +38,10 @@ export async function getMessages(
 
   const limit = Math.min(options?.limit || 50, 100);
   const conditions = [eq(messages.conversationId, conversationId)];
+  if (options?.botSessionId) {
+    await requireBotSessionInConversation(options.botSessionId, conversationId);
+    conditions.push(eq(messages.botSessionId, options.botSessionId));
+  }
   if (options?.before) {
     conditions.push(lt(messages.createdAt, new Date(options.before)));
   }
@@ -42,6 +50,7 @@ export async function getMessages(
     .select({
       id: messages.id,
       conversationId: messages.conversationId,
+      botSessionId: messages.botSessionId,
       senderId: messages.senderId,
       content: messages.content,
       parts: messages.parts,
@@ -59,6 +68,7 @@ export async function getMessages(
   return rows.reverse().map((r) => ({
     id: r.id,
     conversationId: r.conversationId,
+    botSessionId: r.botSessionId,
     senderId: r.senderId,
     senderName: r.senderName,
     senderType: r.senderType,
@@ -72,7 +82,8 @@ export async function sendMessage(
   conversationId: string,
   userId: string,
   userName: string,
-  content: string
+  content: string,
+  options: { botSessionId?: string | null } = {},
 ) {
   // Validate user is a participant
   const [participant] = await db
@@ -93,10 +104,19 @@ export async function sendMessage(
     );
   }
 
+  let botSessionId = options.botSessionId ?? null;
+  if (botSessionId) {
+    await requireBotSessionInConversation(botSessionId, conversationId);
+  } else {
+    const defaultHermesSession = await getDefaultHermesBotSessionForConversation(conversationId, userId);
+    botSessionId = defaultHermesSession?.id ?? null;
+  }
+
   const [msg] = await db
     .insert(messages)
     .values({
       conversationId,
+      botSessionId,
       senderId: userId,
       content,
     })
@@ -109,6 +129,7 @@ export async function sendMessage(
     id: msg.id,
     content: msg.content,
     conversationId: msg.conversationId,
+    botSessionId: msg.botSessionId,
     senderId: msg.senderId,
     senderName: userName,
     createdAt,
@@ -117,6 +138,7 @@ export async function sendMessage(
   return {
     id: msg.id,
     conversationId: msg.conversationId,
+    botSessionId: msg.botSessionId,
     senderId: msg.senderId,
     senderName: userName,
     senderType: "human" as const,
@@ -124,4 +146,13 @@ export async function sendMessage(
     parts: msg.parts ?? null,
     createdAt,
   };
+}
+
+async function requireBotSessionInConversation(botSessionId: string, conversationId: string) {
+  const [session] = await db
+    .select({ id: botSessions.id })
+    .from(botSessions)
+    .where(and(eq(botSessions.id, botSessionId), eq(botSessions.conversationId, conversationId)))
+    .limit(1);
+  if (!session) throw new ServiceError("Hermes session not found", 404);
 }

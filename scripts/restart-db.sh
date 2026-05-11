@@ -157,5 +157,5 @@ done
 echo "PostgreSQL is ready on port $POSTGRES_PORT"
 echo "Connection: postgresql://$POSTGRES_USER:***@localhost:$POSTGRES_PORT/$POSTGRES_DB"
 
-echo "Pushing database schema..."
-pnpm db:push
+echo "Running database migrations..."
+pnpm db:migrate

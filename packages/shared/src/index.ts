@@ -217,6 +217,7 @@ export interface StreamResult {
 export interface ChatMessage {
   id: string;
   conversationId: string;
+  botSessionId?: string | null;
   senderId: string;
   senderName: string;
   senderType?: "human" | "bot";
@@ -253,7 +254,7 @@ export interface ConversationDetail {
 
 export type WsClientEvent =
   | { type: "auth"; token: string }
-  | { type: "send_message"; conversationId: string; content: string }
+  | { type: "send_message"; conversationId: string; content: string; botSessionId?: string | null }
   | { type: "typing"; conversationId: string }
   | { type: "ping" };
 

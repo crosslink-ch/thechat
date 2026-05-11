@@ -10,6 +10,7 @@ import {
   primaryKey,
   index,
   uniqueIndex,
+  type AnyPgColumn,
 } from "drizzle-orm/pg-core";
 import { relations } from "drizzle-orm";
 import type { MessagePart } from "@thechat/shared";
@@ -187,6 +188,9 @@ export const messages = pgTable(
     conversationId: uuid("conversation_id")
       .notNull()
       .references(() => conversations.id, { onDelete: "cascade" }),
+    botSessionId: uuid("bot_session_id").references((): AnyPgColumn => botSessions.id, {
+      onDelete: "set null",
+    }),
     senderId: uuid("sender_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
@@ -202,6 +206,7 @@ export const messages = pgTable(
   },
   (t) => [
     index("messages_conversation_id_idx").on(t.conversationId),
+    index("messages_bot_session_id_idx").on(t.botSessionId),
     index("messages_sender_id_idx").on(t.senderId),
     index("messages_created_at_idx").on(t.createdAt),
   ]
@@ -273,7 +278,7 @@ export const botSessions = pgTable(
     externalSessionId: text("external_session_id"),
     title: text("title"),
     status: varchar("status", { length: 20 }).notNull().default("active"),
-    lastMessageId: uuid("last_message_id").references(() => messages.id, {
+    lastMessageId: uuid("last_message_id").references((): AnyPgColumn => messages.id, {
       onDelete: "set null",
     }),
     createdAt: timestamp("created_at", { withTimezone: true })
@@ -288,10 +293,16 @@ export const botSessions = pgTable(
     index("bot_sessions_bot_id_idx").on(t.botId),
     index("bot_sessions_workspace_id_idx").on(t.workspaceId),
     index("bot_sessions_conversation_id_idx").on(t.conversationId),
-    uniqueIndex("bot_sessions_bot_conversation_scope_idx").on(
+    index("bot_sessions_bot_conversation_scope_idx").on(
       t.botId,
       t.conversationId,
       t.scope
+    ),
+    uniqueIndex("bot_sessions_bot_conversation_scope_external_idx").on(
+      t.botId,
+      t.conversationId,
+      t.scope,
+      t.externalSessionId
     ),
   ]
 );
@@ -525,6 +536,10 @@ export const messagesRelations = relations(messages, ({ one }) => ({
   conversation: one(conversations, {
     fields: [messages.conversationId],
     references: [conversations.id],
+  }),
+  botSession: one(botSessions, {
+    fields: [messages.botSessionId],
+    references: [botSessions.id],
   }),
   sender: one(users, {
     fields: [messages.senderId],

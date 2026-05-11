@@ -7,6 +7,7 @@ import { authRoutes } from "../auth";
 import { workspaceRoutes } from "../workspaces";
 import { conversationRoutes } from "../conversations";
 import { messageRoutes } from "../messages";
+import { botRuntimeRoutes } from "../bot-runtime";
 import { botRoutes } from "./index";
 import { closeBotRuntimeForTests } from "../services/bot-runtime";
 import crypto from "crypto";
@@ -16,6 +17,7 @@ const app = new Elysia()
   .use(workspaceRoutes)
   .use(conversationRoutes)
   .use(messageRoutes)
+  .use(botRuntimeRoutes)
   .use(botRoutes);
 
 function uniqueEmail() {
@@ -91,12 +93,13 @@ async function registerUser(name: string) {
 async function createBot(
   ownerToken: string,
   name: string,
-  webhookUrl?: string
+  webhookUrl?: string,
+  extra?: Record<string, unknown>,
 ) {
   const res = await req(
     "POST",
     "/bots/create",
-    { name, webhookUrl },
+    { name, webhookUrl, ...extra },
     ownerToken
   );
   if (res.body.userId) {
@@ -543,6 +546,83 @@ describe("Bots: DM with bot", () => {
       [human.user.id, secondBotRes.body.userId].sort()
     );
 
+  });
+
+  test("Hermes DM sessions isolate message history", async () => {
+    const human = await registerUser("HermesSessionOwner");
+
+    const wsRes = await req(
+      "POST",
+      "/workspaces/create",
+      { name: "Hermes Sessions WS" },
+      human.token
+    );
+    createdWorkspaceIds.push(wsRes.body.id);
+
+    const botRes = await createBot(human.token, "HermesSessions", undefined, {
+      kind: "hermes",
+      workspaceId: wsRes.body.id,
+    });
+    expect(botRes.status).toBe(200);
+
+    const dmRes = await req(
+      "POST",
+      "/conversations/dm",
+      { workspaceId: wsRes.body.id, otherUserId: botRes.body.userId },
+      human.token
+    );
+    expect(dmRes.status).toBe(200);
+    const dmId = dmRes.body.id;
+
+    const firstSend = await req(
+      "POST",
+      `/messages/${dmId}`,
+      { content: "first session message" },
+      human.token
+    );
+    expect(firstSend.status).toBe(200);
+    const defaultSessionId = firstSend.body.botSessionId;
+    expect(defaultSessionId).toBeDefined();
+
+    const newSession = await req(
+      "POST",
+      `/bot-runtime/conversations/${dmId}/sessions`,
+      {},
+      human.token
+    );
+    expect(newSession.status).toBe(200);
+    expect(newSession.body.id).not.toBe(defaultSessionId);
+
+    const secondSend = await req(
+      "POST",
+      `/messages/${dmId}`,
+      { content: "second session message", botSessionId: newSession.body.id },
+      human.token
+    );
+    expect(secondSend.status).toBe(200);
+    expect(secondSend.body.botSessionId).toBe(newSession.body.id);
+
+    const defaultHistory = await req(
+      "GET",
+      `/messages/${dmId}?botSessionId=${defaultSessionId}`,
+      undefined,
+      human.token
+    );
+    expect(defaultHistory.status).toBe(200);
+    expect(defaultHistory.body.map((m: any) => m.content)).toEqual([
+      "first session message",
+    ]);
+
+    const newHistory = await req(
+      "GET",
+      `/messages/${dmId}?botSessionId=${newSession.body.id}`,
+      undefined,
+      human.token
+    );
+    expect(newHistory.status).toBe(200);
+    expect(newHistory.body.map((m: any) => m.content)).toEqual([
+      "second session message",
+    ]);
   });
 });
 

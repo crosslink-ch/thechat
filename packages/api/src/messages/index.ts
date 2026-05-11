@@ -6,7 +6,9 @@ import { getMessages, sendMessage } from "../services/messages";
 
 const sendSchema = z.object({
   content: z.string().trim().min(1),
+  botSessionId: z.string().uuid().nullable().optional(),
 });
+const botSessionIdSchema = z.string().uuid();
 
 export const messageRoutes = new Elysia({ prefix: "/messages" })
   .derive(async ({ headers }) => {
@@ -29,10 +31,17 @@ export const messageRoutes = new Elysia({ prefix: "/messages" })
 
   // Fetch messages (paginated)
   .get("/:conversationId", async ({ params, query, user, set }) => {
+    const botSessionId = (query.botSessionId as string | undefined) || undefined;
+    if (botSessionId && !botSessionIdSchema.safeParse(botSessionId).success) {
+      set.status = 400;
+      return { error: "Invalid botSessionId" };
+    }
+
     try {
       return await getMessages(params.conversationId, user.id, {
         limit: Number(query.limit) || undefined,
         before: (query.before as string) || undefined,
+        botSessionId,
       });
     } catch (e) {
       if (e instanceof ServiceError) {
@@ -56,7 +65,8 @@ export const messageRoutes = new Elysia({ prefix: "/messages" })
         params.conversationId,
         user.id,
         user.name,
-        parsed.data.content
+        parsed.data.content,
+        { botSessionId: parsed.data.botSessionId ?? null },
       );
     } catch (e) {
       if (e instanceof ServiceError) {

@@ -30,14 +30,24 @@ export function HermesRuntimePanel({
   botName,
   runtime,
   loading,
+  activeSessionId,
+  creatingSession = false,
+  onCreateSession,
+  onSelectSession,
 }: {
   title?: string;
   botName: string;
   runtime: BotRuntimeSnapshot | null;
   loading: boolean;
+  activeSessionId?: string | null;
+  creatingSession?: boolean;
+  onCreateSession?: () => void;
+  onSelectSession?: (sessionId: string) => void;
 }) {
   const sessions = runtime?.sessions ?? [];
-  const invocations = runtime?.invocations ?? [];
+  const invocations = activeSessionId
+    ? (runtime?.invocations ?? []).filter((invocation) => invocation.botSessionId === activeSessionId)
+    : runtime?.invocations ?? [];
 
   return (
     <aside className="hidden w-80 shrink-0 flex-col border-l border-border bg-surface/70 lg:flex">
@@ -47,7 +57,19 @@ export function HermesRuntimePanel({
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
         <section className="mb-5">
-          <div className="mb-2 text-[0.786rem] font-medium uppercase text-text-dimmed">Sessions</div>
+          <div className="mb-2 flex items-center justify-between gap-2">
+            <div className="text-[0.786rem] font-medium uppercase text-text-dimmed">Sessions</div>
+            {onCreateSession && (
+              <button
+                type="button"
+                className="rounded border border-border bg-raised px-2 py-1 text-[0.714rem] font-medium text-text-muted transition-colors hover:bg-hover hover:text-text disabled:cursor-not-allowed disabled:opacity-60"
+                onClick={onCreateSession}
+                disabled={creatingSession}
+              >
+                {creatingSession ? "Creating" : "+ New"}
+              </button>
+            )}
+          </div>
           {loading && sessions.length === 0 ? (
             <div className="text-[0.857rem] text-text-placeholder">Loading...</div>
           ) : sessions.length === 0 ? (
@@ -55,7 +77,16 @@ export function HermesRuntimePanel({
           ) : (
             <div className="space-y-2">
               {sessions.map((session) => (
-                <div key={session.id} className="rounded-md border border-border bg-background px-3 py-2">
+                <button
+                  type="button"
+                  key={session.id}
+                  className={`w-full rounded-md border px-3 py-2 text-left transition-colors ${
+                    activeSessionId === session.id
+                      ? "border-accent/50 bg-accent/10"
+                      : "border-border bg-background hover:bg-hover"
+                  } ${onSelectSession ? "cursor-pointer" : "cursor-default"}`}
+                  onClick={() => onSelectSession?.(session.id)}
+                >
                   <div className="flex items-center justify-between gap-2">
                     <span className="truncate text-[0.857rem] font-medium text-text">
                       {session.title || "Conversation"}
@@ -65,7 +96,7 @@ export function HermesRuntimePanel({
                   <div className="mt-1 truncate text-[0.714rem] text-text-dimmed">
                     {session.externalSessionId ?? session.id}
                   </div>
-                </div>
+                </button>
               ))}
             </div>
           )}

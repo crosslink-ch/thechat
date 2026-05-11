@@ -5,12 +5,14 @@ import { api } from "../lib/api";
 interface UseChannelChatOptions {
   conversationId: string | null;
   token: string | null;
-  wsSendMessage: (conversationId: string, content: string) => void;
+  botSessionId?: string | null;
+  wsSendMessage: (conversationId: string, content: string, botSessionId?: string | null) => void;
 }
 
 export function useChannelChat({
   conversationId,
   token,
+  botSessionId,
   wsSendMessage,
 }: UseChannelChatOptions) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -33,7 +35,7 @@ export function useChannelChat({
     setMessages([]);
     setLoading(true);
     api.messages({ conversationId }).get({
-      query: { limit: 50 },
+      query: { limit: 50, botSessionId: botSessionId ?? undefined },
       headers: { authorization: `Bearer ${token}` },
     })
       .then(({ data }) => {
@@ -52,26 +54,27 @@ export function useChannelChat({
     return () => {
       cancelled = true;
     };
-  }, [conversationId, token, reloadKey]);
+  }, [botSessionId, conversationId, token, reloadKey]);
 
   const addMessage = useCallback(
     (msg: ChatMessage) => {
       if (msg.conversationId !== conversationId) return;
+      if (botSessionId !== undefined && msg.botSessionId !== botSessionId) return;
       setMessages((prev) => {
         // Deduplicate
         if (prev.some((m) => m.id === msg.id)) return prev;
         return [...prev, msg];
       });
     },
-    [conversationId]
+    [botSessionId, conversationId]
   );
 
   const sendMessage = useCallback(
     (content: string) => {
       if (!conversationId) return;
-      wsSendMessage(conversationId, content);
+      wsSendMessage(conversationId, content, botSessionId);
     },
-    [conversationId, wsSendMessage]
+    [botSessionId, conversationId, wsSendMessage]
   );
 
   const refetchMessages = useCallback(() => {

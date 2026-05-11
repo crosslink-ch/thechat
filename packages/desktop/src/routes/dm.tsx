@@ -33,26 +33,33 @@ export function DmRoute() {
     [members, user?.id]
   );
 
-  const channelChat = useChannelChat({
-    conversationId,
-    token,
-    wsSendMessage,
-  });
-
-  const channelChatRef = useRef(channelChat);
-  channelChatRef.current = channelChat;
-
   const [typingUsers, setTypingUsers] = useState<Map<string, string>>(new Map());
   const typingTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
   const [conversation, setConversation] = useState<ConversationDetail | null>(null);
   const [runtime, setRuntime] = useState<BotRuntimeSnapshot | null>(null);
   const [runtimeLoading, setRuntimeLoading] = useState(false);
+  const [creatingSession, setCreatingSession] = useState(false);
+  const [activeBotSessionId, setActiveBotSessionId] = useState<string | null>(null);
 
   const otherParticipant = useMemo(
     () => conversation?.participants.find((p) => p.userId !== user?.id) ?? null,
     [conversation, user?.id],
   );
   const isHermesDm = conversation?.type === "direct" && otherParticipant?.bot?.kind === "hermes";
+  const hermesSessions = useMemo(
+    () => runtime?.sessions.filter((session) => session.botKind === "hermes") ?? [],
+    [runtime],
+  );
+
+  const channelChat = useChannelChat({
+    conversationId,
+    token,
+    botSessionId: isHermesDm ? activeBotSessionId ?? undefined : undefined,
+    wsSendMessage,
+  });
+
+  const channelChatRef = useRef(channelChat);
+  channelChatRef.current = channelChat;
 
   const fetchRuntime = useCallback(async () => {
     if (!token) return;
@@ -93,6 +100,37 @@ export function DmRoute() {
     if (!isHermesDm) return;
     void fetchRuntime();
   }, [fetchRuntime, isHermesDm]);
+
+  useEffect(() => {
+    if (!isHermesDm) {
+      setActiveBotSessionId(null);
+      return;
+    }
+    if (activeBotSessionId && hermesSessions.some((session) => session.id === activeBotSessionId)) {
+      return;
+    }
+    setActiveBotSessionId(hermesSessions[0]?.id ?? null);
+  }, [activeBotSessionId, hermesSessions, isHermesDm]);
+
+  const handleCreateSession = useCallback(async () => {
+    if (!token || !isHermesDm) return;
+    setCreatingSession(true);
+    try {
+      const session = await postJson<BotRuntimeSnapshot["sessions"][number]>(
+        `/bot-runtime/conversations/${conversationId}/sessions`,
+        token,
+        {},
+      );
+      setRuntime((prev) => ({
+        sessions: [session, ...(prev?.sessions ?? []).filter((existing) => existing.id !== session.id)],
+        invocations: prev?.invocations ?? [],
+        events: prev?.events ?? [],
+      }));
+      setActiveBotSessionId(session.id);
+    } finally {
+      setCreatingSession(false);
+    }
+  }, [conversationId, isHermesDm, token]);
 
   // Subscribe to WebSocket messages for this DM
   useEffect(() => {
@@ -188,6 +226,10 @@ export function DmRoute() {
           botName={otherParticipant.user.name}
           runtime={runtime}
           loading={runtimeLoading}
+          activeSessionId={activeBotSessionId}
+          creatingSession={creatingSession}
+          onCreateSession={handleCreateSession}
+          onSelectSession={setActiveBotSessionId}
         />
       )}
     </div>
@@ -197,6 +239,21 @@ export function DmRoute() {
 async function fetchJson<T>(path: string, token: string): Promise<T> {
   const response = await fetch(`${API_URL}${path}`, {
     headers: auth(token),
+  });
+  if (!response.ok) {
+    throw new Error(`Request failed with HTTP ${response.status}`);
+  }
+  return response.json() as Promise<T>;
+}
+
+async function postJson<T>(path: string, token: string, body: unknown): Promise<T> {
+  const response = await fetch(`${API_URL}${path}`, {
+    method: "POST",
+    headers: {
+      ...auth(token),
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
   });
   if (!response.ok) {
     throw new Error(`Request failed with HTTP ${response.status}`);
