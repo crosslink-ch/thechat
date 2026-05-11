@@ -18,8 +18,8 @@ import WS from "ws";
 
 const INTEGRATION = process.env.INTEGRATION === "true";
 
-const API_URL = "http://localhost:3000";
-const WS_URL = "ws://localhost:3000";
+const API_URL = process.env.THECHAT_BACKEND_URL ?? `http://localhost:${process.env.THECHAT_BACKEND_PORT ?? "3000"}`;
+const WS_URL = API_URL.replace(/^http/, "ws");
 
 const api = treaty<App>(API_URL);
 

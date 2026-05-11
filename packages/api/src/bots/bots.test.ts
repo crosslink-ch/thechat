@@ -1,15 +1,29 @@
 import { describe, test, expect, afterAll } from "bun:test";
 import { Elysia } from "elysia";
-import { eq } from "drizzle-orm";
+import { asc, eq } from "drizzle-orm";
 import { db } from "../db";
-import { conversationParticipants, users, workspaces, bots } from "../db/schema";
+import {
+  botEvents,
+  botInvocations,
+  bots,
+  conversationParticipants,
+  users,
+  workspaces,
+} from "../db/schema";
 import { authRoutes } from "../auth";
 import { workspaceRoutes } from "../workspaces";
 import { conversationRoutes } from "../conversations";
 import { messageRoutes } from "../messages";
 import { botRuntimeRoutes } from "../bot-runtime";
+import { hermesPlatformRoutes } from "../hermes-platform";
 import { botRoutes } from "./index";
 import { closeBotRuntimeForTests } from "../services/bot-runtime";
+import {
+  closeRealtimeBusForTests,
+  RedisRealtimeBus,
+  setRealtimeBusForTests,
+  type RealtimeEvent,
+} from "../realtime";
 import crypto from "crypto";
 
 const app = new Elysia()
@@ -18,6 +32,7 @@ const app = new Elysia()
   .use(conversationRoutes)
   .use(messageRoutes)
   .use(botRuntimeRoutes)
+  .use(hermesPlatformRoutes)
   .use(botRoutes);
 
 function uniqueEmail() {
@@ -30,6 +45,7 @@ const createdBotUserIds: string[] = [];
 
 afterAll(async () => {
   await closeBotRuntimeForTests();
+  await closeRealtimeBusForTests();
   // Clean up bots (cascade from user delete handles bot records)
   for (const id of createdBotUserIds) {
     await db.delete(users).where(eq(users.id, id));
@@ -106,6 +122,85 @@ async function createBot(
     createdBotUserIds.push(res.body.userId);
   }
   return res;
+}
+
+async function sleep(ms: number) {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function waitForResult<T>(
+  getter: () => Promise<T | null | undefined>,
+  label: string,
+  timeoutMs = 5_000,
+): Promise<T> {
+  const deadline = Date.now() + timeoutMs;
+  let lastValue: T | null | undefined;
+  while (Date.now() < deadline) {
+    lastValue = await getter();
+    if (lastValue) return lastValue;
+    await sleep(50);
+  }
+  throw new Error(`Timed out waiting for ${label}; last value: ${JSON.stringify(lastValue)}`);
+}
+
+async function invocationsForMessage(messageId: string) {
+  return db
+    .select({
+      id: botInvocations.id,
+      botId: botInvocations.botId,
+      status: botInvocations.status,
+      error: botInvocations.error,
+      responseMessageId: botInvocations.responseMessageId,
+    })
+    .from(botInvocations)
+    .where(eq(botInvocations.triggerMessageId, messageId))
+    .orderBy(asc(botInvocations.createdAt));
+}
+
+async function eventTypesForInvocation(invocationId: string) {
+  const rows = await db
+    .select({ type: botEvents.type })
+    .from(botEvents)
+    .where(eq(botEvents.invocationId, invocationId))
+    .orderBy(asc(botEvents.createdAt));
+  return rows.map((row) => row.type);
+}
+
+function startWebhookServer(
+  handler: (request: Request, body: string) => Response | Promise<Response> = () => new Response("ok"),
+) {
+  const requests: Array<{ body: string; payload: any }> = [];
+  const server = Bun.serve({
+    port: 0,
+    async fetch(request) {
+      const body = await request.text();
+      requests.push({ body, payload: JSON.parse(body) });
+      return handler(request, body);
+    },
+  });
+  return {
+    requests,
+    url: `http://localhost:${server.port}/webhook`,
+    stop: () => server.stop(),
+  };
+}
+
+async function createWorkspaceWithGeneralChannel(token: string, name: string) {
+  const wsRes = await req("POST", "/workspaces/create", { name }, token);
+  expect(wsRes.status).toBe(200);
+  createdWorkspaceIds.push(wsRes.body.id);
+
+  const detailRes = await req("GET", `/workspaces/${wsRes.body.id}`, undefined, token);
+  expect(detailRes.status).toBe(200);
+  return {
+    workspaceId: wsRes.body.id as string,
+    channelId: detailRes.body.channels[0].id as string,
+  };
+}
+
+async function addBotToWorkspace(botId: string, workspaceId: string, token: string) {
+  const res = await req("POST", `/bots/${botId}/workspaces`, { workspaceId }, token);
+  expect(res.status).toBe(200);
 }
 
 describe("Bots: Create", () => {
@@ -799,6 +894,309 @@ describe("Bots: Delete bot", () => {
     );
 
     expect(res.status).toBe(403);
+  });
+});
+
+describe("Bots: mention routing", () => {
+  test("only invokes the explicitly mentioned bot when multiple bots share a channel", async () => {
+    const webhook = startWebhookServer();
+    try {
+      const human = await registerUser("MentionOwner");
+      const { workspaceId, channelId } = await createWorkspaceWithGeneralChannel(
+        human.token,
+        "Mention Routing WS",
+      );
+
+      const alpha = await createBot(human.token, "Alpha.Bot", webhook.url);
+      const beta = await createBot(human.token, "BetaBot", webhook.url);
+      await addBotToWorkspace(alpha.body.id, workspaceId, human.token);
+      await addBotToWorkspace(beta.body.id, workspaceId, human.token);
+
+      const sendRes = await req(
+        "POST",
+        `/messages/${channelId}`,
+        { content: "Please handle this @Alpha.Bot" },
+        human.token,
+      );
+      expect(sendRes.status).toBe(200);
+
+      await waitForResult(async () => {
+        const rows = await invocationsForMessage(sendRes.body.id);
+        return rows.length > 0 ? rows : null;
+      }, "Alpha.Bot invocation");
+      await waitForResult(
+        async () => (webhook.requests.length > 0 ? webhook.requests : null),
+        "Alpha.Bot webhook request",
+      );
+      await sleep(100);
+
+      const invocations = await invocationsForMessage(sendRes.body.id);
+      expect(invocations.map((row) => row.botId)).toEqual([alpha.body.id]);
+      expect(webhook.requests.map((request) => request.payload.bot.name)).toEqual(["Alpha.Bot"]);
+    } finally {
+      webhook.stop();
+    }
+  });
+
+  test("handles case, regex characters, boundaries, and duplicate mentions", async () => {
+    const webhook = startWebhookServer();
+    try {
+      const human = await registerUser("MentionCaseOwner");
+      const { workspaceId, channelId } = await createWorkspaceWithGeneralChannel(
+        human.token,
+        "Mention Case WS",
+      );
+
+      const regexBot = await createBot(human.token, "Regex.Bot", webhook.url);
+      const caseBot = await createBot(human.token, "CaseBot", webhook.url);
+      await addBotToWorkspace(regexBot.body.id, workspaceId, human.token);
+      await addBotToWorkspace(caseBot.body.id, workspaceId, human.token);
+
+      const regexSend = await req(
+        "POST",
+        `/messages/${channelId}`,
+        { content: "@regex.bot please handle the escaped-dot case" },
+        human.token,
+      );
+      expect(regexSend.status).toBe(200);
+      await waitForResult(async () => {
+        const rows = await invocationsForMessage(regexSend.body.id);
+        return rows.length > 0 ? rows : null;
+      }, "case-insensitive regex bot invocation");
+      expect((await invocationsForMessage(regexSend.body.id)).map((row) => row.botId)).toEqual([
+        regexBot.body.id,
+      ]);
+
+      const boundarySend = await req(
+        "POST",
+        `/messages/${channelId}`,
+        { content: "This should not match @CaseBotany" },
+        human.token,
+      );
+      expect(boundarySend.status).toBe(200);
+      await sleep(150);
+      expect(await invocationsForMessage(boundarySend.body.id)).toEqual([]);
+
+      const duplicateSend = await req(
+        "POST",
+        `/messages/${channelId}`,
+        { content: "@casebot please respond once, even with @CaseBot twice" },
+        human.token,
+      );
+      expect(duplicateSend.status).toBe(200);
+      await waitForResult(async () => {
+        const rows = await invocationsForMessage(duplicateSend.body.id);
+        return rows.length > 0 ? rows : null;
+      }, "deduplicated case bot invocation");
+      expect((await invocationsForMessage(duplicateSend.body.id)).map((row) => row.botId)).toEqual([
+        caseBot.body.id,
+      ]);
+      await waitForResult(
+        async () => (webhook.requests.length >= 2 ? webhook.requests : null),
+        "case and regex webhook requests",
+      );
+    } finally {
+      webhook.stop();
+    }
+  });
+
+  test("does not invoke bots without a mention or outside the conversation", async () => {
+    const webhook = startWebhookServer();
+    try {
+      const human = await registerUser("MentionPermissionOwner");
+      const { workspaceId, channelId } = await createWorkspaceWithGeneralChannel(
+        human.token,
+        "Mention Permission WS",
+      );
+
+      const participantBot = await createBot(human.token, "ParticipantBot", webhook.url);
+      await createBot(human.token, "OutsideBot", webhook.url);
+      await addBotToWorkspace(participantBot.body.id, workspaceId, human.token);
+
+      const noMention = await req(
+        "POST",
+        `/messages/${channelId}`,
+        { content: "No bot should be invoked here" },
+        human.token,
+      );
+      expect(noMention.status).toBe(200);
+
+      const outsideMention = await req(
+        "POST",
+        `/messages/${channelId}`,
+        { content: "Even an explicit @OutsideBot mention should not cross participants" },
+        human.token,
+      );
+      expect(outsideMention.status).toBe(200);
+
+      await sleep(150);
+      expect(await invocationsForMessage(noMention.body.id)).toEqual([]);
+      expect(await invocationsForMessage(outsideMention.body.id)).toEqual([]);
+      expect(webhook.requests).toEqual([]);
+    } finally {
+      webhook.stop();
+    }
+  });
+});
+
+describe("Bots: runtime events", () => {
+  test("records queued, running, dispatch, and completed events for webhook bots", async () => {
+    const webhook = startWebhookServer();
+    try {
+      const human = await registerUser("RuntimeWebhookOwner");
+      const { workspaceId, channelId } = await createWorkspaceWithGeneralChannel(
+        human.token,
+        "Runtime Webhook WS",
+      );
+      const botRes = await createBot(human.token, "RuntimeWebhook", webhook.url);
+      await addBotToWorkspace(botRes.body.id, workspaceId, human.token);
+
+      const sendRes = await req(
+        "POST",
+        `/messages/${channelId}`,
+        { content: "@RuntimeWebhook please complete" },
+        human.token,
+      );
+      expect(sendRes.status).toBe(200);
+
+      const invocation = await waitForResult(async () => {
+        const rows = await invocationsForMessage(sendRes.body.id);
+        return rows.find((row) => row.status === "completed");
+      }, "completed webhook invocation");
+
+      expect(invocation.botId).toBe(botRes.body.id);
+      expect(invocation.error).toBeNull();
+      const eventTypes = await eventTypesForInvocation(invocation.id);
+      for (const type of [
+        "invocation.queued",
+        "invocation.running",
+        "webhook.dispatching",
+        "webhook.completed",
+      ]) {
+        expect(eventTypes).toContain(type);
+      }
+    } finally {
+      webhook.stop();
+    }
+  });
+
+  test("records Hermes completed, failed, and cancelled events and publishes runtime updates", async () => {
+    const human = await registerUser("RuntimeHermesOwner");
+    const { workspaceId } = await createWorkspaceWithGeneralChannel(
+      human.token,
+      "Runtime Hermes WS",
+    );
+    const botRes = await createBot(human.token, "RuntimeHermes", undefined, {
+      kind: "hermes",
+      workspaceId,
+    });
+    expect(botRes.status).toBe(200);
+
+    const dmRes = await req(
+      "POST",
+      "/conversations/dm",
+      { workspaceId, otherUserId: botRes.body.userId },
+      human.token,
+    );
+    expect(dmRes.status).toBe(200);
+
+    const redisKeyPrefix = `thechat-runtime-test-${crypto.randomUUID()}`;
+    const serviceBus = new RedisRealtimeBus({ redisKeyPrefix });
+    const observerBus = new RedisRealtimeBus({ redisKeyPrefix });
+    const realtimeEvents: RealtimeEvent[] = [];
+    await setRealtimeBusForTests(serviceBus);
+    const unsubscribe = await observerBus.subscribe((event) => {
+      realtimeEvents.push(event);
+    });
+
+    async function sendAndClaim(content: string) {
+      const sendRes = await req("POST", `/messages/${dmRes.body.id}`, { content }, human.token);
+      expect(sendRes.status).toBe(200);
+      await waitForResult(async () => {
+        const rows = await invocationsForMessage(sendRes.body.id);
+        return rows.find((row) => row.status === "queued");
+      }, `queued Hermes invocation for ${content}`);
+
+      const claimRes = await req("GET", "/hermes-platform/events?limit=1", undefined, botRes.body.apiKey);
+      expect(claimRes.status).toBe(200);
+      expect(claimRes.body.events).toHaveLength(1);
+      return {
+        messageId: sendRes.body.id as string,
+        invocationId: claimRes.body.events[0].invocationId as string,
+      };
+    }
+
+    try {
+      const completed = await sendAndClaim("Complete this Hermes invocation");
+      const completeRes = await req(
+        "POST",
+        "/hermes-platform/messages",
+        {
+          invocationId: completed.invocationId,
+          content: "Hermes completed response",
+        },
+        botRes.body.apiKey,
+      );
+      expect(completeRes.status).toBe(200);
+
+      const failed = await sendAndClaim("Fail this Hermes invocation");
+      const failRes = await req(
+        "POST",
+        `/hermes-platform/invocations/${failed.invocationId}/failed`,
+        { error: "synthetic failure" },
+        botRes.body.apiKey,
+      );
+      expect(failRes.status).toBe(200);
+
+      const cancelled = await sendAndClaim("Cancel this Hermes invocation");
+      const cancelRes = await req(
+        "POST",
+        `/hermes-platform/invocations/${cancelled.invocationId}/cancelled`,
+        { reason: "synthetic cancellation" },
+        botRes.body.apiKey,
+      );
+      expect(cancelRes.status).toBe(200);
+
+      await waitForResult(async () => {
+        const rows = await invocationsForMessage(completed.messageId);
+        return rows.find((row) => row.status === "completed" && row.responseMessageId);
+      }, "completed Hermes invocation");
+      await waitForResult(async () => {
+        const rows = await invocationsForMessage(failed.messageId);
+        return rows.find((row) => row.status === "failed" && row.error === "synthetic failure");
+      }, "failed Hermes invocation");
+      await waitForResult(async () => {
+        const rows = await invocationsForMessage(cancelled.messageId);
+        return rows.find((row) => row.status === "cancelled" && row.error === "synthetic cancellation");
+      }, "cancelled Hermes invocation");
+
+      for (const [invocationId, expected] of [
+        [completed.invocationId, "invocation.completed"],
+        [failed.invocationId, "invocation.failed"],
+        [cancelled.invocationId, "invocation.cancelled"],
+      ] as const) {
+        const eventTypes = await eventTypesForInvocation(invocationId);
+        expect(eventTypes).toContain("invocation.queued");
+        expect(eventTypes).toContain("hermes.platform.claimed");
+        expect(eventTypes).toContain(expected);
+      }
+
+      const cancelledRuntimeUpdate = await waitForResult(() => {
+        const event = realtimeEvents.find(
+          (candidate) =>
+            candidate.event.type === "bot_invocation_updated" &&
+            candidate.event.invocation.id === cancelled.invocationId &&
+            candidate.event.invocation.status === "cancelled" &&
+            candidate.event.event?.type === "invocation.cancelled",
+        );
+        return Promise.resolve(event);
+      }, "cancelled bot_invocation_updated realtime event");
+      expect(cancelledRuntimeUpdate.targetUserIds).toContain(human.user.id);
+    } finally {
+      await unsubscribe();
+      await observerBus.close();
+      await closeRealtimeBusForTests();
+    }
   });
 });
 

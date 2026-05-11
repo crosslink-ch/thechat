@@ -18,7 +18,7 @@
  *   # or:
  *   INTEGRATION=true pnpm test:desktop -- src/hooks/workspace-chat-flow.integration.test.tsx
  */
-import { describe, test, expect, afterAll } from "vitest";
+import { describe, test, expect, beforeAll, afterAll } from "vitest";
 import {
   render,
   within,
@@ -39,8 +39,8 @@ import WS from "ws";
 
 const INTEGRATION = process.env.INTEGRATION === "true";
 
-const API_URL = "http://localhost:3000";
-const WS_URL = "ws://localhost:3000";
+const API_URL = process.env.THECHAT_BACKEND_URL ?? `http://localhost:${process.env.THECHAT_BACKEND_PORT ?? "3000"}`;
+const WS_URL = API_URL.replace(/^http/, "ws");
 
 const api = treaty<App>(API_URL);
 
@@ -181,6 +181,16 @@ describe.skipIf(!INTEGRATION)(
     };
     let workspaceId: string;
     let generalChannelId: string;
+
+    beforeAll(async () => {
+      try {
+        await fetch(API_URL);
+      } catch {
+        throw new Error(
+          `API server not reachable at ${API_URL}. Start it with: pnpm dev:api`,
+        );
+      }
+    });
 
     // -- Fixture setup (API calls) ------------------------------------------
 

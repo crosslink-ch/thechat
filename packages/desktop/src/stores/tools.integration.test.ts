@@ -23,7 +23,7 @@ import type { McpToolInfo } from "../core/types";
 
 const INTEGRATION = process.env.INTEGRATION === "true";
 
-const API_URL = "http://localhost:3000";
+const API_URL = process.env.THECHAT_BACKEND_URL ?? `http://localhost:${process.env.THECHAT_BACKEND_PORT ?? "3000"}`;
 const MCP_URL = `${API_URL}/mcp`;
 
 const api = treaty<App>(API_URL);
