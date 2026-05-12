@@ -1,5 +1,6 @@
 import crypto from "crypto";
 import { and, asc, desc, eq } from "drizzle-orm";
+import { SpanStatusCode } from "@opentelemetry/api";
 import type {
   BotInvocationPublic,
   BotRuntimeSnapshot,
@@ -316,6 +317,9 @@ async function enqueueBotInvocation(input: {
   await publishInvocationUpdate(invocation.id);
 
   if (input.bot.kind === "hermes") {
+    if (invocation.status === "queued" && input.bot.webhookUrl) {
+      void deliverHermesPlatformWebhookInvocation(invocation.id).catch(() => {});
+    }
     return;
   }
 
@@ -607,101 +611,208 @@ export interface HermesPlatformEvent {
   session: { id: string; externalSessionId: string | null };
 }
 
-export async function claimHermesPlatformEvents(botId: string, limit = 10): Promise<HermesPlatformEvent[]> {
-  const cappedLimit = Math.max(1, Math.min(limit, 50));
-  const pending = await db
-    .select({ id: botInvocations.id })
-    .from(botInvocations)
-    .innerJoin(bots, eq(botInvocations.botId, bots.id))
-    .where(and(
-      eq(botInvocations.status, "queued"),
-      eq(botInvocations.adapterKind, "hermes"),
-      eq(botInvocations.botId, botId),
-      eq(bots.kind, "hermes"),
-    ))
-    .orderBy(asc(botInvocations.createdAt))
-    .limit(cappedLimit);
+async function claimHermesPlatformInvocation(invocationId: string): Promise<HermesPlatformEvent | null> {
+  const now = new Date();
+  const [claimed] = await db
+    .update(botInvocations)
+    .set({
+      status: "running",
+      startedAt: now,
+      externalRunId: `thechat:${invocationId}`,
+      error: null,
+      updatedAt: now,
+    })
+    .where(
+      and(
+        eq(botInvocations.id, invocationId),
+        eq(botInvocations.status, "queued"),
+        eq(botInvocations.adapterKind, "hermes"),
+      ),
+    )
+    .returning({ id: botInvocations.id });
+  if (!claimed) return null;
 
-  const events: HermesPlatformEvent[] = [];
-  for (const row of pending) {
-    const now = new Date();
-    const [claimed] = await db
-      .update(botInvocations)
-      .set({
-        status: "running",
-        startedAt: now,
-        externalRunId: `thechat:${row.id}`,
-        error: null,
-        updatedAt: now,
-      })
-      .where(and(eq(botInvocations.id, row.id), eq(botInvocations.status, "queued")))
-      .returning({ id: botInvocations.id });
-    if (!claimed) continue;
-
-    const loaded = await loadInvocationContext(row.id);
-    if (!loaded || loaded.bot.kind !== "hermes" || !loaded.session) {
-      await failInvocation(row.id, new Error("Hermes invocation context is incomplete"));
-      continue;
-    }
-
-    const [config] = await db
-      .select({
-        defaultInstructions: hermesBotConfigs.defaultInstructions,
-        defaultSessionScope: hermesBotConfigs.defaultSessionScope,
-      })
-      .from(hermesBotConfigs)
-      .where(eq(hermesBotConfigs.botId, loaded.bot.id))
-      .limit(1);
-
-    const text = stripBotMention(loaded.triggerMessage.content, loaded.botName) || loaded.triggerMessage.content;
-    await db
-      .update(botInvocations)
-      .set({
-        requestJson: {
-          platform: "thechat",
-          messageId: loaded.triggerMessage.id,
-          messageContent: loaded.triggerMessage.content,
-          text,
-          sessionId: loaded.session.externalSessionId,
-          defaultSessionScope: config?.defaultSessionScope ?? "channel",
-          triggeredAt: loaded.triggerMessage.createdAt.toISOString(),
-        },
-      })
-      .where(eq(botInvocations.id, row.id));
-
-    await publishInvocationUpdate(row.id);
-
-    events.push({
-      id: row.id,
-      invocationId: row.id,
-      chatId: loaded.session.externalSessionId ?? loaded.session.id,
-      chatType: loaded.conversation.type === "direct" ? "dm" : "group",
-      text,
-      messageId: loaded.triggerMessage.id,
-      instructions: config?.defaultInstructions ?? null,
-      sender: {
-        id: loaded.triggerMessage.senderId,
-        name: loaded.triggerSender.name,
-      },
-      bot: {
-        id: loaded.bot.id,
-        userId: loaded.bot.userId,
-        name: loaded.botName,
-      },
-      conversation: {
-        id: loaded.conversation.id,
-        type: loaded.conversation.type,
-        name: loaded.conversation.name,
-        workspaceId: loaded.conversation.workspaceId,
-      },
-      session: {
-        id: loaded.session.id,
-        externalSessionId: loaded.session.externalSessionId,
-      },
-    });
+  const event = await buildHermesPlatformEvent(invocationId);
+  if (!event) {
+    await failInvocation(invocationId, new Error("Hermes invocation context is incomplete"));
+    return null;
   }
 
-  return events;
+  await publishInvocationUpdate(invocationId);
+  return event;
+}
+
+export async function claimHermesPlatformEvents(botId: string, limit = 10): Promise<HermesPlatformEvent[]> {
+  return withSpan(
+    "hermes_platform.events.claim",
+    {
+      "messaging.system": "thechat",
+      "messaging.operation": "receive",
+      "thechat.bot_id": botId,
+    },
+    async (span) => {
+      const cappedLimit = Math.max(1, Math.min(limit, 50));
+      span.setAttribute("thechat.hermes_platform.events.limit", cappedLimit);
+      const pending = await db
+        .select({ id: botInvocations.id })
+        .from(botInvocations)
+        .innerJoin(bots, eq(botInvocations.botId, bots.id))
+        .where(
+          and(
+            eq(botInvocations.status, "queued"),
+            eq(botInvocations.adapterKind, "hermes"),
+            eq(botInvocations.botId, botId),
+            eq(bots.kind, "hermes"),
+          ),
+        )
+        .orderBy(asc(botInvocations.createdAt))
+        .limit(cappedLimit);
+
+      const events: HermesPlatformEvent[] = [];
+      for (const row of pending) {
+        const event = await claimHermesPlatformInvocation(row.id);
+        if (event) events.push(event);
+      }
+      span.setAttribute("thechat.hermes_platform.events.count", events.length);
+      return events;
+    },
+  );
+}
+
+async function buildHermesPlatformEvent(invocationId: string): Promise<HermesPlatformEvent | null> {
+  const loaded = await loadInvocationContext(invocationId);
+  if (!loaded || loaded.bot.kind !== "hermes" || !loaded.session) return null;
+
+  const [config] = await db
+    .select({
+      defaultInstructions: hermesBotConfigs.defaultInstructions,
+      defaultSessionScope: hermesBotConfigs.defaultSessionScope,
+    })
+    .from(hermesBotConfigs)
+    .where(eq(hermesBotConfigs.botId, loaded.bot.id))
+    .limit(1);
+
+  const text = stripBotMention(loaded.triggerMessage.content, loaded.botName) || loaded.triggerMessage.content;
+  await db
+    .update(botInvocations)
+    .set({
+      requestJson: {
+        platform: "thechat",
+        messageId: loaded.triggerMessage.id,
+        messageContent: loaded.triggerMessage.content,
+        text,
+        sessionId: loaded.session.externalSessionId,
+        defaultSessionScope: config?.defaultSessionScope ?? "channel",
+        triggeredAt: loaded.triggerMessage.createdAt.toISOString(),
+      },
+    })
+    .where(eq(botInvocations.id, invocationId));
+
+  return {
+    id: invocationId,
+    invocationId,
+    chatId: loaded.session.externalSessionId ?? loaded.session.id,
+    chatType: loaded.conversation.type === "direct" ? "dm" : "group",
+    text,
+    messageId: loaded.triggerMessage.id,
+    instructions: config?.defaultInstructions ?? null,
+    sender: {
+      id: loaded.triggerMessage.senderId,
+      name: loaded.triggerSender.name,
+    },
+    bot: {
+      id: loaded.bot.id,
+      userId: loaded.bot.userId,
+      name: loaded.botName,
+    },
+    conversation: {
+      id: loaded.conversation.id,
+      type: loaded.conversation.type,
+      name: loaded.conversation.name,
+      workspaceId: loaded.conversation.workspaceId,
+    },
+    session: {
+      id: loaded.session.id,
+      externalSessionId: loaded.session.externalSessionId,
+    },
+  };
+}
+
+async function deliverHermesPlatformWebhookInvocation(invocationId: string): Promise<void> {
+  await withSpan(
+    "hermes_platform.webhook.deliver",
+    {
+      "messaging.system": "thechat",
+      "messaging.destination.kind": "hermes_platform_webhook",
+      "thechat.bot_invocation_id": invocationId,
+    },
+    async (span) => {
+      const initial = await loadInvocationContext(invocationId);
+      if (!initial || initial.bot.kind !== "hermes") {
+        span.setAttribute("thechat.hermes_platform.delivery_status", "skipped");
+        return;
+      }
+      span.setAttribute("thechat.bot_id", initial.bot.id);
+      if (initial.invocation.status !== "queued") {
+        span.setAttribute("thechat.hermes_platform.delivery_status", "already_claimed");
+        return;
+      }
+      if (!initial.bot.webhookUrl) {
+        const error = new Error("Hermes webhook URL is not configured");
+        span.recordException(error);
+        span.setStatus({ code: SpanStatusCode.ERROR, message: error.message });
+        await failInvocation(invocationId, error);
+        span.setAttribute("thechat.hermes_platform.delivery_status", "missing_webhook_url");
+        return;
+      }
+
+      const event = await claimHermesPlatformInvocation(invocationId);
+      if (!event) {
+        span.setAttribute("thechat.hermes_platform.delivery_status", "claim_missed");
+        return;
+      }
+
+      const loaded = await loadInvocationContext(invocationId);
+      if (!loaded?.bot.webhookUrl) {
+        const error = new Error("Hermes webhook URL is not configured");
+        span.recordException(error);
+        span.setStatus({ code: SpanStatusCode.ERROR, message: error.message });
+        await failInvocation(invocationId, error);
+        span.setAttribute("thechat.hermes_platform.delivery_status", "missing_webhook_url");
+        return;
+      }
+
+      const body = JSON.stringify({ type: "thechat.hermes_platform.event", event });
+      try {
+        const response = await fetch(loaded.bot.webhookUrl, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${loaded.bot.apiKey}`,
+            "X-TheChat-Bot-Id": loaded.bot.id,
+            "X-TheChat-Invocation-Id": invocationId,
+          },
+          body,
+        });
+        span.setAttribute("http.response.status_code", response.status);
+        if (!response.ok) {
+          const error = new Error(`Hermes webhook failed with HTTP ${response.status}`);
+          span.recordException(error);
+          span.setStatus({ code: SpanStatusCode.ERROR, message: error.message });
+          await failInvocation(invocationId, error);
+          span.setAttribute("thechat.hermes_platform.delivery_status", "failed");
+          return;
+        }
+        span.setAttribute("thechat.hermes_platform.delivery_status", "delivered");
+      } catch (error) {
+        const failure = error instanceof Error ? error : new Error(String(error));
+        span.recordException(failure);
+        span.setStatus({ code: SpanStatusCode.ERROR, message: failure.message });
+        await failInvocation(invocationId, failure);
+        span.setAttribute("thechat.hermes_platform.delivery_status", "failed");
+      }
+    },
+  );
 }
 
 export async function completeHermesPlatformInvocation(input: {

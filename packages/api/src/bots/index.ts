@@ -15,6 +15,7 @@ import {
   removeBotFromWorkspace,
   regenerateBotKey,
   regenerateBotSecret,
+  updateAuthenticatedBotWebhook,
 } from "../services/bots";
 import { ensureHermesBotConfig } from "../services/hermes";
 
@@ -28,6 +29,10 @@ const createSchema = z.object({
 const updateSchema = z.object({
   name: z.string().trim().min(1, "Bot name is required").optional(),
   webhookUrl: z.string().url().nullish(),
+});
+
+const registerWebhookSchema = z.object({
+  url: z.string().url(),
 });
 
 const addToWorkspaceSchema = z.object({
@@ -92,13 +97,49 @@ export const botRoutes = new Elysia({ prefix: "/bots" })
           return { error: "Workspace ID is required for Hermes bots" };
         }
         await requireWorkspaceAdmin(workspaceId, user.id);
-        const bot = await createBot(name, null, user.id, "hermes");
+        const bot = await createBot(name, webhookUrl ?? null, user.id, "hermes");
         await ensureHermesBotConfig(bot.id);
         await addBotToWorkspace(bot.id, workspaceId, user.id);
         const { webhookSecret: _webhookSecret, ...publicBot } = bot;
         return publicBot;
       }
       return await createBot(name, webhookUrl ?? null, user.id);
+    } catch (e: any) {
+      set.status = e instanceof ServiceError ? e.status : 500;
+      return { error: e.message ?? "Unknown error" };
+    }
+  })
+
+  // Register authenticated bot's webhook URL (bot-token only)
+  .post("/me/webhook", async ({ body, user, set }) => {
+    if (user.type !== "bot") {
+      set.status = 403;
+      return { error: "Only bots can register their own webhook" };
+    }
+
+    const parsed = registerWebhookSchema.safeParse(body);
+    if (!parsed.success) {
+      set.status = 400;
+      return { error: parsed.error.issues[0]?.message ?? "Invalid input" };
+    }
+
+    try {
+      return await updateAuthenticatedBotWebhook(user.id, parsed.data.url);
+    } catch (e: any) {
+      set.status = e instanceof ServiceError ? e.status : 500;
+      return { error: e.message ?? "Unknown error" };
+    }
+  })
+
+  // Clear authenticated bot's webhook URL (bot-token only)
+  .delete("/me/webhook", async ({ user, set }) => {
+    if (user.type !== "bot") {
+      set.status = 403;
+      return { error: "Only bots can clear their own webhook" };
+    }
+
+    try {
+      return await updateAuthenticatedBotWebhook(user.id, null);
     } catch (e: any) {
       set.status = e instanceof ServiceError ? e.status : 500;
       return { error: e.message ?? "Unknown error" };

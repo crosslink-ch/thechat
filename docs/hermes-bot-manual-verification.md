@@ -2,12 +2,14 @@
 
 This guide verifies the native TheChat <-> Hermes Gateway platform adapter.
 TheChat does not call Hermes `/v1/runs` directly; it exposes pending bot
-invocations at `/hermes-platform/*`, and Hermes polls those endpoints as a
-messaging platform.
+invocations at `/hermes-platform/*`. Hermes Gateway can consume those
+invocations either by polling `/hermes-platform/events` or by receiving pushes
+at a webhook URL configured on the bot record.
 
 ## Ports used
 
 - TheChat API for manual testing: `3337`
+- Optional Hermes TheChat webhook for manual testing: `8765`
 - Compose Postgres: `15543 -> 5432`
 - Automated Hermes e2e defaults: API `3338`, Postgres `15544`, Redis `16381`
 
@@ -119,9 +121,14 @@ set +a
 THECHAT_BASE_URL=http://localhost:3337 \
 THECHAT_BOT_TOKEN=bot_... \
 THECHAT_ALLOW_ALL_USERS=true \
-THECHAT_POLL_INTERVAL=0.5 \
+THECHAT_POLL_INTERVAL=1.0 \
 uv run --frozen python -u /home/bruno/agent-worktrees/thechat-hermes-integration/scripts/e2e/run-hermes-gateway-runtime.py
 ```
+
+To use webhook mode instead of polling, start Hermes with
+`THECHAT_WEBHOOK_URL` set to a reachable Hermes Gateway callback URL. Hermes
+registers that URL through the generic bot webhook endpoint
+`POST /bots/me/webhook`.
 
 Health check TheChat's platform bridge:
 
@@ -136,9 +143,9 @@ curl -H "Authorization: Bearer bot_..." \
 2. Send `@Koda say hello from TheChat`.
 3. Open a direct message with `Koda` and send `say hello from DM`.
 
-Expected result:
+Expected result in polling mode:
 
-- Hermes Gateway claims queued TheChat invocations through `/hermes-platform/events`.
+- Hermes Gateway claims queued invocations through `/hermes-platform/events`.
 - The final response is posted back through `/hermes-platform/messages`.
 - The bot responds in channels when mentioned and in direct messages without a mention.
 - The bot runtime panel shows session/activity state for the Hermes bot.
@@ -188,7 +195,7 @@ cd /home/bruno/projects/hermes2
 THECHAT_BASE_URL=http://localhost:3337 \
 THECHAT_BOT_TOKEN="$THECHAT_BOT_TOKEN" \
 THECHAT_ALLOW_ALL_USERS=true \
-THECHAT_POLL_INTERVAL=0.5 \
+THECHAT_POLL_INTERVAL=1.0 \
 uv run --frozen python -u /home/bruno/agent-worktrees/thechat-hermes-integration/scripts/e2e/run-hermes-gateway-runtime.py
 ```
 

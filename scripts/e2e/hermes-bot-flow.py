@@ -196,7 +196,7 @@ def start_hermes_gateway(env: dict[str, str], base: str, bot_token: str, bot_nam
         "THECHAT_BASE_URL": base,
         "THECHAT_BOT_TOKEN": bot_token,
         "THECHAT_ALLOW_ALL_USERS": "true",
-        "THECHAT_POLL_INTERVAL": "0.5",
+        "THECHAT_POLL_INTERVAL": "0.25",
         "LOG_LEVEL": "info",
     }
     log = hermes_log.open("w")

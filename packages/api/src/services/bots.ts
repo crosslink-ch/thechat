@@ -364,6 +364,40 @@ export async function updateBot(
   return getBot(botId, ownerId);
 }
 
+export async function updateAuthenticatedBotWebhook(
+  botUserId: string,
+  webhookUrl: string | null
+) {
+  const [bot] = await db
+    .select({
+      id: bots.id,
+      userId: bots.userId,
+      kind: bots.kind,
+      name: users.name,
+    })
+    .from(bots)
+    .innerJoin(users, eq(bots.userId, users.id))
+    .where(eq(bots.userId, botUserId))
+    .limit(1);
+
+  if (!bot) {
+    throw new ServiceError("Bot not found", 404);
+  }
+
+  await db
+    .update(bots)
+    .set({ webhookUrl })
+    .where(eq(bots.id, bot.id));
+
+  return {
+    id: bot.id,
+    userId: bot.userId,
+    name: bot.name,
+    kind: bot.kind,
+    webhookUrl,
+  };
+}
+
 export async function deleteBot(botId: string, ownerId: string) {
   const [bot] = await db
     .select({ id: bots.id, ownerId: bots.ownerId, userId: bots.userId })

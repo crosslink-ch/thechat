@@ -817,6 +817,60 @@ describe("Bots: Update bot", () => {
     expect(res.body.webhookUrl).toBe("https://both.example.com/hook");
   });
 
+  test("bot can register and clear its own webhook URL", async () => {
+    const webhook = startWebhookServer();
+    try {
+      const human = await registerUser("BotWebhookRegistrationOwner");
+      const { workspaceId, channelId } = await createWorkspaceWithGeneralChannel(
+        human.token,
+        "Bot Webhook Registration",
+      );
+      const botRes = await createBot(human.token, "RegisteringBot");
+      expect(botRes.status).toBe(200);
+      await addBotToWorkspace(botRes.body.id, workspaceId, human.token);
+
+      const humanRegisterRes = await req(
+        "POST",
+        "/bots/me/webhook",
+        { url: webhook.url },
+        human.token,
+      );
+      expect(humanRegisterRes.status).toBe(403);
+
+      const registerRes = await req(
+        "POST",
+        "/bots/me/webhook",
+        { url: webhook.url },
+        botRes.body.apiKey,
+      );
+      expect(registerRes.status).toBe(200);
+      expect(registerRes.body.webhookUrl).toBe(webhook.url);
+
+      const sendRes = await req(
+        "POST",
+        `/messages/${channelId}`,
+        { content: "@RegisteringBot use your registered webhook" },
+        human.token,
+      );
+      expect(sendRes.status).toBe(200);
+
+      const delivery = await waitForResult(async () => {
+        return webhook.requests.find((request) => request.payload.message?.id === sendRes.body.id);
+      }, "registered bot webhook delivery");
+      expect(delivery.payload.bot.id).toBe(botRes.body.id);
+
+      const clearRes = await req("DELETE", "/bots/me/webhook", undefined, botRes.body.apiKey);
+      expect(clearRes.status).toBe(200);
+      expect(clearRes.body.webhookUrl).toBeNull();
+
+      const detailRes = await req("GET", `/bots/${botRes.body.id}`, undefined, human.token);
+      expect(detailRes.status).toBe(200);
+      expect(detailRes.body.webhookUrl).toBeNull();
+    } finally {
+      webhook.stop();
+    }
+  });
+
   test("non-owner cannot update bot → 403", async () => {
     const owner = await registerUser("UpdBotOwner");
     const stranger = await registerUser("UpdStranger");
@@ -1036,7 +1090,7 @@ describe("Bots: runtime state", () => {
       const human = await registerUser("RuntimeWebhookOwner");
       const { workspaceId, channelId } = await createWorkspaceWithGeneralChannel(
         human.token,
-        "Runtime Webhook WS",
+        "Runtime Webhook",
       );
       const botRes = await createBot(human.token, "RuntimeWebhook", webhook.url);
       await addBotToWorkspace(botRes.body.id, workspaceId, human.token);
@@ -1066,7 +1120,7 @@ describe("Bots: runtime state", () => {
     const human = await registerUser("RuntimeHermesOwner");
     const { workspaceId } = await createWorkspaceWithGeneralChannel(
       human.token,
-      "Runtime Hermes WS",
+      "Runtime Hermes",
     );
     const botRes = await createBot(human.token, "RuntimeHermes", undefined, {
       kind: "hermes",
@@ -1155,17 +1209,86 @@ describe("Bots: runtime state", () => {
       const cancelledRuntimeUpdate = await waitForResult(() => {
         const event = realtimeEvents.find(
           (candidate) =>
+            candidate.type === "ws.event" &&
             candidate.event.type === "bot_invocation_updated" &&
             candidate.event.invocation.id === cancelled.invocationId &&
             candidate.event.invocation.status === "cancelled",
         );
         return Promise.resolve(event);
       }, "cancelled bot_invocation_updated realtime event");
+      expect(cancelledRuntimeUpdate.type).toBe("ws.event");
+      if (cancelledRuntimeUpdate.type !== "ws.event") {
+        throw new Error("Expected realtime websocket event");
+      }
       expect(cancelledRuntimeUpdate.targetUserIds).toContain(human.user.id);
     } finally {
       await unsubscribe();
       await observerBus.close();
       await closeRealtimeBusForTests();
+    }
+  });
+
+  test("Hermes platform supports regular bot webhook delivery while polling remains available", async () => {
+    let receivedAuthorization = "";
+    const webhook = startWebhookServer((request) => {
+      receivedAuthorization = request.headers.get("authorization") ?? "";
+      return new Response(JSON.stringify({ ok: true }), {
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+    const human = await registerUser("RuntimeHermesWebhookOwner");
+    const { workspaceId } = await createWorkspaceWithGeneralChannel(
+      human.token,
+      "Runtime Hermes Platform Webhook",
+    );
+    const botRes = await createBot(human.token, "RuntimeHermesWebhook", undefined, {
+      kind: "hermes",
+      workspaceId,
+    });
+    expect(botRes.status).toBe(200);
+
+    const registerRes = await req(
+      "POST",
+      "/bots/me/webhook",
+      { url: webhook.url },
+      botRes.body.apiKey,
+    );
+    expect(registerRes.status).toBe(200);
+    expect(registerRes.body.webhookUrl).toBe(webhook.url);
+
+    const pollingRes = await req("GET", "/hermes-platform/events?limit=1", undefined, botRes.body.apiKey);
+    expect(pollingRes.status).toBe(200);
+    expect(pollingRes.body.events).toEqual([]);
+
+    const dmRes = await req(
+      "POST",
+      "/conversations/dm",
+      { workspaceId, otherUserId: botRes.body.userId },
+      human.token,
+    );
+    expect(dmRes.status).toBe(200);
+
+    try {
+      const sendRes = await req(
+        "POST",
+        `/messages/${dmRes.body.id}`,
+        { content: "Handle this over the platform webhook" },
+        human.token,
+      );
+      expect(sendRes.status).toBe(200);
+
+      const delivery = await waitForResult(async () => {
+        return webhook.requests.find((request) => request.payload.event?.messageId === sendRes.body.id);
+      }, "Hermes platform webhook event");
+
+      expect(receivedAuthorization).toBe(`Bearer ${botRes.body.apiKey}`);
+      expect(delivery.payload.type).toBe("thechat.hermes_platform.event");
+      expect(delivery.payload.event.text).toBe("Handle this over the platform webhook");
+      expect(delivery.payload.event.bot.id).toBe(botRes.body.id);
+      const [invocation] = await invocationsForMessage(sendRes.body.id);
+      expect(invocation.status).toBe("running");
+    } finally {
+      webhook.stop();
     }
   });
 });

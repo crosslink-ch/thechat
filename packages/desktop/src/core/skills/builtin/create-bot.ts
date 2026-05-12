@@ -91,7 +91,7 @@ Use this flow when the user asks to add, connect, configure, or wire up a Hermes
 
 ### 1. Create a Hermes bot user
 
-Create the chat participant as a normal bot with \`kind: "hermes"\`, a workspace ID, and the chosen display name.
+Create the chat participant as a normal bot with \`kind: "hermes"\`, a workspace ID, and the chosen display name. You can omit \`webhookUrl\`; Hermes Gateway can later register its callback through the generic bot webhook endpoint when started in webhook mode.
 
 \`\`\`json
 {
@@ -106,14 +106,14 @@ If using HTTP directly:
 \`\`\`
 POST /bots/create
 Authorization: Bearer <human-user-token>
-Body: { "kind": "hermes", "workspaceId": "<workspace-id>", "name": "Koda" }
+Body: { "kind": "hermes", "workspaceId": "<workspace-id>", "name": "Koda", "webhookUrl": "<optional public Hermes webhook URL>" }
 \`\`\`
 
 Only workspace owners/admins can create Hermes bots. The create response includes the bot's \`apiKey\`; treat it as the bot token and show it to the user because it is needed by the Hermes Gateway process.
 
 ### 2. Start Hermes Gateway for that bot
 
-Hermes Gateway must run with TheChat enabled as a messaging platform. TheChat does not call the Hermes run API for bot replies; Hermes Gateway polls TheChat for pending bot invocations and posts responses back through the TheChat platform endpoints.
+Hermes Gateway must run with TheChat enabled as a messaging platform. TheChat does not call the Hermes run API for bot replies; Hermes Gateway receives TheChat platform events by polling unless it is started with \`THECHAT_WEBHOOK_URL\`.
 
 The gateway needs the per-bot token from the create response:
 
@@ -121,7 +121,10 @@ The gateway needs the per-bot token from the create response:
 THECHAT_BASE_URL=<TheChat API URL>
 THECHAT_BOT_TOKEN=<bot apiKey from /bots/create>
 THECHAT_ALLOW_ALL_USERS=true
+THECHAT_POLL_INTERVAL=1.0
 \`\`\`
+
+For webhook mode, start Hermes with \`THECHAT_WEBHOOK_URL=<public Hermes webhook URL>\`; the gateway registers that URL through \`POST /bots/me/webhook\` using its bot token.
 
 Each Hermes bot gets its own token. To run multiple Hermes bots, repeat the bot creation flow and run one Hermes Gateway process per bot token, each with its own Hermes home/config.
 
@@ -154,6 +157,6 @@ Body: {}
 - In channels/groups, users mention the specific bot name, for example \`@Koda summarize this thread\`.
 - In direct messages with a workspace Hermes bot, users can message the bot without an @mention and it should respond.
 - TheChat stores generic bot session, invocation, and event metadata for UI/history; Hermes Gateway owns the actual model runtime and session memory.
-- TheChat exposes queued invocations through \`/hermes-platform/events\`; the Hermes TheChat platform adapter consumes them and posts final messages through \`/hermes-platform/messages\`.
+- With no bot \`webhookUrl\`, Hermes polls \`/hermes-platform/events\`; in webhook mode Hermes registers \`THECHAT_WEBHOOK_URL\` through \`POST /bots/me/webhook\`, TheChat pushes queued invocations to that callback, and Hermes posts final messages through \`/hermes-platform/messages\`.
 `,
 };

@@ -124,7 +124,7 @@ function HermesBotModalInner() {
         `THECHAT_BASE_URL=${API_URL} \\`,
         `THECHAT_BOT_TOKEN=${botToken} \\`,
         "THECHAT_ALLOW_ALL_USERS=true \\",
-        "THECHAT_POLL_INTERVAL=0.5 \\",
+        "THECHAT_POLL_INTERVAL=1.0 \\",
         "uv run --frozen hermes gateway run --replace",
       ].join("\n")
     : "";
