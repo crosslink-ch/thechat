@@ -3,7 +3,6 @@ import { Elysia } from "elysia";
 import { asc, eq } from "drizzle-orm";
 import { db } from "../db";
 import {
-  botEvents,
   botInvocations,
   bots,
   conversationParticipants,
@@ -155,15 +154,6 @@ async function invocationsForMessage(messageId: string) {
     .from(botInvocations)
     .where(eq(botInvocations.triggerMessageId, messageId))
     .orderBy(asc(botInvocations.createdAt));
-}
-
-async function eventTypesForInvocation(invocationId: string) {
-  const rows = await db
-    .select({ type: botEvents.type })
-    .from(botEvents)
-    .where(eq(botEvents.invocationId, invocationId))
-    .orderBy(asc(botEvents.createdAt));
-  return rows.map((row) => row.type);
 }
 
 function startWebhookServer(
@@ -1039,8 +1029,8 @@ describe("Bots: mention routing", () => {
   });
 });
 
-describe("Bots: runtime events", () => {
-  test("records queued, running, dispatch, and completed events for webhook bots", async () => {
+describe("Bots: runtime state", () => {
+  test("tracks queued, running, and completed state for webhook bots", async () => {
     const webhook = startWebhookServer();
     try {
       const human = await registerUser("RuntimeWebhookOwner");
@@ -1066,21 +1056,13 @@ describe("Bots: runtime events", () => {
 
       expect(invocation.botId).toBe(botRes.body.id);
       expect(invocation.error).toBeNull();
-      const eventTypes = await eventTypesForInvocation(invocation.id);
-      for (const type of [
-        "invocation.queued",
-        "invocation.running",
-        "webhook.dispatching",
-        "webhook.completed",
-      ]) {
-        expect(eventTypes).toContain(type);
-      }
+      expect(webhook.requests).toHaveLength(1);
     } finally {
       webhook.stop();
     }
   });
 
-  test("records Hermes completed, failed, and cancelled events and publishes runtime updates", async () => {
+  test("tracks Hermes completed, failed, and cancelled invocations and publishes runtime updates", async () => {
     const human = await registerUser("RuntimeHermesOwner");
     const { workspaceId } = await createWorkspaceWithGeneralChannel(
       human.token,
@@ -1170,24 +1152,12 @@ describe("Bots: runtime events", () => {
         return rows.find((row) => row.status === "cancelled" && row.error === "synthetic cancellation");
       }, "cancelled Hermes invocation");
 
-      for (const [invocationId, expected] of [
-        [completed.invocationId, "invocation.completed"],
-        [failed.invocationId, "invocation.failed"],
-        [cancelled.invocationId, "invocation.cancelled"],
-      ] as const) {
-        const eventTypes = await eventTypesForInvocation(invocationId);
-        expect(eventTypes).toContain("invocation.queued");
-        expect(eventTypes).toContain("hermes.platform.claimed");
-        expect(eventTypes).toContain(expected);
-      }
-
       const cancelledRuntimeUpdate = await waitForResult(() => {
         const event = realtimeEvents.find(
           (candidate) =>
             candidate.event.type === "bot_invocation_updated" &&
             candidate.event.invocation.id === cancelled.invocationId &&
-            candidate.event.invocation.status === "cancelled" &&
-            candidate.event.event?.type === "invocation.cancelled",
+            candidate.event.invocation.status === "cancelled",
         );
         return Promise.resolve(event);
       }, "cancelled bot_invocation_updated realtime event");

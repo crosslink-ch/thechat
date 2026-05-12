@@ -1,6 +1,5 @@
 import mitt from "mitt";
 import type {
-  BotEventPublic,
   BotInvocationPublic,
   BotSessionPublic,
   ChatMessage,
@@ -18,7 +17,6 @@ export type WsEvents = {
     conversationId: string;
     session: BotSessionPublic | null;
     invocation: BotInvocationPublic;
-    event: BotEventPublic | null;
   };
   "ws:typing": {
     conversationId: string;

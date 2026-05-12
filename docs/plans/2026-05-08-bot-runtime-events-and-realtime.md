@@ -213,9 +213,8 @@ REST/websocket handler or worker mutates Postgres
 ```
 
 Redis Pub/Sub is not durable. That is acceptable for live UI updates because
-clients already refetch messages on conversation load/reconnect. For important
-bot runtime state, persist `bot_events` and let the UI query/catch up from
-Postgres.
+clients already refetch messages and bot invocation state on conversation
+load/reconnect.
 
 Use one shared channel at first:
 
@@ -266,28 +265,21 @@ bot_invocations (
   updated_at timestamptz not null default now(),
   unique (bot_id, trigger_message_id)
 );
-
-bot_events (
-  id uuid primary key,
-  invocation_id uuid not null references bot_invocations(id) on delete cascade,
-  type text not null,
-  payload jsonb not null default '{}',
-  created_at timestamptz not null default now()
-);
 ```
 
 For Hermes:
 
 - `external_session_id` is the Hermes `session_id`.
 - `external_run_id` is the Hermes `run_id`.
-- `bot_events` may include Hermes SSE events, progress, final output, failure,
-  and cancellation metadata.
+- `bot_invocations` carries queued/running/completed/failed/cancelled status,
+  request/response payloads, errors, and timestamps.
 
 For webhook bots:
 
 - `external_session_id` may be null or a value returned by the webhook bot in a
   future response API.
-- `bot_events` can capture webhook delivery attempts and replies.
+- `bot_invocations` carries webhook request status, response metadata, errors,
+  and timestamps.
 
 ## Bot Event Model
 

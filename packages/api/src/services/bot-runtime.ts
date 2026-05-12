@@ -1,7 +1,6 @@
 import crypto from "crypto";
-import { and, asc, desc, eq, inArray } from "drizzle-orm";
+import { and, asc, desc, eq } from "drizzle-orm";
 import type {
-  BotEventPublic,
   BotInvocationPublic,
   BotRuntimeSnapshot,
   BotSessionPublic,
@@ -14,7 +13,6 @@ import { AsyncWorkerRuntime } from "../async/worker";
 import type { AsyncJobHandler, QueueCommand } from "../async/types";
 import { db } from "../db";
 import {
-  botEvents,
   botInvocations,
   bots,
   botSessions,
@@ -191,20 +189,9 @@ export async function listConversationBotRuntime(conversationId: string, userId:
     .orderBy(desc(botInvocations.createdAt))
     .limit(50);
 
-  const invocationIds = invocationRows.map((row) => row.id);
-  const eventRows =
-    invocationIds.length === 0
-      ? []
-      : await db
-          .select()
-          .from(botEvents)
-          .where(inArray(botEvents.invocationId, invocationIds))
-          .orderBy(asc(botEvents.createdAt));
-
   return {
     sessions: sessionRows.map(toPublicSession),
     invocations: invocationRows.map(toPublicInvocation),
-    events: eventRows.map(toPublicEvent),
   };
 }
 
@@ -326,10 +313,7 @@ async function enqueueBotInvocation(input: {
       ? await loadBotSessionForInvocation(input.message.botSessionId, input.bot.botId, input.conversation.id)
       : await getOrCreateBotSession(input.bot.botId, input.conversation);
   const invocation = await getOrCreateInvocation(input.bot, input.conversation, input.message, session.id);
-  const event = await recordBotEvent(invocation.id, "invocation.queued", {
-    triggerMessageId: input.message.id,
-  });
-  await publishInvocationUpdate(invocation.id, event);
+  await publishInvocationUpdate(invocation.id);
 
   if (input.bot.kind === "hermes") {
     return;
@@ -530,7 +514,7 @@ async function handleQueuedBotInvocation(invocationId: string, context: { setPro
   }
 
   await markInvocationStatus(invocationId, "running", { startedAt: new Date(), error: null });
-  await publishInvocationUpdate(invocationId, await recordBotEvent(invocationId, "invocation.running", {}));
+  await publishInvocationUpdate(invocationId);
   await context.setProgress(15, { status: "running" });
 
   try {
@@ -582,7 +566,6 @@ async function handleWebhookInvocation(invocationId: string) {
   const body = JSON.stringify(payload);
   const timestamp = Math.floor(Date.now() / 1000);
   const signature = signWebhookPayload(body, loaded.bot.webhookSecret, timestamp);
-  await recordBotEvent(invocationId, "webhook.dispatching", { webhookUrl: loaded.bot.webhookUrl });
 
   const response = await fetch(loaded.bot.webhookUrl, {
     method: "POST",
@@ -602,10 +585,7 @@ async function handleWebhookInvocation(invocationId: string) {
     completedAt: new Date(),
     responseJson: { status: response.status },
   });
-  await publishInvocationUpdate(
-    invocationId,
-    await recordBotEvent(invocationId, "webhook.completed", { status: response.status }),
-  );
+  await publishInvocationUpdate(invocationId);
 }
 
 export interface HermesPlatformEvent {
@@ -689,12 +669,7 @@ export async function claimHermesPlatformEvents(botId: string, limit = 10): Prom
       })
       .where(eq(botInvocations.id, row.id));
 
-    await publishInvocationUpdate(
-      row.id,
-      await recordBotEvent(row.id, "hermes.platform.claimed", {
-        sessionId: loaded.session.externalSessionId,
-      }),
-    );
+    await publishInvocationUpdate(row.id);
 
     events.push({
       id: row.id,
@@ -787,13 +762,7 @@ export async function completeHermesPlatformInvocation(input: {
   }
 
   await publishBotMessage(responseMessage, loaded.botName, loaded.conversation.type);
-  await publishInvocationUpdate(
-    input.invocationId,
-    await recordBotEvent(input.invocationId, "invocation.completed", {
-      responseMessageId: responseMessage.id,
-      platformMessageId: input.platformMessageId ?? null,
-    }),
-  );
+  await publishInvocationUpdate(input.invocationId);
   return { messageId: responseMessage.id, duplicate: false };
 }
 
@@ -828,13 +797,7 @@ export async function completeHermesPlatformInvocationSilently(input: {
     })
     .where(eq(botInvocations.id, input.invocationId));
 
-  await publishInvocationUpdate(
-    input.invocationId,
-    await recordBotEvent(input.invocationId, "invocation.completed", {
-      silent: true,
-      reason: input.reason ?? null,
-    }),
-  );
+  await publishInvocationUpdate(input.invocationId);
   return { ok: true, duplicate: false };
 }
 
@@ -882,10 +845,7 @@ export async function cancelHermesPlatformInvocation(input: {
     })
     .where(eq(botInvocations.id, input.invocationId));
 
-  await publishInvocationUpdate(
-    input.invocationId,
-    await recordBotEvent(input.invocationId, "invocation.cancelled", { reason }),
-  );
+  await publishInvocationUpdate(input.invocationId);
   return { ok: true, duplicate: false };
 }
 
@@ -930,7 +890,6 @@ async function failInvocation(invocationId: string, error: any) {
       updatedAt: failedAt,
     })
     .where(eq(botInvocations.id, invocationId));
-  const event = await recordBotEvent(invocationId, "invocation.failed", { error: message });
 
   if (loaded?.bot.kind === "hermes") {
     const content = `Hermes run failed: ${message}`;
@@ -951,7 +910,7 @@ async function failInvocation(invocationId: string, error: any) {
     await publishBotMessage(responseMessage, loaded.botName, loaded.conversation.type);
   }
 
-  await publishInvocationUpdate(invocationId, event);
+  await publishInvocationUpdate(invocationId);
 }
 
 async function loadInvocationContext(invocationId: string) {
@@ -1004,15 +963,7 @@ async function markInvocationStatus(
     .where(eq(botInvocations.id, invocationId));
 }
 
-async function recordBotEvent(invocationId: string, type: string, payload: Record<string, unknown>) {
-  const [event] = await db
-    .insert(botEvents)
-    .values({ invocationId, type, payload })
-    .returning();
-  return event;
-}
-
-async function publishInvocationUpdate(invocationId: string, eventRow: typeof botEvents.$inferSelect | null) {
+async function publishInvocationUpdate(invocationId: string) {
   const [invocationRow] = await db
     .select({
       id: botInvocations.id,
@@ -1076,7 +1027,6 @@ async function publishInvocationUpdate(invocationId: string, eventRow: typeof bo
     conversationId: invocationRow.conversationId,
     invocation: toPublicInvocation(invocationRow),
     session: sessionRow ? toPublicSession(sessionRow) : null,
-    event: eventRow ? toPublicEvent(eventRow) : null,
   };
   await publishWsEventToUsers(participantRows.map((p) => p.userId), wsEvent);
 }
@@ -1201,15 +1151,5 @@ function toPublicInvocation(row: {
     completedAt: row.completedAt?.toISOString() ?? null,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
-  };
-}
-
-function toPublicEvent(row: typeof botEvents.$inferSelect): BotEventPublic {
-  return {
-    id: row.id,
-    invocationId: row.invocationId,
-    type: row.type,
-    payload: row.payload ?? null,
-    createdAt: row.createdAt.toISOString(),
   };
 }

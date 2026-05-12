@@ -113,10 +113,9 @@ export function ChannelRoute() {
       conversationId,
       session,
       invocation,
-      event,
     }: WsEvents["ws:bot_invocation_updated"]) => {
       if (conversationId !== channelId) return;
-      setRuntime((prev) => mergeRuntimeUpdate(prev, session, invocation, event));
+      setRuntime((prev) => mergeRuntimeUpdate(prev, session, invocation));
     };
 
     wsEvents.on("ws:new_message", onMessage);

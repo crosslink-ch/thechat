@@ -1,5 +1,4 @@
 import type {
-  BotEventPublic,
   BotInvocationPublic,
   BotRuntimeSnapshot,
   BotSessionPublic,
@@ -9,13 +8,11 @@ export function mergeRuntimeUpdate(
   prev: BotRuntimeSnapshot | null,
   session: BotSessionPublic | null,
   invocation: BotInvocationPublic,
-  event: BotEventPublic | null,
 ): BotRuntimeSnapshot {
-  const snapshot = prev ?? { sessions: [], invocations: [], events: [] };
+  const snapshot = prev ?? { sessions: [], invocations: [] };
   return {
     sessions: session ? upsertById(snapshot.sessions, session) : snapshot.sessions,
     invocations: upsertById(snapshot.invocations, invocation),
-    events: event ? upsertById(snapshot.events, event) : snapshot.events,
   };
 }
 

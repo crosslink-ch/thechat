@@ -125,7 +125,6 @@ export function DmRoute() {
       setRuntime((prev) => ({
         sessions: [session, ...(prev?.sessions ?? []).filter((existing) => existing.id !== session.id)],
         invocations: prev?.invocations ?? [],
-        events: prev?.events ?? [],
       }));
       setActiveBotSessionId(session.id);
     } finally {
@@ -203,10 +202,9 @@ export function DmRoute() {
       conversationId: convId,
       session,
       invocation,
-      event,
     }: WsEvents["ws:bot_invocation_updated"]) => {
       if (convId !== conversationId) return;
-      setRuntime((prev) => mergeRuntimeUpdate(prev, session, invocation, event));
+      setRuntime((prev) => mergeRuntimeUpdate(prev, session, invocation));
     };
 
     wsEvents.on("ws:new_message", onMessage);

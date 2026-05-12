@@ -355,25 +355,6 @@ export const botInvocations = pgTable(
   ]
 );
 
-export const botEvents = pgTable(
-  "bot_events",
-  {
-    id: uuid("id").defaultRandom().primaryKey(),
-    invocationId: uuid("invocation_id")
-      .notNull()
-      .references(() => botInvocations.id, { onDelete: "cascade" }),
-    type: varchar("type", { length: 100 }).notNull(),
-    payload: jsonb("payload").$type<Record<string, unknown>>(),
-    createdAt: timestamp("created_at", { withTimezone: true })
-      .defaultNow()
-      .notNull(),
-  },
-  (t) => [
-    index("bot_events_invocation_id_idx").on(t.invocationId),
-    index("bot_events_type_idx").on(t.type),
-  ]
-);
-
 export const sessions = pgTable(
   "sessions",
   {
@@ -581,7 +562,7 @@ export const botSessionsRelations = relations(botSessions, ({ one, many }) => ({
 
 export const botInvocationsRelations = relations(
   botInvocations,
-  ({ one, many }) => ({
+  ({ one }) => ({
     botSession: one(botSessions, {
       fields: [botInvocations.botSessionId],
       references: [botSessions.id],
@@ -602,16 +583,8 @@ export const botInvocationsRelations = relations(
       fields: [botInvocations.responseMessageId],
       references: [messages.id],
     }),
-    events: many(botEvents),
   })
 );
-
-export const botEventsRelations = relations(botEvents, ({ one }) => ({
-  invocation: one(botInvocations, {
-    fields: [botEvents.invocationId],
-    references: [botInvocations.id],
-  }),
-}));
 
 export const sessionsRelations = relations(sessions, ({ one }) => ({
   user: one(users, {

@@ -96,7 +96,6 @@ function doConnect() {
         conversationId: event.conversationId,
         session: event.session,
         invocation: event.invocation,
-        event: event.event,
       });
     } else if (event.type === "typing") {
       wsEvents.emit("ws:typing", {

@@ -348,18 +348,9 @@ export interface BotInvocationPublic {
   updatedAt: string;
 }
 
-export interface BotEventPublic {
-  id: string;
-  invocationId: string;
-  type: string;
-  payload: Record<string, unknown> | null;
-  createdAt: string;
-}
-
 export interface BotRuntimeSnapshot {
   sessions: BotSessionPublic[];
   invocations: BotInvocationPublic[];
-  events: BotEventPublic[];
 }
 
 // -- Workspace Invite Types --
@@ -406,7 +397,6 @@ export type WsServerEvent =
       conversationId: string;
       session: BotSessionPublic | null;
       invocation: BotInvocationPublic;
-      event: BotEventPublic | null;
     }
   | { type: "typing"; conversationId: string; userId: string; userName: string }
   | { type: "member_joined"; workspaceId: string; member: WorkspaceMember }
