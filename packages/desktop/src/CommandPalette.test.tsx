@@ -78,7 +78,11 @@ beforeEach(() => {
     unreadAgentChats: new Set(),
     unreadChannels: new Set(),
   });
-  useCommandsStore.setState({ commands: [] });
+  useCommandsStore.setState({
+    globalCommands: [],
+    scopedCommands: {},
+    commands: [],
+  });
 });
 
 // --- Tests ---
@@ -95,7 +99,7 @@ describe("CommandPalette", () => {
 
     it("does not show command labels in default mode", async () => {
       useConversationsStore.setState({ conversations });
-      useCommandsStore.setState({ commands: makeTestCommands() });
+      useCommandsStore.getState().setCommands(makeTestCommands());
       await renderPalette();
 
       expect(screen.queryByText("New Chat")).not.toBeInTheDocument();
@@ -130,7 +134,7 @@ describe("CommandPalette", () => {
   describe("command mode (> prefix)", () => {
     it("switches to command mode when > is typed", async () => {
       useConversationsStore.setState({ conversations });
-      useCommandsStore.setState({ commands: makeTestCommands() });
+      useCommandsStore.getState().setCommands(makeTestCommands());
       await renderPalette();
 
       type(">");
@@ -149,7 +153,7 @@ describe("CommandPalette", () => {
     });
 
     it("filters commands by label", async () => {
-      useCommandsStore.setState({ commands: makeTestCommands() });
+      useCommandsStore.getState().setCommands(makeTestCommands());
       await renderPalette();
 
       type(">new");
@@ -159,7 +163,7 @@ describe("CommandPalette", () => {
     });
 
     it("shows shortcut badges for commands that have them", async () => {
-      useCommandsStore.setState({ commands: makeTestCommands() });
+      useCommandsStore.getState().setCommands(makeTestCommands());
       const { container } = await renderPalette();
       type(">");
 
@@ -171,7 +175,7 @@ describe("CommandPalette", () => {
 
     it("does not render a <kbd> for commands without a shortcut", async () => {
       const noShortcutCmd = makeCommand({ id: "toggle-sidebar", label: "Toggle Sidebar" });
-      useCommandsStore.setState({ commands: [noShortcutCmd] });
+      useCommandsStore.getState().setCommands([noShortcutCmd]);
       await renderPalette();
       type(">");
 
@@ -180,7 +184,7 @@ describe("CommandPalette", () => {
     });
 
     it("shows empty state when no commands match", async () => {
-      useCommandsStore.setState({ commands: makeTestCommands() });
+      useCommandsStore.getState().setCommands(makeTestCommands());
       await renderPalette();
 
       type(">zzzzz");
@@ -190,7 +194,7 @@ describe("CommandPalette", () => {
 
     it("executes the highlighted command on Enter", async () => {
       const cmds = makeTestCommands();
-      useCommandsStore.setState({ commands: cmds });
+      useCommandsStore.getState().setCommands(cmds);
       await renderPalette();
       type(">");
 
@@ -201,7 +205,7 @@ describe("CommandPalette", () => {
 
     it("arrow keys navigate the command list", async () => {
       const cmds = makeTestCommands();
-      useCommandsStore.setState({ commands: cmds });
+      useCommandsStore.getState().setCommands(cmds);
       await renderPalette();
       type(">");
 
@@ -214,7 +218,7 @@ describe("CommandPalette", () => {
 
     it("clicking a command executes it", async () => {
       const cmds = makeTestCommands();
-      useCommandsStore.setState({ commands: cmds });
+      useCommandsStore.getState().setCommands(cmds);
       await renderPalette();
       type(">");
 
@@ -228,7 +232,7 @@ describe("CommandPalette", () => {
   describe("mode switching", () => {
     it("returns to conversation mode when > is cleared", async () => {
       useConversationsStore.setState({ conversations });
-      useCommandsStore.setState({ commands: makeTestCommands() });
+      useCommandsStore.getState().setCommands(makeTestCommands());
       await renderPalette();
 
       type(">");

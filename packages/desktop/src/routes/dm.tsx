@@ -8,6 +8,7 @@ import { useAuthStore } from "../stores/auth";
 import { useWebSocketStore } from "../stores/websocket";
 import { useWorkspacesStore } from "../stores/workspaces";
 import { useChannelChat } from "../hooks/useChannelChat";
+import { useScopedCommands } from "../hooks/useScopedCommands";
 import { ChannelChatView } from "../components/ChannelChatView";
 import { HermesRuntimePanel, mergeRuntimeUpdate } from "../components/HermesRuntimePanel";
 import { fireNotification } from "../lib/notifications";
@@ -113,7 +114,7 @@ export function DmRoute() {
   }, [activeBotSessionId, hermesSessions, isHermesDm]);
 
   const handleCreateSession = useCallback(async () => {
-    if (!token || !isHermesDm) return;
+    if (!token || !isHermesDm || creatingSession) return;
     setCreatingSession(true);
     try {
       const session = await postJson<BotRuntimeSnapshot["sessions"][number]>(
@@ -130,7 +131,25 @@ export function DmRoute() {
     } finally {
       setCreatingSession(false);
     }
-  }, [conversationId, isHermesDm, token]);
+  }, [conversationId, creatingSession, isHermesDm, token]);
+
+  const hermesSessionCommands = useMemo(
+    () =>
+      isHermesDm
+        ? [
+            {
+              id: "hermes.new-session",
+              label: "New Hermes Session",
+              shortcut: "C-x n",
+              keybinding: { prefix: "C-x", key: "n" },
+              priority: 50,
+              execute: handleCreateSession,
+            },
+          ]
+        : [],
+    [handleCreateSession, isHermesDm],
+  );
+  useScopedCommands(hermesSessionCommands);
 
   // Subscribe to WebSocket messages for this DM
   useEffect(() => {

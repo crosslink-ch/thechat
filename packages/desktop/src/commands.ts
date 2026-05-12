@@ -26,17 +26,68 @@ export interface Command {
   shortcut: string | null;
   keybinding: Keybinding | null;
   hidden?: boolean;
+  enabled?: boolean;
+  priority?: number;
   execute: () => void;
 }
 
 interface CommandsStore {
+  globalCommands: Command[];
+  scopedCommands: Record<string, Command[]>;
   commands: Command[];
   setCommands: (c: Command[]) => void;
+  registerScopedCommands: (ownerId: string, commands: Command[]) => void;
+  unregisterScopedCommands: (ownerId: string) => void;
+}
+
+function resolveCommands(
+  globalCommands: Command[],
+  scopedCommands: Record<string, Command[]>,
+) {
+  const scoped = Object.values(scopedCommands).flat();
+
+  return [
+    ...scoped.map((command, index) => ({
+      command,
+      order: index,
+      priority: command.priority ?? 50,
+    })),
+    ...globalCommands.map((command, index) => ({
+      command,
+      order: scoped.length + index,
+      priority: command.priority ?? 0,
+    })),
+  ]
+    .filter(({ command }) => command.enabled !== false)
+    .sort((a, b) => b.priority - a.priority || a.order - b.order)
+    .map(({ command }) => command);
 }
 
 export const useCommandsStore = create<CommandsStore>()((set) => ({
+  globalCommands: [],
+  scopedCommands: {},
   commands: [],
-  setCommands: (commands) => set({ commands }),
+  setCommands: (globalCommands) =>
+    set((state) => ({
+      globalCommands,
+      commands: resolveCommands(globalCommands, state.scopedCommands),
+    })),
+  registerScopedCommands: (ownerId, commands) =>
+    set((state) => {
+      const scopedCommands = { ...state.scopedCommands, [ownerId]: commands };
+      return {
+        scopedCommands,
+        commands: resolveCommands(state.globalCommands, scopedCommands),
+      };
+    }),
+  unregisterScopedCommands: (ownerId) =>
+    set((state) => {
+      const { [ownerId]: _removed, ...scopedCommands } = state.scopedCommands;
+      return {
+        scopedCommands,
+        commands: resolveCommands(state.globalCommands, scopedCommands),
+      };
+    }),
 }));
 
 function getRecentProjects(): string[] {

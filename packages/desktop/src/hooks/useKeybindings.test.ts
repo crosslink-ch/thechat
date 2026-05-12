@@ -15,7 +15,7 @@ function makeCommand(overrides: Partial<Command> & { id: string }): Command {
 }
 
 function seedCommands(commands: Command[]) {
-  useCommandsStore.setState({ commands });
+  useCommandsStore.getState().setCommands(commands);
 }
 
 const noopActions = {
@@ -34,7 +34,11 @@ function pressCxChord(key: string) {
 }
 
 beforeEach(() => {
-  useCommandsStore.setState({ commands: [] });
+  useCommandsStore.setState({
+    globalCommands: [],
+    scopedCommands: {},
+    commands: [],
+  });
 });
 
 describe("useKeybindings", () => {
@@ -101,6 +105,59 @@ describe("useKeybindings", () => {
       expect(cmd.execute).toHaveBeenCalledOnce();
     });
 
+    it("dispatches the higher-priority scoped command when it conflicts with a global shortcut", () => {
+      const globalCommand = makeCommand({ id: "new-chat", keybinding: { prefix: "C-x", key: "n" } });
+      const scopedCommand = makeCommand({
+        id: "hermes.new-session",
+        keybinding: { prefix: "C-x", key: "n" },
+        priority: 50,
+      });
+      seedCommands([globalCommand]);
+      useCommandsStore.getState().registerScopedCommands("dm-route", [scopedCommand]);
+
+      renderHook(() => useKeybindings({ ...noopActions }));
+      pressCxChord("n");
+
+      expect(scopedCommand.execute).toHaveBeenCalledOnce();
+      expect(globalCommand.execute).not.toHaveBeenCalled();
+    });
+
+    it("falls back to the global shortcut after the scoped command unregisters", () => {
+      const globalCommand = makeCommand({ id: "new-chat", keybinding: { prefix: "C-x", key: "n" } });
+      const scopedCommand = makeCommand({
+        id: "hermes.new-session",
+        keybinding: { prefix: "C-x", key: "n" },
+        priority: 50,
+      });
+      seedCommands([globalCommand]);
+      useCommandsStore.getState().registerScopedCommands("dm-route", [scopedCommand]);
+      useCommandsStore.getState().unregisterScopedCommands("dm-route");
+
+      renderHook(() => useKeybindings({ ...noopActions }));
+      pressCxChord("n");
+
+      expect(globalCommand.execute).toHaveBeenCalledOnce();
+      expect(scopedCommand.execute).not.toHaveBeenCalled();
+    });
+
+    it("ignores disabled scoped commands and uses the global shortcut", () => {
+      const globalCommand = makeCommand({ id: "new-chat", keybinding: { prefix: "C-x", key: "n" } });
+      const scopedCommand = makeCommand({
+        id: "hermes.new-session",
+        enabled: false,
+        keybinding: { prefix: "C-x", key: "n" },
+        priority: 50,
+      });
+      seedCommands([globalCommand]);
+      useCommandsStore.getState().registerScopedCommands("dm-route", [scopedCommand]);
+
+      renderHook(() => useKeybindings({ ...noopActions }));
+      pressCxChord("n");
+
+      expect(globalCommand.execute).toHaveBeenCalledOnce();
+      expect(scopedCommand.execute).not.toHaveBeenCalled();
+    });
+
     it("unknown key after C-x cancels prefix silently", () => {
       const cmd = makeCommand({ id: "new-chat", keybinding: { prefix: "C-x", key: "n" } });
       seedCommands([cmd]);
@@ -152,6 +209,25 @@ describe("useKeybindings", () => {
 
       expect(singleCmd.execute).not.toHaveBeenCalled();
       expect(multiCmd.execute).toHaveBeenCalledOnce();
+    });
+
+    it("still dispatches C-x c n when a scoped C-x n command is active", () => {
+      const scopedCommand = makeCommand({
+        id: "hermes.new-session",
+        keybinding: { prefix: "C-x", key: "n" },
+        priority: 50,
+      });
+      const projectCommand = makeCommand({ id: "new-chat-in-project", keybinding: { prefix: "C-x c", key: "n" } });
+      seedCommands([projectCommand]);
+      useCommandsStore.getState().registerScopedCommands("dm-route", [scopedCommand]);
+
+      renderHook(() => useKeybindings({ ...noopActions }));
+      pressKey("x", { ctrlKey: true });
+      pressKey("c");
+      pressKey("n");
+
+      expect(projectCommand.execute).toHaveBeenCalledOnce();
+      expect(scopedCommand.execute).not.toHaveBeenCalled();
     });
 
     it("dispatches a 3-level prefix command (C-x c b n)", () => {
