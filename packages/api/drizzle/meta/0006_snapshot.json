@@ -418,13 +418,6 @@
           "primaryKey": false,
           "notNull": false
         },
-        "status": {
-          "name": "status",
-          "type": "varchar(20)",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'active'"
-        },
         "last_message_id": {
           "name": "last_message_id",
           "type": "uuid",

@@ -33,7 +33,6 @@ CREATE TABLE "bot_sessions" (
 	"scope" varchar(20) DEFAULT 'conversation' NOT NULL,
 	"external_session_id" text,
 	"title" text,
-	"status" varchar(20) DEFAULT 'active' NOT NULL,
 	"last_message_id" uuid,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL

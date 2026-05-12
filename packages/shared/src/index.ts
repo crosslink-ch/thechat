@@ -308,7 +308,6 @@ export interface WebhookPayload {
   bot: { id: string; name: string };
 }
 
-export type BotSessionStatus = "active" | "archived";
 export type BotInvocationStatus = "queued" | "running" | "completed" | "failed" | "cancelled";
 
 export interface BotSessionPublic {
@@ -322,7 +321,6 @@ export interface BotSessionPublic {
   scope: string;
   externalSessionId: string | null;
   title: string | null;
-  status: BotSessionStatus | string;
   lastMessageId: string | null;
   createdAt: string;
   updatedAt: string;

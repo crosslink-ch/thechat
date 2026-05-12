@@ -152,7 +152,6 @@ export async function listConversationBotRuntime(conversationId: string, userId:
       scope: botSessions.scope,
       externalSessionId: botSessions.externalSessionId,
       title: botSessions.title,
-      status: botSessions.status,
       lastMessageId: botSessions.lastMessageId,
       createdAt: botSessions.createdAt,
       updatedAt: botSessions.updatedAt,
@@ -258,7 +257,6 @@ export async function createHermesConversationSession(input: {
       scope,
       externalSessionId: `${baseSessionId}:session:${crypto.randomUUID()}`,
       title,
-      status: "active",
     })
     .returning();
 
@@ -274,7 +272,6 @@ export async function createHermesConversationSession(input: {
       scope: botSessions.scope,
       externalSessionId: botSessions.externalSessionId,
       title: botSessions.title,
-      status: botSessions.status,
       lastMessageId: botSessions.lastMessageId,
       createdAt: botSessions.createdAt,
       updatedAt: botSessions.updatedAt,
@@ -1058,7 +1055,6 @@ async function publishInvocationUpdate(invocationId: string, eventRow: typeof bo
           scope: botSessions.scope,
           externalSessionId: botSessions.externalSessionId,
           title: botSessions.title,
-          status: botSessions.status,
           lastMessageId: botSessions.lastMessageId,
           createdAt: botSessions.createdAt,
           updatedAt: botSessions.updatedAt,
@@ -1143,7 +1139,6 @@ function toPublicSession(row: {
   scope: string;
   externalSessionId: string | null;
   title: string | null;
-  status: string;
   lastMessageId: string | null;
   createdAt: Date;
   updatedAt: Date;
@@ -1159,7 +1154,6 @@ function toPublicSession(row: {
     scope: row.scope,
     externalSessionId: row.externalSessionId,
     title: row.title,
-    status: row.status,
     lastMessageId: row.lastMessageId,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),

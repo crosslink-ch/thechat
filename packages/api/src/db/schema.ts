@@ -277,7 +277,6 @@ export const botSessions = pgTable(
     scope: varchar("scope", { length: 20 }).notNull().default("conversation"),
     externalSessionId: text("external_session_id"),
     title: text("title"),
-    status: varchar("status", { length: 20 }).notNull().default("active"),
     lastMessageId: uuid("last_message_id").references((): AnyPgColumn => messages.id, {
       onDelete: "set null",
     }),

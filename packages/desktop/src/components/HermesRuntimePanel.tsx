@@ -87,11 +87,8 @@ export function HermesRuntimePanel({
                   } ${onSelectSession ? "cursor-pointer" : "cursor-default"}`}
                   onClick={() => onSelectSession?.(session.id)}
                 >
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="truncate text-[0.857rem] font-medium text-text">
-                      {session.title || "Conversation"}
-                    </span>
-                    <StatusPill status={session.status} />
+                  <div className="truncate text-[0.857rem] font-medium text-text">
+                    {session.title || "Conversation"}
                   </div>
                   <div className="mt-1 truncate text-[0.714rem] text-text-dimmed">
                     {session.externalSessionId ?? session.id}
