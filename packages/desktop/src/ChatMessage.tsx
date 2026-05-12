@@ -371,7 +371,7 @@ function PermissionPromptBlock({
   };
 
   return (
-    <div data-testid="permission-inline" className="my-2 rounded-lg border border-accent-border/40 bg-raised p-3">
+    <div data-testid="permission-inline" className="my-3 flow-root rounded-lg border border-accent-border/40 bg-raised p-3">
       <div className="mb-2 text-[0.929rem] font-medium text-text-secondary">{permissionHeader(toolArgs)}</div>
       <code className="mb-2 block whitespace-pre-wrap break-all rounded-lg border border-border bg-base px-3 py-2 font-mono text-[0.893rem] text-text">{permission.command}</code>
       {toolArgs && <ToolInlinePreview toolName={toolArgs.toolName} args={toolArgs.args} />}
@@ -379,10 +379,10 @@ function PermissionPromptBlock({
         <div className="mb-2.5 text-[0.857rem] text-text-muted">{permission.description}</div>
       )}
       {feedbackVisible ? (
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <input
             ref={inputRef}
-            className="flex-1 rounded-lg border border-border bg-base px-3 py-1.5 font-[inherit] text-[0.929rem] text-text outline-none placeholder:text-text-placeholder focus:border-border-focus"
+            className="min-w-0 flex-1 rounded-lg border border-border bg-base px-3 py-1.5 font-[inherit] text-[0.929rem] text-text outline-none placeholder:text-text-placeholder focus:border-border-focus"
             type="text"
             placeholder="Feedback for AI..."
             value={feedbackText}
@@ -407,7 +407,7 @@ function PermissionPromptBlock({
           </button>
         </div>
       ) : (
-        <div className="flex justify-end gap-1.5">
+        <div className="flex flex-wrap justify-end gap-1.5">
           <button
             className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border-none bg-none px-3 py-1.5 text-[0.857rem] font-medium text-text-muted shadow-none transition-colors duration-150 hover:bg-hover hover:text-text"
             onClick={onDeny}
@@ -675,7 +675,7 @@ export function StreamingMessage({ convId, pendingPermission, onPermissionAllow,
               }
             }
           })}
-          <div ref={promptRef}>
+          <div ref={promptRef} data-testid="streaming-prompt-anchor" className="clear-both flow-root scroll-mb-8 pb-2">
             {pendingPermission && onPermissionAllow && onPermissionDeny && (
               <PermissionPromptBlock
                 permission={pendingPermission}

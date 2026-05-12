@@ -279,6 +279,34 @@ describe("StreamingMessage", () => {
     expect(screen.getByText("List files")).toBeInTheDocument();
   });
 
+  it("keeps permission prompts in normal flow with scroll clearance", () => {
+    const permission: PermissionRequest = {
+      id: "1",
+      convId: CONV_ID,
+      command: "echo hi",
+      description: "",
+      resolve: vi.fn(),
+      reject: vi.fn(),
+    };
+    setupStreaming([{ type: "text", text: "I need approval before continuing." }]);
+    render(
+      <StreamingMessage
+        convId={CONV_ID}
+        pendingPermission={permission}
+        onPermissionAllow={vi.fn()}
+        onPermissionDeny={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByTestId("streaming-prompt-anchor")).toHaveClass(
+      "clear-both",
+      "flow-root",
+      "scroll-mb-8",
+      "pb-2",
+    );
+    expect(screen.getByTestId("permission-inline")).toHaveClass("flow-root", "my-3");
+  });
+
   it("calls onPermissionAllow when Allow is clicked", () => {
     const onAllow = vi.fn();
     const permission: PermissionRequest = {
