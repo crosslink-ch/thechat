@@ -97,18 +97,40 @@ tokio-console                                # connects to localhost:6669
 
 Requires `tokio-console` CLI: `cargo install tokio-console`
 
-#### OpenTelemetry + Jaeger (trace exploration)
+#### Local Grafana LGTM
 
-Start Jaeger:
-
-```bash
-docker run --rm --name jaeger -p 16686:16686 -p 4318:4318 jaegertracing/all-in-one:latest
-```
-
-Run the app:
+Start the local observability stack:
 
 ```bash
-pnpm tauri dev --features otel
+docker compose up -d otel-lgtm promtail
 ```
 
-Open http://localhost:16686, select "thechat" service, click "Find Traces".
+Open Grafana at http://localhost:13300. The default local credentials are `admin` / `admin`.
+
+TheChat intentionally uses different local observability ports from the AzulAI dev stack, so both projects can run at the same time:
+
+- Grafana: `13300` -> container `3000`
+- OTLP gRPC: `14317` -> container `4317`
+- OTLP HTTP: `14318` -> container `4318`
+
+Override them if needed:
+
+```bash
+GRAFANA_PORT=23300 OTEL_GRPC_PORT=24317 OTEL_HTTP_PORT=24318 docker compose up -d otel-lgtm promtail
+```
+
+The `TheChat Dev` Grafana folder is provisioned from `deployment/local/grafana/dashboards`. It includes dashboards for local logs and OpenTelemetry span metrics/traces.
+
+Promtail reads local log files from `.tmp` by default. `pnpm dev:hermes` writes API, Hermes gateway, and desktop logs there. To use another directory:
+
+```bash
+THECHAT_DEV_LOGS_DIR=/path/to/logs docker compose up -d promtail
+```
+
+For Rust/Tauri traces, point the OTLP exporter at the local LGTM HTTP endpoint and run the app with the `otel` feature:
+
+```bash
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:14318 pnpm tauri dev --features otel
+```
+
+In Grafana Explore, select `Tempo`, choose TraceQL, and run `{ resource.service.name = "thechat" }`.

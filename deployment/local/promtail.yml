@@ -1,0 +1,97 @@
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+positions:
+  filename: /var/lib/promtail/positions.yml
+
+clients:
+  - url: http://otel-lgtm:3100/loki/api/v1/push
+
+scrape_configs:
+  - job_name: thechat-api
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: thechat-api
+          service_name: thechat-api
+          process: api
+          __path__: /var/log/thechat/*api*.log
+    pipeline_stages:
+      - json:
+          drop_malformed: false
+          expressions:
+            level: level
+            time: time
+            trace_id: trace_id
+            span_id: span_id
+      - template:
+          source: level
+          template: '{{ $level := printf "%v" .Value }}{{ if eq $level "10" }}trace{{ else if eq $level "20" }}debug{{ else if eq $level "30" }}info{{ else if eq $level "40" }}warn{{ else if eq $level "50" }}error{{ else if eq $level "60" }}fatal{{ else }}{{ $level }}{{ end }}'
+      - labels:
+          level:
+          trace_id:
+          span_id:
+      - timestamp:
+          source: time
+          format: UnixMs
+          action_on_failure: skip
+
+  - job_name: thechat-hermes-gateway
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: thechat-hermes-gateway
+          service_name: thechat-hermes
+          process: hermes-gateway
+          __path__: /var/log/thechat/*hermes*gateway*.log
+    pipeline_stages:
+      - json:
+          drop_malformed: false
+          expressions:
+            level: level
+            time: time
+            trace_id: trace_id
+            span_id: span_id
+      - template:
+          source: level
+          template: '{{ $level := printf "%v" .Value }}{{ if eq $level "10" }}trace{{ else if eq $level "20" }}debug{{ else if eq $level "30" }}info{{ else if eq $level "40" }}warn{{ else if eq $level "50" }}error{{ else if eq $level "60" }}fatal{{ else }}{{ $level }}{{ end }}'
+      - labels:
+          level:
+          trace_id:
+          span_id:
+      - timestamp:
+          source: time
+          format: UnixMs
+          action_on_failure: skip
+
+  - job_name: thechat-desktop
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: thechat-desktop
+          service_name: thechat-desktop
+          process: desktop
+          __path__: /var/log/thechat/*desktop*.log
+    pipeline_stages:
+      - json:
+          drop_malformed: false
+          expressions:
+            level: level
+            time: time
+            trace_id: trace_id
+            span_id: span_id
+      - template:
+          source: level
+          template: '{{ $level := printf "%v" .Value }}{{ if eq $level "10" }}trace{{ else if eq $level "20" }}debug{{ else if eq $level "30" }}info{{ else if eq $level "40" }}warn{{ else if eq $level "50" }}error{{ else if eq $level "60" }}fatal{{ else }}{{ $level }}{{ end }}'
+      - labels:
+          level:
+          trace_id:
+          span_id:
+      - timestamp:
+          source: time
+          format: UnixMs
+          action_on_failure: skip

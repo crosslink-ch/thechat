@@ -1,6 +1,32 @@
 name: thechat
 
 services:
+  otel-lgtm:
+    image: grafana/otel-lgtm:latest
+    restart: unless-stopped
+    environment:
+      GF_PATHS_PROVISIONING: /otel-lgtm/grafana/conf/provisioning
+    ports:
+      - "${GRAFANA_PORT:-13300}:3000"
+      - "${OTEL_GRPC_PORT:-14317}:4317"
+      - "${OTEL_HTTP_PORT:-14318}:4318"
+    volumes:
+      - otel-lgtm-data:/data
+      - ./deployment/local/grafana/provisioning/dashboards/thechat.yml:/otel-lgtm/grafana/conf/provisioning/dashboards/thechat.yml:ro
+      - ./deployment/local/grafana/dashboards:/otel-lgtm/thechat-dashboards:ro
+
+  promtail:
+    image: grafana/promtail:latest
+    restart: unless-stopped
+    depends_on:
+      - otel-lgtm
+    command:
+      - -config.file=/etc/promtail/config.yml
+    volumes:
+      - ./deployment/local/promtail.yml:/etc/promtail/config.yml:ro
+      - ${THECHAT_DEV_LOGS_DIR:-./.tmp}:/var/log/thechat:ro
+      - promtail-data:/var/lib/promtail
+
   postgres:
     image: postgres:17-alpine
     restart: unless-stopped
@@ -43,5 +69,7 @@ services:
       start_period: 5s
 
 volumes:
+  otel-lgtm-data:
+  promtail-data:
   postgres-data:
   redis-data:
