@@ -119,19 +119,24 @@ function HermesBotModalInner() {
     }
   };
 
-  const setupCommand = botToken
+  const envSnippet = botToken
     ? [
-        `THECHAT_BASE_URL=${API_URL} \\`,
-        `THECHAT_BOT_TOKEN=${botToken} \\`,
-        "THECHAT_ALLOW_ALL_USERS=true \\",
-        "THECHAT_POLL_INTERVAL=1.0 \\",
-        "uv run --frozen hermes gateway run --replace",
+        `THECHAT_BASE_URL=${API_URL}`,
+        `THECHAT_BOT_TOKEN=${botToken}`,
+        "THECHAT_ALLOW_ALL_USERS=true",
+        "",
+        "# Choose one delivery mode.",
+        "# Polling mode:",
+        "THECHAT_POLL_INTERVAL=1.0",
+        "",
+        "# Webhook mode:",
+        "# THECHAT_WEBHOOK_URL=https://your-hermes-gateway.example.com/thechat/webhook",
       ].join("\n")
     : "";
 
   const copySetup = async () => {
-    if (!setupCommand) return;
-    await navigator.clipboard.writeText(setupCommand);
+    if (!envSnippet) return;
+    await navigator.clipboard.writeText(envSnippet);
     setCopied(true);
     window.setTimeout(() => setCopied(false), 1500);
   };
@@ -144,11 +149,14 @@ function HermesBotModalInner() {
         {botToken ? (
           <div>
             <p className="mb-3 text-[0.929rem] leading-relaxed text-text-muted">
-              {createdBotName} was added. Start Hermes Gateway with this bot token:
+              {createdBotName} was added. Add these variables to the Hermes Gateway .env file for this bot:
+            </p>
+            <p className="mb-3 text-[0.857rem] leading-relaxed text-text-muted">
+              Use polling for local or simple setups. Use webhook mode when Hermes has a reachable callback URL.
             </p>
             <textarea
-              className="mb-3 block min-h-36 w-full resize-none rounded-lg border border-border bg-base px-3.5 py-2.5 font-mono text-[0.786rem] leading-relaxed text-text outline-none"
-              value={setupCommand}
+              className="mb-3 block min-h-56 w-full resize-none rounded-lg border border-border bg-base px-3.5 py-2.5 font-mono text-[0.786rem] leading-relaxed text-text outline-none"
+              value={envSnippet}
               readOnly
               spellCheck={false}
             />
@@ -158,7 +166,7 @@ function HermesBotModalInner() {
                 type="button"
                 onClick={copySetup}
               >
-                {copied ? "Copied" : "Copy Setup"}
+                {copied ? "Copied" : "Copy .env"}
               </button>
               <button
                 className="cursor-pointer rounded-lg border border-border bg-raised px-3 py-2.5 font-[inherit] text-[0.929rem] text-text-muted transition-colors duration-150 hover:bg-hover hover:text-text"

@@ -113,18 +113,24 @@ Only workspace owners/admins can create Hermes bots. The create response include
 
 ### 2. Start Hermes Gateway for that bot
 
-Hermes Gateway must run with TheChat enabled as a messaging platform. TheChat does not call the Hermes run API for bot replies; Hermes Gateway receives TheChat platform events by polling unless it is started with \`THECHAT_WEBHOOK_URL\`.
+Hermes Gateway must run with TheChat enabled as a messaging platform. TheChat does not call the Hermes run API for bot replies; Hermes Gateway consumes TheChat platform events through either polling or webhook delivery.
 
-The gateway needs the per-bot token from the create response:
+Assume the user will put the per-bot TheChat settings in the Hermes Gateway \`.env\` file instead of prepending environment variables to the run command. The gateway needs the per-bot token from the create response:
 
 \`\`\`
 THECHAT_BASE_URL=<TheChat API URL>
 THECHAT_BOT_TOKEN=<bot apiKey from /bots/create>
 THECHAT_ALLOW_ALL_USERS=true
+
+# Choose one delivery mode.
+# Polling mode:
 THECHAT_POLL_INTERVAL=1.0
+
+# Webhook mode:
+# THECHAT_WEBHOOK_URL=<public Hermes webhook URL>
 \`\`\`
 
-For webhook mode, start Hermes with \`THECHAT_WEBHOOK_URL=<public Hermes webhook URL>\`; the gateway registers that URL through \`POST /bots/me/webhook\` using its bot token.
+For polling mode, Hermes claims queued invocations from \`/hermes-platform/events\`. For webhook mode, Hermes registers \`THECHAT_WEBHOOK_URL\` through \`POST /bots/me/webhook\` using its bot token, and TheChat pushes queued invocations to that callback.
 
 Each Hermes bot gets its own token. To run multiple Hermes bots, repeat the bot creation flow and run one Hermes Gateway process per bot token, each with its own Hermes home/config.
 

@@ -60,9 +60,9 @@ Open TheChat desktop, create or select a workspace, open the command palette,
 and run **Add Hermes Bot**.
 
 Use any bot name, for example `Koda`, and optional instructions such as
-`Reply concisely in TheChat.` After creation, TheChat shows a setup command
-containing a `THECHAT_BOT_TOKEN=bot_...` value. Keep that token for the next
-step.
+`Reply concisely in TheChat.` After creation, TheChat shows a `.env` snippet
+containing a `THECHAT_BOT_TOKEN=bot_...` value. Add those variables to the
+environment file loaded by Hermes Gateway.
 
 Each Hermes bot has its own token. To run two Hermes bots, create two bots and
 start one Hermes Gateway process per token, each with its own `HERMES_HOME`.
@@ -107,28 +107,38 @@ streaming:
 EOF
 ```
 
-Run the gateway, replacing `bot_...` with the bot token shown by TheChat. Use
-the runtime wrapper below instead of `hermes gateway run` when `HERMES_HOME` is
-pointing at a temporary test/manual directory; the CLI command may refresh an
-installed user service definition, while this wrapper starts the gateway runtime
-in the foreground only.
+Add the TheChat platform settings to the `.env` file loaded by Hermes Gateway,
+replacing `bot_...` with the bot token shown by TheChat. Choose one delivery
+mode: polling claims queued invocations from TheChat, while webhook mode lets
+TheChat push invocations to a reachable Hermes Gateway callback URL.
+
+```dotenv
+THECHAT_BASE_URL=http://localhost:3337
+THECHAT_BOT_TOKEN=bot_...
+THECHAT_ALLOW_ALL_USERS=true
+
+# Polling mode:
+THECHAT_POLL_INTERVAL=1.0
+
+# Webhook mode:
+# THECHAT_WEBHOOK_URL=http://localhost:8765/thechat/webhook
+```
+
+Run the gateway. Use the runtime wrapper below instead of `hermes gateway run`
+when `HERMES_HOME` is pointing at a temporary test/manual directory; the CLI
+command may refresh an installed user service definition, while this wrapper
+starts the gateway runtime in the foreground only.
 
 ```bash
 set -a
 . /home/bruno/agent-worktrees/thechat-hermes-integration/.env
 set +a
 
-THECHAT_BASE_URL=http://localhost:3337 \
-THECHAT_BOT_TOKEN=bot_... \
-THECHAT_ALLOW_ALL_USERS=true \
-THECHAT_POLL_INTERVAL=1.0 \
 uv run --frozen python -u /home/bruno/agent-worktrees/thechat-hermes-integration/scripts/e2e/run-hermes-gateway-runtime.py
 ```
 
-To use webhook mode instead of polling, start Hermes with
-`THECHAT_WEBHOOK_URL` set to a reachable Hermes Gateway callback URL. Hermes
-registers that URL through the generic bot webhook endpoint
-`POST /bots/me/webhook`.
+In webhook mode, Hermes registers `THECHAT_WEBHOOK_URL` through the generic bot
+webhook endpoint `POST /bots/me/webhook`.
 
 Health check TheChat's platform bridge:
 
@@ -187,15 +197,30 @@ CHANNEL_ID=$(curl -sS "$API/workspaces/$WORKSPACE_ID" \
   | python3 -c 'import json,sys; print(json.load(sys.stdin)["channels"][0]["id"])')
 ```
 
-Start Hermes with the API-created bot token before sending the message:
+Start Hermes with the API-created bot token before sending the message. Put the
+same TheChat platform settings in the `.env` file loaded by Hermes Gateway:
+
+```dotenv
+THECHAT_BASE_URL=http://localhost:3337
+THECHAT_BOT_TOKEN=bot_...
+THECHAT_ALLOW_ALL_USERS=true
+
+# Polling mode:
+THECHAT_POLL_INTERVAL=1.0
+
+# Webhook mode:
+# THECHAT_WEBHOOK_URL=http://localhost:8765/thechat/webhook
+```
+
+Then run the gateway:
 
 ```bash
 cd /home/bruno/projects/hermes2
 
-THECHAT_BASE_URL=http://localhost:3337 \
-THECHAT_BOT_TOKEN="$THECHAT_BOT_TOKEN" \
-THECHAT_ALLOW_ALL_USERS=true \
-THECHAT_POLL_INTERVAL=1.0 \
+set -a
+. /home/bruno/agent-worktrees/thechat-hermes-integration/.env
+set +a
+
 uv run --frozen python -u /home/bruno/agent-worktrees/thechat-hermes-integration/scripts/e2e/run-hermes-gateway-runtime.py
 ```
 
