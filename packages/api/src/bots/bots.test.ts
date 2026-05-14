@@ -16,7 +16,7 @@ import { messageRoutes } from "../messages";
 import { botRuntimeRoutes } from "../bot-runtime";
 import { hermesPlatformRoutes } from "../hermes-platform";
 import { botRoutes } from "./index";
-import { closeBotRuntimeForTests } from "../services/bot-runtime";
+import { closeBotRuntimeForTests, startBotWorker } from "../services/bot-runtime";
 import {
   closeRealtimeBusForTests,
   RedisRealtimeBus,
@@ -154,6 +154,10 @@ async function invocationsForMessage(messageId: string) {
     .from(botInvocations)
     .where(eq(botInvocations.triggerMessageId, messageId))
     .orderBy(asc(botInvocations.createdAt));
+}
+
+async function startBotWorkerForTest() {
+  await startBotWorker({ concurrency: 1 });
 }
 
 function startWebhookServer(
@@ -846,6 +850,7 @@ describe("Bots: Update bot", () => {
       expect(registerRes.status).toBe(200);
       expect(registerRes.body.webhookUrl).toBe(webhook.url);
 
+      await startBotWorkerForTest();
       const sendRes = await req(
         "POST",
         `/messages/${channelId}`,
@@ -956,6 +961,7 @@ describe("Bots: mention routing", () => {
       await addBotToWorkspace(alpha.body.id, workspaceId, human.token);
       await addBotToWorkspace(beta.body.id, workspaceId, human.token);
 
+      await startBotWorkerForTest();
       const sendRes = await req(
         "POST",
         `/messages/${channelId}`,
@@ -996,6 +1002,7 @@ describe("Bots: mention routing", () => {
       await addBotToWorkspace(regexBot.body.id, workspaceId, human.token);
       await addBotToWorkspace(caseBot.body.id, workspaceId, human.token);
 
+      await startBotWorkerForTest();
       const regexSend = await req(
         "POST",
         `/messages/${channelId}`,
@@ -1095,6 +1102,7 @@ describe("Bots: runtime state", () => {
       const botRes = await createBot(human.token, "RuntimeWebhook", webhook.url);
       await addBotToWorkspace(botRes.body.id, workspaceId, human.token);
 
+      await startBotWorkerForTest();
       const sendRes = await req(
         "POST",
         `/messages/${channelId}`,
@@ -1269,6 +1277,7 @@ describe("Bots: runtime state", () => {
     expect(dmRes.status).toBe(200);
 
     try {
+      await startBotWorkerForTest();
       const sendRes = await req(
         "POST",
         `/messages/${dmRes.body.id}`,
@@ -1289,6 +1298,68 @@ describe("Bots: runtime state", () => {
       expect(invocation.status).toBe("running");
     } finally {
       webhook.stop();
+    }
+  });
+
+  test("Hermes platform webhook delivery is performed by the bot worker", async () => {
+    await closeBotRuntimeForTests();
+
+    const webhook = startWebhookServer();
+    const human = await registerUser("RuntimeHermesWorkerWebhookOwner");
+    const { workspaceId } = await createWorkspaceWithGeneralChannel(
+      human.token,
+      "Runtime Hermes Worker Webhook",
+    );
+    const botRes = await createBot(human.token, "RuntimeHermesWorkerWebhook", undefined, {
+      kind: "hermes",
+      workspaceId,
+    });
+    expect(botRes.status).toBe(200);
+
+    const registerRes = await req(
+      "POST",
+      "/bots/me/webhook",
+      { url: webhook.url },
+      botRes.body.apiKey,
+    );
+    expect(registerRes.status).toBe(200);
+
+    const dmRes = await req(
+      "POST",
+      "/conversations/dm",
+      { workspaceId, otherUserId: botRes.body.userId },
+      human.token,
+    );
+    expect(dmRes.status).toBe(200);
+
+    try {
+      const sendRes = await req(
+        "POST",
+        `/messages/${dmRes.body.id}`,
+        { content: "Deliver this through the bot worker" },
+        human.token,
+      );
+      expect(sendRes.status).toBe(200);
+
+      await waitForResult(async () => {
+        const rows = await invocationsForMessage(sendRes.body.id);
+        return rows.find((row) => row.status === "queued");
+      }, "queued Hermes webhook invocation");
+      await sleep(150);
+      expect(webhook.requests).toHaveLength(0);
+
+      await startBotWorkerForTest();
+      const delivery = await waitForResult(async () => {
+        return webhook.requests.find((request) => request.payload.event?.messageId === sendRes.body.id);
+      }, "worker-delivered Hermes webhook event");
+
+      expect(delivery.payload.type).toBe("thechat.hermes_platform.event");
+      expect(delivery.payload.event.text).toBe("Deliver this through the bot worker");
+      const [invocation] = await invocationsForMessage(sendRes.body.id);
+      expect(invocation.status).toBe("running");
+    } finally {
+      webhook.stop();
+      await closeBotRuntimeForTests();
     }
   });
 });
@@ -1362,6 +1433,7 @@ describe("Bots: @mention webhook", () => {
         const channelId = detailRes.body.channels[0].id;
 
         // Send a message mentioning the bot
+        await startBotWorkerForTest();
         await req(
           "POST",
           `/messages/${channelId}`,

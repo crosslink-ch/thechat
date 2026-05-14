@@ -15,7 +15,6 @@ import { mcpRoutes } from "./mcp";
 import { hermesRoutes } from "./hermes";
 import { hermesPlatformRoutes } from "./hermes-platform";
 import { botRuntimeRoutes } from "./bot-runtime";
-import { startBotWorker } from "./services/bot-runtime";
 
 const app = new Elysia()
   .use(cors())
@@ -55,9 +54,3 @@ export type App = typeof app;
 app.listen(Number(process.env.THECHAT_BACKEND_PORT) || 3000);
 
 console.log(`TheChat API running at http://localhost:${app.server!.port}`);
-
-if (process.env.BOT_WORKER_ENABLED !== "0") {
-  startBotWorker().catch((error) => {
-    console.error("Failed to start bot worker", error);
-  });
-}

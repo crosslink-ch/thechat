@@ -31,6 +31,7 @@ import { withSpan } from "../observability";
 
 export const BOT_QUEUE_NAME = "thechat:bots";
 export const BOT_INVOKE_JOB_NAME = "bot.invoke";
+export const HERMES_WEBHOOK_DELIVERY_JOB_NAME = "bot.hermes_webhook.deliver";
 
 type BotKind = "webhook" | "hermes";
 type ConversationType = "direct" | "group";
@@ -65,6 +66,12 @@ interface ConversationRow {
 interface BotInvokePayload {
   invocationId: string;
 }
+
+interface HermesWebhookDeliveryPayload {
+  invocationId: string;
+}
+
+type HermesPlatformDeliveryMode = "polling" | "webhook";
 
 let asyncBus: BullMqAsyncBus | null = null;
 let botWorker: AsyncWorkerRuntime | null = null;
@@ -278,6 +285,7 @@ export async function startBotWorker(options: { concurrency?: number } = {}): Pr
   botWorkerStartPromise = (async () => {
     const runtime = new AsyncWorkerRuntime({ concurrency: options.concurrency });
     runtime.register(createBotInvokeHandler());
+    runtime.register(createHermesWebhookDeliveryHandler());
     await runtime.start([BOT_QUEUE_NAME]);
     botWorker = runtime;
     return runtime;
@@ -286,6 +294,10 @@ export async function startBotWorker(options: { concurrency?: number } = {}): Pr
 }
 
 export async function closeBotRuntimeForTests(): Promise<void> {
+  await closeBotRuntime();
+}
+
+export async function closeBotRuntime(): Promise<void> {
   await Promise.allSettled([asyncBus?.close(), botWorker?.close(true)]);
   asyncBus = null;
   botWorker = null;
@@ -304,6 +316,20 @@ function createBotInvokeHandler(): AsyncJobHandler<BotInvokePayload> {
   };
 }
 
+function createHermesWebhookDeliveryHandler(): AsyncJobHandler<HermesWebhookDeliveryPayload> {
+  return {
+    queue: BOT_QUEUE_NAME,
+    name: HERMES_WEBHOOK_DELIVERY_JOB_NAME,
+    async handle(job, context) {
+      const { invocationId } = job.message.payload;
+      await context.setProgress(5, { invocationId });
+      const isFinalAttempt = job.attemptsMade + 1 >= job.maxAttempts;
+      await deliverHermesPlatformWebhookInvocation(invocationId, { failOnError: isFinalAttempt });
+      await context.setProgress(100, { invocationId });
+    },
+  };
+}
+
 async function enqueueBotInvocation(input: {
   bot: TriggeredBot;
   conversation: ConversationRow;
@@ -318,16 +344,18 @@ async function enqueueBotInvocation(input: {
 
   if (input.bot.kind === "hermes") {
     if (invocation.status === "queued" && input.bot.webhookUrl) {
-      void deliverHermesPlatformWebhookInvocation(invocation.id).catch(() => {});
+      const command = createHermesWebhookDeliveryCommand(
+        invocation.id,
+        input.conversation.workspaceId,
+        input.message.id,
+      );
+      await getAsyncBus().enqueue(command);
     }
     return;
   }
 
   const command = createBotInvokeCommand(invocation.id, input.conversation.workspaceId, input.message.id);
   await getAsyncBus().enqueue(command);
-  if (process.env.BOT_WORKER_AUTOSTART !== "0") {
-    await startBotWorker();
-  }
 }
 
 async function getOrCreateBotSession(botId: string, conversation: ConversationRow) {
@@ -505,6 +533,35 @@ function createBotInvokeCommand(
   };
 }
 
+function createHermesWebhookDeliveryCommand(
+  invocationId: string,
+  workspaceId: string | null,
+  triggerMessageId: string,
+): QueueCommand<HermesWebhookDeliveryPayload> {
+  return {
+    queue: BOT_QUEUE_NAME,
+    name: HERMES_WEBHOOK_DELIVERY_JOB_NAME,
+    jobId: `bot:hermes-webhook:${invocationId}`,
+    attempts: 3,
+    backoff: { type: "exponential", delay: 2_000 },
+    removeOnComplete: { age: 7 * 24 * 60 * 60, count: 10_000 },
+    removeOnFail: false,
+    message: {
+      id: crypto.randomUUID(),
+      type: "bot.hermes_webhook_delivery.requested",
+      version: 1,
+      aggregate: { type: "bot_invocation", id: invocationId },
+      actor: { type: "system", id: "thechat" },
+      tenant: workspaceId ? { workspaceId } : undefined,
+      correlationId: triggerMessageId,
+      causationId: triggerMessageId,
+      idempotencyKey: `bot-hermes-webhook-delivery:${invocationId}`,
+      occurredAt: new Date().toISOString(),
+      payload: { invocationId },
+    },
+  };
+}
+
 async function handleQueuedBotInvocation(invocationId: string, context: { setProgress(progress: number, detail?: unknown): Promise<void> }) {
   const loaded = await loadInvocationContext(invocationId);
   if (!loaded) {
@@ -611,7 +668,21 @@ export interface HermesPlatformEvent {
   session: { id: string; externalSessionId: string | null };
 }
 
-async function claimHermesPlatformInvocation(invocationId: string): Promise<HermesPlatformEvent | null> {
+interface PreparedHermesPlatformEvent {
+  event: HermesPlatformEvent;
+  requestJson: Record<string, unknown>;
+}
+
+async function claimHermesPlatformInvocation(
+  invocationId: string,
+  deliveryMode: HermesPlatformDeliveryMode = "polling",
+): Promise<HermesPlatformEvent | null> {
+  const prepared = await prepareHermesPlatformEvent(invocationId, deliveryMode);
+  if (!prepared) {
+    await failInvocation(invocationId, new Error("Hermes invocation context is incomplete"));
+    return null;
+  }
+
   const now = new Date();
   const [claimed] = await db
     .update(botInvocations)
@@ -620,6 +691,7 @@ async function claimHermesPlatformInvocation(invocationId: string): Promise<Herm
       startedAt: now,
       externalRunId: `thechat:${invocationId}`,
       error: null,
+      requestJson: prepared.requestJson,
       updatedAt: now,
     })
     .where(
@@ -632,14 +704,8 @@ async function claimHermesPlatformInvocation(invocationId: string): Promise<Herm
     .returning({ id: botInvocations.id });
   if (!claimed) return null;
 
-  const event = await buildHermesPlatformEvent(invocationId);
-  if (!event) {
-    await failInvocation(invocationId, new Error("Hermes invocation context is incomplete"));
-    return null;
-  }
-
   await publishInvocationUpdate(invocationId);
-  return event;
+  return prepared.event;
 }
 
 export async function claimHermesPlatformEvents(botId: string, limit = 10): Promise<HermesPlatformEvent[]> {
@@ -670,7 +736,7 @@ export async function claimHermesPlatformEvents(botId: string, limit = 10): Prom
 
       const events: HermesPlatformEvent[] = [];
       for (const row of pending) {
-        const event = await claimHermesPlatformInvocation(row.id);
+        const event = await claimHermesPlatformInvocation(row.id, "polling");
         if (event) events.push(event);
       }
       span.setAttribute("thechat.hermes_platform.events.count", events.length);
@@ -679,7 +745,10 @@ export async function claimHermesPlatformEvents(botId: string, limit = 10): Prom
   );
 }
 
-async function buildHermesPlatformEvent(invocationId: string): Promise<HermesPlatformEvent | null> {
+async function prepareHermesPlatformEvent(
+  invocationId: string,
+  deliveryMode: HermesPlatformDeliveryMode,
+): Promise<PreparedHermesPlatformEvent | null> {
   const loaded = await loadInvocationContext(invocationId);
   if (!loaded || loaded.bot.kind !== "hermes" || !loaded.session) return null;
 
@@ -693,52 +762,54 @@ async function buildHermesPlatformEvent(invocationId: string): Promise<HermesPla
     .limit(1);
 
   const text = stripBotMention(loaded.triggerMessage.content, loaded.botName) || loaded.triggerMessage.content;
-  await db
-    .update(botInvocations)
-    .set({
-      requestJson: {
-        platform: "thechat",
-        messageId: loaded.triggerMessage.id,
-        messageContent: loaded.triggerMessage.content,
-        text,
-        sessionId: loaded.session.externalSessionId,
-        defaultSessionScope: config?.defaultSessionScope ?? "channel",
-        triggeredAt: loaded.triggerMessage.createdAt.toISOString(),
-      },
-    })
-    .where(eq(botInvocations.id, invocationId));
+  const requestJson = {
+    platform: "thechat",
+    deliveryMode,
+    messageId: loaded.triggerMessage.id,
+    messageContent: loaded.triggerMessage.content,
+    text,
+    sessionId: loaded.session.externalSessionId,
+    defaultSessionScope: config?.defaultSessionScope ?? "channel",
+    triggeredAt: loaded.triggerMessage.createdAt.toISOString(),
+  };
 
   return {
-    id: invocationId,
-    invocationId,
-    chatId: loaded.session.externalSessionId ?? loaded.session.id,
-    chatType: loaded.conversation.type === "direct" ? "dm" : "group",
-    text,
-    messageId: loaded.triggerMessage.id,
-    instructions: config?.defaultInstructions ?? null,
-    sender: {
-      id: loaded.triggerMessage.senderId,
-      name: loaded.triggerSender.name,
-    },
-    bot: {
-      id: loaded.bot.id,
-      userId: loaded.bot.userId,
-      name: loaded.botName,
-    },
-    conversation: {
-      id: loaded.conversation.id,
-      type: loaded.conversation.type,
-      name: loaded.conversation.name,
-      workspaceId: loaded.conversation.workspaceId,
-    },
-    session: {
-      id: loaded.session.id,
-      externalSessionId: loaded.session.externalSessionId,
+    requestJson,
+    event: {
+      id: invocationId,
+      invocationId,
+      chatId: loaded.session.externalSessionId ?? loaded.session.id,
+      chatType: loaded.conversation.type === "direct" ? "dm" : "group",
+      text,
+      messageId: loaded.triggerMessage.id,
+      instructions: config?.defaultInstructions ?? null,
+      sender: {
+        id: loaded.triggerMessage.senderId,
+        name: loaded.triggerSender.name,
+      },
+      bot: {
+        id: loaded.bot.id,
+        userId: loaded.bot.userId,
+        name: loaded.botName,
+      },
+      conversation: {
+        id: loaded.conversation.id,
+        type: loaded.conversation.type,
+        name: loaded.conversation.name,
+        workspaceId: loaded.conversation.workspaceId,
+      },
+      session: {
+        id: loaded.session.id,
+        externalSessionId: loaded.session.externalSessionId,
+      },
     },
   };
 }
 
-async function deliverHermesPlatformWebhookInvocation(invocationId: string): Promise<void> {
+async function deliverHermesPlatformWebhookInvocation(
+  invocationId: string,
+  options: { failOnError?: boolean } = {},
+): Promise<void> {
   await withSpan(
     "hermes_platform.webhook.deliver",
     {
@@ -753,7 +824,18 @@ async function deliverHermesPlatformWebhookInvocation(invocationId: string): Pro
         return;
       }
       span.setAttribute("thechat.bot_id", initial.bot.id);
-      if (initial.invocation.status !== "queued") {
+      if (initial.invocation.status === "completed" || initial.invocation.status === "cancelled") {
+        span.setAttribute("thechat.hermes_platform.delivery_status", "already_finished");
+        return;
+      }
+      if (initial.invocation.status === "failed") {
+        span.setAttribute("thechat.hermes_platform.delivery_status", "already_failed");
+        return;
+      }
+      if (
+        initial.invocation.status === "running" &&
+        getHermesPlatformDeliveryMode(initial.invocation.requestJson) !== "webhook"
+      ) {
         span.setAttribute("thechat.hermes_platform.delivery_status", "already_claimed");
         return;
       }
@@ -766,7 +848,10 @@ async function deliverHermesPlatformWebhookInvocation(invocationId: string): Pro
         return;
       }
 
-      const event = await claimHermesPlatformInvocation(invocationId);
+      const event =
+        initial.invocation.status === "running"
+          ? (await prepareHermesPlatformEvent(invocationId, "webhook"))?.event ?? null
+          : await claimHermesPlatformInvocation(invocationId, "webhook");
       if (!event) {
         span.setAttribute("thechat.hermes_platform.delivery_status", "claim_missed");
         return;
@@ -799,20 +884,25 @@ async function deliverHermesPlatformWebhookInvocation(invocationId: string): Pro
           const error = new Error(`Hermes webhook failed with HTTP ${response.status}`);
           span.recordException(error);
           span.setStatus({ code: SpanStatusCode.ERROR, message: error.message });
-          await failInvocation(invocationId, error);
           span.setAttribute("thechat.hermes_platform.delivery_status", "failed");
-          return;
+          throw error;
         }
         span.setAttribute("thechat.hermes_platform.delivery_status", "delivered");
       } catch (error) {
         const failure = error instanceof Error ? error : new Error(String(error));
         span.recordException(failure);
         span.setStatus({ code: SpanStatusCode.ERROR, message: failure.message });
-        await failInvocation(invocationId, failure);
         span.setAttribute("thechat.hermes_platform.delivery_status", "failed");
+        if (options.failOnError) await failInvocation(invocationId, failure);
+        throw failure;
       }
     },
   );
+}
+
+function getHermesPlatformDeliveryMode(requestJson: Record<string, unknown> | null): HermesPlatformDeliveryMode | null {
+  const deliveryMode = requestJson?.deliveryMode;
+  return deliveryMode === "polling" || deliveryMode === "webhook" ? deliveryMode : null;
 }
 
 export async function completeHermesPlatformInvocation(input: {

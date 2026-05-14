@@ -20,7 +20,7 @@ COPY packages/shared/ packages/shared/
 COPY packages/api/ packages/api/
 
 # Build
-RUN cd packages/api && bun build src/index.ts --outdir dist --target bun
+RUN cd packages/api && bun build src/index.ts src/scripts/worker.ts --outdir dist --target bun
 
 # --- Production stage ---
 FROM oven/bun:1-slim
@@ -28,11 +28,11 @@ FROM oven/bun:1-slim
 WORKDIR /app
 
 # Copy built output and node_modules
-COPY --from=builder /app/packages/api/dist/index.js ./
+COPY --from=builder /app/packages/api/dist ./dist
 COPY --from=builder /app/node_modules ./node_modules
 
 EXPOSE 3000
 
 ENV NODE_ENV=production
 
-CMD ["bun", "run", "index.js"]
+CMD ["bun", "run", "dist/index.js"]

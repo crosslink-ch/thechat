@@ -2,9 +2,11 @@
   "name": "thechat-monorepo",
   "private": true,
   "scripts": {
-    "dev": "concurrently -n api,tauri -c blue,green \"pnpm dev:api\" \"pnpm tauri:dev\"",
+    "dev": "python3 scripts/dev.py",
+    "dev:services": "python3 scripts/dev.py",
     "dev:desktop": "pnpm --filter @thechat/desktop dev",
     "dev:api": "pnpm --filter @thechat/api dev",
+    "dev:worker": "pnpm --filter @thechat/api dev:worker",
     "dev:hermes": "scripts/run-hermes-manual.sh",
     "build": "pnpm -r build",
     "build:desktop": "pnpm --filter @thechat/desktop build",
@@ -25,7 +27,6 @@
   },
   "packageManager": "pnpm@10.28.2",
   "devDependencies": {
-    "concurrently": "^9.2.1",
     "dotenv-cli": "^11.0.0"
   }
 }

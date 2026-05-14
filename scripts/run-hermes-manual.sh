@@ -9,8 +9,9 @@ Usage:
   scripts/run-hermes-manual.sh bot_...
   scripts/run-hermes-manual.sh --bot-token bot_... [options]
 
-Starts local TheChat dependencies, TheChat API, and an isolated Hermes Gateway
-for manual Hermes bot testing. Press Ctrl-C to stop the API/Gateway processes.
+Starts local TheChat dependencies, TheChat API, the bot worker, and an isolated
+Hermes Gateway for manual Hermes bot testing. Press Ctrl-C to stop the started
+processes.
 
 Options:
   --bot-token TOKEN          TheChat Hermes bot API key, usually bot_...
@@ -22,6 +23,7 @@ Options:
   --model NAME              Hermes model (default: HERMES_MODEL or deepseek/deepseek-v4-pro)
   --desktop                 Also start the Vite desktop UI dev server
   --tauri                   Also start the Tauri desktop app
+  --no-worker               Do not start the local TheChat bot worker
   --no-deps                 Do not start Compose Postgres/Redis
   --no-migrate              Do not run API migrations
   --no-hermes-sync          Do not run uv sync --frozen in the Hermes checkout
@@ -70,6 +72,7 @@ START_DEPS=1
 RUN_MIGRATIONS=1
 RUN_HERMES_SYNC=1
 STOP_DEPS_ON_EXIT=0
+START_WORKER=1
 DESKTOP_MODE="none"
 
 while [[ $# -gt 0 ]]; do
@@ -116,6 +119,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --tauri)
       DESKTOP_MODE="tauri"
+      shift
+      ;;
+    --no-worker)
+      START_WORKER=0
       shift
       ;;
     --no-deps)
@@ -193,6 +200,7 @@ command -v "$BUN_CMD" >/dev/null 2>&1 || fail "$BUN_CMD is required"
 
 mkdir -p "$ROOT/.tmp"
 API_LOG="$ROOT/.tmp/thechat-hermes-manual-api.log"
+WORKER_LOG="$ROOT/.tmp/thechat-hermes-manual-worker.log"
 HERMES_LOG="$ROOT/.tmp/thechat-hermes-manual-gateway.log"
 DESKTOP_LOG="$ROOT/.tmp/thechat-hermes-manual-desktop.log"
 
@@ -330,6 +338,20 @@ else
   wait_for_http "TheChat API" "$BASE_URL/health" "$API_LOG" "${PIDS[-1]}"
 fi
 
+if [[ "$START_WORKER" == "1" ]]; then
+  start_bg "TheChat bot worker" "$WORKER_LOG" "$ROOT" env \
+    DATABASE_URL="$DATABASE_URL" \
+    REDIS_URL="$REDIS_URL" \
+    REALTIME_DRIVER="$REALTIME_DRIVER" \
+    REDIS_KEY_PREFIX="$REDIS_KEY_PREFIX" \
+    JWT_SECRET="$JWT_SECRET" \
+    THECHAT_SECRET_KEY="$THECHAT_SECRET_KEY" \
+    THECHAT_BACKEND_PORT="$API_PORT" \
+    LOG_LEVEL="${LOG_LEVEL:-info}" \
+    "$BUN_CMD" run "$ROOT/packages/api/src/scripts/worker.ts"
+  wait_for_process_alive "TheChat bot worker" "${PIDS[-1]}" "$WORKER_LOG"
+fi
+
 log "Validating Hermes platform token against $BASE_URL"
 if ! curl -fsS -H "Authorization: Bearer $BOT_TOKEN" "$BASE_URL/hermes-platform/health" >/dev/null; then
   fail "TheChat rejected the bot token at $BASE_URL/hermes-platform/health"
@@ -379,6 +401,7 @@ Hermes manual integration is running.
 TheChat API:      $BASE_URL
 Hermes home:      $HERMES_MANUAL_HOME
 API log:          $API_LOG
+$(if [[ "$START_WORKER" == "1" ]]; then printf 'Worker log:       %s' "$WORKER_LOG"; fi)
 Hermes log:       $HERMES_LOG
 $(if [[ "$DESKTOP_MODE" == "web" ]]; then printf 'Desktop web UI: http://localhost:1420\nDesktop log:    %s' "$DESKTOP_LOG"; fi)
 $(if [[ "$DESKTOP_MODE" == "tauri" ]]; then printf 'Desktop log:       %s' "$DESKTOP_LOG"; fi)
@@ -398,6 +421,7 @@ while true; do
       tail_log_and_fail "${NAMES[$index]}" "$(
         case "${NAMES[$index]}" in
           "TheChat API") printf '%s' "$API_LOG" ;;
+          "TheChat bot worker") printf '%s' "$WORKER_LOG" ;;
           "Hermes Gateway") printf '%s' "$HERMES_LOG" ;;
           *) printf '%s' "$DESKTOP_LOG" ;;
         esac

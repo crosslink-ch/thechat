@@ -13,8 +13,11 @@
   },
   "scripts": {
     "dev": "bun run --env-file ../../.env --watch src/index.ts",
-    "build": "bun build src/index.ts --outdir dist --target bun",
+    "dev:worker": "bun run --env-file ../../.env --watch src/scripts/worker.ts",
+    "build": "bun build src/index.ts src/scripts/worker.ts --outdir dist --target bun",
     "start": "bun run --env-file ../../.env dist/index.js",
+    "start:worker": "bun run --env-file ../../.env dist/scripts/worker.js",
+    "worker": "bun run --env-file ../../.env src/scripts/worker.ts",
     "test": "bun test --env-file ../../.env",
     "db:generate": "bun run --env-file ../../.env drizzle-kit generate",
     "db:migrate": "bun run --env-file ../../.env drizzle-kit migrate",

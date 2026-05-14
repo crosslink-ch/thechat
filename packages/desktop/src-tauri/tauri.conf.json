@@ -4,7 +4,7 @@
   "version": "0.0.0-dev",
   "identifier": "com.bruno.thechat",
   "build": {
-    "beforeDevCommand": "pnpm dev",
+    "beforeDevCommand": "pnpm --filter @thechat/desktop dev",
     "devUrl": "http://localhost:1420",
     "beforeBuildCommand": "pnpm build",
     "frontendDist": "../dist"

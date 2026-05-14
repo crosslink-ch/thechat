@@ -65,6 +65,25 @@ Executable is written to `packages/desktop/src-tauri/target/release/`
 
 ### Dev mode
 
+For the local backend stack:
+
+```bash
+pnpm dev
+```
+
+This starts Docker Compose services, runs database migrations, then starts the API
+and bot worker. Logs are written to `.tmp/dev`.
+
+Useful options:
+
+```bash
+pnpm dev -- --skip-compose
+pnpm dev -- --skip-migrate
+pnpm dev -- --no-worker
+```
+
+For the desktop app:
+
 ```bash
 pnpm tauri:dev
 ```

@@ -46,6 +46,21 @@ env:
   REQUIRE_EMAIL_VERIFICATION: "false"
   LOG_LEVEL: "info"
 
+worker:
+  enabled: true
+  replicaCount: 1
+  command:
+    - bun
+    - run
+    - dist/scripts/worker.js
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      memory: 512Mi
+      cpu: 1000m
+
 service:
   type: ClusterIP
   port: 80

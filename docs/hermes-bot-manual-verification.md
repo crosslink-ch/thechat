@@ -42,10 +42,17 @@ PATH="$HOME/.bun/bin:$PATH" pnpm --filter @thechat/api db:migrate
 
 ## 2. Start TheChat
 
-API only:
+API and bot worker:
+
+```bash
+PATH="$HOME/.bun/bin:$PATH" pnpm dev:services
+```
+
+Or start them in separate terminals:
 
 ```bash
 PATH="$HOME/.bun/bin:$PATH" pnpm dev:api
+PATH="$HOME/.bun/bin:$PATH" pnpm dev:worker
 ```
 
 In another terminal, start desktop if you want to verify through UI:
@@ -76,12 +83,12 @@ cd /home/bruno/agent-worktrees/thechat-hermes-integration
 PATH="$HOME/.bun/bin:$PATH" pnpm dev:hermes -- bot_...
 ```
 
-This starts Compose Postgres/Redis, runs API migrations, starts TheChat API on
-`3337`, validates the bot token, and starts Hermes Gateway with an isolated
-`HERMES_HOME`. Add `--desktop` to also start the web dev UI at
+This starts Compose Postgres/Redis, runs API migrations, starts TheChat API and
+the bot worker, validates the bot token, and starts Hermes Gateway with an
+isolated `HERMES_HOME`. Add `--desktop` to also start the web dev UI at
 `http://localhost:1420`, or `--tauri` to launch the Tauri app. If TheChat API
-is already running at the target URL, the script reuses it and skips dependency
-startup and migrations.
+is already running at the target URL, the script reuses it and still starts a
+local bot worker unless `--no-worker` is set.
 
 The expanded manual steps are below.
 
@@ -159,6 +166,13 @@ Expected result in polling mode:
 - The final response is posted back through `/hermes-platform/messages`.
 - The bot responds in channels when mentioned and in direct messages without a mention.
 - The bot runtime panel shows session/activity state for the Hermes bot.
+
+Expected result in webhook mode:
+
+- The API enqueues a Hermes webhook delivery job in Redis.
+- The separate bot worker consumes that job and posts the invocation to the
+  Hermes Gateway webhook URL.
+- Hermes Gateway posts the final response back through `/hermes-platform/messages`.
 
 ## 6. API-only manual flow
 
