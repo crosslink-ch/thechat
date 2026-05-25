@@ -18,6 +18,7 @@ import {
 import { fireNotification } from "../lib/notifications";
 import { wsEvents, type WsEvents } from "../lib/ws-events";
 import { API_URL } from "../lib/api";
+import { selectHermesSessionProgress } from "../lib/hermes-progress";
 
 function auth(token: string) {
   return { authorization: `Bearer ${token}` };
@@ -55,18 +56,10 @@ export function DmRoute() {
     () => runtime?.sessions.filter((session) => session.botKind === "hermes") ?? [],
     [runtime],
   );
-  const activeHermesProgress = useMemo(() => {
-    const invocations = (runtime?.invocations ?? []).filter(
-      (invocation) =>
-        invocation.botKind === "hermes" &&
-        (invocation.status === "queued" || invocation.status === "running"),
-    );
-    const invocationIds = new Set(invocations.map((invocation) => invocation.id));
-    return {
-      invocations,
-      events: (runtime?.events ?? []).filter((event) => invocationIds.has(event.invocationId)),
-    };
-  }, [runtime]);
+  const activeHermesProgress = useMemo(
+    () => selectHermesSessionProgress(runtime, activeBotSessionId),
+    [activeBotSessionId, runtime],
+  );
 
   const channelChat = useChannelChat({
     conversationId,
@@ -191,8 +184,10 @@ export function DmRoute() {
       conversationId: convId,
       userId,
       userName,
+      botSessionId,
     }: WsEvents["ws:typing"]) => {
       if (convId !== conversationId) return;
+      if (isHermesDm && botSessionId && botSessionId !== activeBotSessionId) return;
 
       setTypingUsers((prev) => {
         const next = new Map(prev);
@@ -246,12 +241,12 @@ export function DmRoute() {
       }
       typingTimers.current.clear();
     };
-  }, [conversationId, user?.id]);
+  }, [activeBotSessionId, conversationId, isHermesDm, user?.id]);
 
-  // Clear typing users when DM changes
+  // Clear typing users when the visible DM session changes.
   useEffect(() => {
     setTypingUsers(new Map());
-  }, [conversationId]);
+  }, [activeBotSessionId, conversationId]);
 
   return (
     <div className="flex min-h-0 flex-1">
@@ -262,6 +257,7 @@ export function DmRoute() {
           typingUsers={typingUsers}
           progressInvocations={activeHermesProgress.invocations}
           progressEvents={activeHermesProgress.events}
+          typingSuppressedUserIds={activeHermesProgress.typingSuppressedUserIds}
           onSend={channelChat.sendMessage}
           mentions={mentions}
         />

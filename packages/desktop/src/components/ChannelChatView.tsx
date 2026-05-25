@@ -12,6 +12,7 @@ import { HermesProgressInline } from "./HermesProgressInline";
 const noop = () => {};
 const EMPTY_PROGRESS_INVOCATIONS: BotInvocationPublic[] = [];
 const EMPTY_PROGRESS_EVENTS: BotInvocationProgressEventPublic[] = [];
+const EMPTY_TYPING_SUPPRESSED_USER_IDS: string[] = [];
 
 interface ChannelChatViewProps {
   messages: ChatMessage[];
@@ -19,6 +20,7 @@ interface ChannelChatViewProps {
   typingUsers: Map<string, string>; // userId -> userName
   progressInvocations?: BotInvocationPublic[];
   progressEvents?: BotInvocationProgressEventPublic[];
+  typingSuppressedUserIds?: string[];
   onSend: (content: string) => void;
   mentions?: MentionUser[];
 }
@@ -34,6 +36,7 @@ export function ChannelChatView({
   typingUsers,
   progressInvocations = EMPTY_PROGRESS_INVOCATIONS,
   progressEvents = EMPTY_PROGRESS_EVENTS,
+  typingSuppressedUserIds = EMPTY_TYPING_SUPPRESSED_USER_IDS,
   onSend,
   mentions,
 }: ChannelChatViewProps) {
@@ -41,7 +44,7 @@ export function ChannelChatView({
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, progressEvents, progressInvocations, typingUsers]);
+  }, [messages, progressEvents, progressInvocations, typingSuppressedUserIds, typingUsers]);
 
   const handleSend = useCallback(
     (content: string) => {
@@ -50,7 +53,10 @@ export function ChannelChatView({
     [onSend]
   );
 
-  const progressBotUserIds = new Set(progressInvocations.map((invocation) => invocation.botUserId));
+  const progressBotUserIds = new Set([
+    ...progressInvocations.map((invocation) => invocation.botUserId),
+    ...typingSuppressedUserIds,
+  ]);
   const visibleTypingNames = Array.from(typingUsers.entries())
     .filter(([userId]) => !progressBotUserIds.has(userId))
     .map(([, userName]) => userName)

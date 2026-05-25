@@ -1111,6 +1111,7 @@ export async function publishHermesPlatformTyping(input: {
     conversationId: loaded.conversation.id,
     userId: loaded.bot.userId,
     userName: loaded.botName,
+    botSessionId: loaded.session?.id ?? null,
   });
   return { ok: true };
 }

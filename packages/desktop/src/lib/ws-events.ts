@@ -28,6 +28,7 @@ export type WsEvents = {
     conversationId: string;
     userId: string;
     userName: string;
+    botSessionId?: string | null;
   };
   "ws:member_joined": {
     workspaceId: string;

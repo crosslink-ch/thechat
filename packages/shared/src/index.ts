@@ -422,7 +422,13 @@ export type WsServerEvent =
       invocationId: string;
       event: BotInvocationProgressEventPublic;
     }
-  | { type: "typing"; conversationId: string; userId: string; userName: string }
+  | {
+      type: "typing";
+      conversationId: string;
+      userId: string;
+      userName: string;
+      botSessionId?: string | null;
+    }
   | { type: "member_joined"; workspaceId: string; member: WorkspaceMember }
   | { type: "member_role_changed"; workspaceId: string; userId: string; newRole: WorkspaceMemberRole }
   | { type: "member_removed"; workspaceId: string; userId: string }

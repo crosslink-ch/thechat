@@ -108,6 +108,7 @@ function doConnect() {
         conversationId: event.conversationId,
         userId: event.userId,
         userName: event.userName,
+        botSessionId: event.botSessionId ?? null,
       });
     } else if (event.type === "member_joined") {
       wsEvents.emit("ws:member_joined", {

@@ -8,6 +8,7 @@
     "dev:api": "pnpm --filter @thechat/api dev",
     "dev:worker": "pnpm --filter @thechat/api dev:worker",
     "dev:hermes": "scripts/run-hermes-manual.sh",
+    "dev:hermes-progress-demo": "node scripts/hermes-progress-demo.mjs",
     "build": "pnpm -r build",
     "build:desktop": "pnpm --filter @thechat/desktop build",
     "build:api": "pnpm --filter @thechat/api build",
