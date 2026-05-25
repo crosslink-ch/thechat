@@ -1,15 +1,24 @@
 import { useRef, useEffect, useCallback } from "react";
 import { InputBar } from "./InputBar";
 import { Markdown } from "./Markdown";
-import type { ChatMessage } from "@thechat/shared";
+import type {
+  BotInvocationProgressEventPublic,
+  BotInvocationPublic,
+  ChatMessage,
+} from "@thechat/shared";
 import type { MentionUser } from "./MentionList";
+import { HermesProgressInline } from "./HermesProgressInline";
 
 const noop = () => {};
+const EMPTY_PROGRESS_INVOCATIONS: BotInvocationPublic[] = [];
+const EMPTY_PROGRESS_EVENTS: BotInvocationProgressEventPublic[] = [];
 
 interface ChannelChatViewProps {
   messages: ChatMessage[];
   loading: boolean;
   typingUsers: Map<string, string>; // userId -> userName
+  progressInvocations?: BotInvocationPublic[];
+  progressEvents?: BotInvocationProgressEventPublic[];
   onSend: (content: string) => void;
   mentions?: MentionUser[];
 }
@@ -23,6 +32,8 @@ export function ChannelChatView({
   messages,
   loading,
   typingUsers,
+  progressInvocations = EMPTY_PROGRESS_INVOCATIONS,
+  progressEvents = EMPTY_PROGRESS_EVENTS,
   onSend,
   mentions,
 }: ChannelChatViewProps) {
@@ -30,7 +41,7 @@ export function ChannelChatView({
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, typingUsers]);
+  }, [messages, progressEvents, progressInvocations, typingUsers]);
 
   const handleSend = useCallback(
     (content: string) => {
@@ -39,7 +50,11 @@ export function ChannelChatView({
     [onSend]
   );
 
-  const typingNames = Array.from(typingUsers.values()).filter(Boolean);
+  const progressBotUserIds = new Set(progressInvocations.map((invocation) => invocation.botUserId));
+  const visibleTypingNames = Array.from(typingUsers.entries())
+    .filter(([userId]) => !progressBotUserIds.has(userId))
+    .map(([, userName]) => userName)
+    .filter(Boolean);
 
   return (
     <>
@@ -64,9 +79,13 @@ export function ChannelChatView({
             </div>
           </div>
         ))}
-        {typingNames.length > 0 && (
+        <HermesProgressInline
+          invocations={progressInvocations}
+          events={progressEvents}
+        />
+        {visibleTypingNames.length > 0 && (
           <div className="animate-pulse px-5 py-1 pb-2 text-[0.786rem] text-text-dimmed">
-            {typingNames.join(", ")} {typingNames.length === 1 ? "is" : "are"} typing...
+            {visibleTypingNames.join(", ")} {visibleTypingNames.length === 1 ? "is" : "are"} typing...
           </div>
         )}
         <div ref={endRef} />

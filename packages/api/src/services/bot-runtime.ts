@@ -1,8 +1,9 @@
 import crypto from "crypto";
-import { and, asc, desc, eq } from "drizzle-orm";
+import { and, asc, desc, eq, sql } from "drizzle-orm";
 import { SpanStatusCode } from "@opentelemetry/api";
 import type {
   BotInvocationPublic,
+  BotInvocationProgressEventPublic,
   BotRuntimeSnapshot,
   BotSessionPublic,
   ChatMessage,
@@ -14,6 +15,7 @@ import { AsyncWorkerRuntime } from "../async/worker";
 import type { AsyncJobHandler, QueueCommand } from "../async/types";
 import { db } from "../db";
 import {
+  botInvocationEvents,
   botInvocations,
   bots,
   botSessions,
@@ -33,6 +35,7 @@ export const BOT_QUEUE_NAME = "thechat:bots";
 export const BOT_INVOKE_JOB_NAME = "bot.invoke";
 export const HERMES_WEBHOOK_DELIVERY_JOB_NAME = "bot.hermes_webhook.deliver";
 const BOT_RUNTIME_SESSION_LIMIT = 100;
+const BOT_RUNTIME_EVENT_LIMIT = 300;
 
 type BotKind = "webhook" | "hermes";
 type ConversationType = "direct" | "group";
@@ -70,6 +73,21 @@ interface BotInvokePayload {
 
 interface HermesWebhookDeliveryPayload {
   invocationId: string;
+}
+
+interface HermesPlatformProgressInput {
+  authenticatedBotId: string;
+  invocationId: string;
+  botId?: string;
+  conversationId?: string;
+  type: string;
+  status?: string | null;
+  toolCallId?: string | null;
+  toolName?: string | null;
+  label?: string | null;
+  preview?: string | null;
+  payload?: Record<string, unknown> | null;
+  occurredAt?: Date | null;
 }
 
 type HermesPlatformDeliveryMode = "polling" | "webhook";
@@ -199,9 +217,17 @@ export async function listConversationBotRuntime(conversationId: string, userId:
     .orderBy(desc(botInvocations.createdAt))
     .limit(50);
 
+  const eventRows = await db
+    .select()
+    .from(botInvocationEvents)
+    .where(eq(botInvocationEvents.conversationId, conversationId))
+    .orderBy(desc(botInvocationEvents.createdAt), desc(botInvocationEvents.sequence))
+    .limit(BOT_RUNTIME_EVENT_LIMIT);
+
   return {
     sessions: sessionRows.map(toPublicSession),
     invocations: invocationRows.map(toPublicInvocation),
+    events: eventRows.reverse().map(toPublicProgressEvent),
   };
 }
 
@@ -1080,6 +1106,73 @@ export async function publishHermesPlatformTyping(input: {
   return { ok: true };
 }
 
+export async function publishHermesPlatformProgress(
+  input: HermesPlatformProgressInput,
+): Promise<{ ok: true; event: BotInvocationProgressEventPublic }> {
+  return withSpan(
+    "hermes_platform.progress.record",
+    {
+      "messaging.system": "thechat",
+      "messaging.operation": "hermes_progress",
+      "thechat.bot_invocation_id": input.invocationId,
+      "thechat.hermes_progress.type": input.type,
+      "thechat.hermes_progress.tool": input.toolName ?? "",
+    },
+    async (span) => {
+      const loaded = await loadInvocationContext(input.invocationId);
+      if (!loaded) throw new ServiceError("Invocation not found", 404);
+      if (loaded.bot.kind !== "hermes") throw new ServiceError("Invocation is not for a Hermes bot", 400);
+      if (loaded.bot.id !== input.authenticatedBotId) throw new ServiceError("Bot token does not match invocation", 403);
+      if (input.botId && input.botId !== loaded.bot.id) throw new ServiceError("Bot does not match invocation", 400);
+      if (input.conversationId && input.conversationId !== loaded.conversation.id) {
+        throw new ServiceError("Conversation does not match invocation", 400);
+      }
+
+      const [eventRow] = await db
+        .insert(botInvocationEvents)
+        .values({
+          invocationId: loaded.invocation.id,
+          botId: loaded.bot.id,
+          conversationId: loaded.conversation.id,
+          sequence: sql<number>`(
+            select coalesce(max(${botInvocationEvents.sequence}), 0) + 1
+            from ${botInvocationEvents}
+            where ${botInvocationEvents.invocationId} = ${loaded.invocation.id}
+          )`,
+          eventType: input.type,
+          status: input.status ?? null,
+          toolCallId: input.toolCallId ?? null,
+          toolName: input.toolName ?? null,
+          label: input.label ?? null,
+          preview: input.preview ?? null,
+          payloadJson: input.payload ?? null,
+          occurredAt: input.occurredAt ?? new Date(),
+        })
+        .returning();
+
+      await db
+        .update(botInvocations)
+        .set({ updatedAt: new Date() })
+        .where(eq(botInvocations.id, loaded.invocation.id));
+
+      const participantRows = await db
+        .select({ userId: conversationParticipants.userId })
+        .from(conversationParticipants)
+        .where(eq(conversationParticipants.conversationId, loaded.conversation.id));
+
+      const event = toPublicProgressEvent(eventRow);
+      span.setAttribute("thechat.hermes_progress.sequence", event.sequence);
+      await publishWsEventToUsers(participantRows.map((p) => p.userId), {
+        type: "bot_invocation_progress",
+        conversationId: loaded.conversation.id,
+        invocationId: loaded.invocation.id,
+        event,
+      });
+      return { ok: true, event };
+    },
+  );
+}
+
 async function failInvocation(invocationId: string, error: any) {
   const message = error?.message ?? String(error);
   const loaded = await loadInvocationContext(invocationId);
@@ -1354,5 +1447,39 @@ function toPublicInvocation(row: {
     completedAt: row.completedAt?.toISOString() ?? null,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
+  };
+}
+
+function toPublicProgressEvent(row: {
+  id: string;
+  invocationId: string;
+  botId: string;
+  conversationId: string;
+  sequence: number;
+  eventType: string;
+  status: string | null;
+  toolCallId: string | null;
+  toolName: string | null;
+  label: string | null;
+  preview: string | null;
+  payloadJson: Record<string, unknown> | null;
+  occurredAt: Date;
+  createdAt: Date;
+}): BotInvocationProgressEventPublic {
+  return {
+    id: row.id,
+    invocationId: row.invocationId,
+    botId: row.botId,
+    conversationId: row.conversationId,
+    sequence: row.sequence,
+    type: row.eventType,
+    status: row.status,
+    toolCallId: row.toolCallId,
+    toolName: row.toolName,
+    label: row.label,
+    preview: row.preview,
+    payload: row.payloadJson,
+    occurredAt: row.occurredAt.toISOString(),
+    createdAt: row.createdAt.toISOString(),
   };
 }

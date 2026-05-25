@@ -7,7 +7,11 @@ import { useConversationsStore } from "../stores/conversations";
 import { useWorkspacesStore } from "../stores/workspaces";
 import { useChannelChat } from "../hooks/useChannelChat";
 import { ChannelChatView } from "../components/ChannelChatView";
-import { HermesRuntimePanel, mergeRuntimeUpdate } from "../components/HermesRuntimePanel";
+import {
+  HermesRuntimePanel,
+  mergeRuntimeProgressEvent,
+  mergeRuntimeUpdate,
+} from "../components/HermesRuntimePanel";
 import { wsEvents, type WsEvents } from "../lib/ws-events";
 import { API_URL } from "../lib/api";
 
@@ -47,6 +51,18 @@ export function ChannelRoute() {
     () => members?.filter((m) => m.bot?.kind === "hermes").map((m) => m.user.name) ?? [],
     [members],
   );
+  const activeHermesProgress = useMemo(() => {
+    const invocations = (runtime?.invocations ?? []).filter(
+      (invocation) =>
+        invocation.botKind === "hermes" &&
+        (invocation.status === "queued" || invocation.status === "running"),
+    );
+    const invocationIds = new Set(invocations.map((invocation) => invocation.id));
+    return {
+      invocations,
+      events: (runtime?.events ?? []).filter((event) => invocationIds.has(event.invocationId)),
+    };
+  }, [runtime]);
 
   // Mark channel as read on mount
   useEffect(() => {
@@ -117,15 +133,24 @@ export function ChannelRoute() {
       if (conversationId !== channelId) return;
       setRuntime((prev) => mergeRuntimeUpdate(prev, session, invocation));
     };
+    const onBotInvocationProgress = ({
+      conversationId,
+      event,
+    }: WsEvents["ws:bot_invocation_progress"]) => {
+      if (conversationId !== channelId) return;
+      setRuntime((prev) => mergeRuntimeProgressEvent(prev, event));
+    };
 
     wsEvents.on("ws:new_message", onMessage);
     wsEvents.on("ws:typing", onTyping);
     wsEvents.on("ws:bot_invocation_updated", onBotInvocationUpdated);
+    wsEvents.on("ws:bot_invocation_progress", onBotInvocationProgress);
 
     return () => {
       wsEvents.off("ws:new_message", onMessage);
       wsEvents.off("ws:typing", onTyping);
       wsEvents.off("ws:bot_invocation_updated", onBotInvocationUpdated);
+      wsEvents.off("ws:bot_invocation_progress", onBotInvocationProgress);
       // Clear all typing timers
       for (const timer of typingTimers.current.values()) {
         clearTimeout(timer);
@@ -144,6 +169,13 @@ export function ChannelRoute() {
         ...runtime,
         sessions: runtime.sessions.filter((s) => s.botKind === "hermes"),
         invocations: runtime.invocations.filter((i) => i.botKind === "hermes"),
+        events: runtime.events.filter((event) =>
+          runtime.invocations.some(
+            (invocation) =>
+              invocation.botKind === "hermes" &&
+              invocation.id === event.invocationId,
+          ),
+        ),
       }
     : null;
   const showHermesPanel = hermesBotNames.length > 0;
@@ -155,6 +187,8 @@ export function ChannelRoute() {
           messages={channelChat.messages}
           loading={channelChat.loading}
           typingUsers={typingUsers}
+          progressInvocations={activeHermesProgress.invocations}
+          progressEvents={activeHermesProgress.events}
           onSend={channelChat.sendMessage}
           mentions={mentions}
         />

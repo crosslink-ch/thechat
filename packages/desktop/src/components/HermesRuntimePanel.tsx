@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type {
   BotInvocationPublic,
+  BotInvocationProgressEventPublic,
   BotRuntimeSnapshot,
   BotSessionPublic,
 } from "@thechat/shared";
@@ -13,10 +14,23 @@ export function mergeRuntimeUpdate(
   session: BotSessionPublic | null,
   invocation: BotInvocationPublic,
 ): BotRuntimeSnapshot {
-  const snapshot = prev ?? { sessions: [], invocations: [] };
+  const snapshot = prev ?? { sessions: [], invocations: [], events: [] };
   return {
     sessions: session ? upsertById(snapshot.sessions, session) : snapshot.sessions,
     invocations: upsertById(snapshot.invocations, invocation),
+    events: snapshot.events,
+  };
+}
+
+export function mergeRuntimeProgressEvent(
+  prev: BotRuntimeSnapshot | null,
+  event: BotInvocationProgressEventPublic,
+): BotRuntimeSnapshot {
+  const snapshot = prev ?? { sessions: [], invocations: [], events: [] };
+  return {
+    sessions: snapshot.sessions,
+    invocations: snapshot.invocations,
+    events: upsertById(snapshot.events, event).sort(compareProgressEvents),
   };
 }
 
@@ -24,6 +38,16 @@ function upsertById<T extends { id: string }>(items: T[], item: T) {
   const next = items.filter((existing) => existing.id !== item.id);
   next.unshift(item);
   return next;
+}
+
+function compareProgressEvents(
+  a: BotInvocationProgressEventPublic,
+  b: BotInvocationProgressEventPublic,
+) {
+  const byInvocation = a.invocationId.localeCompare(b.invocationId);
+  if (byInvocation !== 0) return byInvocation;
+  if (a.sequence !== b.sequence) return a.sequence - b.sequence;
+  return Date.parse(a.createdAt) - Date.parse(b.createdAt);
 }
 
 export function HermesRuntimePanel({

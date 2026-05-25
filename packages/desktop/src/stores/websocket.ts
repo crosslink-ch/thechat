@@ -97,6 +97,12 @@ function doConnect() {
         session: event.session,
         invocation: event.invocation,
       });
+    } else if (event.type === "bot_invocation_progress") {
+      wsEvents.emit("ws:bot_invocation_progress", {
+        conversationId: event.conversationId,
+        invocationId: event.invocationId,
+        event: event.event,
+      });
     } else if (event.type === "typing") {
       wsEvents.emit("ws:typing", {
         conversationId: event.conversationId,

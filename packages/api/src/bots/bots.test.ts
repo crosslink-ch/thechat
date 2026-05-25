@@ -3,6 +3,7 @@ import { Elysia } from "elysia";
 import { asc, eq } from "drizzle-orm";
 import { db } from "../db";
 import {
+  botInvocationEvents,
   botInvocations,
   bots,
   conversationParticipants,
@@ -154,6 +155,14 @@ async function invocationsForMessage(messageId: string) {
     .from(botInvocations)
     .where(eq(botInvocations.triggerMessageId, messageId))
     .orderBy(asc(botInvocations.createdAt));
+}
+
+async function progressEventsForInvocation(invocationId: string) {
+  return db
+    .select()
+    .from(botInvocationEvents)
+    .where(eq(botInvocationEvents.invocationId, invocationId))
+    .orderBy(asc(botInvocationEvents.sequence));
 }
 
 async function startBotWorkerForTest() {
@@ -1172,6 +1181,24 @@ describe("Bots: runtime state", () => {
 
     try {
       const completed = await sendAndClaim("Complete this Hermes invocation");
+      const progressRes = await req(
+        "POST",
+        `/hermes-platform/invocations/${completed.invocationId}/progress`,
+        {
+          type: "tool.started",
+          status: "running",
+          toolCallId: "call-1",
+          toolName: "shell",
+          label: "Shell: pnpm test",
+          payload: { args: { command: "pnpm test" } },
+          occurredAt: new Date().toISOString(),
+        },
+        botRes.body.apiKey,
+      );
+      expect(progressRes.status).toBe(200);
+      expect(progressRes.body.event.invocationId).toBe(completed.invocationId);
+      expect(progressRes.body.event.toolCallId).toBe("call-1");
+
       const completeRes = await req(
         "POST",
         "/hermes-platform/messages",
@@ -1205,6 +1232,26 @@ describe("Bots: runtime state", () => {
         const rows = await invocationsForMessage(completed.messageId);
         return rows.find((row) => row.status === "completed" && row.responseMessageId);
       }, "completed Hermes invocation");
+      const storedProgressEvents = await progressEventsForInvocation(completed.invocationId);
+      expect(storedProgressEvents).toHaveLength(1);
+      expect(storedProgressEvents[0].eventType).toBe("tool.started");
+      expect(storedProgressEvents[0].toolName).toBe("shell");
+
+      const runtimeRes = await req(
+        "GET",
+        `/bot-runtime/conversations/${dmRes.body.id}`,
+        undefined,
+        human.token,
+      );
+      expect(runtimeRes.status).toBe(200);
+      expect(runtimeRes.body.events).toContainEqual(
+        expect.objectContaining({
+          invocationId: completed.invocationId,
+          type: "tool.started",
+          toolName: "shell",
+        }),
+      );
+
       await waitForResult(async () => {
         const rows = await invocationsForMessage(failed.messageId);
         return rows.find((row) => row.status === "failed" && row.error === "synthetic failure");
@@ -1229,6 +1276,22 @@ describe("Bots: runtime state", () => {
         throw new Error("Expected realtime websocket event");
       }
       expect(cancelledRuntimeUpdate.targetUserIds).toContain(human.user.id);
+
+      const progressRuntimeEvent = await waitForResult(() => {
+        const event = realtimeEvents.find(
+          (candidate) =>
+            candidate.type === "ws.event" &&
+            candidate.event.type === "bot_invocation_progress" &&
+            candidate.event.invocationId === completed.invocationId &&
+            candidate.event.event.toolName === "shell",
+        );
+        return Promise.resolve(event);
+      }, "Hermes progress realtime event");
+      expect(progressRuntimeEvent.type).toBe("ws.event");
+      if (progressRuntimeEvent.type !== "ws.event") {
+        throw new Error("Expected realtime websocket event");
+      }
+      expect(progressRuntimeEvent.targetUserIds).toContain(human.user.id);
     } finally {
       await unsubscribe();
       await observerBus.close();

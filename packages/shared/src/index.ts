@@ -348,9 +348,27 @@ export interface BotInvocationPublic {
   updatedAt: string;
 }
 
+export interface BotInvocationProgressEventPublic {
+  id: string;
+  invocationId: string;
+  botId: string;
+  conversationId: string;
+  sequence: number;
+  type: string;
+  status: string | null;
+  toolCallId: string | null;
+  toolName: string | null;
+  label: string | null;
+  preview: string | null;
+  payload: Record<string, unknown> | null;
+  occurredAt: string;
+  createdAt: string;
+}
+
 export interface BotRuntimeSnapshot {
   sessions: BotSessionPublic[];
   invocations: BotInvocationPublic[];
+  events: BotInvocationProgressEventPublic[];
 }
 
 // -- Workspace Invite Types --
@@ -397,6 +415,12 @@ export type WsServerEvent =
       conversationId: string;
       session: BotSessionPublic | null;
       invocation: BotInvocationPublic;
+    }
+  | {
+      type: "bot_invocation_progress";
+      conversationId: string;
+      invocationId: string;
+      event: BotInvocationProgressEventPublic;
     }
   | { type: "typing"; conversationId: string; userId: string; userName: string }
   | { type: "member_joined"; workspaceId: string; member: WorkspaceMember }
