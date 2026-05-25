@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import type { ChatMessage } from "@thechat/shared";
-import { useChannelChat } from "./useChannelChat";
+import { clearChannelChatCacheForTests, useChannelChat } from "./useChannelChat";
 import { api } from "../lib/api";
 
 vi.mock("../lib/api", () => ({
@@ -41,6 +41,7 @@ function sessionMessage(conversationId: string, botSessionId: string, content: s
 describe("useChannelChat", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    clearChannelChatCacheForTests();
   });
 
   it("clears old messages and ignores stale fetches when switching conversations", async () => {
@@ -166,5 +167,43 @@ describe("useChannelChat", () => {
       "active live",
     ]);
     expect(wsSendMessage).toHaveBeenCalledWith("dm-hermes", "next", "session-active");
+  });
+
+  it("reuses fresh cached history when remounting the same conversation", async () => {
+    vi.mocked(api.messages).mockReturnValue({
+      get: vi.fn(() =>
+        Promise.resolve({ data: [message("dm-cache", "cached history")] }),
+      ),
+    } as any);
+    const wsSendMessage = vi.fn();
+
+    const first = renderHook(() =>
+      useChannelChat({
+        conversationId: "dm-cache",
+        token: "test-token",
+        wsSendMessage,
+      }),
+    );
+
+    await waitFor(() => {
+      expect(first.result.current.messages.map((m) => m.content)).toEqual([
+        "cached history",
+      ]);
+    });
+    first.unmount();
+
+    const second = renderHook(() =>
+      useChannelChat({
+        conversationId: "dm-cache",
+        token: "test-token",
+        wsSendMessage,
+      }),
+    );
+
+    expect(second.result.current.loading).toBe(false);
+    expect(second.result.current.messages.map((m) => m.content)).toEqual([
+      "cached history",
+    ]);
+    expect(api.messages).toHaveBeenCalledTimes(1);
   });
 });

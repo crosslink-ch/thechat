@@ -1,5 +1,5 @@
 import crypto from "crypto";
-import { and, asc, desc, eq } from "drizzle-orm";
+import { and, asc, desc, eq, inArray } from "drizzle-orm";
 import { SpanStatusCode } from "@opentelemetry/api";
 import type {
   BotInvocationPublic,
@@ -64,6 +64,28 @@ interface ConversationRow {
   type: ConversationType;
   name: string | null;
   workspaceId: string | null;
+}
+
+interface BotSessionRow {
+  id: string;
+  botId: string;
+  botUserId: string;
+  botName: string;
+  botKind: BotKind;
+  workspaceId: string | null;
+  conversationId: string | null;
+  scope: string;
+  externalSessionId: string | null;
+  title: string | null;
+  lastMessageId: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+interface BotSessionRowWithSummary extends BotSessionRow {
+  lastMessagePreview: string | null;
+  lastMessageSenderName: string | null;
+  lastMessageCreatedAt: Date | null;
 }
 
 interface BotInvokePayload {
@@ -194,7 +216,9 @@ export async function listConversationBotRuntime(conversationId: string, userId:
         .orderBy(desc(botSessions.updatedAt))
         .limit(BOT_RUNTIME_SESSION_LIMIT);
 
-      const invocationRows = await db
+      const sessionRowsWithSummary = await attachSessionSummaries(sessionRows);
+
+      const activeInvocationRows = await db
         .select({
           id: botInvocations.id,
           botSessionId: botInvocations.botSessionId,
@@ -219,21 +243,25 @@ export async function listConversationBotRuntime(conversationId: string, userId:
         .from(botInvocations)
         .innerJoin(bots, eq(botInvocations.botId, bots.id))
         .innerJoin(users, eq(bots.userId, users.id))
-        .where(eq(botInvocations.conversationId, conversationId))
-        .orderBy(desc(botInvocations.createdAt))
-        .limit(50);
+        .where(
+          and(
+            eq(botInvocations.conversationId, conversationId),
+            inArray(botInvocations.status, ["queued", "running"]),
+          ),
+        )
+        .orderBy(desc(botInvocations.createdAt));
 
       const events = await getBotProgressStore().listForInvocations(
-        invocationRows.map((invocation) => invocation.id),
+        activeInvocationRows.map((invocation) => invocation.id),
       );
 
       span.setAttribute("thechat.bot_runtime.sessions", sessionRows.length);
-      span.setAttribute("thechat.bot_runtime.invocations", invocationRows.length);
+      span.setAttribute("thechat.bot_runtime.active_invocations", activeInvocationRows.length);
       span.setAttribute("thechat.bot_runtime.progress_events", events.length);
 
       return {
-        sessions: sessionRows.map(toPublicSession),
-        invocations: invocationRows.map(toPublicInvocation),
+        sessions: sessionRowsWithSummary.map(toPublicSession),
+        invocations: activeInvocationRows.map(toPublicInvocation),
         events,
       };
     },
@@ -314,7 +342,8 @@ export async function createHermesConversationSession(input: {
     .where(eq(botSessions.id, session.id))
     .limit(1);
   if (!sessionRow) throw new ServiceError("Failed to create Hermes session", 500);
-  return toPublicSession(sessionRow);
+  const [sessionWithSummary] = await attachSessionSummaries([sessionRow]);
+  return toPublicSession(sessionWithSummary);
 }
 
 export async function startBotWorker(options: { concurrency?: number } = {}): Promise<AsyncWorkerRuntime> {
@@ -1312,12 +1341,15 @@ async function publishInvocationUpdate(invocationId: string) {
     .select({ userId: conversationParticipants.userId })
     .from(conversationParticipants)
     .where(eq(conversationParticipants.conversationId, invocationRow.conversationId));
+  const [sessionWithSummary] = sessionRow
+    ? await attachSessionSummaries([sessionRow])
+    : [null];
 
   const wsEvent: WsServerEvent = {
     type: "bot_invocation_updated",
     conversationId: invocationRow.conversationId,
     invocation: toPublicInvocation(invocationRow),
-    session: sessionRow ? toPublicSession(sessionRow) : null,
+    session: sessionWithSummary ? toPublicSession(sessionWithSummary) : null,
   };
   await publishWsEventToUsers(participantRows.map((p) => p.userId), wsEvent);
 }
@@ -1369,21 +1401,43 @@ function getAsyncBus() {
   return asyncBus;
 }
 
-function toPublicSession(row: {
-  id: string;
-  botId: string;
-  botUserId: string;
-  botName: string;
-  botKind: BotKind;
-  workspaceId: string | null;
-  conversationId: string | null;
-  scope: string;
-  externalSessionId: string | null;
-  title: string | null;
-  lastMessageId: string | null;
-  createdAt: Date;
-  updatedAt: Date;
-}): BotSessionPublic {
+async function attachSessionSummaries(rows: BotSessionRow[]): Promise<BotSessionRowWithSummary[]> {
+  const lastMessageIds = Array.from(
+    new Set(rows.map((row) => row.lastMessageId).filter((id): id is string => !!id)),
+  );
+  if (lastMessageIds.length === 0) {
+    return rows.map((row) => ({
+      ...row,
+      lastMessagePreview: null,
+      lastMessageSenderName: null,
+      lastMessageCreatedAt: null,
+    }));
+  }
+
+  const lastMessages = await db
+    .select({
+      id: messages.id,
+      content: messages.content,
+      createdAt: messages.createdAt,
+      senderName: users.name,
+    })
+    .from(messages)
+    .innerJoin(users, eq(messages.senderId, users.id))
+    .where(inArray(messages.id, lastMessageIds));
+  const lastMessagesById = new Map(lastMessages.map((message) => [message.id, message]));
+
+  return rows.map((row) => {
+    const lastMessage = row.lastMessageId ? lastMessagesById.get(row.lastMessageId) : null;
+    return {
+      ...row,
+      lastMessagePreview: lastMessage?.content.trim() || null,
+      lastMessageSenderName: lastMessage?.senderName ?? null,
+      lastMessageCreatedAt: lastMessage?.createdAt ?? null,
+    };
+  });
+}
+
+function toPublicSession(row: BotSessionRowWithSummary): BotSessionPublic {
   return {
     id: row.id,
     botId: row.botId,
@@ -1396,6 +1450,9 @@ function toPublicSession(row: {
     externalSessionId: row.externalSessionId,
     title: row.title,
     lastMessageId: row.lastMessageId,
+    lastMessagePreview: row.lastMessagePreview,
+    lastMessageSenderName: row.lastMessageSenderName,
+    lastMessageCreatedAt: row.lastMessageCreatedAt?.toISOString() ?? null,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };

@@ -1,90 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 import type {
   BotInvocationPublic,
-  BotInvocationProgressEventPublic,
   BotRuntimeSnapshot,
   BotSessionPublic,
 } from "@thechat/shared";
 
 const INITIAL_SESSION_LIMIT = 20;
 const SESSION_PAGE_SIZE = 20;
-const MAX_PROGRESS_EVENTS_PER_INVOCATION = 100;
-
-export function mergeRuntimeUpdate(
-  prev: BotRuntimeSnapshot | null,
-  session: BotSessionPublic | null,
-  invocation: BotInvocationPublic,
-): BotRuntimeSnapshot {
-  const snapshot = prev ?? { sessions: [], invocations: [], events: [] };
-  const invocations = upsertById(snapshot.invocations, invocation);
-  return {
-    sessions: session ? upsertById(snapshot.sessions, session) : snapshot.sessions,
-    invocations,
-    events: pruneProgressEvents(snapshot.events, invocations),
-  };
-}
-
-export function mergeRuntimeProgressEvent(
-  prev: BotRuntimeSnapshot | null,
-  event: BotInvocationProgressEventPublic,
-): BotRuntimeSnapshot {
-  const snapshot = prev ?? { sessions: [], invocations: [], events: [] };
-  return {
-    sessions: snapshot.sessions,
-    invocations: snapshot.invocations,
-    events: pruneProgressEvents(
-      upsertById(snapshot.events, event),
-      snapshot.invocations,
-    ),
-  };
-}
-
-function upsertById<T extends { id: string }>(items: T[], item: T) {
-  const next = items.filter((existing) => existing.id !== item.id);
-  next.unshift(item);
-  return next;
-}
-
-function compareProgressEvents(
-  a: BotInvocationProgressEventPublic,
-  b: BotInvocationProgressEventPublic,
-) {
-  const byInvocation = a.invocationId.localeCompare(b.invocationId);
-  if (byInvocation !== 0) return byInvocation;
-  if (a.sequence !== b.sequence) return a.sequence - b.sequence;
-  return Date.parse(a.createdAt) - Date.parse(b.createdAt);
-}
-
-function pruneProgressEvents(
-  events: BotInvocationProgressEventPublic[],
-  invocations: BotInvocationPublic[],
-) {
-  const knownInvocationIds = new Set(invocations.map((invocation) => invocation.id));
-  const activeInvocationIds = new Set(
-    invocations
-      .filter((invocation) => invocation.status === "queued" || invocation.status === "running")
-      .map((invocation) => invocation.id),
-  );
-  const sorted = events
-    .filter(
-      (event) =>
-        !knownInvocationIds.has(event.invocationId) ||
-        activeInvocationIds.has(event.invocationId),
-    )
-    .sort(compareProgressEvents);
-  const counts = new Map<string, number>();
-  const kept: BotInvocationProgressEventPublic[] = [];
-
-  for (let index = sorted.length - 1; index >= 0; index -= 1) {
-    const event = sorted[index];
-    const count = counts.get(event.invocationId) ?? 0;
-    if (count >= MAX_PROGRESS_EVENTS_PER_INVOCATION) continue;
-    counts.set(event.invocationId, count + 1);
-    kept.push(event);
-  }
-
-  return kept.reverse();
-}
 
 export function HermesRuntimePanel({
   title = "Hermes",
@@ -149,7 +71,7 @@ export function HermesRuntimePanel({
             )}
           </div>
           {loading && sessions.length === 0 ? (
-            <div className="text-[0.857rem] text-text-placeholder">Loading...</div>
+            <SessionSkeletonList />
           ) : sessions.length === 0 ? (
             <div className="text-[0.857rem] text-text-placeholder">No sessions yet</div>
           ) : (
@@ -187,6 +109,27 @@ export function HermesRuntimePanel({
         </section>
       </div>
     </aside>
+  );
+}
+
+function SessionSkeletonList() {
+  return (
+    <div className="space-y-2" aria-label="Loading sessions">
+      {Array.from({ length: 3 }, (_, index) => (
+        <div
+          key={index}
+          className="rounded-md border border-border bg-background px-3 py-2"
+        >
+          <div className="flex items-start justify-between gap-2">
+            <div className="h-3 w-28 animate-pulse rounded bg-raised" />
+            <div className="h-4 w-12 animate-pulse rounded bg-raised" />
+          </div>
+          <div className="mt-2 h-2.5 w-24 animate-pulse rounded bg-raised" />
+          <div className="mt-3 h-2.5 w-full animate-pulse rounded bg-raised" />
+          <div className="mt-1.5 h-2.5 w-3/4 animate-pulse rounded bg-raised" />
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -228,12 +171,6 @@ function SessionRow({
           </>
         )}
         <span className="shrink-0">{summary.activityLabel}</span>
-        {summary.invocationCount > 1 && (
-          <>
-            <span className="shrink-0">/</span>
-            <span className="shrink-0">{summary.invocationCount} runs</span>
-          </>
-        )}
       </div>
 
       {summary.preview ? (
@@ -277,7 +214,6 @@ interface SessionSummary {
   title: string;
   activityLabel: string;
   preview: string;
-  invocationCount: number;
   latestInvocation: BotInvocationPublic | null;
 }
 
@@ -295,10 +231,13 @@ function summarizeSession(
     session,
     title: sessionTitle(session, index),
     activityLabel: latestInvocation
-      ? `Last run ${formatSessionTime(latestInvocation.updatedAt)}`
-      : `Created ${formatSessionTime(session.createdAt)}`,
-    preview: latestInvocation ? invocationPreview(latestInvocation) : "",
-    invocationCount: sessionInvocations.length,
+      ? `${statusLabel(latestInvocation.status)} ${formatSessionTime(latestInvocation.updatedAt)}`
+      : session.lastMessageCreatedAt
+        ? `Last message ${formatSessionTime(session.lastMessageCreatedAt)}`
+        : `Created ${formatSessionTime(session.createdAt)}`,
+    preview: latestInvocation
+      ? invocationPreview(latestInvocation) || session.lastMessagePreview || ""
+      : session.lastMessagePreview ?? "",
     latestInvocation,
   };
 }
@@ -319,6 +258,10 @@ function latestByUpdatedAt(invocations: BotInvocationPublic[]) {
     }
   }
   return latest;
+}
+
+function statusLabel(status: string) {
+  return status === "queued" ? "Queued" : "Running";
 }
 
 function invocationPreview(invocation: BotInvocationPublic) {

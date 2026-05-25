@@ -322,6 +322,9 @@ export interface BotSessionPublic {
   externalSessionId: string | null;
   title: string | null;
   lastMessageId: string | null;
+  lastMessagePreview: string | null;
+  lastMessageSenderName: string | null;
+  lastMessageCreatedAt: string | null;
   createdAt: string;
   updatedAt: string;
 }

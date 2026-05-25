@@ -7,7 +7,7 @@ import type {
 import {
   mergeRuntimeProgressEvent,
   mergeRuntimeUpdate,
-} from "./HermesRuntimePanel";
+} from "../lib/bot-runtime-state";
 
 describe("Hermes runtime progress state", () => {
   it("keeps only the latest progress events for an active invocation", () => {
@@ -37,6 +37,7 @@ describe("Hermes runtime progress state", () => {
     const updated = mergeRuntimeUpdate(snapshot, null, completed);
 
     expect(updated.events).toEqual([]);
+    expect(updated.invocations).toEqual([]);
   });
 });
 

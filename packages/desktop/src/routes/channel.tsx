@@ -1,24 +1,15 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 import { useParams } from "@tanstack/react-router";
-import type { BotRuntimeSnapshot } from "@thechat/shared";
 import { useAuthStore } from "../stores/auth";
+import { useBotRuntimeStore } from "../stores/bot-runtime";
 import { useWebSocketStore } from "../stores/websocket";
 import { useConversationsStore } from "../stores/conversations";
 import { useWorkspacesStore } from "../stores/workspaces";
 import { useChannelChat } from "../hooks/useChannelChat";
 import { ChannelChatView } from "../components/ChannelChatView";
-import {
-  HermesRuntimePanel,
-  mergeRuntimeProgressEvent,
-  mergeRuntimeUpdate,
-} from "../components/HermesRuntimePanel";
+import { HermesRuntimePanel } from "../components/HermesRuntimePanel";
 import { wsEvents, type WsEvents } from "../lib/ws-events";
-import { API_URL } from "../lib/api";
 import { selectHermesConversationProgress } from "../lib/hermes-progress";
-
-function auth(token: string) {
-  return { authorization: `Bearer ${token}` };
-}
 
 export function ChannelRoute() {
   const { id: channelId } = useParams({ from: "/channel/$id" });
@@ -46,8 +37,12 @@ export function ChannelRoute() {
 
   const [typingUsers, setTypingUsers] = useState<Map<string, string>>(new Map());
   const typingTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
-  const [runtime, setRuntime] = useState<BotRuntimeSnapshot | null>(null);
-  const [runtimeLoading, setRuntimeLoading] = useState(false);
+  const runtimeEntry = useBotRuntimeStore((s) => s.entries[channelId]);
+  const runtime = runtimeEntry?.runtime ?? null;
+  const runtimeLoading = runtimeEntry?.loading ?? false;
+  const fetchRuntime = useBotRuntimeStore((s) => s.fetchRuntime);
+  const mergeInvocationUpdate = useBotRuntimeStore((s) => s.mergeInvocationUpdate);
+  const mergeProgressEvent = useBotRuntimeStore((s) => s.mergeProgressEvent);
   const hermesBotNames = useMemo(
     () => members?.filter((m) => m.bot?.kind === "hermes").map((m) => m.user.name) ?? [],
     [members],
@@ -63,28 +58,9 @@ export function ChannelRoute() {
   }, [channelId]);
 
   useEffect(() => {
-    let cancelled = false;
-    setRuntime(null);
     if (!token || hermesBotNames.length === 0) return;
-    setRuntimeLoading(true);
-    fetch(`${API_URL}/bot-runtime/conversations/${channelId}`, { headers: auth(token) })
-      .then((response) => {
-        if (!response.ok) throw new Error(`Request failed with HTTP ${response.status}`);
-        return response.json() as Promise<BotRuntimeSnapshot>;
-      })
-      .then((snapshot) => {
-        if (!cancelled) setRuntime(snapshot);
-      })
-      .catch(() => {
-        if (!cancelled) setRuntime(null);
-      })
-      .finally(() => {
-        if (!cancelled) setRuntimeLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [channelId, hermesBotNames.length, token]);
+    void fetchRuntime(channelId, token);
+  }, [channelId, fetchRuntime, hermesBotNames.length, token]);
 
   // Subscribe to WebSocket messages for this channel
   useEffect(() => {
@@ -124,14 +100,14 @@ export function ChannelRoute() {
       invocation,
     }: WsEvents["ws:bot_invocation_updated"]) => {
       if (conversationId !== channelId) return;
-      setRuntime((prev) => mergeRuntimeUpdate(prev, session, invocation));
+      mergeInvocationUpdate(channelId, session, invocation);
     };
     const onBotInvocationProgress = ({
       conversationId,
       event,
     }: WsEvents["ws:bot_invocation_progress"]) => {
       if (conversationId !== channelId) return;
-      setRuntime((prev) => mergeRuntimeProgressEvent(prev, event));
+      mergeProgressEvent(channelId, event);
     };
 
     wsEvents.on("ws:new_message", onMessage);
@@ -150,7 +126,7 @@ export function ChannelRoute() {
       }
       typingTimers.current.clear();
     };
-  }, [channelId]);
+  }, [channelId, mergeInvocationUpdate, mergeProgressEvent]);
 
   // Clear typing users when channel changes
   useEffect(() => {

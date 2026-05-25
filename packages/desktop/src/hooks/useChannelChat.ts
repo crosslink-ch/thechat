@@ -2,12 +2,27 @@ import { useState, useCallback, useEffect, useRef } from "react";
 import type { ChatMessage } from "@thechat/shared";
 import { api } from "../lib/api";
 
+const MESSAGE_CACHE_TTL_MS = 60_000;
+
+interface MessageCacheEntry {
+  messages: ChatMessage[];
+  loadedAt: number;
+}
+
+const messageCache = new Map<string, MessageCacheEntry>();
+
 interface UseChannelChatOptions {
   conversationId: string | null;
   token: string | null;
   botSessionId?: string | null;
   wsSendMessage: (conversationId: string, content: string, botSessionId?: string | null) => void;
 }
+
+export function clearChannelChatCache() {
+  messageCache.clear();
+}
+
+export const clearChannelChatCacheForTests = clearChannelChatCache;
 
 export function useChannelChat({
   conversationId,
@@ -32,8 +47,21 @@ export function useChannelChat({
     let cancelled = false;
     const requestId = requestSeq.current + 1;
     requestSeq.current = requestId;
-    setMessages([]);
-    setLoading(true);
+    const key = cacheKey(conversationId, botSessionId);
+    const cached = messageCache.get(key);
+    if (cached) {
+      setMessages(cached.messages);
+      setLoading(false);
+      if (reloadKey === 0 && Date.now() - cached.loadedAt < MESSAGE_CACHE_TTL_MS) {
+        return () => {
+          cancelled = true;
+        };
+      }
+    } else {
+      setMessages([]);
+      setLoading(true);
+    }
+
     api.messages({ conversationId }).get({
       query: { limit: 50, botSessionId: botSessionId ?? undefined },
       headers: { authorization: `Bearer ${token}` },
@@ -41,7 +69,9 @@ export function useChannelChat({
       .then(({ data }) => {
         if (cancelled || requestId !== requestSeq.current) return;
         if (Array.isArray(data)) {
-          setMessages(data as ChatMessage[]);
+          const nextMessages = data as ChatMessage[];
+          messageCache.set(key, { messages: nextMessages, loadedAt: Date.now() });
+          setMessages(nextMessages);
         }
       })
       .catch(() => {})
@@ -63,7 +93,12 @@ export function useChannelChat({
       setMessages((prev) => {
         // Deduplicate
         if (prev.some((m) => m.id === msg.id)) return prev;
-        return [...prev, msg];
+        const next = [...prev, msg];
+        messageCache.set(cacheKey(conversationId, botSessionId), {
+          messages: next,
+          loadedAt: Date.now(),
+        });
+        return next;
       });
     },
     [botSessionId, conversationId]
@@ -83,4 +118,8 @@ export function useChannelChat({
   }, [conversationId, token]);
 
   return { messages, loading, addMessage, sendMessage, refetchMessages };
+}
+
+function cacheKey(conversationId: string, botSessionId: string | null | undefined) {
+  return `${conversationId}:${botSessionId ?? "all"}`;
 }

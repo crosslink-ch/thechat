@@ -1200,6 +1200,27 @@ describe("Bots: runtime state", () => {
       expect(progressRes.body.event.invocationId).toBe(completed.invocationId);
       expect(progressRes.body.event.toolCallId).toBe("call-1");
 
+      const activeRuntimeRes = await req(
+        "GET",
+        `/bot-runtime/conversations/${dmRes.body.id}`,
+        undefined,
+        human.token,
+      );
+      expect(activeRuntimeRes.status).toBe(200);
+      expect(activeRuntimeRes.body.invocations).toContainEqual(
+        expect.objectContaining({
+          id: completed.invocationId,
+          status: "running",
+        }),
+      );
+      expect(activeRuntimeRes.body.events).toContainEqual(
+        expect.objectContaining({
+          invocationId: completed.invocationId,
+          type: "tool.started",
+          toolName: "shell",
+        }),
+      );
+
       const completeRes = await req(
         "POST",
         "/hermes-platform/messages",
@@ -1240,11 +1261,16 @@ describe("Bots: runtime state", () => {
         human.token,
       );
       expect(runtimeRes.status).toBe(200);
-      expect(runtimeRes.body.events).toContainEqual(
+      expect(runtimeRes.body.invocations).not.toContainEqual(
         expect.objectContaining({
-          invocationId: completed.invocationId,
-          type: "tool.started",
-          toolName: "shell",
+          id: completed.invocationId,
+        }),
+      );
+      expect(runtimeRes.body.events).toEqual([]);
+      expect(runtimeRes.body.sessions).toContainEqual(
+        expect.objectContaining({
+          lastMessagePreview: "Hermes completed response",
+          lastMessageSenderName: "RuntimeHermes",
         }),
       );
 
