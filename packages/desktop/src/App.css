@@ -258,6 +258,10 @@
   border-radius: 6px;
 }
 
+.md-content .katex {
+  position: relative;
+}
+
 /* Bounded fallback for Hermes session previews. This keeps session cards compact
    even if Tailwind's line-clamp utility is unavailable or a preview is huge. */
 .runtime-session-preview {
