@@ -75,7 +75,7 @@ export function HermesRuntimePanel({
           ) : sessions.length === 0 ? (
             <div className="text-[0.857rem] text-text-placeholder">No sessions yet</div>
           ) : (
-            <div className="space-y-2">
+            <div className="flex flex-col gap-2">
               {visibleSessionSummaries.map((summary) => (
                 <SessionRow
                   key={summary.session.id}
@@ -149,7 +149,7 @@ function SessionRow({
   return (
     <button
       type="button"
-      className={`w-full rounded-md border px-3 py-2 text-left transition-colors ${
+      className={`block w-full overflow-hidden rounded-md border px-3 py-2 text-left transition-colors ${
         active
           ? "border-accent/50 bg-accent/10"
           : "border-border bg-background hover:bg-hover"
@@ -174,11 +174,11 @@ function SessionRow({
       </div>
 
       {summary.preview ? (
-        <div className="mt-2 line-clamp-2 text-[0.786rem] leading-5 text-text-muted">
+        <div className="runtime-session-preview mt-2 text-[0.786rem] leading-5 text-text-muted">
           {summary.preview}
         </div>
       ) : (
-        <div className="mt-2 text-[0.786rem] leading-5 text-text-placeholder">
+        <div className="mt-2 truncate text-[0.786rem] leading-5 text-text-placeholder">
           No messages yet
         </div>
       )}
