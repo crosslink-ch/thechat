@@ -1,5 +1,5 @@
 import crypto from "crypto";
-import { and, asc, desc, eq, sql } from "drizzle-orm";
+import { and, asc, desc, eq } from "drizzle-orm";
 import { SpanStatusCode } from "@opentelemetry/api";
 import type {
   BotInvocationPublic,
@@ -15,7 +15,6 @@ import { AsyncWorkerRuntime } from "../async/worker";
 import type { AsyncJobHandler, QueueCommand } from "../async/types";
 import { db } from "../db";
 import {
-  botInvocationEvents,
   botInvocations,
   bots,
   botSessions,
@@ -30,12 +29,12 @@ import { publishWsEventToUsers } from "../realtime";
 import { stripBotMention } from "./hermes";
 import { ServiceError } from "./errors";
 import { withSpan } from "../observability";
+import { getBotProgressStore } from "./bot-progress-store";
 
 export const BOT_QUEUE_NAME = "thechat:bots";
 export const BOT_INVOKE_JOB_NAME = "bot.invoke";
 export const HERMES_WEBHOOK_DELIVERY_JOB_NAME = "bot.hermes_webhook.deliver";
 const BOT_RUNTIME_SESSION_LIMIT = 100;
-const BOT_RUNTIME_EVENT_LIMIT = 300;
 
 type BotKind = "webhook" | "hermes";
 type ConversationType = "direct" | "group";
@@ -163,72 +162,82 @@ export async function processMessageMentions(msg: TriggerMessage) {
 }
 
 export async function listConversationBotRuntime(conversationId: string, userId: string): Promise<BotRuntimeSnapshot> {
-  await requireConversationParticipant(conversationId, userId);
+  return withSpan(
+    "bot.runtime.list",
+    {
+      "messaging.system": "thechat",
+      "thechat.conversation_id": conversationId,
+    },
+    async (span) => {
+      await requireConversationParticipant(conversationId, userId);
 
-  const sessionRows = await db
-    .select({
-      id: botSessions.id,
-      botId: botSessions.botId,
-      botUserId: bots.userId,
-      botName: users.name,
-      botKind: bots.kind,
-      workspaceId: botSessions.workspaceId,
-      conversationId: botSessions.conversationId,
-      scope: botSessions.scope,
-      externalSessionId: botSessions.externalSessionId,
-      title: botSessions.title,
-      lastMessageId: botSessions.lastMessageId,
-      createdAt: botSessions.createdAt,
-      updatedAt: botSessions.updatedAt,
-    })
-    .from(botSessions)
-    .innerJoin(bots, eq(botSessions.botId, bots.id))
-    .innerJoin(users, eq(bots.userId, users.id))
-    .where(eq(botSessions.conversationId, conversationId))
-    .orderBy(desc(botSessions.updatedAt))
-    .limit(BOT_RUNTIME_SESSION_LIMIT);
+      const sessionRows = await db
+        .select({
+          id: botSessions.id,
+          botId: botSessions.botId,
+          botUserId: bots.userId,
+          botName: users.name,
+          botKind: bots.kind,
+          workspaceId: botSessions.workspaceId,
+          conversationId: botSessions.conversationId,
+          scope: botSessions.scope,
+          externalSessionId: botSessions.externalSessionId,
+          title: botSessions.title,
+          lastMessageId: botSessions.lastMessageId,
+          createdAt: botSessions.createdAt,
+          updatedAt: botSessions.updatedAt,
+        })
+        .from(botSessions)
+        .innerJoin(bots, eq(botSessions.botId, bots.id))
+        .innerJoin(users, eq(bots.userId, users.id))
+        .where(eq(botSessions.conversationId, conversationId))
+        .orderBy(desc(botSessions.updatedAt))
+        .limit(BOT_RUNTIME_SESSION_LIMIT);
 
-  const invocationRows = await db
-    .select({
-      id: botInvocations.id,
-      botSessionId: botInvocations.botSessionId,
-      botId: botInvocations.botId,
-      botUserId: bots.userId,
-      botName: users.name,
-      botKind: bots.kind,
-      conversationId: botInvocations.conversationId,
-      triggerMessageId: botInvocations.triggerMessageId,
-      responseMessageId: botInvocations.responseMessageId,
-      adapterKind: botInvocations.adapterKind,
-      status: botInvocations.status,
-      externalRunId: botInvocations.externalRunId,
-      requestJson: botInvocations.requestJson,
-      responseJson: botInvocations.responseJson,
-      error: botInvocations.error,
-      startedAt: botInvocations.startedAt,
-      completedAt: botInvocations.completedAt,
-      createdAt: botInvocations.createdAt,
-      updatedAt: botInvocations.updatedAt,
-    })
-    .from(botInvocations)
-    .innerJoin(bots, eq(botInvocations.botId, bots.id))
-    .innerJoin(users, eq(bots.userId, users.id))
-    .where(eq(botInvocations.conversationId, conversationId))
-    .orderBy(desc(botInvocations.createdAt))
-    .limit(50);
+      const invocationRows = await db
+        .select({
+          id: botInvocations.id,
+          botSessionId: botInvocations.botSessionId,
+          botId: botInvocations.botId,
+          botUserId: bots.userId,
+          botName: users.name,
+          botKind: bots.kind,
+          conversationId: botInvocations.conversationId,
+          triggerMessageId: botInvocations.triggerMessageId,
+          responseMessageId: botInvocations.responseMessageId,
+          adapterKind: botInvocations.adapterKind,
+          status: botInvocations.status,
+          externalRunId: botInvocations.externalRunId,
+          requestJson: botInvocations.requestJson,
+          responseJson: botInvocations.responseJson,
+          error: botInvocations.error,
+          startedAt: botInvocations.startedAt,
+          completedAt: botInvocations.completedAt,
+          createdAt: botInvocations.createdAt,
+          updatedAt: botInvocations.updatedAt,
+        })
+        .from(botInvocations)
+        .innerJoin(bots, eq(botInvocations.botId, bots.id))
+        .innerJoin(users, eq(bots.userId, users.id))
+        .where(eq(botInvocations.conversationId, conversationId))
+        .orderBy(desc(botInvocations.createdAt))
+        .limit(50);
 
-  const eventRows = await db
-    .select()
-    .from(botInvocationEvents)
-    .where(eq(botInvocationEvents.conversationId, conversationId))
-    .orderBy(desc(botInvocationEvents.createdAt), desc(botInvocationEvents.sequence))
-    .limit(BOT_RUNTIME_EVENT_LIMIT);
+      const events = await getBotProgressStore().listForInvocations(
+        invocationRows.map((invocation) => invocation.id),
+      );
 
-  return {
-    sessions: sessionRows.map(toPublicSession),
-    invocations: invocationRows.map(toPublicInvocation),
-    events: eventRows.reverse().map(toPublicProgressEvent),
-  };
+      span.setAttribute("thechat.bot_runtime.sessions", sessionRows.length);
+      span.setAttribute("thechat.bot_runtime.invocations", invocationRows.length);
+      span.setAttribute("thechat.bot_runtime.progress_events", events.length);
+
+      return {
+        sessions: sessionRows.map(toPublicSession),
+        invocations: invocationRows.map(toPublicInvocation),
+        events,
+      };
+    },
+  );
 }
 
 export async function getDefaultHermesBotSessionForConversation(conversationId: string, userId: string) {
@@ -1128,39 +1137,24 @@ export async function publishHermesPlatformProgress(
         throw new ServiceError("Conversation does not match invocation", 400);
       }
 
-      const [eventRow] = await db
-        .insert(botInvocationEvents)
-        .values({
-          invocationId: loaded.invocation.id,
-          botId: loaded.bot.id,
-          conversationId: loaded.conversation.id,
-          sequence: sql<number>`(
-            select coalesce(max(${botInvocationEvents.sequence}), 0) + 1
-            from ${botInvocationEvents}
-            where ${botInvocationEvents.invocationId} = ${loaded.invocation.id}
-          )`,
-          eventType: input.type,
-          status: input.status ?? null,
-          toolCallId: input.toolCallId ?? null,
-          toolName: input.toolName ?? null,
-          label: input.label ?? null,
-          preview: input.preview ?? null,
-          payloadJson: input.payload ?? null,
-          occurredAt: input.occurredAt ?? new Date(),
-        })
-        .returning();
-
-      await db
-        .update(botInvocations)
-        .set({ updatedAt: new Date() })
-        .where(eq(botInvocations.id, loaded.invocation.id));
-
       const participantRows = await db
         .select({ userId: conversationParticipants.userId })
         .from(conversationParticipants)
         .where(eq(conversationParticipants.conversationId, loaded.conversation.id));
 
-      const event = toPublicProgressEvent(eventRow);
+      const event = await getBotProgressStore().append({
+        invocationId: loaded.invocation.id,
+        botId: loaded.bot.id,
+        conversationId: loaded.conversation.id,
+        type: input.type,
+        status: input.status ?? null,
+        toolCallId: input.toolCallId ?? null,
+        toolName: input.toolName ?? null,
+        label: input.label ?? null,
+        preview: input.preview ?? null,
+        payload: input.payload ?? null,
+        occurredAt: input.occurredAt ?? new Date(),
+      });
       span.setAttribute("thechat.hermes_progress.sequence", event.sequence);
       await publishWsEventToUsers(participantRows.map((p) => p.userId), {
         type: "bot_invocation_progress",
@@ -1447,39 +1441,5 @@ function toPublicInvocation(row: {
     completedAt: row.completedAt?.toISOString() ?? null,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
-  };
-}
-
-function toPublicProgressEvent(row: {
-  id: string;
-  invocationId: string;
-  botId: string;
-  conversationId: string;
-  sequence: number;
-  eventType: string;
-  status: string | null;
-  toolCallId: string | null;
-  toolName: string | null;
-  label: string | null;
-  preview: string | null;
-  payloadJson: Record<string, unknown> | null;
-  occurredAt: Date;
-  createdAt: Date;
-}): BotInvocationProgressEventPublic {
-  return {
-    id: row.id,
-    invocationId: row.invocationId,
-    botId: row.botId,
-    conversationId: row.conversationId,
-    sequence: row.sequence,
-    type: row.eventType,
-    status: row.status,
-    toolCallId: row.toolCallId,
-    toolName: row.toolName,
-    label: row.label,
-    preview: row.preview,
-    payload: row.payloadJson,
-    occurredAt: row.occurredAt.toISOString(),
-    createdAt: row.createdAt.toISOString(),
   };
 }

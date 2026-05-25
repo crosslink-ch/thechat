@@ -355,42 +355,6 @@ export const botInvocations = pgTable(
   ]
 );
 
-export const botInvocationEvents = pgTable(
-  "bot_invocation_events",
-  {
-    id: uuid("id").defaultRandom().primaryKey(),
-    invocationId: uuid("invocation_id")
-      .notNull()
-      .references(() => botInvocations.id, { onDelete: "cascade" }),
-    botId: uuid("bot_id")
-      .notNull()
-      .references(() => bots.id, { onDelete: "cascade" }),
-    conversationId: uuid("conversation_id")
-      .notNull()
-      .references(() => conversations.id, { onDelete: "cascade" }),
-    sequence: integer("sequence").notNull(),
-    eventType: varchar("event_type", { length: 64 }).notNull(),
-    status: varchar("status", { length: 32 }),
-    toolCallId: text("tool_call_id"),
-    toolName: text("tool_name"),
-    label: text("label"),
-    preview: text("preview"),
-    payloadJson: jsonb("payload_json").$type<Record<string, unknown>>(),
-    occurredAt: timestamp("occurred_at", { withTimezone: true })
-      .defaultNow()
-      .notNull(),
-    createdAt: timestamp("created_at", { withTimezone: true })
-      .defaultNow()
-      .notNull(),
-  },
-  (t) => [
-    index("bot_invocation_events_invocation_id_idx").on(t.invocationId),
-    index("bot_invocation_events_conversation_id_idx").on(t.conversationId),
-    index("bot_invocation_events_bot_id_idx").on(t.botId),
-    index("bot_invocation_events_created_at_idx").on(t.createdAt),
-  ]
-);
-
 export const sessions = pgTable(
   "sessions",
   {
@@ -598,7 +562,7 @@ export const botSessionsRelations = relations(botSessions, ({ one, many }) => ({
 
 export const botInvocationsRelations = relations(
   botInvocations,
-  ({ one, many }) => ({
+  ({ one }) => ({
     botSession: one(botSessions, {
       fields: [botInvocations.botSessionId],
       references: [botSessions.id],
@@ -618,25 +582,6 @@ export const botInvocationsRelations = relations(
     responseMessage: one(messages, {
       fields: [botInvocations.responseMessageId],
       references: [messages.id],
-    }),
-    events: many(botInvocationEvents),
-  })
-);
-
-export const botInvocationEventsRelations = relations(
-  botInvocationEvents,
-  ({ one }) => ({
-    invocation: one(botInvocations, {
-      fields: [botInvocationEvents.invocationId],
-      references: [botInvocations.id],
-    }),
-    bot: one(bots, {
-      fields: [botInvocationEvents.botId],
-      references: [bots.id],
-    }),
-    conversation: one(conversations, {
-      fields: [botInvocationEvents.conversationId],
-      references: [conversations.id],
     }),
   })
 );

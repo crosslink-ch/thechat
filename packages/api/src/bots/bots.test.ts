@@ -1,9 +1,8 @@
-import { describe, test, expect, afterAll } from "bun:test";
+import { describe, test, expect, afterAll, beforeAll } from "bun:test";
 import { Elysia } from "elysia";
 import { asc, eq } from "drizzle-orm";
 import { db } from "../db";
 import {
-  botInvocationEvents,
   botInvocations,
   bots,
   conversationParticipants,
@@ -18,6 +17,11 @@ import { botRuntimeRoutes } from "../bot-runtime";
 import { hermesPlatformRoutes } from "../hermes-platform";
 import { botRoutes } from "./index";
 import { closeBotRuntimeForTests, startBotWorker } from "../services/bot-runtime";
+import {
+  closeBotProgressStoreForTests,
+  createLocalBotProgressStoreForTests,
+  setBotProgressStoreForTests,
+} from "../services/bot-progress-store";
 import {
   closeRealtimeBusForTests,
   RedisRealtimeBus,
@@ -43,8 +47,13 @@ const createdUserEmails: string[] = [];
 const createdWorkspaceIds: string[] = [];
 const createdBotUserIds: string[] = [];
 
+beforeAll(async () => {
+  await setBotProgressStoreForTests(createLocalBotProgressStoreForTests());
+});
+
 afterAll(async () => {
   await closeBotRuntimeForTests();
+  await closeBotProgressStoreForTests();
   await closeRealtimeBusForTests();
   // Clean up bots (cascade from user delete handles bot records)
   for (const id of createdBotUserIds) {
@@ -155,14 +164,6 @@ async function invocationsForMessage(messageId: string) {
     .from(botInvocations)
     .where(eq(botInvocations.triggerMessageId, messageId))
     .orderBy(asc(botInvocations.createdAt));
-}
-
-async function progressEventsForInvocation(invocationId: string) {
-  return db
-    .select()
-    .from(botInvocationEvents)
-    .where(eq(botInvocationEvents.invocationId, invocationId))
-    .orderBy(asc(botInvocationEvents.sequence));
 }
 
 async function startBotWorkerForTest() {
@@ -1232,11 +1233,6 @@ describe("Bots: runtime state", () => {
         const rows = await invocationsForMessage(completed.messageId);
         return rows.find((row) => row.status === "completed" && row.responseMessageId);
       }, "completed Hermes invocation");
-      const storedProgressEvents = await progressEventsForInvocation(completed.invocationId);
-      expect(storedProgressEvents).toHaveLength(1);
-      expect(storedProgressEvents[0].eventType).toBe("tool.started");
-      expect(storedProgressEvents[0].toolName).toBe("shell");
-
       const runtimeRes = await req(
         "GET",
         `/bot-runtime/conversations/${dmRes.body.id}`,

@@ -8,6 +8,7 @@ import type {
 
 const INITIAL_SESSION_LIMIT = 20;
 const SESSION_PAGE_SIZE = 20;
+const MAX_PROGRESS_EVENTS_PER_INVOCATION = 100;
 
 export function mergeRuntimeUpdate(
   prev: BotRuntimeSnapshot | null,
@@ -15,10 +16,11 @@ export function mergeRuntimeUpdate(
   invocation: BotInvocationPublic,
 ): BotRuntimeSnapshot {
   const snapshot = prev ?? { sessions: [], invocations: [], events: [] };
+  const invocations = upsertById(snapshot.invocations, invocation);
   return {
     sessions: session ? upsertById(snapshot.sessions, session) : snapshot.sessions,
-    invocations: upsertById(snapshot.invocations, invocation),
-    events: snapshot.events,
+    invocations,
+    events: pruneProgressEvents(snapshot.events, invocations),
   };
 }
 
@@ -30,7 +32,10 @@ export function mergeRuntimeProgressEvent(
   return {
     sessions: snapshot.sessions,
     invocations: snapshot.invocations,
-    events: upsertById(snapshot.events, event).sort(compareProgressEvents),
+    events: pruneProgressEvents(
+      upsertById(snapshot.events, event),
+      snapshot.invocations,
+    ),
   };
 }
 
@@ -48,6 +53,37 @@ function compareProgressEvents(
   if (byInvocation !== 0) return byInvocation;
   if (a.sequence !== b.sequence) return a.sequence - b.sequence;
   return Date.parse(a.createdAt) - Date.parse(b.createdAt);
+}
+
+function pruneProgressEvents(
+  events: BotInvocationProgressEventPublic[],
+  invocations: BotInvocationPublic[],
+) {
+  const knownInvocationIds = new Set(invocations.map((invocation) => invocation.id));
+  const activeInvocationIds = new Set(
+    invocations
+      .filter((invocation) => invocation.status === "queued" || invocation.status === "running")
+      .map((invocation) => invocation.id),
+  );
+  const sorted = events
+    .filter(
+      (event) =>
+        !knownInvocationIds.has(event.invocationId) ||
+        activeInvocationIds.has(event.invocationId),
+    )
+    .sort(compareProgressEvents);
+  const counts = new Map<string, number>();
+  const kept: BotInvocationProgressEventPublic[] = [];
+
+  for (let index = sorted.length - 1; index >= 0; index -= 1) {
+    const event = sorted[index];
+    const count = counts.get(event.invocationId) ?? 0;
+    if (count >= MAX_PROGRESS_EVENTS_PER_INVOCATION) continue;
+    counts.set(event.invocationId, count + 1);
+    kept.push(event);
+  }
+
+  return kept.reverse();
 }
 
 export function HermesRuntimePanel({

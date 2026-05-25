@@ -55,7 +55,7 @@ export function HermesProgressInline({
                 </div>
               ) : (
                 <div className="pl-4 text-[0.786rem] text-text-dimmed">
-                  Starting Hermes run
+                  {emptyStateLabel(invocation)}
                 </div>
               )}
             </div>
@@ -64,6 +64,19 @@ export function HermesProgressInline({
       })}
     </div>
   );
+}
+
+function emptyStateLabel(invocation: BotInvocationPublic) {
+  if (invocation.status === "queued") return "Queued";
+  if (invocation.status === "running" && olderThan(invocation.startedAt, 30_000)) {
+    return "No recent tool updates";
+  }
+  return "Waiting for the next Hermes update";
+}
+
+function olderThan(iso: string | null, ageMs: number) {
+  if (!iso) return false;
+  return Date.now() - Date.parse(iso) > ageMs;
 }
 
 function ProgressEventRow({ event }: { event: BotInvocationProgressEventPublic }) {
