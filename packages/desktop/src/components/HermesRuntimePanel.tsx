@@ -1,8 +1,12 @@
+import { useEffect, useMemo, useState } from "react";
 import type {
   BotInvocationPublic,
   BotRuntimeSnapshot,
   BotSessionPublic,
 } from "@thechat/shared";
+
+const INITIAL_SESSION_LIMIT = 20;
+const SESSION_PAGE_SIZE = 20;
 
 export function mergeRuntimeUpdate(
   prev: BotRuntimeSnapshot | null,
@@ -42,9 +46,26 @@ export function HermesRuntimePanel({
   onSelectSession?: (sessionId: string) => void;
 }) {
   const sessions = runtime?.sessions ?? [];
-  const invocations = activeSessionId
-    ? (runtime?.invocations ?? []).filter((invocation) => invocation.botSessionId === activeSessionId)
-    : runtime?.invocations ?? [];
+  const invocations = runtime?.invocations ?? [];
+  const [visibleSessionCount, setVisibleSessionCount] = useState(INITIAL_SESSION_LIMIT);
+  const sessionResetKey = `${title}:${botName}:${sessions[0]?.conversationId ?? ""}`;
+  const hasMultipleBots = useMemo(
+    () => new Set(sessions.map((session) => session.botId)).size > 1,
+    [sessions],
+  );
+  const sessionSummaries = useMemo(
+    () =>
+      sessions.map((session, index) =>
+        summarizeSession(session, invocations, index),
+      ),
+    [invocations, sessions],
+  );
+  const visibleSessionSummaries = sessionSummaries.slice(0, visibleSessionCount);
+  const hiddenSessionCount = Math.max(0, sessionSummaries.length - visibleSessionSummaries.length);
+
+  useEffect(() => {
+    setVisibleSessionCount(INITIAL_SESSION_LIMIT);
+  }, [sessionResetKey]);
 
   return (
     <aside className="hidden w-80 shrink-0 flex-col border-l border-border bg-surface/70 lg:flex">
@@ -73,40 +94,34 @@ export function HermesRuntimePanel({
             <div className="text-[0.857rem] text-text-placeholder">No sessions yet</div>
           ) : (
             <div className="space-y-2">
-              {sessions.map((session) => (
+              {visibleSessionSummaries.map((summary) => (
+                <SessionRow
+                  key={summary.session.id}
+                  summary={summary}
+                  active={activeSessionId === summary.session.id}
+                  selectable={!!onSelectSession}
+                  showBotName={hasMultipleBots}
+                  onSelect={() => onSelectSession?.(summary.session.id)}
+                />
+              ))}
+              {hiddenSessionCount > 0 && (
                 <button
                   type="button"
-                  key={session.id}
-                  className={`w-full rounded-md border px-3 py-2 text-left transition-colors ${
-                    activeSessionId === session.id
-                      ? "border-accent/50 bg-accent/10"
-                      : "border-border bg-background hover:bg-hover"
-                  } ${onSelectSession ? "cursor-pointer" : "cursor-default"}`}
-                  onClick={() => onSelectSession?.(session.id)}
+                  className="w-full rounded-md border border-border bg-raised px-3 py-2 text-[0.786rem] font-medium text-text-muted transition-colors hover:bg-hover hover:text-text"
+                  onClick={() =>
+                    setVisibleSessionCount((count) =>
+                      Math.min(count + SESSION_PAGE_SIZE, sessionSummaries.length),
+                    )
+                  }
                 >
-                  <div className="truncate text-[0.857rem] font-medium text-text">
-                    {session.title || "Conversation"}
-                  </div>
-                  <div className="mt-1 truncate text-[0.714rem] text-text-dimmed">
-                    {session.externalSessionId ?? session.id}
-                  </div>
+                  Show {Math.min(SESSION_PAGE_SIZE, hiddenSessionCount)} more
                 </button>
-              ))}
-            </div>
-          )}
-        </section>
-
-        <section>
-          <div className="mb-2 text-[0.786rem] font-medium uppercase text-text-dimmed">Activity</div>
-          {loading && invocations.length === 0 ? (
-            <div className="text-[0.857rem] text-text-placeholder">Loading...</div>
-          ) : invocations.length === 0 ? (
-            <div className="text-[0.857rem] text-text-placeholder">No activity yet</div>
-          ) : (
-            <div className="space-y-2">
-              {invocations.map((invocation) => (
-                <InvocationRow key={invocation.id} invocation={invocation} />
-              ))}
+              )}
+              {sessionSummaries.length > INITIAL_SESSION_LIMIT && (
+                <div className="px-1 text-center text-[0.714rem] text-text-dimmed">
+                  Showing {visibleSessionSummaries.length} of {sessionSummaries.length} recent sessions
+                </div>
+              )}
             </div>
           )}
         </section>
@@ -115,30 +130,62 @@ export function HermesRuntimePanel({
   );
 }
 
-function InvocationRow({ invocation }: { invocation: BotInvocationPublic }) {
-  const partial = typeof invocation.responseJson?.partialOutput === "string"
-    ? invocation.responseJson.partialOutput
-    : "";
-  const output = typeof invocation.responseJson?.output === "string"
-    ? invocation.responseJson.output
-    : partial;
-
+function SessionRow({
+  summary,
+  active,
+  selectable,
+  showBotName,
+  onSelect,
+}: {
+  summary: SessionSummary;
+  active: boolean;
+  selectable: boolean;
+  showBotName: boolean;
+  onSelect: () => void;
+}) {
   return (
-    <div className="rounded-md border border-border bg-background px-3 py-2">
-      <div className="mb-1 flex items-center justify-between gap-2">
-        <span className="text-[0.857rem] font-medium text-text">{formatInvocationTime(invocation.createdAt)}</span>
-        <StatusPill status={invocation.status} />
+    <button
+      type="button"
+      className={`w-full rounded-md border px-3 py-2 text-left transition-colors ${
+        active
+          ? "border-accent/50 bg-accent/10"
+          : "border-border bg-background hover:bg-hover"
+      } ${selectable ? "cursor-pointer" : "cursor-default"}`}
+      onClick={onSelect}
+    >
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0 flex-1 truncate text-[0.857rem] font-medium text-text">
+          {summary.title}
+        </div>
+        {summary.latestInvocation && <StatusPill status={summary.latestInvocation.status} />}
       </div>
-      {invocation.externalRunId && (
-        <div className="truncate text-[0.714rem] text-text-dimmed">{invocation.externalRunId}</div>
+
+      <div className="mt-1 flex min-w-0 items-center gap-1.5 text-[0.714rem] text-text-dimmed">
+        {showBotName && (
+          <>
+            <span className="truncate">{summary.session.botName}</span>
+            <span className="shrink-0">/</span>
+          </>
+        )}
+        <span className="shrink-0">{summary.activityLabel}</span>
+        {summary.invocationCount > 1 && (
+          <>
+            <span className="shrink-0">/</span>
+            <span className="shrink-0">{summary.invocationCount} runs</span>
+          </>
+        )}
+      </div>
+
+      {summary.preview ? (
+        <div className="mt-2 line-clamp-2 text-[0.786rem] leading-5 text-text-muted">
+          {summary.preview}
+        </div>
+      ) : (
+        <div className="mt-2 text-[0.786rem] leading-5 text-text-placeholder">
+          No messages yet
+        </div>
       )}
-      {output && (
-        <div className="mt-2 line-clamp-3 text-[0.786rem] leading-5 text-text-muted">{output}</div>
-      )}
-      {invocation.error && (
-        <div className="mt-2 line-clamp-3 text-[0.786rem] leading-5 text-error-bright">{invocation.error}</div>
-      )}
-    </div>
+    </button>
   );
 }
 
@@ -163,4 +210,77 @@ function StatusPill({ status }: { status: string }) {
 function formatInvocationTime(iso: string) {
   const date = new Date(iso);
   return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+interface SessionSummary {
+  session: BotSessionPublic;
+  title: string;
+  activityLabel: string;
+  preview: string;
+  invocationCount: number;
+  latestInvocation: BotInvocationPublic | null;
+}
+
+function summarizeSession(
+  session: BotSessionPublic,
+  invocations: BotInvocationPublic[],
+  index: number,
+): SessionSummary {
+  const sessionInvocations = invocations.filter(
+    (invocation) => invocation.botSessionId === session.id,
+  );
+  const latestInvocation = latestByUpdatedAt(sessionInvocations);
+
+  return {
+    session,
+    title: sessionTitle(session, index),
+    activityLabel: latestInvocation
+      ? `Last run ${formatSessionTime(latestInvocation.updatedAt)}`
+      : `Created ${formatSessionTime(session.createdAt)}`,
+    preview: latestInvocation ? invocationPreview(latestInvocation) : "",
+    invocationCount: sessionInvocations.length,
+    latestInvocation,
+  };
+}
+
+function sessionTitle(session: BotSessionPublic, index: number) {
+  const title = session.title?.trim();
+  if (title) return title;
+  const isDefaultSession = !session.externalSessionId?.includes(":session:");
+  if (isDefaultSession) return "Default session";
+  return `Session ${index + 1}`;
+}
+
+function latestByUpdatedAt(invocations: BotInvocationPublic[]) {
+  let latest: BotInvocationPublic | null = null;
+  for (const invocation of invocations) {
+    if (!latest || Date.parse(invocation.updatedAt) > Date.parse(latest.updatedAt)) {
+      latest = invocation;
+    }
+  }
+  return latest;
+}
+
+function invocationPreview(invocation: BotInvocationPublic) {
+  return (
+    textField(invocation.requestJson, "text") ||
+    textField(invocation.requestJson, "messageContent") ||
+    textField(invocation.responseJson, "output") ||
+    textField(invocation.responseJson, "partialOutput") ||
+    invocation.error ||
+    ""
+  );
+}
+
+function textField(source: Record<string, unknown> | null, key: string) {
+  const value = source?.[key];
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function formatSessionTime(iso: string) {
+  const date = new Date(iso);
+  const now = new Date();
+  const sameDay = date.toDateString() === now.toDateString();
+  if (sameDay) return formatInvocationTime(iso);
+  return date.toLocaleDateString([], { month: "short", day: "numeric" });
 }

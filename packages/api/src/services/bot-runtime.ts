@@ -32,6 +32,7 @@ import { withSpan } from "../observability";
 export const BOT_QUEUE_NAME = "thechat:bots";
 export const BOT_INVOKE_JOB_NAME = "bot.invoke";
 export const HERMES_WEBHOOK_DELIVERY_JOB_NAME = "bot.hermes_webhook.deliver";
+const BOT_RUNTIME_SESSION_LIMIT = 100;
 
 type BotKind = "webhook" | "hermes";
 type ConversationType = "direct" | "group";
@@ -166,7 +167,8 @@ export async function listConversationBotRuntime(conversationId: string, userId:
     .innerJoin(bots, eq(botSessions.botId, bots.id))
     .innerJoin(users, eq(bots.userId, users.id))
     .where(eq(botSessions.conversationId, conversationId))
-    .orderBy(desc(botSessions.updatedAt));
+    .orderBy(desc(botSessions.updatedAt))
+    .limit(BOT_RUNTIME_SESSION_LIMIT);
 
   const invocationRows = await db
     .select({
