@@ -204,7 +204,7 @@ THECHAT_BOT_TOKEN=$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["
 curl -sS -X PATCH "$API/bots/$BOT_ID/hermes" \
   -H "Authorization: Bearer $TOKEN" \
   -H 'Content-Type: application/json' \
-  -d '{"defaultInstructions":"Reply concisely."}'
+  -d '{"defaultInstructions":"Reply concisely in TheChat."}'
 
 CHANNEL_ID=$(curl -sS "$API/workspaces/$WORKSPACE_ID" \
   -H "Authorization: Bearer $TOKEN" \

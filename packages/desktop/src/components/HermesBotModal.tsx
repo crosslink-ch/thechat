@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
+import { DEFAULT_HERMES_THECHAT_INSTRUCTIONS } from "@thechat/shared";
 import { create } from "zustand";
 import { API_URL, api } from "../lib/api";
 import { useAuthStore } from "../stores/auth";
 import { requestInputBarFocus } from "../stores/input-focus";
 import { useWorkspacesStore } from "../stores/workspaces";
 
-const DEFAULT_INSTRUCTIONS = "Reply concisely in TheChat.";
+const DEFAULT_INSTRUCTIONS = DEFAULT_HERMES_THECHAT_INSTRUCTIONS;
 
 const useHermesBotModalState = create(() => ({ open: false }));
 

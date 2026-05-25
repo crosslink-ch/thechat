@@ -279,6 +279,25 @@ export interface BotWithApiKey extends Bot {
 export type HermesDefaultMode = "run" | "response";
 export type HermesSessionScope = "channel" | "thread" | "workspace";
 
+export const THECHAT_LATEX_FORMATTING_INSTRUCTIONS = `# LaTeX math formatting
+- TheChat renders LaTeX math in markdown.
+- For **inline math**, use double-dollar delimiters with no spaces inside, like \`$$E = mc^2$$\`.
+- For **block math**, use either a standalone double-dollar block:
+  \`\`\`
+  $$
+  \\int_0^1 x^2 \\, dx = \\frac{1}{3}
+  $$
+  \`\`\`
+  or a fenced math block:
+  \`\`\`math
+  \\int_0^1 x^2 \\, dx = \\frac{1}{3}
+  \`\`\`
+- Do **not** use single-dollar inline math such as \`$x$\`; single dollars are treated as normal text to avoid conflicts with currency and shell variables.
+- Escape literal dollar signs as \`\\$\` when needed.
+- Keep LaTeX out of code fences unless you intentionally want a math block.`;
+
+export const DEFAULT_HERMES_THECHAT_INSTRUCTIONS = "Reply concisely in TheChat.";
+
 export interface HermesBotConfigPublic {
   botId: string;
   defaultMode: HermesDefaultMode;

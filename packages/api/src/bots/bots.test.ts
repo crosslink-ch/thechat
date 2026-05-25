@@ -1174,6 +1174,7 @@ describe("Bots: runtime state", () => {
       const claimRes = await req("GET", "/hermes-platform/events?limit=1", undefined, botRes.body.apiKey);
       expect(claimRes.status).toBe(200);
       expect(claimRes.body.events).toHaveLength(1);
+      expect(claimRes.body.events[0].instructions).toBeNull();
       return {
         messageId: sendRes.body.id as string,
         invocationId: claimRes.body.events[0].invocationId as string,
@@ -1378,6 +1379,7 @@ describe("Bots: runtime state", () => {
       expect(receivedAuthorization).toBe(`Bearer ${botRes.body.apiKey}`);
       expect(delivery.payload.type).toBe("thechat.hermes_platform.event");
       expect(delivery.payload.event.text).toBe("Handle this over the platform webhook");
+      expect(delivery.payload.event.instructions).toBeNull();
       expect(delivery.payload.event.bot.id).toBe(botRes.body.id);
       const [invocation] = await invocationsForMessage(sendRes.body.id);
       expect(invocation.status).toBe("running");

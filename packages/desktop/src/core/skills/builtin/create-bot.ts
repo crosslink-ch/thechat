@@ -150,6 +150,9 @@ Body: {
 }
 \`\`\`
 
+Hermes Gateway's TheChat platform hint includes TheChat LaTeX math formatting
+rules, so default instructions only need bot-specific behavior.
+
 To validate TheChat-side bot configuration:
 
 \`\`\`
