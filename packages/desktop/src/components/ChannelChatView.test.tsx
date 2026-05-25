@@ -1,10 +1,14 @@
-import { describe, expect, it, beforeAll, vi } from "vitest";
+import { describe, expect, it, beforeAll, beforeEach, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import type { BotInvocationPublic } from "@thechat/shared";
 import { ChannelChatView } from "./ChannelChatView";
 
 beforeAll(() => {
   Element.prototype.scrollIntoView = vi.fn();
+});
+
+beforeEach(() => {
+  vi.mocked(Element.prototype.scrollIntoView).mockClear();
 });
 
 describe("ChannelChatView Hermes progress", () => {
@@ -53,6 +57,32 @@ describe("ChannelChatView Hermes progress", () => {
     );
 
     expect(screen.queryByText("Koda is typing...")).toBeNull();
+  });
+
+  it("does not use scrollIntoView for automatic chat scrolling", () => {
+    render(
+      <ChannelChatView
+        messages={[
+          {
+            id: "message-1",
+            conversationId: "conversation-1",
+            senderId: "bot-user-1",
+            senderName: "Koda",
+            senderType: "bot",
+            content: "A long message with display math\n\n\\[x_{t+1}=x_t-\\eta f'(x_t)\\]",
+            createdAt: "2026-01-01T00:00:00.000Z",
+            botSessionId: "session-1",
+          },
+        ]}
+        loading={false}
+        typingUsers={new Map()}
+        progressInvocations={[]}
+        progressEvents={[]}
+        onSend={() => {}}
+      />,
+    );
+
+    expect(Element.prototype.scrollIntoView).not.toHaveBeenCalled();
   });
 });
 

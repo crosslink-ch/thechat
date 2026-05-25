@@ -40,10 +40,12 @@ export function ChannelChatView({
   onSend,
   mentions,
 }: ChannelChatViewProps) {
-  const endRef = useRef<HTMLDivElement>(null);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: "smooth" });
+    const scrollContainer = scrollContainerRef.current;
+    if (!scrollContainer) return;
+    scrollContainer.scrollTop = scrollContainer.scrollHeight;
   }, [messages, progressEvents, progressInvocations, typingSuppressedUserIds, typingUsers]);
 
   const handleSend = useCallback(
@@ -64,7 +66,7 @@ export function ChannelChatView({
 
   return (
     <>
-      <div className="flex flex-1 flex-col overflow-y-auto">
+      <div ref={scrollContainerRef} className="flex flex-1 flex-col overflow-y-auto">
         {loading && (
           <div className="flex flex-1 flex-col items-center justify-center text-[1rem] text-text-placeholder">Loading messages...</div>
         )}
@@ -94,7 +96,6 @@ export function ChannelChatView({
             {visibleTypingNames.join(", ")} {visibleTypingNames.length === 1 ? "is" : "are"} typing...
           </div>
         )}
-        <div ref={endRef} />
       </div>
       <InputBar convId={undefined} onSend={handleSend} onStop={noop} mentions={mentions} />
     </>
