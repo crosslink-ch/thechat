@@ -16,7 +16,7 @@ export type WsEvents = {
   };
   "ws:bot_invocation_updated": {
     conversationId: string;
-    session: BotSessionPublic | null;
+    context: BotSessionPublic | null;
     invocation: BotInvocationPublic;
   };
   "ws:bot_invocation_progress": {

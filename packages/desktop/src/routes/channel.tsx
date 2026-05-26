@@ -7,7 +7,6 @@ import { useConversationsStore } from "../stores/conversations";
 import { useWorkspacesStore } from "../stores/workspaces";
 import { useChannelChat } from "../hooks/useChannelChat";
 import { ChannelChatView } from "../components/ChannelChatView";
-import { HermesRuntimePanel } from "../components/HermesRuntimePanel";
 import { wsEvents, type WsEvents } from "../lib/ws-events";
 import { selectHermesConversationProgress } from "../lib/hermes-progress";
 
@@ -43,7 +42,6 @@ export function ChannelRoute() {
   );
   const runtimeQuery = useBotRuntime(channelId, token, hermesBotNames.length > 0);
   const runtime = runtimeQuery.data ?? null;
-  const runtimeLoading = runtimeQuery.isLoading;
   const { mergeInvocationUpdate, mergeProgressEvent } = useBotRuntimeCache();
   const activeHermesProgress = useMemo(
     () => selectHermesConversationProgress(runtime),
@@ -89,11 +87,11 @@ export function ChannelRoute() {
     };
     const onBotInvocationUpdated = ({
       conversationId,
-      session,
+      context,
       invocation,
     }: WsEvents["ws:bot_invocation_updated"]) => {
       if (conversationId !== channelId) return;
-      mergeInvocationUpdate(channelId, session, invocation);
+      mergeInvocationUpdate(channelId, context, invocation);
     };
     const onBotInvocationProgress = ({
       conversationId,
@@ -126,22 +124,6 @@ export function ChannelRoute() {
     setTypingUsers(new Map());
   }, [channelId]);
 
-  const visibleRuntime = runtime
-    ? {
-        ...runtime,
-        sessions: runtime.sessions.filter((s) => s.botKind === "hermes"),
-        invocations: runtime.invocations.filter((i) => i.botKind === "hermes"),
-        events: runtime.events.filter((event) =>
-          runtime.invocations.some(
-            (invocation) =>
-              invocation.botKind === "hermes" &&
-              invocation.id === event.invocationId,
-          ),
-        ),
-      }
-    : null;
-  const showHermesPanel = hermesBotNames.length > 0;
-
   return (
     <div className="flex min-h-0 flex-1">
       <div className="flex min-w-0 flex-1 flex-col">
@@ -156,14 +138,6 @@ export function ChannelRoute() {
           mentions={mentions}
         />
       </div>
-      {showHermesPanel && (
-        <HermesRuntimePanel
-          title="Hermes Bots"
-          botName={hermesBotNames.join(", ")}
-          runtime={visibleRuntime}
-          loading={runtimeLoading}
-        />
-      )}
     </div>
   );
 }

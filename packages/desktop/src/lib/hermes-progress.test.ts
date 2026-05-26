@@ -4,61 +4,63 @@ import type {
   BotInvocationPublic,
   BotRuntimeSnapshot,
 } from "@thechat/shared";
-import {
-  selectHermesConversationProgress,
-  selectHermesSessionProgress,
-} from "./hermes-progress";
+import { selectHermesConversationProgress } from "./hermes-progress";
 
 describe("Hermes progress selectors", () => {
-  it("scopes visible progress to the selected Hermes session", () => {
+  it("shows active Hermes progress across the continuous conversation", () => {
     const snapshot = runtime({
       invocations: [
         invocation({
-          id: "invocation-session-1",
-          botSessionId: "session-1",
+          id: "invocation-context-1",
+          botSessionId: "context-1",
           botUserId: "bot-user-1",
         }),
         invocation({
-          id: "invocation-session-2",
-          botSessionId: "session-2",
+          id: "invocation-context-2",
+          botSessionId: "context-2",
           botUserId: "bot-user-1",
         }),
       ],
       events: [
-        progressEvent({ id: "event-session-1", invocationId: "invocation-session-1" }),
-        progressEvent({ id: "event-session-2", invocationId: "invocation-session-2" }),
+        progressEvent({ id: "event-context-1", invocationId: "invocation-context-1" }),
+        progressEvent({ id: "event-context-2", invocationId: "invocation-context-2" }),
       ],
     });
 
-    const selected = selectHermesSessionProgress(snapshot, "session-2");
+    const selected = selectHermesConversationProgress(snapshot);
 
     expect(selected.invocations.map((invocation) => invocation.id)).toEqual([
-      "invocation-session-2",
+      "invocation-context-1",
+      "invocation-context-2",
     ]);
-    expect(selected.events.map((event) => event.id)).toEqual(["event-session-2"]);
+    expect(selected.events.map((event) => event.id)).toEqual([
+      "event-context-1",
+      "event-context-2",
+    ]);
     expect(selected.typingSuppressedUserIds).toEqual(["bot-user-1"]);
   });
 
-  it("suppresses typing for all active Hermes bots even when another session is selected", () => {
+  it("suppresses typing for all active Hermes bots", () => {
     const snapshot = runtime({
       invocations: [
         invocation({
-          id: "selected-session",
-          botSessionId: "session-2",
+          id: "first-bot",
+          botSessionId: "context-2",
           botUserId: "bot-user-1",
         }),
         invocation({
-          id: "other-session",
-          botSessionId: "session-1",
+          id: "second-bot",
+          botSessionId: "context-1",
           botUserId: "bot-user-2",
         }),
       ],
     });
 
-    const selected = selectHermesSessionProgress(snapshot, "session-2");
+    const selected = selectHermesConversationProgress(snapshot);
 
     expect(selected.invocations.map((invocation) => invocation.id)).toEqual([
-      "selected-session",
+      "first-bot",
+      "second-bot",
     ]);
     expect(selected.typingSuppressedUserIds.sort()).toEqual([
       "bot-user-1",

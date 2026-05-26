@@ -100,7 +100,7 @@ export async function getHermesBotCapabilities(botId: string, userId: string) {
     directMessages: true,
     workspaceBots: true,
     multipleBotsPerWorkspace: true,
-    sessions: true,
+    continuousConversation: true,
     runtimeEvents: true,
   };
 }

@@ -690,18 +690,18 @@ describe("Bots: DM with bot", () => {
 
   });
 
-  test("Hermes DM sessions isolate message history", async () => {
-    const human = await registerUser("HermesSessionOwner");
+  test("Hermes DMs keep one continuous history on an internal continuity handle", async () => {
+    const human = await registerUser("HermesContinuityOwner");
 
     const wsRes = await req(
       "POST",
       "/workspaces/create",
-      { name: "Hermes Sessions WS" },
+      { name: "Hermes Continuity WS" },
       human.token
     );
     createdWorkspaceIds.push(wsRes.body.id);
 
-    const botRes = await createBot(human.token, "HermesSessions", undefined, {
+    const botRes = await createBot(human.token, "HermesContinuity", undefined, {
       kind: "hermes",
       workspaceId: wsRes.body.id,
     });
@@ -719,52 +719,44 @@ describe("Bots: DM with bot", () => {
     const firstSend = await req(
       "POST",
       `/messages/${dmId}`,
-      { content: "first session message" },
+      { content: "first message" },
       human.token
     );
     expect(firstSend.status).toBe(200);
-    const defaultSessionId = firstSend.body.botSessionId;
-    expect(defaultSessionId).toBeDefined();
-
-    const newSession = await req(
-      "POST",
-      `/bot-runtime/conversations/${dmId}/sessions`,
-      {},
-      human.token
-    );
-    expect(newSession.status).toBe(200);
-    expect(newSession.body.id).not.toBe(defaultSessionId);
+    const continuityId = firstSend.body.botSessionId;
+    expect(continuityId).toBeDefined();
 
     const secondSend = await req(
       "POST",
       `/messages/${dmId}`,
-      { content: "second session message", botSessionId: newSession.body.id },
+      { content: "second message" },
       human.token
     );
     expect(secondSend.status).toBe(200);
-    expect(secondSend.body.botSessionId).toBe(newSession.body.id);
+    expect(secondSend.body.botSessionId).toBe(continuityId);
 
-    const defaultHistory = await req(
+    const history = await req(
       "GET",
-      `/messages/${dmId}?botSessionId=${defaultSessionId}`,
+      `/messages/${dmId}`,
       undefined,
       human.token
     );
-    expect(defaultHistory.status).toBe(200);
-    expect(defaultHistory.body.map((m: any) => m.content)).toEqual([
-      "first session message",
+    expect(history.status).toBe(200);
+    expect(history.body.map((m: any) => m.content)).toEqual([
+      "first message",
+      "second message",
     ]);
 
-    const newHistory = await req(
+    const runtime = await req(
       "GET",
-      `/messages/${dmId}?botSessionId=${newSession.body.id}`,
+      `/bot-runtime/conversations/${dmId}`,
       undefined,
       human.token
     );
-    expect(newHistory.status).toBe(200);
-    expect(newHistory.body.map((m: any) => m.content)).toEqual([
-      "second session message",
-    ]);
+    expect(runtime.status).toBe(200);
+    expect(runtime.body.sessions).toContainEqual(
+      expect.objectContaining({ id: continuityId }),
+    );
   });
 });
 
@@ -1452,13 +1444,13 @@ describe("Bots: runtime state", () => {
     }
   });
 
-  test("keeps Hermes invocations and messages isolated across two DM sessions", async () => {
-    const human = await registerUser("RuntimeHermesTwoSessionsOwner");
+  test("keeps concurrent Hermes DM invocations visible in one continuous context", async () => {
+    const human = await registerUser("RuntimeHermesContinuityOwner");
     const { workspaceId } = await createWorkspaceWithGeneralChannel(
       human.token,
-      "Runtime Hermes Two Sessions",
+      "Runtime Hermes Continuity",
     );
-    const botRes = await createBot(human.token, "RuntimeHermesTwoSessions", undefined, {
+    const botRes = await createBot(human.token, "RuntimeHermesContinuity", undefined, {
       kind: "hermes",
       workspaceId,
     });
@@ -1472,19 +1464,11 @@ describe("Bots: runtime state", () => {
     );
     expect(dmRes.status).toBe(200);
 
-    const secondSessionRes = await req(
-      "POST",
-      `/bot-runtime/conversations/${dmRes.body.id}/sessions`,
-      {},
-      human.token,
-    );
-    expect(secondSessionRes.status).toBe(200);
-
-    async function sendAndClaim(content: string, botSessionId?: string | null) {
+    async function sendAndClaim(content: string) {
       const sendRes = await req(
         "POST",
         `/messages/${dmRes.body.id}`,
-        botSessionId ? { content, botSessionId } : { content },
+        { content },
         human.token,
       );
       expect(sendRes.status).toBe(200);
@@ -1504,12 +1488,18 @@ describe("Bots: runtime state", () => {
       };
     }
 
-    const first = await sendAndClaim("First session prompt");
-    const second = await sendAndClaim("Second session prompt", secondSessionRes.body.id);
-    expect(first.botSessionId).not.toBe(second.botSessionId);
+    const first = await sendAndClaim("First prompt");
+    const second = await sendAndClaim("Second prompt");
+    expect(first.botSessionId).toBe(second.botSessionId);
     expect(first.event.session.id).toBe(first.botSessionId);
     expect(second.event.session.id).toBe(second.botSessionId);
-    expect(first.event.chatId).not.toBe(second.event.chatId);
+    expect(first.event.chatId).toBe(second.event.chatId);
+    expect(first.event.continuity).toEqual(
+      expect.objectContaining({
+        id: first.botSessionId,
+        externalChatId: first.event.chatId,
+      }),
+    );
 
     const firstProgressRes = await req(
       "POST",
@@ -1519,7 +1509,7 @@ describe("Bots: runtime state", () => {
         status: "running",
         toolCallId: "first-call",
         toolName: "shell",
-        label: "First session tool",
+        label: "First tool",
       },
       botRes.body.apiKey,
     );
@@ -1532,7 +1522,7 @@ describe("Bots: runtime state", () => {
         status: "running",
         toolCallId: "second-call",
         toolName: "shell",
-        label: "Second session tool",
+        label: "Second tool",
       },
       botRes.body.apiKey,
     );
@@ -1577,7 +1567,7 @@ describe("Bots: runtime state", () => {
       "/hermes-platform/messages",
       {
         invocationId: first.invocationId,
-        content: "First session answer",
+        content: "First answer",
         complete: false,
       },
       botRes.body.apiKey,
@@ -1586,7 +1576,7 @@ describe("Bots: runtime state", () => {
     const firstCompleteRes = await req(
       "POST",
       `/hermes-platform/invocations/${first.invocationId}/completed`,
-      { reason: "first session done" },
+      { reason: "first run done" },
       botRes.body.apiKey,
     );
     expect(firstCompleteRes.status).toBe(200);
@@ -1617,15 +1607,12 @@ describe("Bots: runtime state", () => {
 
     expect(
       await messageContentsForBotSession(dmRes.body.id, first.botSessionId),
-    ).toEqual(["First session prompt", "First session answer"]);
-    expect(
-      await messageContentsForBotSession(dmRes.body.id, second.botSessionId),
-    ).toEqual(["Second session prompt"]);
+    ).toEqual(["First prompt", "Second prompt", "First answer"]);
 
     const secondCancelRes = await req(
       "POST",
       `/hermes-platform/invocations/${second.invocationId}/cancelled`,
-      { reason: "second session stopped" },
+      { reason: "second run stopped" },
       botRes.body.apiKey,
     );
     expect(secondCancelRes.status).toBe(200);

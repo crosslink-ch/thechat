@@ -9,22 +9,18 @@ const MESSAGE_CACHE_TTL_MS = 60_000;
 interface UseChannelChatOptions {
   conversationId: string | null;
   token: string | null;
-  botSessionId?: string | null;
-  wsSendMessage: (conversationId: string, content: string, botSessionId?: string | null) => void;
+  wsSendMessage: (conversationId: string, content: string) => void;
 }
 
-export const messagesQueryKey = (
-  conversationId: string,
-  botSessionId: string | null | undefined,
-) => ["messages", conversationId, botSessionId ?? "all"] as const;
+export const messagesQueryKey = (conversationId: string) =>
+  ["messages", conversationId] as const;
 
 async function fetchMessages(
   conversationId: string,
   token: string,
-  botSessionId: string | null | undefined,
 ): Promise<ChatMessage[]> {
   const { data, error } = await api.messages({ conversationId }).get({
-    query: { limit: 50, botSessionId: botSessionId ?? undefined },
+    query: { limit: 50 },
     ...authHeaders(token),
   });
 
@@ -38,15 +34,14 @@ async function fetchMessages(
 export function useChannelChat({
   conversationId,
   token,
-  botSessionId,
   wsSendMessage,
 }: UseChannelChatOptions) {
   const queryClient = useQueryClient();
   const query = useQuery({
     queryKey: conversationId
-      ? messagesQueryKey(conversationId, botSessionId)
+      ? messagesQueryKey(conversationId)
       : ["messages", "disabled"],
-    queryFn: () => fetchMessages(conversationId!, token!, botSessionId),
+    queryFn: () => fetchMessages(conversationId!, token!),
     enabled: !!conversationId && !!token,
     staleTime: MESSAGE_CACHE_TTL_MS,
   });
@@ -54,36 +49,23 @@ export function useChannelChat({
   const addMessage = useCallback(
     (msg: ChatMessage) => {
       if (msg.conversationId !== conversationId) return;
-      const upsertMessage = (
-        key: ReturnType<typeof messagesQueryKey>,
-        createIfMissing: boolean,
-      ) => {
-        if (!createIfMissing && queryClient.getQueryData(key) === undefined) return;
-        queryClient.setQueryData<ChatMessage[]>(key, (prev = []) => {
+      queryClient.setQueryData<ChatMessage[]>(
+        messagesQueryKey(conversationId),
+        (prev = []) => {
           if (prev.some((m) => m.id === msg.id)) return prev;
           return [...prev, msg];
-        });
-      };
-
-      const activeKey = messagesQueryKey(conversationId, botSessionId);
-      if (botSessionId == null || msg.botSessionId === botSessionId) {
-        upsertMessage(activeKey, true);
-      }
-
-      if (msg.botSessionId) {
-        upsertMessage(messagesQueryKey(conversationId, msg.botSessionId), false);
-      }
-      upsertMessage(messagesQueryKey(conversationId, undefined), false);
+        },
+      );
     },
-    [botSessionId, conversationId, queryClient],
+    [conversationId, queryClient],
   );
 
   const sendMessage = useCallback(
     (content: string) => {
       if (!conversationId) return;
-      wsSendMessage(conversationId, content, botSessionId);
+      wsSendMessage(conversationId, content);
     },
-    [botSessionId, conversationId, wsSendMessage],
+    [conversationId, wsSendMessage],
   );
 
   const refetchMessages = useCallback(() => {

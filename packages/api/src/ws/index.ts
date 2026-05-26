@@ -100,11 +100,10 @@ async function handleSendMessage(
   userName: string,
   conversationId: string,
   content: string,
-  botSessionId?: string | null,
 ) {
   let msg;
   try {
-    msg = await sendMessage(conversationId, userId, userName, content, { botSessionId });
+    msg = await sendMessage(conversationId, userId, userName, content);
   } catch (e) {
     if (e instanceof ServiceError) {
       sendTo(ws, { type: "error", message: e.message });
@@ -224,7 +223,6 @@ export const wsRoutes = new Elysia().ws("/ws", {
         socketUser.name,
         event.conversationId,
         event.content,
-        event.botSessionId ?? null,
       );
     } else if (event.type === "typing") {
       await handleTyping(

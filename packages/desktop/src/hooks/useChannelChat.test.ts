@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import type { ChatMessage } from "@thechat/shared";
-import { messagesQueryKey, useChannelChat } from "./useChannelChat";
+import { useChannelChat } from "./useChannelChat";
 import { api } from "../lib/api";
 import { createQueryWrapper, createTestQueryClient } from "../test-utils/query";
 
@@ -138,7 +138,7 @@ describe("useChannelChat", () => {
     });
   });
 
-  it("filters live messages and sends with the active bot session", async () => {
+  it("keeps continuous live history and sends without a bot context", async () => {
     const history = deferred<{ data: ChatMessage[] }>();
     const get = vi.fn(() => history.promise);
     vi.mocked(api.messages).mockReturnValue({ get } as any);
@@ -149,7 +149,6 @@ describe("useChannelChat", () => {
         useChannelChat({
           conversationId: "dm-hermes",
           token: "test-token",
-          botSessionId: "session-active",
           wsSendMessage,
         }),
       { wrapper: createQueryWrapper() },
@@ -157,12 +156,12 @@ describe("useChannelChat", () => {
 
     await waitFor(() => expect(api.messages).toHaveBeenCalledTimes(1));
     expect(get).toHaveBeenCalledWith({
-      query: { limit: 50, botSessionId: "session-active" },
+      query: { limit: 50 },
       headers: { authorization: "Bearer test-token" },
     });
 
     act(() => {
-      history.resolve({ data: [sessionMessage("dm-hermes", "session-active", "active history")] });
+      history.resolve({ data: [sessionMessage("dm-hermes", "context-1", "active history")] });
     });
 
     await waitFor(() => {
@@ -170,58 +169,19 @@ describe("useChannelChat", () => {
     });
 
     act(() => {
-      result.current.addMessage(sessionMessage("dm-hermes", "session-other", "other live"));
-      result.current.addMessage(sessionMessage("dm-hermes", "session-active", "active live"));
+      result.current.addMessage(sessionMessage("dm-hermes", "context-2", "other live"));
+      result.current.addMessage(sessionMessage("dm-hermes", "context-1", "active live"));
       result.current.sendMessage("next");
     });
 
     await waitFor(() => {
       expect(result.current.messages.map((m) => m.content)).toEqual([
         "active history",
+        "other live",
         "active live",
       ]);
     });
-    expect(wsSendMessage).toHaveBeenCalledWith("dm-hermes", "next", "session-active");
-  });
-
-  it("updates cached inactive bot-session history for proactive messages", async () => {
-    vi.mocked(api.messages).mockReturnValue({
-      get: vi.fn(() => Promise.resolve({ data: [] })),
-    } as any);
-    const client = createTestQueryClient();
-    const wrapper = createQueryWrapper(client);
-    client.setQueryData(
-      messagesQueryKey("dm-hermes", "session-other"),
-      [sessionMessage("dm-hermes", "session-other", "other history")],
-    );
-
-    const { result } = renderHook(
-      () =>
-        useChannelChat({
-          conversationId: "dm-hermes",
-          token: "test-token",
-          botSessionId: "session-active",
-          wsSendMessage: vi.fn(),
-        }),
-      { wrapper },
-    );
-
-    await waitFor(() => expect(api.messages).toHaveBeenCalledTimes(1));
-
-    act(() => {
-      result.current.addMessage(
-        sessionMessage("dm-hermes", "session-other", "cron update"),
-      );
-    });
-
-    expect(result.current.messages).toEqual([]);
-    expect(
-      client
-        .getQueryData<ChatMessage[]>(
-          messagesQueryKey("dm-hermes", "session-other"),
-        )
-        ?.map((m) => m.content),
-    ).toEqual(["other history", "cron update"]);
+    expect(wsSendMessage).toHaveBeenCalledWith("dm-hermes", "next");
   });
 
   it("reuses fresh cached history when remounting the same conversation", async () => {

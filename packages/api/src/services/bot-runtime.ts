@@ -269,7 +269,7 @@ export async function listConversationBotRuntime(conversationId: string, userId:
         activeInvocationRows.map((invocation) => invocation.id),
       );
 
-      span.setAttribute("thechat.bot_runtime.sessions", sessionRows.length);
+      span.setAttribute("thechat.bot_runtime.contexts", sessionRows.length);
       span.setAttribute("thechat.bot_runtime.active_invocations", activeInvocationRows.length);
       span.setAttribute("thechat.bot_runtime.progress_events", events.length);
 
@@ -282,7 +282,7 @@ export async function listConversationBotRuntime(conversationId: string, userId:
   );
 }
 
-export async function getDefaultHermesBotSessionForConversation(conversationId: string, userId: string) {
+export async function getDefaultHermesContinuityForConversation(conversationId: string, userId: string) {
   await requireConversationParticipant(conversationId, userId);
   const conversation = await loadConversationRow(conversationId);
   if (!conversation || conversation.type !== "direct") return null;
@@ -291,87 +291,6 @@ export async function getDefaultHermesBotSessionForConversation(conversationId: 
   if (hermesBots.length !== 1) return null;
 
   return getOrCreateBotSession(hermesBots[0].botId, conversation);
-}
-
-export async function createHermesConversationSession(input: {
-  conversationId: string;
-  userId: string;
-  botId?: string | null;
-}) {
-  return withSpan(
-    "bot.runtime.session.create",
-    {
-      "messaging.system": "thechat",
-      "thechat.conversation_id": input.conversationId,
-      "thechat.bot_id": input.botId ?? "",
-    },
-    async (span) => {
-      await requireConversationParticipant(input.conversationId, input.userId);
-      const conversation = await loadConversationRow(input.conversationId);
-      if (!conversation) throw new ServiceError("Conversation not found", 404);
-
-      const hermesBots = await loadHermesBotsForConversation(input.conversationId);
-      span.setAttribute("thechat.hermes_bots.count", hermesBots.length);
-      const bot = input.botId
-        ? hermesBots.find((candidate) => candidate.botId === input.botId)
-        : hermesBots[0];
-      if (!bot) throw new ServiceError("Hermes bot not found in this conversation", 404);
-      if (!input.botId && hermesBots.length > 1) {
-        throw new ServiceError("botId is required when multiple Hermes bots are present", 400);
-      }
-
-      const scope = await resolveBotSessionScope(bot.botId);
-      const baseSessionId = sessionKey(
-        conversation.workspaceId,
-        scope === "workspace" ? null : conversation.id,
-        bot.botId,
-      );
-      const existingSessions = await db
-        .select({ id: botSessions.id })
-        .from(botSessions)
-        .where(and(eq(botSessions.botId, bot.botId), eq(botSessions.conversationId, conversation.id)));
-      const title = `Session ${existingSessions.length + 1}`;
-      const [session] = await db
-        .insert(botSessions)
-        .values({
-          botId: bot.botId,
-          workspaceId: conversation.workspaceId,
-          conversationId: conversation.id,
-          scope,
-          externalSessionId: `${baseSessionId}:session:${crypto.randomUUID()}`,
-          title,
-        })
-        .returning();
-
-      const [sessionRow] = await db
-        .select({
-          id: botSessions.id,
-          botId: botSessions.botId,
-          botUserId: bots.userId,
-          botName: users.name,
-          botKind: bots.kind,
-          workspaceId: botSessions.workspaceId,
-          conversationId: botSessions.conversationId,
-          scope: botSessions.scope,
-          externalSessionId: botSessions.externalSessionId,
-          title: botSessions.title,
-          lastMessageId: botSessions.lastMessageId,
-          createdAt: botSessions.createdAt,
-          updatedAt: botSessions.updatedAt,
-        })
-        .from(botSessions)
-        .innerJoin(bots, eq(botSessions.botId, bots.id))
-        .innerJoin(users, eq(bots.userId, users.id))
-        .where(eq(botSessions.id, session.id))
-        .limit(1);
-      if (!sessionRow) throw new ServiceError("Failed to create Hermes session", 500);
-      const [sessionWithSummary] = await attachSessionSummaries([sessionRow]);
-      span.setAttribute("thechat.bot_id", bot.botId);
-      span.setAttribute("thechat.bot_session_id", sessionRow.id);
-      span.setAttribute("thechat.bot_session.scope", sessionRow.scope);
-      return toPublicSession(sessionWithSummary);
-    },
-  );
 }
 
 export async function startBotWorker(options: { concurrency?: number } = {}): Promise<AsyncWorkerRuntime> {
@@ -453,59 +372,82 @@ async function enqueueBotInvocation(input: {
 }
 
 async function getOrCreateBotSession(botId: string, conversation: ConversationRow) {
-  const scope = await resolveBotSessionScope(botId);
-  const externalSessionId = sessionKey(conversation.workspaceId, scope === "workspace" ? null : conversation.id, botId);
+  return withSpan(
+    "bot.runtime.continuity.resolve",
+    {
+      "messaging.system": "thechat",
+      "thechat.bot_id": botId,
+      "thechat.conversation_id": conversation.id,
+      "thechat.workspace_id": conversation.workspaceId ?? "",
+    },
+    async (span) => {
+      const scope = await resolveBotSessionScope(botId);
+      const externalSessionId = sessionKey(conversation.workspaceId, scope === "workspace" ? null : conversation.id, botId);
+      span.setAttribute("thechat.bot_context.scope", scope);
+      span.setAttribute("thechat.bot_context.external_id", externalSessionId);
 
-  const [existing] = await db
-    .select()
-    .from(botSessions)
-    .where(
-      and(
-        eq(botSessions.botId, botId),
-        eq(botSessions.conversationId, conversation.id),
-        eq(botSessions.scope, scope),
-        eq(botSessions.externalSessionId, externalSessionId),
-      ),
-    )
-    .limit(1);
-  if (existing) return existing;
+      const [existing] = await db
+        .select()
+        .from(botSessions)
+        .where(
+          and(
+            eq(botSessions.botId, botId),
+            eq(botSessions.conversationId, conversation.id),
+            eq(botSessions.scope, scope),
+            eq(botSessions.externalSessionId, externalSessionId),
+          ),
+        )
+        .limit(1);
+      if (existing) {
+        span.setAttribute("thechat.bot_context.created", false);
+        span.setAttribute("thechat.bot_context_id", existing.id);
+        return existing;
+      }
 
-  const inserted = await db
-    .insert(botSessions)
-    .values({
-      botId,
-      workspaceId: conversation.workspaceId,
-      conversationId: conversation.id,
-      scope,
-      externalSessionId,
-      title: conversation.name,
-    })
-    .onConflictDoNothing({
-      target: [
-        botSessions.botId,
-        botSessions.conversationId,
-        botSessions.scope,
-        botSessions.externalSessionId,
-      ],
-    })
-    .returning();
+      const inserted = await db
+        .insert(botSessions)
+        .values({
+          botId,
+          workspaceId: conversation.workspaceId,
+          conversationId: conversation.id,
+          scope,
+          externalSessionId,
+          title: conversation.name,
+        })
+        .onConflictDoNothing({
+          target: [
+            botSessions.botId,
+            botSessions.conversationId,
+            botSessions.scope,
+            botSessions.externalSessionId,
+          ],
+        })
+        .returning();
 
-  if (inserted[0]) return inserted[0];
+      if (inserted[0]) {
+        span.setAttribute("thechat.bot_context.created", true);
+        span.setAttribute("thechat.bot_context_id", inserted[0].id);
+        return inserted[0];
+      }
 
-  const [conflicting] = await db
-    .select()
-    .from(botSessions)
-    .where(
-      and(
-        eq(botSessions.botId, botId),
-        eq(botSessions.conversationId, conversation.id),
-        eq(botSessions.scope, scope),
-        eq(botSessions.externalSessionId, externalSessionId),
-      ),
-    )
-    .limit(1);
-  if (!conflicting) throw new Error("Failed to create bot session");
-  return conflicting;
+      const [conflicting] = await db
+        .select()
+        .from(botSessions)
+        .where(
+          and(
+            eq(botSessions.botId, botId),
+            eq(botSessions.conversationId, conversation.id),
+            eq(botSessions.scope, scope),
+            eq(botSessions.externalSessionId, externalSessionId),
+          ),
+        )
+        .limit(1);
+      if (!conflicting) throw new Error("Failed to create bot session");
+      span.setAttribute("thechat.bot_context.created", false);
+      span.setAttribute("thechat.bot_context_id", conflicting.id);
+      return conflicting;
+    },
+  );
 }
 
 async function resolveBotSessionScope(botId: string) {
@@ -530,7 +472,7 @@ async function loadBotSessionForInvocation(sessionId: string, botId: string, con
       ),
     )
     .limit(1);
-  if (!session) throw new ServiceError("Hermes session not found", 404);
+  if (!session) throw new ServiceError("Hermes context not found", 404);
   return session;
 }
 
@@ -759,6 +701,7 @@ export interface HermesPlatformEvent {
     name: string | null;
     workspaceId: string | null;
   };
+  continuity: { id: string; externalChatId: string | null };
   session: { id: string; externalSessionId: string | null };
 }
 
@@ -862,6 +805,7 @@ async function prepareHermesPlatformEvent(
     messageId: loaded.triggerMessage.id,
     messageContent: loaded.triggerMessage.content,
     text,
+    contextId: loaded.session.id,
     sessionId: loaded.session.externalSessionId,
     defaultSessionScope: config?.defaultSessionScope ?? "channel",
     triggeredAt: loaded.triggerMessage.createdAt.toISOString(),
@@ -891,6 +835,10 @@ async function prepareHermesPlatformEvent(
         type: loaded.conversation.type,
         name: loaded.conversation.name,
         workspaceId: loaded.conversation.workspaceId,
+      },
+      continuity: {
+        id: loaded.session.id,
+        externalChatId: loaded.session.externalSessionId,
       },
       session: {
         id: loaded.session.id,
@@ -1025,7 +973,7 @@ async function loadBotSessionForPlatformMessage(input: {
         ),
       )
       .limit(1);
-    if (!session) throw new ServiceError("Hermes session not found", 404);
+    if (!session) throw new ServiceError("Hermes context not found", 404);
     return session;
   }
 
@@ -1065,7 +1013,7 @@ async function resolveHermesPlatformMessageTarget(input: {
       throw new ServiceError("Conversation does not match invocation", 400);
     }
     if (input.botSessionId && input.botSessionId !== loaded.session?.id) {
-      throw new ServiceError("Hermes session does not match invocation", 400);
+      throw new ServiceError("Hermes context does not match invocation", 400);
     }
     return {
       invocation: loaded.invocation,
@@ -1176,6 +1124,7 @@ export async function publishHermesPlatformMessage(input: {
       span.setAttribute("thechat.conversation_id", target.conversation.id);
       span.setAttribute("thechat.bot_id", target.bot.id);
       span.setAttribute("thechat.bot_session_id", target.session?.id ?? "");
+      span.setAttribute("thechat.bot_context_id", target.session?.id ?? "");
       span.setAttribute(
         "thechat.hermes_platform.message.has_previous_response",
         Boolean(target.invocation?.responseMessageId),
@@ -1581,7 +1530,7 @@ async function publishInvocationUpdate(invocationId: string) {
     type: "bot_invocation_updated",
     conversationId: invocationRow.conversationId,
     invocation: toPublicInvocation(invocationRow),
-    session: sessionWithSummary ? toPublicSession(sessionWithSummary) : null,
+    context: sessionWithSummary ? toPublicSession(sessionWithSummary) : null,
   };
   await publishWsEventToUsers(participantRows.map((p) => p.userId), wsEvent);
 }

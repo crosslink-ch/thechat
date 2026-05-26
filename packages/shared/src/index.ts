@@ -254,7 +254,7 @@ export interface ConversationDetail {
 
 export type WsClientEvent =
   | { type: "auth"; token: string }
-  | { type: "send_message"; conversationId: string; content: string; botSessionId?: string | null }
+  | { type: "send_message"; conversationId: string; content: string }
   | { type: "typing"; conversationId: string }
   | { type: "ping" };
 
@@ -435,7 +435,7 @@ export type WsServerEvent =
   | {
       type: "bot_invocation_updated";
       conversationId: string;
-      session: BotSessionPublic | null;
+      context: BotSessionPublic | null;
       invocation: BotInvocationPublic;
     }
   | {

@@ -9,7 +9,7 @@ const MAX_PROGRESS_EVENTS_PER_INVOCATION = 100;
 
 export function mergeRuntimeUpdate(
   prev: BotRuntimeSnapshot | null,
-  session: BotSessionPublic | null,
+  context: BotSessionPublic | null,
   invocation: BotInvocationPublic,
 ): BotRuntimeSnapshot {
   const snapshot = prev ?? { sessions: [], invocations: [], events: [] };
@@ -21,7 +21,7 @@ export function mergeRuntimeUpdate(
     ? snapshot.events
     : snapshot.events.filter((event) => event.invocationId !== invocation.id);
   return {
-    sessions: session ? upsertById(snapshot.sessions, session) : snapshot.sessions,
+    sessions: context ? upsertById(snapshot.sessions, context) : snapshot.sessions,
     invocations,
     events: pruneProgressEvents(events),
   };

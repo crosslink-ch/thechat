@@ -3,7 +3,6 @@ import { invoke } from "@tauri-apps/api/core";
 import type { AuthUser } from "@thechat/shared";
 import { api } from "../lib/api";
 import { queryClient } from "../lib/query-client";
-import { useHermesUiStore } from "./hermes-ui";
 
 const KV_ACCESS_TOKEN = "auth_access_token";
 const KV_REFRESH_TOKEN = "auth_refresh_token";
@@ -242,7 +241,6 @@ export const useAuthStore = create<AuthStore>()((set) => ({
     await kvDelete(KV_REFRESH_TOKEN);
     await kvDelete(KV_USER);
     queryClient.clear();
-    useHermesUiStore.getState().clear();
     set({ token: null, user: null });
   },
 }));

@@ -1,0 +1,817 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TheChat Bot Platform with Native Hermes DM</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #101114;
+      --surface: #151820;
+      --surface-2: #1e232d;
+      --surface-3: #252b37;
+      --border: #333a48;
+      --text: #f2f5f8;
+      --muted: #9aa5b7;
+      --green: #4ec5a1;
+      --blue: #76a8ff;
+      --yellow: #e9c46a;
+      --red: #ef7777;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--bg);
+      color: var(--text);
+    }
+
+    button,
+    input {
+      font: inherit;
+    }
+
+    .app {
+      display: grid;
+      grid-template-columns: 240px minmax(0, 1fr);
+      min-height: 100vh;
+    }
+
+    .sidebar {
+      border-right: 1px solid var(--border);
+      background: #12151b;
+      padding: 16px 12px;
+    }
+
+    .workspace {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 6px 8px 16px;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 14px;
+    }
+
+    .logo {
+      width: 32px;
+      height: 32px;
+      border-radius: 7px;
+      background: linear-gradient(135deg, var(--green), var(--blue));
+    }
+
+    .workspace strong {
+      display: block;
+      font-size: 14px;
+    }
+
+    .workspace span,
+    .hint,
+    .muted {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .section-title {
+      color: var(--muted);
+      font-size: 11px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      padding: 12px 8px 6px;
+    }
+
+    .nav-item {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      width: 100%;
+      border: 0;
+      border-radius: 7px;
+      background: transparent;
+      color: var(--text);
+      min-height: 36px;
+      padding: 8px;
+      text-align: left;
+      cursor: pointer;
+    }
+
+    .nav-item:hover,
+    .nav-item.active {
+      background: var(--surface-2);
+    }
+
+    .dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      background: var(--green);
+      flex: 0 0 auto;
+    }
+
+    .dot.blue { background: var(--blue); }
+    .dot.yellow { background: var(--yellow); }
+    .dot.red { background: var(--red); }
+
+    .main {
+      display: grid;
+      grid-template-rows: auto auto minmax(0, 1fr) auto;
+      min-width: 0;
+    }
+
+    .topbar {
+      min-height: 68px;
+      border-bottom: 1px solid var(--border);
+      background: #12151b;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 14px 20px;
+    }
+
+    .title h1 {
+      margin: 0 0 4px;
+      font-size: 18px;
+      line-height: 1.2;
+      letter-spacing: 0;
+    }
+
+    .tabs {
+      display: flex;
+      gap: 6px;
+      border-bottom: 1px solid var(--border);
+      padding: 10px 20px 0;
+      background: #11141a;
+    }
+
+    .tab,
+    .small-button,
+    .icon-button {
+      border: 1px solid var(--border);
+      background: var(--surface);
+      color: var(--text);
+      border-radius: 7px;
+      padding: 8px 11px;
+      cursor: pointer;
+    }
+
+    .tab {
+      color: var(--muted);
+      border-radius: 7px 7px 0 0;
+      border-bottom-color: transparent;
+    }
+
+    .tab.active {
+      color: var(--text);
+      background: var(--surface-2);
+    }
+
+    .screen {
+      display: none;
+      overflow: hidden;
+      min-height: 0;
+    }
+
+    .screen.active {
+      display: grid;
+    }
+
+    .channel-layout {
+      grid-template-columns: minmax(0, 1fr) 340px;
+      min-height: 0;
+    }
+
+    .dm-layout {
+      grid-template-columns: minmax(0, 1fr) 360px;
+      min-height: 0;
+    }
+
+    .timeline {
+      overflow: auto;
+      padding: 20px;
+    }
+
+    .messages {
+      max-width: 920px;
+      margin: 0 auto;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    .message {
+      display: grid;
+      grid-template-columns: 38px minmax(0, 1fr);
+      gap: 12px;
+    }
+
+    .avatar {
+      width: 38px;
+      height: 38px;
+      border-radius: 8px;
+      background: var(--surface-3);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--muted);
+    }
+
+    .avatar.bot {
+      color: #f7fbff;
+      background: linear-gradient(135deg, #244d47, #2d477d);
+    }
+
+    .avatar.infra {
+      background: linear-gradient(135deg, #5a3e25, #3c4d7a);
+      color: #fff8ee;
+    }
+
+    .bubble {
+      border: 1px solid var(--border);
+      background: var(--surface);
+      border-radius: 8px;
+      padding: 12px 14px;
+    }
+
+    .meta {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 7px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .meta strong {
+      color: var(--text);
+      font-size: 13px;
+    }
+
+    .body {
+      font-size: 14px;
+      line-height: 1.5;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      background: var(--surface-2);
+      color: var(--muted);
+      padding: 3px 7px;
+      font-size: 12px;
+      white-space: nowrap;
+    }
+
+    .badge.green {
+      color: #bff2e4;
+      border-color: #347061;
+      background: #17302d;
+    }
+
+    .badge.yellow {
+      color: #ffe9ad;
+      border-color: #6c5b2b;
+      background: #332a17;
+    }
+
+    .run-card,
+    .cron-card,
+    .approval-card {
+      border: 1px solid #3a4658;
+      background: #131a23;
+      border-radius: 8px;
+      overflow: hidden;
+      margin-top: 10px;
+    }
+
+    .run-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 10px 12px;
+      border-bottom: 1px solid #2d3747;
+    }
+
+    .run-title {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .steps {
+      display: grid;
+      gap: 8px;
+      padding: 10px 12px;
+    }
+
+    .step {
+      display: grid;
+      grid-template-columns: 16px minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 8px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .step .box {
+      width: 16px;
+      height: 16px;
+      border-radius: 4px;
+      border: 1px solid var(--border);
+      background: #202938;
+    }
+
+    .step.done .box {
+      background: var(--green);
+      border-color: var(--green);
+    }
+
+    .step.active {
+      color: var(--text);
+    }
+
+    .tool {
+      border: 1px solid #384252;
+      background: #101620;
+      border-radius: 7px;
+      padding: 10px;
+      margin: 2px 12px 10px 36px;
+    }
+
+    .code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      background: #0b0d11;
+      color: #dce7ff;
+      border-radius: 6px;
+      padding: 8px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 12px;
+    }
+
+    .side {
+      border-left: 1px solid var(--border);
+      background: #13161d;
+      overflow: auto;
+      padding: 16px;
+    }
+
+    .side h2 {
+      font-size: 15px;
+      margin: 4px 0 12px;
+      letter-spacing: 0;
+    }
+
+    .panel {
+      border: 1px solid var(--border);
+      background: var(--surface);
+      border-radius: 8px;
+      padding: 12px;
+      margin-bottom: 12px;
+    }
+
+    .panel-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      font-size: 13px;
+      font-weight: 700;
+      margin-bottom: 10px;
+    }
+
+    .bot-row,
+    .context-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 8px;
+      border: 1px solid transparent;
+      background: #151922;
+      border-radius: 7px;
+      padding: 9px;
+      margin-bottom: 7px;
+    }
+
+    .bot-row strong,
+    .context-row strong {
+      display: block;
+      font-size: 13px;
+      margin-bottom: 3px;
+    }
+
+    .bot-row span,
+    .context-row span {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .composer {
+      border-top: 1px solid var(--border);
+      padding: 14px 20px;
+      background: #12151b;
+    }
+
+    .composer-box {
+      max-width: 920px;
+      margin: 0 auto;
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 10px;
+      border: 1px solid var(--border);
+      background: var(--surface);
+      border-radius: 8px;
+      padding: 10px;
+    }
+
+    .composer input {
+      min-width: 0;
+      border: 0;
+      outline: 0;
+      color: var(--text);
+      background: transparent;
+    }
+
+    .send {
+      border: 0;
+      border-radius: 7px;
+      background: var(--green);
+      color: #061510;
+      font-weight: 700;
+      padding: 8px 12px;
+      cursor: pointer;
+    }
+
+    .divider {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      color: var(--muted);
+      font-size: 12px;
+      margin: 8px 0;
+    }
+
+    .divider::before,
+    .divider::after {
+      content: "";
+      height: 1px;
+      background: var(--border);
+      flex: 1;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .metric {
+      border: 1px solid #2f3744;
+      background: #10141b;
+      border-radius: 7px;
+      padding: 9px;
+    }
+
+    .metric span {
+      display: block;
+      color: var(--muted);
+      font-size: 11px;
+      margin-bottom: 4px;
+    }
+
+    .metric strong {
+      font-size: 13px;
+    }
+
+    @media (max-width: 1080px) {
+      .app {
+        grid-template-columns: 76px minmax(0, 1fr);
+      }
+
+      .workspace div:not(.logo),
+      .section-title,
+      .nav-item span {
+        display: none;
+      }
+
+      .channel-layout,
+      .dm-layout {
+        grid-template-columns: 1fr;
+      }
+
+      .side {
+        display: none;
+      }
+    }
+
+    @media (max-width: 720px) {
+      .app {
+        grid-template-columns: 1fr;
+      }
+
+      .sidebar {
+        display: none;
+      }
+
+      .topbar {
+        align-items: stretch;
+        flex-direction: column;
+      }
+
+      .message {
+        grid-template-columns: 1fr;
+      }
+
+      .avatar {
+        display: none;
+      }
+
+      .composer-box,
+      .grid {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="workspace">
+        <div class="logo"></div>
+        <div>
+          <strong>Acme Labs</strong>
+          <span>General bot platform</span>
+        </div>
+      </div>
+
+      <div class="section-title">Channels</div>
+      <button class="nav-item active"><span class="dot"></span><span># deploys</span></button>
+      <button class="nav-item"><span class="dot blue"></span><span># research</span></button>
+      <button class="nav-item"><span class="dot yellow"></span><span># incidents</span></button>
+
+      <div class="section-title">Bot DMs</div>
+      <button class="nav-item"><span class="dot"></span><span>Hermes Release</span></button>
+      <button class="nav-item"><span class="dot blue"></span><span>Buildkite Bot</span></button>
+      <button class="nav-item"><span class="dot red"></span><span>Pager Bot</span></button>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div class="title">
+          <h1>TheChat as a bot platform</h1>
+          <span class="hint">Generic conversations stay generic. Hermes gets native runtime UI only where Hermes is active.</span>
+        </div>
+        <button class="small-button">Add bot</button>
+      </header>
+
+      <nav class="tabs" aria-label="Prototype screens">
+        <button class="tab active" data-screen="channel">Channel with bots</button>
+        <button class="tab" data-screen="dm">Hermes DM</button>
+        <button class="tab" data-screen="cron">Scheduled messages</button>
+      </nav>
+
+      <section id="channel" class="screen channel-layout active">
+        <div class="timeline">
+          <div class="messages">
+            <div class="message">
+              <div class="avatar">BR</div>
+              <div class="bubble">
+                <div class="meta"><strong>Bruno</strong><span>09:42</span><span># deploys</span></div>
+                <div class="body">@ReleaseHermes check whether staging is safe to deploy. @InfraHermes watch for infra regressions while it runs.</div>
+              </div>
+            </div>
+
+            <div class="message">
+              <div class="avatar bot">RH</div>
+              <div class="bubble">
+                <div class="meta">
+                  <strong>ReleaseHermes</strong>
+                  <span>Hermes bot</span>
+                  <span class="badge green">shared channel context</span>
+                </div>
+                <div class="body">I am checking CI, branch state, and release notes.</div>
+                <div class="run-card">
+                  <div class="run-head">
+                    <div class="run-title"><span class="dot"></span><span>Hermes run</span></div>
+                    <span class="badge green">running</span>
+                  </div>
+                  <div class="steps">
+                    <div class="step done"><span class="box"></span><span>Loaded #deploys context for ReleaseHermes</span><span>0.3s</span></div>
+                    <div class="step done"><span class="box"></span><span>Checked GitHub checks</span><span>1.8s</span></div>
+                    <div class="step active"><span class="box"></span><span>Running staging smoke test</span><span>now</span></div>
+                  </div>
+                  <div class="tool">
+                    <div class="meta"><strong>terminal</strong><span>release repo</span><span>exit pending</span></div>
+                    <div class="code">pnpm test:smoke --filter staging</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="message">
+              <div class="avatar infra">IH</div>
+              <div class="bubble">
+                <div class="meta">
+                  <strong>InfraHermes</strong>
+                  <span>Hermes bot</span>
+                  <span class="badge">separate bot context</span>
+                </div>
+                <div class="body">I will monitor deploy latency and error-rate panels for this thread. I will only post again if thresholds move.</div>
+              </div>
+            </div>
+
+            <div class="message">
+              <div class="avatar">AK</div>
+              <div class="bubble">
+                <div class="meta"><strong>Aki</strong><span>09:47</span></div>
+                <div class="body">Good. Keep the bot updates in this thread so the release channel stays readable.</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <aside class="side">
+          <h2>Channel bots</h2>
+          <div class="panel">
+            <div class="panel-title"><span>Participants</span><button class="small-button">Manage</button></div>
+            <div class="bot-row">
+              <div><strong>ReleaseHermes</strong><span>Hermes runtime, shared channel memory</span></div>
+              <span class="badge green">active</span>
+            </div>
+            <div class="bot-row">
+              <div><strong>InfraHermes</strong><span>Hermes runtime, separate bot memory</span></div>
+              <span class="badge">watching</span>
+            </div>
+            <div class="bot-row">
+              <div><strong>Buildkite Bot</strong><span>Webhook bot, no Hermes runtime</span></div>
+              <span class="badge">generic</span>
+            </div>
+          </div>
+
+          <div class="panel">
+            <div class="panel-title"><span>Bot relay policy</span></div>
+            <div class="body muted">Bots can answer human mentions. Bot-to-bot replies require explicit mentions and depth limits.</div>
+          </div>
+        </aside>
+      </section>
+
+      <section id="dm" class="screen dm-layout">
+        <div class="timeline">
+          <div class="messages">
+            <div class="message">
+              <div class="avatar">BR</div>
+              <div class="bubble">
+                <div class="meta"><strong>Bruno</strong><span>10:12</span><span>DM with ReleaseHermes</span></div>
+                <div class="body">Track release blockers every morning and tell me here if anything changes.</div>
+              </div>
+            </div>
+
+            <div class="message">
+              <div class="avatar bot">RH</div>
+              <div class="bubble">
+                <div class="meta"><strong>ReleaseHermes</strong><span>Hermes DM platform</span></div>
+                <div class="body">I created a scheduled check for this DM. Results will arrive here as scheduled messages.</div>
+                <div class="cron-card">
+                  <div class="run-head">
+                    <div class="run-title"><span class="dot yellow"></span><span>Cron job created</span></div>
+                    <span class="badge yellow">weekdays 07:30</span>
+                  </div>
+                  <div class="steps">
+                    <div class="step done"><span class="box"></span><span>Delivery target: this DM conversation</span><span></span></div>
+                    <div class="step done"><span class="box"></span><span>Prompt: self-contained release blocker check</span><span></span></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="divider">Hermes context reset after 24h idle; this DM continues</div>
+
+            <div class="message">
+              <div class="avatar bot">RH</div>
+              <div class="bubble">
+                <div class="meta"><strong>ReleaseHermes</strong><span>scheduled</span><span>07:30</span></div>
+                <div class="body">Morning release check: no new blockers. CI is green and staging health is normal.</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <aside class="side">
+          <h2>Hermes DM Runtime</h2>
+          <div class="panel">
+            <div class="panel-title"><span>Context</span><button class="small-button">History</button></div>
+            <div class="grid">
+              <div class="metric"><span>Visible model</span><strong>One continuous DM</strong></div>
+              <div class="metric"><span>Hermes backing</span><strong>Multiple epochs</strong></div>
+              <div class="metric"><span>Last reset</span><strong>Idle policy</strong></div>
+              <div class="metric"><span>Diagnostics</span><strong>Hidden IDs</strong></div>
+            </div>
+          </div>
+
+          <div class="panel">
+            <div class="panel-title"><span>Active work</span><span class="badge green">idle</span></div>
+            <div class="context-row">
+              <div><strong>Morning release check</strong><span>Next run tomorrow 07:30</span></div>
+              <span class="badge yellow">cron</span>
+            </div>
+            <div class="context-row">
+              <div><strong>Approval queue</strong><span>No pending approvals</span></div>
+              <span class="badge">clear</span>
+            </div>
+          </div>
+
+          <div class="panel">
+            <div class="panel-title"><span>Why this panel appears</span></div>
+            <div class="body muted">This is a DM with a Hermes bot, so Hermes-specific runtime controls are useful. Normal channels keep generic bot UI.</div>
+          </div>
+        </aside>
+      </section>
+
+      <section id="cron" class="screen channel-layout">
+        <div class="timeline">
+          <div class="messages">
+            <div class="message">
+              <div class="avatar bot">RH</div>
+              <div class="bubble">
+                <div class="meta">
+                  <strong>ReleaseHermes</strong>
+                  <span>Scheduled message</span>
+                  <span class="badge yellow">cron</span>
+                </div>
+                <div class="body">Deploy watchdog changed state: staging error rate is above the warning threshold for 4 minutes.</div>
+                <div class="cron-card">
+                  <div class="run-head">
+                    <div class="run-title"><span class="dot yellow"></span><span>Staging watchdog</span></div>
+                    <span class="badge yellow">delivered to #deploys thread</span>
+                  </div>
+                  <div class="steps">
+                    <div class="step done"><span class="box"></span><span>Triggered by saved schedule, not a live user prompt</span><span></span></div>
+                    <div class="step done"><span class="box"></span><span>Origin: #deploys / release thread</span><span></span></div>
+                    <div class="step done"><span class="box"></span><span>Next run in 15 minutes</span><span></span></div>
+                  </div>
+                </div>
+                <div class="meta" style="margin-top: 10px;">
+                  <button class="small-button">Run now</button>
+                  <button class="small-button">Pause</button>
+                  <button class="small-button">Edit</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <aside class="side">
+          <h2>Scheduled bot messages</h2>
+          <div class="panel">
+            <div class="panel-title"><span>Targets are conversations</span></div>
+            <div class="body muted">Cron delivers to a TheChat conversation or thread with bot/provenance metadata. It does not deliver to a user-visible Hermes session.</div>
+          </div>
+          <div class="panel">
+            <div class="panel-title"><span>Home target</span></div>
+            <div class="body muted">Each Hermes bot can have a home conversation for fallback delivery when no origin exists.</div>
+          </div>
+        </aside>
+      </section>
+
+      <footer class="composer">
+        <div class="composer-box">
+          <span class="badge green">@ReleaseHermes</span>
+          <input value="Message this conversation..." aria-label="Message composer">
+          <button class="send">Send</button>
+        </div>
+      </footer>
+    </main>
+  </div>
+
+  <script>
+    const tabs = document.querySelectorAll(".tab");
+    const screens = document.querySelectorAll(".screen");
+
+    tabs.forEach((tab) => {
+      tab.addEventListener("click", () => {
+        const target = tab.dataset.screen;
+        tabs.forEach((item) => item.classList.toggle("active", item === tab));
+        screens.forEach((screen) => {
+          screen.classList.toggle("active", screen.id === target);
+        });
+      });
+    });
+  </script>
+</body>
+</html>

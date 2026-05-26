@@ -12,7 +12,7 @@ interface WebSocketStore {
   reconnecting: boolean;
   connect: (token: string) => void;
   disconnect: () => void;
-  sendMessage: (conversationId: string, content: string, botSessionId?: string | null) => void;
+  sendMessage: (conversationId: string, content: string) => void;
   sendTyping: (conversationId: string) => void;
 }
 
@@ -94,7 +94,7 @@ function doConnect() {
     } else if (event.type === "bot_invocation_updated") {
       wsEvents.emit("ws:bot_invocation_updated", {
         conversationId: event.conversationId,
-        session: event.session,
+        context: event.context,
         invocation: event.invocation,
       });
     } else if (event.type === "bot_invocation_progress") {
@@ -197,12 +197,11 @@ export const useWebSocketStore = create<WebSocketStore>()(() => ({
     useWebSocketStore.setState({ connected: false, reconnecting: false });
   },
 
-  sendMessage: (conversationId: string, content: string, botSessionId?: string | null) => {
+  sendMessage: (conversationId: string, content: string) => {
     const event: WsClientEvent = {
       type: "send_message",
       conversationId,
       content,
-      botSessionId: botSessionId ?? null,
     };
     if (ws?.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify(event));

@@ -1,21 +1,21 @@
 import { eq, and, lt, desc } from "drizzle-orm";
 import { db } from "../db";
 import {
-  botSessions,
   messages,
   conversationParticipants,
   users,
 } from "../db/schema";
 import {
-  getDefaultHermesBotSessionForConversation,
+  getDefaultHermesContinuityForConversation,
   processMessageMentions,
 } from "./bot-runtime";
 import { ServiceError } from "./errors";
+import { withSpan } from "../observability";
 
 export async function getMessages(
   conversationId: string,
   userId: string,
-  options?: { limit?: number; before?: string; botSessionId?: string | null }
+  options?: { limit?: number; before?: string }
 ) {
   // Validate user is a participant
   const [participant] = await db
@@ -38,10 +38,6 @@ export async function getMessages(
 
   const limit = Math.min(options?.limit || 50, 100);
   const conditions = [eq(messages.conversationId, conversationId)];
-  if (options?.botSessionId) {
-    await requireBotSessionInConversation(options.botSessionId, conversationId);
-    conditions.push(eq(messages.botSessionId, options.botSessionId));
-  }
   if (options?.before) {
     conditions.push(lt(messages.createdAt, new Date(options.before)));
   }
@@ -83,76 +79,75 @@ export async function sendMessage(
   userId: string,
   userName: string,
   content: string,
-  options: { botSessionId?: string | null } = {},
 ) {
-  // Validate user is a participant
-  const [participant] = await db
-    .select()
-    .from(conversationParticipants)
-    .where(
-      and(
-        eq(conversationParticipants.conversationId, conversationId),
-        eq(conversationParticipants.userId, userId)
-      )
-    )
-    .limit(1);
+  return withSpan(
+    "message.send",
+    {
+      "messaging.system": "thechat",
+      "messaging.operation": "send",
+      "thechat.conversation_id": conversationId,
+      "thechat.user_id": userId,
+    },
+    async (span) => {
+      // Validate user is a participant
+      const [participant] = await db
+        .select()
+        .from(conversationParticipants)
+        .where(
+          and(
+            eq(conversationParticipants.conversationId, conversationId),
+            eq(conversationParticipants.userId, userId)
+          )
+        )
+        .limit(1);
 
-  if (!participant) {
-    throw new ServiceError(
-      "You are not a participant of this conversation",
-      403
-    );
-  }
+      if (!participant) {
+        throw new ServiceError(
+          "You are not a participant of this conversation",
+          403
+        );
+      }
 
-  let botSessionId = options.botSessionId ?? null;
-  if (botSessionId) {
-    await requireBotSessionInConversation(botSessionId, conversationId);
-  } else {
-    const defaultHermesSession = await getDefaultHermesBotSessionForConversation(conversationId, userId);
-    botSessionId = defaultHermesSession?.id ?? null;
-  }
+      const hermesContinuity = await getDefaultHermesContinuityForConversation(conversationId, userId);
+      const botSessionId = hermesContinuity?.id ?? null;
+      span.setAttribute("thechat.bot_context_id", botSessionId ?? "");
+      span.setAttribute("thechat.hermes_continuity.auto_attached", Boolean(botSessionId));
 
-  const [msg] = await db
-    .insert(messages)
-    .values({
-      conversationId,
-      botSessionId,
-      senderId: userId,
-      content,
-    })
-    .returning();
+      const [msg] = await db
+        .insert(messages)
+        .values({
+          conversationId,
+          botSessionId,
+          senderId: userId,
+          content,
+        })
+        .returning();
 
-  const createdAt = msg.createdAt.toISOString();
+      const createdAt = msg.createdAt.toISOString();
+      span.setAttribute("thechat.message_id", msg.id);
 
-  // Fire-and-forget bot invocation detection for mentioned bots and Hermes DMs.
-  processMessageMentions({
-    id: msg.id,
-    content: msg.content,
-    conversationId: msg.conversationId,
-    botSessionId: msg.botSessionId,
-    senderId: msg.senderId,
-    senderName: userName,
-    createdAt,
-  }).catch((error) => console.error("Failed to enqueue bot invocation", error));
+      // Fire-and-forget bot invocation detection for mentioned bots and Hermes DMs.
+      processMessageMentions({
+        id: msg.id,
+        content: msg.content,
+        conversationId: msg.conversationId,
+        botSessionId: msg.botSessionId,
+        senderId: msg.senderId,
+        senderName: userName,
+        createdAt,
+      }).catch((error) => console.error("Failed to enqueue bot invocation", error));
 
-  return {
-    id: msg.id,
-    conversationId: msg.conversationId,
-    botSessionId: msg.botSessionId,
-    senderId: msg.senderId,
-    senderName: userName,
-    senderType: "human" as const,
-    content: msg.content,
-    parts: msg.parts ?? null,
-    createdAt,
-  };
-}
-
-async function requireBotSessionInConversation(botSessionId: string, conversationId: string) {
-  const [session] = await db
-    .select({ id: botSessions.id })
-    .from(botSessions)
-    .where(and(eq(botSessions.id, botSessionId), eq(botSessions.conversationId, conversationId)))
-    .limit(1);
-  if (!session) throw new ServiceError("Hermes session not found", 404);
+      return {
+        id: msg.id,
+        conversationId: msg.conversationId,
+        botSessionId: msg.botSessionId,
+        senderId: msg.senderId,
+        senderName: userName,
+        senderType: "human" as const,
+        content: msg.content,
+        parts: msg.parts ?? null,
+        createdAt,
+      };
+    },
+  );
 }

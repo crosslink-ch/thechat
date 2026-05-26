@@ -12,7 +12,6 @@ import {
   botRuntimeQueryKey,
   useBotRuntime,
   useBotRuntimeCache,
-  useCreateHermesBotSession,
 } from "./useBotRuntime";
 
 vi.mock("../lib/api", () => ({
@@ -119,7 +118,7 @@ describe("useBotRuntime", () => {
     });
   });
 
-  it("updates session summaries from bot-session messages", () => {
+  it("updates context summaries from bot messages", () => {
     const client = createTestQueryClient();
     client.setQueryData<BotRuntimeSnapshot>(
       botRuntimeQueryKey("conversation-1"),
@@ -177,34 +176,6 @@ describe("useBotRuntime", () => {
     ]);
   });
 
-  it("adds created Hermes sessions to the runtime query cache", async () => {
-    const createdSession = session({ id: "session-2", title: "Session 2" });
-    const post = vi.fn(() => Promise.resolve({ data: createdSession, error: null }));
-    vi.mocked(api["bot-runtime"].conversations).mockReturnValue({
-      sessions: { post },
-    } as any);
-
-    const client = createTestQueryClient();
-    client.setQueryData<BotRuntimeSnapshot>(
-      botRuntimeQueryKey("conversation-1"),
-      runtime({ sessions: [session()] }),
-    );
-
-    const { result } = renderHook(
-      () => useCreateHermesBotSession("conversation-1", "token-1"),
-      { wrapper: createQueryWrapper(client) },
-    );
-
-    await act(async () => {
-      await result.current.mutateAsync({});
-    });
-
-    expect(
-      client.getQueryData<BotRuntimeSnapshot>(
-        botRuntimeQueryKey("conversation-1"),
-      )?.sessions.map((item) => item.id),
-    ).toEqual(["session-2", "session-1"]);
-  });
 });
 
 function runtime(overrides: Partial<BotRuntimeSnapshot> = {}): BotRuntimeSnapshot {

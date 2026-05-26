@@ -1,5 +1,5 @@
 import { useCallback, useMemo } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type {
   BotInvocationProgressEventPublic,
   BotInvocationPublic,
@@ -34,23 +34,6 @@ export async function fetchBotRuntime(
   return data as BotRuntimeSnapshot;
 }
 
-export async function createHermesBotSession(
-  conversationId: string,
-  token: string,
-  botId?: string | null,
-): Promise<BotSessionPublic> {
-  const { data, error } = await api["bot-runtime"]
-    .conversations({ conversationId })
-    .sessions
-    .post({ botId: botId ?? undefined }, authHeaders(token));
-
-  if (error) {
-    throw new Error(edenErrorMessage(error, "Failed to create Hermes session"));
-  }
-
-  return data as BotSessionPublic;
-}
-
 export function useBotRuntime(
   conversationId: string | null,
   token: string | null,
@@ -66,47 +49,18 @@ export function useBotRuntime(
   });
 }
 
-export function useCreateHermesBotSession(
-  conversationId: string,
-  token: string | null,
-) {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: ({ botId }: { botId?: string | null } = {}) => {
-      if (!token) throw new Error("Authentication required");
-      return createHermesBotSession(conversationId, token, botId);
-    },
-    onSuccess: (session) => {
-      queryClient.setQueryData<BotRuntimeSnapshot>(
-        botRuntimeQueryKey(conversationId),
-        (previous) => ({
-          sessions: [
-            session,
-            ...(previous?.sessions ?? []).filter(
-              (existing) => existing.id !== session.id,
-            ),
-          ],
-          invocations: previous?.invocations ?? [],
-          events: previous?.events ?? [],
-        }),
-      );
-    },
-  });
-}
-
 export function useBotRuntimeCache() {
   const queryClient = useQueryClient();
 
   const mergeInvocationUpdate = useCallback(
     (
       conversationId: string,
-      session: BotSessionPublic | null,
+      context: BotSessionPublic | null,
       invocation: BotInvocationPublic,
     ) => {
       queryClient.setQueryData<BotRuntimeSnapshot>(
         botRuntimeQueryKey(conversationId),
-        (previous) => mergeRuntimeUpdate(previous ?? null, session, invocation),
+        (previous) => mergeRuntimeUpdate(previous ?? null, context, invocation),
       );
     },
     [queryClient],
