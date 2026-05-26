@@ -1,11 +1,12 @@
 import { describe, test, expect, afterAll, beforeAll } from "bun:test";
 import { Elysia } from "elysia";
-import { asc, eq } from "drizzle-orm";
+import { and, asc, eq } from "drizzle-orm";
 import { db } from "../db";
 import {
   botInvocations,
   bots,
   conversationParticipants,
+  messages,
   users,
   workspaces,
 } from "../db/schema";
@@ -168,10 +169,44 @@ async function invocationsForMessage(messageId: string) {
       status: botInvocations.status,
       error: botInvocations.error,
       responseMessageId: botInvocations.responseMessageId,
+      responseJson: botInvocations.responseJson,
     })
     .from(botInvocations)
     .where(eq(botInvocations.triggerMessageId, messageId))
     .orderBy(asc(botInvocations.createdAt));
+}
+
+async function botMessagesForConversation(conversationId: string, botUserId: string) {
+  const rows = await db
+    .select({
+      id: messages.id,
+      content: messages.content,
+      botSessionId: messages.botSessionId,
+      createdAt: messages.createdAt,
+    })
+    .from(messages)
+    .where(
+      and(
+        eq(messages.conversationId, conversationId),
+        eq(messages.senderId, botUserId),
+      ),
+    )
+    .orderBy(asc(messages.createdAt));
+  return rows.filter((message) => message.botSessionId);
+}
+
+async function messageContentsForBotSession(conversationId: string, botSessionId: string) {
+  const rows = await db
+    .select({ content: messages.content })
+    .from(messages)
+    .where(
+      and(
+        eq(messages.conversationId, conversationId),
+        eq(messages.botSessionId, botSessionId),
+      ),
+    )
+    .orderBy(asc(messages.createdAt));
+  return rows.map((message) => message.content);
 }
 
 async function startBotWorkerForTest() {
@@ -1230,16 +1265,45 @@ describe("Bots: runtime state", () => {
         }),
       );
 
+      const statusMessageRes = await req(
+        "POST",
+        "/hermes-platform/messages",
+        {
+          invocationId: completed.invocationId,
+          content: "Still working...",
+          complete: false,
+        },
+        botRes.body.apiKey,
+      );
+      expect(statusMessageRes.status).toBe(200);
+      await waitForResult(async () => {
+        const rows = await invocationsForMessage(completed.messageId);
+        return rows.find(
+          (row) =>
+            row.id === completed.invocationId &&
+            row.status === "running" &&
+            row.responseMessageId === statusMessageRes.body.messageId,
+        );
+      }, "running Hermes invocation after a non-final bot message");
+
       const completeRes = await req(
         "POST",
         "/hermes-platform/messages",
         {
           invocationId: completed.invocationId,
           content: "Hermes completed response",
+          complete: false,
         },
         botRes.body.apiKey,
       );
       expect(completeRes.status).toBe(200);
+      const completionRes = await req(
+        "POST",
+        `/hermes-platform/invocations/${completed.invocationId}/completed`,
+        { reason: "Hermes gateway completed" },
+        botRes.body.apiKey,
+      );
+      expect(completionRes.status).toBe(200);
 
       const failed = await sendAndClaim("Fail this Hermes invocation");
       const failRes = await req(
@@ -1263,6 +1327,22 @@ describe("Bots: runtime state", () => {
         const rows = await invocationsForMessage(completed.messageId);
         return rows.find((row) => row.status === "completed" && row.responseMessageId);
       }, "completed Hermes invocation");
+      const completedRows = await invocationsForMessage(completed.messageId);
+      expect(completedRows).toContainEqual(
+        expect.objectContaining({
+          id: completed.invocationId,
+          responseMessageId: completeRes.body.messageId,
+          responseJson: expect.objectContaining({
+            output: "Hermes completed response",
+          }),
+        }),
+      );
+      const botMessageContents = (
+        await botMessagesForConversation(dmRes.body.id, botRes.body.userId)
+      ).map((message) => message.content);
+      expect(botMessageContents).toEqual(
+        expect.arrayContaining(["Still working...", "Hermes completed response"]),
+      );
       const runtimeRes = await req(
         "GET",
         `/bot-runtime/conversations/${dmRes.body.id}`,
@@ -1282,6 +1362,48 @@ describe("Bots: runtime state", () => {
           lastMessageSenderName: "RuntimeHermes",
         }),
       );
+
+      const followUpRes = await req(
+        "POST",
+        "/hermes-platform/messages",
+        {
+          invocationId: completed.invocationId,
+          content: "Hermes follow-up after completion",
+          platformMessageId: "follow-up-message",
+        },
+        botRes.body.apiKey,
+      );
+      expect(followUpRes.status).toBe(200);
+      expect(followUpRes.body).toEqual(
+        expect.objectContaining({
+          messageId: expect.any(String),
+          duplicate: false,
+        }),
+      );
+      expect(followUpRes.body.messageId).not.toBe(completeRes.body.messageId);
+
+      const proactiveRes = await req(
+        "POST",
+        "/hermes-platform/messages",
+        {
+          conversationId: dmRes.body.id,
+          content: "Hermes proactive cron update",
+          platformMessageId: "cron-message",
+        },
+        botRes.body.apiKey,
+      );
+      expect(proactiveRes.status).toBe(200);
+      expect(proactiveRes.body).toEqual(
+        expect.objectContaining({
+          messageId: expect.any(String),
+          duplicate: false,
+        }),
+      );
+      expect(proactiveRes.body.messageId).not.toBe(followUpRes.body.messageId);
+      const botMessageContentsAfterProactive = (
+        await botMessagesForConversation(dmRes.body.id, botRes.body.userId)
+      ).map((message) => message.content);
+      expect(botMessageContentsAfterProactive).toContain("Hermes proactive cron update");
 
       await waitForResult(async () => {
         const rows = await invocationsForMessage(failed.messageId);
@@ -1328,6 +1450,197 @@ describe("Bots: runtime state", () => {
       await observerBus.close();
       await closeRealtimeBusForTests();
     }
+  });
+
+  test("keeps Hermes invocations and messages isolated across two DM sessions", async () => {
+    const human = await registerUser("RuntimeHermesTwoSessionsOwner");
+    const { workspaceId } = await createWorkspaceWithGeneralChannel(
+      human.token,
+      "Runtime Hermes Two Sessions",
+    );
+    const botRes = await createBot(human.token, "RuntimeHermesTwoSessions", undefined, {
+      kind: "hermes",
+      workspaceId,
+    });
+    expect(botRes.status).toBe(200);
+
+    const dmRes = await req(
+      "POST",
+      "/conversations/dm",
+      { workspaceId, otherUserId: botRes.body.userId },
+      human.token,
+    );
+    expect(dmRes.status).toBe(200);
+
+    const secondSessionRes = await req(
+      "POST",
+      `/bot-runtime/conversations/${dmRes.body.id}/sessions`,
+      {},
+      human.token,
+    );
+    expect(secondSessionRes.status).toBe(200);
+
+    async function sendAndClaim(content: string, botSessionId?: string | null) {
+      const sendRes = await req(
+        "POST",
+        `/messages/${dmRes.body.id}`,
+        botSessionId ? { content, botSessionId } : { content },
+        human.token,
+      );
+      expect(sendRes.status).toBe(200);
+      await waitForResult(async () => {
+        const rows = await invocationsForMessage(sendRes.body.id);
+        return rows.find((row) => row.status === "queued");
+      }, `queued Hermes invocation for ${content}`);
+
+      const claimRes = await req("GET", "/hermes-platform/events?limit=1", undefined, botRes.body.apiKey);
+      expect(claimRes.status).toBe(200);
+      expect(claimRes.body.events).toHaveLength(1);
+      return {
+        messageId: sendRes.body.id as string,
+        botSessionId: sendRes.body.botSessionId as string,
+        invocationId: claimRes.body.events[0].invocationId as string,
+        event: claimRes.body.events[0],
+      };
+    }
+
+    const first = await sendAndClaim("First session prompt");
+    const second = await sendAndClaim("Second session prompt", secondSessionRes.body.id);
+    expect(first.botSessionId).not.toBe(second.botSessionId);
+    expect(first.event.session.id).toBe(first.botSessionId);
+    expect(second.event.session.id).toBe(second.botSessionId);
+    expect(first.event.chatId).not.toBe(second.event.chatId);
+
+    const firstProgressRes = await req(
+      "POST",
+      `/hermes-platform/invocations/${first.invocationId}/progress`,
+      {
+        type: "tool.started",
+        status: "running",
+        toolCallId: "first-call",
+        toolName: "shell",
+        label: "First session tool",
+      },
+      botRes.body.apiKey,
+    );
+    expect(firstProgressRes.status).toBe(200);
+    const secondProgressRes = await req(
+      "POST",
+      `/hermes-platform/invocations/${second.invocationId}/progress`,
+      {
+        type: "tool.started",
+        status: "running",
+        toolCallId: "second-call",
+        toolName: "shell",
+        label: "Second session tool",
+      },
+      botRes.body.apiKey,
+    );
+    expect(secondProgressRes.status).toBe(200);
+
+    const activeRuntimeRes = await req(
+      "GET",
+      `/bot-runtime/conversations/${dmRes.body.id}`,
+      undefined,
+      human.token,
+    );
+    expect(activeRuntimeRes.status).toBe(200);
+    expect(activeRuntimeRes.body.invocations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: first.invocationId,
+          botSessionId: first.botSessionId,
+          status: "running",
+        }),
+        expect.objectContaining({
+          id: second.invocationId,
+          botSessionId: second.botSessionId,
+          status: "running",
+        }),
+      ]),
+    );
+    expect(activeRuntimeRes.body.events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          invocationId: first.invocationId,
+          toolCallId: "first-call",
+        }),
+        expect.objectContaining({
+          invocationId: second.invocationId,
+          toolCallId: "second-call",
+        }),
+      ]),
+    );
+
+    const firstMessageRes = await req(
+      "POST",
+      "/hermes-platform/messages",
+      {
+        invocationId: first.invocationId,
+        content: "First session answer",
+        complete: false,
+      },
+      botRes.body.apiKey,
+    );
+    expect(firstMessageRes.status).toBe(200);
+    const firstCompleteRes = await req(
+      "POST",
+      `/hermes-platform/invocations/${first.invocationId}/completed`,
+      { reason: "first session done" },
+      botRes.body.apiKey,
+    );
+    expect(firstCompleteRes.status).toBe(200);
+
+    const afterFirstRuntimeRes = await req(
+      "GET",
+      `/bot-runtime/conversations/${dmRes.body.id}`,
+      undefined,
+      human.token,
+    );
+    expect(afterFirstRuntimeRes.status).toBe(200);
+    expect(afterFirstRuntimeRes.body.invocations).not.toContainEqual(
+      expect.objectContaining({ id: first.invocationId }),
+    );
+    expect(afterFirstRuntimeRes.body.invocations).toContainEqual(
+      expect.objectContaining({
+        id: second.invocationId,
+        botSessionId: second.botSessionId,
+        status: "running",
+      }),
+    );
+    expect(afterFirstRuntimeRes.body.events).toEqual([
+      expect.objectContaining({
+        invocationId: second.invocationId,
+        toolCallId: "second-call",
+      }),
+    ]);
+
+    expect(
+      await messageContentsForBotSession(dmRes.body.id, first.botSessionId),
+    ).toEqual(["First session prompt", "First session answer"]);
+    expect(
+      await messageContentsForBotSession(dmRes.body.id, second.botSessionId),
+    ).toEqual(["Second session prompt"]);
+
+    const secondCancelRes = await req(
+      "POST",
+      `/hermes-platform/invocations/${second.invocationId}/cancelled`,
+      { reason: "second session stopped" },
+      botRes.body.apiKey,
+    );
+    expect(secondCancelRes.status).toBe(200);
+
+    const afterCancelRuntimeRes = await req(
+      "GET",
+      `/bot-runtime/conversations/${dmRes.body.id}`,
+      undefined,
+      human.token,
+    );
+    expect(afterCancelRuntimeRes.status).toBe(200);
+    expect(afterCancelRuntimeRes.body.invocations).not.toContainEqual(
+      expect.objectContaining({ id: second.invocationId }),
+    );
+    expect(afterCancelRuntimeRes.body.events).toEqual([]);
   });
 
   test("Hermes platform supports regular bot webhook delivery while polling remains available", async () => {

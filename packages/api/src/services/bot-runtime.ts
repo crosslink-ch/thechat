@@ -113,9 +113,23 @@ interface HermesPlatformProgressInput {
 
 type HermesPlatformDeliveryMode = "polling" | "webhook";
 
+interface HermesPlatformMessageTarget {
+  invocation: typeof botInvocations.$inferSelect | null;
+  bot: typeof bots.$inferSelect;
+  botName: string;
+  conversation: typeof conversations.$inferSelect;
+  session: typeof botSessions.$inferSelect | null;
+}
+
 let asyncBus: BullMqAsyncBus | null = null;
 let botWorker: AsyncWorkerRuntime | null = null;
 let botWorkerStartPromise: Promise<AsyncWorkerRuntime> | null = null;
+
+function recordFromJson(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? { ...(value as Record<string, unknown>) }
+    : {};
+}
 
 export function signWebhookPayload(body: string, secret: string, timestamp: number): string {
   const signedContent = `${timestamp}.${body}`;
@@ -985,66 +999,248 @@ function getHermesPlatformDeliveryMode(requestJson: Record<string, unknown> | nu
   return deliveryMode === "polling" || deliveryMode === "webhook" ? deliveryMode : null;
 }
 
-export async function completeHermesPlatformInvocation(input: {
+function conversationIdFromHermesChatId(chatId: string | null | undefined): string | null {
+  if (!chatId) return null;
+  const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  if (uuidPattern.test(chatId)) return chatId;
+  const match = chatId.match(/(?:^|:)conversation:([^:]+)/);
+  return match?.[1] ?? null;
+}
+
+async function loadBotSessionForPlatformMessage(input: {
+  botId: string;
+  conversationId: string;
+  botSessionId?: string | null;
+  chatId?: string | null;
+}) {
+  if (input.botSessionId) {
+    const [session] = await db
+      .select()
+      .from(botSessions)
+      .where(
+        and(
+          eq(botSessions.id, input.botSessionId),
+          eq(botSessions.botId, input.botId),
+          eq(botSessions.conversationId, input.conversationId),
+        ),
+      )
+      .limit(1);
+    if (!session) throw new ServiceError("Hermes session not found", 404);
+    return session;
+  }
+
+  if (input.chatId) {
+    const [session] = await db
+      .select()
+      .from(botSessions)
+      .where(
+        and(
+          eq(botSessions.botId, input.botId),
+          eq(botSessions.conversationId, input.conversationId),
+          eq(botSessions.externalSessionId, input.chatId),
+        ),
+      )
+      .limit(1);
+    if (session) return session;
+  }
+
+  return null;
+}
+
+async function resolveHermesPlatformMessageTarget(input: {
   authenticatedBotId: string;
-  invocationId: string;
+  invocationId?: string | null;
+  botId?: string;
+  conversationId?: string;
+  botSessionId?: string | null;
+  chatId?: string | null;
+}): Promise<HermesPlatformMessageTarget> {
+  if (input.invocationId) {
+    const loaded = await loadInvocationContext(input.invocationId);
+    if (!loaded) throw new ServiceError("Invocation not found", 404);
+    if (loaded.bot.kind !== "hermes") throw new ServiceError("Invocation is not for a Hermes bot", 400);
+    if (loaded.bot.id !== input.authenticatedBotId) throw new ServiceError("Bot token does not match invocation", 403);
+    if (input.botId && input.botId !== loaded.bot.id) throw new ServiceError("Bot does not match invocation", 400);
+    if (input.conversationId && input.conversationId !== loaded.conversation.id) {
+      throw new ServiceError("Conversation does not match invocation", 400);
+    }
+    if (input.botSessionId && input.botSessionId !== loaded.session?.id) {
+      throw new ServiceError("Hermes session does not match invocation", 400);
+    }
+    return {
+      invocation: loaded.invocation,
+      bot: loaded.bot,
+      botName: loaded.botName,
+      conversation: loaded.conversation,
+      session: loaded.session,
+    };
+  }
+
+  if (input.botId && input.botId !== input.authenticatedBotId) {
+    throw new ServiceError("Bot token does not match bot", 403);
+  }
+
+  const [botRow] = await db
+    .select({
+      bot: bots,
+      botName: users.name,
+    })
+    .from(bots)
+    .innerJoin(users, eq(bots.userId, users.id))
+    .where(eq(bots.id, input.authenticatedBotId))
+    .limit(1);
+  if (!botRow || botRow.bot.kind !== "hermes") throw new ServiceError("Bot token is not for a Hermes bot", 403);
+
+  let conversationId = input.conversationId ?? conversationIdFromHermesChatId(input.chatId);
+  if (!conversationId && input.chatId) {
+    const [session] = await db
+      .select({
+        conversationId: botSessions.conversationId,
+      })
+      .from(botSessions)
+      .where(and(eq(botSessions.botId, botRow.bot.id), eq(botSessions.externalSessionId, input.chatId)))
+      .limit(1);
+    conversationId = session?.conversationId ?? null;
+  }
+  if (!conversationId) throw new ServiceError("conversationId or resolvable chatId is required", 400);
+
+  const [conversation] = await db
+    .select()
+    .from(conversations)
+    .where(eq(conversations.id, conversationId))
+    .limit(1);
+  if (!conversation) throw new ServiceError("Conversation not found", 404);
+
+  const [participant] = await db
+    .select({ userId: conversationParticipants.userId })
+    .from(conversationParticipants)
+    .where(
+      and(
+        eq(conversationParticipants.conversationId, conversation.id),
+        eq(conversationParticipants.userId, botRow.bot.userId),
+      ),
+    )
+    .limit(1);
+  if (!participant) throw new ServiceError("Bot is not a participant of this conversation", 403);
+
+  const explicitSession = await loadBotSessionForPlatformMessage({
+    botId: botRow.bot.id,
+    conversationId: conversation.id,
+    botSessionId: input.botSessionId,
+    chatId: input.chatId,
+  });
+  const session = explicitSession ?? (await getOrCreateBotSession(botRow.bot.id, conversation));
+
+  return {
+    invocation: null,
+    bot: botRow.bot,
+    botName: botRow.botName,
+    conversation,
+    session,
+  };
+}
+
+export async function publishHermesPlatformMessage(input: {
+  authenticatedBotId: string;
+  invocationId?: string | null;
   content: string;
   platformMessageId?: string | null;
   botId?: string;
   conversationId?: string;
+  botSessionId?: string | null;
+  chatId?: string | null;
+  complete?: boolean;
 }) {
-  const content = input.content.trim();
-  if (!content) throw new ServiceError("Message content is required", 400);
+  return withSpan(
+    "hermes_platform.message.record",
+    {
+      "messaging.system": "thechat",
+      "messaging.operation": "hermes_message",
+      "thechat.bot_invocation_id": input.invocationId ?? "",
+      "thechat.bot_id": input.botId ?? input.authenticatedBotId,
+      "thechat.conversation_id": input.conversationId ?? "",
+      "thechat.hermes_platform.message.has_invocation": Boolean(input.invocationId),
+      "thechat.hermes_platform.message.complete": Boolean(input.invocationId && input.complete === true),
+    },
+    async (span) => {
+      const content = input.content.trim();
+      if (!content) throw new ServiceError("Message content is required", 400);
 
-  const loaded = await loadInvocationContext(input.invocationId);
-  if (!loaded) throw new ServiceError("Invocation not found", 404);
-  if (loaded.bot.kind !== "hermes") throw new ServiceError("Invocation is not for a Hermes bot", 400);
-  if (loaded.bot.id !== input.authenticatedBotId) throw new ServiceError("Bot token does not match invocation", 403);
-  if (input.botId && input.botId !== loaded.bot.id) throw new ServiceError("Bot does not match invocation", 400);
-  if (input.conversationId && input.conversationId !== loaded.conversation.id) {
-    throw new ServiceError("Conversation does not match invocation", 400);
-  }
+      const target = await resolveHermesPlatformMessageTarget(input);
+      const shouldComplete = Boolean(target.invocation && input.complete === true);
+      const previousResponseJson = recordFromJson(target.invocation?.responseJson);
+      const previousPlatformMessageId = previousResponseJson.platformMessageId;
+      if (target.invocation) {
+        span.setAttribute("thechat.bot_invocation.status.previous", target.invocation.status);
+      }
+      span.setAttribute("thechat.conversation_id", target.conversation.id);
+      span.setAttribute("thechat.bot_id", target.bot.id);
+      span.setAttribute("thechat.bot_session_id", target.session?.id ?? "");
+      span.setAttribute(
+        "thechat.hermes_platform.message.has_previous_response",
+        Boolean(target.invocation?.responseMessageId),
+      );
 
-  if (loaded.invocation.responseMessageId && loaded.invocation.status === "completed") {
-    return { messageId: loaded.invocation.responseMessageId, duplicate: true };
-  }
+      if (
+        shouldComplete &&
+        target.invocation?.status === "completed" &&
+        target.invocation.responseMessageId &&
+        input.platformMessageId &&
+        previousPlatformMessageId === input.platformMessageId
+      ) {
+        span.setAttribute("thechat.hermes_platform.message.duplicate", true);
+        return { messageId: target.invocation.responseMessageId, duplicate: true };
+      }
 
-  const [responseMessage] = await db
-    .insert(messages)
-    .values({
-      conversationId: loaded.conversation.id,
-      botSessionId: loaded.session?.id ?? null,
-      senderId: loaded.bot.userId,
-      content,
-      parts: [{ type: "text", text: content }],
-    })
-    .returning();
+      const [responseMessage] = await db
+        .insert(messages)
+        .values({
+          conversationId: target.conversation.id,
+          botSessionId: target.session?.id ?? null,
+          senderId: target.bot.userId,
+          content,
+          parts: [{ type: "text", text: content }],
+        })
+        .returning();
 
-  const completedAt = new Date();
-  await db
-    .update(botInvocations)
-    .set({
-      status: "completed",
-      responseMessageId: responseMessage.id,
-      responseJson: {
-        platform: "thechat",
-        platformMessageId: input.platformMessageId ?? null,
-        output: content,
-      },
-      completedAt,
-      updatedAt: completedAt,
-    })
-    .where(eq(botInvocations.id, input.invocationId));
-  if (loaded.session) {
-    await db
-      .update(botSessions)
-      .set({ lastMessageId: responseMessage.id, updatedAt: completedAt })
-      .where(eq(botSessions.id, loaded.session.id));
-  }
+      const now = new Date();
+      if (target.invocation) {
+        await db
+          .update(botInvocations)
+          .set({
+            ...(shouldComplete
+              ? { status: "completed", completedAt: now, error: null }
+              : {}),
+            responseMessageId: responseMessage.id,
+            responseJson: {
+              ...previousResponseJson,
+              platform: "thechat",
+              platformMessageId: input.platformMessageId ?? null,
+              output: content,
+            },
+            updatedAt: now,
+          })
+          .where(eq(botInvocations.id, target.invocation.id));
+      }
+      if (target.session) {
+        await db
+          .update(botSessions)
+          .set({ lastMessageId: responseMessage.id, updatedAt: now })
+          .where(eq(botSessions.id, target.session.id));
+      }
 
-  await publishBotMessage(responseMessage, loaded.botName, loaded.conversation.type);
-  await publishInvocationUpdate(input.invocationId);
-  return { messageId: responseMessage.id, duplicate: false };
+      span.setAttribute("thechat.message_id", responseMessage.id);
+      if (target.invocation) {
+        span.setAttribute(
+          "thechat.bot_invocation.status.next",
+          shouldComplete ? "completed" : target.invocation.status,
+        );
+      }
+      await publishBotMessage(responseMessage, target.botName, target.conversation.type);
+      if (target.invocation) await publishInvocationUpdate(target.invocation.id);
+      return { messageId: responseMessage.id, duplicate: false };
+    },
+  );
 }
 
 export async function completeHermesPlatformInvocationSilently(input: {
@@ -1052,34 +1248,56 @@ export async function completeHermesPlatformInvocationSilently(input: {
   invocationId: string;
   reason?: string | null;
 }) {
-  const loaded = await loadInvocationContext(input.invocationId);
-  if (!loaded) throw new ServiceError("Invocation not found", 404);
-  if (loaded.bot.kind !== "hermes") throw new ServiceError("Invocation is not for a Hermes bot", 400);
-  if (loaded.bot.id !== input.authenticatedBotId) throw new ServiceError("Bot token does not match invocation", 403);
+  return withSpan(
+    "hermes_platform.invocation.complete",
+    {
+      "messaging.system": "thechat",
+      "messaging.operation": "hermes_complete",
+      "thechat.bot_invocation_id": input.invocationId,
+    },
+    async (span) => {
+      const loaded = await loadInvocationContext(input.invocationId);
+      if (!loaded) throw new ServiceError("Invocation not found", 404);
+      if (loaded.bot.kind !== "hermes") throw new ServiceError("Invocation is not for a Hermes bot", 400);
+      if (loaded.bot.id !== input.authenticatedBotId) throw new ServiceError("Bot token does not match invocation", 403);
 
-  if (loaded.invocation.status === "completed") {
-    return { ok: true, duplicate: true };
-  }
+      span.setAttribute("thechat.bot_invocation.status.previous", loaded.invocation.status);
+      if (loaded.invocation.status === "completed") {
+        span.setAttribute("thechat.hermes_platform.complete.duplicate", true);
+        return { ok: true, duplicate: true };
+      }
 
-  const completedAt = new Date();
-  await db
-    .update(botInvocations)
-    .set({
-      status: "completed",
-      responseJson: {
-        platform: "thechat",
-        output: null,
-        silent: true,
-        reason: input.reason ?? null,
-      },
-      error: null,
-      completedAt,
-      updatedAt: completedAt,
-    })
-    .where(eq(botInvocations.id, input.invocationId));
+      const previousResponseJson = recordFromJson(loaded.invocation.responseJson);
+      const hasPriorResponse = Object.keys(previousResponseJson).length > 0;
+      const completedAt = new Date();
+      await db
+        .update(botInvocations)
+        .set({
+          status: "completed",
+          responseJson: hasPriorResponse
+            ? {
+                ...previousResponseJson,
+                completion: {
+                  type: "silent",
+                  reason: input.reason ?? null,
+                },
+              }
+            : {
+                platform: "thechat",
+                output: null,
+                silent: true,
+                reason: input.reason ?? null,
+              },
+          error: null,
+          completedAt,
+          updatedAt: completedAt,
+        })
+        .where(eq(botInvocations.id, input.invocationId));
 
-  await publishInvocationUpdate(input.invocationId);
-  return { ok: true, duplicate: false };
+      await publishInvocationUpdate(input.invocationId);
+      return { ok: true, duplicate: false };
+    },
+  );
 }
 
 export async function failHermesPlatformInvocation(input: {

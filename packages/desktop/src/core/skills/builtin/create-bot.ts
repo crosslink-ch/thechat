@@ -166,6 +166,6 @@ Body: {}
 - In channels/groups, users mention the specific bot name, for example \`@Koda summarize this thread\`.
 - In direct messages with a workspace Hermes bot, users can message the bot without an @mention and it should respond.
 - TheChat stores generic bot session, invocation, and event metadata for UI/history; Hermes Gateway owns the actual model runtime and session memory.
-- With no bot \`webhookUrl\`, Hermes polls \`/hermes-platform/events\`; in webhook mode Hermes registers \`THECHAT_WEBHOOK_URL\` through \`POST /bots/me/webhook\`, TheChat pushes queued invocations to that callback, and Hermes posts final messages through \`/hermes-platform/messages\`.
+- With no bot \`webhookUrl\`, Hermes polls \`/hermes-platform/events\`; in webhook mode Hermes registers \`THECHAT_WEBHOOK_URL\` through \`POST /bots/me/webhook\`, TheChat pushes queued invocations to that callback, and Hermes posts bot messages through \`/hermes-platform/messages\` while reporting invocation lifecycle through \`/hermes-platform/invocations/:id/*\`.
 `,
 };

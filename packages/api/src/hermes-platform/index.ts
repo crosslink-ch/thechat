@@ -6,20 +6,23 @@ import { bots, users } from "../db/schema";
 import {
   cancelHermesPlatformInvocation,
   claimHermesPlatformEvents,
-  completeHermesPlatformInvocation,
   completeHermesPlatformInvocationSilently,
   failHermesPlatformInvocation,
+  publishHermesPlatformMessage,
   publishHermesPlatformProgress,
   publishHermesPlatformTyping,
 } from "../services/bot-runtime";
 import { ServiceError } from "../services/errors";
 
-const completeSchema = z.object({
-  invocationId: z.string().min(1),
+const messageSchema = z.object({
+  invocationId: z.string().min(1).optional(),
   botId: z.string().min(1).optional(),
   conversationId: z.string().min(1).optional(),
+  botSessionId: z.string().uuid().nullish(),
+  chatId: z.string().min(1).optional(),
   content: z.string().min(1),
   platformMessageId: z.string().nullish(),
+  complete: z.boolean().optional(),
 });
 
 const typingSchema = z.object({
@@ -127,19 +130,22 @@ export const hermesPlatformRoutes = new Elysia({ prefix: "/hermes-platform" })
     }
   })
   .post("/messages", async ({ body, platformBot, set }) => {
-    const parsed = completeSchema.safeParse(body);
+    const parsed = messageSchema.safeParse(body);
     if (!parsed.success) {
       set.status = 400;
       return { error: parsed.error.issues[0]?.message ?? "Invalid input" };
     }
     try {
-      return await completeHermesPlatformInvocation({
+      return await publishHermesPlatformMessage({
         authenticatedBotId: platformBot!.id,
-        invocationId: parsed.data.invocationId,
+        invocationId: parsed.data.invocationId ?? null,
         botId: parsed.data.botId,
         conversationId: parsed.data.conversationId,
+        botSessionId: parsed.data.botSessionId ?? null,
+        chatId: parsed.data.chatId,
         content: parsed.data.content,
         platformMessageId: parsed.data.platformMessageId ?? null,
+        complete: parsed.data.complete,
       });
     } catch (e: any) {
       set.status = e instanceof ServiceError ? e.status : 500;
