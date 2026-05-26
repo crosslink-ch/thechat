@@ -119,6 +119,64 @@ describe("useBotRuntime", () => {
     });
   });
 
+  it("updates session summaries from bot-session messages", () => {
+    const client = createTestQueryClient();
+    client.setQueryData<BotRuntimeSnapshot>(
+      botRuntimeQueryKey("conversation-1"),
+      runtime({
+        sessions: [
+          session({ id: "session-1", updatedAt: "2026-01-01T00:00:00.000Z" }),
+          session({ id: "session-2", updatedAt: "2026-01-01T00:00:00.000Z" }),
+        ],
+      }),
+    );
+
+    const { result } = renderHook(() => useBotRuntimeCache(), {
+      wrapper: createQueryWrapper(client),
+    });
+
+    act(() => {
+      result.current.mergeMessageUpdate("conversation-1", {
+        id: "message-2",
+        conversationId: "conversation-1",
+        botSessionId: "session-2",
+        senderId: "bot-user-1",
+        senderName: "Koda",
+        senderType: "bot",
+        content: "Cron result",
+        parts: null,
+        createdAt: "2026-01-01T00:05:00.000Z",
+      });
+    });
+
+    expect(
+      client.getQueryData<BotRuntimeSnapshot>(
+        botRuntimeQueryKey("conversation-1"),
+      )?.sessions.map((item) => ({
+        id: item.id,
+        lastMessageId: item.lastMessageId,
+        lastMessagePreview: item.lastMessagePreview,
+        lastMessageSenderName: item.lastMessageSenderName,
+        lastMessageCreatedAt: item.lastMessageCreatedAt,
+      })),
+    ).toEqual([
+      {
+        id: "session-2",
+        lastMessageId: "message-2",
+        lastMessagePreview: "Cron result",
+        lastMessageSenderName: "Koda",
+        lastMessageCreatedAt: "2026-01-01T00:05:00.000Z",
+      },
+      {
+        id: "session-1",
+        lastMessageId: null,
+        lastMessagePreview: null,
+        lastMessageSenderName: null,
+        lastMessageCreatedAt: null,
+      },
+    ]);
+  });
+
   it("adds created Hermes sessions to the runtime query cache", async () => {
     const createdSession = session({ id: "session-2", title: "Session 2" });
     const post = vi.fn(() => Promise.resolve({ data: createdSession, error: null }));

@@ -52,7 +52,7 @@ export function DmRoute() {
   const runtimeQuery = useBotRuntime(conversationId, token, isHermesDm);
   const runtime = runtimeQuery.data ?? null;
   const runtimeLoading = runtimeQuery.isLoading;
-  const { mergeInvocationUpdate, mergeProgressEvent } = useBotRuntimeCache();
+  const { mergeInvocationUpdate, mergeProgressEvent, mergeMessageUpdate } = useBotRuntimeCache();
   const {
     isPending: creatingSession,
     mutateAsync: createSession,
@@ -134,6 +134,7 @@ export function DmRoute() {
     }: WsEvents["ws:new_message"]) => {
       if (msg.conversationId === conversationId) {
         channelChatRef.current.addMessage(msg);
+        if (isHermesDm) mergeMessageUpdate(conversationId, msg);
         // Clear typing indicator for this user
         setTypingUsers((prev) => {
           if (!prev.has(msg.senderId)) return prev;
@@ -211,6 +212,7 @@ export function DmRoute() {
     conversationId,
     effectiveHermesSessionId,
     isHermesDm,
+    mergeMessageUpdate,
     mergeInvocationUpdate,
     mergeProgressEvent,
     user?.id,

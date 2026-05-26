@@ -54,14 +54,26 @@ export function useChannelChat({
   const addMessage = useCallback(
     (msg: ChatMessage) => {
       if (msg.conversationId !== conversationId) return;
-      if (botSessionId !== undefined && msg.botSessionId !== botSessionId) return;
-      queryClient.setQueryData<ChatMessage[]>(
-        messagesQueryKey(conversationId, botSessionId),
-        (prev = []) => {
+      const upsertMessage = (
+        key: ReturnType<typeof messagesQueryKey>,
+        createIfMissing: boolean,
+      ) => {
+        if (!createIfMissing && queryClient.getQueryData(key) === undefined) return;
+        queryClient.setQueryData<ChatMessage[]>(key, (prev = []) => {
           if (prev.some((m) => m.id === msg.id)) return prev;
           return [...prev, msg];
-        },
-      );
+        });
+      };
+
+      const activeKey = messagesQueryKey(conversationId, botSessionId);
+      if (botSessionId == null || msg.botSessionId === botSessionId) {
+        upsertMessage(activeKey, true);
+      }
+
+      if (msg.botSessionId) {
+        upsertMessage(messagesQueryKey(conversationId, msg.botSessionId), false);
+      }
+      upsertMessage(messagesQueryKey(conversationId, undefined), false);
     },
     [botSessionId, conversationId, queryClient],
   );
