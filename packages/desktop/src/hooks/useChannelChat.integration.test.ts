@@ -14,6 +14,7 @@ import { renderHook, waitFor, act } from "@testing-library/react";
 import { treaty } from "@elysiajs/eden";
 import type { App } from "@thechat/api";
 import { useChannelChat } from "./useChannelChat";
+import { createQueryWrapper } from "../test-utils/query";
 import WS from "ws";
 
 const INTEGRATION = process.env.INTEGRATION === "true";
@@ -177,6 +178,7 @@ describe.skipIf(!INTEGRATION)("Channel message visibility (integration)", () => 
           token: userB.token,
           wsSendMessage: vi.fn(),
         }),
+        { wrapper: createQueryWrapper() },
       );
 
       await waitFor(() => {
@@ -208,6 +210,7 @@ describe.skipIf(!INTEGRATION)("Channel message visibility (integration)", () => 
           initialProps: {
             conversationId: generalChannelId as string | null,
           },
+          wrapper: createQueryWrapper(),
         },
       );
 
@@ -248,6 +251,7 @@ describe.skipIf(!INTEGRATION)("Channel message visibility (integration)", () => 
           token: userB.token,
           wsSendMessage: vi.fn(),
         }),
+        { wrapper: createQueryWrapper() },
       );
 
       await waitFor(() => expect(result.current.loading).toBe(false));
@@ -281,6 +285,7 @@ describe.skipIf(!INTEGRATION)("Channel message visibility (integration)", () => 
           token: userB.token,
           wsSendMessage: vi.fn(),
         }),
+        { wrapper: createQueryWrapper() },
       );
 
       await waitFor(() => expect(result.current.loading).toBe(false));
@@ -312,6 +317,7 @@ describe.skipIf(!INTEGRATION)("Channel message visibility (integration)", () => 
           token: userB.token,
           wsSendMessage: vi.fn(),
         }),
+        { wrapper: createQueryWrapper() },
       );
 
       await waitFor(() => expect(result.current.loading).toBe(false));
@@ -418,6 +424,7 @@ describe.skipIf(!INTEGRATION)("Channel message visibility (integration)", () => 
             token: userB.token,
             wsSendMessage: vi.fn(),
           }),
+          { wrapper: createQueryWrapper() },
         );
 
         await waitFor(() => expect(result.current.loading).toBe(false));
@@ -472,6 +479,7 @@ describe.skipIf(!INTEGRATION)("Channel message visibility (integration)", () => 
             token: userA.token,
             wsSendMessage: vi.fn(),
           }),
+          { wrapper: createQueryWrapper() },
         );
         const hookB = renderHook(() =>
           useChannelChat({
@@ -479,6 +487,7 @@ describe.skipIf(!INTEGRATION)("Channel message visibility (integration)", () => 
             token: userB.token,
             wsSendMessage: vi.fn(),
           }),
+          { wrapper: createQueryWrapper() },
         );
 
         await waitFor(() =>

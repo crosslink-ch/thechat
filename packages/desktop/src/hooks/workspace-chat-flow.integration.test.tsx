@@ -34,6 +34,7 @@ import {
 } from "react";
 import { useChannelChat } from "./useChannelChat";
 import { ChannelChatView } from "../components/ChannelChatView";
+import { createQueryWrapper } from "../test-utils/query";
 import type { ChatMessage } from "@thechat/shared";
 import WS from "ws";
 
@@ -305,6 +306,7 @@ describe.skipIf(!INTEGRATION)(
           token={userA.token}
           wsSendMessage={wsSendA}
         />,
+        { wrapper: createQueryWrapper() },
       );
 
       const viewB = render(
@@ -314,6 +316,7 @@ describe.skipIf(!INTEGRATION)(
           token={userB.token}
           wsSendMessage={wsSendB}
         />,
+        { wrapper: createQueryWrapper() },
       );
 
       // Both should show the empty state after loading
@@ -358,6 +361,7 @@ describe.skipIf(!INTEGRATION)(
             token={userA.token}
             wsSendMessage={wsSendA}
           />,
+          { wrapper: createQueryWrapper() },
         );
 
         const viewB = render(
@@ -367,6 +371,7 @@ describe.skipIf(!INTEGRATION)(
             token={userB.token}
             wsSendMessage={() => {}}
           />,
+          { wrapper: createQueryWrapper() },
         );
 
         // Wait for both views to finish loading

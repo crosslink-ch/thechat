@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 import { useParams } from "@tanstack/react-router";
 import { useAuthStore } from "../stores/auth";
-import { useBotRuntimeStore } from "../stores/bot-runtime";
+import { useBotRuntime, useBotRuntimeCache } from "../hooks/useBotRuntime";
 import { useWebSocketStore } from "../stores/websocket";
 import { useConversationsStore } from "../stores/conversations";
 import { useWorkspacesStore } from "../stores/workspaces";
@@ -37,16 +37,14 @@ export function ChannelRoute() {
 
   const [typingUsers, setTypingUsers] = useState<Map<string, string>>(new Map());
   const typingTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
-  const runtimeEntry = useBotRuntimeStore((s) => s.entries[channelId]);
-  const runtime = runtimeEntry?.runtime ?? null;
-  const runtimeLoading = runtimeEntry?.loading ?? false;
-  const fetchRuntime = useBotRuntimeStore((s) => s.fetchRuntime);
-  const mergeInvocationUpdate = useBotRuntimeStore((s) => s.mergeInvocationUpdate);
-  const mergeProgressEvent = useBotRuntimeStore((s) => s.mergeProgressEvent);
   const hermesBotNames = useMemo(
     () => members?.filter((m) => m.bot?.kind === "hermes").map((m) => m.user.name) ?? [],
     [members],
   );
+  const runtimeQuery = useBotRuntime(channelId, token, hermesBotNames.length > 0);
+  const runtime = runtimeQuery.data ?? null;
+  const runtimeLoading = runtimeQuery.isLoading;
+  const { mergeInvocationUpdate, mergeProgressEvent } = useBotRuntimeCache();
   const activeHermesProgress = useMemo(
     () => selectHermesConversationProgress(runtime),
     [runtime],
@@ -56,11 +54,6 @@ export function ChannelRoute() {
   useEffect(() => {
     useConversationsStore.getState().markChannelRead(channelId);
   }, [channelId]);
-
-  useEffect(() => {
-    if (!token || hermesBotNames.length === 0) return;
-    void fetchRuntime(channelId, token);
-  }, [channelId, fetchRuntime, hermesBotNames.length, token]);
 
   // Subscribe to WebSocket messages for this channel
   useEffect(() => {

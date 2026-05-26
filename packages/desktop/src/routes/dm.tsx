@@ -1,9 +1,13 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { useParams } from "@tanstack/react-router";
-import type { BotRuntimeSnapshot } from "@thechat/shared";
 import { useAuthStore } from "../stores/auth";
-import { useBotRuntimeStore } from "../stores/bot-runtime";
-import { useConversationDetailsStore } from "../stores/conversation-details";
+import {
+  useBotRuntime,
+  useBotRuntimeCache,
+  useCreateHermesBotSession,
+} from "../hooks/useBotRuntime";
+import { useConversationDetail } from "../hooks/useConversationDetail";
+import { useHermesUiStore } from "../stores/hermes-ui";
 import { useWebSocketStore } from "../stores/websocket";
 import { useWorkspacesStore } from "../stores/workspaces";
 import { useChannelChat } from "../hooks/useChannelChat";
@@ -12,12 +16,7 @@ import { ChannelChatView } from "../components/ChannelChatView";
 import { HermesRuntimePanel } from "../components/HermesRuntimePanel";
 import { fireNotification } from "../lib/notifications";
 import { wsEvents, type WsEvents } from "../lib/ws-events";
-import { API_URL } from "../lib/api";
 import { selectHermesSessionProgress } from "../lib/hermes-progress";
-
-function auth(token: string) {
-  return { authorization: `Bearer ${token}` };
-}
 
 export function DmRoute() {
   const { id: conversationId } = useParams({ from: "/dm/$id" });
@@ -25,22 +24,14 @@ export function DmRoute() {
   const user = useAuthStore((s) => s.user);
   const members = useWorkspacesStore((s) => s.activeWorkspace?.members);
   const wsSendMessage = useWebSocketStore((s) => s.sendMessage);
-  const conversationEntry = useConversationDetailsStore((s) => s.entries[conversationId]);
-  const conversationLoading = conversationEntry?.loading ?? false;
-  const conversation = conversationEntry?.detail ?? null;
-  const conversationPending = !conversation && !!token && !conversationEntry?.error;
-  const fetchConversationDetail = useConversationDetailsStore((s) => s.fetchDetail);
-  const runtimeEntry = useBotRuntimeStore((s) => s.entries[conversationId]);
-  const runtime = runtimeEntry?.runtime ?? null;
-  const runtimeLoading = runtimeEntry?.loading ?? false;
-  const activeBotSessionId = useBotRuntimeStore(
+  const conversationQuery = useConversationDetail(conversationId, token);
+  const conversation = conversationQuery.data ?? null;
+  const conversationLoading = conversationQuery.isLoading;
+  const conversationPending = !conversation && !!token && !conversationQuery.error;
+  const activeBotSessionId = useHermesUiStore(
     (s) => s.activeSessionIds[conversationId] ?? null,
   );
-  const fetchRuntime = useBotRuntimeStore((s) => s.fetchRuntime);
-  const updateRuntime = useBotRuntimeStore((s) => s.updateRuntime);
-  const mergeInvocationUpdate = useBotRuntimeStore((s) => s.mergeInvocationUpdate);
-  const mergeProgressEvent = useBotRuntimeStore((s) => s.mergeProgressEvent);
-  const setStoredActiveSessionId = useBotRuntimeStore((s) => s.setActiveSessionId);
+  const setStoredActiveSessionId = useHermesUiStore((s) => s.setActiveSessionId);
 
   const mentions = useMemo(
     () =>
@@ -52,13 +43,20 @@ export function DmRoute() {
 
   const [typingUsers, setTypingUsers] = useState<Map<string, string>>(new Map());
   const typingTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
-  const [creatingSession, setCreatingSession] = useState(false);
 
   const otherParticipant = useMemo(
     () => conversation?.participants.find((p) => p.userId !== user?.id) ?? null,
     [conversation, user?.id],
   );
   const isHermesDm = conversation?.type === "direct" && otherParticipant?.bot?.kind === "hermes";
+  const runtimeQuery = useBotRuntime(conversationId, token, isHermesDm);
+  const runtime = runtimeQuery.data ?? null;
+  const runtimeLoading = runtimeQuery.isLoading;
+  const { mergeInvocationUpdate, mergeProgressEvent } = useBotRuntimeCache();
+  const {
+    isPending: creatingSession,
+    mutateAsync: createSession,
+  } = useCreateHermesBotSession(conversationId, token);
   const hermesSessions = useMemo(
     () => runtime?.sessions.filter((session) => session.botKind === "hermes") ?? [],
     [runtime],
@@ -85,16 +83,6 @@ export function DmRoute() {
   channelChatRef.current = channelChat;
 
   useEffect(() => {
-    if (!token) return;
-    void fetchConversationDetail(conversationId, token);
-  }, [conversationId, fetchConversationDetail, token]);
-
-  useEffect(() => {
-    if (!isHermesDm || !token) return;
-    void fetchRuntime(conversationId, token);
-  }, [conversationId, fetchRuntime, isHermesDm, token]);
-
-  useEffect(() => {
     if (!isHermesDm) return;
     if (activeBotSessionId && hermesSessions.some((session) => session.id === activeBotSessionId)) {
       return;
@@ -109,30 +97,15 @@ export function DmRoute() {
   ]);
 
   const handleCreateSession = useCallback(async () => {
-    if (!token || !isHermesDm || creatingSession) return;
-    setCreatingSession(true);
-    try {
-      const session = await postJson<BotRuntimeSnapshot["sessions"][number]>(
-        `/bot-runtime/conversations/${conversationId}/sessions`,
-        token,
-        {},
-      );
-      updateRuntime(conversationId, (prev) => ({
-        sessions: [session, ...(prev?.sessions ?? []).filter((existing) => existing.id !== session.id)],
-        invocations: prev?.invocations ?? [],
-        events: prev?.events ?? [],
-      }));
-      setStoredActiveSessionId(conversationId, session.id);
-    } finally {
-      setCreatingSession(false);
-    }
+    if (!isHermesDm || creatingSession) return;
+    const session = await createSession({});
+    setStoredActiveSessionId(conversationId, session.id);
   }, [
     conversationId,
+    createSession,
     creatingSession,
     isHermesDm,
     setStoredActiveSessionId,
-    token,
-    updateRuntime,
   ]);
 
   const hermesSessionCommands = useMemo(
@@ -280,19 +253,4 @@ export function DmRoute() {
       )}
     </div>
   );
-}
-
-async function postJson<T>(path: string, token: string, body: unknown): Promise<T> {
-  const response = await fetch(`${API_URL}${path}`, {
-    method: "POST",
-    headers: {
-      ...auth(token),
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(body),
-  });
-  if (!response.ok) {
-    throw new Error(`Request failed with HTTP ${response.status}`);
-  }
-  return response.json() as Promise<T>;
 }

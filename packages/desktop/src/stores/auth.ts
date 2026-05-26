@@ -2,9 +2,8 @@ import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
 import type { AuthUser } from "@thechat/shared";
 import { api } from "../lib/api";
-import { clearChannelChatCache } from "../hooks/useChannelChat";
-import { useBotRuntimeStore } from "./bot-runtime";
-import { useConversationDetailsStore } from "./conversation-details";
+import { queryClient } from "../lib/query-client";
+import { useHermesUiStore } from "./hermes-ui";
 
 const KV_ACCESS_TOKEN = "auth_access_token";
 const KV_REFRESH_TOKEN = "auth_refresh_token";
@@ -242,9 +241,8 @@ export const useAuthStore = create<AuthStore>()((set) => ({
     await kvDelete(KV_ACCESS_TOKEN);
     await kvDelete(KV_REFRESH_TOKEN);
     await kvDelete(KV_USER);
-    clearChannelChatCache();
-    useBotRuntimeStore.getState().clear();
-    useConversationDetailsStore.getState().clear();
+    queryClient.clear();
+    useHermesUiStore.getState().clear();
     set({ token: null, user: null });
   },
 }));

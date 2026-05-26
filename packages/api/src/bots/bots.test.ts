@@ -46,8 +46,11 @@ function uniqueEmail() {
 const createdUserEmails: string[] = [];
 const createdWorkspaceIds: string[] = [];
 const createdBotUserIds: string[] = [];
+const originalRedisKeyPrefix = process.env.REDIS_KEY_PREFIX;
+const botsTestRedisKeyPrefix = `thechat-bots-test-${crypto.randomUUID()}`;
 
 beforeAll(async () => {
+  process.env.REDIS_KEY_PREFIX = botsTestRedisKeyPrefix;
   await setBotProgressStoreForTests(createLocalBotProgressStoreForTests());
 });
 
@@ -55,6 +58,11 @@ afterAll(async () => {
   await closeBotRuntimeForTests();
   await closeBotProgressStoreForTests();
   await closeRealtimeBusForTests();
+  if (originalRedisKeyPrefix === undefined) {
+    delete process.env.REDIS_KEY_PREFIX;
+  } else {
+    process.env.REDIS_KEY_PREFIX = originalRedisKeyPrefix;
+  }
   // Clean up bots (cascade from user delete handles bot records)
   for (const id of createdBotUserIds) {
     await db.delete(users).where(eq(users.id, id));

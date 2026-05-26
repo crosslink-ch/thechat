@@ -284,66 +284,80 @@ export async function createHermesConversationSession(input: {
   userId: string;
   botId?: string | null;
 }) {
-  await requireConversationParticipant(input.conversationId, input.userId);
-  const conversation = await loadConversationRow(input.conversationId);
-  if (!conversation) throw new ServiceError("Conversation not found", 404);
+  return withSpan(
+    "bot.runtime.session.create",
+    {
+      "messaging.system": "thechat",
+      "thechat.conversation_id": input.conversationId,
+      "thechat.bot_id": input.botId ?? "",
+    },
+    async (span) => {
+      await requireConversationParticipant(input.conversationId, input.userId);
+      const conversation = await loadConversationRow(input.conversationId);
+      if (!conversation) throw new ServiceError("Conversation not found", 404);
 
-  const hermesBots = await loadHermesBotsForConversation(input.conversationId);
-  const bot = input.botId
-    ? hermesBots.find((candidate) => candidate.botId === input.botId)
-    : hermesBots[0];
-  if (!bot) throw new ServiceError("Hermes bot not found in this conversation", 404);
-  if (!input.botId && hermesBots.length > 1) {
-    throw new ServiceError("botId is required when multiple Hermes bots are present", 400);
-  }
+      const hermesBots = await loadHermesBotsForConversation(input.conversationId);
+      span.setAttribute("thechat.hermes_bots.count", hermesBots.length);
+      const bot = input.botId
+        ? hermesBots.find((candidate) => candidate.botId === input.botId)
+        : hermesBots[0];
+      if (!bot) throw new ServiceError("Hermes bot not found in this conversation", 404);
+      if (!input.botId && hermesBots.length > 1) {
+        throw new ServiceError("botId is required when multiple Hermes bots are present", 400);
+      }
 
-  const scope = await resolveBotSessionScope(bot.botId);
-  const baseSessionId = sessionKey(
-    conversation.workspaceId,
-    scope === "workspace" ? null : conversation.id,
-    bot.botId,
+      const scope = await resolveBotSessionScope(bot.botId);
+      const baseSessionId = sessionKey(
+        conversation.workspaceId,
+        scope === "workspace" ? null : conversation.id,
+        bot.botId,
+      );
+      const existingSessions = await db
+        .select({ id: botSessions.id })
+        .from(botSessions)
+        .where(and(eq(botSessions.botId, bot.botId), eq(botSessions.conversationId, conversation.id)));
+      const title = `Session ${existingSessions.length + 1}`;
+      const [session] = await db
+        .insert(botSessions)
+        .values({
+          botId: bot.botId,
+          workspaceId: conversation.workspaceId,
+          conversationId: conversation.id,
+          scope,
+          externalSessionId: `${baseSessionId}:session:${crypto.randomUUID()}`,
+          title,
+        })
+        .returning();
+
+      const [sessionRow] = await db
+        .select({
+          id: botSessions.id,
+          botId: botSessions.botId,
+          botUserId: bots.userId,
+          botName: users.name,
+          botKind: bots.kind,
+          workspaceId: botSessions.workspaceId,
+          conversationId: botSessions.conversationId,
+          scope: botSessions.scope,
+          externalSessionId: botSessions.externalSessionId,
+          title: botSessions.title,
+          lastMessageId: botSessions.lastMessageId,
+          createdAt: botSessions.createdAt,
+          updatedAt: botSessions.updatedAt,
+        })
+        .from(botSessions)
+        .innerJoin(bots, eq(botSessions.botId, bots.id))
+        .innerJoin(users, eq(bots.userId, users.id))
+        .where(eq(botSessions.id, session.id))
+        .limit(1);
+      if (!sessionRow) throw new ServiceError("Failed to create Hermes session", 500);
+      const [sessionWithSummary] = await attachSessionSummaries([sessionRow]);
+      span.setAttribute("thechat.bot_id", bot.botId);
+      span.setAttribute("thechat.bot_session_id", sessionRow.id);
+      span.setAttribute("thechat.bot_session.scope", sessionRow.scope);
+      return toPublicSession(sessionWithSummary);
+    },
   );
-  const existingSessions = await db
-    .select({ id: botSessions.id })
-    .from(botSessions)
-    .where(and(eq(botSessions.botId, bot.botId), eq(botSessions.conversationId, conversation.id)));
-  const title = `Session ${existingSessions.length + 1}`;
-  const [session] = await db
-    .insert(botSessions)
-    .values({
-      botId: bot.botId,
-      workspaceId: conversation.workspaceId,
-      conversationId: conversation.id,
-      scope,
-      externalSessionId: `${baseSessionId}:session:${crypto.randomUUID()}`,
-      title,
-    })
-    .returning();
-
-  const [sessionRow] = await db
-    .select({
-      id: botSessions.id,
-      botId: botSessions.botId,
-      botUserId: bots.userId,
-      botName: users.name,
-      botKind: bots.kind,
-      workspaceId: botSessions.workspaceId,
-      conversationId: botSessions.conversationId,
-      scope: botSessions.scope,
-      externalSessionId: botSessions.externalSessionId,
-      title: botSessions.title,
-      lastMessageId: botSessions.lastMessageId,
-      createdAt: botSessions.createdAt,
-      updatedAt: botSessions.updatedAt,
-    })
-    .from(botSessions)
-    .innerJoin(bots, eq(botSessions.botId, bots.id))
-    .innerJoin(users, eq(bots.userId, users.id))
-    .where(eq(botSessions.id, session.id))
-    .limit(1);
-  if (!sessionRow) throw new ServiceError("Failed to create Hermes session", 500);
-  const [sessionWithSummary] = await attachSessionSummaries([sessionRow]);
-  return toPublicSession(sessionWithSummary);
 }
 
 export async function startBotWorker(options: { concurrency?: number } = {}): Promise<AsyncWorkerRuntime> {

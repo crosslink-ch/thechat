@@ -1,8 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import type { ChatMessage } from "@thechat/shared";
-import { clearChannelChatCacheForTests, useChannelChat } from "./useChannelChat";
+import { useChannelChat } from "./useChannelChat";
 import { api } from "../lib/api";
+import { createQueryWrapper, createTestQueryClient } from "../test-utils/query";
 
 vi.mock("../lib/api", () => ({
   api: {
@@ -40,8 +41,7 @@ function sessionMessage(conversationId: string, botSessionId: string, content: s
 
 describe("useChannelChat", () => {
   beforeEach(() => {
-    vi.clearAllMocks();
-    clearChannelChatCacheForTests();
+    vi.resetAllMocks();
   });
 
   it("clears old messages and ignores stale fetches when switching conversations", async () => {
@@ -61,7 +61,10 @@ describe("useChannelChat", () => {
           token: "test-token",
           wsSendMessage: vi.fn(),
         }),
-      { initialProps: { conversationId: "dm-first" } },
+      {
+        initialProps: { conversationId: "dm-first" },
+        wrapper: createQueryWrapper(),
+      },
     );
 
     await waitFor(() => expect(api.messages).toHaveBeenCalledTimes(1));
@@ -86,16 +89,17 @@ describe("useChannelChat", () => {
     expect(result.current.messages.map((m) => m.content)).toEqual(["second history"]);
   });
 
-  it("refetches on demand and ignores stale in-flight history", async () => {
-    const first = deferred<{ data: ChatMessage[] }>();
+  it("refetches on demand while keeping the current history visible", async () => {
     const second = deferred<{ data: ChatMessage[] }>();
-    let callCount = 0;
-    vi.mocked(api.messages).mockImplementation(() => {
-      callCount += 1;
-      return {
-        get: vi.fn(() => (callCount === 1 ? first.promise : second.promise)),
-      } as any;
-    });
+    vi.mocked(api.messages)
+      .mockReturnValueOnce({
+        get: vi.fn(() =>
+          Promise.resolve({ data: [message("dm-refetch", "initial history")] }),
+        ),
+      } as any)
+      .mockReturnValueOnce({
+        get: vi.fn(() => second.promise),
+      } as any);
 
     const { result } = renderHook(
       () =>
@@ -104,18 +108,25 @@ describe("useChannelChat", () => {
           token: "test-token",
           wsSendMessage: vi.fn(),
         }),
+      { wrapper: createQueryWrapper() },
     );
 
-    await waitFor(() => expect(api.messages).toHaveBeenCalledTimes(1));
+    await waitFor(() => {
+      expect(result.current.messages.map((m) => m.content)).toEqual([
+        "initial history",
+      ]);
+    });
 
     act(() => {
       result.current.refetchMessages();
     });
 
     await waitFor(() => expect(api.messages).toHaveBeenCalledTimes(2));
+    expect(result.current.messages.map((m) => m.content)).toEqual([
+      "initial history",
+    ]);
 
     act(() => {
-      first.resolve({ data: [message("dm-refetch", "stale refetch history")] });
       second.resolve({ data: [message("dm-refetch", "current refetch history")] });
     });
 
@@ -133,13 +144,15 @@ describe("useChannelChat", () => {
     vi.mocked(api.messages).mockReturnValue({ get } as any);
     const wsSendMessage = vi.fn();
 
-    const { result } = renderHook(() =>
-      useChannelChat({
-        conversationId: "dm-hermes",
-        token: "test-token",
-        botSessionId: "session-active",
-        wsSendMessage,
-      }),
+    const { result } = renderHook(
+      () =>
+        useChannelChat({
+          conversationId: "dm-hermes",
+          token: "test-token",
+          botSessionId: "session-active",
+          wsSendMessage,
+        }),
+      { wrapper: createQueryWrapper() },
     );
 
     await waitFor(() => expect(api.messages).toHaveBeenCalledTimes(1));
@@ -162,10 +175,12 @@ describe("useChannelChat", () => {
       result.current.sendMessage("next");
     });
 
-    expect(result.current.messages.map((m) => m.content)).toEqual([
-      "active history",
-      "active live",
-    ]);
+    await waitFor(() => {
+      expect(result.current.messages.map((m) => m.content)).toEqual([
+        "active history",
+        "active live",
+      ]);
+    });
     expect(wsSendMessage).toHaveBeenCalledWith("dm-hermes", "next", "session-active");
   });
 
@@ -176,6 +191,8 @@ describe("useChannelChat", () => {
       ),
     } as any);
     const wsSendMessage = vi.fn();
+    const client = createTestQueryClient();
+    const wrapper = createQueryWrapper(client);
 
     const first = renderHook(() =>
       useChannelChat({
@@ -183,6 +200,7 @@ describe("useChannelChat", () => {
         token: "test-token",
         wsSendMessage,
       }),
+      { wrapper },
     );
 
     await waitFor(() => {
@@ -198,6 +216,7 @@ describe("useChannelChat", () => {
         token: "test-token",
         wsSendMessage,
       }),
+      { wrapper },
     );
 
     expect(second.result.current.loading).toBe(false);
