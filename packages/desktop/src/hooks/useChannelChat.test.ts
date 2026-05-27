@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import type { ChatMessage } from "@thechat/shared";
-import { useChannelChat } from "./useChannelChat";
+import { messagesQueryKey, useChannelChat } from "./useChannelChat";
 import { api } from "../lib/api";
 import { createQueryWrapper, createTestQueryClient } from "../test-utils/query";
 
@@ -19,11 +19,15 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
-function message(conversationId: string, content: string): ChatMessage {
+function message(
+  conversationId: string,
+  content: string,
+  threadId: string | null = null,
+): ChatMessage {
   return {
     id: crypto.randomUUID(),
     conversationId,
-    threadId: null,
+    threadId,
     senderId: "sender-1",
     senderName: "Sender",
     senderType: "human",
@@ -176,6 +180,54 @@ describe("useChannelChat", () => {
       ]);
     });
     expect(wsSendMessage).toHaveBeenCalledWith("dm-hermes", "next", null);
+  });
+
+  it("updates inactive task-thread caches from live messages", async () => {
+    const get = vi.fn(() =>
+      Promise.resolve({ data: [message("dm-hermes", "first history", "thread-1")] }),
+    );
+    vi.mocked(api.messages).mockReturnValue({ get } as any);
+    const client = createTestQueryClient();
+    client.setQueryData<ChatMessage[]>(
+      messagesQueryKey("dm-hermes", "thread-2"),
+      [message("dm-hermes", "second prompt", "thread-2")],
+    );
+
+    const { result, rerender } = renderHook(
+      ({ threadId }: { threadId: string }) =>
+        useChannelChat({
+          conversationId: "dm-hermes",
+          threadId,
+          token: "test-token",
+          wsSendMessage: vi.fn(),
+        }),
+      {
+        initialProps: { threadId: "thread-1" },
+        wrapper: createQueryWrapper(client),
+      },
+    );
+
+    await waitFor(() => {
+      expect(result.current.messages.map((m) => m.content)).toEqual(["first history"]);
+    });
+
+    act(() => {
+      result.current.addMessage(message("dm-hermes", "second response", "thread-2"));
+    });
+
+    expect(result.current.messages.map((m) => m.content)).toEqual(["first history"]);
+    expect(
+      client
+        .getQueryData<ChatMessage[]>(messagesQueryKey("dm-hermes", "thread-2"))
+        ?.map((m) => m.content),
+    ).toEqual(["second prompt", "second response"]);
+
+    rerender({ threadId: "thread-2" });
+
+    expect(result.current.messages.map((m) => m.content)).toEqual([
+      "second prompt",
+      "second response",
+    ]);
   });
 
   it("reuses fresh cached history when remounting the same conversation", async () => {

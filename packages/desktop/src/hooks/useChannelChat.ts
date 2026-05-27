@@ -52,14 +52,21 @@ export function useChannelChat({
   const addMessage = useCallback(
     (msg: ChatMessage) => {
       if (msg.conversationId !== conversationId) return;
-      if (threadId && msg.threadId !== threadId) return;
-      queryClient.setQueryData<ChatMessage[]>(
-        messagesQueryKey(conversationId, threadId),
-        (prev = []) => {
-          if (prev.some((m) => m.id === msg.id)) return prev;
-          return [...prev, msg];
-        },
-      );
+
+      const updateCache = (cacheThreadId: string | null, createIfMissing: boolean) => {
+        const key = messagesQueryKey(conversationId, cacheThreadId);
+        if (!createIfMissing && queryClient.getQueryData(key) === undefined) return;
+        queryClient.setQueryData<ChatMessage[]>(key, (prev = []) =>
+          appendMessage(prev, msg),
+        );
+      };
+
+      if (msg.threadId) {
+        updateCache(msg.threadId, msg.threadId === threadId);
+        updateCache(null, threadId === null);
+      } else {
+        updateCache(null, threadId === null);
+      }
     },
     [conversationId, queryClient, threadId],
   );
@@ -84,4 +91,9 @@ export function useChannelChat({
     sendMessage,
     refetchMessages,
   };
+}
+
+function appendMessage(messages: ChatMessage[], msg: ChatMessage) {
+  if (messages.some((m) => m.id === msg.id)) return messages;
+  return [...messages, msg];
 }

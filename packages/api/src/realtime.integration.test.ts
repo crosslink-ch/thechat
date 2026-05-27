@@ -45,6 +45,7 @@ describe("Redis realtime bus integration", () => {
         event: {
           type: "typing",
           conversationId: "conversation-1",
+          threadId: null,
           userId: "user-a",
           userName: "Alice",
         },

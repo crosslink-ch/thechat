@@ -151,7 +151,8 @@ async function handleTyping(
   _ws: WebSocket,
   userId: string,
   userName: string,
-  conversationId: string
+  conversationId: string,
+  threadId?: string | null,
 ) {
   const participants = await db
     .select({ userId: conversationParticipants.userId })
@@ -161,6 +162,7 @@ async function handleTyping(
   const event: WsServerEvent = {
     type: "typing",
     conversationId,
+    threadId: threadId ?? null,
     userId,
     userName,
   };
@@ -233,7 +235,8 @@ export const wsRoutes = new Elysia().ws("/ws", {
         socket,
         socketUser.id,
         socketUser.name,
-        event.conversationId
+        event.conversationId,
+        event.threadId ?? null,
       );
     }
   },

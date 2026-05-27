@@ -267,7 +267,7 @@ export interface ConversationThreadPublic {
 export type WsClientEvent =
   | { type: "auth"; token: string }
   | { type: "send_message"; conversationId: string; content: string; threadId?: string | null }
-  | { type: "typing"; conversationId: string }
+  | { type: "typing"; conversationId: string; threadId?: string | null }
   | { type: "ping" };
 
 // -- Bot Types --
@@ -438,6 +438,7 @@ export type WsServerEvent =
   | {
       type: "typing";
       conversationId: string;
+      threadId: string | null;
       userId: string;
       userName: string;
     }

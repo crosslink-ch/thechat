@@ -82,13 +82,14 @@ export function DmRoute() {
         if (msg.threadId) {
           touchThread(msg.threadId, msg.createdAt);
         }
-        // Clear typing indicator for this user
-        setTypingUsers((prev) => {
-          if (!prev.has(msg.senderId)) return prev;
-          const next = new Map(prev);
-          next.delete(msg.senderId);
-          return next;
-        });
+        if (!isHermesDm || msg.threadId === activeThreadId) {
+          setTypingUsers((prev) => {
+            if (!prev.has(msg.senderId)) return prev;
+            const next = new Map(prev);
+            next.delete(msg.senderId);
+            return next;
+          });
+        }
       } else if (conversationType === "direct" && msg.senderId !== user?.id) {
         fireNotification(msg.senderName, msg.content);
       }
@@ -96,10 +97,12 @@ export function DmRoute() {
 
     const onTyping = ({
       conversationId: convId,
+      threadId,
       userId,
       userName,
     }: WsEvents["ws:typing"]) => {
       if (convId !== conversationId) return;
+      if (isHermesDm && (threadId ?? null) !== activeThreadId) return;
 
       setTypingUsers((prev) => {
         const next = new Map(prev);
@@ -153,16 +156,26 @@ export function DmRoute() {
       typingTimers.current.clear();
     };
   }, [
+    activeThreadId,
     conversationId,
+    isHermesDm,
     mergeInvocationUpdate,
     mergeProgressEvent,
     touchThread,
     user?.id,
   ]);
 
-  // Clear typing users when the visible DM changes.
+  // Clear typing users when the visible DM or Hermes task changes.
   useEffect(() => {
     setTypingUsers(new Map());
+    for (const timer of typingTimers.current.values()) {
+      clearTimeout(timer);
+    }
+    typingTimers.current.clear();
+  }, [conversationId, activeThreadId]);
+
+  // Reset task selection when the visible DM changes.
+  useEffect(() => {
     setActiveThreadId(null);
   }, [conversationId]);
 

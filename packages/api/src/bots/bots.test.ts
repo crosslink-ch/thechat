@@ -1710,6 +1710,16 @@ describe("Bots: runtime state", () => {
     expect(firstThreadRes.status).toBe(200);
     expect(secondThreadRes.status).toBe(200);
 
+    const redisKeyPrefix = `thechat-thread-typing-test-${crypto.randomUUID()}`;
+    const serviceBus = new RedisRealtimeBus({ redisKeyPrefix });
+    const observerBus = new RedisRealtimeBus({ redisKeyPrefix });
+    const realtimeEvents: RealtimeEvent[] = [];
+    await setRealtimeBusForTests(serviceBus);
+    const unsubscribe = await observerBus.subscribe((event) => {
+      realtimeEvents.push(event);
+    });
+
+    try {
     async function sendAndClaim(content: string, threadId: string) {
       const sendRes = await req(
         "POST",
@@ -1739,6 +1749,31 @@ describe("Bots: runtime state", () => {
 
     const first = await sendAndClaim("First threaded prompt", firstThreadRes.body.id);
     const second = await sendAndClaim("Second threaded prompt", secondThreadRes.body.id);
+
+    const typingRes = await req(
+      "POST",
+      "/hermes-platform/typing",
+      {
+        invocationId: first.invocationId,
+        threadId: first.threadId,
+      },
+      botRes.body.apiKey,
+    );
+    expect(typingRes.status).toBe(200);
+    const typingRuntimeEvent = await waitForResult(() => {
+      const event = realtimeEvents.find(
+        (candidate) =>
+          candidate.type === "ws.event" &&
+          candidate.event.type === "typing" &&
+          candidate.event.threadId === first.threadId,
+      );
+      return Promise.resolve(event);
+    }, "threaded Hermes typing realtime event");
+    expect(typingRuntimeEvent.type).toBe("ws.event");
+    if (typingRuntimeEvent.type !== "ws.event") {
+      throw new Error("Expected realtime websocket event");
+    }
+    expect(typingRuntimeEvent.targetUserIds).toContain(human.user.id);
 
     const progressRes = await req(
       "POST",
@@ -1801,6 +1836,11 @@ describe("Bots: runtime state", () => {
     expect(secondThreadMessages.body.map((message: any) => message.content)).toEqual([
       "Second threaded prompt",
     ]);
+    } finally {
+      await unsubscribe();
+      await observerBus.close();
+      await closeRealtimeBusForTests();
+    }
   });
 
   test("Hermes platform supports regular bot webhook delivery while polling remains available", async () => {

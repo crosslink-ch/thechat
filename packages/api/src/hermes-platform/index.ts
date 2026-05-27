@@ -29,6 +29,7 @@ const typingSchema = z.object({
   invocationId: z.string().min(1),
   botId: z.string().min(1).optional(),
   conversationId: z.string().min(1).optional(),
+  threadId: z.string().min(1).nullish(),
 });
 
 const progressSchema = z.object({
@@ -162,6 +163,7 @@ export const hermesPlatformRoutes = new Elysia({ prefix: "/hermes-platform" })
       return await publishHermesPlatformTyping({
         authenticatedBotId: platformBot!.id,
         ...parsed.data,
+        threadId: parsed.data.threadId ?? null,
       });
     } catch (e: any) {
       set.status = e instanceof ServiceError ? e.status : 500;

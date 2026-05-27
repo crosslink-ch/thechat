@@ -24,6 +24,7 @@ export type WsEvents = {
   };
   "ws:typing": {
     conversationId: string;
+    threadId: string | null;
     userId: string;
     userName: string;
   };

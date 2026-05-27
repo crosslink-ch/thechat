@@ -1050,6 +1050,7 @@ export async function publishHermesPlatformTyping(input: {
   invocationId: string;
   botId?: string;
   conversationId?: string;
+  threadId?: string | null;
 }) {
   const loaded = await loadInvocationContext(input.invocationId);
   if (!loaded) throw new ServiceError("Invocation not found", 404);
@@ -1059,6 +1060,10 @@ export async function publishHermesPlatformTyping(input: {
   if (input.conversationId && input.conversationId !== loaded.conversation.id) {
     throw new ServiceError("Conversation does not match invocation", 400);
   }
+  const threadId = loaded.invocation.threadId ?? loaded.triggerMessage.threadId ?? null;
+  if (input.threadId && input.threadId !== threadId) {
+    throw new ServiceError("Thread does not match invocation", 400);
+  }
 
   const participantRows = await db
     .select({ userId: conversationParticipants.userId })
@@ -1067,6 +1072,7 @@ export async function publishHermesPlatformTyping(input: {
   await publishWsEventToUsers(participantRows.map((p) => p.userId), {
     type: "typing",
     conversationId: loaded.conversation.id,
+    threadId,
     userId: loaded.bot.userId,
     userName: loaded.botName,
   });

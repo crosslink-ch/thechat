@@ -13,7 +13,7 @@ interface WebSocketStore {
   connect: (token: string) => void;
   disconnect: () => void;
   sendMessage: (conversationId: string, content: string, threadId?: string | null) => void;
-  sendTyping: (conversationId: string) => void;
+  sendTyping: (conversationId: string, threadId?: string | null) => void;
 }
 
 let ws: WebSocket | null = null;
@@ -105,6 +105,7 @@ function doConnect() {
     } else if (event.type === "typing") {
       wsEvents.emit("ws:typing", {
         conversationId: event.conversationId,
+        threadId: event.threadId,
         userId: event.userId,
         userName: event.userName,
       });
@@ -209,9 +210,9 @@ export const useWebSocketStore = create<WebSocketStore>()(() => ({
     }
   },
 
-  sendTyping: (conversationId: string) => {
+  sendTyping: (conversationId: string, threadId?: string | null) => {
     if (ws?.readyState === WebSocket.OPEN) {
-      const event: WsClientEvent = { type: "typing", conversationId };
+      const event: WsClientEvent = { type: "typing", conversationId, threadId: threadId ?? null };
       ws.send(JSON.stringify(event));
     }
   },
