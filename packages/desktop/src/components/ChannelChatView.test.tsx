@@ -66,6 +66,7 @@ describe("ChannelChatView Hermes progress", () => {
           {
             id: "message-1",
             conversationId: "conversation-1",
+            threadId: null,
             senderId: "bot-user-1",
             senderName: "Koda",
             senderType: "bot",
@@ -96,6 +97,7 @@ function invocation(
     botName: "Koda",
     botKind: "hermes",
     conversationId: "conversation-1",
+    threadId: null,
     triggerMessageId: "message-1",
     responseMessageId: null,
     adapterKind: "hermes",

@@ -217,6 +217,7 @@ export interface StreamResult {
 export interface ChatMessage {
   id: string;
   conversationId: string;
+  threadId: string | null;
   senderId: string;
   senderName: string;
   senderType?: "human" | "bot";
@@ -249,11 +250,23 @@ export interface ConversationDetail {
   participants: ConversationParticipantPublic[];
 }
 
+export interface ConversationThreadPublic {
+  id: string;
+  conversationId: string;
+  botId: string;
+  title: string;
+  status: string;
+  createdById: string;
+  lastActivityAt: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 // -- WebSocket Event Types --
 
 export type WsClientEvent =
   | { type: "auth"; token: string }
-  | { type: "send_message"; conversationId: string; content: string }
+  | { type: "send_message"; conversationId: string; content: string; threadId?: string | null }
   | { type: "typing"; conversationId: string }
   | { type: "ping" };
 
@@ -310,6 +323,7 @@ export interface WebhookPayload {
     id: string;
     content: string;
     conversationId: string;
+    threadId: string | null;
     senderId: string;
     senderName: string;
     createdAt: string;
@@ -333,6 +347,7 @@ export interface BotInvocationPublic {
   botName: string;
   botKind: BotKind;
   conversationId: string;
+  threadId: string | null;
   triggerMessageId: string;
   responseMessageId: string | null;
   adapterKind: BotKind | string;
@@ -352,6 +367,7 @@ export interface BotInvocationProgressEventPublic {
   invocationId: string;
   botId: string;
   conversationId: string;
+  threadId: string | null;
   sequence: number;
   type: string;
   status: string | null;

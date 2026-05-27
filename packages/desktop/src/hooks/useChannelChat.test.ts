@@ -23,6 +23,7 @@ function message(conversationId: string, content: string): ChatMessage {
   return {
     id: crypto.randomUUID(),
     conversationId,
+    threadId: null,
     senderId: "sender-1",
     senderName: "Sender",
     senderType: "human",
@@ -174,7 +175,7 @@ describe("useChannelChat", () => {
         "active live",
       ]);
     });
-    expect(wsSendMessage).toHaveBeenCalledWith("dm-hermes", "next");
+    expect(wsSendMessage).toHaveBeenCalledWith("dm-hermes", "next", null);
   });
 
   it("reuses fresh cached history when remounting the same conversation", async () => {

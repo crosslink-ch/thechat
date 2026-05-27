@@ -174,7 +174,61 @@ Expected result in webhook mode:
   Hermes Gateway webhook URL.
 - Hermes Gateway posts the final response back through `/hermes-platform/messages`.
 
-## 6. API-only manual flow
+## 6. Simulate Hermes without Gateway or LLM
+
+Use `scripts/hermes-progress-demo.mjs` when you want to test the TheChat UI and
+Hermes task-thread plumbing without running Hermes Gateway or calling a model.
+It acts like a tiny fake Hermes Gateway: it claims pending `/hermes-platform`
+invocations, emits progress events, posts responses, and can also send
+cron-style proactive messages.
+
+Start TheChat API/worker/desktop as usual, create a Hermes bot, copy its
+`bot_...` token, and leave the real Hermes Gateway stopped.
+
+To test two parallel task threads from the UI:
+
+```bash
+cd /home/bruno/agent-worktrees/thechat-hermes-integration
+THECHAT_BOT_TOKEN=bot_... pnpm dev:hermes-progress-demo -- \
+  --scenario=parallel \
+  --count=2 \
+  --cron
+```
+
+Then open the Hermes DM in the desktop UI, create two tasks, and send one
+message in each task. The simulator claims both invocations, interleaves
+progress across them, completes both, and posts a cron-style message back into
+each same task thread.
+
+To test failure, cancellation, and a still-running invocation:
+
+```bash
+THECHAT_BOT_TOKEN=bot_... pnpm dev:hermes-progress-demo -- \
+  --scenario=parallel \
+  --count=3 \
+  --outcomes=fail,cancel,running
+```
+
+To post only a cron/proactive message after copying IDs from the script output
+or API responses:
+
+```bash
+THECHAT_BOT_TOKEN=bot_... pnpm dev:hermes-progress-demo -- \
+  --scenario=cron \
+  --chat-id=<conversation-id> \
+  --thread-id=<task-thread-id> \
+  --cron-content='Scheduled update for task {index}'
+```
+
+Useful flags:
+
+- `--outcomes=complete,fail,cancel,running,message-only` controls each claimed
+  invocation.
+- `--hold-ms=400` speeds up progress stages.
+- `--no-complete` leaves claimed invocations running by default.
+- `--help` prints the full option list.
+
+## 7. API-only manual flow
 
 These commands exercise the same flow without the desktop UI.
 
@@ -250,7 +304,7 @@ sleep 10
 curl -sS "$API/messages/$CHANNEL_ID" -H "Authorization: Bearer $TOKEN"
 ```
 
-## 7. Automated E2E smoke
+## 8. Automated E2E smoke
 
 The Hermes suite is opt-in and is wired into the main test runner:
 

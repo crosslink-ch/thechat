@@ -167,6 +167,7 @@ async function invocationsForMessage(messageId: string) {
       id: botInvocations.id,
       botId: botInvocations.botId,
       status: botInvocations.status,
+      threadId: botInvocations.threadId,
       error: botInvocations.error,
       responseMessageId: botInvocations.responseMessageId,
       responseJson: botInvocations.responseJson,
@@ -1672,6 +1673,134 @@ describe("Bots: runtime state", () => {
       expect.objectContaining({ id: second.invocationId }),
     );
     expect(afterCancelRuntimeRes.body.events).toEqual([]);
+  });
+
+  test("routes Hermes DM task threads to separate Hermes thread ids", async () => {
+    const human = await registerUser("RuntimeHermesTaskThreadOwner");
+    const { workspaceId } = await createWorkspaceWithGeneralChannel(
+      human.token,
+      "Runtime Hermes Task Threads",
+    );
+    const botRes = await createBot(human.token, "RuntimeHermesTaskThreads", undefined, {
+      kind: "hermes",
+      workspaceId,
+    });
+    expect(botRes.status).toBe(200);
+
+    const dmRes = await req(
+      "POST",
+      "/conversations/dm",
+      { workspaceId, otherUserId: botRes.body.userId },
+      human.token,
+    );
+    expect(dmRes.status).toBe(200);
+
+    const firstThreadRes = await req(
+      "POST",
+      `/conversations/threads/${dmRes.body.id}`,
+      { botId: botRes.body.id, title: "First task" },
+      human.token,
+    );
+    const secondThreadRes = await req(
+      "POST",
+      `/conversations/threads/${dmRes.body.id}`,
+      { botId: botRes.body.id, title: "Second task" },
+      human.token,
+    );
+    expect(firstThreadRes.status).toBe(200);
+    expect(secondThreadRes.status).toBe(200);
+
+    async function sendAndClaim(content: string, threadId: string) {
+      const sendRes = await req(
+        "POST",
+        `/messages/${dmRes.body.id}`,
+        { content, threadId },
+        human.token,
+      );
+      expect(sendRes.status).toBe(200);
+      expect(sendRes.body.threadId).toBe(threadId);
+      const invocation = await waitForResult(async () => {
+        const rows = await invocationsForMessage(sendRes.body.id);
+        return rows.find((row) => row.status === "queued");
+      }, `queued threaded Hermes invocation for ${content}`);
+      expect(invocation.threadId).toBe(threadId);
+
+      const claimRes = await req("GET", "/hermes-platform/events?limit=1", undefined, botRes.body.apiKey);
+      expect(claimRes.status).toBe(200);
+      expect(claimRes.body.events).toHaveLength(1);
+      expect(claimRes.body.events[0].threadId).toBe(threadId);
+      expect(claimRes.body.events[0].chatId).toBe(dmRes.body.id);
+      return {
+        messageId: sendRes.body.id as string,
+        invocationId: claimRes.body.events[0].invocationId as string,
+        threadId,
+      };
+    }
+
+    const first = await sendAndClaim("First threaded prompt", firstThreadRes.body.id);
+    const second = await sendAndClaim("Second threaded prompt", secondThreadRes.body.id);
+
+    const progressRes = await req(
+      "POST",
+      `/hermes-platform/invocations/${first.invocationId}/progress`,
+      {
+        type: "tool.started",
+        status: "running",
+        toolCallId: "first-thread-call",
+        toolName: "shell",
+      },
+      botRes.body.apiKey,
+    );
+    expect(progressRes.status).toBe(200);
+    expect(progressRes.body.event.threadId).toBe(first.threadId);
+
+    const runtimeRes = await req(
+      "GET",
+      `/bot-runtime/conversations/${dmRes.body.id}`,
+      undefined,
+      human.token,
+    );
+    expect(runtimeRes.status).toBe(200);
+    expect(runtimeRes.body.invocations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: first.invocationId, threadId: first.threadId }),
+        expect.objectContaining({ id: second.invocationId, threadId: second.threadId }),
+      ]),
+    );
+
+    const firstMessageRes = await req(
+      "POST",
+      "/hermes-platform/messages",
+      {
+        invocationId: first.invocationId,
+        content: "First threaded answer",
+      },
+      botRes.body.apiKey,
+    );
+    expect(firstMessageRes.status).toBe(200);
+
+    const firstThreadMessages = await req(
+      "GET",
+      `/messages/${dmRes.body.id}?threadId=${first.threadId}`,
+      undefined,
+      human.token,
+    );
+    expect(firstThreadMessages.status).toBe(200);
+    expect(firstThreadMessages.body.map((message: any) => message.content)).toEqual([
+      "First threaded prompt",
+      "First threaded answer",
+    ]);
+
+    const secondThreadMessages = await req(
+      "GET",
+      `/messages/${dmRes.body.id}?threadId=${second.threadId}`,
+      undefined,
+      human.token,
+    );
+    expect(secondThreadMessages.status).toBe(200);
+    expect(secondThreadMessages.body.map((message: any) => message.content)).toEqual([
+      "Second threaded prompt",
+    ]);
   });
 
   test("Hermes platform supports regular bot webhook delivery while polling remains available", async () => {

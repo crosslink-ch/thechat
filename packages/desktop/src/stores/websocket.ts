@@ -12,7 +12,7 @@ interface WebSocketStore {
   reconnecting: boolean;
   connect: (token: string) => void;
   disconnect: () => void;
-  sendMessage: (conversationId: string, content: string) => void;
+  sendMessage: (conversationId: string, content: string, threadId?: string | null) => void;
   sendTyping: (conversationId: string) => void;
 }
 
@@ -195,11 +195,12 @@ export const useWebSocketStore = create<WebSocketStore>()(() => ({
     useWebSocketStore.setState({ connected: false, reconnecting: false });
   },
 
-  sendMessage: (conversationId: string, content: string) => {
+  sendMessage: (conversationId: string, content: string, threadId?: string | null) => {
     const event: WsClientEvent = {
       type: "send_message",
       conversationId,
       content,
+      threadId: threadId ?? null,
     };
     if (ws?.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify(event));

@@ -262,6 +262,7 @@ describe.skipIf(!INTEGRATION)("Channel message visibility (integration)", () => 
         result.current.addMessage({
           id: crypto.randomUUID(),
           conversationId: generalChannelId,
+          threadId: null,
           senderId: userA.user.id,
           senderName: "Alice",
           content: "Real-time channel msg",
@@ -295,6 +296,7 @@ describe.skipIf(!INTEGRATION)("Channel message visibility (integration)", () => 
       const msg = {
         id,
         conversationId: generalChannelId,
+        threadId: null,
         senderId: userA.user.id,
         senderName: "Alice",
         content: "Dup test",
@@ -327,6 +329,7 @@ describe.skipIf(!INTEGRATION)("Channel message visibility (integration)", () => 
         result.current.addMessage({
           id: crypto.randomUUID(),
           conversationId: "wrong-conversation-id",
+          threadId: null,
           senderId: userA.user.id,
           senderName: "Alice",
           content: "Should be ignored",

@@ -187,6 +187,9 @@ export const messages = pgTable(
     conversationId: uuid("conversation_id")
       .notNull()
       .references(() => conversations.id, { onDelete: "cascade" }),
+    threadId: uuid("thread_id").references(() => conversationThreads.id, {
+      onDelete: "set null",
+    }),
     senderId: uuid("sender_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
@@ -202,6 +205,7 @@ export const messages = pgTable(
   },
   (t) => [
     index("messages_conversation_id_idx").on(t.conversationId),
+    index("messages_thread_id_idx").on(t.threadId),
     index("messages_sender_id_idx").on(t.senderId),
     index("messages_created_at_idx").on(t.createdAt),
   ]
@@ -263,6 +267,9 @@ export const botInvocations = pgTable(
     conversationId: uuid("conversation_id")
       .notNull()
       .references(() => conversations.id, { onDelete: "cascade" }),
+    threadId: uuid("thread_id").references(() => conversationThreads.id, {
+      onDelete: "set null",
+    }),
     triggerMessageId: uuid("trigger_message_id")
       .notNull()
       .references(() => messages.id, { onDelete: "cascade" }),
@@ -289,6 +296,7 @@ export const botInvocations = pgTable(
   (t) => [
     index("bot_invocations_bot_id_idx").on(t.botId),
     index("bot_invocations_conversation_id_idx").on(t.conversationId),
+    index("bot_invocations_thread_id_idx").on(t.threadId),
     index("bot_invocations_trigger_message_id_idx").on(t.triggerMessageId),
     index("bot_invocations_status_idx").on(t.status),
     uniqueIndex("bot_invocations_bot_trigger_idx").on(
@@ -296,6 +304,39 @@ export const botInvocations = pgTable(
       t.triggerMessageId
     ),
   ]
+);
+
+export const conversationThreads = pgTable(
+  "conversation_threads",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    conversationId: uuid("conversation_id")
+      .notNull()
+      .references(() => conversations.id, { onDelete: "cascade" }),
+    botId: uuid("bot_id")
+      .notNull()
+      .references(() => bots.id, { onDelete: "cascade" }),
+    title: varchar("title", { length: 255 }).notNull(),
+    status: varchar("status", { length: 20 }).notNull().default("active"),
+    createdById: uuid("created_by_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    lastActivityAt: timestamp("last_activity_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull()
+      .$onUpdate(() => new Date()),
+  },
+  (t) => [
+    index("conversation_threads_conversation_id_idx").on(t.conversationId),
+    index("conversation_threads_bot_id_idx").on(t.botId),
+    index("conversation_threads_last_activity_idx").on(t.lastActivityAt),
+  ],
 );
 
 export const sessions = pgTable(
@@ -434,6 +475,7 @@ export const conversationsRelations = relations(
   ({ one, many }) => ({
     participants: many(conversationParticipants),
     messages: many(messages),
+    threads: many(conversationThreads),
     workspace: one(workspaces, {
       fields: [conversations.workspaceId],
       references: [workspaces.id],
@@ -459,6 +501,10 @@ export const messagesRelations = relations(messages, ({ one }) => ({
   conversation: one(conversations, {
     fields: [messages.conversationId],
     references: [conversations.id],
+  }),
+  thread: one(conversationThreads, {
+    fields: [messages.threadId],
+    references: [conversationThreads.id],
   }),
   sender: one(users, {
     fields: [messages.senderId],
@@ -490,6 +536,10 @@ export const botInvocationsRelations = relations(
       fields: [botInvocations.conversationId],
       references: [conversations.id],
     }),
+    thread: one(conversationThreads, {
+      fields: [botInvocations.threadId],
+      references: [conversationThreads.id],
+    }),
     triggerMessage: one(messages, {
       fields: [botInvocations.triggerMessageId],
       references: [messages.id],
@@ -499,6 +549,26 @@ export const botInvocationsRelations = relations(
       references: [messages.id],
     }),
   })
+);
+
+export const conversationThreadsRelations = relations(
+  conversationThreads,
+  ({ one, many }) => ({
+    conversation: one(conversations, {
+      fields: [conversationThreads.conversationId],
+      references: [conversations.id],
+    }),
+    bot: one(bots, {
+      fields: [conversationThreads.botId],
+      references: [bots.id],
+    }),
+    createdBy: one(users, {
+      fields: [conversationThreads.createdById],
+      references: [users.id],
+    }),
+    messages: many(messages),
+    invocations: many(botInvocations),
+  }),
 );
 
 export const sessionsRelations = relations(sessions, ({ one }) => ({

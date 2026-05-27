@@ -12,16 +12,19 @@ export interface ActiveHermesProgress {
 
 export function selectHermesConversationProgress(
   runtime: BotRuntimeSnapshot | null,
+  threadId?: string | null,
 ): ActiveHermesProgress {
-  return selectActiveHermesProgress(runtime);
+  return selectActiveHermesProgress(runtime, threadId);
 }
 
 function selectActiveHermesProgress(
   runtime: BotRuntimeSnapshot | null,
+  threadId?: string | null,
 ): ActiveHermesProgress {
   const activeInvocations = (runtime?.invocations ?? []).filter(
     (invocation) =>
       invocation.botKind === "hermes" &&
+      (!threadId || invocation.threadId === threadId) &&
       (invocation.status === "queued" || invocation.status === "running"),
   );
   const visibleInvocationIds = new Set(

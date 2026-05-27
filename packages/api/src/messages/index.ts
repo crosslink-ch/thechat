@@ -6,6 +6,7 @@ import { getMessages, sendMessage } from "../services/messages";
 
 const sendSchema = z.object({
   content: z.string().trim().min(1),
+  threadId: z.string().uuid().nullable().optional(),
 });
 
 export const messageRoutes = new Elysia({ prefix: "/messages" })
@@ -33,6 +34,7 @@ export const messageRoutes = new Elysia({ prefix: "/messages" })
       return await getMessages(params.conversationId, user.id, {
         limit: Number(query.limit) || undefined,
         before: (query.before as string) || undefined,
+        threadId: (query.threadId as string) || undefined,
       });
     } catch (e) {
       if (e instanceof ServiceError) {
@@ -57,6 +59,7 @@ export const messageRoutes = new Elysia({ prefix: "/messages" })
         user.id,
         user.name,
         parsed.data.content,
+        { threadId: parsed.data.threadId ?? null },
       );
     } catch (e) {
       if (e instanceof ServiceError) {

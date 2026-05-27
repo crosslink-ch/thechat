@@ -9,6 +9,7 @@ interface ProgressEventInput {
   invocationId: string;
   botId: string;
   conversationId: string;
+  threadId: string | null;
   type: string;
   status: string | null;
   toolCallId: string | null;
@@ -62,6 +63,7 @@ class RedisBotProgressStore implements BotProgressStore {
       invocationId: input.invocationId,
       botId: input.botId,
       conversationId: input.conversationId,
+      threadId: input.threadId,
       sequence,
       type: input.type,
       status: input.status,
@@ -138,6 +140,7 @@ class LocalBotProgressStore implements BotProgressStore {
       invocationId: input.invocationId,
       botId: input.botId,
       conversationId: input.conversationId,
+      threadId: input.threadId,
       sequence,
       type: input.type,
       status: input.status,

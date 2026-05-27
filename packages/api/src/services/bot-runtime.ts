@@ -17,6 +17,7 @@ import {
   botInvocations,
   bots,
   conversationParticipants,
+  conversationThreads,
   conversations,
   hermesBotConfigs,
   messages,
@@ -41,6 +42,7 @@ interface TriggerMessage {
   id: string;
   content: string;
   conversationId: string;
+  threadId: string | null;
   senderId: string;
   senderName: string;
   createdAt: string;
@@ -92,6 +94,7 @@ interface HermesPlatformMessageTarget {
   bot: typeof bots.$inferSelect;
   botName: string;
   conversation: typeof conversations.$inferSelect;
+  threadId: string | null;
 }
 
 let asyncBus: BullMqAsyncBus | null = null;
@@ -189,6 +192,7 @@ export async function listConversationBotRuntime(conversationId: string, userId:
           botName: users.name,
           botKind: bots.kind,
           conversationId: botInvocations.conversationId,
+          threadId: botInvocations.threadId,
           triggerMessageId: botInvocations.triggerMessageId,
           responseMessageId: botInvocations.responseMessageId,
           adapterKind: botInvocations.adapterKind,
@@ -312,11 +316,13 @@ async function getOrCreateInvocation(
     .values({
       botId: bot.botId,
       conversationId: conversation.id,
+      threadId: message.threadId,
       triggerMessageId: message.id,
       adapterKind: bot.kind,
       status: "queued",
       requestJson: {
         messageId: message.id,
+        threadId: message.threadId,
         messageContent: message.content,
         triggeredAt: new Date().toISOString(),
       },
@@ -443,6 +449,7 @@ async function handleWebhookInvocation(invocationId: string) {
       id: loaded.triggerMessage.id,
       content: loaded.triggerMessage.content,
       conversationId: loaded.triggerMessage.conversationId,
+      threadId: loaded.triggerMessage.threadId,
       senderId: loaded.triggerMessage.senderId,
       senderName: loaded.triggerSender.name,
       createdAt: loaded.triggerMessage.createdAt.toISOString(),
@@ -487,6 +494,7 @@ export interface HermesPlatformEvent {
   invocationId: string;
   chatId: string;
   chatType: "dm" | "group";
+  threadId: string | null;
   text: string;
   messageId: string;
   instructions: string | null;
@@ -594,10 +602,12 @@ async function prepareHermesPlatformEvent(
 
   const text = stripBotMention(loaded.triggerMessage.content, loaded.botName) || loaded.triggerMessage.content;
   const chatId = conversationChatId(loaded.conversation);
+  const threadId = loaded.invocation.threadId ?? loaded.triggerMessage.threadId ?? null;
   const requestJson = {
     platform: "thechat",
     deliveryMode,
     chatId,
+    threadId,
     messageId: loaded.triggerMessage.id,
     messageContent: loaded.triggerMessage.content,
     text,
@@ -611,6 +621,7 @@ async function prepareHermesPlatformEvent(
       invocationId,
       chatId,
       chatType: loaded.conversation.type === "direct" ? "dm" : "group",
+      threadId,
       text,
       messageId: loaded.triggerMessage.id,
       instructions: config?.defaultInstructions ?? null,
@@ -750,6 +761,7 @@ async function resolveHermesPlatformMessageTarget(input: {
   botId?: string;
   conversationId?: string;
   chatId?: string | null;
+  threadId?: string | null;
 }): Promise<HermesPlatformMessageTarget> {
   if (input.invocationId) {
     const loaded = await loadInvocationContext(input.invocationId);
@@ -765,6 +777,7 @@ async function resolveHermesPlatformMessageTarget(input: {
       bot: loaded.bot,
       botName: loaded.botName,
       conversation: loaded.conversation,
+      threadId: loaded.invocation.threadId ?? null,
     };
   }
 
@@ -804,12 +817,15 @@ async function resolveHermesPlatformMessageTarget(input: {
     )
     .limit(1);
   if (!participant) throw new ServiceError("Bot is not a participant of this conversation", 403);
+  const threadId = input.threadId ?? null;
+  if (threadId) await requireConversationThread(conversation.id, threadId);
 
   return {
     invocation: null,
     bot: botRow.bot,
     botName: botRow.botName,
     conversation,
+    threadId,
   };
 }
 
@@ -821,6 +837,7 @@ export async function publishHermesPlatformMessage(input: {
   botId?: string;
   conversationId?: string;
   chatId?: string | null;
+  threadId?: string | null;
   complete?: boolean;
 }) {
   return withSpan(
@@ -867,6 +884,7 @@ export async function publishHermesPlatformMessage(input: {
         .insert(messages)
         .values({
           conversationId: target.conversation.id,
+          threadId: target.threadId,
           senderId: target.bot.userId,
           content,
           parts: [{ type: "text", text: content }],
@@ -892,6 +910,12 @@ export async function publishHermesPlatformMessage(input: {
           })
           .where(eq(botInvocations.id, target.invocation.id));
       }
+      if (target.threadId) {
+        await db
+          .update(conversationThreads)
+          .set({ lastActivityAt: responseMessage.createdAt, updatedAt: responseMessage.createdAt })
+          .where(eq(conversationThreads.id, target.threadId));
+      }
 
       span.setAttribute("thechat.message_id", responseMessage.id);
       if (target.invocation) {
@@ -905,6 +929,7 @@ export async function publishHermesPlatformMessage(input: {
         id: responseMessage.id,
         content: responseMessage.content,
         conversationId: responseMessage.conversationId,
+        threadId: responseMessage.threadId,
         senderId: responseMessage.senderId,
         senderName: target.botName,
         createdAt: responseMessage.createdAt.toISOString(),
@@ -1079,6 +1104,7 @@ export async function publishHermesPlatformProgress(
         invocationId: loaded.invocation.id,
         botId: loaded.bot.id,
         conversationId: loaded.conversation.id,
+        threadId: loaded.invocation.threadId ?? null,
         type: input.type,
         status: input.status ?? null,
         toolCallId: input.toolCallId ?? null,
@@ -1120,6 +1146,7 @@ async function failInvocation(invocationId: string, error: any) {
       .insert(messages)
       .values({
         conversationId: loaded.conversation.id,
+        threadId: loaded.invocation.threadId ?? loaded.triggerMessage.threadId,
         senderId: loaded.bot.userId,
         content,
         parts: [{ type: "text", text: content }],
@@ -1191,6 +1218,7 @@ async function publishInvocationUpdate(invocationId: string) {
       botName: users.name,
       botKind: bots.kind,
       conversationId: botInvocations.conversationId,
+      threadId: botInvocations.threadId,
       triggerMessageId: botInvocations.triggerMessageId,
       responseMessageId: botInvocations.responseMessageId,
       adapterKind: botInvocations.adapterKind,
@@ -1238,6 +1266,7 @@ async function publishBotMessage(
     message: {
       id: message.id,
       conversationId: message.conversationId,
+      threadId: message.threadId,
       senderId: message.senderId,
       senderName,
       senderType: "bot",
@@ -1259,6 +1288,20 @@ async function requireConversationParticipant(conversationId: string, userId: st
   if (!participant) throw new ServiceError("You are not a participant of this conversation", 403);
 }
 
+async function requireConversationThread(conversationId: string, threadId: string) {
+  const [thread] = await db
+    .select({ id: conversationThreads.id })
+    .from(conversationThreads)
+    .where(
+      and(
+        eq(conversationThreads.id, threadId),
+        eq(conversationThreads.conversationId, conversationId),
+      ),
+    )
+    .limit(1);
+  if (!thread) throw new ServiceError("Thread does not belong to this conversation", 400);
+}
+
 function getAsyncBus() {
   asyncBus ??= new BullMqAsyncBus();
   return asyncBus;
@@ -1271,6 +1314,7 @@ function toPublicInvocation(row: {
   botName: string;
   botKind: BotKind;
   conversationId: string;
+  threadId: string | null;
   triggerMessageId: string;
   responseMessageId: string | null;
   adapterKind: string;
@@ -1291,6 +1335,7 @@ function toPublicInvocation(row: {
     botName: row.botName,
     botKind: row.botKind,
     conversationId: row.conversationId,
+    threadId: row.threadId,
     triggerMessageId: row.triggerMessageId,
     responseMessageId: row.responseMessageId,
     adapterKind: row.adapterKind,

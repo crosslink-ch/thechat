@@ -4,6 +4,7 @@ import {
   bots,
   conversations,
   conversationParticipants,
+  conversationThreads,
   messages,
   users,
   workspaceMembers,
@@ -221,6 +222,7 @@ export async function listUserDms(workspaceId: string, userId: string) {
       .select({
         id: messages.id,
         conversationId: messages.conversationId,
+        threadId: messages.threadId,
         senderId: messages.senderId,
         content: messages.content,
         createdAt: messages.createdAt,
@@ -246,6 +248,7 @@ export async function listUserDms(workspaceId: string, userId: string) {
         ? {
             id: lastMsg.id,
             conversationId: lastMsg.conversationId,
+            threadId: lastMsg.threadId,
             senderId: lastMsg.senderId,
             senderName: lastMsg.senderName,
             content: lastMsg.content,
@@ -380,6 +383,116 @@ export async function getConversationDetail(conversationId: string, userId: stri
       },
       bot: p.botId ? { id: p.botId, kind: p.botKind! } : null,
     })),
+  };
+}
+
+export async function listConversationThreads(conversationId: string, userId: string) {
+  await requireConversationParticipant(conversationId, userId);
+
+  const rows = await db
+    .select()
+    .from(conversationThreads)
+    .where(eq(conversationThreads.conversationId, conversationId))
+    .orderBy(desc(conversationThreads.lastActivityAt));
+
+  return rows.map(toPublicThread);
+}
+
+export async function createConversationThread(
+  conversationId: string,
+  userId: string,
+  input: { botId?: string | null; title?: string | null },
+) {
+  await requireConversationParticipant(conversationId, userId);
+  const botId = input.botId ?? (await inferHermesBotId(conversationId));
+  await requireHermesBotParticipant(conversationId, botId);
+
+  const title = normalizeThreadTitle(input.title);
+  const [thread] = await db
+    .insert(conversationThreads)
+    .values({
+      conversationId,
+      botId,
+      title,
+      createdById: userId,
+    })
+    .returning();
+
+  return toPublicThread(thread);
+}
+
+async function requireConversationParticipant(conversationId: string, userId: string) {
+  const [participant] = await db
+    .select({ userId: conversationParticipants.userId })
+    .from(conversationParticipants)
+    .where(
+      and(
+        eq(conversationParticipants.conversationId, conversationId),
+        eq(conversationParticipants.userId, userId),
+      ),
+    )
+    .limit(1);
+
+  if (!participant) {
+    throw new ServiceError("You are not a participant of this conversation", 403);
+  }
+}
+
+async function inferHermesBotId(conversationId: string) {
+  const [row] = await db
+    .select({ botId: bots.id })
+    .from(conversationParticipants)
+    .innerJoin(bots, eq(bots.userId, conversationParticipants.userId))
+    .where(
+      and(
+        eq(conversationParticipants.conversationId, conversationId),
+        eq(bots.kind, "hermes"),
+      ),
+    )
+    .limit(1);
+
+  if (!row) {
+    throw new ServiceError("Conversation does not include a Hermes bot", 400);
+  }
+  return row.botId;
+}
+
+async function requireHermesBotParticipant(conversationId: string, botId: string) {
+  const [row] = await db
+    .select({ botId: bots.id })
+    .from(bots)
+    .innerJoin(conversationParticipants, eq(conversationParticipants.userId, bots.userId))
+    .where(
+      and(
+        eq(bots.id, botId),
+        eq(bots.kind, "hermes"),
+        eq(conversationParticipants.conversationId, conversationId),
+      ),
+    )
+    .limit(1);
+
+  if (!row) {
+    throw new ServiceError("Hermes bot is not a participant of this conversation", 400);
+  }
+}
+
+function normalizeThreadTitle(title: string | null | undefined) {
+  const normalized = title?.trim().replace(/\s+/g, " ");
+  if (!normalized) return "New task";
+  return normalized.slice(0, 255);
+}
+
+function toPublicThread(thread: typeof conversationThreads.$inferSelect) {
+  return {
+    id: thread.id,
+    conversationId: thread.conversationId,
+    botId: thread.botId,
+    title: thread.title,
+    status: thread.status,
+    createdById: thread.createdById,
+    lastActivityAt: thread.lastActivityAt.toISOString(),
+    createdAt: thread.createdAt.toISOString(),
+    updatedAt: thread.updatedAt.toISOString(),
   };
 }
 

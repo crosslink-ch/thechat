@@ -3,8 +3,10 @@ import { z } from "zod";
 import { resolveTokenToUser } from "../auth/middleware";
 import { ServiceError } from "../services/errors";
 import {
+  createConversationThread,
   createOrGetDm,
   getConversationDetail,
+  listConversationThreads,
   listUserDms,
   createChannel,
 } from "../services/conversations";
@@ -17,6 +19,11 @@ const dmSchema = z.object({
 const channelSchema = z.object({
   workspaceId: z.string().trim().min(1),
   name: z.string().trim().min(1).max(100),
+});
+
+const threadSchema = z.object({
+  botId: z.string().uuid().optional(),
+  title: z.string().trim().min(1).max(255).optional(),
 });
 
 export const conversationRoutes = new Elysia({ prefix: "/conversations" })
@@ -87,6 +94,42 @@ export const conversationRoutes = new Elysia({ prefix: "/conversations" })
         parsed.data.workspaceId,
         parsed.data.name,
         user.id
+      );
+    } catch (e) {
+      if (e instanceof ServiceError) {
+        set.status = e.status;
+        return { error: e.message };
+      }
+      throw e;
+    }
+  })
+
+  // List task threads for a conversation
+  .get("/threads/:conversationId", async ({ params, user, set }) => {
+    try {
+      return await listConversationThreads(params.conversationId, user.id);
+    } catch (e) {
+      if (e instanceof ServiceError) {
+        set.status = e.status;
+        return { error: e.message };
+      }
+      throw e;
+    }
+  })
+
+  // Create a task thread for a Hermes-capable conversation
+  .post("/threads/:conversationId", async ({ params, body, user, set }) => {
+    const parsed = threadSchema.safeParse(body);
+    if (!parsed.success) {
+      set.status = 400;
+      return { error: parsed.error.issues[0]?.message ?? "Invalid input" };
+    }
+
+    try {
+      return await createConversationThread(
+        params.conversationId,
+        user.id,
+        parsed.data,
       );
     } catch (e) {
       if (e instanceof ServiceError) {

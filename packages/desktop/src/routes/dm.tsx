@@ -5,6 +5,7 @@ import {
   useBotRuntime,
   useBotRuntimeCache,
 } from "../hooks/useBotRuntime";
+import { useConversationThreads } from "../hooks/useConversationThreads";
 import { useConversationDetail } from "../hooks/useConversationDetail";
 import { useWebSocketStore } from "../stores/websocket";
 import { useWorkspacesStore } from "../stores/workspaces";
@@ -42,18 +43,27 @@ export function DmRoute() {
     [conversation, user?.id],
   );
   const isHermesDm = conversation?.type === "direct" && otherParticipant?.bot?.kind === "hermes";
+  const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
   const runtimeQuery = useBotRuntime(conversationId, token, isHermesDm);
   const runtime = runtimeQuery.data ?? null;
   const runtimeLoading = runtimeQuery.isLoading;
+  const threadState = useConversationThreads(conversationId, token, isHermesDm);
+  const {
+    threads,
+    loading: threadsLoading,
+    createThread,
+    touchThread,
+  } = threadState;
   const { mergeInvocationUpdate, mergeProgressEvent } = useBotRuntimeCache();
   const activeHermesProgress = useMemo(
-    () => selectHermesConversationProgress(runtime),
-    [runtime],
+    () => selectHermesConversationProgress(runtime, activeThreadId),
+    [activeThreadId, runtime],
   );
   const chatConversationId = conversation ? conversationId : null;
 
   const channelChat = useChannelChat({
     conversationId: chatConversationId,
+    threadId: isHermesDm ? activeThreadId : null,
     token,
     wsSendMessage,
   });
@@ -69,6 +79,9 @@ export function DmRoute() {
     }: WsEvents["ws:new_message"]) => {
       if (msg.conversationId === conversationId) {
         channelChatRef.current.addMessage(msg);
+        if (msg.threadId) {
+          touchThread(msg.threadId, msg.createdAt);
+        }
         // Clear typing indicator for this user
         setTypingUsers((prev) => {
           if (!prev.has(msg.senderId)) return prev;
@@ -143,13 +156,53 @@ export function DmRoute() {
     conversationId,
     mergeInvocationUpdate,
     mergeProgressEvent,
+    touchThread,
     user?.id,
   ]);
 
   // Clear typing users when the visible DM changes.
   useEffect(() => {
     setTypingUsers(new Map());
+    setActiveThreadId(null);
   }, [conversationId]);
+
+  useEffect(() => {
+    if (!isHermesDm) return;
+    if (activeThreadId && threads.some((thread) => thread.id === activeThreadId)) {
+      return;
+    }
+    setActiveThreadId(threads[0]?.id ?? null);
+  }, [activeThreadId, isHermesDm, threads]);
+
+  const handleCreateThread = () => {
+    void createThread({
+      botId: otherParticipant?.bot?.id,
+    }).then((thread) => {
+      if (thread) setActiveThreadId(thread.id);
+    });
+  };
+
+  const handleSend = (content: string) => {
+    if (!isHermesDm) {
+      channelChat.sendMessage(content);
+      return;
+    }
+
+    void (async () => {
+      let threadId = activeThreadId;
+      if (!threadId) {
+        const thread = await createThread({
+          botId: otherParticipant?.bot?.id,
+          title: titleFromMessage(content),
+        });
+        if (!thread) return;
+        threadId = thread.id;
+        setActiveThreadId(thread.id);
+      }
+      wsSendMessage(conversationId, content, threadId);
+      touchThread(threadId);
+    })();
+  };
 
   return (
     <div className="flex min-h-0 flex-1">
@@ -165,7 +218,7 @@ export function DmRoute() {
           progressInvocations={activeHermesProgress.invocations}
           progressEvents={activeHermesProgress.events}
           typingSuppressedUserIds={activeHermesProgress.typingSuppressedUserIds}
-          onSend={channelChat.sendMessage}
+          onSend={handleSend}
           mentions={mentions}
         />
       </div>
@@ -174,8 +227,19 @@ export function DmRoute() {
           botName={otherParticipant.user.name}
           runtime={runtime}
           loading={runtimeLoading}
+          threads={threads}
+          threadsLoading={threadsLoading}
+          activeThreadId={activeThreadId}
+          onSelectThread={setActiveThreadId}
+          onCreateThread={handleCreateThread}
         />
       )}
     </div>
   );
+}
+
+function titleFromMessage(content: string) {
+  const normalized = content.trim().replace(/\s+/g, " ");
+  if (!normalized) return "New task";
+  return normalized.length > 48 ? `${normalized.slice(0, 45)}...` : normalized;
 }
