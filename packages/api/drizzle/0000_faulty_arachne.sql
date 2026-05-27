@@ -7,7 +7,6 @@ CREATE TYPE "public"."workspace_member_role" AS ENUM('member', 'admin', 'owner')
 CREATE TYPE "public"."workspace_provider" AS ENUM('openrouter', 'codex', 'glm', 'featherless');--> statement-breakpoint
 CREATE TABLE "bot_invocations" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
-	"bot_session_id" uuid,
 	"bot_id" uuid NOT NULL,
 	"conversation_id" uuid NOT NULL,
 	"trigger_message_id" uuid NOT NULL,
@@ -20,19 +19,6 @@ CREATE TABLE "bot_invocations" (
 	"error" text,
 	"started_at" timestamp with time zone,
 	"completed_at" timestamp with time zone,
-	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
-	"updated_at" timestamp with time zone DEFAULT now() NOT NULL
-);
---> statement-breakpoint
-CREATE TABLE "bot_sessions" (
-	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
-	"bot_id" uuid NOT NULL,
-	"workspace_id" varchar(100),
-	"conversation_id" uuid,
-	"scope" varchar(20) DEFAULT 'conversation' NOT NULL,
-	"external_session_id" text,
-	"title" text,
-	"last_message_id" uuid,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL
 );
@@ -82,7 +68,6 @@ CREATE TABLE "hermes_bot_configs" (
 	"api_key_encrypted" text,
 	"default_mode" varchar(20) DEFAULT 'run' NOT NULL,
 	"default_instructions" text,
-	"default_session_scope" varchar(20) DEFAULT 'channel' NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL
 );
@@ -90,7 +75,6 @@ CREATE TABLE "hermes_bot_configs" (
 CREATE TABLE "messages" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"conversation_id" uuid NOT NULL,
-	"bot_session_id" uuid,
 	"sender_id" uuid NOT NULL,
 	"content" text NOT NULL,
 	"parts" jsonb,
@@ -159,15 +143,10 @@ CREATE TABLE "workspaces" (
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
-ALTER TABLE "bot_invocations" ADD CONSTRAINT "bot_invocations_bot_session_id_bot_sessions_id_fk" FOREIGN KEY ("bot_session_id") REFERENCES "public"."bot_sessions"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "bot_invocations" ADD CONSTRAINT "bot_invocations_bot_id_bots_id_fk" FOREIGN KEY ("bot_id") REFERENCES "public"."bots"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "bot_invocations" ADD CONSTRAINT "bot_invocations_conversation_id_conversations_id_fk" FOREIGN KEY ("conversation_id") REFERENCES "public"."conversations"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "bot_invocations" ADD CONSTRAINT "bot_invocations_trigger_message_id_messages_id_fk" FOREIGN KEY ("trigger_message_id") REFERENCES "public"."messages"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "bot_invocations" ADD CONSTRAINT "bot_invocations_response_message_id_messages_id_fk" FOREIGN KEY ("response_message_id") REFERENCES "public"."messages"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "bot_sessions" ADD CONSTRAINT "bot_sessions_bot_id_bots_id_fk" FOREIGN KEY ("bot_id") REFERENCES "public"."bots"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "bot_sessions" ADD CONSTRAINT "bot_sessions_workspace_id_workspaces_id_fk" FOREIGN KEY ("workspace_id") REFERENCES "public"."workspaces"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "bot_sessions" ADD CONSTRAINT "bot_sessions_conversation_id_conversations_id_fk" FOREIGN KEY ("conversation_id") REFERENCES "public"."conversations"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "bot_sessions" ADD CONSTRAINT "bot_sessions_last_message_id_messages_id_fk" FOREIGN KEY ("last_message_id") REFERENCES "public"."messages"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "bots" ADD CONSTRAINT "bots_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "bots" ADD CONSTRAINT "bots_owner_id_users_id_fk" FOREIGN KEY ("owner_id") REFERENCES "public"."users"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "conversation_participants" ADD CONSTRAINT "conversation_participants_conversation_id_conversations_id_fk" FOREIGN KEY ("conversation_id") REFERENCES "public"."conversations"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
@@ -176,7 +155,6 @@ ALTER TABLE "conversations" ADD CONSTRAINT "conversations_workspace_id_workspace
 ALTER TABLE "email_verifications" ADD CONSTRAINT "email_verifications_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "hermes_bot_configs" ADD CONSTRAINT "hermes_bot_configs_bot_id_bots_id_fk" FOREIGN KEY ("bot_id") REFERENCES "public"."bots"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "messages" ADD CONSTRAINT "messages_conversation_id_conversations_id_fk" FOREIGN KEY ("conversation_id") REFERENCES "public"."conversations"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "messages" ADD CONSTRAINT "messages_bot_session_id_bot_sessions_id_fk" FOREIGN KEY ("bot_session_id") REFERENCES "public"."bot_sessions"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "messages" ADD CONSTRAINT "messages_sender_id_users_id_fk" FOREIGN KEY ("sender_id") REFERENCES "public"."users"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "sessions" ADD CONSTRAINT "sessions_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "workspace_configs" ADD CONSTRAINT "workspace_configs_workspace_id_workspaces_id_fk" FOREIGN KEY ("workspace_id") REFERENCES "public"."workspaces"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
@@ -187,16 +165,10 @@ ALTER TABLE "workspace_members" ADD CONSTRAINT "workspace_members_workspace_id_w
 ALTER TABLE "workspace_members" ADD CONSTRAINT "workspace_members_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "workspaces" ADD CONSTRAINT "workspaces_created_by_id_users_id_fk" FOREIGN KEY ("created_by_id") REFERENCES "public"."users"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 CREATE INDEX "bot_invocations_bot_id_idx" ON "bot_invocations" USING btree ("bot_id");--> statement-breakpoint
-CREATE INDEX "bot_invocations_session_id_idx" ON "bot_invocations" USING btree ("bot_session_id");--> statement-breakpoint
 CREATE INDEX "bot_invocations_conversation_id_idx" ON "bot_invocations" USING btree ("conversation_id");--> statement-breakpoint
 CREATE INDEX "bot_invocations_trigger_message_id_idx" ON "bot_invocations" USING btree ("trigger_message_id");--> statement-breakpoint
 CREATE INDEX "bot_invocations_status_idx" ON "bot_invocations" USING btree ("status");--> statement-breakpoint
 CREATE UNIQUE INDEX "bot_invocations_bot_trigger_idx" ON "bot_invocations" USING btree ("bot_id","trigger_message_id");--> statement-breakpoint
-CREATE INDEX "bot_sessions_bot_id_idx" ON "bot_sessions" USING btree ("bot_id");--> statement-breakpoint
-CREATE INDEX "bot_sessions_workspace_id_idx" ON "bot_sessions" USING btree ("workspace_id");--> statement-breakpoint
-CREATE INDEX "bot_sessions_conversation_id_idx" ON "bot_sessions" USING btree ("conversation_id");--> statement-breakpoint
-CREATE INDEX "bot_sessions_bot_conversation_scope_idx" ON "bot_sessions" USING btree ("bot_id","conversation_id","scope");--> statement-breakpoint
-CREATE UNIQUE INDEX "bot_sessions_bot_conversation_scope_external_idx" ON "bot_sessions" USING btree ("bot_id","conversation_id","scope","external_session_id");--> statement-breakpoint
 CREATE UNIQUE INDEX "bots_user_id_idx" ON "bots" USING btree ("user_id");--> statement-breakpoint
 CREATE UNIQUE INDEX "bots_api_key_idx" ON "bots" USING btree ("api_key");--> statement-breakpoint
 CREATE INDEX "bots_owner_id_idx" ON "bots" USING btree ("owner_id");--> statement-breakpoint
@@ -206,7 +178,6 @@ CREATE INDEX "conversations_workspace_id_idx" ON "conversations" USING btree ("w
 CREATE UNIQUE INDEX "conversations_workspace_name_idx" ON "conversations" USING btree ("workspace_id","name");--> statement-breakpoint
 CREATE UNIQUE INDEX "email_verifications_user_id_idx" ON "email_verifications" USING btree ("user_id");--> statement-breakpoint
 CREATE INDEX "messages_conversation_id_idx" ON "messages" USING btree ("conversation_id");--> statement-breakpoint
-CREATE INDEX "messages_bot_session_id_idx" ON "messages" USING btree ("bot_session_id");--> statement-breakpoint
 CREATE INDEX "messages_sender_id_idx" ON "messages" USING btree ("sender_id");--> statement-breakpoint
 CREATE INDEX "messages_created_at_idx" ON "messages" USING btree ("created_at");--> statement-breakpoint
 CREATE UNIQUE INDEX "sessions_token_idx" ON "sessions" USING btree ("token");--> statement-breakpoint

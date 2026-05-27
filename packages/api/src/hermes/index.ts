@@ -10,12 +10,10 @@ import {
 } from "../services/hermes";
 
 const modeSchema = z.enum(["run", "response"]);
-const scopeSchema = z.enum(["channel", "thread", "workspace"]);
 
 const updateSchema = z.object({
   defaultMode: modeSchema.optional(),
   defaultInstructions: z.string().nullish(),
-  defaultSessionScope: scopeSchema.optional(),
 });
 
 export const hermesRoutes = new Elysia({ prefix: "/bots" })
@@ -49,7 +47,6 @@ export const hermesRoutes = new Elysia({ prefix: "/bots" })
       return await updateHermesBotConfig(params.botId, user.id, {
         defaultMode: parsed.data.defaultMode,
         defaultInstructions: parsed.data.defaultInstructions,
-        defaultSessionScope: parsed.data.defaultSessionScope,
       });
     } catch (e: any) {
       set.status = e instanceof ServiceError ? e.status : 500;

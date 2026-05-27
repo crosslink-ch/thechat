@@ -15,6 +15,9 @@ import { mcpRoutes } from "./mcp";
 import { hermesRoutes } from "./hermes";
 import { hermesPlatformRoutes } from "./hermes-platform";
 import { botRuntimeRoutes } from "./bot-runtime";
+import { initObservability, shutdownObservability, withSpan } from "./observability";
+
+await initObservability("thechat-api");
 
 const app = new Elysia()
   .use(cors())
@@ -38,19 +41,42 @@ const app = new Elysia()
   .use(mcpRoutes)
   .get("/", () => "TheChat API")
   .get("/health", async ({ db }) => {
-    try {
-      await db.execute(sql`SELECT 1`);
-      return { status: "ok", db: "connected" };
-    } catch (e) {
-      return Response.json(
-        { status: "error", db: "disconnected" },
-        { status: 503 }
-      );
-    }
+    return withSpan(
+      "http.health",
+      {
+        "messaging.system": "thechat",
+        "http.route": "/health",
+      },
+      async () => {
+        try {
+          await db.execute(sql`SELECT 1`);
+          return { status: "ok", db: "connected" };
+        } catch (e) {
+          return Response.json(
+            { status: "error", db: "disconnected" },
+            { status: 503 }
+          );
+        }
+      },
+    );
   });
 
 export type App = typeof app;
 
 app.listen(Number(process.env.THECHAT_BACKEND_PORT) || 3000);
 
+process.once("SIGTERM", () => {
+  void shutdownAndExit(143);
+});
+process.once("SIGINT", () => {
+  void shutdownAndExit(130);
+});
+
 console.log(`TheChat API running at http://localhost:${app.server!.port}`);
+
+async function shutdownAndExit(code: number) {
+  await shutdownObservability().catch((error) => {
+    console.error("Failed to shut down observability", error);
+  });
+  process.exit(code);
+}

@@ -10,7 +10,6 @@ import {
   primaryKey,
   index,
   uniqueIndex,
-  type AnyPgColumn,
 } from "drizzle-orm/pg-core";
 import { relations } from "drizzle-orm";
 import type { MessagePart } from "@thechat/shared";
@@ -188,9 +187,6 @@ export const messages = pgTable(
     conversationId: uuid("conversation_id")
       .notNull()
       .references(() => conversations.id, { onDelete: "cascade" }),
-    botSessionId: uuid("bot_session_id").references((): AnyPgColumn => botSessions.id, {
-      onDelete: "set null",
-    }),
     senderId: uuid("sender_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
@@ -206,7 +202,6 @@ export const messages = pgTable(
   },
   (t) => [
     index("messages_conversation_id_idx").on(t.conversationId),
-    index("messages_bot_session_id_idx").on(t.botSessionId),
     index("messages_sender_id_idx").on(t.senderId),
     index("messages_created_at_idx").on(t.createdAt),
   ]
@@ -249,7 +244,6 @@ export const hermesBotConfigs = pgTable("hermes_bot_configs", {
   apiKeyEncrypted: text("api_key_encrypted"),
   defaultMode: varchar("default_mode", { length: 20 }).notNull().default("run"),
   defaultInstructions: text("default_instructions"),
-  defaultSessionScope: varchar("default_session_scope", { length: 20 }).notNull().default("channel"),
   createdAt: timestamp("created_at", { withTimezone: true })
     .defaultNow()
     .notNull(),
@@ -259,60 +253,10 @@ export const hermesBotConfigs = pgTable("hermes_bot_configs", {
     .$onUpdate(() => new Date()),
 });
 
-export const botSessions = pgTable(
-  "bot_sessions",
-  {
-    id: uuid("id").defaultRandom().primaryKey(),
-    botId: uuid("bot_id")
-      .notNull()
-      .references(() => bots.id, { onDelete: "cascade" }),
-    workspaceId: varchar("workspace_id", { length: 100 }).references(
-      () => workspaces.id,
-      { onDelete: "cascade" }
-    ),
-    conversationId: uuid("conversation_id").references(
-      () => conversations.id,
-      { onDelete: "cascade" }
-    ),
-    scope: varchar("scope", { length: 20 }).notNull().default("conversation"),
-    externalSessionId: text("external_session_id"),
-    title: text("title"),
-    lastMessageId: uuid("last_message_id").references((): AnyPgColumn => messages.id, {
-      onDelete: "set null",
-    }),
-    createdAt: timestamp("created_at", { withTimezone: true })
-      .defaultNow()
-      .notNull(),
-    updatedAt: timestamp("updated_at", { withTimezone: true })
-      .defaultNow()
-      .notNull()
-      .$onUpdate(() => new Date()),
-  },
-  (t) => [
-    index("bot_sessions_bot_id_idx").on(t.botId),
-    index("bot_sessions_workspace_id_idx").on(t.workspaceId),
-    index("bot_sessions_conversation_id_idx").on(t.conversationId),
-    index("bot_sessions_bot_conversation_scope_idx").on(
-      t.botId,
-      t.conversationId,
-      t.scope
-    ),
-    uniqueIndex("bot_sessions_bot_conversation_scope_external_idx").on(
-      t.botId,
-      t.conversationId,
-      t.scope,
-      t.externalSessionId
-    ),
-  ]
-);
-
 export const botInvocations = pgTable(
   "bot_invocations",
   {
     id: uuid("id").defaultRandom().primaryKey(),
-    botSessionId: uuid("bot_session_id").references(() => botSessions.id, {
-      onDelete: "set null",
-    }),
     botId: uuid("bot_id")
       .notNull()
       .references(() => bots.id, { onDelete: "cascade" }),
@@ -344,7 +288,6 @@ export const botInvocations = pgTable(
   },
   (t) => [
     index("bot_invocations_bot_id_idx").on(t.botId),
-    index("bot_invocations_session_id_idx").on(t.botSessionId),
     index("bot_invocations_conversation_id_idx").on(t.conversationId),
     index("bot_invocations_trigger_message_id_idx").on(t.triggerMessageId),
     index("bot_invocations_status_idx").on(t.status),
@@ -517,10 +460,6 @@ export const messagesRelations = relations(messages, ({ one }) => ({
     fields: [messages.conversationId],
     references: [conversations.id],
   }),
-  botSession: one(botSessions, {
-    fields: [messages.botSessionId],
-    references: [botSessions.id],
-  }),
   sender: one(users, {
     fields: [messages.senderId],
     references: [users.id],
@@ -540,33 +479,9 @@ export const botsRelations = relations(bots, ({ one }) => ({
   }),
 }));
 
-export const botSessionsRelations = relations(botSessions, ({ one, many }) => ({
-  bot: one(bots, {
-    fields: [botSessions.botId],
-    references: [bots.id],
-  }),
-  workspace: one(workspaces, {
-    fields: [botSessions.workspaceId],
-    references: [workspaces.id],
-  }),
-  conversation: one(conversations, {
-    fields: [botSessions.conversationId],
-    references: [conversations.id],
-  }),
-  lastMessage: one(messages, {
-    fields: [botSessions.lastMessageId],
-    references: [messages.id],
-  }),
-  invocations: many(botInvocations),
-}));
-
 export const botInvocationsRelations = relations(
   botInvocations,
   ({ one }) => ({
-    botSession: one(botSessions, {
-      fields: [botInvocations.botSessionId],
-      references: [botSessions.id],
-    }),
     bot: one(bots, {
       fields: [botInvocations.botId],
       references: [bots.id],

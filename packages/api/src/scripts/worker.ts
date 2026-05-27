@@ -1,11 +1,18 @@
 import { BOT_QUEUE_NAME, closeBotRuntime, startBotWorker } from "../services/bot-runtime";
+import { initObservability, shutdownObservability } from "../observability";
 
 async function main() {
-  await startBotWorker();
-  console.log(`TheChat bot worker listening on ${BOT_QUEUE_NAME}`);
+  await initObservability("thechat-worker");
 
-  await waitForShutdownSignal();
-  await closeBotRuntime();
+  try {
+    await startBotWorker();
+    console.log(`TheChat bot worker listening on ${BOT_QUEUE_NAME}`);
+
+    await waitForShutdownSignal();
+  } finally {
+    await closeBotRuntime();
+    await shutdownObservability();
+  }
 }
 
 function waitForShutdownSignal(): Promise<void> {
@@ -19,5 +26,6 @@ function waitForShutdownSignal(): Promise<void> {
 main().catch(async (error) => {
   console.error("TheChat bot worker failed", error);
   await closeBotRuntime();
+  await shutdownObservability();
   process.exitCode = 1;
 });

@@ -4,7 +4,6 @@ import type {
   BotInvocationProgressEventPublic,
   BotInvocationPublic,
   BotRuntimeSnapshot,
-  BotSessionPublic,
 } from "@thechat/shared";
 import { api } from "../lib/api";
 import { createQueryWrapper, createTestQueryClient } from "../test-utils/query";
@@ -102,7 +101,6 @@ describe("useBotRuntime", () => {
     act(() => {
       result.current.mergeInvocationUpdate(
         "conversation-1",
-        session(),
         invocation({ status: "completed" }),
       );
     });
@@ -112,99 +110,17 @@ describe("useBotRuntime", () => {
         botRuntimeQueryKey("conversation-1"),
       ),
     ).toMatchObject({
-      sessions: [{ id: "session-1" }],
       invocations: [],
       events: [],
     });
-  });
-
-  it("updates context summaries from bot messages", () => {
-    const client = createTestQueryClient();
-    client.setQueryData<BotRuntimeSnapshot>(
-      botRuntimeQueryKey("conversation-1"),
-      runtime({
-        sessions: [
-          session({ id: "session-1", updatedAt: "2026-01-01T00:00:00.000Z" }),
-          session({ id: "session-2", updatedAt: "2026-01-01T00:00:00.000Z" }),
-        ],
-      }),
-    );
-
-    const { result } = renderHook(() => useBotRuntimeCache(), {
-      wrapper: createQueryWrapper(client),
-    });
-
-    act(() => {
-      result.current.mergeMessageUpdate("conversation-1", {
-        id: "message-2",
-        conversationId: "conversation-1",
-        botSessionId: "session-2",
-        senderId: "bot-user-1",
-        senderName: "Koda",
-        senderType: "bot",
-        content: "Cron result",
-        parts: null,
-        createdAt: "2026-01-01T00:05:00.000Z",
-      });
-    });
-
-    expect(
-      client.getQueryData<BotRuntimeSnapshot>(
-        botRuntimeQueryKey("conversation-1"),
-      )?.sessions.map((item) => ({
-        id: item.id,
-        lastMessageId: item.lastMessageId,
-        lastMessagePreview: item.lastMessagePreview,
-        lastMessageSenderName: item.lastMessageSenderName,
-        lastMessageCreatedAt: item.lastMessageCreatedAt,
-      })),
-    ).toEqual([
-      {
-        id: "session-2",
-        lastMessageId: "message-2",
-        lastMessagePreview: "Cron result",
-        lastMessageSenderName: "Koda",
-        lastMessageCreatedAt: "2026-01-01T00:05:00.000Z",
-      },
-      {
-        id: "session-1",
-        lastMessageId: null,
-        lastMessagePreview: null,
-        lastMessageSenderName: null,
-        lastMessageCreatedAt: null,
-      },
-    ]);
   });
 
 });
 
 function runtime(overrides: Partial<BotRuntimeSnapshot> = {}): BotRuntimeSnapshot {
   return {
-    sessions: [],
     invocations: [],
     events: [],
-    ...overrides,
-  };
-}
-
-function session(overrides: Partial<BotSessionPublic> = {}): BotSessionPublic {
-  return {
-    id: "session-1",
-    botId: "bot-1",
-    botUserId: "bot-user-1",
-    botName: "Koda",
-    botKind: "hermes",
-    workspaceId: "workspace-1",
-    conversationId: "conversation-1",
-    scope: "conversation",
-    externalSessionId: "external-session-1",
-    title: "Default session",
-    lastMessageId: null,
-    lastMessagePreview: null,
-    lastMessageSenderName: null,
-    lastMessageCreatedAt: null,
-    createdAt: "2026-01-01T00:00:00.000Z",
-    updatedAt: "2026-01-01T00:00:00.000Z",
     ...overrides,
   };
 }
@@ -214,7 +130,6 @@ function invocation(
 ): BotInvocationPublic {
   return {
     id: "invocation-1",
-    botSessionId: "session-1",
     botId: "bot-1",
     botUserId: "bot-user-1",
     botName: "Koda",

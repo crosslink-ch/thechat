@@ -4,8 +4,6 @@ import type {
   BotInvocationProgressEventPublic,
   BotInvocationPublic,
   BotRuntimeSnapshot,
-  BotSessionPublic,
-  ChatMessage,
 } from "@thechat/shared";
 import { api } from "../lib/api";
 import { authHeaders, edenErrorMessage } from "../lib/eden";
@@ -55,12 +53,11 @@ export function useBotRuntimeCache() {
   const mergeInvocationUpdate = useCallback(
     (
       conversationId: string,
-      context: BotSessionPublic | null,
       invocation: BotInvocationPublic,
     ) => {
       queryClient.setQueryData<BotRuntimeSnapshot>(
         botRuntimeQueryKey(conversationId),
-        (previous) => mergeRuntimeUpdate(previous ?? null, context, invocation),
+        (previous) => mergeRuntimeUpdate(previous ?? null, invocation),
       );
     },
     [queryClient],
@@ -79,47 +76,6 @@ export function useBotRuntimeCache() {
     [queryClient],
   );
 
-  const mergeMessageUpdate = useCallback(
-    (conversationId: string, message: ChatMessage) => {
-      if (!message.botSessionId) return;
-      let shouldInvalidate = false;
-      queryClient.setQueryData<BotRuntimeSnapshot>(
-        botRuntimeQueryKey(conversationId),
-        (previous) => {
-          if (!previous) return previous;
-          const session = previous.sessions.find(
-            (existing) => existing.id === message.botSessionId,
-          );
-          if (!session) {
-            shouldInvalidate = true;
-            return previous;
-          }
-          const updatedSession: BotSessionPublic = {
-            ...session,
-            lastMessageId: message.id,
-            lastMessagePreview: message.content.trim() || null,
-            lastMessageSenderName: message.senderName,
-            lastMessageCreatedAt: message.createdAt,
-            updatedAt: message.createdAt,
-          };
-          return {
-            ...previous,
-            sessions: [
-              updatedSession,
-              ...previous.sessions.filter((existing) => existing.id !== session.id),
-            ],
-          };
-        },
-      );
-      if (shouldInvalidate) {
-        void queryClient.invalidateQueries({
-          queryKey: botRuntimeQueryKey(conversationId),
-        });
-      }
-    },
-    [queryClient],
-  );
-
   const invalidate = useCallback(
     (conversationId: string) => {
       void queryClient.invalidateQueries({
@@ -130,7 +86,7 @@ export function useBotRuntimeCache() {
   );
 
   return useMemo(
-    () => ({ mergeInvocationUpdate, mergeProgressEvent, mergeMessageUpdate, invalidate }),
-    [invalidate, mergeInvocationUpdate, mergeMessageUpdate, mergeProgressEvent],
+    () => ({ mergeInvocationUpdate, mergeProgressEvent, invalidate }),
+    [invalidate, mergeInvocationUpdate, mergeProgressEvent],
   );
 }

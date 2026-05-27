@@ -181,7 +181,6 @@ async function botMessagesForConversation(conversationId: string, botUserId: str
     .select({
       id: messages.id,
       content: messages.content,
-      botSessionId: messages.botSessionId,
       createdAt: messages.createdAt,
     })
     .from(messages)
@@ -192,19 +191,14 @@ async function botMessagesForConversation(conversationId: string, botUserId: str
       ),
     )
     .orderBy(asc(messages.createdAt));
-  return rows.filter((message) => message.botSessionId);
+  return rows;
 }
 
-async function messageContentsForBotSession(conversationId: string, botSessionId: string) {
+async function messageContentsForConversation(conversationId: string) {
   const rows = await db
     .select({ content: messages.content })
     .from(messages)
-    .where(
-      and(
-        eq(messages.conversationId, conversationId),
-        eq(messages.botSessionId, botSessionId),
-      ),
-    )
+    .where(eq(messages.conversationId, conversationId))
     .orderBy(asc(messages.createdAt));
   return rows.map((message) => message.content);
 }
@@ -690,7 +684,7 @@ describe("Bots: DM with bot", () => {
 
   });
 
-  test("Hermes DMs keep one continuous history on an internal continuity handle", async () => {
+  test("Hermes DMs use the conversation as the shared platform chat", async () => {
     const human = await registerUser("HermesContinuityOwner");
 
     const wsRes = await req(
@@ -723,8 +717,6 @@ describe("Bots: DM with bot", () => {
       human.token
     );
     expect(firstSend.status).toBe(200);
-    const continuityId = firstSend.body.botSessionId;
-    expect(continuityId).toBeDefined();
 
     const secondSend = await req(
       "POST",
@@ -733,7 +725,6 @@ describe("Bots: DM with bot", () => {
       human.token
     );
     expect(secondSend.status).toBe(200);
-    expect(secondSend.body.botSessionId).toBe(continuityId);
 
     const history = await req(
       "GET",
@@ -754,9 +745,7 @@ describe("Bots: DM with bot", () => {
       human.token
     );
     expect(runtime.status).toBe(200);
-    expect(runtime.body.sessions).toContainEqual(
-      expect.objectContaining({ id: continuityId }),
-    );
+    expect(runtime.body).not.toHaveProperty("sessions");
   });
 });
 
@@ -1133,6 +1122,57 @@ describe("Bots: mention routing", () => {
       webhook.stop();
     }
   });
+
+  test("Hermes bot messages can mention another Hermes bot in a channel", async () => {
+    const human = await registerUser("HermesBotHandoffOwner");
+    const { workspaceId, channelId } = await createWorkspaceWithGeneralChannel(
+      human.token,
+      "Hermes Bot Handoff",
+    );
+    const firstBot = await createBot(human.token, "FirstHermesBot", undefined, {
+      kind: "hermes",
+      workspaceId,
+    });
+    const secondBot = await createBot(human.token, "SecondHermesBot", undefined, {
+      kind: "hermes",
+      workspaceId,
+    });
+    expect(firstBot.status).toBe(200);
+    expect(secondBot.status).toBe(200);
+
+    const publishRes = await req(
+      "POST",
+      "/hermes-platform/messages",
+      {
+        conversationId: channelId,
+        content: "@SecondHermesBot please take this from here",
+        platformMessageId: "bot-handoff-1",
+      },
+      firstBot.body.apiKey,
+    );
+    expect(publishRes.status).toBe(200);
+
+    const invocation = await waitForResult(async () => {
+      const rows = await invocationsForMessage(publishRes.body.messageId);
+      return rows.find((row) => row.botId === secondBot.body.id && row.status === "queued");
+    }, "queued Hermes bot-to-bot invocation");
+    const firstClaimRes = await req("GET", "/hermes-platform/events?limit=1", undefined, firstBot.body.apiKey);
+    expect(firstClaimRes.status).toBe(200);
+    expect(firstClaimRes.body.events).toEqual([]);
+
+    const secondClaimRes = await req("GET", "/hermes-platform/events?limit=1", undefined, secondBot.body.apiKey);
+    expect(secondClaimRes.status).toBe(200);
+    expect(secondClaimRes.body.events).toHaveLength(1);
+    expect(secondClaimRes.body.events[0]).toEqual(
+      expect.objectContaining({
+        chatId: channelId,
+        chatType: "group",
+        messageId: publishRes.body.messageId,
+        sender: expect.objectContaining({ id: firstBot.body.userId }),
+        bot: expect.objectContaining({ id: secondBot.body.id }),
+      }),
+    );
+  });
 });
 
 describe("Bots: runtime state", () => {
@@ -1348,12 +1388,7 @@ describe("Bots: runtime state", () => {
         }),
       );
       expect(runtimeRes.body.events).toEqual([]);
-      expect(runtimeRes.body.sessions).toContainEqual(
-        expect.objectContaining({
-          lastMessagePreview: "Hermes completed response",
-          lastMessageSenderName: "RuntimeHermes",
-        }),
-      );
+      expect(runtimeRes.body).not.toHaveProperty("sessions");
 
       const followUpRes = await req(
         "POST",
@@ -1392,10 +1427,29 @@ describe("Bots: runtime state", () => {
         }),
       );
       expect(proactiveRes.body.messageId).not.toBe(followUpRes.body.messageId);
+      const chatIdProactiveRes = await req(
+        "POST",
+        "/hermes-platform/messages",
+        {
+          chatId: dmRes.body.id,
+          content: "Hermes proactive chatId update",
+          platformMessageId: "cron-chat-message",
+        },
+        botRes.body.apiKey,
+      );
+      expect(chatIdProactiveRes.status).toBe(200);
+      expect(chatIdProactiveRes.body).toEqual(
+        expect.objectContaining({
+          messageId: expect.any(String),
+          duplicate: false,
+        }),
+      );
+      expect(chatIdProactiveRes.body.messageId).not.toBe(proactiveRes.body.messageId);
       const botMessageContentsAfterProactive = (
         await botMessagesForConversation(dmRes.body.id, botRes.body.userId)
       ).map((message) => message.content);
       expect(botMessageContentsAfterProactive).toContain("Hermes proactive cron update");
+      expect(botMessageContentsAfterProactive).toContain("Hermes proactive chatId update");
 
       await waitForResult(async () => {
         const rows = await invocationsForMessage(failed.messageId);
@@ -1444,7 +1498,7 @@ describe("Bots: runtime state", () => {
     }
   });
 
-  test("keeps concurrent Hermes DM invocations visible in one continuous context", async () => {
+  test("keeps concurrent Hermes DM invocations visible in one shared chat", async () => {
     const human = await registerUser("RuntimeHermesContinuityOwner");
     const { workspaceId } = await createWorkspaceWithGeneralChannel(
       human.token,
@@ -1482,7 +1536,6 @@ describe("Bots: runtime state", () => {
       expect(claimRes.body.events).toHaveLength(1);
       return {
         messageId: sendRes.body.id as string,
-        botSessionId: sendRes.body.botSessionId as string,
         invocationId: claimRes.body.events[0].invocationId as string,
         event: claimRes.body.events[0],
       };
@@ -1490,16 +1543,8 @@ describe("Bots: runtime state", () => {
 
     const first = await sendAndClaim("First prompt");
     const second = await sendAndClaim("Second prompt");
-    expect(first.botSessionId).toBe(second.botSessionId);
-    expect(first.event.session.id).toBe(first.botSessionId);
-    expect(second.event.session.id).toBe(second.botSessionId);
-    expect(first.event.chatId).toBe(second.event.chatId);
-    expect(first.event.continuity).toEqual(
-      expect.objectContaining({
-        id: first.botSessionId,
-        externalChatId: first.event.chatId,
-      }),
-    );
+    expect(first.event.chatId).toBe(dmRes.body.id);
+    expect(second.event.chatId).toBe(dmRes.body.id);
 
     const firstProgressRes = await req(
       "POST",
@@ -1539,12 +1584,10 @@ describe("Bots: runtime state", () => {
       expect.arrayContaining([
         expect.objectContaining({
           id: first.invocationId,
-          botSessionId: first.botSessionId,
           status: "running",
         }),
         expect.objectContaining({
           id: second.invocationId,
-          botSessionId: second.botSessionId,
           status: "running",
         }),
       ]),
@@ -1594,7 +1637,6 @@ describe("Bots: runtime state", () => {
     expect(afterFirstRuntimeRes.body.invocations).toContainEqual(
       expect.objectContaining({
         id: second.invocationId,
-        botSessionId: second.botSessionId,
         status: "running",
       }),
     );
@@ -1605,9 +1647,11 @@ describe("Bots: runtime state", () => {
       }),
     ]);
 
-    expect(
-      await messageContentsForBotSession(dmRes.body.id, first.botSessionId),
-    ).toEqual(["First prompt", "Second prompt", "First answer"]);
+    expect(await messageContentsForConversation(dmRes.body.id)).toEqual([
+      "First prompt",
+      "Second prompt",
+      "First answer",
+    ]);
 
     const secondCancelRes = await req(
       "POST",

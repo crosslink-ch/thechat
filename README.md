@@ -152,4 +152,4 @@ For Rust/Tauri traces, point the OTLP exporter at the local LGTM HTTP endpoint a
 OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:14318 pnpm tauri dev --features otel
 ```
 
-In Grafana Explore, select `Tempo`, choose TraceQL, and run `{ resource.service.name = "thechat" }`.
+In Grafana Explore, select `Tempo`, choose TraceQL, and run `{ resource.service.namespace = "thechat" }`.

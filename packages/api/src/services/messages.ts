@@ -5,10 +5,7 @@ import {
   conversationParticipants,
   users,
 } from "../db/schema";
-import {
-  getDefaultHermesContinuityForConversation,
-  processMessageMentions,
-} from "./bot-runtime";
+import { processMessageMentions } from "./bot-runtime";
 import { ServiceError } from "./errors";
 import { withSpan } from "../observability";
 
@@ -46,7 +43,6 @@ export async function getMessages(
     .select({
       id: messages.id,
       conversationId: messages.conversationId,
-      botSessionId: messages.botSessionId,
       senderId: messages.senderId,
       content: messages.content,
       parts: messages.parts,
@@ -64,7 +60,6 @@ export async function getMessages(
   return rows.reverse().map((r) => ({
     id: r.id,
     conversationId: r.conversationId,
-    botSessionId: r.botSessionId,
     senderId: r.senderId,
     senderName: r.senderName,
     senderType: r.senderType,
@@ -108,16 +103,10 @@ export async function sendMessage(
         );
       }
 
-      const hermesContinuity = await getDefaultHermesContinuityForConversation(conversationId, userId);
-      const botSessionId = hermesContinuity?.id ?? null;
-      span.setAttribute("thechat.bot_context_id", botSessionId ?? "");
-      span.setAttribute("thechat.hermes_continuity.auto_attached", Boolean(botSessionId));
-
       const [msg] = await db
         .insert(messages)
         .values({
           conversationId,
-          botSessionId,
           senderId: userId,
           content,
         })
@@ -131,7 +120,6 @@ export async function sendMessage(
         id: msg.id,
         content: msg.content,
         conversationId: msg.conversationId,
-        botSessionId: msg.botSessionId,
         senderId: msg.senderId,
         senderName: userName,
         createdAt,
@@ -140,7 +128,6 @@ export async function sendMessage(
       return {
         id: msg.id,
         conversationId: msg.conversationId,
-        botSessionId: msg.botSessionId,
         senderId: msg.senderId,
         senderName: userName,
         senderType: "human" as const,

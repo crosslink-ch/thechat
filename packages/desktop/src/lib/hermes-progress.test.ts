@@ -12,12 +12,10 @@ describe("Hermes progress selectors", () => {
       invocations: [
         invocation({
           id: "invocation-context-1",
-          botSessionId: "context-1",
           botUserId: "bot-user-1",
         }),
         invocation({
           id: "invocation-context-2",
-          botSessionId: "context-2",
           botUserId: "bot-user-1",
         }),
       ],
@@ -45,12 +43,10 @@ describe("Hermes progress selectors", () => {
       invocations: [
         invocation({
           id: "first-bot",
-          botSessionId: "context-2",
           botUserId: "bot-user-1",
         }),
         invocation({
           id: "second-bot",
-          botSessionId: "context-1",
           botUserId: "bot-user-2",
         }),
       ],
@@ -96,7 +92,6 @@ function runtime(
   overrides: Partial<BotRuntimeSnapshot> = {},
 ): BotRuntimeSnapshot {
   return {
-    sessions: [],
     invocations: [],
     events: [],
     ...overrides,
@@ -109,7 +104,6 @@ function invocation(
   const now = "2026-01-01T00:00:00.000Z";
   return {
     id: "invocation-1",
-    botSessionId: "session-1",
     botId: "bot-1",
     botUserId: "bot-user-1",
     botName: "Koda",

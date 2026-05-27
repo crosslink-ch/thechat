@@ -71,7 +71,6 @@ describe("ChannelChatView Hermes progress", () => {
             senderType: "bot",
             content: "A long message with display math\n\n\\[x_{t+1}=x_t-\\eta f'(x_t)\\]",
             createdAt: "2026-01-01T00:00:00.000Z",
-            botSessionId: "session-1",
           },
         ]}
         loading={false}
@@ -92,7 +91,6 @@ function invocation(
   const now = "2026-01-01T00:00:00.000Z";
   return {
     id: "invocation-1",
-    botSessionId: "session-1",
     botId: "bot-1",
     botUserId: "bot-user-1",
     botName: "Koda",

@@ -45,7 +45,7 @@ export function DmRoute() {
   const runtimeQuery = useBotRuntime(conversationId, token, isHermesDm);
   const runtime = runtimeQuery.data ?? null;
   const runtimeLoading = runtimeQuery.isLoading;
-  const { mergeInvocationUpdate, mergeProgressEvent, mergeMessageUpdate } = useBotRuntimeCache();
+  const { mergeInvocationUpdate, mergeProgressEvent } = useBotRuntimeCache();
   const activeHermesProgress = useMemo(
     () => selectHermesConversationProgress(runtime),
     [runtime],
@@ -69,7 +69,6 @@ export function DmRoute() {
     }: WsEvents["ws:new_message"]) => {
       if (msg.conversationId === conversationId) {
         channelChatRef.current.addMessage(msg);
-        if (isHermesDm) mergeMessageUpdate(conversationId, msg);
         // Clear typing indicator for this user
         setTypingUsers((prev) => {
           if (!prev.has(msg.senderId)) return prev;
@@ -112,11 +111,10 @@ export function DmRoute() {
 
     const onBotInvocationUpdated = ({
       conversationId: convId,
-      context,
       invocation,
     }: WsEvents["ws:bot_invocation_updated"]) => {
       if (convId !== conversationId) return;
-      mergeInvocationUpdate(conversationId, context, invocation);
+      mergeInvocationUpdate(conversationId, invocation);
     };
     const onBotInvocationProgress = ({
       conversationId: convId,
@@ -143,8 +141,6 @@ export function DmRoute() {
     };
   }, [
     conversationId,
-    isHermesDm,
-    mergeMessageUpdate,
     mergeInvocationUpdate,
     mergeProgressEvent,
     user?.id,

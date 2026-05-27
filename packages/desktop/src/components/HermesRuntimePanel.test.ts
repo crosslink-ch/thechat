@@ -12,7 +12,6 @@ import {
 describe("Hermes runtime progress state", () => {
   it("keeps only the latest progress events for an active invocation", () => {
     let snapshot: BotRuntimeSnapshot = {
-      sessions: [],
       invocations: [invocation({ status: "running" })],
       events: [],
     };
@@ -29,12 +28,12 @@ describe("Hermes runtime progress state", () => {
   it("drops progress events once an invocation is no longer active", () => {
     const runningInvocation = invocation({ status: "running" });
     const snapshot = mergeRuntimeProgressEvent(
-      { sessions: [], invocations: [runningInvocation], events: [] },
+      { invocations: [runningInvocation], events: [] },
       progressEvent(1),
     );
 
     const completed = invocation({ status: "completed" });
-    const updated = mergeRuntimeUpdate(snapshot, null, completed);
+    const updated = mergeRuntimeUpdate(snapshot, completed);
 
     expect(updated.events).toEqual([]);
     expect(updated.invocations).toEqual([]);
@@ -47,7 +46,6 @@ function invocation(
   const now = "2026-01-01T00:00:00.000Z";
   return {
     id: "invocation-1",
-    botSessionId: "session-1",
     botId: "bot-1",
     botUserId: "bot-user-1",
     botName: "Hermes",

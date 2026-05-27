@@ -217,7 +217,6 @@ export interface StreamResult {
 export interface ChatMessage {
   id: string;
   conversationId: string;
-  botSessionId?: string | null;
   senderId: string;
   senderName: string;
   senderType?: "human" | "bot";
@@ -277,7 +276,6 @@ export interface BotWithApiKey extends Bot {
 }
 
 export type HermesDefaultMode = "run" | "response";
-export type HermesSessionScope = "channel" | "thread" | "workspace";
 
 export const THECHAT_LATEX_FORMATTING_INSTRUCTIONS = `# LaTeX math formatting
 - TheChat renders LaTeX math in markdown.
@@ -302,7 +300,6 @@ export interface HermesBotConfigPublic {
   botId: string;
   defaultMode: HermesDefaultMode;
   defaultInstructions: string | null;
-  defaultSessionScope: HermesSessionScope;
   createdAt: string;
   updatedAt: string;
 }
@@ -329,28 +326,8 @@ export interface WebhookPayload {
 
 export type BotInvocationStatus = "queued" | "running" | "completed" | "failed" | "cancelled";
 
-export interface BotSessionPublic {
-  id: string;
-  botId: string;
-  botUserId: string;
-  botName: string;
-  botKind: BotKind;
-  workspaceId: string | null;
-  conversationId: string | null;
-  scope: string;
-  externalSessionId: string | null;
-  title: string | null;
-  lastMessageId: string | null;
-  lastMessagePreview: string | null;
-  lastMessageSenderName: string | null;
-  lastMessageCreatedAt: string | null;
-  createdAt: string;
-  updatedAt: string;
-}
-
 export interface BotInvocationPublic {
   id: string;
-  botSessionId: string | null;
   botId: string;
   botUserId: string;
   botName: string;
@@ -388,7 +365,6 @@ export interface BotInvocationProgressEventPublic {
 }
 
 export interface BotRuntimeSnapshot {
-  sessions: BotSessionPublic[];
   invocations: BotInvocationPublic[];
   events: BotInvocationProgressEventPublic[];
 }
@@ -435,7 +411,6 @@ export type WsServerEvent =
   | {
       type: "bot_invocation_updated";
       conversationId: string;
-      context: BotSessionPublic | null;
       invocation: BotInvocationPublic;
     }
   | {
@@ -449,7 +424,6 @@ export type WsServerEvent =
       conversationId: string;
       userId: string;
       userName: string;
-      botSessionId?: string | null;
     }
   | { type: "member_joined"; workspaceId: string; member: WorkspaceMember }
   | { type: "member_role_changed"; workspaceId: string; userId: string; newRole: WorkspaceMemberRole }

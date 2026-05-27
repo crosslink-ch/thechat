@@ -102,7 +102,6 @@ function HermesBotModalInner() {
         {
           defaultMode: "run",
           defaultInstructions: instructions.trim() || null,
-          defaultSessionScope: "channel",
         },
         auth(token),
       );

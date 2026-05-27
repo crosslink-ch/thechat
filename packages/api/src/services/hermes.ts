@@ -4,14 +4,12 @@ import { bots, hermesBotConfigs, users } from "../db/schema";
 import { ServiceError } from "./errors";
 
 export type HermesDefaultMode = "run" | "response";
-export type HermesSessionScope = "channel" | "thread" | "workspace";
 
 function toPublicConfig(row: typeof hermesBotConfigs.$inferSelect) {
   return {
     botId: row.botId,
     defaultMode: row.defaultMode as HermesDefaultMode,
     defaultInstructions: row.defaultInstructions,
-    defaultSessionScope: row.defaultSessionScope as HermesSessionScope,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
@@ -33,7 +31,6 @@ async function requireBotOwner(botId: string, userId: string) {
 export async function ensureHermesBotConfig(botId: string, defaults: {
   defaultMode?: HermesDefaultMode;
   defaultInstructions?: string | null;
-  defaultSessionScope?: HermesSessionScope;
 } = {}) {
   const [existing] = await db
     .select()
@@ -50,7 +47,6 @@ export async function ensureHermesBotConfig(botId: string, defaults: {
       apiKeyEncrypted: null,
       defaultMode: defaults.defaultMode ?? "run",
       defaultInstructions: defaults.defaultInstructions ?? null,
-      defaultSessionScope: defaults.defaultSessionScope ?? "channel",
     })
     .returning();
   return created;
@@ -64,7 +60,6 @@ export async function getHermesBotConfig(botId: string, userId: string) {
 export async function updateHermesBotConfig(botId: string, userId: string, updates: {
   defaultMode?: HermesDefaultMode;
   defaultInstructions?: string | null;
-  defaultSessionScope?: HermesSessionScope;
 }) {
   await requireBotOwner(botId, userId);
   await ensureHermesBotConfig(botId);
@@ -72,7 +67,6 @@ export async function updateHermesBotConfig(botId: string, userId: string, updat
   const set: Partial<typeof hermesBotConfigs.$inferInsert> = {};
   if (updates.defaultMode !== undefined) set.defaultMode = updates.defaultMode;
   if (updates.defaultInstructions !== undefined) set.defaultInstructions = updates.defaultInstructions;
-  if (updates.defaultSessionScope !== undefined) set.defaultSessionScope = updates.defaultSessionScope;
   if (Object.keys(set).length > 0) {
     await db.update(hermesBotConfigs).set(set).where(eq(hermesBotConfigs.botId, botId));
   }

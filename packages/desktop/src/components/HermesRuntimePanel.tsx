@@ -2,10 +2,7 @@ import { useMemo } from "react";
 import type {
   BotInvocationPublic,
   BotRuntimeSnapshot,
-  BotSessionPublic,
 } from "@thechat/shared";
-
-const CONTEXT_LIMIT = 4;
 
 export function HermesRuntimePanel({
   title = "Hermes",
@@ -18,10 +15,6 @@ export function HermesRuntimePanel({
   runtime: BotRuntimeSnapshot | null;
   loading: boolean;
 }) {
-  const contexts = useMemo(
-    () => (runtime?.sessions ?? []).filter((context) => context.botKind === "hermes"),
-    [runtime],
-  );
   const invocations = useMemo(
     () => (runtime?.invocations ?? []).filter((invocation) => invocation.botKind === "hermes"),
     [runtime],
@@ -29,9 +22,6 @@ export function HermesRuntimePanel({
   const activeInvocations = invocations.filter(
     (invocation) => invocation.status === "queued" || invocation.status === "running",
   );
-  const contextSummaries = contexts
-    .map((context) => summarizeContext(context, invocations))
-    .slice(0, CONTEXT_LIMIT);
 
   return (
     <aside className="hidden w-80 shrink-0 flex-col border-l border-border bg-surface/70 lg:flex">
@@ -58,25 +48,6 @@ export function HermesRuntimePanel({
             </div>
           )}
         </section>
-
-        <section>
-          <div className="mb-2 text-[0.786rem] font-medium uppercase text-text-dimmed">
-            Conversation
-          </div>
-          {loading && contextSummaries.length === 0 ? (
-            <PanelSkeleton />
-          ) : contextSummaries.length === 0 ? (
-            <div className="rounded-md border border-border bg-background px-3 py-2 text-[0.857rem] text-text-placeholder">
-              No history yet
-            </div>
-          ) : (
-            <div className="flex flex-col gap-2">
-              {contextSummaries.map((summary) => (
-                <ContextRow key={summary.context.id} summary={summary} />
-              ))}
-            </div>
-          )}
-        </section>
       </div>
     </aside>
   );
@@ -94,25 +65,6 @@ function InvocationRow({ invocation }: { invocation: BotInvocationPublic }) {
       <div className="mt-1 text-[0.714rem] text-text-dimmed">
         {formatSessionTime(invocation.updatedAt)}
       </div>
-    </div>
-  );
-}
-
-function ContextRow({ summary }: { summary: ContextSummary }) {
-  return (
-    <div className="rounded-md border border-border bg-background px-3 py-2">
-      <div className="flex items-start justify-between gap-2">
-        <div className="min-w-0 flex-1 truncate text-[0.857rem] font-medium text-text">
-          {summary.title}
-        </div>
-        {summary.latestInvocation && <StatusPill status={summary.latestInvocation.status} />}
-      </div>
-      <div className="mt-1 text-[0.714rem] text-text-dimmed">{summary.activityLabel}</div>
-      {summary.preview ? (
-        <div className="runtime-session-preview mt-2 text-[0.786rem] leading-5 text-text-muted">
-          {summary.preview}
-        </div>
-      ) : null}
     </div>
   );
 }
@@ -153,58 +105,6 @@ function StatusPill({ status }: { status: string }) {
       {status}
     </span>
   );
-}
-
-interface ContextSummary {
-  context: BotSessionPublic;
-  title: string;
-  activityLabel: string;
-  preview: string;
-  latestInvocation: BotInvocationPublic | null;
-}
-
-function summarizeContext(
-  context: BotSessionPublic,
-  invocations: BotInvocationPublic[],
-): ContextSummary {
-  const contextInvocations = invocations.filter(
-    (invocation) => invocation.botSessionId === context.id,
-  );
-  const latestInvocation = latestByUpdatedAt(contextInvocations);
-
-  return {
-    context,
-    title: contextTitle(context),
-    activityLabel: latestInvocation
-      ? `${statusLabel(latestInvocation.status)} ${formatSessionTime(latestInvocation.updatedAt)}`
-      : context.lastMessageCreatedAt
-        ? `Last message ${formatSessionTime(context.lastMessageCreatedAt)}`
-        : `Created ${formatSessionTime(context.createdAt)}`,
-    preview: latestInvocation
-      ? invocationPreview(latestInvocation) || context.lastMessagePreview || ""
-      : context.lastMessagePreview ?? "",
-    latestInvocation,
-  };
-}
-
-function contextTitle(context: BotSessionPublic) {
-  const title = context.title?.trim();
-  if (title) return title;
-  return context.scope === "workspace" ? "Workspace" : "Current conversation";
-}
-
-function latestByUpdatedAt(invocations: BotInvocationPublic[]) {
-  let latest: BotInvocationPublic | null = null;
-  for (const invocation of invocations) {
-    if (!latest || Date.parse(invocation.updatedAt) > Date.parse(latest.updatedAt)) {
-      latest = invocation;
-    }
-  }
-  return latest;
-}
-
-function statusLabel(status: string) {
-  return status === "queued" ? "Queued" : "Running";
 }
 
 function invocationPreview(invocation: BotInvocationPublic) {

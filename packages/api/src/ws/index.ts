@@ -130,7 +130,6 @@ async function handleSendMessage(
     message: {
       id: msg.id,
       conversationId: msg.conversationId,
-      botSessionId: msg.botSessionId,
       senderId: msg.senderId,
       senderName: msg.senderName,
       senderType: msg.senderType,

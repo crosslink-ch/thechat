@@ -1,5 +1,5 @@
 {
-  "id": "bcc4adbd-1ebc-4a16-a185-12120f4c9942",
+  "id": "c9b4ac57-eef7-4ea8-ab7c-4fb2404ae590",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -14,12 +14,6 @@
           "primaryKey": true,
           "notNull": true,
           "default": "gen_random_uuid()"
-        },
-        "bot_session_id": {
-          "name": "bot_session_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
         },
         "bot_id": {
           "name": "bot_id",
@@ -125,21 +119,6 @@
           "method": "btree",
           "with": {}
         },
-        "bot_invocations_session_id_idx": {
-          "name": "bot_invocations_session_id_idx",
-          "columns": [
-            {
-              "expression": "bot_session_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
         "bot_invocations_conversation_id_idx": {
           "name": "bot_invocations_conversation_id_idx",
           "columns": [
@@ -208,19 +187,6 @@
         }
       },
       "foreignKeys": {
-        "bot_invocations_bot_session_id_bot_sessions_id_fk": {
-          "name": "bot_invocations_bot_session_id_bot_sessions_id_fk",
-          "tableFrom": "bot_invocations",
-          "tableTo": "bot_sessions",
-          "columnsFrom": [
-            "bot_session_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "set null",
-          "onUpdate": "no action"
-        },
         "bot_invocations_bot_id_bots_id_fk": {
           "name": "bot_invocations_bot_id_bots_id_fk",
           "tableFrom": "bot_invocations",
@@ -266,242 +232,6 @@
           "tableTo": "messages",
           "columnsFrom": [
             "response_message_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "set null",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.bot_sessions": {
-      "name": "bot_sessions",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "uuid",
-          "primaryKey": true,
-          "notNull": true,
-          "default": "gen_random_uuid()"
-        },
-        "bot_id": {
-          "name": "bot_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "workspace_id": {
-          "name": "workspace_id",
-          "type": "varchar(100)",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "conversation_id": {
-          "name": "conversation_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "scope": {
-          "name": "scope",
-          "type": "varchar(20)",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'conversation'"
-        },
-        "external_session_id": {
-          "name": "external_session_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "title": {
-          "name": "title",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "last_message_id": {
-          "name": "last_message_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {
-        "bot_sessions_bot_id_idx": {
-          "name": "bot_sessions_bot_id_idx",
-          "columns": [
-            {
-              "expression": "bot_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "bot_sessions_workspace_id_idx": {
-          "name": "bot_sessions_workspace_id_idx",
-          "columns": [
-            {
-              "expression": "workspace_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "bot_sessions_conversation_id_idx": {
-          "name": "bot_sessions_conversation_id_idx",
-          "columns": [
-            {
-              "expression": "conversation_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "bot_sessions_bot_conversation_scope_idx": {
-          "name": "bot_sessions_bot_conversation_scope_idx",
-          "columns": [
-            {
-              "expression": "bot_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "conversation_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "scope",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "bot_sessions_bot_conversation_scope_external_idx": {
-          "name": "bot_sessions_bot_conversation_scope_external_idx",
-          "columns": [
-            {
-              "expression": "bot_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "conversation_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "scope",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "external_session_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {
-        "bot_sessions_bot_id_bots_id_fk": {
-          "name": "bot_sessions_bot_id_bots_id_fk",
-          "tableFrom": "bot_sessions",
-          "tableTo": "bots",
-          "columnsFrom": [
-            "bot_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "bot_sessions_workspace_id_workspaces_id_fk": {
-          "name": "bot_sessions_workspace_id_workspaces_id_fk",
-          "tableFrom": "bot_sessions",
-          "tableTo": "workspaces",
-          "columnsFrom": [
-            "workspace_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "bot_sessions_conversation_id_conversations_id_fk": {
-          "name": "bot_sessions_conversation_id_conversations_id_fk",
-          "tableFrom": "bot_sessions",
-          "tableTo": "conversations",
-          "columnsFrom": [
-            "conversation_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "bot_sessions_last_message_id_messages_id_fk": {
-          "name": "bot_sessions_last_message_id_messages_id_fk",
-          "tableFrom": "bot_sessions",
-          "tableTo": "messages",
-          "columnsFrom": [
-            "last_message_id"
           ],
           "columnsTo": [
             "id"
@@ -994,13 +724,6 @@
           "primaryKey": false,
           "notNull": false
         },
-        "default_session_scope": {
-          "name": "default_session_scope",
-          "type": "varchar(20)",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'channel'"
-        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp with time zone",
@@ -1055,12 +778,6 @@
           "primaryKey": false,
           "notNull": true
         },
-        "bot_session_id": {
-          "name": "bot_session_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
         "sender_id": {
           "name": "sender_id",
           "type": "uuid",
@@ -1100,21 +817,6 @@
           "columns": [
             {
               "expression": "conversation_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "messages_bot_session_id_idx": {
-          "name": "messages_bot_session_id_idx",
-          "columns": [
-            {
-              "expression": "bot_session_id",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -1168,19 +870,6 @@
             "id"
           ],
           "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "messages_bot_session_id_bot_sessions_id_fk": {
-          "name": "messages_bot_session_id_bot_sessions_id_fk",
-          "tableFrom": "messages",
-          "tableTo": "bot_sessions",
-          "columnsFrom": [
-            "bot_session_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "set null",
           "onUpdate": "no action"
         },
         "messages_sender_id_users_id_fk": {

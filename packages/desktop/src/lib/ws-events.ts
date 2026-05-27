@@ -2,7 +2,6 @@ import mitt from "mitt";
 import type {
   BotInvocationPublic,
   BotInvocationProgressEventPublic,
-  BotSessionPublic,
   ChatMessage,
   WorkspaceMember,
   WorkspaceMemberRole,
@@ -16,7 +15,6 @@ export type WsEvents = {
   };
   "ws:bot_invocation_updated": {
     conversationId: string;
-    context: BotSessionPublic | null;
     invocation: BotInvocationPublic;
   };
   "ws:bot_invocation_progress": {
@@ -28,7 +26,6 @@ export type WsEvents = {
     conversationId: string;
     userId: string;
     userName: string;
-    botSessionId?: string | null;
   };
   "ws:member_joined": {
     workspaceId: string;

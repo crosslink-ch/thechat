@@ -2,17 +2,15 @@ import type {
   BotInvocationPublic,
   BotInvocationProgressEventPublic,
   BotRuntimeSnapshot,
-  BotSessionPublic,
 } from "@thechat/shared";
 
 const MAX_PROGRESS_EVENTS_PER_INVOCATION = 100;
 
 export function mergeRuntimeUpdate(
   prev: BotRuntimeSnapshot | null,
-  context: BotSessionPublic | null,
   invocation: BotInvocationPublic,
 ): BotRuntimeSnapshot {
-  const snapshot = prev ?? { sessions: [], invocations: [], events: [] };
+  const snapshot = prev ?? { invocations: [], events: [] };
   const isActive = isActiveInvocation(invocation);
   const invocations = isActive
     ? upsertById(snapshot.invocations, invocation)
@@ -21,7 +19,6 @@ export function mergeRuntimeUpdate(
     ? snapshot.events
     : snapshot.events.filter((event) => event.invocationId !== invocation.id);
   return {
-    sessions: context ? upsertById(snapshot.sessions, context) : snapshot.sessions,
     invocations,
     events: pruneProgressEvents(events),
   };
@@ -31,9 +28,8 @@ export function mergeRuntimeProgressEvent(
   prev: BotRuntimeSnapshot | null,
   event: BotInvocationProgressEventPublic,
 ): BotRuntimeSnapshot {
-  const snapshot = prev ?? { sessions: [], invocations: [], events: [] };
+  const snapshot = prev ?? { invocations: [], events: [] };
   return {
-    sessions: snapshot.sessions,
     invocations: snapshot.invocations,
     events: pruneProgressEvents(
       upsertById(snapshot.events, event),

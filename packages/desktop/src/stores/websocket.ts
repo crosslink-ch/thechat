@@ -94,7 +94,6 @@ function doConnect() {
     } else if (event.type === "bot_invocation_updated") {
       wsEvents.emit("ws:bot_invocation_updated", {
         conversationId: event.conversationId,
-        context: event.context,
         invocation: event.invocation,
       });
     } else if (event.type === "bot_invocation_progress") {
@@ -108,7 +107,6 @@ function doConnect() {
         conversationId: event.conversationId,
         userId: event.userId,
         userName: event.userName,
-        botSessionId: event.botSessionId ?? null,
       });
     } else if (event.type === "member_joined") {
       wsEvents.emit("ws:member_joined", {

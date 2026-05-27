@@ -87,11 +87,10 @@ export function ChannelRoute() {
     };
     const onBotInvocationUpdated = ({
       conversationId,
-      context,
       invocation,
     }: WsEvents["ws:bot_invocation_updated"]) => {
       if (conversationId !== channelId) return;
-      mergeInvocationUpdate(channelId, context, invocation);
+      mergeInvocationUpdate(channelId, invocation);
     };
     const onBotInvocationProgress = ({
       conversationId,

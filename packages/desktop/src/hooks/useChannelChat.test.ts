@@ -32,13 +32,6 @@ function message(conversationId: string, content: string): ChatMessage {
   };
 }
 
-function sessionMessage(conversationId: string, botSessionId: string, content: string): ChatMessage {
-  return {
-    ...message(conversationId, content),
-    botSessionId,
-  };
-}
-
 describe("useChannelChat", () => {
   beforeEach(() => {
     vi.resetAllMocks();
@@ -161,7 +154,7 @@ describe("useChannelChat", () => {
     });
 
     act(() => {
-      history.resolve({ data: [sessionMessage("dm-hermes", "context-1", "active history")] });
+      history.resolve({ data: [message("dm-hermes", "active history")] });
     });
 
     await waitFor(() => {
@@ -169,8 +162,8 @@ describe("useChannelChat", () => {
     });
 
     act(() => {
-      result.current.addMessage(sessionMessage("dm-hermes", "context-2", "other live"));
-      result.current.addMessage(sessionMessage("dm-hermes", "context-1", "active live"));
+      result.current.addMessage(message("dm-hermes", "other live"));
+      result.current.addMessage(message("dm-hermes", "active live"));
       result.current.sendMessage("next");
     });
 
