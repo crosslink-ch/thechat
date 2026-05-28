@@ -1,4 +1,4 @@
-import { eq, and, lt, desc } from "drizzle-orm";
+import { eq, and, lt, desc, isNull } from "drizzle-orm";
 import { db } from "../db";
 import {
   messages,
@@ -13,7 +13,7 @@ import { withSpan } from "../observability";
 export async function getMessages(
   conversationId: string,
   userId: string,
-  options?: { limit?: number; before?: string; threadId?: string }
+  options?: { limit?: number; before?: string; threadId?: string; unthreaded?: boolean }
 ) {
   // Validate user is a participant
   const [participant] = await db
@@ -39,6 +39,8 @@ export async function getMessages(
   if (options?.threadId) {
     await requireConversationThread(conversationId, options.threadId);
     conditions.push(eq(messages.threadId, options.threadId));
+  } else if (options?.unthreaded) {
+    conditions.push(isNull(messages.threadId));
   }
   if (options?.before) {
     conditions.push(lt(messages.createdAt, new Date(options.before)));

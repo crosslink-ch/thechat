@@ -9,6 +9,10 @@ const sendSchema = z.object({
   threadId: z.string().uuid().nullable().optional(),
 });
 
+function isTruthyQueryValue(value: unknown) {
+  return value === "true" || value === "1" || value === true;
+}
+
 export const messageRoutes = new Elysia({ prefix: "/messages" })
   .derive(async ({ headers }) => {
     const authHeader = headers.authorization;
@@ -35,6 +39,7 @@ export const messageRoutes = new Elysia({ prefix: "/messages" })
         limit: Number(query.limit) || undefined,
         before: (query.before as string) || undefined,
         threadId: (query.threadId as string) || undefined,
+        unthreaded: isTruthyQueryValue(query.unthreaded),
       });
     } catch (e) {
       if (e instanceof ServiceError) {

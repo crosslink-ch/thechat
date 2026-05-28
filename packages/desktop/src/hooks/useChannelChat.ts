@@ -9,20 +9,32 @@ const MESSAGE_CACHE_TTL_MS = 60_000;
 interface UseChannelChatOptions {
   conversationId: string | null;
   threadId?: string | null;
+  unthreadedOnly?: boolean;
   token: string | null;
   wsSendMessage: (conversationId: string, content: string, threadId?: string | null) => void;
 }
 
-export const messagesQueryKey = (conversationId: string, threadId?: string | null) =>
-  ["messages", conversationId, threadId ?? "all"] as const;
+export const messagesQueryKey = (
+  conversationId: string,
+  threadId?: string | null,
+  unthreadedOnly = false,
+) => ["messages", conversationId, unthreadedOnly ? "general" : threadId ?? "all"] as const;
 
 async function fetchMessages(
   conversationId: string,
   token: string,
   threadId?: string | null,
+  unthreadedOnly = false,
 ): Promise<ChatMessage[]> {
+  const query: Record<string, string | number> = { limit: 50 };
+  if (threadId) {
+    query.threadId = threadId;
+  } else if (unthreadedOnly) {
+    query.unthreaded = "true";
+  }
+
   const { data, error } = await api.messages({ conversationId }).get({
-    query: threadId ? { limit: 50, threadId } : { limit: 50 },
+    query,
     ...authHeaders(token),
   });
 
@@ -36,15 +48,16 @@ async function fetchMessages(
 export function useChannelChat({
   conversationId,
   threadId = null,
+  unthreadedOnly = false,
   token,
   wsSendMessage,
 }: UseChannelChatOptions) {
   const queryClient = useQueryClient();
   const query = useQuery({
     queryKey: conversationId
-      ? messagesQueryKey(conversationId, threadId)
+      ? messagesQueryKey(conversationId, threadId, unthreadedOnly)
       : ["messages", "disabled"],
-    queryFn: () => fetchMessages(conversationId!, token!, threadId),
+    queryFn: () => fetchMessages(conversationId!, token!, threadId, unthreadedOnly),
     enabled: !!conversationId && !!token,
     staleTime: MESSAGE_CACHE_TTL_MS,
   });
@@ -53,8 +66,12 @@ export function useChannelChat({
     (msg: ChatMessage) => {
       if (msg.conversationId !== conversationId) return;
 
-      const updateCache = (cacheThreadId: string | null, createIfMissing: boolean) => {
-        const key = messagesQueryKey(conversationId, cacheThreadId);
+      const updateCache = (
+        cacheThreadId: string | null,
+        cacheUnthreadedOnly: boolean,
+        createIfMissing: boolean,
+      ) => {
+        const key = messagesQueryKey(conversationId, cacheThreadId, cacheUnthreadedOnly);
         if (!createIfMissing && queryClient.getQueryData(key) === undefined) return;
         queryClient.setQueryData<ChatMessage[]>(key, (prev = []) =>
           appendMessage(prev, msg),
@@ -62,13 +79,14 @@ export function useChannelChat({
       };
 
       if (msg.threadId) {
-        updateCache(msg.threadId, msg.threadId === threadId);
-        updateCache(null, threadId === null);
+        updateCache(msg.threadId, false, !unthreadedOnly && msg.threadId === threadId);
+        updateCache(null, false, !unthreadedOnly && threadId === null);
       } else {
-        updateCache(null, threadId === null);
+        updateCache(null, true, unthreadedOnly && threadId === null);
+        updateCache(null, false, !unthreadedOnly && threadId === null);
       }
     },
-    [conversationId, queryClient, threadId],
+    [conversationId, queryClient, threadId, unthreadedOnly],
   );
 
   const sendMessage = useCallback(

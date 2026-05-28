@@ -1709,6 +1709,14 @@ describe("Bots: runtime state", () => {
     );
     expect(firstThreadRes.status).toBe(200);
     expect(secondThreadRes.status).toBe(200);
+    const renamedSecondThreadRes = await req(
+      "PATCH",
+      `/conversations/threads/${dmRes.body.id}`,
+      { threadId: secondThreadRes.body.id, title: "Renamed second task" },
+      human.token,
+    );
+    expect(renamedSecondThreadRes.status).toBe(200);
+    expect(renamedSecondThreadRes.body.title).toBe("Renamed second task");
 
     const redisKeyPrefix = `thechat-thread-typing-test-${crypto.randomUUID()}`;
     const serviceBus = new RedisRealtimeBus({ redisKeyPrefix });
@@ -1835,6 +1843,35 @@ describe("Bots: runtime state", () => {
     expect(secondThreadMessages.status).toBe(200);
     expect(secondThreadMessages.body.map((message: any) => message.content)).toEqual([
       "Second threaded prompt",
+    ]);
+
+    const generalProactiveRes = await req(
+      "POST",
+      "/hermes-platform/messages",
+      {
+        conversationId: dmRes.body.id,
+        content: "General proactive note",
+      },
+      botRes.body.apiKey,
+    );
+    expect(generalProactiveRes.status).toBe(200);
+    expect(generalProactiveRes.body).toEqual(
+      expect.objectContaining({
+        messageId: expect.any(String),
+        threadId: null,
+        duplicate: false,
+      }),
+    );
+
+    const generalMessages = await req(
+      "GET",
+      `/messages/${dmRes.body.id}?unthreaded=true`,
+      undefined,
+      human.token,
+    );
+    expect(generalMessages.status).toBe(200);
+    expect(generalMessages.body.map((message: any) => message.content)).toEqual([
+      "General proactive note",
     ]);
     } finally {
       await unsubscribe();

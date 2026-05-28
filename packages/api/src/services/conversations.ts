@@ -421,6 +421,36 @@ export async function createConversationThread(
   return toPublicThread(thread);
 }
 
+export async function updateConversationThread(
+  conversationId: string,
+  threadId: string,
+  userId: string,
+  input: { title: string },
+) {
+  await requireConversationParticipant(conversationId, userId);
+
+  const now = new Date();
+  const [thread] = await db
+    .update(conversationThreads)
+    .set({
+      title: normalizeThreadTitle(input.title),
+      updatedAt: now,
+    })
+    .where(
+      and(
+        eq(conversationThreads.id, threadId),
+        eq(conversationThreads.conversationId, conversationId),
+      ),
+    )
+    .returning();
+
+  if (!thread) {
+    throw new ServiceError("Thread not found", 404);
+  }
+
+  return toPublicThread(thread);
+}
+
 async function requireConversationParticipant(conversationId: string, userId: string) {
   const [participant] = await db
     .select({ userId: conversationParticipants.userId })

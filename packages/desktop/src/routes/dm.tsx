@@ -52,18 +52,24 @@ export function DmRoute() {
     threads,
     loading: threadsLoading,
     createThread,
+    renameThread,
     touchThread,
   } = threadState;
   const { mergeInvocationUpdate, mergeProgressEvent } = useBotRuntimeCache();
+  const generalThreadActive = isHermesDm && activeThreadId === null;
   const activeHermesProgress = useMemo(
-    () => selectHermesConversationProgress(runtime, activeThreadId),
-    [activeThreadId, runtime],
+    () =>
+      selectHermesConversationProgress(runtime, activeThreadId, {
+        unthreadedOnly: generalThreadActive,
+      }),
+    [activeThreadId, generalThreadActive, runtime],
   );
   const chatConversationId = conversation ? conversationId : null;
 
   const channelChat = useChannelChat({
     conversationId: chatConversationId,
     threadId: isHermesDm ? activeThreadId : null,
+    unthreadedOnly: generalThreadActive,
     token,
     wsSendMessage,
   });
@@ -181,10 +187,9 @@ export function DmRoute() {
 
   useEffect(() => {
     if (!isHermesDm) return;
-    if (activeThreadId && threads.some((thread) => thread.id === activeThreadId)) {
-      return;
+    if (activeThreadId && !threads.some((thread) => thread.id === activeThreadId)) {
+      setActiveThreadId(null);
     }
-    setActiveThreadId(threads[0]?.id ?? null);
   }, [activeThreadId, isHermesDm, threads]);
 
   const handleCreateThread = () => {
@@ -196,21 +201,20 @@ export function DmRoute() {
   };
 
   const handleSend = (content: string) => {
-    if (!isHermesDm) {
+    if (!isHermesDm || activeThreadId === null) {
       channelChat.sendMessage(content);
       return;
     }
 
     void (async () => {
-      let threadId = activeThreadId;
-      if (!threadId) {
-        const thread = await createThread({
-          botId: otherParticipant?.bot?.id,
-          title: titleFromMessage(content),
-        });
-        if (!thread) return;
-        threadId = thread.id;
-        setActiveThreadId(thread.id);
+      const threadId = activeThreadId;
+      const activeThread = threads.find((thread) => thread.id === threadId);
+      if (isAutoNamedThread(activeThread)) {
+        try {
+          await renameThread(threadId, titleFromMessage(content));
+        } catch (error) {
+          console.error("Failed to rename Hermes task thread", error);
+        }
       }
       wsSendMessage(conversationId, content, threadId);
       touchThread(threadId);
@@ -255,4 +259,8 @@ function titleFromMessage(content: string) {
   const normalized = content.trim().replace(/\s+/g, " ");
   if (!normalized) return "New task";
   return normalized.length > 48 ? `${normalized.slice(0, 45)}...` : normalized;
+}
+
+function isAutoNamedThread(thread: { title: string } | null | undefined) {
+  return thread?.title.trim() === "New task";
 }

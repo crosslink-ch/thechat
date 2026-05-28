@@ -23,7 +23,7 @@ export function HermesRuntimePanel({
   threads?: ConversationThreadPublic[];
   threadsLoading?: boolean;
   activeThreadId?: string | null;
-  onSelectThread?: (threadId: string) => void;
+  onSelectThread?: (threadId: string | null) => void;
   onCreateThread?: () => void;
 }) {
   const invocations = useMemo(
@@ -41,6 +41,9 @@ export function HermesRuntimePanel({
     }
     return counts;
   }, [activeInvocations]);
+  const generalActiveCount = activeInvocations.filter(
+    (invocation) => invocation.threadId === null,
+  ).length;
 
   return (
     <aside className="hidden w-80 shrink-0 flex-col border-l border-border bg-surface/70 lg:flex">
@@ -68,15 +71,16 @@ export function HermesRuntimePanel({
               </button>
             )}
           </div>
-          {threadsLoading && threads.length === 0 ? (
-            <PanelSkeleton />
-          ) : threads.length === 0 ? (
-            <div className="rounded-md border border-border bg-background px-3 py-2 text-[0.857rem] text-text-placeholder">
-              No tasks
-            </div>
-          ) : (
-            <div className="flex flex-col gap-1.5">
-              {threads.map((thread) => (
+          <div className="flex flex-col gap-1.5">
+            <GeneralThreadRow
+              active={activeThreadId === null}
+              activeCount={generalActiveCount}
+              onSelect={onSelectThread}
+            />
+            {threadsLoading && threads.length === 0 ? (
+              <PanelSkeleton />
+            ) : (
+              threads.map((thread) => (
                 <ThreadRow
                   key={thread.id}
                   thread={thread}
@@ -84,9 +88,9 @@ export function HermesRuntimePanel({
                   activeCount={activeCountsByThread.get(thread.id) ?? 0}
                   onSelect={onSelectThread}
                 />
-              ))}
-            </div>
-          )}
+              ))
+            )}
+          </div>
         </section>
         <section className="mb-5">
           <div className="mb-2 text-[0.786rem] font-medium uppercase text-text-dimmed">
@@ -120,7 +124,7 @@ function ThreadRow({
   thread: ConversationThreadPublic;
   active: boolean;
   activeCount: number;
-  onSelect?: (threadId: string) => void;
+  onSelect?: (threadId: string | null) => void;
 }) {
   return (
     <button
@@ -144,6 +148,42 @@ function ThreadRow({
       </div>
       <div className="mt-1 text-[0.714rem] text-text-dimmed">
         {formatSessionTime(thread.lastActivityAt)}
+      </div>
+    </button>
+  );
+}
+
+function GeneralThreadRow({
+  active,
+  activeCount,
+  onSelect,
+}: {
+  active: boolean;
+  activeCount: number;
+  onSelect?: (threadId: string | null) => void;
+}) {
+  return (
+    <button
+      type="button"
+      className={`w-full cursor-pointer rounded-md border px-3 py-2 text-left transition-colors duration-150 ${
+        active
+          ? "border-accent/40 bg-accent/10"
+          : "border-border bg-background hover:bg-hover"
+      }`}
+      onClick={() => onSelect?.(null)}
+    >
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0 flex-1 truncate text-[0.857rem] font-medium text-text">
+          General
+        </div>
+        {activeCount > 0 && (
+          <span className="shrink-0 rounded border border-accent/40 bg-accent/10 px-1.5 py-0.5 text-[0.643rem] font-medium uppercase text-accent">
+            {activeCount}
+          </span>
+        )}
+      </div>
+      <div className="mt-1 text-[0.714rem] text-text-dimmed">
+        Inbox
       </div>
     </button>
   );

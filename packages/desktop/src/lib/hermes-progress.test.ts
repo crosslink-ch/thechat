@@ -64,6 +64,48 @@ describe("Hermes progress selectors", () => {
     ]);
   });
 
+  it("scopes General progress to unthreaded Hermes invocations", () => {
+    const snapshot = runtime({
+      invocations: [
+        invocation({ id: "general-invocation", threadId: null }),
+        invocation({ id: "task-invocation", threadId: "thread-1" }),
+      ],
+      events: [
+        progressEvent({ id: "general-event", invocationId: "general-invocation", threadId: null }),
+        progressEvent({ id: "task-event", invocationId: "task-invocation", threadId: "thread-1" }),
+      ],
+    });
+
+    const selected = selectHermesConversationProgress(snapshot, null, {
+      unthreadedOnly: true,
+    });
+
+    expect(selected.invocations.map((invocation) => invocation.id)).toEqual([
+      "general-invocation",
+    ]);
+    expect(selected.events.map((event) => event.id)).toEqual(["general-event"]);
+  });
+
+  it("scopes task progress to the selected thread", () => {
+    const snapshot = runtime({
+      invocations: [
+        invocation({ id: "first-task", threadId: "thread-1" }),
+        invocation({ id: "second-task", threadId: "thread-2" }),
+      ],
+      events: [
+        progressEvent({ id: "first-event", invocationId: "first-task", threadId: "thread-1" }),
+        progressEvent({ id: "second-event", invocationId: "second-task", threadId: "thread-2" }),
+      ],
+    });
+
+    const selected = selectHermesConversationProgress(snapshot, "thread-2");
+
+    expect(selected.invocations.map((invocation) => invocation.id)).toEqual([
+      "second-task",
+    ]);
+    expect(selected.events.map((event) => event.id)).toEqual(["second-event"]);
+  });
+
   it("ignores completed invocations and non-Hermes bots", () => {
     const snapshot = runtime({
       invocations: [

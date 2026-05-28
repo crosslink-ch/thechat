@@ -41,6 +41,23 @@ async function createConversationThread(
   return data as ConversationThreadPublic;
 }
 
+async function updateConversationThread(
+  conversationId: string,
+  token: string,
+  input: { threadId: string; title: string },
+): Promise<ConversationThreadPublic> {
+  const { data, error } = await api.conversations.threads({ conversationId }).patch(
+    input,
+    authHeaders(token),
+  );
+
+  if (error) {
+    throw new Error(edenErrorMessage(error, "Failed to update task thread"));
+  }
+
+  return data as ConversationThreadPublic;
+}
+
 export function useConversationThreads(
   conversationId: string | null,
   token: string | null,
@@ -63,6 +80,23 @@ export function useConversationThreads(
       queryClient.setQueryData<ConversationThreadPublic[]>(
         conversationThreadsQueryKey(conversationId),
         (previous = []) => [thread, ...previous.filter((item) => item.id !== thread.id)],
+      );
+      return thread;
+    },
+    [conversationId, queryClient, token],
+  );
+
+  const renameThread = useCallback(
+    async (threadId: string, title: string) => {
+      if (!conversationId || !token) return null;
+      const thread = await updateConversationThread(conversationId, token, {
+        threadId,
+        title,
+      });
+      queryClient.setQueryData<ConversationThreadPublic[]>(
+        conversationThreadsQueryKey(conversationId),
+        (previous = []) =>
+          previous.map((item) => (item.id === thread.id ? thread : item)),
       );
       return thread;
     },
@@ -92,9 +126,10 @@ export function useConversationThreads(
       threads: query.data ?? [],
       loading: query.isLoading,
       createThread,
+      renameThread,
       touchThread,
       refetchThreads: query.refetch,
     }),
-    [createThread, query.data, query.isLoading, query.refetch, touchThread],
+    [createThread, query.data, query.isLoading, query.refetch, renameThread, touchThread],
   );
 }

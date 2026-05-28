@@ -230,6 +230,50 @@ describe("useChannelChat", () => {
     ]);
   });
 
+  it("keeps the Hermes General cache scoped to unthreaded messages", async () => {
+    const get = vi.fn(() =>
+      Promise.resolve({ data: [message("dm-hermes", "general history")] }),
+    );
+    vi.mocked(api.messages).mockReturnValue({ get } as any);
+    const wsSendMessage = vi.fn();
+
+    const { result } = renderHook(
+      () =>
+        useChannelChat({
+          conversationId: "dm-hermes",
+          threadId: null,
+          unthreadedOnly: true,
+          token: "test-token",
+          wsSendMessage,
+        }),
+      { wrapper: createQueryWrapper() },
+    );
+
+    await waitFor(() => {
+      expect(result.current.messages.map((m) => m.content)).toEqual([
+        "general history",
+      ]);
+    });
+    expect(get).toHaveBeenCalledWith({
+      query: { limit: 50, unthreaded: "true" },
+      headers: { authorization: "Bearer test-token" },
+    });
+
+    act(() => {
+      result.current.addMessage(message("dm-hermes", "task live", "thread-1"));
+      result.current.addMessage(message("dm-hermes", "general live"));
+      result.current.sendMessage("next general");
+    });
+
+    await waitFor(() => {
+      expect(result.current.messages.map((m) => m.content)).toEqual([
+        "general history",
+        "general live",
+      ]);
+    });
+    expect(wsSendMessage).toHaveBeenCalledWith("dm-hermes", "next general", null);
+  });
+
   it("reuses fresh cached history when remounting the same conversation", async () => {
     vi.mocked(api.messages).mockReturnValue({
       get: vi.fn(() =>

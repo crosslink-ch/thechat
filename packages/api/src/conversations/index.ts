@@ -9,6 +9,7 @@ import {
   listConversationThreads,
   listUserDms,
   createChannel,
+  updateConversationThread,
 } from "../services/conversations";
 
 const dmSchema = z.object({
@@ -24,6 +25,11 @@ const channelSchema = z.object({
 const threadSchema = z.object({
   botId: z.string().uuid().optional(),
   title: z.string().trim().min(1).max(255).optional(),
+});
+
+const updateThreadSchema = z.object({
+  threadId: z.string().uuid(),
+  title: z.string().trim().min(1).max(255),
 });
 
 export const conversationRoutes = new Elysia({ prefix: "/conversations" })
@@ -130,6 +136,29 @@ export const conversationRoutes = new Elysia({ prefix: "/conversations" })
         params.conversationId,
         user.id,
         parsed.data,
+      );
+    } catch (e) {
+      if (e instanceof ServiceError) {
+        set.status = e.status;
+        return { error: e.message };
+      }
+      throw e;
+    }
+  })
+
+  .patch("/threads/:conversationId", async ({ params, body, user, set }) => {
+    const parsed = updateThreadSchema.safeParse(body);
+    if (!parsed.success) {
+      set.status = 400;
+      return { error: parsed.error.issues[0]?.message ?? "Invalid input" };
+    }
+
+    try {
+      return await updateConversationThread(
+        params.conversationId,
+        parsed.data.threadId,
+        user.id,
+        { title: parsed.data.title },
       );
     } catch (e) {
       if (e instanceof ServiceError) {

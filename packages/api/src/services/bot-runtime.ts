@@ -877,7 +877,11 @@ export async function publishHermesPlatformMessage(input: {
         previousPlatformMessageId === input.platformMessageId
       ) {
         span.setAttribute("thechat.hermes_platform.message.duplicate", true);
-        return { messageId: target.invocation.responseMessageId, duplicate: true };
+        return {
+          messageId: target.invocation.responseMessageId,
+          threadId: target.threadId,
+          duplicate: true,
+        };
       }
 
       const [responseMessage] = await db
@@ -935,7 +939,7 @@ export async function publishHermesPlatformMessage(input: {
         createdAt: responseMessage.createdAt.toISOString(),
       }).catch((error) => console.error("Failed to enqueue bot invocation from bot message", error));
       if (target.invocation) await publishInvocationUpdate(target.invocation.id);
-      return { messageId: responseMessage.id, duplicate: false };
+      return { messageId: responseMessage.id, threadId: responseMessage.threadId, duplicate: false };
     },
   );
 }
