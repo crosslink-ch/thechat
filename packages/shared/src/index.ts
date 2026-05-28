@@ -262,6 +262,12 @@ export interface ConversationThreadPublic {
   updatedAt: string;
 }
 
+export interface ConversationThreadsPage {
+  items: ConversationThreadPublic[];
+  nextCursor: string | null;
+  hasMore: boolean;
+}
+
 // -- WebSocket Event Types --
 
 export type WsClientEvent =

@@ -335,6 +335,11 @@ export const conversationThreads = pgTable(
   (t) => [
     index("conversation_threads_conversation_id_idx").on(t.conversationId),
     index("conversation_threads_bot_id_idx").on(t.botId),
+    index("conversation_threads_conversation_activity_idx").on(
+      t.conversationId,
+      t.lastActivityAt,
+      t.id,
+    ),
     index("conversation_threads_last_activity_idx").on(t.lastActivityAt),
   ],
 );

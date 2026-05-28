@@ -1,0 +1,1 @@
+CREATE INDEX "conversation_threads_conversation_activity_idx" ON "conversation_threads" USING btree ("conversation_id","last_activity_at","id");

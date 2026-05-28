@@ -1,27 +1,68 @@
 import { useCallback, useMemo } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import type { ConversationThreadPublic } from "@thechat/shared";
+import {
+  useInfiniteQuery,
+  useQueryClient,
+  type InfiniteData,
+} from "@tanstack/react-query";
+import type {
+  ConversationThreadPublic,
+  ConversationThreadsPage,
+} from "@thechat/shared";
 import { api } from "../lib/api";
 import { authHeaders, edenErrorMessage } from "../lib/eden";
 
 const CONVERSATION_THREADS_STALE_MS = 60_000;
+const DEFAULT_THREAD_PAGE_SIZE = 50;
 
-export const conversationThreadsQueryKey = (conversationId: string) =>
-  ["conversation-threads", conversationId] as const;
+interface ConversationThreadsOptions {
+  botId?: string | null;
+  status?: string | null;
+  pageSize?: number;
+}
+
+type ThreadsInfiniteData = InfiniteData<ConversationThreadsPage, string | null>;
+
+export const conversationThreadsQueryKey = (
+  conversationId: string,
+  options: ConversationThreadsOptions = {},
+) =>
+  [
+    "conversation-threads",
+    conversationId,
+    {
+      botId: options.botId ?? null,
+      status: options.status ?? null,
+      pageSize: options.pageSize ?? DEFAULT_THREAD_PAGE_SIZE,
+    },
+  ] as const;
 
 async function fetchConversationThreads(
   conversationId: string,
   token: string,
-): Promise<ConversationThreadPublic[]> {
+  input: {
+    cursor?: string | null;
+    botId?: string | null;
+    status?: string | null;
+    limit: number;
+  },
+): Promise<ConversationThreadsPage> {
+  const query: Record<string, string | number> = { limit: input.limit };
+  if (input.cursor) query.cursor = input.cursor;
+  if (input.botId) query.botId = input.botId;
+  if (input.status) query.status = input.status;
+
   const { data, error } = await api.conversations.threads({ conversationId }).get(
-    authHeaders(token),
+    {
+      query,
+      ...authHeaders(token),
+    },
   );
 
   if (error) {
     throw new Error(edenErrorMessage(error, "Failed to load task threads"));
   }
 
-  return Array.isArray(data) ? (data as ConversationThreadPublic[]) : [];
+  return data as ConversationThreadsPage;
 }
 
 async function createConversationThread(
@@ -62,28 +103,50 @@ export function useConversationThreads(
   conversationId: string | null,
   token: string | null,
   enabled = true,
+  options: ConversationThreadsOptions = {},
 ) {
   const queryClient = useQueryClient();
-  const query = useQuery({
-    queryKey: conversationId
-      ? conversationThreadsQueryKey(conversationId)
-      : ["conversation-threads", "disabled"],
-    queryFn: () => fetchConversationThreads(conversationId!, token!),
+  const botId = options.botId ?? null;
+  const status = options.status ?? null;
+  const pageSize = options.pageSize ?? DEFAULT_THREAD_PAGE_SIZE;
+  const queryKey = useMemo(
+    () =>
+      conversationId
+        ? conversationThreadsQueryKey(conversationId, { botId, status, pageSize })
+        : (["conversation-threads", "disabled"] as const),
+    [botId, conversationId, pageSize, status],
+  );
+  const query = useInfiniteQuery({
+    queryKey,
+    queryFn: ({ pageParam }) =>
+      fetchConversationThreads(conversationId!, token!, {
+        cursor: pageParam,
+        botId,
+        status,
+        limit: pageSize,
+      }),
+    initialPageParam: null as string | null,
+    getNextPageParam: (lastPage) => lastPage.nextCursor,
     enabled: enabled && !!conversationId && !!token,
     staleTime: CONVERSATION_THREADS_STALE_MS,
   });
+
+  const threads = useMemo(
+    () => dedupeThreads(query.data?.pages.flatMap((page) => page.items) ?? []),
+    [query.data],
+  );
 
   const createThread = useCallback(
     async (input: { botId?: string; title?: string } = {}) => {
       if (!conversationId || !token) return null;
       const thread = await createConversationThread(conversationId, token, input);
-      queryClient.setQueryData<ConversationThreadPublic[]>(
-        conversationThreadsQueryKey(conversationId),
-        (previous = []) => [thread, ...previous.filter((item) => item.id !== thread.id)],
+      queryClient.setQueryData<ThreadsInfiniteData>(
+        conversationThreadsQueryKey(conversationId, { botId, status, pageSize }),
+        (previous) => upsertLoadedThread(previous, thread),
       );
       return thread;
     },
-    [conversationId, queryClient, token],
+    [botId, conversationId, pageSize, queryClient, status, token],
   );
 
   const renameThread = useCallback(
@@ -93,43 +156,147 @@ export function useConversationThreads(
         threadId,
         title,
       });
-      queryClient.setQueryData<ConversationThreadPublic[]>(
-        conversationThreadsQueryKey(conversationId),
-        (previous = []) =>
-          previous.map((item) => (item.id === thread.id ? thread : item)),
+      queryClient.setQueryData<ThreadsInfiniteData>(
+        conversationThreadsQueryKey(conversationId, { botId, status, pageSize }),
+        (previous) => updateLoadedThread(previous, thread),
       );
       return thread;
     },
-    [conversationId, queryClient, token],
+    [botId, conversationId, pageSize, queryClient, status, token],
   );
 
   const touchThread = useCallback(
     (threadId: string, at = new Date().toISOString()) => {
-      if (!conversationId) return;
-      queryClient.setQueryData<ConversationThreadPublic[]>(
-        conversationThreadsQueryKey(conversationId),
-        (previous = []) =>
-          previous
-            .map((thread) =>
-              thread.id === threadId
-                ? { ...thread, lastActivityAt: at, updatedAt: at }
-                : thread,
-            )
-            .sort((a, b) => Date.parse(b.lastActivityAt) - Date.parse(a.lastActivityAt)),
+      if (!conversationId || !token || !enabled) return;
+      const previous = queryClient.getQueryData<ThreadsInfiniteData>(queryKey);
+      if (!hasLoadedThread(previous, threadId)) {
+        void query.refetch();
+        return;
+      }
+
+      queryClient.setQueryData<ThreadsInfiniteData>(
+        queryKey,
+        (previous) =>
+          updateLoadedThreadActivity(previous, threadId, at),
       );
     },
-    [conversationId, queryClient],
+    [conversationId, enabled, query.refetch, queryClient, queryKey, token],
   );
 
   return useMemo(
     () => ({
-      threads: query.data ?? [],
+      threads,
       loading: query.isLoading,
+      loadingMore: query.isFetchingNextPage,
+      hasMore: query.hasNextPage,
+      loadMore: query.fetchNextPage,
       createThread,
       renameThread,
       touchThread,
       refetchThreads: query.refetch,
     }),
-    [createThread, query.data, query.isLoading, query.refetch, renameThread, touchThread],
+    [
+      createThread,
+      query.fetchNextPage,
+      query.hasNextPage,
+      query.isFetchingNextPage,
+      query.isLoading,
+      query.refetch,
+      renameThread,
+      threads,
+      touchThread,
+    ],
   );
+}
+
+function dedupeThreads(threads: ConversationThreadPublic[]) {
+  const seen = new Set<string>();
+  return threads.filter((thread) => {
+    if (seen.has(thread.id)) return false;
+    seen.add(thread.id);
+    return true;
+  });
+}
+
+function hasLoadedThread(
+  data: ThreadsInfiniteData | undefined,
+  threadId: string,
+) {
+  return data?.pages.some((page) =>
+    page.items.some((thread) => thread.id === threadId),
+  ) ?? false;
+}
+
+function emptyThreadPages(thread: ConversationThreadPublic): ThreadsInfiniteData {
+  return {
+    pages: [{ items: [thread], nextCursor: null, hasMore: false }],
+    pageParams: [null],
+  };
+}
+
+function upsertLoadedThread(
+  data: ThreadsInfiniteData | undefined,
+  thread: ConversationThreadPublic,
+): ThreadsInfiniteData {
+  if (!data) return emptyThreadPages(thread);
+  const [firstPage, ...restPages] = data.pages;
+  if (!firstPage) return emptyThreadPages(thread);
+  return {
+    ...data,
+    pages: [
+      {
+        ...firstPage,
+        items: [thread, ...firstPage.items.filter((item) => item.id !== thread.id)],
+      },
+      ...restPages.map((page) => ({
+        ...page,
+        items: page.items.filter((item) => item.id !== thread.id),
+      })),
+    ],
+  };
+}
+
+function updateLoadedThread(
+  data: ThreadsInfiniteData | undefined,
+  thread: ConversationThreadPublic,
+): ThreadsInfiniteData | undefined {
+  if (!data) return data;
+  return {
+    ...data,
+    pages: data.pages.map((page) => ({
+      ...page,
+      items: page.items.map((item) => (item.id === thread.id ? thread : item)),
+    })),
+  };
+}
+
+function updateLoadedThreadActivity(
+  data: ThreadsInfiniteData | undefined,
+  threadId: string,
+  at: string,
+): ThreadsInfiniteData | undefined {
+  if (!data) return data;
+  const loadedThreads = dedupeThreads(
+    data.pages.flatMap((page) =>
+      page.items.map((thread) =>
+        thread.id === threadId
+          ? { ...thread, lastActivityAt: at, updatedAt: at }
+          : thread,
+      ),
+    ),
+  ).sort((a, b) => {
+    const activity = Date.parse(b.lastActivityAt) - Date.parse(a.lastActivityAt);
+    return activity || b.id.localeCompare(a.id);
+  });
+
+  let cursor = 0;
+  return {
+    ...data,
+    pages: data.pages.map((page) => {
+      const size = page.items.length;
+      const items = loadedThreads.slice(cursor, cursor + size);
+      cursor += size;
+      return { ...page, items };
+    }),
+  };
 }

@@ -1718,6 +1718,54 @@ describe("Bots: runtime state", () => {
     expect(renamedSecondThreadRes.status).toBe(200);
     expect(renamedSecondThreadRes.body.title).toBe("Renamed second task");
 
+    const firstThreadPageRes = await req(
+      "GET",
+      `/conversations/threads/${dmRes.body.id}?limit=1&botId=${botRes.body.id}`,
+      undefined,
+      human.token,
+    );
+    expect(firstThreadPageRes.status).toBe(200);
+    expect(firstThreadPageRes.body.items).toHaveLength(1);
+    expect(firstThreadPageRes.body.hasMore).toBe(true);
+    expect(firstThreadPageRes.body.nextCursor).toEqual(expect.any(String));
+
+    const secondThreadPageRes = await req(
+      "GET",
+      `/conversations/threads/${dmRes.body.id}?limit=1&cursor=${encodeURIComponent(
+        firstThreadPageRes.body.nextCursor,
+      )}`,
+      undefined,
+      human.token,
+    );
+    expect(secondThreadPageRes.status).toBe(200);
+    expect(secondThreadPageRes.body.items).toHaveLength(1);
+    expect(secondThreadPageRes.body.hasMore).toBe(false);
+    expect(secondThreadPageRes.body.nextCursor).toBe(null);
+    expect([
+      ...firstThreadPageRes.body.items,
+      ...secondThreadPageRes.body.items,
+    ].map((thread: any) => thread.id).sort()).toEqual([
+      firstThreadRes.body.id,
+      secondThreadRes.body.id,
+    ].sort());
+
+    const botThreadPageRes = await req(
+      "GET",
+      `/conversations/threads/${dmRes.body.id}?limit=2`,
+      undefined,
+      botRes.body.apiKey,
+    );
+    expect(botThreadPageRes.status).toBe(200);
+    expect(botThreadPageRes.body.items).toHaveLength(2);
+
+    const invalidCursorRes = await req(
+      "GET",
+      `/conversations/threads/${dmRes.body.id}?cursor=not-a-cursor`,
+      undefined,
+      human.token,
+    );
+    expect(invalidCursorRes.status).toBe(400);
+
     const redisKeyPrefix = `thechat-thread-typing-test-${crypto.randomUUID()}`;
     const serviceBus = new RedisRealtimeBus({ redisKeyPrefix });
     const observerBus = new RedisRealtimeBus({ redisKeyPrefix });

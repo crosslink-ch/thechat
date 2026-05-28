@@ -32,6 +32,13 @@ const updateThreadSchema = z.object({
   title: z.string().trim().min(1).max(255),
 });
 
+const threadListQuerySchema = z.object({
+  limit: z.coerce.number().int().positive().max(100).optional(),
+  cursor: z.string().min(1).optional(),
+  botId: z.string().uuid().optional(),
+  status: z.string().trim().min(1).max(20).optional(),
+});
+
 export const conversationRoutes = new Elysia({ prefix: "/conversations" })
   .derive(async ({ headers }) => {
     const authHeader = headers.authorization;
@@ -111,9 +118,24 @@ export const conversationRoutes = new Elysia({ prefix: "/conversations" })
   })
 
   // List task threads for a conversation
-  .get("/threads/:conversationId", async ({ params, user, set }) => {
+  .get("/threads/:conversationId", async ({ params, query, user, set }) => {
+    const parsed = threadListQuerySchema.safeParse(query);
+    if (!parsed.success) {
+      set.status = 400;
+      return { error: parsed.error.issues[0]?.message ?? "Invalid query" };
+    }
+
     try {
-      return await listConversationThreads(params.conversationId, user.id);
+      return await listConversationThreads(
+        params.conversationId,
+        user.id,
+        {
+          limit: parsed.data.limit,
+          cursor: parsed.data.cursor,
+          botId: parsed.data.botId,
+          status: parsed.data.status,
+        },
+      );
     } catch (e) {
       if (e instanceof ServiceError) {
         set.status = e.status;

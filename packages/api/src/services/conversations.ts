@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, lt, or } from "drizzle-orm";
 import { db } from "../db";
 import {
   bots,
@@ -386,16 +386,61 @@ export async function getConversationDetail(conversationId: string, userId: stri
   };
 }
 
-export async function listConversationThreads(conversationId: string, userId: string) {
+const DEFAULT_THREAD_PAGE_SIZE = 50;
+const MAX_THREAD_PAGE_SIZE = 100;
+
+type ConversationThreadCursor = {
+  lastActivityAt: Date;
+  id: string;
+};
+
+export async function listConversationThreads(
+  conversationId: string,
+  userId: string,
+  options: {
+    limit?: number | null;
+    cursor?: string | null;
+    botId?: string | null;
+    status?: string | null;
+  } = {},
+) {
   await requireConversationParticipant(conversationId, userId);
+
+  const limit = normalizeThreadPageSize(options.limit);
+  const cursor = parseConversationThreadCursor(options.cursor);
+  const conditions = [eq(conversationThreads.conversationId, conversationId)];
+  if (options.botId) {
+    await requireBotParticipant(conversationId, options.botId);
+    conditions.push(eq(conversationThreads.botId, options.botId));
+  }
+  if (options.status) {
+    conditions.push(eq(conversationThreads.status, options.status));
+  }
+  if (cursor) {
+    const cursorCondition = or(
+      lt(conversationThreads.lastActivityAt, cursor.lastActivityAt),
+      and(
+        eq(conversationThreads.lastActivityAt, cursor.lastActivityAt),
+        lt(conversationThreads.id, cursor.id),
+      ),
+    );
+    if (cursorCondition) conditions.push(cursorCondition);
+  }
 
   const rows = await db
     .select()
     .from(conversationThreads)
-    .where(eq(conversationThreads.conversationId, conversationId))
-    .orderBy(desc(conversationThreads.lastActivityAt));
+    .where(and(...conditions))
+    .orderBy(desc(conversationThreads.lastActivityAt), desc(conversationThreads.id))
+    .limit(limit + 1);
 
-  return rows.map(toPublicThread);
+  const pageRows = rows.slice(0, limit);
+  const hasMore = rows.length > limit;
+  return {
+    items: pageRows.map(toPublicThread),
+    nextCursor: hasMore ? encodeConversationThreadCursor(pageRows.at(-1) ?? null) : null,
+    hasMore,
+  };
 }
 
 export async function createConversationThread(
@@ -506,10 +551,65 @@ async function requireHermesBotParticipant(conversationId: string, botId: string
   }
 }
 
+async function requireBotParticipant(conversationId: string, botId: string) {
+  const [row] = await db
+    .select({ botId: bots.id })
+    .from(bots)
+    .innerJoin(conversationParticipants, eq(conversationParticipants.userId, bots.userId))
+    .where(
+      and(
+        eq(bots.id, botId),
+        eq(conversationParticipants.conversationId, conversationId),
+      ),
+    )
+    .limit(1);
+
+  if (!row) {
+    throw new ServiceError("Bot is not a participant of this conversation", 400);
+  }
+}
+
 function normalizeThreadTitle(title: string | null | undefined) {
   const normalized = title?.trim().replace(/\s+/g, " ");
   if (!normalized) return "New task";
   return normalized.slice(0, 255);
+}
+
+function normalizeThreadPageSize(limit: number | null | undefined) {
+  if (!Number.isFinite(limit ?? NaN)) return DEFAULT_THREAD_PAGE_SIZE;
+  return Math.max(1, Math.min(Math.trunc(limit!), MAX_THREAD_PAGE_SIZE));
+}
+
+function encodeConversationThreadCursor(
+  thread: typeof conversationThreads.$inferSelect | null,
+) {
+  if (!thread) return null;
+  const payload = JSON.stringify({
+    lastActivityAt: thread.lastActivityAt.toISOString(),
+    id: thread.id,
+  });
+  return Buffer.from(payload).toString("base64url");
+}
+
+function parseConversationThreadCursor(
+  cursor: string | null | undefined,
+): ConversationThreadCursor | null {
+  if (!cursor) return null;
+
+  try {
+    const parsed = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8"));
+    const lastActivityAt = new Date(parsed.lastActivityAt);
+    if (
+      !parsed ||
+      typeof parsed.id !== "string" ||
+      Number.isNaN(lastActivityAt.getTime())
+    ) {
+      throw new Error("Invalid cursor payload");
+    }
+    return { id: parsed.id, lastActivityAt };
+  } catch {
+    throw new ServiceError("Invalid thread pagination cursor", 400);
+  }
 }
 
 function toPublicThread(thread: typeof conversationThreads.$inferSelect) {

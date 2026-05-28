@@ -51,6 +51,9 @@ export function DmRoute() {
   const {
     threads,
     loading: threadsLoading,
+    loadingMore: threadsLoadingMore,
+    hasMore: threadsHasMore,
+    loadMore: loadMoreThreads,
     createThread,
     renameThread,
     touchThread,
@@ -246,9 +249,14 @@ export function DmRoute() {
           loading={runtimeLoading}
           threads={threads}
           threadsLoading={threadsLoading}
+          threadsLoadingMore={threadsLoadingMore}
+          threadsHasMore={threadsHasMore}
           activeThreadId={activeThreadId}
           onSelectThread={setActiveThreadId}
           onCreateThread={handleCreateThread}
+          onLoadMoreThreads={() => {
+            void loadMoreThreads();
+          }}
         />
       )}
     </div>

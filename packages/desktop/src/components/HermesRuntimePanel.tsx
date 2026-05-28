@@ -12,9 +12,12 @@ export function HermesRuntimePanel({
   loading,
   threads = [],
   threadsLoading = false,
+  threadsLoadingMore = false,
+  threadsHasMore = false,
   activeThreadId = null,
   onSelectThread,
   onCreateThread,
+  onLoadMoreThreads,
 }: {
   title?: string;
   botName: string;
@@ -22,9 +25,12 @@ export function HermesRuntimePanel({
   loading: boolean;
   threads?: ConversationThreadPublic[];
   threadsLoading?: boolean;
+  threadsLoadingMore?: boolean;
+  threadsHasMore?: boolean;
   activeThreadId?: string | null;
   onSelectThread?: (threadId: string | null) => void;
   onCreateThread?: () => void;
+  onLoadMoreThreads?: () => void;
 }) {
   const invocations = useMemo(
     () => (runtime?.invocations ?? []).filter((invocation) => invocation.botKind === "hermes"),
@@ -89,6 +95,16 @@ export function HermesRuntimePanel({
                   onSelect={onSelectThread}
                 />
               ))
+            )}
+            {threadsHasMore && (
+              <button
+                type="button"
+                className="w-full cursor-pointer rounded-md border border-border bg-background px-3 py-2 text-center text-[0.786rem] font-medium text-text-muted transition-colors duration-150 hover:bg-hover hover:text-text disabled:cursor-default disabled:opacity-50"
+                onClick={onLoadMoreThreads}
+                disabled={threadsLoadingMore}
+              >
+                {threadsLoadingMore ? "Loading..." : "Load more"}
+              </button>
             )}
           </div>
         </section>
