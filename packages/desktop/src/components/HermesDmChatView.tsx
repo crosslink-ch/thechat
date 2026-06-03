@@ -3,14 +3,18 @@ import { InputBar } from "./InputBar";
 import { Markdown } from "./Markdown";
 import { useAutoScroll } from "../hooks/useAutoScroll";
 import type { ChatMessage } from "@thechat/shared";
+import type { ActiveHermesInvocationProgress } from "../lib/hermes-progress";
 import type { MentionUser } from "./MentionList";
+import { HermesProgressInline } from "./HermesProgressInline";
 
 const noop = () => {};
 
-interface ChannelChatViewProps {
+interface HermesDmChatViewProps {
   messages: ChatMessage[];
   loading: boolean;
-  typingUsers: Map<string, string>; // userId -> userName
+  typingUsers: Map<string, string>;
+  progressInvocations: ActiveHermesInvocationProgress[];
+  typingSuppressedUserIds: string[];
   onSend: (content: string) => void;
   mentions?: MentionUser[];
   scrollKey?: string | null;
@@ -21,23 +25,31 @@ function formatTime(iso: string) {
   return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
-export function ChannelChatView({
+export function HermesDmChatView({
   messages,
   loading,
   typingUsers,
+  progressInvocations,
+  typingSuppressedUserIds,
   onSend,
   mentions,
   scrollKey,
-}: ChannelChatViewProps) {
+}: HermesDmChatViewProps) {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const { isAtBottom, scrollToBottom } = useAutoScroll(scrollContainerRef);
   const forceNextContentScrollRef = useRef(false);
   const initializedScrollKeyRef = useRef<string | null>(null);
 
+  const progressBotUserIds = new Set([
+    ...progressInvocations.map(({ invocation }) => invocation.botUserId),
+    ...typingSuppressedUserIds,
+  ]);
   const visibleTypingNames = Array.from(typingUsers.entries())
+    .filter(([userId]) => !progressBotUserIds.has(userId))
     .map(([, userName]) => userName)
     .filter(Boolean);
-  const hasLiveActivity = visibleTypingNames.length > 0;
+  const hasLiveActivity =
+    progressInvocations.length > 0 || visibleTypingNames.length > 0;
 
   const messageScrollSignature = useMemo(
     () =>
@@ -46,11 +58,39 @@ export function ChannelChatView({
         .join("|"),
     [messages],
   );
+  const progressScrollSignature = useMemo(
+    () =>
+      [
+        ...progressInvocations.map((invocation) =>
+          [
+            invocation.invocation.id,
+            invocation.invocation.status,
+            invocation.invocation.updatedAt,
+            invocation.invocation.threadId ?? "",
+          ].join(":"),
+        ),
+        ...progressInvocations.flatMap(({ events }) =>
+          events.map((event) =>
+            [
+              event.id,
+              event.invocationId,
+              event.sequence,
+              event.status ?? "",
+              event.label ?? "",
+              event.preview ?? "",
+              event.occurredAt,
+            ].join(":"),
+          ),
+        ),
+        ...typingSuppressedUserIds,
+      ].join("|"),
+    [progressInvocations, typingSuppressedUserIds],
+  );
   const typingScrollSignature = useMemo(
     () => visibleTypingNames.join("|"),
     [visibleTypingNames],
   );
-  const scrollScopeKey = scrollKey ?? "__channel_chat_default__";
+  const scrollScopeKey = scrollKey ?? "__hermes_dm_chat_default__";
 
   useEffect(() => {
     if (loading || initializedScrollKeyRef.current === scrollScopeKey) return;
@@ -66,6 +106,10 @@ export function ChannelChatView({
     }
     scrollToBottom();
   }, [messageScrollSignature, scrollToBottom]);
+
+  useEffect(() => {
+    scrollToBottom();
+  }, [progressScrollSignature, scrollToBottom]);
 
   useEffect(() => {
     scrollToBottom();
@@ -85,7 +129,7 @@ export function ChannelChatView({
       <div className="relative flex min-h-0 flex-1 flex-col">
         <div
           ref={scrollContainerRef}
-          data-testid="channel-chat-scroll"
+          data-testid="hermes-dm-chat-scroll"
           className="flex flex-1 flex-col overflow-y-auto"
         >
           {loading && (
@@ -108,6 +152,9 @@ export function ChannelChatView({
               </div>
             </div>
           ))}
+          <HermesProgressInline
+            invocations={progressInvocations}
+          />
           {visibleTypingNames.length > 0 && (
             <div className="animate-pulse px-5 py-1 pb-2 text-[0.786rem] text-text-dimmed">
               {visibleTypingNames.join(", ")} {visibleTypingNames.length === 1 ? "is" : "are"} typing...

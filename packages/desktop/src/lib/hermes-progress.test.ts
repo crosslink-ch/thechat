@@ -27,11 +27,11 @@ describe("Hermes progress selectors", () => {
 
     const selected = selectHermesConversationProgress(snapshot);
 
-    expect(selected.invocations.map((invocation) => invocation.id)).toEqual([
+    expect(selected.invocations.map(({ invocation }) => invocation.id)).toEqual([
       "invocation-context-1",
       "invocation-context-2",
     ]);
-    expect(selected.events.map((event) => event.id)).toEqual([
+    expect(selected.invocations.flatMap(({ events }) => events.map((event) => event.id))).toEqual([
       "event-context-1",
       "event-context-2",
     ]);
@@ -54,7 +54,7 @@ describe("Hermes progress selectors", () => {
 
     const selected = selectHermesConversationProgress(snapshot);
 
-    expect(selected.invocations.map((invocation) => invocation.id)).toEqual([
+    expect(selected.invocations.map(({ invocation }) => invocation.id)).toEqual([
       "first-bot",
       "second-bot",
     ]);
@@ -80,10 +80,10 @@ describe("Hermes progress selectors", () => {
       unthreadedOnly: true,
     });
 
-    expect(selected.invocations.map((invocation) => invocation.id)).toEqual([
+    expect(selected.invocations.map(({ invocation }) => invocation.id)).toEqual([
       "general-invocation",
     ]);
-    expect(selected.events.map((event) => event.id)).toEqual(["general-event"]);
+    expect(selected.invocations.flatMap(({ events }) => events.map((event) => event.id))).toEqual(["general-event"]);
   });
 
   it("scopes task progress to the selected thread", () => {
@@ -100,10 +100,10 @@ describe("Hermes progress selectors", () => {
 
     const selected = selectHermesConversationProgress(snapshot, "thread-2");
 
-    expect(selected.invocations.map((invocation) => invocation.id)).toEqual([
+    expect(selected.invocations.map(({ invocation }) => invocation.id)).toEqual([
       "second-task",
     ]);
-    expect(selected.events.map((event) => event.id)).toEqual(["second-event"]);
+    expect(selected.invocations.flatMap(({ events }) => events.map((event) => event.id))).toEqual(["second-event"]);
   });
 
   it("ignores completed invocations and non-Hermes bots", () => {
@@ -122,10 +122,10 @@ describe("Hermes progress selectors", () => {
 
     const selected = selectHermesConversationProgress(snapshot);
 
-    expect(selected.invocations.map((invocation) => invocation.id)).toEqual([
+    expect(selected.invocations.map(({ invocation }) => invocation.id)).toEqual([
       "active-hermes",
     ]);
-    expect(selected.events.map((event) => event.id)).toEqual(["active-event"]);
+    expect(selected.invocations.flatMap(({ events }) => events.map((event) => event.id))).toEqual(["active-event"]);
     expect(selected.typingSuppressedUserIds).toEqual(["bot-user-1"]);
   });
 });

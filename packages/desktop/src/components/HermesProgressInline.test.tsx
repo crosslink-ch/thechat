@@ -10,76 +10,80 @@ describe("HermesProgressInline", () => {
   it("collapses tool start and completion events into one row", () => {
     render(
       <HermesProgressInline
-        invocations={[invocation()]}
-        events={[
-          progressEvent({
-            id: "patch-started",
-            sequence: 1,
-            type: "tool.started",
-            status: "running",
-            toolCallId: "call-patch",
-            toolName: "patch",
-            label: "/home/bruno/projects/python-probability-study/tests/test_expected_value.py",
-            preview: "/home/bruno/projects/python-probability-study/tests/test_expected_value.py",
-            payload: {
-              args: {
-                path: "/home/bruno/projects/python-probability-study/tests/test_expected_value.py",
-                mode: "replace",
-                new_string: "assert variance(outcomes, probabilities) == 2",
-              },
-            },
-          }),
-          progressEvent({
-            id: "patch-completed",
-            sequence: 2,
-            type: "tool.completed",
-            status: "completed",
-            toolCallId: "call-patch",
-            toolName: "patch",
-            label: null,
-            preview: null,
-            payload: {
-              args: {
-                path: "/home/bruno/projects/python-probability-study/tests/test_expected_value.py",
-                mode: "replace",
-                new_string: "assert variance(outcomes, probabilities) == 2",
-              },
-              duration: 0.2,
-            },
-          }),
-          progressEvent({
-            id: "terminal-started",
-            sequence: 3,
-            type: "tool.started",
-            status: "running",
-            toolCallId: "call-terminal",
-            toolName: "terminal",
-            label: "pwd && uv run pytest -q && uv run expected_value.py",
-            preview: "pwd && uv run pytest -q && uv run expected_value.py",
-            payload: {
-              args: {
-                command: "pwd && uv run pytest -q && uv run expected_value.py",
-                timeout: 300,
-              },
-            },
-          }),
-          progressEvent({
-            id: "terminal-completed",
-            sequence: 4,
-            type: "tool.completed",
-            status: "completed",
-            toolCallId: "call-terminal",
-            toolName: "terminal",
-            label: null,
-            preview: null,
-            payload: {
-              args: {
-                command: "pwd && uv run pytest -q && uv run expected_value.py",
-                timeout: 300,
-              },
-              duration: 4.5,
-            },
-          }),
+        invocations={[
+          {
+            invocation: invocation(),
+            events: [
+              progressEvent({
+                id: "patch-started",
+                sequence: 1,
+                type: "tool.started",
+                status: "running",
+                toolCallId: "call-patch",
+                toolName: "patch",
+                label: "/home/bruno/projects/python-probability-study/tests/test_expected_value.py",
+                preview: "/home/bruno/projects/python-probability-study/tests/test_expected_value.py",
+                payload: {
+                  args: {
+                    path: "/home/bruno/projects/python-probability-study/tests/test_expected_value.py",
+                    mode: "replace",
+                    new_string: "assert variance(outcomes, probabilities) == 2",
+                  },
+                },
+              }),
+              progressEvent({
+                id: "patch-completed",
+                sequence: 2,
+                type: "tool.completed",
+                status: "completed",
+                toolCallId: "call-patch",
+                toolName: "patch",
+                label: null,
+                preview: null,
+                payload: {
+                  args: {
+                    path: "/home/bruno/projects/python-probability-study/tests/test_expected_value.py",
+                    mode: "replace",
+                    new_string: "assert variance(outcomes, probabilities) == 2",
+                  },
+                  duration: 0.2,
+                },
+              }),
+              progressEvent({
+                id: "terminal-started",
+                sequence: 3,
+                type: "tool.started",
+                status: "running",
+                toolCallId: "call-terminal",
+                toolName: "terminal",
+                label: "pwd && uv run pytest -q && uv run expected_value.py",
+                preview: "pwd && uv run pytest -q && uv run expected_value.py",
+                payload: {
+                  args: {
+                    command: "pwd && uv run pytest -q && uv run expected_value.py",
+                    timeout: 300,
+                  },
+                },
+              }),
+              progressEvent({
+                id: "terminal-completed",
+                sequence: 4,
+                type: "tool.completed",
+                status: "completed",
+                toolCallId: "call-terminal",
+                toolName: "terminal",
+                label: null,
+                preview: null,
+                payload: {
+                  args: {
+                    command: "pwd && uv run pytest -q && uv run expected_value.py",
+                    timeout: 300,
+                  },
+                  duration: 4.5,
+                },
+              }),
+            ],
+          },
         ]}
       />,
     );

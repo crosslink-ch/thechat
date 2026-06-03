@@ -11,6 +11,7 @@ import { useWebSocketStore } from "../stores/websocket";
 import { useWorkspacesStore } from "../stores/workspaces";
 import { useChannelChat } from "../hooks/useChannelChat";
 import { ChannelChatView } from "../components/ChannelChatView";
+import { HermesDmChatView } from "../components/HermesDmChatView";
 import { HermesRuntimePanel } from "../components/HermesRuntimePanel";
 import { fireNotification } from "../lib/notifications";
 import { wsEvents, type WsEvents } from "../lib/ws-events";
@@ -227,25 +228,35 @@ export function DmRoute() {
   return (
     <div className="flex min-h-0 flex-1">
       <div className="flex min-w-0 flex-1 flex-col">
-        <ChannelChatView
-          messages={channelChat.messages}
-          loading={
-            channelChat.loading ||
-            conversationLoading ||
-            conversationPending
-          }
-          typingUsers={typingUsers}
-          progressInvocations={activeHermesProgress.invocations}
-          progressEvents={activeHermesProgress.events}
-          typingSuppressedUserIds={activeHermesProgress.typingSuppressedUserIds}
-          onSend={handleSend}
-          mentions={mentions}
-          scrollKey={
-            isHermesDm
-              ? `${conversationId}:${activeThreadId ?? "general"}`
-              : conversationId
-          }
-        />
+        {isHermesDm ? (
+          <HermesDmChatView
+            messages={channelChat.messages}
+            loading={
+              channelChat.loading ||
+              conversationLoading ||
+              conversationPending
+            }
+            typingUsers={typingUsers}
+            progressInvocations={activeHermesProgress.invocations}
+            typingSuppressedUserIds={activeHermesProgress.typingSuppressedUserIds}
+            onSend={handleSend}
+            mentions={mentions}
+            scrollKey={`${conversationId}:${activeThreadId ?? "general"}`}
+          />
+        ) : (
+          <ChannelChatView
+            messages={channelChat.messages}
+            loading={
+              channelChat.loading ||
+              conversationLoading ||
+              conversationPending
+            }
+            typingUsers={typingUsers}
+            onSend={handleSend}
+            mentions={mentions}
+            scrollKey={conversationId}
+          />
+        )}
       </div>
       {isHermesDm && (
         <HermesRuntimePanel

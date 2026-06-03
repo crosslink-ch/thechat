@@ -3,6 +3,7 @@ import type {
   BotInvocationPublic,
   MessagePart,
 } from "@thechat/shared";
+import type { ActiveHermesInvocationProgress } from "../lib/hermes-progress";
 import { formatToolSummary } from "../lib/tool-summary";
 
 type ToolCallPart = Extract<MessagePart, { type: "tool-call" }>;
@@ -12,18 +13,15 @@ type ProgressDisplayEvent = BotInvocationProgressEventPublic & {
 
 export function HermesProgressInline({
   invocations,
-  events,
 }: {
-  invocations: BotInvocationPublic[];
-  events: BotInvocationProgressEventPublic[];
+  invocations: ActiveHermesInvocationProgress[];
 }) {
   if (invocations.length === 0) return null;
 
   return (
     <div className="space-y-2 px-5 py-2">
-      {invocations.map((invocation) => {
-        const invocationEvents = events
-          .filter((event) => event.invocationId === invocation.id)
+      {invocations.map(({ invocation, events }) => {
+        const invocationEvents = [...events]
           .sort(compareEvents);
         const displayEvents = collapseToolLifecycleEvents(invocationEvents);
         const visibleEvents = displayEvents.slice(-6);

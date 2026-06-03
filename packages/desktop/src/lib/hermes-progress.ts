@@ -5,9 +5,13 @@ import type {
 } from "@thechat/shared";
 
 export interface ActiveHermesProgress {
-  invocations: BotInvocationPublic[];
-  events: BotInvocationProgressEventPublic[];
+  invocations: ActiveHermesInvocationProgress[];
   typingSuppressedUserIds: string[];
+}
+
+export interface ActiveHermesInvocationProgress {
+  invocation: BotInvocationPublic;
+  events: BotInvocationProgressEventPublic[];
 }
 
 export function selectHermesConversationProgress(
@@ -32,12 +36,19 @@ function selectActiveHermesProgress(
   const visibleInvocationIds = new Set(
     activeInvocations.map((invocation) => invocation.id),
   );
+  const eventsByInvocationId = new Map<string, BotInvocationProgressEventPublic[]>();
+  for (const event of runtime?.events ?? []) {
+    if (!visibleInvocationIds.has(event.invocationId)) continue;
+    const invocationEvents = eventsByInvocationId.get(event.invocationId) ?? [];
+    invocationEvents.push(event);
+    eventsByInvocationId.set(event.invocationId, invocationEvents);
+  }
 
   return {
-    invocations: activeInvocations,
-    events: (runtime?.events ?? []).filter((event) =>
-      visibleInvocationIds.has(event.invocationId),
-    ),
+    invocations: activeInvocations.map((invocation) => ({
+      invocation,
+      events: eventsByInvocationId.get(invocation.id) ?? [],
+    })),
     typingSuppressedUserIds: Array.from(
       new Set(activeInvocations.map((invocation) => invocation.botUserId)),
     ),
