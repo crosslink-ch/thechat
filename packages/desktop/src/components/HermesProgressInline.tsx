@@ -6,6 +6,9 @@ import type {
 import { formatToolSummary } from "../lib/tool-summary";
 
 type ToolCallPart = Extract<MessagePart, { type: "tool-call" }>;
+type ProgressDisplayEvent = BotInvocationProgressEventPublic & {
+  displayKey: string;
+};
 
 export function HermesProgressInline({
   invocations,
@@ -22,8 +25,9 @@ export function HermesProgressInline({
         const invocationEvents = events
           .filter((event) => event.invocationId === invocation.id)
           .sort(compareEvents);
-        const visibleEvents = invocationEvents.slice(-6);
-        const hiddenCount = Math.max(0, invocationEvents.length - visibleEvents.length);
+        const displayEvents = collapseToolLifecycleEvents(invocationEvents);
+        const visibleEvents = displayEvents.slice(-6);
+        const hiddenCount = Math.max(0, displayEvents.length - visibleEvents.length);
 
         return (
           <div key={invocation.id} className="flex gap-2.5">
@@ -50,7 +54,7 @@ export function HermesProgressInline({
               {visibleEvents.length > 0 ? (
                 <div className="space-y-1">
                   {visibleEvents.map((event) => (
-                    <ProgressEventRow key={event.id} event={event} />
+                    <ProgressEventRow key={event.displayKey} event={event} />
                   ))}
                 </div>
               ) : (
@@ -64,6 +68,37 @@ export function HermesProgressInline({
       })}
     </div>
   );
+}
+
+function collapseToolLifecycleEvents(
+  events: BotInvocationProgressEventPublic[],
+): ProgressDisplayEvent[] {
+  const rows: ProgressDisplayEvent[] = [];
+  const toolRowsByCallId = new Map<string, ProgressDisplayEvent>();
+
+  for (const event of events) {
+    if (!event.toolCallId) {
+      rows.push({ ...event, displayKey: event.id });
+      continue;
+    }
+
+    const existing = toolRowsByCallId.get(event.toolCallId);
+    if (!existing) {
+      const row = { ...event, displayKey: `tool:${event.toolCallId}` };
+      rows.push(row);
+      toolRowsByCallId.set(event.toolCallId, row);
+      continue;
+    }
+
+    Object.assign(existing, {
+      ...event,
+      displayKey: existing.displayKey,
+      label: existing.label?.trim() ? existing.label : event.label,
+      preview: existing.preview?.trim() ? existing.preview : event.preview,
+    });
+  }
+
+  return rows.sort(compareEvents);
 }
 
 function emptyStateLabel(invocation: BotInvocationPublic) {
