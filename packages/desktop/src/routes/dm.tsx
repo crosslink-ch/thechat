@@ -240,6 +240,11 @@ export function DmRoute() {
           typingSuppressedUserIds={activeHermesProgress.typingSuppressedUserIds}
           onSend={handleSend}
           mentions={mentions}
+          scrollKey={
+            isHermesDm
+              ? `${conversationId}:${activeThreadId ?? "general"}`
+              : conversationId
+          }
         />
       </div>
       {isHermesDm && (

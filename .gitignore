@@ -39,5 +39,6 @@ dev.db-wal
 .test-credentials.json
 
 .claude
+.firecrawl/
 __pycache__
 .tmp/

@@ -135,6 +135,7 @@ export function ChannelRoute() {
           typingSuppressedUserIds={activeHermesProgress.typingSuppressedUserIds}
           onSend={channelChat.sendMessage}
           mentions={mentions}
+          scrollKey={channelId}
         />
       </div>
     </div>
