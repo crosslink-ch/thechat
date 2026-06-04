@@ -12,7 +12,7 @@ import {
   uniqueIndex,
 } from "drizzle-orm/pg-core";
 import { relations } from "drizzle-orm";
-import type { MessagePart } from "@thechat/shared";
+import type { HermesSessionReference, MessagePart } from "@thechat/shared";
 
 // -- Enums --
 
@@ -280,6 +280,7 @@ export const botInvocations = pgTable(
     adapterKind: varchar("adapter_kind", { length: 20 }).notNull(),
     status: varchar("status", { length: 20 }).notNull().default("queued"),
     externalRunId: text("external_run_id"),
+    hermesSessionJson: jsonb("hermes_session_json").$type<HermesSessionReference>(),
     requestJson: jsonb("request_json").$type<Record<string, unknown>>(),
     responseJson: jsonb("response_json").$type<Record<string, unknown>>(),
     error: text("error"),
@@ -318,6 +319,7 @@ export const conversationThreads = pgTable(
       .references(() => bots.id, { onDelete: "cascade" }),
     title: varchar("title", { length: 255 }).notNull(),
     status: varchar("status", { length: 20 }).notNull().default("active"),
+    hermesSessionJson: jsonb("hermes_session_json").$type<HermesSessionReference>(),
     createdById: uuid("created_by_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),

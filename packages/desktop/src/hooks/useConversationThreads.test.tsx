@@ -171,6 +171,7 @@ function thread(
     botId: "bot-1",
     title: "New task",
     status: "active",
+    hermesSession: null,
     createdById: "user-1",
     lastActivityAt: now,
     createdAt: now,

@@ -6,8 +6,7 @@ import type { ChatMessage } from "@thechat/shared";
 import type { ActiveHermesInvocationProgress } from "../lib/hermes-progress";
 import type { MentionUser } from "./MentionList";
 import { HermesProgressInline } from "./HermesProgressInline";
-
-const noop = () => {};
+import type { HermesSlashCommand } from "../lib/hermes-slash-commands";
 
 interface HermesDmChatViewProps {
   messages: ChatMessage[];
@@ -16,8 +15,12 @@ interface HermesDmChatViewProps {
   progressInvocations: ActiveHermesInvocationProgress[];
   typingSuppressedUserIds: string[];
   onSend: (content: string) => void;
+  onStop?: () => void;
   mentions?: MentionUser[];
   scrollKey?: string | null;
+  taskActive?: boolean;
+  queuedCount?: number;
+  slashCommands?: HermesSlashCommand[];
 }
 
 function formatTime(iso: string) {
@@ -32,8 +35,12 @@ export function HermesDmChatView({
   progressInvocations,
   typingSuppressedUserIds,
   onSend,
+  onStop,
   mentions,
   scrollKey,
+  taskActive = false,
+  queuedCount = 0,
+  slashCommands,
 }: HermesDmChatViewProps) {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const { isAtBottom, scrollToBottom } = useAutoScroll(scrollContainerRef);
@@ -171,7 +178,15 @@ export function HermesDmChatView({
           </button>
         )}
       </div>
-      <InputBar convId={undefined} onSend={handleSend} onStop={noop} mentions={mentions} />
+      <InputBar
+        convId={undefined}
+        onSend={handleSend}
+        onStop={onStop ?? (() => {})}
+        mentions={mentions}
+        isStreamingOverride={taskActive}
+        queuedCount={queuedCount}
+        slashCommands={slashCommands}
+      />
     </>
   );
 }

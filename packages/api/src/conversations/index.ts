@@ -25,6 +25,7 @@ const channelSchema = z.object({
 const threadSchema = z.object({
   botId: z.string().uuid().optional(),
   title: z.string().trim().min(1).max(255).optional(),
+  hermesSession: z.record(z.string(), z.unknown()).optional(),
 });
 
 const updateThreadSchema = z.object({

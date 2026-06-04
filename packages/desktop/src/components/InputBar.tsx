@@ -4,6 +4,10 @@ import { useInputFocusStore } from "../stores/input-focus";
 import { RichInput, type RichInputHandle } from "./RichInput";
 import type { MentionUser } from "./MentionList";
 import type { ImageAttachment } from "../lib/images";
+import {
+  filterHermesSlashCommands,
+  type HermesSlashCommand,
+} from "../lib/hermes-slash-commands";
 
 const ACCEPTED_MIME = new Set(["image/png", "image/jpeg", "image/gif", "image/webp", "image/svg+xml", "image/bmp"]);
 
@@ -26,17 +30,36 @@ interface InputBarProps {
   onStop: () => void;
   mentions?: MentionUser[];
   autoFocusKey?: string;
+  isStreamingOverride?: boolean;
+  queuedCount?: number;
+  slashCommands?: HermesSlashCommand[];
 }
 
-export const InputBar = memo(function InputBar({ convId, onSend, onStop, mentions, autoFocusKey }: InputBarProps) {
-  const isStreaming = useIsStreaming(convId);
+export const InputBar = memo(function InputBar({
+  convId,
+  onSend,
+  onStop,
+  mentions,
+  autoFocusKey,
+  isStreamingOverride,
+  queuedCount = 0,
+  slashCommands,
+}: InputBarProps) {
+  const storeStreaming = useIsStreaming(convId);
+  const isStreaming = isStreamingOverride ?? storeStreaming;
   const inputRef = useRef<RichInputHandle>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [canSubmit, setCanSubmit] = useState(false);
   const [images, setImages] = useState<ImageAttachment[]>([]);
   const [dragOver, setDragOver] = useState(false);
+  const [inputText, setInputText] = useState("");
 
   const hasContent = canSubmit || images.length > 0;
+  const slashSuggestions = slashCommands
+    ? filterHermesSlashCommands(inputText).filter((suggestion) =>
+        slashCommands.some((command) => command.command === suggestion.command),
+      )
+    : [];
 
   useEffect(() => {
     if (!autoFocusKey) return;
@@ -71,6 +94,7 @@ export const InputBar = memo(function InputBar({ convId, onSend, onStop, mention
       const imgs = images.length > 0 ? images : undefined;
       onSend(text, imgs);
       setImages([]);
+      setInputText("");
     },
     [images, onSend],
   );
@@ -180,6 +204,22 @@ export const InputBar = memo(function InputBar({ convId, onSend, onStop, mention
             ))}
           </div>
         )}
+        {slashSuggestions.length > 0 && (
+          <div className="flex flex-wrap gap-1.5 border-b border-border px-3 py-2">
+            {slashSuggestions.map((command) => (
+              <button
+                key={command.command}
+                type="button"
+                className="flex max-w-full cursor-pointer items-center gap-1.5 rounded-md border border-border bg-background px-2 py-1 text-left text-[0.786rem] text-text-muted transition-colors duration-150 hover:bg-hover hover:text-text"
+                title={command.description}
+                onClick={() => inputRef.current?.setText(`${command.command} `)}
+              >
+                <span className="font-medium text-text">{command.label}</span>
+                <span className="truncate">{command.description}</span>
+              </button>
+            ))}
+          </div>
+        )}
         <RichInput
           ref={inputRef}
           onSubmit={handleRichInputSubmit}
@@ -187,6 +227,7 @@ export const InputBar = memo(function InputBar({ convId, onSend, onStop, mention
           placeholder={isStreaming ? "Queue a message..." : "Send a message..."}
           mentions={mentions}
           onCanSubmitChange={setCanSubmit}
+          onTextChange={setInputText}
         />
         <input
           ref={fileInputRef}
@@ -200,6 +241,11 @@ export const InputBar = memo(function InputBar({ convId, onSend, onStop, mention
           }}
         />
         <div className="absolute right-2 bottom-2 flex items-center gap-1.5">
+          {queuedCount > 0 && (
+            <span className="mr-1 rounded border border-border bg-background px-1.5 py-0.5 text-[0.643rem] font-medium uppercase text-text-dimmed">
+              {queuedCount} queued
+            </span>
+          )}
           <button
             type="button"
             className="flex size-8 cursor-pointer items-center justify-center rounded-lg border-none bg-transparent text-text-dimmed shadow-none transition-colors duration-150 hover:bg-hover hover:text-text-muted"

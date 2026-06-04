@@ -10,6 +10,7 @@ import {
   workspaceMembers,
 } from "../db/schema";
 import { ServiceError } from "./errors";
+import { hermesSessionReferenceFromJson, normalizeHermesSessionReference } from "./hermes-session-reference";
 
 export async function createOrGetDm(
   workspaceId: string,
@@ -438,7 +439,9 @@ export async function listConversationThreads(
   const hasMore = rows.length > limit;
   return {
     items: pageRows.map(toPublicThread),
-    nextCursor: hasMore ? encodeConversationThreadCursor(pageRows.at(-1) ?? null) : null,
+    nextCursor: hasMore
+      ? encodeConversationThreadCursor(pageRows.at(-1) ?? null)
+      : null,
     hasMore,
   };
 }
@@ -446,19 +449,24 @@ export async function listConversationThreads(
 export async function createConversationThread(
   conversationId: string,
   userId: string,
-  input: { botId?: string | null; title?: string | null },
+  input: { botId?: string | null; title?: string | null; hermesSession?: Record<string, unknown> | null },
 ) {
   await requireConversationParticipant(conversationId, userId);
   const botId = input.botId ?? (await inferHermesBotId(conversationId));
   await requireHermesBotParticipant(conversationId, botId);
 
   const title = normalizeThreadTitle(input.title);
+  const hermesSession = normalizeHermesSessionReference(input.hermesSession, {
+    reason: "task.created",
+    source: "thechat",
+  });
   const [thread] = await db
     .insert(conversationThreads)
     .values({
       conversationId,
       botId,
       title,
+      hermesSessionJson: hermesSession,
       createdById: userId,
     })
     .returning();
@@ -619,6 +627,7 @@ function toPublicThread(thread: typeof conversationThreads.$inferSelect) {
     botId: thread.botId,
     title: thread.title,
     status: thread.status,
+    hermesSession: hermesSessionReferenceFromJson(thread.hermesSessionJson),
     createdById: thread.createdById,
     lastActivityAt: thread.lastActivityAt.toISOString(),
     createdAt: thread.createdAt.toISOString(),

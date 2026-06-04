@@ -15,6 +15,8 @@ export function HermesRuntimePanel({
   threadsLoadingMore = false,
   threadsHasMore = false,
   activeThreadId = null,
+  queuedCountsByThread,
+  generalQueuedCount = 0,
   onSelectThread,
   onCreateThread,
   onLoadMoreThreads,
@@ -28,6 +30,8 @@ export function HermesRuntimePanel({
   threadsLoadingMore?: boolean;
   threadsHasMore?: boolean;
   activeThreadId?: string | null;
+  queuedCountsByThread?: Map<string, number>;
+  generalQueuedCount?: number;
   onSelectThread?: (threadId: string | null) => void;
   onCreateThread?: () => void;
   onLoadMoreThreads?: () => void;
@@ -80,7 +84,7 @@ export function HermesRuntimePanel({
           <div className="flex flex-col gap-1.5">
             <GeneralThreadRow
               active={activeThreadId === null}
-              activeCount={generalActiveCount}
+              activeCount={generalActiveCount + generalQueuedCount}
               onSelect={onSelectThread}
             />
             {threadsLoading && threads.length === 0 ? (
@@ -91,7 +95,10 @@ export function HermesRuntimePanel({
                   key={thread.id}
                   thread={thread}
                   active={thread.id === activeThreadId}
-                  activeCount={activeCountsByThread.get(thread.id) ?? 0}
+                  activeCount={
+                    (activeCountsByThread.get(thread.id) ?? 0) +
+                    (queuedCountsByThread?.get(thread.id) ?? 0)
+                  }
                   onSelect={onSelectThread}
                 />
               ))

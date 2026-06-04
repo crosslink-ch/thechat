@@ -6,6 +6,7 @@ import type {
   BotInvocationProgressEventPublic,
   BotRuntimeSnapshot,
   ChatMessage,
+  HermesSessionReference,
   WebhookPayload,
   WsServerEvent,
 } from "@thechat/shared";
@@ -29,6 +30,11 @@ import { stripBotMention } from "./hermes";
 import { ServiceError } from "./errors";
 import { withSpan } from "../observability";
 import { getBotProgressStore } from "./bot-progress-store";
+import {
+  hermesSessionReferenceFromJson,
+  mergeHermesSessionIntoJson,
+  normalizeHermesSessionReference,
+} from "./hermes-session-reference";
 
 export const BOT_QUEUE_NAME = "thechat:bots";
 export const BOT_INVOKE_JOB_NAME = "bot.invoke";
@@ -77,6 +83,7 @@ interface HermesPlatformProgressInput {
   invocationId: string;
   botId?: string;
   conversationId?: string;
+  session?: Record<string, unknown> | null;
   type: string;
   status?: string | null;
   toolCallId?: string | null;
@@ -105,6 +112,10 @@ function recordFromJson(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
     ? { ...(value as Record<string, unknown>) }
     : {};
+}
+
+function conversationThreadScopeId(chatId: string, threadId: string | null) {
+  return threadId ? `thread:${threadId}` : `chat:${chatId}`;
 }
 
 export function signWebhookPayload(body: string, secret: string, timestamp: number): string {
@@ -198,6 +209,7 @@ export async function listConversationBotRuntime(conversationId: string, userId:
           adapterKind: botInvocations.adapterKind,
           status: botInvocations.status,
           externalRunId: botInvocations.externalRunId,
+          hermesSessionJson: botInvocations.hermesSessionJson,
           requestJson: botInvocations.requestJson,
           responseJson: botInvocations.responseJson,
           error: botInvocations.error,
@@ -495,6 +507,7 @@ export interface HermesPlatformEvent {
   chatId: string;
   chatType: "dm" | "group";
   threadId: string | null;
+  continuity: Record<string, unknown>;
   text: string;
   messageId: string;
   instructions: string | null;
@@ -603,11 +616,21 @@ async function prepareHermesPlatformEvent(
   const text = stripBotMention(loaded.triggerMessage.content, loaded.botName) || loaded.triggerMessage.content;
   const chatId = conversationChatId(loaded.conversation);
   const threadId = loaded.invocation.threadId ?? loaded.triggerMessage.threadId ?? null;
+  const continuity = {
+    id: conversationThreadScopeId(chatId, threadId),
+    scope: threadId ? "thread" : "chat",
+    conversationId: loaded.conversation.id,
+    botId: loaded.bot.id,
+    chatId,
+    threadId,
+    ...(loaded.thread?.hermesSessionJson ?? {}),
+  };
   const requestJson = {
     platform: "thechat",
     deliveryMode,
     chatId,
     threadId,
+    continuity,
     messageId: loaded.triggerMessage.id,
     messageContent: loaded.triggerMessage.content,
     text,
@@ -622,6 +645,7 @@ async function prepareHermesPlatformEvent(
       chatId,
       chatType: loaded.conversation.type === "direct" ? "dm" : "group",
       threadId,
+      continuity,
       text,
       messageId: loaded.triggerMessage.id,
       instructions: config?.defaultInstructions ?? null,
@@ -829,6 +853,51 @@ async function resolveHermesPlatformMessageTarget(input: {
   };
 }
 
+async function persistHermesSessionReference(input: {
+  invocation?: typeof botInvocations.$inferSelect | null;
+  threadId?: string | null;
+  session?: unknown;
+  reason: string;
+  publishInvocation?: boolean;
+}): Promise<HermesSessionReference | null> {
+  const hermesSession = normalizeHermesSessionReference(input.session, {
+    reason: input.reason,
+    source: "hermes",
+  });
+  if (!hermesSession) return null;
+
+  const now = new Date();
+  if (input.invocation) {
+    const responseJson = mergeHermesSessionIntoJson(
+      input.invocation.responseJson,
+      hermesSession,
+    );
+    await db
+      .update(botInvocations)
+      .set({
+        hermesSessionJson: hermesSession,
+        responseJson,
+        updatedAt: now,
+      })
+      .where(eq(botInvocations.id, input.invocation.id));
+    if (input.publishInvocation) {
+      await publishInvocationUpdate(input.invocation.id);
+    }
+  }
+
+  if (input.threadId) {
+    await db
+      .update(conversationThreads)
+      .set({
+        hermesSessionJson: hermesSession,
+        updatedAt: now,
+      })
+      .where(eq(conversationThreads.id, input.threadId));
+  }
+
+  return hermesSession;
+}
+
 export async function publishHermesPlatformMessage(input: {
   authenticatedBotId: string;
   invocationId?: string | null;
@@ -839,6 +908,7 @@ export async function publishHermesPlatformMessage(input: {
   chatId?: string | null;
   threadId?: string | null;
   complete?: boolean;
+  session?: Record<string, unknown> | null;
 }) {
   return withSpan(
     "hermes_platform.message.record",
@@ -859,6 +929,10 @@ export async function publishHermesPlatformMessage(input: {
       const shouldComplete = Boolean(target.invocation && input.complete === true);
       const previousResponseJson = recordFromJson(target.invocation?.responseJson);
       const previousPlatformMessageId = previousResponseJson.platformMessageId;
+      const hermesSession = normalizeHermesSessionReference(input.session, {
+        reason: shouldComplete ? "message.completed" : "message.delivered",
+        source: "hermes",
+      });
       if (target.invocation) {
         span.setAttribute("thechat.bot_invocation.status.previous", target.invocation.status);
       }
@@ -909,7 +983,9 @@ export async function publishHermesPlatformMessage(input: {
               platform: "thechat",
               platformMessageId: input.platformMessageId ?? null,
               output: content,
+              ...(hermesSession ? { hermesSession } : {}),
             },
+            ...(hermesSession ? { hermesSessionJson: hermesSession } : {}),
             updatedAt: now,
           })
           .where(eq(botInvocations.id, target.invocation.id));
@@ -917,7 +993,11 @@ export async function publishHermesPlatformMessage(input: {
       if (target.threadId) {
         await db
           .update(conversationThreads)
-          .set({ lastActivityAt: responseMessage.createdAt, updatedAt: responseMessage.createdAt })
+          .set({
+            lastActivityAt: responseMessage.createdAt,
+            updatedAt: responseMessage.createdAt,
+            ...(hermesSession ? { hermesSessionJson: hermesSession } : {}),
+          })
           .where(eq(conversationThreads.id, target.threadId));
       }
 
@@ -948,6 +1028,7 @@ export async function completeHermesPlatformInvocationSilently(input: {
   authenticatedBotId: string;
   invocationId: string;
   reason?: string | null;
+  session?: Record<string, unknown> | null;
 }) {
   return withSpan(
     "hermes_platform.invocation.complete",
@@ -970,6 +1051,10 @@ export async function completeHermesPlatformInvocationSilently(input: {
 
       const previousResponseJson = recordFromJson(loaded.invocation.responseJson);
       const hasPriorResponse = Object.keys(previousResponseJson).length > 0;
+      const hermesSession = normalizeHermesSessionReference(input.session, {
+        reason: "invocation.completed",
+        source: "hermes",
+      });
       const completedAt = new Date();
       await db
         .update(botInvocations)
@@ -982,18 +1067,30 @@ export async function completeHermesPlatformInvocationSilently(input: {
                   type: "silent",
                   reason: input.reason ?? null,
                 },
+                ...(hermesSession ? { hermesSession } : {}),
               }
             : {
                 platform: "thechat",
                 output: null,
                 silent: true,
                 reason: input.reason ?? null,
+                ...(hermesSession ? { hermesSession } : {}),
               },
+          ...(hermesSession ? { hermesSessionJson: hermesSession } : {}),
           error: null,
           completedAt,
           updatedAt: completedAt,
         })
         .where(eq(botInvocations.id, input.invocationId));
+      if (hermesSession && loaded.invocation.threadId) {
+        await db
+          .update(conversationThreads)
+          .set({
+            hermesSessionJson: hermesSession,
+            updatedAt: completedAt,
+          })
+          .where(eq(conversationThreads.id, loaded.invocation.threadId));
+      }
 
       await publishInvocationUpdate(input.invocationId);
       return { ok: true, duplicate: false };
@@ -1005,11 +1102,18 @@ export async function failHermesPlatformInvocation(input: {
   authenticatedBotId: string;
   invocationId: string;
   error: string;
+  session?: Record<string, unknown> | null;
 }) {
   const loaded = await loadInvocationContext(input.invocationId);
   if (!loaded) throw new ServiceError("Invocation not found", 404);
   if (loaded.bot.kind !== "hermes") throw new ServiceError("Invocation is not for a Hermes bot", 400);
   if (loaded.bot.id !== input.authenticatedBotId) throw new ServiceError("Bot token does not match invocation", 403);
+  await persistHermesSessionReference({
+    invocation: loaded.invocation,
+    threadId: loaded.invocation.threadId ?? null,
+    session: input.session,
+    reason: "invocation.failed",
+  });
   await failInvocation(input.invocationId, new Error(input.error));
   return { ok: true };
 }
@@ -1018,6 +1122,7 @@ export async function cancelHermesPlatformInvocation(input: {
   authenticatedBotId: string;
   invocationId: string;
   reason?: string | null;
+  session?: Record<string, unknown> | null;
 }) {
   const loaded = await loadInvocationContext(input.invocationId);
   if (!loaded) throw new ServiceError("Invocation not found", 404);
@@ -1029,6 +1134,10 @@ export async function cancelHermesPlatformInvocation(input: {
   }
 
   const reason = input.reason?.trim() || "Hermes gateway cancelled the message";
+  const hermesSession = normalizeHermesSessionReference(input.session, {
+    reason: "invocation.cancelled",
+    source: "hermes",
+  });
   const cancelledAt = new Date();
   await db
     .update(botInvocations)
@@ -1038,12 +1147,23 @@ export async function cancelHermesPlatformInvocation(input: {
         platform: "thechat",
         cancelled: true,
         reason,
+        ...(hermesSession ? { hermesSession } : {}),
       },
+      ...(hermesSession ? { hermesSessionJson: hermesSession } : {}),
       error: reason,
       completedAt: cancelledAt,
       updatedAt: cancelledAt,
     })
     .where(eq(botInvocations.id, input.invocationId));
+  if (hermesSession && loaded.invocation.threadId) {
+    await db
+      .update(conversationThreads)
+      .set({
+        hermesSessionJson: hermesSession,
+        updatedAt: cancelledAt,
+      })
+      .where(eq(conversationThreads.id, loaded.invocation.threadId));
+  }
 
   await publishInvocationUpdate(input.invocationId);
   return { ok: true, duplicate: false };
@@ -1104,6 +1224,13 @@ export async function publishHermesPlatformProgress(
       if (input.conversationId && input.conversationId !== loaded.conversation.id) {
         throw new ServiceError("Conversation does not match invocation", 400);
       }
+      await persistHermesSessionReference({
+        invocation: loaded.invocation,
+        threadId: loaded.invocation.threadId ?? null,
+        session: input.session,
+        reason: "progress",
+        publishInvocation: true,
+      });
 
       const participantRows = await db
         .select({ userId: conversationParticipants.userId })
@@ -1197,6 +1324,13 @@ async function loadInvocationContext(invocationId: string) {
     .from(users)
     .where(eq(users.id, row.triggerMessage.senderId))
     .limit(1);
+  const [thread] = row.invocation.threadId
+    ? await db
+        .select()
+        .from(conversationThreads)
+        .where(eq(conversationThreads.id, row.invocation.threadId))
+        .limit(1)
+    : [null];
 
   return {
     invocation: row.invocation,
@@ -1205,6 +1339,7 @@ async function loadInvocationContext(invocationId: string) {
     triggerMessage: row.triggerMessage,
     triggerSender: { name: triggerSender?.name ?? "Unknown" },
     conversation: row.conversation,
+    thread,
   };
 }
 
@@ -1234,6 +1369,7 @@ async function publishInvocationUpdate(invocationId: string) {
       adapterKind: botInvocations.adapterKind,
       status: botInvocations.status,
       externalRunId: botInvocations.externalRunId,
+      hermesSessionJson: botInvocations.hermesSessionJson,
       requestJson: botInvocations.requestJson,
       responseJson: botInvocations.responseJson,
       error: botInvocations.error,
@@ -1330,6 +1466,7 @@ function toPublicInvocation(row: {
   adapterKind: string;
   status: string;
   externalRunId: string | null;
+  hermesSessionJson: HermesSessionReference | null;
   requestJson: Record<string, unknown> | null;
   responseJson: Record<string, unknown> | null;
   error: string | null;
@@ -1351,6 +1488,7 @@ function toPublicInvocation(row: {
     adapterKind: row.adapterKind,
     status: row.status,
     externalRunId: row.externalRunId,
+    hermesSession: hermesSessionReferenceFromJson(row.hermesSessionJson),
     requestJson: row.requestJson,
     responseJson: row.responseJson,
     error: row.error,

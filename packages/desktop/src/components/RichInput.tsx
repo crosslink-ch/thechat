@@ -15,11 +15,13 @@ interface RichInputProps {
   disabled?: boolean;
   mentions?: MentionUser[];
   onCanSubmitChange?: (canSubmit: boolean) => void;
+  onTextChange?: (text: string) => void;
 }
 
 export interface RichInputHandle {
   submit: () => void;
   focus: () => void;
+  setText: (text: string) => void;
 }
 
 export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function RichInput(
@@ -30,6 +32,7 @@ export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function Ri
     disabled = false,
     mentions,
     onCanSubmitChange,
+    onTextChange,
   }: RichInputProps,
   ref,
 ) {
@@ -41,6 +44,9 @@ export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function Ri
 
   const onCanSubmitChangeRef = useRef(onCanSubmitChange);
   onCanSubmitChangeRef.current = onCanSubmitChange;
+
+  const onTextChangeRef = useRef(onTextChange);
+  onTextChangeRef.current = onTextChange;
 
   const mentionsRef = useRef(mentions);
   mentionsRef.current = mentions;
@@ -127,10 +133,14 @@ export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function Ri
       },
     },
     onCreate: ({ editor: currentEditor }) => {
-      onCanSubmitChangeRef.current?.(currentEditor.getText().trim().length > 0);
+      const text = currentEditor.getText();
+      onCanSubmitChangeRef.current?.(text.trim().length > 0);
+      onTextChangeRef.current?.(text);
     },
     onUpdate: ({ editor: currentEditor }) => {
-      onCanSubmitChangeRef.current?.(currentEditor.getText().trim().length > 0);
+      const text = currentEditor.getText();
+      onCanSubmitChangeRef.current?.(text.trim().length > 0);
+      onTextChangeRef.current?.(text);
     },
   });
 
@@ -143,6 +153,21 @@ export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function Ri
       },
       focus: () => {
         editor?.commands.focus("end");
+      },
+      setText: (text: string) => {
+        if (!editor) return;
+        editor.commands.setContent({
+          type: "doc",
+          content: [
+            {
+              type: "paragraph",
+              content: text ? [{ type: "text", text }] : [],
+            },
+          ],
+        });
+        onCanSubmitChangeRef.current?.(text.trim().length > 0);
+        onTextChangeRef.current?.(text);
+        editor.commands.focus("end");
       },
     }),
     [editor],
