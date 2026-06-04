@@ -3,6 +3,7 @@ import { create } from "zustand";
 import { z } from "zod";
 import { useAuthStore } from "../stores/auth";
 import { api } from "../lib/api";
+import { edenErrorMessage } from "../lib/eden";
 import { requestInputBarFocus } from "../stores/input-focus";
 
 // Colocated visibility store
@@ -33,6 +34,7 @@ export function AuthModal() {
 function ResendButton({ email }: { email: string }) {
   const [state, setState] = useState<"idle" | "sending" | "sent">("idle");
   const [cooldown, setCooldown] = useState(0);
+  const [error, setError] = useState("");
 
   useEffect(() => {
     if (cooldown <= 0) return;
@@ -43,27 +45,32 @@ function ResendButton({ email }: { email: string }) {
   const handleResend = useCallback(async () => {
     if (state === "sending" || cooldown > 0) return;
     setState("sending");
-    try {
-      await api.auth["resend-verification"].post({ email });
-      setState("sent");
-      setCooldown(60);
-    } catch {
+    setError("");
+    const { error: resendError } = await api.auth["resend-verification"].post({ email });
+    if (resendError) {
       setState("idle");
+      setError(edenErrorMessage(resendError, "Could not send a new code. Try again."));
+      return;
     }
+    setState("sent");
+    setCooldown(60);
   }, [email, state, cooldown]);
 
   return (
-    <button
-      className="cursor-pointer border-none bg-none p-0 font-[inherit] text-[0.929rem] text-accent underline transition-colors duration-150 hover:text-text disabled:cursor-default disabled:opacity-40 disabled:no-underline"
-      onClick={handleResend}
-      disabled={state === "sending" || cooldown > 0}
-    >
-      {state === "sending"
-        ? "Sending..."
-        : cooldown > 0
-          ? `Resend in ${cooldown}s`
-          : "Send a new code"}
-    </button>
+    <div className="flex flex-col items-center gap-2">
+      <button
+        className="cursor-pointer border-none bg-none p-0 font-[inherit] text-[0.929rem] text-accent underline transition-colors duration-150 hover:text-text disabled:cursor-default disabled:opacity-40 disabled:no-underline"
+        onClick={handleResend}
+        disabled={state === "sending" || cooldown > 0}
+      >
+        {state === "sending"
+          ? "Sending..."
+          : cooldown > 0
+            ? `Resend in ${cooldown}s`
+            : "Send a new code"}
+      </button>
+      {error && <div className="text-[0.857rem] text-error-bright">{error}</div>}
+    </div>
   );
 }
 

@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
 import type { AuthUser } from "@thechat/shared";
 import { api } from "../lib/api";
+import { edenErrorMessage } from "../lib/eden";
 import { queryClient } from "../lib/query-client";
 
 const KV_ACCESS_TOKEN = "auth_access_token";
@@ -178,7 +179,7 @@ export const useAuthStore = create<AuthStore>()((set) => ({
   login: async (email: string, password: string) => {
     const { data, error } = await api.auth.login.post({ email, password });
 
-    if (error) throw new Error((error as any).error || "Login failed");
+    if (error) throw new Error(edenErrorMessage(error, "Login failed"));
     if (!data || !("accessToken" in data)) throw new Error("Login failed");
 
     await kvSet(KV_ACCESS_TOKEN, data.accessToken!);
@@ -191,7 +192,7 @@ export const useAuthStore = create<AuthStore>()((set) => ({
   register: async (name: string, email: string, password: string): Promise<string | null> => {
     const { data, error } = await api.auth.register.post({ name, email, password });
 
-    if (error) throw new Error((error as any).error || "Registration failed");
+    if (error) throw new Error(edenErrorMessage(error, "Registration failed"));
     if (!data) throw new Error("Registration failed");
 
     // If verification required, return message
@@ -213,7 +214,7 @@ export const useAuthStore = create<AuthStore>()((set) => ({
   verifyEmailOtp: async (email: string, code: string) => {
     const { data, error } = await api.auth["verify-email-otp"].post({ email, code });
 
-    if (error) throw new Error((error as any).error || "Verification failed");
+    if (error) throw new Error(edenErrorMessage(error, "Verification failed"));
     if (!data || !("accessToken" in data)) throw new Error("Verification failed");
 
     await kvSet(KV_ACCESS_TOKEN, data.accessToken!);
