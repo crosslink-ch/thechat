@@ -1,6 +1,6 @@
 import crypto from "crypto";
 import { eq, and } from "drizzle-orm";
-import type { WsServerEvent } from "@thechat/shared";
+import type { BotCommandPublic, WsServerEvent } from "@thechat/shared";
 import { db } from "../db";
 import {
   users,
@@ -395,6 +395,68 @@ export async function updateAuthenticatedBotWebhook(
     name: bot.name,
     kind: bot.kind,
     webhookUrl,
+  };
+}
+
+/** Normalize a registered command list: lowercase names, drop duplicate names/aliases (first wins). */
+export function normalizeBotCommands(commands: BotCommandPublic[]): BotCommandPublic[] {
+  const seen = new Set<string>();
+  const result: BotCommandPublic[] = [];
+  for (const entry of commands) {
+    const command = entry.command.toLowerCase();
+    if (seen.has(command)) continue;
+    seen.add(command);
+    const aliases = (entry.aliases ?? [])
+      .map((alias) => alias.toLowerCase())
+      .filter((alias) => {
+        if (seen.has(alias)) return false;
+        seen.add(alias);
+        return true;
+      });
+    result.push({
+      command,
+      description: entry.description,
+      argsHint: entry.argsHint?.trim() || null,
+      category: entry.category?.trim() || null,
+      ...(aliases.length > 0 ? { aliases } : {}),
+    });
+  }
+  return result;
+}
+
+export async function updateAuthenticatedBotCommands(
+  botUserId: string,
+  commands: BotCommandPublic[] | null
+) {
+  const [bot] = await db
+    .select({
+      id: bots.id,
+      userId: bots.userId,
+      kind: bots.kind,
+      name: users.name,
+    })
+    .from(bots)
+    .innerJoin(users, eq(bots.userId, users.id))
+    .where(eq(bots.userId, botUserId))
+    .limit(1);
+
+  if (!bot) {
+    throw new ServiceError("Bot not found", 404);
+  }
+
+  const commandsJson = commands ? normalizeBotCommands(commands) : null;
+
+  await db
+    .update(bots)
+    .set({ commandsJson })
+    .where(eq(bots.id, bot.id));
+
+  return {
+    id: bot.id,
+    userId: bot.userId,
+    name: bot.name,
+    kind: bot.kind,
+    commands: commandsJson,
   };
 }
 

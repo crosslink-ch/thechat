@@ -1,0 +1,124 @@
+import { describe, expect, it, beforeAll, vi } from "vitest";
+import { fireEvent, render, screen } from "@testing-library/react";
+import { InputBar } from "./InputBar";
+import type { HermesSlashCommand } from "../lib/hermes-slash-commands";
+
+beforeAll(() => {
+  Element.prototype.scrollIntoView = vi.fn();
+});
+
+const COMMANDS: HermesSlashCommand[] = [
+  { command: "/help", description: "Show available commands" },
+  { command: "/new", description: "Start a new session", argsHint: "[name]", aliases: ["/reset"] },
+  { command: "/queue", description: "Queue a prompt", argsHint: "<prompt>" },
+];
+
+function renderInputBar(overrides: Partial<Parameters<typeof InputBar>[0]> = {}) {
+  const onSend = vi.fn();
+  const utils = render(
+    <InputBar
+      convId="conv-1"
+      onSend={onSend}
+      onStop={() => {}}
+      slashCommands={COMMANDS}
+      {...overrides}
+    />,
+  );
+  const editor = utils.container.querySelector<HTMLElement>(".ProseMirror");
+  if (!editor) throw new Error("ProseMirror editor not found");
+  return { ...utils, onSend, editor };
+}
+
+function openMenu() {
+  // The "/" menu button inserts "/" into the input, which opens the menu.
+  fireEvent.click(screen.getByTitle("Bot commands"));
+  return screen.getByTestId("slash-command-menu");
+}
+
+describe("InputBar slash command menu", () => {
+  it("does not render the menu button without slash commands", () => {
+    renderInputBar({ slashCommands: undefined });
+    expect(screen.queryByTitle("Bot commands")).toBeNull();
+  });
+
+  it("opens a menu listing all commands via the menu button", () => {
+    renderInputBar();
+    openMenu();
+    expect(screen.getByTestId("slash-command-item-help")).toBeInTheDocument();
+    expect(screen.getByTestId("slash-command-item-new")).toBeInTheDocument();
+    expect(screen.getByTestId("slash-command-item-queue")).toBeInTheDocument();
+    expect(screen.getByText("Show available commands")).toBeInTheDocument();
+    expect(screen.getByText("<prompt>")).toBeInTheDocument();
+  });
+
+  it("navigates with arrow keys and highlights the selection", () => {
+    const { editor } = renderInputBar();
+    openMenu();
+
+    expect(screen.getByTestId("slash-command-item-help").dataset.selected).toBe("true");
+
+    fireEvent.keyDown(editor, { key: "ArrowDown" });
+    expect(screen.getByTestId("slash-command-item-help").dataset.selected).toBeUndefined();
+    expect(screen.getByTestId("slash-command-item-new").dataset.selected).toBe("true");
+
+    fireEvent.keyDown(editor, { key: "ArrowUp" });
+    fireEvent.keyDown(editor, { key: "ArrowUp" });
+    expect(screen.getByTestId("slash-command-item-queue").dataset.selected).toBe("true");
+  });
+
+  it("sends argument-less commands immediately on Enter", () => {
+    const { editor, onSend } = renderInputBar();
+    openMenu();
+
+    fireEvent.keyDown(editor, { key: "Enter" });
+    expect(onSend).toHaveBeenCalledWith("/help");
+    expect(screen.queryByTestId("slash-command-menu")).toBeNull();
+    expect(editor.textContent ?? "").toBe("");
+  });
+
+  it("inserts commands that require arguments instead of sending", () => {
+    const { editor, onSend } = renderInputBar();
+    openMenu();
+
+    fireEvent.keyDown(editor, { key: "ArrowDown" });
+    fireEvent.keyDown(editor, { key: "ArrowDown" });
+    fireEvent.keyDown(editor, { key: "Enter" });
+
+    expect(onSend).not.toHaveBeenCalled();
+    expect(editor.textContent).toBe("/queue ");
+    // Menu closes once arguments are being typed.
+    expect(screen.queryByTestId("slash-command-menu")).toBeNull();
+  });
+
+  it("inserts the highlighted command on Tab without sending", () => {
+    const { editor, onSend } = renderInputBar();
+    openMenu();
+
+    fireEvent.keyDown(editor, { key: "Tab" });
+    expect(onSend).not.toHaveBeenCalled();
+    expect(editor.textContent).toBe("/help ");
+  });
+
+  it("dismisses the menu on Escape", () => {
+    const { editor } = renderInputBar();
+    openMenu();
+
+    fireEvent.keyDown(editor, { key: "Escape" });
+    expect(screen.queryByTestId("slash-command-menu")).toBeNull();
+  });
+
+  it("selects a command on click", () => {
+    const { onSend } = renderInputBar();
+    openMenu();
+
+    fireEvent.mouseDown(screen.getByTestId("slash-command-item-help"));
+    expect(onSend).toHaveBeenCalledWith("/help");
+  });
+
+  it("toggles the menu closed via the menu button", () => {
+    renderInputBar();
+    openMenu();
+    fireEvent.click(screen.getByTitle("Bot commands"));
+    expect(screen.queryByTestId("slash-command-menu")).toBeNull();
+  });
+});

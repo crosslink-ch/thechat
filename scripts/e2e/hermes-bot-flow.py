@@ -464,6 +464,22 @@ def main():
         assert status == 200, (status, dm)
         dm_id = dm["id"]
 
+        # The gateway registers its slash commands at connect (Telegram
+        # setMyCommands-style); the DM detail exposes them for the client menu.
+        status, dm_detail = http_json("GET", f"{base}/conversations/detail/{dm_id}", token=token)
+        assert status == 200, (status, dm_detail)
+        koda_bot = next(
+            (p.get("bot") or {})
+            for p in dm_detail["participants"]
+            if (p.get("bot") or {}).get("kind") == "hermes"
+        )
+        registered_commands = {c["command"]: c for c in (koda_bot.get("commands") or [])}
+        assert "help" in registered_commands, sorted(registered_commands)
+        assert "new" in registered_commands, sorted(registered_commands)
+        assert registered_commands["new"].get("aliases") == ["reset"], registered_commands["new"]
+        assert registered_commands["new"].get("argsHint") == "[name]", registered_commands["new"]
+        assert "start" not in registered_commands, sorted(registered_commands)
+
         status, sent = http_json("POST", f"{base}/messages/{dm_id}", {"content": "Answer this direct message smoke test without an at mention"}, token)
         assert status == 200, (status, sent)
         koda_dm_runtime_started = wait_for_invocations(dm_id, "Koda E2E", 1, statuses={"queued", "running", "completed"})
