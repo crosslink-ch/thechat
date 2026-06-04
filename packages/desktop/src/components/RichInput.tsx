@@ -16,6 +16,8 @@ interface RichInputProps {
   mentions?: MentionUser[];
   onCanSubmitChange?: (canSubmit: boolean) => void;
   onTextChange?: (text: string) => void;
+  /** Pre-editor key hook (e.g. for a command menu). Return true to consume the event. */
+  onKeyIntercept?: (event: KeyboardEvent) => boolean;
 }
 
 /** Newlines are paragraph splits, so serialize blocks with single "\n". */
@@ -36,6 +38,7 @@ export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function Ri
     mentions,
     onCanSubmitChange,
     onTextChange,
+    onKeyIntercept,
   }: RichInputProps,
   ref,
 ) {
@@ -44,6 +47,9 @@ export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function Ri
 
   const onEmptySubmitAttemptRef = useRef(onEmptySubmitAttempt);
   onEmptySubmitAttemptRef.current = onEmptySubmitAttempt;
+
+  const onKeyInterceptRef = useRef(onKeyIntercept);
+  onKeyInterceptRef.current = onKeyIntercept;
 
   const onCanSubmitChangeRef = useRef(onCanSubmitChange);
   onCanSubmitChangeRef.current = onCanSubmitChange;
@@ -137,6 +143,9 @@ export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function Ri
         class:
           "block max-h-[200px] w-full overflow-y-auto bg-transparent px-4 pt-3 pb-11 font-[inherit] text-[1rem] leading-relaxed text-text outline-none",
       },
+      // Direct view props run before extension keymaps, so interceptors
+      // (slash command menu navigation) win over Enter-to-submit.
+      handleKeyDown: (_view, event) => onKeyInterceptRef.current?.(event) ?? false,
     },
     onCreate: ({ editor: currentEditor }) => {
       const text = currentEditor.getText(TEXT_OPTIONS);

@@ -17,7 +17,8 @@ import { fireNotification } from "../lib/notifications";
 import { wsEvents, type WsEvents } from "../lib/ws-events";
 import { selectHermesConversationProgress } from "../lib/hermes-progress";
 import {
-  HERMES_SLASH_COMMANDS,
+  buildHermesSlashCommands,
+  canonicalHermesSlashCommand,
   parseHermesSlashCommand,
 } from "../lib/hermes-slash-commands";
 
@@ -50,6 +51,11 @@ export function DmRoute() {
     [conversation, user?.id],
   );
   const isHermesDm = conversation?.type === "direct" && otherParticipant?.bot?.kind === "hermes";
+  const registeredBotCommands = otherParticipant?.bot?.commands;
+  const slashCommands = useMemo(
+    () => buildHermesSlashCommands(registeredBotCommands),
+    [registeredBotCommands],
+  );
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
   const runtimeQuery = useBotRuntime(conversationId, token, isHermesDm);
   const runtime = runtimeQuery.data ?? null;
@@ -314,12 +320,15 @@ export function DmRoute() {
     }
 
     const slash = parseHermesSlashCommand(content);
-    if (slash?.command === "/branch") {
-      void handleBranchCommand(slash.args);
+    const canonical = slash
+      ? canonicalHermesSlashCommand(slash.command, slashCommands) ?? slash.command
+      : null;
+    if (canonical === "/branch") {
+      void handleBranchCommand(slash!.args);
       return;
     }
     if (slash) {
-      if (slash.command === "/new" || slash.command === "/reset") {
+      if (canonical === "/new" || canonical === "/reset") {
         clearQueuedPrompts(activeScopeKey);
       }
       sendHermesMessageNow(content, activeThreadId);
@@ -374,7 +383,7 @@ export function DmRoute() {
             scrollKey={`${conversationId}:${activeThreadId ?? "general"}`}
             taskActive={taskActive}
             queuedCount={queuedPrompts.length}
-            slashCommands={HERMES_SLASH_COMMANDS}
+            slashCommands={slashCommands}
           />
         ) : (
           <ChannelChatView

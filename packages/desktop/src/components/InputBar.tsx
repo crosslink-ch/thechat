@@ -2,10 +2,12 @@ import { memo, useEffect, useRef, useState, useCallback, type DragEvent } from "
 import { useIsStreaming } from "../stores/streaming";
 import { useInputFocusStore } from "../stores/input-focus";
 import { RichInput, type RichInputHandle } from "./RichInput";
+import { SlashCommandMenu } from "./SlashCommandMenu";
 import type { MentionUser } from "./MentionList";
 import type { ImageAttachment } from "../lib/images";
 import {
   filterHermesSlashCommands,
+  slashCommandRequiresArgs,
   type HermesSlashCommand,
 } from "../lib/hermes-slash-commands";
 
@@ -53,13 +55,18 @@ export const InputBar = memo(function InputBar({
   const [images, setImages] = useState<ImageAttachment[]>([]);
   const [dragOver, setDragOver] = useState(false);
   const [inputText, setInputText] = useState("");
+  const [slashSelectedIndex, setSlashSelectedIndex] = useState(0);
+  const [slashMenuDismissed, setSlashMenuDismissed] = useState(false);
 
   const hasContent = canSubmit || images.length > 0;
   const slashSuggestions = slashCommands
-    ? filterHermesSlashCommands(inputText).filter((suggestion) =>
-        slashCommands.some((command) => command.command === suggestion.command),
-      )
+    ? filterHermesSlashCommands(inputText, slashCommands)
     : [];
+  const slashMenuOpen = slashSuggestions.length > 0 && !slashMenuDismissed;
+  const highlightedSlashIndex = Math.min(
+    slashSelectedIndex,
+    Math.max(slashSuggestions.length - 1, 0),
+  );
 
   useEffect(() => {
     if (!autoFocusKey) return;
@@ -108,6 +115,67 @@ export const InputBar = memo(function InputBar({
     }
     return false;
   }, [images, onSend]);
+
+  const handleInputTextChange = useCallback((text: string) => {
+    setInputText(text);
+    // Typing re-opens an Esc-dismissed menu and resets the highlight.
+    setSlashMenuDismissed(false);
+    setSlashSelectedIndex(0);
+  }, []);
+
+  // Telegram-style selection: commands that need arguments are inserted for
+  // further typing, argument-less commands are sent immediately.
+  const handleSlashCommandSelect = useCallback(
+    (command: HermesSlashCommand) => {
+      if (slashCommandRequiresArgs(command)) {
+        inputRef.current?.setText(`${command.command} `);
+        return;
+      }
+      onSend(command.command);
+      inputRef.current?.setText("");
+    },
+    [onSend],
+  );
+
+  // RichInput reads this through a ref, so the latest render's state is used.
+  const handleSlashMenuKey = useCallback(
+    (event: KeyboardEvent) => {
+      if (!slashMenuOpen) return false;
+      switch (event.key) {
+        case "ArrowDown":
+          setSlashSelectedIndex((highlightedSlashIndex + 1) % slashSuggestions.length);
+          return true;
+        case "ArrowUp":
+          setSlashSelectedIndex(
+            (highlightedSlashIndex - 1 + slashSuggestions.length) % slashSuggestions.length,
+          );
+          return true;
+        case "Enter": {
+          if (event.shiftKey) return false;
+          handleSlashCommandSelect(slashSuggestions[highlightedSlashIndex]);
+          return true;
+        }
+        case "Tab":
+          inputRef.current?.setText(`${slashSuggestions[highlightedSlashIndex].command} `);
+          return true;
+        case "Escape":
+          setSlashMenuDismissed(true);
+          return true;
+        default:
+          return false;
+      }
+    },
+    [handleSlashCommandSelect, highlightedSlashIndex, slashMenuOpen, slashSuggestions],
+  );
+
+  // Telegram-style bot menu button: toggles the full command list.
+  const handleSlashMenuButtonClick = useCallback(() => {
+    if (inputText.trimStart().startsWith("/")) {
+      inputRef.current?.setText("");
+    } else {
+      inputRef.current?.setText("/");
+    }
+  }, [inputText]);
 
   // Allow submit with only images (no text)
   const handleSendClick = useCallback(() => {
@@ -179,6 +247,13 @@ export const InputBar = memo(function InputBar({
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
+        // Telegram-style: the command menu hides while focus is elsewhere
+        // and reappears when the input regains focus.
+        onBlur={(event) => {
+          if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
+          setSlashMenuDismissed(true);
+        }}
+        onFocus={() => setSlashMenuDismissed(false)}
       >
         {/* Image preview strip */}
         {images.length > 0 && (
@@ -204,21 +279,13 @@ export const InputBar = memo(function InputBar({
             ))}
           </div>
         )}
-        {slashSuggestions.length > 0 && (
-          <div className="flex flex-wrap gap-1.5 border-b border-border px-3 py-2">
-            {slashSuggestions.map((command) => (
-              <button
-                key={command.command}
-                type="button"
-                className="flex max-w-full cursor-pointer items-center gap-1.5 rounded-md border border-border bg-background px-2 py-1 text-left text-[0.786rem] text-text-muted transition-colors duration-150 hover:bg-hover hover:text-text"
-                title={command.description}
-                onClick={() => inputRef.current?.setText(`${command.command} `)}
-              >
-                <span className="font-medium text-text">{command.label}</span>
-                <span className="truncate">{command.description}</span>
-              </button>
-            ))}
-          </div>
+        {slashMenuOpen && (
+          <SlashCommandMenu
+            commands={slashSuggestions}
+            selectedIndex={highlightedSlashIndex}
+            onSelect={handleSlashCommandSelect}
+            onHighlight={setSlashSelectedIndex}
+          />
         )}
         <RichInput
           ref={inputRef}
@@ -227,7 +294,8 @@ export const InputBar = memo(function InputBar({
           placeholder={isStreaming ? "Queue a message..." : "Send a message..."}
           mentions={mentions}
           onCanSubmitChange={setCanSubmit}
-          onTextChange={setInputText}
+          onTextChange={handleInputTextChange}
+          onKeyIntercept={handleSlashMenuKey}
         />
         <input
           ref={fileInputRef}
@@ -245,6 +313,18 @@ export const InputBar = memo(function InputBar({
             <span className="mr-1 rounded border border-border bg-background px-1.5 py-0.5 text-[0.643rem] font-medium uppercase text-text-dimmed">
               {queuedCount} queued
             </span>
+          )}
+          {slashCommands && slashCommands.length > 0 && (
+            <button
+              type="button"
+              className={`flex size-8 cursor-pointer items-center justify-center rounded-lg border-none shadow-none transition-colors duration-150 ${slashMenuOpen ? "bg-hover text-text" : "bg-transparent text-text-dimmed hover:bg-hover hover:text-text-muted"}`}
+              onClick={handleSlashMenuButtonClick}
+              title="Bot commands"
+            >
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+                <path d="M10 2.5l-4 11" />
+              </svg>
+            </button>
           )}
           <button
             type="button"

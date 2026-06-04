@@ -12,7 +12,7 @@ import {
   uniqueIndex,
 } from "drizzle-orm/pg-core";
 import { relations } from "drizzle-orm";
-import type { HermesSessionReference, MessagePart } from "@thechat/shared";
+import type { BotCommandPublic, HermesSessionReference, MessagePart } from "@thechat/shared";
 
 // -- Enums --
 
@@ -225,6 +225,7 @@ export const bots = pgTable(
     webhookSecret: varchar("webhook_secret", { length: 128 }).notNull(),
     apiKey: varchar("api_key", { length: 128 }).notNull(),
     kind: botKindEnum("kind").notNull().default("webhook"),
+    commandsJson: jsonb("commands_json").$type<BotCommandPublic[]>(),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
       .notNull(),
