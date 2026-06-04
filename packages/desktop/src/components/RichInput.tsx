@@ -18,6 +18,9 @@ interface RichInputProps {
   onTextChange?: (text: string) => void;
 }
 
+/** Newlines are paragraph splits, so serialize blocks with single "\n". */
+const TEXT_OPTIONS = { blockSeparator: "\n" } as const;
+
 export interface RichInputHandle {
   submit: () => void;
   focus: () => void;
@@ -74,11 +77,14 @@ export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function Ri
         addKeyboardShortcuts() {
           return {
             Enter: ({ editor }) => {
-              submitIfNotEmpty(editor.getText(), () => editor.commands.clearContent());
+              submitIfNotEmpty(editor.getText(TEXT_OPTIONS), () => editor.commands.clearContent());
               return true;
             },
+            // Split a new paragraph rather than inserting a hard break:
+            // WebKitGTK renders the caret on the wrong line after trailing
+            // <br> elements, while real block splits position it correctly.
             "Shift-Enter": ({ editor }) => {
-              editor.commands.setHardBreak();
+              editor.commands.splitBlock();
               return true;
             },
           };
@@ -133,12 +139,12 @@ export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function Ri
       },
     },
     onCreate: ({ editor: currentEditor }) => {
-      const text = currentEditor.getText();
+      const text = currentEditor.getText(TEXT_OPTIONS);
       onCanSubmitChangeRef.current?.(text.trim().length > 0);
       onTextChangeRef.current?.(text);
     },
     onUpdate: ({ editor: currentEditor }) => {
-      const text = currentEditor.getText();
+      const text = currentEditor.getText(TEXT_OPTIONS);
       onCanSubmitChangeRef.current?.(text.trim().length > 0);
       onTextChangeRef.current?.(text);
     },
@@ -149,7 +155,7 @@ export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function Ri
     () => ({
       submit: () => {
         if (!editor) return;
-        submitIfNotEmpty(editor.getText(), () => editor.commands.clearContent());
+        submitIfNotEmpty(editor.getText(TEXT_OPTIONS), () => editor.commands.clearContent());
       },
       focus: () => {
         editor?.commands.focus("end");
@@ -158,12 +164,10 @@ export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function Ri
         if (!editor) return;
         editor.commands.setContent({
           type: "doc",
-          content: [
-            {
-              type: "paragraph",
-              content: text ? [{ type: "text", text }] : [],
-            },
-          ],
+          content: text.split("\n").map((line) => ({
+            type: "paragraph",
+            content: line ? [{ type: "text", text: line }] : [],
+          })),
         });
         onCanSubmitChangeRef.current?.(text.trim().length > 0);
         onTextChangeRef.current?.(text);
