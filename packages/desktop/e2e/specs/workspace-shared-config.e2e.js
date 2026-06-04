@@ -11,7 +11,9 @@
 // workspace-manage UI). The actual feature exercise (login → enable
 // inheritance → send chat) goes through the real UI.
 
-const API_URL = "http://localhost:3000";
+const API_URL =
+  process.env.THECHAT_BACKEND_URL ||
+  `http://localhost:${process.env.THECHAT_BACKEND_PORT || "3000"}`;
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
 if (!OPENROUTER_API_KEY) {
   throw new Error("OPENROUTER_API_KEY env var is required — set it in .env");

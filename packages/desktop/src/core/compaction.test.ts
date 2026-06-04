@@ -27,11 +27,6 @@ describe("isOverflow", () => {
   });
 
   it("uses inputLimit when available (GPT-5.x Codex models)", async () => {
-    // gpt-5.3-codex: contextWindow=400K, inputLimit=272K
-    // usable = inputLimit - 20K = 252K
-    expect(await isOverflow(252_000, "gpt-5.3-codex")).toBe(true);
-    expect(await isOverflow(250_000, "gpt-5.3-codex")).toBe(false);
-
     // gpt-5.4: contextWindow=1.05M, inputLimit=922K
     // usable = inputLimit - 20K = 902K
     expect(await isOverflow(902_000, "gpt-5.4")).toBe(true);

@@ -15,7 +15,9 @@ export default defineConfig(async () => {
   const env = loadEnv("test", monorepoRoot, "");
 
   const backendUrl =
-    process.env.THECHAT_BACKEND_URL || "http://localhost:3000";
+    process.env.THECHAT_BACKEND_URL ||
+    env.THECHAT_BACKEND_URL ||
+    `http://localhost:${process.env.THECHAT_BACKEND_PORT || env.THECHAT_BACKEND_PORT || "3000"}`;
 
   return {
     define: {

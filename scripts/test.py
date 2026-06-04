@@ -142,7 +142,7 @@ SUITES = [
         "cmd": [
             "cargo", "test",
             "--manifest-path", "packages/desktop/src-tauri/Cargo.toml",
-            "codex_live", "--", "--ignored",
+            "codex_live", "--", "--ignored", "--test-threads=1", "--nocapture",
         ],
         "opt_in": True,  # needs CODEX_ACCESS_TOKEN credentials
     },

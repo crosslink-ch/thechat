@@ -581,7 +581,15 @@ async fn connect_codex_websocket(
         })?;
     apply_codex_ws_headers(&mut request, headers, turn_state);
 
-    let (socket, response) = connect_async(request).await.map_err(|e| match e {
+    let connect_result =
+        tokio::time::timeout(std::time::Duration::from_secs(30), connect_async(request))
+            .await
+            .map_err(|_| CodexWebsocketError::Fallback {
+                reason: "Codex websocket connect timed out".to_string(),
+                http_only: false,
+            })?;
+
+    let (socket, response) = connect_result.map_err(|e| match e {
         tokio_tungstenite::tungstenite::Error::Http(response)
             if response.status() == StatusCode::UPGRADE_REQUIRED =>
         {
@@ -623,15 +631,20 @@ async fn read_codex_websocket_response(
 
     loop {
         let message = tokio::select! {
-            msg = socket.next() => match msg {
-                Some(Ok(message)) => message,
-                Some(Err(err)) => {
+            msg = tokio::time::timeout(std::time::Duration::from_secs(120), socket.next()) => match msg {
+                Ok(Some(Ok(message))) => message,
+                Ok(Some(Err(err))) => {
                     return Err(CodexWebsocketError::Fatal(format!(
                         "Codex websocket read error: {}",
                         err
                     )));
                 }
-                None => break,
+                Ok(None) => break,
+                Err(_) => {
+                    return Err(CodexWebsocketError::Fatal(
+                        "Codex websocket timed out waiting for response.completed".to_string(),
+                    ));
+                }
             },
             _ = cancel.cancelled() => {
                 let _ = socket.close(None).await;
@@ -1340,6 +1353,11 @@ mod tests {
             "Authorization".to_string(),
             format!("Bearer {}", access_token),
         );
+        headers.insert("originator".to_string(), "codex_cli_rs".to_string());
+        headers.insert(
+            "User-Agent".to_string(),
+            "codex_cli_rs/0.0.0 (TheChat test)".to_string(),
+        );
         if !account_id.is_empty() {
             headers.insert("ChatGPT-Account-Id".to_string(), account_id);
         }
@@ -1347,9 +1365,10 @@ mod tests {
     }
 
     fn make_request(input: Vec<Value>, tools: Vec<Value>) -> CodexRequestPayload {
+        let model = std::env::var("CODEX_LIVE_MODEL").unwrap_or_else(|_| "gpt-5.5".to_string());
         parse_codex_request_payload(
             &serde_json::json!({
-                "model": "gpt-5.3-codex",
+                "model": model,
                 "instructions": "You are a helpful assistant. Keep your response very short.",
                 "reasoning": { "effort": "low" },
                 "input": input,
@@ -1395,11 +1414,12 @@ mod tests {
         let mut func_calls: HashMap<String, CodexFuncCall> = HashMap::new();
 
         loop {
-            let message = socket
-                .next()
-                .await
-                .expect("WebSocket stream ended before terminal event")
-                .expect("WebSocket read error");
+            let message =
+                tokio::time::timeout(std::time::Duration::from_secs(120), socket.next())
+                    .await
+                    .expect("timed out waiting for Codex websocket terminal event")
+                    .expect("WebSocket stream ended before terminal event")
+                    .expect("WebSocket read error");
 
             let payload = match message {
                 Message::Text(text) => text.to_string(),
@@ -1469,7 +1489,10 @@ mod tests {
         let headers = live_headers();
         let request = make_request(vec![user_message("Say hello world")], vec![]);
 
-        let client = reqwest::Client::new();
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(120))
+            .build()
+            .expect("build HTTP client");
         let mut req = client
             .post(CODEX_API_URL)
             .header("Content-Type", "application/json")

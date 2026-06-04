@@ -63,6 +63,7 @@ describe("streamCodexCompletion", () => {
         Authorization: "Bearer test-token",
         Accept: "text/event-stream",
         "Content-Type": "application/json",
+        originator: "codex_cli_rs",
         "ChatGPT-Account-Id": "acct_123",
         "x-client-request-id": "conv_123",
         "session_id": "conv_123",

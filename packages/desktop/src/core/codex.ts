@@ -3,6 +3,7 @@ import { debug as logDebug } from "../log";
 import type { ChatParams, StreamEvent, StreamResult, ToolDefinition } from "./types";
 import { CODEX_MODELS, DEFAULT_REASONING_EFFORT } from "./models";
 import { ProviderError } from "./errors";
+import { CODEX_ORIGINATOR } from "./codex-auth";
 
 export { CODEX_MODELS };
 
@@ -194,6 +195,7 @@ export function buildCodexRequest(options: BuildCodexRequestOptions): {
     Authorization: `Bearer ${accessToken}`,
     Accept: "text/event-stream",
     "Content-Type": "application/json",
+    originator: CODEX_ORIGINATOR,
   };
   if (accountId) {
     headers["ChatGPT-Account-Id"] = accountId;

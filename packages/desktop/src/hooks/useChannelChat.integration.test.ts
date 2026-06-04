@@ -270,12 +270,14 @@ describe.skipIf(!INTEGRATION)("Channel message visibility (integration)", () => 
         });
       });
 
-      expect(result.current.messages).toHaveLength(initialCount + 1);
-      expect(
-        result.current.messages.find(
-          (m) => m.content === "Real-time channel msg",
-        ),
-      ).toBeDefined();
+      await waitFor(() => {
+        expect(result.current.messages).toHaveLength(initialCount + 1);
+        expect(
+          result.current.messages.find(
+            (m) => m.content === "Real-time channel msg",
+          ),
+        ).toBeDefined();
+      });
       unmount();
     });
 
@@ -308,7 +310,9 @@ describe.skipIf(!INTEGRATION)("Channel message visibility (integration)", () => 
         result.current.addMessage(msg); // duplicate
       });
 
-      expect(result.current.messages).toHaveLength(initialCount + 1);
+      await waitFor(() => {
+        expect(result.current.messages).toHaveLength(initialCount + 1);
+      });
       unmount();
     });
 

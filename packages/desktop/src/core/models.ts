@@ -32,7 +32,6 @@ export interface ModelInfo {
 export const CODEX_MODELS: ModelInfo[] = [
   { id: "gpt-5.5", name: "GPT-5.5", maxOutputTokens: 128_000, contextWindow: 272_000 },
   { id: "gpt-5.4", name: "GPT-5.4", maxOutputTokens: 128_000, contextWindow: 1_050_000, inputLimit: 922_000 },
-  { id: "gpt-5.3-codex", name: "GPT-5.3 Codex", maxOutputTokens: 128_000, contextWindow: 400_000, inputLimit: 272_000 },
 ];
 
 // ---------------------------------------------------------------------------

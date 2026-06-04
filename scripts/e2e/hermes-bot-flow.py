@@ -117,6 +117,28 @@ def http_json(method: str, url: str, body=None, token: str | None = None):
         return exc.code, parsed
 
 
+def sql_literal(value: str) -> str:
+    return "'" + value.replace("'", "''") + "'"
+
+
+def db_json(sql: str):
+    text = subprocess.check_output([
+        "docker",
+        "exec",
+        PG_CONTAINER,
+        "psql",
+        "-U",
+        "thechat",
+        "-d",
+        "thechat",
+        "-t",
+        "-A",
+        "-c",
+        sql,
+    ], cwd=ROOT, text=True).strip()
+    return json.loads(text or "null")
+
+
 def start_postgres():
     run(["docker", "rm", "-f", PG_CONTAINER], check=False)
     run([
@@ -305,18 +327,72 @@ def wait_for_runtime_invocations(base: str, token: str, conversation_id: str, bo
     return wait_for(find_snapshot, timeout=timeout, label=f"{bot_name} runtime invocations")
 
 
-def wait_for_completed_runtime_invocations(base: str, token: str, conversation_id: str, bot_name: str, count: int, *, timeout: int = 180):
-    def find_snapshot():
-        status, snapshot = http_json("GET", f"{base}/bot-runtime/conversations/{conversation_id}", token=token)
-        if status != 200:
-            return None
-        completed = [
-            i for i in snapshot.get("invocations", [])
-            if i.get("botName") == bot_name and i.get("status") == "completed" and i.get("externalRunId")
-        ]
-        return snapshot if len(completed) >= count else None
+def invocation_snapshot(conversation_id: str, bot_name: str, statuses: set[str] | None = None):
+    status_clause = ""
+    if statuses:
+        status_values = ", ".join(sql_literal(status) for status in sorted(statuses))
+        status_clause = f" and bi.status in ({status_values})"
+    rows = db_json(
+        """
+        select coalesce(
+          jsonb_agg(
+            jsonb_build_object(
+              'id', bi.id,
+              'botName', u.name,
+              'conversationId', bi.conversation_id,
+              'threadId', bi.thread_id,
+              'triggerMessageId', bi.trigger_message_id,
+              'responseMessageId', bi.response_message_id,
+              'status', bi.status,
+              'externalRunId', bi.external_run_id,
+              'hermesSession', bi.hermes_session_json,
+              'requestJson', bi.request_json,
+              'responseJson', bi.response_json,
+              'startedAt', bi.started_at,
+              'completedAt', bi.completed_at,
+              'createdAt', bi.created_at,
+              'updatedAt', bi.updated_at
+            )
+            order by bi.created_at
+          ),
+          '[]'::jsonb
+        )
+        from bot_invocations bi
+        inner join bots b on bi.bot_id = b.id
+        inner join users u on b.user_id = u.id
+        where bi.conversation_id = {conversation_id}
+          and u.name = {bot_name}
+          {status_clause}
+        """.format(
+            conversation_id=sql_literal(conversation_id),
+            bot_name=sql_literal(bot_name),
+            status_clause=status_clause,
+        )
+    )
+    return {"invocations": rows}
 
-    return wait_for(find_snapshot, timeout=timeout, label=f"{bot_name} completed runtime invocations")
+
+def wait_for_invocations(conversation_id: str, bot_name: str, count: int, *, statuses: set[str] | None = None, require_external_run: bool = False, timeout: int = 180, label: str | None = None):
+    def find_snapshot():
+        snapshot = invocation_snapshot(conversation_id, bot_name, statuses)
+        matches = snapshot.get("invocations", [])
+        if require_external_run:
+            matches = [i for i in matches if i.get("externalRunId")]
+        return snapshot if len(matches) >= count else None
+
+    return wait_for(find_snapshot, timeout=timeout, label=label or f"{bot_name} invocations")
+
+
+def wait_for_completed_invocations(conversation_id: str, bot_name: str, count: int, *, timeout: int = 180):
+    return wait_for_invocations(
+        conversation_id,
+        bot_name,
+        count,
+        statuses={"completed"},
+        require_external_run=True,
+        timeout=timeout,
+        label=f"{bot_name} completed invocations",
+    )
 
 
 def main():
@@ -372,12 +448,12 @@ def main():
         status, sent = http_json("POST", f"{base}/messages/{channel_id}", {"content": "@Koda E2E answer this channel smoke test"}, token)
         assert status == 200, (status, sent)
         koda_channel = wait_for_bot_message(base, token, channel_id, "Koda E2E")
-        koda_channel_runtime = wait_for_completed_runtime_invocations(base, token, channel_id, "Koda E2E", 1)
+        koda_channel_runtime = wait_for_completed_invocations(channel_id, "Koda E2E", 1)
 
         status, sent = http_json("POST", f"{base}/messages/{channel_id}", {"content": "@Nova E2E answer this second channel smoke test"}, token)
         assert status == 200, (status, sent)
         nova_channel = wait_for_bot_message(base, token, channel_id, "Nova E2E")
-        nova_channel_runtime = wait_for_completed_runtime_invocations(base, token, channel_id, "Nova E2E", 1)
+        nova_channel_runtime = wait_for_completed_invocations(channel_id, "Nova E2E", 1)
 
         status, dm = http_json(
             "POST",
@@ -390,20 +466,28 @@ def main():
 
         status, sent = http_json("POST", f"{base}/messages/{dm_id}", {"content": "Answer this direct message smoke test without an at mention"}, token)
         assert status == 200, (status, sent)
-        koda_dm_runtime_started = wait_for_runtime_invocations(base, token, dm_id, "Koda E2E", 1)
+        koda_dm_runtime_started = wait_for_invocations(dm_id, "Koda E2E", 1, statuses={"queued", "running", "completed"})
         koda_dm = wait_for_bot_message(base, token, dm_id, "Koda E2E")
-        koda_dm_runtime = wait_for_runtime_invocations(base, token, dm_id, "Koda E2E", 1)
-        koda_sessions = [s for s in koda_dm_runtime.get("sessions", []) if s.get("botName") == "Koda E2E"]
-        assert len(koda_sessions) == 1, koda_dm_runtime
-        assert f"conversation:{dm_id}" in (koda_sessions[0].get("externalSessionId") or ""), koda_sessions
-        assert any(i.get("status") == "completed" and i.get("externalRunId") for i in koda_dm_runtime.get("invocations", [])), koda_dm_runtime
+        koda_dm_runtime = wait_for_completed_invocations(dm_id, "Koda E2E", 1)
+        koda_completed = [i for i in koda_dm_runtime.get("invocations", []) if i.get("status") == "completed"]
+        assert any(i.get("externalRunId") for i in koda_completed), koda_dm_runtime
+        koda_session = (koda_completed[0].get("hermesSession") or {})
+        assert koda_session.get("sessionId"), koda_dm_runtime
+        assert "thechat:dm" in (koda_session.get("sessionKey") or ""), koda_session
+        assert dm_id in (koda_session.get("sessionKey") or ""), koda_session
 
         status, sent = http_json("POST", f"{base}/messages/{dm_id}", {"content": "Answer this follow-up using the same session"}, token)
         assert status == 200, (status, sent)
-        wait_for_runtime_invocations(base, token, dm_id, "Koda E2E", 2)
-        koda_dm_runtime_followup = wait_for_completed_runtime_invocations(base, token, dm_id, "Koda E2E", 2)
+        wait_for_invocations(dm_id, "Koda E2E", 2, statuses={"queued", "running", "completed"})
+        koda_dm_runtime_followup = wait_for_completed_invocations(dm_id, "Koda E2E", 2)
         koda_completed = [i for i in koda_dm_runtime_followup.get("invocations", []) if i.get("botName") == "Koda E2E" and i.get("status") == "completed"]
         assert len(koda_completed) >= 2, koda_dm_runtime_followup
+        koda_session_ids = {
+            (i.get("hermesSession") or {}).get("sessionId")
+            for i in koda_completed
+            if (i.get("hermesSession") or {}).get("sessionId")
+        }
+        assert len(koda_session_ids) == 1, koda_dm_runtime_followup
 
         time.sleep(3)
         status, dm_messages = http_json("GET", f"{base}/messages/{dm_id}", token=token)
@@ -422,7 +506,7 @@ def main():
         status, sent = http_json("POST", f"{base}/messages/{nova_dm['id']}", {"content": "Answer this Nova direct message smoke test"}, token)
         assert status == 200, (status, sent)
         nova_dm_message = wait_for_bot_message(base, token, nova_dm["id"], "Nova E2E")
-        nova_dm_runtime = wait_for_completed_runtime_invocations(base, token, nova_dm["id"], "Nova E2E", 1)
+        nova_dm_runtime = wait_for_completed_invocations(nova_dm["id"], "Nova E2E", 1)
         status, nova_dm_messages = http_json("GET", f"{base}/messages/{nova_dm['id']}", token=token)
         assert status == 200, (status, nova_dm_messages)
         assert any(m.get("senderName") == "Nova E2E" for m in nova_dm_messages), nova_dm_messages

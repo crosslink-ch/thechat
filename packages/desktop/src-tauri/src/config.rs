@@ -117,6 +117,14 @@ pub fn config_file_path(base: &Path) -> PathBuf {
     base.join("config.json")
 }
 
+fn effective_config_dir(base: &Path) -> PathBuf {
+    if let Ok(dir) = std::env::var("THECHAT_DATA_DIR") {
+        PathBuf::from(dir)
+    } else {
+        base.to_path_buf()
+    }
+}
+
 /// Resolve the config path: in dev mode, use `config.json` at the monorepo
 /// root (derived from `CARGO_MANIFEST_DIR` at compile time); otherwise fall
 /// back to the provided base config directory.
@@ -125,8 +133,9 @@ pub fn config_file_path(base: &Path) -> PathBuf {
 /// dev-mode lookup so the test never accidentally reads or writes a
 /// developer's local `config.json`.
 pub fn resolve_config_path(base: &Path) -> PathBuf {
+    let effective_base = effective_config_dir(base);
     if std::env::var_os("THECHAT_DATA_DIR").is_some() {
-        return config_file_path(base);
+        return config_file_path(&effective_base);
     }
     if cfg!(debug_assertions) {
         // CARGO_MANIFEST_DIR = packages/desktop/src-tauri → repo root is 3 levels up
@@ -134,7 +143,7 @@ pub fn resolve_config_path(base: &Path) -> PathBuf {
             .join("../../..");
         return repo_root.join("config.json");
     }
-    config_file_path(base)
+    config_file_path(&effective_base)
 }
 
 fn default_config(backend_url: &str) -> AppConfig {
@@ -180,7 +189,7 @@ fn default_config(backend_url: &str) -> AppConfig {
 }
 
 fn create_default_config(base: &Path) -> Result<AppConfig, String> {
-    let config_path = config_file_path(base);
+    let config_path = resolve_config_path(base);
 
     if let Some(parent) = config_path.parent() {
         fs::create_dir_all(parent)
@@ -394,7 +403,7 @@ mod tests {
         let mut config = default_config(DEFAULT_BACKEND_URL);
         config.api_key = "sk-saved".to_string();
         config.provider = Some("codex".to_string());
-        config.providers.codex.model = "gpt-5.3-codex".to_string();
+        config.providers.codex.model = "gpt-5.5".to_string();
 
         let json = serde_json::to_string_pretty(&config).unwrap();
         std::fs::write(&path, &json).unwrap();
@@ -402,7 +411,7 @@ mod tests {
         let content = std::fs::read_to_string(&path).unwrap();
         let loaded: AppConfig = serde_json::from_str(&content).unwrap();
         assert_eq!(loaded.api_key, "sk-saved");
-        assert_eq!(loaded.providers.codex.model, "gpt-5.3-codex");
+        assert_eq!(loaded.providers.codex.model, "gpt-5.5");
         assert_eq!(loaded.provider.as_deref(), Some("codex"));
 
         std::fs::remove_dir_all(dir).ok();
