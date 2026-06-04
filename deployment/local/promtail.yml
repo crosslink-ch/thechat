@@ -17,7 +17,7 @@ scrape_configs:
           job: thechat-api
           service_name: thechat-api
           process: api
-          __path__: /var/log/thechat/*api*.log
+          __path__: /var/log/thechat/**/*api*.log
     pipeline_stages:
       - json:
           drop_malformed: false
@@ -46,7 +46,7 @@ scrape_configs:
           job: thechat-hermes-gateway
           service_name: thechat-hermes
           process: hermes-gateway
-          __path__: /var/log/thechat/*hermes*gateway*.log
+          __path__: /var/log/thechat/**/*hermes*gateway*.log
     pipeline_stages:
       - json:
           drop_malformed: false
@@ -75,7 +75,7 @@ scrape_configs:
           job: thechat-desktop
           service_name: thechat-desktop
           process: desktop
-          __path__: /var/log/thechat/*desktop*.log
+          __path__: /var/log/thechat/**/*desktop*.log
     pipeline_stages:
       - json:
           drop_malformed: false

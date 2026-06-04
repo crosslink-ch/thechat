@@ -104,6 +104,104 @@ fn init_tracing() {
     tracing::subscriber::set_global_default(registry).expect("failed to set tracing subscriber");
 }
 
+/// Directory watched by the local Promtail/Grafana dev stack (see compose.yml).
+///
+/// Honors `THECHAT_DEV_LOGS_DIR` when set. Dev builds fall back to the repo's
+/// `.tmp/dev` directory — the same default as `scripts/dev.py` — so desktop
+/// logs show up in local Grafana without extra configuration. Release builds
+/// return `None` unless the env var is set explicitly.
+fn dev_logs_dir() -> Option<std::path::PathBuf> {
+    if let Ok(dir) = std::env::var("THECHAT_DEV_LOGS_DIR") {
+        let dir = dir.trim();
+        if !dir.is_empty() {
+            return Some(std::path::PathBuf::from(dir));
+        }
+    }
+    if cfg!(debug_assertions) {
+        return Some(
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../.tmp/dev"),
+        );
+    }
+    None
+}
+
+/// Format a log record as the single-line JSON shape the local Promtail
+/// pipeline expects: `level` as a lowercase string, `time` in unix
+/// milliseconds, message in `msg` (see deployment/local/promtail.yml).
+fn dev_log_json_line(time_ms: u128, level: log::Level, target: &str, message: &str) -> String {
+    serde_json::json!({
+        "time": time_ms as u64,
+        "level": level.as_str().to_lowercase(),
+        "target": target,
+        "msg": message,
+    })
+    .to_string()
+}
+
+/// Replica of tauri-plugin-log's default human-readable format. Formats are
+/// applied per-target (the root dispatch is a passthrough) because the
+/// dev-logs target uses JSON while stdout and the platform log dir keep this
+/// shape.
+fn human_log_target(kind: tauri_plugin_log::TargetKind) -> tauri_plugin_log::Target {
+    tauri_plugin_log::Target::new(kind).format(|out, message, record| {
+        out.finish(format_args!(
+            "{}[{}][{}] {}",
+            chrono::Utc::now().format("[%Y-%m-%d][%H:%M:%S]"),
+            record.target(),
+            record.level(),
+            message
+        ));
+    })
+}
+
+/// Log target that mirrors records as Promtail-compatible JSON into
+/// `<dir>/desktop.log` so the desktop app shows up in local Grafana.
+fn dev_log_target(dir: std::path::PathBuf) -> tauri_plugin_log::Target {
+    tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Folder {
+        path: dir,
+        file_name: Some("desktop".into()),
+    })
+    .format(|out, message, record| {
+        let time_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0);
+        out.finish(format_args!(
+            "{}",
+            dev_log_json_line(
+                time_ms,
+                record.level(),
+                record.target(),
+                &message.to_string()
+            )
+        ));
+    })
+}
+
+/// The configured tauri-plugin-log builder used by `run()`. Public so the
+/// integration test can exercise the exact logging pipeline.
+#[doc(hidden)]
+pub fn log_plugin_builder() -> tauri_plugin_log::Builder {
+    // The root dispatch is a passthrough and each target formats itself —
+    // fern applies the root format before per-target formats, so a formatted
+    // root would feed already-formatted lines into the JSON target below.
+    let mut log_builder = tauri_plugin_log::Builder::new()
+        .level(log_level_from_env())
+        .format(|out, message, _record| out.finish(format_args!("{message}")))
+        .targets([
+            human_log_target(tauri_plugin_log::TargetKind::Stdout),
+            human_log_target(tauri_plugin_log::TargetKind::LogDir { file_name: None }),
+        ]);
+    if let Some(dir) = dev_logs_dir() {
+        // Mirror logs as JSON into the Promtail-watched dev logs dir so the
+        // desktop app shows up in local Grafana (job=thechat-desktop).
+        log_builder = log_builder
+            .max_file_size(10 * 1024 * 1024)
+            .target(dev_log_target(dir));
+    }
+    log_builder
+}
+
 type DbState = Arc<Database>;
 
 pub struct InitialProjectDir(pub Option<String>);
@@ -322,11 +420,7 @@ pub fn run() {
     tracing::info!("app started");
 
     tauri::Builder::default()
-        .plugin(
-            tauri_plugin_log::Builder::new()
-                .level(log_level_from_env())
-                .build(),
-        )
+        .plugin(log_plugin_builder().build())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_dialog::init())
@@ -427,6 +521,25 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dev_log_json_line_is_promtail_compatible() {
+        let line = dev_log_json_line(
+            1_717_000_000_123,
+            log::Level::Warn,
+            "webview",
+            "boom \"quoted\"\nsecond line",
+        );
+
+        // Must stay a single line so Promtail treats it as one entry.
+        assert!(!line.contains('\n'));
+
+        let parsed: serde_json::Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(parsed["time"], 1_717_000_000_123u64);
+        assert_eq!(parsed["level"], "warn");
+        assert_eq!(parsed["target"], "webview");
+        assert_eq!(parsed["msg"], "boom \"quoted\"\nsecond line");
+    }
 
     #[test]
     fn app_builds_with_mock_runtime() {

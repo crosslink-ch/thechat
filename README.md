@@ -140,11 +140,13 @@ GRAFANA_PORT=23300 OTEL_GRPC_PORT=24317 OTEL_HTTP_PORT=24318 docker compose up -
 
 The `TheChat Dev` Grafana folder is provisioned from `deployment/local/grafana/dashboards`. It includes dashboards for local logs and OpenTelemetry span metrics/traces.
 
-Promtail reads local log files from `.tmp` by default. `pnpm dev:hermes` writes API, Hermes gateway, and desktop logs there. To use another directory:
+Promtail reads local log files from `.tmp` by default (`pnpm dev:services` mounts `.tmp/dev` instead and writes API and worker logs there; `pnpm dev:hermes` writes API, Hermes gateway, and desktop logs to `.tmp`). Files are matched recursively, so either mount works. To use another directory:
 
 ```bash
 THECHAT_DEV_LOGS_DIR=/path/to/logs docker compose up -d promtail
 ```
+
+Dev builds of the desktop app (`pnpm tauri:dev`) also mirror their logs — including webview logs from the frontend — as JSON to `$THECHAT_DEV_LOGS_DIR/desktop.log` (default `.tmp/dev/desktop.log`), so they appear in the `TheChat Dev Logs` dashboard under `job=thechat-desktop` without extra setup. Rust-side `tracing` events are not included; use `THECHAT_TRACING` (stderr) or the `otel` feature for those.
 
 For Rust/Tauri traces, point the OTLP exporter at the local LGTM HTTP endpoint and run the app with the `otel` feature:
 
