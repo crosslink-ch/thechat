@@ -1,0 +1,1 @@
+ALTER TABLE "bots" ADD COLUMN "commands_json" jsonb;

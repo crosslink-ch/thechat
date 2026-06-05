@@ -16,6 +16,7 @@ import {
   regenerateBotKey,
   regenerateBotSecret,
   updateAuthenticatedBotWebhook,
+  updateAuthenticatedBotCommands,
 } from "../services/bots";
 import { ensureHermesBotConfig } from "../services/hermes";
 
@@ -33,6 +34,29 @@ const updateSchema = z.object({
 
 const registerWebhookSchema = z.object({
   url: z.string().url(),
+});
+
+const commandNameSchema = z
+  .string()
+  .trim()
+  .toLowerCase()
+  .regex(
+    /^[a-z0-9][a-z0-9_-]{0,31}$/,
+    "Command names must be 1-32 chars: lowercase letters, digits, '_' or '-'",
+  );
+
+const registerCommandsSchema = z.object({
+  commands: z
+    .array(
+      z.object({
+        command: commandNameSchema,
+        description: z.string().trim().min(1).max(256),
+        argsHint: z.string().trim().max(128).nullish(),
+        category: z.string().trim().max(64).nullish(),
+        aliases: z.array(commandNameSchema).max(8).optional(),
+      }),
+    )
+    .max(200),
 });
 
 const addToWorkspaceSchema = z.object({
@@ -140,6 +164,42 @@ export const botRoutes = new Elysia({ prefix: "/bots" })
 
     try {
       return await updateAuthenticatedBotWebhook(user.id, null);
+    } catch (e: any) {
+      set.status = e instanceof ServiceError ? e.status : 500;
+      return { error: e.message ?? "Unknown error" };
+    }
+  })
+
+  // Replace authenticated bot's slash command list (bot-token only, Telegram setMyCommands-style)
+  .post("/me/commands", async ({ body, user, set }) => {
+    if (user.type !== "bot") {
+      set.status = 403;
+      return { error: "Only bots can register their own commands" };
+    }
+
+    const parsed = registerCommandsSchema.safeParse(body);
+    if (!parsed.success) {
+      set.status = 400;
+      return { error: parsed.error.issues[0]?.message ?? "Invalid input" };
+    }
+
+    try {
+      return await updateAuthenticatedBotCommands(user.id, parsed.data.commands);
+    } catch (e: any) {
+      set.status = e instanceof ServiceError ? e.status : 500;
+      return { error: e.message ?? "Unknown error" };
+    }
+  })
+
+  // Clear authenticated bot's slash command list (bot-token only)
+  .delete("/me/commands", async ({ user, set }) => {
+    if (user.type !== "bot") {
+      set.status = 403;
+      return { error: "Only bots can clear their own commands" };
+    }
+
+    try {
+      return await updateAuthenticatedBotCommands(user.id, null);
     } catch (e: any) {
       set.status = e instanceof ServiceError ? e.status : 500;
       return { error: e.message ?? "Unknown error" };

@@ -238,7 +238,7 @@ export interface ConversationParticipantPublic {
   role: WorkspaceMemberRole;
   joinedAt: string;
   user: AuthUser;
-  bot?: { id: string; kind: BotKind } | null;
+  bot?: { id: string; kind: BotKind; commands?: BotCommandPublic[] | null } | null;
 }
 
 export interface ConversationDetail {
@@ -280,6 +280,23 @@ export type WsClientEvent =
 // -- Bot Types --
 
 export type BotKind = "webhook" | "hermes";
+
+/**
+ * A slash command registered by a bot (Telegram setMyCommands-style).
+ * Bots replace their full command list via `POST /bots/me/commands`;
+ * clients use it to render command menus.
+ */
+export interface BotCommandPublic {
+  /** Canonical command name without the leading slash, e.g. "new". */
+  command: string;
+  description: string;
+  /** Argument placeholder, e.g. "<prompt>" (required) or "[name]" (optional). */
+  argsHint?: string | null;
+  /** Grouping label, e.g. "Session" or "Configuration". */
+  category?: string | null;
+  /** Alternative names without the leading slash, e.g. ["reset"]. */
+  aliases?: string[];
+}
 
 export interface Bot {
   id: string;

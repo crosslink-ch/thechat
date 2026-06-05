@@ -911,6 +911,110 @@ describe("Bots: Update bot", () => {
     }
   });
 
+  test("bot can register, expose, and clear its slash commands", async () => {
+    const human = await registerUser("BotCommandsOwner");
+    const { workspaceId } = await createWorkspaceWithGeneralChannel(
+      human.token,
+      "Bot Commands Registration",
+    );
+    const botRes = await createBot(human.token, "CommandsBot", undefined, {
+      kind: "hermes",
+      workspaceId,
+    });
+    expect(botRes.status).toBe(200);
+
+    const humanRegisterRes = await req(
+      "POST",
+      "/bots/me/commands",
+      { commands: [{ command: "help", description: "Show help" }] },
+      human.token,
+    );
+    expect(humanRegisterRes.status).toBe(403);
+
+    const invalidRes = await req(
+      "POST",
+      "/bots/me/commands",
+      { commands: [{ command: "Bad Name!", description: "nope" }] },
+      botRes.body.apiKey,
+    );
+    expect(invalidRes.status).toBe(400);
+
+    const registerRes = await req(
+      "POST",
+      "/bots/me/commands",
+      {
+        commands: [
+          {
+            command: "new",
+            description: "Start a new session",
+            argsHint: "[name]",
+            category: "Session",
+            aliases: ["reset"],
+          },
+          { command: "queue", description: "Queue a prompt", argsHint: "<prompt>" },
+          // Duplicate of canonical name above — dropped by normalization.
+          { command: "new", description: "Duplicate entry" },
+          // Alias colliding with an existing name — alias dropped.
+          { command: "status", description: "Show session info", aliases: ["queue"] },
+        ],
+      },
+      botRes.body.apiKey,
+    );
+    expect(registerRes.status).toBe(200);
+    expect(registerRes.body.commands).toEqual([
+      {
+        command: "new",
+        description: "Start a new session",
+        argsHint: "[name]",
+        category: "Session",
+        aliases: ["reset"],
+      },
+      { command: "queue", description: "Queue a prompt", argsHint: "<prompt>", category: null },
+      { command: "status", description: "Show session info", argsHint: null, category: null },
+    ]);
+
+    const dmRes = await req(
+      "POST",
+      "/conversations/dm",
+      { workspaceId, otherUserId: botRes.body.userId },
+      human.token,
+    );
+    expect(dmRes.status).toBe(200);
+
+    const detailRes = await req(
+      "GET",
+      `/conversations/detail/${dmRes.body.id}`,
+      undefined,
+      human.token,
+    );
+    expect(detailRes.status).toBe(200);
+    const botParticipant = detailRes.body.participants.find(
+      (participant: any) => participant.bot?.id === botRes.body.id,
+    );
+    expect(botParticipant.bot.kind).toBe("hermes");
+    expect(botParticipant.bot.commands.map((c: any) => c.command)).toEqual([
+      "new",
+      "queue",
+      "status",
+    ]);
+
+    const clearRes = await req("DELETE", "/bots/me/commands", undefined, botRes.body.apiKey);
+    expect(clearRes.status).toBe(200);
+    expect(clearRes.body.commands).toBeNull();
+
+    const clearedDetailRes = await req(
+      "GET",
+      `/conversations/detail/${dmRes.body.id}`,
+      undefined,
+      human.token,
+    );
+    expect(clearedDetailRes.status).toBe(200);
+    const clearedParticipant = clearedDetailRes.body.participants.find(
+      (participant: any) => participant.bot?.id === botRes.body.id,
+    );
+    expect(clearedParticipant.bot.commands).toBeNull();
+  });
+
   test("non-owner cannot update bot → 403", async () => {
     const owner = await registerUser("UpdBotOwner");
     const stranger = await registerUser("UpdStranger");

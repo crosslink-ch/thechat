@@ -359,6 +359,7 @@ export async function getConversationDetail(conversationId: string, userId: stri
       userType: users.type,
       botId: bots.id,
       botKind: bots.kind,
+      botCommands: bots.commandsJson,
     })
     .from(conversationParticipants)
     .innerJoin(users, eq(conversationParticipants.userId, users.id))
@@ -382,7 +383,9 @@ export async function getConversationDetail(conversationId: string, userId: stri
         avatar: p.userAvatar,
         type: p.userType,
       },
-      bot: p.botId ? { id: p.botId, kind: p.botKind! } : null,
+      bot: p.botId
+        ? { id: p.botId, kind: p.botKind!, commands: p.botCommands ?? null }
+        : null,
     })),
   };
 }
