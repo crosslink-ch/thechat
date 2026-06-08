@@ -21,6 +21,7 @@ import type {
 
 export const AGENT_MESSAGE_PAGE_SIZE = 20;
 export const AGENT_MESSAGE_WINDOW_SIZE = 120;
+export const AGENT_MESSAGE_WINDOW_TRIM_THRESHOLD = 160;
 const AGENT_CONTEXT_MESSAGE_LIMIT = 50;
 
 export interface ChatError {
@@ -216,13 +217,14 @@ export function useChat(options?: UseChatOptions) {
     }
   }, [conversation, hasOlderMessages, loadingOlderMessages]);
 
-  const trimToRecentMessages = useCallback(() => {
-    if (messagesRef.current.length > AGENT_MESSAGE_WINDOW_SIZE) {
-      setHasOlderMessages(true);
-    }
+  const appendVisibleMessage = useCallback((msg: Message) => {
     setMessages((prev) => {
-      if (prev.length <= AGENT_MESSAGE_WINDOW_SIZE) return prev;
-      return prev.slice(-AGENT_MESSAGE_WINDOW_SIZE);
+      const next = appendMessage(prev, msg);
+      if (next === prev || next.length <= AGENT_MESSAGE_WINDOW_TRIM_THRESHOLD) {
+        return next;
+      }
+      setHasOlderMessages(true);
+      return next.slice(-AGENT_MESSAGE_WINDOW_SIZE);
     });
   }, []);
 
@@ -309,7 +311,7 @@ export function useChat(options?: UseChatOptions) {
           reasoningContent: null,
         });
         const userMsg = dbMessageToMessage(userDbMsg);
-        setMessages((prev) => appendMessage(prev, userMsg));
+        appendVisibleMessage(userMsg);
 
         // Build API messages from current messages + new user message
         const apiMessages: Array<Record<string, unknown>> = [];
@@ -392,7 +394,7 @@ export function useChat(options?: UseChatOptions) {
                 }).then((dbMsg) => {
                   const msg = dbMessageToMessage(dbMsg);
                   if (activeConvIdRef.current === streamConvId) {
-                    setMessages((prev) => appendMessage(prev, msg));
+                    appendVisibleMessage(msg);
                   }
                 });
                 // Remove from queued messages UI state
@@ -491,7 +493,7 @@ export function useChat(options?: UseChatOptions) {
           const savedMsg = dbMessageToMessage(savedDb);
           // Only update UI state if still viewing this conversation
           if (activeConvIdRef.current === streamConvId) {
-            setMessages((prev) => appendMessage(prev, savedMsg));
+            appendVisibleMessage(savedMsg);
           }
         }
 
@@ -529,7 +531,7 @@ export function useChat(options?: UseChatOptions) {
         }
       }
     },
-    [conversation, options?.params, options?.tools, options?.getTools],
+    [appendVisibleMessage, conversation, options?.params, options?.tools, options?.getTools],
   );
   sendMessageRef.current = sendMessage;
 
@@ -555,7 +557,6 @@ export function useChat(options?: UseChatOptions) {
     stopStreaming,
     loadConversation,
     loadOlderMessages,
-    trimToRecentMessages,
     startNewConversation,
   };
 }

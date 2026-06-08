@@ -382,7 +382,6 @@ export function DmRoute() {
             onSend={handleSend}
             onStop={handleStopHermesTask}
             onLoadOlderMessages={channelChat.loadOlderMessages}
-            onTrimToRecentMessages={channelChat.trimToRecentMessages}
             mentions={mentions}
             scrollKey={`${conversationId}:${activeThreadId ?? "general"}`}
             taskActive={taskActive}
@@ -402,7 +401,6 @@ export function DmRoute() {
             typingUsers={typingUsers}
             onSend={handleSend}
             onLoadOlderMessages={channelChat.loadOlderMessages}
-            onTrimToRecentMessages={channelChat.trimToRecentMessages}
             mentions={mentions}
             scrollKey={conversationId}
           />

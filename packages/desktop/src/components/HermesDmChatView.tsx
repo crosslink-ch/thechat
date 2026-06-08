@@ -9,7 +9,6 @@ import { HermesProgressInline } from "./HermesProgressInline";
 import type { HermesSlashCommand } from "../lib/hermes-slash-commands";
 
 const TOP_LOAD_THRESHOLD_PX = 80;
-const DEFAULT_MESSAGE_WINDOW_SIZE = 120;
 
 interface HermesDmChatViewProps {
   messages: ChatMessage[];
@@ -22,13 +21,11 @@ interface HermesDmChatViewProps {
   onSend: (content: string) => void;
   onStop?: () => void;
   onLoadOlderMessages?: () => boolean | void | Promise<boolean | void>;
-  onTrimToRecentMessages?: () => void;
   mentions?: MentionUser[];
   scrollKey?: string | null;
   taskActive?: boolean;
   queuedCount?: number;
   slashCommands?: HermesSlashCommand[];
-  messageWindowSize?: number;
 }
 
 function formatTime(iso: string) {
@@ -47,67 +44,57 @@ export function HermesDmChatView({
   onSend,
   onStop,
   onLoadOlderMessages,
-  onTrimToRecentMessages,
   mentions,
   scrollKey,
   taskActive = false,
   queuedCount = 0,
   slashCommands,
-  messageWindowSize = DEFAULT_MESSAGE_WINDOW_SIZE,
 }: HermesDmChatViewProps) {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const { isAtBottom, scrollToBottom } = useAutoScroll(scrollContainerRef);
   const forceNextContentScrollRef = useRef(false);
   const skipNextContentScrollRef = useRef(false);
   const initializedScrollKeyRef = useRef<string | null>(null);
+  const progressScrollFrameRef = useRef<number | null>(null);
   const loadingOlderRef = useRef(false);
   const prependScrollSnapshotRef = useRef<{
     scrollHeight: number;
     scrollTop: number;
   } | null>(null);
 
-  const progressBotUserIds = new Set([
-    ...progressInvocations.map(({ invocation }) => invocation.botUserId),
-    ...typingSuppressedUserIds,
-  ]);
-  const visibleTypingNames = Array.from(typingUsers.entries())
-    .filter(([userId]) => !progressBotUserIds.has(userId))
-    .map(([, userName]) => userName)
-    .filter(Boolean);
+  const visibleTypingNames = useMemo(() => {
+    const progressBotUserIds = new Set([
+      ...progressInvocations.map(({ invocation }) => invocation.botUserId),
+      ...typingSuppressedUserIds,
+    ]);
+    return Array.from(typingUsers.entries())
+      .filter(([userId]) => !progressBotUserIds.has(userId))
+      .map(([, userName]) => userName)
+      .filter(Boolean);
+  }, [progressInvocations, typingSuppressedUserIds, typingUsers]);
   const hasLiveActivity =
     progressInvocations.length > 0 || visibleTypingNames.length > 0;
 
   const messageScrollSignature = useMemo(
-    () =>
-      messages
-        .map((message) => `${message.id}:${message.createdAt}:${message.content.length}`)
-        .join("|"),
+    () => chatMessageWindowSignature(messages),
     [messages],
   );
   const progressScrollSignature = useMemo(
     () =>
       [
-        ...progressInvocations.map((invocation) =>
-          [
+        ...progressInvocations.map((invocation) => {
+          const lastEvent = invocation.events[invocation.events.length - 1];
+          return [
             invocation.invocation.id,
             invocation.invocation.status,
             invocation.invocation.updatedAt,
             invocation.invocation.threadId ?? "",
-          ].join(":"),
-        ),
-        ...progressInvocations.flatMap(({ events }) =>
-          events.map((event) =>
-            [
-              event.id,
-              event.invocationId,
-              event.sequence,
-              event.status ?? "",
-              event.label ?? "",
-              event.preview ?? "",
-              event.occurredAt,
-            ].join(":"),
-          ),
-        ),
+            invocation.events.length,
+            lastEvent?.id ?? "",
+            lastEvent?.sequence ?? "",
+            lastEvent?.occurredAt ?? "",
+          ].join(":");
+        }),
         ...typingSuppressedUserIds,
       ].join("|"),
     [progressInvocations, typingSuppressedUserIds],
@@ -175,12 +162,6 @@ export function HermesDmChatView({
   }, [loadingOlder, messageScrollSignature]);
 
   useEffect(() => {
-    if (isAtBottom && messages.length > messageWindowSize) {
-      onTrimToRecentMessages?.();
-    }
-  }, [isAtBottom, messageWindowSize, messages.length, onTrimToRecentMessages]);
-
-  useEffect(() => {
     if (loading || initializedScrollKeyRef.current === scrollScopeKey) return;
     initializedScrollKeyRef.current = scrollScopeKey;
     scrollToBottom({ force: true });
@@ -200,7 +181,20 @@ export function HermesDmChatView({
   }, [messageScrollSignature, scrollToBottom]);
 
   useEffect(() => {
-    scrollToBottom();
+    if (progressScrollFrameRef.current !== null) {
+      cancelAnimationFrame(progressScrollFrameRef.current);
+    }
+    progressScrollFrameRef.current = requestAnimationFrame(() => {
+      progressScrollFrameRef.current = null;
+      scrollToBottom();
+    });
+
+    return () => {
+      if (progressScrollFrameRef.current !== null) {
+        cancelAnimationFrame(progressScrollFrameRef.current);
+        progressScrollFrameRef.current = null;
+      }
+    };
   }, [progressScrollSignature, scrollToBottom]);
 
   useEffect(() => {
@@ -286,4 +280,18 @@ export function HermesDmChatView({
       />
     </>
   );
+}
+
+function chatMessageWindowSignature(messages: ChatMessage[]) {
+  const firstMessage = messages[0];
+  const lastMessage = messages[messages.length - 1];
+  return [
+    messages.length,
+    firstMessage?.id ?? "",
+    firstMessage?.createdAt ?? "",
+    firstMessage?.content.length ?? 0,
+    lastMessage?.id ?? "",
+    lastMessage?.createdAt ?? "",
+    lastMessage?.content.length ?? 0,
+  ].join(":");
 }
