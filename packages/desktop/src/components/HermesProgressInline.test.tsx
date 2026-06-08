@@ -211,6 +211,46 @@ describe("HermesProgressInline", () => {
     expect(screen.getByText("error")).toBeInTheDocument();
     expect(screen.getByText("Compression provider failed")).toBeInTheDocument();
   });
+
+  it("shows emitted tool names next to bare progress labels", () => {
+    render(
+      <HermesProgressInline
+        invocations={[
+          {
+            invocation: invocation(),
+            events: [
+              progressEvent({
+                id: "skill-view",
+                type: "tool.started",
+                status: "running",
+                toolCallId: "call-skill",
+                toolName: "skill_view",
+                label: "html-math-study-notes",
+                preview: "html-math-study-notes",
+                payload: {
+                  args: { name: "html-math-study-notes" },
+                },
+              }),
+              progressEvent({
+                id: "custom-tool",
+                type: "tool.started",
+                status: "running",
+                toolCallId: "call-custom",
+                toolName: "custom_tool",
+                label: "external context",
+                preview: "external context",
+              }),
+            ],
+          },
+        ]}
+      />,
+    );
+
+    expect(screen.getByText("skill_view")).toBeInTheDocument();
+    expect(screen.getByText("html-math-study-notes")).toBeInTheDocument();
+    expect(screen.getByText("custom_tool")).toBeInTheDocument();
+    expect(screen.getByText("external context")).toBeInTheDocument();
+  });
 });
 
 function invocation(
