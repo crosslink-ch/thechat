@@ -199,6 +199,14 @@ function ToolEventRow({ event }: { event: BotInvocationProgressEventPublic }) {
   return (
     <div className="flex min-w-0 items-center gap-2 text-[0.786rem] text-text-muted">
       <StatusDot status={status} />
+      {event.toolName && (
+        <span
+          className="max-w-[10rem] shrink-0 truncate rounded border border-border bg-base px-1.5 py-0.5 font-mono text-[0.714rem] text-text-dimmed"
+          title={event.toolName}
+        >
+          {event.toolName}
+        </span>
+      )}
       <span className="min-w-0 flex-1 truncate">{eventLabel(event)}</span>
       {duration !== null && (
         <span className="shrink-0 tabular-nums text-text-dimmed">
