@@ -113,26 +113,6 @@ describe("ChannelChatView", () => {
     });
   });
 
-  it("trims to the recent message window while the user is at the bottom", async () => {
-    const onTrimToRecentMessages = vi.fn();
-    render(
-      <ChannelChatView
-        messages={[
-          message({ id: "message-1", content: "first" }),
-          message({ id: "message-2", content: "second" }),
-        ]}
-        loading={false}
-        typingUsers={new Map()}
-        onSend={() => {}}
-        onTrimToRecentMessages={onTrimToRecentMessages}
-        messageWindowSize={1}
-      />,
-    );
-
-    await waitFor(() => {
-      expect(onTrimToRecentMessages).toHaveBeenCalledTimes(1);
-    });
-  });
 });
 
 function makeScrollable(element: HTMLElement) {

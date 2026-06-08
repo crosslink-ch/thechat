@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useMemo, useCallback, useLayoutEffect } from "react";
 import { useNavigate, useMatches, useRouterState } from "@tanstack/react-router";
 import { invoke } from "@tauri-apps/api/core";
-import { AGENT_MESSAGE_WINDOW_SIZE, useChat } from "../hooks/useChat";
+import { useChat } from "../hooks/useChat";
 import { openCodexAuthModal } from "../components/CodexAuthModal";
 import { useIsStreaming, subscribeToStream } from "../stores/streaming";
 import { useAutoScroll } from "../hooks/useAutoScroll";
@@ -19,7 +19,7 @@ import { useQuestionStore } from "../core/question";
 import { useTodoStore, EMPTY_TODOS } from "../core/todo";
 import { buildSystemPrompt, type ProjectInfo } from "../core/system-prompt";
 import { fireNotification } from "../lib/notifications";
-import type { Conversation } from "../core/types";
+import type { Conversation, Message } from "../core/types";
 
 const TOP_LOAD_THRESHOLD_PX = 80;
 
@@ -60,7 +60,6 @@ export function AgentChatRoute() {
     stopStreaming,
     loadConversation,
     loadOlderMessages,
-    trimToRecentMessages,
     startNewConversation,
   } = useChat({
     getTools,
@@ -97,10 +96,7 @@ export function AgentChatRoute() {
     scrollTop: number;
   } | null>(null);
   const messageScrollSignature = useMemo(
-    () =>
-      messages
-        .map((message) => `${message.id}:${message.created_at}:${message.parts.length}`)
-        .join("|"),
+    () => agentMessageWindowSignature(messages),
     [messages],
   );
 
@@ -163,12 +159,6 @@ export function AgentChatRoute() {
     el.scrollTop = snapshot.scrollTop + heightDelta;
     prependScrollSnapshotRef.current = null;
   }, [loadingOlderMessages, messageScrollSignature]);
-
-  useEffect(() => {
-    if (isAtBottom && messages.length > AGENT_MESSAGE_WINDOW_SIZE) {
-      trimToRecentMessages();
-    }
-  }, [isAtBottom, messages.length, trimToRecentMessages]);
 
   // Load conversation from route param
   const loadedIdRef = useRef<string | null>(null);
@@ -445,4 +435,18 @@ export function AgentChatRoute() {
       />
     </>
   );
+}
+
+function agentMessageWindowSignature(messages: Message[]) {
+  const firstMessage = messages[0];
+  const lastMessage = messages[messages.length - 1];
+  return [
+    messages.length,
+    firstMessage?.id ?? "",
+    firstMessage?.created_at ?? "",
+    firstMessage?.parts.length ?? 0,
+    lastMessage?.id ?? "",
+    lastMessage?.created_at ?? "",
+    lastMessage?.parts.length ?? 0,
+  ].join(":");
 }

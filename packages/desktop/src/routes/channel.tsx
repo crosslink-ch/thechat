@@ -102,7 +102,6 @@ export function ChannelRoute() {
           typingUsers={typingUsers}
           onSend={channelChat.sendMessage}
           onLoadOlderMessages={channelChat.loadOlderMessages}
-          onTrimToRecentMessages={channelChat.trimToRecentMessages}
           mentions={mentions}
           scrollKey={channelId}
         />

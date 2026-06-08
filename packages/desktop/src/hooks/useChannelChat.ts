@@ -1,4 +1,4 @@
-import { useCallback } from "react";
+import { useCallback, useMemo } from "react";
 import {
   useInfiniteQuery,
   useQueryClient,
@@ -11,6 +11,7 @@ import { authHeaders, edenErrorMessage } from "../lib/eden";
 const MESSAGE_CACHE_TTL_MS = 60_000;
 export const MESSAGE_PAGE_SIZE = 20;
 export const MESSAGE_WINDOW_SIZE = 120;
+export const MESSAGE_WINDOW_TRIM_THRESHOLD = 160;
 
 interface UseChannelChatOptions {
   conversationId: string | null;
@@ -171,16 +172,10 @@ export function useChannelChat({
     token,
   ]);
 
-  const trimToRecentMessages = useCallback(() => {
-    if (!conversationId) return;
-    const key = messagesQueryKey(conversationId, threadId, unthreadedOnly);
-    queryClient.setQueryData<MessageWindow>(key, (prev) =>
-      trimWindowToRecentMessages(prev),
-    );
-  }, [conversationId, queryClient, threadId, unthreadedOnly]);
+  const messages = useMemo(() => flattenMessageWindow(query.data), [query.data]);
 
   return {
-    messages: flattenMessageWindow(query.data),
+    messages,
     loading: query.isLoading,
     loadingOlder: query.isFetchingNextPage,
     hasOlderMessages: query.hasNextPage,
@@ -188,7 +183,6 @@ export function useChannelChat({
     sendMessage,
     refetchMessages,
     loadOlderMessages,
-    trimToRecentMessages,
   };
 }
 
@@ -219,15 +213,18 @@ function appendMessageToWindow(
     pages.push({ messages: [], hasOlder: false });
   }
   pages[0].messages = appendMessage(pages[0].messages, msg);
-  return { ...window, pages };
+  const nextWindow = { ...window, pages };
+  return trimWindowToRecentMessages(nextWindow, MESSAGE_WINDOW_TRIM_THRESHOLD) ?? nextWindow;
 }
 
 function trimWindowToRecentMessages(
   window: MessageWindow | undefined,
+  trimThreshold = MESSAGE_WINDOW_SIZE,
 ): MessageWindow | undefined {
   if (!window) return window;
+  if (countWindowMessages(window) <= trimThreshold) return window;
+
   const messages = flattenMessageWindow(window);
-  if (messages.length <= MESSAGE_WINDOW_SIZE) return window;
 
   const recentMessages = messages.slice(-MESSAGE_WINDOW_SIZE);
   const pages = buildNewestFirstPages(recentMessages, true);
@@ -251,6 +248,10 @@ function flattenMessageWindow(window: MessageWindow | undefined): ChatMessage[] 
   }
 
   return messages;
+}
+
+function countWindowMessages(window: MessageWindow) {
+  return window.pages.reduce((count, page) => count + page.messages.length, 0);
 }
 
 function buildNewestFirstPages(

@@ -7,7 +7,6 @@ import type { MentionUser } from "./MentionList";
 
 const noop = () => {};
 const TOP_LOAD_THRESHOLD_PX = 80;
-const DEFAULT_MESSAGE_WINDOW_SIZE = 120;
 
 interface ChannelChatViewProps {
   messages: ChatMessage[];
@@ -17,10 +16,8 @@ interface ChannelChatViewProps {
   typingUsers: Map<string, string>; // userId -> userName
   onSend: (content: string) => void;
   onLoadOlderMessages?: () => boolean | void | Promise<boolean | void>;
-  onTrimToRecentMessages?: () => void;
   mentions?: MentionUser[];
   scrollKey?: string | null;
-  messageWindowSize?: number;
 }
 
 function formatTime(iso: string) {
@@ -36,10 +33,8 @@ export function ChannelChatView({
   typingUsers,
   onSend,
   onLoadOlderMessages,
-  onTrimToRecentMessages,
   mentions,
   scrollKey,
-  messageWindowSize = DEFAULT_MESSAGE_WINDOW_SIZE,
 }: ChannelChatViewProps) {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const { isAtBottom, scrollToBottom } = useAutoScroll(scrollContainerRef);
@@ -52,16 +47,14 @@ export function ChannelChatView({
     scrollTop: number;
   } | null>(null);
 
-  const visibleTypingNames = Array.from(typingUsers.entries())
-    .map(([, userName]) => userName)
-    .filter(Boolean);
+  const visibleTypingNames = useMemo(
+    () => Array.from(typingUsers.values()).filter(Boolean),
+    [typingUsers],
+  );
   const hasLiveActivity = visibleTypingNames.length > 0;
 
   const messageScrollSignature = useMemo(
-    () =>
-      messages
-        .map((message) => `${message.id}:${message.createdAt}:${message.content.length}`)
-        .join("|"),
+    () => chatMessageWindowSignature(messages),
     [messages],
   );
   const typingScrollSignature = useMemo(
@@ -125,12 +118,6 @@ export function ChannelChatView({
     el.scrollTop = snapshot.scrollTop + heightDelta;
     prependScrollSnapshotRef.current = null;
   }, [loadingOlder, messageScrollSignature]);
-
-  useEffect(() => {
-    if (isAtBottom && messages.length > messageWindowSize) {
-      onTrimToRecentMessages?.();
-    }
-  }, [isAtBottom, messageWindowSize, messages.length, onTrimToRecentMessages]);
 
   useEffect(() => {
     if (loading || initializedScrollKeyRef.current === scrollScopeKey) return;
@@ -223,4 +210,18 @@ export function ChannelChatView({
       <InputBar convId={undefined} onSend={handleSend} onStop={noop} mentions={mentions} />
     </>
   );
+}
+
+function chatMessageWindowSignature(messages: ChatMessage[]) {
+  const firstMessage = messages[0];
+  const lastMessage = messages[messages.length - 1];
+  return [
+    messages.length,
+    firstMessage?.id ?? "",
+    firstMessage?.createdAt ?? "",
+    firstMessage?.content.length ?? 0,
+    lastMessage?.id ?? "",
+    lastMessage?.createdAt ?? "",
+    lastMessage?.content.length ?? 0,
+  ].join(":");
 }

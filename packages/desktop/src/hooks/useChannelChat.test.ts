@@ -4,6 +4,7 @@ import type { InfiniteData } from "@tanstack/react-query";
 import type { ChatMessage } from "@thechat/shared";
 import {
   MESSAGE_PAGE_SIZE,
+  MESSAGE_WINDOW_TRIM_THRESHOLD,
   MESSAGE_WINDOW_SIZE,
   messagesQueryKey,
   useChannelChat,
@@ -398,7 +399,7 @@ describe("useChannelChat", () => {
     });
   });
 
-  it("trims the visible cache to the recent window and keeps older pagination available", async () => {
+  it("trims the visible cache on append only after the threshold", async () => {
     vi.mocked(api.messages).mockReturnValue({
       get: vi.fn(() =>
         Promise.resolve({ data: [message("dm-trim", "initial")] }),
@@ -420,22 +421,26 @@ describe("useChannelChat", () => {
     });
 
     act(() => {
-      for (let i = 0; i < MESSAGE_WINDOW_SIZE + 1; i += 1) {
+      for (let i = 0; i < MESSAGE_WINDOW_TRIM_THRESHOLD - 1; i += 1) {
         result.current.addMessage(message("dm-trim", `live ${i}`));
       }
     });
 
     await waitFor(() => {
-      expect(result.current.messages).toHaveLength(MESSAGE_WINDOW_SIZE + 2);
+      expect(result.current.messages).toHaveLength(MESSAGE_WINDOW_TRIM_THRESHOLD);
     });
 
     act(() => {
-      result.current.trimToRecentMessages();
+      result.current.addMessage(
+        message("dm-trim", `live ${MESSAGE_WINDOW_TRIM_THRESHOLD - 1}`),
+      );
     });
 
     await waitFor(() => {
       expect(result.current.messages).toHaveLength(MESSAGE_WINDOW_SIZE);
-      expect(result.current.messages[0].content).toBe("live 1");
+      expect(result.current.messages[0].content).toBe(
+        `live ${MESSAGE_WINDOW_TRIM_THRESHOLD - MESSAGE_WINDOW_SIZE}`,
+      );
       expect(result.current.hasOlderMessages).toBe(true);
     });
   });
