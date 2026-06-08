@@ -374,11 +374,15 @@ export function DmRoute() {
               conversationLoading ||
               conversationPending
             }
+            loadingOlder={channelChat.loadingOlder}
+            hasOlderMessages={channelChat.hasOlderMessages}
             typingUsers={typingUsers}
             progressInvocations={activeHermesProgress.invocations}
             typingSuppressedUserIds={activeHermesProgress.typingSuppressedUserIds}
             onSend={handleSend}
             onStop={handleStopHermesTask}
+            onLoadOlderMessages={channelChat.loadOlderMessages}
+            onTrimToRecentMessages={channelChat.trimToRecentMessages}
             mentions={mentions}
             scrollKey={`${conversationId}:${activeThreadId ?? "general"}`}
             taskActive={taskActive}
@@ -393,8 +397,12 @@ export function DmRoute() {
               conversationLoading ||
               conversationPending
             }
+            loadingOlder={channelChat.loadingOlder}
+            hasOlderMessages={channelChat.hasOlderMessages}
             typingUsers={typingUsers}
             onSend={handleSend}
+            onLoadOlderMessages={channelChat.loadOlderMessages}
+            onTrimToRecentMessages={channelChat.trimToRecentMessages}
             mentions={mentions}
             scrollKey={conversationId}
           />

@@ -1,7 +1,7 @@
-import { useState, useEffect, useRef, useMemo, useCallback } from "react";
+import { useState, useEffect, useRef, useMemo, useCallback, useLayoutEffect } from "react";
 import { useNavigate, useMatches, useRouterState } from "@tanstack/react-router";
 import { invoke } from "@tauri-apps/api/core";
-import { useChat } from "../hooks/useChat";
+import { AGENT_MESSAGE_WINDOW_SIZE, useChat } from "../hooks/useChat";
 import { openCodexAuthModal } from "../components/CodexAuthModal";
 import { useIsStreaming, subscribeToStream } from "../stores/streaming";
 import { useAutoScroll } from "../hooks/useAutoScroll";
@@ -20,6 +20,8 @@ import { useTodoStore, EMPTY_TODOS } from "../core/todo";
 import { buildSystemPrompt, type ProjectInfo } from "../core/system-prompt";
 import { fireNotification } from "../lib/notifications";
 import type { Conversation } from "../core/types";
+
+const TOP_LOAD_THRESHOLD_PX = 80;
 
 export function AgentChatRoute() {
   const navigate = useNavigate();
@@ -50,10 +52,15 @@ export function AgentChatRoute() {
     messages,
     conversation,
     error,
+    loadingMessages,
+    loadingOlderMessages,
+    hasOlderMessages,
     queuedMessages,
     sendMessage,
     stopStreaming,
     loadConversation,
+    loadOlderMessages,
+    trimToRecentMessages,
     startNewConversation,
   } = useChat({
     getTools,
@@ -83,6 +90,85 @@ export function AgentChatRoute() {
   const [showFeedbackInput, setShowFeedbackInput] = useState(false);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const { isAtBottom, scrollToBottom } = useAutoScroll(scrollContainerRef);
+  const loadingOlderRef = useRef(false);
+  const skipNextMessageScrollRef = useRef(false);
+  const prependScrollSnapshotRef = useRef<{
+    scrollHeight: number;
+    scrollTop: number;
+  } | null>(null);
+  const messageScrollSignature = useMemo(
+    () =>
+      messages
+        .map((message) => `${message.id}:${message.created_at}:${message.parts.length}`)
+        .join("|"),
+    [messages],
+  );
+
+  const requestOlderMessages = useCallback(() => {
+    const el = scrollContainerRef.current;
+    if (
+      !el ||
+      loadingMessages ||
+      loadingOlderMessages ||
+      loadingOlderRef.current ||
+      !hasOlderMessages
+    ) {
+      return;
+    }
+
+    loadingOlderRef.current = true;
+    prependScrollSnapshotRef.current = {
+      scrollHeight: el.scrollHeight,
+      scrollTop: el.scrollTop,
+    };
+    skipNextMessageScrollRef.current = true;
+
+    void loadOlderMessages()
+      .then((loaded) => {
+        if (loaded === false) {
+          prependScrollSnapshotRef.current = null;
+          skipNextMessageScrollRef.current = false;
+        }
+      })
+      .finally(() => {
+        loadingOlderRef.current = false;
+      });
+  }, [
+    hasOlderMessages,
+    loadOlderMessages,
+    loadingMessages,
+    loadingOlderMessages,
+  ]);
+
+  useEffect(() => {
+    const el = scrollContainerRef.current;
+    if (!el) return;
+
+    const handleScroll = () => {
+      if (el.scrollTop <= TOP_LOAD_THRESHOLD_PX) {
+        requestOlderMessages();
+      }
+    };
+
+    el.addEventListener("scroll", handleScroll, { passive: true });
+    return () => el.removeEventListener("scroll", handleScroll);
+  }, [requestOlderMessages]);
+
+  useLayoutEffect(() => {
+    const el = scrollContainerRef.current;
+    const snapshot = prependScrollSnapshotRef.current;
+    if (!el || !snapshot || loadingOlderMessages) return;
+
+    const heightDelta = el.scrollHeight - snapshot.scrollHeight;
+    el.scrollTop = snapshot.scrollTop + heightDelta;
+    prependScrollSnapshotRef.current = null;
+  }, [loadingOlderMessages, messageScrollSignature]);
+
+  useEffect(() => {
+    if (isAtBottom && messages.length > AGENT_MESSAGE_WINDOW_SIZE) {
+      trimToRecentMessages();
+    }
+  }, [isAtBottom, messages.length, trimToRecentMessages]);
 
   // Load conversation from route param
   const loadedIdRef = useRef<string | null>(null);
@@ -189,6 +275,10 @@ export function AgentChatRoute() {
 
   // Scroll to bottom when user sends a message (always force)
   useEffect(() => {
+    if (skipNextMessageScrollRef.current) {
+      skipNextMessageScrollRef.current = false;
+      return;
+    }
     const lastMsg = messages[messages.length - 1];
     if (lastMsg?.role === "user") {
       scrollToBottom({ force: true });
@@ -269,7 +359,22 @@ export function AgentChatRoute() {
 
       <div className="relative flex flex-1 flex-col overflow-hidden">
         <div ref={scrollContainerRef} className="flex flex-1 flex-col overflow-y-auto">
-          {messages.length === 0 && !isStreaming && (
+          {loadingMessages && (
+            <div className="flex flex-1 flex-col items-center justify-center text-[1rem] text-text-placeholder">Loading messages...</div>
+          )}
+          {!loadingMessages && hasOlderMessages && (
+            <div className="flex justify-center px-5 py-2">
+              <button
+                type="button"
+                onClick={requestOlderMessages}
+                disabled={loadingOlderMessages}
+                className="rounded border border-border bg-elevated px-3 py-1 text-[0.786rem] text-text-muted hover:bg-raised disabled:cursor-default disabled:opacity-60"
+              >
+                {loadingOlderMessages ? "Loading earlier messages..." : "Load earlier messages"}
+              </button>
+            </div>
+          )}
+          {!loadingMessages && messages.length === 0 && !isStreaming && (
             <div className="flex flex-1 flex-col items-center justify-center gap-3">
               <ProjectPicker
                 projectDir={projectDir}

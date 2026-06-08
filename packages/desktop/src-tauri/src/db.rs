@@ -52,7 +52,9 @@ impl Database {
             CREATE TABLE IF NOT EXISTS kv_store (
                 key TEXT PRIMARY KEY,
                 value TEXT NOT NULL
-            );",
+            );
+            CREATE INDEX IF NOT EXISTS idx_messages_conversation_created_at
+                ON messages(conversation_id, created_at);",
         )
         .map_err(|e| format!("Failed to create tables: {}", e))?;
 
@@ -218,31 +220,68 @@ impl Database {
     }
 
     #[instrument(skip(self))]
-    pub fn get_messages(&self, conversation_id: &str) -> Result<Vec<Message>, String> {
+    pub fn get_messages(
+        &self,
+        conversation_id: &str,
+        limit: Option<u32>,
+        before: Option<&str>,
+    ) -> Result<Vec<Message>, String> {
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
-        let mut stmt = conn
-            .prepare(
-                "SELECT id, conversation_id, role, content, reasoning_content, created_at FROM messages WHERE conversation_id = ?1 ORDER BY created_at ASC",
-            )
-            .map_err(|e| e.to_string())?;
+        let limit = limit.unwrap_or(50).clamp(1, 100);
+        let query = if before.is_some() {
+            "SELECT id, conversation_id, role, content, reasoning_content, created_at
+             FROM messages
+             WHERE conversation_id = ?1 AND created_at < ?2
+             ORDER BY created_at DESC, rowid DESC
+             LIMIT ?3"
+        } else {
+            "SELECT id, conversation_id, role, content, reasoning_content, created_at
+             FROM messages
+             WHERE conversation_id = ?1
+             ORDER BY created_at DESC, rowid DESC
+             LIMIT ?2"
+        };
 
-        let rows = stmt
-            .query_map(params![conversation_id], |row| {
-                Ok(Message {
-                    id: row.get(0)?,
-                    conversation_id: row.get(1)?,
-                    role: row.get(2)?,
-                    content: row.get(3)?,
-                    reasoning_content: row.get(4)?,
-                    created_at: row.get(5)?,
-                })
-            })
-            .map_err(|e| e.to_string())?;
+        let mut stmt = conn.prepare(query).map_err(|e| e.to_string())?;
 
         let mut messages = Vec::new();
-        for row in rows {
-            messages.push(row.map_err(|e| e.to_string())?);
+        if let Some(before) = before {
+            let rows = stmt
+                .query_map(params![conversation_id, before, limit], |row| {
+                    Ok(Message {
+                        id: row.get(0)?,
+                        conversation_id: row.get(1)?,
+                        role: row.get(2)?,
+                        content: row.get(3)?,
+                        reasoning_content: row.get(4)?,
+                        created_at: row.get(5)?,
+                    })
+                })
+                .map_err(|e| e.to_string())?;
+
+            for row in rows {
+                messages.push(row.map_err(|e| e.to_string())?);
+            }
+        } else {
+            let rows = stmt
+                .query_map(params![conversation_id, limit], |row| {
+                    Ok(Message {
+                        id: row.get(0)?,
+                        conversation_id: row.get(1)?,
+                        role: row.get(2)?,
+                        content: row.get(3)?,
+                        reasoning_content: row.get(4)?,
+                        created_at: row.get(5)?,
+                    })
+                })
+                .map_err(|e| e.to_string())?;
+
+            for row in rows {
+                messages.push(row.map_err(|e| e.to_string())?);
+            }
         }
+
+        messages.reverse();
         Ok(messages)
     }
 }
@@ -253,6 +292,17 @@ mod tests {
 
     fn test_db() -> Database {
         Database::new(":memory:").unwrap()
+    }
+
+    fn save_ordered_message(
+        db: &Database,
+        conversation_id: &str,
+        role: &str,
+        content: &str,
+    ) -> Message {
+        let message = db.save_message(conversation_id, role, content, None).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        message
     }
 
     #[test]
@@ -305,7 +355,7 @@ mod tests {
         db.save_message(&conv.id, "assistant", "Hi there", Some("thinking..."))
             .unwrap();
 
-        let msgs = db.get_messages(&conv.id).unwrap();
+        let msgs = db.get_messages(&conv.id, None, None).unwrap();
         assert_eq!(msgs.len(), 2);
         assert_eq!(msgs[0].role, "user");
         assert_eq!(msgs[0].content, "Hello");
@@ -319,7 +369,7 @@ mod tests {
     fn get_messages_empty() {
         let db = test_db();
         let conv = db.create_conversation("Empty", None).unwrap();
-        let msgs = db.get_messages(&conv.id).unwrap();
+        let msgs = db.get_messages(&conv.id, None, None).unwrap();
         assert!(msgs.is_empty());
     }
 
@@ -342,15 +392,46 @@ mod tests {
         let db = test_db();
         let conv = db.create_conversation("Chat", None).unwrap();
 
-        db.save_message(&conv.id, "user", "First", None).unwrap();
-        db.save_message(&conv.id, "assistant", "Second", None)
-            .unwrap();
-        db.save_message(&conv.id, "user", "Third", None).unwrap();
+        save_ordered_message(&db, &conv.id, "user", "First");
+        save_ordered_message(&db, &conv.id, "assistant", "Second");
+        save_ordered_message(&db, &conv.id, "user", "Third");
 
-        let msgs = db.get_messages(&conv.id).unwrap();
+        let msgs = db.get_messages(&conv.id, None, None).unwrap();
         assert_eq!(msgs[0].content, "First");
         assert_eq!(msgs[1].content, "Second");
         assert_eq!(msgs[2].content, "Third");
+    }
+
+    #[test]
+    fn get_messages_limits_to_latest_page() {
+        let db = test_db();
+        let conv = db.create_conversation("Chat", None).unwrap();
+
+        save_ordered_message(&db, &conv.id, "user", "First");
+        save_ordered_message(&db, &conv.id, "assistant", "Second");
+        save_ordered_message(&db, &conv.id, "user", "Third");
+
+        let msgs = db.get_messages(&conv.id, Some(2), None).unwrap();
+        assert_eq!(msgs.len(), 2);
+        assert_eq!(msgs[0].content, "Second");
+        assert_eq!(msgs[1].content, "Third");
+    }
+
+    #[test]
+    fn get_messages_fetches_older_page_before_cursor() {
+        let db = test_db();
+        let conv = db.create_conversation("Chat", None).unwrap();
+
+        let first = save_ordered_message(&db, &conv.id, "user", "First");
+        save_ordered_message(&db, &conv.id, "assistant", "Second");
+        let third = save_ordered_message(&db, &conv.id, "user", "Third");
+
+        let msgs = db
+            .get_messages(&conv.id, Some(2), Some(third.created_at.as_str()))
+            .unwrap();
+        assert_eq!(msgs.len(), 2);
+        assert_eq!(msgs[0].content, first.content);
+        assert_eq!(msgs[1].content, "Second");
     }
 
     #[test]
@@ -400,8 +481,8 @@ mod tests {
         db.save_message(&conv2.id, "user", "In chat 2", None)
             .unwrap();
 
-        let msgs1 = db.get_messages(&conv1.id).unwrap();
-        let msgs2 = db.get_messages(&conv2.id).unwrap();
+        let msgs1 = db.get_messages(&conv1.id, None, None).unwrap();
+        let msgs2 = db.get_messages(&conv2.id, None, None).unwrap();
         assert_eq!(msgs1.len(), 1);
         assert_eq!(msgs2.len(), 1);
         assert_eq!(msgs1[0].content, "In chat 1");

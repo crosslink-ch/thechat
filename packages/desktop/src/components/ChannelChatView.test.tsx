@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeAll, beforeEach, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { ChatMessage } from "@thechat/shared";
 import { ChannelChatView } from "./ChannelChatView";
 
@@ -88,6 +88,50 @@ describe("ChannelChatView", () => {
 
     expect(scrollToMock).not.toHaveBeenCalled();
     expect(screen.getByRole("button", { name: /jump to bottom/i })).toBeInTheDocument();
+  });
+
+  it("loads older messages when the user scrolls near the top", async () => {
+    const onLoadOlderMessages = vi.fn(() => Promise.resolve());
+    render(
+      <ChannelChatView
+        messages={[message()]}
+        loading={false}
+        hasOlderMessages
+        typingUsers={new Map()}
+        onSend={() => {}}
+        onLoadOlderMessages={onLoadOlderMessages}
+      />,
+    );
+    const scroller = screen.getByTestId("channel-chat-scroll");
+    makeScrollable(scroller);
+    scroller.scrollTop = 0;
+
+    fireEvent.scroll(scroller);
+
+    await waitFor(() => {
+      expect(onLoadOlderMessages).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("trims to the recent message window while the user is at the bottom", async () => {
+    const onTrimToRecentMessages = vi.fn();
+    render(
+      <ChannelChatView
+        messages={[
+          message({ id: "message-1", content: "first" }),
+          message({ id: "message-2", content: "second" }),
+        ]}
+        loading={false}
+        typingUsers={new Map()}
+        onSend={() => {}}
+        onTrimToRecentMessages={onTrimToRecentMessages}
+        messageWindowSize={1}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(onTrimToRecentMessages).toHaveBeenCalledTimes(1);
+    });
   });
 });
 

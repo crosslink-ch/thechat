@@ -20,6 +20,7 @@ vi.mock("@tauri-apps/api/core", () => ({
 
 // Mock useChat — the route's heaviest dependency
 vi.mock("../hooks/useChat", () => ({
+  AGENT_MESSAGE_WINDOW_SIZE: 120,
   useChat: vi.fn(() => ({
     messages: [],
     conversation: null,

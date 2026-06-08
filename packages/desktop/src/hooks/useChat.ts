@@ -19,6 +19,10 @@ import type {
   StreamEvent,
 } from "../core/types";
 
+export const AGENT_MESSAGE_PAGE_SIZE = 20;
+export const AGENT_MESSAGE_WINDOW_SIZE = 120;
+const AGENT_CONTEXT_MESSAGE_LIMIT = 50;
+
 export interface ChatError {
   message: string;
   provider?: Provider;
@@ -108,6 +112,18 @@ async function messageToApiMessage(m: Message): Promise<Record<string, unknown>>
   return { role: m.role, content: await buildUserContent(text, refs) };
 }
 
+async function loadDbMessages(
+  conversationId: string,
+  limit: number,
+  before?: string | null,
+) {
+  return invoke<DbMessage[]>("get_messages", {
+    conversationId,
+    limit,
+    before: before ?? null,
+  });
+}
+
 interface UseChatOptions {
   tools?: ToolDefinition[];
   getTools?: () => ToolDefinition[];
@@ -121,6 +137,9 @@ export function useChat(options?: UseChatOptions) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [conversation, setConversation] = useState<Conversation | null>(null);
   const [error, setError] = useState<ChatError | null>(null);
+  const [loadingMessages, setLoadingMessages] = useState(false);
+  const [loadingOlderMessages, setLoadingOlderMessages] = useState(false);
+  const [hasOlderMessages, setHasOlderMessages] = useState(false);
   const [queuedMessages, setQueuedMessages] = useState<Array<{ id: string; content: string }>>([]);
   const queuedMessagesRef = useRef<Array<{ id: string; content: string }>>([]);
   const abortControllersRef = useRef<Map<string, AbortController>>(new Map());
@@ -143,12 +162,21 @@ export function useChat(options?: UseChatOptions) {
   const loadConversation = useCallback(async (conv: Conversation) => {
     activeConvIdRef.current = conv.id;
     clearQueue();
-    const dbMsgs = await invoke<DbMessage[]>("get_messages", {
-      conversationId: conv.id,
-    });
     setConversation(conv);
-    setMessages(dbMsgs.map(dbMessageToMessage));
+    setMessages([]);
+    setHasOlderMessages(false);
+    setLoadingMessages(true);
     setError(null);
+    try {
+      const dbMsgs = await loadDbMessages(conv.id, AGENT_MESSAGE_PAGE_SIZE);
+      if (activeConvIdRef.current !== conv.id) return;
+      setMessages(dbMsgs.map(dbMessageToMessage));
+      setHasOlderMessages(dbMsgs.length === AGENT_MESSAGE_PAGE_SIZE);
+    } finally {
+      if (activeConvIdRef.current === conv.id) {
+        setLoadingMessages(false);
+      }
+    }
   }, [clearQueue]);
 
   const startNewConversation = useCallback(() => {
@@ -156,8 +184,47 @@ export function useChat(options?: UseChatOptions) {
     clearQueue();
     setConversation(null);
     setMessages([]);
+    setHasOlderMessages(false);
+    setLoadingMessages(false);
+    setLoadingOlderMessages(false);
     setError(null);
   }, [clearQueue]);
+
+  const loadOlderMessages = useCallback(async () => {
+    const conv = conversation;
+    const oldestMessage = messagesRef.current[0];
+    if (!conv || !oldestMessage || !hasOlderMessages || loadingOlderMessages) {
+      return false;
+    }
+
+    setLoadingOlderMessages(true);
+    try {
+      const dbMsgs = await loadDbMessages(
+        conv.id,
+        AGENT_MESSAGE_PAGE_SIZE,
+        oldestMessage.created_at,
+      );
+      if (activeConvIdRef.current !== conv.id) return false;
+      const olderMessages = dbMsgs.map(dbMessageToMessage);
+      setMessages((prev) => prependMessages(prev, olderMessages));
+      setHasOlderMessages(dbMsgs.length === AGENT_MESSAGE_PAGE_SIZE);
+      return olderMessages.length > 0;
+    } finally {
+      if (activeConvIdRef.current === conv.id) {
+        setLoadingOlderMessages(false);
+      }
+    }
+  }, [conversation, hasOlderMessages, loadingOlderMessages]);
+
+  const trimToRecentMessages = useCallback(() => {
+    if (messagesRef.current.length > AGENT_MESSAGE_WINDOW_SIZE) {
+      setHasOlderMessages(true);
+    }
+    setMessages((prev) => {
+      if (prev.length <= AGENT_MESSAGE_WINDOW_SIZE) return prev;
+      return prev.slice(-AGENT_MESSAGE_WINDOW_SIZE);
+    });
+  }, []);
 
   const sendMessage = useCallback(
     async (userContent: string, images?: ImageAttachment[]) => {
@@ -225,6 +292,12 @@ export function useChat(options?: UseChatOptions) {
           }
         }
 
+        const contextDbMsgs = await loadDbMessages(
+          conv.id,
+          AGENT_CONTEXT_MESSAGE_LIMIT,
+        );
+        const contextMessages = contextDbMsgs.map(dbMessageToMessage);
+
         // Save user message to DB (images stored as file path refs, not base64)
         const dbContent = userParts.length === 1 && userParts[0].type === "text"
           ? userContent
@@ -236,11 +309,11 @@ export function useChat(options?: UseChatOptions) {
           reasoningContent: null,
         });
         const userMsg = dbMessageToMessage(userDbMsg);
-        setMessages((prev) => [...prev, userMsg]);
+        setMessages((prev) => appendMessage(prev, userMsg));
 
         // Build API messages from current messages + new user message
         const apiMessages: Array<Record<string, unknown>> = [];
-        for (const m of messagesRef.current) {
+        for (const m of contextMessages) {
           apiMessages.push(await messageToApiMessage(m));
         }
         apiMessages.push({
@@ -319,7 +392,7 @@ export function useChat(options?: UseChatOptions) {
                 }).then((dbMsg) => {
                   const msg = dbMessageToMessage(dbMsg);
                   if (activeConvIdRef.current === streamConvId) {
-                    setMessages((prev) => [...prev, msg]);
+                    setMessages((prev) => appendMessage(prev, msg));
                   }
                 });
                 // Remove from queued messages UI state
@@ -418,7 +491,7 @@ export function useChat(options?: UseChatOptions) {
           const savedMsg = dbMessageToMessage(savedDb);
           // Only update UI state if still viewing this conversation
           if (activeConvIdRef.current === streamConvId) {
-            setMessages((prev) => [...prev, savedMsg]);
+            setMessages((prev) => appendMessage(prev, savedMsg));
           }
         }
 
@@ -474,10 +547,29 @@ export function useChat(options?: UseChatOptions) {
     messages,
     conversation,
     error,
+    loadingMessages,
+    loadingOlderMessages,
+    hasOlderMessages,
     queuedMessages,
     sendMessage,
     stopStreaming,
     loadConversation,
+    loadOlderMessages,
+    trimToRecentMessages,
     startNewConversation,
   };
+}
+
+function appendMessage(messages: Message[], msg: Message) {
+  if (messages.some((message) => message.id === msg.id)) return messages;
+  return [...messages, msg];
+}
+
+function prependMessages(messages: Message[], olderMessages: Message[]) {
+  if (olderMessages.length === 0) return messages;
+  const seen = new Set(messages.map((message) => message.id));
+  return [
+    ...olderMessages.filter((message) => !seen.has(message.id)),
+    ...messages,
+  ];
 }
