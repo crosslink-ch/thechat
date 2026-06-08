@@ -97,8 +97,12 @@ export function ChannelRoute() {
         <ChannelChatView
           messages={channelChat.messages}
           loading={channelChat.loading}
+          loadingOlder={channelChat.loadingOlder}
+          hasOlderMessages={channelChat.hasOlderMessages}
           typingUsers={typingUsers}
           onSend={channelChat.sendMessage}
+          onLoadOlderMessages={channelChat.loadOlderMessages}
+          onTrimToRecentMessages={channelChat.trimToRecentMessages}
           mentions={mentions}
           scrollKey={channelId}
         />

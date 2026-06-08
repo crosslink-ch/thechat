@@ -352,10 +352,14 @@ async fn save_message(
 #[tracing::instrument(skip(db))]
 async fn get_messages(
     conversation_id: String,
+    limit: Option<u32>,
+    before: Option<String>,
     db: State<'_, DbState>,
 ) -> Result<Vec<Message>, String> {
     let db = Arc::clone(&db);
-    tokio::task::spawn_blocking(move || db.get_messages(&conversation_id))
+    tokio::task::spawn_blocking(move || {
+        db.get_messages(&conversation_id, limit, before.as_deref())
+    })
         .await
         .map_err(|e| format!("Task join error: {}", e))?
 }
@@ -623,7 +627,7 @@ mod tests {
         assert_eq!(conv.title, "Test");
 
         db.save_message(&conv.id, "user", "Hello", None).unwrap();
-        let msgs = db.get_messages(&conv.id).unwrap();
+        let msgs = db.get_messages(&conv.id, None, None).unwrap();
         assert_eq!(msgs.len(), 1);
     }
 }

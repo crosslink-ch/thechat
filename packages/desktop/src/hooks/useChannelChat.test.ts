@@ -1,7 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { act, renderHook, waitFor } from "@testing-library/react";
+import type { InfiniteData } from "@tanstack/react-query";
 import type { ChatMessage } from "@thechat/shared";
-import { messagesQueryKey, useChannelChat } from "./useChannelChat";
+import {
+  MESSAGE_PAGE_SIZE,
+  MESSAGE_WINDOW_SIZE,
+  messagesQueryKey,
+  useChannelChat,
+} from "./useChannelChat";
 import { api } from "../lib/api";
 import { createQueryWrapper, createTestQueryClient } from "../test-utils/query";
 
@@ -23,6 +29,7 @@ function message(
   conversationId: string,
   content: string,
   threadId: string | null = null,
+  createdAt = new Date().toISOString(),
 ): ChatMessage {
   return {
     id: crypto.randomUUID(),
@@ -33,8 +40,29 @@ function message(
     senderType: "human",
     content,
     parts: null,
-    createdAt: new Date().toISOString(),
+    createdAt,
   };
+}
+
+interface TestMessagePage {
+  messages: ChatMessage[];
+  hasOlder: boolean;
+}
+
+function messageWindow(
+  messages: ChatMessage[],
+  hasOlder = false,
+): InfiniteData<TestMessagePage, string | null> {
+  return {
+    pages: [{ messages, hasOlder }],
+    pageParams: [null],
+  };
+}
+
+function flattenWindow(
+  window: InfiniteData<TestMessagePage, string | null> | undefined,
+) {
+  return window?.pages.flatMap((page) => page.messages).map((m) => m.content);
 }
 
 describe("useChannelChat", () => {
@@ -154,7 +182,7 @@ describe("useChannelChat", () => {
 
     await waitFor(() => expect(api.messages).toHaveBeenCalledTimes(1));
     expect(get).toHaveBeenCalledWith({
-      query: { limit: 50 },
+      query: { limit: MESSAGE_PAGE_SIZE },
       headers: { authorization: "Bearer test-token" },
     });
 
@@ -188,9 +216,9 @@ describe("useChannelChat", () => {
     );
     vi.mocked(api.messages).mockReturnValue({ get } as any);
     const client = createTestQueryClient();
-    client.setQueryData<ChatMessage[]>(
+    client.setQueryData(
       messagesQueryKey("dm-hermes", "thread-2"),
-      [message("dm-hermes", "second prompt", "thread-2")],
+      messageWindow([message("dm-hermes", "second prompt", "thread-2")]),
     );
 
     const { result, rerender } = renderHook(
@@ -217,9 +245,11 @@ describe("useChannelChat", () => {
 
     expect(result.current.messages.map((m) => m.content)).toEqual(["first history"]);
     expect(
-      client
-        .getQueryData<ChatMessage[]>(messagesQueryKey("dm-hermes", "thread-2"))
-        ?.map((m) => m.content),
+      flattenWindow(
+        client.getQueryData<InfiniteData<TestMessagePage, string | null>>(
+          messagesQueryKey("dm-hermes", "thread-2"),
+        ),
+      ),
     ).toEqual(["second prompt", "second response"]);
 
     rerender({ threadId: "thread-2" });
@@ -255,7 +285,7 @@ describe("useChannelChat", () => {
       ]);
     });
     expect(get).toHaveBeenCalledWith({
-      query: { limit: 50, unthreaded: "true" },
+      query: { limit: MESSAGE_PAGE_SIZE, unthreaded: "true" },
       headers: { authorization: "Bearer test-token" },
     });
 
@@ -314,5 +344,99 @@ describe("useChannelChat", () => {
       "cached history",
     ]);
     expect(api.messages).toHaveBeenCalledTimes(1);
+  });
+
+  it("loads older messages before the current oldest cursor", async () => {
+    const recent = Array.from({ length: MESSAGE_PAGE_SIZE }, (_, i) =>
+      message(
+        "dm-paged",
+        `recent ${i}`,
+        null,
+        `2026-01-01T00:${String(20 + i).padStart(2, "0")}:00.000Z`,
+      ),
+    );
+    const older = [
+      message("dm-paged", "older 0", null, "2026-01-01T00:18:00.000Z"),
+      message("dm-paged", "older 1", null, "2026-01-01T00:19:00.000Z"),
+    ];
+    const get = vi.fn(({ query }: { query: Record<string, unknown> }) =>
+      Promise.resolve({ data: query.before ? older : recent }),
+    );
+    vi.mocked(api.messages).mockReturnValue({ get } as any);
+
+    const { result } = renderHook(
+      () =>
+        useChannelChat({
+          conversationId: "dm-paged",
+          token: "test-token",
+          wsSendMessage: vi.fn(),
+        }),
+      { wrapper: createQueryWrapper() },
+    );
+
+    await waitFor(() => {
+      expect(result.current.messages.map((m) => m.content)).toEqual(
+        recent.map((m) => m.content),
+      );
+    });
+    expect(result.current.hasOlderMessages).toBe(true);
+
+    await act(async () => {
+      await result.current.loadOlderMessages();
+    });
+
+    expect(get).toHaveBeenLastCalledWith({
+      query: { limit: MESSAGE_PAGE_SIZE, before: recent[0].createdAt },
+      headers: { authorization: "Bearer test-token" },
+    });
+    await waitFor(() => {
+      expect(result.current.messages.map((m) => m.content)).toEqual([
+        "older 0",
+        "older 1",
+        ...recent.map((m) => m.content),
+      ]);
+    });
+  });
+
+  it("trims the visible cache to the recent window and keeps older pagination available", async () => {
+    vi.mocked(api.messages).mockReturnValue({
+      get: vi.fn(() =>
+        Promise.resolve({ data: [message("dm-trim", "initial")] }),
+      ),
+    } as any);
+
+    const { result } = renderHook(
+      () =>
+        useChannelChat({
+          conversationId: "dm-trim",
+          token: "test-token",
+          wsSendMessage: vi.fn(),
+        }),
+      { wrapper: createQueryWrapper() },
+    );
+
+    await waitFor(() => {
+      expect(result.current.messages.map((m) => m.content)).toEqual(["initial"]);
+    });
+
+    act(() => {
+      for (let i = 0; i < MESSAGE_WINDOW_SIZE + 1; i += 1) {
+        result.current.addMessage(message("dm-trim", `live ${i}`));
+      }
+    });
+
+    await waitFor(() => {
+      expect(result.current.messages).toHaveLength(MESSAGE_WINDOW_SIZE + 2);
+    });
+
+    act(() => {
+      result.current.trimToRecentMessages();
+    });
+
+    await waitFor(() => {
+      expect(result.current.messages).toHaveLength(MESSAGE_WINDOW_SIZE);
+      expect(result.current.messages[0].content).toBe("live 1");
+      expect(result.current.hasOlderMessages).toBe(true);
+    });
   });
 });

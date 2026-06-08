@@ -27,11 +27,15 @@ export function useAutoScroll(containerRef: RefObject<HTMLElement | null>) {
     const handleScroll = () => {
       const atBottom = checkAtBottom();
       setIsAtBottom(atBottom);
+      if (!atBottom) {
+        userScrolledAwayRef.current = true;
+        return;
+      }
       // Re-enable auto-scroll when user reaches the bottom, but not
       // immediately after a wheel-up event. Without this debounce the
       // scroll event that fires right after wheel-up (while still within
       // the threshold) would clear userScrolledAwayRef and snap back.
-      if (atBottom && Date.now() - lastWheelUpRef.current > 200) {
+      if (Date.now() - lastWheelUpRef.current > 200) {
         userScrolledAwayRef.current = false;
       }
     };

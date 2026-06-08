@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeAll, beforeEach, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type {
   BotInvocationProgressEventPublic,
   BotInvocationPublic,
@@ -176,6 +176,31 @@ describe("HermesDmChatView", () => {
 
     expect(scrollToMock).not.toHaveBeenCalled();
     expect(screen.getByRole("button", { name: /jump to bottom/i })).toBeInTheDocument();
+  });
+
+  it("loads older messages when the user scrolls near the top", async () => {
+    const onLoadOlderMessages = vi.fn(() => Promise.resolve());
+    render(
+      <HermesDmChatView
+        messages={[message()]}
+        loading={false}
+        hasOlderMessages
+        typingUsers={new Map()}
+        progressInvocations={[]}
+        typingSuppressedUserIds={[]}
+        onSend={() => {}}
+        onLoadOlderMessages={onLoadOlderMessages}
+      />,
+    );
+    const scroller = screen.getByTestId("hermes-dm-chat-scroll");
+    makeScrollable(scroller);
+    scroller.scrollTop = 0;
+
+    fireEvent.scroll(scroller);
+
+    await waitFor(() => {
+      expect(onLoadOlderMessages).toHaveBeenCalledTimes(1);
+    });
   });
 });
 
