@@ -141,7 +141,7 @@ export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function Ri
     editorProps: {
       attributes: {
         class:
-          "block max-h-[200px] w-full overflow-y-auto bg-transparent px-4 pt-3 pb-11 font-[inherit] text-[1rem] leading-relaxed text-text outline-none",
+          "block max-h-[200px] w-full overflow-y-auto bg-transparent px-4 py-3 font-[inherit] text-[1rem] leading-relaxed text-text outline-none",
       },
       // Direct view props run before extension keymaps, so interceptors
       // (slash command menu navigation) win over Enter-to-submit.
