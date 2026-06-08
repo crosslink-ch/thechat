@@ -10,6 +10,17 @@ type ToolCallPart = Extract<MessagePart, { type: "tool-call" }>;
 type ProgressDisplayEvent = BotInvocationProgressEventPublic & {
   displayKey: string;
 };
+type ActivityGroups = {
+  toolEvents: BotInvocationProgressEventPublic[];
+  noticeEvents: BotInvocationProgressEventPublic[];
+  reasoningEvents: BotInvocationProgressEventPublic[];
+  otherEvents: BotInvocationProgressEventPublic[];
+};
+type NoticeSeverity = "info" | "warning" | "error";
+
+const MAX_VISIBLE_NOTICES = 2;
+const MAX_VISIBLE_TOOLS = 4;
+const MAX_VISIBLE_OTHER = 2;
 
 export function HermesProgressInline({
   invocations,
@@ -23,9 +34,22 @@ export function HermesProgressInline({
       {invocations.map(({ invocation, events }) => {
         const invocationEvents = [...events]
           .sort(compareEvents);
-        const displayEvents = collapseToolLifecycleEvents(invocationEvents);
-        const visibleEvents = displayEvents.slice(-6);
-        const hiddenCount = Math.max(0, displayEvents.length - visibleEvents.length);
+        const groups = groupActivityEvents(invocationEvents);
+        const displayToolEvents = collapseToolLifecycleEvents(groups.toolEvents);
+        const visibleNoticeEvents = groups.noticeEvents.slice(-MAX_VISIBLE_NOTICES);
+        const latestReasoningEvent = groups.reasoningEvents.at(-1) ?? null;
+        const visibleToolEvents = displayToolEvents.slice(-MAX_VISIBLE_TOOLS);
+        const visibleOtherEvents = groups.otherEvents.slice(-MAX_VISIBLE_OTHER);
+        const hiddenCount =
+          Math.max(0, groups.noticeEvents.length - visibleNoticeEvents.length) +
+          Math.max(0, groups.reasoningEvents.length - (latestReasoningEvent ? 1 : 0)) +
+          Math.max(0, displayToolEvents.length - visibleToolEvents.length) +
+          Math.max(0, groups.otherEvents.length - visibleOtherEvents.length);
+        const hasVisibleActivity =
+          visibleNoticeEvents.length > 0 ||
+          latestReasoningEvent !== null ||
+          visibleToolEvents.length > 0 ||
+          visibleOtherEvents.length > 0;
 
         return (
           <div key={invocation.id} className="flex gap-2.5">
@@ -49,10 +73,23 @@ export function HermesProgressInline({
                 </div>
               )}
 
-              {visibleEvents.length > 0 ? (
-                <div className="space-y-1">
-                  {visibleEvents.map((event) => (
-                    <ProgressEventRow key={event.displayKey} event={event} />
+              {hasVisibleActivity ? (
+                <div className="space-y-1.5">
+                  {visibleNoticeEvents.map((event) => (
+                    <NoticeEventRow key={event.id} event={event} />
+                  ))}
+                  {latestReasoningEvent && (
+                    <ReasoningEventRow event={latestReasoningEvent} />
+                  )}
+                  {visibleToolEvents.length > 0 && (
+                    <div className="space-y-1">
+                      {visibleToolEvents.map((event) => (
+                        <ToolEventRow key={event.displayKey} event={event} />
+                      ))}
+                    </div>
+                  )}
+                  {visibleOtherEvents.map((event) => (
+                    <OtherEventRow key={event.id} event={event} />
                   ))}
                 </div>
               ) : (
@@ -65,6 +102,48 @@ export function HermesProgressInline({
         );
       })}
     </div>
+  );
+}
+
+function groupActivityEvents(
+  events: BotInvocationProgressEventPublic[],
+): ActivityGroups {
+  const groups: ActivityGroups = {
+    toolEvents: [],
+    noticeEvents: [],
+    reasoningEvents: [],
+    otherEvents: [],
+  };
+
+  for (const event of events) {
+    if (isNoticeEvent(event)) {
+      groups.noticeEvents.push(event);
+    } else if (isReasoningEvent(event)) {
+      groups.reasoningEvents.push(event);
+    } else if (isToolEvent(event)) {
+      groups.toolEvents.push(event);
+    } else {
+      groups.otherEvents.push(event);
+    }
+  }
+
+  return groups;
+}
+
+function isToolEvent(event: BotInvocationProgressEventPublic) {
+  if (event.type.startsWith("tool.")) return true;
+  return Boolean(event.toolCallId && event.toolName && !event.toolName.startsWith("_"));
+}
+
+function isNoticeEvent(event: BotInvocationProgressEventPublic) {
+  return event.type.startsWith("notice.") || event.type.startsWith("status.");
+}
+
+function isReasoningEvent(event: BotInvocationProgressEventPublic) {
+  return (
+    event.type.startsWith("reasoning.") ||
+    event.type === "_thinking" ||
+    event.toolName === "_thinking"
   );
 }
 
@@ -102,7 +181,7 @@ function collapseToolLifecycleEvents(
 function emptyStateLabel(invocation: BotInvocationPublic) {
   if (invocation.status === "queued") return "Queued";
   if (invocation.status === "running" && olderThan(invocation.startedAt, 30_000)) {
-    return "No recent tool updates";
+    return "No recent Hermes activity";
   }
   return "Waiting for the next Hermes update";
 }
@@ -112,7 +191,7 @@ function olderThan(iso: string | null, ageMs: number) {
   return Date.now() - Date.parse(iso) > ageMs;
 }
 
-function ProgressEventRow({ event }: { event: BotInvocationProgressEventPublic }) {
+function ToolEventRow({ event }: { event: BotInvocationProgressEventPublic }) {
   const status = event.status ?? statusFromType(event.type);
   const payload = event.payload ?? {};
   const duration = typeof payload.duration === "number" ? payload.duration : null;
@@ -126,6 +205,58 @@ function ProgressEventRow({ event }: { event: BotInvocationProgressEventPublic }
           {formatDuration(duration)}
         </span>
       )}
+    </div>
+  );
+}
+
+function NoticeEventRow({ event }: { event: BotInvocationProgressEventPublic }) {
+  const severity = noticeSeverity(event);
+  const style =
+    severity === "error"
+      ? "border-error/30 bg-error/10 text-error"
+      : severity === "warning"
+      ? "border-warning-text/30 bg-warning-bg text-warning-text"
+      : "border-accent/25 bg-accent/10 text-text-secondary";
+  const badge = severity === "warning" ? "warn" : severity;
+
+  return (
+    <div className={`rounded border px-2 py-1.5 text-[0.786rem] ${style}`}>
+      <div className="flex min-w-0 items-start gap-2">
+        <span className="mt-0.5 shrink-0 rounded border border-current/30 px-1.5 py-0.5 text-[0.643rem] font-medium uppercase">
+          {badge}
+        </span>
+        <span className="min-w-0 whitespace-pre-wrap break-words leading-relaxed">
+          {eventText(event)}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function ReasoningEventRow({ event }: { event: BotInvocationProgressEventPublic }) {
+  const text = firstLine(eventText(event));
+
+  return (
+    <div className="flex min-w-0 items-start gap-2 rounded border border-border-subtle bg-base/40 px-2 py-1.5 text-[0.786rem]">
+      <span className="mt-1.5 inline-block size-1.5 shrink-0 animate-pulse rounded-full bg-accent" />
+      <div className="min-w-0 flex-1">
+        <div className="font-medium text-text-muted">Thinking</div>
+        {text && (
+          <div className="truncate text-text-dimmed">
+            {text}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function OtherEventRow({ event }: { event: BotInvocationProgressEventPublic }) {
+  return (
+    <div className="flex min-w-0 items-center gap-2 text-[0.786rem] text-text-dimmed">
+      <span className="inline-block size-1.5 shrink-0 rounded-full bg-text-dimmed" />
+      <span className="shrink-0 font-medium text-text-muted">Update</span>
+      <span className="min-w-0 flex-1 truncate">{eventText(event)}</span>
     </div>
   );
 }
@@ -157,6 +288,42 @@ function eventLabel(event: BotInvocationProgressEventPublic) {
   }
   if (event.preview?.trim()) return event.preview.trim();
   return event.type.replace(/\./g, " ");
+}
+
+function eventText(event: BotInvocationProgressEventPublic) {
+  if (event.label?.trim()) return event.label.trim();
+  if (event.preview?.trim()) return event.preview.trim();
+  const payloadText = stringField(event.payload, "text");
+  if (payloadText) return payloadText;
+  return event.type.replace(/\./g, " ");
+}
+
+function stringField(source: Record<string, unknown> | null, key: string) {
+  const value = source?.[key];
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function firstLine(text: string) {
+  return text.split(/\r?\n/).find((line) => line.trim())?.trim() ?? "";
+}
+
+function noticeSeverity(event: BotInvocationProgressEventPublic): NoticeSeverity {
+  if (
+    event.status === "failed" ||
+    event.status === "error" ||
+    event.type.endsWith(".error")
+  ) {
+    return "error";
+  }
+  if (
+    event.status === "warning" ||
+    event.status === "warn" ||
+    event.type.endsWith(".warning") ||
+    event.type.endsWith(".warn")
+  ) {
+    return "warning";
+  }
+  return "info";
 }
 
 function recordField(source: Record<string, unknown> | null, key: string) {
