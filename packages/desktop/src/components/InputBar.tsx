@@ -140,7 +140,22 @@ export const InputBar = memo(function InputBar({
   // RichInput reads this through a ref, so the latest render's state is used.
   const handleSlashMenuKey = useCallback(
     (event: KeyboardEvent) => {
-      if (!slashMenuOpen) return false;
+      if (!slashMenuOpen) {
+        if (
+          event.key === "/" &&
+          !event.altKey &&
+          !event.ctrlKey &&
+          !event.metaKey &&
+          inputText.length === 0 &&
+          slashCommands &&
+          slashCommands.length > 0
+        ) {
+          setInputText("/");
+          setSlashMenuDismissed(false);
+          setSlashSelectedIndex(0);
+        }
+        return false;
+      }
       switch (event.key) {
         case "ArrowDown":
           setSlashSelectedIndex((highlightedSlashIndex + 1) % slashSuggestions.length);
@@ -165,17 +180,15 @@ export const InputBar = memo(function InputBar({
           return false;
       }
     },
-    [handleSlashCommandSelect, highlightedSlashIndex, slashMenuOpen, slashSuggestions],
+    [
+      handleSlashCommandSelect,
+      highlightedSlashIndex,
+      inputText,
+      slashCommands,
+      slashMenuOpen,
+      slashSuggestions,
+    ],
   );
-
-  // Telegram-style bot menu button: toggles the full command list.
-  const handleSlashMenuButtonClick = useCallback(() => {
-    if (inputText.trimStart().startsWith("/")) {
-      inputRef.current?.setText("");
-    } else {
-      inputRef.current?.setText("/");
-    }
-  }, [inputText]);
 
   // Allow submit with only images (no text)
   const handleSendClick = useCallback(() => {
@@ -308,23 +321,14 @@ export const InputBar = memo(function InputBar({
             e.target.value = "";
           }}
         />
-        <div className="absolute right-2 bottom-2 flex items-center gap-1.5">
+        <div
+          data-testid="input-actions"
+          className="flex min-h-10 items-center justify-end gap-1.5 px-2 pb-2"
+        >
           {queuedCount > 0 && (
             <span className="mr-1 rounded border border-border bg-background px-1.5 py-0.5 text-[0.643rem] font-medium uppercase text-text-dimmed">
               {queuedCount} queued
             </span>
-          )}
-          {slashCommands && slashCommands.length > 0 && (
-            <button
-              type="button"
-              className={`flex size-8 cursor-pointer items-center justify-center rounded-lg border-none shadow-none transition-colors duration-150 ${slashMenuOpen ? "bg-hover text-text" : "bg-transparent text-text-dimmed hover:bg-hover hover:text-text-muted"}`}
-              onClick={handleSlashMenuButtonClick}
-              title="Bot commands"
-            >
-              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
-                <path d="M10 2.5l-4 11" />
-              </svg>
-            </button>
           )}
           <button
             type="button"
