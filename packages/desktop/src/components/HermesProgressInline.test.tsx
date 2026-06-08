@@ -101,6 +101,116 @@ describe("HermesProgressInline", () => {
     expect(screen.getByText("0.2s")).toBeInTheDocument();
     expect(screen.getByText("4.5s")).toBeInTheDocument();
   });
+
+  it("renders notices and reasoning separately from tool activity", () => {
+    render(
+      <HermesProgressInline
+        invocations={[
+          {
+            invocation: invocation(),
+            events: [
+              progressEvent({
+                id: "notice",
+                sequence: 1,
+                type: "notice.lifecycle",
+                status: "info",
+                toolCallId: null,
+                toolName: null,
+                label: "Codex gpt-5.5 caps context at 272K",
+              }),
+              progressEvent({
+                id: "legacy-status",
+                sequence: 2,
+                type: "status.warn",
+                status: "warning",
+                toolCallId: null,
+                toolName: null,
+                label: "Compression provider is unavailable",
+              }),
+              progressEvent({
+                id: "reasoning",
+                sequence: 3,
+                type: "reasoning.available",
+                status: "running",
+                toolCallId: null,
+                toolName: null,
+                preview: "Drafting a response before using tools\nmore detail",
+                payload: { text: "Drafting a response before using tools" },
+              }),
+              progressEvent({
+                id: "tool",
+                sequence: 4,
+                type: "tool.started",
+                status: "running",
+                toolCallId: "call-read",
+                toolName: "read_file",
+                label: "Read task context",
+              }),
+            ],
+          },
+        ]}
+      />,
+    );
+
+    expect(screen.getByText("info")).toBeInTheDocument();
+    expect(screen.getByText("warn")).toBeInTheDocument();
+    expect(screen.getByText("Codex gpt-5.5 caps context at 272K")).toBeInTheDocument();
+    expect(screen.getByText("Compression provider is unavailable")).toBeInTheDocument();
+    expect(screen.getByText("Thinking")).toBeInTheDocument();
+    expect(screen.getByText("Drafting a response before using tools")).toBeInTheDocument();
+    expect(screen.getByText("Read task context")).toBeInTheDocument();
+  });
+
+  it("does not treat reasoning events with an internal tool name as tools", () => {
+    render(
+      <HermesProgressInline
+        invocations={[
+          {
+            invocation: invocation(),
+            events: [
+              progressEvent({
+                id: "reasoning",
+                type: "reasoning.available",
+                toolCallId: null,
+                toolName: "_thinking",
+                preview: "Considering the request",
+                payload: { text: "Considering the request" },
+              }),
+            ],
+          },
+        ]}
+      />,
+    );
+
+    expect(screen.getByText("Thinking")).toBeInTheDocument();
+    expect(screen.getByText("Considering the request")).toBeInTheDocument();
+    expect(screen.queryByText(/^_thinking/)).not.toBeInTheDocument();
+  });
+
+  it("renders error notices without treating them as tool activity", () => {
+    render(
+      <HermesProgressInline
+        invocations={[
+          {
+            invocation: invocation(),
+            events: [
+              progressEvent({
+                id: "error-notice",
+                type: "notice.error",
+                status: "failed",
+                toolCallId: null,
+                toolName: null,
+                label: "Compression provider failed",
+              }),
+            ],
+          },
+        ]}
+      />,
+    );
+
+    expect(screen.getByText("error")).toBeInTheDocument();
+    expect(screen.getByText("Compression provider failed")).toBeInTheDocument();
+  });
 });
 
 function invocation(
