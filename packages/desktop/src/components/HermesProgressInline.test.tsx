@@ -1,5 +1,5 @@
-import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { fireEvent, render, screen } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
 import type {
   BotInvocationProgressEventPublic,
   BotInvocationPublic,
@@ -250,6 +250,120 @@ describe("HermesProgressInline", () => {
     expect(screen.getByText("html-math-study-notes")).toBeInTheDocument();
     expect(screen.getByText("custom_tool")).toBeInTheDocument();
     expect(screen.getByText("external context")).toBeInTheDocument();
+  });
+
+  it("renders approval actions as buttons mapped to Hermes slash commands", () => {
+    const onApprovalCommand = vi.fn();
+    const approval = progressEvent({
+      id: "approval-1",
+      type: "approval.request",
+      status: "waiting",
+      toolCallId: null,
+      toolName: null,
+      label: "Command approval required",
+      preview: "rm -rf /important",
+      payload: {
+        command: "rm -rf /important",
+        description: "recursive delete",
+        choices: ["once", "session", "always", "deny"],
+      },
+    });
+    const { rerender } = render(
+      <HermesProgressInline
+        invocations={[{ invocation: invocation(), events: [approval] }]}
+        onApprovalCommand={onApprovalCommand}
+      />,
+    );
+
+    expect(screen.getByText("Command approval required")).toBeInTheDocument();
+    expect(screen.getByText("recursive delete")).toBeInTheDocument();
+    expect(screen.getByText("rm -rf /important")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Approve once" }));
+    expect(onApprovalCommand).toHaveBeenLastCalledWith("/approve");
+
+    rerender(
+      <HermesProgressInline
+        invocations={[
+          {
+            invocation: invocation(),
+            events: [{ ...approval, id: "approval-2" }],
+          },
+        ]}
+        onApprovalCommand={onApprovalCommand}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Approve session" }));
+    expect(onApprovalCommand).toHaveBeenLastCalledWith("/approve session");
+
+    rerender(
+      <HermesProgressInline
+        invocations={[
+          {
+            invocation: invocation(),
+            events: [{ ...approval, id: "approval-3" }],
+          },
+        ]}
+        onApprovalCommand={onApprovalCommand}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Approve always" }));
+    expect(onApprovalCommand).toHaveBeenLastCalledWith("/approve always");
+
+    rerender(
+      <HermesProgressInline
+        invocations={[
+          {
+            invocation: invocation(),
+            events: [{ ...approval, id: "approval-4" }],
+          },
+        ]}
+        onApprovalCommand={onApprovalCommand}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Deny" }));
+    expect(onApprovalCommand).toHaveBeenLastCalledWith("/deny");
+  });
+
+  it("enables pending approval actions in FIFO order", () => {
+    const onApprovalCommand = vi.fn();
+    const firstApproval = progressEvent({
+      id: "approval-1",
+      sequence: 1,
+      type: "approval.request",
+      status: "waiting",
+      toolCallId: null,
+      toolName: null,
+      payload: { command: "rm -rf /first" },
+    });
+    const secondApproval = progressEvent({
+      id: "approval-2",
+      sequence: 2,
+      type: "approval.request",
+      status: "waiting",
+      toolCallId: null,
+      toolName: null,
+      payload: { command: "rm -rf /second" },
+    });
+
+    render(
+      <HermesProgressInline
+        invocations={[
+          { invocation: invocation(), events: [firstApproval, secondApproval] },
+        ]}
+        onApprovalCommand={onApprovalCommand}
+      />,
+    );
+
+    const approveButtons = screen.getAllByRole("button", { name: "Approve once" });
+    expect(approveButtons[0]).not.toBeDisabled();
+    expect(approveButtons[1]).toBeDisabled();
+
+    fireEvent.click(approveButtons[0]);
+
+    expect(onApprovalCommand).toHaveBeenCalledWith("/approve");
+    expect(screen.getByRole("button", { name: "Approved" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Approve once" })).not.toBeDisabled();
   });
 });
 

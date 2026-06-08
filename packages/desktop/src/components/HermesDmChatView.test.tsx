@@ -76,6 +76,43 @@ describe("HermesDmChatView", () => {
     expect(screen.queryByText("Koda is typing...")).toBeNull();
   });
 
+  it("sends approval slash commands from approval buttons", () => {
+    const onSend = vi.fn();
+    render(
+      <HermesDmChatView
+        messages={[]}
+        loading={false}
+        typingUsers={new Map()}
+        progressInvocations={[
+          {
+            invocation: invocation({ status: "running" }),
+            events: [
+              progressEvent({
+                id: "approval-1",
+                type: "approval.request",
+                status: "waiting",
+                toolCallId: null,
+                toolName: null,
+                label: "Command approval required",
+                preview: "rm -rf /important",
+                payload: {
+                  command: "rm -rf /important",
+                  description: "recursive delete",
+                },
+              }),
+            ],
+          },
+        ]}
+        typingSuppressedUserIds={[]}
+        onSend={onSend}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Approve once" }));
+
+    expect(onSend).toHaveBeenCalledWith("/approve");
+  });
+
   it("does not jump for Hermes progress props with unchanged visible content", () => {
     const activeInvocation = invocation({ updatedAt: "2026-01-01T00:00:00.000Z" });
     const activeEvent = progressEvent({
