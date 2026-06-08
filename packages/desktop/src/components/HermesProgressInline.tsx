@@ -1,3 +1,4 @@
+import { useState } from "react";
 import type {
   BotInvocationProgressEventPublic,
   BotInvocationPublic,
@@ -11,12 +12,14 @@ type ProgressDisplayEvent = BotInvocationProgressEventPublic & {
   displayKey: string;
 };
 type ActivityGroups = {
+  approvalEvents: BotInvocationProgressEventPublic[];
   toolEvents: BotInvocationProgressEventPublic[];
   noticeEvents: BotInvocationProgressEventPublic[];
   reasoningEvents: BotInvocationProgressEventPublic[];
   otherEvents: BotInvocationProgressEventPublic[];
 };
 type NoticeSeverity = "info" | "warning" | "error";
+type ApprovalDecision = "once" | "session" | "always" | "deny";
 
 const MAX_VISIBLE_NOTICES = 2;
 const MAX_VISIBLE_TOOLS = 4;
@@ -24,10 +27,27 @@ const MAX_VISIBLE_OTHER = 2;
 
 export function HermesProgressInline({
   invocations,
+  onApprovalCommand,
 }: {
   invocations: ActiveHermesInvocationProgress[];
+  onApprovalCommand?: (command: string) => void;
 }) {
+  const [sentApprovalDecisions, setSentApprovalDecisions] = useState<
+    Record<string, ApprovalDecision>
+  >({});
+
   if (invocations.length === 0) return null;
+
+  const handleApprovalDecision = (
+    event: BotInvocationProgressEventPublic,
+    decision: ApprovalDecision,
+  ) => {
+    setSentApprovalDecisions((previous) => ({
+      ...previous,
+      [event.id]: decision,
+    }));
+    onApprovalCommand?.(approvalCommand(decision));
+  };
 
   return (
     <div className="space-y-2 px-5 py-2">
@@ -36,6 +56,10 @@ export function HermesProgressInline({
           .sort(compareEvents);
         const groups = groupActivityEvents(invocationEvents);
         const displayToolEvents = collapseToolLifecycleEvents(groups.toolEvents);
+        const visibleApprovalEvents = groups.approvalEvents;
+        const actionableApprovalId =
+          visibleApprovalEvents.find((event) => !sentApprovalDecisions[event.id])?.id ??
+          null;
         const visibleNoticeEvents = groups.noticeEvents.slice(-MAX_VISIBLE_NOTICES);
         const latestReasoningEvent = groups.reasoningEvents.at(-1) ?? null;
         const visibleToolEvents = displayToolEvents.slice(-MAX_VISIBLE_TOOLS);
@@ -46,6 +70,7 @@ export function HermesProgressInline({
           Math.max(0, displayToolEvents.length - visibleToolEvents.length) +
           Math.max(0, groups.otherEvents.length - visibleOtherEvents.length);
         const hasVisibleActivity =
+          visibleApprovalEvents.length > 0 ||
           visibleNoticeEvents.length > 0 ||
           latestReasoningEvent !== null ||
           visibleToolEvents.length > 0 ||
@@ -75,6 +100,15 @@ export function HermesProgressInline({
 
               {hasVisibleActivity ? (
                 <div className="space-y-1.5">
+                  {visibleApprovalEvents.map((event) => (
+                    <ApprovalEventRow
+                      key={event.id}
+                      event={event}
+                      sentDecision={sentApprovalDecisions[event.id] ?? null}
+                      isActionable={event.id === actionableApprovalId}
+                      onDecision={(decision) => handleApprovalDecision(event, decision)}
+                    />
+                  ))}
                   {visibleNoticeEvents.map((event) => (
                     <NoticeEventRow key={event.id} event={event} />
                   ))}
@@ -109,6 +143,7 @@ function groupActivityEvents(
   events: BotInvocationProgressEventPublic[],
 ): ActivityGroups {
   const groups: ActivityGroups = {
+    approvalEvents: [],
     toolEvents: [],
     noticeEvents: [],
     reasoningEvents: [],
@@ -116,7 +151,9 @@ function groupActivityEvents(
   };
 
   for (const event of events) {
-    if (isNoticeEvent(event)) {
+    if (isApprovalEvent(event)) {
+      groups.approvalEvents.push(event);
+    } else if (isNoticeEvent(event)) {
       groups.noticeEvents.push(event);
     } else if (isReasoningEvent(event)) {
       groups.reasoningEvents.push(event);
@@ -133,6 +170,10 @@ function groupActivityEvents(
 function isToolEvent(event: BotInvocationProgressEventPublic) {
   if (event.type.startsWith("tool.")) return true;
   return Boolean(event.toolCallId && event.toolName && !event.toolName.startsWith("_"));
+}
+
+function isApprovalEvent(event: BotInvocationProgressEventPublic) {
+  return event.type === "approval.request";
 }
 
 function isNoticeEvent(event: BotInvocationProgressEventPublic) {
@@ -259,6 +300,116 @@ function ReasoningEventRow({ event }: { event: BotInvocationProgressEventPublic 
   );
 }
 
+function ApprovalEventRow({
+  event,
+  sentDecision,
+  isActionable,
+  onDecision,
+}: {
+  event: BotInvocationProgressEventPublic;
+  sentDecision: ApprovalDecision | null;
+  isActionable: boolean;
+  onDecision: (decision: ApprovalDecision) => void;
+}) {
+  const command = approvalCommandText(event);
+  const description = stringField(event.payload, "description");
+  const choices = approvalChoices(event);
+  const disabled = sentDecision !== null || !isActionable;
+
+  return (
+    <div className="rounded-md border border-warning-text/30 bg-warning-bg/70 px-3 py-2 text-[0.786rem] text-text-secondary">
+      <div className="mb-2 flex min-w-0 items-center gap-2">
+        <span className="inline-block size-2 shrink-0 rounded-full bg-warning-text" />
+        <div className="min-w-0 flex-1 font-medium text-text">Command approval required</div>
+        <span className="shrink-0 rounded border border-warning-text/30 px-1.5 py-0.5 text-[0.643rem] font-medium uppercase text-warning-text">
+          waiting
+        </span>
+      </div>
+
+      {description && (
+        <div className="mb-2 whitespace-pre-wrap break-words text-text-muted">
+          {description}
+        </div>
+      )}
+
+      {command && (
+        <code className="mb-2 block max-h-40 overflow-y-auto whitespace-pre-wrap break-all rounded border border-border bg-base px-2 py-1.5 font-mono text-[0.714rem] text-text">
+          {command}
+        </code>
+      )}
+
+      {!isActionable && sentDecision === null && (
+        <div className="mb-2 text-text-dimmed">Resolve the earlier approval first.</div>
+      )}
+
+      <div className="flex flex-wrap justify-end gap-1.5">
+        {choices.includes("deny") && (
+          <ApprovalButton
+            label={sentDecision === "deny" ? "Denied" : "Deny"}
+            disabled={disabled}
+            tone="danger"
+            onClick={() => onDecision("deny")}
+          />
+        )}
+        {choices.includes("once") && (
+          <ApprovalButton
+            label={sentDecision === "once" ? "Approved" : "Approve once"}
+            disabled={disabled}
+            tone="primary"
+            onClick={() => onDecision("once")}
+          />
+        )}
+        {choices.includes("session") && (
+          <ApprovalButton
+            label={sentDecision === "session" ? "Approved for session" : "Approve session"}
+            disabled={disabled}
+            tone="secondary"
+            onClick={() => onDecision("session")}
+          />
+        )}
+        {choices.includes("always") && (
+          <ApprovalButton
+            label={sentDecision === "always" ? "Always approved" : "Approve always"}
+            disabled={disabled}
+            tone="secondary"
+            onClick={() => onDecision("always")}
+          />
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ApprovalButton({
+  label,
+  disabled,
+  tone,
+  onClick,
+}: {
+  label: string;
+  disabled: boolean;
+  tone: "primary" | "secondary" | "danger";
+  onClick: () => void;
+}) {
+  const toneClass =
+    tone === "danger"
+      ? "bg-error-bg text-error-bright hover:not-disabled:bg-danger-bg-hover"
+      : tone === "primary"
+      ? "bg-accent/15 text-accent hover:not-disabled:bg-accent/25"
+      : "bg-button text-text-muted hover:not-disabled:bg-button-hover hover:not-disabled:text-text";
+
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      className={`inline-flex min-h-7 cursor-pointer items-center rounded border border-border px-2.5 py-1 text-[0.786rem] font-medium transition-colors disabled:cursor-default disabled:opacity-55 ${toneClass}`}
+      onClick={onClick}
+    >
+      {label}
+    </button>
+  );
+}
+
 function OtherEventRow({ event }: { event: BotInvocationProgressEventPublic }) {
   return (
     <div className="flex min-w-0 items-center gap-2 text-[0.786rem] text-text-dimmed">
@@ -309,6 +460,39 @@ function eventText(event: BotInvocationProgressEventPublic) {
 function stringField(source: Record<string, unknown> | null, key: string) {
   const value = source?.[key];
   return typeof value === "string" ? value.trim() : "";
+}
+
+function approvalCommandText(event: BotInvocationProgressEventPublic) {
+  return (
+    stringField(event.payload, "command") ||
+    event.preview?.trim() ||
+    event.label?.trim() ||
+    ""
+  );
+}
+
+function approvalChoices(event: BotInvocationProgressEventPublic): ApprovalDecision[] {
+  const value = event.payload?.choices;
+  const choices = Array.isArray(value)
+    ? value.filter(isApprovalDecision)
+    : [];
+  return choices.length > 0 ? choices : ["once", "session", "always", "deny"];
+}
+
+function isApprovalDecision(value: unknown): value is ApprovalDecision {
+  return (
+    value === "once" ||
+    value === "session" ||
+    value === "always" ||
+    value === "deny"
+  );
+}
+
+function approvalCommand(decision: ApprovalDecision) {
+  if (decision === "deny") return "/deny";
+  if (decision === "session") return "/approve session";
+  if (decision === "always") return "/approve always";
+  return "/approve";
 }
 
 function firstLine(text: string) {
