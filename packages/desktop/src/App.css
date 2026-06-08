@@ -258,10 +258,6 @@
   border-radius: 6px;
 }
 
-.md-content .katex {
-  position: relative;
-}
-
 /* Bounded fallback for Hermes runtime previews. This keeps activity cards compact
    even if Tailwind's line-clamp utility is unavailable or a preview is huge. */
 .runtime-session-preview {
@@ -310,19 +306,30 @@
 
 /* KaTeX math */
 .md-content .katex {
-  font-size: 1.05em;
+  position: relative;
+  color: var(--color-text);
+  font-size: 1.12em;
+  line-height: 1.25;
+  text-rendering: geometricPrecision;
 }
 
 .md-content .katex-display {
   overflow-x: auto;
   overflow-y: hidden;
-  margin: 0.75em 0;
-  padding: 0.2em 0;
+  margin: 0.85em 0;
+  padding: 0.6em 0.75em;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 6px;
+  background: var(--color-raised);
+  text-align: left;
 }
 
 .md-content .katex-display > .katex {
-  display: inline-block;
+  display: block;
+  width: max-content;
   min-width: max-content;
+  margin: 0 auto;
+  font-size: 1.15em;
 }
 
 /* Code blocks — rehype-highlight adds its own classes to inner <code> */
