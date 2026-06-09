@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
+import { act, render, screen } from "@testing-library/react";
 import { Markdown } from "./Markdown";
 
 describe("Markdown", () => {
@@ -35,5 +35,24 @@ describe("Markdown", () => {
     );
 
     expect(container.querySelector(".katex-display")).not.toBeNull();
+  });
+
+  it("can defer expensive math rendering until after the initial paint", async () => {
+    vi.useFakeTimers();
+    const { container, unmount } = render(<Markdown content={"$$x^2 + y^2 = z^2$$"} defer />);
+
+    try {
+      expect(container.querySelector(".katex")).toBeNull();
+      expect(screen.getByText("$$x^2 + y^2 = z^2$$")).toBeInTheDocument();
+
+      await act(async () => {
+        vi.runAllTimers();
+      });
+
+      expect(container.querySelector(".katex")).not.toBeNull();
+    } finally {
+      unmount();
+      vi.useRealTimers();
+    }
   });
 });
