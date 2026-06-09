@@ -61,6 +61,37 @@ describe("HermesDmChatView", () => {
     expect(screen.getByText("Koda is typing...")).toBeInTheDocument();
   });
 
+  it("defers markdown formatting for large Hermes histories", () => {
+    vi.useFakeTimers();
+    const messages = Array.from({ length: 41 }, (_, index) =>
+      message({
+        id: `message-${index}`,
+        content: `$$x_${index}^2 + y_${index}^2 = z_${index}^2$$`,
+      }),
+    );
+
+    const { container, unmount } = render(
+      <HermesDmChatView
+        messages={messages}
+        loading={false}
+        typingUsers={new Map()}
+        progressInvocations={[]}
+        typingSuppressedUserIds={[]}
+        onSend={() => {}}
+        scrollKey="conversation-1:general"
+      />,
+    );
+
+    try {
+      expect(screen.getByRole("status")).toHaveTextContent("Formatting message history...");
+      expect(container.querySelector(".katex")).toBeNull();
+      expect(screen.getByText("$$x_40^2 + y_40^2 = z_40^2$$")).toBeInTheDocument();
+    } finally {
+      unmount();
+      vi.useRealTimers();
+    }
+  });
+
   it("can suppress generic typing even when visible progress is scoped out", () => {
     render(
       <HermesDmChatView

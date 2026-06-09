@@ -1,4 +1,4 @@
-import { useRef, useEffect, useCallback, useMemo, useLayoutEffect } from "react";
+import { useRef, useEffect, useCallback, useMemo, useLayoutEffect, useState } from "react";
 import { InputBar } from "./InputBar";
 import { Markdown } from "./Markdown";
 import { useAutoScroll } from "../hooks/useAutoScroll";
@@ -9,6 +9,10 @@ import { HermesProgressInline } from "./HermesProgressInline";
 import type { HermesSlashCommand } from "../lib/hermes-slash-commands";
 
 const TOP_LOAD_THRESHOLD_PX = 80;
+const DEFER_FORMATTING_MESSAGE_THRESHOLD = 40;
+const DEFER_FORMATTING_BATCH_SIZE = 4;
+const DEFER_FORMATTING_BATCH_DELAY_MS = 24;
+const DEFER_FORMATTING_MAX_DELAY_MS = 900;
 
 interface HermesDmChatViewProps {
   messages: ChatMessage[];
@@ -52,15 +56,25 @@ export function HermesDmChatView({
 }: HermesDmChatViewProps) {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const { isAtBottom, scrollToBottom } = useAutoScroll(scrollContainerRef);
+  const isAtBottomRef = useRef(isAtBottom);
   const forceNextContentScrollRef = useRef(false);
   const skipNextContentScrollRef = useRef(false);
   const initializedScrollKeyRef = useRef<string | null>(null);
   const progressScrollFrameRef = useRef<number | null>(null);
   const loadingOlderRef = useRef(false);
+  const deferredFormattedIdsRef = useRef<Set<string>>(new Set());
+  const deferredFormattingScopeRef = useRef<string | null>(null);
+  const deferredFormattingPendingIdsRef = useRef<Set<string>>(new Set());
+  const deferredFormattingTotalRef = useRef(0);
+  const deferredFormattingFrameRef = useRef<number | null>(null);
   const prependScrollSnapshotRef = useRef<{
     scrollHeight: number;
     scrollTop: number;
   } | null>(null);
+  const [formattingProgress, setFormattingProgress] = useState({
+    ready: 0,
+    total: 0,
+  });
 
   const visibleTypingNames = useMemo(() => {
     const progressBotUserIds = new Set([
@@ -104,6 +118,81 @@ export function HermesDmChatView({
     [visibleTypingNames],
   );
   const scrollScopeKey = scrollKey ?? "__hermes_dm_chat_default__";
+  const deferMessageFormatting =
+    messages.length > DEFER_FORMATTING_MESSAGE_THRESHOLD;
+  const formattingHistory =
+    deferMessageFormatting && formattingProgress.ready < formattingProgress.total;
+
+  useEffect(() => {
+    isAtBottomRef.current = isAtBottom;
+  }, [isAtBottom]);
+
+  useEffect(() => {
+    if (deferredFormattingScopeRef.current !== scrollScopeKey) {
+      deferredFormattingScopeRef.current = scrollScopeKey;
+      deferredFormattedIdsRef.current = new Set();
+    }
+
+    const allMessageIds = new Set(messages.map((message) => message.id));
+    const formattedIds = new Set(
+      [...deferredFormattedIdsRef.current].filter((messageId) =>
+        allMessageIds.has(messageId),
+      ),
+    );
+
+    if (!deferMessageFormatting) {
+      deferredFormattedIdsRef.current = allMessageIds;
+      deferredFormattingPendingIdsRef.current = new Set();
+      deferredFormattingTotalRef.current = allMessageIds.size;
+      setFormattingProgress({
+        ready: allMessageIds.size,
+        total: allMessageIds.size,
+      });
+      return;
+    }
+
+    deferredFormattedIdsRef.current = formattedIds;
+    const pendingIds = new Set(
+      [...allMessageIds].filter((messageId) => !formattedIds.has(messageId)),
+    );
+    deferredFormattingPendingIdsRef.current = pendingIds;
+    deferredFormattingTotalRef.current = allMessageIds.size;
+    setFormattingProgress({
+      ready: allMessageIds.size - pendingIds.size,
+      total: allMessageIds.size,
+    });
+  }, [deferMessageFormatting, messageScrollSignature, messages, scrollScopeKey]);
+
+  useEffect(() => {
+    return () => {
+      if (deferredFormattingFrameRef.current !== null) {
+        cancelAnimationFrame(deferredFormattingFrameRef.current);
+        deferredFormattingFrameRef.current = null;
+      }
+    };
+  }, []);
+
+  const handleDeferredMarkdownRender = useCallback(
+    (messageId: string) => {
+      deferredFormattedIdsRef.current.add(messageId);
+      if (!deferredFormattingPendingIdsRef.current.delete(messageId)) return;
+
+      if (deferredFormattingFrameRef.current !== null) return;
+      deferredFormattingFrameRef.current = requestAnimationFrame(() => {
+        deferredFormattingFrameRef.current = null;
+        const total = deferredFormattingTotalRef.current;
+        const ready = Math.max(
+          0,
+          total - deferredFormattingPendingIdsRef.current.size,
+        );
+        setFormattingProgress({ ready, total });
+        if (isAtBottomRef.current) {
+          scrollToBottom({ force: true });
+        }
+      });
+    },
+    [scrollToBottom],
+  );
 
   const requestOlderMessages = useCallback(() => {
     const el = scrollContainerRef.current;
@@ -233,10 +322,21 @@ export function HermesDmChatView({
               </button>
             </div>
           )}
+          {!loading && formattingHistory && (
+            <div
+              role="status"
+              aria-live="polite"
+              className="pointer-events-none sticky top-2 z-10 flex justify-center px-5 py-1 text-[0.786rem] text-text-dimmed"
+            >
+              <span className="rounded border border-border bg-surface/95 px-2.5 py-1 shadow-sm">
+                Formatting message history...
+              </span>
+            </div>
+          )}
           {!loading && messages.length === 0 && (
             <div className="flex flex-1 flex-col items-center justify-center text-[1rem] text-text-placeholder">No messages yet. Start the conversation!</div>
           )}
-          {messages.map((msg) => (
+          {messages.map((msg, index) => (
             <div key={msg.id} className="flex gap-2.5 px-5 py-2.5 transition-colors duration-100 hover:bg-raised/50">
               <div className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-full bg-elevated text-[0.857rem] font-semibold text-text-muted">
                 {msg.senderName.charAt(0).toUpperCase()}
@@ -246,7 +346,20 @@ export function HermesDmChatView({
                   <span className="text-[0.929rem] font-semibold text-text">{msg.senderName}</span>
                   <span className="text-[0.714rem] text-text-dimmed">{formatTime(msg.createdAt)}</span>
                 </div>
-                <Markdown content={msg.content} />
+                <Markdown
+                  content={msg.content}
+                  defer={deferMessageFormatting}
+                  deferDelayMs={
+                    deferMessageFormatting
+                      ? deferredMarkdownDelayMs(messages.length, index)
+                      : 0
+                  }
+                  onDeferredRender={
+                    deferMessageFormatting
+                      ? () => handleDeferredMarkdownRender(msg.id)
+                      : undefined
+                  }
+                />
               </div>
             </div>
           ))}
@@ -295,4 +408,13 @@ function chatMessageWindowSignature(messages: ChatMessage[]) {
     lastMessage?.createdAt ?? "",
     lastMessage?.content.length ?? 0,
   ].join(":");
+}
+
+function deferredMarkdownDelayMs(messageCount: number, index: number) {
+  const distanceFromEnd = messageCount - index - 1;
+  return Math.min(
+    DEFER_FORMATTING_MAX_DELAY_MS,
+    Math.floor(distanceFromEnd / DEFER_FORMATTING_BATCH_SIZE) *
+      DEFER_FORMATTING_BATCH_DELAY_MS,
+  );
 }
