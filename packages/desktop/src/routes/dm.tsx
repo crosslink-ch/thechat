@@ -17,6 +17,14 @@ import { fireNotification } from "../lib/notifications";
 import { wsEvents, type WsEvents } from "../lib/ws-events";
 import { selectHermesConversationProgress } from "../lib/hermes-progress";
 import {
+  decisionFromApprovalCommand,
+  pendingApprovalEvents,
+} from "../lib/hermes-approvals";
+import {
+  recordApprovalDecision,
+  useHermesApprovalsStore,
+} from "../stores/hermes-approvals";
+import {
   buildHermesSlashCommands,
   canonicalHermesSlashCommand,
   parseHermesSlashCommand,
@@ -330,6 +338,20 @@ export function DmRoute() {
     if (slash) {
       if (canonical === "/new" || canonical === "/reset") {
         clearQueuedPrompts(activeScopeKey);
+      }
+      // Optimistically resolve approval cards: the gateway resolves pending
+      // approvals oldest-first, so mirror that here. Covers both the inline
+      // approval buttons (which send these commands) and typed commands.
+      const approvalDecision = decisionFromApprovalCommand(content);
+      if (approvalDecision) {
+        const pending = pendingApprovalEvents(
+          activeHermesProgress.invocations,
+          useHermesApprovalsStore.getState().decisions,
+        );
+        const targets = approvalDecision.all ? pending : pending.slice(0, 1);
+        for (const event of targets) {
+          recordApprovalDecision(event.id, approvalDecision.decision);
+        }
       }
       sendHermesMessageNow(content, activeThreadId);
       return;
