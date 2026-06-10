@@ -61,6 +61,7 @@ export function Sidebar() {
   const isChannel = routePath.startsWith("/channel");
   const isDm = routePath.startsWith("/dm");
   const isSettings = routePath === "/settings";
+  const isScrollDebug = routePath === "/debug/scroll";
   const currentAgentChatId = isAgentChat ? routeParams.id : undefined;
   const activeChannelId = isChannel ? routeParams.id : null;
   const activeDmUserId = isDm ? routeParams.id : null;
@@ -311,6 +312,22 @@ export function Sidebar() {
 
         {/* Footer */}
         <div className="border-t border-border-subtle px-2.5 py-2">
+          {import.meta.env.DEV && (
+            <button
+              className={`mb-1.5 flex w-full cursor-pointer items-center gap-2 rounded-md border-none px-2.5 py-2 text-left font-[inherit] text-[0.857rem] transition-colors duration-150 ${isScrollDebug ? "bg-elevated text-text" : "bg-none text-text-secondary hover:bg-hover hover:text-text"}`}
+              onClick={() => navigate({ to: "/debug/scroll" })}
+            >
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M2.33 3.5h9.34" />
+                <path d="M2.33 7h9.34" />
+                <path d="M2.33 10.5h9.34" />
+                <path d="M4.67 2.33v2.34" />
+                <path d="M9.33 5.83v2.34" />
+                <path d="M6.42 9.33v2.34" />
+              </svg>
+              Scroll Debug
+            </button>
+          )}
           {user ? (
             <div className="relative" ref={profileMenuRef}>
               <button
