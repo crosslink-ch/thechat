@@ -399,6 +399,76 @@ describe("useChannelChat", () => {
     });
   });
 
+  it("unloads a scope's extra history pages when switching away", async () => {
+    const recent = Array.from({ length: MESSAGE_PAGE_SIZE }, (_, i) =>
+      message(
+        "dm-hermes",
+        `recent ${i}`,
+        null,
+        `2026-01-01T00:${String(20 + i).padStart(2, "0")}:00.000Z`,
+      ),
+    );
+    const older = Array.from({ length: MESSAGE_PAGE_SIZE }, (_, i) =>
+      message(
+        "dm-hermes",
+        `older ${i}`,
+        null,
+        `2026-01-01T00:${String(i).padStart(2, "0")}:00.000Z`,
+      ),
+    );
+    const get = vi.fn(({ query }: { query: Record<string, unknown> }) =>
+      Promise.resolve({
+        data: query.threadId
+          ? [message("dm-hermes", "task history", "thread-2")]
+          : query.before
+            ? older
+            : recent,
+      }),
+    );
+    vi.mocked(api.messages).mockReturnValue({ get } as any);
+    const client = createTestQueryClient();
+
+    const { result, rerender } = renderHook(
+      ({ threadId, unthreadedOnly }: { threadId: string | null; unthreadedOnly: boolean }) =>
+        useChannelChat({
+          conversationId: "dm-hermes",
+          threadId,
+          unthreadedOnly,
+          token: "test-token",
+          wsSendMessage: vi.fn(),
+        }),
+      {
+        initialProps: { threadId: null as string | null, unthreadedOnly: true },
+        wrapper: createQueryWrapper(client),
+      },
+    );
+
+    await waitFor(() => {
+      expect(result.current.messages).toHaveLength(MESSAGE_PAGE_SIZE);
+    });
+    await act(async () => {
+      await result.current.loadOlderMessages();
+    });
+    await waitFor(() => {
+      expect(result.current.messages).toHaveLength(MESSAGE_PAGE_SIZE * 2);
+    });
+
+    rerender({ threadId: "thread-2", unthreadedOnly: false });
+
+    const generalWindow = client.getQueryData<
+      InfiniteData<TestMessagePage, string | null>
+    >(messagesQueryKey("dm-hermes", null, true));
+    expect(flattenWindow(generalWindow)).toEqual(recent.map((m) => m.content));
+    expect(generalWindow?.pages).toHaveLength(1);
+    expect(generalWindow?.pages[0].hasOlder).toBe(true);
+
+    await waitFor(() => {
+      expect(result.current.messages.map((m) => m.content)).toEqual([
+        "task history",
+      ]);
+    });
+  });
+
   it("trims the visible cache on append only after the threshold", async () => {
     vi.mocked(api.messages).mockReturnValue({
       get: vi.fn(() =>

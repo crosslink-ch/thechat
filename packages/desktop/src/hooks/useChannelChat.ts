@@ -1,7 +1,10 @@
-import { useCallback, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import {
+  hashKey,
   useInfiniteQuery,
   useQueryClient,
+  type QueryClient,
+  type QueryKey,
   type InfiniteData,
 } from "@tanstack/react-query";
 import type { ChatMessage } from "@thechat/shared";
@@ -116,6 +119,29 @@ export function useChannelChat({
     staleTime: MESSAGE_CACHE_TTL_MS,
   });
 
+  // Older pages accumulate while the user scrolls up. Rendering them all
+  // again when the user returns to a scope makes switching feel slow, so
+  // unload a scope's history back to the initial page on switch-away.
+  const activeKeyRef = useRef<QueryKey | null>(null);
+  useEffect(() => {
+    const key = conversationId
+      ? messagesQueryKey(conversationId, threadId, unthreadedOnly)
+      : null;
+    const previousKey = activeKeyRef.current;
+    if (previousKey && (!key || hashKey(previousKey) !== hashKey(key))) {
+      trimCachedWindowToInitialPage(queryClient, previousKey);
+    }
+    activeKeyRef.current = key;
+  }, [conversationId, queryClient, threadId, unthreadedOnly]);
+
+  useEffect(() => {
+    return () => {
+      if (activeKeyRef.current) {
+        trimCachedWindowToInitialPage(queryClient, activeKeyRef.current);
+      }
+    };
+  }, [queryClient]);
+
   const addMessage = useCallback(
     (msg: ChatMessage) => {
       if (msg.conversationId !== conversationId) return;
@@ -215,6 +241,17 @@ function appendMessageToWindow(
   pages[0].messages = appendMessage(pages[0].messages, msg);
   const nextWindow = { ...window, pages };
   return trimWindowToRecentMessages(nextWindow, MESSAGE_WINDOW_TRIM_THRESHOLD) ?? nextWindow;
+}
+
+function trimCachedWindowToInitialPage(queryClient: QueryClient, key: QueryKey) {
+  const window = queryClient.getQueryData<MessageWindow>(key);
+  if (!window) return;
+  const messages = flattenMessageWindow(window);
+  if (messages.length <= MESSAGE_PAGE_SIZE) return;
+  queryClient.setQueryData<MessageWindow>(key, {
+    pages: [{ messages: messages.slice(-MESSAGE_PAGE_SIZE), hasOlder: true }],
+    pageParams: [null],
+  });
 }
 
 function trimWindowToRecentMessages(
