@@ -2,11 +2,12 @@ import { useRef, useEffect, useCallback, useMemo, useLayoutEffect } from "react"
 import { InputBar } from "./InputBar";
 import { Markdown } from "./Markdown";
 import { useAutoScroll } from "../hooks/useAutoScroll";
+import { useOlderHistoryScroll } from "../hooks/useOlderHistoryScroll";
+import { useScrollStability } from "../hooks/useScrollStability";
 import type { ChatMessage } from "@thechat/shared";
 import type { MentionUser } from "./MentionList";
 
 const noop = () => {};
-const TOP_LOAD_THRESHOLD_PX = 80;
 
 interface ChannelChatViewProps {
   messages: ChatMessage[];
@@ -39,13 +40,7 @@ export function ChannelChatView({
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const { isAtBottom, scrollToBottom } = useAutoScroll(scrollContainerRef);
   const forceNextContentScrollRef = useRef(false);
-  const skipNextContentScrollRef = useRef(false);
   const initializedScrollKeyRef = useRef<string | null>(null);
-  const loadingOlderRef = useRef(false);
-  const prependScrollSnapshotRef = useRef<{
-    scrollHeight: number;
-    scrollTop: number;
-  } | null>(null);
 
   const visibleTypingNames = useMemo(
     () => Array.from(typingUsers.values()).filter(Boolean),
@@ -63,80 +58,31 @@ export function ChannelChatView({
   );
   const scrollScopeKey = scrollKey ?? "__channel_chat_default__";
 
-  const requestOlderMessages = useCallback(() => {
-    const el = scrollContainerRef.current;
-    if (
-      !el ||
-      loading ||
-      loadingOlder ||
-      loadingOlderRef.current ||
-      !hasOlderMessages ||
-      !onLoadOlderMessages
-    ) {
-      return;
-    }
-
-    loadingOlderRef.current = true;
-    prependScrollSnapshotRef.current = {
-      scrollHeight: el.scrollHeight,
-      scrollTop: el.scrollTop,
-    };
-    skipNextContentScrollRef.current = true;
-
-    void Promise.resolve(onLoadOlderMessages())
-      .then((loaded) => {
-        if (loaded === false) {
-          prependScrollSnapshotRef.current = null;
-          skipNextContentScrollRef.current = false;
-        }
-      })
-      .finally(() => {
-        loadingOlderRef.current = false;
-      });
-  }, [hasOlderMessages, loading, loadingOlder, onLoadOlderMessages]);
-
-  useEffect(() => {
-    const el = scrollContainerRef.current;
-    if (!el) return;
-
-    const handleScroll = () => {
-      if (el.scrollTop <= TOP_LOAD_THRESHOLD_PX) {
-        requestOlderMessages();
-      }
-    };
-
-    el.addEventListener("scroll", handleScroll, { passive: true });
-    return () => el.removeEventListener("scroll", handleScroll);
-  }, [requestOlderMessages]);
+  const { requestOlderMessages, consumeSkipContentScroll } = useOlderHistoryScroll({
+    containerRef: scrollContainerRef,
+    loading,
+    loadingOlder,
+    hasOlderMessages,
+    onLoadOlderMessages,
+    messageScrollSignature,
+  });
+  useScrollStability(scrollContainerRef);
 
   useLayoutEffect(() => {
-    const el = scrollContainerRef.current;
-    const snapshot = prependScrollSnapshotRef.current;
-    if (!el || !snapshot || loadingOlder) return;
-
-    const heightDelta = el.scrollHeight - snapshot.scrollHeight;
-    el.scrollTop = snapshot.scrollTop + heightDelta;
-    prependScrollSnapshotRef.current = null;
-  }, [loadingOlder, messageScrollSignature]);
-
-  useEffect(() => {
     if (loading || initializedScrollKeyRef.current === scrollScopeKey) return;
     initializedScrollKeyRef.current = scrollScopeKey;
     scrollToBottom({ force: true });
   }, [loading, scrollScopeKey, scrollToBottom]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (forceNextContentScrollRef.current) {
       forceNextContentScrollRef.current = false;
       scrollToBottom({ force: true });
       return;
     }
-    if (skipNextContentScrollRef.current) {
-      skipNextContentScrollRef.current = false;
-      return;
-    }
+    if (consumeSkipContentScroll()) return;
     scrollToBottom();
-  }, [messageScrollSignature, scrollToBottom]);
+  }, [consumeSkipContentScroll, messageScrollSignature, scrollToBottom]);
 
   useEffect(() => {
     scrollToBottom();
@@ -157,7 +103,7 @@ export function ChannelChatView({
         <div
           ref={scrollContainerRef}
           data-testid="channel-chat-scroll"
-          className="flex flex-1 flex-col overflow-y-auto"
+          className="flex flex-1 flex-col overflow-y-auto [overflow-anchor:none]"
         >
           {loading && (
             <div className="flex flex-1 flex-col items-center justify-center text-[1rem] text-text-placeholder">Loading messages...</div>
@@ -178,7 +124,11 @@ export function ChannelChatView({
             <div className="flex flex-1 flex-col items-center justify-center text-[1rem] text-text-placeholder">No messages yet. Start the conversation!</div>
           )}
           {messages.map((msg) => (
-            <div key={msg.id} className="flex gap-2.5 px-5 py-2.5 transition-colors duration-100 hover:bg-raised/50">
+            <div
+              key={msg.id}
+              data-message-id={msg.id}
+              className="flex gap-2.5 px-5 py-2.5 transition-colors duration-100 hover:bg-raised/50"
+            >
               <div className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-full bg-elevated text-[0.857rem] font-semibold text-text-muted">
                 {msg.senderName.charAt(0).toUpperCase()}
               </div>
