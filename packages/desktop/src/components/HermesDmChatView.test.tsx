@@ -6,6 +6,7 @@ import type {
   ChatMessage,
 } from "@thechat/shared";
 import { HermesDmChatView } from "./HermesDmChatView";
+import { useHermesApprovalsStore } from "../stores/hermes-approvals";
 
 beforeAll(() => {
   Element.prototype.scrollIntoView = vi.fn();
@@ -14,6 +15,7 @@ beforeAll(() => {
 let scrollToMock: ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
+  useHermesApprovalsStore.getState().resetForTests();
   vi.mocked(Element.prototype.scrollIntoView).mockClear();
   scrollToMock = vi.fn(function scrollTo(
     this: Element,
@@ -139,7 +141,7 @@ describe("HermesDmChatView", () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Approve once" }));
+    fireEvent.click(screen.getByRole("button", { name: "Approve" }));
 
     expect(onSend).toHaveBeenCalledWith("/approve");
   });

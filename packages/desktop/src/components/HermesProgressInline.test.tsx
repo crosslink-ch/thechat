@@ -1,12 +1,17 @@
 import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   BotInvocationProgressEventPublic,
   BotInvocationPublic,
 } from "@thechat/shared";
 import { HermesProgressInline } from "./HermesProgressInline";
+import { useHermesApprovalsStore } from "../stores/hermes-approvals";
 
 describe("HermesProgressInline", () => {
+  beforeEach(() => {
+    useHermesApprovalsStore.getState().resetForTests();
+  });
+
   it("collapses tool start and completion events into one row", () => {
     render(
       <HermesProgressInline
@@ -275,11 +280,11 @@ describe("HermesProgressInline", () => {
       />,
     );
 
-    expect(screen.getByText("Command approval required")).toBeInTheDocument();
+    expect(screen.getByText("Koda wants to run a command")).toBeInTheDocument();
     expect(screen.getByText("recursive delete")).toBeInTheDocument();
     expect(screen.getByText("rm -rf /important")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Approve once" }));
+    fireEvent.click(screen.getByRole("button", { name: "Approve" }));
     expect(onApprovalCommand).toHaveBeenLastCalledWith("/approve");
 
     rerender(
@@ -293,7 +298,7 @@ describe("HermesProgressInline", () => {
         onApprovalCommand={onApprovalCommand}
       />,
     );
-    fireEvent.click(screen.getByRole("button", { name: "Approve session" }));
+    fireEvent.click(screen.getByRole("button", { name: "Approve for session" }));
     expect(onApprovalCommand).toHaveBeenLastCalledWith("/approve session");
 
     rerender(
@@ -307,7 +312,7 @@ describe("HermesProgressInline", () => {
         onApprovalCommand={onApprovalCommand}
       />,
     );
-    fireEvent.click(screen.getByRole("button", { name: "Approve always" }));
+    fireEvent.click(screen.getByRole("button", { name: "Always approve" }));
     expect(onApprovalCommand).toHaveBeenLastCalledWith("/approve always");
 
     rerender(
@@ -325,6 +330,98 @@ describe("HermesProgressInline", () => {
     expect(onApprovalCommand).toHaveBeenLastCalledWith("/deny");
   });
 
+  it("collapses the approval card into a resolved row after a decision", () => {
+    const onApprovalCommand = vi.fn();
+    const approval = progressEvent({
+      id: "approval-1",
+      type: "approval.request",
+      status: "waiting",
+      toolCallId: null,
+      toolName: null,
+      preview: "rm -rf /important",
+      payload: { command: "rm -rf /important" },
+    });
+
+    render(
+      <HermesProgressInline
+        invocations={[{ invocation: invocation(), events: [approval] }]}
+        onApprovalCommand={onApprovalCommand}
+      />,
+    );
+
+    expect(screen.getByText(/is waiting for your approval/)).toBeInTheDocument();
+    expect(screen.getByText("action needed")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Approve" }));
+
+    expect(screen.queryByTestId("hermes-approval-request")).not.toBeInTheDocument();
+    expect(screen.getByTestId("hermes-approval-resolved")).toBeInTheDocument();
+    expect(screen.getByText("Approved")).toBeInTheDocument();
+    expect(screen.queryByText("action needed")).not.toBeInTheDocument();
+    expect(screen.getByText(/is working/)).toBeInTheDocument();
+  });
+
+  it("keeps a sent decision after the component remounts", () => {
+    const approval = progressEvent({
+      id: "approval-1",
+      type: "approval.request",
+      status: "waiting",
+      toolCallId: null,
+      toolName: null,
+      payload: { command: "rm -rf /important" },
+    });
+    const view = render(
+      <HermesProgressInline
+        invocations={[{ invocation: invocation(), events: [approval] }]}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Deny" }));
+    view.unmount();
+
+    render(
+      <HermesProgressInline
+        invocations={[{ invocation: invocation(), events: [approval] }]}
+      />,
+    );
+
+    expect(screen.queryByTestId("hermes-approval-request")).not.toBeInTheDocument();
+    expect(screen.getByText("Denied")).toBeInTheDocument();
+  });
+
+  it("resolves approval requests from gateway approval.resolved events", () => {
+    const approval = progressEvent({
+      id: "approval-1",
+      sequence: 1,
+      type: "approval.request",
+      status: "waiting",
+      toolCallId: null,
+      toolName: null,
+      payload: { command: "sudo systemctl restart api", sessionKey: "dm:1" },
+    });
+    const resolution = progressEvent({
+      id: "resolution-1",
+      sequence: 2,
+      type: "approval.resolved",
+      status: "completed",
+      toolCallId: null,
+      toolName: null,
+      payload: { choice: "session", sessionKey: "dm:1" },
+    });
+
+    render(
+      <HermesProgressInline
+        invocations={[
+          { invocation: invocation(), events: [approval, resolution] },
+        ]}
+      />,
+    );
+
+    expect(screen.queryByTestId("hermes-approval-request")).not.toBeInTheDocument();
+    expect(screen.getByText("Approved for session")).toBeInTheDocument();
+    expect(screen.getByText("sudo systemctl restart api")).toBeInTheDocument();
+  });
+
   it("enables pending approval actions in FIFO order", () => {
     const onApprovalCommand = vi.fn();
     const firstApproval = progressEvent({
@@ -334,6 +431,7 @@ describe("HermesProgressInline", () => {
       status: "waiting",
       toolCallId: null,
       toolName: null,
+      createdAt: "2026-01-01T00:00:00.000Z",
       payload: { command: "rm -rf /first" },
     });
     const secondApproval = progressEvent({
@@ -343,6 +441,7 @@ describe("HermesProgressInline", () => {
       status: "waiting",
       toolCallId: null,
       toolName: null,
+      createdAt: "2026-01-01T00:00:01.000Z",
       payload: { command: "rm -rf /second" },
     });
 
@@ -355,15 +454,22 @@ describe("HermesProgressInline", () => {
       />,
     );
 
-    const approveButtons = screen.getAllByRole("button", { name: "Approve once" });
-    expect(approveButtons[0]).not.toBeDisabled();
-    expect(approveButtons[1]).toBeDisabled();
+    // Only the oldest pending approval is actionable; the later one waits.
+    expect(screen.getAllByRole("button", { name: "Approve" })).toHaveLength(1);
+    expect(
+      screen.getByText("Waiting for the earlier approval to be resolved first."),
+    ).toBeInTheDocument();
 
-    fireEvent.click(approveButtons[0]);
+    fireEvent.click(screen.getByRole("button", { name: "Approve" }));
 
     expect(onApprovalCommand).toHaveBeenCalledWith("/approve");
-    expect(screen.getByRole("button", { name: "Approved" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Approve once" })).not.toBeDisabled();
+    // First request collapses into a resolved row; the second becomes actionable.
+    expect(screen.getByTestId("hermes-approval-resolved")).toBeInTheDocument();
+    expect(screen.getByText("rm -rf /first")).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "Approve" })).toHaveLength(1);
+    expect(
+      screen.queryByText("Waiting for the earlier approval to be resolved first."),
+    ).not.toBeInTheDocument();
   });
 });
 
