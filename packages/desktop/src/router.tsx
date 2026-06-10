@@ -10,6 +10,7 @@ import { AgentChatRoute } from "./routes/agent-chat";
 import { ChannelRoute } from "./routes/channel";
 import { DmRoute } from "./routes/dm";
 import { NotificationsRoute } from "./routes/notifications";
+import { ScrollDebugRoute } from "./routes/scroll-debug";
 import { SettingsRoute } from "./routes/settings";
 import { WorkspaceManageRoute } from "./routes/workspace-manage";
 
@@ -70,6 +71,17 @@ const workspaceManageRoute = createRoute({
   component: WorkspaceManageRoute,
 });
 
+const scrollDebugRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/debug/scroll",
+  beforeLoad: () => {
+    if (!import.meta.env.DEV) {
+      throw redirect({ to: "/chat" });
+    }
+  },
+  component: ScrollDebugRoute,
+});
+
 const routeTree = rootRoute.addChildren([
   indexRoute,
   agentChatRoute,
@@ -79,6 +91,7 @@ const routeTree = rootRoute.addChildren([
   notificationsRoute,
   settingsRoute,
   workspaceManageRoute,
+  scrollDebugRoute,
 ]);
 
 const hashHistory = createHashHistory();
