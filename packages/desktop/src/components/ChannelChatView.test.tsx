@@ -113,6 +113,32 @@ describe("ChannelChatView", () => {
     });
   });
 
+  it("does not request older messages again while a load is in flight", async () => {
+    const onLoadOlderMessages = vi.fn(() => new Promise<boolean>(() => {}));
+    render(
+      <ChannelChatView
+        messages={[message()]}
+        loading={false}
+        hasOlderMessages
+        typingUsers={new Map()}
+        onSend={() => {}}
+        onLoadOlderMessages={onLoadOlderMessages}
+      />,
+    );
+    const scroller = screen.getByTestId("channel-chat-scroll");
+    makeScrollable(scroller);
+    scroller.scrollTop = 0;
+
+    fireEvent.scroll(scroller);
+    fireEvent.scroll(scroller);
+
+    await waitFor(() => {
+      expect(onLoadOlderMessages).toHaveBeenCalledTimes(1);
+    });
+    fireEvent.scroll(scroller);
+    expect(onLoadOlderMessages).toHaveBeenCalledTimes(1);
+  });
+
 });
 
 function makeScrollable(element: HTMLElement) {
