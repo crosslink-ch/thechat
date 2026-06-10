@@ -471,6 +471,221 @@ describe("HermesProgressInline", () => {
       screen.queryByText("Waiting for the earlier approval to be resolved first."),
     ).not.toBeInTheDocument();
   });
+
+  it("renders activity rows in the order events happened", () => {
+    // Terminal -> approval (resolved) -> thinking -> terminal: rows must keep
+    // this order instead of grouping by type.
+    render(
+      <HermesProgressInline
+        invocations={[
+          {
+            invocation: invocation(),
+            events: [
+              progressEvent({
+                id: "tool-1-started",
+                sequence: 1,
+                type: "tool.started",
+                status: "running",
+                toolCallId: "call-1",
+                toolName: "terminal",
+                label: "du -sh /var/cache",
+              }),
+              progressEvent({
+                id: "tool-1-completed",
+                sequence: 2,
+                type: "tool.completed",
+                status: "completed",
+                toolCallId: "call-1",
+                toolName: "terminal",
+                payload: { duration: 1.2 },
+              }),
+              progressEvent({
+                id: "approval-1",
+                sequence: 3,
+                type: "approval.request",
+                status: "waiting",
+                toolCallId: null,
+                toolName: null,
+                payload: { command: "rm -rf /var/cache/old" },
+              }),
+              progressEvent({
+                id: "resolution-1",
+                sequence: 4,
+                type: "approval.resolved",
+                status: "completed",
+                toolCallId: null,
+                toolName: null,
+                payload: { choice: "once" },
+              }),
+              progressEvent({
+                id: "reasoning-1",
+                sequence: 5,
+                type: "reasoning.available",
+                toolCallId: null,
+                toolName: null,
+                payload: { text: "Cleanup finished, verifying disk usage" },
+              }),
+              progressEvent({
+                id: "tool-2-started",
+                sequence: 6,
+                type: "tool.started",
+                status: "running",
+                toolCallId: "call-2",
+                toolName: "terminal",
+                label: "df -h /var/cache",
+              }),
+            ],
+          },
+        ]}
+      />,
+    );
+
+    const kinds = screen
+      .getAllByTestId("hermes-activity-row")
+      .map((row) => row.dataset.kind);
+    expect(kinds).toEqual(["tool", "approval-resolved", "reasoning", "tool"]);
+  });
+
+  it("collapses consecutive reasoning events but keeps separated blocks apart", () => {
+    render(
+      <HermesProgressInline
+        invocations={[
+          {
+            invocation: invocation(),
+            events: [
+              progressEvent({
+                id: "reasoning-1",
+                sequence: 1,
+                type: "reasoning.available",
+                toolCallId: null,
+                toolName: null,
+                payload: { text: "First thought" },
+              }),
+              progressEvent({
+                id: "reasoning-2",
+                sequence: 2,
+                type: "reasoning.available",
+                toolCallId: null,
+                toolName: null,
+                payload: { text: "Refined thought" },
+              }),
+              progressEvent({
+                id: "tool-1",
+                sequence: 3,
+                type: "tool.started",
+                status: "running",
+                toolCallId: "call-1",
+                toolName: "terminal",
+                label: "ls",
+              }),
+              progressEvent({
+                id: "reasoning-3",
+                sequence: 4,
+                type: "reasoning.available",
+                toolCallId: null,
+                toolName: null,
+                payload: { text: "Second block" },
+              }),
+            ],
+          },
+        ]}
+      />,
+    );
+
+    const kinds = screen
+      .getAllByTestId("hermes-activity-row")
+      .map((row) => row.dataset.kind);
+    expect(kinds).toEqual(["reasoning", "tool", "reasoning"]);
+    // The first block shows its latest text, not the first delta.
+    expect(screen.getByText("Refined thought")).toBeInTheDocument();
+    expect(screen.queryByText("First thought")).not.toBeInTheDocument();
+    expect(screen.getByText("Second block")).toBeInTheDocument();
+  });
+
+  it("expands tool and thinking rows to show the full text", () => {
+    const longCommand =
+      "find /var/cache/builds -type d -mtime +30 -print0 | xargs -0 du -sh | sort -rh | head -50";
+    const reasoningText = "Line one of thinking\nLine two with more detail";
+    render(
+      <HermesProgressInline
+        invocations={[
+          {
+            invocation: invocation(),
+            events: [
+              progressEvent({
+                id: "tool-1",
+                sequence: 1,
+                type: "tool.started",
+                status: "running",
+                toolCallId: "call-1",
+                toolName: "terminal",
+                label: longCommand,
+              }),
+              progressEvent({
+                id: "reasoning-1",
+                sequence: 2,
+                type: "reasoning.available",
+                toolCallId: null,
+                toolName: null,
+                payload: { text: reasoningText },
+              }),
+            ],
+          },
+        ]}
+      />,
+    );
+
+    expect(screen.queryByTestId("hermes-activity-detail")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: new RegExp("terminal") }));
+    expect(screen.getByTestId("hermes-activity-detail")).toHaveTextContent(
+      "head -50",
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /Thinking/ }));
+    const details = screen.getAllByTestId("hermes-activity-detail");
+    expect(details).toHaveLength(2);
+    expect(details[1]).toHaveTextContent("Line two with more detail");
+
+    fireEvent.click(screen.getByRole("button", { name: new RegExp("terminal") }));
+    expect(screen.getAllByTestId("hermes-activity-detail")).toHaveLength(1);
+  });
+
+  it("keeps pending approvals visible beyond the row window", () => {
+    const events = [
+      progressEvent({
+        id: "approval-early",
+        sequence: 1,
+        type: "approval.request",
+        status: "waiting",
+        toolCallId: null,
+        toolName: null,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        payload: { command: "rm -rf /important" },
+      }),
+      ...Array.from({ length: 12 }, (_, index) =>
+        progressEvent({
+          id: `tool-${index}`,
+          sequence: index + 2,
+          type: "tool.started",
+          status: "running",
+          toolCallId: `call-${index}`,
+          toolName: "terminal",
+          label: `step ${index}`,
+        }),
+      ),
+    ];
+
+    render(
+      <HermesProgressInline
+        invocations={[{ invocation: invocation(), events }]}
+      />,
+    );
+
+    expect(screen.getByTestId("hermes-approval-request")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Approve" })).toBeInTheDocument();
+    expect(screen.getByText(/earlier update/)).toBeInTheDocument();
+  });
 });
 
 function invocation(

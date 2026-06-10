@@ -21,21 +21,25 @@ import {
 import { formatToolSummary } from "../lib/tool-summary";
 
 type ToolCallPart = Extract<MessagePart, { type: "tool-call" }>;
-type ProgressDisplayEvent = BotInvocationProgressEventPublic & {
-  displayKey: string;
-};
-type ActivityGroups = {
-  toolEvents: BotInvocationProgressEventPublic[];
-  noticeEvents: BotInvocationProgressEventPublic[];
-  reasoningEvents: BotInvocationProgressEventPublic[];
-  otherEvents: BotInvocationProgressEventPublic[];
-};
 type NoticeSeverity = "info" | "warning" | "error";
 
-const MAX_VISIBLE_NOTICES = 2;
-const MAX_VISIBLE_TOOLS = 4;
-const MAX_VISIBLE_OTHER = 2;
-const MAX_VISIBLE_RESOLVED_APPROVALS = 2;
+/**
+ * One visual row in the activity timeline. Rows are built by walking the
+ * invocation's events in sequence order, so the list reflects the actual
+ * order things happened: a tool row sits where the tool started (its
+ * completion only updates it in place), a thinking row sits where that
+ * reasoning block began (consecutive reasoning events collapse into it),
+ * and an approval sits where Hermes asked — pending or resolved.
+ */
+type EventRow = {
+  kind: "tool" | "notice" | "reasoning" | "other";
+  key: string;
+  event: BotInvocationProgressEventPublic;
+};
+type ApprovalRow = { kind: "approval"; key: string; state: ApprovalRequestState };
+type ActivityRow = EventRow | ApprovalRow;
+
+const MAX_VISIBLE_ROWS = 8;
 
 export function HermesProgressInline({
   invocations,
@@ -46,8 +50,19 @@ export function HermesProgressInline({
 }) {
   const decisions = useHermesApprovalsStore((state) => state.decisions);
   const nowMs = useNowTick(invocations.length > 0);
+  const [expandedRowKeys, setExpandedRowKeys] = useState<Set<string>>(
+    () => new Set(),
+  );
 
   if (invocations.length === 0) return null;
+
+  const toggleRow = (key: string) => {
+    setExpandedRowKeys((previous) => {
+      const next = new Set(previous);
+      if (!next.delete(key)) next.add(key);
+      return next;
+    });
+  };
 
   const approvalStatesByInvocation = new Map(
     invocations.map(({ invocation, events }) => [
@@ -83,35 +98,21 @@ export function HermesProgressInline({
         const invocationEvents = [...events].sort(compareEvents);
         const approvalStates =
           approvalStatesByInvocation.get(invocation.id) ?? [];
-        const pendingApprovals = approvalStates.filter(
+        const needsApproval = approvalStates.some(
           (state) => state.status === "pending",
         );
-        const resolvedApprovals = approvalStates.filter(
-          (state) => state.status === "resolved",
+        const rows = buildActivityRows(invocationEvents, approvalStates);
+        let visibleRows = rows.slice(-MAX_VISIBLE_ROWS);
+        // Pending approvals must stay actionable even when older than the
+        // visible window (e.g. parallel tools kept emitting afterwards).
+        const hiddenPending = rows.filter(
+          (row) =>
+            row.kind === "approval" &&
+            row.state.status === "pending" &&
+            !visibleRows.includes(row),
         );
-        const visibleResolvedApprovals = resolvedApprovals.slice(
-          -MAX_VISIBLE_RESOLVED_APPROVALS,
-        );
-        const needsApproval = pendingApprovals.length > 0;
-        const groups = groupActivityEvents(invocationEvents);
-        const displayToolEvents = collapseToolLifecycleEvents(groups.toolEvents);
-        const visibleNoticeEvents = groups.noticeEvents.slice(-MAX_VISIBLE_NOTICES);
-        const latestReasoningEvent = groups.reasoningEvents.at(-1) ?? null;
-        const visibleToolEvents = displayToolEvents.slice(-MAX_VISIBLE_TOOLS);
-        const visibleOtherEvents = groups.otherEvents.slice(-MAX_VISIBLE_OTHER);
-        const hiddenCount =
-          Math.max(0, resolvedApprovals.length - visibleResolvedApprovals.length) +
-          Math.max(0, groups.noticeEvents.length - visibleNoticeEvents.length) +
-          Math.max(0, groups.reasoningEvents.length - (latestReasoningEvent ? 1 : 0)) +
-          Math.max(0, displayToolEvents.length - visibleToolEvents.length) +
-          Math.max(0, groups.otherEvents.length - visibleOtherEvents.length);
-        const hasVisibleActivity =
-          pendingApprovals.length > 0 ||
-          visibleResolvedApprovals.length > 0 ||
-          visibleNoticeEvents.length > 0 ||
-          latestReasoningEvent !== null ||
-          visibleToolEvents.length > 0 ||
-          visibleOtherEvents.length > 0;
+        visibleRows = [...hiddenPending, ...visibleRows];
+        const hiddenCount = rows.length - visibleRows.length;
         const elapsedLabel = invocation.startedAt
           ? formatElapsed(nowMs - Date.parse(invocation.startedAt))
           : null;
@@ -164,40 +165,51 @@ export function HermesProgressInline({
                 </div>
               )}
 
-              {hasVisibleActivity ? (
+              {visibleRows.length > 0 ? (
                 <div className="space-y-1.5">
-                  {visibleNoticeEvents.map((event) => (
-                    <NoticeEventRow key={event.id} event={event} />
-                  ))}
-                  {latestReasoningEvent && (
-                    <ReasoningEventRow event={latestReasoningEvent} />
-                  )}
-                  {visibleToolEvents.length > 0 && (
-                    <div className="space-y-1">
-                      {visibleToolEvents.map((event) => (
-                        <ToolEventRow key={event.displayKey} event={event} />
-                      ))}
+                  {visibleRows.map((row) => (
+                    <div
+                      key={row.key}
+                      data-testid="hermes-activity-row"
+                      data-kind={rowKind(row)}
+                    >
+                      {row.kind === "approval" ? (
+                        row.state.status === "pending" ? (
+                          <ApprovalRequestCard
+                            event={row.state.event}
+                            botName={invocation.botName}
+                            isActionable={
+                              row.state.event.id === actionableApprovalId
+                            }
+                            onDecision={(decision) =>
+                              handleApprovalDecision(row.state.event, decision)
+                            }
+                          />
+                        ) : (
+                          <ResolvedApprovalRow
+                            state={row.state}
+                            expanded={expandedRowKeys.has(row.key)}
+                            onToggle={() => toggleRow(row.key)}
+                          />
+                        )
+                      ) : row.kind === "notice" ? (
+                        <NoticeEventRow event={row.event} />
+                      ) : row.kind === "reasoning" ? (
+                        <ReasoningEventRow
+                          event={row.event}
+                          expanded={expandedRowKeys.has(row.key)}
+                          onToggle={() => toggleRow(row.key)}
+                        />
+                      ) : row.kind === "tool" ? (
+                        <ToolEventRow
+                          event={row.event}
+                          expanded={expandedRowKeys.has(row.key)}
+                          onToggle={() => toggleRow(row.key)}
+                        />
+                      ) : (
+                        <OtherEventRow event={row.event} />
+                      )}
                     </div>
-                  )}
-                  {visibleOtherEvents.map((event) => (
-                    <OtherEventRow key={event.id} event={event} />
-                  ))}
-                  {/* Approval lifecycle stays in one place at the bottom: a
-                      pending card collapses into a resolved row without
-                      jumping elsewhere in the list. */}
-                  {visibleResolvedApprovals.map((state) => (
-                    <ResolvedApprovalRow key={state.event.id} state={state} />
-                  ))}
-                  {pendingApprovals.map((state) => (
-                    <ApprovalRequestCard
-                      key={state.event.id}
-                      event={state.event}
-                      botName={invocation.botName}
-                      isActionable={state.event.id === actionableApprovalId}
-                      onDecision={(decision) =>
-                        handleApprovalDecision(state.event, decision)
-                      }
-                    />
                   ))}
                 </div>
               ) : (
@@ -225,31 +237,77 @@ function useNowTick(active: boolean) {
   return now;
 }
 
-function groupActivityEvents(
-  events: BotInvocationProgressEventPublic[],
-): ActivityGroups {
-  const groups: ActivityGroups = {
-    toolEvents: [],
-    noticeEvents: [],
-    reasoningEvents: [],
-    otherEvents: [],
-  };
+function buildActivityRows(
+  sortedEvents: BotInvocationProgressEventPublic[],
+  approvalStates: ApprovalRequestState[],
+): ActivityRow[] {
+  const approvalStateByEventId = new Map(
+    approvalStates.map((state) => [state.event.id, state]),
+  );
+  const rows: ActivityRow[] = [];
+  const toolRowByCallId = new Map<string, EventRow>();
 
-  for (const event of events) {
-    if (isApprovalRequestEvent(event) || isApprovalResolutionEvent(event)) {
-      continue; // rendered via deriveApprovalStates
-    } else if (isNoticeEvent(event)) {
-      groups.noticeEvents.push(event);
-    } else if (isReasoningEvent(event)) {
-      groups.reasoningEvents.push(event);
-    } else if (isToolEvent(event)) {
-      groups.toolEvents.push(event);
-    } else {
-      groups.otherEvents.push(event);
+  for (const event of sortedEvents) {
+    if (isApprovalRequestEvent(event)) {
+      const state = approvalStateByEventId.get(event.id);
+      if (state) rows.push({ kind: "approval", key: event.id, state });
+      continue;
     }
+    if (isApprovalResolutionEvent(event)) continue; // consumed by deriveApprovalStates
+
+    if (isNoticeEvent(event)) {
+      rows.push({ kind: "notice", key: event.id, event });
+      continue;
+    }
+
+    if (isReasoningEvent(event)) {
+      // Consecutive reasoning events are one thinking block: update the row
+      // in place (latest text) without moving it in the timeline.
+      const lastRow = rows[rows.length - 1];
+      if (lastRow?.kind === "reasoning") {
+        lastRow.event = event;
+      } else {
+        rows.push({ kind: "reasoning", key: event.id, event });
+      }
+      continue;
+    }
+
+    if (isToolEvent(event)) {
+      const callId = event.toolCallId;
+      const existing = callId ? toolRowByCallId.get(callId) : undefined;
+      if (!existing) {
+        const row: EventRow = {
+          kind: "tool",
+          key: callId ? `tool:${callId}` : event.id,
+          event,
+        };
+        rows.push(row);
+        if (callId) toolRowByCallId.set(callId, row);
+        continue;
+      }
+      // Lifecycle updates (completed/failed) refresh status, duration, and
+      // missing text but keep the row at its start position.
+      existing.event = {
+        ...event,
+        label: existing.event.label?.trim() ? existing.event.label : event.label,
+        preview: existing.event.preview?.trim()
+          ? existing.event.preview
+          : event.preview,
+      };
+      continue;
+    }
+
+    rows.push({ kind: "other", key: event.id, event });
   }
 
-  return groups;
+  return rows;
+}
+
+function rowKind(row: ActivityRow) {
+  if (row.kind === "approval") {
+    return row.state.status === "pending" ? "approval-pending" : "approval-resolved";
+  }
+  return row.kind;
 }
 
 function isToolEvent(event: BotInvocationProgressEventPublic) {
@@ -269,37 +327,6 @@ function isReasoningEvent(event: BotInvocationProgressEventPublic) {
   );
 }
 
-function collapseToolLifecycleEvents(
-  events: BotInvocationProgressEventPublic[],
-): ProgressDisplayEvent[] {
-  const rows: ProgressDisplayEvent[] = [];
-  const toolRowsByCallId = new Map<string, ProgressDisplayEvent>();
-
-  for (const event of events) {
-    if (!event.toolCallId) {
-      rows.push({ ...event, displayKey: event.id });
-      continue;
-    }
-
-    const existing = toolRowsByCallId.get(event.toolCallId);
-    if (!existing) {
-      const row = { ...event, displayKey: `tool:${event.toolCallId}` };
-      rows.push(row);
-      toolRowsByCallId.set(event.toolCallId, row);
-      continue;
-    }
-
-    Object.assign(existing, {
-      ...event,
-      displayKey: existing.displayKey,
-      label: existing.label?.trim() ? existing.label : event.label,
-      preview: existing.preview?.trim() ? existing.preview : event.preview,
-    });
-  }
-
-  return rows.sort(compareEvents);
-}
-
 function emptyStateLabel(invocation: BotInvocationPublic, nowMs: number) {
   if (invocation.status === "queued") return "Queued";
   if (invocation.status === "running" && olderThan(invocation.startedAt, 30_000, nowMs)) {
@@ -313,27 +340,51 @@ function olderThan(iso: string | null, ageMs: number, nowMs: number) {
   return nowMs - Date.parse(iso) > ageMs;
 }
 
-function ToolEventRow({ event }: { event: BotInvocationProgressEventPublic }) {
+function ToolEventRow({
+  event,
+  expanded,
+  onToggle,
+}: {
+  event: BotInvocationProgressEventPublic;
+  expanded: boolean;
+  onToggle: () => void;
+}) {
   const status = event.status ?? statusFromType(event.type);
   const payload = event.payload ?? {};
   const duration = typeof payload.duration === "number" ? payload.duration : null;
 
   return (
-    <div className="flex min-w-0 items-center gap-2 text-[0.786rem] text-text-muted">
-      <StatusDot status={status} />
-      {event.toolName && (
-        <span
-          className="max-w-[10rem] shrink-0 truncate rounded border border-border bg-base px-1.5 py-0.5 font-mono text-[0.714rem] text-text-dimmed"
-          title={event.toolName}
+    <div className="min-w-0">
+      <button
+        type="button"
+        aria-expanded={expanded}
+        onClick={onToggle}
+        className="flex w-full min-w-0 cursor-pointer items-center gap-2 text-left text-[0.786rem] text-text-muted hover:text-text"
+      >
+        <StatusDot status={status} />
+        {event.toolName && (
+          <span
+            className="max-w-[10rem] shrink-0 truncate rounded border border-border bg-base px-1.5 py-0.5 font-mono text-[0.714rem] text-text-dimmed"
+            title={event.toolName}
+          >
+            {event.toolName}
+          </span>
+        )}
+        <span className="min-w-0 flex-1 truncate">{eventLabel(event)}</span>
+        {duration !== null && (
+          <span className="shrink-0 tabular-nums text-text-dimmed">
+            {formatDuration(duration)}
+          </span>
+        )}
+        <ExpandChevron expanded={expanded} />
+      </button>
+      {expanded && (
+        <code
+          data-testid="hermes-activity-detail"
+          className="mt-1 block whitespace-pre-wrap break-all rounded border border-border bg-base px-2 py-1.5 font-mono text-[0.714rem] leading-relaxed text-text-secondary"
         >
-          {event.toolName}
-        </span>
-      )}
-      <span className="min-w-0 flex-1 truncate">{eventLabel(event)}</span>
-      {duration !== null && (
-        <span className="shrink-0 tabular-nums text-text-dimmed">
-          {formatDuration(duration)}
-        </span>
+          {toolDetailText(event)}
+        </code>
       )}
     </div>
   );
@@ -363,20 +414,43 @@ function NoticeEventRow({ event }: { event: BotInvocationProgressEventPublic }) 
   );
 }
 
-function ReasoningEventRow({ event }: { event: BotInvocationProgressEventPublic }) {
-  const text = firstLine(eventText(event));
+function ReasoningEventRow({
+  event,
+  expanded,
+  onToggle,
+}: {
+  event: BotInvocationProgressEventPublic;
+  expanded: boolean;
+  onToggle: () => void;
+}) {
+  const fullText = eventText(event);
+  const previewText = firstLine(fullText);
 
   return (
-    <div className="flex min-w-0 items-start gap-2 rounded border border-border-subtle bg-base/40 px-2 py-1.5 text-[0.786rem]">
-      <span className="mt-1.5 inline-block size-1.5 shrink-0 animate-pulse rounded-full bg-accent" />
-      <div className="min-w-0 flex-1">
-        <div className="font-medium text-text-muted">Thinking</div>
-        {text && (
-          <div className="truncate text-text-dimmed">
-            {text}
-          </div>
-        )}
-      </div>
+    <div className="rounded border border-border-subtle bg-base/40 px-2 py-1.5 text-[0.786rem]">
+      <button
+        type="button"
+        aria-expanded={expanded}
+        onClick={onToggle}
+        className="flex w-full min-w-0 cursor-pointer items-start gap-2 text-left"
+      >
+        <span className="mt-1.5 inline-block size-1.5 shrink-0 animate-pulse rounded-full bg-accent" />
+        <span className="min-w-0 flex-1">
+          <span className="block font-medium text-text-muted">Thinking</span>
+          {!expanded && previewText && (
+            <span className="block truncate text-text-dimmed">{previewText}</span>
+          )}
+        </span>
+        <ExpandChevron expanded={expanded} className="mt-0.5" />
+      </button>
+      {expanded && fullText && (
+        <div
+          data-testid="hermes-activity-detail"
+          className="mt-1 whitespace-pre-wrap break-words pl-3.5 leading-relaxed text-text-dimmed"
+        >
+          {fullText}
+        </div>
+      )}
     </div>
   );
 }
@@ -461,32 +535,53 @@ function ApprovalRequestCard({
   );
 }
 
-function ResolvedApprovalRow({ state }: { state: ApprovalRequestState }) {
+function ResolvedApprovalRow({
+  state,
+  expanded,
+  onToggle,
+}: {
+  state: ApprovalRequestState;
+  expanded: boolean;
+  onToggle: () => void;
+}) {
   const command = approvalCommandText(state.event);
   const decision = state.decision ?? "once";
   const denied = decision === "deny";
 
   return (
-    <div
-      data-testid="hermes-approval-resolved"
-      className="flex min-w-0 items-center gap-2 text-[0.786rem] text-text-muted"
-    >
-      <span
-        className={`inline-block size-2 shrink-0 rounded-full ${
-          denied ? "bg-error" : "bg-success"
-        }`}
-      />
-      <span
-        className={`shrink-0 font-medium ${
-          denied ? "text-error-light" : "text-success-light"
-        }`}
+    <div className="min-w-0" data-testid="hermes-approval-resolved">
+      <button
+        type="button"
+        aria-expanded={expanded}
+        onClick={onToggle}
+        className="flex w-full min-w-0 cursor-pointer items-center gap-2 text-left text-[0.786rem] text-text-muted hover:text-text"
       >
-        {approvalDecisionLabel(decision)}
-      </span>
-      {command && (
+        <span
+          className={`inline-block size-2 shrink-0 rounded-full ${
+            denied ? "bg-error" : "bg-success"
+          }`}
+        />
+        <span
+          className={`shrink-0 font-medium ${
+            denied ? "text-error-light" : "text-success-light"
+          }`}
+        >
+          {approvalDecisionLabel(decision)}
+        </span>
+        {command && (
+          <code
+            className="min-w-0 flex-1 truncate font-mono text-[0.714rem] text-text-dimmed"
+            title={command}
+          >
+            {command}
+          </code>
+        )}
+        <ExpandChevron expanded={expanded} />
+      </button>
+      {expanded && command && (
         <code
-          className="min-w-0 flex-1 truncate font-mono text-[0.714rem] text-text-dimmed"
-          title={command}
+          data-testid="hermes-activity-detail"
+          className="mt-1 block whitespace-pre-wrap break-all rounded border border-border bg-base px-2 py-1.5 font-mono text-[0.714rem] leading-relaxed text-text-secondary"
         >
           {command}
         </code>
@@ -534,6 +629,33 @@ function OtherEventRow({ event }: { event: BotInvocationProgressEventPublic }) {
   );
 }
 
+function ExpandChevron({
+  expanded,
+  className = "",
+}: {
+  expanded: boolean;
+  className?: string;
+}) {
+  return (
+    <svg
+      width="10"
+      height="10"
+      viewBox="0 0 10 10"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.4"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      className={`shrink-0 text-text-dimmed transition-transform duration-150 ${
+        expanded ? "rotate-90" : ""
+      } ${className}`}
+    >
+      <path d="M3.5 2l3 3-3 3" />
+    </svg>
+  );
+}
+
 function StatusDot({ status }: { status: string | null }) {
   if (status === "running") {
     return (
@@ -561,6 +683,21 @@ function eventLabel(event: BotInvocationProgressEventPublic) {
   }
   if (event.preview?.trim()) return event.preview.trim();
   return event.type.replace(/\./g, " ");
+}
+
+/** Fullest available text for an expanded tool row. */
+function toolDetailText(event: BotInvocationProgressEventPublic) {
+  const candidates = [
+    event.label?.trim() ?? "",
+    event.preview?.trim() ?? "",
+    stringField(recordField(event.payload, "args"), "command"),
+    eventLabel(event),
+  ];
+  return candidates.reduce(
+    (longest, candidate) =>
+      candidate.length > longest.length ? candidate : longest,
+    "",
+  );
 }
 
 function eventText(event: BotInvocationProgressEventPublic) {
