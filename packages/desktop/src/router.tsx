@@ -10,6 +10,7 @@ import { AgentChatRoute } from "./routes/agent-chat";
 import { ChannelRoute } from "./routes/channel";
 import { DmRoute } from "./routes/dm";
 import { NotificationsRoute } from "./routes/notifications";
+import { HermesDebugRoute } from "./routes/hermes-debug";
 import { ScrollDebugRoute } from "./routes/scroll-debug";
 import { SettingsRoute } from "./routes/settings";
 import { WorkspaceManageRoute } from "./routes/workspace-manage";
@@ -82,6 +83,17 @@ const scrollDebugRoute = createRoute({
   component: ScrollDebugRoute,
 });
 
+const hermesDebugRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/debug/hermes",
+  beforeLoad: () => {
+    if (!import.meta.env.DEV) {
+      throw redirect({ to: "/chat" });
+    }
+  },
+  component: HermesDebugRoute,
+});
+
 const routeTree = rootRoute.addChildren([
   indexRoute,
   agentChatRoute,
@@ -92,6 +104,7 @@ const routeTree = rootRoute.addChildren([
   settingsRoute,
   workspaceManageRoute,
   scrollDebugRoute,
+  hermesDebugRoute,
 ]);
 
 const hashHistory = createHashHistory();

@@ -62,6 +62,7 @@ export function Sidebar() {
   const isDm = routePath.startsWith("/dm");
   const isSettings = routePath === "/settings";
   const isScrollDebug = routePath === "/debug/scroll";
+  const isHermesDebug = routePath === "/debug/hermes";
   const currentAgentChatId = isAgentChat ? routeParams.id : undefined;
   const activeChannelId = isChannel ? routeParams.id : null;
   const activeDmUserId = isDm ? routeParams.id : null;
@@ -326,6 +327,18 @@ export function Sidebar() {
                 <path d="M6.42 9.33v2.34" />
               </svg>
               Scroll Debug
+            </button>
+          )}
+          {import.meta.env.DEV && (
+            <button
+              className={`mb-1.5 flex w-full cursor-pointer items-center gap-2 rounded-md border-none px-2.5 py-2 text-left font-[inherit] text-[0.857rem] transition-colors duration-150 ${isHermesDebug ? "bg-elevated text-text" : "bg-none text-text-secondary hover:bg-hover hover:text-text"}`}
+              onClick={() => navigate({ to: "/debug/hermes" })}
+            >
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="7" cy="7" r="5.2" />
+                <path d="M7 4.5v2.8l1.9 1.2" />
+              </svg>
+              Hermes Debug
             </button>
           )}
           {user ? (
