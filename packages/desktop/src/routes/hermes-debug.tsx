@@ -133,7 +133,10 @@ export function HermesDebugRoute() {
     const callId = nextId("call");
     const commands = [
       ["read_file", "/srv/app/config/cache.yaml"],
-      ["terminal", "du -sh /var/cache/builds/*"],
+      [
+        "terminal",
+        "find /var/cache/builds -mindepth 1 -maxdepth 2 -type d -mtime +30 -print0 | xargs -0 du -sh | sort -rh | head -50 && echo '---' && df -h /var/cache && journalctl -u build-cache-gc --since '7 days ago' --no-pager | tail -20",
+      ],
       ["grep", "retention.days in /srv/app/config"],
       ["patch", "/srv/app/config/cache.yaml"],
     ];
@@ -236,14 +239,17 @@ export function HermesDebugRoute() {
   );
 
   const addReasoning = useCallback(() => {
+    const text = [
+      "Checking the cache directory sizes before deciding what is safe to delete.",
+      "",
+      "The retention policy says 30 days, but the GC service logs show it has not run in a while — I should verify the timer is active before deleting anything manually.",
+      "If the GC timer is broken, fixing it is better than a one-off cleanup.",
+    ].join("\n");
     emitEvent({
       type: "reasoning.available",
       status: "running",
-      preview:
-        "Checking the cache directory sizes before deciding what is safe to delete",
-      payload: {
-        text: "Checking the cache directory sizes before deciding what is safe to delete",
-      },
+      preview: text,
+      payload: { text },
     });
   }, [emitEvent]);
 
