@@ -9,6 +9,7 @@ import { useConversationsStore } from "../stores/conversations";
 import { useKeybindings } from "../hooks/useKeybindings";
 import { Sidebar } from "../components/Sidebar";
 import { ChatHeader } from "../components/ChatHeader";
+import { WindowTitlebar } from "../components/WindowTitlebar";
 import { CommandPalette } from "../CommandPalette";
 import { PermissionModePicker } from "../PermissionModePicker";
 import { SelectProjectPicker } from "../SelectProjectPicker";
@@ -87,13 +88,16 @@ export function RootLayout() {
   });
 
   return (
-    <div className="relative flex h-screen overflow-hidden">
-      <Sidebar />
-      <div className="flex min-w-0 flex-1 flex-col">
-        <ChatHeader />
-        <ErrorBoundary name="Route">
-          <Outlet />
-        </ErrorBoundary>
+    <div className="relative flex h-screen flex-col overflow-hidden bg-base">
+      <WindowTitlebar />
+      <div className="flex min-h-0 flex-1 overflow-hidden">
+        <Sidebar />
+        <div className="flex min-w-0 flex-1 flex-col">
+          <ChatHeader />
+          <ErrorBoundary name="Route">
+            <Outlet />
+          </ErrorBoundary>
+        </div>
       </div>
       <CommandPalette />
       <PermissionModePicker />
