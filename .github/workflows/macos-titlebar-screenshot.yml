@@ -94,15 +94,18 @@ jobs:
           import json
           from pathlib import Path
 
-          config_path = Path("packages/desktop/src-tauri/tauri.conf.json")
-          config = json.loads(config_path.read_text())
-          window = config["app"]["windows"][0]
-          # GitHub's macOS screenshot surface is usually 1024x768. The app's
-          # normal 1100px width clips the right-side titlebar controls, so use
-          # a narrower window for this diagnostic screenshot only.
-          window["width"] = 900
-          window["height"] = 650
-          config_path.write_text(json.dumps(config, indent=2) + "\n")
+          for config_path in (
+              Path("packages/desktop/src-tauri/tauri.conf.json"),
+              Path("packages/desktop/src-tauri/tauri.macos.conf.json"),
+          ):
+              config = json.loads(config_path.read_text())
+              window = config["app"]["windows"][0]
+              # GitHub's macOS screenshot surface is usually 1024x768. The app's
+              # normal 1100px width can clip window chrome, so use a narrower
+              # window for this diagnostic screenshot only.
+              window["width"] = 900
+              window["height"] = 650
+              config_path.write_text(json.dumps(config, indent=2) + "\n")
           PY
 
       - name: Build macOS .app bundle
