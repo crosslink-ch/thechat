@@ -3,6 +3,7 @@ import { useAuthStore } from "../stores/auth";
 import { useWorkspacesStore } from "../stores/workspaces";
 import { useNotificationsStore } from "../stores/notifications";
 import { useConversationsStore } from "../stores/conversations";
+import { useHermesIndicatorsStore } from "../stores/hermes-indicators";
 import { fireNotification } from "./notifications";
 import { api } from "./api";
 import type { WorkspaceWithDetails } from "@thechat/shared";
@@ -123,11 +124,25 @@ export function registerGlobalWsHandlers(navigate: Navigate): () => void {
     );
   };
 
+  const onBotInvocationUpdated = ({
+    invocation,
+  }: WsEvents["ws:bot_invocation_updated"]) => {
+    useHermesIndicatorsStore.getState().trackInvocation(invocation);
+  };
+
+  const onBotInvocationProgress = ({
+    event,
+  }: WsEvents["ws:bot_invocation_progress"]) => {
+    useHermesIndicatorsStore.getState().trackProgressEvent(event);
+  };
+
   wsEvents.on("ws:new_message", onNewMessage);
   wsEvents.on("ws:member_joined", onMemberJoined);
   wsEvents.on("ws:member_role_changed", onMemberRoleChanged);
   wsEvents.on("ws:member_removed", onMemberRemoved);
   wsEvents.on("ws:invite_received", onInviteReceived);
+  wsEvents.on("ws:bot_invocation_updated", onBotInvocationUpdated);
+  wsEvents.on("ws:bot_invocation_progress", onBotInvocationProgress);
 
   return () => {
     wsEvents.off("ws:new_message", onNewMessage);
@@ -135,5 +150,7 @@ export function registerGlobalWsHandlers(navigate: Navigate): () => void {
     wsEvents.off("ws:member_role_changed", onMemberRoleChanged);
     wsEvents.off("ws:member_removed", onMemberRemoved);
     wsEvents.off("ws:invite_received", onInviteReceived);
+    wsEvents.off("ws:bot_invocation_updated", onBotInvocationUpdated);
+    wsEvents.off("ws:bot_invocation_progress", onBotInvocationProgress);
   };
 }

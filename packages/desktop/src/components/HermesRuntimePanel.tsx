@@ -17,6 +17,10 @@ export function HermesRuntimePanel({
   activeThreadId = null,
   queuedCountsByThread,
   generalQueuedCount = 0,
+  approvalThreadIds,
+  generalNeedsApproval = false,
+  unreadThreadIds,
+  generalUnread = false,
   onSelectThread,
   onCreateThread,
   onLoadMoreThreads,
@@ -32,6 +36,10 @@ export function HermesRuntimePanel({
   activeThreadId?: string | null;
   queuedCountsByThread?: Map<string, number>;
   generalQueuedCount?: number;
+  approvalThreadIds?: Set<string>;
+  generalNeedsApproval?: boolean;
+  unreadThreadIds?: Set<string>;
+  generalUnread?: boolean;
   onSelectThread?: (threadId: string | null) => void;
   onCreateThread?: () => void;
   onLoadMoreThreads?: () => void;
@@ -85,6 +93,8 @@ export function HermesRuntimePanel({
             <GeneralThreadRow
               active={activeThreadId === null}
               activeCount={generalActiveCount + generalQueuedCount}
+              needsApproval={generalNeedsApproval}
+              unread={generalUnread && activeThreadId !== null}
               onSelect={onSelectThread}
             />
             {threadsLoading && threads.length === 0 ? (
@@ -98,6 +108,11 @@ export function HermesRuntimePanel({
                   activeCount={
                     (activeCountsByThread.get(thread.id) ?? 0) +
                     (queuedCountsByThread?.get(thread.id) ?? 0)
+                  }
+                  needsApproval={approvalThreadIds?.has(thread.id) ?? false}
+                  unread={
+                    thread.id !== activeThreadId &&
+                    (unreadThreadIds?.has(thread.id) ?? false)
                   }
                   onSelect={onSelectThread}
                 />
@@ -142,11 +157,15 @@ function ThreadRow({
   thread,
   active,
   activeCount,
+  needsApproval,
+  unread,
   onSelect,
 }: {
   thread: ConversationThreadPublic;
   active: boolean;
   activeCount: number;
+  needsApproval?: boolean;
+  unread?: boolean;
   onSelect?: (threadId: string | null) => void;
 }) {
   return (
@@ -155,7 +174,9 @@ function ThreadRow({
       className={`w-full cursor-pointer rounded-md border px-3 py-2 text-left transition-colors duration-150 ${
         active
           ? "border-accent/40 bg-accent/10"
-          : "border-border bg-background hover:bg-hover"
+          : needsApproval
+            ? "border-warning-text/40 bg-warning-bg/60 hover:bg-warning-bg"
+            : "border-border bg-background hover:bg-hover"
       }`}
       onClick={() => onSelect?.(thread.id)}
     >
@@ -163,11 +184,11 @@ function ThreadRow({
         <div className="min-w-0 flex-1 truncate text-[0.857rem] font-medium text-text">
           {thread.title}
         </div>
-        {activeCount > 0 && (
-          <span className="shrink-0 rounded border border-accent/40 bg-accent/10 px-1.5 py-0.5 text-[0.643rem] font-medium uppercase text-accent">
-            {activeCount}
-          </span>
-        )}
+        <ThreadRowBadges
+          activeCount={activeCount}
+          needsApproval={needsApproval}
+          unread={unread}
+        />
       </div>
       <div className="mt-1 text-[0.714rem] text-text-dimmed">
         {formatSessionTime(thread.lastActivityAt)}
@@ -179,10 +200,14 @@ function ThreadRow({
 function GeneralThreadRow({
   active,
   activeCount,
+  needsApproval,
+  unread,
   onSelect,
 }: {
   active: boolean;
   activeCount: number;
+  needsApproval?: boolean;
+  unread?: boolean;
   onSelect?: (threadId: string | null) => void;
 }) {
   return (
@@ -191,7 +216,9 @@ function GeneralThreadRow({
       className={`w-full cursor-pointer rounded-md border px-3 py-2 text-left transition-colors duration-150 ${
         active
           ? "border-accent/40 bg-accent/10"
-          : "border-border bg-background hover:bg-hover"
+          : needsApproval
+            ? "border-warning-text/40 bg-warning-bg/60 hover:bg-warning-bg"
+            : "border-border bg-background hover:bg-hover"
       }`}
       onClick={() => onSelect?.(null)}
     >
@@ -199,16 +226,51 @@ function GeneralThreadRow({
         <div className="min-w-0 flex-1 truncate text-[0.857rem] font-medium text-text">
           General
         </div>
-        {activeCount > 0 && (
-          <span className="shrink-0 rounded border border-accent/40 bg-accent/10 px-1.5 py-0.5 text-[0.643rem] font-medium uppercase text-accent">
-            {activeCount}
-          </span>
-        )}
+        <ThreadRowBadges
+          activeCount={activeCount}
+          needsApproval={needsApproval}
+          unread={unread}
+        />
       </div>
       <div className="mt-1 text-[0.714rem] text-text-dimmed">
         Inbox
       </div>
     </button>
+  );
+}
+
+function ThreadRowBadges({
+  activeCount,
+  needsApproval,
+  unread,
+}: {
+  activeCount: number;
+  needsApproval?: boolean;
+  unread?: boolean;
+}) {
+  return (
+    <span className="flex shrink-0 items-center gap-1.5">
+      {needsApproval && (
+        <span
+          className="rounded border border-warning-text/40 bg-warning-bg px-1.5 py-0.5 text-[0.643rem] font-medium uppercase text-warning-text"
+          title="Waiting for your approval"
+        >
+          Action needed
+        </span>
+      )}
+      {activeCount > 0 && (
+        <span className="rounded border border-accent/40 bg-accent/10 px-1.5 py-0.5 text-[0.643rem] font-medium uppercase text-accent">
+          {activeCount}
+        </span>
+      )}
+      {unread && !needsApproval && (
+        <span
+          className="size-1.5 rounded-full bg-accent"
+          title="Finished — not read yet"
+          aria-label="Unread result"
+        />
+      )}
+    </span>
   );
 }
 

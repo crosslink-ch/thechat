@@ -5,7 +5,7 @@ import { useWebSocketStore } from "../stores/websocket";
 import { useWorkspacesStore } from "../stores/workspaces";
 import { usePermissionModeStore } from "../stores/permission-mode";
 import { basename } from "../lib/path";
-import { useSidebarState } from "./Sidebar";
+import { toggleSidebar, useSidebarState } from "./Sidebar";
 
 // Mini-store for agent chat title & project dir (set by agent-chat route)
 const useAgentChatTitle = create(() => ({ title: "", projectDir: null as string | null }));
@@ -60,7 +60,18 @@ export function ChatHeader() {
   const showWsStatus = !isAgentChat && (connected || reconnecting);
 
   return (
-    <div className={`flex h-12 items-center gap-2 border-b border-border-subtle bg-surface px-3 ${sidebarOpen ? "" : "pl-18"}`}>
+    <div className="flex h-12 shrink-0 items-center gap-1.5 border-b border-border-subtle bg-surface px-3">
+      <button
+        aria-label={sidebarOpen ? "Collapse sidebar" : "Open sidebar"}
+        title={sidebarOpen ? "Collapse sidebar" : "Open sidebar"}
+        className="flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-md border-none bg-none text-text-muted transition-colors duration-150 hover:bg-hover hover:text-text"
+        onClick={toggleSidebar}
+      >
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+          <rect x="1.5" y="2" width="11" height="10" rx="1.5" />
+          <path d="M5 2V12" />
+        </svg>
+      </button>
       {showBackButton && (
         <button
           className="flex size-8 cursor-pointer items-center justify-center rounded-md border-none bg-none text-text-muted transition-colors duration-150 hover:bg-hover hover:text-text"

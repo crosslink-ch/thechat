@@ -25,6 +25,10 @@ import {
   useHermesApprovalsStore,
 } from "../stores/hermes-approvals";
 import {
+  hermesScopeKey,
+  useHermesIndicatorsStore,
+} from "../stores/hermes-indicators";
+import {
   buildHermesSlashCommands,
   canonicalHermesSlashCommand,
   parseHermesSlashCommand,
@@ -111,6 +115,64 @@ export function DmRoute() {
     return counts;
   }, [conversationId, queuedPromptsByScope]);
   const generalQueuedCount = queuedPromptsByScope[hermesScopeKey(conversationId, null)]?.length ?? 0;
+
+  // Attention indicators: which tasks in this DM need approval or finished unread.
+  const pendingApprovals = useHermesIndicatorsStore((s) => s.pendingApprovals);
+  const unreadScopes = useHermesIndicatorsStore((s) => s.unreadScopes);
+  const approvalThreadIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const approval of pendingApprovals) {
+      if (approval.conversationId !== conversationId) continue;
+      if (approval.threadId) ids.add(approval.threadId);
+    }
+    return ids;
+  }, [conversationId, pendingApprovals]);
+  const generalNeedsApproval = useMemo(
+    () =>
+      pendingApprovals.some(
+        (approval) =>
+          approval.conversationId === conversationId && approval.threadId === null,
+      ),
+    [conversationId, pendingApprovals],
+  );
+  const unreadThreadIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const scope of Object.values(unreadScopes)) {
+      if (scope.conversationId !== conversationId) continue;
+      if (scope.threadId) ids.add(scope.threadId);
+    }
+    return ids;
+  }, [conversationId, unreadScopes]);
+  const generalUnread = useMemo(
+    () =>
+      Object.values(unreadScopes).some(
+        (scope) => scope.conversationId === conversationId && scope.threadId === null,
+      ),
+    [conversationId, unreadScopes],
+  );
+
+  // Keep the indicators store in sync with what the user is looking at, and
+  // seed it from the fetched runtime snapshot so approvals requested before
+  // this client connected still show up.
+  useEffect(() => {
+    if (!isHermesDm) return;
+    const store = useHermesIndicatorsStore.getState();
+    store.setVisibleScope(hermesScopeKey(conversationId, activeThreadId));
+    return () => {
+      useHermesIndicatorsStore.getState().setVisibleScope(null);
+    };
+  }, [activeThreadId, conversationId, isHermesDm]);
+
+  useEffect(() => {
+    if (!isHermesDm || !runtime) return;
+    useHermesIndicatorsStore
+      .getState()
+      .seedFromSnapshot(
+        conversationId,
+        runtime,
+        useHermesApprovalsStore.getState().decisions,
+      );
+  }, [conversationId, isHermesDm, runtime]);
 
   const channelChat = useChannelChat({
     conversationId: chatConversationId,
@@ -442,6 +504,10 @@ export function DmRoute() {
           onCreateThread={handleCreateThread}
           queuedCountsByThread={queuedCountsByThread}
           generalQueuedCount={generalQueuedCount}
+          approvalThreadIds={approvalThreadIds}
+          generalNeedsApproval={generalNeedsApproval}
+          unreadThreadIds={unreadThreadIds}
+          generalUnread={generalUnread}
           onLoadMoreThreads={() => {
             void loadMoreThreads();
           }}
@@ -469,8 +535,4 @@ function titleFromBranchCommand(args: string, sourceTitle?: string | null) {
 
 function isAutoNamedThread(thread: { title: string } | null | undefined) {
   return thread?.title.trim() === "New task";
-}
-
-function hermesScopeKey(conversationId: string, threadId: string | null) {
-  return threadId ? `${conversationId}:thread:${threadId}` : `${conversationId}:general`;
 }
