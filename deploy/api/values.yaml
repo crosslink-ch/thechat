@@ -21,9 +21,30 @@ databaseSecret: thechat-db
 # Name of an existing Kubernetes Secret containing JWT_SECRET
 jwtSecret: thechat-jwt
 
-# Name of an existing Kubernetes Secret containing REDIS_URL.
+# Name of a Kubernetes Secret containing REDIS_URL.
+# When redis.enabled=true, this chart creates the secret.
 # Required when REALTIME_DRIVER=redis or BullMQ workers are enabled.
 redisSecret: thechat-redis
+
+redis:
+  enabled: true
+  image:
+    repository: redis
+    tag: 7-alpine
+    pullPolicy: IfNotPresent
+  service:
+    port: 6379
+  persistence:
+    enabled: true
+    size: 1Gi
+    storageClassName: ""
+  resources:
+    requests:
+      cpu: 25m
+      memory: 64Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
 
 # Name of an existing Kubernetes Secret for SMTP credentials (optional)
 # Expected keys: SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS

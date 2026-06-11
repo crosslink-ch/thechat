@@ -47,6 +47,30 @@ app.kubernetes.io/name: {{ include "thechat-api.workerName" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
 
+{{- define "thechat-api.redisFullname" -}}
+{{- printf "%s-redis" (include "thechat-api.fullname" .) | trunc 63 | trimSuffix "-" }}
+{{- end }}
+
+{{- define "thechat-api.redisName" -}}
+{{- printf "%s-redis" (include "thechat-api.name" .) | trunc 63 | trimSuffix "-" }}
+{{- end }}
+
+{{- define "thechat-api.redisLabels" -}}
+helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | trunc 63 | trimSuffix "-" }}
+{{ include "thechat-api.redisSelectorLabels" . }}
+app.kubernetes.io/version: {{ .Values.redis.image.tag | quote }}
+app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{- end }}
+
+{{- define "thechat-api.redisSelectorLabels" -}}
+app.kubernetes.io/name: {{ include "thechat-api.redisName" . }}
+app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end }}
+
+{{- define "thechat-api.redisUrl" -}}
+redis://{{ include "thechat-api.redisFullname" . }}.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.redis.service.port }}/0
+{{- end }}
+
 {{- define "thechat-api.env" -}}
 {{- range $key, $value := .Values.env }}
 - name: {{ $key }}
