@@ -14,7 +14,8 @@
       {
         "title": "TheChat",
         "width": 1100,
-        "height": 800
+        "height": 800,
+        "decorations": false
       }
     ],
     "security": {
