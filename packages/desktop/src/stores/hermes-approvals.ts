@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import type { ApprovalDecision } from "../lib/hermes-approvals";
+import { resolveHermesApprovalIndicator } from "./hermes-indicators";
 
 /**
  * Approval decisions the user already sent from this client, keyed by the
@@ -46,4 +47,5 @@ export function recordApprovalDecision(
   decision: ApprovalDecision,
 ) {
   useHermesApprovalsStore.getState().recordDecision(eventId, decision);
+  resolveHermesApprovalIndicator(eventId);
 }

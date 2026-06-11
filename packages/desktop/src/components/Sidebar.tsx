@@ -123,18 +123,6 @@ export function Sidebar() {
         <div className="border-b border-border-subtle p-2">
           <div className="mb-2 flex items-center gap-1.5">
             <button
-              aria-label="Collapse sidebar"
-              className="flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-md border border-border bg-raised text-text-muted transition-colors duration-150 hover:bg-hover hover:text-text"
-              onClick={toggleSidebar}
-            >
-              <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M3 2.5H11" />
-                <path d="M3 7H11" />
-                <path d="M3 11.5H11" />
-                <path d="M2.5 2.5V11.5" />
-              </svg>
-            </button>
-            <button
               className="flex min-w-0 flex-1 cursor-pointer items-center justify-center gap-1.5 rounded-md border border-border bg-raised px-2.5 py-2 font-[inherit] text-[0.857rem] font-medium text-text-secondary transition-colors duration-150 hover:bg-hover hover:text-text"
               onClick={handleNewChat}
             >
