@@ -1,0 +1,125 @@
+name: macOS Titlebar Screenshot
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Git ref to build and screenshot"
+        required: false
+        default: "main-v2"
+  push:
+    branches: [main-v2]
+    paths:
+      - ".github/workflows/macos-titlebar-screenshot.yml"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "packages/desktop/**"
+      - "packages/shared/**"
+
+permissions:
+  contents: read
+
+jobs:
+  screenshot:
+    name: Build and screenshot macOS window
+    runs-on: macos-15
+    timeout-minutes: 45
+    env:
+      THECHAT_BACKEND_URL: http://127.0.0.1:3107
+      RUST_BACKTRACE: 1
+
+    steps:
+      - name: Checkout requested ref
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.ref || github.sha }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: packages/desktop/src-tauri
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Bundle Node.js runtime for Tauri resources
+        shell: bash
+        run: |
+          set -euxo pipefail
+          NODE_VERSION=24.14.1
+          RESOURCES_DIR=packages/desktop/src-tauri/resources/node
+          rm -rf "$RESOURCES_DIR"
+          mkdir -p "$RESOURCES_DIR"
+
+          if [ "$(uname -m)" = "arm64" ]; then
+            NODE_ARCH=arm64
+          else
+            NODE_ARCH=x64
+          fi
+
+          curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-darwin-${NODE_ARCH}.tar.gz" \
+            | tar xz --strip-components=1 -C "$RESOURCES_DIR"
+
+          rm -rf "$RESOURCES_DIR/include" "$RESOURCES_DIR/share" \
+                 "$RESOURCES_DIR/CHANGELOG.md" "$RESOURCES_DIR/README.md" "$RESOURCES_DIR/LICENSE"
+
+          for cmd in npm npx; do
+            LINK="$RESOURCES_DIR/bin/$cmd"
+            if [ -L "$LINK" ]; then
+              TARGET=$(readlink "$LINK")
+              rm "$LINK"
+              printf '#!/bin/sh\nexec "$(dirname "$0")/node" "$(dirname "$0")/%s" "$@"\n' "$TARGET" > "$LINK"
+              chmod +x "$LINK"
+            fi
+          done
+          rm -f "$RESOURCES_DIR/bin/corepack"
+          rm -rf "$RESOURCES_DIR/lib/node_modules/corepack"
+
+      - name: Build macOS .app bundle
+        shell: bash
+        run: |
+          set -euxo pipefail
+          pnpm --filter @thechat/desktop tauri build --debug --no-sign --ci --bundles app
+          APP_PATH=$(find packages/desktop/src-tauri/target/debug/bundle/macos -maxdepth 1 -name "*.app" -print -quit)
+          if [ -z "$APP_PATH" ]; then
+            echo "No .app bundle found" >&2
+            find packages/desktop/src-tauri/target -maxdepth 5 -type d -print
+            exit 1
+          fi
+          echo "APP_PATH=$APP_PATH" >> "$GITHUB_ENV"
+          echo "Built app bundle: $APP_PATH"
+
+      - name: Launch app and capture screenshot
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p "$RUNNER_TEMP/thechat-screenshot"
+          open -n "$APP_PATH"
+          sleep 10
+          ps -axo pid,ppid,stat,comm | grep -i thechat || true
+          screencapture -x "$RUNNER_TEMP/thechat-screenshot/thechat-macos-titlebar.png"
+          file "$RUNNER_TEMP/thechat-screenshot/thechat-macos-titlebar.png"
+          pkill -x thechat || true
+
+      - name: Upload screenshot artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: thechat-macos-titlebar-${{ github.run_number }}
+          path: |
+            ${{ runner.temp }}/thechat-screenshot/*.png
+            packages/desktop/src-tauri/target/debug/bundle/macos/*.app/Contents/Info.plist
+          if-no-files-found: warn
+          retention-days: 14
