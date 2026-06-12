@@ -2,6 +2,7 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import type { ConversationThreadPublic } from "@thechat/shared";
 import { api } from "../lib/api";
+import { wsEvents } from "../lib/ws-events";
 import { createQueryWrapper } from "../test-utils/query";
 import { useConversationThreads } from "./useConversationThreads";
 
@@ -147,6 +148,43 @@ describe("useConversationThreads", () => {
       ]);
     });
     expect(get).toHaveBeenCalledTimes(2);
+  });
+
+  it("updates a loaded task thread title from websocket cache events", async () => {
+    const initial = thread({ title: "New task" });
+    const updated = thread({
+      title: "Investigate flaky tests",
+      updatedAt: "2026-01-01T00:01:00.000Z",
+    });
+    const get = vi.fn(() => Promise.resolve({ data: page([initial]) }));
+    vi.mocked(api.conversations.threads).mockReturnValue({
+      get,
+      post: vi.fn(),
+      patch: vi.fn(),
+    } as any);
+
+    const { result } = renderHook(
+      () => useConversationThreads("conversation-1", "test-token", true),
+      { wrapper: createQueryWrapper() },
+    );
+
+    await waitFor(() => {
+      expect(result.current.threads.map((item) => item.title)).toEqual(["New task"]);
+    });
+
+    act(() => {
+      wsEvents.emit("ws:conversation_thread_updated", {
+        conversationId: "conversation-1",
+        thread: updated,
+      });
+    });
+
+    await waitFor(() => {
+      expect(result.current.threads.map((item) => item.title)).toEqual([
+        "Investigate flaky tests",
+      ]);
+    });
+    expect(get).toHaveBeenCalledTimes(1);
   });
 });
 

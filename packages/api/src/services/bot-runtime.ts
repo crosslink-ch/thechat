@@ -6,6 +6,7 @@ import type {
   BotInvocationProgressEventPublic,
   BotRuntimeSnapshot,
   ChatMessage,
+  ConversationThreadPublic,
   HermesSessionReference,
   WebhookPayload,
   WsServerEvent,
@@ -39,6 +40,7 @@ import {
 export const BOT_QUEUE_NAME = "thechat:bots";
 export const BOT_INVOKE_JOB_NAME = "bot.invoke";
 export const HERMES_WEBHOOK_DELIVERY_JOB_NAME = "bot.hermes_webhook.deliver";
+const MAX_THREAD_TITLE_LENGTH = 255;
 
 type BotKind = "webhook" | "hermes";
 type ConversationType = "direct" | "group";
@@ -112,6 +114,35 @@ function recordFromJson(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
     ? { ...(value as Record<string, unknown>) }
     : {};
+}
+
+function normalizeHermesGeneratedTitle(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const normalized = value
+    .replace(/[\u0000-\u001f\u007f]+/g, " ")
+    .trim()
+    .replace(/\s+/g, " ");
+  if (!normalized) return null;
+  return normalized.slice(0, MAX_THREAD_TITLE_LENGTH);
+}
+
+function titleFromSessionPayload(session: unknown): string | null {
+  if (!session || typeof session !== "object" || Array.isArray(session)) return null;
+  const record = session as Record<string, unknown>;
+  return normalizeHermesGeneratedTitle(record.title ?? record.sessionTitle ?? record.session_title);
+}
+
+function titleFromProgressInput(input: HermesPlatformProgressInput): string | null {
+  if (input.type !== "session.title") return titleFromSessionPayload(input.session);
+  return normalizeHermesGeneratedTitle(input.payload?.title) ?? titleFromSessionPayload(input.session);
+}
+
+function sessionPayloadWithTitle(session: unknown, title: string | null): unknown {
+  if (!title || !session || typeof session !== "object" || Array.isArray(session)) return session;
+  return {
+    ...(session as Record<string, unknown>),
+    title,
+  };
 }
 
 function conversationThreadScopeId(chatId: string, threadId: string | null) {
@@ -1224,13 +1255,17 @@ export async function publishHermesPlatformProgress(
       if (input.conversationId && input.conversationId !== loaded.conversation.id) {
         throw new ServiceError("Conversation does not match invocation", 400);
       }
+      const generatedTitle = titleFromProgressInput(input);
       await persistHermesSessionReference({
         invocation: loaded.invocation,
         threadId: loaded.invocation.threadId ?? null,
-        session: input.session,
+        session: sessionPayloadWithTitle(input.session, generatedTitle),
         reason: "progress",
         publishInvocation: true,
       });
+      if (input.type === "session.title") {
+        await updateHermesThreadTitleFromProgress(loaded, generatedTitle);
+      }
 
       const participantRows = await db
         .select({ userId: conversationParticipants.userId })
@@ -1261,6 +1296,49 @@ export async function publishHermesPlatformProgress(
       return { ok: true, event };
     },
   );
+}
+
+async function updateHermesThreadTitleFromProgress(
+  loaded: NonNullable<Awaited<ReturnType<typeof loadInvocationContext>>>,
+  title: string | null,
+) {
+  const threadId = loaded.invocation.threadId ?? null;
+  if (!threadId || !title) return null;
+
+  const now = new Date();
+  const [thread] = await db
+    .update(conversationThreads)
+    .set({
+      title,
+      updatedAt: now,
+    })
+    .where(
+      and(
+        eq(conversationThreads.id, threadId),
+        eq(conversationThreads.conversationId, loaded.conversation.id),
+      ),
+    )
+    .returning();
+  if (!thread) return null;
+
+  await publishConversationThreadUpdate(loaded.conversation.id, thread);
+  return thread;
+}
+
+async function publishConversationThreadUpdate(
+  conversationId: string,
+  thread: typeof conversationThreads.$inferSelect,
+) {
+  const participantRows = await db
+    .select({ userId: conversationParticipants.userId })
+    .from(conversationParticipants)
+    .where(eq(conversationParticipants.conversationId, conversationId));
+  const event: WsServerEvent = {
+    type: "conversation_thread_updated",
+    conversationId,
+    thread: toPublicConversationThread(thread),
+  };
+  await publishWsEventToUsers(participantRows.map((p) => p.userId), event);
 }
 
 async function failInvocation(invocationId: string, error: any) {
@@ -1496,5 +1574,22 @@ function toPublicInvocation(row: {
     completedAt: row.completedAt?.toISOString() ?? null,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
+  };
+}
+
+function toPublicConversationThread(
+  thread: typeof conversationThreads.$inferSelect,
+): ConversationThreadPublic {
+  return {
+    id: thread.id,
+    conversationId: thread.conversationId,
+    botId: thread.botId,
+    title: thread.title,
+    status: thread.status,
+    hermesSession: hermesSessionReferenceFromJson(thread.hermesSessionJson),
+    createdById: thread.createdById,
+    lastActivityAt: thread.lastActivityAt.toISOString(),
+    createdAt: thread.createdAt.toISOString(),
+    updatedAt: thread.updatedAt.toISOString(),
   };
 }

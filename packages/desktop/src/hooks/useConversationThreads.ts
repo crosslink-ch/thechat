@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from "react";
+import { useCallback, useEffect, useMemo } from "react";
 import {
   useInfiniteQuery,
   useQueryClient,
@@ -11,6 +11,7 @@ import type {
 } from "@thechat/shared";
 import { api } from "../lib/api";
 import { authHeaders, edenErrorMessage } from "../lib/eden";
+import { wsEvents, type WsEvents } from "../lib/ws-events";
 
 const CONVERSATION_THREADS_STALE_MS = 60_000;
 const DEFAULT_THREAD_PAGE_SIZE = 50;
@@ -195,6 +196,35 @@ export function useConversationThreads(
     },
     [conversationId, enabled, queryClient, queryKey, token],
   );
+
+  useEffect(() => {
+    if (!conversationId || !token || !enabled) return;
+
+    const onConversationThreadUpdated = ({
+      conversationId: eventConversationId,
+      thread,
+    }: WsEvents["ws:conversation_thread_updated"]) => {
+      if (eventConversationId !== conversationId) return;
+      if (botId && thread.botId !== botId) return;
+      if (status && thread.status !== status) return;
+
+      const previous = queryClient.getQueryData<ThreadsInfiniteData>(queryKey);
+      if (!hasLoadedThread(previous, thread.id)) {
+        void query.refetch();
+        return;
+      }
+
+      queryClient.setQueryData<ThreadsInfiniteData>(
+        queryKey,
+        (previous) => updateLoadedThread(previous, thread),
+      );
+    };
+
+    wsEvents.on("ws:conversation_thread_updated", onConversationThreadUpdated);
+    return () => {
+      wsEvents.off("ws:conversation_thread_updated", onConversationThreadUpdated);
+    };
+  }, [botId, conversationId, enabled, query.refetch, queryClient, queryKey, status, token]);
 
   return useMemo(
     () => ({

@@ -102,6 +102,11 @@ function doConnect() {
         invocationId: event.invocationId,
         event: event.event,
       });
+    } else if (event.type === "conversation_thread_updated") {
+      wsEvents.emit("ws:conversation_thread_updated", {
+        conversationId: event.conversationId,
+        thread: event.thread,
+      });
     } else if (event.type === "typing") {
       wsEvents.emit("ws:typing", {
         conversationId: event.conversationId,

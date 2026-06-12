@@ -370,6 +370,7 @@ export interface HermesSessionReference {
   lineageRootId: string | null;
   reason: string | null;
   source: string | null;
+  title?: string | null;
   branchFromSessionId?: string | null;
   branchFromThreadId?: string | null;
   branchFromLineageRootId?: string | null;
@@ -472,6 +473,11 @@ export type WsServerEvent =
       conversationId: string;
       invocationId: string;
       event: BotInvocationProgressEventPublic;
+    }
+  | {
+      type: "conversation_thread_updated";
+      conversationId: string;
+      thread: ConversationThreadPublic;
     }
   | {
       type: "typing";

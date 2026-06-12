@@ -1949,6 +1949,60 @@ describe("Bots: runtime state", () => {
     expect(progressRes.status).toBe(200);
     expect(progressRes.body.event.threadId).toBe(first.threadId);
 
+    const titleProgressRes = await req(
+      "POST",
+      `/hermes-platform/invocations/${first.invocationId}/progress`,
+      {
+        type: "session.title",
+        payload: { title: "Investigate threaded checkout" },
+        session: {
+          sessionId: "session-title-first",
+          sessionKey: `thechat:dm:${dmRes.body.id}:thread:${first.threadId}`,
+          title: "Investigate threaded checkout",
+        },
+      },
+      botRes.body.apiKey,
+    );
+    expect(titleProgressRes.status).toBe(200);
+    expect(titleProgressRes.body.event.type).toBe("session.title");
+    expect(titleProgressRes.body.event.payload.title).toBe("Investigate threaded checkout");
+
+    const titledThreadsRes = await req(
+      "GET",
+      `/conversations/threads/${dmRes.body.id}?limit=2`,
+      undefined,
+      human.token,
+    );
+    expect(titledThreadsRes.status).toBe(200);
+    const titledFirstThread = titledThreadsRes.body.items.find(
+      (thread: any) => thread.id === first.threadId,
+    );
+    expect(titledFirstThread).toEqual(
+      expect.objectContaining({
+        title: "Investigate threaded checkout",
+        hermesSession: expect.objectContaining({
+          sessionId: "session-title-first",
+          title: "Investigate threaded checkout",
+        }),
+      }),
+    );
+
+    const titleRuntimeEvent = await waitForResult(() => {
+      const event = realtimeEvents.find(
+        (candidate) =>
+          candidate.type === "ws.event" &&
+          candidate.event.type === "conversation_thread_updated" &&
+          candidate.event.thread.id === first.threadId &&
+          candidate.event.thread.title === "Investigate threaded checkout",
+      );
+      return Promise.resolve(event);
+    }, "thread title realtime event");
+    expect(titleRuntimeEvent.type).toBe("ws.event");
+    if (titleRuntimeEvent.type !== "ws.event") {
+      throw new Error("Expected realtime websocket event");
+    }
+    expect(titleRuntimeEvent.targetUserIds).toContain(human.user.id);
+
     const runtimeRes = await req(
       "GET",
       `/bot-runtime/conversations/${dmRes.body.id}`,

@@ -3,6 +3,7 @@ import type {
   BotInvocationPublic,
   BotInvocationProgressEventPublic,
   ChatMessage,
+  ConversationThreadPublic,
   WorkspaceMember,
   WorkspaceMemberRole,
   WorkspaceInvite,
@@ -21,6 +22,10 @@ export type WsEvents = {
     conversationId: string;
     invocationId: string;
     event: BotInvocationProgressEventPublic;
+  };
+  "ws:conversation_thread_updated": {
+    conversationId: string;
+    thread: ConversationThreadPublic;
   };
   "ws:typing": {
     conversationId: string;

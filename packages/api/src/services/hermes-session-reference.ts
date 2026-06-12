@@ -3,6 +3,7 @@ import type { HermesSessionReference } from "@thechat/shared";
 type HermesSessionReferenceInput = Record<string, unknown>;
 
 const MAX_SESSION_FIELD_LENGTH = 2048;
+const MAX_SESSION_TITLE_LENGTH = 255;
 
 export function normalizeHermesSessionReference(
   value: unknown,
@@ -19,6 +20,7 @@ export function normalizeHermesSessionReference(
   const branchFromSessionId = stringField(record.branchFromSessionId ?? record.branch_from_session_id);
   const branchFromThreadId = stringField(record.branchFromThreadId ?? record.branch_from_thread_id);
   const branchFromLineageRootId = stringField(record.branchFromLineageRootId ?? record.branch_from_lineage_root_id);
+  const title = titleField(record.title ?? record.sessionTitle ?? record.session_title);
   const branchTitle = stringField(record.branchTitle ?? record.branch_title);
 
   if (!sessionId && !sessionKey && !branchFromSessionId) return null;
@@ -29,6 +31,7 @@ export function normalizeHermesSessionReference(
     lineageRootId,
     reason: stringField(record.reason) ?? options.reason ?? null,
     source: stringField(record.source) ?? options.source ?? "hermes",
+    ...(title ? { title } : {}),
     ...(branchFromSessionId ? { branchFromSessionId } : {}),
     ...(branchFromThreadId ? { branchFromThreadId } : {}),
     ...(branchFromLineageRootId ? { branchFromLineageRootId } : {}),
@@ -53,6 +56,14 @@ export function mergeHermesSessionIntoJson(
     ...record,
     hermesSession: session,
   };
+}
+
+function titleField(value: unknown) {
+  const normalized = stringField(value)
+    ?.replace(/[\u0000-\u001f\u007f]+/g, " ")
+    .trim()
+    .replace(/\s+/g, " ");
+  return normalized ? normalized.slice(0, MAX_SESSION_TITLE_LENGTH) : null;
 }
 
 function stringField(value: unknown) {
