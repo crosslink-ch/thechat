@@ -25,7 +25,10 @@ const channelSchema = z.object({
 const threadSchema = z.object({
   botId: z.string().uuid().optional(),
   title: z.string().trim().min(1).max(255).optional(),
-  hermesSession: z.record(z.string(), z.unknown()).optional(),
+  // Present (including null) means "create this task as a Hermes branch".
+  // Null branches from the conversation's general Hermes lane; a UUID branches
+  // from that TheChat task thread. Hermes resolves the actual session at run time.
+  branchFromThreadId: z.string().uuid().nullable().optional(),
 });
 
 const updateThreadSchema = z.object({

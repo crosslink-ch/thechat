@@ -36,6 +36,13 @@
       "when": 1780585282245,
       "tag": "0004_reflective_the_hunter",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1781268619602,
+      "tag": "0005_minimal_hermes_branching",
+      "breakpoints": true
     }
   ]
 }

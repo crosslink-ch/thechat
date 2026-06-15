@@ -6,13 +6,15 @@ import {
   text,
   timestamp,
   jsonb,
+  boolean,
   integer,
   primaryKey,
   index,
   uniqueIndex,
+  foreignKey,
 } from "drizzle-orm/pg-core";
 import { relations } from "drizzle-orm";
-import type { BotCommandPublic, HermesSessionReference, MessagePart } from "@thechat/shared";
+import type { BotCommandPublic, MessagePart } from "@thechat/shared";
 
 // -- Enums --
 
@@ -281,7 +283,6 @@ export const botInvocations = pgTable(
     adapterKind: varchar("adapter_kind", { length: 20 }).notNull(),
     status: varchar("status", { length: 20 }).notNull().default("queued"),
     externalRunId: text("external_run_id"),
-    hermesSessionJson: jsonb("hermes_session_json").$type<HermesSessionReference>(),
     requestJson: jsonb("request_json").$type<Record<string, unknown>>(),
     responseJson: jsonb("response_json").$type<Record<string, unknown>>(),
     error: text("error"),
@@ -320,7 +321,8 @@ export const conversationThreads = pgTable(
       .references(() => bots.id, { onDelete: "cascade" }),
     title: varchar("title", { length: 255 }).notNull(),
     status: varchar("status", { length: 20 }).notNull().default("active"),
-    hermesSessionJson: jsonb("hermes_session_json").$type<HermesSessionReference>(),
+    branchPending: boolean("branch_pending").notNull().default(false),
+    branchFromThreadId: uuid("branch_from_thread_id"),
     createdById: uuid("created_by_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
@@ -344,6 +346,11 @@ export const conversationThreads = pgTable(
       t.id,
     ),
     index("conversation_threads_last_activity_idx").on(t.lastActivityAt),
+    foreignKey({
+      name: "conversation_threads_branch_from_thread_id_fk",
+      columns: [t.branchFromThreadId],
+      foreignColumns: [t.id],
+    }).onDelete("set null"),
   ],
 );
 

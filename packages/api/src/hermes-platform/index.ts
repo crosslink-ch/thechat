@@ -23,7 +23,6 @@ const messageSchema = z.object({
   content: z.string().min(1),
   platformMessageId: z.string().nullish(),
   complete: z.boolean().optional(),
-  session: z.record(z.string(), z.unknown()).nullish(),
 });
 
 const typingSchema = z.object({
@@ -36,7 +35,6 @@ const typingSchema = z.object({
 const progressSchema = z.object({
   botId: z.string().min(1).optional(),
   conversationId: z.string().min(1).optional(),
-  session: z.record(z.string(), z.unknown()).nullish(),
   type: z.string().min(1).max(64),
   status: z.string().min(1).max(32).nullish(),
   toolCallId: z.string().min(1).nullish(),
@@ -49,17 +47,14 @@ const progressSchema = z.object({
 
 const failedSchema = z.object({
   error: z.string().min(1),
-  session: z.record(z.string(), z.unknown()).nullish(),
 });
 
 const silentCompleteSchema = z.object({
   reason: z.string().optional(),
-  session: z.record(z.string(), z.unknown()).nullish(),
 });
 
 const cancelledSchema = z.object({
   reason: z.string().optional(),
-  session: z.record(z.string(), z.unknown()).nullish(),
 });
 
 type HermesPlatformBot = {
@@ -152,7 +147,6 @@ export const hermesPlatformRoutes = new Elysia({ prefix: "/hermes-platform" })
         content: parsed.data.content,
         platformMessageId: parsed.data.platformMessageId ?? null,
         complete: parsed.data.complete,
-        session: parsed.data.session ?? null,
       });
     } catch (e: any) {
       set.status = e instanceof ServiceError ? e.status : 500;
@@ -194,7 +188,6 @@ export const hermesPlatformRoutes = new Elysia({ prefix: "/hermes-platform" })
         preview: parsed.data.preview ?? null,
         payload: parsed.data.payload ?? null,
         occurredAt: parsed.data.occurredAt ? new Date(parsed.data.occurredAt) : null,
-        session: parsed.data.session ?? null,
       });
     } catch (e: any) {
       set.status = e instanceof ServiceError ? e.status : 500;
@@ -212,7 +205,6 @@ export const hermesPlatformRoutes = new Elysia({ prefix: "/hermes-platform" })
         authenticatedBotId: platformBot!.id,
         invocationId: params.invocationId,
         error: parsed.data.error,
-        session: parsed.data.session ?? null,
       });
     } catch (e: any) {
       set.status = e instanceof ServiceError ? e.status : 500;
@@ -230,7 +222,6 @@ export const hermesPlatformRoutes = new Elysia({ prefix: "/hermes-platform" })
         authenticatedBotId: platformBot!.id,
         invocationId: params.invocationId,
         reason: parsed.data.reason ?? null,
-        session: parsed.data.session ?? null,
       });
     } catch (e: any) {
       set.status = e instanceof ServiceError ? e.status : 500;
@@ -248,7 +239,6 @@ export const hermesPlatformRoutes = new Elysia({ prefix: "/hermes-platform" })
         authenticatedBotId: platformBot!.id,
         invocationId: params.invocationId,
         reason: parsed.data.reason ?? null,
-        session: parsed.data.session ?? null,
       });
     } catch (e: any) {
       set.status = e instanceof ServiceError ? e.status : 500;

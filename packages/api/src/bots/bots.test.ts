@@ -1855,7 +1855,7 @@ describe("Bots: runtime state", () => {
 
     const botThreadPageRes = await req(
       "GET",
-      `/conversations/threads/${dmRes.body.id}?limit=2`,
+      `/conversations/threads/${dmRes.body.id}?limit=3`,
       undefined,
       botRes.body.apiKey,
     );
@@ -1869,6 +1869,24 @@ describe("Bots: runtime state", () => {
       human.token,
     );
     expect(invalidCursorRes.status).toBe(400);
+
+    const branchThreadRes = await req(
+      "POST",
+      `/conversations/threads/${dmRes.body.id}`,
+      {
+        botId: botRes.body.id,
+        title: "Branch of first task",
+        branchFromThreadId: firstThreadRes.body.id,
+      },
+      human.token,
+    );
+    expect(branchThreadRes.status).toBe(200);
+    expect(branchThreadRes.body).toEqual(
+      expect.objectContaining({
+        branchPending: true,
+        branchFromThreadId: firstThreadRes.body.id,
+      }),
+    );
 
     const redisKeyPrefix = `thechat-thread-typing-test-${crypto.randomUUID()}`;
     const serviceBus = new RedisRealtimeBus({ redisKeyPrefix });
@@ -1900,15 +1918,28 @@ describe("Bots: runtime state", () => {
       expect(claimRes.body.events).toHaveLength(1);
       expect(claimRes.body.events[0].threadId).toBe(threadId);
       expect(claimRes.body.events[0].chatId).toBe(dmRes.body.id);
+      expect(claimRes.body.events[0]).not.toHaveProperty("continuity");
+      if (threadId !== branchThreadRes.body.id) {
+        expect(claimRes.body.events[0]).not.toHaveProperty("sessionIntent");
+      }
       return {
         messageId: sendRes.body.id as string,
         invocationId: claimRes.body.events[0].invocationId as string,
         threadId,
+        event: claimRes.body.events[0],
       };
     }
 
     const first = await sendAndClaim("First threaded prompt", firstThreadRes.body.id);
     const second = await sendAndClaim("Second threaded prompt", secondThreadRes.body.id);
+    const branch = await sendAndClaim("Branched threaded prompt", branchThreadRes.body.id);
+    expect(branch.event.sessionIntent).toEqual(
+      expect.objectContaining({
+        type: "branch",
+        fromThreadId: firstThreadRes.body.id,
+        title: "Branch of first task",
+      }),
+    );
 
     const typingRes = await req(
       "POST",
@@ -1955,11 +1986,6 @@ describe("Bots: runtime state", () => {
       {
         type: "session.title",
         payload: { title: "Investigate threaded checkout" },
-        session: {
-          sessionId: "session-title-first",
-          sessionKey: `thechat:dm:${dmRes.body.id}:thread:${first.threadId}`,
-          title: "Investigate threaded checkout",
-        },
       },
       botRes.body.apiKey,
     );
@@ -1969,7 +1995,7 @@ describe("Bots: runtime state", () => {
 
     const titledThreadsRes = await req(
       "GET",
-      `/conversations/threads/${dmRes.body.id}?limit=2`,
+      `/conversations/threads/${dmRes.body.id}?limit=3`,
       undefined,
       human.token,
     );
@@ -1980,10 +2006,8 @@ describe("Bots: runtime state", () => {
     expect(titledFirstThread).toEqual(
       expect.objectContaining({
         title: "Investigate threaded checkout",
-        hermesSession: expect.objectContaining({
-          sessionId: "session-title-first",
-          title: "Investigate threaded checkout",
-        }),
+        branchPending: false,
+        branchFromThreadId: null,
       }),
     );
 

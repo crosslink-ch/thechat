@@ -256,7 +256,8 @@ export interface ConversationThreadPublic {
   botId: string;
   title: string;
   status: string;
-  hermesSession: HermesSessionReference | null;
+  branchPending?: boolean;
+  branchFromThreadId?: string | null;
   createdById: string;
   lastActivityAt: string;
   createdAt: string;
@@ -364,20 +365,6 @@ export interface WebhookPayload {
 
 export type BotInvocationStatus = "queued" | "running" | "completed" | "failed" | "cancelled";
 
-export interface HermesSessionReference {
-  sessionId: string | null;
-  sessionKey: string | null;
-  lineageRootId: string | null;
-  reason: string | null;
-  source: string | null;
-  title?: string | null;
-  branchFromSessionId?: string | null;
-  branchFromThreadId?: string | null;
-  branchFromLineageRootId?: string | null;
-  branchTitle?: string | null;
-  updatedAt: string;
-}
-
 export interface BotInvocationPublic {
   id: string;
   botId: string;
@@ -391,7 +378,6 @@ export interface BotInvocationPublic {
   adapterKind: BotKind | string;
   status: BotInvocationStatus | string;
   externalRunId: string | null;
-  hermesSession: HermesSessionReference | null;
   requestJson: Record<string, unknown> | null;
   responseJson: Record<string, unknown> | null;
   error: string | null;

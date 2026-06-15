@@ -141,7 +141,6 @@ function invocation(
     adapterKind: "hermes",
     status: "running",
     externalRunId: null,
-    hermesSession: null,
     requestJson: null,
     responseJson: null,
     error: null,

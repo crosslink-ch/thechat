@@ -82,7 +82,6 @@ export function DmRoute() {
     createThread,
     renameThread,
     touchThread,
-    updateThreadSession,
   } = threadState;
   const { mergeInvocationUpdate, mergeProgressEvent } = useBotRuntimeCache();
   const generalThreadActive = isHermesDm && activeThreadId === null;
@@ -97,14 +96,6 @@ export function DmRoute() {
   const activeScopeKey = hermesScopeKey(conversationId, activeThreadId);
   const queuedPrompts = queuedPromptsByScope[activeScopeKey] ?? [];
   const taskActive = activeHermesProgress.invocations.length > 0;
-  const activeHermesSession = useMemo(() => {
-    if (activeThreadId) {
-      return threads.find((thread) => thread.id === activeThreadId)?.hermesSession ?? null;
-    }
-    return runtime?.invocations
-      .filter((invocation) => invocation.botKind === "hermes" && invocation.threadId === null)
-      .find((invocation) => invocation.hermesSession)?.hermesSession ?? null;
-  }, [activeThreadId, runtime?.invocations, threads]);
   const queuedCountsByThread = useMemo(() => {
     const counts = new Map<string, number>();
     const prefix = `${conversationId}:thread:`;
@@ -245,9 +236,6 @@ export function DmRoute() {
     }: WsEvents["ws:bot_invocation_updated"]) => {
       if (convId !== conversationId) return;
       mergeInvocationUpdate(conversationId, invocation);
-      if (invocation.threadId && invocation.hermesSession) {
-        updateThreadSession(invocation.threadId, invocation.hermesSession);
-      }
     };
     const onBotInvocationProgress = ({
       conversationId: convId,
@@ -279,7 +267,6 @@ export function DmRoute() {
     mergeInvocationUpdate,
     mergeProgressEvent,
     touchThread,
-    updateThreadSession,
     user?.id,
   ]);
 
@@ -362,26 +349,14 @@ export function DmRoute() {
       ? threads.find((thread) => thread.id === activeThreadId)
       : null;
     const branchTitle = titleFromBranchCommand(args, sourceThread?.title);
-    const sourceSession = sourceThread?.hermesSession ?? activeHermesSession;
-    const hermesSession = sourceSession?.sessionId
-      ? {
-          branchFromSessionId: sourceSession.sessionId,
-          branchFromThreadId: sourceThread?.id ?? null,
-          branchFromLineageRootId: sourceSession.lineageRootId ?? sourceSession.sessionId,
-          branchTitle,
-          reason: "branch.pending",
-          source: "thechat",
-          updatedAt: new Date().toISOString(),
-        }
-      : undefined;
 
     const thread = await createThread({
       botId: otherParticipant?.bot?.id,
       title: branchTitle,
-      ...(hermesSession ? { hermesSession } : {}),
+      branchFromThreadId: sourceThread?.id ?? null,
     });
     if (thread) setActiveThreadId(thread.id);
-  }, [activeHermesSession, activeThreadId, createThread, isHermesDm, otherParticipant?.bot?.id, threads]);
+  }, [activeThreadId, createThread, isHermesDm, otherParticipant?.bot?.id, threads]);
 
   const handleSend = (content: string) => {
     if (!isHermesDm) {

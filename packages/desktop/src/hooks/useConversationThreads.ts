@@ -7,7 +7,6 @@ import {
 import type {
   ConversationThreadPublic,
   ConversationThreadsPage,
-  HermesSessionReference,
 } from "@thechat/shared";
 import { api } from "../lib/api";
 import { authHeaders, edenErrorMessage } from "../lib/eden";
@@ -70,7 +69,7 @@ async function fetchConversationThreads(
 async function createConversationThread(
   conversationId: string,
   token: string,
-  input: { botId?: string; title?: string; hermesSession?: Record<string, unknown> },
+  input: { botId?: string; title?: string; branchFromThreadId?: string | null },
 ): Promise<ConversationThreadPublic> {
   const { data, error } = await api.conversations.threads({ conversationId }).post(
     input,
@@ -139,7 +138,7 @@ export function useConversationThreads(
   );
 
   const createThread = useCallback(
-    async (input: { botId?: string; title?: string; hermesSession?: Record<string, unknown> } = {}) => {
+    async (input: { botId?: string; title?: string; branchFromThreadId?: string | null } = {}) => {
       if (!conversationId || !token) return null;
       const thread = await createConversationThread(conversationId, token, input);
       queryClient.setQueryData<ThreadsInfiniteData>(
@@ -185,18 +184,6 @@ export function useConversationThreads(
     [conversationId, enabled, query.refetch, queryClient, queryKey, token],
   );
 
-  const updateThreadSession = useCallback(
-    (threadId: string, hermesSession: HermesSessionReference) => {
-      if (!conversationId || !token || !enabled) return;
-      queryClient.setQueryData<ThreadsInfiniteData>(
-        queryKey,
-        (previous) =>
-          updateLoadedThreadSession(previous, threadId, hermesSession),
-      );
-    },
-    [conversationId, enabled, queryClient, queryKey, token],
-  );
-
   useEffect(() => {
     if (!conversationId || !token || !enabled) return;
 
@@ -236,7 +223,6 @@ export function useConversationThreads(
       createThread,
       renameThread,
       touchThread,
-      updateThreadSession,
       refetchThreads: query.refetch,
     }),
     [
@@ -249,7 +235,6 @@ export function useConversationThreads(
       renameThread,
       threads,
       touchThread,
-      updateThreadSession,
     ],
   );
 }
@@ -346,21 +331,4 @@ function updateLoadedThreadActivity(
   };
 }
 
-function updateLoadedThreadSession(
-  data: ThreadsInfiniteData | undefined,
-  threadId: string,
-  hermesSession: HermesSessionReference,
-): ThreadsInfiniteData | undefined {
-  if (!data) return data;
-  return {
-    ...data,
-    pages: data.pages.map((page) => ({
-      ...page,
-      items: page.items.map((thread) =>
-        thread.id === threadId
-          ? { ...thread, hermesSession, updatedAt: hermesSession.updatedAt }
-          : thread,
-      ),
-    })),
-  };
-}
+
