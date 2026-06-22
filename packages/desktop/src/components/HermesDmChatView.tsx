@@ -305,6 +305,7 @@ export function HermesDmChatView({
           <HermesProgressInline
             invocations={progressInvocations}
             onApprovalCommand={handleSend}
+            onStop={onStop}
           />
           {visibleTypingNames.length > 0 && (
             <div className="animate-pulse px-5 py-1 pb-2 text-[0.786rem] text-text-dimmed">

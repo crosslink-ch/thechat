@@ -44,9 +44,11 @@ const MAX_VISIBLE_ROWS = 8;
 export function HermesProgressInline({
   invocations,
   onApprovalCommand,
+  onStop,
 }: {
   invocations: ActiveHermesInvocationProgress[];
   onApprovalCommand?: (command: string) => void;
+  onStop?: () => void;
 }) {
   const decisions = useHermesApprovalsStore((state) => state.decisions);
   const nowMs = useNowTick(invocations.length > 0);
@@ -93,7 +95,7 @@ export function HermesProgressInline({
   };
 
   return (
-    <div className="space-y-2 px-5 py-2">
+    <div className="space-y-3 px-5 py-3">
       {invocations.map(({ invocation, events }) => {
         const invocationEvents = [...events].sort(compareEvents);
         const approvalStates =
@@ -116,107 +118,150 @@ export function HermesProgressInline({
         const elapsedLabel = invocation.startedAt
           ? formatElapsed(nowMs - Date.parse(invocation.startedAt))
           : null;
+        const statusLabel = needsApproval
+          ? "action needed"
+          : invocation.status === "queued"
+            ? "queued"
+            : invocation.status;
+        const title = `${invocation.botName} ${
+          needsApproval
+            ? "is waiting for your approval"
+            : invocation.status === "queued"
+              ? "is queued"
+              : "is working"
+        }`;
 
         return (
-          <div key={invocation.id} className="flex gap-2.5">
-            <div className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-full bg-elevated text-[0.857rem] font-semibold text-text-muted">
-              {invocation.botName.charAt(0).toUpperCase()}
-            </div>
-            <div
-              className={`min-w-0 flex-1 rounded-md border px-3 py-2 ${
-                needsApproval
-                  ? "border-warning-text/30 bg-raised/40"
-                  : "border-border-subtle bg-raised/40"
-              }`}
-            >
-              <div className="mb-1.5 flex items-center gap-2">
-                <span
-                  className={`inline-block size-2 shrink-0 rounded-full ${
-                    needsApproval
-                      ? "bg-warning-text"
-                      : "animate-pulse bg-accent"
-                  }`}
-                />
-                <span className="min-w-0 flex-1 truncate text-[0.857rem] font-medium text-text-muted">
-                  {invocation.botName}{" "}
-                  {needsApproval
-                    ? "is waiting for your approval"
-                    : invocation.status === "queued"
-                    ? "is queued"
-                    : "is working"}
+          <div
+            key={invocation.id}
+            className={`min-w-0 overflow-hidden rounded border bg-surface ${
+              needsApproval
+                ? "border-warning-text/35"
+                : "border-[rgba(245,245,245,0.12)]"
+            }`}
+          >
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center justify-between gap-3 border-b border-[rgba(245,245,245,0.12)] px-5 py-[18px]">
+                <div className="flex min-w-0 items-center gap-3">
+                  <span
+                    className={`inline-block size-2 shrink-0 rounded-full ${
+                      needsApproval
+                        ? "bg-warning-text"
+                        : "animate-pulse bg-[#54894a]"
+                    }`}
+                  />
+                  <span className="min-w-0 truncate text-[1rem] font-medium text-text-secondary">
+                    {title}
+                  </span>
+                </div>
+                <div className="flex shrink-0 items-center gap-3">
                   {elapsedLabel && (
-                    <span className="text-text-dimmed"> · {elapsedLabel}</span>
+                    <span className="tabular-nums text-[0.929rem] text-text-dimmed">
+                      {elapsedLabel}
+                    </span>
                   )}
-                </span>
-                {needsApproval ? (
-                  <span className="shrink-0 rounded border border-warning-text/40 bg-warning-bg px-1.5 py-0.5 text-[0.643rem] font-medium uppercase text-warning-text">
-                    action needed
+                  <span
+                    className={`shrink-0 rounded border px-2 py-1 text-[0.786rem] font-medium ${
+                      needsApproval
+                        ? "border-warning-text/40 bg-warning-bg text-warning-text"
+                        : "border-[#54894a]/50 bg-[#54894a]/10 text-[#54894a]"
+                    }`}
+                  >
+                    {statusLabel}
                   </span>
-                ) : (
-                  <span className="shrink-0 rounded border border-accent/40 bg-accent/10 px-1.5 py-0.5 text-[0.643rem] font-medium uppercase text-accent">
-                    {invocation.status}
-                  </span>
-                )}
+                  {onStop && invocation.status !== "queued" && (
+                    <button
+                      type="button"
+                      className="flex cursor-pointer items-center gap-2.5 rounded border border-[rgba(245,245,245,0.24)] px-[9px] py-1 text-[0.929rem] font-medium text-text-secondary transition-colors hover:bg-hover hover:text-text"
+                      onClick={onStop}
+                    >
+                      <span className="size-3.5 rounded-sm border border-current bg-current" />
+                      Stop
+                    </button>
+                  )}
+                </div>
               </div>
 
-              {hiddenCount > 0 && (
-                <div className="pb-1 pl-4 text-[0.714rem] text-text-dimmed">
-                  {hiddenCount} earlier update{hiddenCount === 1 ? "" : "s"}
-                </div>
-              )}
+              <div className="px-5 py-5">
+                {hiddenCount > 0 && (
+                  <div className="mb-4 flex items-center gap-2 text-[0.929rem] text-text-secondary">
+                    <span className="inline-block size-[13px] rounded-full border border-[rgba(245,245,245,0.2)] bg-surface" />
+                    {hiddenCount} earlier update{hiddenCount === 1 ? "" : "s"}
+                  </div>
+                )}
 
-              {visibleRows.length > 0 ? (
-                <div className="space-y-1.5">
-                  {visibleRows.map((row) => (
-                    <div
-                      key={row.key}
-                      data-testid="hermes-activity-row"
-                      data-kind={rowKind(row)}
-                    >
-                      {row.kind === "approval" ? (
-                        row.state.status === "pending" ? (
-                          <ApprovalRequestCard
-                            event={row.state.event}
-                            botName={invocation.botName}
-                            isActionable={
-                              row.state.event.id === actionableApprovalId
-                            }
-                            onDecision={(decision) =>
-                              handleApprovalDecision(row.state.event, decision)
-                            }
-                          />
-                        ) : (
-                          <ResolvedApprovalRow
-                            state={row.state}
+                {visibleRows.length > 0 ? (
+                  <div className="relative space-y-5 before:absolute before:bottom-[8px] before:left-[6px] before:top-[8px] before:w-px before:bg-[rgba(245,245,245,0.12)]">
+                    {visibleRows.map((row) => (
+                      <div
+                        key={row.key}
+                        data-testid="hermes-activity-row"
+                        data-kind={rowKind(row)}
+                      >
+                        {row.kind === "approval" ? (
+                          row.state.status === "pending" ? (
+                            <ApprovalRequestCard
+                              event={row.state.event}
+                              botName={invocation.botName}
+                              isActionable={
+                                row.state.event.id === actionableApprovalId
+                              }
+                              onDecision={(decision) =>
+                                handleApprovalDecision(row.state.event, decision)
+                              }
+                            />
+                          ) : (
+                            <ResolvedApprovalRow
+                              state={row.state}
+                              expanded={expandedRowKeys.has(row.key)}
+                              onToggle={() => toggleRow(row.key)}
+                            />
+                          )
+                        ) : row.kind === "notice" ? (
+                          <NoticeEventRow event={row.event} />
+                        ) : row.kind === "reasoning" ? (
+                          <ReasoningEventRow
+                            event={row.event}
                             expanded={expandedRowKeys.has(row.key)}
                             onToggle={() => toggleRow(row.key)}
                           />
-                        )
-                      ) : row.kind === "notice" ? (
-                        <NoticeEventRow event={row.event} />
-                      ) : row.kind === "reasoning" ? (
-                        <ReasoningEventRow
-                          event={row.event}
-                          expanded={expandedRowKeys.has(row.key)}
-                          onToggle={() => toggleRow(row.key)}
-                        />
-                      ) : row.kind === "tool" ? (
-                        <ToolEventRow
-                          event={row.event}
-                          expanded={expandedRowKeys.has(row.key)}
-                          onToggle={() => toggleRow(row.key)}
-                        />
-                      ) : (
-                        <OtherEventRow event={row.event} />
-                      )}
-                    </div>
-                  ))}
+                        ) : row.kind === "tool" ? (
+                          <ToolEventRow
+                            event={row.event}
+                            expanded={expandedRowKeys.has(row.key)}
+                            onToggle={() => toggleRow(row.key)}
+                          />
+                        ) : (
+                          <OtherEventRow event={row.event} />
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-[0.929rem] text-text-dimmed">
+                    {emptyStateLabel(invocation, nowMs)}
+                  </div>
+                )}
+              </div>
+
+              <div className="flex items-center gap-6 border-t border-[rgba(245,245,245,0.12)] px-5 py-3.5">
+                <span className="shrink-0 text-[0.929rem] text-text-secondary">
+                  Context
+                </span>
+                <div className="h-0.5 min-w-0 flex-1 overflow-hidden rounded-full bg-[#32353d]">
+                  <div className="h-full w-[85%] bg-[#b18640]" />
                 </div>
-              ) : (
-                <div className="pl-4 text-[0.786rem] text-text-dimmed">
-                  {emptyStateLabel(invocation, nowMs)}
-                </div>
-              )}
+                <span className="shrink-0 tabular-nums text-[0.929rem] text-text-secondary">
+                  85%
+                </span>
+                <button
+                  type="button"
+                  className="flex shrink-0 cursor-pointer items-center gap-2 text-[0.929rem] text-text-secondary hover:text-text"
+                >
+                  Details
+                  <ExpandChevron expanded={false} />
+                </button>
+              </div>
             </div>
           </div>
         );
@@ -354,17 +399,17 @@ function ToolEventRow({
   const duration = typeof payload.duration === "number" ? payload.duration : null;
 
   return (
-    <div className="min-w-0">
+    <div className="relative z-10 min-w-0">
       <button
         type="button"
         aria-expanded={expanded}
         onClick={onToggle}
-        className="flex w-full min-w-0 cursor-pointer items-center gap-2 text-left text-[0.786rem] text-text-muted hover:text-text"
+        className="flex w-full min-w-0 cursor-pointer items-start gap-2.5 text-left text-[0.929rem] text-text-secondary hover:text-text"
       >
         <StatusDot status={status} />
         {event.toolName && (
           <span
-            className="max-w-[10rem] shrink-0 truncate rounded border border-border bg-base px-1.5 py-0.5 font-mono text-[0.714rem] text-text-dimmed"
+            className="max-w-[10rem] shrink-0 truncate rounded border border-border bg-base px-1.5 py-0.5 font-mono text-[0.786rem] text-text-dimmed"
             title={event.toolName}
           >
             {event.toolName}
@@ -381,7 +426,7 @@ function ToolEventRow({
       {expanded && (
         <code
           data-testid="hermes-activity-detail"
-          className="mt-1 block whitespace-pre-wrap break-all rounded border border-border bg-base px-2 py-1.5 font-mono text-[0.714rem] leading-relaxed text-text-secondary"
+          className="ml-6 mt-2 block whitespace-pre-wrap break-all rounded border border-border bg-base px-2 py-1.5 font-mono text-[0.786rem] leading-relaxed text-text-secondary"
         >
           {toolDetailText(event)}
         </code>
@@ -401,14 +446,27 @@ function NoticeEventRow({ event }: { event: BotInvocationProgressEventPublic }) 
   const badge = severity === "warning" ? "warn" : severity;
 
   return (
-    <div className={`rounded border px-2 py-1.5 text-[0.786rem] ${style}`}>
-      <div className="flex min-w-0 items-start gap-2">
-        <span className="mt-0.5 shrink-0 rounded border border-current/30 px-1.5 py-0.5 text-[0.643rem] font-medium uppercase">
-          {badge}
-        </span>
-        <span className="min-w-0 whitespace-pre-wrap break-words leading-relaxed">
-          {eventText(event)}
-        </span>
+    <div className="relative z-10 flex min-w-0 items-start gap-2.5">
+      <TimelineDot
+        tone={
+          severity === "error"
+            ? "error"
+            : severity === "warning"
+              ? "warning"
+              : "blue"
+        }
+      />
+      <div
+        className={`min-w-0 flex-1 rounded border px-2.5 py-2 text-[0.929rem] ${style}`}
+      >
+        <div className="flex min-w-0 items-start gap-2">
+          <span className="mt-0.5 shrink-0 rounded border border-current/30 px-1.5 py-0.5 text-[0.643rem] font-medium uppercase">
+            {badge}
+          </span>
+          <span className="min-w-0 whitespace-pre-wrap break-words leading-relaxed">
+            {eventText(event)}
+          </span>
+        </div>
       </div>
     </div>
   );
@@ -427,30 +485,36 @@ function ReasoningEventRow({
   const previewText = firstLine(fullText);
 
   return (
-    <div className="rounded border border-border-subtle bg-base/40 px-2 py-1.5 text-[0.786rem]">
-      <button
-        type="button"
-        aria-expanded={expanded}
-        onClick={onToggle}
-        className="flex w-full min-w-0 cursor-pointer items-start gap-2 text-left"
+    <div className="relative z-10 flex min-w-0 items-start gap-2.5">
+      <TimelineDot tone="blue" pulse />
+      <div
+        className="min-w-0 flex-1 rounded border border-border-subtle bg-base/40 px-2.5 py-2 text-[0.929rem]"
       >
-        <span className="mt-1.5 inline-block size-1.5 shrink-0 animate-pulse rounded-full bg-accent" />
-        <span className="min-w-0 flex-1">
-          <span className="block font-medium text-text-muted">Thinking</span>
-          {!expanded && previewText && (
-            <span className="block truncate text-text-dimmed">{previewText}</span>
-          )}
-        </span>
-        <ExpandChevron expanded={expanded} className="mt-0.5" />
-      </button>
-      {expanded && fullText && (
-        <div
-          data-testid="hermes-activity-detail"
-          className="mt-1 whitespace-pre-wrap break-words pl-3.5 leading-relaxed text-text-dimmed"
+        <button
+          type="button"
+          aria-expanded={expanded}
+          onClick={onToggle}
+          className="flex w-full min-w-0 cursor-pointer items-start gap-2 text-left"
         >
-          {fullText}
-        </div>
-      )}
+          <span className="min-w-0 flex-1">
+            <span className="block font-medium text-text-muted">Thinking</span>
+            {!expanded && previewText && (
+              <span className="block truncate text-text-dimmed">
+                {previewText}
+              </span>
+            )}
+          </span>
+          <ExpandChevron expanded={expanded} className="mt-0.5" />
+        </button>
+        {expanded && fullText && (
+          <div
+            data-testid="hermes-activity-detail"
+            className="mt-1 whitespace-pre-wrap break-words leading-relaxed text-text-dimmed"
+          >
+            {fullText}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -471,66 +535,68 @@ function ApprovalRequestCard({
   const choices = approvalChoices(event);
 
   return (
-    <div
-      data-testid="hermes-approval-request"
-      className="rounded-md border border-warning-text/30 bg-warning-bg/70 px-3 py-2 text-[0.786rem] text-text-secondary"
-    >
-      <div className="mb-2 flex min-w-0 items-center gap-2">
-        <span className="inline-block size-2 shrink-0 animate-pulse rounded-full bg-warning-text" />
-        <div className="min-w-0 flex-1 font-medium text-text">
-          {botName} wants to run a command
+    <div className="relative z-10 flex min-w-0 items-start gap-2.5">
+      <TimelineDot tone="warning" pulse />
+      <div
+        data-testid="hermes-approval-request"
+        className="min-w-0 flex-1 rounded border border-warning-text/30 bg-warning-bg/70 px-3 py-2.5 text-[0.929rem] text-text-secondary"
+      >
+        <div className="mb-2 flex min-w-0 items-center gap-2">
+          <div className="min-w-0 flex-1 font-medium text-text">
+            {botName} wants to run a command
+          </div>
         </div>
+
+        {command && (
+          <code className="mb-2 block max-h-40 overflow-y-auto whitespace-pre-wrap break-all rounded border border-border bg-base px-2 py-1.5 font-mono text-[0.714rem] text-text">
+            {command}
+          </code>
+        )}
+
+        {description && (
+          <div className="mb-2 whitespace-pre-wrap break-words text-text-muted">
+            {description}
+          </div>
+        )}
+
+        {isActionable ? (
+          <div className="flex flex-wrap items-center gap-1.5">
+            {choices.includes("once") && (
+              <ApprovalButton
+                label="Approve"
+                tone="primary"
+                onClick={() => onDecision("once")}
+              />
+            )}
+            {choices.includes("session") && (
+              <ApprovalButton
+                label="Approve for session"
+                tone="secondary"
+                onClick={() => onDecision("session")}
+              />
+            )}
+            {choices.includes("always") && (
+              <ApprovalButton
+                label="Always approve"
+                tone="secondary"
+                onClick={() => onDecision("always")}
+              />
+            )}
+            {choices.includes("deny") && (
+              <ApprovalButton
+                label="Deny"
+                tone="danger"
+                className="ml-auto"
+                onClick={() => onDecision("deny")}
+              />
+            )}
+          </div>
+        ) : (
+          <div className="text-text-dimmed">
+            Waiting for the earlier approval to be resolved first.
+          </div>
+        )}
       </div>
-
-      {command && (
-        <code className="mb-2 block max-h-40 overflow-y-auto whitespace-pre-wrap break-all rounded border border-border bg-base px-2 py-1.5 font-mono text-[0.714rem] text-text">
-          {command}
-        </code>
-      )}
-
-      {description && (
-        <div className="mb-2 whitespace-pre-wrap break-words text-text-muted">
-          {description}
-        </div>
-      )}
-
-      {isActionable ? (
-        <div className="flex flex-wrap items-center gap-1.5">
-          {choices.includes("once") && (
-            <ApprovalButton
-              label="Approve"
-              tone="primary"
-              onClick={() => onDecision("once")}
-            />
-          )}
-          {choices.includes("session") && (
-            <ApprovalButton
-              label="Approve for session"
-              tone="secondary"
-              onClick={() => onDecision("session")}
-            />
-          )}
-          {choices.includes("always") && (
-            <ApprovalButton
-              label="Always approve"
-              tone="secondary"
-              onClick={() => onDecision("always")}
-            />
-          )}
-          {choices.includes("deny") && (
-            <ApprovalButton
-              label="Deny"
-              tone="danger"
-              className="ml-auto"
-              onClick={() => onDecision("deny")}
-            />
-          )}
-        </div>
-      ) : (
-        <div className="text-text-dimmed">
-          Waiting for the earlier approval to be resolved first.
-        </div>
-      )}
     </div>
   );
 }
@@ -549,18 +615,14 @@ function ResolvedApprovalRow({
   const denied = decision === "deny";
 
   return (
-    <div className="min-w-0" data-testid="hermes-approval-resolved">
+    <div className="relative z-10 min-w-0" data-testid="hermes-approval-resolved">
       <button
         type="button"
         aria-expanded={expanded}
         onClick={onToggle}
-        className="flex w-full min-w-0 cursor-pointer items-center gap-2 text-left text-[0.786rem] text-text-muted hover:text-text"
+        className="flex w-full min-w-0 cursor-pointer items-start gap-2.5 text-left text-[0.929rem] text-text-secondary hover:text-text"
       >
-        <span
-          className={`inline-block size-2 shrink-0 rounded-full ${
-            denied ? "bg-error" : "bg-success"
-          }`}
-        />
+        <TimelineDot tone={denied ? "error" : "success"} />
         <span
           className={`shrink-0 font-medium ${
             denied ? "text-error-light" : "text-success-light"
@@ -581,7 +643,7 @@ function ResolvedApprovalRow({
       {expanded && command && (
         <code
           data-testid="hermes-activity-detail"
-          className="mt-1 block whitespace-pre-wrap break-all rounded border border-border bg-base px-2 py-1.5 font-mono text-[0.714rem] leading-relaxed text-text-secondary"
+          className="ml-6 mt-2 block whitespace-pre-wrap break-all rounded border border-border bg-base px-2 py-1.5 font-mono text-[0.786rem] leading-relaxed text-text-secondary"
         >
           {command}
         </code>
@@ -621,8 +683,8 @@ function ApprovalButton({
 
 function OtherEventRow({ event }: { event: BotInvocationProgressEventPublic }) {
   return (
-    <div className="flex min-w-0 items-center gap-2 text-[0.786rem] text-text-dimmed">
-      <span className="inline-block size-1.5 shrink-0 rounded-full bg-text-dimmed" />
+    <div className="relative z-10 flex min-w-0 items-start gap-2.5 text-[0.929rem] text-text-dimmed">
+      <TimelineDot tone="muted" />
       <span className="shrink-0 font-medium text-text-muted">Update</span>
       <span className="min-w-0 flex-1 truncate">{eventText(event)}</span>
     </div>
@@ -656,17 +718,63 @@ function ExpandChevron({
   );
 }
 
-function StatusDot({ status }: { status: string | null }) {
-  if (status === "running") {
-    return (
+function TimelineDot({
+  tone,
+  pulse = false,
+  className = "",
+}: {
+  tone: "blue" | "green" | "success" | "warning" | "error" | "muted";
+  pulse?: boolean;
+  className?: string;
+}) {
+  const colors =
+    tone === "blue"
+      ? {
+          outer: "border-accent/50",
+          inner: "bg-accent",
+        }
+      : tone === "green"
+      ? {
+          outer: "border-[rgba(84,137,74,0.5)]",
+          inner: "bg-[#54894a]",
+        }
+      : tone === "success"
+        ? {
+            outer: "border-success/50",
+            inner: "bg-success",
+          }
+        : tone === "warning"
+          ? {
+              outer: "border-warning-text/50",
+              inner: "bg-warning-text",
+            }
+          : tone === "error"
+            ? {
+                outer: "border-error/50",
+                inner: "bg-error",
+              }
+            : {
+                outer: "border-text-dimmed/50",
+                inner: "bg-text-dimmed",
+              };
+
+  return (
+    <span
+      className={`mt-1 flex size-[13px] shrink-0 items-center justify-center rounded-full border bg-surface ${colors.outer} ${className}`}
+    >
       <span
-        className="inline-block size-3 shrink-0 rounded-full border-2 border-text-dimmed border-t-transparent"
-        style={{ animation: "spin 1s linear infinite" }}
+        className={`size-[5px] rounded-full ${colors.inner} ${
+          pulse ? "animate-pulse" : ""
+        }`}
       />
-    );
-  }
-  const color = status === "failed" ? "bg-error" : "bg-success";
-  return <span className={`inline-block size-2 shrink-0 rounded-full ${color}`} />;
+    </span>
+  );
+}
+
+function StatusDot({ status }: { status: string | null }) {
+  if (status === "running") return <TimelineDot tone="green" pulse />;
+  if (status === "failed") return <TimelineDot tone="error" />;
+  return <TimelineDot tone="success" />;
 }
 
 function eventLabel(event: BotInvocationProgressEventPublic) {
