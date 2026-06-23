@@ -3,13 +3,18 @@ import { useAuthStore } from "../stores/auth";
 import { useWorkspacesStore } from "../stores/workspaces";
 import { useNotificationsStore } from "../stores/notifications";
 import { useConversationsStore } from "../stores/conversations";
-import { useHermesIndicatorsStore } from "../stores/hermes-indicators";
+import {
+  hermesScopeKey,
+  useHermesIndicatorsStore,
+} from "../stores/hermes-indicators";
 import { fireNotification } from "./notifications";
 import { api } from "./api";
 import type { WorkspaceWithDetails } from "@thechat/shared";
 import type { WsEvents } from "./ws-events";
 
 type Navigate = (opts: { to: string }) => void;
+
+const DIRECT_NOTIFICATION_BODY_MAX_CHARS = 240;
 
 function auth(token: string) {
   return { headers: { authorization: `Bearer ${token}` } };
@@ -45,8 +50,12 @@ export function registerGlobalWsHandlers(navigate: Navigate): () => void {
       useConversationsStore.getState().markChannelUnread(msg.conversationId);
     }
     const currentUserId = useAuthStore.getState().user?.id;
-    if (conversationType === "direct" && msg.senderId !== currentUserId) {
-      fireNotification(msg.senderName, msg.content);
+    if (
+      conversationType === "direct" &&
+      msg.senderId !== currentUserId &&
+      !isVisibleHermesConversation(msg.conversationId)
+    ) {
+      fireNotification(msg.senderName, notificationBodyPreview(msg.content));
     }
   };
 
@@ -153,4 +162,18 @@ export function registerGlobalWsHandlers(navigate: Navigate): () => void {
     wsEvents.off("ws:bot_invocation_updated", onBotInvocationUpdated);
     wsEvents.off("ws:bot_invocation_progress", onBotInvocationProgress);
   };
+}
+
+function isVisibleHermesConversation(conversationId: string) {
+  const visibleScope = useHermesIndicatorsStore.getState().visibleScope;
+  return (
+    visibleScope === hermesScopeKey(conversationId, null) ||
+    visibleScope?.startsWith(`${conversationId}:thread:`) === true
+  );
+}
+
+function notificationBodyPreview(content: string) {
+  const normalized = content.trim().replace(/\s+/g, " ");
+  if (normalized.length <= DIRECT_NOTIFICATION_BODY_MAX_CHARS) return normalized;
+  return `${normalized.slice(0, DIRECT_NOTIFICATION_BODY_MAX_CHARS - 1).trimEnd()}…`;
 }

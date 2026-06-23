@@ -92,6 +92,10 @@ export function DmRoute() {
       }),
     [activeThreadId, generalThreadActive, runtime],
   );
+  const activeHermesProgressRef = useRef(activeHermesProgress);
+  activeHermesProgressRef.current = activeHermesProgress;
+  const threadsRef = useRef(threads);
+  threadsRef.current = threads;
   const chatConversationId = conversation ? conversationId : null;
   const activeScopeKey = hermesScopeKey(conversationId, activeThreadId);
   const queuedPrompts = queuedPromptsByScope[activeScopeKey] ?? [];
@@ -175,6 +179,7 @@ export function DmRoute() {
 
   const channelChatRef = useRef(channelChat);
   channelChatRef.current = channelChat;
+  const channelSendMessage = channelChat.sendMessage;
 
   // Subscribe to WebSocket messages for this DM
   useEffect(() => {
@@ -320,12 +325,12 @@ export function DmRoute() {
 
   const sendHermesMessageNow = useCallback((content: string, threadId: string | null) => {
     if (threadId === null) {
-      channelChat.sendMessage(content);
+      channelSendMessage(content);
       return;
     }
 
     void (async () => {
-      const activeThread = threads.find((thread) => thread.id === threadId);
+      const activeThread = threadsRef.current.find((thread) => thread.id === threadId);
       if (!parseHermesSlashCommand(content) && isAutoNamedThread(activeThread)) {
         try {
           await renameThread(threadId, titleFromMessage(content));
@@ -336,7 +341,7 @@ export function DmRoute() {
       wsSendMessage(conversationId, content, threadId);
       touchThread(threadId);
     })();
-  }, [channelChat, conversationId, renameThread, threads, touchThread, wsSendMessage]);
+  }, [channelSendMessage, conversationId, renameThread, touchThread, wsSendMessage]);
 
   const handleStopHermesTask = useCallback(() => {
     if (!isHermesDm) return;
@@ -346,7 +351,7 @@ export function DmRoute() {
   const handleBranchCommand = useCallback(async (args: string) => {
     if (!isHermesDm) return;
     const sourceThread = activeThreadId
-      ? threads.find((thread) => thread.id === activeThreadId)
+      ? threadsRef.current.find((thread) => thread.id === activeThreadId)
       : null;
     const branchTitle = titleFromBranchCommand(args, sourceThread?.title);
 
@@ -356,11 +361,11 @@ export function DmRoute() {
       branchFromThreadId: sourceThread?.id ?? null,
     });
     if (thread) setActiveThreadId(thread.id);
-  }, [activeThreadId, createThread, isHermesDm, otherParticipant?.bot?.id, threads]);
+  }, [activeThreadId, createThread, isHermesDm, otherParticipant?.bot?.id]);
 
-  const handleSend = (content: string) => {
+  const handleSend = useCallback((content: string) => {
     if (!isHermesDm) {
-      channelChat.sendMessage(content);
+      channelSendMessage(content);
       return;
     }
 
@@ -382,7 +387,7 @@ export function DmRoute() {
       const approvalDecision = decisionFromApprovalCommand(content);
       if (approvalDecision) {
         const pending = pendingApprovalEvents(
-          activeHermesProgress.invocations,
+          activeHermesProgressRef.current.invocations,
           useHermesApprovalsStore.getState().decisions,
         );
         const targets = approvalDecision.all ? pending : pending.slice(0, 1);
@@ -398,7 +403,18 @@ export function DmRoute() {
       return;
     }
     sendHermesMessageNow(content, activeThreadId);
-  };
+  }, [
+    activeScopeKey,
+    activeThreadId,
+    channelSendMessage,
+    clearQueuedPrompts,
+    enqueueHermesPrompt,
+    handleBranchCommand,
+    isHermesDm,
+    sendHermesMessageNow,
+    slashCommands,
+    taskActive,
+  ]);
 
   useEffect(() => {
     if (!isHermesDm) return;

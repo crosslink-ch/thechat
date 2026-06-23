@@ -6,6 +6,7 @@ import type {
 } from "@thechat/shared";
 import { registerGlobalWsHandlers } from "./ws-global-handlers";
 import { wsEvents } from "./ws-events";
+import { fireNotification } from "./notifications";
 import { useAuthStore } from "../stores/auth";
 import { useWorkspacesStore } from "../stores/workspaces";
 import {
@@ -57,11 +58,88 @@ describe("registerGlobalWsHandlers", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     useAuthStore.setState({ token: "token-1", user: null, loading: false });
+    useHermesIndicatorsStore.getState().resetForTests();
     useWorkspacesStore.setState({
       workspaces: [],
       activeWorkspace: structuredClone(baseWorkspace),
       loading: false,
     });
+  });
+
+  it("does not fire a desktop notification for a background Hermes task in the visible DM", () => {
+    useAuthStore.setState({
+      token: "token-1",
+      loading: false,
+      user: {
+        id: "u-me",
+        name: "Me",
+        email: "me@example.com",
+        avatar: null,
+        type: "human",
+      },
+    });
+    useHermesIndicatorsStore
+      .getState()
+      .setVisibleScope(hermesScopeKey("conv-1", "active-thread"));
+
+    const cleanup = registerGlobalWsHandlers(() => {});
+
+    wsEvents.emit("ws:new_message", {
+      conversationType: "direct",
+      message: {
+        id: "msg-1",
+        conversationId: "conv-1",
+        threadId: "background-thread",
+        senderId: "u-bot",
+        senderName: "Koda",
+        senderType: "bot",
+        content: "Background task finished.",
+        parts: null,
+        createdAt: "2026-06-11T10:00:00.000Z",
+      },
+    });
+
+    expect(fireNotification).not.toHaveBeenCalled();
+
+    cleanup();
+  });
+
+  it("truncates direct-message desktop notification bodies", () => {
+    useAuthStore.setState({
+      token: "token-1",
+      loading: false,
+      user: {
+        id: "u-me",
+        name: "Me",
+        email: "me@example.com",
+        avatar: null,
+        type: "human",
+      },
+    });
+    const cleanup = registerGlobalWsHandlers(() => {});
+    const longContent = Array.from({ length: 80 }, (_, index) => `word${index}`).join(" ");
+
+    wsEvents.emit("ws:new_message", {
+      conversationType: "direct",
+      message: {
+        id: "msg-2",
+        conversationId: "conv-2",
+        threadId: "background-thread",
+        senderId: "u-bot",
+        senderName: "Koda",
+        senderType: "bot",
+        content: longContent,
+        parts: null,
+        createdAt: "2026-06-11T10:00:00.000Z",
+      },
+    });
+
+    expect(fireNotification).toHaveBeenCalledTimes(1);
+    const [, body] = vi.mocked(fireNotification).mock.calls[0];
+    expect(body.length).toBeLessThanOrEqual(240);
+    expect(body.endsWith("…")).toBe(true);
+
+    cleanup();
   });
 
   it("optimistically adds a joined member and refreshes workspace details", async () => {
