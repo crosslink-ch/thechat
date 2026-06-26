@@ -416,42 +416,40 @@ export function HermesDebugRoute() {
         />
       </div>
 
-      <aside className="hidden w-[360px] shrink-0 flex-col border-l border-border bg-surface/80 lg:flex">
-        <div className="border-b border-border px-4 py-3">
-          <div className="text-[0.786rem] font-medium uppercase text-text-dimmed">
-            Hermes Debug
+      <aside className="hidden w-[404px] shrink-0 flex-col border-l border-[rgba(245,245,245,0.12)] bg-surface lg:flex">
+        <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
+          <div className="flex items-center justify-between border-b border-[rgba(245,245,245,0.12)] py-1">
+            <h2 className="min-w-0 flex-1 text-[1.071rem] font-bold text-white">
+              Progress &amp; approvals
+            </h2>
+            <span className="rounded-md bg-[rgba(245,245,245,0.12)] px-1.5 py-0.5 text-[0.786rem] text-text-secondary">
+              {"</>"}dev
+            </span>
           </div>
-          <div className="text-[1rem] font-semibold text-text">
-            Progress &amp; approvals
-          </div>
-        </div>
-        <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
-          <ControlSection title="Scenarios">
-            <div className="grid grid-cols-2 gap-1.5">
-              <DebugButton onClick={scenarioWorking}>Working</DebugButton>
-              <DebugButton onClick={scenarioApproval}>Approval</DebugButton>
-              <DebugButton onClick={scenarioTwoApprovals}>2 approvals</DebugButton>
-              <DebugButton onClick={resetAll}>Reset</DebugButton>
-            </div>
-          </ControlSection>
 
-          <ControlSection title="Events">
-            <div className="grid grid-cols-2 gap-1.5">
-              <DebugButton onClick={addApprovalRequest}>Approval request</DebugButton>
-              <DebugButton onClick={addResolutionEvent}>Resolve (event)</DebugButton>
-              <DebugButton onClick={addToolStarted}>Tool started</DebugButton>
-              <DebugButton onClick={completeLastTool}>Tool completed</DebugButton>
-              <DebugButton onClick={() => addNotice("info")}>Notice info</DebugButton>
-              <DebugButton onClick={() => addNotice("warn")}>Notice warn</DebugButton>
-              <DebugButton onClick={() => addNotice("error")}>Notice error</DebugButton>
-              <DebugButton onClick={addReasoning}>Reasoning</DebugButton>
-            </div>
-          </ControlSection>
+          <div className="mt-5 flex flex-col gap-5">
+            <ControlSection title="Scenario">
+              <DebugButton icon="play" onClick={scenarioWorking}>Working</DebugButton>
+              <DebugButton icon="check" onClick={scenarioApproval}>Approval</DebugButton>
+              <DebugButton icon="relation" onClick={scenarioTwoApprovals}>2 approvals</DebugButton>
+              <DebugButton icon="refresh" onClick={resetAll}>Reset</DebugButton>
+            </ControlSection>
 
-          <ControlSection title="Invocation">
-            <div className="grid grid-cols-2 gap-1.5">
-              <DebugButton onClick={startRunning}>Start running</DebugButton>
+            <ControlSection title="Fire event">
+              <DebugButton icon="hand" onClick={addApprovalRequest}>Approval req</DebugButton>
+              <DebugButton icon="check" onClick={addResolutionEvent}>Resolve</DebugButton>
+              <DebugButton icon="tool" onClick={addToolStarted}>Tool started</DebugButton>
+              <DebugButton icon="tool" tone="accent" onClick={completeLastTool}>Tool completed</DebugButton>
+              <DebugButton icon="info" onClick={() => addNotice("info")}>Notice info</DebugButton>
+              <DebugButton icon="warning" onClick={() => addNotice("warn")}>Notice warn</DebugButton>
+              <DebugButton icon="alert" onClick={() => addNotice("error")}>Notice error</DebugButton>
+              <DebugButton icon="brain" onClick={addReasoning}>Reasoning</DebugButton>
+            </ControlSection>
+
+            <ControlSection title="Invocation">
+              <DebugButton icon="play" onClick={startRunning}>Start running</DebugButton>
               <DebugButton
+                icon="clock"
                 onClick={() =>
                   setPrimary((previous) => ({
                     ...previous,
@@ -463,48 +461,44 @@ export function HermesDebugRoute() {
               >
                 Queued
               </DebugButton>
-              <DebugButton onClick={completeInvocation}>Complete</DebugButton>
-              <DebugButton onClick={() => setRemountKey((key) => key + 1)}>
-                Remount view
+              <DebugButton icon="flag" onClick={completeInvocation}>Complete</DebugButton>
+              <DebugButton icon="rotate" onClick={() => setRemountKey((key) => key + 1)}>
+                Remount
               </DebugButton>
-            </div>
-            <label className="mt-1.5 flex cursor-pointer items-center justify-between gap-2 rounded-md border border-border bg-background px-3 py-2 text-[0.857rem] text-text-secondary">
-              <span>Second invocation</span>
-              <input
-                type="checkbox"
+              <ToggleRow
                 checked={secondInvocation}
-                onChange={(event) => setSecondInvocation(event.currentTarget.checked)}
+                label="Second invocation"
+                onChange={setSecondInvocation}
               />
-            </label>
-            <label className="mt-1.5 flex cursor-pointer items-center justify-between gap-2 rounded-md border border-border bg-background px-3 py-2 text-[0.857rem] text-text-secondary">
-              <span>Gateway emits approval.resolved</span>
-              <input
-                type="checkbox"
+              <ToggleRow
                 checked={gatewayEmitsResolution}
-                onChange={(event) =>
-                  setGatewayEmitsResolution(event.currentTarget.checked)
-                }
+                label="Gateway emits approval.resolved"
+                onChange={setGatewayEmitsResolution}
               />
-            </label>
-            <DebugButton
-              className="mt-1.5 w-full"
-              onClick={() => useHermesApprovalsStore.getState().resetForTests()}
-            >
-              Clear local decisions
-            </DebugButton>
-          </ControlSection>
+              <DebugButton
+                className="col-span-2 w-full"
+                icon="trash"
+                tone="danger"
+                onClick={() => useHermesApprovalsStore.getState().resetForTests()}
+              >
+                Clear local decisions
+              </DebugButton>
+            </ControlSection>
 
-          <ControlSection title="State">
-            <dl className="grid grid-cols-2 gap-x-3 gap-y-1.5 text-[0.786rem]">
-              <Metric label="Status" value={primary.status} />
+            <ControlSection title="Pending approvals">
+              <PendingApprovals approvals={pendingApprovals} />
+            </ControlSection>
+
+            <ControlSection title="State">
+              <Metric label="Status" value={statusLabel(primary.status)} />
               <Metric label="Events" value={primary.events.length} />
               <Metric label="Pending approvals" value={pendingApprovals.length} />
               <Metric
                 label="Local decisions"
                 value={Object.keys(localDecisions).length}
               />
-            </dl>
-          </ControlSection>
+            </ControlSection>
+          </div>
         </div>
       </aside>
     </div>
@@ -599,40 +593,250 @@ function ControlSection({
   children: React.ReactNode;
 }) {
   return (
-    <section className="mb-5">
-      <div className="mb-2 text-[0.786rem] font-medium uppercase text-text-dimmed">
-        {title}
+    <section>
+      <div className="mb-1 flex items-center gap-3 py-1">
+        <div className="shrink-0 text-[0.786rem] uppercase leading-[16px] text-white">
+          {title}
+        </div>
+        <div className="h-px min-w-0 flex-1 bg-[rgba(245,245,245,0.12)]" />
       </div>
-      {children}
+      <div className="grid grid-cols-2 gap-1.5">
+        {children}
+      </div>
     </section>
+  );
+}
+
+type DebugIconName =
+  | "alert"
+  | "brain"
+  | "check"
+  | "clock"
+  | "flag"
+  | "hand"
+  | "info"
+  | "play"
+  | "refresh"
+  | "relation"
+  | "rotate"
+  | "tool"
+  | "trash"
+  | "warning";
+
+function DebugIcon({ name }: { name: DebugIconName }) {
+  const common = {
+    fill: "none",
+    stroke: "currentColor",
+    strokeLinecap: "round" as const,
+    strokeLinejoin: "round" as const,
+    strokeWidth: 1.6,
+  };
+
+  return (
+    <svg className="size-3.5 shrink-0" viewBox="0 0 16 16" aria-hidden="true" {...common}>
+      {name === "play" && <path d="M5.25 3.5v9l7-4.5-7-4.5Z" />}
+      {name === "check" && (
+        <>
+          <circle cx="8" cy="8" r="5.25" />
+          <path d="m5.6 8.1 1.55 1.55L10.7 6.1" />
+        </>
+      )}
+      {name === "relation" && (
+        <>
+          <circle cx="4.4" cy="8" r="2" />
+          <circle cx="11.6" cy="5" r="2" />
+          <circle cx="11.6" cy="11" r="2" />
+          <path d="M6.3 7.2 9.7 5.8M6.3 8.8l3.4 1.4" />
+        </>
+      )}
+      {name === "refresh" && (
+        <>
+          <path d="M13 5.5A5.1 5.1 0 0 0 4.2 3.8L3 5" />
+          <path d="M3 2.5V5h2.5" />
+          <path d="M3 10.5a5.1 5.1 0 0 0 8.8 1.7L13 11" />
+          <path d="M13 13.5V11h-2.5" />
+        </>
+      )}
+      {name === "hand" && (
+        <>
+          <path d="M5.2 7.7V3.4a1 1 0 0 1 2 0v3.7" />
+          <path d="M7.2 7V2.8a1 1 0 0 1 2 0V7" />
+          <path d="M9.2 7.3V4a1 1 0 0 1 2 0v5" />
+          <path d="M5.2 8.3 4.1 7.2a1.05 1.05 0 0 0-1.5 1.48l3 3.28A4.25 4.25 0 0 0 12.95 9" />
+        </>
+      )}
+      {name === "tool" && (
+        <>
+          <path d="M10.6 2.6a3 3 0 0 0 2.8 2.8L6.2 12.6a1.8 1.8 0 0 1-2.55-2.55Z" />
+          <path d="M4.8 11.2 2.6 13.4" />
+        </>
+      )}
+      {name === "info" && (
+        <>
+          <circle cx="8" cy="8" r="5.25" />
+          <path d="M8 7.5v3.25" />
+          <path d="M8 5.25h.01" />
+        </>
+      )}
+      {name === "warning" && (
+        <>
+          <path d="M8 2.5 14 13H2Z" />
+          <path d="M8 6.2v3.1" />
+          <path d="M8 11.4h.01" />
+        </>
+      )}
+      {name === "alert" && (
+        <>
+          <circle cx="8" cy="8" r="5.25" />
+          <path d="M8 4.8v4" />
+          <path d="M8 11.2h.01" />
+        </>
+      )}
+      {name === "brain" && (
+        <>
+          <path d="M6.6 3.1a2 2 0 0 0-3 1.7 2.3 2.3 0 0 0 .35 4.55 2.2 2.2 0 0 0 2.65 2.8" />
+          <path d="M9.4 3.1a2 2 0 0 1 3 1.7 2.3 2.3 0 0 1-.35 4.55 2.2 2.2 0 0 1-2.65 2.8" />
+          <path d="M8 3v10" />
+        </>
+      )}
+      {name === "clock" && (
+        <>
+          <circle cx="8" cy="8" r="5.25" />
+          <path d="M8 5v3.3l2.2 1.3" />
+        </>
+      )}
+      {name === "flag" && (
+        <>
+          <path d="M4.2 13.5v-11" />
+          <path d="M4.2 3h7.2l-1 2 1 2H4.2" />
+        </>
+      )}
+      {name === "rotate" && (
+        <>
+          <path d="M12.4 6.2a4.5 4.5 0 1 0 1 3.55" />
+          <path d="M12.8 3.6v2.8h-2.8" />
+        </>
+      )}
+      {name === "trash" && (
+        <>
+          <path d="M2.8 4.2h10.4" />
+          <path d="M6.4 2.5h3.2" />
+          <path d="M4.1 4.2 4.8 13h6.4l.7-8.8" />
+          <path d="M6.8 6.7v3.8M9.2 6.7v3.8" />
+        </>
+      )}
+    </svg>
   );
 }
 
 function DebugButton({
   children,
   className = "",
+  icon,
   onClick,
+  tone = "default",
 }: {
   children: React.ReactNode;
   className?: string;
+  icon?: DebugIconName;
   onClick: () => void;
+  tone?: "accent" | "danger" | "default";
 }) {
+  const toneClass =
+    tone === "accent"
+      ? "border-[rgba(47,136,191,0.5)] bg-[rgba(47,136,191,0.2)] hover:bg-[rgba(47,136,191,0.28)]"
+      : tone === "danger"
+        ? "border-[rgba(253,78,72,0.5)] bg-transparent hover:bg-danger-bg"
+        : "border-[rgba(245,245,245,0.12)] bg-elevated hover:bg-hover";
+
   return (
     <button
       type="button"
-      className={`cursor-pointer rounded-md border border-border bg-background px-3 py-2 text-center text-[0.786rem] font-medium text-text-muted transition-colors duration-150 hover:bg-hover hover:text-text ${className}`}
+      className={`flex min-h-9 cursor-pointer items-center justify-center gap-2 rounded border px-3 py-2 text-center text-[0.786rem] font-medium text-text-secondary transition-colors duration-150 hover:text-text ${toneClass} ${className}`}
       onClick={onClick}
     >
+      {icon && <DebugIcon name={icon} />}
       {children}
     </button>
   );
 }
 
+function ToggleRow({
+  checked,
+  label,
+  onChange,
+}: {
+  checked: boolean;
+  label: string;
+  onChange: (checked: boolean) => void;
+}) {
+  return (
+    <label className="col-span-2 flex cursor-pointer items-center gap-2 border-b border-[rgba(245,245,245,0.15)] py-1.5 text-[0.786rem] font-medium leading-4 text-text-secondary">
+      <span className="min-w-0 flex-1">{label}</span>
+      <input
+        className="peer sr-only"
+        type="checkbox"
+        checked={checked}
+        onChange={(event) => onChange(event.currentTarget.checked)}
+      />
+      <span className="relative h-3.5 w-7 rounded-full bg-[rgba(245,245,245,0.25)] transition-colors peer-checked:bg-[rgba(245,245,245,0.75)]">
+        <span className="absolute left-0.5 top-0.5 size-2.5 rounded-full bg-surface transition-transform peer-checked:translate-x-[14px]" />
+      </span>
+    </label>
+  );
+}
+
+function PendingApprovals({
+  approvals,
+}: {
+  approvals: BotInvocationProgressEventPublic[];
+}) {
+  if (approvals.length === 0) {
+    return (
+      <div className="col-span-2 flex min-h-[88px] flex-col items-center justify-center rounded border border-[rgba(245,245,245,0.12)] bg-elevated px-5 text-center">
+        <DebugIcon name="check" />
+        <div className="mt-1 text-[0.786rem] text-text-secondary">No approvals waiting</div>
+        <div className="mt-0.5 text-[0.714rem] text-text-dimmed">
+          Hermes will pause here if it needs a decision
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="col-span-2 flex flex-col gap-1.5">
+      {approvals.map((approval) => (
+        <div
+          key={approval.id}
+          className="rounded border border-[rgba(245,245,245,0.12)] bg-elevated px-3 py-2"
+        >
+          <div className="text-[0.786rem] font-medium text-text-secondary">
+            {approval.label ?? "Approval required"}
+          </div>
+          {approval.preview && (
+            <div className="mt-1 truncate font-mono text-[0.714rem] text-text-dimmed">
+              {approval.preview}
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function Metric({ label, value }: { label: string; value: string | number }) {
   return (
-    <>
-      <dt className="text-text-dimmed">{label}</dt>
-      <dd className="text-right font-mono text-text-secondary">{value}</dd>
-    </>
+    <div className="min-h-12 rounded border border-[rgba(245,245,245,0.12)] bg-elevated px-3 py-2">
+      <div className="text-[0.714rem] text-text-dimmed">{label}</div>
+      <div className="mt-0.5 truncate text-[0.786rem] font-medium text-text-secondary">
+        {value}
+      </div>
+    </div>
   );
+}
+
+function statusLabel(status: InvocationStatus) {
+  if (status === "idle") return "Idle";
+  if (status === "queued") return "Queued";
+  return "Running";
 }
