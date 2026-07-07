@@ -69,8 +69,7 @@ export function WindowTitlebar() {
         </button>
       </div>
 
-      <div data-tauri-drag-region className="flex min-w-0 flex-1 items-center justify-center gap-2 px-3">
-        <span className="size-1.5 rounded-full bg-accent/70 shadow-[0_0_10px_rgba(139,92,246,0.45)]" />
+      <div data-tauri-drag-region className="flex min-w-0 flex-1 items-center justify-center px-3">
         <span className="truncate text-[0.786rem] font-semibold tracking-wide text-text-secondary">
           TheChat
         </span>

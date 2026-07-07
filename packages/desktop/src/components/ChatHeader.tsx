@@ -1,7 +1,6 @@
 import { useState, useEffect } from "react";
 import { create } from "zustand";
 import { useMatches } from "@tanstack/react-router";
-import { useWebSocketStore } from "../stores/websocket";
 import { useWorkspacesStore } from "../stores/workspaces";
 import { usePermissionModeStore } from "../stores/permission-mode";
 import { basename } from "../lib/path";
@@ -15,8 +14,6 @@ export const setAgentChatProjectDir = (projectDir: string | null) =>
 export const getAgentChatProjectDir = () => useAgentChatTitle.getState().projectDir;
 
 export function ChatHeader() {
-  const connected = useWebSocketStore((s) => s.connected);
-  const reconnecting = useWebSocketStore((s) => s.reconnecting);
   const activeWorkspace = useWorkspacesStore((s) => s.activeWorkspace);
   const permissionMode = usePermissionModeStore((s) => s.mode);
   const agentChatTitle = useAgentChatTitle((s) => s.title);
@@ -55,7 +52,6 @@ export function ChatHeader() {
   }
 
   const showBackButton = !isAgentChat;
-  const showWsStatus = !isAgentChat && (connected || reconnecting);
 
   return (
     <div className="flex h-12 shrink-0 items-center gap-1.5 border-b border-border-subtle bg-surface px-3">
@@ -84,13 +80,6 @@ export function ChatHeader() {
         <span className="rounded-md bg-danger-bg px-2 py-0.5 text-[0.786rem] font-medium text-error-bright">
           Bypass
         </span>
-      )}
-      {showWsStatus && (
-        reconnecting ? (
-          <span className="size-1.5 shrink-0 animate-pulse rounded-full bg-warning-text" title="Reconnecting..." />
-        ) : (
-          <span className="size-1.5 shrink-0 rounded-full bg-success" title="Connected" />
-        )
       )}
     </div>
   );

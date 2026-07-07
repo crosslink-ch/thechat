@@ -7,12 +7,15 @@ import {
 } from "../hooks/useBotRuntime";
 import { useConversationThreads } from "../hooks/useConversationThreads";
 import { useConversationDetail } from "../hooks/useConversationDetail";
+import { useScopedCommands } from "../hooks/useScopedCommands";
 import { useWebSocketStore } from "../stores/websocket";
 import { useWorkspacesStore } from "../stores/workspaces";
 import { useChannelChat } from "../hooks/useChannelChat";
 import { ChannelChatView } from "../components/ChannelChatView";
 import { HermesDmChatView } from "../components/HermesDmChatView";
 import { HermesRuntimePanel } from "../components/HermesRuntimePanel";
+import { closePaletteAndRefocus } from "../CommandPalette";
+import type { Command } from "../commands";
 import { wsEvents, type WsEvents } from "../lib/ws-events";
 import { selectHermesConversationProgress } from "../lib/hermes-progress";
 import {
@@ -291,13 +294,33 @@ export function DmRoute() {
     }
   }, [activeThreadId, isHermesDm, threads]);
 
-  const handleCreateThread = () => {
+  const handleCreateThread = useCallback(() => {
+    if (!isHermesDm) return;
     void createThread({
       botId: otherParticipant?.bot?.id,
     }).then((thread) => {
       if (thread) setActiveThreadId(thread.id);
     });
-  };
+  }, [createThread, isHermesDm, otherParticipant?.bot?.id]);
+
+  const hermesTaskCommands = useMemo<Command[]>(
+    () => [
+      {
+        id: "hermes.new-task",
+        label: "New Task",
+        shortcut: "C-x n",
+        keybinding: { prefix: "C-x", key: "n" },
+        enabled: isHermesDm,
+        priority: 100,
+        execute: () => {
+          handleCreateThread();
+          closePaletteAndRefocus();
+        },
+      },
+    ],
+    [handleCreateThread, isHermesDm],
+  );
+  useScopedCommands(hermesTaskCommands);
 
   const clearQueuedPrompts = useCallback((scopeKey: string) => {
     setQueuedPromptsByScope((previous) => {

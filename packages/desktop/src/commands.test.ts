@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { Conversation } from "./core/types";
 
 const closePaletteMock = vi.fn();
+const closePaletteAndRefocusMock = vi.fn();
 const togglePaletteMock = vi.fn();
 const openPaletteInCommandModeMock = vi.fn();
 const toggleSidebarMock = vi.fn();
@@ -15,6 +16,7 @@ const openHermesBotModalMock = vi.fn();
 vi.mock("./CommandPalette", () => ({
   togglePalette: () => togglePaletteMock(),
   closePalette: () => closePaletteMock(),
+  closePaletteAndRefocus: () => closePaletteAndRefocusMock(),
   openPaletteInCommandMode: () => openPaletteInCommandModeMock(),
 }));
 
@@ -122,5 +124,28 @@ describe("createCommands - Select Project", () => {
     expect(closePaletteMock).toHaveBeenCalledOnce();
     expect(openHermesBotModalMock).toHaveBeenCalledOnce();
     expect(navigate).not.toHaveBeenCalled();
+  });
+
+  it("registers debug routes as dev-only commands", () => {
+    const navigate = vi.fn();
+    const commands = createCommands(navigate);
+    const scrollDebug = commands.find((c) => c.id === "debug-scroll");
+    const hermesDebug = commands.find((c) => c.id === "debug-hermes");
+
+    expect(scrollDebug).toMatchObject({
+      id: "debug-scroll",
+      label: "Scroll Debug",
+    });
+    expect(hermesDebug).toMatchObject({
+      id: "debug-hermes",
+      label: "Hermes Debug",
+    });
+
+    scrollDebug!.execute();
+    hermesDebug!.execute();
+
+    expect(navigate).toHaveBeenCalledWith({ to: "/debug/scroll" });
+    expect(navigate).toHaveBeenCalledWith({ to: "/debug/hermes" });
+    expect(closePaletteAndRefocusMock).toHaveBeenCalledTimes(2);
   });
 });

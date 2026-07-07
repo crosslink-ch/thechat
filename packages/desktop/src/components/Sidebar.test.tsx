@@ -107,9 +107,9 @@ describe("Sidebar", () => {
     await renderWithRouter(<Sidebar />);
 
     expect(screen.getByText("Log in")).toBeInTheDocument();
-    expect(screen.getByText("New Chat")).toBeInTheDocument();
-    expect(screen.getByText("Chat 1")).toBeInTheDocument();
-    expect(screen.getByText("Chat 2")).toBeInTheDocument();
+    expect(screen.queryByText("New Chat")).not.toBeInTheDocument();
+    expect(screen.queryByText("Chat 1")).not.toBeInTheDocument();
+    expect(screen.queryByText("Chat 2")).not.toBeInTheDocument();
     // No workspace switcher
     expect(screen.queryByText("Select workspace")).not.toBeInTheDocument();
   });
@@ -123,7 +123,7 @@ describe("Sidebar", () => {
 
     expect(screen.getByText("Select workspace")).toBeInTheDocument();
     expect(screen.getByText("Test User")).toBeInTheDocument();
-    expect(screen.getByText("Notifications")).toBeInTheDocument();
+    expect(screen.getByLabelText("Notifications")).toBeInTheDocument();
 
     fireEvent.click(screen.getByText("Test User"));
     expect(screen.getByText("Log out")).toBeInTheDocument();
@@ -138,12 +138,9 @@ describe("Sidebar", () => {
 
     // Workspace name shown in switcher
     expect(screen.getByText("Team Alpha")).toBeInTheDocument();
-    // Tab bar with Agent Chats (default) and Workspace tabs
-    expect(screen.getByText("Agent Chats")).toBeInTheDocument();
-    expect(screen.getByText("Workspace")).toBeInTheDocument();
-
-    // Switch to Workspace tab
-    fireEvent.click(screen.getByText("Workspace"));
+    expect(screen.queryByText("Agent Chats")).not.toBeInTheDocument();
+    expect(screen.queryByText("New Chat")).not.toBeInTheDocument();
+    expect(screen.queryByPlaceholderText("Search")).not.toBeInTheDocument();
 
     // Channels and DMs shown
     expect(screen.getByText("Channels")).toBeInTheDocument();
@@ -151,30 +148,31 @@ describe("Sidebar", () => {
     expect(screen.getByText("People")).toBeInTheDocument();
     expect(screen.getByText("Alice")).toBeInTheDocument();
 
-    // Notifications button remains available in footer
-    expect(screen.getByText("Notifications")).toBeInTheDocument();
+    // Notifications button remains available at the top.
+    expect(screen.getByLabelText("Notifications")).toBeInTheDocument();
   });
 
-  it("shows agent chats in all modes", async () => {
+  it("does not show agent chats in the sidebar UI", async () => {
     useConversationsStore.setState({ conversations });
 
-    // Not logged in — agent chats shown directly (no tabs)
+    // Not logged in
     const { unmount } = await renderWithRouter(<Sidebar />);
-    expect(screen.getByText("New Chat")).toBeInTheDocument();
-    expect(screen.getByText("Chat 1")).toBeInTheDocument();
+    expect(screen.queryByText("New Chat")).not.toBeInTheDocument();
+    expect(screen.queryByText("Chat 1")).not.toBeInTheDocument();
     unmount();
 
-    // Logged in, no workspace — agent chats shown directly (no tabs)
+    // Logged in, no workspace
     useAuthStore.setState({ user, token: "test-token" });
     useWorkspacesStore.setState({ workspaces: workspaceList });
     const { unmount: unmount2 } = await renderWithRouter(<Sidebar />);
-    expect(screen.getByText("New Chat")).toBeInTheDocument();
-    expect(screen.getByText("Chat 1")).toBeInTheDocument();
+    expect(screen.queryByText("New Chat")).not.toBeInTheDocument();
+    expect(screen.queryByText("Chat 1")).not.toBeInTheDocument();
     unmount2();
 
-    // Logged in, with workspace — Agent Chats tab visible
+    // Logged in, with workspace
     useWorkspacesStore.setState({ activeWorkspace });
     await renderWithRouter(<Sidebar />);
-    expect(screen.getByText("Agent Chats")).toBeInTheDocument();
+    expect(screen.queryByText("Agent Chats")).not.toBeInTheDocument();
+    expect(screen.queryByText("Chat 1")).not.toBeInTheDocument();
   });
 });

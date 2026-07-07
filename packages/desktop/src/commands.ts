@@ -243,6 +243,30 @@ export function createCommands(
         closePaletteAndRefocus();
       },
     },
+    ...(import.meta.env.DEV
+      ? [
+          {
+            id: "debug-scroll",
+            label: "Scroll Debug",
+            shortcut: null,
+            keybinding: null,
+            execute: () => {
+              navigate({ to: "/debug/scroll" });
+              closePaletteAndRefocus();
+            },
+          },
+          {
+            id: "debug-hermes",
+            label: "Hermes Debug",
+            shortcut: null,
+            keybinding: null,
+            execute: () => {
+              navigate({ to: "/debug/hermes" });
+              closePaletteAndRefocus();
+            },
+          },
+        ]
+      : []),
     {
       id: "configure-mcp",
       label: "Configure MCP Server",
