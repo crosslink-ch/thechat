@@ -13,7 +13,6 @@ import { useChannelChat } from "../hooks/useChannelChat";
 import { ChannelChatView } from "../components/ChannelChatView";
 import { HermesDmChatView } from "../components/HermesDmChatView";
 import { HermesRuntimePanel } from "../components/HermesRuntimePanel";
-import { fireNotification } from "../lib/notifications";
 import { wsEvents, type WsEvents } from "../lib/ws-events";
 import { selectHermesConversationProgress } from "../lib/hermes-progress";
 import {
@@ -189,7 +188,6 @@ export function DmRoute() {
   useEffect(() => {
     const onMessage = ({
       message: msg,
-      conversationType,
     }: WsEvents["ws:new_message"]) => {
       if (msg.conversationId === conversationId) {
         channelChatRef.current.addMessage(msg);
@@ -204,8 +202,6 @@ export function DmRoute() {
             return next;
           });
         }
-      } else if (conversationType === "direct" && msg.senderId !== user?.id) {
-        fireNotification(msg.senderName, msg.content);
       }
     };
 
@@ -280,7 +276,6 @@ export function DmRoute() {
     mergeProgressEvent,
     touchThread,
     updateThreadSession,
-    user?.id,
   ]);
 
   // Clear typing users when the visible DM or Hermes task changes.

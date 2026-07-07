@@ -70,7 +70,9 @@ export function AgentChatRoute() {
       const isViewingThisChat = activeAgentConvIdRef.current === convId;
       if (!isViewingThisChat) {
         useConversationsStore.getState().markAgentChatUnread(convId);
-        fireNotification("Agent Chat", `Response ready: ${convTitle}`);
+        fireNotification("Agent Chat", `Response ready: ${convTitle}`, {
+          dedupeKey: `agent-response:${convId}`,
+        });
       }
     },
   });

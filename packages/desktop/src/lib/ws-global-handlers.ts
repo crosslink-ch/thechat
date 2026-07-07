@@ -46,7 +46,9 @@ export function registerGlobalWsHandlers(navigate: Navigate): () => void {
     }
     const currentUserId = useAuthStore.getState().user?.id;
     if (conversationType === "direct" && msg.senderId !== currentUserId) {
-      fireNotification(msg.senderName, msg.content);
+      fireNotification(msg.senderName, msg.content, {
+        dedupeKey: `message:${msg.id}`,
+      });
     }
   };
 
@@ -121,6 +123,7 @@ export function registerGlobalWsHandlers(navigate: Navigate): () => void {
     fireNotification(
       "Workspace Invite",
       `${invite.inviterName} invited you to ${invite.workspaceName}`,
+      { dedupeKey: `workspace-invite:${invite.id}` },
     );
   };
 

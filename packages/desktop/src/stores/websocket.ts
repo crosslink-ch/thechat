@@ -169,6 +169,25 @@ function handleVisibilityChange() {
 
 document.addEventListener("visibilitychange", handleVisibilityChange);
 
+function disposeWebSocketModule() {
+  currentToken = null;
+  pendingMessages = [];
+  clearTimers();
+  document.removeEventListener("visibilitychange", handleVisibilityChange);
+
+  if (!ws) return;
+  ws.onopen = null;
+  ws.onmessage = null;
+  ws.onclose = null;
+  ws.onerror = null;
+  ws.close();
+  ws = null;
+}
+
+if (import.meta.hot) {
+  import.meta.hot.dispose(disposeWebSocketModule);
+}
+
 export const useWebSocketStore = create<WebSocketStore>()(() => ({
   connected: false,
   reconnecting: false,
