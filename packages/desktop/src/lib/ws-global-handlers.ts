@@ -55,7 +55,9 @@ export function registerGlobalWsHandlers(navigate: Navigate): () => void {
       msg.senderId !== currentUserId &&
       !isVisibleHermesConversation(msg.conversationId)
     ) {
-      fireNotification(msg.senderName, notificationBodyPreview(msg.content));
+      fireNotification(msg.senderName, notificationBodyPreview(msg.content), {
+        dedupeKey: `message:${msg.id}`,
+      });
     }
   };
 
@@ -130,6 +132,7 @@ export function registerGlobalWsHandlers(navigate: Navigate): () => void {
     fireNotification(
       "Workspace Invite",
       `${invite.inviterName} invited you to ${invite.workspaceName}`,
+      { dedupeKey: `workspace-invite:${invite.id}` },
     );
   };
 

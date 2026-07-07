@@ -9,6 +9,7 @@ import { wsEvents } from "./ws-events";
 import { fireNotification } from "./notifications";
 import { useAuthStore } from "../stores/auth";
 import { useWorkspacesStore } from "../stores/workspaces";
+import { useNotificationsStore } from "../stores/notifications";
 import {
   hermesScopeKey,
   useHermesIndicatorsStore,
@@ -59,6 +60,7 @@ describe("registerGlobalWsHandlers", () => {
     vi.clearAllMocks();
     useAuthStore.setState({ token: "token-1", user: null, loading: false });
     useHermesIndicatorsStore.getState().resetForTests();
+    useNotificationsStore.setState({ notifications: [], loading: false });
     useWorkspacesStore.setState({
       workspaces: [],
       activeWorkspace: structuredClone(baseWorkspace),
@@ -193,6 +195,97 @@ describe("registerGlobalWsHandlers", () => {
 
     expect(workspacesRouteMock).toHaveBeenCalledWith({ id: "ws-1" });
     expect(useWorkspacesStore.getState().activeWorkspace?.name).toBe("Workspace (server)");
+
+    cleanup();
+  });
+
+  it("fires direct-message notifications with a stable message dedupe key", () => {
+    useAuthStore.setState({
+      token: "token-1",
+      user: {
+        id: "u-current",
+        name: "Current User",
+        email: "current@example.com",
+        avatar: null,
+        type: "human",
+      },
+      loading: false,
+    });
+    const cleanup = registerGlobalWsHandlers(() => {});
+
+    wsEvents.emit("ws:new_message", {
+      conversationType: "direct",
+      message: {
+        id: "msg-1",
+        conversationId: "conv-1",
+        threadId: null,
+        senderId: "u-other",
+        senderName: "Other User",
+        content: "hello",
+        createdAt: "2026-01-01T00:00:00.000Z",
+      },
+    });
+
+    expect(fireNotification).toHaveBeenCalledWith("Other User", "hello", {
+      dedupeKey: "message:msg-1",
+    });
+
+    cleanup();
+  });
+
+  it("does not fire direct-message notifications for the current user's messages", () => {
+    useAuthStore.setState({
+      token: "token-1",
+      user: {
+        id: "u-current",
+        name: "Current User",
+        email: "current@example.com",
+        avatar: null,
+        type: "human",
+      },
+      loading: false,
+    });
+    const cleanup = registerGlobalWsHandlers(() => {});
+
+    wsEvents.emit("ws:new_message", {
+      conversationType: "direct",
+      message: {
+        id: "msg-1",
+        conversationId: "conv-1",
+        threadId: null,
+        senderId: "u-current",
+        senderName: "Current User",
+        content: "hello",
+        createdAt: "2026-01-01T00:00:00.000Z",
+      },
+    });
+
+    expect(fireNotification).not.toHaveBeenCalled();
+
+    cleanup();
+  });
+
+  it("dedupes workspace invite OS notifications by invite id", () => {
+    const cleanup = registerGlobalWsHandlers(() => {});
+
+    wsEvents.emit("ws:invite_received", {
+      invite: {
+        id: "invite-1",
+        workspaceId: "ws-1",
+        workspaceName: "Workspace",
+        inviterId: "u-owner",
+        inviterName: "Owner",
+        inviteeId: "u-current",
+        createdAt: "2026-01-01T00:00:00.000Z",
+      },
+    });
+
+    expect(fireNotification).toHaveBeenCalledWith(
+      "Workspace Invite",
+      "Owner invited you to Workspace",
+      { dedupeKey: "workspace-invite:invite-1" },
+    );
+    expect(useNotificationsStore.getState().notifications).toHaveLength(1);
 
     cleanup();
   });
