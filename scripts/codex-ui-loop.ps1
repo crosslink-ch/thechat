@@ -49,6 +49,93 @@ function Convert-StatusToText {
   return ($StatusLines -join "`n")
 }
 
+function Join-WindowsProcessArguments {
+  param([string[]]$Arguments)
+
+  return (($Arguments | ForEach-Object {
+    $argument = $_
+    if ($null -eq $argument) {
+      $argument = ""
+    }
+
+    if ($argument -eq "") {
+      return '""'
+    }
+
+    if ($argument -notmatch '[\s"]') {
+      return $argument
+    }
+
+    $quoted = New-Object System.Text.StringBuilder
+    [void]$quoted.Append('"')
+    $backslashes = 0
+
+    foreach ($character in $argument.ToCharArray()) {
+      if ($character -eq '\') {
+        $backslashes += 1
+        continue
+      }
+
+      if ($character -eq '"') {
+        [void]$quoted.Append(('\' * (($backslashes * 2) + 1)))
+        [void]$quoted.Append('"')
+        $backslashes = 0
+        continue
+      }
+
+      if ($backslashes -gt 0) {
+        [void]$quoted.Append(('\' * $backslashes))
+        $backslashes = 0
+      }
+
+      [void]$quoted.Append($character)
+    }
+
+    if ($backslashes -gt 0) {
+      [void]$quoted.Append(('\' * ($backslashes * 2)))
+    }
+
+    [void]$quoted.Append('"')
+    return $quoted.ToString()
+  }) -join " ")
+}
+
+function Resolve-CodexInvocation {
+  $command = Get-Command codex -ErrorAction Stop
+  $source = $command.Source
+  if ([string]::IsNullOrWhiteSpace($source)) {
+    $source = $command.Path
+  }
+
+  if (-not [string]::IsNullOrWhiteSpace($source) -and $source.EndsWith(".ps1", [System.StringComparison]::OrdinalIgnoreCase)) {
+    $baseDir = Split-Path -Parent $source
+    $candidateScriptPaths = @(
+      (Join-Path $baseDir "node_modules\@openai\codex\bin\codex.js"),
+      (Join-Path $baseDir "..\@openai\codex\bin\codex.js"),
+      (Join-Path $baseDir "..\node_modules\@openai\codex\bin\codex.js")
+    )
+
+    foreach ($candidateScriptPath in $candidateScriptPaths) {
+      $resolvedScriptPath = Resolve-Path -LiteralPath $candidateScriptPath -ErrorAction SilentlyContinue
+      if ($resolvedScriptPath) {
+        $localNodePath = Join-Path $baseDir "node.exe"
+        $nodePath = if (Test-Path -LiteralPath $localNodePath) { $localNodePath } else { "node.exe" }
+        return [pscustomobject]@{
+          FileName = $nodePath
+          PrefixArgs = @($resolvedScriptPath.Path)
+          DisplayName = "$nodePath $($resolvedScriptPath.Path)"
+        }
+      }
+    }
+  }
+
+  return [pscustomobject]@{
+    FileName = $source
+    PrefixArgs = @()
+    DisplayName = $source
+  }
+}
+
 function Invoke-CodexAgent {
   param(
     [string]$Prompt,
@@ -75,8 +162,60 @@ function Invoke-CodexAgent {
 
   $args += @("--output-last-message", $OutputPath, "-")
 
-  $Prompt | & codex @args 2>&1 | Tee-Object -FilePath $LogPath
-  $exitCode = $LASTEXITCODE
+  $codexInvocation = Resolve-CodexInvocation
+  $processArgs = @($codexInvocation.PrefixArgs) + $args
+  $displayCommand = "$($codexInvocation.DisplayName) $(Join-WindowsProcessArguments $args)"
+
+  Write-Host "Running: $displayCommand"
+  Write-Host "Log: $LogPath"
+
+  $startInfo = New-Object System.Diagnostics.ProcessStartInfo
+  $startInfo.FileName = $codexInvocation.FileName
+  $startInfo.Arguments = Join-WindowsProcessArguments $processArgs
+  $startInfo.WorkingDirectory = $RepoRoot
+  $startInfo.UseShellExecute = $false
+  $startInfo.RedirectStandardInput = $true
+  $startInfo.RedirectStandardOutput = $true
+  $startInfo.RedirectStandardError = $true
+  $startInfo.CreateNoWindow = $true
+
+  $process = New-Object System.Diagnostics.Process
+  $process.StartInfo = $startInfo
+  if (-not $process.Start()) {
+    throw "Failed to start Codex process."
+  }
+
+  $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+  $stderrTask = $process.StandardError.ReadToEndAsync()
+  $process.StandardInput.Write($Prompt)
+  $process.StandardInput.Close()
+  $process.WaitForExit()
+  $stdoutTask.Wait()
+  $stderrTask.Wait()
+
+  $stdout = $stdoutTask.Result
+  $stderr = $stderrTask.Result
+  $exitCode = $process.ExitCode
+
+  $logSections = @(
+    "Command: $displayCommand",
+    "Exit code: $exitCode",
+    "",
+    "----- stdout -----",
+    $stdout.TrimEnd(),
+    "",
+    "----- stderr -----",
+    $stderr.TrimEnd()
+  )
+  Set-Content -LiteralPath $LogPath -Value ($logSections -join [Environment]::NewLine)
+
+  if (-not [string]::IsNullOrWhiteSpace($stdout)) {
+    Write-Host $stdout.TrimEnd()
+  }
+  if (-not [string]::IsNullOrWhiteSpace($stderr)) {
+    Write-Host $stderr.TrimEnd()
+  }
+
   if ($exitCode -ne 0) {
     throw "codex exec failed with exit code $exitCode. See $LogPath"
   }
