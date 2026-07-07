@@ -1,0 +1,107 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": ["pass", "fail"]
+    },
+    "summary": {
+      "type": "string"
+    },
+    "blocking_issues": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "severity": {
+            "type": "string",
+            "enum": ["critical", "high", "medium", "low"]
+          },
+          "file": {
+            "type": "string"
+          },
+          "issue": {
+            "type": "string"
+          },
+          "evidence": {
+            "type": "string"
+          },
+          "recommended_fix": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "severity",
+          "file",
+          "issue",
+          "evidence",
+          "recommended_fix"
+        ]
+      }
+    },
+    "checks_run": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "command": {
+            "type": "string"
+          },
+          "result": {
+            "type": "string",
+            "enum": ["pass", "fail", "skipped"]
+          },
+          "notes": {
+            "type": "string"
+          }
+        },
+        "required": ["name", "command", "result", "notes"]
+      }
+    },
+    "visual_verification": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "target": {
+            "type": "string"
+          },
+          "result": {
+            "type": "string",
+            "enum": ["pass", "fail", "skipped"]
+          },
+          "evidence_path": {
+            "type": "string"
+          },
+          "notes": {
+            "type": "string"
+          }
+        },
+        "required": ["target", "result", "evidence_path", "notes"]
+      }
+    },
+    "residual_risks": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "required": [
+    "status",
+    "summary",
+    "blocking_issues",
+    "checks_run",
+    "visual_verification",
+    "residual_risks"
+  ]
+}
+

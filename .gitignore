@@ -42,3 +42,6 @@ dev.db-wal
 .firecrawl/
 __pycache__
 .tmp/
+
+# Codex implementation/verification loop artifacts
+.codex-loop/runs/
