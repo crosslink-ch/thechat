@@ -20,5 +20,21 @@ approval prompts. To keep full filesystem access but avoid the bypass flag, run:
 powershell -ExecutionPolicy Bypass -File scripts/codex-ui-loop.ps1 -NoBypass
 ```
 
+The script also defaults to `--ignore-user-config` so an invalid local
+`config.toml` value cannot break the loop. Codex still uses `CODEX_HOME` for
+authentication. To opt back into user config, run:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/codex-ui-loop.ps1 -UseUserConfig
+```
+
+You can pass explicit Codex config overrides when needed. This installed Codex
+CLI accepts reasoning effort values `none`, `low`, `medium`, and `high`:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/codex-ui-loop.ps1 `
+  -CodexConfig 'model_reasoning_effort="high"'
+```
+
 Generated reports, logs, and screenshots are written under `.codex-loop/runs/`
 and are ignored by git.
