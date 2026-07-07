@@ -3,9 +3,6 @@ param(
   [int]$MaxIterations = 5,
   [string]$TaskPath = ".codex-loop/remove-agent-chats-ui.md",
   [string]$RunName = "remove-agent-chats-ui",
-  [string]$Model = "",
-  [string[]]$CodexConfig = @(),
-  [switch]$UseUserConfig,
   [switch]$NoBypass
 )
 
@@ -66,20 +63,6 @@ function Invoke-CodexAgent {
   New-Item -ItemType Directory -Force -Path $logParent | Out-Null
 
   $args = @("exec", "--cd", $RepoRoot, "--color", "never")
-  if (-not $UseUserConfig) {
-    $args += "--ignore-user-config"
-  }
-
-  if (-not [string]::IsNullOrWhiteSpace($Model)) {
-    $args += @("--model", $Model)
-  }
-
-  foreach ($configOverride in $CodexConfig) {
-    if (-not [string]::IsNullOrWhiteSpace($configOverride)) {
-      $args += @("--config", $configOverride)
-    }
-  }
-
   if ($NoBypass) {
     $args += @("--sandbox", "danger-full-access")
   } else {
@@ -119,24 +102,12 @@ $permissionMode = if ($NoBypass) {
 } else {
   "--dangerously-bypass-approvals-and-sandbox"
 }
-$configMode = if ($UseUserConfig) {
-  "user config enabled"
-} else {
-  "--ignore-user-config"
-}
 
 Write-Host "Codex UI loop"
 Write-Host "Repo: $RepoRoot"
 Write-Host "Task: $resolvedTaskPath"
 Write-Host "Run directory: $runDir"
 Write-Host "Permission mode: $permissionMode"
-Write-Host "Config mode: $configMode"
-if (-not [string]::IsNullOrWhiteSpace($Model)) {
-  Write-Host "Model override: $Model"
-}
-if ($CodexConfig.Count -gt 0) {
-  Write-Host "Codex config overrides: $($CodexConfig -join ', ')"
-}
 Write-Host "Max iterations: $MaxIterations"
 
 $lastVerifierReport = "No verifier report yet. This is the first implementation pass."
