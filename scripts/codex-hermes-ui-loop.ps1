@@ -6,15 +6,14 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-$argsForLoop = @(
-  "-MaxIterations", $MaxIterations,
-  "-TaskPath", ".codex-loop/hermes-dm-work-in-progress-ui.md",
-  "-RunName", "hermes-dm-work-in-progress-ui"
-)
-
-if ($NoBypass) {
-  $argsForLoop += "-NoBypass"
+$loopParams = @{
+  MaxIterations = $MaxIterations
+  TaskPath = ".codex-loop/hermes-dm-work-in-progress-ui.md"
+  RunName = "hermes-dm-work-in-progress-ui"
 }
 
-& (Join-Path $PSScriptRoot "codex-ui-loop.ps1") @argsForLoop
+if ($NoBypass) {
+  $loopParams.NoBypass = $true
+}
 
+& (Join-Path $PSScriptRoot "codex-ui-loop.ps1") @loopParams
