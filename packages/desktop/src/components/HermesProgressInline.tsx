@@ -560,7 +560,6 @@ function ApprovalRequestCard({
               <ApprovalButton
                 label="Deny"
                 tone="danger"
-                className="ml-auto"
                 onClick={() => onDecision("deny")}
               />
             )}
