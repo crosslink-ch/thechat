@@ -95,7 +95,7 @@ export function HermesProgressInline({
   };
 
   return (
-    <div className="space-y-3 px-5 py-3">
+    <div className="py-1">
       {invocations.map(({ invocation, events }) => {
         const invocationEvents = [...events].sort(compareEvents);
         const approvalStates =
@@ -123,75 +123,70 @@ export function HermesProgressInline({
           : invocation.status === "queued"
             ? "queued"
             : invocation.status;
-        const title = `${invocation.botName} ${
-          needsApproval
-            ? "is waiting for your approval"
-            : invocation.status === "queued"
-              ? "is queued"
-              : "is working"
-        }`;
+        const title = needsApproval
+          ? "is waiting for your approval"
+          : invocation.status === "queued"
+            ? "is queued"
+            : "is working";
 
         return (
           <div
             key={invocation.id}
-            className={`min-w-0 overflow-hidden rounded border bg-surface ${
-              needsApproval
-                ? "border-warning-text/35"
-                : "border-[rgba(245,245,245,0.12)]"
-            }`}
+            className="flex gap-2.5 px-5 py-2.5 transition-colors duration-100 hover:bg-raised/30"
           >
+            <div className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-full bg-elevated text-[0.857rem] font-semibold text-text-muted">
+              {invocation.botName.charAt(0).toUpperCase()}
+            </div>
             <div className="min-w-0 flex-1">
-              <div className="flex items-center justify-between gap-3 border-b border-[rgba(245,245,245,0.12)] px-5 py-[18px]">
-                <div className="flex min-w-0 items-center gap-3">
-                  <span
-                    className={`inline-block size-2 shrink-0 rounded-full ${
-                      needsApproval
-                        ? "bg-warning-text"
-                        : "animate-pulse bg-[#54894a]"
-                    }`}
-                  />
-                  <span className="min-w-0 truncate text-[1rem] font-medium text-text-secondary">
-                    {title}
-                  </span>
-                </div>
-                <div className="flex shrink-0 items-center gap-3">
+              <div className="mb-2 flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1">
+                <span className="min-w-0 text-[0.929rem] font-medium text-text-secondary">
+                  {invocation.botName} {title}
+                </span>
+                <span
+                  className={`inline-block size-1.5 shrink-0 rounded-full ${
+                    needsApproval
+                      ? "bg-warning-text"
+                      : "animate-pulse bg-[#54894a]"
+                  }`}
+                />
+                <span
+                  className={`shrink-0 rounded-sm px-1.5 py-0.5 text-[0.714rem] font-medium ${
+                    needsApproval
+                      ? "bg-warning-bg text-warning-text"
+                      : "bg-[#54894a]/10 text-[#8fcf84]"
+                  }`}
+                >
+                  {statusLabel}
+                </span>
+                <div className="ml-auto flex shrink-0 items-center gap-2">
                   {elapsedLabel && (
-                    <span className="tabular-nums text-[0.929rem] text-text-dimmed">
+                    <span className="tabular-nums text-[0.786rem] text-text-dimmed">
                       {elapsedLabel}
                     </span>
                   )}
-                  <span
-                    className={`shrink-0 rounded border px-2 py-1 text-[0.786rem] font-medium ${
-                      needsApproval
-                        ? "border-warning-text/40 bg-warning-bg text-warning-text"
-                        : "border-[#54894a]/50 bg-[#54894a]/10 text-[#54894a]"
-                    }`}
-                  >
-                    {statusLabel}
-                  </span>
                   {onStop && invocation.status !== "queued" && (
                     <button
                       type="button"
-                      className="flex cursor-pointer items-center gap-2.5 rounded border border-[rgba(245,245,245,0.24)] px-[9px] py-1 text-[0.929rem] font-medium text-text-secondary transition-colors hover:bg-hover hover:text-text"
+                      className="flex cursor-pointer items-center gap-1.5 rounded border border-border bg-transparent px-2 py-1 text-[0.786rem] font-medium text-text-muted transition-colors hover:bg-hover hover:text-text"
                       onClick={onStop}
                     >
-                      <span className="size-3.5 rounded-sm border border-current bg-current" />
+                      <span className="size-2.5 rounded-sm border border-current bg-current" />
                       Stop
                     </button>
                   )}
                 </div>
               </div>
 
-              <div className="px-5 py-5">
+              <div className="min-w-0">
                 {hiddenCount > 0 && (
-                  <div className="mb-4 flex items-center gap-2 text-[0.929rem] text-text-secondary">
-                    <span className="inline-block size-[13px] rounded-full border border-[rgba(245,245,245,0.2)] bg-surface" />
+                  <div className="mb-3 flex items-center gap-2 text-[0.857rem] text-text-dimmed">
+                    <span className="inline-block size-[13px] rounded-full border border-border bg-base" />
                     {hiddenCount} earlier update{hiddenCount === 1 ? "" : "s"}
                   </div>
                 )}
 
                 {visibleRows.length > 0 ? (
-                  <div className="relative space-y-5 before:absolute before:bottom-[8px] before:left-[6px] before:top-[8px] before:w-px before:bg-[rgba(245,245,245,0.12)]">
+                  <div className="relative space-y-3.5 before:absolute before:bottom-[8px] before:left-[6px] before:top-[8px] before:w-px before:bg-border-subtle">
                     {visibleRows.map((row) => (
                       <div
                         key={row.key}
@@ -242,25 +237,6 @@ export function HermesProgressInline({
                     {emptyStateLabel(invocation, nowMs)}
                   </div>
                 )}
-              </div>
-
-              <div className="flex items-center gap-6 border-t border-[rgba(245,245,245,0.12)] px-5 py-3.5">
-                <span className="shrink-0 text-[0.929rem] text-text-secondary">
-                  Context
-                </span>
-                <div className="h-0.5 min-w-0 flex-1 overflow-hidden rounded-full bg-[#32353d]">
-                  <div className="h-full w-[85%] bg-[#b18640]" />
-                </div>
-                <span className="shrink-0 tabular-nums text-[0.929rem] text-text-secondary">
-                  85%
-                </span>
-                <button
-                  type="button"
-                  className="flex shrink-0 cursor-pointer items-center gap-2 text-[0.929rem] text-text-secondary hover:text-text"
-                >
-                  Details
-                  <ExpandChevron expanded={false} />
-                </button>
               </div>
             </div>
           </div>
@@ -404,12 +380,12 @@ function ToolEventRow({
         type="button"
         aria-expanded={expanded}
         onClick={onToggle}
-        className="flex w-full min-w-0 cursor-pointer items-start gap-2.5 text-left text-[0.929rem] text-text-secondary hover:text-text"
+        className="flex w-full min-w-0 cursor-pointer items-start gap-2.5 text-left text-[0.929rem] text-text-muted transition-colors hover:text-text-secondary"
       >
         <StatusDot status={status} />
         {event.toolName && (
           <span
-            className="max-w-[10rem] shrink-0 truncate rounded border border-border bg-base px-1.5 py-0.5 font-mono text-[0.786rem] text-text-dimmed"
+            className="max-w-[10rem] shrink-0 truncate rounded-sm border border-border bg-base/70 px-1.5 py-0.5 font-mono text-[0.786rem] text-text-dimmed"
             title={event.toolName}
           >
             {event.toolName}
@@ -426,7 +402,7 @@ function ToolEventRow({
       {expanded && (
         <code
           data-testid="hermes-activity-detail"
-          className="ml-6 mt-2 block whitespace-pre-wrap break-all rounded border border-border bg-base px-2 py-1.5 font-mono text-[0.786rem] leading-relaxed text-text-secondary"
+          className="ml-6 mt-1.5 block max-h-72 overflow-y-auto whitespace-pre-wrap break-all border-l border-border-accent bg-raised/30 py-1.5 pl-3 pr-2 font-mono text-[0.786rem] leading-relaxed text-text-secondary"
         >
           {toolDetailText(event)}
         </code>
@@ -439,10 +415,10 @@ function NoticeEventRow({ event }: { event: BotInvocationProgressEventPublic }) 
   const severity = noticeSeverity(event);
   const style =
     severity === "error"
-      ? "border-error/30 bg-error/10 text-error"
+      ? "border-error/60 text-error-light"
       : severity === "warning"
-      ? "border-warning-text/30 bg-warning-bg text-warning-text"
-      : "border-accent/25 bg-accent/10 text-text-secondary";
+      ? "border-warning-text/70 text-warning-text"
+      : "border-accent/50 text-text-muted";
   const badge = severity === "warning" ? "warn" : severity;
 
   return (
@@ -457,10 +433,10 @@ function NoticeEventRow({ event }: { event: BotInvocationProgressEventPublic }) 
         }
       />
       <div
-        className={`min-w-0 flex-1 rounded border px-2.5 py-2 text-[0.929rem] ${style}`}
+        className={`min-w-0 flex-1 border-l py-1 pl-3 text-[0.929rem] ${style}`}
       >
         <div className="flex min-w-0 items-start gap-2">
-          <span className="mt-0.5 shrink-0 rounded border border-current/30 px-1.5 py-0.5 text-[0.643rem] font-medium uppercase">
+          <span className="mt-0.5 shrink-0 rounded-sm border border-current/30 bg-base/30 px-1.5 py-0.5 text-[0.643rem] font-medium uppercase">
             {badge}
           </span>
           <span className="min-w-0 whitespace-pre-wrap break-words leading-relaxed">
@@ -487,17 +463,15 @@ function ReasoningEventRow({
   return (
     <div className="relative z-10 flex min-w-0 items-start gap-2.5">
       <TimelineDot tone="blue" pulse />
-      <div
-        className="min-w-0 flex-1 rounded border border-border-subtle bg-base/40 px-2.5 py-2 text-[0.929rem]"
-      >
+      <div className="min-w-0 flex-1 text-[0.929rem]">
         <button
           type="button"
           aria-expanded={expanded}
           onClick={onToggle}
-          className="flex w-full min-w-0 cursor-pointer items-start gap-2 text-left"
+          className="flex w-full min-w-0 cursor-pointer items-start gap-2 text-left text-text-muted transition-colors hover:text-text-secondary"
         >
           <span className="min-w-0 flex-1">
-            <span className="block font-medium text-text-muted">Thinking</span>
+            <span className="block font-medium text-text-secondary">Thinking</span>
             {!expanded && previewText && (
               <span className="block truncate text-text-dimmed">
                 {previewText}
@@ -509,7 +483,7 @@ function ReasoningEventRow({
         {expanded && fullText && (
           <div
             data-testid="hermes-activity-detail"
-            className="mt-1 whitespace-pre-wrap break-words leading-relaxed text-text-dimmed"
+            className="mt-1.5 whitespace-pre-wrap break-words border-l border-border-accent bg-raised/30 py-1.5 pl-3 pr-2 leading-relaxed text-text-dimmed"
           >
             {fullText}
           </div>
@@ -539,7 +513,7 @@ function ApprovalRequestCard({
       <TimelineDot tone="warning" pulse />
       <div
         data-testid="hermes-approval-request"
-        className="min-w-0 flex-1 rounded border border-warning-text/30 bg-warning-bg/70 px-3 py-2.5 text-[0.929rem] text-text-secondary"
+        className="min-w-0 flex-1 border-l-2 border-warning-text bg-warning-bg/35 py-2 pl-3 pr-2.5 text-[0.929rem] text-text-secondary"
       >
         <div className="mb-2 flex min-w-0 items-center gap-2">
           <div className="min-w-0 flex-1 font-medium text-text">
@@ -548,7 +522,7 @@ function ApprovalRequestCard({
         </div>
 
         {command && (
-          <code className="mb-2 block max-h-40 overflow-y-auto whitespace-pre-wrap break-all rounded border border-border bg-base px-2 py-1.5 font-mono text-[0.714rem] text-text">
+          <code className="mb-2 block max-h-40 overflow-y-auto whitespace-pre-wrap break-all border-l border-warning-text/40 bg-base/60 py-1.5 pl-3 pr-2 font-mono text-[0.714rem] text-text">
             {command}
           </code>
         )}
@@ -643,7 +617,7 @@ function ResolvedApprovalRow({
       {expanded && command && (
         <code
           data-testid="hermes-activity-detail"
-          className="ml-6 mt-2 block whitespace-pre-wrap break-all rounded border border-border bg-base px-2 py-1.5 font-mono text-[0.786rem] leading-relaxed text-text-secondary"
+          className="ml-6 mt-1.5 block max-h-72 overflow-y-auto whitespace-pre-wrap break-all border-l border-border-accent bg-raised/30 py-1.5 pl-3 pr-2 font-mono text-[0.786rem] leading-relaxed text-text-secondary"
         >
           {command}
         </code>
@@ -665,10 +639,10 @@ function ApprovalButton({
 }) {
   const toneClass =
     tone === "danger"
-      ? "bg-error-bg text-error-bright hover:bg-danger-bg-hover"
+      ? "bg-error-bg/80 text-error-bright hover:bg-danger-bg-hover"
       : tone === "primary"
       ? "bg-accent/15 text-accent hover:bg-accent/25"
-      : "bg-button text-text-muted hover:bg-button-hover hover:text-text";
+      : "bg-button/80 text-text-muted hover:bg-button-hover hover:text-text";
 
   return (
     <button
@@ -760,7 +734,7 @@ function TimelineDot({
 
   return (
     <span
-      className={`mt-1 flex size-[13px] shrink-0 items-center justify-center rounded-full border bg-surface ${colors.outer} ${className}`}
+      className={`mt-1 flex size-[13px] shrink-0 items-center justify-center rounded-full border bg-base ${colors.outer} ${className}`}
     >
       <span
         className={`size-[5px] rounded-full ${colors.inner} ${

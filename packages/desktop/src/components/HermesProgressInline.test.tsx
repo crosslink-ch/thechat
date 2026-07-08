@@ -107,6 +107,32 @@ describe("HermesProgressInline", () => {
     expect(screen.getByText("4.5s")).toBeInTheDocument();
   });
 
+  it("does not render the old context footer", () => {
+    render(
+      <HermesProgressInline
+        invocations={[
+          {
+            invocation: invocation(),
+            events: [
+              progressEvent({
+                id: "tool",
+                type: "tool.started",
+                status: "running",
+                toolCallId: "call-read",
+                toolName: "read_file",
+                label: "Read task context",
+              }),
+            ],
+          },
+        ]}
+      />,
+    );
+
+    expect(screen.queryByText("Context")).not.toBeInTheDocument();
+    expect(screen.queryByText("85%")).not.toBeInTheDocument();
+    expect(screen.queryByText("Details")).not.toBeInTheDocument();
+  });
+
   it("renders notices and reasoning separately from tool activity", () => {
     render(
       <HermesProgressInline
