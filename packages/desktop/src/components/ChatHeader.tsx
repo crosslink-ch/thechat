@@ -1,9 +1,7 @@
-import { useState, useEffect } from "react";
 import { create } from "zustand";
 import { useMatches } from "@tanstack/react-router";
 import { useWorkspacesStore } from "../stores/workspaces";
 import { usePermissionModeStore } from "../stores/permission-mode";
-import { basename } from "../lib/path";
 
 // Mini-store for agent chat title & project dir (set by agent-chat route)
 const useAgentChatTitle = create(() => ({ title: "", projectDir: null as string | null }));
@@ -16,33 +14,25 @@ export const getAgentChatProjectDir = () => useAgentChatTitle.getState().project
 export function ChatHeader() {
   const activeWorkspace = useWorkspacesStore((s) => s.activeWorkspace);
   const permissionMode = usePermissionModeStore((s) => s.mode);
-  const agentChatTitle = useAgentChatTitle((s) => s.title);
-  const agentProjectDir = useAgentChatTitle((s) => s.projectDir);
   const matches = useMatches();
   const lastMatch = matches[matches.length - 1];
   const routePath = lastMatch?.fullPath ?? "";
   const params = (lastMatch?.params ?? {}) as Record<string, string>;
 
-  const [projectName, setProjectName] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (agentProjectDir) {
-      basename(agentProjectDir).then(setProjectName);
-    } else {
-      setProjectName(null);
-    }
-  }, [agentProjectDir]);
-
-  const isAgentChat = routePath.startsWith("/chat");
   const isChannel = routePath.startsWith("/channel");
   const isDm = routePath.startsWith("/dm");
   const isSettings = routePath === "/settings";
+  const isWorkspaceHome = routePath === "/";
+  const isWorkspaceManage = routePath === "/workspace/manage";
+  const isNotifications = routePath === "/notifications";
 
-  let chatTitle = "New Chat";
+  let chatTitle = "Workspace";
   if (isSettings) {
     chatTitle = "Settings";
-  } else if (isAgentChat) {
-    chatTitle = agentChatTitle || "New Chat";
+  } else if (isWorkspaceManage) {
+    chatTitle = activeWorkspace?.name ?? "Workspace";
+  } else if (isNotifications) {
+    chatTitle = "Notifications";
   } else if (isChannel) {
     const channelId = params.id;
     const channel = activeWorkspace?.channels.find((ch) => ch.id === channelId);
@@ -51,7 +41,7 @@ export function ChatHeader() {
     chatTitle = "Direct Message";
   }
 
-  const showBackButton = !isAgentChat;
+  const showBackButton = !isWorkspaceHome;
 
   return (
     <div className="flex h-12 shrink-0 items-center gap-1.5 border-b border-border-subtle bg-surface px-3">
@@ -66,11 +56,6 @@ export function ChatHeader() {
         </button>
       )}
       <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-[0.929rem] text-text-muted">{chatTitle}</span>
-      {isAgentChat && projectName && (
-        <span className="rounded-md bg-elevated px-2 py-0.5 text-[0.786rem] text-text-dimmed" title={agentProjectDir!}>
-          {projectName}
-        </span>
-      )}
       {permissionMode === "allow-edits" && (
         <span className="rounded-md bg-warning-bg px-2 py-0.5 text-[0.786rem] font-medium text-warning-text">
           Allow Edits

@@ -26,7 +26,10 @@ describe("Workspace shared config", function () {
   // get killed by mocha before our own waitUntil deadlines fire.
   this.timeout(180_000);
 
-  it("uses workspace OpenRouter credentials when local settings inherit from workspace", async () => {
+  // Agent Chat UI entry points have been removed. This legacy e2e exercised
+  // the removed UI directly; keep the setup documented but skip it until the
+  // inherited-config behavior has workspace-channel UI coverage.
+  it.skip("uses workspace OpenRouter credentials when local settings inherit from workspace", async () => {
     const email = `e2e-shared-cfg-${Date.now()}@e2e.local`;
     const password = "password123";
     const wsName = `E2E WS ${Date.now()}`;

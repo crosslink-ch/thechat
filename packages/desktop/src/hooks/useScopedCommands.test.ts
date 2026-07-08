@@ -24,7 +24,7 @@ beforeEach(() => {
 
 describe("useScopedCommands", () => {
   it("registers scoped commands ahead of global commands by default", () => {
-    const globalCommand = command("new-chat", { priority: 0 });
+    const globalCommand = command("global-command", { priority: 0 });
     const scopedCommand = command("hermes.new-session");
     useCommandsStore.getState().setCommands([globalCommand]);
 
@@ -32,11 +32,11 @@ describe("useScopedCommands", () => {
 
     expect(useCommandsStore.getState().commands.map((cmd) => cmd.id)).toEqual([
       "hermes.new-session",
-      "new-chat",
+      "global-command",
     ]);
 
     unmount();
-    expect(useCommandsStore.getState().commands.map((cmd) => cmd.id)).toEqual(["new-chat"]);
+    expect(useCommandsStore.getState().commands.map((cmd) => cmd.id)).toEqual(["global-command"]);
   });
 
   it("updates scoped commands when the hook input changes", () => {

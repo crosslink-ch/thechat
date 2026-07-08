@@ -110,7 +110,7 @@ export function registerGlobalWsHandlers(navigate: Navigate): () => void {
     if (userId === currentUserId) {
       useWorkspacesStore.setState({ activeWorkspace: null });
       useWorkspacesStore.getState().initialize();
-      navigate({ to: "/chat" });
+      navigate({ to: "/" });
       return;
     }
 

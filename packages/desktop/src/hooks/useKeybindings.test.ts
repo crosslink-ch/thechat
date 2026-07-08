@@ -96,7 +96,7 @@ describe("useKeybindings", () => {
 
   describe("C-x prefix commands", () => {
     it("dispatches a C-x prefixed command", () => {
-      const cmd = makeCommand({ id: "new-chat", keybinding: { prefix: "C-x", key: "n" } });
+      const cmd = makeCommand({ id: "prefix-command", keybinding: { prefix: "C-x", key: "n" } });
       seedCommands([cmd]);
 
       renderHook(() => useKeybindings({ ...noopActions }));
@@ -106,7 +106,7 @@ describe("useKeybindings", () => {
     });
 
     it("dispatches the higher-priority scoped command when it conflicts with a global shortcut", () => {
-      const globalCommand = makeCommand({ id: "new-chat", keybinding: { prefix: "C-x", key: "n" } });
+      const globalCommand = makeCommand({ id: "global-prefix-command", keybinding: { prefix: "C-x", key: "n" } });
       const scopedCommand = makeCommand({
         id: "hermes.new-session",
         keybinding: { prefix: "C-x", key: "n" },
@@ -123,7 +123,7 @@ describe("useKeybindings", () => {
     });
 
     it("falls back to the global shortcut after the scoped command unregisters", () => {
-      const globalCommand = makeCommand({ id: "new-chat", keybinding: { prefix: "C-x", key: "n" } });
+      const globalCommand = makeCommand({ id: "global-prefix-command", keybinding: { prefix: "C-x", key: "n" } });
       const scopedCommand = makeCommand({
         id: "hermes.new-session",
         keybinding: { prefix: "C-x", key: "n" },
@@ -141,7 +141,7 @@ describe("useKeybindings", () => {
     });
 
     it("ignores disabled scoped commands and uses the global shortcut", () => {
-      const globalCommand = makeCommand({ id: "new-chat", keybinding: { prefix: "C-x", key: "n" } });
+      const globalCommand = makeCommand({ id: "global-prefix-command", keybinding: { prefix: "C-x", key: "n" } });
       const scopedCommand = makeCommand({
         id: "hermes.new-session",
         enabled: false,
@@ -159,7 +159,7 @@ describe("useKeybindings", () => {
     });
 
     it("unknown key after C-x cancels prefix silently", () => {
-      const cmd = makeCommand({ id: "new-chat", keybinding: { prefix: "C-x", key: "n" } });
+      const cmd = makeCommand({ id: "prefix-command", keybinding: { prefix: "C-x", key: "n" } });
       seedCommands([cmd]);
 
       renderHook(() => useKeybindings({ ...noopActions }));
@@ -173,7 +173,7 @@ describe("useKeybindings", () => {
 
     it("prefix times out after 2 seconds", () => {
       vi.useFakeTimers();
-      const cmd = makeCommand({ id: "new-chat", keybinding: { prefix: "C-x", key: "n" } });
+      const cmd = makeCommand({ id: "prefix-command", keybinding: { prefix: "C-x", key: "n" } });
       seedCommands([cmd]);
 
       renderHook(() => useKeybindings({ ...noopActions }));
@@ -217,7 +217,7 @@ describe("useKeybindings", () => {
         keybinding: { prefix: "C-x", key: "n" },
         priority: 50,
       });
-      const projectCommand = makeCommand({ id: "new-chat-in-project", keybinding: { prefix: "C-x c", key: "n" } });
+      const projectCommand = makeCommand({ id: "nested-prefix-command", keybinding: { prefix: "C-x c", key: "n" } });
       seedCommands([projectCommand]);
       useCommandsStore.getState().registerScopedCommands("dm-route", [scopedCommand]);
 

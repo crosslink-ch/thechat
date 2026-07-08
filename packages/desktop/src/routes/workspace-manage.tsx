@@ -96,7 +96,7 @@ export function WorkspaceManageRoute() {
           <button
             type="button"
             className="cursor-pointer text-accent underline"
-            onClick={() => navigate({ to: "/chat" })}
+            onClick={() => navigate({ to: "/" })}
           >
             Go back
           </button>
@@ -194,7 +194,7 @@ export function WorkspaceManageRoute() {
         <button
           type="button"
           className="cursor-pointer rounded-lg border border-border bg-raised px-2.5 py-1.5 text-[0.857rem] text-text-muted transition-colors hover:bg-hover hover:text-text"
-          onClick={() => navigate({ to: "/chat" })}
+          onClick={() => navigate({ to: "/" })}
         >
           Back
         </button>

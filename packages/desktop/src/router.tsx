@@ -6,7 +6,7 @@ import {
   redirect,
 } from "@tanstack/react-router";
 import { RootLayout } from "./routes/__root";
-import { AgentChatRoute } from "./routes/agent-chat";
+import { WorkspaceHomeRoute } from "./routes/workspace-home";
 import { ChannelRoute } from "./routes/channel";
 import { DmRoute } from "./routes/dm";
 import { NotificationsRoute } from "./routes/notifications";
@@ -22,24 +22,23 @@ const rootRoute = createRootRoute({
 const indexRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/",
+  component: WorkspaceHomeRoute,
+});
+
+const legacyAgentChatRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/chat",
   beforeLoad: () => {
-    throw redirect({ to: "/chat" });
+    throw redirect({ to: "/" });
   },
 });
 
-const agentChatRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: "/chat",
-  component: AgentChatRoute,
-  validateSearch: (search: Record<string, unknown>): { projectDir?: string } => ({
-    projectDir: (search.projectDir as string) || undefined,
-  }),
-});
-
-const agentChatIdRoute = createRoute({
+const legacyAgentChatIdRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/chat/$id",
-  component: AgentChatRoute,
+  beforeLoad: () => {
+    throw redirect({ to: "/" });
+  },
 });
 
 const channelRoute = createRoute({
@@ -77,7 +76,7 @@ const scrollDebugRoute = createRoute({
   path: "/debug/scroll",
   beforeLoad: () => {
     if (!import.meta.env.DEV) {
-      throw redirect({ to: "/chat" });
+      throw redirect({ to: "/" });
     }
   },
   component: ScrollDebugRoute,
@@ -88,7 +87,7 @@ const hermesDebugRoute = createRoute({
   path: "/debug/hermes",
   beforeLoad: () => {
     if (!import.meta.env.DEV) {
-      throw redirect({ to: "/chat" });
+      throw redirect({ to: "/" });
     }
   },
   component: HermesDebugRoute,
@@ -96,8 +95,8 @@ const hermesDebugRoute = createRoute({
 
 const routeTree = rootRoute.addChildren([
   indexRoute,
-  agentChatRoute,
-  agentChatIdRoute,
+  legacyAgentChatRoute,
+  legacyAgentChatIdRoute,
   channelRoute,
   dmRoute,
   notificationsRoute,

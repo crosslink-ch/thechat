@@ -12,8 +12,7 @@ import { ChatHeader } from "../components/ChatHeader";
 import { WindowTitlebar } from "../components/WindowTitlebar";
 import { CommandPalette } from "../CommandPalette";
 import { PermissionModePicker } from "../PermissionModePicker";
-import { SelectProjectPicker } from "../SelectProjectPicker";
-import { AuthModal } from "../components/AuthModal";
+import { AuthModal, AuthOnboarding } from "../components/AuthModal";
 import { CodexAuthModal } from "../components/CodexAuthModal";
 import { WorkspaceModal } from "../components/WorkspaceModal";
 import { HermesBotModal } from "../components/HermesBotModal";
@@ -30,6 +29,8 @@ import { info as logInfo } from "../log";
 export function RootLayout() {
   const navigate = useNavigate();
   const token = useAuthStore((s) => s.token);
+  const user = useAuthStore((s) => s.user);
+  const authLoading = useAuthStore((s) => s.loading);
   const tools = useToolsStore((s) => s.tools);
   const prevTokenRef = useRef(token);
 
@@ -76,16 +77,36 @@ export function RootLayout() {
 
   // Initialize command registry
   useEffect(() => {
-    useCommandsStore.getState().setCommands(createCommands(navigate));
-  }, [navigate]);
+    useCommandsStore.getState().setCommands(user ? createCommands(navigate) : []);
+  }, [navigate, user]);
 
   // Keybindings
   useKeybindings({
     onPermissionAllow: null,
     onPermissionDeny: null,
     onPermissionDenyWithFeedback: null,
-    handleRegistryCommands: true,
+    handleRegistryCommands: Boolean(user),
   });
+
+  if (authLoading) {
+    return (
+      <div className="relative flex h-screen flex-col overflow-hidden bg-base">
+        <WindowTitlebar />
+        <div className="flex min-h-0 flex-1 items-center justify-center text-[0.929rem] text-text-placeholder">
+          Loading...
+        </div>
+      </div>
+    );
+  }
+
+  if (!user) {
+    return (
+      <div className="relative flex h-screen flex-col overflow-hidden bg-base">
+        <WindowTitlebar />
+        <AuthOnboarding />
+      </div>
+    );
+  }
 
   return (
     <div className="relative flex h-screen flex-col overflow-hidden bg-base">
@@ -101,7 +122,6 @@ export function RootLayout() {
       </div>
       <CommandPalette />
       <PermissionModePicker />
-      <SelectProjectPicker />
       <AuthModal />
       <CodexAuthModal />
       <WorkspaceModal />

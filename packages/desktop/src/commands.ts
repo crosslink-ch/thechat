@@ -1,14 +1,10 @@
 import { create } from "zustand";
 import { togglePalette, closePalette, closePaletteAndRefocus, openPaletteInCommandMode } from "./CommandPalette";
 import { toggleSidebar } from "./components/Sidebar";
-import { openAuthModal } from "./components/AuthModal";
 import { openWorkspaceModal } from "./components/WorkspaceModal";
 import { openHermesBotModal } from "./components/HermesBotModal";
-import { getAgentChatProjectDir } from "./components/ChatHeader";
 import { openPermissionModePicker } from "./PermissionModePicker";
-import { openSelectProjectPicker } from "./SelectProjectPicker";
 import { openMcpConfigDialog } from "./McpConfigDialog";
-import { useConversationsStore } from "./stores/conversations";
 import { useWorkspacesStore } from "./stores/workspaces";
 import { useFontSizeStore } from "./stores/font-size";
 
@@ -90,25 +86,6 @@ export const useCommandsStore = create<CommandsStore>()((set) => ({
     }),
 }));
 
-function getRecentProjects(): string[] {
-  const conversations = useConversationsStore.getState().conversations;
-  const seen = new Set<string>();
-  const projects: string[] = [];
-
-  for (const conv of conversations) {
-    if (!conv.project_dir || seen.has(conv.project_dir)) continue;
-    seen.add(conv.project_dir);
-    projects.push(conv.project_dir);
-  }
-
-  const currentProject = getAgentChatProjectDir();
-  if (currentProject && !seen.has(currentProject)) {
-    projects.unshift(currentProject);
-  }
-
-  return projects;
-}
-
 export function createCommands(
   navigate: (opts: {
     to: string;
@@ -117,39 +94,6 @@ export function createCommands(
   }) => void,
 ): Command[] {
   return [
-    {
-      id: "new-chat",
-      label: "New Chat",
-      shortcut: "C-x n",
-      keybinding: { prefix: "C-x", key: "n" },
-      execute: () => {
-        navigate({ to: "/chat" });
-        closePaletteAndRefocus();
-      },
-    },
-    {
-      id: "new-chat-in-project",
-      label: "New Chat in Project",
-      shortcut: "C-x c n",
-      keybinding: { prefix: "C-x c", key: "n" },
-      execute: () => {
-        const dir = getAgentChatProjectDir();
-        navigate({ to: "/chat", search: dir ? { projectDir: dir } : {} });
-        closePaletteAndRefocus();
-      },
-    },
-    {
-      id: "select-project",
-      label: "Select Project",
-      shortcut: "C-x c s",
-      keybinding: { prefix: "C-x c", key: "s" },
-      execute: () => {
-        closePalette();
-        openSelectProjectPicker(getRecentProjects(), (projectDir) => {
-          navigate({ to: "/chat", search: { projectDir } });
-        });
-      },
-    },
     {
       id: "toggle-palette",
       label: "Command Palette",
@@ -178,16 +122,6 @@ export function createCommands(
       execute: () => {
         toggleSidebar();
         closePaletteAndRefocus();
-      },
-    },
-    {
-      id: "login",
-      label: "Log In",
-      shortcut: null,
-      keybinding: null,
-      execute: () => {
-        openAuthModal();
-        closePalette();
       },
     },
     {

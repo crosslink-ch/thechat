@@ -1,25 +1,24 @@
 import { useState, useDeferredValue, useMemo, useRef, useEffect } from "react";
 import { create } from "zustand";
-import { useNavigate, useMatches } from "@tanstack/react-router";
-import { useConversationsStore } from "./stores/conversations";
-import { useStreamingConvIds } from "./stores/streaming";
 import { useCommandsStore } from "./commands";
 import { requestInputBarFocus } from "./stores/input-focus";
 
-// Colocated visibility store
 const usePaletteState = create(() => ({ open: false, initialQuery: "" }));
+
 export const togglePalette = () =>
   usePaletteState.setState((s) => ({ open: !s.open, initialQuery: "" }));
+
 export const closePalette = () =>
   usePaletteState.setState({ open: false, initialQuery: "" });
 
-/** Close the palette and request the input bar to re-focus. */
+/** Close the palette and request the active message input to re-focus. */
 export function closePaletteAndRefocus() {
   closePalette();
   requestInputBarFocus();
 }
+
 export const openPaletteInCommandMode = () =>
-  usePaletteState.setState({ open: true, initialQuery: ">" });
+  usePaletteState.setState({ open: true, initialQuery: "" });
 
 export function CommandPalette() {
   const { open } = usePaletteState();
@@ -28,15 +27,6 @@ export function CommandPalette() {
 }
 
 function CommandPaletteInner() {
-  const navigate = useNavigate();
-  const matches = useMatches();
-  const lastMatch = matches[matches.length - 1];
-  const routeParams = (lastMatch?.params ?? {}) as Record<string, string>;
-  const currentId = routeParams.id;
-
-  const conversations = useConversationsStore((s) => s.conversations);
-  const unreadAgentChats = useConversationsStore((s) => s.unreadAgentChats);
-  const streamingConvIds = useStreamingConvIds();
   const commands = useCommandsStore((s) => s.commands);
   const initialQuery = usePaletteState((s) => s.initialQuery);
 
@@ -47,31 +37,18 @@ function CommandPaletteInner() {
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
-  const isCommandMode = query.startsWith(">");
-  const deferredCommandQuery = isCommandMode ? deferredQuery.slice(1).trimStart() : "";
-
-  const filteredConversations = useMemo(
-    () =>
-      isCommandMode
-        ? []
-        : conversations.filter((c) =>
-            c.title.toLowerCase().includes(deferredQuery.toLowerCase()),
-          ),
-    [conversations, deferredQuery, isCommandMode],
-  );
+  const commandQuery = deferredQuery.startsWith(">")
+    ? deferredQuery.slice(1).trimStart()
+    : deferredQuery;
 
   const filteredCommands = useMemo(
     () =>
-      isCommandMode
-        ? commands.filter((cmd) =>
-            !cmd.hidden &&
-            cmd.label.toLowerCase().includes(deferredCommandQuery.toLowerCase()),
-          )
-        : [],
-    [commands, deferredCommandQuery, isCommandMode],
+      commands.filter((cmd) =>
+        !cmd.hidden &&
+        cmd.label.toLowerCase().includes(commandQuery.toLowerCase()),
+      ),
+    [commands, commandQuery],
   );
-
-  const listLength = isCommandMode ? filteredCommands.length : filteredConversations.length;
 
   useEffect(() => {
     setHighlightIndex(0);
@@ -82,12 +59,6 @@ function CommandPaletteInner() {
     item?.scrollIntoView({ block: "nearest" });
   }, [highlightIndex]);
 
-  const handleSelectConversation = (conv: { id: string }) => {
-    navigate({ to: "/chat/$id", params: { id: conv.id } });
-    useConversationsStore.getState().markAgentChatRead(conv.id);
-    closePaletteAndRefocus();
-  };
-
   const handleSelectCommand = (index: number) => {
     const cmd = filteredCommands[index];
     if (!cmd) return;
@@ -97,17 +68,13 @@ function CommandPaletteInner() {
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "ArrowDown") {
       e.preventDefault();
-      setHighlightIndex((i) => Math.min(i + 1, listLength - 1));
+      setHighlightIndex((i) => Math.min(i + 1, Math.max(filteredCommands.length - 1, 0)));
     } else if (e.key === "ArrowUp") {
       e.preventDefault();
       setHighlightIndex((i) => Math.max(i - 1, 0));
     } else if (e.key === "Enter") {
       e.preventDefault();
-      if (isCommandMode) {
-        handleSelectCommand(highlightIndex);
-      } else if (filteredConversations[highlightIndex]) {
-        handleSelectConversation(filteredConversations[highlightIndex]);
-      }
+      handleSelectCommand(highlightIndex);
     } else if (e.key === "Escape") {
       closePaletteAndRefocus();
     }
@@ -124,7 +91,7 @@ function CommandPaletteInner() {
           <input
             ref={inputRef}
             className="w-full border-b border-border bg-transparent py-3 pr-4 pl-10 font-[inherit] text-[1rem] text-text outline-none placeholder:text-text-placeholder"
-            placeholder={isCommandMode ? "Type a command..." : "Search chats (type > for commands)"}
+            placeholder="Type a command..."
             autoFocus
             value={query}
             onChange={(e) => setQuery(e.target.value)}
@@ -136,49 +103,22 @@ function CommandPaletteInner() {
           ref={listRef}
           style={{ opacity: isStale ? 0.6 : 1 }}
         >
-          {isCommandMode ? (
-            <>
-              {filteredCommands.map((cmd, i) => (
-                <button
-                  key={cmd.id}
-                  data-testid="palette-item"
-                  className={`flex w-full cursor-pointer items-center gap-1.5 border-none bg-none px-4 py-2.5 text-left font-[inherit] text-[0.929rem] text-text-muted transition-colors duration-75 ${i === highlightIndex ? "bg-elevated text-text" : "hover:bg-hover hover:text-text"}`}
-                  onClick={() => handleSelectCommand(i)}
-                  onMouseEnter={() => setHighlightIndex(i)}
-                >
-                  <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap">{cmd.label}</span>
-                  {cmd.shortcut && (
-                    <kbd className="ml-auto rounded border border-border bg-base px-1.5 py-0.5 font-mono text-[0.714rem] text-text-dimmed">{cmd.shortcut}</kbd>
-                  )}
-                </button>
-              ))}
-              {filteredCommands.length === 0 && (
-                <div className="px-4 py-5 text-center text-[0.929rem] text-text-placeholder">No matching commands</div>
+          {filteredCommands.map((cmd, i) => (
+            <button
+              key={cmd.id}
+              data-testid="palette-item"
+              className={`flex w-full cursor-pointer items-center gap-1.5 border-none bg-none px-4 py-2.5 text-left font-[inherit] text-[0.929rem] text-text-muted transition-colors duration-75 ${i === highlightIndex ? "bg-elevated text-text" : "hover:bg-hover hover:text-text"}`}
+              onClick={() => handleSelectCommand(i)}
+              onMouseEnter={() => setHighlightIndex(i)}
+            >
+              <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap">{cmd.label}</span>
+              {cmd.shortcut && (
+                <kbd className="ml-auto rounded border border-border bg-base px-1.5 py-0.5 font-mono text-[0.714rem] text-text-dimmed">{cmd.shortcut}</kbd>
               )}
-            </>
-          ) : (
-            <>
-              {filteredConversations.map((conv, i) => {
-                const isStreamingBg = streamingConvIds?.has(conv.id);
-                const isUnread = unreadAgentChats?.has(conv.id);
-                return (
-                  <button
-                    key={conv.id}
-                    data-testid="palette-item"
-                    className={`flex w-full cursor-pointer items-center gap-1.5 border-none bg-none px-4 py-2.5 text-left font-[inherit] text-[0.929rem] text-text-muted transition-colors duration-75 ${i === highlightIndex ? "bg-elevated text-text" : "hover:bg-hover hover:text-text"} ${conv.id === currentId ? "text-accent" : ""}`}
-                    onClick={() => handleSelectConversation(conv)}
-                    onMouseEnter={() => setHighlightIndex(i)}
-                  >
-                    <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap">{conv.title}</span>
-                    {isStreamingBg && <span className="size-1.5 shrink-0 animate-pulse rounded-full bg-accent" />}
-                    {!isStreamingBg && isUnread && <span className="size-1.5 shrink-0 rounded-full bg-accent" />}
-                  </button>
-                );
-              })}
-              {filteredConversations.length === 0 && (
-                <div className="px-4 py-5 text-center text-[0.929rem] text-text-placeholder">No matching chats</div>
-              )}
-            </>
+            </button>
+          ))}
+          {filteredCommands.length === 0 && (
+            <div className="px-4 py-5 text-center text-[0.929rem] text-text-placeholder">No matching commands</div>
           )}
         </div>
       </div>

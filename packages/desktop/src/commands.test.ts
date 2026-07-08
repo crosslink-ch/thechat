@@ -1,17 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { Conversation } from "./core/types";
 
 const closePaletteMock = vi.fn();
 const closePaletteAndRefocusMock = vi.fn();
 const togglePaletteMock = vi.fn();
 const openPaletteInCommandModeMock = vi.fn();
 const toggleSidebarMock = vi.fn();
-const openAuthModalMock = vi.fn();
 const openWorkspaceModalMock = vi.fn();
-const getAgentChatProjectDirMock = vi.fn<() => string | null>();
 const openPermissionModePickerMock = vi.fn();
-const openSelectProjectPickerMock = vi.fn();
 const openHermesBotModalMock = vi.fn();
+const openMcpConfigDialogMock = vi.fn();
 
 vi.mock("./CommandPalette", () => ({
   togglePalette: () => togglePaletteMock(),
@@ -24,10 +21,6 @@ vi.mock("./components/Sidebar", () => ({
   toggleSidebar: () => toggleSidebarMock(),
 }));
 
-vi.mock("./components/AuthModal", () => ({
-  openAuthModal: () => openAuthModalMock(),
-}));
-
 vi.mock("./components/WorkspaceModal", () => ({
   openWorkspaceModal: () => openWorkspaceModalMock(),
 }));
@@ -36,78 +29,44 @@ vi.mock("./components/HermesBotModal", () => ({
   openHermesBotModal: () => openHermesBotModalMock(),
 }));
 
-vi.mock("./components/ChatHeader", () => ({
-  getAgentChatProjectDir: () => getAgentChatProjectDirMock(),
-}));
-
 vi.mock("./PermissionModePicker", () => ({
   openPermissionModePicker: () => openPermissionModePickerMock(),
 }));
 
-vi.mock("./SelectProjectPicker", () => ({
-  openSelectProjectPicker: (...args: unknown[]) => openSelectProjectPickerMock(...args),
+vi.mock("./McpConfigDialog", () => ({
+  openMcpConfigDialog: () => openMcpConfigDialogMock(),
 }));
 
 import { createCommands } from "./commands";
-import { useConversationsStore } from "./stores/conversations";
+import { useWorkspacesStore } from "./stores/workspaces";
 
-describe("createCommands - Select Project", () => {
+describe("createCommands", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    useConversationsStore.setState({
-      conversations: [],
-      unreadAgentChats: new Set(),
-      unreadChannels: new Set(),
+    useWorkspacesStore.setState({
+      workspaces: [],
+      activeWorkspace: null,
+      loading: false,
     });
-    getAgentChatProjectDirMock.mockReturnValue(null);
   });
 
-  it("opens picker with deduped recents plus current project, then navigates with selected project", () => {
-    const conversations: Conversation[] = [
-      { id: "1", title: "A", project_dir: "/repo/a", created_at: "", updated_at: "" },
-      { id: "2", title: "B", project_dir: "/repo/b", created_at: "", updated_at: "" },
-      { id: "3", title: "A2", project_dir: "/repo/a", created_at: "", updated_at: "" },
-      { id: "4", title: "No project", project_dir: null, created_at: "", updated_at: "" },
-    ];
-    useConversationsStore.setState({ conversations });
-    getAgentChatProjectDirMock.mockReturnValue("/repo/current");
+  it("does not expose removed creation or project-selection commands", () => {
+    const commands = createCommands(vi.fn());
+    const ids = commands.map((command) => command.id);
+    const shortcuts = commands.map((command) => command.shortcut).filter(Boolean);
+    const removedPrimaryId = ["new", "chat"].join("-");
+    const removedProjectId = ["new", "chat", "in", "project"].join("-");
+    const removedSelectProjectId = ["select", "project"].join("-");
+    const removedPrimaryShortcut = ["C-x", "n"].join(" ");
+    const removedProjectShortcut = ["C-x", "c", "n"].join(" ");
 
-    const navigate = vi.fn();
-    const selectProject = createCommands(navigate).find((c) => c.id === "select-project");
-
-    expect(selectProject).toBeDefined();
-    selectProject!.execute();
-
-    expect(closePaletteMock).toHaveBeenCalledOnce();
-    expect(openSelectProjectPickerMock).toHaveBeenCalledOnce();
-
-    const [recentProjects, onSelect] = openSelectProjectPickerMock.mock.calls[0] as [
-      string[],
-      (projectDir: string) => void,
-    ];
-
-    expect(recentProjects).toEqual(["/repo/current", "/repo/a", "/repo/b"]);
-
-    onSelect("/repo/custom");
-
-    expect(navigate).toHaveBeenCalledWith({ to: "/chat", search: { projectDir: "/repo/custom" } });
-  });
-
-  it("does not duplicate current project when it already exists in recents", () => {
-    useConversationsStore.setState({
-      conversations: [
-        { id: "1", title: "Current", project_dir: "/repo/current", created_at: "", updated_at: "" },
-        { id: "2", title: "Other", project_dir: "/repo/other", created_at: "", updated_at: "" },
-      ],
-    });
-    getAgentChatProjectDirMock.mockReturnValue("/repo/current");
-
-    const navigate = vi.fn();
-    const selectProject = createCommands(navigate).find((c) => c.id === "select-project")!;
-    selectProject.execute();
-
-    const [recentProjects] = openSelectProjectPickerMock.mock.calls[0] as [string[], unknown];
-    expect(recentProjects).toEqual(["/repo/current", "/repo/other"]);
+    expect(ids).not.toContain("login");
+    expect(commands.map((command) => command.label)).not.toContain("Log In");
+    expect(ids).not.toContain(removedPrimaryId);
+    expect(ids).not.toContain(removedProjectId);
+    expect(ids).not.toContain(removedSelectProjectId);
+    expect(shortcuts).not.toContain(removedPrimaryShortcut);
+    expect(shortcuts).not.toContain(removedProjectShortcut);
   });
 
   it("opens the Add Hermes Bot flow from a dedicated command", () => {
@@ -124,6 +83,29 @@ describe("createCommands - Select Project", () => {
     expect(closePaletteMock).toHaveBeenCalledOnce();
     expect(openHermesBotModalMock).toHaveBeenCalledOnce();
     expect(navigate).not.toHaveBeenCalled();
+  });
+
+  it("navigates to workspace management only when a workspace is active", () => {
+    const navigate = vi.fn();
+    const command = createCommands(navigate).find((c) => c.id === "manage-workspace")!;
+
+    command.execute();
+    expect(navigate).not.toHaveBeenCalled();
+
+    useWorkspacesStore.setState({
+      activeWorkspace: {
+        id: "ws-1",
+        name: "Workspace",
+        createdAt: "2026-01-01",
+        updatedAt: "2026-01-01",
+        channels: [],
+        members: [],
+      },
+    });
+
+    command.execute();
+    expect(navigate).toHaveBeenCalledWith({ to: "/workspace/manage" });
+    expect(closePaletteAndRefocusMock).toHaveBeenCalledOnce();
   });
 
   it("registers debug routes as dev-only commands", () => {
