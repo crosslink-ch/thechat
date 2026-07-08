@@ -8,6 +8,18 @@ Run from the repository root:
 powershell -ExecutionPolicy Bypass -File scripts/codex-ui-loop.ps1
 ```
 
+Available task specs:
+
+```powershell
+# Remove Agent Chat UI access
+powershell -ExecutionPolicy Bypass -File scripts/codex-ui-loop.ps1 `
+  -TaskPath .codex-loop/remove-agent-chats-ui.md `
+  -RunName remove-agent-chats-ui
+
+# Improve Hermes DM work-in-progress UI
+powershell -ExecutionPolicy Bypass -File scripts/codex-hermes-ui-loop.ps1
+```
+
 The script runs separate Codex implementation and verification agents until the
 verifier returns `status: "pass"` or the iteration limit is reached.
 

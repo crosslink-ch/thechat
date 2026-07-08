@@ -264,9 +264,7 @@ Make the requested code changes. Keep the work scoped to the task. You may run
 terminal commands, tests, builds, and local app checks as needed.
 
 Important constraints:
-- Remove Agent Chats only from user-facing UI access.
-- Do not delete backend/service/file-reading/tooling functionality merely to
-  hide the UI.
+- Follow the scope, non-goals, and acceptance criteria in the task spec.
 - Preserve unrelated behavior.
 - Prefer existing project patterns.
 - Before stopping, run the most relevant checks you can reasonably run.
@@ -301,14 +299,14 @@ Verify the task independently. Be skeptical and concrete.
 
 Required checks:
 - Run relevant automated checks for touched desktop UI and affected packages.
-- Search for Agent Chat UI exposure in routes, navigation, command palette
-  actions, menus, shortcuts, onboarding, and empty states.
-- Start and visually inspect the app when practical.
-- Verify Workspace is the main/default view once the app is usable.
-- Verify first-run onboarding requires registration before app use where
-  practical.
-- Verify backend Agent Chat implementation was not removed merely to hide UI
-  access.
+- Search the codebase for task-specific UI labels, routes, states, and removed
+  or forbidden elements named in the task spec.
+- Start and visually inspect the app when practical, using any debug route,
+  fixture, or scenario called out by the task spec.
+- Verify every acceptance criterion in the task spec.
+- Verify every non-goal in the task spec was respected.
+- Capture screenshots or other visual evidence under the loop run directory
+  for each important visual state named in the task spec.
 
 Return only JSON matching the provided schema. Use status "pass" only if the
 implementation satisfies the acceptance criteria. If evidence is incomplete,
