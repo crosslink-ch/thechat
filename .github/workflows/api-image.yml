@@ -6,6 +6,10 @@ on:
     paths:
       - "packages/api/**"
       - "packages/shared/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "patches/**"
       - ".github/workflows/api-image.yml"
   workflow_dispatch:
 

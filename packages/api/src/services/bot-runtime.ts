@@ -30,6 +30,8 @@ import { stripBotMention } from "./hermes";
 import { ServiceError } from "./errors";
 import { withSpan } from "../observability";
 import { getBotProgressStore } from "./bot-progress-store";
+import { createChatMessageSentV1 } from "../events/envelope";
+import { enqueueDomainEvent } from "../events/outbox";
 
 export const BOT_QUEUE_NAME = "thechat:bots";
 export const BOT_INVOKE_JOB_NAME = "bot.invoke";
@@ -1041,45 +1043,62 @@ export async function publishHermesPlatformMessage(input: {
         };
       }
 
-      const [responseMessage] = await db
-        .insert(messages)
-        .values({
-          conversationId: target.conversation.id,
-          threadId: target.threadId,
-          senderId: target.bot.userId,
-          content,
-          parts: [{ type: "text", text: content }],
-        })
-        .returning();
-
       const now = new Date();
-      if (target.invocation) {
-        await db
-          .update(botInvocations)
-          .set({
-            ...(shouldComplete
-              ? { status: "completed", completedAt: now, error: null }
-              : {}),
-            responseMessageId: responseMessage.id,
-            responseJson: {
-              ...previousResponseJson,
-              platform: "thechat",
-              platformMessageId: input.platformMessageId ?? null,
-              output: content,
-            },
-            updatedAt: now,
+      const responseMessage = await db.transaction(async (tx) => {
+        const [inserted] = await tx
+          .insert(messages)
+          .values({
+            conversationId: target.conversation.id,
+            threadId: target.threadId,
+            senderId: target.bot.userId,
+            content,
+            parts: [{ type: "text", text: content }],
           })
-          .where(eq(botInvocations.id, target.invocation.id));
-      }
-      if (target.threadId) {
-        await db
-          .update(conversationThreads)
-          .set({
-            lastActivityAt: responseMessage.createdAt,
-            updatedAt: responseMessage.createdAt,
-          })
-          .where(eq(conversationThreads.id, target.threadId));
-      }
+          .returning();
+
+        if (target.invocation) {
+          await tx
+            .update(botInvocations)
+            .set({
+              ...(shouldComplete
+                ? { status: "completed", completedAt: now, error: null }
+                : {}),
+              responseMessageId: inserted.id,
+              responseJson: {
+                ...previousResponseJson,
+                platform: "thechat",
+                platformMessageId: input.platformMessageId ?? null,
+                output: content,
+              },
+              updatedAt: now,
+            })
+            .where(eq(botInvocations.id, target.invocation.id));
+        }
+        if (target.threadId) {
+          await tx
+            .update(conversationThreads)
+            .set({
+              lastActivityAt: inserted.createdAt,
+              updatedAt: inserted.createdAt,
+            })
+            .where(eq(conversationThreads.id, target.threadId));
+        }
+
+        const event = createChatMessageSentV1({
+          messageId: inserted.id,
+          senderId: inserted.senderId,
+          senderType: "bot",
+          workspaceId: target.conversation.workspaceId,
+          correlationId:
+            target.invocation?.triggerMessageId ?? inserted.id,
+          causationId: target.invocation?.id,
+          occurredAt: inserted.createdAt,
+        });
+        await enqueueDomainEvent(tx, event, {
+          partitionKey: inserted.conversationId,
+        });
+        return inserted;
+      });
 
       span.setAttribute("thechat.message_id", responseMessage.id);
       if (target.invocation) {
@@ -1089,15 +1108,6 @@ export async function publishHermesPlatformMessage(input: {
         );
       }
       await publishBotMessage(responseMessage, target.botName, target.conversation.type);
-      processMessageMentions({
-        id: responseMessage.id,
-        content: responseMessage.content,
-        conversationId: responseMessage.conversationId,
-        threadId: responseMessage.threadId,
-        senderId: responseMessage.senderId,
-        senderName: target.botName,
-        createdAt: responseMessage.createdAt.toISOString(),
-      }).catch((error) => console.error("Failed to enqueue bot invocation from bot message", error));
       if (target.invocation) await publishInvocationUpdate(target.invocation.id);
       return { messageId: responseMessage.id, threadId: responseMessage.threadId, duplicate: false };
     },
@@ -1358,35 +1368,65 @@ async function failInvocation(
         eq(botInvocations.status, "queued"),
       )
     : eq(botInvocations.id, invocationId);
-  const [failed] = await db
-    .update(botInvocations)
-    .set({
-      status: "failed",
-      error: message,
-      completedAt: failedAt,
-      updatedAt: failedAt,
-    })
-    .where(where)
-    .returning({ id: botInvocations.id });
-  if (!failed) return false;
-
+  let responseMessage: typeof messages.$inferSelect | null = null;
   if (loaded?.bot.kind === "hermes") {
     const content = `Hermes run failed: ${message}`;
-    const [responseMessage] = await db
-      .insert(messages)
-      .values({
-        conversationId: loaded.conversation.id,
-        threadId: resolveInvocationThreadId(loaded),
-        senderId: loaded.bot.userId,
-        content,
-        parts: [{ type: "text", text: content }],
-      })
-      .returning();
-    await db
-      .update(botInvocations)
-      .set({ responseMessageId: responseMessage.id })
-      .where(eq(botInvocations.id, invocationId));
+    responseMessage = await db.transaction(async (tx) => {
+      const [failed] = await tx
+        .update(botInvocations)
+        .set({
+          status: "failed",
+          error: message,
+          completedAt: failedAt,
+          updatedAt: failedAt,
+        })
+        .where(where)
+        .returning({ id: botInvocations.id });
+      if (!failed) return null;
+
+      const [inserted] = await tx
+        .insert(messages)
+        .values({
+          conversationId: loaded.conversation.id,
+          threadId: resolveInvocationThreadId(loaded),
+          senderId: loaded.bot.userId,
+          content,
+          parts: [{ type: "text", text: content }],
+        })
+        .returning();
+      await tx
+        .update(botInvocations)
+        .set({ responseMessageId: inserted.id })
+        .where(eq(botInvocations.id, invocationId));
+
+      const event = createChatMessageSentV1({
+        messageId: inserted.id,
+        senderId: inserted.senderId,
+        senderType: "bot",
+        workspaceId: loaded.conversation.workspaceId,
+        correlationId: loaded.triggerMessage.id,
+        causationId: invocationId,
+        occurredAt: inserted.createdAt,
+      });
+      await enqueueDomainEvent(tx, event, {
+        partitionKey: inserted.conversationId,
+      });
+      return inserted;
+    });
+    if (!responseMessage) return false;
     await publishBotMessage(responseMessage, loaded.botName, loaded.conversation.type);
+  } else {
+    const [failed] = await db
+      .update(botInvocations)
+      .set({
+        status: "failed",
+        error: message,
+        completedAt: failedAt,
+        updatedAt: failedAt,
+      })
+      .where(where)
+      .returning({ id: botInvocations.id });
+    if (!failed) return false;
   }
 
   await publishInvocationUpdate(invocationId);

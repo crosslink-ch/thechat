@@ -29,5 +29,10 @@
   "packageManager": "pnpm@10.28.2",
   "devDependencies": {
     "dotenv-cli": "^11.0.0"
+  },
+  "pnpm": {
+    "patchedDependencies": {
+      "kafkajs@2.2.4": "patches/kafkajs@2.2.4.patch"
+    }
   }
 }

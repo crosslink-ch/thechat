@@ -1,11 +1,12 @@
 import { describe, test, expect, afterAll, beforeAll } from "bun:test";
 import { Elysia } from "elysia";
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, inArray } from "drizzle-orm";
 import { db } from "../db";
 import {
   botInvocations,
   bots,
   conversationParticipants,
+  eventOutbox,
   messages,
   users,
   workspaces,
@@ -33,6 +34,11 @@ import {
   setRealtimeBusForTests,
   type RealtimeEvent,
 } from "../realtime";
+import {
+  closeDomainEventRuntime,
+  createDefaultDomainEventRegistry,
+  startDomainEventRuntime,
+} from "../events/runtime";
 import crypto from "crypto";
 
 const app = new Elysia()
@@ -52,14 +58,18 @@ const createdUserEmails: string[] = [];
 const createdWorkspaceIds: string[] = [];
 const createdBotUserIds: string[] = [];
 const originalRedisKeyPrefix = process.env.REDIS_KEY_PREFIX;
+const originalDomainEventsDriver = process.env.DOMAIN_EVENTS_DRIVER;
 const botsTestRedisKeyPrefix = `thechat-bots-test-${crypto.randomUUID()}`;
 
 beforeAll(async () => {
   process.env.REDIS_KEY_PREFIX = botsTestRedisKeyPrefix;
+  process.env.DOMAIN_EVENTS_DRIVER ||= "outbox";
   await setBotProgressStoreForTests(createLocalBotProgressStoreForTests());
+  await startDomainEventRuntime();
 });
 
 afterAll(async () => {
+  await closeDomainEventRuntime();
   await closeBotRuntimeForTests();
   await closeBotProgressStoreForTests();
   await closeRealtimeBusForTests();
@@ -67,6 +77,16 @@ afterAll(async () => {
     delete process.env.REDIS_KEY_PREFIX;
   } else {
     process.env.REDIS_KEY_PREFIX = originalRedisKeyPrefix;
+  }
+  if (originalDomainEventsDriver === undefined) {
+    delete process.env.DOMAIN_EVENTS_DRIVER;
+  } else {
+    process.env.DOMAIN_EVENTS_DRIVER = originalDomainEventsDriver;
+  }
+  if (createdWorkspaceIds.length > 0) {
+    await db
+      .delete(eventOutbox)
+      .where(inArray(eventOutbox.tenantId, createdWorkspaceIds));
   }
   // Clean up bots (cascade from user delete handles bot records)
   for (const id of createdBotUserIds) {
@@ -85,7 +105,7 @@ afterAll(async () => {
       await db.delete(users).where(eq(users.id, user.id));
     }
   }
-});
+}, 20_000);
 
 async function req(
   method: string,
@@ -456,6 +476,42 @@ describe("Bots: Send messages", () => {
     expect(sendRes.body.content).toBe("Hello from bot!");
     expect(sendRes.body.senderId).toBe(botRes.body.userId);
     expect(sendRes.body.senderName).toBe("MsgBot");
+  });
+
+  test("persists a message and its domain event in the transactional outbox", async () => {
+    const human = await registerUser("OutboxOwner");
+    const { channelId } = await createWorkspaceWithGeneralChannel(
+      human.token,
+      "Message Outbox WS",
+    );
+
+    const sendRes = await req(
+      "POST",
+      `/messages/${channelId}`,
+      { content: "Persist this with its domain event" },
+      human.token,
+    );
+    expect(sendRes.status).toBe(200);
+
+    const [message] = await db
+      .select({ id: messages.id })
+      .from(messages)
+      .where(eq(messages.id, sendRes.body.id));
+    const [outbox] = await db
+      .select()
+      .from(eventOutbox)
+      .where(eq(eventOutbox.aggregateId, sendRes.body.id));
+
+    expect(message.id).toBe(sendRes.body.id);
+    expect(outbox).toMatchObject({
+      eventType: "chat.message.sent",
+      eventVersion: 1,
+      aggregateType: "message",
+      aggregateId: sendRes.body.id,
+      partitionKey: channelId,
+    });
+    expect(outbox.event.payload).toEqual({ messageId: sendRes.body.id });
+    expect(JSON.stringify(outbox.event)).not.toContain(sendRes.body.content);
   });
 });
 
@@ -1098,6 +1154,45 @@ describe("Bots: Delete bot", () => {
 });
 
 describe("Bots: mention routing", () => {
+  test("duplicate message events create only one bot invocation", async () => {
+    const human = await registerUser("DuplicateEventOwner");
+    const { workspaceId, channelId } = await createWorkspaceWithGeneralChannel(
+      human.token,
+      "Duplicate Event WS",
+    );
+    const bot = await createBot(human.token, "DuplicateHermes", undefined, {
+      kind: "hermes",
+      workspaceId,
+    });
+    expect(bot.status).toBe(200);
+
+    const sendRes = await req(
+      "POST",
+      `/messages/${channelId}`,
+      { content: "@DuplicateHermes handle this once" },
+      human.token,
+    );
+    expect(sendRes.status).toBe(200);
+    await waitForResult(async () => {
+      const rows = await invocationsForMessage(sendRes.body.id);
+      return rows.length === 1 ? rows[0] : null;
+    }, "initial invocation from domain event");
+
+    const [outbox] = await db
+      .select({ event: eventOutbox.event })
+      .from(eventOutbox)
+      .where(eq(eventOutbox.aggregateId, sendRes.body.id));
+    const registry = createDefaultDomainEventRegistry();
+    await Promise.all([
+      registry.dispatch(outbox.event),
+      registry.dispatch(outbox.event),
+    ]);
+
+    const invocations = await invocationsForMessage(sendRes.body.id);
+    expect(invocations).toHaveLength(1);
+    expect(invocations[0].botId).toBe(bot.body.id);
+  });
+
   test("only invokes the explicitly mentioned bot when multiple bots share a channel", async () => {
     const webhook = startWebhookServer();
     try {

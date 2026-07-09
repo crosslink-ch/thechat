@@ -43,6 +43,13 @@
       "when": 1781268619602,
       "tag": "0005_minimal_hermes_branching",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1783626069336,
+      "tag": "0006_right_wallow",
+      "breakpoints": true
     }
   ]
 }

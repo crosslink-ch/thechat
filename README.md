@@ -71,8 +71,10 @@ For the local backend stack:
 pnpm dev
 ```
 
-This starts Docker Compose services, runs database migrations, then starts the API
-and bot worker. Logs are written to `.tmp/dev`.
+This starts Docker Compose services (including Apache Kafka), runs database
+migrations, then starts the API and bot worker. Local development defaults to
+`DOMAIN_EVENTS_DRIVER=kafka` with Kafka on `localhost:19092`. Logs are written
+to `.tmp/dev`.
 
 Useful options:
 
@@ -89,6 +91,61 @@ pnpm tauri:dev
 ```
 
 Starts the Vite dev server and the Tauri app with hot reload.
+
+### Domain events and Kafka
+
+Message creation uses a transactional outbox: the message row and a versioned
+`chat.message.sent` event are committed in one PostgreSQL transaction. The API
+does not contact Kafka. The worker reloads the canonical message and sender by
+message ID, detects bot mentions and Hermes DMs, and then uses the existing
+BullMQ bot queue.
+
+`DOMAIN_EVENTS_DRIVER=outbox` (the application default) claims and handles
+outbox events directly, so tests and existing deployments do not need Kafka.
+`DOMAIN_EVENTS_DRIVER=kafka` runs an outbox relay and consumes the shared topic
+with KafkaJS. Message events are keyed by conversation ID for per-conversation
+partition ordering. Defaults are:
+
+```text
+KAFKA_TOPIC=thechat.domain-events.v1
+KAFKA_AUTO_CREATE_TOPICS=true
+KAFKA_TOPIC_PARTITIONS=3
+KAFKA_FROM_BEGINNING=true
+KAFKA_CONSUMER_GROUP=thechat-message-events-v1
+KAFKA_CLIENT_ID=thechat-worker
+```
+
+To run only the broker or exercise the env-gated real round-trip test:
+
+```bash
+docker compose up -d postgres kafka
+pnpm db:migrate
+KAFKA_BROKERS=localhost:19092 pnpm --filter @thechat/api test -- src/events/kafka.integration.test.ts
+```
+
+Kafka mode requires comma-separated `KAFKA_BROKERS`. TLS is enabled with
+`KAFKA_SSL=true`; optional SASL uses `KAFKA_SASL_MECHANISM` (`plain`,
+`scram-sha-256`, or `scram-sha-512`), `KAFKA_SASL_USERNAME`, and
+`KAFKA_SASL_PASSWORD`. Local development sets
+`KAFKA_AUTO_CREATE_TOPICS=true`; production should leave it false and
+pre-create the topic with the required partition and replication settings.
+New consumer groups replay retained events by default; set
+`KAFKA_FROM_BEGINNING=false` only when intentionally starting at the topic's
+current end.
+
+Delivery is at least once. A relay crash after Kafka accepts an event but before
+the outbox row is marked published can produce a duplicate. Consumers must be
+idempotent; message mention handling relies on the database uniqueness of
+`bot_invocations(bot_id, trigger_message_id)` and deterministic BullMQ job IDs.
+This does not claim exactly-once processing.
+
+The `apache/kafka:4.3.1` KRaft broker in `compose.yml` is a single-node,
+development-only service. Production should use a managed or operator-backed
+multi-broker Kafka cluster, pre-create and appropriately partition/replicate the
+topic, configure retention and monitoring, and supply TLS/SASL credentials via
+secrets. Published outbox rows should also be pruned or archived under an
+operations-defined retention policy. Do not use the Compose broker for
+production.
 
 ### Rust profiling
 

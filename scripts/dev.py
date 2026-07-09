@@ -27,6 +27,11 @@ DEV_DEFAULTS = {
     "REDIS_KEY_PREFIX": "thechat",
     "REALTIME_DRIVER": "redis",
     "ASYNC_WORKER_CONCURRENCY": "4",
+    "DOMAIN_EVENTS_DRIVER": "kafka",
+    "KAFKA_BROKERS": "localhost:19092",
+    "KAFKA_AUTO_CREATE_TOPICS": "true",
+    "KAFKA_TOPIC_PARTITIONS": "3",
+    "KAFKA_FROM_BEGINNING": "true",
     "REQUIRE_EMAIL_VERIFICATION": "false",
     "JWT_SECRET": "change-me-local-thechat-jwt-secret",
     "THECHAT_SECRET_KEY": "change-me-local-thechat-secret-key",
@@ -106,7 +111,7 @@ class DevProcess:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run Docker Compose services, API, and bot worker for local development")
-    parser.add_argument("--skip-compose", action="store_true", help="Do not start local postgres/redis/observability with Docker Compose")
+    parser.add_argument("--skip-compose", action="store_true", help="Do not start local postgres/redis/Kafka/observability with Docker Compose")
     parser.add_argument("--skip-migrate", action="store_true", help="Do not run Drizzle migrations before starting services")
     parser.add_argument("--no-worker", action="store_true", help="Do not start the bot worker")
     parser.add_argument("--logs-dir", default=str(DEFAULT_LOG_DIR), help="Directory for per-service logs")
@@ -129,9 +134,12 @@ def main() -> int:
     logs_dir.mkdir(parents=True, exist_ok=True)
 
     if not args.skip_compose:
-        run(["docker", "compose", "up", "-d", "postgres", "redis", "otel-lgtm", "promtail"], env)
+        run(["docker", "compose", "up", "-d", "postgres", "redis", "kafka", "otel-lgtm", "promtail"], env)
         wait_for_service_port(env["DATABASE_URL"], "postgres")
         wait_for_service_port(env["REDIS_URL"], "redis")
+        kafka_broker = env["KAFKA_BROKERS"].split(",", 1)[0].strip()
+        wait_for_service_port(f"kafka://{kafka_broker}", "kafka")
+        wait_for_compose_kafka(env)
 
     if not args.skip_migrate and env.get("DATABASE_URL"):
         run(["pnpm", "db:migrate"], env)
@@ -268,11 +276,41 @@ def wait_for_service_port(url: str, name: str, *, timeout: int = 60) -> None:
     raise SystemExit(f"Timed out waiting for {name} at {host}:{port}")
 
 
+def wait_for_compose_kafka(env: dict[str, str], *, timeout: int = 90) -> None:
+    deadline = time.monotonic() + timeout
+    command = [
+        "docker",
+        "compose",
+        "exec",
+        "-T",
+        "kafka",
+        "/opt/kafka/bin/kafka-topics.sh",
+        "--bootstrap-server",
+        "localhost:9092",
+        "--list",
+    ]
+    while time.monotonic() < deadline:
+        result = subprocess.run(
+            command,
+            cwd=ROOT,
+            env=env,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        if result.returncode == 0:
+            return
+        time.sleep(1)
+
+    raise SystemExit("Timed out waiting for the Docker Compose Kafka broker")
+
+
 def default_port(scheme: str) -> int | None:
     if scheme in ("postgres", "postgresql"):
         return 5432
     if scheme == "redis":
         return 6379
+    if scheme == "kafka":
+        return 9092
     return None
 
 

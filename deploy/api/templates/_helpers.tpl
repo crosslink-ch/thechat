@@ -2,6 +2,36 @@
 {{- default .Chart.Name .Values.nameOverride | trunc 63 | trimSuffix "-" }}
 {{- end }}
 
+{{- define "thechat-api.kafkaEnv" -}}
+{{- if .Values.kafka.existingSecret }}
+- name: KAFKA_BROKERS
+  valueFrom:
+    secretKeyRef:
+      name: {{ .Values.kafka.existingSecret }}
+      key: {{ .Values.kafka.brokersSecretKey }}
+{{- else if .Values.kafka.brokers }}
+- name: KAFKA_BROKERS
+  value: {{ .Values.kafka.brokers | quote }}
+{{- end }}
+{{- if .Values.kafka.saslSecret }}
+- name: KAFKA_SASL_MECHANISM
+  valueFrom:
+    secretKeyRef:
+      name: {{ .Values.kafka.saslSecret }}
+      key: KAFKA_SASL_MECHANISM
+- name: KAFKA_SASL_USERNAME
+  valueFrom:
+    secretKeyRef:
+      name: {{ .Values.kafka.saslSecret }}
+      key: KAFKA_SASL_USERNAME
+- name: KAFKA_SASL_PASSWORD
+  valueFrom:
+    secretKeyRef:
+      name: {{ .Values.kafka.saslSecret }}
+      key: KAFKA_SASL_PASSWORD
+{{- end }}
+{{- end }}
+
 {{- define "thechat-api.fullname" -}}
 {{- if .Values.fullnameOverride }}
 {{- .Values.fullnameOverride | trunc 63 | trimSuffix "-" }}

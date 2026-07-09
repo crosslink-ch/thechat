@@ -46,6 +46,18 @@ redis:
       cpu: 500m
       memory: 256Mi
 
+# Optional external Kafka configuration for the worker. This chart never
+# deploys Kafka. Leave these empty while DOMAIN_EVENTS_DRIVER=outbox.
+kafka:
+  # Comma-separated broker endpoints. Prefer existingSecret in production.
+  brokers: ""
+  # Existing Secret containing KAFKA_BROKERS.
+  existingSecret: ""
+  brokersSecretKey: KAFKA_BROKERS
+  # Optional existing Secret containing KAFKA_SASL_MECHANISM,
+  # KAFKA_SASL_USERNAME, and KAFKA_SASL_PASSWORD.
+  saslSecret: ""
+
 # Name of an existing Kubernetes Secret for SMTP credentials (optional)
 # Expected keys: SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS
 # Set to "" to disable
@@ -62,6 +74,13 @@ env:
   REALTIME_DRIVER: "redis"
   REDIS_KEY_PREFIX: "thechat"
   ASYNC_WORKER_CONCURRENCY: "4"
+  DOMAIN_EVENTS_DRIVER: "outbox"
+  KAFKA_CLIENT_ID: "thechat-worker"
+  KAFKA_TOPIC: "thechat.domain-events.v1"
+  KAFKA_AUTO_CREATE_TOPICS: "false"
+  KAFKA_FROM_BEGINNING: "true"
+  KAFKA_CONSUMER_GROUP: "thechat-message-events-v1"
+  KAFKA_SSL: "false"
   EMAIL_PROVIDER: "smtp"
   EMAIL_FROM: "noreply@thechat.app"
   REQUIRE_EMAIL_VERIFICATION: "false"

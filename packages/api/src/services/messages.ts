@@ -4,11 +4,13 @@ import {
   messages,
   conversationParticipants,
   conversationThreads,
+  conversations,
   users,
 } from "../db/schema";
-import { processMessageMentions } from "./bot-runtime";
 import { ServiceError } from "./errors";
 import { withSpan } from "../observability";
+import { createChatMessageSentV1 } from "../events/envelope";
+import { enqueueDomainEvent } from "../events/outbox";
 
 export async function getMessages(
   conversationId: string,
@@ -96,8 +98,17 @@ export async function sendMessage(
     async (span) => {
       // Validate user is a participant
       const [participant] = await db
-        .select()
+        .select({
+          userId: conversationParticipants.userId,
+          senderType: users.type,
+          workspaceId: conversations.workspaceId,
+        })
         .from(conversationParticipants)
+        .innerJoin(
+          conversations,
+          eq(conversationParticipants.conversationId, conversations.id),
+        )
+        .innerJoin(users, eq(conversationParticipants.userId, users.id))
         .where(
           and(
             eq(conversationParticipants.conversationId, conversationId),
@@ -118,36 +129,45 @@ export async function sendMessage(
         await requireConversationThread(conversationId, threadId);
       }
 
-      const [msg] = await db
-        .insert(messages)
-        .values({
-          conversationId,
-          threadId,
-          senderId: userId,
-          content,
-        })
-        .returning();
+      const msg = await db.transaction(async (tx) => {
+        const [inserted] = await tx
+          .insert(messages)
+          .values({
+            conversationId,
+            threadId,
+            senderId: userId,
+            content,
+          })
+          .returning();
+
+        if (threadId) {
+          await tx
+            .update(conversationThreads)
+            .set({
+              lastActivityAt: inserted.createdAt,
+              updatedAt: inserted.createdAt,
+            })
+            .where(eq(conversationThreads.id, threadId));
+        }
+
+        const event = createChatMessageSentV1({
+          messageId: inserted.id,
+          senderId: inserted.senderId,
+          senderType: participant.senderType,
+          workspaceId: participant.workspaceId,
+          occurredAt: inserted.createdAt,
+        });
+        await enqueueDomainEvent(tx, event, {
+          partitionKey: inserted.conversationId,
+        });
+        return inserted;
+      });
 
       const createdAt = msg.createdAt.toISOString();
       span.setAttribute("thechat.message_id", msg.id);
       if (threadId) {
         span.setAttribute("thechat.thread_id", threadId);
-        await db
-          .update(conversationThreads)
-          .set({ lastActivityAt: msg.createdAt, updatedAt: msg.createdAt })
-          .where(eq(conversationThreads.id, threadId));
       }
-
-      // Fire-and-forget bot invocation detection for mentioned bots and Hermes DMs.
-      processMessageMentions({
-        id: msg.id,
-        content: msg.content,
-        conversationId: msg.conversationId,
-        threadId: msg.threadId,
-        senderId: msg.senderId,
-        senderName: userName,
-        createdAt,
-      }).catch((error) => console.error("Failed to enqueue bot invocation", error));
 
       return {
         id: msg.id,
@@ -155,7 +175,7 @@ export async function sendMessage(
         threadId: msg.threadId,
         senderId: msg.senderId,
         senderName: userName,
-        senderType: "human" as const,
+        senderType: participant.senderType,
         content: msg.content,
         parts: msg.parts ?? null,
         createdAt,

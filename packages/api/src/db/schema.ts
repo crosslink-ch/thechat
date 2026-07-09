@@ -15,6 +15,7 @@ import {
 } from "drizzle-orm/pg-core";
 import { relations } from "drizzle-orm";
 import type { BotCommandPublic, MessagePart } from "@thechat/shared";
+import type { DomainEventEnvelope } from "../events/envelope";
 
 // -- Enums --
 
@@ -211,6 +212,51 @@ export const messages = pgTable(
     index("messages_sender_id_idx").on(t.senderId),
     index("messages_created_at_idx").on(t.createdAt),
   ]
+);
+
+export const eventOutbox = pgTable(
+  "event_outbox",
+  {
+    id: uuid("id").primaryKey(),
+    eventType: varchar("event_type", { length: 255 }).notNull(),
+    eventVersion: integer("event_version").notNull(),
+    aggregateType: varchar("aggregate_type", { length: 100 }).notNull(),
+    aggregateId: varchar("aggregate_id", { length: 255 }).notNull(),
+    actorType: varchar("actor_type", { length: 100 }),
+    actorId: varchar("actor_id", { length: 255 }),
+    tenantId: varchar("tenant_id", { length: 100 }),
+    correlationId: varchar("correlation_id", { length: 255 }),
+    causationId: varchar("causation_id", { length: 255 }),
+    partitionKey: varchar("partition_key", { length: 255 }).notNull(),
+    event: jsonb("event").$type<DomainEventEnvelope>().notNull(),
+    availableAt: timestamp("available_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    publishedAt: timestamp("published_at", { withTimezone: true }),
+    attempts: integer("attempts").default(0).notNull(),
+    lastError: text("last_error"),
+    lockedBy: varchar("locked_by", { length: 255 }),
+    lockedAt: timestamp("locked_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (t) => [
+    index("event_outbox_pending_idx").on(
+      t.publishedAt,
+      t.availableAt,
+      t.createdAt,
+    ),
+    index("event_outbox_lock_idx").on(t.publishedAt, t.lockedAt),
+    index("event_outbox_partition_order_idx").on(
+      t.partitionKey,
+      t.publishedAt,
+      t.createdAt,
+      t.id,
+    ),
+    index("event_outbox_aggregate_idx").on(t.aggregateType, t.aggregateId),
+    index("event_outbox_correlation_idx").on(t.correlationId),
+  ],
 );
 
 export const bots = pgTable(

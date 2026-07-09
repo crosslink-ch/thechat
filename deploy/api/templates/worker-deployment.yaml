@@ -36,6 +36,7 @@ spec:
             {{- toYaml .Values.worker.command | nindent 12 }}
           env:
             {{- include "thechat-api.env" . | trim | nindent 12 }}
+            {{- include "thechat-api.kafkaEnv" . | trim | nindent 12 }}
           {{- with .Values.worker.resources }}
           resources:
             {{- toYaml . | nindent 12 }}
