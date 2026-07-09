@@ -68,6 +68,7 @@ export async function claimOutboxEvents(options: {
             SELECT pending.id
             FROM event_outbox AS pending
             WHERE pending.published_at IS NULL
+              AND pending.dead_at IS NULL
               AND pending.available_at <= ${nowIso}
               AND (pending.locked_at IS NULL OR pending.locked_at < ${staleBeforeIso})
               AND NOT EXISTS (
@@ -75,6 +76,7 @@ export async function claimOutboxEvents(options: {
                 FROM event_outbox AS earlier
                 WHERE earlier.partition_key = pending.partition_key
                   AND earlier.published_at IS NULL
+                  AND earlier.dead_at IS NULL
                   AND (
                     earlier.created_at < pending.created_at
                     OR (
@@ -130,14 +132,17 @@ export async function releaseOutboxEvent(
   event: Pick<ClaimedOutboxEvent, "id" | "attempts" | "lockedBy">,
   error: unknown,
   now = new Date(),
+  maxAttempts = 25,
 ) {
   const attempts = event.attempts + 1;
-  await db
+  const deadAt = attempts >= maxAttempts ? now : null;
+  const [updated] = await db
     .update(eventOutbox)
     .set({
       attempts: sql`${eventOutbox.attempts} + 1`,
       lastError: errorMessage(error).slice(0, 4_000),
       availableAt: new Date(now.getTime() + retryDelayMs(attempts)),
+      deadAt,
       lockedBy: null,
       lockedAt: null,
     })
@@ -146,7 +151,12 @@ export async function releaseOutboxEvent(
         eq(eventOutbox.id, event.id),
         eq(eventOutbox.lockedBy, event.lockedBy),
       ),
-    );
+    )
+    .returning({
+      attempts: eventOutbox.attempts,
+      deadAt: eventOutbox.deadAt,
+    });
+  return updated ?? { attempts, deadAt };
 }
 
 function errorMessage(error: unknown) {

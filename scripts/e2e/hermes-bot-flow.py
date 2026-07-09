@@ -261,6 +261,25 @@ def start_api(env: dict[str, str]) -> subprocess.Popen:
     return proc
 
 
+def start_worker(env: dict[str, str]) -> subprocess.Popen:
+    worker_env = env | {
+        "DATABASE_URL": DATABASE_URL,
+        "REDIS_URL": REDIS_URL,
+        "REDIS_KEY_PREFIX": "thechat-hermes-e2e",
+        "DOMAIN_EVENTS_DRIVER": "outbox",
+        "LOG_LEVEL": "error",
+    }
+    proc = subprocess.Popen(
+        [BUN, "run", "packages/api/src/scripts/worker.ts"],
+        cwd=ROOT,
+        env=worker_env,
+    )
+    time.sleep(2)
+    if proc.poll() is not None:
+        raise RuntimeError(f"TheChat worker exited with {proc.returncode}")
+    return proc
+
+
 def create_hermes_bot(base: str, token: str, workspace_id: str, name: str, instructions: str):
     status, bot = http_json(
         "POST",
@@ -401,6 +420,7 @@ def main():
     env["DATABASE_URL"] = DATABASE_URL
 
     api_proc: subprocess.Popen | None = None
+    worker_proc: subprocess.Popen | None = None
     hermes_procs: list[subprocess.Popen] = []
     try:
         start_postgres()
@@ -408,6 +428,7 @@ def main():
 
         run([PNPM, "--dir", "packages/api", "exec", "drizzle-kit", "migrate"], env=env)
         api_proc = start_api(env)
+        worker_proc = start_worker(env)
 
         base = f"http://localhost:{API_PORT}"
         email = f"hermes-e2e-{int(time.time())}@example.com"
@@ -552,6 +573,12 @@ def main():
                 hermes_proc.wait(timeout=15)
             except subprocess.TimeoutExpired:
                 hermes_proc.kill()
+        if worker_proc:
+            worker_proc.send_signal(signal.SIGTERM)
+            try:
+                worker_proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                worker_proc.kill()
         if api_proc:
             api_proc.send_signal(signal.SIGTERM)
             try:

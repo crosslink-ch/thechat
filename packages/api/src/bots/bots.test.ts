@@ -63,7 +63,10 @@ const botsTestRedisKeyPrefix = `thechat-bots-test-${crypto.randomUUID()}`;
 
 beforeAll(async () => {
   process.env.REDIS_KEY_PREFIX = botsTestRedisKeyPrefix;
-  process.env.DOMAIN_EVENTS_DRIVER ||= "outbox";
+  process.env.DOMAIN_EVENTS_DRIVER =
+    process.env.THECHAT_BOTS_TEST_EVENTS_DRIVER === "kafka"
+      ? "kafka"
+      : "outbox";
   await setBotProgressStoreForTests(createLocalBotProgressStoreForTests());
   await startDomainEventRuntime();
 });
@@ -87,6 +90,22 @@ afterAll(async () => {
     await db
       .delete(eventOutbox)
       .where(inArray(eventOutbox.tenantId, createdWorkspaceIds));
+  }
+  const createdHumanUsers =
+    createdUserEmails.length > 0
+      ? await db
+          .select({ id: users.id })
+          .from(users)
+          .where(inArray(users.email, createdUserEmails))
+      : [];
+  const eventActorIds = [
+    ...createdBotUserIds,
+    ...createdHumanUsers.map((user) => user.id),
+  ];
+  if (eventActorIds.length > 0) {
+    await db
+      .delete(eventOutbox)
+      .where(inArray(eventOutbox.actorId, eventActorIds));
   }
   // Clean up bots (cascade from user delete handles bot records)
   for (const id of createdBotUserIds) {
@@ -510,7 +529,13 @@ describe("Bots: Send messages", () => {
       aggregateId: sendRes.body.id,
       partitionKey: channelId,
     });
-    expect(outbox.event.payload).toEqual({ messageId: sendRes.body.id });
+    expect(outbox.event.payload).toMatchObject({
+      messageId: sendRes.body.id,
+      conversationId: channelId,
+      messageKind: "user",
+      automationDepth: 0,
+    });
+    expect(outbox.event.payload.targetBotIds).toEqual([]);
     expect(JSON.stringify(outbox.event)).not.toContain(sendRes.body.content);
   });
 });
@@ -1182,6 +1207,21 @@ describe("Bots: mention routing", () => {
       .select({ event: eventOutbox.event })
       .from(eventOutbox)
       .where(eq(eventOutbox.aggregateId, sendRes.body.id));
+    const renameRes = await req(
+      "PATCH",
+      `/bots/${bot.body.id}`,
+      { name: "RenamedDuplicateHermes" },
+      human.token,
+    );
+    expect(renameRes.status).toBe(200);
+    const replacement = await createBot(
+      human.token,
+      "DuplicateHermes",
+      undefined,
+      { kind: "hermes", workspaceId },
+    );
+    expect(replacement.status).toBe(200);
+
     const registry = createDefaultDomainEventRegistry();
     await Promise.all([
       registry.dispatch(outbox.event),
@@ -1384,6 +1424,14 @@ describe("Bots: mention routing", () => {
         bot: expect.objectContaining({ id: secondBot.body.id }),
       }),
     );
+    const [claimedInvocation] = await db
+      .select({ requestJson: botInvocations.requestJson })
+      .from(botInvocations)
+      .where(eq(botInvocations.id, invocation.id));
+    expect(claimedInvocation.requestJson).toMatchObject({
+      automationDepth: 1,
+      correlationId: publishRes.body.messageId,
+    });
   });
 });
 

@@ -20,6 +20,7 @@
     "start:worker": "bun run --env-file ../../.env dist/scripts/worker.js",
     "worker": "bun run --env-file ../../.env src/scripts/worker.ts",
     "test": "bun test --env-file ../../.env",
+    "test:kafka": "test -n \"$KAFKA_BROKERS\" || { echo \"KAFKA_BROKERS is required for test:kafka\" >&2; exit 1; }; RUN_KAFKA_INTEGRATION=1 bun test --env-file ../../.env src/events/kafka.integration.test.ts",
     "db:generate": "bun run --env-file ../../.env drizzle-kit generate",
     "db:migrate": "bun run --env-file ../../.env drizzle-kit migrate",
     "db:push": "bun run --env-file ../../.env drizzle-kit push",

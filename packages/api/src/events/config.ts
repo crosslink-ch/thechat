@@ -5,10 +5,12 @@ export interface DomainEventsConfig {
   batchSize: number;
   pollIntervalMs: number;
   lockTimeoutMs: number;
+  maxAttempts: number;
   kafka: {
     brokers: string[];
     clientId: string;
     topic: string;
+    deadLetterTopic: string;
     autoCreateTopics: boolean;
     topicPartitions: number;
     fromBeginning: boolean;
@@ -43,6 +45,12 @@ export function loadDomainEventsConfig(
       "KAFKA_BROKERS is required when DOMAIN_EVENTS_DRIVER=kafka",
     );
   }
+  const topic = env.KAFKA_TOPIC?.trim() || "thechat.domain-events.v1";
+  const deadLetterTopic =
+    env.KAFKA_DEAD_LETTER_TOPIC?.trim() || `${topic}.dlq`;
+  if (topic === deadLetterTopic) {
+    throw new Error("KAFKA_DEAD_LETTER_TOPIC must differ from KAFKA_TOPIC");
+  }
 
   return {
     driver,
@@ -50,12 +58,14 @@ export function loadDomainEventsConfig(
     pollIntervalMs: positiveInteger(env.DOMAIN_EVENTS_POLL_INTERVAL_MS, 500),
     lockTimeoutMs: positiveInteger(
       env.DOMAIN_EVENTS_LOCK_TIMEOUT_MS,
-      60_000,
+      300_000,
     ),
+    maxAttempts: positiveInteger(env.DOMAIN_EVENTS_MAX_ATTEMPTS, 25),
     kafka: {
       brokers,
       clientId: env.KAFKA_CLIENT_ID?.trim() || "thechat-worker",
-      topic: env.KAFKA_TOPIC?.trim() || "thechat.domain-events.v1",
+      topic,
+      deadLetterTopic,
       autoCreateTopics: booleanValue(env.KAFKA_AUTO_CREATE_TOPICS),
       topicPartitions: positiveInteger(env.KAFKA_TOPIC_PARTITIONS, 3),
       fromBeginning: booleanValue(env.KAFKA_FROM_BEGINNING, true),

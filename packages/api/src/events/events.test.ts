@@ -7,18 +7,25 @@ import {
   type DomainEventEnvelope,
 } from "./envelope";
 import { loadDomainEventsConfig } from "./config";
-import { DomainEventRegistry } from "./registry";
+import { DomainEventRegistry, InvalidDomainEventError } from "./registry";
 import { retryDelayMs } from "./retry";
+import { processKafkaMessageAndCommit } from "./kafka-offsets";
 
 const ids = {
   message: "11111111-1111-4111-8111-111111111111",
+  conversation: "22222222-2222-4222-8222-222222222222",
   sender: "33333333-3333-4333-8333-333333333333",
+  bot: "44444444-4444-4444-8444-444444444444",
 };
 
 describe("domain event envelopes", () => {
   test("creates and parses the minimal chat.message.sent v1 envelope", () => {
     const event = createChatMessageSentV1({
       messageId: ids.message,
+      conversationId: ids.conversation,
+      targetBotIds: [ids.bot],
+      messageKind: "user",
+      automationDepth: 0,
       senderId: ids.sender,
       senderType: "human",
       workspaceId: "workspace-one",
@@ -32,7 +39,13 @@ describe("domain event envelopes", () => {
       aggregate: { type: "message", id: ids.message },
       actor: { type: "human", id: ids.sender },
       tenant: { workspaceId: "workspace-one" },
-      payload: { messageId: ids.message },
+      payload: {
+        messageId: ids.message,
+        conversationId: ids.conversation,
+        targetBotIds: [ids.bot],
+        messageKind: "user",
+        automationDepth: 0,
+      },
     });
     expect(JSON.stringify(event)).not.toContain("content");
   });
@@ -44,6 +57,10 @@ describe("domain event envelopes", () => {
 
     const event = createChatMessageSentV1({
       messageId: ids.message,
+      conversationId: ids.conversation,
+      targetBotIds: [],
+      messageKind: "user",
+      automationDepth: 0,
       senderId: ids.sender,
       senderType: "human",
     });
@@ -51,9 +68,27 @@ describe("domain event envelopes", () => {
     expect(() =>
       parseChatMessageSentV1({
         ...event,
-        payload: { messageId: "99999999-9999-4999-8999-999999999999" },
+        actor: { id: ids.sender, type: "bot" },
       }),
-    ).toThrow("messageId must match aggregate.id");
+    ).toThrow("user events require a human actor");
+    expect(() =>
+      parseChatMessageSentV1({
+        ...event,
+        payload: {
+          ...event.payload,
+          targetBotIds: [ids.bot, ids.bot],
+        },
+      }),
+    ).toThrow("targetBotIds must be unique");
+    expect(() =>
+      parseChatMessageSentV1({
+        ...event,
+        payload: {
+          ...event.payload,
+          messageId: "99999999-9999-4999-8999-999999999999",
+        },
+      }),
+    ).toThrow("payload.messageId must match aggregate.id");
   });
 });
 
@@ -92,15 +127,22 @@ describe("domain event registry", () => {
     await expect(
       registry.dispatch({ ...event, type: "another.event" }),
     ).resolves.toBe(false);
+    expect(registry.supports("test.event", 1)).toBe(true);
+    expect(registry.hasEventType("test.event")).toBe(true);
+    expect(registry.supports("test.event", 2)).toBe(false);
+    await expect(
+      registry.dispatch({ ...event, version: 2 }, { rejectMissing: true }),
+    ).rejects.toThrow("No handler registered");
   });
 
   test("propagates handler failures for retry by the transport", async () => {
+    const transientFailure = new Error("transient failure");
     const registry = new DomainEventRegistry().register({
       type: "test.failure",
       version: 1,
       parse: parseDomainEventEnvelope,
       async handle() {
-        throw new Error("transient failure");
+        throw transientFailure;
       },
     });
     const event = parseDomainEventEnvelope({
@@ -112,7 +154,98 @@ describe("domain event registry", () => {
       payload: {},
     });
 
-    await expect(registry.dispatch(event)).rejects.toThrow("transient failure");
+    await expect(registry.dispatch(event)).rejects.toBe(transientFailure);
+  });
+
+  test("classifies only event-specific parse failures as invalid events", async () => {
+    const parseFailure = new Error("payload marker is invalid");
+    const registry = new DomainEventRegistry().register({
+      type: "test.invalid-payload",
+      version: 1,
+      parse(): DomainEventEnvelope & {
+        type: "test.invalid-payload";
+        version: 1;
+      } {
+        throw parseFailure;
+      },
+      async handle() {
+        throw new Error("handler must not run");
+      },
+    });
+    const event = parseDomainEventEnvelope({
+      id: "66666666-6666-4666-8666-666666666666",
+      type: "test.invalid-payload",
+      version: 1,
+      aggregate: { type: "test", id: "invalid-payload" },
+      occurredAt: "2026-07-09T12:00:00.000Z",
+      payload: { marker: false },
+    });
+
+    const error = await registry.dispatch(event).then(
+      () => null,
+      (caught: unknown) => caught,
+    );
+    expect(error).toBeInstanceOf(InvalidDomainEventError);
+    expect((error as InvalidDomainEventError).cause).toBe(parseFailure);
+  });
+});
+
+describe("Kafka business offset handling", () => {
+  test("commits the next offset only after successful processing", async () => {
+    const steps: string[] = [];
+    let committedOffsets: Array<{
+      topic: string;
+      partition: number;
+      offset: string;
+    }> = [];
+
+    await processKafkaMessageAndCommit(
+      { topic: "events", partition: 2, offset: "41" },
+      async () => {
+        steps.push("handled");
+      },
+      async (offsets) => {
+        steps.push("committed");
+        committedOffsets = offsets;
+      },
+    );
+
+    expect(steps).toEqual(["handled", "committed"]);
+    expect(committedOffsets).toEqual([
+      { topic: "events", partition: 2, offset: "42" },
+    ]);
+  });
+
+  test("does not commit processing failures and propagates commit failures", async () => {
+    const processingFailure = new Error("database unavailable");
+    let commitCalls = 0;
+    await expect(
+      processKafkaMessageAndCommit(
+        { topic: "events", partition: 0, offset: "7" },
+        async () => {
+          throw processingFailure;
+        },
+        async () => {
+          commitCalls += 1;
+        },
+      ),
+    ).rejects.toBe(processingFailure);
+    expect(commitCalls).toBe(0);
+
+    const commitFailure = new Error("offset commit failed");
+    let processCalls = 0;
+    await expect(
+      processKafkaMessageAndCommit(
+        { topic: "events", partition: 0, offset: "7" },
+        async () => {
+          processCalls += 1;
+        },
+        async () => {
+          throw commitFailure;
+        },
+      ),
+    ).rejects.toBe(commitFailure);
+    expect(processCalls).toBe(1);
   });
 });
 
@@ -127,6 +260,17 @@ describe("domain event configuration and retries", () => {
     expect(() =>
       loadDomainEventsConfig({ DOMAIN_EVENTS_DRIVER: "kafka" }),
     ).toThrow("KAFKA_BROKERS is required");
+  });
+
+  test("requires the Kafka main and dead-letter topics to differ", () => {
+    expect(() =>
+      loadDomainEventsConfig({
+        DOMAIN_EVENTS_DRIVER: "kafka",
+        KAFKA_BROKERS: "broker:9092",
+        KAFKA_TOPIC: "same-topic",
+        KAFKA_DEAD_LETTER_TOPIC: "same-topic",
+      }),
+    ).toThrow("KAFKA_DEAD_LETTER_TOPIC must differ");
   });
 
   test("backs off retries with a bounded delay", () => {

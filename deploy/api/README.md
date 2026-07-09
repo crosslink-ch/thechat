@@ -59,9 +59,11 @@ kafka:
 ```
 
 For brokers that do not require a secret, use `kafka.brokers` instead. The
-chart does not deploy a Kafka broker. Production Kafka should be multi-broker,
-with the `thechat.domain-events.v1` topic pre-created, partitioned for expected
-conversation concurrency, replicated, retained, secured, and monitored.
+chart fails rendering when Kafka mode has neither `kafka.brokers` nor
+`kafka.existingSecret`, and it does not deploy a Kafka broker. Production Kafka
+should be multi-broker, with both `thechat.domain-events.v1` and
+`thechat.domain-events.v1.dlq` pre-created, partitioned for expected conversation
+concurrency, replicated, retained, secured, and monitored.
 
 ## Migrations
 
@@ -84,7 +86,24 @@ uses the same API image and runs `bun run dist/scripts/worker.js`.
 It also claims the transactional domain-event outbox. In `outbox` mode it
 handles events directly; in `kafka` mode it publishes to Kafka and consumes via
 the configured consumer group. Delivery is at least once, so handlers must be
-idempotent; TheChat uses the unique bot/trigger-message invocation key.
+idempotent; TheChat uses the unique bot/trigger-message invocation key and
+stable target IDs captured in each event.
+
+The event runtime is supervised with the BullMQ worker: an unrecoverable Kafka
+consumer crash fails the process so Kubernetes restarts it instead of leaving a
+silent relay-only pod. BullMQ jobs remain durable in Redis and resume after the
+restart, but bot-job and domain-event availability share this worker failure
+domain. Split them into separate Deployments if they need independent SLOs.
+
+The worker Deployment uses `Recreate`, intentionally preventing old outbox-mode
+and new Kafka-mode workers from overlapping during a driver cutover. Before
+switching to Kafka, apply migrations, pre-create the main and DLQ topics, verify
+worker credentials/ACLs, and render the chart with production values. Roll back
+by restoring `DOMAIN_EVENTS_DRIVER=outbox`; pending, unpublished rows remain in
+PostgreSQL. Alert on worker restarts, consumer lag, DLQ traffic,
+`event_outbox.dead_at`, and old unpublished outbox rows. Reset a reviewed
+PostgreSQL quarantine row by clearing `dead_at`, `locked_at`, and `locked_by`,
+resetting `attempts`, and setting `available_at=now()`.
 
 ## Install
 

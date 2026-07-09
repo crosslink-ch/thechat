@@ -1,3 +1,12 @@
+{{- $domainEventsDriver := default "outbox" (index .Values.env "DOMAIN_EVENTS_DRIVER") -}}
+{{- $kafkaTopic := default "thechat.domain-events.v1" (index .Values.env "KAFKA_TOPIC") -}}
+{{- $kafkaDeadLetterTopic := default "thechat.domain-events.v1.dlq" (index .Values.env "KAFKA_DEAD_LETTER_TOPIC") -}}
+{{- if and .Values.worker.enabled (eq $domainEventsDriver "kafka") (not .Values.kafka.brokers) (not .Values.kafka.existingSecret) -}}
+{{- fail "worker DOMAIN_EVENTS_DRIVER=kafka requires kafka.brokers or kafka.existingSecret" -}}
+{{- end -}}
+{{- if and .Values.worker.enabled (eq $domainEventsDriver "kafka") (eq $kafkaTopic $kafkaDeadLetterTopic) -}}
+{{- fail "KAFKA_TOPIC and KAFKA_DEAD_LETTER_TOPIC must differ" -}}
+{{- end -}}
 {{- if .Values.worker.enabled }}
 apiVersion: apps/v1
 kind: Deployment
@@ -7,6 +16,10 @@ metadata:
     {{- include "thechat-api.workerLabels" . | nindent 4 }}
 spec:
   replicas: {{ .Values.worker.replicaCount }}
+  # Recreate prevents old outbox-mode and new Kafka-mode workers from
+  # overlapping during a driver cutover.
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       {{- include "thechat-api.workerSelectorLabels" . | nindent 6 }}

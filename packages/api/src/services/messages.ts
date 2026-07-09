@@ -11,6 +11,7 @@ import { ServiceError } from "./errors";
 import { withSpan } from "../observability";
 import { createChatMessageSentV1 } from "../events/envelope";
 import { enqueueDomainEvent } from "../events/outbox";
+import { resolveMessageBotTargetIds } from "./message-bot-targets";
 
 export async function getMessages(
   conversationId: string,
@@ -150,8 +151,19 @@ export async function sendMessage(
             .where(eq(conversationThreads.id, threadId));
         }
 
+        const targetBotIds = await resolveMessageBotTargetIds(tx, {
+          conversationId: inserted.conversationId,
+          content: inserted.content,
+          senderId: inserted.senderId,
+          senderType: participant.senderType,
+        });
         const event = createChatMessageSentV1({
           messageId: inserted.id,
+          conversationId: inserted.conversationId,
+          targetBotIds,
+          messageKind:
+            participant.senderType === "bot" ? "bot_response" : "user",
+          automationDepth: participant.senderType === "bot" ? 1 : 0,
           senderId: inserted.senderId,
           senderType: participant.senderType,
           workspaceId: participant.workspaceId,

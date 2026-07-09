@@ -2,7 +2,7 @@ import { describe, test, expect, afterAll } from "bun:test";
 import { Elysia } from "elysia";
 import { eq } from "drizzle-orm";
 import { db } from "../db";
-import { users, workspaces } from "../db/schema";
+import { eventOutbox, users, workspaces } from "../db/schema";
 import { authRoutes } from "../auth";
 import { workspaceRoutes } from "../workspaces";
 import { inviteRoutes } from "../invites";
@@ -26,6 +26,7 @@ const createdWorkspaceIds: string[] = [];
 
 afterAll(async () => {
   for (const id of createdWorkspaceIds) {
+    await db.delete(eventOutbox).where(eq(eventOutbox.tenantId, id));
     await db.delete(workspaces).where(eq(workspaces.id, id));
   }
   for (const email of createdUserEmails) {

@@ -10,6 +10,7 @@ import {
 import { withSpan } from "../observability";
 import { loadDomainEventsConfig, type DomainEventsConfig } from "./config";
 import { parseDomainEventEnvelope } from "./envelope";
+import { processKafkaMessageAndCommit } from "./kafka-offsets";
 import { logDomainEvent } from "./log";
 import { createChatMessageSentHandler } from "./message-handler";
 import {
@@ -18,7 +19,11 @@ import {
   releaseOutboxEvent,
   type ClaimedOutboxEvent,
 } from "./outbox";
-import { DomainEventRegistry } from "./registry";
+import {
+  DomainEventRegistry,
+  InvalidDomainEventError,
+  PermanentDomainEventError,
+} from "./registry";
 
 export interface DomainEventRuntimeOptions {
   config?: DomainEventsConfig;
@@ -29,6 +34,9 @@ export interface DomainEventRuntimeOptions {
 export function createDefaultDomainEventRegistry() {
   return new DomainEventRegistry().register(createChatMessageSentHandler());
 }
+
+const KAFKA_DLQ_MAX_VALUE_BYTES = 256 * 1024;
+const KAFKA_DLQ_MAX_KEY_BYTES = 1024;
 
 export class DomainEventRuntime {
   private readonly config: DomainEventsConfig;
@@ -124,6 +132,11 @@ export class DomainEventRuntime {
               numPartitions: this.config.kafka.topicPartitions,
               replicationFactor: 1,
             },
+            {
+              topic: this.config.kafka.deadLetterTopic,
+              numPartitions: this.config.kafka.topicPartitions,
+              replicationFactor: 1,
+            },
           ],
         });
       } finally {
@@ -158,8 +171,18 @@ export class DomainEventRuntime {
     });
     this.consumerPromise = this.consumer
       .run({
+        autoCommit: false,
+        partitionsConsumedConcurrently: 1,
         eachMessage: (payload: EachMessagePayload) =>
-          this.consumeKafkaMessage(payload),
+          processKafkaMessageAndCommit(
+            {
+              topic: payload.topic,
+              partition: payload.partition,
+              offset: payload.message.offset,
+            },
+            () => this.consumeKafkaMessage(payload),
+            (offsets) => this.consumer!.commitOffsets(offsets),
+          ),
       })
       .catch((error: unknown) => {
         if (!this.abortController.signal.aborted) {
@@ -173,59 +196,148 @@ export class DomainEventRuntime {
       });
   }
 
-  private async consumeKafkaMessage({
-    topic,
-    partition,
-    message,
-  }: EachMessagePayload) {
+  private async consumeKafkaMessage(payload: EachMessagePayload) {
+    const { topic, partition, message } = payload;
     if (!message.value) {
-      logDomainEvent("warn", "domain_event.kafka.message_skipped", undefined, {
-        topic,
-        partition,
-        offset: message.offset,
-        reason: "empty_value",
-      });
+      await this.deadLetterKafkaMessage(payload, "empty_value");
       return;
     }
 
-    let event;
+    let event: ReturnType<typeof parseDomainEventEnvelope>;
     try {
       event = parseDomainEventEnvelope(
         JSON.parse(message.value.toString("utf8")),
       );
     } catch (error) {
-      logDomainEvent("warn", "domain_event.kafka.message_skipped", undefined, {
-        topic,
-        partition,
-        offset: message.offset,
-        reason: "invalid_envelope",
-        error: errorMessage(error),
-      });
+      await this.deadLetterKafkaMessage(payload, "invalid_envelope", error);
       return;
     }
 
-    await withSpan(
-      "domain_event.kafka.consume",
-      {
-        "messaging.system": "kafka",
-        "messaging.operation": "receive",
-        "messaging.destination.name": topic,
-        "messaging.kafka.partition": partition,
-        "messaging.kafka.message.offset": message.offset,
-        "messaging.message.id": event.id,
-        "messaging.message.type": event.type,
-      },
-      async () => {
-        logDomainEvent("info", "domain_event.kafka.consumed", event, {
+    if (!this.registry.supports(event.type, event.version)) {
+      if (this.registry.hasEventType(event.type)) {
+        await this.deadLetterKafkaMessage(
+          payload,
+          "unsupported_event_version",
+          new Error(`No handler for ${event.type} v${event.version}`),
+          event,
+        );
+      } else {
+        logDomainEvent("info", "domain_event.kafka.message_skipped", event, {
           topic,
           partition,
           offset: message.offset,
+          reason: "unregistered_event_type",
         });
-        // KafkaJS only advances this message after this callback resolves. A
-        // transient handler failure is rethrown so the consumer retries it.
-        await this.registry.dispatch(event);
-      },
-    );
+      }
+      return;
+    }
+
+    try {
+      await withSpan(
+        "domain_event.kafka.consume",
+        {
+          "messaging.system": "kafka",
+          "messaging.operation": "receive",
+          "messaging.destination.name": topic,
+          "messaging.kafka.partition": partition,
+          "messaging.kafka.message.offset": message.offset,
+          "messaging.message.id": event.id,
+          "messaging.message.type": event.type,
+        },
+        async () => {
+          logDomainEvent("info", "domain_event.kafka.consumed", event, {
+            topic,
+            partition,
+            offset: message.offset,
+          });
+          await this.registry.dispatch(event);
+        },
+      );
+    } catch (error) {
+      if (error instanceof InvalidDomainEventError) {
+        await this.deadLetterKafkaMessage(
+          payload,
+          "invalid_event_payload",
+          error,
+          event,
+        );
+        return;
+      }
+      if (error instanceof PermanentDomainEventError) {
+        await this.deadLetterKafkaMessage(
+          payload,
+          "permanent_handler_failure",
+          error,
+          event,
+        );
+        return;
+      }
+      throw error;
+    }
+  }
+
+  private async deadLetterKafkaMessage(
+    { topic, partition, message }: EachMessagePayload,
+    reason: string,
+    error?: unknown,
+    event?: ReturnType<typeof parseDomainEventEnvelope>,
+  ) {
+    if (!this.producer) throw new Error("Kafka producer is not connected");
+    const failedAt = new Date().toISOString();
+    const originalValue = message.value ?? Buffer.alloc(0);
+    const storedValue = originalValue.subarray(0, KAFKA_DLQ_MAX_VALUE_BYTES);
+    const originalKey = message.key ?? Buffer.alloc(0);
+    const storedKey = originalKey.subarray(0, KAFKA_DLQ_MAX_KEY_BYTES);
+    await this.producer.send({
+      topic: this.config.kafka.deadLetterTopic,
+      messages: [
+        {
+          key: event?.aggregate.id || (storedKey.length > 0 ? storedKey : null),
+          value: JSON.stringify({
+            failedAt,
+            reason,
+            error: error ? errorMessage(error).slice(0, 2_000) : null,
+            source: {
+              topic,
+              partition,
+              offset: message.offset,
+              timestamp: message.timestamp,
+            },
+            eventId: event?.id ?? null,
+            eventType: event?.type ?? null,
+            eventVersion: event?.version ?? null,
+            keyBase64: storedKey.length > 0 ? storedKey.toString("base64") : null,
+            keyBytes: originalKey.length,
+            keyTruncated: originalKey.length > storedKey.length,
+            valueBase64:
+              storedValue.length > 0 ? storedValue.toString("base64") : null,
+            valueBytes: originalValue.length,
+            valueTruncated: originalValue.length > storedValue.length,
+          }),
+          headers: {
+            "dead-letter-reason": reason,
+            "source-topic": topic,
+            "source-partition": String(partition),
+            "source-offset": message.offset,
+            ...(event
+              ? {
+                  "event-id": event.id,
+                  "event-type": event.type,
+                  "event-version": String(event.version),
+                }
+              : {}),
+          },
+        },
+      ],
+    });
+    logDomainEvent("error", "domain_event.kafka.dead_lettered", event, {
+      topic,
+      deadLetterTopic: this.config.kafka.deadLetterTopic,
+      partition,
+      offset: message.offset,
+      reason,
+      error: error ? errorMessage(error) : undefined,
+    });
   }
 
   private async runOutboxRelay() {
@@ -247,9 +359,9 @@ export class DomainEventRuntime {
           workerId: this.workerId,
           count: rows.length,
         });
-        for (const row of rows) {
-          await this.processOutboxEvent(row);
-        }
+        await Promise.all(
+          rows.map((row) => this.processOutboxEvent(row)),
+        );
       } catch (error) {
         if (!signal.aborted) {
           logDomainEvent("error", "domain_event.outbox.claim_failed", undefined, {
@@ -276,17 +388,36 @@ export class DomainEventRuntime {
             "messaging.message.type": row.event.type,
             "thechat.outbox.attempts": row.attempts,
           },
-          () => this.registry.dispatch(parseDomainEventEnvelope(row.event)),
+          () =>
+            this.registry.dispatch(parseDomainEventEnvelope(row.event), {
+              rejectMissing: true,
+            }),
         );
       }
       await markOutboxEventPublished(row.id, row.lockedBy);
     } catch (error) {
-      await releaseOutboxEvent(row, error);
-      logDomainEvent("error", "domain_event.outbox.processing_failed", row.event, {
-        driver: this.config.driver,
-        attempts: row.attempts + 1,
-        error: errorMessage(error),
-      });
+      const permanent =
+        error instanceof InvalidDomainEventError ||
+        error instanceof PermanentDomainEventError;
+      const released = await releaseOutboxEvent(
+        row,
+        error,
+        new Date(),
+        permanent ? 1 : this.config.maxAttempts,
+      );
+      logDomainEvent(
+        released.deadAt ? "error" : "warn",
+        released.deadAt
+          ? "domain_event.outbox.dead_lettered"
+          : "domain_event.outbox.processing_failed",
+        row.event,
+        {
+          driver: this.config.driver,
+          attempts: released.attempts,
+          maxAttempts: this.config.maxAttempts,
+          error: errorMessage(error),
+        },
+      );
     }
   }
 
@@ -377,7 +508,13 @@ function waitForAbort(signal: AbortSignal, timeoutMs: number) {
   });
 }
 
-function errorMessage(error: unknown) {
+function errorMessage(error: unknown): string {
+  if (error instanceof InvalidDomainEventError) {
+    return `${error.message}: ${errorMessage(error.cause)}`;
+  }
+  if (error instanceof PermanentDomainEventError && error.cause) {
+    return `${error.message}: ${errorMessage(error.cause)}`;
+  }
   return error instanceof Error ? error.message : String(error);
 }
 

@@ -32,6 +32,13 @@ export type DomainEventEnvelope = z.infer<typeof domainEventEnvelopeSchema>;
 
 export const CHAT_MESSAGE_SENT_EVENT_TYPE = "chat.message.sent";
 export const CHAT_MESSAGE_SENT_EVENT_VERSION = 1;
+export const MAX_BOT_AUTOMATION_DEPTH = 8;
+
+export const chatMessageKindSchema = z.enum([
+  "user",
+  "bot_response",
+  "system_failure",
+]);
 
 export const chatMessageSentV1Schema = domainEventEnvelopeSchema.extend({
   type: z.literal(CHAT_MESSAGE_SENT_EVENT_TYPE),
@@ -42,13 +49,63 @@ export const chatMessageSentV1Schema = domainEventEnvelopeSchema.extend({
   }),
   payload: z.object({
     messageId: z.string().uuid(),
+    conversationId: z.string().uuid(),
+    targetBotIds: z.array(z.string().uuid()),
+    messageKind: chatMessageKindSchema,
+    automationDepth: z.number().int().nonnegative().max(100),
   }),
-}).superRefine((event, context) => {
+}).superRefine((event, ctx) => {
   if (event.aggregate.id !== event.payload.messageId) {
-    context.addIssue({
+    ctx.addIssue({
       code: "custom",
       path: ["payload", "messageId"],
-      message: "messageId must match aggregate.id",
+      message: "payload.messageId must match aggregate.id",
+    });
+  }
+  const expectedActorType =
+    event.payload.messageKind === "user" ? "human" : "bot";
+  if (event.actor?.type !== expectedActorType) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["actor", "type"],
+      message: `${event.payload.messageKind} events require a ${expectedActorType} actor`,
+    });
+  }
+  if (
+    event.payload.messageKind === "user" &&
+    event.payload.automationDepth !== 0
+  ) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["payload", "automationDepth"],
+      message: "user events require automationDepth=0",
+    });
+  }
+  if (
+    event.payload.messageKind !== "user" &&
+    event.payload.automationDepth < 1
+  ) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["payload", "automationDepth"],
+      message: "bot-authored events require automationDepth>=1",
+    });
+  }
+  if (
+    event.payload.messageKind === "system_failure" &&
+    event.payload.targetBotIds.length > 0
+  ) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["payload", "targetBotIds"],
+      message: "system failure events cannot target bots",
+    });
+  }
+  if (new Set(event.payload.targetBotIds).size !== event.payload.targetBotIds.length) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["payload", "targetBotIds"],
+      message: "targetBotIds must be unique",
     });
   }
 });
@@ -65,6 +122,10 @@ export function parseChatMessageSentV1(value: unknown): ChatMessageSentV1 {
 
 export function createChatMessageSentV1(input: {
   messageId: string;
+  conversationId: string;
+  targetBotIds: string[];
+  messageKind: z.infer<typeof chatMessageKindSchema>;
+  automationDepth: number;
   senderId: string;
   senderType: "human" | "bot";
   workspaceId?: string | null;
@@ -84,6 +145,12 @@ export function createChatMessageSentV1(input: {
     correlationId: input.correlationId ?? input.messageId,
     ...(input.causationId ? { causationId: input.causationId } : {}),
     occurredAt: (input.occurredAt ?? new Date()).toISOString(),
-    payload: { messageId: input.messageId },
+    payload: {
+      messageId: input.messageId,
+      conversationId: input.conversationId,
+      targetBotIds: input.targetBotIds,
+      messageKind: input.messageKind,
+      automationDepth: input.automationDepth,
+    },
   });
 }

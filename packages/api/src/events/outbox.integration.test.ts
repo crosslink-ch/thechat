@@ -76,6 +76,51 @@ describe("transactional outbox claiming", () => {
     );
   });
 
+  test("dead-letters a poison row at the attempt limit and unblocks its partition", async () => {
+    const now = new Date("2001-01-01T00:00:00.000Z");
+    const partitionKey = `poison-${crypto.randomUUID()}`;
+    const poison = event(crypto.randomUUID(), "poison");
+    const following = event(crypto.randomUUID(), "following");
+    for (const item of [poison, following]) {
+      await enqueueDomainEvent(db, item, {
+        partitionKey,
+        availableAt: new Date("2000-12-31T23:00:00.000Z"),
+      });
+      ids.push(item.id);
+    }
+    await db
+      .update(eventOutbox)
+      .set({ createdAt: new Date("2000-12-31T23:00:00.000Z") })
+      .where(eq(eventOutbox.id, poison.id));
+    await db
+      .update(eventOutbox)
+      .set({ createdAt: new Date("2000-12-31T23:00:01.000Z") })
+      .where(eq(eventOutbox.id, following.id));
+
+    const claimed = await claimOutboxEvents({
+      workerId: "poison-worker",
+      batchSize: 10,
+      lockTimeoutMs: 300_000,
+      now,
+    });
+    const poisonClaim = claimed.find((row) => row.id === poison.id)!;
+    const released = await releaseOutboxEvent(
+      poisonClaim,
+      new Error("unsupported event"),
+      now,
+      1,
+    );
+    expect(released).toMatchObject({ attempts: 1, deadAt: now });
+
+    const nextClaim = await claimOutboxEvents({
+      workerId: "following-worker",
+      batchSize: 10,
+      lockTimeoutMs: 300_000,
+      now,
+    });
+    expect(nextClaim.map((row) => row.id)).toContain(following.id);
+  });
+
   test("claims only the oldest unpublished event for each partition key", async () => {
     const now = new Date("2000-01-01T00:00:00.000Z");
     const first = event(crypto.randomUUID(), "first");

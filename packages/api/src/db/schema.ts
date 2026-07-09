@@ -233,6 +233,7 @@ export const eventOutbox = pgTable(
       .defaultNow()
       .notNull(),
     publishedAt: timestamp("published_at", { withTimezone: true }),
+    deadAt: timestamp("dead_at", { withTimezone: true }),
     attempts: integer("attempts").default(0).notNull(),
     lastError: text("last_error"),
     lockedBy: varchar("locked_by", { length: 255 }),
@@ -244,13 +245,15 @@ export const eventOutbox = pgTable(
   (t) => [
     index("event_outbox_pending_idx").on(
       t.publishedAt,
+      t.deadAt,
       t.availableAt,
       t.createdAt,
     ),
-    index("event_outbox_lock_idx").on(t.publishedAt, t.lockedAt),
+    index("event_outbox_lock_idx").on(t.publishedAt, t.deadAt, t.lockedAt),
     index("event_outbox_partition_order_idx").on(
       t.partitionKey,
       t.publishedAt,
+      t.deadAt,
       t.createdAt,
       t.id,
     ),

@@ -32,6 +32,7 @@ import { withSpan } from "../observability";
 import { getBotProgressStore } from "./bot-progress-store";
 import { createChatMessageSentV1 } from "../events/envelope";
 import { enqueueDomainEvent } from "../events/outbox";
+import { resolveMessageBotTargetIds } from "./message-bot-targets";
 
 export const BOT_QUEUE_NAME = "thechat:bots";
 export const BOT_INVOKE_JOB_NAME = "bot.invoke";
@@ -51,6 +52,10 @@ interface TriggerMessage {
   senderId: string;
   senderName: string;
   createdAt: string;
+  targetBotIds: string[];
+  automationDepth: number;
+  domainEventId: string;
+  correlationId: string;
 }
 
 interface TriggeredBot {
@@ -112,6 +117,27 @@ function recordFromJson(value: unknown): Record<string, unknown> {
     : {};
 }
 
+function nextAutomationContext(
+  invocation: typeof botInvocations.$inferSelect | null,
+  fallbackCorrelationId: string,
+) {
+  const request = recordFromJson(invocation?.requestJson);
+  const storedDepth = request.automationDepth;
+  const automationDepth =
+    typeof storedDepth === "number" &&
+    Number.isInteger(storedDepth) &&
+    storedDepth >= 0
+      ? storedDepth + 1
+      : 1;
+  return {
+    automationDepth,
+    correlationId:
+      typeof request.correlationId === "string" && request.correlationId
+        ? request.correlationId
+        : fallbackCorrelationId,
+  };
+}
+
 function normalizeHermesGeneratedTitle(value: unknown): string | null {
   if (typeof value !== "string") return null;
   const normalized = value
@@ -138,17 +164,13 @@ export async function processMessageMentions(msg: TriggerMessage) {
     {
       "messaging.conversation_id": msg.conversationId,
       "messaging.message_id": msg.id,
+      "messaging.domain_event_id": msg.domainEventId,
+      "thechat.automation_depth": msg.automationDepth,
     },
     async () => {
-      const participants = await db
-        .select({ userId: conversationParticipants.userId })
-        .from(conversationParticipants)
-        .where(eq(conversationParticipants.conversationId, msg.conversationId));
+      if (msg.targetBotIds.length === 0) return;
 
-      const participantIds = participants.map((p) => p.userId);
-      if (participantIds.length === 0) return;
-
-      const botRows = await db
+      const triggeredBots = await db
         .select({
           botId: bots.id,
           botUserId: bots.userId,
@@ -158,13 +180,21 @@ export async function processMessageMentions(msg: TriggerMessage) {
           botName: users.name,
         })
         .from(bots)
-        .innerJoin(users, eq(bots.userId, users.id));
+        .innerJoin(users, eq(bots.userId, users.id))
+        .innerJoin(
+          conversationParticipants,
+          and(
+            eq(conversationParticipants.userId, bots.userId),
+            eq(conversationParticipants.conversationId, msg.conversationId),
+          ),
+        )
+        .where(inArray(bots.id, msg.targetBotIds));
+      const routableBots = triggeredBots.filter(
+        (bot) => bot.kind !== "webhook" || Boolean(bot.webhookUrl),
+      );
+      if (routableBots.length === 0) return;
 
-      const participantBots = botRows.filter((b) => participantIds.includes(b.botUserId));
-      if (participantBots.length === 0) return;
-      const senderIsBot = participantBots.some((b) => b.botUserId === msg.senderId);
-
-      const [conv] = await db
+      const [conversation] = await db
         .select({
           id: conversations.id,
           type: conversations.type,
@@ -174,21 +204,12 @@ export async function processMessageMentions(msg: TriggerMessage) {
         .from(conversations)
         .where(eq(conversations.id, msg.conversationId))
         .limit(1);
+      if (!conversation) {
+        throw new Error(`Conversation ${msg.conversationId} does not exist`);
+      }
 
-      if (!conv) return;
-
-      const triggeredBots = participantBots.filter((b) => {
-        if (b.botUserId === msg.senderId) return false;
-        if (b.kind === "webhook" && !b.webhookUrl) return false;
-        const escaped = b.botName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-        const regex = new RegExp(`@${escaped}\\b`, "i");
-        const isMentioned = regex.test(msg.content);
-        const isDirectHermesDm = !senderIsBot && conv.type === "direct" && b.kind === "hermes";
-        return isMentioned || isDirectHermesDm;
-      });
-
-      for (const bot of triggeredBots) {
-        await enqueueBotInvocation({ bot, conversation: conv, message: msg });
+      for (const bot of routableBots) {
+        await enqueueBotInvocation({ bot, conversation, message: msg });
       }
     },
   );
@@ -414,14 +435,20 @@ async function enqueueBotInvocation(input: {
       const command = createHermesWebhookDeliveryCommand(
         invocation.id,
         input.conversation.workspaceId,
-        input.message.id,
+        input.message.correlationId,
+        input.message.domainEventId,
       );
       await getAsyncBus().enqueue(command);
     }
     return;
   }
 
-  const command = createBotInvokeCommand(invocation.id, input.conversation.workspaceId, input.message.id);
+  const command = createBotInvokeCommand(
+    invocation.id,
+    input.conversation.workspaceId,
+    input.message.correlationId,
+    input.message.domainEventId,
+  );
   await getAsyncBus().enqueue(command);
 }
 
@@ -443,6 +470,9 @@ async function getOrCreateInvocation(
         messageId: message.id,
         threadId: message.threadId,
         messageContent: message.content,
+        domainEventId: message.domainEventId,
+        correlationId: message.correlationId,
+        automationDepth: message.automationDepth,
         triggeredAt: new Date().toISOString(),
       },
     })
@@ -465,7 +495,8 @@ async function getOrCreateInvocation(
 function createBotInvokeCommand(
   invocationId: string,
   workspaceId: string | null,
-  triggerMessageId: string,
+  correlationId: string,
+  causationId: string,
 ): QueueCommand<BotInvokePayload> {
   return {
     queue: BOT_QUEUE_NAME,
@@ -482,8 +513,8 @@ function createBotInvokeCommand(
       aggregate: { type: "bot_invocation", id: invocationId },
       actor: { type: "system", id: "thechat" },
       tenant: workspaceId ? { workspaceId } : undefined,
-      correlationId: triggerMessageId,
-      causationId: triggerMessageId,
+      correlationId,
+      causationId,
       idempotencyKey: `bot-invocation:${invocationId}`,
       occurredAt: new Date().toISOString(),
       payload: { invocationId },
@@ -494,7 +525,8 @@ function createBotInvokeCommand(
 function createHermesWebhookDeliveryCommand(
   invocationId: string,
   workspaceId: string | null,
-  triggerMessageId: string,
+  correlationId: string,
+  causationId: string,
 ): QueueCommand<HermesWebhookDeliveryPayload> {
   return {
     queue: BOT_QUEUE_NAME,
@@ -511,8 +543,8 @@ function createHermesWebhookDeliveryCommand(
       aggregate: { type: "bot_invocation", id: invocationId },
       actor: { type: "system", id: "thechat" },
       tenant: workspaceId ? { workspaceId } : undefined,
-      correlationId: triggerMessageId,
-      causationId: triggerMessageId,
+      correlationId,
+      causationId,
       idempotencyKey: `bot-hermes-webhook-delivery:${invocationId}`,
       occurredAt: new Date().toISOString(),
       payload: { invocationId },
@@ -743,6 +775,7 @@ async function prepareHermesPlatformEvent(
       }
     : null;
   const requestJson = {
+    ...recordFromJson(loaded.invocation.requestJson),
     platform: "thechat",
     deliveryMode,
     chatId,
@@ -1084,13 +1117,26 @@ export async function publishHermesPlatformMessage(input: {
             .where(eq(conversationThreads.id, target.threadId));
         }
 
+        const automation = nextAutomationContext(
+          target.invocation,
+          target.invocation?.triggerMessageId ?? inserted.id,
+        );
+        const targetBotIds = await resolveMessageBotTargetIds(tx, {
+          conversationId: inserted.conversationId,
+          content: inserted.content,
+          senderId: inserted.senderId,
+          senderType: "bot",
+        });
         const event = createChatMessageSentV1({
           messageId: inserted.id,
+          conversationId: inserted.conversationId,
+          targetBotIds,
+          messageKind: "bot_response",
+          automationDepth: automation.automationDepth,
           senderId: inserted.senderId,
           senderType: "bot",
           workspaceId: target.conversation.workspaceId,
-          correlationId:
-            target.invocation?.triggerMessageId ?? inserted.id,
+          correlationId: automation.correlationId,
           causationId: target.invocation?.id,
           occurredAt: inserted.createdAt,
         });
@@ -1399,12 +1445,20 @@ async function failInvocation(
         .set({ responseMessageId: inserted.id })
         .where(eq(botInvocations.id, invocationId));
 
+      const automation = nextAutomationContext(
+        loaded.invocation,
+        loaded.triggerMessage.id,
+      );
       const event = createChatMessageSentV1({
         messageId: inserted.id,
+        conversationId: inserted.conversationId,
+        targetBotIds: [],
+        messageKind: "system_failure",
+        automationDepth: automation.automationDepth,
         senderId: inserted.senderId,
         senderType: "bot",
         workspaceId: loaded.conversation.workspaceId,
-        correlationId: loaded.triggerMessage.id,
+        correlationId: automation.correlationId,
         causationId: invocationId,
         occurredAt: inserted.createdAt,
       });

@@ -1,7 +1,7 @@
-FROM node:22-slim AS builder
+FROM node:22.23.1-slim@sha256:53ada149d435c38b14476cb57e4a7da73c15595aba79bd6971b547ceb6d018bf AS builder
 
-RUN corepack enable && corepack prepare pnpm@latest --activate
-RUN npm i -g bun
+RUN corepack enable && corepack prepare pnpm@10.28.2 --activate
+RUN npm i -g bun@1.3.14
 
 WORKDIR /app
 
@@ -24,7 +24,7 @@ COPY packages/api/ packages/api/
 RUN cd packages/api && bun build src/index.ts src/scripts/worker.ts --outdir dist --target bun
 
 # --- Production stage ---
-FROM oven/bun:1-slim
+FROM oven/bun:1.3.14-slim@sha256:d56a2534ffd262e92c12fd3249d3924d296d97086da773f821d7d0477435ea04
 
 WORKDIR /app
 

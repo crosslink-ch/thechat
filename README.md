@@ -96,56 +96,88 @@ Starts the Vite dev server and the Tauri app with hot reload.
 
 Message creation uses a transactional outbox: the message row and a versioned
 `chat.message.sent` event are committed in one PostgreSQL transaction. The API
-does not contact Kafka. The worker reloads the canonical message and sender by
-message ID, detects bot mentions and Hermes DMs, and then uses the existing
-BullMQ bot queue.
+does not contact Kafka. The event stores IDs rather than message content, but it
+also captures the eligible target-bot IDs, message kind, and automation depth in
+the message transaction. This keeps replay routing stable when bots are added or
+renamed.
+The worker reloads the canonical message and sender, then uses the existing
+BullMQ bot queue. System-failure messages never trigger bots, and bot-authored
+chains stop at a causal depth of eight.
 
 `DOMAIN_EVENTS_DRIVER=outbox` (the application default) claims and handles
 outbox events directly, so tests and existing deployments do not need Kafka.
 `DOMAIN_EVENTS_DRIVER=kafka` runs an outbox relay and consumes the shared topic
-with KafkaJS. Message events are keyed by conversation ID for per-conversation
-partition ordering. Defaults are:
+with KafkaJS. Message events are keyed by conversation ID, so Kafka preserves
+the relay's order within a conversation partition. Concurrent source
+transactions do not claim a strict client-request total order.
+
+Defaults are:
 
 ```text
+DOMAIN_EVENTS_MAX_ATTEMPTS=25
+DOMAIN_EVENTS_LOCK_TIMEOUT_MS=300000
 KAFKA_TOPIC=thechat.domain-events.v1
-KAFKA_AUTO_CREATE_TOPICS=true
+KAFKA_DEAD_LETTER_TOPIC=thechat.domain-events.v1.dlq
+KAFKA_AUTO_CREATE_TOPICS=false
 KAFKA_TOPIC_PARTITIONS=3
 KAFKA_FROM_BEGINNING=true
 KAFKA_CONSUMER_GROUP=thechat-message-events-v1
 KAFKA_CLIENT_ID=thechat-worker
 ```
 
-To run only the broker or exercise the env-gated real round-trip test:
+To run the env-gated real broker tests:
 
 ```bash
-docker compose up -d postgres kafka
+docker compose up -d postgres redis kafka
 pnpm db:migrate
-KAFKA_BROKERS=localhost:19092 pnpm --filter @thechat/api test -- src/events/kafka.integration.test.ts
+KAFKA_BROKERS=localhost:19092 pnpm test:kafka
 ```
+
+To run the complete bot suite through Kafka instead of direct outbox handling,
+also set `THECHAT_BOTS_TEST_EVENTS_DRIVER=kafka` and use a unique topic and
+consumer group. Ordinary tests force outbox mode and remain broker-free.
 
 Kafka mode requires comma-separated `KAFKA_BROKERS`. TLS is enabled with
 `KAFKA_SSL=true`; optional SASL uses `KAFKA_SASL_MECHANISM` (`plain`,
 `scram-sha-256`, or `scram-sha-512`), `KAFKA_SASL_USERNAME`, and
 `KAFKA_SASL_PASSWORD`. Local development sets
 `KAFKA_AUTO_CREATE_TOPICS=true`; production should leave it false and
-pre-create the topic with the required partition and replication settings.
-New consumer groups replay retained events by default; set
-`KAFKA_FROM_BEGINNING=false` only when intentionally starting at the topic's
-current end.
+pre-create both the main and DLQ topics with the required partition and
+replication settings. New consumer groups replay retained events by default;
+set `KAFKA_FROM_BEGINNING=false` only when intentionally starting at the
+current end. For a new event type or version, deploy consumer support before any
+producer can emit it; an older consumer intentionally skips unknown types and
+quarantines unsupported versions of types it already knows.
 
 Delivery is at least once. A relay crash after Kafka accepts an event but before
 the outbox row is marked published can produce a duplicate. Consumers must be
-idempotent; message mention handling relies on the database uniqueness of
-`bot_invocations(bot_id, trigger_message_id)` and deterministic BullMQ job IDs.
-This does not claim exactly-once processing.
+idempotent; message handling uses stable event target IDs, the unique
+`bot_invocations(bot_id, trigger_message_id)` key, and deterministic BullMQ job
+IDs. A failed BullMQ enqueue leaves the source event unacknowledged, so retry
+reconciles the already-created invocation. This does not claim exactly-once
+processing.
 
-The `apache/kafka:4.3.1` KRaft broker in `compose.yml` is a single-node,
-development-only service. Production should use a managed or operator-backed
-multi-broker Kafka cluster, pre-create and appropriately partition/replicate the
-topic, configure retention and monitoring, and supply TLS/SASL credentials via
-secrets. Published outbox rows should also be pruned or archived under an
-operations-defined retention policy. Do not use the Compose broker for
-production.
+Malformed Kafka records, unsupported versions of known event types, invalid
+event-specific payloads, and explicitly classified permanent handler failures
+are published to `KAFKA_DEAD_LETTER_TOPIC` before their source offsets are
+acknowledged. Kafka auto-commit is disabled; the consumer commits the next
+offset only after successful handling, an intentional unknown type skip, or an
+acknowledged DLQ publication. Transient handler, database, and Redis failures
+remain uncommitted for at-least-once replay. DLQ metadata records the original
+byte counts and stores bounded key/value excerpts so a near-limit poison record
+cannot make its own DLQ write oversized. Invalid/permanent direct-outbox events
+are quarantined immediately; transient failures back off and are quarantined
+with `dead_at` after `DOMAIN_EVENTS_MAX_ATTEMPTS`. Later rows for that
+conversation can then advance. Review and repair a quarantined row before
+clearing `dead_at`, resetting `attempts`, and setting `available_at=now()`.
+
+The `apache/kafka:4.3.1` KRaft image in `compose.yml` is digest-pinned but remains
+a single-node, development-only service. Production should use a managed or
+operator-backed multi-broker Kafka cluster, retain both topics appropriately,
+and supply TLS/SASL credentials via secrets. Monitor worker restarts, consumer
+lag, DLQ traffic, old unpublished rows, and `event_outbox.dead_at`. Published
+outbox rows should be pruned or archived under an operations-defined retention
+policy. Do not use the Compose broker for production.
 
 ### Rust profiling
 

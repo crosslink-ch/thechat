@@ -50,6 +50,13 @@
       "when": 1783626069336,
       "tag": "0006_right_wallow",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1783632363761,
+      "tag": "0007_little_mathemanic",
+      "breakpoints": true
     }
   ]
 }
