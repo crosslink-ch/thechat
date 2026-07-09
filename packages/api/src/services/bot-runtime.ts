@@ -1,5 +1,5 @@
 import crypto from "crypto";
-import { and, asc, desc, eq, inArray } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, lte } from "drizzle-orm";
 import { SpanStatusCode } from "@opentelemetry/api";
 import type {
   BotInvocationPublic,
@@ -35,6 +35,7 @@ export const BOT_QUEUE_NAME = "thechat:bots";
 export const BOT_INVOKE_JOB_NAME = "bot.invoke";
 export const HERMES_WEBHOOK_DELIVERY_JOB_NAME = "bot.hermes_webhook.deliver";
 const MAX_THREAD_TITLE_LENGTH = 255;
+const DEFAULT_HERMES_DISPATCH_TIMEOUT_MS = 2 * 60 * 1000;
 
 type BotKind = "webhook" | "hermes";
 type ConversationType = "direct" | "group";
@@ -200,6 +201,7 @@ export async function listConversationBotRuntime(conversationId: string, userId:
     },
     async (span) => {
       await requireConversationParticipant(conversationId, userId);
+      await failTimedOutHermesDispatchesForConversation(conversationId);
 
       const activeInvocationRows = await db
         .select({
@@ -247,6 +249,104 @@ export async function listConversationBotRuntime(conversationId: string, userId:
       };
     },
   );
+}
+
+function hermesDispatchTimeoutMs() {
+  const raw = process.env.HERMES_DISPATCH_TIMEOUT_MS;
+  if (!raw) return DEFAULT_HERMES_DISPATCH_TIMEOUT_MS;
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed > 0
+    ? parsed
+    : DEFAULT_HERMES_DISPATCH_TIMEOUT_MS;
+}
+
+function formatTimeout(timeoutMs: number) {
+  const seconds = Math.round(timeoutMs / 1000);
+  if (seconds < 60) return `${seconds} seconds`;
+  const minutes = Math.round(seconds / 60);
+  return `${minutes} minute${minutes === 1 ? "" : "s"}`;
+}
+
+function hermesDispatchTimeoutCutoff(timeoutMs: number) {
+  return new Date(Date.now() - timeoutMs);
+}
+
+function hermesDispatchTimedOut(createdAt: Date, timeoutMs: number) {
+  return createdAt.getTime() <= Date.now() - timeoutMs;
+}
+
+function hermesDispatchTimeoutError(timeoutMs: number) {
+  return new Error(
+    `Hermes dispatch timed out after ${formatTimeout(timeoutMs)}; the gateway or worker did not claim the task.`,
+  );
+}
+
+async function failTimedOutHermesDispatchesForConversation(conversationId: string) {
+  const timeoutMs = hermesDispatchTimeoutMs();
+  const staleQueued = await db
+    .select({ id: botInvocations.id })
+    .from(botInvocations)
+    .where(
+      and(
+        eq(botInvocations.conversationId, conversationId),
+        eq(botInvocations.adapterKind, "hermes"),
+        eq(botInvocations.status, "queued"),
+        lte(botInvocations.createdAt, hermesDispatchTimeoutCutoff(timeoutMs)),
+      ),
+    );
+
+  for (const invocation of staleQueued) {
+    await failInvocation(invocation.id, hermesDispatchTimeoutError(timeoutMs), {
+      onlyQueuedHermes: true,
+    });
+  }
+}
+
+async function failTimedOutHermesDispatchesForBot(botId: string) {
+  const timeoutMs = hermesDispatchTimeoutMs();
+  const staleQueued = await db
+    .select({ id: botInvocations.id })
+    .from(botInvocations)
+    .where(
+      and(
+        eq(botInvocations.botId, botId),
+        eq(botInvocations.adapterKind, "hermes"),
+        eq(botInvocations.status, "queued"),
+        lte(botInvocations.createdAt, hermesDispatchTimeoutCutoff(timeoutMs)),
+      ),
+    );
+
+  for (const invocation of staleQueued) {
+    await failInvocation(invocation.id, hermesDispatchTimeoutError(timeoutMs), {
+      onlyQueuedHermes: true,
+    });
+  }
+}
+
+async function failHermesDispatchIfTimedOut(
+  invocationId: string,
+  timeoutMs = hermesDispatchTimeoutMs(),
+  createdAt?: Date,
+) {
+  if (createdAt && !hermesDispatchTimedOut(createdAt, timeoutMs)) return false;
+  if (!createdAt) {
+    const [row] = await db
+      .select({ createdAt: botInvocations.createdAt })
+      .from(botInvocations)
+      .where(
+        and(
+          eq(botInvocations.id, invocationId),
+          eq(botInvocations.adapterKind, "hermes"),
+          eq(botInvocations.status, "queued"),
+        ),
+      )
+      .limit(1);
+    if (!row || !hermesDispatchTimedOut(row.createdAt, timeoutMs)) return false;
+  }
+
+  return failInvocation(invocationId, hermesDispatchTimeoutError(timeoutMs), {
+    onlyQueuedHermes: true,
+  });
 }
 
 export async function startBotWorker(options: { concurrency?: number } = {}): Promise<AsyncWorkerRuntime> {
@@ -529,6 +629,7 @@ export interface HermesPlatformEvent {
 interface PreparedHermesPlatformEvent {
   event: HermesPlatformEvent;
   requestJson: Record<string, unknown>;
+  createdAt: Date;
 }
 
 async function claimHermesPlatformInvocation(
@@ -538,6 +639,11 @@ async function claimHermesPlatformInvocation(
   const prepared = await prepareHermesPlatformEvent(invocationId, deliveryMode);
   if (!prepared) {
     await failInvocation(invocationId, new Error("Hermes invocation context is incomplete"));
+    return null;
+  }
+
+  const timeoutMs = hermesDispatchTimeoutMs();
+  if (await failHermesDispatchIfTimedOut(invocationId, timeoutMs, prepared.createdAt)) {
     return null;
   }
 
@@ -557,10 +663,14 @@ async function claimHermesPlatformInvocation(
         eq(botInvocations.id, invocationId),
         eq(botInvocations.status, "queued"),
         eq(botInvocations.adapterKind, "hermes"),
+        gt(botInvocations.createdAt, hermesDispatchTimeoutCutoff(timeoutMs)),
       ),
     )
     .returning({ id: botInvocations.id });
-  if (!claimed) return null;
+  if (!claimed) {
+    await failHermesDispatchIfTimedOut(invocationId, timeoutMs);
+    return null;
+  }
 
   await publishInvocationUpdate(invocationId);
   return prepared.event;
@@ -577,6 +687,7 @@ export async function claimHermesPlatformEvents(botId: string, limit = 10): Prom
     async (span) => {
       const cappedLimit = Math.max(1, Math.min(limit, 50));
       span.setAttribute("thechat.hermes_platform.events.limit", cappedLimit);
+      await failTimedOutHermesDispatchesForBot(botId);
       const pending = await db
         .select({ id: botInvocations.id })
         .from(botInvocations)
@@ -587,6 +698,7 @@ export async function claimHermesPlatformEvents(botId: string, limit = 10): Prom
             eq(botInvocations.adapterKind, "hermes"),
             eq(botInvocations.botId, botId),
             eq(bots.kind, "hermes"),
+            gt(botInvocations.createdAt, hermesDispatchTimeoutCutoff(hermesDispatchTimeoutMs())),
           ),
         )
         .orderBy(asc(botInvocations.createdAt))
@@ -643,6 +755,7 @@ async function prepareHermesPlatformEvent(
   };
 
   return {
+    createdAt: loaded.invocation.createdAt,
     requestJson,
     event: {
       id: invocationId,
@@ -801,12 +914,16 @@ async function resolveHermesPlatformMessageTarget(input: {
     if (input.conversationId && input.conversationId !== loaded.conversation.id) {
       throw new ServiceError("Conversation does not match invocation", 400);
     }
+    const threadId = resolveInvocationThreadId(loaded);
+    if (input.threadId && input.threadId !== threadId) {
+      throw new ServiceError("Thread does not match invocation", 400);
+    }
     return {
       invocation: loaded.invocation,
       bot: loaded.bot,
       botName: loaded.botName,
       conversation: loaded.conversation,
-      threadId: loaded.invocation.threadId ?? null,
+      threadId,
     };
   }
 
@@ -856,6 +973,17 @@ async function resolveHermesPlatformMessageTarget(input: {
     conversation,
     threadId,
   };
+}
+
+function resolveInvocationThreadId(
+  loaded: NonNullable<Awaited<ReturnType<typeof loadInvocationContext>>>,
+) {
+  const requestJson = recordFromJson(loaded.invocation.requestJson);
+  const requestThreadId =
+    typeof requestJson.threadId === "string" && requestJson.threadId
+      ? requestJson.threadId
+      : null;
+  return loaded.invocation.threadId ?? loaded.triggerMessage.threadId ?? requestThreadId ?? null;
 }
 
 export async function publishHermesPlatformMessage(input: {
@@ -1096,7 +1224,7 @@ export async function publishHermesPlatformTyping(input: {
   if (input.conversationId && input.conversationId !== loaded.conversation.id) {
     throw new ServiceError("Conversation does not match invocation", 400);
   }
-  const threadId = loaded.invocation.threadId ?? loaded.triggerMessage.threadId ?? null;
+  const threadId = resolveInvocationThreadId(loaded);
   if (input.threadId && input.threadId !== threadId) {
     throw new ServiceError("Thread does not match invocation", 400);
   }
@@ -1150,7 +1278,7 @@ export async function publishHermesPlatformProgress(
         invocationId: loaded.invocation.id,
         botId: loaded.bot.id,
         conversationId: loaded.conversation.id,
-        threadId: loaded.invocation.threadId ?? null,
+        threadId: resolveInvocationThreadId(loaded),
         type: input.type,
         status: input.status ?? null,
         toolCallId: input.toolCallId ?? null,
@@ -1176,7 +1304,7 @@ async function updateHermesThreadTitleFromProgress(
   loaded: NonNullable<Awaited<ReturnType<typeof loadInvocationContext>>>,
   title: string | null,
 ) {
-  const threadId = loaded.invocation.threadId ?? null;
+  const threadId = resolveInvocationThreadId(loaded);
   if (!threadId || !title) return null;
 
   const now = new Date();
@@ -1215,11 +1343,22 @@ async function publishConversationThreadUpdate(
   await publishWsEventToUsers(participantRows.map((p) => p.userId), event);
 }
 
-async function failInvocation(invocationId: string, error: any) {
+async function failInvocation(
+  invocationId: string,
+  error: any,
+  options: { onlyQueuedHermes?: boolean } = {},
+) {
   const message = error?.message ?? String(error);
   const loaded = await loadInvocationContext(invocationId);
   const failedAt = new Date();
-  await db
+  const where = options.onlyQueuedHermes
+    ? and(
+        eq(botInvocations.id, invocationId),
+        eq(botInvocations.adapterKind, "hermes"),
+        eq(botInvocations.status, "queued"),
+      )
+    : eq(botInvocations.id, invocationId);
+  const [failed] = await db
     .update(botInvocations)
     .set({
       status: "failed",
@@ -1227,7 +1366,9 @@ async function failInvocation(invocationId: string, error: any) {
       completedAt: failedAt,
       updatedAt: failedAt,
     })
-    .where(eq(botInvocations.id, invocationId));
+    .where(where)
+    .returning({ id: botInvocations.id });
+  if (!failed) return false;
 
   if (loaded?.bot.kind === "hermes") {
     const content = `Hermes run failed: ${message}`;
@@ -1235,7 +1376,7 @@ async function failInvocation(invocationId: string, error: any) {
       .insert(messages)
       .values({
         conversationId: loaded.conversation.id,
-        threadId: loaded.invocation.threadId ?? loaded.triggerMessage.threadId,
+        threadId: resolveInvocationThreadId(loaded),
         senderId: loaded.bot.userId,
         content,
         parts: [{ type: "text", text: content }],
@@ -1249,7 +1390,14 @@ async function failInvocation(invocationId: string, error: any) {
   }
 
   await publishInvocationUpdate(invocationId);
+  return true;
 }
+
+export const __botRuntimeInternalsForTests = {
+  failQueuedHermesDispatch(invocationId: string, error: Error) {
+    return failInvocation(invocationId, error, { onlyQueuedHermes: true });
+  },
+};
 
 async function loadInvocationContext(invocationId: string) {
   const [row] = await db

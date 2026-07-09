@@ -17,7 +17,11 @@ import { messageRoutes } from "../messages";
 import { botRuntimeRoutes } from "../bot-runtime";
 import { hermesPlatformRoutes } from "../hermes-platform";
 import { botRoutes } from "./index";
-import { closeBotRuntimeForTests, startBotWorker } from "../services/bot-runtime";
+import {
+  __botRuntimeInternalsForTests,
+  closeBotRuntimeForTests,
+  startBotWorker,
+} from "../services/bot-runtime";
 import {
   closeBotProgressStoreForTests,
   createLocalBotProgressStoreForTests,
@@ -175,6 +179,14 @@ async function invocationsForMessage(messageId: string) {
     .from(botInvocations)
     .where(eq(botInvocations.triggerMessageId, messageId))
     .orderBy(asc(botInvocations.createdAt));
+}
+
+async function markInvocationDispatchStale(invocationId: string) {
+  const staleAt = new Date(Date.now() - 5 * 60 * 1000);
+  await db
+    .update(botInvocations)
+    .set({ createdAt: staleAt, updatedAt: staleAt })
+    .where(eq(botInvocations.id, invocationId));
 }
 
 async function botMessagesForConversation(conversationId: string, botUserId: string) {
@@ -1603,6 +1615,192 @@ describe("Bots: runtime state", () => {
     }
   });
 
+  test("fails stale queued Hermes dispatches instead of leaving Activity active forever", async () => {
+    const human = await registerUser("RuntimeHermesDispatchTimeoutOwner");
+    const { workspaceId } = await createWorkspaceWithGeneralChannel(
+      human.token,
+      "Runtime Hermes Dispatch Timeout",
+    );
+    const botRes = await createBot(human.token, "RuntimeHermesDispatchTimeout", undefined, {
+      kind: "hermes",
+      workspaceId,
+    });
+    expect(botRes.status).toBe(200);
+
+    const dmRes = await req(
+      "POST",
+      "/conversations/dm",
+      { workspaceId, otherUserId: botRes.body.userId },
+      human.token,
+    );
+    expect(dmRes.status).toBe(200);
+
+    const sendRes = await req(
+      "POST",
+      `/messages/${dmRes.body.id}`,
+      { content: "This should time out if Hermes never claims it" },
+      human.token,
+    );
+    expect(sendRes.status).toBe(200);
+
+    const queued = await waitForResult(async () => {
+      const rows = await invocationsForMessage(sendRes.body.id);
+      return rows.find((row) => row.status === "queued");
+    }, "queued Hermes invocation for dispatch timeout");
+
+    await markInvocationDispatchStale(queued.id);
+
+    const runtimeRes = await req(
+      "GET",
+      `/bot-runtime/conversations/${dmRes.body.id}`,
+      undefined,
+      human.token,
+    );
+    expect(runtimeRes.status).toBe(200);
+    expect(runtimeRes.body.invocations).not.toContainEqual(
+      expect.objectContaining({ id: queued.id }),
+    );
+
+    const [failed] = await invocationsForMessage(sendRes.body.id);
+    expect(failed).toEqual(
+      expect.objectContaining({
+        id: queued.id,
+        status: "failed",
+        error: expect.stringContaining("Hermes dispatch timed out"),
+        responseMessageId: expect.any(String),
+      }),
+    );
+    const botMessages = await botMessagesForConversation(dmRes.body.id, botRes.body.userId);
+    expect(botMessages.map((message) => message.content)).toEqual(
+      expect.arrayContaining([expect.stringContaining("Hermes dispatch timed out")]),
+    );
+  });
+
+  test("polling does not claim stale queued Hermes dispatches", async () => {
+    const human = await registerUser("RuntimeHermesStalePollingOwner");
+    const { workspaceId } = await createWorkspaceWithGeneralChannel(
+      human.token,
+      "Runtime Hermes Stale Polling",
+    );
+    const botRes = await createBot(human.token, "RuntimeHermesStalePolling", undefined, {
+      kind: "hermes",
+      workspaceId,
+    });
+    expect(botRes.status).toBe(200);
+
+    const dmRes = await req(
+      "POST",
+      "/conversations/dm",
+      { workspaceId, otherUserId: botRes.body.userId },
+      human.token,
+    );
+    expect(dmRes.status).toBe(200);
+
+    const sendRes = await req(
+      "POST",
+      `/messages/${dmRes.body.id}`,
+      { content: "Hermes should not claim this stale polling task" },
+      human.token,
+    );
+    expect(sendRes.status).toBe(200);
+
+    const queued = await waitForResult(async () => {
+      const rows = await invocationsForMessage(sendRes.body.id);
+      return rows.find((row) => row.status === "queued");
+    }, "queued Hermes invocation for stale polling timeout");
+
+    await markInvocationDispatchStale(queued.id);
+
+    const claimRes = await req(
+      "GET",
+      "/hermes-platform/events?limit=1",
+      undefined,
+      botRes.body.apiKey,
+    );
+    expect(claimRes.status).toBe(200);
+    expect(claimRes.body.events).toEqual([]);
+
+    const [failed] = await invocationsForMessage(sendRes.body.id);
+    expect(failed).toEqual(
+      expect.objectContaining({
+        id: queued.id,
+        status: "failed",
+        error: expect.stringContaining("Hermes dispatch timed out"),
+        responseMessageId: expect.any(String),
+      }),
+    );
+    const botMessages = await botMessagesForConversation(dmRes.body.id, botRes.body.userId);
+    expect(botMessages.map((message) => message.content)).toEqual(
+      expect.arrayContaining([expect.stringContaining("Hermes dispatch timed out")]),
+    );
+  });
+
+  test("does not fail a Hermes dispatch after Hermes claims it", async () => {
+    const human = await registerUser("RuntimeHermesDispatchRaceOwner");
+    const { workspaceId } = await createWorkspaceWithGeneralChannel(
+      human.token,
+      "Runtime Hermes Dispatch Race",
+    );
+    const botRes = await createBot(human.token, "RuntimeHermesDispatchRace", undefined, {
+      kind: "hermes",
+      workspaceId,
+    });
+    expect(botRes.status).toBe(200);
+
+    const dmRes = await req(
+      "POST",
+      "/conversations/dm",
+      { workspaceId, otherUserId: botRes.body.userId },
+      human.token,
+    );
+    expect(dmRes.status).toBe(200);
+
+    const sendRes = await req(
+      "POST",
+      `/messages/${dmRes.body.id}`,
+      { content: "Hermes should claim this before the timeout failure wins" },
+      human.token,
+    );
+    expect(sendRes.status).toBe(200);
+
+    const queued = await waitForResult(async () => {
+      const rows = await invocationsForMessage(sendRes.body.id);
+      return rows.find((row) => row.status === "queued");
+    }, "queued Hermes invocation for dispatch timeout race");
+
+    const claimRes = await req(
+      "GET",
+      "/hermes-platform/events?limit=1",
+      undefined,
+      botRes.body.apiKey,
+    );
+    expect(claimRes.status).toBe(200);
+    expect(claimRes.body.events).toHaveLength(1);
+    expect(claimRes.body.events[0].invocationId).toBe(queued.id);
+
+    await markInvocationDispatchStale(queued.id);
+
+    const failed = await __botRuntimeInternalsForTests.failQueuedHermesDispatch(
+      queued.id,
+      new Error("Hermes dispatch timed out after 2 minutes"),
+    );
+    expect(failed).toBe(false);
+
+    const [running] = await invocationsForMessage(sendRes.body.id);
+    expect(running).toEqual(
+      expect.objectContaining({
+        id: queued.id,
+        status: "running",
+        error: null,
+        responseMessageId: null,
+      }),
+    );
+    const botMessages = await botMessagesForConversation(dmRes.body.id, botRes.body.userId);
+    expect(botMessages.map((message) => message.content)).not.toEqual(
+      expect.arrayContaining([expect.stringContaining("Hermes dispatch timed out")]),
+    );
+  });
+
   test("keeps concurrent Hermes DM invocations visible in one shared chat", async () => {
     const human = await registerUser("RuntimeHermesContinuityOwner");
     const { workspaceId } = await createWorkspaceWithGeneralChannel(
@@ -2064,6 +2262,46 @@ describe("Bots: runtime state", () => {
       "First threaded answer",
     ]);
 
+    const firstCompleteRes = await req(
+      "POST",
+      `/hermes-platform/invocations/${first.invocationId}/completed`,
+      { reason: "first threaded run done" },
+      botRes.body.apiKey,
+    );
+    expect(firstCompleteRes.status).toBe(200);
+
+    const asyncFollowUpRes = await req(
+      "POST",
+      "/hermes-platform/messages",
+      {
+        invocationId: first.invocationId,
+        threadId: null,
+        content: "Async watcher says the AWS SSO login is complete",
+        platformMessageId: "threaded-async-follow-up",
+      },
+      botRes.body.apiKey,
+    );
+    expect(asyncFollowUpRes.status).toBe(200);
+    expect(asyncFollowUpRes.body).toEqual(
+      expect.objectContaining({
+        threadId: first.threadId,
+        duplicate: false,
+      }),
+    );
+
+    const firstThreadMessagesAfterFollowUp = await req(
+      "GET",
+      `/messages/${dmRes.body.id}?threadId=${first.threadId}`,
+      undefined,
+      human.token,
+    );
+    expect(firstThreadMessagesAfterFollowUp.status).toBe(200);
+    expect(firstThreadMessagesAfterFollowUp.body.map((message: any) => message.content)).toEqual([
+      "First threaded prompt",
+      "First threaded answer",
+      "Async watcher says the AWS SSO login is complete",
+    ]);
+
     const secondThreadMessages = await req(
       "GET",
       `/messages/${dmRes.body.id}?threadId=${second.threadId}`,
@@ -2232,6 +2470,73 @@ describe("Bots: runtime state", () => {
       expect(delivery.payload.event.text).toBe("Deliver this through the bot worker");
       const [invocation] = await invocationsForMessage(sendRes.body.id);
       expect(invocation.status).toBe("running");
+    } finally {
+      webhook.stop();
+      await closeBotRuntimeForTests();
+    }
+  });
+
+  test("Hermes platform webhook delivery does not claim stale queued dispatches", async () => {
+    await closeBotRuntimeForTests();
+
+    const webhook = startWebhookServer();
+    const human = await registerUser("RuntimeHermesWorkerWebhookTimeoutOwner");
+    const { workspaceId } = await createWorkspaceWithGeneralChannel(
+      human.token,
+      "Runtime Hermes Worker Webhook Timeout",
+    );
+    const botRes = await createBot(human.token, "RuntimeHermesWorkerWebhookTimeout", undefined, {
+      kind: "hermes",
+      workspaceId,
+    });
+    expect(botRes.status).toBe(200);
+
+    const registerRes = await req(
+      "POST",
+      "/bots/me/webhook",
+      { url: webhook.url },
+      botRes.body.apiKey,
+    );
+    expect(registerRes.status).toBe(200);
+
+    const dmRes = await req(
+      "POST",
+      "/conversations/dm",
+      { workspaceId, otherUserId: botRes.body.userId },
+      human.token,
+    );
+    expect(dmRes.status).toBe(200);
+
+    try {
+      const sendRes = await req(
+        "POST",
+        `/messages/${dmRes.body.id}`,
+        { content: "Do not deliver this stale webhook task" },
+        human.token,
+      );
+      expect(sendRes.status).toBe(200);
+
+      const queued = await waitForResult(async () => {
+        const rows = await invocationsForMessage(sendRes.body.id);
+        return rows.find((row) => row.status === "queued");
+      }, "queued stale Hermes webhook invocation");
+      await markInvocationDispatchStale(queued.id);
+
+      await startBotWorkerForTest();
+      const failed = await waitForResult(async () => {
+        const [row] = await invocationsForMessage(sendRes.body.id);
+        return row?.status === "failed" ? row : null;
+      }, "stale Hermes webhook dispatch failure");
+
+      expect(failed).toEqual(
+        expect.objectContaining({
+          id: queued.id,
+          status: "failed",
+          error: expect.stringContaining("Hermes dispatch timed out"),
+          responseMessageId: expect.any(String),
+        }),
+      );
+      expect(webhook.requests).toHaveLength(0);
     } finally {
       webhook.stop();
       await closeBotRuntimeForTests();

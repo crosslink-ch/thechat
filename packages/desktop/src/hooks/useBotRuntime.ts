@@ -13,6 +13,7 @@ import {
 } from "../lib/bot-runtime-state";
 
 const BOT_RUNTIME_STALE_MS = 60_000;
+const BOT_RUNTIME_ACTIVE_REFETCH_MS = 15_000;
 
 export const botRuntimeQueryKey = (conversationId: string) =>
   ["bot-runtime", conversationId] as const;
@@ -44,6 +45,10 @@ export function useBotRuntime(
     queryFn: () => fetchBotRuntime(conversationId!, token!),
     enabled: enabled && !!conversationId && !!token,
     staleTime: BOT_RUNTIME_STALE_MS,
+    refetchInterval: (query) =>
+      hasActiveInvocation(query.state.data as BotRuntimeSnapshot | undefined)
+        ? BOT_RUNTIME_ACTIVE_REFETCH_MS
+        : false,
   });
 }
 
@@ -88,5 +93,14 @@ export function useBotRuntimeCache() {
   return useMemo(
     () => ({ mergeInvocationUpdate, mergeProgressEvent, invalidate }),
     [invalidate, mergeInvocationUpdate, mergeProgressEvent],
+  );
+}
+
+function hasActiveInvocation(snapshot: BotRuntimeSnapshot | undefined) {
+  return (
+    snapshot?.invocations.some(
+      (invocation) =>
+        invocation.status === "queued" || invocation.status === "running",
+    ) ?? false
   );
 }

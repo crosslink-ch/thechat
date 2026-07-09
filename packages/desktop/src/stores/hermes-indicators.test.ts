@@ -121,6 +121,39 @@ describe("useHermesIndicatorsStore", () => {
       expect(store().unreadScopes).toEqual({});
       expect(store().visibleScope).toBe(scopeKey);
     });
+
+    it("marks General unread for offscreen messages and clears when viewed", () => {
+      store().setVisibleScope(hermesScopeKey("conv-1", "t-1"));
+
+      store().markScopeUnread({
+        conversationId: "conv-1",
+        threadId: null,
+        botUserId: "u-bot",
+      });
+
+      const generalScopeKey = hermesScopeKey("conv-1", null);
+      expect(store().unreadScopes[generalScopeKey]).toEqual({
+        conversationId: "conv-1",
+        threadId: null,
+        botUserId: "u-bot",
+      });
+
+      store().setVisibleScope(generalScopeKey);
+
+      expect(store().unreadScopes).toEqual({});
+    });
+
+    it("does not mark the currently visible scope unread for messages", () => {
+      store().setVisibleScope(hermesScopeKey("conv-1", null));
+
+      store().markScopeUnread({
+        conversationId: "conv-1",
+        threadId: null,
+        botUserId: "u-bot",
+      });
+
+      expect(store().unreadScopes).toEqual({});
+    });
   });
 
   describe("pending approvals", () => {

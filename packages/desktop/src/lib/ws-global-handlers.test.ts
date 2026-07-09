@@ -102,6 +102,67 @@ describe("registerGlobalWsHandlers", () => {
     });
 
     expect(fireNotification).not.toHaveBeenCalled();
+    expect(
+      useHermesIndicatorsStore.getState().unreadScopes[
+        hermesScopeKey("conv-1", "background-thread")
+      ],
+    ).toEqual({
+      conversationId: "conv-1",
+      threadId: "background-thread",
+      botUserId: "u-bot",
+    });
+
+    cleanup();
+  });
+
+  it("marks General unread when a direct bot message arrives while a task is visible", () => {
+    useAuthStore.setState({
+      token: "token-1",
+      loading: false,
+      user: {
+        id: "u-me",
+        name: "Me",
+        email: "me@example.com",
+        avatar: null,
+        type: "human",
+      },
+    });
+    useHermesIndicatorsStore
+      .getState()
+      .setVisibleScope(hermesScopeKey("conv-1", "active-thread"));
+
+    const cleanup = registerGlobalWsHandlers(() => {});
+
+    wsEvents.emit("ws:new_message", {
+      conversationType: "direct",
+      message: {
+        id: "msg-general",
+        conversationId: "conv-1",
+        threadId: null,
+        senderId: "u-bot",
+        senderName: "Koda",
+        senderType: "bot",
+        content: "Ok it's good now",
+        parts: null,
+        createdAt: "2026-06-11T10:05:00.000Z",
+      },
+    });
+
+    expect(
+      useHermesIndicatorsStore.getState().unreadScopes[
+        hermesScopeKey("conv-1", null)
+      ],
+    ).toEqual({
+      conversationId: "conv-1",
+      threadId: null,
+      botUserId: "u-bot",
+    });
+    expect(fireNotification).not.toHaveBeenCalled();
+
+    useHermesIndicatorsStore
+      .getState()
+      .setVisibleScope(hermesScopeKey("conv-1", null));
+    expect(useHermesIndicatorsStore.getState().unreadScopes).toEqual({});
 
     cleanup();
   });
@@ -261,6 +322,7 @@ describe("registerGlobalWsHandlers", () => {
     });
 
     expect(fireNotification).not.toHaveBeenCalled();
+    expect(useHermesIndicatorsStore.getState().unreadScopes).toEqual({});
 
     cleanup();
   });
