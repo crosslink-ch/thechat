@@ -57,8 +57,6 @@ export function DmRoute() {
 
   const [typingUsers, setTypingUsers] = useState<Map<string, string>>(new Map());
   const typingTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
-  const [queuedPromptsByScope, setQueuedPromptsByScope] = useState<Record<string, string[]>>({});
-  const previousTaskActiveByScope = useRef<Record<string, boolean>>({});
 
   const otherParticipant = useMemo(
     () => conversation?.participants.find((p) => p.userId !== user?.id) ?? null,
@@ -99,19 +97,7 @@ export function DmRoute() {
   const threadsRef = useRef(threads);
   threadsRef.current = threads;
   const chatConversationId = conversation ? conversationId : null;
-  const activeScopeKey = hermesScopeKey(conversationId, activeThreadId);
-  const queuedPrompts = queuedPromptsByScope[activeScopeKey] ?? [];
   const taskActive = activeHermesProgress.invocations.length > 0;
-  const queuedCountsByThread = useMemo(() => {
-    const counts = new Map<string, number>();
-    const prefix = `${conversationId}:thread:`;
-    for (const [scopeKey, prompts] of Object.entries(queuedPromptsByScope)) {
-      if (!scopeKey.startsWith(prefix) || prompts.length === 0) continue;
-      counts.set(scopeKey.slice(prefix.length), prompts.length);
-    }
-    return counts;
-  }, [conversationId, queuedPromptsByScope]);
-  const generalQueuedCount = queuedPromptsByScope[hermesScopeKey(conversationId, null)]?.length ?? 0;
 
   // Attention indicators: which tasks in this DM need approval or finished unread.
   const pendingApprovals = useHermesIndicatorsStore((s) => s.pendingApprovals);
@@ -322,25 +308,6 @@ export function DmRoute() {
   );
   useScopedCommands(hermesTaskCommands);
 
-  const clearQueuedPrompts = useCallback((scopeKey: string) => {
-    setQueuedPromptsByScope((previous) => {
-      if (!previous[scopeKey]?.length) return previous;
-      const next = { ...previous };
-      delete next[scopeKey];
-      return next;
-    });
-  }, []);
-
-  const enqueueHermesPrompt = useCallback((scopeKey: string, content: string) => {
-    setQueuedPromptsByScope((previous) => ({
-      ...previous,
-      [scopeKey]: [
-        ...(previous[scopeKey] ?? []),
-        content,
-      ],
-    }));
-  }, []);
-
   const sendHermesMessageNow = useCallback((content: string, threadId: string | null) => {
     if (threadId === null) {
       channelSendMessage(content);
@@ -396,9 +363,6 @@ export function DmRoute() {
       return;
     }
     if (slash) {
-      if (canonical === "/new" || canonical === "/reset") {
-        clearQueuedPrompts(activeScopeKey);
-      }
       // Optimistically resolve approval cards: the gateway resolves pending
       // approvals oldest-first, so mirror that here. Covers both the inline
       // approval buttons (which send these commands) and typed commands.
@@ -416,45 +380,18 @@ export function DmRoute() {
       sendHermesMessageNow(content, activeThreadId);
       return;
     }
-    if (taskActive) {
-      enqueueHermesPrompt(activeScopeKey, content);
-      return;
-    }
+    // TheChat intentionally does not queue normal Hermes DM messages locally.
+    // Hermes owns the busy-turn policy: default messages can interrupt/steer
+    // according to gateway config, while /queue passes through to Hermes' FIFO.
     sendHermesMessageNow(content, activeThreadId);
   }, [
-    activeScopeKey,
     activeThreadId,
     channelSendMessage,
-    clearQueuedPrompts,
-    enqueueHermesPrompt,
     handleBranchCommand,
     isHermesDm,
     sendHermesMessageNow,
     slashCommands,
-    taskActive,
   ]);
-
-  useEffect(() => {
-    if (!isHermesDm) return;
-    const wasActive = previousTaskActiveByScope.current[activeScopeKey] ?? false;
-    previousTaskActiveByScope.current[activeScopeKey] = taskActive;
-    if (!wasActive || taskActive || queuedPrompts.length === 0) return;
-
-    const [nextPrompt] = queuedPrompts;
-    setQueuedPromptsByScope((previous) => {
-      const current = previous[activeScopeKey] ?? [];
-      if (current.length === 0) return previous;
-      const next = { ...previous };
-      const remaining = current.slice(1);
-      if (remaining.length > 0) {
-        next[activeScopeKey] = remaining;
-      } else {
-        delete next[activeScopeKey];
-      }
-      return next;
-    });
-    sendHermesMessageNow(nextPrompt, activeThreadId);
-  }, [activeScopeKey, activeThreadId, isHermesDm, queuedPrompts, sendHermesMessageNow, taskActive]);
 
   return (
     <div className="flex min-h-0 flex-1">
@@ -478,7 +415,6 @@ export function DmRoute() {
             mentions={mentions}
             scrollKey={`${conversationId}:${activeThreadId ?? "general"}`}
             taskActive={taskActive}
-            queuedCount={queuedPrompts.length}
             slashCommands={slashCommands}
           />
         ) : (
@@ -511,8 +447,6 @@ export function DmRoute() {
           activeThreadId={activeThreadId}
           onSelectThread={setActiveThreadId}
           onCreateThread={handleCreateThread}
-          queuedCountsByThread={queuedCountsByThread}
-          generalQueuedCount={generalQueuedCount}
           approvalThreadIds={approvalThreadIds}
           generalNeedsApproval={generalNeedsApproval}
           unreadThreadIds={unreadThreadIds}

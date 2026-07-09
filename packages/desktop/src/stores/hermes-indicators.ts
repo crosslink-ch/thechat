@@ -51,6 +51,7 @@ interface HermesIndicatorsStore {
   visibleScope: string | null;
   trackInvocation: (invocation: BotInvocationPublic) => void;
   trackProgressEvent: (event: BotInvocationProgressEventPublic) => void;
+  markScopeUnread: (scope: HermesUnreadScope) => void;
   resolveApproval: (eventId: string) => void;
   seedFromSnapshot: (
     conversationId: string,
@@ -171,6 +172,21 @@ export const useHermesIndicatorsStore = create<HermesIndicatorsStore>()((set) =>
         pendingApprovals: state.pendingApprovals.filter(
           (p) => !resolved.has(p.eventId),
         ),
+      };
+    });
+  },
+
+  markScopeUnread: (scope) => {
+    set((state) => {
+      const scopeKey = hermesScopeKey(scope.conversationId, scope.threadId);
+      if (scopeKey === state.visibleScope || state.unreadScopes[scopeKey]) {
+        return state;
+      }
+      return {
+        unreadScopes: {
+          ...state.unreadScopes,
+          [scopeKey]: scope,
+        },
       };
     });
   },

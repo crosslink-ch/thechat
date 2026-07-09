@@ -365,8 +365,8 @@ function ThreadRowBadges({
       {unread && !needsApproval && (
         <span
           className="size-1.5 rounded-full bg-accent"
-          title="Finished - not read yet"
-          aria-label="Unread result"
+          title="Unread"
+          aria-label="Unread"
         />
       )}
     </span>

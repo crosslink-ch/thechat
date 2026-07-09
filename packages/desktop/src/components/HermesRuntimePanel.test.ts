@@ -38,6 +38,41 @@ describe("Hermes runtime progress state", () => {
     expect(updated.events).toEqual([]);
     expect(updated.invocations).toEqual([]);
   });
+
+  it("reconciles a failed queued dispatch without dropping other active runs", () => {
+    const runningInvocation = invocation({
+      id: "running-task",
+      status: "running",
+      threadId: "thread-running",
+    });
+    const queuedInvocation = invocation({
+      id: "queued-task",
+      status: "queued",
+      threadId: "thread-queued",
+    });
+    const snapshot: BotRuntimeSnapshot = {
+      invocations: [runningInvocation, queuedInvocation],
+      events: [
+        progressEvent(1, { invocationId: "running-task" }),
+        progressEvent(2, { invocationId: "queued-task" }),
+      ],
+    };
+
+    const updated = mergeRuntimeUpdate(
+      snapshot,
+      invocation({
+        id: "queued-task",
+        status: "failed",
+        threadId: "thread-queued",
+        error: "Hermes dispatch timed out",
+      }),
+    );
+
+    expect(updated.invocations).toEqual([runningInvocation]);
+    expect(updated.events).toEqual([
+      expect.objectContaining({ invocationId: "running-task" }),
+    ]);
+  });
 });
 
 function invocation(
@@ -68,7 +103,10 @@ function invocation(
   };
 }
 
-function progressEvent(sequence: number): BotInvocationProgressEventPublic {
+function progressEvent(
+  sequence: number,
+  overrides: Partial<BotInvocationProgressEventPublic> = {},
+): BotInvocationProgressEventPublic {
   const timestamp = new Date(Date.UTC(2026, 0, 1, 0, 0, sequence)).toISOString();
   return {
     id: `event-${sequence}`,
@@ -86,5 +124,6 @@ function progressEvent(sequence: number): BotInvocationProgressEventPublic {
     payload: null,
     occurredAt: timestamp,
     createdAt: timestamp,
+    ...overrides,
   };
 }

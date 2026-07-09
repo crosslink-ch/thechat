@@ -46,10 +46,17 @@ export function registerGlobalWsHandlers(navigate: Navigate): () => void {
     message: msg,
     conversationType,
   }: WsEvents["ws:new_message"]) => {
+    const currentUserId = useAuthStore.getState().user?.id;
     if (conversationType === "group") {
       useConversationsStore.getState().markChannelUnread(msg.conversationId);
     }
-    const currentUserId = useAuthStore.getState().user?.id;
+    if (conversationType === "direct" && msg.senderId !== currentUserId) {
+      useHermesIndicatorsStore.getState().markScopeUnread({
+        conversationId: msg.conversationId,
+        threadId: msg.threadId ?? null,
+        botUserId: msg.senderType === "bot" ? msg.senderId : null,
+      });
+    }
     if (
       conversationType === "direct" &&
       msg.senderId !== currentUserId &&
