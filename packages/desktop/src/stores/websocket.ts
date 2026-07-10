@@ -12,7 +12,12 @@ interface WebSocketStore {
   reconnecting: boolean;
   connect: (token: string) => void;
   disconnect: () => void;
-  sendMessage: (conversationId: string, content: string, threadId?: string | null) => void;
+  sendMessage: (
+    conversationId: string,
+    content: string,
+    threadId?: string | null,
+    clientMessageId?: string,
+  ) => void;
   sendTyping: (conversationId: string, threadId?: string | null) => void;
 }
 
@@ -90,6 +95,13 @@ function doConnect() {
       wsEvents.emit("ws:new_message", {
         message: event.message,
         conversationType: event.conversationType,
+        clientMessageId: event.clientMessageId,
+      });
+    } else if (event.type === "message_error") {
+      wsEvents.emit("ws:message_error", {
+        conversationId: event.conversationId,
+        clientMessageId: event.clientMessageId,
+        message: event.message,
       });
     } else if (event.type === "bot_invocation_updated") {
       wsEvents.emit("ws:bot_invocation_updated", {
@@ -220,12 +232,18 @@ export const useWebSocketStore = create<WebSocketStore>()(() => ({
     useWebSocketStore.setState({ connected: false, reconnecting: false });
   },
 
-  sendMessage: (conversationId: string, content: string, threadId?: string | null) => {
+  sendMessage: (
+    conversationId: string,
+    content: string,
+    threadId?: string | null,
+    clientMessageId?: string,
+  ) => {
     const event: WsClientEvent = {
       type: "send_message",
       conversationId,
       content,
       threadId: threadId ?? null,
+      clientMessageId,
     };
     if (ws?.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify(event));

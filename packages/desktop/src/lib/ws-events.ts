@@ -13,6 +13,12 @@ export type WsEvents = {
   "ws:new_message": {
     message: ChatMessage;
     conversationType: "direct" | "group";
+    clientMessageId?: string;
+  };
+  "ws:message_error": {
+    conversationId: string;
+    clientMessageId: string;
+    message: string;
   };
   "ws:bot_invocation_updated": {
     conversationId: string;

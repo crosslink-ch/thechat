@@ -9,6 +9,7 @@ import type { ActiveHermesInvocationProgress } from "../lib/hermes-progress";
 import type { MentionUser } from "./MentionList";
 import { HermesProgressInline } from "./HermesProgressInline";
 import type { HermesSlashCommand } from "../lib/hermes-slash-commands";
+import { MessageSendError } from "./MessageSendError";
 
 const DEFER_FORMATTING_MESSAGE_THRESHOLD = 40;
 const DEFER_FORMATTING_BATCH_SIZE = 4;
@@ -20,6 +21,7 @@ interface HermesDmChatViewProps {
   loading: boolean;
   loadingOlder?: boolean;
   hasOlderMessages?: boolean;
+  sendError?: string | null;
   typingUsers: Map<string, string>;
   progressInvocations: ActiveHermesInvocationProgress[];
   typingSuppressedUserIds: string[];
@@ -43,6 +45,7 @@ export function HermesDmChatView({
   loading,
   loadingOlder = false,
   hasOlderMessages = false,
+  sendError,
   typingUsers,
   progressInvocations,
   typingSuppressedUserIds,
@@ -334,6 +337,7 @@ export function HermesDmChatView({
           </button>
         )}
       </div>
+      <MessageSendError error={sendError} />
       <InputBar
         convId={undefined}
         onSend={handleSend}

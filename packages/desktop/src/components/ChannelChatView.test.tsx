@@ -39,6 +39,22 @@ describe("ChannelChatView", () => {
     expect(screen.getByText("Koda is typing...")).toBeInTheDocument();
   });
 
+  it("shows message send failures as an alert", () => {
+    render(
+      <ChannelChatView
+        messages={[]}
+        loading={false}
+        sendError="Thread not found"
+        typingUsers={new Map()}
+        onSend={() => {}}
+      />,
+    );
+
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Message not sent: Thread not found",
+    );
+  });
+
   it("does not use scrollIntoView for automatic chat scrolling", () => {
     render(
       <ChannelChatView

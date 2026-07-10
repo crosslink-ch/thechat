@@ -27,6 +27,7 @@ export function ChannelRoute() {
     conversationId: channelId,
     token,
     wsSendMessage,
+    selfUser: user,
   });
 
   const channelChatRef = useRef(channelChat);
@@ -42,9 +43,12 @@ export function ChannelRoute() {
 
   // Subscribe to WebSocket messages for this channel
   useEffect(() => {
-    const onMessage = ({ message: msg }: WsEvents["ws:new_message"]) => {
+    const onMessage = ({
+      message: msg,
+      clientMessageId,
+    }: WsEvents["ws:new_message"]) => {
       if (msg.conversationId === channelId) {
-        channelChatRef.current.addMessage(msg);
+        channelChatRef.current.addMessage(msg, clientMessageId);
       }
     };
 
@@ -99,6 +103,7 @@ export function ChannelRoute() {
           loading={channelChat.loading}
           loadingOlder={channelChat.loadingOlder}
           hasOlderMessages={channelChat.hasOlderMessages}
+          sendError={channelChat.sendError}
           typingUsers={typingUsers}
           onSend={channelChat.sendMessage}
           onLoadOlderMessages={channelChat.loadOlderMessages}

@@ -274,7 +274,13 @@ export interface ConversationThreadsPage {
 
 export type WsClientEvent =
   | { type: "auth"; token: string }
-  | { type: "send_message"; conversationId: string; content: string; threadId?: string | null }
+  | {
+      type: "send_message";
+      conversationId: string;
+      content: string;
+      threadId?: string | null;
+      clientMessageId?: string;
+    }
   | { type: "typing"; conversationId: string; threadId?: string | null }
   | { type: "ping" };
 
@@ -448,7 +454,18 @@ export interface WorkspaceConfig {
 export type WsServerEvent =
   | { type: "auth_ok"; userId: string }
   | { type: "auth_error"; message: string }
-  | { type: "new_message"; message: ChatMessage; conversationType: "direct" | "group" }
+  | {
+      type: "new_message";
+      message: ChatMessage;
+      conversationType: "direct" | "group";
+      clientMessageId?: string;
+    }
+  | {
+      type: "message_error";
+      conversationId: string;
+      clientMessageId: string;
+      message: string;
+    }
   | {
       type: "bot_invocation_updated";
       conversationId: string;

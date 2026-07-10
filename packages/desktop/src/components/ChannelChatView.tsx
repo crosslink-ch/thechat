@@ -4,6 +4,7 @@ import { Markdown } from "./Markdown";
 import { useAutoScroll } from "../hooks/useAutoScroll";
 import { useOlderHistoryScroll } from "../hooks/useOlderHistoryScroll";
 import { useScrollStability } from "../hooks/useScrollStability";
+import { MessageSendError } from "./MessageSendError";
 import type { ChatMessage } from "@thechat/shared";
 import type { MentionUser } from "./MentionList";
 
@@ -14,6 +15,7 @@ interface ChannelChatViewProps {
   loading: boolean;
   loadingOlder?: boolean;
   hasOlderMessages?: boolean;
+  sendError?: string | null;
   typingUsers: Map<string, string>; // userId -> userName
   onSend: (content: string) => void;
   onLoadOlderMessages?: () => boolean | void | Promise<boolean | void>;
@@ -31,6 +33,7 @@ export function ChannelChatView({
   loading,
   loadingOlder = false,
   hasOlderMessages = false,
+  sendError,
   typingUsers,
   onSend,
   onLoadOlderMessages,
@@ -157,6 +160,7 @@ export function ChannelChatView({
           </button>
         )}
       </div>
+      <MessageSendError error={sendError} />
       <InputBar convId={undefined} onSend={handleSend} onStop={noop} mentions={mentions} />
     </>
   );

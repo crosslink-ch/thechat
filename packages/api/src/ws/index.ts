@@ -101,6 +101,7 @@ async function handleSendMessage(
   conversationId: string,
   content: string,
   threadId?: string | null,
+  clientMessageId?: string,
 ) {
   let msg;
   try {
@@ -109,7 +110,17 @@ async function handleSendMessage(
     });
   } catch (e) {
     if (e instanceof ServiceError) {
-      sendTo(ws, { type: "error", message: e.message });
+      sendTo(
+        ws,
+        clientMessageId
+          ? {
+              type: "message_error",
+              conversationId,
+              clientMessageId,
+              message: e.message,
+            }
+          : { type: "error", message: e.message },
+      );
       return;
     }
     throw e;
@@ -142,6 +153,7 @@ async function handleSendMessage(
       createdAt: msg.createdAt,
     },
     conversationType: conv?.type ?? "group",
+    clientMessageId,
   };
 
   await tryBroadcastToUsers(participants.map((p) => p.userId), event);
@@ -217,7 +229,17 @@ export const wsRoutes = new Elysia().ws("/ws", {
     // All other events require auth
     const socketUser = socketUsers.get(socket);
     if (!socketUser) {
-      sendTo(socket, { type: "error", message: "Not authenticated" });
+      sendTo(
+        socket,
+        event.type === "send_message" && event.clientMessageId
+          ? {
+              type: "message_error",
+              conversationId: event.conversationId,
+              clientMessageId: event.clientMessageId,
+              message: "Not authenticated",
+            }
+          : { type: "error", message: "Not authenticated" },
+      );
       return;
     }
 
@@ -229,6 +251,7 @@ export const wsRoutes = new Elysia().ws("/ws", {
         event.conversationId,
         event.content,
         event.threadId ?? null,
+        event.clientMessageId,
       );
     } else if (event.type === "typing") {
       await handleTyping(

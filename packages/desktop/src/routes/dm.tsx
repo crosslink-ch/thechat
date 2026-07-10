@@ -163,19 +163,22 @@ export function DmRoute() {
     unthreadedOnly: generalThreadActive,
     token,
     wsSendMessage,
+    selfUser: user,
   });
 
   const channelChatRef = useRef(channelChat);
   channelChatRef.current = channelChat;
   const channelSendMessage = channelChat.sendMessage;
+  const addOptimisticSentMessage = channelChat.addOptimisticSentMessage;
 
   // Subscribe to WebSocket messages for this DM
   useEffect(() => {
     const onMessage = ({
       message: msg,
+      clientMessageId,
     }: WsEvents["ws:new_message"]) => {
       if (msg.conversationId === conversationId) {
-        channelChatRef.current.addMessage(msg);
+        channelChatRef.current.addMessage(msg, clientMessageId);
         if (msg.threadId) {
           touchThread(msg.threadId, msg.createdAt);
         }
@@ -316,6 +319,7 @@ export function DmRoute() {
 
     void (async () => {
       const activeThread = threadsRef.current.find((thread) => thread.id === threadId);
+      const clientMessageId = addOptimisticSentMessage(content, threadId);
       if (!parseHermesSlashCommand(content) && isAutoNamedThread(activeThread)) {
         try {
           await renameThread(threadId, titleFromMessage(content));
@@ -323,10 +327,17 @@ export function DmRoute() {
           console.error("Failed to rename Hermes task thread", error);
         }
       }
-      wsSendMessage(conversationId, content, threadId);
+      wsSendMessage(conversationId, content, threadId, clientMessageId ?? undefined);
       touchThread(threadId);
     })();
-  }, [channelSendMessage, conversationId, renameThread, touchThread, wsSendMessage]);
+  }, [
+    addOptimisticSentMessage,
+    channelSendMessage,
+    conversationId,
+    renameThread,
+    touchThread,
+    wsSendMessage,
+  ]);
 
   const handleStopHermesTask = useCallback(() => {
     if (!isHermesDm) return;
@@ -406,6 +417,7 @@ export function DmRoute() {
             }
             loadingOlder={channelChat.loadingOlder}
             hasOlderMessages={channelChat.hasOlderMessages}
+            sendError={channelChat.sendError}
             typingUsers={typingUsers}
             progressInvocations={activeHermesProgress.invocations}
             typingSuppressedUserIds={activeHermesProgress.typingSuppressedUserIds}
@@ -427,6 +439,7 @@ export function DmRoute() {
             }
             loadingOlder={channelChat.loadingOlder}
             hasOlderMessages={channelChat.hasOlderMessages}
+            sendError={channelChat.sendError}
             typingUsers={typingUsers}
             onSend={handleSend}
             onLoadOlderMessages={channelChat.loadOlderMessages}

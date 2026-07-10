@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   hashKey,
   useInfiniteQuery,
@@ -7,9 +7,10 @@ import {
   type QueryKey,
   type InfiniteData,
 } from "@tanstack/react-query";
-import type { ChatMessage } from "@thechat/shared";
+import type { AuthUser, ChatMessage } from "@thechat/shared";
 import { api } from "../lib/api";
 import { authHeaders, edenErrorMessage } from "../lib/eden";
+import { wsEvents, type WsEvents } from "../lib/ws-events";
 
 const MESSAGE_CACHE_TTL_MS = 60_000;
 export const MESSAGE_PAGE_SIZE = 20;
@@ -21,7 +22,13 @@ interface UseChannelChatOptions {
   threadId?: string | null;
   unthreadedOnly?: boolean;
   token: string | null;
-  wsSendMessage: (conversationId: string, content: string, threadId?: string | null) => void;
+  wsSendMessage: (
+    conversationId: string,
+    content: string,
+    threadId?: string | null,
+    clientMessageId?: string,
+  ) => void;
+  selfUser?: AuthUser | null;
 }
 
 export const messagesQueryKey = (
@@ -36,6 +43,12 @@ interface MessagePage {
 }
 
 type MessageWindow = InfiniteData<MessagePage, string | null>;
+
+interface LocalSentMessage {
+  clientMessageId: string;
+  message: ChatMessage;
+  confirmed: boolean;
+}
 
 async function fetchMessages(
   conversationId: string,
@@ -92,8 +105,11 @@ export function useChannelChat({
   unthreadedOnly = false,
   token,
   wsSendMessage,
+  selfUser = null,
 }: UseChannelChatOptions) {
   const queryClient = useQueryClient();
+  const [localSentMessages, setLocalSentMessages] = useState<LocalSentMessage[]>([]);
+  const [sendError, setSendError] = useState<string | null>(null);
   const query = useInfiniteQuery<
     MessagePage,
     Error,
@@ -143,8 +159,13 @@ export function useChannelChat({
   }, [queryClient]);
 
   const addMessage = useCallback(
-    (msg: ChatMessage) => {
+    (msg: ChatMessage, clientMessageId?: string) => {
       if (msg.conversationId !== conversationId) return;
+      setLocalSentMessages((previous) =>
+        clientMessageId
+          ? confirmLocalSentMessage(previous, clientMessageId, msg)
+          : confirmMatchingLiveEcho(previous, msg),
+      );
 
       const updateCache = (
         cacheThreadId: string | null,
@@ -169,12 +190,37 @@ export function useChannelChat({
     [conversationId, queryClient, threadId, unthreadedOnly],
   );
 
+  const addOptimisticSentMessage = useCallback(
+    (content: string, targetThreadId: string | null = threadId ?? null) => {
+      if (!conversationId) return null;
+      const localMessage = createLocalSentMessage(
+        conversationId,
+        targetThreadId,
+        content,
+        selfUser,
+      );
+      if (!localMessage) return null;
+      setSendError(null);
+      setLocalSentMessages((previous) =>
+        appendLocalSentMessage(previous, localMessage),
+      );
+      return localMessage.clientMessageId;
+    },
+    [conversationId, selfUser, threadId],
+  );
+
   const sendMessage = useCallback(
     (content: string) => {
-      if (!conversationId) return;
-      wsSendMessage(conversationId, content, threadId ?? null);
+      if (!conversationId) return null;
+      const clientMessageId = addOptimisticSentMessage(content, threadId ?? null);
+      if (clientMessageId) {
+        wsSendMessage(conversationId, content, threadId ?? null, clientMessageId);
+      } else {
+        wsSendMessage(conversationId, content, threadId ?? null);
+      }
+      return clientMessageId;
     },
-    [conversationId, threadId, wsSendMessage],
+    [addOptimisticSentMessage, conversationId, threadId, wsSendMessage],
   );
 
   const refetchMessages = useCallback(() => {
@@ -198,7 +244,78 @@ export function useChannelChat({
     token,
   ]);
 
-  const messages = useMemo(() => flattenMessageWindow(query.data), [query.data]);
+  useEffect(() => {
+    const onMessageError = ({
+      conversationId: failedConversationId,
+      clientMessageId,
+      message,
+    }: WsEvents["ws:message_error"]) => {
+      if (failedConversationId !== conversationId) return;
+      setLocalSentMessages((previous) =>
+        previous.filter((local) => local.clientMessageId !== clientMessageId),
+      );
+      setSendError(message);
+    };
+
+    wsEvents.on("ws:message_error", onMessageError);
+    return () => {
+      wsEvents.off("ws:message_error", onMessageError);
+    };
+  }, [conversationId]);
+
+  // A live echo can arrive while an older history request is still running.
+  // Keep its server payload locally until that request settles, then restore it
+  // to the active cache before dropping the local overlay.
+  useEffect(() => {
+    if (!conversationId || query.isFetching) return;
+    const key = messagesQueryKey(conversationId, threadId, unthreadedOnly);
+    if (queryClient.isFetching({ queryKey: key, exact: true }) > 0) return;
+
+    const confirmedInScope = localSentMessages.filter(
+      (local) =>
+        local.confirmed &&
+        local.message.conversationId === conversationId &&
+        messageBelongsToScope(local.message, threadId, unthreadedOnly),
+    );
+    if (confirmedInScope.length === 0) return;
+
+    queryClient.setQueryData<MessageWindow>(key, (previous) =>
+      confirmedInScope.reduce(
+        (window, local) => appendMessageToWindow(window, local.message),
+        previous,
+      ),
+    );
+    const restoredIds = new Set(
+      confirmedInScope.map((local) => local.clientMessageId),
+    );
+    setLocalSentMessages((previous) =>
+      previous.filter((local) => !restoredIds.has(local.clientMessageId)),
+    );
+  }, [
+    conversationId,
+    localSentMessages,
+    query.isFetching,
+    queryClient,
+    threadId,
+    unthreadedOnly,
+  ]);
+
+  useEffect(() => {
+    setLocalSentMessages([]);
+    setSendError(null);
+  }, [conversationId]);
+
+  const messages = useMemo(
+    () =>
+      appendVisibleLocalMessages(
+        flattenMessageWindow(query.data),
+        localSentMessages,
+        conversationId,
+        threadId,
+        unthreadedOnly,
+      ),
+    [conversationId, localSentMessages, query.data, threadId, unthreadedOnly],
+  );
 
   return {
     messages,
@@ -206,15 +323,121 @@ export function useChannelChat({
     loadingOlder: query.isFetchingNextPage,
     hasOlderMessages: query.hasNextPage,
     addMessage,
+    addOptimisticSentMessage,
     sendMessage,
+    sendError,
     refetchMessages,
     loadOlderMessages,
+  };
+}
+
+function createLocalSentMessage(
+  conversationId: string,
+  threadId: string | null,
+  content: string,
+  selfUser: AuthUser | null,
+): LocalSentMessage | null {
+  if (!selfUser) return null;
+  const clientMessageId = newClientMessageId();
+  return {
+    clientMessageId,
+    confirmed: false,
+    message: {
+      id: `optimistic:${clientMessageId}`,
+      conversationId,
+      threadId,
+      senderId: selfUser.id,
+      senderName: selfUser.name,
+      senderType: selfUser.type,
+      content,
+      parts: null,
+      createdAt: new Date().toISOString(),
+    },
   };
 }
 
 function appendMessage(messages: ChatMessage[], msg: ChatMessage) {
   if (messages.some((m) => m.id === msg.id)) return messages;
   return [...messages, msg];
+}
+
+function appendLocalSentMessage(
+  messages: LocalSentMessage[],
+  message: LocalSentMessage,
+) {
+  if (
+    messages.some(
+      (candidate) => candidate.clientMessageId === message.clientMessageId,
+    )
+  ) {
+    return messages;
+  }
+  return [...messages, message];
+}
+
+function confirmLocalSentMessage(
+  messages: LocalSentMessage[],
+  clientMessageId: string,
+  serverMessage: ChatMessage,
+) {
+  const index = messages.findIndex(
+    (candidate) => candidate.clientMessageId === clientMessageId,
+  );
+  if (index < 0) return messages;
+  const confirmed: LocalSentMessage = {
+    clientMessageId,
+    message: serverMessage,
+    confirmed: true,
+  };
+  return [...messages.slice(0, index), confirmed, ...messages.slice(index + 1)];
+}
+
+function confirmMatchingLiveEcho(
+  messages: LocalSentMessage[],
+  serverMessage: ChatMessage,
+) {
+  const index = messages.findIndex(
+    (candidate) =>
+      !candidate.confirmed &&
+      candidate.message.conversationId === serverMessage.conversationId &&
+      candidate.message.threadId === serverMessage.threadId &&
+      candidate.message.senderId === serverMessage.senderId &&
+      candidate.message.content === serverMessage.content,
+  );
+  if (index < 0) return messages;
+  const local = messages[index];
+  const confirmed: LocalSentMessage = {
+    ...local,
+    message: serverMessage,
+    confirmed: true,
+  };
+  return [...messages.slice(0, index), confirmed, ...messages.slice(index + 1)];
+}
+
+function appendVisibleLocalMessages(
+  messages: ChatMessage[],
+  localMessages: LocalSentMessage[],
+  conversationId: string | null,
+  threadId: string | null,
+  unthreadedOnly: boolean,
+) {
+  let next = messages;
+  for (const local of localMessages) {
+    if (local.message.conversationId !== conversationId) continue;
+    if (!messageBelongsToScope(local.message, threadId, unthreadedOnly)) continue;
+    next = appendMessage(next, local.message);
+  }
+  return next;
+}
+
+function messageBelongsToScope(
+  msg: ChatMessage,
+  threadId: string | null,
+  unthreadedOnly: boolean,
+) {
+  if (threadId) return msg.threadId === threadId;
+  if (unthreadedOnly) return msg.threadId === null;
+  return true;
 }
 
 function appendMessageToWindow(
@@ -241,6 +464,13 @@ function appendMessageToWindow(
   pages[0].messages = appendMessage(pages[0].messages, msg);
   const nextWindow = { ...window, pages };
   return trimWindowToRecentMessages(nextWindow, MESSAGE_WINDOW_TRIM_THRESHOLD) ?? nextWindow;
+}
+
+function newClientMessageId() {
+  return (
+    globalThis.crypto?.randomUUID?.() ??
+    `${Date.now()}-${Math.random().toString(36).slice(2)}`
+  );
 }
 
 function trimCachedWindowToInitialPage(queryClient: QueryClient, key: QueryKey) {

@@ -11,6 +11,7 @@ import {
 } from "./useChannelChat";
 import { api } from "../lib/api";
 import { createQueryWrapper, createTestQueryClient } from "../test-utils/query";
+import { wsEvents } from "../lib/ws-events";
 
 vi.mock("../lib/api", () => ({
   api: {
@@ -42,6 +43,16 @@ function message(
     content,
     parts: null,
     createdAt,
+  };
+}
+
+function selfUser() {
+  return {
+    id: "sender-1",
+    name: "Sender",
+    email: "sender@example.com",
+    avatar: null,
+    type: "human" as const,
   };
 }
 
@@ -209,6 +220,356 @@ describe("useChannelChat", () => {
       ]);
     });
     expect(wsSendMessage).toHaveBeenCalledWith("dm-hermes", "next", null);
+  });
+
+  it("renders sent messages optimistically and replaces the server echo", async () => {
+    vi.mocked(api.messages).mockReturnValue({
+      get: vi.fn(() => Promise.resolve({ data: [] })),
+    } as any);
+    const wsSendMessage = vi.fn();
+
+    const { result } = renderHook(
+      () =>
+        useChannelChat({
+          conversationId: "dm-hermes",
+          token: "test-token",
+          wsSendMessage,
+          selfUser: {
+            id: "sender-1",
+            name: "Sender",
+            email: "sender@example.com",
+            avatar: null,
+            type: "human",
+          },
+        }),
+      { wrapper: createQueryWrapper() },
+    );
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    act(() => {
+      result.current.sendMessage("show this right away");
+    });
+
+    expect(wsSendMessage).toHaveBeenCalledWith(
+      "dm-hermes",
+      "show this right away",
+      null,
+      expect.any(String),
+    );
+    expect(result.current.messages).toHaveLength(1);
+    expect(result.current.messages[0]).toMatchObject({
+      id: expect.stringMatching(/^optimistic:/),
+      content: "show this right away",
+      senderId: "sender-1",
+      senderName: "Sender",
+    });
+
+    const persisted = message("dm-hermes", "show this right away");
+    const clientMessageId = wsSendMessage.mock.calls[0][3];
+    act(() => {
+      result.current.addMessage(persisted, clientMessageId);
+    });
+
+    expect(result.current.messages).toHaveLength(1);
+    expect(result.current.messages[0]).toMatchObject({
+      id: persisted.id,
+      content: "show this right away",
+    });
+  });
+
+  it("keeps optimistic sent messages when an in-flight history fetch resolves without them", async () => {
+    const history = deferred<{ data: ChatMessage[] }>();
+    vi.mocked(api.messages).mockReturnValue({
+      get: vi.fn(() => history.promise),
+    } as any);
+
+    const { result } = renderHook(
+      () =>
+        useChannelChat({
+          conversationId: "dm-hermes",
+          token: "test-token",
+          wsSendMessage: vi.fn(),
+          selfUser: {
+            id: "sender-1",
+            name: "Sender",
+            email: "sender@example.com",
+            avatar: null,
+            type: "human",
+          },
+        }),
+      { wrapper: createQueryWrapper() },
+    );
+
+    await waitFor(() => expect(api.messages).toHaveBeenCalledTimes(1));
+
+    act(() => {
+      result.current.sendMessage("sent during load");
+    });
+
+    expect(result.current.messages.map((m) => m.content)).toEqual([
+      "sent during load",
+    ]);
+
+    act(() => {
+      history.resolve({ data: [] });
+    });
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.messages.map((m) => m.content)).toEqual([
+      "sent during load",
+    ]);
+  });
+
+  it("keeps a confirmed echo when an older in-flight history fetch omits it", async () => {
+    const history = deferred<{ data: ChatMessage[] }>();
+    vi.mocked(api.messages).mockReturnValue({
+      get: vi.fn(() => history.promise),
+    } as any);
+    const wsSendMessage = vi.fn();
+
+    const { result } = renderHook(
+      () =>
+        useChannelChat({
+          conversationId: "dm-hermes",
+          token: "test-token",
+          wsSendMessage,
+          selfUser: selfUser(),
+        }),
+      { wrapper: createQueryWrapper() },
+    );
+
+    await waitFor(() => expect(api.messages).toHaveBeenCalledTimes(1));
+
+    act(() => {
+      result.current.sendMessage("survive stale history");
+    });
+    const clientMessageId = wsSendMessage.mock.calls[0][3];
+    const persisted = message("dm-hermes", "survive stale history");
+
+    act(() => {
+      result.current.addMessage(persisted, clientMessageId);
+    });
+    expect(result.current.messages.map((item) => item.id)).toEqual([
+      persisted.id,
+    ]);
+
+    act(() => {
+      history.resolve({ data: [] });
+    });
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.messages.map((item) => item.id)).toEqual([
+      persisted.id,
+    ]);
+  });
+
+  it("renders a repeated message even when identical content already exists", async () => {
+    const previous = message("dm-hermes", "yes");
+    vi.mocked(api.messages).mockReturnValue({
+      get: vi.fn(() => Promise.resolve({ data: [previous] })),
+    } as any);
+    const wsSendMessage = vi.fn();
+
+    const { result } = renderHook(
+      () =>
+        useChannelChat({
+          conversationId: "dm-hermes",
+          token: "test-token",
+          wsSendMessage,
+          selfUser: selfUser(),
+        }),
+      { wrapper: createQueryWrapper() },
+    );
+
+    await waitFor(() => expect(result.current.messages).toHaveLength(1));
+
+    act(() => {
+      result.current.sendMessage("yes");
+    });
+    expect(result.current.messages).toHaveLength(2);
+    expect(result.current.messages[1].id).toMatch(/^optimistic:/);
+
+    const clientMessageId = wsSendMessage.mock.calls[0][3];
+    const persisted = message("dm-hermes", "yes");
+    act(() => {
+      result.current.addMessage(persisted, clientMessageId);
+    });
+
+    expect(result.current.messages.map((item) => item.id)).toEqual([
+      previous.id,
+      persisted.id,
+    ]);
+  });
+
+  it("reconciles identical in-flight sends one-to-one", async () => {
+    vi.mocked(api.messages).mockReturnValue({
+      get: vi.fn(() => Promise.resolve({ data: [] })),
+    } as any);
+    const wsSendMessage = vi.fn();
+
+    const { result } = renderHook(
+      () =>
+        useChannelChat({
+          conversationId: "dm-hermes",
+          token: "test-token",
+          wsSendMessage,
+          selfUser: selfUser(),
+        }),
+      { wrapper: createQueryWrapper() },
+    );
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    act(() => {
+      result.current.sendMessage("same");
+      result.current.sendMessage("same");
+    });
+    expect(result.current.messages).toHaveLength(2);
+
+    const first = message("dm-hermes", "same");
+    act(() => {
+      result.current.addMessage(first, wsSendMessage.mock.calls[0][3]);
+    });
+    expect(result.current.messages).toHaveLength(2);
+    expect(result.current.messages.map((item) => item.id)).toContain(first.id);
+
+    const second = message("dm-hermes", "same");
+    act(() => {
+      result.current.addMessage(second, wsSendMessage.mock.calls[1][3]);
+    });
+    expect(result.current.messages.map((item) => item.id)).toEqual([
+      first.id,
+      second.id,
+    ]);
+  });
+
+  it("reconciles id-less live echoes one-to-one for older servers", async () => {
+    vi.mocked(api.messages).mockReturnValue({
+      get: vi.fn(() => Promise.resolve({ data: [] })),
+    } as any);
+
+    const { result } = renderHook(
+      () =>
+        useChannelChat({
+          conversationId: "dm-hermes",
+          token: "test-token",
+          wsSendMessage: vi.fn(),
+          selfUser: selfUser(),
+        }),
+      { wrapper: createQueryWrapper() },
+    );
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    act(() => {
+      result.current.sendMessage("same");
+      result.current.sendMessage("same");
+    });
+
+    const first = message("dm-hermes", "same");
+    act(() => {
+      result.current.addMessage(first);
+    });
+    expect(result.current.messages).toHaveLength(2);
+    expect(result.current.messages.filter((item) => item.id === first.id)).toHaveLength(1);
+
+    const second = message("dm-hermes", "same");
+    act(() => {
+      result.current.addMessage(second);
+    });
+    expect(result.current.messages.map((item) => item.id)).toEqual([
+      first.id,
+      second.id,
+    ]);
+  });
+
+  it("rolls back a rejected optimistic message and exposes the error", async () => {
+    vi.mocked(api.messages).mockReturnValue({
+      get: vi.fn(() => Promise.resolve({ data: [] })),
+    } as any);
+    const wsSendMessage = vi.fn();
+
+    const { result } = renderHook(
+      () =>
+        useChannelChat({
+          conversationId: "dm-hermes",
+          token: "test-token",
+          wsSendMessage,
+          selfUser: selfUser(),
+        }),
+      { wrapper: createQueryWrapper() },
+    );
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    act(() => {
+      result.current.sendMessage("will fail");
+    });
+    expect(result.current.messages).toHaveLength(1);
+
+    act(() => {
+      wsEvents.emit("ws:message_error", {
+        conversationId: "dm-hermes",
+        clientMessageId: wsSendMessage.mock.calls[0][3],
+        message: "Thread not found",
+      });
+    });
+
+    expect(result.current.messages).toEqual([]);
+    expect(result.current.sendError).toBe("Thread not found");
+
+    act(() => {
+      result.current.sendMessage("try again");
+    });
+    expect(result.current.sendError).toBeNull();
+    expect(result.current.messages).toHaveLength(1);
+  });
+
+  it("can optimistically render sent Hermes task-thread messages", async () => {
+    vi.mocked(api.messages).mockReturnValue({
+      get: vi.fn(() => Promise.resolve({ data: [] })),
+    } as any);
+
+    const { result } = renderHook(
+      () =>
+        useChannelChat({
+          conversationId: "dm-hermes",
+          threadId: "thread-1",
+          token: "test-token",
+          wsSendMessage: vi.fn(),
+          selfUser: {
+            id: "sender-1",
+            name: "Sender",
+            email: "sender@example.com",
+            avatar: null,
+            type: "human",
+          },
+        }),
+      { wrapper: createQueryWrapper() },
+    );
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    let clientMessageId: string | null = null;
+    act(() => {
+      clientMessageId = result.current.addOptimisticSentMessage(
+        "thread prompt",
+        "thread-1",
+      );
+    });
+
+    expect(result.current.messages).toHaveLength(1);
+    expect(result.current.messages[0]).toMatchObject({
+      id: expect.stringMatching(/^optimistic:/),
+      threadId: "thread-1",
+      content: "thread prompt",
+    });
+
+    const persisted = message("dm-hermes", "thread prompt", "thread-1");
+    act(() => {
+      result.current.addMessage(persisted, clientMessageId!);
+    });
+
+    expect(result.current.messages).toHaveLength(1);
+    expect(result.current.messages[0].id).toBe(persisted.id);
   });
 
   it("updates inactive task-thread caches from live messages", async () => {
