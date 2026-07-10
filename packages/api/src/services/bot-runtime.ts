@@ -1358,21 +1358,25 @@ async function failInvocation(
         eq(botInvocations.status, "queued"),
       )
     : eq(botInvocations.id, invocationId);
-  const [failed] = await db
-    .update(botInvocations)
-    .set({
-      status: "failed",
-      error: message,
-      completedAt: failedAt,
-      updatedAt: failedAt,
-    })
-    .where(where)
-    .returning({ id: botInvocations.id });
-  if (!failed) return false;
+  const result = await db.transaction(async (tx) => {
+    const [failed] = await tx
+      .update(botInvocations)
+      .set({
+        status: "failed",
+        error: message,
+        completedAt: failedAt,
+        updatedAt: failedAt,
+      })
+      .where(where)
+      .returning({ id: botInvocations.id });
+    if (!failed) return { failed: false as const, responseMessage: null };
 
-  if (loaded?.bot.kind === "hermes") {
+    if (loaded?.bot.kind !== "hermes") {
+      return { failed: true as const, responseMessage: null };
+    }
+
     const content = `Hermes run failed: ${message}`;
-    const [responseMessage] = await db
+    const [responseMessage] = await tx
       .insert(messages)
       .values({
         conversationId: loaded.conversation.id,
@@ -1382,11 +1386,20 @@ async function failInvocation(
         parts: [{ type: "text", text: content }],
       })
       .returning();
-    await db
+    await tx
       .update(botInvocations)
       .set({ responseMessageId: responseMessage.id })
       .where(eq(botInvocations.id, invocationId));
-    await publishBotMessage(responseMessage, loaded.botName, loaded.conversation.type);
+    return { failed: true as const, responseMessage };
+  });
+  if (!result.failed) return false;
+
+  if (result.responseMessage && loaded) {
+    await publishBotMessage(
+      result.responseMessage,
+      loaded.botName,
+      loaded.conversation.type,
+    );
   }
 
   await publishInvocationUpdate(invocationId);
