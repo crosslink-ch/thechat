@@ -4,6 +4,7 @@ serviceAccount:
 
 replicaCount: 1
 
+# Use the same immutable tag for image and migrateImage in production.
 image:
   repository: ghcr.io/crosslink-ch/thechat-api
   tag: latest
@@ -13,6 +14,18 @@ migrateImage:
   repository: ghcr.io/crosslink-ch/thechat-api-migrate
   tag: latest
   pullPolicy: IfNotPresent
+
+migrationJob:
+  # Helm waits for this pre-install/pre-upgrade hook before changing workloads.
+  activeDeadlineSeconds: 300
+  backoffLimit: 1
+  resources:
+    requests:
+      cpu: 25m
+      memory: 64Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
 
 # Name of an existing Kubernetes Secret containing DATABASE_URL
 # The secret must have a key called DATABASE_URL

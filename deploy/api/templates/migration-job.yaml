@@ -1,0 +1,55 @@
+{{- if ne (toString .Values.image.tag) (toString .Values.migrateImage.tag) }}
+{{- fail "image.tag and migrateImage.tag must match; use the same immutable build tag in production" }}
+{{- end }}
+{{- /* Keep these fallbacks in sync with values.yaml: --reuse-values omits keys added by newer chart versions. */ -}}
+{{- $defaultMigrationResources := dict "requests" (dict "cpu" "25m" "memory" "64Mi") "limits" (dict "cpu" "500m" "memory" "512Mi") }}
+{{- $defaultMigrationJob := dict "activeDeadlineSeconds" 300 "backoffLimit" 1 "resources" $defaultMigrationResources }}
+{{- $migrationJob := mergeOverwrite (deepCopy $defaultMigrationJob) (.Values.migrationJob | default dict) }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "thechat-api.migrationFullname" . }}
+  labels:
+    {{- include "thechat-api.migrationLabels" . | nindent 4 }}
+    app.kubernetes.io/component: migration
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-5"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  activeDeadlineSeconds: {{ dig "activeDeadlineSeconds" 300 $migrationJob }}
+  backoffLimit: {{ dig "backoffLimit" 1 $migrationJob }}
+  template:
+    metadata:
+      labels:
+        {{- include "thechat-api.migrationSelectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: migration
+    spec:
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: migrate
+          image: "{{ .Values.migrateImage.repository }}:{{ .Values.migrateImage.tag }}"
+          imagePullPolicy: {{ .Values.migrateImage.pullPolicy }}
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.databaseSecret }}
+                  key: DATABASE_URL
+          {{- with (get $migrationJob "resources") }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}

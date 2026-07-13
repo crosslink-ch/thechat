@@ -31,6 +31,28 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- printf "%s-worker" (include "thechat-api.fullname" .) | trunc 63 | trimSuffix "-" }}
 {{- end }}
 
+{{- define "thechat-api.migrationFullname" -}}
+{{- $base := include "thechat-api.fullname" . | trunc 55 | trimSuffix "-" -}}
+{{- printf "%s-migrate" $base -}}
+{{- end }}
+
+{{- define "thechat-api.migrationName" -}}
+{{- $base := include "thechat-api.name" . | trunc 55 | trimSuffix "-" -}}
+{{- printf "%s-migrate" $base -}}
+{{- end }}
+
+{{- define "thechat-api.migrationLabels" -}}
+helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | trunc 63 | trimSuffix "-" }}
+{{ include "thechat-api.migrationSelectorLabels" . }}
+app.kubernetes.io/version: {{ .Values.migrateImage.tag | default .Chart.AppVersion | quote }}
+app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{- end }}
+
+{{- define "thechat-api.migrationSelectorLabels" -}}
+app.kubernetes.io/name: {{ include "thechat-api.migrationName" . }}
+app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end }}
+
 {{- define "thechat-api.workerName" -}}
 {{- printf "%s-worker" (include "thechat-api.name" .) | trunc 63 | trimSuffix "-" }}
 {{- end }}
