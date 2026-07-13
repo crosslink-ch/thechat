@@ -90,6 +90,7 @@ export class DomainEventRuntime {
         if (!signal.aborted) {
           logDomainEvent("error", "domain_event.outbox.claim_failed", undefined, {
             workerId: this.workerId,
+            err: error,
             error: errorMessage(error),
           });
           await waitForAbort(signal, this.config.pollIntervalMs);
@@ -131,6 +132,7 @@ export class DomainEventRuntime {
         logDomainEvent("warn", "domain_event.outbox.release_lease_lost", undefined, {
           outboxId: row.id,
           workerId: row.lockedBy,
+          err: error,
           error: errorMessage(error),
         });
         return;
@@ -145,6 +147,7 @@ export class DomainEventRuntime {
           outboxId: row.id,
           attempts: outcome.attempts,
           maxAttempts: permanent ? 1 : this.config.maxAttempts,
+          err: error,
           error: errorMessage(error),
         },
       );

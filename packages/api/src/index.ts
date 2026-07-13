@@ -1,6 +1,5 @@
 import { Elysia } from "elysia";
 import { cors } from "@elysiajs/cors";
-import { logger } from "@bogeychan/elysia-logger";
 import { sql } from "drizzle-orm";
 import { db } from "./db";
 import { authRoutes } from "./auth";
@@ -16,16 +15,15 @@ import { hermesRoutes } from "./hermes";
 import { hermesPlatformRoutes } from "./hermes-platform";
 import { botRuntimeRoutes } from "./bot-runtime";
 import { initObservability, shutdownObservability, withSpan } from "./observability";
+import { log } from "./logging";
+
+const apiLog = log.child({ component: "api" });
 
 await initObservability("thechat-api");
 
 const app = new Elysia()
   .use(cors())
-  .use(
-    logger({
-      level: process.env.LOG_LEVEL ?? "info",
-    })
-  )
+  .use(log.into())
   .decorate("db", db)
   .use(authRoutes)
   .use(workspaceRoutes)
@@ -72,11 +70,11 @@ process.once("SIGINT", () => {
   void shutdownAndExit(130);
 });
 
-console.log(`TheChat API running at http://localhost:${app.server!.port}`);
+apiLog.info({ port: app.server!.port }, "TheChat API is running");
 
 async function shutdownAndExit(code: number) {
   await shutdownObservability().catch((error) => {
-    console.error("Failed to shut down observability", error);
+    apiLog.error({ err: error }, "Failed to shut down observability");
   });
   process.exit(code);
 }

@@ -1,7 +1,10 @@
 import { Queue, type ConnectionOptions, type JobsOptions } from "bullmq";
 import { withSpan } from "../observability";
+import { log } from "../logging";
 import { toBullMqJobId, toBullMqQueueName } from "./transport";
 import type { AsyncBus, AsyncMessage, QueueCommand, QueuedJob } from "./types";
+
+const bullMqLog = log.child({ component: "bullmq" });
 
 export interface BullMqAsyncBusOptions {
   redisUrl?: string;
@@ -72,7 +75,7 @@ export class BullMqAsyncBus implements AsyncBus {
       },
     });
     queue.on("error", (error) => {
-      console.error("BullMQ queue error", { queue: queueName, error });
+      bullMqLog.error({ err: error, queue: queueName }, "BullMQ queue error");
     });
     this.queues.set(queueName, queue);
     return queue;

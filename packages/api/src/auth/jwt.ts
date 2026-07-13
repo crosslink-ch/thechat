@@ -1,8 +1,11 @@
 import { SignJWT, jwtVerify } from "jose";
+import { log } from "../logging";
+
+const authLog = log.child({ component: "auth" });
 
 const secret = new TextEncoder().encode(
   process.env.JWT_SECRET ?? (() => {
-    console.warn("JWT_SECRET not set — using insecure dev fallback");
+    authLog.warn("JWT_SECRET not set — using insecure dev fallback");
     return "dev-insecure-jwt-secret-do-not-use-in-production";
   })()
 );

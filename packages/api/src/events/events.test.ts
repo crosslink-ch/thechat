@@ -123,7 +123,7 @@ describe("domain event registry", () => {
   test("classifies event-specific parse failures without hiding transient handler failures", async () => {
     const parseFailure = new Error("payload marker is invalid");
     const transientFailure = new Error("transient failure");
-    const parseRegistry = new DomainEventRegistry().register({
+    const parseRegistry = new DomainEventRegistry().register<DomainEventEnvelope>({
       type: "test.invalid-payload",
       version: 1,
       parse() {

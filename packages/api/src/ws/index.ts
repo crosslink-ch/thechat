@@ -7,6 +7,9 @@ import { resolveTokenToUser } from "../auth/middleware";
 import { sendMessage } from "../services/messages";
 import { ServiceError } from "../services/errors";
 import { getRealtimeBus, publishWsEventToUsers } from "../realtime";
+import { log } from "../logging";
+
+const websocketLog = log.child({ component: "websocket" });
 
 // Connection tracking
 const userSockets = new Map<string, Set<WebSocket>>();
@@ -42,7 +45,7 @@ function sendTo(ws: WebSocket, event: WsServerEvent) {
 
 export function broadcastToUser(userId: string, event: WsServerEvent) {
   void publishWsEventToUsers([userId], event).catch((error) => {
-    console.error("Failed to publish websocket event", error);
+    websocketLog.error({ err: error }, "Failed to publish websocket event");
   });
 }
 
@@ -54,7 +57,7 @@ async function tryBroadcastToUsers(userIds: string[], event: WsServerEvent) {
   try {
     await broadcastToUsers(userIds, event);
   } catch (error) {
-    console.error("Failed to publish websocket event", error);
+    websocketLog.error({ err: error }, "Failed to publish websocket event");
   }
 }
 
@@ -81,7 +84,7 @@ function startRealtimeSubscription() {
     }
   }).catch((error) => {
     realtimeSubscriptionStarted = false;
-    console.error("Failed to subscribe to realtime events", error);
+    websocketLog.error({ err: error }, "Failed to subscribe to realtime events");
     setTimeout(startRealtimeSubscription, 1_000);
   });
 }

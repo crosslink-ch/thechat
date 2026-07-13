@@ -1,6 +1,9 @@
 import Redis from "ioredis";
 import type { WsServerEvent } from "@thechat/shared";
 import { withSpan } from "./observability";
+import { log } from "./logging";
+
+const realtimeLog = log.child({ component: "realtime" });
 
 export type RealtimeEvent =
   | {
@@ -66,8 +69,12 @@ export class RedisRealtimeBus implements RealtimeBus {
     this.subscriber.on("message", (_channel, message) => {
       void this.handleMessage(message);
     });
-    this.publisher.on("error", (error) => console.warn("Redis realtime publisher error", error));
-    this.subscriber.on("error", (error) => console.warn("Redis realtime subscriber error", error));
+    this.publisher.on("error", (error) => {
+      realtimeLog.warn({ err: error }, "Redis realtime publisher error");
+    });
+    this.subscriber.on("error", (error) => {
+      realtimeLog.warn({ err: error }, "Redis realtime subscriber error");
+    });
   }
 
   async publish(event: RealtimeEvent): Promise<void> {
@@ -114,7 +121,7 @@ export class RedisRealtimeBus implements RealtimeBus {
     try {
       event = JSON.parse(message);
     } catch (error) {
-      console.warn("Invalid realtime message", error);
+      realtimeLog.warn({ err: error }, "Invalid realtime message");
       return;
     }
     await withSpan(
