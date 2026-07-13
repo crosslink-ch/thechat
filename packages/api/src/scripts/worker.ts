@@ -1,16 +1,25 @@
 import { BOT_QUEUE_NAME, closeBotRuntime, startBotWorker } from "../services/bot-runtime";
+import {
+  closeDomainEventRuntime,
+  startDomainEventRuntime,
+} from "../events/runtime";
 import { initObservability, shutdownObservability } from "../observability";
+import { log } from "../logging";
+
+const workerLog = log.child({ component: "worker" });
 
 async function main() {
   await initObservability("thechat-worker");
 
   try {
     await startBotWorker();
-    console.log(`TheChat bot worker listening on ${BOT_QUEUE_NAME}`);
+    await startDomainEventRuntime();
+    workerLog.info({ queue: BOT_QUEUE_NAME }, "TheChat bot worker is listening");
+    workerLog.info("TheChat PostgreSQL domain-event outbox relay is running");
 
     await waitForShutdownSignal();
   } finally {
-    await closeBotRuntime();
+    await Promise.all([closeDomainEventRuntime(), closeBotRuntime()]);
     await shutdownObservability();
   }
 }
@@ -24,8 +33,8 @@ function waitForShutdownSignal(): Promise<void> {
 }
 
 main().catch(async (error) => {
-  console.error("TheChat bot worker failed", error);
-  await closeBotRuntime();
+  workerLog.error({ err: error }, "TheChat worker failed");
+  await Promise.all([closeDomainEventRuntime(), closeBotRuntime()]);
   await shutdownObservability();
   process.exitCode = 1;
 });

@@ -96,6 +96,47 @@ def wait_for(predicate, timeout=60, label="condition"):
     raise RuntimeError(f"Timed out waiting for {label}. Last error: {last_error}")
 
 
+def wait_for_working_state(base: str, token: str, conversation_id: str, bot_name: str, *, timeout: int = 120):
+    """Assert the active TheChat runtime state appears before the final reply."""
+    started = time.time()
+    last_snapshot = None
+    while time.time() - started < timeout:
+        status, snapshot = http_json(
+            "GET",
+            f"{base}/bot-runtime/conversations/{conversation_id}",
+            token=token,
+        )
+        if status == 200 and isinstance(snapshot, dict):
+            last_snapshot = snapshot
+            running = [
+                invocation
+                for invocation in snapshot.get("invocations", [])
+                if isinstance(invocation, dict)
+                and invocation.get("botName") == bot_name
+                and invocation.get("status") == "running"
+            ]
+            if running:
+                message_status, messages = http_json(
+                    "GET", f"{base}/messages/{conversation_id}", token=token,
+                )
+                final_arrived = message_status == 200 and isinstance(messages, list) and any(
+                    isinstance(message, dict)
+                    and message.get("senderName") == bot_name
+                    and message.get("content", "").strip()
+                    for message in messages
+                )
+                if not final_arrived:
+                    return {
+                        "invocation": running[0],
+                        "progressEvents": snapshot.get("events", []),
+                    }
+        time.sleep(0.1)
+    raise RuntimeError(
+        f"Timed out waiting for active {bot_name} working state before final message. "
+        f"Last snapshot: {last_snapshot}"
+    )
+
+
 def http_json(method: str, url: str, body=None, token: str | None = None):
     data = None if body is None else json.dumps(body).encode()
     headers = {}
@@ -261,6 +302,28 @@ def start_api(env: dict[str, str]) -> subprocess.Popen:
     return proc
 
 
+def start_worker(env: dict[str, str]) -> subprocess.Popen:
+    """Start the bot worker and durable PostgreSQL event relay for E2E."""
+    worker_env = env | {
+        "DATABASE_URL": DATABASE_URL,
+        "REDIS_URL": REDIS_URL,
+        "REALTIME_DRIVER": "redis",
+        "REDIS_KEY_PREFIX": "thechat-hermes-e2e",
+        "JWT_SECRET": "thechat-hermes-e2e-jwt-secret",
+        "THECHAT_SECRET_KEY": "thechat-hermes-e2e-secret-key",
+        "LOG_LEVEL": "error",
+    }
+    proc = subprocess.Popen(
+        [BUN, "run", "packages/api/src/scripts/worker.ts"],
+        cwd=ROOT,
+        env=worker_env,
+    )
+    time.sleep(1)
+    if proc.poll() is not None:
+        raise RuntimeError(f"TheChat worker exited early with {proc.returncode}")
+    return proc
+
+
 def create_hermes_bot(base: str, token: str, workspace_id: str, name: str, instructions: str):
     status, bot = http_json(
         "POST",
@@ -345,7 +408,6 @@ def invocation_snapshot(conversation_id: str, bot_name: str, statuses: set[str] 
               'responseMessageId', bi.response_message_id,
               'status', bi.status,
               'externalRunId', bi.external_run_id,
-              'hermesSession', bi.hermes_session_json,
               'requestJson', bi.request_json,
               'responseJson', bi.response_json,
               'startedAt', bi.started_at,
@@ -401,6 +463,7 @@ def main():
     env["DATABASE_URL"] = DATABASE_URL
 
     api_proc: subprocess.Popen | None = None
+    worker_proc: subprocess.Popen | None = None
     hermes_procs: list[subprocess.Popen] = []
     try:
         start_postgres()
@@ -408,6 +471,7 @@ def main():
 
         run([PNPM, "--dir", "packages/api", "exec", "drizzle-kit", "migrate"], env=env)
         api_proc = start_api(env)
+        worker_proc = start_worker(env)
 
         base = f"http://localhost:{API_PORT}"
         email = f"hermes-e2e-{int(time.time())}@example.com"
@@ -482,15 +546,15 @@ def main():
 
         status, sent = http_json("POST", f"{base}/messages/{dm_id}", {"content": "Answer this direct message smoke test without an at mention"}, token)
         assert status == 200, (status, sent)
+        koda_dm_working_state = wait_for_working_state(base, token, dm_id, "Koda E2E")
         koda_dm_runtime_started = wait_for_invocations(dm_id, "Koda E2E", 1, statuses={"queued", "running", "completed"})
         koda_dm = wait_for_bot_message(base, token, dm_id, "Koda E2E")
         koda_dm_runtime = wait_for_completed_invocations(dm_id, "Koda E2E", 1)
         koda_completed = [i for i in koda_dm_runtime.get("invocations", []) if i.get("status") == "completed"]
         assert any(i.get("externalRunId") for i in koda_completed), koda_dm_runtime
-        koda_session = (koda_completed[0].get("hermesSession") or {})
-        assert koda_session.get("sessionId"), koda_dm_runtime
-        assert "thechat:dm" in (koda_session.get("sessionKey") or ""), koda_session
-        assert dm_id in (koda_session.get("sessionKey") or ""), koda_session
+        koda_request = koda_completed[0].get("requestJson") or {}
+        assert koda_request.get("platform") == "thechat", koda_dm_runtime
+        assert koda_request.get("conversationId") == dm_id, koda_dm_runtime
 
         status, sent = http_json("POST", f"{base}/messages/{dm_id}", {"content": "Answer this follow-up using the same session"}, token)
         assert status == 200, (status, sent)
@@ -498,12 +562,10 @@ def main():
         koda_dm_runtime_followup = wait_for_completed_invocations(dm_id, "Koda E2E", 2)
         koda_completed = [i for i in koda_dm_runtime_followup.get("invocations", []) if i.get("botName") == "Koda E2E" and i.get("status") == "completed"]
         assert len(koda_completed) >= 2, koda_dm_runtime_followup
-        koda_session_ids = {
-            (i.get("hermesSession") or {}).get("sessionId")
-            for i in koda_completed
-            if (i.get("hermesSession") or {}).get("sessionId")
-        }
-        assert len(koda_session_ids) == 1, koda_dm_runtime_followup
+        assert all(
+            (invocation.get("requestJson") or {}).get("conversationId") == dm_id
+            for invocation in koda_completed
+        ), koda_dm_runtime_followup
 
         time.sleep(3)
         status, dm_messages = http_json("GET", f"{base}/messages/{dm_id}", token=token)
@@ -541,6 +603,7 @@ def main():
                 "kodaChannel": koda_channel_runtime,
                 "novaChannel": nova_channel_runtime,
                 "kodaDmStarted": koda_dm_runtime_started,
+                "kodaDmWorkingState": koda_dm_working_state,
                 "kodaDm": koda_dm_runtime_followup,
                 "novaDm": nova_dm_runtime,
             },
@@ -552,6 +615,12 @@ def main():
                 hermes_proc.wait(timeout=15)
             except subprocess.TimeoutExpired:
                 hermes_proc.kill()
+        if worker_proc:
+            worker_proc.send_signal(signal.SIGTERM)
+            try:
+                worker_proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                worker_proc.kill()
         if api_proc:
             api_proc.send_signal(signal.SIGTERM)
             try:

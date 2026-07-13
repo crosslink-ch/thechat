@@ -1,11 +1,12 @@
 import { describe, test, expect, afterAll, beforeAll } from "bun:test";
 import { Elysia } from "elysia";
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, inArray } from "drizzle-orm";
 import { db } from "../db";
 import {
   botInvocations,
   bots,
   conversationParticipants,
+  eventOutbox,
   messages,
   users,
   workspaces,
@@ -33,6 +34,7 @@ import {
   setRealtimeBusForTests,
   type RealtimeEvent,
 } from "../realtime";
+import { closeDomainEventRuntime, startDomainEventRuntime } from "../events/runtime";
 import crypto from "crypto";
 
 const app = new Elysia()
@@ -57,9 +59,11 @@ const botsTestRedisKeyPrefix = `thechat-bots-test-${crypto.randomUUID()}`;
 beforeAll(async () => {
   process.env.REDIS_KEY_PREFIX = botsTestRedisKeyPrefix;
   await setBotProgressStoreForTests(createLocalBotProgressStoreForTests());
+  await startDomainEventRuntime();
 });
 
 afterAll(async () => {
+  await closeDomainEventRuntime();
   await closeBotRuntimeForTests();
   await closeBotProgressStoreForTests();
   await closeRealtimeBusForTests();
@@ -67,6 +71,27 @@ afterAll(async () => {
     delete process.env.REDIS_KEY_PREFIX;
   } else {
     process.env.REDIS_KEY_PREFIX = originalRedisKeyPrefix;
+  }
+  if (createdWorkspaceIds.length > 0) {
+    await db
+      .delete(eventOutbox)
+      .where(inArray(eventOutbox.tenantId, createdWorkspaceIds));
+  }
+  const createdHumanUsers =
+    createdUserEmails.length > 0
+      ? await db
+          .select({ id: users.id })
+          .from(users)
+          .where(inArray(users.email, createdUserEmails))
+      : [];
+  const eventActorIds = [
+    ...createdBotUserIds,
+    ...createdHumanUsers.map((user) => user.id),
+  ];
+  if (eventActorIds.length > 0) {
+    await db
+      .delete(eventOutbox)
+      .where(inArray(eventOutbox.actorId, eventActorIds));
   }
   // Clean up bots (cascade from user delete handles bot records)
   for (const id of createdBotUserIds) {

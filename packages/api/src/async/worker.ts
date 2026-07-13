@@ -1,8 +1,11 @@
 import { Worker, type ConnectionOptions, type Job } from "bullmq";
 import { withSpan } from "../observability";
+import { log } from "../logging";
 import { createBullMqConnection } from "./bullmq";
 import { toBullMqQueueName } from "./transport";
 import type { AsyncJob, AsyncJobContext, AsyncJobHandler, AsyncMessage, QueueName } from "./types";
+
+const asyncWorkerLog = log.child({ component: "async-worker" });
 
 export interface AsyncWorkerRuntimeOptions {
   redisUrl?: string;
@@ -41,15 +44,21 @@ export class AsyncWorkerRuntime {
         },
       );
       worker.on("failed", (job, error) => {
-        console.warn("Async worker failed job", {
-          queue: queueName,
-          jobName: job?.name,
-          jobId: job?.id,
-          error,
-        });
+        asyncWorkerLog.warn(
+          {
+            err: error,
+            queue: queueName,
+            jobName: job?.name,
+            jobId: job?.id,
+          },
+          "Async worker failed job",
+        );
       });
       worker.on("error", (error) => {
-        console.error("Async worker queue error", { queue: queueName, error });
+        asyncWorkerLog.error(
+          { err: error, queue: queueName },
+          "Async worker queue error",
+        );
       });
 
       this.workers.push(worker);

@@ -1,6 +1,9 @@
 import crypto from "crypto";
 import Redis from "ioredis";
 import type { BotInvocationProgressEventPublic } from "@thechat/shared";
+import { log } from "../logging";
+
+const botProgressLog = log.child({ component: "bot-progress-store" });
 
 const DEFAULT_PROGRESS_TTL_SECONDS = 60 * 60;
 const DEFAULT_PROGRESS_MAX_EVENTS = 100;
@@ -49,7 +52,9 @@ class RedisBotProgressStore implements BotProgressStore {
       DEFAULT_PROGRESS_MAX_EVENTS,
     );
     this.redis = new Redis(redisUrl, { lazyConnect: true, maxRetriesPerRequest: null });
-    this.redis.on("error", (error) => console.warn("Redis bot progress store error", error));
+    this.redis.on("error", (error) => {
+      botProgressLog.warn({ err: error }, "Redis bot progress store error");
+    });
   }
 
   async append(input: ProgressEventInput): Promise<BotInvocationProgressEventPublic> {
@@ -211,7 +216,10 @@ class ResilientBotProgressStore implements BotProgressStore {
   private warn(error: unknown) {
     if (this.warned) return;
     this.warned = true;
-    console.warn("Falling back to in-memory Hermes progress store", error);
+    botProgressLog.warn(
+      { err: error },
+      "Falling back to in-memory Hermes progress store",
+    );
   }
 }
 
