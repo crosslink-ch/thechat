@@ -4,38 +4,100 @@ import type {
   BotInvocationPublic,
   BotRuntimeSnapshot,
 } from "@thechat/shared";
+import { pendingApprovalEvents } from "./hermes-approvals";
 import { selectHermesConversationProgress } from "./hermes-progress";
 
 describe("Hermes progress selectors", () => {
-  it("shows active Hermes progress across the continuous conversation", () => {
+  it("coalesces overlapping invocations for one Hermes conversation lane", () => {
     const snapshot = runtime({
       invocations: [
         invocation({
           id: "invocation-context-1",
           botUserId: "bot-user-1",
+          startedAt: "2026-01-01T00:00:00.000Z",
         }),
         invocation({
           id: "invocation-context-2",
           botUserId: "bot-user-1",
+          startedAt: "2026-01-01T00:00:01.000Z",
         }),
       ],
       events: [
-        progressEvent({ id: "event-context-1", invocationId: "invocation-context-1" }),
-        progressEvent({ id: "event-context-2", invocationId: "invocation-context-2" }),
+        progressEvent({
+          id: "event-context-1",
+          invocationId: "invocation-context-1",
+          occurredAt: "2026-01-01T00:00:00.500Z",
+        }),
+      ],
+    });
+
+    const handoffSelected = selectHermesConversationProgress(snapshot);
+    expect(handoffSelected.invocations).toHaveLength(1);
+    expect(handoffSelected.invocations[0]?.invocation.id).toBe("invocation-context-1");
+    expect(handoffSelected.invocations[0]?.events.map((event) => event.id)).toEqual([
+      "event-context-1",
+    ]);
+
+    const replacementSelected = selectHermesConversationProgress({
+      ...snapshot,
+      events: [
+        ...snapshot.events,
+        progressEvent({
+          id: "event-context-2",
+          invocationId: "invocation-context-2",
+          occurredAt: "2026-01-01T00:00:01.500Z",
+        }),
+      ],
+    });
+
+    expect(replacementSelected.invocations.map(({ invocation }) => invocation.id)).toEqual([
+      "invocation-context-2",
+    ]);
+    expect(
+      replacementSelected.invocations.flatMap(({ events }) => events.map((event) => event.id)),
+    ).toEqual(["event-context-2"]);
+    expect(replacementSelected.typingSuppressedUserIds).toEqual(["bot-user-1"]);
+  });
+
+  it("preserves pending approvals from an older invocation during a lane handoff", () => {
+    const snapshot = runtime({
+      invocations: [
+        invocation({
+          id: "approval-invocation",
+          startedAt: "2026-01-01T00:00:00.000Z",
+          createdAt: "2026-01-01T00:00:00.000Z",
+        }),
+        invocation({
+          id: "replacement-invocation",
+          startedAt: "2026-01-01T00:00:01.000Z",
+          createdAt: "2026-01-01T00:00:01.000Z",
+        }),
+      ],
+      events: [
+        progressEvent({
+          id: "approval-event",
+          invocationId: "approval-invocation",
+          type: "approval.request",
+          status: "waiting",
+          occurredAt: "2026-01-01T00:00:00.500Z",
+        }),
+        progressEvent({
+          id: "replacement-event",
+          invocationId: "replacement-invocation",
+          occurredAt: "2026-01-01T00:00:01.500Z",
+        }),
       ],
     });
 
     const selected = selectHermesConversationProgress(snapshot);
 
     expect(selected.invocations.map(({ invocation }) => invocation.id)).toEqual([
-      "invocation-context-1",
-      "invocation-context-2",
+      "replacement-invocation",
+      "approval-invocation",
     ]);
-    expect(selected.invocations.flatMap(({ events }) => events.map((event) => event.id))).toEqual([
-      "event-context-1",
-      "event-context-2",
+    expect(pendingApprovalEvents(selected.invocations, {}).map((event) => event.id)).toEqual([
+      "approval-event",
     ]);
-    expect(selected.typingSuppressedUserIds).toEqual(["bot-user-1"]);
   });
 
   it("suppresses typing for all active Hermes bots", () => {
@@ -43,16 +105,20 @@ describe("Hermes progress selectors", () => {
       invocations: [
         invocation({
           id: "first-bot",
+          botId: "bot-1",
           botUserId: "bot-user-1",
         }),
         invocation({
           id: "second-bot",
+          botId: "bot-2",
           botUserId: "bot-user-2",
         }),
       ],
     });
 
-    const selected = selectHermesConversationProgress(snapshot);
+    const selected = selectHermesConversationProgress(snapshot, undefined, {
+      activeTypingUserIds: ["bot-user-1", "bot-user-2"],
+    });
 
     expect(selected.invocations.map(({ invocation }) => invocation.id)).toEqual([
       "first-bot",
@@ -62,6 +128,46 @@ describe("Hermes progress selectors", () => {
       "bot-user-1",
       "bot-user-2",
     ]);
+  });
+
+  it("hides stale silent handoff records but keeps live or eventful work visible", () => {
+    const snapshot = runtime({
+      invocations: [
+        invocation({
+          id: "silent-invocation",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        }),
+      ],
+    });
+    const nowMs = Date.parse("2026-01-01T00:00:31.000Z");
+
+    const stale = selectHermesConversationProgress(snapshot, undefined, {
+      activeTypingUserIds: [],
+      nowMs,
+    });
+    expect(stale.invocations).toEqual([]);
+
+    const typing = selectHermesConversationProgress(snapshot, undefined, {
+      activeTypingUserIds: ["bot-user-1"],
+      nowMs,
+    });
+    expect(typing.invocations[0]?.invocation.id).toBe("silent-invocation");
+
+    const waiting = selectHermesConversationProgress(
+      {
+        ...snapshot,
+        events: [
+          progressEvent({
+            invocationId: "silent-invocation",
+            type: "approval.request",
+            status: "waiting",
+          }),
+        ],
+      },
+      undefined,
+      { activeTypingUserIds: [], nowMs },
+    );
+    expect(waiting.invocations[0]?.invocation.id).toBe("silent-invocation");
   });
 
   it("scopes General progress to unthreaded Hermes invocations", () => {
@@ -97,6 +203,11 @@ describe("Hermes progress selectors", () => {
         progressEvent({ id: "second-event", invocationId: "second-task", threadId: "thread-2" }),
       ],
     });
+
+    const allThreads = selectHermesConversationProgress(snapshot);
+    expect(
+      allThreads.invocations.map(({ invocation }) => invocation.id).sort(),
+    ).toEqual(["first-task", "second-task"]);
 
     const selected = selectHermesConversationProgress(snapshot, "thread-2");
 

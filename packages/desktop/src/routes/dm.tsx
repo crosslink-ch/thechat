@@ -72,6 +72,7 @@ export function DmRoute() {
   const runtimeQuery = useBotRuntime(conversationId, token, isHermesDm);
   const runtime = runtimeQuery.data ?? null;
   const runtimeLoading = runtimeQuery.isLoading;
+  const [progressNowMs, setProgressNowMs] = useState(() => Date.now());
   const threadState = useConversationThreads(conversationId, token, isHermesDm);
   const {
     threads,
@@ -89,11 +90,25 @@ export function DmRoute() {
     () =>
       selectHermesConversationProgress(runtime, activeThreadId, {
         unthreadedOnly: generalThreadActive,
+        activeTypingUserIds: typingUsers.keys(),
+        nowMs: progressNowMs,
       }),
-    [activeThreadId, generalThreadActive, runtime],
+    [activeThreadId, generalThreadActive, progressNowMs, runtime, typingUsers],
   );
   const activeHermesProgressRef = useRef(activeHermesProgress);
   activeHermesProgressRef.current = activeHermesProgress;
+  const shouldTickSilentHermesProgress = activeHermesProgress.invocations.some(
+    ({ invocation, events }) =>
+      invocation.status === "running" &&
+      events.length === 0 &&
+      !typingUsers.has(invocation.botUserId),
+  );
+  useEffect(() => {
+    setProgressNowMs(Date.now());
+    if (!shouldTickSilentHermesProgress) return;
+    const interval = window.setInterval(() => setProgressNowMs(Date.now()), 1_000);
+    return () => window.clearInterval(interval);
+  }, [shouldTickSilentHermesProgress]);
   const threadsRef = useRef(threads);
   threadsRef.current = threads;
   const chatConversationId = conversation ? conversationId : null;
