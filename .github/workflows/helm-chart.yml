@@ -1,0 +1,25 @@
+name: Helm chart
+
+on:
+  pull_request:
+    paths:
+      - "deploy/api/**"
+      - ".github/workflows/helm-chart.yml"
+  push:
+    branches: [main]
+    paths:
+      - "deploy/api/**"
+      - ".github/workflows/helm-chart.yml"
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.18.6
+      - name: Lint chart
+        run: helm lint deploy/api
+      - name: Test rendered migration hook
+        run: python3 deploy/api/tests/test_migration_hook.py
