@@ -1,12 +1,11 @@
-import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
 import type { AuthUser } from "@thechat/shared";
+import { create } from "zustand";
 import { api } from "../lib/api";
-import { edenErrorMessage } from "../lib/eden";
+import { edenErrorMessage, isAuthoritativeAuthRejection } from "../lib/eden";
 import { queryClient } from "../lib/query-client";
 
 const KV_ACCESS_TOKEN = "auth_access_token";
-const KV_REFRESH_TOKEN = "auth_refresh_token";
 const KV_USER = "auth_user";
 
 async function kvGet(key: string): Promise<string | null> {
@@ -21,16 +20,15 @@ async function kvDelete(key: string): Promise<void> {
   return invoke("kv_delete", { key });
 }
 
-/** Decode JWT payload without verification (for reading exp claim client-side) */
-function decodeJwtPayload(jwt: string): { exp?: number } | null {
-  try {
-    const parts = jwt.split(".");
-    if (parts.length !== 3) return null;
-    const payload = JSON.parse(atob(parts[1]));
-    return payload;
-  } catch {
-    return null;
-  }
+async function clearStoredAuth() {
+  await Promise.all([kvDelete(KV_ACCESS_TOKEN), kvDelete(KV_USER)]);
+}
+
+async function persistCredentials(accessToken: string, user: AuthUser) {
+  await Promise.all([
+    kvSet(KV_ACCESS_TOKEN, accessToken),
+    kvSet(KV_USER, JSON.stringify(user)),
+  ]);
 }
 
 interface AuthStore {
@@ -39,51 +37,13 @@ interface AuthStore {
   loading: boolean;
   initialize: () => Promise<void>;
   login: (email: string, password: string) => Promise<void>;
-  register: (name: string, email: string, password: string) => Promise<string | null>;
+  register: (
+    name: string,
+    email: string,
+    password: string,
+  ) => Promise<string | null>;
   verifyEmailOtp: (email: string, code: string) => Promise<void>;
   logout: () => Promise<void>;
-}
-
-let refreshTimer: ReturnType<typeof setTimeout> | null = null;
-
-function clearRefreshTimer() {
-  if (refreshTimer) {
-    clearTimeout(refreshTimer);
-    refreshTimer = null;
-  }
-}
-
-function scheduleRefresh(accessToken: string) {
-  clearRefreshTimer();
-  const payload = decodeJwtPayload(accessToken);
-  if (!payload?.exp) return;
-
-  // Refresh 60s before expiry
-  const msUntilRefresh = payload.exp * 1000 - Date.now() - 60_000;
-  if (msUntilRefresh <= 0) {
-    doRefresh();
-    return;
-  }
-
-  refreshTimer = setTimeout(doRefresh, msUntilRefresh);
-}
-
-async function doRefresh() {
-  try {
-    const refreshToken = await kvGet(KV_REFRESH_TOKEN);
-    if (!refreshToken) return;
-
-    const { data, error } = await api.auth.refresh.post({ refreshToken });
-
-    if (data && !error && "accessToken" in data) {
-      const newAccessToken = data.accessToken as string;
-      await kvSet(KV_ACCESS_TOKEN, newAccessToken);
-      useAuthStore.setState({ token: newAccessToken });
-      scheduleRefresh(newAccessToken);
-    }
-  } catch {
-    // Refresh failed
-  }
 }
 
 export const useAuthStore = create<AuthStore>()((set) => ({
@@ -92,85 +52,47 @@ export const useAuthStore = create<AuthStore>()((set) => ({
   loading: true,
 
   initialize: async () => {
-    try {
-      let accessToken = await kvGet(KV_ACCESS_TOKEN);
-      const refreshToken = await kvGet(KV_REFRESH_TOKEN);
+    const restoreCachedState = (
+      accessToken: string | null,
+      cachedUser: string | null,
+    ) => {
+      if (!accessToken || !cachedUser) return;
+      try {
+        set({ user: JSON.parse(cachedUser) as AuthUser, token: accessToken });
+      } catch {
+        // A corrupt cache is ignored without deleting a potentially valid
+        // credential during an outage.
+      }
+    };
 
-      if (!accessToken && !refreshToken) {
-        set({ loading: false });
+    let accessToken: string | null = null;
+    let cachedUser: string | null = null;
+    try {
+      [accessToken, cachedUser] = await Promise.all([
+        kvGet(KV_ACCESS_TOKEN),
+        kvGet(KV_USER),
+      ]);
+
+      if (!accessToken) return;
+
+      const me = await api.auth.me.get({
+        headers: { authorization: `Bearer ${accessToken}` },
+      });
+      if (me.data && !me.error && "user" in me.data && me.data.user) {
+        await persistCredentials(accessToken, me.data.user);
+        set({ user: me.data.user, token: accessToken });
         return;
       }
 
-      // Try using the access token
-      if (accessToken) {
-        const { data, error } = await api.auth.me.get({
-          headers: { authorization: `Bearer ${accessToken}` },
-        });
-
-        if (data && !error && "user" in data) {
-          // Access token is valid — also verify the refresh token (session)
-          if (refreshToken) {
-            const sessionRes = await api.auth["verify-session"].post({ refreshToken });
-            if (sessionRes.error || !sessionRes.data || !("valid" in sessionRes.data)) {
-              // Refresh token is invalid — clear everything
-              await kvDelete(KV_ACCESS_TOKEN);
-              await kvDelete(KV_REFRESH_TOKEN);
-              await kvDelete(KV_USER);
-              set({ loading: false });
-              return;
-            }
-          } else {
-            // No refresh token stored — can't maintain session
-            await kvDelete(KV_ACCESS_TOKEN);
-            await kvDelete(KV_USER);
-            set({ loading: false });
-            return;
-          }
-
-          set({ user: data.user, token: accessToken });
-          await kvSet(KV_USER, JSON.stringify(data.user));
-          scheduleRefresh(accessToken);
-          return;
-        }
+      if (isAuthoritativeAuthRejection(me.error)) {
+        await clearStoredAuth();
+        return;
       }
 
-      // Access token invalid/expired - try refresh
-      if (refreshToken) {
-        const { data, error } = await api.auth.refresh.post({ refreshToken });
-        if (data && !error && "accessToken" in data) {
-          const newAccessToken = data.accessToken as string;
-          await kvSet(KV_ACCESS_TOKEN, newAccessToken);
-          set({ token: newAccessToken });
-          scheduleRefresh(newAccessToken);
-
-          // Fetch user info with new token
-          const meRes = await api.auth.me.get({
-            headers: { authorization: `Bearer ${newAccessToken}` },
-          });
-          if (meRes.data && !meRes.error && "user" in meRes.data) {
-            set({ user: meRes.data.user });
-            await kvSet(KV_USER, JSON.stringify(meRes.data.user));
-            return;
-          }
-        }
-      }
-
-      // Both failed (server reachable but tokens invalid) - clear everything
-      await kvDelete(KV_ACCESS_TOKEN);
-      await kvDelete(KV_REFRESH_TOKEN);
-      await kvDelete(KV_USER);
+      restoreCachedState(accessToken, cachedUser);
     } catch {
-      // Server unreachable - fall back to cached user
-      const storedToken = await kvGet(KV_ACCESS_TOKEN);
-      const cached = await kvGet(KV_USER);
-      if (cached) {
-        try {
-          const user = JSON.parse(cached);
-          set({ user, token: storedToken });
-        } catch {
-          // Corrupt cache
-        }
-      }
+      // Preserve cached state on transport and authentication-service failures.
+      restoreCachedState(accessToken, cachedUser);
     } finally {
       set({ loading: false });
     }
@@ -180,67 +102,68 @@ export const useAuthStore = create<AuthStore>()((set) => ({
     const { data, error } = await api.auth.login.post({ email, password });
 
     if (error) throw new Error(edenErrorMessage(error, "Login failed"));
-    if (!data || !("accessToken" in data)) throw new Error("Login failed");
+    if (!data || !("accessToken" in data) || !("user" in data) || !data.user) {
+      throw new Error("Login failed");
+    }
 
-    await kvSet(KV_ACCESS_TOKEN, data.accessToken!);
-    await kvSet(KV_REFRESH_TOKEN, data.refreshToken!);
-    await kvSet(KV_USER, JSON.stringify(data.user!));
-    set({ token: data.accessToken!, user: data.user! });
-    scheduleRefresh(data.accessToken!);
+    await persistCredentials(data.accessToken, data.user);
+    set({ token: data.accessToken, user: data.user });
   },
 
-  register: async (name: string, email: string, password: string): Promise<string | null> => {
-    const { data, error } = await api.auth.register.post({ name, email, password });
+  register: async (
+    name: string,
+    email: string,
+    password: string,
+  ): Promise<string | null> => {
+    const { data, error } = await api.auth.register.post({
+      name,
+      email,
+      password,
+    });
 
     if (error) throw new Error(edenErrorMessage(error, "Registration failed"));
     if (!data) throw new Error("Registration failed");
 
-    // If verification required, return message
-    if ("message" in data) {
-      return data.message as string;
-    }
+    if ("message" in data) return data.message;
 
-    // Auto-login
-    if ("accessToken" in data) {
-      await kvSet(KV_ACCESS_TOKEN, data.accessToken!);
-      await kvSet(KV_REFRESH_TOKEN, data.refreshToken!);
-      await kvSet(KV_USER, JSON.stringify(data.user!));
-      set({ token: data.accessToken!, user: data.user! });
-      scheduleRefresh(data.accessToken!);
+    if ("accessToken" in data && "user" in data && data.user) {
+      await persistCredentials(data.accessToken, data.user);
+      set({ token: data.accessToken, user: data.user });
     }
     return null;
   },
 
   verifyEmailOtp: async (email: string, code: string) => {
-    const { data, error } = await api.auth["verify-email-otp"].post({ email, code });
+    const { data, error } = await api.auth["verify-email"].post({
+      email,
+      code,
+    });
 
     if (error) throw new Error(edenErrorMessage(error, "Verification failed"));
-    if (!data || !("accessToken" in data)) throw new Error("Verification failed");
+    if (!data || !("accessToken" in data) || !("user" in data) || !data.user) {
+      throw new Error("Verification failed");
+    }
 
-    await kvSet(KV_ACCESS_TOKEN, data.accessToken!);
-    await kvSet(KV_REFRESH_TOKEN, data.refreshToken!);
-    await kvSet(KV_USER, JSON.stringify(data.user!));
-    set({ token: data.accessToken!, user: data.user! });
-    scheduleRefresh(data.accessToken!);
+    await persistCredentials(data.accessToken, data.user);
+    set({ token: data.accessToken, user: data.user });
   },
 
   logout: async () => {
-    clearRefreshTimer();
-    try {
-      const accessToken = await kvGet(KV_ACCESS_TOKEN);
-      const refreshToken = await kvGet(KV_REFRESH_TOKEN);
-      if (accessToken) {
-        await api.auth.logout.post(
-          { refreshToken: refreshToken ?? "" },
-          { headers: { authorization: `Bearer ${accessToken}` } },
-        );
+    const accessToken = await kvGet(KV_ACCESS_TOKEN);
+    if (accessToken) {
+      const { error } = await api.auth.logout.post(
+        {},
+        { headers: { authorization: `Bearer ${accessToken}` } },
+      );
+      // A 401/403 means the credential is already unusable and local cleanup is
+      // safe. For transport/5xx failures, retain the sole token so the user can
+      // retry authoritative server-side revocation.
+      if (error && !isAuthoritativeAuthRejection(error)) {
+        throw new Error(edenErrorMessage(error, "Logout failed"));
       }
-    } catch {
-      // Ignore network errors on logout
     }
-    await kvDelete(KV_ACCESS_TOKEN);
-    await kvDelete(KV_REFRESH_TOKEN);
-    await kvDelete(KV_USER);
+
+    await clearStoredAuth();
     queryClient.clear();
     set({ token: null, user: null });
   },

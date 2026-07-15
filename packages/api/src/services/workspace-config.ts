@@ -86,7 +86,8 @@ export async function getWorkspaceConfig(
   workspaceId: string,
   userId: string
 ): Promise<WorkspaceConfig> {
-  await requireMembership(workspaceId, userId);
+  const membership = await requireMembership(workspaceId, userId);
+  requireAdminOrOwner(membership.role);
 
   const [row] = await db
     .select()
