@@ -35,3 +35,14 @@ export function edenErrorMessage(error: unknown, fallback: string) {
   }
   return fallback;
 }
+
+export function edenErrorStatus(error: unknown): number | null {
+  if (!error || typeof error !== "object" || !("status" in error)) return null;
+  const status = (error as { status?: unknown }).status;
+  return typeof status === "number" ? status : null;
+}
+
+export function isAuthoritativeAuthRejection(error: unknown) {
+  const status = edenErrorStatus(error);
+  return status === 401 || status === 403;
+}

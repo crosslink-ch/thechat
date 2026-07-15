@@ -31,8 +31,9 @@ migrationJob:
 # The secret must have a key called DATABASE_URL
 databaseSecret: thechat-db
 
-# Name of an existing Kubernetes Secret containing JWT_SECRET
-jwtSecret: thechat-jwt
+# Name of an existing Kubernetes Secret containing BETTER_AUTH_SECRET.
+# Generate at least 32 bytes of high-entropy random data.
+betterAuthSecret: thechat-better-auth
 
 # Name of a Kubernetes Secret containing REDIS_URL.
 # When redis.enabled=true, this chart creates the secret.
@@ -70,8 +71,12 @@ smtpSecret: ""
 postmarkSecret: ""
 
 env:
+  NODE_ENV: "production"
   THECHAT_BACKEND_PORT: "3000"
   THECHAT_BACKEND_URL: "https://api.thechat.app"
+  BETTER_AUTH_URL: "https://api.thechat.app"
+  AUTH_TRUST_PROXY: "true"
+  AUTH_TRUSTED_IP_HEADER: "x-real-ip"
   REALTIME_DRIVER: "redis"
   REDIS_KEY_PREFIX: "thechat"
   ASYNC_WORKER_CONCURRENCY: "4"

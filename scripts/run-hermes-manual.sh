@@ -295,7 +295,8 @@ export DATABASE_URL="${DATABASE_URL:-postgres://thechat:thechat@localhost:15543/
 export REDIS_URL="${REDIS_URL:-redis://localhost:16380}"
 export REALTIME_DRIVER="${REALTIME_DRIVER:-redis}"
 export REDIS_KEY_PREFIX="${REDIS_KEY_PREFIX:-thechat-hermes-manual}"
-export JWT_SECRET="${JWT_SECRET:-change-me-local-thechat-jwt-secret}"
+export BETTER_AUTH_SECRET="${BETTER_AUTH_SECRET:-change-me-local-thechat-better-auth-secret}"
+export BETTER_AUTH_URL="${BETTER_AUTH_URL:-$BASE_URL}"
 export THECHAT_SECRET_KEY="${THECHAT_SECRET_KEY:-change-me-local-thechat-secret-key}"
 export THECHAT_BACKEND_PORT="$API_PORT"
 
@@ -330,7 +331,8 @@ else
     REDIS_URL="$REDIS_URL" \
     REALTIME_DRIVER="$REALTIME_DRIVER" \
     REDIS_KEY_PREFIX="$REDIS_KEY_PREFIX" \
-    JWT_SECRET="$JWT_SECRET" \
+    BETTER_AUTH_SECRET="$BETTER_AUTH_SECRET" \
+    BETTER_AUTH_URL="$BETTER_AUTH_URL" \
     THECHAT_SECRET_KEY="$THECHAT_SECRET_KEY" \
     THECHAT_BACKEND_PORT="$API_PORT" \
     LOG_LEVEL="${LOG_LEVEL:-info}" \
@@ -344,7 +346,8 @@ if [[ "$START_WORKER" == "1" ]]; then
     REDIS_URL="$REDIS_URL" \
     REALTIME_DRIVER="$REALTIME_DRIVER" \
     REDIS_KEY_PREFIX="$REDIS_KEY_PREFIX" \
-    JWT_SECRET="$JWT_SECRET" \
+    BETTER_AUTH_SECRET="$BETTER_AUTH_SECRET" \
+    BETTER_AUTH_URL="$BETTER_AUTH_URL" \
     THECHAT_SECRET_KEY="$THECHAT_SECRET_KEY" \
     THECHAT_BACKEND_PORT="$API_PORT" \
     LOG_LEVEL="${LOG_LEVEL:-info}" \

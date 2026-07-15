@@ -1,37 +1,95 @@
 import { Elysia } from "elysia";
 import { eq } from "drizzle-orm";
 import { db } from "../db";
-import { bots, users } from "../db/schema";
-import { verifyAccessToken } from "./jwt";
+import { bots, session, users } from "../db/schema";
+import { auth, isEmailVerificationRequired } from "./better-auth";
+import { log } from "../logging";
+
+const authMiddlewareLog = log.child({ component: "auth-middleware" });
+
+export const authServiceUnavailable = {
+  error: "Authentication service temporarily unavailable",
+};
+
+export class AuthInfrastructureError extends Error {
+  constructor(cause: unknown) {
+    super(authServiceUnavailable.error, { cause });
+    this.name = "AuthInfrastructureError";
+  }
+}
+
+export const authInfrastructureErrors = new Elysia({
+  name: "auth-infrastructure-errors",
+}).onError({ as: "global" }, ({ error, set }) => {
+  if (!(error instanceof AuthInfrastructureError)) return;
+  set.status = 503;
+  return authServiceUnavailable;
+});
+
+type ResolvedUser = {
+  id: string;
+  name: string;
+  email: string | null;
+  avatar: string | null;
+  type: "human" | "bot";
+};
+
+async function loadHumanUser(userId: string): Promise<ResolvedUser | null> {
+  const [user] = await db
+    .select({
+      id: users.id,
+      name: users.name,
+      email: users.email,
+      avatar: users.avatar,
+      type: users.type,
+      emailVerified: users.emailVerified,
+    })
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1);
+
+  if (!user || user.type !== "human") return null;
+
+  if (isEmailVerificationRequired() && !user.emailVerified) {
+    // A policy change from optional to required invalidates sessions created
+    // under the earlier policy. The shared table makes this replica-safe.
+    await db.delete(session).where(eq(session.userId, user.id));
+    return null;
+  }
+
+  return {
+    id: user.id,
+    name: user.name,
+    email: user.email,
+    avatar: user.avatar,
+    type: user.type,
+  };
+}
 
 /**
  * Resolve a Bearer token to a user record.
- * - JWT (contains dots) → verify and reconstruct user from payload (0 DB queries)
- * - bot_ prefix → DB lookup (unchanged)
+ * - bot_ prefix → bot API-key lookup
+ * - all other bearer tokens → Better Auth opaque human session lookup
  */
-export async function resolveTokenToUser(token: string) {
-  // 1. JWT access token (has 2 dots)
-  if (token.includes(".")) {
-    const payload = await verifyAccessToken(token);
-    if (!payload) return null;
-    return {
-      id: payload.sub,
-      name: payload.name,
-      email: payload.email,
-      avatar: payload.avatar,
-      type: payload.type,
-    };
-  }
+export async function resolveTokenToUser(
+  token: string,
+  options: { includeBotTokens?: boolean } = {},
+) {
+  const includeBotTokens = options.includeBotTokens ?? true;
 
-  // 2. Bot API keys (no expiry)
-  if (token.startsWith("bot_")) {
-    const [bot] = await db
-      .select({ userId: bots.userId })
-      .from(bots)
-      .where(eq(bots.apiKey, token))
-      .limit(1);
+  try {
+    // Bot API keys are deliberately never handed to Better Auth.
+    if (token.startsWith("bot_")) {
+      if (!includeBotTokens) return null;
 
-    if (bot) {
+      const [bot] = await db
+        .select({ userId: bots.userId })
+        .from(bots)
+        .where(eq(bots.apiKey, token))
+        .limit(1);
+
+      if (!bot) return null;
+
       const [user] = await db
         .select({
           id: users.id,
@@ -46,9 +104,24 @@ export async function resolveTokenToUser(token: string) {
 
       return user ?? null;
     }
-  }
 
-  return null;
+    const betterAuthSession = await auth.api.getSession({
+      headers: new Headers({ authorization: `Bearer ${token}` }),
+    });
+
+    if (betterAuthSession?.user?.id) {
+      return loadHumanUser(betterAuthSession.user.id);
+    }
+
+    return null;
+  } catch (error) {
+    if (error instanceof AuthInfrastructureError) throw error;
+    // Session/user-store failures are infrastructure failures, not evidence
+    // that a credential is invalid. Route boundaries map this typed error to
+    // a sanitized, retryable 503 without leaking database/driver details.
+    authMiddlewareLog.error({ err: error }, "Authentication lookup failed");
+    throw new AuthInfrastructureError(error);
+  }
 }
 
 export const optionalAuth = new Elysia({ name: "optional-auth" }).derive(
@@ -61,7 +134,7 @@ export const optionalAuth = new Elysia({ name: "optional-auth" }).derive(
     const token = authHeader.slice(7);
     const user = await resolveTokenToUser(token);
     return { user };
-  }
+  },
 );
 
 export const requireAuth = new Elysia({ name: "require-auth" })

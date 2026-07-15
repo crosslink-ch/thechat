@@ -42,9 +42,10 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
 
 {{- define "thechat-api.migrationLabels" -}}
+{{- $migrateImage := default (dict) .Values.migrateImage -}}
 helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | trunc 63 | trimSuffix "-" }}
 {{ include "thechat-api.migrationSelectorLabels" . }}
-app.kubernetes.io/version: {{ .Values.migrateImage.tag | default .Chart.AppVersion | quote }}
+app.kubernetes.io/version: {{ get $migrateImage "tag" | default .Values.image.tag | default .Chart.AppVersion | quote }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end }}
 
@@ -94,7 +95,24 @@ redis://{{ include "thechat-api.redisFullname" . }}.{{ .Release.Namespace }}.svc
 {{- end }}
 
 {{- define "thechat-api.env" -}}
-{{- range $key, $value := .Values.env }}
+{{- $configuredEnv := default (dict) .Values.env -}}
+{{- $backendUrl := default "https://api.thechat.app" (index $configuredEnv "THECHAT_BACKEND_URL") -}}
+{{- $defaultEnv := dict
+  "NODE_ENV" "production"
+  "BETTER_AUTH_URL" $backendUrl
+  "AUTH_TRUST_PROXY" "true"
+  "AUTH_TRUSTED_IP_HEADER" "x-real-ip"
+  "REALTIME_DRIVER" "redis"
+  "REDIS_KEY_PREFIX" "thechat"
+  "REQUIRE_EMAIL_VERIFICATION" "false"
+-}}
+{{- $effectiveEnv := mergeOverwrite (deepCopy $defaultEnv) $configuredEnv -}}
+{{- range $key, $value := $defaultEnv -}}
+{{- if or (not (hasKey $effectiveEnv $key)) (eq (index $effectiveEnv $key) nil) -}}
+{{- $_ := set $effectiveEnv $key $value -}}
+{{- end -}}
+{{- end -}}
+{{- range $key, $value := $effectiveEnv }}
 - name: {{ $key }}
   value: {{ $value | quote }}
 {{- end }}
@@ -103,11 +121,15 @@ redis://{{ include "thechat-api.redisFullname" . }}.{{ .Release.Namespace }}.svc
     secretKeyRef:
       name: {{ .Values.databaseSecret }}
       key: DATABASE_URL
-- name: JWT_SECRET
+{{- $betterAuthSecret := "thechat-better-auth" -}}
+{{- if and (hasKey .Values "betterAuthSecret") (ne .Values.betterAuthSecret nil) -}}
+{{- $betterAuthSecret = required "betterAuthSecret is required" .Values.betterAuthSecret -}}
+{{- end }}
+- name: BETTER_AUTH_SECRET
   valueFrom:
     secretKeyRef:
-      name: {{ .Values.jwtSecret }}
-      key: JWT_SECRET
+      name: {{ $betterAuthSecret }}
+      key: BETTER_AUTH_SECRET
 - name: REDIS_URL
   valueFrom:
     secretKeyRef:

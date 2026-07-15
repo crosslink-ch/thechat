@@ -1,330 +1,251 @@
-import { describe, test, expect, afterAll } from "bun:test";
-import { Elysia } from "elysia";
-import { eq } from "drizzle-orm";
-import { db } from "../db";
-import { users, sessions, emailVerifications } from "../db/schema";
-import { authRoutes } from "./index";
+import { afterAll, describe, expect, spyOn, test } from "bun:test";
 import crypto from "crypto";
+import { eq } from "drizzle-orm";
+import { Elysia } from "elysia";
+import { db } from "../db";
+import { account, bots, session, users } from "../db/schema";
+import { auth } from "./better-auth";
+import { authRoutes } from "./index";
+import { resolveTokenToUser } from "./middleware";
 
 const app = new Elysia().use(authRoutes);
+const createdUserEmails: string[] = [];
+const createdUserIds: string[] = [];
 
 function uniqueEmail() {
   return `test-${crypto.randomUUID()}@test.com`;
 }
 
-const createdUserEmails: string[] = [];
-
-async function cleanup() {
+afterAll(async () => {
   for (const email of createdUserEmails) {
-    const [user] = await db
-      .select({ id: users.id })
-      .from(users)
-      .where(eq(users.email, email))
-      .limit(1);
-    if (user) {
-      // Cascade deletes handle sessions + verifications
-      await db.delete(users).where(eq(users.id, user.id));
-    }
+    await db.delete(users).where(eq(users.email, email));
   }
-}
-
-afterAll(cleanup);
+  for (const id of createdUserIds) {
+    await db.delete(users).where(eq(users.id, id));
+  }
+});
 
 async function req(
   method: string,
   path: string,
   body?: unknown,
-  token?: string
+  token?: string,
 ) {
   const headers: Record<string, string> = {};
-  if (body) headers["Content-Type"] = "application/json";
-  if (token) headers["Authorization"] = `Bearer ${token}`;
-
+  if (body !== undefined) headers["content-type"] = "application/json";
+  if (token) headers.authorization = `Bearer ${token}`;
   const response = await app.handle(
     new Request(`http://localhost${path}`, {
       method,
       headers,
-      body: body ? JSON.stringify(body) : undefined,
-    })
+      body: body === undefined ? undefined : JSON.stringify(body),
+    }),
   );
-
   const text = await response.text();
-  let json: any;
+  let parsed: any = text;
   try {
-    json = JSON.parse(text);
+    parsed = JSON.parse(text);
   } catch {
-    json = text;
+    // Keep plain-text framework responses as-is.
   }
-  return { status: response.status, body: json };
+  return { status: response.status, body: parsed };
 }
 
-describe("Auth: Registration", () => {
-  test("successful registration returns accessToken, refreshToken, and user", async () => {
-    const email = uniqueEmail();
-    createdUserEmails.push(email);
+async function register(name = "Test User") {
+  const email = uniqueEmail();
+  createdUserEmails.push(email);
+  const response = await req("POST", "/auth/register", {
+    name,
+    email,
+    password: "password123",
+  });
+  return { email, response };
+}
 
-    const res = await req("POST", "/auth/register", {
-      name: "Test User",
-      email,
-      password: "password123",
+describe("Better Auth registration and login", () => {
+  test("registration returns one opaque bearer token and stores the credential in account", async () => {
+    const { email, response } = await register();
+
+    expect(response.status).toBe(200);
+    expect(response.body.accessToken).toBeString();
+    expect(response.body.accessToken.split(".")).not.toHaveLength(3);
+    expect(response.body.refreshToken).toBeUndefined();
+    expect(response.body.user).toMatchObject({ email, type: "human" });
+    expect(response.body.user.id).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+    );
+
+    const [credential] = await db
+      .select({
+        userId: account.userId,
+        providerId: account.providerId,
+        password: account.password,
+      })
+      .from(account)
+      .where(eq(account.userId, response.body.user.id));
+    expect(credential).toMatchObject({
+      userId: response.body.user.id,
+      providerId: "credential",
     });
-
-    expect(res.status).toBe(200);
-    expect(res.body.accessToken).toBeDefined();
-    expect(res.body.refreshToken).toBeDefined();
-    expect(res.body.user).toBeDefined();
-    expect(res.body.user.name).toBe("Test User");
-    expect(res.body.user.email).toBe(email);
-
-    // accessToken should be a JWT (3 dot-separated segments)
-    expect(res.body.accessToken.split(".").length).toBe(3);
+    expect(credential.password).toBeString();
   });
 
-  test("duplicate email returns 409", async () => {
-    const email = uniqueEmail();
-    createdUserEmails.push(email);
-
-    await req("POST", "/auth/register", {
-      name: "First",
+  test("login returns one opaque bearer token", async () => {
+    const { email } = await register("Login Test");
+    const response = await req("POST", "/auth/login", {
       email,
       password: "password123",
     });
 
-    const res = await req("POST", "/auth/register", {
-      name: "Second",
+    expect(response.status).toBe(200);
+    expect(response.body.accessToken).toBeString();
+    expect(response.body.refreshToken).toBeUndefined();
+    expect(response.body.user.email).toBe(email);
+  });
+
+  test("wrong-password and unknown-account failures are identical", async () => {
+    const { email } = await register("Generic Login");
+    const wrongPassword = await req("POST", "/auth/login", {
+      email,
+      password: "wrong-password",
+    });
+    const unknownAccount = await req("POST", "/auth/login", {
+      email: uniqueEmail(),
+      password: "wrong-password",
+    });
+
+    expect(wrongPassword).toEqual({
+      status: 401,
+      body: { error: "Invalid email or password" },
+    });
+    expect(unknownAccount).toEqual(wrongPassword);
+  });
+
+  test("duplicate registration is rejected", async () => {
+    const { email } = await register("First Registration");
+    const duplicate = await req("POST", "/auth/register", {
+      name: "Duplicate Registration",
       email,
       password: "password456",
     });
 
-    expect(res.status).toBe(409);
-    expect(res.body.error).toContain("already");
-  });
-
-  test("missing fields return 422", async () => {
-    const res = await req("POST", "/auth/register", {
-      email: "bad",
-    });
-
-    expect(res.status).toBeGreaterThanOrEqual(400);
+    expect(duplicate.status).toBe(409);
   });
 });
 
-describe("Auth: Login", () => {
-  test("correct credentials return accessToken, refreshToken, and user", async () => {
-    const email = uniqueEmail();
-    createdUserEmails.push(email);
+describe("Better Auth session facade", () => {
+  test("/me resolves a live session and logout revokes it", async () => {
+    const { email, response: registered } = await register("Session Test");
+    const token = registered.body.accessToken;
 
-    await req("POST", "/auth/register", {
-      name: "Login Test",
-      email,
-      password: "password123",
+    const me = await req("GET", "/auth/me", undefined, token);
+    expect(me).toMatchObject({
+      status: 200,
+      body: { user: { email } },
     });
 
-    const res = await req("POST", "/auth/login", {
-      email,
-      password: "password123",
-    });
-
-    expect(res.status).toBe(200);
-    expect(res.body.accessToken).toBeDefined();
-    expect(res.body.refreshToken).toBeDefined();
-    expect(res.body.user.email).toBe(email);
+    const logout = await req("POST", "/auth/logout", {}, token);
+    expect(logout).toEqual({ status: 200, body: { success: true } });
+    expect((await req("GET", "/auth/me", undefined, token)).status).toBe(401);
+    expect(
+      await db
+        .select({ id: session.id })
+        .from(session)
+        .where(eq(session.userId, registered.body.user.id)),
+    ).toHaveLength(0);
   });
 
-  test("wrong password returns 401", async () => {
-    const email = uniqueEmail();
-    createdUserEmails.push(email);
-
-    await req("POST", "/auth/register", {
-      name: "Wrong PW",
-      email,
-      password: "password123",
-    });
-
-    const res = await req("POST", "/auth/login", {
-      email,
-      password: "wrongpassword",
-    });
-
-    expect(res.status).toBe(401);
-  });
-
-  test("nonexistent email returns 401", async () => {
-    const res = await req("POST", "/auth/login", {
-      email: uniqueEmail(),
-      password: "password123",
-    });
-
-    expect(res.status).toBe(401);
-  });
-});
-
-describe("Auth: Session (GET /auth/me)", () => {
-  test("valid token returns user", async () => {
-    const email = uniqueEmail();
-    createdUserEmails.push(email);
-
-    const reg = await req("POST", "/auth/register", {
-      name: "Session Test",
-      email,
-      password: "password123",
-    });
-
-    const res = await req("GET", "/auth/me", undefined, reg.body.accessToken);
-
-    expect(res.status).toBe(200);
-    expect(res.body.user.email).toBe(email);
-  });
-
-  test("invalid token returns 401", async () => {
-    const res = await req("GET", "/auth/me", undefined, "invalid-token");
-    expect(res.status).toBe(401);
-  });
-
-  test("no token returns 401", async () => {
-    const res = await req("GET", "/auth/me");
-    expect(res.status).toBe(401);
-  });
-});
-
-describe("Auth: Logout", () => {
-  test("invalidates refresh token", async () => {
-    const email = uniqueEmail();
-    createdUserEmails.push(email);
-
-    const reg = await req("POST", "/auth/register", {
-      name: "Logout Test",
-      email,
-      password: "password123",
-    });
-
-    const accessToken = reg.body.accessToken;
-    const refreshToken = reg.body.refreshToken;
-
-    // Logout — sends refresh token in body
-    const logoutRes = await req(
-      "POST",
-      "/auth/logout",
-      { refreshToken },
-      accessToken
-    );
-    expect(logoutRes.status).toBe(200);
-
-    // JWT access token still works (stateless — valid until expiry)
-    const meRes = await req("GET", "/auth/me", undefined, accessToken);
-    expect(meRes.status).toBe(200);
-
-    // But refresh token is invalidated — cannot get new access tokens
-    const refreshRes = await req("POST", "/auth/refresh", { refreshToken });
-    expect(refreshRes.status).toBe(401);
-  });
-});
-
-describe("Auth: Refresh", () => {
-  test("returns new access token for valid refresh token", async () => {
-    const email = uniqueEmail();
-    createdUserEmails.push(email);
-
-    const reg = await req("POST", "/auth/register", {
-      name: "Refresh Test",
-      email,
-      password: "password123",
-    });
-
-    const res = await req("POST", "/auth/refresh", {
-      refreshToken: reg.body.refreshToken,
-    });
-
-    expect(res.status).toBe(200);
-    expect(res.body.accessToken).toBeDefined();
-    expect(res.body.accessToken.split(".").length).toBe(3);
-
-    // New access token should work for /me
-    const meRes = await req("GET", "/auth/me", undefined, res.body.accessToken);
-    expect(meRes.status).toBe(200);
-    expect(meRes.body.user.email).toBe(email);
-  });
-
-  test("invalid refresh token returns 401", async () => {
-    const res = await req("POST", "/auth/refresh", {
-      refreshToken: "invalid-refresh-token",
-    });
-    expect(res.status).toBe(401);
-  });
-
-  test("refresh after logout fails", async () => {
-    const email = uniqueEmail();
-    createdUserEmails.push(email);
-
-    const reg = await req("POST", "/auth/register", {
-      name: "Refresh After Logout",
-      email,
-      password: "password123",
-    });
-
-    // Logout
-    await req(
-      "POST",
-      "/auth/logout",
-      { refreshToken: reg.body.refreshToken },
-      reg.body.accessToken
+  test("logout returns 503 when Better Auth reports success without revoking", async () => {
+    const { response: registered } = await register("Failed Revocation");
+    const token = registered.body.accessToken;
+    const originalHandler = auth.handler.bind(auth);
+    const handlerSpy = spyOn(auth, "handler").mockImplementation(
+      async (request: Request) => {
+        if (new URL(request.url).pathname === "/_better-auth/sign-out") {
+          return Response.json({ success: true });
+        }
+        return originalHandler(request);
+      },
     );
 
-    // Refresh should fail
-    const res = await req("POST", "/auth/refresh", {
-      refreshToken: reg.body.refreshToken,
-    });
-    expect(res.status).toBe(401);
+    try {
+      expect(await req("POST", "/auth/logout", {}, token)).toEqual({
+        status: 503,
+        body: { error: "Authentication service temporarily unavailable" },
+      });
+      expect((await req("GET", "/auth/me", undefined, token)).status).toBe(200);
+    } finally {
+      handlerSpy.mockRestore();
+    }
+  });
+
+  test("invalid and missing tokens return 401", async () => {
+    expect((await req("GET", "/auth/me")).status).toBe(401);
+    expect(
+      (await req("GET", "/auth/me", undefined, "not-a-session-token")).status,
+    ).toBe(401);
+  });
+
+  test("verification policy revokes a session created while verification was optional", async () => {
+    const previous = process.env.REQUIRE_EMAIL_VERIFICATION;
+    process.env.REQUIRE_EMAIL_VERIFICATION = "false";
+    const { response: registered } = await register("Policy Test");
+    try {
+      process.env.REQUIRE_EMAIL_VERIFICATION = "true";
+      expect(
+        (await req("GET", "/auth/me", undefined, registered.body.accessToken))
+          .status,
+      ).toBe(401);
+      expect(
+        await db
+          .select({ id: session.id })
+          .from(session)
+          .where(eq(session.userId, registered.body.user.id)),
+      ).toHaveLength(0);
+    } finally {
+      if (previous === undefined) delete process.env.REQUIRE_EMAIL_VERIFICATION;
+      else process.env.REQUIRE_EMAIL_VERIFICATION = previous;
+    }
+  });
+
+  test("refresh and verify-session routes do not exist", async () => {
+    expect((await req("POST", "/auth/refresh", {})).status).toBe(404);
+    expect((await req("POST", "/auth/verify-session", {})).status).toBe(404);
   });
 });
 
-describe("Auth: Verify Session", () => {
-  test("valid refresh token returns valid: true", async () => {
-    const email = uniqueEmail();
-    createdUserEmails.push(email);
+describe("bot API-key isolation", () => {
+  test("bot_ keys use the bot table and can be excluded from human-only routes", async () => {
+    const getSessionSpy = spyOn(auth.api, "getSession");
+    const ownerEmail = uniqueEmail();
+    createdUserEmails.push(ownerEmail);
+    const [owner] = await db
+      .insert(users)
+      .values({ name: "Bot Owner", email: ownerEmail, type: "human" })
+      .returning({ id: users.id });
+    const [botUser] = await db
+      .insert(users)
+      .values({ name: "Auth Bot", type: "bot" })
+      .returning({ id: users.id });
+    createdUserIds.push(botUser.id);
+    const apiKey = `bot_${crypto.randomUUID()}`;
 
-    const reg = await req("POST", "/auth/register", {
-      name: "Verify Session Test",
-      email,
-      password: "password123",
+    await db.insert(bots).values({
+      userId: botUser.id,
+      ownerId: owner.id,
+      webhookSecret: "whsec_auth_test",
+      apiKey,
     });
 
-    const res = await req("POST", "/auth/verify-session", {
-      refreshToken: reg.body.refreshToken,
+    expect(await resolveTokenToUser(apiKey)).toMatchObject({
+      id: botUser.id,
+      type: "bot",
     });
-
-    expect(res.status).toBe(200);
-    expect(res.body.valid).toBe(true);
-  });
-
-  test("invalid refresh token returns 401", async () => {
-    const res = await req("POST", "/auth/verify-session", {
-      refreshToken: "invalid-token",
-    });
-    expect(res.status).toBe(401);
-  });
-
-  test("returns 401 after logout", async () => {
-    const email = uniqueEmail();
-    createdUserEmails.push(email);
-
-    const reg = await req("POST", "/auth/register", {
-      name: "Verify After Logout",
-      email,
-      password: "password123",
-    });
-
-    // Logout invalidates the session
-    await req(
-      "POST",
-      "/auth/logout",
-      { refreshToken: reg.body.refreshToken },
-      reg.body.accessToken
-    );
-
-    const res = await req("POST", "/auth/verify-session", {
-      refreshToken: reg.body.refreshToken,
-    });
-    expect(res.status).toBe(401);
+    expect(
+      await resolveTokenToUser(apiKey, { includeBotTokens: false }),
+    ).toBeNull();
+    expect(await resolveTokenToUser("bot_not-a-real-key")).toBeNull();
+    expect(getSessionSpy).not.toHaveBeenCalled();
+    getSessionSpy.mockRestore();
   });
 });

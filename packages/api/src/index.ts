@@ -3,6 +3,7 @@ import { cors } from "@elysiajs/cors";
 import { sql } from "drizzle-orm";
 import { db } from "./db";
 import { authRoutes } from "./auth";
+import { authInfrastructureErrors } from "./auth/middleware";
 import { workspaceRoutes } from "./workspaces";
 import { workspaceConfigRoutes } from "./workspaces/config";
 import { conversationRoutes } from "./conversations";
@@ -25,6 +26,7 @@ const app = new Elysia()
   .use(cors())
   .use(log.into())
   .decorate("db", db)
+  .use(authInfrastructureErrors)
   .use(authRoutes)
   .use(workspaceRoutes)
   .use(workspaceConfigRoutes)

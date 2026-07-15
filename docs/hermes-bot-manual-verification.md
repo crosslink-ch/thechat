@@ -25,7 +25,8 @@ Create a local `.env` if you do not already have one:
 cat > .env <<'EOF'
 DATABASE_URL=postgres://thechat:thechat@localhost:15543/thechat
 REDIS_URL=redis://localhost:16380
-JWT_SECRET=change-me-local-thechat-jwt-secret
+BETTER_AUTH_SECRET=change-me-local-thechat-better-auth-secret
+BETTER_AUTH_URL=http://localhost:3337
 THECHAT_SECRET_KEY=change-me-local-thechat-secret-key
 THECHAT_BACKEND_PORT=3337
 OPENROUTER_API_KEY=...

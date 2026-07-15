@@ -1,7 +1,9 @@
-{{- if ne (toString .Values.image.tag) (toString .Values.migrateImage.tag) }}
+{{- /* Keep these fallbacks in sync with values.yaml: --reuse-values omits keys added by newer chart versions. */ -}}
+{{- $defaultMigrateImage := dict "repository" "ghcr.io/crosslink-ch/thechat-api-migrate" "tag" .Values.image.tag "pullPolicy" "IfNotPresent" }}
+{{- $migrateImage := mergeOverwrite (deepCopy $defaultMigrateImage) (.Values.migrateImage | default dict) }}
+{{- if ne (toString .Values.image.tag) (toString (get $migrateImage "tag")) }}
 {{- fail "image.tag and migrateImage.tag must match; use the same immutable build tag in production" }}
 {{- end }}
-{{- /* Keep these fallbacks in sync with values.yaml: --reuse-values omits keys added by newer chart versions. */ -}}
 {{- $defaultMigrationResources := dict "requests" (dict "cpu" "25m" "memory" "64Mi") "limits" (dict "cpu" "500m" "memory" "512Mi") }}
 {{- $defaultMigrationJob := dict "activeDeadlineSeconds" 300 "backoffLimit" 1 "resources" $defaultMigrationResources }}
 {{- $migrationJob := mergeOverwrite (deepCopy $defaultMigrationJob) (.Values.migrationJob | default dict) }}
@@ -41,8 +43,8 @@ spec:
       {{- end }}
       containers:
         - name: migrate
-          image: "{{ .Values.migrateImage.repository }}:{{ .Values.migrateImage.tag }}"
-          imagePullPolicy: {{ .Values.migrateImage.pullPolicy }}
+          image: "{{ $migrateImage.repository }}:{{ $migrateImage.tag }}"
+          imagePullPolicy: {{ $migrateImage.pullPolicy }}
           env:
             - name: DATABASE_URL
               valueFrom:
