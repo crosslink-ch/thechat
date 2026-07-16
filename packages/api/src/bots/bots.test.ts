@@ -2543,6 +2543,43 @@ describe("Bots: runtime state", () => {
     );
     expect(firstCompleteRes.status).toBe(200);
 
+    const lateTitleRes = await req(
+      "POST",
+      `/hermes-platform/invocations/${first.invocationId}/progress`,
+      {
+        type: "session.title",
+        payload: { title: "Investigate threaded checkout complete" },
+      },
+      botRes.body.apiKey,
+    );
+    expect(lateTitleRes.status).toBe(200);
+    expect(lateTitleRes.body).toEqual({ ok: true, event: null });
+
+    const threadsAfterLateTitle = await req(
+      "GET",
+      `/conversations/threads/${dmRes.body.id}?limit=3`,
+      undefined,
+      human.token,
+    );
+    expect(threadsAfterLateTitle.status).toBe(200);
+    expect(
+      threadsAfterLateTitle.body.items.find((thread: any) => thread.id === first.threadId),
+    ).toEqual(expect.objectContaining({ title: "Investigate threaded checkout complete" }));
+
+    const runtimeAfterLateTitle = await req(
+      "GET",
+      `/bot-runtime/conversations/${dmRes.body.id}`,
+      undefined,
+      human.token,
+    );
+    expect(runtimeAfterLateTitle.status).toBe(200);
+    expect(runtimeAfterLateTitle.body.invocations).not.toContainEqual(
+      expect.objectContaining({ id: first.invocationId }),
+    );
+    expect(runtimeAfterLateTitle.body.events).not.toContainEqual(
+      expect.objectContaining({ invocationId: first.invocationId }),
+    );
+
     const asyncFollowUpRes = await req(
       "POST",
       "/hermes-platform/messages",

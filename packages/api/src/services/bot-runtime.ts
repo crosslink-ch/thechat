@@ -1619,7 +1619,7 @@ export async function publishHermesPlatformTyping(input: {
 
 export async function publishHermesPlatformProgress(
   input: HermesPlatformProgressInput,
-): Promise<{ ok: true; event: BotInvocationProgressEventPublic }> {
+): Promise<{ ok: true; event: BotInvocationProgressEventPublic | null }> {
   return withSpan(
     "hermes_platform.progress.record",
     {
@@ -1639,15 +1639,19 @@ export async function publishHermesPlatformProgress(
         throw new ServiceError("Conversation does not match invocation", 400);
       }
       const responseJson = recordFromJson(loaded.invocation.responseJson);
-      if (
+      const generatedTitle = titleFromProgressInput(input);
+      const executionAlreadyTerminal =
         loaded.invocation.status === "completed" ||
         loaded.invocation.status === "failed" ||
         loaded.invocation.status === "cancelled" ||
-        hasHermesExecutionCompletion(responseJson)
-      ) {
+        hasHermesExecutionCompletion(responseJson);
+      if (executionAlreadyTerminal) {
+        if (input.type === "session.title") {
+          await updateHermesThreadTitleFromProgress(loaded, generatedTitle);
+          return { ok: true, event: null };
+        }
         throw new ServiceError("Invocation execution is already terminal", 409);
       }
-      const generatedTitle = titleFromProgressInput(input);
       if (input.type === "session.title") {
         await updateHermesThreadTitleFromProgress(loaded, generatedTitle);
       }
@@ -1693,6 +1697,7 @@ export async function publishHermesPlatformProgress(
           invocationId: loaded.invocation.id,
           conversationId: loaded.conversation.id,
         });
+        if (input.type === "session.title") return { ok: true, event: null };
         throw new ServiceError("Invocation execution is already terminal", 409);
       }
       span.setAttribute("thechat.hermes_progress.sequence", event.sequence);
