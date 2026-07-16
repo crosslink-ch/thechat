@@ -39,6 +39,58 @@ describe("Hermes runtime progress state", () => {
     expect(updated.invocations).toEqual([]);
   });
 
+  it("keeps claimed invocation metadata only while transient progress exists", () => {
+    const claimed = invocation({ status: "claimed" });
+
+    expect(mergeRuntimeUpdate(null, claimed)).toEqual({
+      invocations: [],
+      events: [],
+    });
+
+    const withProgress = mergeRuntimeProgressEvent(null, progressEvent(1), claimed);
+    expect(withProgress.invocations).toEqual([claimed]);
+    expect(withProgress.events).toHaveLength(1);
+
+    const refreshed = mergeRuntimeUpdate(withProgress, claimed);
+    expect(refreshed.invocations).toEqual([claimed]);
+    expect(refreshed.events).toHaveLength(1);
+  });
+
+  it("does not keep a stale legacy running invocation without progress", () => {
+    expect(mergeRuntimeUpdate(null, invocation({ status: "running" }))).toEqual({
+      invocations: [],
+      events: [],
+    });
+  });
+
+  it("removes invocation metadata and approvals on terminal progress", () => {
+    const claimed = invocation({ status: "claimed" });
+    const active = mergeRuntimeProgressEvent(null, progressEvent(1), claimed);
+    const withApproval = mergeRuntimeProgressEvent(
+      active,
+      progressEvent(2, { type: "approval.request", toolCallId: null }),
+      claimed,
+    );
+
+    const completed = mergeRuntimeProgressEvent(
+      withApproval,
+      progressEvent(3, {
+        type: "invocation.completed",
+        status: "completed",
+        toolCallId: null,
+      }),
+      claimed,
+    );
+
+    expect(completed.invocations).toEqual([]);
+    expect(completed.events).toEqual([
+      expect.objectContaining({
+        sequence: 3,
+        type: "invocation.completed",
+      }),
+    ]);
+  });
+
   it("reconciles a failed queued dispatch without dropping other active runs", () => {
     const runningInvocation = invocation({
       id: "running-task",

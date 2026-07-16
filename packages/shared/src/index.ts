@@ -369,7 +369,13 @@ export interface WebhookPayload {
   bot: { id: string; name: string };
 }
 
-export type BotInvocationStatus = "queued" | "running" | "completed" | "failed" | "cancelled";
+export type BotInvocationStatus =
+  | "queued"
+  | "running"
+  | "claimed"
+  | "completed"
+  | "failed"
+  | "cancelled";
 
 export interface BotInvocationPublic {
   id: string;
@@ -476,6 +482,7 @@ export type WsServerEvent =
       conversationId: string;
       invocationId: string;
       event: BotInvocationProgressEventPublic;
+      invocation?: BotInvocationPublic;
     }
   | {
       type: "conversation_thread_updated";

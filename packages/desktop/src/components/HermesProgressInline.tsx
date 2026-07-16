@@ -122,7 +122,7 @@ export function HermesProgressInline({
           ? "action needed"
           : invocation.status === "queued"
             ? "queued"
-            : invocation.status;
+            : "active";
         const title = needsApproval
           ? "is waiting for your approval"
           : invocation.status === "queued"

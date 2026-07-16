@@ -11,7 +11,22 @@ export function mergeRuntimeUpdate(
   invocation: BotInvocationPublic,
 ): BotRuntimeSnapshot {
   const snapshot = prev ?? { invocations: [], events: [] };
-  const isActive = isActiveInvocation(invocation);
+  if (
+    snapshot.events.some(
+      (event) =>
+        event.invocationId === invocation.id &&
+        isTerminalHermesProgressEvent(event),
+    )
+  ) {
+    return snapshot;
+  }
+  const isDurablyActive =
+    invocation.status === "queued" ||
+    (invocation.botKind !== "hermes" && invocation.status === "running");
+  const isActive =
+    !isLegacyTerminalInvocation(invocation) &&
+    (isDurablyActive ||
+      snapshot.events.some((event) => event.invocationId === invocation.id));
   const invocations = isActive
     ? upsertById(snapshot.invocations, invocation)
     : snapshot.invocations.filter((existing) => existing.id !== invocation.id);
@@ -27,10 +42,46 @@ export function mergeRuntimeUpdate(
 export function mergeRuntimeProgressEvent(
   prev: BotRuntimeSnapshot | null,
   event: BotInvocationProgressEventPublic,
+  invocation?: BotInvocationPublic,
 ): BotRuntimeSnapshot {
   const snapshot = prev ?? { invocations: [], events: [] };
+  const terminalSequence = snapshot.events.reduce((latest, existing) =>
+    existing.invocationId === event.invocationId &&
+    isTerminalHermesProgressEvent(existing)
+      ? Math.max(latest, existing.sequence)
+      : latest,
+  Number.NEGATIVE_INFINITY);
+  if (
+    isTerminalHermesProgressEvent(event) &&
+    terminalSequence >= event.sequence
+  ) {
+    return {
+      invocations: snapshot.invocations.filter(
+        (existing) => existing.id !== event.invocationId,
+      ),
+      events: snapshot.events,
+    };
+  }
+  if (!isTerminalHermesProgressEvent(event) && terminalSequence >= event.sequence) {
+    return snapshot;
+  }
+  if (isTerminalHermesProgressEvent(event)) {
+    return {
+      invocations: snapshot.invocations.filter(
+        (existing) => existing.id !== event.invocationId,
+      ),
+      events: pruneProgressEvents([
+        ...snapshot.events.filter(
+          (existing) => existing.invocationId !== event.invocationId,
+        ),
+        event,
+      ]),
+    };
+  }
   return {
-    invocations: snapshot.invocations,
+    invocations: invocation
+      ? upsertById(snapshot.invocations, invocation)
+      : snapshot.invocations,
     events: pruneProgressEvents(
       upsertById(snapshot.events, event),
     ),
@@ -69,6 +120,20 @@ function pruneProgressEvents(events: BotInvocationProgressEventPublic[]) {
   return kept.reverse();
 }
 
-function isActiveInvocation(invocation: BotInvocationPublic) {
-  return invocation.status === "queued" || invocation.status === "running";
+export function isTerminalHermesProgressEvent(
+  event: BotInvocationProgressEventPublic,
+) {
+  return (
+    event.type === "invocation.completed" ||
+    event.type === "invocation.failed" ||
+    event.type === "invocation.cancelled"
+  );
+}
+
+function isLegacyTerminalInvocation(invocation: BotInvocationPublic) {
+  return (
+    invocation.status === "completed" ||
+    invocation.status === "failed" ||
+    invocation.status === "cancelled"
+  );
 }

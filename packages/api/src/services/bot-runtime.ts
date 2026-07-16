@@ -1,5 +1,17 @@
 import crypto from "crypto";
-import { and, asc, desc, eq, gt, inArray, lte } from "drizzle-orm";
+import {
+  and,
+  asc,
+  desc,
+  eq,
+  gt,
+  inArray,
+  lte,
+  ne,
+  notInArray,
+  or,
+  sql,
+} from "drizzle-orm";
 import { SpanStatusCode } from "@opentelemetry/api";
 import type {
   BotInvocationPublic,
@@ -29,7 +41,10 @@ import { publishWsEventToUsers } from "../realtime";
 import { stripBotMention } from "./hermes";
 import { ServiceError } from "./errors";
 import { withSpan } from "../observability";
-import { getBotProgressStore } from "./bot-progress-store";
+import {
+  botProgressRetentionMs,
+  getBotProgressStore,
+} from "./bot-progress-store";
 import { createChatMessageSentV1 } from "../events/envelope";
 import { enqueueDomainEvent } from "../events/outbox";
 import { resolveMessageBotTargetIds } from "./message-bot-targets";
@@ -42,7 +57,7 @@ const DEFAULT_HERMES_DISPATCH_TIMEOUT_MS = 2 * 60 * 1000;
 
 type BotKind = "webhook" | "hermes";
 type ConversationType = "direct" | "group";
-type BotInvocationStatus = "queued" | "running" | "completed" | "failed" | "cancelled";
+type BotInvocationStatus = "queued" | "running" | "claimed" | "completed" | "failed" | "cancelled";
 
 interface TriggerMessage {
   id: string;
@@ -115,6 +130,33 @@ function recordFromJson(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
     ? { ...(value as Record<string, unknown>) }
     : {};
+}
+
+function hermesCompletionType(responseJson: Record<string, unknown>) {
+  const completion = responseJson.completion;
+  if (!completion || typeof completion !== "object" || Array.isArray(completion)) return null;
+  const type = (completion as Record<string, unknown>).type;
+  return typeof type === "string" ? type : null;
+}
+
+function hasHermesExecutionCompletion(responseJson: Record<string, unknown>) {
+  return hermesCompletionType(responseJson) !== null || responseJson.silent === true;
+}
+
+function terminalProgressTypeForCompletion(responseJson: Record<string, unknown>) {
+  const completionType = hermesCompletionType(responseJson);
+  if (completionType === "failed") return "invocation.failed";
+  if (completionType === "cancelled") return "invocation.cancelled";
+  return "invocation.completed";
+}
+
+function terminalProgressTypeForInvocation(
+  status: BotInvocationStatus,
+  responseJson: Record<string, unknown>,
+) {
+  if (status === "failed") return "invocation.failed";
+  if (status === "cancelled") return "invocation.cancelled";
+  return terminalProgressTypeForCompletion(responseJson);
 }
 
 function nextAutomationContext(
@@ -226,6 +268,50 @@ export async function listConversationBotRuntime(conversationId: string, userId:
       await requireConversationParticipant(conversationId, userId);
       await failTimedOutHermesDispatchesForConversation(conversationId);
 
+      const noTerminalExecution = and(
+        sql`${botInvocations.responseJson}->'completion' IS NULL`,
+        sql`COALESCE(${botInvocations.responseJson}->>'silent', 'false') <> 'true'`,
+      );
+      const legacyProgressCandidates = await db
+        .select({ id: botInvocations.id })
+        .from(botInvocations)
+        .where(
+          and(
+            eq(botInvocations.conversationId, conversationId),
+            eq(botInvocations.adapterKind, "hermes"),
+            inArray(botInvocations.status, ["running", "claimed"]),
+            gt(
+              botInvocations.updatedAt,
+              new Date(Date.now() - botProgressRetentionMs()),
+            ),
+            noTerminalExecution,
+          ),
+        );
+      const events = await getBotProgressStore().listForConversation(
+        conversationId,
+        legacyProgressCandidates.map((invocation) => invocation.id),
+      );
+      const progressInvocationIds = Array.from(
+        new Set(events.map((event) => event.invocationId)),
+      );
+      const durableWhere = or(
+        eq(botInvocations.status, "queued"),
+        and(
+          eq(botInvocations.status, "running"),
+          ne(botInvocations.adapterKind, "hermes"),
+        ),
+      );
+      const activeWhere = progressInvocationIds.length > 0
+        ? or(
+            durableWhere,
+            and(
+              inArray(botInvocations.id, progressInvocationIds),
+              notInArray(botInvocations.status, ["completed", "failed", "cancelled"]),
+              noTerminalExecution,
+            ),
+          )
+        : durableWhere;
+
       const activeInvocationRows = await db
         .select({
           id: botInvocations.id,
@@ -254,21 +340,29 @@ export async function listConversationBotRuntime(conversationId: string, userId:
         .where(
           and(
             eq(botInvocations.conversationId, conversationId),
-            inArray(botInvocations.status, ["queued", "running"]),
+            activeWhere,
           ),
         )
         .orderBy(desc(botInvocations.createdAt));
 
-      const events = await getBotProgressStore().listForInvocations(
+      const visibleInvocationIds = new Set(
         activeInvocationRows.map((invocation) => invocation.id),
+      );
+      const visibleEvents = events.filter((event) =>
+        visibleInvocationIds.has(event.invocationId),
       );
 
       span.setAttribute("thechat.bot_runtime.active_invocations", activeInvocationRows.length);
-      span.setAttribute("thechat.bot_runtime.progress_events", events.length);
+      span.setAttribute("thechat.bot_runtime.progress_events", visibleEvents.length);
 
       return {
-        invocations: activeInvocationRows.map(toPublicInvocation),
-        events,
+        invocations: activeInvocationRows.map((invocation) => {
+          const publicInvocation = toPublicInvocation(invocation);
+          return progressInvocationIds.includes(invocation.id)
+            ? toProgressCompatibleInvocation(publicInvocation)
+            : publicInvocation;
+        }),
+        events: visibleEvents,
       };
     },
   );
@@ -558,7 +652,14 @@ async function handleQueuedBotInvocation(invocationId: string, context: { setPro
     await context.setProgress(100, { status: "missing" });
     return;
   }
-  if (loaded.invocation.status === "completed") return;
+  if (
+    loaded.invocation.status === "claimed" ||
+    loaded.invocation.status === "completed" ||
+    loaded.invocation.status === "failed" ||
+    loaded.invocation.status === "cancelled"
+  ) {
+    return;
+  }
   if (loaded.invocation.status === "running" && loaded.invocation.startedAt) {
     const ageMs = Date.now() - loaded.invocation.startedAt.getTime();
     if (ageMs < 10 * 60 * 1000) return;
@@ -685,8 +786,9 @@ async function claimHermesPlatformInvocation(
   const [claimed] = await db
     .update(botInvocations)
     .set({
-      status: "running",
+      status: deliveryMode === "polling" ? "claimed" : "running",
       startedAt: now,
+      completedAt: deliveryMode === "polling" ? now : null,
       externalRunId: `thechat:${invocationId}`,
       error: null,
       requestJson: prepared.requestJson,
@@ -839,7 +941,11 @@ async function deliverHermesPlatformWebhookInvocation(
         return;
       }
       span.setAttribute("thechat.bot_id", initial.bot.id);
-      if (initial.invocation.status === "completed" || initial.invocation.status === "cancelled") {
+      if (
+        initial.invocation.status === "claimed" ||
+        initial.invocation.status === "completed" ||
+        initial.invocation.status === "cancelled"
+      ) {
         span.setAttribute("thechat.hermes_platform.delivery_status", "already_finished");
         return;
       }
@@ -902,6 +1008,24 @@ async function deliverHermesPlatformWebhookInvocation(
           span.setAttribute("thechat.hermes_platform.delivery_status", "failed");
           throw error;
         }
+        const claimedAt = new Date();
+        // A fast webhook consumer may post execution progress/completion before
+        // the delivery request returns. Only close the transient delivery state
+        // if it is still `running`; never overwrite post-claim metadata.
+        await db
+          .update(botInvocations)
+          .set({
+            status: "claimed",
+            completedAt: claimedAt,
+            updatedAt: claimedAt,
+          })
+          .where(
+            and(
+              eq(botInvocations.id, invocationId),
+              eq(botInvocations.status, "running"),
+            ),
+          );
+        await publishInvocationUpdate(invocationId);
         span.setAttribute("thechat.hermes_platform.delivery_status", "delivered");
       } catch (error) {
         const failure = error instanceof Error ? error : new Error(String(error));
@@ -1050,6 +1174,8 @@ export async function publishHermesPlatformMessage(input: {
       const target = await resolveHermesPlatformMessageTarget(input);
       const shouldComplete = Boolean(target.invocation && input.complete === true);
       const previousResponseJson = recordFromJson(target.invocation?.responseJson);
+      const shouldFinalize = shouldComplete &&
+        !hasHermesExecutionCompletion(previousResponseJson);
       const previousPlatformMessageId = previousResponseJson.platformMessageId;
       if (target.invocation) {
         span.setAttribute("thechat.bot_invocation.status.previous", target.invocation.status);
@@ -1063,12 +1189,16 @@ export async function publishHermesPlatformMessage(input: {
 
       if (
         shouldComplete &&
-        target.invocation?.status === "completed" &&
+        target.invocation &&
         target.invocation.responseMessageId &&
         input.platformMessageId &&
-        previousPlatformMessageId === input.platformMessageId
+        previousPlatformMessageId === input.platformMessageId &&
+        hasHermesExecutionCompletion(previousResponseJson)
       ) {
         span.setAttribute("thechat.hermes_platform.message.duplicate", true);
+        await finishHermesProgress(target.invocation.id, "invocation.completed", {
+          reason: "duplicate message completion",
+        });
         return {
           messageId: target.invocation.responseMessageId,
           threadId: target.threadId,
@@ -1093,8 +1223,12 @@ export async function publishHermesPlatformMessage(input: {
           await tx
             .update(botInvocations)
             .set({
-              ...(shouldComplete
-                ? { status: "completed", completedAt: now, error: null }
+              ...(shouldFinalize
+                ? {
+                    status: "claimed",
+                    completedAt: target.invocation.completedAt ?? now,
+                    error: null,
+                  }
                 : {}),
               responseMessageId: inserted.id,
               responseJson: {
@@ -1102,6 +1236,14 @@ export async function publishHermesPlatformMessage(input: {
                 platform: "thechat",
                 platformMessageId: input.platformMessageId ?? null,
                 output: content,
+                ...(shouldFinalize
+                  ? {
+                      completion: {
+                        type: "message",
+                        platformMessageId: input.platformMessageId ?? null,
+                      },
+                    }
+                  : {}),
               },
               updatedAt: now,
             })
@@ -1150,11 +1292,16 @@ export async function publishHermesPlatformMessage(input: {
       if (target.invocation) {
         span.setAttribute(
           "thechat.bot_invocation.status.next",
-          shouldComplete ? "completed" : target.invocation.status,
+          shouldComplete ? "claimed" : target.invocation.status,
         );
       }
       await publishBotMessage(responseMessage, target.botName, target.conversation.type);
       if (target.invocation) await publishInvocationUpdate(target.invocation.id);
+      if (target.invocation && shouldFinalize) {
+        await finishHermesProgress(target.invocation.id, "invocation.completed", {
+          platformMessageId: input.platformMessageId ?? null,
+        });
+      }
       return { messageId: responseMessage.id, threadId: responseMessage.threadId, duplicate: false };
     },
   );
@@ -1179,18 +1326,31 @@ export async function completeHermesPlatformInvocationSilently(input: {
       if (loaded.bot.id !== input.authenticatedBotId) throw new ServiceError("Bot token does not match invocation", 403);
 
       span.setAttribute("thechat.bot_invocation.status.previous", loaded.invocation.status);
-      if (loaded.invocation.status === "completed") {
+      const previousResponseJson = recordFromJson(loaded.invocation.responseJson);
+      if (
+        loaded.invocation.status === "completed" ||
+        loaded.invocation.status === "failed" ||
+        loaded.invocation.status === "cancelled" ||
+        hasHermesExecutionCompletion(previousResponseJson)
+      ) {
         span.setAttribute("thechat.hermes_platform.complete.duplicate", true);
+        await finishHermesProgress(
+          input.invocationId,
+          terminalProgressTypeForInvocation(
+            loaded.invocation.status as BotInvocationStatus,
+            previousResponseJson,
+          ),
+          { reason: input.reason ?? null },
+        );
         return { ok: true, duplicate: true };
       }
 
-      const previousResponseJson = recordFromJson(loaded.invocation.responseJson);
       const hasPriorResponse = Object.keys(previousResponseJson).length > 0;
       const completedAt = new Date();
       await db
         .update(botInvocations)
         .set({
-          status: "completed",
+          status: "claimed",
           responseJson: hasPriorResponse
             ? {
                 ...previousResponseJson,
@@ -1204,14 +1364,21 @@ export async function completeHermesPlatformInvocationSilently(input: {
                 output: null,
                 silent: true,
                 reason: input.reason ?? null,
+                completion: {
+                  type: "silent",
+                  reason: input.reason ?? null,
+                },
               },
           error: null,
-          completedAt,
+          completedAt: loaded.invocation.completedAt ?? completedAt,
           updatedAt: completedAt,
         })
         .where(eq(botInvocations.id, input.invocationId));
 
       await publishInvocationUpdate(input.invocationId);
+      await finishHermesProgress(input.invocationId, "invocation.completed", {
+        reason: input.reason ?? null,
+      });
       return { ok: true, duplicate: false };
     },
   );
@@ -1226,8 +1393,7 @@ export async function failHermesPlatformInvocation(input: {
   if (!loaded) throw new ServiceError("Invocation not found", 404);
   if (loaded.bot.kind !== "hermes") throw new ServiceError("Invocation is not for a Hermes bot", 400);
   if (loaded.bot.id !== input.authenticatedBotId) throw new ServiceError("Bot token does not match invocation", 403);
-  await failInvocation(input.invocationId, new Error(input.error));
-  return { ok: true };
+  return recordHermesExecutionFailure(loaded, input.error);
 }
 
 export async function cancelHermesPlatformInvocation(input: {
@@ -1240,7 +1406,21 @@ export async function cancelHermesPlatformInvocation(input: {
   if (loaded.bot.kind !== "hermes") throw new ServiceError("Invocation is not for a Hermes bot", 400);
   if (loaded.bot.id !== input.authenticatedBotId) throw new ServiceError("Bot token does not match invocation", 403);
 
-  if (loaded.invocation.status === "completed" || loaded.invocation.status === "cancelled") {
+  const previousResponseJson = recordFromJson(loaded.invocation.responseJson);
+  if (
+    loaded.invocation.status === "completed" ||
+    loaded.invocation.status === "failed" ||
+    loaded.invocation.status === "cancelled" ||
+    hasHermesExecutionCompletion(previousResponseJson)
+  ) {
+    await finishHermesProgress(
+      input.invocationId,
+      terminalProgressTypeForInvocation(
+        loaded.invocation.status as BotInvocationStatus,
+        previousResponseJson,
+      ),
+      { reason: input.reason ?? null },
+    );
     return { ok: true, duplicate: true };
   }
 
@@ -1249,20 +1429,153 @@ export async function cancelHermesPlatformInvocation(input: {
   await db
     .update(botInvocations)
     .set({
-      status: "cancelled",
+      status: "claimed",
       responseJson: {
+        ...previousResponseJson,
         platform: "thechat",
         cancelled: true,
         reason,
+        completion: { type: "cancelled", reason },
       },
       error: reason,
-      completedAt: cancelledAt,
+      completedAt: loaded.invocation.completedAt ?? cancelledAt,
       updatedAt: cancelledAt,
     })
     .where(eq(botInvocations.id, input.invocationId));
 
   await publishInvocationUpdate(input.invocationId);
+  await finishHermesProgress(input.invocationId, "invocation.cancelled", { reason });
   return { ok: true, duplicate: false };
+}
+
+async function recordHermesExecutionFailure(
+  loaded: NonNullable<Awaited<ReturnType<typeof loadInvocationContext>>>,
+  error: string,
+) {
+  const previousResponseJson = recordFromJson(loaded.invocation.responseJson);
+  if (
+    loaded.invocation.status === "completed" ||
+    loaded.invocation.status === "failed" ||
+    loaded.invocation.status === "cancelled" ||
+    hasHermesExecutionCompletion(previousResponseJson)
+  ) {
+    await finishHermesProgress(
+      loaded.invocation.id,
+      terminalProgressTypeForInvocation(
+        loaded.invocation.status as BotInvocationStatus,
+        previousResponseJson,
+      ),
+      { error },
+    );
+    return { ok: true, duplicate: true };
+  }
+
+  const failedAt = new Date();
+  const content = `Hermes run failed: ${error}`;
+  const responseMessage = await db.transaction(async (tx) => {
+    const [inserted] = await tx
+      .insert(messages)
+      .values({
+        conversationId: loaded.conversation.id,
+        threadId: resolveInvocationThreadId(loaded),
+        senderId: loaded.bot.userId,
+        content,
+        parts: [{ type: "text", text: content }],
+      })
+      .returning();
+
+    await tx
+      .update(botInvocations)
+      .set({
+        status: "claimed",
+        responseMessageId: inserted.id,
+        responseJson: {
+          ...previousResponseJson,
+          platform: "thechat",
+          completion: { type: "failed", error },
+        },
+        error,
+        completedAt: loaded.invocation.completedAt ?? failedAt,
+        updatedAt: failedAt,
+      })
+      .where(eq(botInvocations.id, loaded.invocation.id));
+
+    const automation = nextAutomationContext(
+      loaded.invocation,
+      loaded.triggerMessage.id,
+    );
+    const event = createChatMessageSentV1({
+      messageId: inserted.id,
+      conversationId: inserted.conversationId,
+      targetBotIds: [],
+      messageKind: "system_failure",
+      automationDepth: automation.automationDepth,
+      senderId: inserted.senderId,
+      senderType: "bot",
+      workspaceId: loaded.conversation.workspaceId,
+      correlationId: automation.correlationId,
+      causationId: loaded.invocation.id,
+      occurredAt: inserted.createdAt,
+    });
+    await enqueueDomainEvent(tx, event, {
+      partitionKey: inserted.conversationId,
+    });
+    return inserted;
+  });
+
+  await publishBotMessage(responseMessage, loaded.botName, loaded.conversation.type);
+  await publishInvocationUpdate(loaded.invocation.id);
+  await finishHermesProgress(loaded.invocation.id, "invocation.failed", { error });
+  return { ok: true, duplicate: false };
+}
+
+type HermesTerminalProgressType =
+  | "invocation.completed"
+  | "invocation.failed"
+  | "invocation.cancelled";
+
+async function finishHermesProgress(
+  invocationId: string,
+  type: HermesTerminalProgressType,
+  payload: Record<string, unknown>,
+) {
+  const loaded = await loadInvocationContext(invocationId);
+  if (!loaded || loaded.bot.kind !== "hermes") return;
+
+  const store = getBotProgressStore();
+  const status = type.slice("invocation.".length);
+  try {
+    const event = await store.append({
+      invocationId: loaded.invocation.id,
+      botId: loaded.bot.id,
+      conversationId: loaded.conversation.id,
+      threadId: resolveInvocationThreadId(loaded),
+      type,
+      status,
+      toolCallId: null,
+      toolName: null,
+      label: null,
+      preview: null,
+      payload,
+      occurredAt: new Date(),
+    });
+    const participantRows = await db
+      .select({ userId: conversationParticipants.userId })
+      .from(conversationParticipants)
+      .where(eq(conversationParticipants.conversationId, loaded.conversation.id));
+    await publishWsEventToUsers(participantRows.map((p) => p.userId), {
+      type: "bot_invocation_progress",
+      conversationId: loaded.conversation.id,
+      invocationId: loaded.invocation.id,
+      event,
+      invocation: toPublicInvocationFromContext(loaded),
+    });
+  } finally {
+    await store.clear({
+      invocationId: loaded.invocation.id,
+      conversationId: loaded.conversation.id,
+    });
+  }
 }
 
 export async function publishHermesPlatformTyping(input: {
@@ -1284,6 +1597,11 @@ export async function publishHermesPlatformTyping(input: {
   if (input.threadId && input.threadId !== threadId) {
     throw new ServiceError("Thread does not match invocation", 400);
   }
+
+  await getBotProgressStore().touch({
+    invocationId: loaded.invocation.id,
+    conversationId: loaded.conversation.id,
+  });
 
   const participantRows = await db
     .select({ userId: conversationParticipants.userId })
@@ -1320,6 +1638,15 @@ export async function publishHermesPlatformProgress(
       if (input.conversationId && input.conversationId !== loaded.conversation.id) {
         throw new ServiceError("Conversation does not match invocation", 400);
       }
+      const responseJson = recordFromJson(loaded.invocation.responseJson);
+      if (
+        loaded.invocation.status === "completed" ||
+        loaded.invocation.status === "failed" ||
+        loaded.invocation.status === "cancelled" ||
+        hasHermesExecutionCompletion(responseJson)
+      ) {
+        throw new ServiceError("Invocation execution is already terminal", 409);
+      }
       const generatedTitle = titleFromProgressInput(input);
       if (input.type === "session.title") {
         await updateHermesThreadTitleFromProgress(loaded, generatedTitle);
@@ -1330,7 +1657,8 @@ export async function publishHermesPlatformProgress(
         .from(conversationParticipants)
         .where(eq(conversationParticipants.conversationId, loaded.conversation.id));
 
-      const event = await getBotProgressStore().append({
+      const progressStore = getBotProgressStore();
+      const event = await progressStore.append({
         invocationId: loaded.invocation.id,
         botId: loaded.bot.id,
         conversationId: loaded.conversation.id,
@@ -1344,12 +1672,45 @@ export async function publishHermesPlatformProgress(
         payload: input.payload ?? null,
         occurredAt: input.occurredAt ?? new Date(),
       });
+      // Re-check after the transient write so a completion that won the race
+      // cannot be followed by a resurrecting progress event.
+      const latestInvocation = await db.query.botInvocations.findFirst({
+        where: eq(botInvocations.id, loaded.invocation.id),
+        columns: {
+          status: true,
+          responseJson: true,
+        },
+      });
+      const latestResponseJson = recordFromJson(latestInvocation?.responseJson);
+      if (
+        !latestInvocation ||
+        latestInvocation.status === "completed" ||
+        latestInvocation.status === "failed" ||
+        latestInvocation.status === "cancelled" ||
+        hasHermesExecutionCompletion(latestResponseJson)
+      ) {
+        await progressStore.clear({
+          invocationId: loaded.invocation.id,
+          conversationId: loaded.conversation.id,
+        });
+        throw new ServiceError("Invocation execution is already terminal", 409);
+      }
       span.setAttribute("thechat.hermes_progress.sequence", event.sequence);
-      await publishWsEventToUsers(participantRows.map((p) => p.userId), {
+      const participantUserIds = participantRows.map((participant) => participant.userId);
+      const progressInvocation = toProgressCompatibleInvocation(
+        toPublicInvocationFromContext(loaded),
+      );
+      await publishWsEventToUsers(participantUserIds, {
+        type: "bot_invocation_updated",
+        conversationId: loaded.conversation.id,
+        invocation: progressInvocation,
+      });
+      await publishWsEventToUsers(participantUserIds, {
         type: "bot_invocation_progress",
         conversationId: loaded.conversation.id,
         invocationId: loaded.invocation.id,
         event,
+        invocation: progressInvocation,
       });
       return { ok: true, event };
     },
@@ -1640,6 +2001,40 @@ async function requireConversationThread(conversationId: string, threadId: strin
 function getAsyncBus() {
   asyncBus ??= new BullMqAsyncBus();
   return asyncBus;
+}
+
+function toPublicInvocationFromContext(
+  loaded: NonNullable<Awaited<ReturnType<typeof loadInvocationContext>>>,
+) {
+  return toPublicInvocation({
+    id: loaded.invocation.id,
+    botId: loaded.invocation.botId,
+    botUserId: loaded.bot.userId,
+    botName: loaded.botName,
+    botKind: loaded.bot.kind,
+    conversationId: loaded.invocation.conversationId,
+    threadId: loaded.invocation.threadId,
+    triggerMessageId: loaded.invocation.triggerMessageId,
+    responseMessageId: loaded.invocation.responseMessageId,
+    adapterKind: loaded.invocation.adapterKind,
+    status: loaded.invocation.status,
+    externalRunId: loaded.invocation.externalRunId,
+    requestJson: loaded.invocation.requestJson,
+    responseJson: loaded.invocation.responseJson,
+    error: loaded.invocation.error,
+    startedAt: loaded.invocation.startedAt,
+    completedAt: loaded.invocation.completedAt,
+    createdAt: loaded.invocation.createdAt,
+    updatedAt: loaded.invocation.updatedAt,
+  });
+}
+
+function toProgressCompatibleInvocation(
+  invocation: BotInvocationPublic,
+): BotInvocationPublic {
+  return invocation.status === "claimed"
+    ? { ...invocation, status: "running" }
+    : invocation;
 }
 
 function toPublicInvocation(row: {

@@ -10,6 +10,7 @@ import {
   isApprovalResolutionEvent,
   type ApprovalDecision,
 } from "../lib/hermes-approvals";
+import { isTerminalHermesProgressEvent } from "../lib/bot-runtime-state";
 
 /**
  * Workspace-wide Hermes attention indicators, fed by the global WebSocket
@@ -48,9 +49,13 @@ interface HermesIndicatorsStore {
   pendingApprovals: HermesPendingApproval[];
   unreadScopes: Record<string, HermesUnreadScope>;
   invocationMeta: Record<string, InvocationMeta>;
+  terminalSequences: Record<string, number>;
   visibleScope: string | null;
   trackInvocation: (invocation: BotInvocationPublic) => void;
-  trackProgressEvent: (event: BotInvocationProgressEventPublic) => void;
+  trackProgressEvent: (
+    event: BotInvocationProgressEventPublic,
+    invocation?: BotInvocationPublic,
+  ) => void;
   markScopeUnread: (scope: HermesUnreadScope) => void;
   resolveApproval: (eventId: string) => void;
   seedFromSnapshot: (
@@ -66,21 +71,41 @@ export function hermesScopeKey(conversationId: string, threadId: string | null) 
   return threadId ? `${conversationId}:thread:${threadId}` : `${conversationId}:general`;
 }
 
+function hasHermesExecutionCompletion(
+  responseJson: BotInvocationPublic["responseJson"],
+) {
+  if (!responseJson) return false;
+  return responseJson.silent === true ||
+    (typeof responseJson.completion === "object" && responseJson.completion !== null);
+}
+
+function rememberTerminalSequence(
+  existing: Record<string, number>,
+  invocationId: string,
+  sequence: number,
+) {
+  const nextSequence = Math.max(existing[invocationId] ?? 0, sequence);
+  const next = { ...existing, [invocationId]: nextSequence };
+  const keys = Object.keys(next);
+  if (keys.length > 500) delete next[keys[0]!];
+  return next;
+}
+
 const initialState = {
   pendingApprovals: [] as HermesPendingApproval[],
   unreadScopes: {} as Record<string, HermesUnreadScope>,
   invocationMeta: {} as Record<string, InvocationMeta>,
+  terminalSequences: {} as Record<string, number>,
   visibleScope: null as string | null,
 };
 
-export const useHermesIndicatorsStore = create<HermesIndicatorsStore>()((set) => ({
+export const useHermesIndicatorsStore = create<HermesIndicatorsStore>()((set, get) => ({
   ...initialState,
 
   trackInvocation: (invocation) => {
     if (invocation.botKind !== "hermes") return;
     set((state) => {
-      const isActive =
-        invocation.status === "queued" || invocation.status === "running";
+      const isActive = invocation.status === "queued";
       if (isActive) {
         const existing = state.invocationMeta[invocation.id];
         if (
@@ -102,7 +127,25 @@ export const useHermesIndicatorsStore = create<HermesIndicatorsStore>()((set) =>
         };
       }
 
-      // Terminal update: drop its pending approvals and, unless the user is
+      if (
+        invocation.status !== "completed" &&
+        invocation.status !== "failed" &&
+        invocation.status !== "cancelled"
+      ) {
+        if (
+          invocation.status === "claimed" &&
+          hasHermesExecutionCompletion(invocation.responseJson)
+        ) {
+          // Terminal Hermes callbacks keep delivery status `claimed`; retain
+          // progress metadata until the terminal progress event consumes it.
+          return state;
+        }
+        const invocationMeta = { ...state.invocationMeta };
+        delete invocationMeta[invocation.id];
+        return { invocationMeta };
+      }
+
+      // Legacy terminal update: drop its pending approvals and, unless the user is
       // looking at this scope, mark it unread. Only an observed
       // active -> terminal transition counts — the server may re-publish
       // already-terminal invocations, which must not re-mark a read scope.
@@ -135,7 +178,78 @@ export const useHermesIndicatorsStore = create<HermesIndicatorsStore>()((set) =>
     });
   },
 
-  trackProgressEvent: (event) => {
+  trackProgressEvent: (event, invocation) => {
+    const terminalSequence = get().terminalSequences[event.invocationId];
+    if (
+      !isTerminalHermesProgressEvent(event) &&
+      terminalSequence !== undefined &&
+      terminalSequence >= event.sequence
+    ) {
+      return;
+    }
+    if (isTerminalHermesProgressEvent(event)) {
+      set((state) => {
+        const wasActive = !!state.invocationMeta[event.invocationId];
+        const meta = state.invocationMeta[event.invocationId] ??
+          (invocation?.botKind === "hermes"
+            ? {
+                conversationId: invocation.conversationId,
+                threadId: invocation.threadId,
+                botUserId: invocation.botUserId,
+              }
+            : null);
+        const invocationMeta = { ...state.invocationMeta };
+        delete invocationMeta[event.invocationId];
+        const pendingApprovals = state.pendingApprovals.filter(
+          (approval) => approval.invocationId !== event.invocationId,
+        );
+        const next: Partial<HermesIndicatorsStore> = {
+          invocationMeta,
+          pendingApprovals,
+          terminalSequences: rememberTerminalSequence(
+            state.terminalSequences,
+            event.invocationId,
+            event.sequence,
+          ),
+        };
+        const finished =
+          event.type === "invocation.completed" || event.type === "invocation.failed";
+        const conversationId = meta?.conversationId ?? event.conversationId;
+        const threadId = meta?.threadId ?? event.threadId ?? null;
+        const scopeKey = hermesScopeKey(conversationId, threadId);
+        if (
+          wasActive &&
+          finished &&
+          scopeKey !== state.visibleScope &&
+          !state.unreadScopes[scopeKey]
+        ) {
+          next.unreadScopes = {
+            ...state.unreadScopes,
+            [scopeKey]: {
+              conversationId,
+              threadId,
+              botUserId: meta?.botUserId ?? invocation?.botUserId ?? null,
+            },
+          };
+        }
+        return next;
+      });
+      return;
+    }
+
+    if (invocation?.botKind === "hermes") {
+      set((state) => ({
+        invocationMeta: {
+          ...state.invocationMeta,
+          [event.invocationId]: {
+            conversationId: invocation.conversationId,
+            threadId: invocation.threadId,
+            botUserId: invocation.botUserId,
+          },
+        },
+      }));
+    }
+
     if (isApprovalRequestEvent(event)) {
       set((state) => {
         if (state.pendingApprovals.some((p) => p.eventId === event.id)) return state;
@@ -205,9 +319,20 @@ export const useHermesIndicatorsStore = create<HermesIndicatorsStore>()((set) =>
   seedFromSnapshot: (conversationId, snapshot, localDecisions) => {
     set((state) => {
       const activeInvocations = snapshot.invocations.filter(
-        (invocation) =>
-          invocation.botKind === "hermes" &&
-          (invocation.status === "queued" || invocation.status === "running"),
+        (invocation) => {
+          if (
+            invocation.botKind !== "hermes" ||
+            invocation.status === "completed" ||
+            invocation.status === "failed" ||
+            invocation.status === "cancelled"
+          ) {
+            return false;
+          }
+          return (
+            invocation.status === "queued" ||
+            snapshot.events.some((event) => event.invocationId === invocation.id)
+          );
+        },
       );
       const invocationMeta = { ...state.invocationMeta };
       for (const invocation of activeInvocations) {

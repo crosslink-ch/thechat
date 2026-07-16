@@ -46,7 +46,7 @@ export function useBotRuntime(
     enabled: enabled && !!conversationId && !!token,
     staleTime: BOT_RUNTIME_STALE_MS,
     refetchInterval: (query) =>
-      hasActiveInvocation(query.state.data as BotRuntimeSnapshot | undefined)
+      hasActiveBotRuntimeActivity(query.state.data as BotRuntimeSnapshot | undefined)
         ? BOT_RUNTIME_ACTIVE_REFETCH_MS
         : false,
   });
@@ -72,10 +72,11 @@ export function useBotRuntimeCache() {
     (
       conversationId: string,
       event: BotInvocationProgressEventPublic,
+      invocation?: BotInvocationPublic,
     ) => {
       queryClient.setQueryData<BotRuntimeSnapshot>(
         botRuntimeQueryKey(conversationId),
-        (previous) => mergeRuntimeProgressEvent(previous ?? null, event),
+        (previous) => mergeRuntimeProgressEvent(previous ?? null, event, invocation),
       );
     },
     [queryClient],
@@ -96,11 +97,12 @@ export function useBotRuntimeCache() {
   );
 }
 
-function hasActiveInvocation(snapshot: BotRuntimeSnapshot | undefined) {
+export function hasActiveBotRuntimeActivity(snapshot: BotRuntimeSnapshot | undefined) {
   return (
     snapshot?.invocations.some(
       (invocation) =>
-        invocation.status === "queued" || invocation.status === "running",
-    ) ?? false
+        invocation.status === "queued" ||
+        (invocation.botKind !== "hermes" && invocation.status === "running"),
+    ) || (snapshot?.events.length ?? 0) > 0
   );
 }

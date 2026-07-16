@@ -28,6 +28,7 @@ export type WsEvents = {
     conversationId: string;
     invocationId: string;
     event: BotInvocationProgressEventPublic;
+    invocation?: BotInvocationPublic;
   };
   "ws:conversation_thread_updated": {
     conversationId: string;

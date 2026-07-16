@@ -48,8 +48,12 @@ export function HermesRuntimePanel({
     () => (runtime?.invocations ?? []).filter((invocation) => invocation.botKind === "hermes"),
     [runtime],
   );
+  const progressInvocationIds = new Set(
+    (runtime?.events ?? []).map((event) => event.invocationId),
+  );
   const activeInvocations = invocations.filter(
-    (invocation) => invocation.status === "queued" || invocation.status === "running",
+    (invocation) =>
+      invocation.status === "queued" || progressInvocationIds.has(invocation.id),
   );
   const activeCountsByThread = useMemo(() => {
     const counts = new Map<string, number>();
