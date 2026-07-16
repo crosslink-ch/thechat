@@ -2612,6 +2612,32 @@ describe("Bots: runtime state", () => {
       "Async watcher says the AWS SSO login is complete",
     ]);
 
+    const newerFirstThread = await sendAndClaim(
+      "Newer prompt in the first thread",
+      first.threadId,
+    );
+    expect(newerFirstThread.invocationId).not.toBe(first.invocationId);
+    const staleTitleRetryRes = await req(
+      "POST",
+      `/hermes-platform/invocations/${first.invocationId}/progress`,
+      {
+        type: "session.title",
+        payload: { title: "Obsolete title from the first invocation" },
+      },
+      botRes.body.apiKey,
+    );
+    expect(staleTitleRetryRes.status).toBe(200);
+    expect(staleTitleRetryRes.body).toEqual({ ok: true, event: null });
+    const threadsAfterStaleTitle = await req(
+      "GET",
+      `/conversations/threads/${dmRes.body.id}?limit=3`,
+      undefined,
+      human.token,
+    );
+    expect(
+      threadsAfterStaleTitle.body.items.find((thread: any) => thread.id === first.threadId),
+    ).toEqual(expect.objectContaining({ title: "Investigate threaded checkout complete" }));
+
     const secondThreadMessages = await req(
       "GET",
       `/messages/${dmRes.body.id}?threadId=${second.threadId}`,

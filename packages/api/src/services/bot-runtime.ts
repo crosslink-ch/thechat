@@ -1647,7 +1647,9 @@ export async function publishHermesPlatformProgress(
         hasHermesExecutionCompletion(responseJson);
       if (executionAlreadyTerminal) {
         if (input.type === "session.title") {
-          await updateHermesThreadTitleFromProgress(loaded, generatedTitle);
+          if (await isLatestHermesInvocationForThread(loaded)) {
+            await updateHermesThreadTitleFromProgress(loaded, generatedTitle);
+          }
           return { ok: true, event: null };
         }
         throw new ServiceError("Invocation execution is already terminal", 409);
@@ -1720,6 +1722,26 @@ export async function publishHermesPlatformProgress(
       return { ok: true, event };
     },
   );
+}
+
+async function isLatestHermesInvocationForThread(
+  loaded: NonNullable<Awaited<ReturnType<typeof loadInvocationContext>>>,
+) {
+  const threadId = resolveInvocationThreadId(loaded);
+  if (!threadId) return true;
+  const [latest] = await db
+    .select({ id: botInvocations.id })
+    .from(botInvocations)
+    .where(
+      and(
+        eq(botInvocations.botId, loaded.bot.id),
+        eq(botInvocations.conversationId, loaded.conversation.id),
+        eq(botInvocations.threadId, threadId),
+      ),
+    )
+    .orderBy(desc(botInvocations.createdAt), desc(botInvocations.id))
+    .limit(1);
+  return latest?.id === loaded.invocation.id;
 }
 
 async function updateHermesThreadTitleFromProgress(
