@@ -1647,9 +1647,7 @@ export async function publishHermesPlatformProgress(
         hasHermesExecutionCompletion(responseJson);
       if (executionAlreadyTerminal) {
         if (input.type === "session.title") {
-          if (await isLatestHermesInvocationForThread(loaded)) {
-            await updateHermesThreadTitleFromProgress(loaded, generatedTitle);
-          }
+          await updateHermesThreadTitleFromProgress(loaded, generatedTitle);
           return { ok: true, event: null };
         }
         throw new ServiceError("Invocation execution is already terminal", 409);
@@ -1724,12 +1722,14 @@ export async function publishHermesPlatformProgress(
   );
 }
 
-async function isLatestHermesInvocationForThread(
+async function updateHermesThreadTitleFromProgress(
   loaded: NonNullable<Awaited<ReturnType<typeof loadInvocationContext>>>,
+  title: string | null,
 ) {
   const threadId = resolveInvocationThreadId(loaded);
-  if (!threadId) return true;
-  const [latest] = await db
+  if (!threadId || !title) return null;
+
+  const latestInvocationId = db
     .select({ id: botInvocations.id })
     .from(botInvocations)
     .where(
@@ -1741,16 +1741,6 @@ async function isLatestHermesInvocationForThread(
     )
     .orderBy(desc(botInvocations.createdAt), desc(botInvocations.id))
     .limit(1);
-  return latest?.id === loaded.invocation.id;
-}
-
-async function updateHermesThreadTitleFromProgress(
-  loaded: NonNullable<Awaited<ReturnType<typeof loadInvocationContext>>>,
-  title: string | null,
-) {
-  const threadId = resolveInvocationThreadId(loaded);
-  if (!threadId || !title) return null;
-
   const now = new Date();
   const [thread] = await db
     .update(conversationThreads)
@@ -1762,6 +1752,7 @@ async function updateHermesThreadTitleFromProgress(
       and(
         eq(conversationThreads.id, threadId),
         eq(conversationThreads.conversationId, loaded.conversation.id),
+        sql`${loaded.invocation.id} = (${latestInvocationId})`,
       ),
     )
     .returning();
