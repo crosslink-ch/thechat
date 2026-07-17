@@ -134,6 +134,34 @@ describe("useHermesIndicatorsStore", () => {
       expect(store().invocationMeta["inv-1"]).toBeUndefined();
     });
 
+    it("rejects all nonterminal progress after a terminal event across sequence epochs", () => {
+      const claimed = makeInvocation({ status: "claimed", threadId: "t-1" });
+      store().trackProgressEvent(
+        makeEvent({
+          id: "evt-terminal",
+          sequence: 1,
+          type: "invocation.completed",
+          threadId: "t-1",
+        }),
+        claimed,
+      );
+
+      store().trackProgressEvent(
+        makeEvent({
+          id: "evt-delayed-fallback",
+          sequence: 3,
+          type: "approval.request",
+          threadId: "t-1",
+          toolCallId: "call-after-terminal",
+        }),
+        claimed,
+      );
+
+      expect(store().terminalSequences["inv-1"]).toBe(1);
+      expect(store().invocationMeta["inv-1"]).toBeUndefined();
+      expect(store().pendingApprovals).toEqual([]);
+    });
+
     it("ignores terminal updates that were never observed active", () => {
       // The server may re-publish already-terminal invocations; those must
       // not re-mark a scope the user has already read.
@@ -248,6 +276,27 @@ describe("useHermesIndicatorsStore", () => {
           sequence: 3,
           type: "approval.resolved",
           payload: { resolveAll: true },
+        }),
+      );
+
+      expect(store().pendingApprovals).toEqual([]);
+    });
+
+    it("does not leave a correlated approval pending when its resolution arrives first", () => {
+      store().trackProgressEvent(
+        makeEvent({
+          id: "evt-resolution",
+          sequence: 2,
+          type: "approval.resolved",
+          toolCallId: "call-1",
+        }),
+      );
+      store().trackProgressEvent(
+        makeEvent({
+          id: "evt-request",
+          sequence: 1,
+          type: "approval.request",
+          toolCallId: "call-1",
         }),
       );
 

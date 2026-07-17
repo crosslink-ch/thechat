@@ -1,6 +1,9 @@
 import { describe, test, expect, afterAll, beforeAll } from "bun:test";
 import { Elysia } from "elysia";
+import { Queue } from "bullmq";
 import { and, asc, eq, inArray } from "drizzle-orm";
+import Redis from "ioredis";
+import postgres from "postgres";
 import { db } from "../db";
 import {
   botInvocations,
@@ -20,9 +23,12 @@ import { hermesPlatformRoutes } from "../hermes-platform";
 import { botRoutes } from "./index";
 import {
   __botRuntimeInternalsForTests,
+  BOT_QUEUE_NAME,
   closeBotRuntimeForTests,
   startBotWorker,
 } from "../services/bot-runtime";
+import { createBullMqConnection } from "../async/bullmq";
+import { toBullMqJobId, toBullMqQueueName } from "../async/transport";
 import {
   closeBotProgressStoreForTests,
   createLocalBotProgressStoreForTests,
@@ -61,6 +67,44 @@ const createdBotUserIds: string[] = [];
 const originalRedisKeyPrefix = process.env.REDIS_KEY_PREFIX;
 const botsTestRedisKeyPrefix = `thechat-bots-test-${crypto.randomUUID()}`;
 
+async function deleteBotsTestRedisKeys() {
+  const redis = new Redis(
+    process.env.REDIS_URL ?? "redis://localhost:16380",
+    {
+      lazyConnect: true,
+      connectTimeout: 1_500,
+      maxRetriesPerRequest: 1,
+      retryStrategy: () => null,
+    },
+  );
+  redis.on("error", () => {});
+  try {
+    await redis.connect();
+    let cursor = "0";
+    do {
+      const [nextCursor, keys] = await redis.scan(
+        cursor,
+        "MATCH",
+        `${botsTestRedisKeyPrefix}:*`,
+        "COUNT",
+        500,
+      );
+      cursor = nextCursor;
+      if (keys.length > 0) await redis.del(...keys);
+    } while (cursor !== "0");
+  } finally {
+    if (redis.status === "ready") {
+      try {
+        await redis.quit();
+      } finally {
+        redis.disconnect();
+      }
+    } else {
+      redis.disconnect();
+    }
+  }
+}
+
 beforeAll(async () => {
   process.env.REDIS_KEY_PREFIX = botsTestRedisKeyPrefix;
   await setBotProgressStoreForTests(createLocalBotProgressStoreForTests());
@@ -72,10 +116,14 @@ afterAll(async () => {
   await closeBotRuntimeForTests();
   await closeBotProgressStoreForTests();
   await closeRealtimeBusForTests();
-  if (originalRedisKeyPrefix === undefined) {
-    delete process.env.REDIS_KEY_PREFIX;
-  } else {
-    process.env.REDIS_KEY_PREFIX = originalRedisKeyPrefix;
+  try {
+    await deleteBotsTestRedisKeys();
+  } finally {
+    if (originalRedisKeyPrefix === undefined) {
+      delete process.env.REDIS_KEY_PREFIX;
+    } else {
+      process.env.REDIS_KEY_PREFIX = originalRedisKeyPrefix;
+    }
   }
   if (createdWorkspaceIds.length > 0) {
     await db
@@ -205,6 +253,7 @@ async function invocationsForMessage(messageId: string) {
       error: botInvocations.error,
       responseMessageId: botInvocations.responseMessageId,
       responseJson: botInvocations.responseJson,
+      completedAt: botInvocations.completedAt,
     })
     .from(botInvocations)
     .where(eq(botInvocations.triggerMessageId, messageId))
@@ -285,6 +334,203 @@ async function createWorkspaceWithGeneralChannel(token: string, name: string) {
 async function addBotToWorkspace(botId: string, workspaceId: string, token: string) {
   const res = await req("POST", `/bots/${botId}/workspaces`, { workspaceId }, token);
   expect(res.status).toBe(200);
+}
+
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
+async function waitForPromise<T>(promise: Promise<T>, label: string, timeoutMs = 5_000) {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        timeout = setTimeout(() => reject(new Error(`Timed out waiting for ${label}`)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
+
+function createRecordingProgressStore(options: { failFirstClear?: boolean } = {}) {
+  const delegate = createLocalBotProgressStoreForTests();
+  const terminalEvents: Awaited<ReturnType<BotProgressStore["append"]>>[] = [];
+  let failNextClear = options.failFirstClear === true;
+  const store: BotProgressStore = {
+    async append(input) {
+      const event = await delegate.append(input);
+      if (input.type.startsWith("invocation.")) {
+        terminalEvents.push(event);
+      }
+      return event;
+    },
+    touch: (input) => delegate.touch(input),
+    listForConversation: (id, candidates) => delegate.listForConversation(id, candidates),
+    async clear(input) {
+      await delegate.clear(input);
+      if (failNextClear) {
+        failNextClear = false;
+        throw new Error("synthetic progress cleanup failure");
+      }
+    },
+    close: () => delegate.close?.() ?? Promise.resolve(),
+  };
+  return {
+    store,
+    terminalEvents,
+  };
+}
+
+async function raceAtBotInvocationUpdateBoundary(
+  callbacks: Array<() => Promise<Awaited<ReturnType<typeof req>>>>,
+) {
+  const databaseUrl = process.env.DATABASE_URL;
+  if (!databaseUrl) throw new Error("DATABASE_URL is required for the PostgreSQL race barrier");
+
+  const locker = postgres(databaseUrl, { max: 1 });
+  const monitor = postgres(databaseUrl, { max: 1 });
+  const lockAcquired = deferred<void>();
+  const releaseLock = deferred<void>();
+  const lockTransaction = locker.begin(async (sql) => {
+    await sql.unsafe("LOCK TABLE bot_invocations IN SHARE MODE");
+    lockAcquired.resolve(undefined);
+    await releaseLock.promise;
+  });
+  void lockTransaction.catch(lockAcquired.reject);
+  let responsePromises: Array<Promise<Awaited<ReturnType<typeof req>>>> = [];
+
+  try {
+    await waitForPromise(lockAcquired.promise, "bot_invocations SHARE lock");
+    const [baselineActivity] = await monitor<{ blocked: number }[]>`
+      SELECT count(*)::int AS blocked
+      FROM pg_stat_activity
+      WHERE datname = current_database()
+        AND state = 'active'
+        AND wait_event_type = 'Lock'
+        AND query ILIKE ${'%update "bot_invocations"%'}
+    `;
+    const blockedBaseline = Number(baselineActivity?.blocked);
+    const blockedTarget = blockedBaseline + callbacks.length;
+    responsePromises = callbacks.map((callback) => callback());
+    await waitForResult(async () => {
+      const [activity] = await monitor<{ blocked: number }[]>`
+        SELECT count(*)::int AS blocked
+        FROM pg_stat_activity
+        WHERE datname = current_database()
+          AND state = 'active'
+          AND wait_event_type = 'Lock'
+          AND query ILIKE ${'%update "bot_invocations"%'}
+      `;
+      return Number(activity?.blocked) >= blockedTarget ? activity : null;
+    }, `${callbacks.length} new bot_invocations updates blocked at the PostgreSQL lock boundary`);
+    releaseLock.resolve(undefined);
+    return await Promise.all(responsePromises);
+  } finally {
+    releaseLock.resolve(undefined);
+    await Promise.allSettled(responsePromises);
+    await Promise.allSettled([lockTransaction]);
+    await Promise.allSettled([locker.end(), monitor.end()]);
+  }
+}
+
+async function createHermesDmFixture(name: string, webhookUrl?: string) {
+  const human = await registerUser(`${name}Owner`);
+  const { workspaceId } = await createWorkspaceWithGeneralChannel(human.token, name);
+  const botRes = await createBot(human.token, name, undefined, {
+    kind: "hermes",
+    workspaceId,
+  });
+  expect(botRes.status).toBe(200);
+  if (webhookUrl) {
+    const webhookRes = await req(
+      "POST",
+      "/bots/me/webhook",
+      { url: webhookUrl },
+      botRes.body.apiKey,
+    );
+    expect(webhookRes.status).toBe(200);
+  }
+  const dmRes = await req(
+    "POST",
+    "/conversations/dm",
+    { workspaceId, otherUserId: botRes.body.userId },
+    human.token,
+  );
+  expect(dmRes.status).toBe(200);
+  return {
+    human,
+    workspaceId,
+    conversationId: dmRes.body.id as string,
+    bot: botRes.body,
+  };
+}
+
+async function sendHermesQueued(
+  fixture: Awaited<ReturnType<typeof createHermesDmFixture>>,
+  content: string,
+  threadId?: string,
+) {
+  const sendRes = await req(
+    "POST",
+    `/messages/${fixture.conversationId}`,
+    { content, ...(threadId ? { threadId } : {}) },
+    fixture.human.token,
+  );
+  expect(sendRes.status).toBe(200);
+  const invocation = await waitForResult(async () => {
+    const rows = await invocationsForMessage(sendRes.body.id);
+    return rows.find((row) => row.status === "queued");
+  }, `queued Hermes invocation for ${content}`);
+  return { messageId: sendRes.body.id as string, invocation };
+}
+
+async function sendHermesAndClaim(
+  fixture: Awaited<ReturnType<typeof createHermesDmFixture>>,
+  content: string,
+  threadId?: string,
+) {
+  const queued = await sendHermesQueued(fixture, content, threadId);
+  const claimRes = await req(
+    "GET",
+    "/hermes-platform/events?limit=1",
+    undefined,
+    fixture.bot.apiKey,
+  );
+  expect(claimRes.status).toBe(200);
+  expect(claimRes.body.events).toHaveLength(1);
+  expect(claimRes.body.events[0].invocationId).toBe(queued.invocation.id);
+  return {
+    ...queued,
+    invocationId: queued.invocation.id as string,
+    event: claimRes.body.events[0],
+  };
+}
+
+async function waitForHermesWebhookJobTerminal(invocationId: string) {
+  const queue = new Queue(toBullMqQueueName(BOT_QUEUE_NAME), {
+    connection: createBullMqConnection(),
+    prefix: botsTestRedisKeyPrefix,
+  });
+  try {
+    return await waitForResult(async () => {
+      const job = await queue.getJob(
+        toBullMqJobId(`bot:hermes-webhook:${invocationId}`),
+      );
+      if (!job) return null;
+      const state = await job.getState();
+      return state === "completed" || state === "failed" ? { job, state } : null;
+    }, `terminal Hermes webhook job ${invocationId}`, 15_000);
+  } finally {
+    await queue.close();
+  }
 }
 
 describe("Bots: Create", () => {
@@ -1380,6 +1626,502 @@ describe("Bots: runtime state", () => {
       webhook.stop();
     }
   });
+
+  test("finalizes a direct Hermes complete message once across exact and changed-content retries", async () => {
+    const progress = createRecordingProgressStore();
+    await setBotProgressStoreForTests(progress.store);
+    try {
+      const fixture = await createHermesDmFixture("RuntimeHermesFinalMessage");
+      const claimed = await sendHermesAndClaim(
+        fixture,
+        "Return one durable final response",
+      );
+      const platformMessageId = `hermes-final-${crypto.randomUUID()}`;
+
+      const firstRes = await req(
+        "POST",
+        "/hermes-platform/messages",
+        {
+          invocationId: claimed.invocationId,
+          content: "The first final response",
+          platformMessageId,
+          complete: true,
+        },
+        fixture.bot.apiKey,
+      );
+      expect(firstRes.status).toBe(200);
+      expect(firstRes.body).toEqual(
+        expect.objectContaining({
+          messageId: expect.any(String),
+          duplicate: false,
+        }),
+      );
+
+      const [firstFinalized] = await invocationsForMessage(claimed.messageId);
+      const firstCompletedAt = firstFinalized.completedAt?.toISOString();
+      expect(firstFinalized).toEqual(
+        expect.objectContaining({
+          status: "claimed",
+          error: null,
+          responseMessageId: firstRes.body.messageId,
+          responseJson: expect.objectContaining({
+            output: "The first final response",
+            platformMessageId,
+            completion: {
+              type: "message",
+              platformMessageId,
+            },
+          }),
+          completedAt: expect.any(Date),
+        }),
+      );
+
+      const exactRetryRes = await req(
+        "POST",
+        "/hermes-platform/messages",
+        {
+          invocationId: claimed.invocationId,
+          content: "The first final response",
+          platformMessageId,
+          complete: true,
+        },
+        fixture.bot.apiKey,
+      );
+      const changedContentRetryRes = await req(
+        "POST",
+        "/hermes-platform/messages",
+        {
+          invocationId: claimed.invocationId,
+          content: "A retry must not replace the accepted final response",
+          platformMessageId,
+          complete: true,
+        },
+        fixture.bot.apiKey,
+      );
+      expect(exactRetryRes.status).toBe(200);
+      expect(changedContentRetryRes.status).toBe(200);
+      expect(exactRetryRes.body).toEqual({
+        messageId: firstRes.body.messageId,
+        threadId: null,
+        duplicate: true,
+      });
+      expect(changedContentRetryRes.body).toEqual(exactRetryRes.body);
+
+      const [durable] = await invocationsForMessage(claimed.messageId);
+      expect(durable).toEqual(
+        expect.objectContaining({
+          status: "claimed",
+          error: null,
+          responseMessageId: firstRes.body.messageId,
+          responseJson: expect.objectContaining({
+            output: "The first final response",
+            platformMessageId,
+            completion: {
+              type: "message",
+              platformMessageId,
+            },
+          }),
+        }),
+      );
+      expect(durable.completedAt?.toISOString()).toBe(firstCompletedAt);
+
+      const responseMessages = await botMessagesForConversation(
+        fixture.conversationId,
+        fixture.bot.userId,
+      );
+      expect(responseMessages).toEqual([
+        expect.objectContaining({
+          id: firstRes.body.messageId,
+          content: "The first final response",
+        }),
+      ]);
+      const responseOutboxEvents = await db
+        .select({ event: eventOutbox.event })
+        .from(eventOutbox)
+        .where(eq(eventOutbox.causationId, claimed.invocationId));
+      expect(
+        responseOutboxEvents.filter(
+          ({ event }) => event.payload.messageKind === "bot_response",
+        ),
+      ).toHaveLength(1);
+      expect(
+        progress.terminalEvents.filter(
+          (event) =>
+            event.invocationId === claimed.invocationId &&
+            event.type === "invocation.completed",
+        ),
+      ).toHaveLength(1);
+    } finally {
+      await setBotProgressStoreForTests(createLocalBotProgressStoreForTests());
+    }
+  });
+
+  test("keeps durable Hermes completion idempotent when progress cleanup fails and the HTTP callback retries", async () => {
+    const fixture = await createHermesDmFixture("RuntimeHermesCleanupRetry");
+    const claimed = await sendHermesAndClaim(
+      fixture,
+      "Complete durably before transient cleanup fails",
+    );
+    const progress = createRecordingProgressStore({ failFirstClear: true });
+    await setBotProgressStoreForTests(progress.store);
+    const platformMessageId = `cleanup-retry-${crypto.randomUUID()}`;
+    const callbackBody = {
+      invocationId: claimed.invocationId,
+      content: "Completion survives a cleanup retry",
+      platformMessageId,
+      complete: true,
+    };
+
+    try {
+      const firstRes = await req(
+        "POST",
+        "/hermes-platform/messages",
+        callbackBody,
+        fixture.bot.apiKey,
+      );
+      expect(firstRes.status).toBe(500);
+      expect(firstRes.body).toEqual({ error: "synthetic progress cleanup failure" });
+
+      const [afterCleanupFailure] = await invocationsForMessage(claimed.messageId);
+      expect(afterCleanupFailure).toEqual(
+        expect.objectContaining({
+          status: "claimed",
+          error: null,
+          responseMessageId: expect.any(String),
+          responseJson: expect.objectContaining({
+            output: callbackBody.content,
+            platformMessageId,
+            completion: { type: "message", platformMessageId },
+          }),
+          completedAt: expect.any(Date),
+        }),
+      );
+      const durableCompletedAt = afterCleanupFailure.completedAt?.toISOString();
+      const durableMessageId = afterCleanupFailure.responseMessageId!;
+
+      const retryRes = await req(
+        "POST",
+        "/hermes-platform/messages",
+        callbackBody,
+        fixture.bot.apiKey,
+      );
+      expect(retryRes.status).toBe(200);
+      expect(retryRes.body).toEqual({
+        messageId: durableMessageId,
+        threadId: null,
+        duplicate: true,
+      });
+
+      const [afterRetry] = await invocationsForMessage(claimed.messageId);
+      expect(afterRetry).toEqual(
+        expect.objectContaining({
+          status: "claimed",
+          error: null,
+          responseMessageId: durableMessageId,
+          responseJson: expect.objectContaining({
+            output: callbackBody.content,
+            platformMessageId,
+            completion: { type: "message", platformMessageId },
+          }),
+        }),
+      );
+      expect(afterRetry.completedAt?.toISOString()).toBe(durableCompletedAt);
+      expect(await botMessagesForConversation(
+        fixture.conversationId,
+        fixture.bot.userId,
+      )).toEqual([
+        expect.objectContaining({
+          id: durableMessageId,
+          content: callbackBody.content,
+        }),
+      ]);
+      const outboxEvents = await db
+        .select({ event: eventOutbox.event })
+        .from(eventOutbox)
+        .where(eq(eventOutbox.causationId, claimed.invocationId));
+      expect(outboxEvents.filter(
+        ({ event }) => event.payload.messageKind === "bot_response",
+      )).toHaveLength(1);
+      expect(progress.terminalEvents.filter(
+        (event) =>
+          event.invocationId === claimed.invocationId &&
+          event.type === "invocation.completed",
+      )).toHaveLength(1);
+    } finally {
+      await setBotProgressStoreForTests(createLocalBotProgressStoreForTests());
+    }
+  });
+
+  test("preserves the first silent, failed, cancelled, and final-message terminal outcomes on retry", async () => {
+    const fixture = await createHermesDmFixture("RuntimeHermesTerminalRetries");
+
+    const silent = await sendHermesAndClaim(fixture, "Complete silently once");
+    const firstSilentRes = await req(
+      "POST",
+      `/hermes-platform/invocations/${silent.invocationId}/completed`,
+      { reason: "first silent reason" },
+      fixture.bot.apiKey,
+    );
+    const retrySilentRes = await req(
+      "POST",
+      `/hermes-platform/invocations/${silent.invocationId}/completed`,
+      { reason: "replacement silent reason" },
+      fixture.bot.apiKey,
+    );
+    expect(firstSilentRes.body).toEqual({ ok: true, duplicate: false });
+    expect(retrySilentRes.body).toEqual({ ok: true, duplicate: true });
+    const [silentRow] = await invocationsForMessage(silent.messageId);
+    expect(silentRow).toEqual(
+      expect.objectContaining({
+        status: "claimed",
+        error: null,
+        responseMessageId: null,
+        responseJson: expect.objectContaining({
+          completion: { type: "silent", reason: "first silent reason" },
+        }),
+      }),
+    );
+
+    const failed = await sendHermesAndClaim(fixture, "Fail once");
+    const firstFailRes = await req(
+      "POST",
+      `/hermes-platform/invocations/${failed.invocationId}/failed`,
+      { error: "first failure" },
+      fixture.bot.apiKey,
+    );
+    const retryFailRes = await req(
+      "POST",
+      `/hermes-platform/invocations/${failed.invocationId}/failed`,
+      { error: "replacement failure" },
+      fixture.bot.apiKey,
+    );
+    expect(firstFailRes.body).toEqual({ ok: true, duplicate: false });
+    expect(retryFailRes.body).toEqual({ ok: true, duplicate: true });
+    const [failedRow] = await invocationsForMessage(failed.messageId);
+    expect(failedRow).toEqual(
+      expect.objectContaining({
+        status: "claimed",
+        error: "first failure",
+        responseMessageId: expect.any(String),
+        responseJson: expect.objectContaining({
+          completion: { type: "failed", error: "first failure" },
+        }),
+      }),
+    );
+
+    const cancelled = await sendHermesAndClaim(fixture, "Cancel once");
+    const firstCancelRes = await req(
+      "POST",
+      `/hermes-platform/invocations/${cancelled.invocationId}/cancelled`,
+      { reason: "first cancellation" },
+      fixture.bot.apiKey,
+    );
+    const retryCancelRes = await req(
+      "POST",
+      `/hermes-platform/invocations/${cancelled.invocationId}/cancelled`,
+      { reason: "replacement cancellation" },
+      fixture.bot.apiKey,
+    );
+    expect(firstCancelRes.body).toEqual({ ok: true, duplicate: false });
+    expect(retryCancelRes.body).toEqual({ ok: true, duplicate: true });
+    const [cancelledRow] = await invocationsForMessage(cancelled.messageId);
+    expect(cancelledRow).toEqual(
+      expect.objectContaining({
+        status: "claimed",
+        error: "first cancellation",
+        responseMessageId: null,
+        responseJson: expect.objectContaining({
+          completion: { type: "cancelled", reason: "first cancellation" },
+        }),
+      }),
+    );
+
+    const finalMessage = await sendHermesAndClaim(fixture, "Publish one final message");
+    const finalPlatformMessageId = `terminal-retry-${crypto.randomUUID()}`;
+    const firstMessageRes = await req(
+      "POST",
+      "/hermes-platform/messages",
+      {
+        invocationId: finalMessage.invocationId,
+        content: "Accepted final message",
+        platformMessageId: finalPlatformMessageId,
+        complete: true,
+      },
+      fixture.bot.apiKey,
+    );
+    const retryMessageRes = await req(
+      "POST",
+      "/hermes-platform/messages",
+      {
+        invocationId: finalMessage.invocationId,
+        content: "Rejected replacement final message",
+        platformMessageId: finalPlatformMessageId,
+        complete: true,
+      },
+      fixture.bot.apiKey,
+    );
+    expect(firstMessageRes.body.duplicate).toBe(false);
+    expect(retryMessageRes.body).toEqual({
+      messageId: firstMessageRes.body.messageId,
+      threadId: null,
+      duplicate: true,
+    });
+    const [finalMessageRow] = await invocationsForMessage(finalMessage.messageId);
+    expect(finalMessageRow).toEqual(
+      expect.objectContaining({
+        status: "claimed",
+        error: null,
+        responseMessageId: firstMessageRes.body.messageId,
+        responseJson: expect.objectContaining({
+          output: "Accepted final message",
+          completion: {
+            type: "message",
+            platformMessageId: finalPlatformMessageId,
+          },
+        }),
+      }),
+    );
+
+    const responseContents = (
+      await botMessagesForConversation(fixture.conversationId, fixture.bot.userId)
+    ).map((message) => message.content);
+    expect(responseContents.filter((content) => content === "Hermes run failed: first failure")).toHaveLength(1);
+    expect(responseContents.filter((content) => content === "Accepted final message")).toHaveLength(1);
+    expect(responseContents).not.toContain("Hermes run failed: replacement failure");
+    expect(responseContents).not.toContain("Rejected replacement final message");
+  });
+
+  test("preserves one winner in barrier-controlled concurrent completed-vs-cancelled and failed-vs-completed callbacks", async () => {
+    const fixture = await createHermesDmFixture("RuntimeHermesTerminalRaces");
+    const progress = createRecordingProgressStore();
+    await setBotProgressStoreForTests(progress.store);
+    try {
+      const completed = await sendHermesAndClaim(
+        fixture,
+        "Race completion against cancellation",
+      );
+      const completionReason = "completion competing at the update boundary";
+      const cancellationReason = "cancellation competing at the update boundary";
+      const [completionResponse, cancellationResponse] =
+        await raceAtBotInvocationUpdateBoundary([
+          () => req(
+            "POST",
+            `/hermes-platform/invocations/${completed.invocationId}/completed`,
+            { reason: completionReason },
+            fixture.bot.apiKey,
+          ),
+          () => req(
+            "POST",
+            `/hermes-platform/invocations/${completed.invocationId}/cancelled`,
+            { reason: cancellationReason },
+            fixture.bot.apiKey,
+          ),
+        ]);
+      const [completedRow] = await invocationsForMessage(completed.messageId);
+      const completedRaceMessages = await botMessagesForConversation(
+        fixture.conversationId,
+        fixture.bot.userId,
+      );
+      const completedRaceOutbox = await db
+        .select({ event: eventOutbox.event })
+        .from(eventOutbox)
+        .where(eq(eventOutbox.causationId, completed.invocationId));
+
+      const failed = await sendHermesAndClaim(
+        fixture,
+        "Race failure against completion",
+      );
+      const failureError = "failure competing at the update boundary";
+      const failureCompletionReason = "completion competing with failure";
+      const [failureResponse, failureCompletionResponse] =
+        await raceAtBotInvocationUpdateBoundary([
+          () => req(
+            "POST",
+            `/hermes-platform/invocations/${failed.invocationId}/failed`,
+            { error: failureError },
+            fixture.bot.apiKey,
+          ),
+          () => req(
+            "POST",
+            `/hermes-platform/invocations/${failed.invocationId}/completed`,
+            { reason: failureCompletionReason },
+            fixture.bot.apiKey,
+          ),
+        ]);
+      const [failedRow] = await invocationsForMessage(failed.messageId);
+      const failureMessages = (
+        await botMessagesForConversation(fixture.conversationId, fixture.bot.userId)
+      ).filter((message) => message.content === `Hermes run failed: ${failureError}`);
+      const failureOutbox = await db
+        .select({ event: eventOutbox.event })
+        .from(eventOutbox)
+        .where(eq(eventOutbox.causationId, failed.invocationId));
+
+      expect([completionResponse.status, cancellationResponse.status]).toEqual([200, 200]);
+      expect([
+        completionResponse.body.duplicate,
+        cancellationResponse.body.duplicate,
+      ].sort()).toEqual([false, true]);
+      const completionWon = completionResponse.body.duplicate === false;
+      expect(completedRow).toEqual(
+        expect.objectContaining({
+          status: "claimed",
+          error: completionWon ? null : cancellationReason,
+          responseMessageId: null,
+          responseJson: expect.objectContaining({
+            completion: completionWon
+              ? { type: "silent", reason: completionReason }
+              : { type: "cancelled", reason: cancellationReason },
+          }),
+          completedAt: expect.any(Date),
+        }),
+      );
+      expect(progress.terminalEvents.filter(
+        (event) => event.invocationId === completed.invocationId,
+      ).map((event) => event.type)).toEqual([
+        completionWon ? "invocation.completed" : "invocation.cancelled",
+      ]);
+      expect(completedRaceMessages).toEqual([]);
+      expect(completedRaceOutbox.filter(
+        ({ event }) => event.payload.messageKind === "bot_response" ||
+          event.payload.messageKind === "system_failure",
+      )).toHaveLength(0);
+
+      expect([failureResponse.status, failureCompletionResponse.status]).toEqual([200, 200]);
+      expect([
+        failureResponse.body.duplicate,
+        failureCompletionResponse.body.duplicate,
+      ].sort()).toEqual([false, true]);
+      const failureWon = failureResponse.body.duplicate === false;
+      expect(failedRow).toEqual(
+        expect.objectContaining({
+          status: "claimed",
+          error: failureWon ? failureError : null,
+          responseMessageId: failureWon ? expect.any(String) : null,
+          responseJson: expect.objectContaining({
+            completion: failureWon
+              ? { type: "failed", error: failureError }
+              : { type: "silent", reason: failureCompletionReason },
+          }),
+          completedAt: expect.any(Date),
+        }),
+      );
+      expect(progress.terminalEvents.filter(
+        (event) => event.invocationId === failed.invocationId,
+      ).map((event) => event.type)).toEqual([
+        failureWon ? "invocation.failed" : "invocation.completed",
+      ]);
+      expect(failureMessages).toHaveLength(failureWon ? 1 : 0);
+      if (failureWon) {
+        expect(failureMessages[0]?.id).toBe(failedRow.responseMessageId!);
+      }
+      expect(failureOutbox.filter(
+        ({ event }) => event.payload.messageKind === "system_failure",
+      )).toHaveLength(failureWon ? 1 : 0);
+    } finally {
+      await setBotProgressStoreForTests(createLocalBotProgressStoreForTests());
+    }
+  }, 15_000);
 
   test("treats Hermes claim as delivery completion while progress remains transient", async () => {
     let progressNow = Date.now();
@@ -2683,6 +3425,375 @@ describe("Bots: runtime state", () => {
       await closeRealtimeBusForTests();
     }
   });
+
+  test("rejects an older delayed title when a newer same-thread invocation is still queued", async () => {
+    const fixture = await createHermesDmFixture("RuntimeHermesQueuedTitleGuard");
+    const threadRes = await req(
+      "POST",
+      `/conversations/threads/${fixture.conversationId}`,
+      { botId: fixture.bot.id, title: "Initial task title" },
+      fixture.human.token,
+    );
+    expect(threadRes.status).toBe(200);
+    const threadId = threadRes.body.id as string;
+
+    const older = await sendHermesAndClaim(
+      fixture,
+      "Older threaded invocation",
+      threadId,
+    );
+    const olderCompleteRes = await req(
+      "POST",
+      `/hermes-platform/invocations/${older.invocationId}/completed`,
+      { reason: "older invocation finished" },
+      fixture.bot.apiKey,
+    );
+    expect(olderCompleteRes.body).toEqual({ ok: true, duplicate: false });
+
+    const newer = await sendHermesQueued(
+      fixture,
+      "Newer invocation deliberately remains queued",
+      threadId,
+    );
+    const renameRes = await req(
+      "PATCH",
+      `/conversations/threads/${fixture.conversationId}`,
+      { threadId, title: "Title owned by the newer queued invocation" },
+      fixture.human.token,
+    );
+    expect(renameRes.status).toBe(200);
+
+    const delayedOlderTitleRes = await req(
+      "POST",
+      `/hermes-platform/invocations/${older.invocationId}/progress`,
+      {
+        type: "session.title",
+        payload: { title: "Obsolete delayed title from the older invocation" },
+      },
+      fixture.bot.apiKey,
+    );
+    expect(delayedOlderTitleRes.status).toBe(200);
+    expect(delayedOlderTitleRes.body).toEqual({ ok: true, event: null });
+
+    const threadsRes = await req(
+      "GET",
+      `/conversations/threads/${fixture.conversationId}?limit=10`,
+      undefined,
+      fixture.human.token,
+    );
+    expect(threadsRes.status).toBe(200);
+    expect(threadsRes.body.items.find((thread: any) => thread.id === threadId)).toEqual(
+      expect.objectContaining({
+        title: "Title owned by the newer queued invocation",
+        status: "active",
+      }),
+    );
+
+    const [olderRow] = await invocationsForMessage(older.messageId);
+    const [newerRow] = await invocationsForMessage(newer.messageId);
+    expect(olderRow).toEqual(
+      expect.objectContaining({
+        id: older.invocationId,
+        status: "claimed",
+        responseJson: expect.objectContaining({
+          completion: { type: "silent", reason: "older invocation finished" },
+        }),
+      }),
+    );
+    expect(newerRow).toEqual(
+      expect.objectContaining({ id: newer.invocation.id, status: "queued" }),
+    );
+    const runtimeRes = await req(
+      "GET",
+      `/bot-runtime/conversations/${fixture.conversationId}`,
+      undefined,
+      fixture.human.token,
+    );
+    expect(runtimeRes.status).toBe(200);
+    expect(runtimeRes.body.invocations).toContainEqual(
+      expect.objectContaining({ id: newer.invocation.id, status: "queued" }),
+    );
+    expect(runtimeRes.body.invocations).not.toContainEqual(
+      expect.objectContaining({ id: older.invocationId }),
+    );
+    expect(runtimeRes.body.events).not.toContainEqual(
+      expect.objectContaining({ invocationId: older.invocationId }),
+    );
+  });
+
+  test("deduplicates retried approval progress by source event id before applying ordered resolution", async () => {
+    let progressNow = Date.now();
+    await setBotProgressStoreForTests(createLocalBotProgressStoreForTests({
+      activityTimeoutMs: 30_000,
+      now: () => progressNow,
+    }));
+    try {
+      const fixture = await createHermesDmFixture("RuntimeHermesSourceProgressRetry");
+      const claimed = await sendHermesAndClaim(
+        fixture,
+        "Retry one source approval event",
+      );
+      const sourceEventId = `approval-source-${crypto.randomUUID()}`;
+      const approvalBody = {
+        type: "approval.request",
+        status: "waiting",
+        sourceEventId,
+        payload: { sessionKey: "source-session-1" },
+        occurredAt: new Date(progressNow).toISOString(),
+      };
+      const firstApprovalRes = await req(
+        "POST",
+        `/hermes-platform/invocations/${claimed.invocationId}/progress`,
+        approvalBody,
+        fixture.bot.apiKey,
+      );
+      const retryApprovalRes = await req(
+        "POST",
+        `/hermes-platform/invocations/${claimed.invocationId}/progress`,
+        approvalBody,
+        fixture.bot.apiKey,
+      );
+      const resolveApprovalRes = await req(
+        "POST",
+        `/hermes-platform/invocations/${claimed.invocationId}/progress`,
+        {
+          type: "approval.resolved",
+          status: "completed",
+          sourceEventId: `approval-resolution-${crypto.randomUUID()}`,
+          payload: { sessionKey: "source-session-1", resolvedCount: 1 },
+          occurredAt: new Date(progressNow + 1).toISOString(),
+        },
+        fixture.bot.apiKey,
+      );
+      expect(firstApprovalRes.status).toBe(200);
+      expect(retryApprovalRes.status).toBe(200);
+      expect(resolveApprovalRes.status).toBe(200);
+
+      progressNow += 30_001;
+      const runtimeRes = await req(
+        "GET",
+        `/bot-runtime/conversations/${fixture.conversationId}`,
+        undefined,
+        fixture.human.token,
+      );
+      expect(runtimeRes.status).toBe(200);
+      expect(runtimeRes.body.events.filter(
+        (event: any) => event.invocationId === claimed.invocationId,
+      )).toEqual([]);
+      expect(runtimeRes.body.invocations).not.toContainEqual(
+        expect.objectContaining({ id: claimed.invocationId }),
+      );
+    } finally {
+      await setBotProgressStoreForTests(createLocalBotProgressStoreForTests());
+    }
+  });
+
+  test("preserves fast Hermes completion while the outbound webhook resolves with 2xx", async () => {
+    await closeBotRuntimeForTests();
+    const webhookResponse = deferred<Response>();
+    const webhook = startWebhookServer(() => webhookResponse.promise);
+    const progress = createRecordingProgressStore();
+    await setBotProgressStoreForTests(progress.store);
+    try {
+      const fixture = await createHermesDmFixture(
+        "RuntimeHermesFastWebhookSuccess",
+        webhook.url,
+      );
+      await startBotWorkerForTest();
+      const sendRes = await req(
+        "POST",
+        `/messages/${fixture.conversationId}`,
+        { content: "Complete before the successful webhook response returns" },
+        fixture.human.token,
+      );
+      expect(sendRes.status).toBe(200);
+
+      const delivery = await waitForResult(
+        async () => webhook.requests.find(
+          (request) => request.payload.event?.messageId === sendRes.body.id,
+        ),
+        "held Hermes webhook request before 2xx",
+      );
+      const invocationId = delivery.payload.event.invocationId as string;
+      const [running] = await invocationsForMessage(sendRes.body.id);
+      expect(running).toEqual(
+        expect.objectContaining({ id: invocationId, status: "running" }),
+      );
+
+      const progressRes = await req(
+        "POST",
+        `/hermes-platform/invocations/${invocationId}/progress`,
+        {
+          type: "tool.started",
+          status: "running",
+          toolCallId: "fast-success-tool",
+          toolName: "shell",
+        },
+        fixture.bot.apiKey,
+      );
+      expect(progressRes.status).toBe(200);
+      const platformMessageId = `fast-webhook-success-${crypto.randomUUID()}`;
+      const completeRes = await req(
+        "POST",
+        "/hermes-platform/messages",
+        {
+          invocationId,
+          content: "Fast webhook completion won",
+          platformMessageId,
+          complete: true,
+        },
+        fixture.bot.apiKey,
+      );
+      expect(completeRes.status).toBe(200);
+      expect(completeRes.body.duplicate).toBe(false);
+
+      webhookResponse.resolve(new Response("ok", { status: 200 }));
+      const terminalJob = await waitForHermesWebhookJobTerminal(invocationId);
+      expect(terminalJob.state).toBe("completed");
+
+      const [durable] = await invocationsForMessage(sendRes.body.id);
+      expect(durable).toEqual(
+        expect.objectContaining({
+          id: invocationId,
+          status: "claimed",
+          error: null,
+          responseMessageId: completeRes.body.messageId,
+          responseJson: expect.objectContaining({
+            output: "Fast webhook completion won",
+            completion: { type: "message", platformMessageId },
+          }),
+        }),
+      );
+      expect(await botMessagesForConversation(
+        fixture.conversationId,
+        fixture.bot.userId,
+      )).toEqual([
+        expect.objectContaining({
+          id: completeRes.body.messageId,
+          content: "Fast webhook completion won",
+        }),
+      ]);
+      expect(webhook.requests).toHaveLength(1);
+      expect(progress.terminalEvents.filter(
+        (event) => event.invocationId === invocationId,
+      )).toHaveLength(1);
+    } finally {
+      webhookResponse.resolve(new Response("cleanup", { status: 200 }));
+      webhook.stop();
+      await closeBotRuntimeForTests();
+      await setBotProgressStoreForTests(createLocalBotProgressStoreForTests());
+    }
+  }, 10_000);
+
+  test("preserves fast Hermes completion when the unresolved outbound webhook returns non-2xx", async () => {
+    await closeBotRuntimeForTests();
+    const releaseWebhookResponses = deferred<void>();
+    const webhookStatuses: number[] = [];
+    const webhook = startWebhookServer(async () => {
+      await releaseWebhookResponses.promise;
+      webhookStatuses.push(503);
+      return new Response("synthetic failure", { status: 503 });
+    });
+    const progress = createRecordingProgressStore();
+    await setBotProgressStoreForTests(progress.store);
+    try {
+      const fixture = await createHermesDmFixture(
+        "RuntimeHermesFastWebhookFailure",
+        webhook.url,
+      );
+      await startBotWorkerForTest();
+      const sendRes = await req(
+        "POST",
+        `/messages/${fixture.conversationId}`,
+        { content: "Complete before the failed webhook response returns" },
+        fixture.human.token,
+      );
+      expect(sendRes.status).toBe(200);
+
+      const delivery = await waitForResult(
+        async () => webhook.requests.find(
+          (request) => request.payload.event?.messageId === sendRes.body.id,
+        ),
+        "held Hermes webhook request before non-2xx",
+      );
+      const invocationId = delivery.payload.event.invocationId as string;
+      const [running] = await invocationsForMessage(sendRes.body.id);
+      expect(running).toEqual(
+        expect.objectContaining({ id: invocationId, status: "running" }),
+      );
+      const progressRes = await req(
+        "POST",
+        `/hermes-platform/invocations/${invocationId}/progress`,
+        {
+          type: "tool.started",
+          status: "running",
+          toolCallId: "fast-failure-tool",
+          toolName: "shell",
+        },
+        fixture.bot.apiKey,
+      );
+      expect(progressRes.status).toBe(200);
+      const platformMessageId = `fast-webhook-failure-${crypto.randomUUID()}`;
+      const completeRes = await req(
+        "POST",
+        "/hermes-platform/messages",
+        {
+          invocationId,
+          content: "Fast completion survives webhook failure",
+          platformMessageId,
+          complete: true,
+        },
+        fixture.bot.apiKey,
+      );
+      expect(completeRes.status).toBe(200);
+      expect(completeRes.body.duplicate).toBe(false);
+
+      releaseWebhookResponses.resolve(undefined);
+      const terminalJob = await waitForHermesWebhookJobTerminal(invocationId);
+
+      const [durable] = await invocationsForMessage(sendRes.body.id);
+      expect(durable).toEqual(
+        expect.objectContaining({
+          id: invocationId,
+          status: "claimed",
+          error: null,
+          responseMessageId: completeRes.body.messageId,
+          responseJson: expect.objectContaining({
+            output: "Fast completion survives webhook failure",
+            completion: { type: "message", platformMessageId },
+          }),
+        }),
+      );
+      expect({
+        jobState: terminalJob.state,
+        attemptsMade: terminalJob.job.attemptsMade,
+        requestCount: webhook.requests.length,
+        webhookStatuses,
+      }).toEqual({
+        jobState: "completed",
+        attemptsMade: 2,
+        requestCount: 1,
+        webhookStatuses: [503],
+      });
+      expect(await botMessagesForConversation(
+        fixture.conversationId,
+        fixture.bot.userId,
+      )).toEqual([
+        expect.objectContaining({
+          id: completeRes.body.messageId,
+          content: "Fast completion survives webhook failure",
+        }),
+      ]);
+      expect(progress.terminalEvents.filter(
+        (event) => event.invocationId === invocationId,
+      )).toHaveLength(1);
+    } finally {
+      releaseWebhookResponses.resolve(undefined);
+      webhook.stop();
+      await closeBotRuntimeForTests();
+      await setBotProgressStoreForTests(createLocalBotProgressStoreForTests());
+    }
+  }, 25_000);
 
   test("Hermes platform supports regular bot webhook delivery while polling remains available", async () => {
     let receivedAuthorization = "";

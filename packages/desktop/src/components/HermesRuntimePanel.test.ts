@@ -1,13 +1,124 @@
+import { createElement } from "react";
+import { render, screen, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import type {
   BotInvocationProgressEventPublic,
   BotInvocationPublic,
   BotRuntimeSnapshot,
+  ConversationThreadPublic,
 } from "@thechat/shared";
 import {
   mergeRuntimeProgressEvent,
   mergeRuntimeUpdate,
 } from "../lib/bot-runtime-state";
+import { HermesRuntimePanel } from "./HermesRuntimePanel";
+
+describe("HermesRuntimePanel", () => {
+  it("renders queued General and task deliveries and counts them without progress", () => {
+    renderPanel(runtime({
+      invocations: [
+        invocation({
+          id: "queued-general",
+          status: "queued",
+          requestJson: { text: "Queued General delivery" },
+        }),
+        invocation({
+          id: "queued-task",
+          status: "queued",
+          threadId: "thread-1",
+          requestJson: { text: "Queued task delivery" },
+        }),
+      ],
+    }));
+
+    expect(screen.getByText("Queued General delivery")).toBeInTheDocument();
+    expect(screen.getByText("Queued task delivery")).toBeInTheDocument();
+    expect(screen.getAllByText("queued")).toHaveLength(2);
+    expect(within(generalRow()).getByText("1")).toBeInTheDocument();
+    expect(within(taskRow()).getByText("1")).toBeInTheDocument();
+  });
+
+  it("renders claimed transient progress in the matching task scope", () => {
+    renderPanel(runtime({
+      invocations: [
+        invocation({
+          status: "claimed",
+          threadId: "thread-1",
+          requestJson: { text: "Claimed task work" },
+        }),
+      ],
+      events: [progressEvent(1, { threadId: "thread-1" })],
+    }));
+
+    expect(screen.getByText("Claimed task work")).toBeInTheDocument();
+    expect(screen.getByText("claimed")).toBeInTheDocument();
+    expect(within(taskRow()).getByText("1")).toBeInTheDocument();
+    expect(within(generalRow()).queryByText("1")).not.toBeInTheDocument();
+  });
+
+  it("hides claimed and legacy running invocations that have no progress", () => {
+    renderPanel(runtime({
+      invocations: [
+        invocation({
+          id: "silent-claimed",
+          status: "claimed",
+          requestJson: { text: "Silent claimed work" },
+        }),
+        invocation({
+          id: "silent-running",
+          status: "running",
+          threadId: "thread-1",
+          requestJson: { text: "Silent running work" },
+        }),
+      ],
+    }));
+
+    expect(screen.getByText("No active runs")).toBeInTheDocument();
+    expect(screen.queryByText("Silent claimed work")).not.toBeInTheDocument();
+    expect(screen.queryByText("Silent running work")).not.toBeInTheDocument();
+    expect(within(generalRow()).queryByText("1")).not.toBeInTheDocument();
+    expect(within(taskRow()).queryByText("1")).not.toBeInTheDocument();
+  });
+
+  it("does not let progress for one invocation activate another", () => {
+    renderPanel(runtime({
+      invocations: [
+        invocation({
+          id: "eventful-invocation",
+          status: "claimed",
+          requestJson: { text: "Eventful invocation" },
+        }),
+        invocation({
+          id: "unrelated-invocation",
+          status: "claimed",
+          requestJson: { text: "Unrelated invocation" },
+        }),
+      ],
+      events: [progressEvent(1, { invocationId: "eventful-invocation" })],
+    }));
+
+    expect(screen.getByText("Eventful invocation")).toBeInTheDocument();
+    expect(screen.queryByText("Unrelated invocation")).not.toBeInTheDocument();
+    expect(within(generalRow()).getByText("1")).toBeInTheDocument();
+  });
+
+  it("filters non-Hermes invocations even when they are queued or eventful", () => {
+    renderPanel(runtime({
+      invocations: [
+        invocation({
+          botKind: "webhook",
+          status: "queued",
+          requestJson: { text: "Webhook activity" },
+        }),
+      ],
+      events: [progressEvent(1)],
+    }));
+
+    expect(screen.getByText("No active runs")).toBeInTheDocument();
+    expect(screen.queryByText("Webhook activity")).not.toBeInTheDocument();
+    expect(within(generalRow()).queryByText("1")).not.toBeInTheDocument();
+  });
+});
 
 describe("Hermes runtime progress state", () => {
   it("keeps only the latest progress events for an active invocation", () => {
@@ -126,6 +237,49 @@ describe("Hermes runtime progress state", () => {
     ]);
   });
 });
+
+function renderPanel(snapshot: BotRuntimeSnapshot) {
+  return render(createElement(HermesRuntimePanel, {
+    botName: "Koda",
+    runtime: snapshot,
+    loading: false,
+    threads: [thread()],
+  }));
+}
+
+function generalRow() {
+  return screen.getByRole("button", { name: /General\s*Inbox/ });
+}
+
+function taskRow() {
+  return screen.getByRole("button", { name: /Release task/ });
+}
+
+function runtime(overrides: Partial<BotRuntimeSnapshot> = {}): BotRuntimeSnapshot {
+  return {
+    invocations: [],
+    events: [],
+    ...overrides,
+  };
+}
+
+function thread(
+  overrides: Partial<ConversationThreadPublic> = {},
+): ConversationThreadPublic {
+  const now = "2026-01-01T00:00:00.000Z";
+  return {
+    id: "thread-1",
+    conversationId: "conversation-1",
+    botId: "bot-1",
+    title: "Release task",
+    status: "active",
+    createdById: "user-1",
+    lastActivityAt: now,
+    createdAt: now,
+    updatedAt: now,
+    ...overrides,
+  };
+}
 
 function invocation(
   overrides: Partial<BotInvocationPublic> = {},

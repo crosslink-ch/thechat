@@ -55,6 +55,56 @@ const baseWorkspace: WorkspaceWithDetails = {
   ],
 };
 
+function hermesInvocation(
+  overrides: Partial<BotInvocationPublic> = {},
+): BotInvocationPublic {
+  return {
+    id: "inv-1",
+    botId: "bot-1",
+    botUserId: "u-bot",
+    botName: "Hermes",
+    botKind: "hermes",
+    conversationId: "conv-1",
+    threadId: "t-1",
+    triggerMessageId: "msg-1",
+    responseMessageId: null,
+    adapterKind: "hermes",
+    status: "claimed",
+    externalRunId: null,
+    requestJson: null,
+    responseJson: null,
+    error: null,
+    startedAt: "2026-06-11T10:00:00.000Z",
+    completedAt: null,
+    createdAt: "2026-06-11T10:00:00.000Z",
+    updatedAt: "2026-06-11T10:00:00.000Z",
+    ...overrides,
+  };
+}
+
+function hermesProgressEvent(
+  overrides: Partial<BotInvocationProgressEventPublic> = {},
+): BotInvocationProgressEventPublic {
+  return {
+    id: "evt-1",
+    invocationId: "inv-1",
+    botId: "bot-1",
+    conversationId: "conv-1",
+    threadId: "t-1",
+    sequence: 1,
+    type: "approval.request",
+    status: null,
+    toolCallId: "call-1",
+    toolName: null,
+    label: null,
+    preview: null,
+    payload: null,
+    occurredAt: "2026-06-11T10:01:00.000Z",
+    createdAt: "2026-06-11T10:01:00.000Z",
+    ...overrides,
+  };
+}
+
 describe("registerGlobalWsHandlers", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -354,44 +404,8 @@ describe("registerGlobalWsHandlers", () => {
 
   it("feeds Hermes invocation progress lifecycle events into the indicators store", () => {
     useHermesIndicatorsStore.getState().resetForTests();
-    const invocation: BotInvocationPublic = {
-      id: "inv-1",
-      botId: "bot-1",
-      botUserId: "u-bot",
-      botName: "Hermes",
-      botKind: "hermes",
-      conversationId: "conv-1",
-      threadId: "t-1",
-      triggerMessageId: "msg-1",
-      responseMessageId: null,
-      adapterKind: "hermes",
-      status: "claimed",
-      externalRunId: null,
-      requestJson: null,
-      responseJson: null,
-      error: null,
-      startedAt: "2026-06-11T10:00:00.000Z",
-      completedAt: "2026-06-11T10:00:00.000Z",
-      createdAt: "2026-06-11T10:00:00.000Z",
-      updatedAt: "2026-06-11T10:00:00.000Z",
-    };
-    const approvalRequest: BotInvocationProgressEventPublic = {
-      id: "evt-1",
-      invocationId: "inv-1",
-      botId: "bot-1",
-      conversationId: "conv-1",
-      threadId: "t-1",
-      sequence: 1,
-      type: "approval.request",
-      status: null,
-      toolCallId: null,
-      toolName: null,
-      label: null,
-      preview: null,
-      payload: null,
-      occurredAt: "2026-06-11T10:01:00.000Z",
-      createdAt: "2026-06-11T10:01:00.000Z",
-    };
+    const invocation = hermesInvocation();
+    const approvalRequest = hermesProgressEvent();
 
     const cleanup = registerGlobalWsHandlers(() => {});
 
@@ -402,17 +416,15 @@ describe("registerGlobalWsHandlers", () => {
       invocation,
     });
 
-    expect(
-      useHermesIndicatorsStore.getState().pendingApprovals.map((p) => p.eventId),
-    ).toEqual(["evt-1"]);
-
-    const completedInvocation = {
-      ...invocation,
-      responseJson: { completion: { type: "silent" } },
-    };
-    wsEvents.emit("ws:bot_invocation_updated", {
-      conversationId: "conv-1",
-      invocation: completedInvocation,
+    expect(useHermesIndicatorsStore.getState()).toMatchObject({
+      pendingApprovals: [expect.objectContaining({ eventId: "evt-1" })],
+      invocationMeta: {
+        "inv-1": {
+          conversationId: "conv-1",
+          threadId: "t-1",
+          botUserId: "u-bot",
+        },
+      },
     });
 
     wsEvents.emit("ws:bot_invocation_progress", {
@@ -433,5 +445,53 @@ describe("registerGlobalWsHandlers", () => {
     expect(state.unreadScopes[hermesScopeKey("conv-1", "t-1")]).toBeDefined();
 
     cleanup();
+  });
+
+  it("applies duplicate global progress and terminal events idempotently", () => {
+    const cleanup = registerGlobalWsHandlers(() => {});
+    try {
+      const invocation = hermesInvocation();
+      const approvalRequest = hermesProgressEvent();
+      const terminal = hermesProgressEvent({
+        id: "evt-terminal",
+        sequence: 2,
+        type: "invocation.completed",
+        status: "completed",
+      });
+
+      for (let replay = 0; replay < 2; replay += 1) {
+        wsEvents.emit("ws:bot_invocation_progress", {
+          conversationId: "conv-1",
+          invocationId: "inv-1",
+          event: approvalRequest,
+          invocation,
+        });
+      }
+      expect(useHermesIndicatorsStore.getState().pendingApprovals).toEqual([
+        expect.objectContaining({ eventId: "evt-1" }),
+      ]);
+
+      for (let replay = 0; replay < 2; replay += 1) {
+        wsEvents.emit("ws:bot_invocation_progress", {
+          conversationId: "conv-1",
+          invocationId: "inv-1",
+          event: terminal,
+          invocation,
+        });
+      }
+
+      const state = useHermesIndicatorsStore.getState();
+      expect(state.pendingApprovals).toEqual([]);
+      expect(state.invocationMeta).toEqual({});
+      expect(state.unreadScopes).toEqual({
+        [hermesScopeKey("conv-1", "t-1")]: {
+          conversationId: "conv-1",
+          threadId: "t-1",
+          botUserId: "u-bot",
+        },
+      });
+    } finally {
+      cleanup();
+    }
   });
 });
