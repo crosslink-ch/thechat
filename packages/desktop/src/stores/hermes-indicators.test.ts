@@ -68,7 +68,7 @@ describe("useHermesIndicatorsStore", () => {
 
   describe("unread scopes", () => {
     it("marks a scope unread when an observed-active invocation finishes off-screen", () => {
-      store().trackInvocation(makeInvocation({ threadId: "t-1", status: "running" }));
+      store().trackInvocation(makeInvocation({ threadId: "t-1", status: "queued" }));
       store().trackInvocation(makeInvocation({ threadId: "t-1", status: "completed" }));
 
       const scopeKey = hermesScopeKey("conv-1", "t-1");
@@ -81,10 +81,57 @@ describe("useHermesIndicatorsStore", () => {
 
     it("does not mark the visible scope unread", () => {
       store().setVisibleScope(hermesScopeKey("conv-1", null));
-      store().trackInvocation(makeInvocation({ status: "running" }));
+      store().trackInvocation(makeInvocation({ status: "queued" }));
       store().trackInvocation(makeInvocation({ status: "completed" }));
 
       expect(store().unreadScopes).toEqual({});
+    });
+
+    it("drops queued lifecycle metadata when Hermes claims delivery", () => {
+      store().trackInvocation(makeInvocation({ status: "queued" }));
+      expect(store().invocationMeta["inv-1"]).toBeDefined();
+
+      store().trackInvocation(makeInvocation({ status: "claimed" }));
+
+      expect(store().invocationMeta["inv-1"]).toBeUndefined();
+      expect(store().unreadScopes).toEqual({});
+    });
+
+    it("retains progress metadata until a claimed completion event arrives", () => {
+      store().trackProgressEvent(
+        makeEvent({ type: "tool.started" }),
+        makeInvocation({ status: "claimed" }),
+      );
+      store().trackInvocation(
+        makeInvocation({
+          status: "claimed",
+          responseJson: { completion: { type: "silent" } },
+        }),
+      );
+      expect(store().invocationMeta["inv-1"]).toBeDefined();
+
+      const completed = makeInvocation({
+        status: "claimed",
+        responseJson: { completion: { type: "silent" } },
+      });
+      store().trackProgressEvent(
+        makeEvent({ type: "invocation.completed", sequence: 2 }),
+        completed,
+      );
+
+      expect(store().invocationMeta["inv-1"]).toBeUndefined();
+      expect(store().unreadScopes[hermesScopeKey("conv-1", null)]).toBeDefined();
+
+      store().trackProgressEvent(
+        makeEvent({ type: "invocation.completed", sequence: 1 }),
+        completed,
+      );
+      store().trackProgressEvent(
+        makeEvent({ type: "tool.started", sequence: 2 }),
+        makeInvocation({ status: "running" }),
+      );
+      expect(store().terminalSequences["inv-1"]).toBe(2);
+      expect(store().invocationMeta["inv-1"]).toBeUndefined();
     });
 
     it("ignores terminal updates that were never observed active", () => {
@@ -96,7 +143,7 @@ describe("useHermesIndicatorsStore", () => {
     });
 
     it("does not mark unread for cancelled invocations", () => {
-      store().trackInvocation(makeInvocation({ status: "running" }));
+      store().trackInvocation(makeInvocation({ status: "queued" }));
       store().trackInvocation(makeInvocation({ status: "cancelled" }));
 
       expect(store().unreadScopes).toEqual({});
@@ -111,7 +158,7 @@ describe("useHermesIndicatorsStore", () => {
     });
 
     it("clears unread when the scope becomes visible", () => {
-      store().trackInvocation(makeInvocation({ status: "running" }));
+      store().trackInvocation(makeInvocation({ status: "queued" }));
       store().trackInvocation(makeInvocation({ status: "failed" }));
       const scopeKey = hermesScopeKey("conv-1", null);
       expect(store().unreadScopes[scopeKey]).toBeDefined();
@@ -219,12 +266,32 @@ describe("useHermesIndicatorsStore", () => {
     });
 
     it("drops pending approvals when their invocation finishes", () => {
-      store().trackInvocation(makeInvocation({ status: "running" }));
+      store().trackInvocation(makeInvocation({ status: "queued" }));
       store().trackProgressEvent(makeEvent({ id: "evt-1" }));
 
       store().trackInvocation(makeInvocation({ status: "cancelled" }));
 
       expect(store().pendingApprovals).toEqual([]);
+    });
+
+    it("clears claimed progress metadata and approvals on terminal progress", () => {
+      const claimed = makeInvocation({ status: "claimed", threadId: "t-1" });
+      store().trackProgressEvent(
+        makeEvent({ id: "evt-1", threadId: "t-1" }),
+        claimed,
+      );
+
+      store().trackProgressEvent(
+        makeEvent({
+          id: "evt-terminal",
+          type: "invocation.cancelled",
+          threadId: "t-1",
+        }),
+        claimed,
+      );
+
+      expect(store().pendingApprovals).toEqual([]);
+      expect(store().invocationMeta).toEqual({});
     });
 
     it("resolves a pending approval by event id (local decision)", () => {
@@ -238,7 +305,7 @@ describe("useHermesIndicatorsStore", () => {
 
   describe("seedFromSnapshot", () => {
     it("seeds pending approvals from active invocations only", () => {
-      const active = makeInvocation({ id: "inv-1", threadId: "t-1", status: "running" });
+      const active = makeInvocation({ id: "inv-1", threadId: "t-1", status: "claimed" });
       const done = makeInvocation({ id: "inv-2", status: "completed" });
       const snapshot = {
         invocations: [active, done],
@@ -260,7 +327,7 @@ describe("useHermesIndicatorsStore", () => {
 
     it("skips approvals already resolved by a local decision", () => {
       const snapshot = {
-        invocations: [makeInvocation({ status: "running" })],
+        invocations: [makeInvocation({ status: "claimed" })],
         events: [makeEvent({ id: "evt-1" })],
       };
 
@@ -276,7 +343,7 @@ describe("useHermesIndicatorsStore", () => {
       store().seedFromSnapshot(
         "conv-1",
         {
-          invocations: [makeInvocation({ status: "running" })],
+          invocations: [makeInvocation({ status: "claimed" })],
           events: [makeEvent({ id: "evt-1" })],
         },
         {},
@@ -285,7 +352,7 @@ describe("useHermesIndicatorsStore", () => {
       store().seedFromSnapshot(
         "conv-1",
         {
-          invocations: [makeInvocation({ status: "running" })],
+          invocations: [makeInvocation({ status: "claimed" })],
           events: [makeEvent({ id: "evt-2" })],
         },
         {},
@@ -301,8 +368,8 @@ describe("useHermesIndicatorsStore", () => {
       store().seedFromSnapshot(
         "conv-1",
         {
-          invocations: [makeInvocation({ status: "running" })],
-          events: [],
+          invocations: [makeInvocation({ status: "claimed" })],
+          events: [makeEvent({ type: "tool.started" })],
         },
         {},
       );

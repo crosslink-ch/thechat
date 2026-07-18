@@ -114,11 +114,13 @@ describe("Hermes progress selectors", () => {
           botUserId: "bot-user-2",
         }),
       ],
+      events: [
+        progressEvent({ invocationId: "first-bot" }),
+        progressEvent({ id: "event-2", invocationId: "second-bot" }),
+      ],
     });
 
-    const selected = selectHermesConversationProgress(snapshot, undefined, {
-      activeTypingUserIds: ["bot-user-1", "bot-user-2"],
-    });
+    const selected = selectHermesConversationProgress(snapshot);
 
     expect(selected.invocations.map(({ invocation }) => invocation.id)).toEqual([
       "first-bot",
@@ -130,44 +132,48 @@ describe("Hermes progress selectors", () => {
     ]);
   });
 
-  it("hides stale silent handoff records but keeps live or eventful work visible", () => {
+  it("uses queued delivery or transient progress rather than invocation status as liveness", () => {
     const snapshot = runtime({
       invocations: [
         invocation({
-          id: "silent-invocation",
-          updatedAt: "2026-01-01T00:00:00.000Z",
+          id: "claimed-invocation",
+          status: "claimed",
+        }),
+        invocation({
+          id: "legacy-running-invocation",
+          status: "running",
+        }),
+        invocation({
+          id: "queued-invocation",
+          botId: "bot-2",
+          botUserId: "bot-user-2",
+          botName: "Hermes Two",
+          status: "queued",
         }),
       ],
     });
-    const nowMs = Date.parse("2026-01-01T00:00:31.000Z");
 
-    const stale = selectHermesConversationProgress(snapshot, undefined, {
-      activeTypingUserIds: [],
-      nowMs,
-    });
-    expect(stale.invocations).toEqual([]);
-
-    const typing = selectHermesConversationProgress(snapshot, undefined, {
-      activeTypingUserIds: ["bot-user-1"],
-      nowMs,
-    });
-    expect(typing.invocations[0]?.invocation.id).toBe("silent-invocation");
+    const deliveryOnly = selectHermesConversationProgress(snapshot);
+    expect(deliveryOnly.invocations.map(({ invocation }) => invocation.id)).toEqual([
+      "queued-invocation",
+    ]);
 
     const waiting = selectHermesConversationProgress(
       {
         ...snapshot,
         events: [
           progressEvent({
-            invocationId: "silent-invocation",
+            invocationId: "claimed-invocation",
             type: "approval.request",
             status: "waiting",
           }),
         ],
       },
-      undefined,
-      { activeTypingUserIds: [], nowMs },
     );
-    expect(waiting.invocations[0]?.invocation.id).toBe("silent-invocation");
+    expect(waiting.invocations.map(({ invocation }) => invocation.id)).toEqual([
+      "claimed-invocation",
+      "queued-invocation",
+    ]);
   });
 
   it("scopes General progress to unthreaded Hermes invocations", () => {

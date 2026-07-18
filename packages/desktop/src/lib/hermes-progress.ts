@@ -17,12 +17,7 @@ export interface ActiveHermesInvocationProgress {
 
 interface HermesProgressSelectionOptions {
   unthreadedOnly?: boolean;
-  activeTypingUserIds?: Iterable<string>;
-  nowMs?: number;
-  silentRunningGraceMs?: number;
 }
-
-const DEFAULT_SILENT_RUNNING_GRACE_MS = 30_000;
 
 export function selectHermesConversationProgress(
   runtime: BotRuntimeSnapshot | null,
@@ -40,29 +35,31 @@ function selectActiveHermesProgress(
   const scopedInvocations = (runtime?.invocations ?? []).filter(
     (invocation) =>
       invocation.botKind === "hermes" &&
-      matchesThreadScope(invocation.threadId, threadId, options.unthreadedOnly === true) &&
-      (invocation.status === "queued" || invocation.status === "running"),
+      matchesThreadScope(invocation.threadId, threadId, options.unthreadedOnly === true),
   );
-  const visibleInvocationIds = new Set(
+  const scopedInvocationIds = new Set(
     scopedInvocations.map((invocation) => invocation.id),
   );
   const eventsByInvocationId = new Map<string, BotInvocationProgressEventPublic[]>();
   for (const event of runtime?.events ?? []) {
-    if (!visibleInvocationIds.has(event.invocationId)) continue;
+    if (!scopedInvocationIds.has(event.invocationId)) continue;
     const invocationEvents = eventsByInvocationId.get(event.invocationId) ?? [];
     invocationEvents.push(event);
     eventsByInvocationId.set(event.invocationId, invocationEvents);
   }
 
-  const activeTypingUserIds = new Set(options.activeTypingUserIds ?? []);
-  const nowMs = options.nowMs ?? Date.now();
-  const silentRunningGraceMs =
-    options.silentRunningGraceMs ?? DEFAULT_SILENT_RUNNING_GRACE_MS;
   const visibleInvocations = scopedInvocations.filter((invocation) => {
-    if (invocation.status !== "running") return true;
-    if ((eventsByInvocationId.get(invocation.id)?.length ?? 0) > 0) return true;
-    if (activeTypingUserIds.has(invocation.botUserId)) return true;
-    return nowMs - updatedTimestamp(invocation) <= silentRunningGraceMs;
+    if (
+      invocation.status === "completed" ||
+      invocation.status === "failed" ||
+      invocation.status === "cancelled"
+    ) {
+      return false;
+    }
+    return (
+      invocation.status === "queued" ||
+      (eventsByInvocationId.get(invocation.id)?.length ?? 0) > 0
+    );
   });
 
   const invocationsByLane = new Map<string, BotInvocationPublic[]>();
@@ -105,7 +102,7 @@ function selectActiveHermesProgress(
   return {
     invocations: activeInvocations,
     typingSuppressedUserIds: Array.from(
-      new Set(scopedInvocations.map((invocation) => invocation.botUserId)),
+      new Set(visibleInvocations.map((invocation) => invocation.botUserId)),
     ),
   };
 }
@@ -120,11 +117,6 @@ function compareInvocationsByRecency(
 function invocationTimestamp(invocation: BotInvocationPublic): number {
   const parsed = Date.parse(invocation.startedAt ?? invocation.createdAt);
   return Number.isFinite(parsed) ? parsed : 0;
-}
-
-function updatedTimestamp(invocation: BotInvocationPublic): number {
-  const parsed = Date.parse(invocation.updatedAt);
-  return Number.isFinite(parsed) ? parsed : invocationTimestamp(invocation);
 }
 
 function matchesThreadScope(

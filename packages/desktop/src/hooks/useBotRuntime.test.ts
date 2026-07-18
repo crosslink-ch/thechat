@@ -9,6 +9,7 @@ import { api } from "../lib/api";
 import { createQueryWrapper, createTestQueryClient } from "../test-utils/query";
 import {
   botRuntimeQueryKey,
+  hasActiveBotRuntimeActivity,
   useBotRuntime,
   useBotRuntimeCache,
 } from "./useBotRuntime";
@@ -113,6 +114,59 @@ describe("useBotRuntime", () => {
       invocations: [],
       events: [],
     });
+  });
+
+  it("ignores late websocket progress after a terminal sequence", () => {
+    const client = createTestQueryClient();
+    const { result } = renderHook(() => useBotRuntimeCache(), {
+      wrapper: createQueryWrapper(client),
+    });
+    const running = invocation({ status: "running" });
+    const terminal = progressEvent({
+      id: "event-terminal",
+      sequence: 2,
+      type: "invocation.completed",
+      status: "completed",
+    });
+
+    const olderTerminal = progressEvent({
+      id: "event-terminal-retry",
+      sequence: 1,
+      type: "invocation.completed",
+      status: "completed",
+    });
+    const lateProgress = progressEvent({ id: "event-late", sequence: 2 });
+
+    act(() => {
+      result.current.mergeProgressEvent("conversation-1", progressEvent(), running);
+      result.current.mergeProgressEvent("conversation-1", terminal, running);
+      result.current.mergeProgressEvent("conversation-1", olderTerminal, running);
+      result.current.mergeInvocationUpdate("conversation-1", running);
+      result.current.mergeProgressEvent("conversation-1", lateProgress, running);
+    });
+
+    expect(client.getQueryData<BotRuntimeSnapshot>(
+      botRuntimeQueryKey("conversation-1"),
+    )).toEqual({
+      invocations: [],
+      events: [terminal],
+    });
+  });
+
+  it("polls for queued deliveries, webhook runs, and transient Hermes progress", () => {
+    expect(hasActiveBotRuntimeActivity(runtime({
+      invocations: [invocation({ status: "queued" })],
+    }))).toBe(true);
+    expect(hasActiveBotRuntimeActivity(runtime({
+      invocations: [invocation({ status: "claimed" })],
+      events: [progressEvent()],
+    }))).toBe(true);
+    expect(hasActiveBotRuntimeActivity(runtime({
+      invocations: [invocation({ status: "running" })],
+    }))).toBe(false);
+    expect(hasActiveBotRuntimeActivity(runtime({
+      invocations: [invocation({ botKind: "webhook", status: "running" })],
+    }))).toBe(true);
   });
 
 });

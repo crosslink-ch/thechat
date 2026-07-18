@@ -151,8 +151,9 @@ export function registerGlobalWsHandlers(navigate: Navigate): () => void {
 
   const onBotInvocationProgress = ({
     event,
+    invocation,
   }: WsEvents["ws:bot_invocation_progress"]) => {
-    useHermesIndicatorsStore.getState().trackProgressEvent(event);
+    useHermesIndicatorsStore.getState().trackProgressEvent(event, invocation);
   };
 
   wsEvents.on("ws:new_message", onNewMessage);

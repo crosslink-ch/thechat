@@ -113,6 +113,7 @@ function doConnect() {
         conversationId: event.conversationId,
         invocationId: event.invocationId,
         event: event.event,
+        invocation: event.invocation,
       });
     } else if (event.type === "conversation_thread_updated") {
       wsEvents.emit("ws:conversation_thread_updated", {

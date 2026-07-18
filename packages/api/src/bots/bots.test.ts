@@ -26,7 +26,12 @@ import {
 import {
   closeBotProgressStoreForTests,
   createLocalBotProgressStoreForTests,
+  getBotProgressStore,
   setBotProgressStoreForTests,
+} from "../services/bot-progress-store";
+import type {
+  BotProgressStore,
+  ProgressEventInput,
 } from "../services/bot-progress-store";
 import {
   closeRealtimeBusForTests,
@@ -1319,7 +1324,11 @@ describe("Bots: mention routing", () => {
 
 describe("Bots: runtime state", () => {
   test("tracks queued, running, and completed state for webhook bots", async () => {
-    const webhook = startWebhookServer();
+    let releaseWebhook = () => {};
+    const heldResponse = new Promise<Response>((resolve) => {
+      releaseWebhook = () => resolve(new Response("ok"));
+    });
+    const webhook = startWebhookServer(() => heldResponse);
     try {
       const human = await registerUser("RuntimeWebhookOwner");
       const { workspaceId, channelId } = await createWorkspaceWithGeneralChannel(
@@ -1338,6 +1347,26 @@ describe("Bots: runtime state", () => {
       );
       expect(sendRes.status).toBe(200);
 
+      const runningInvocation = await waitForResult(async () => {
+        const rows = await invocationsForMessage(sendRes.body.id);
+        return rows.find((row) => row.status === "running");
+      }, "running webhook invocation");
+      const runtimeRes = await req(
+        "GET",
+        `/bot-runtime/conversations/${channelId}`,
+        undefined,
+        human.token,
+      );
+      expect(runtimeRes.status).toBe(200);
+      expect(runtimeRes.body.invocations).toContainEqual(
+        expect.objectContaining({
+          id: runningInvocation.id,
+          botKind: "webhook",
+          status: "running",
+        }),
+      );
+
+      releaseWebhook();
       const invocation = await waitForResult(async () => {
         const rows = await invocationsForMessage(sendRes.body.id);
         return rows.find((row) => row.status === "completed");
@@ -1347,11 +1376,19 @@ describe("Bots: runtime state", () => {
       expect(invocation.error).toBeNull();
       expect(webhook.requests).toHaveLength(1);
     } finally {
+      releaseWebhook();
       webhook.stop();
     }
   });
 
-  test("tracks Hermes completed, failed, and cancelled invocations and publishes runtime updates", async () => {
+  test("treats Hermes claim as delivery completion while progress remains transient", async () => {
+    let progressNow = Date.now();
+    await setBotProgressStoreForTests(
+      createLocalBotProgressStoreForTests({
+        activityTimeoutMs: 30_000,
+        now: () => progressNow,
+      }),
+    );
     const human = await registerUser("RuntimeHermesOwner");
     const { workspaceId } = await createWorkspaceWithGeneralChannel(
       human.token,
@@ -1400,6 +1437,25 @@ describe("Bots: runtime state", () => {
 
     try {
       const completed = await sendAndClaim("Complete this Hermes invocation");
+      const claimedRows = await invocationsForMessage(completed.messageId);
+      expect(claimedRows).toContainEqual(
+        expect.objectContaining({
+          id: completed.invocationId,
+          status: "claimed",
+        }),
+      );
+      const claimedRuntimeRes = await req(
+        "GET",
+        `/bot-runtime/conversations/${dmRes.body.id}`,
+        undefined,
+        human.token,
+      );
+      expect(claimedRuntimeRes.status).toBe(200);
+      expect(claimedRuntimeRes.body.invocations).not.toContainEqual(
+        expect.objectContaining({ id: completed.invocationId }),
+      );
+      expect(claimedRuntimeRes.body.events).toEqual([]);
+
       const progressRes = await req(
         "POST",
         `/hermes-platform/invocations/${completed.invocationId}/progress`,
@@ -1439,6 +1495,17 @@ describe("Bots: runtime state", () => {
         }),
       );
 
+      progressNow += 30_001;
+      const abandonedRuntimeRes = await req(
+        "GET",
+        `/bot-runtime/conversations/${dmRes.body.id}`,
+        undefined,
+        human.token,
+      );
+      expect(abandonedRuntimeRes.status).toBe(200);
+      expect(abandonedRuntimeRes.body.invocations).toEqual([]);
+      expect(abandonedRuntimeRes.body.events).toEqual([]);
+
       const statusMessageRes = await req(
         "POST",
         "/hermes-platform/messages",
@@ -1455,10 +1522,10 @@ describe("Bots: runtime state", () => {
         return rows.find(
           (row) =>
             row.id === completed.invocationId &&
-            row.status === "running" &&
+            row.status === "claimed" &&
             row.responseMessageId === statusMessageRes.body.messageId,
         );
-      }, "running Hermes invocation after a non-final bot message");
+      }, "claimed Hermes delivery after a non-final bot message");
 
       const completeRes = await req(
         "POST",
@@ -1499,15 +1566,38 @@ describe("Bots: runtime state", () => {
 
       await waitForResult(async () => {
         const rows = await invocationsForMessage(completed.messageId);
-        return rows.find((row) => row.status === "completed" && row.responseMessageId);
-      }, "completed Hermes invocation");
+        return rows.find(
+          (row) =>
+            row.status === "claimed" &&
+            row.responseMessageId &&
+            (row.responseJson as Record<string, any> | null)?.completion?.type === "silent",
+        );
+      }, "claimed Hermes delivery with recorded execution completion");
+      const lateProgressRes = await req(
+        "POST",
+        `/hermes-platform/invocations/${completed.invocationId}/progress`,
+        { type: "tool.started", status: "running", toolCallId: "late-call" },
+        botRes.body.apiKey,
+      );
+      expect(lateProgressRes.status).toBe(409);
+      const lateCancelRes = await req(
+        "POST",
+        `/hermes-platform/invocations/${completed.invocationId}/cancelled`,
+        { reason: "late cancellation" },
+        botRes.body.apiKey,
+      );
+      expect(lateCancelRes.status).toBe(200);
+      expect(lateCancelRes.body.duplicate).toBe(true);
+
       const completedRows = await invocationsForMessage(completed.messageId);
       expect(completedRows).toContainEqual(
         expect.objectContaining({
           id: completed.invocationId,
           responseMessageId: completeRes.body.messageId,
+          error: null,
           responseJson: expect.objectContaining({
             output: "Hermes completed response",
+            completion: expect.objectContaining({ type: "silent" }),
           }),
         }),
       );
@@ -1517,6 +1607,20 @@ describe("Bots: runtime state", () => {
       expect(botMessageContents).toEqual(
         expect.arrayContaining(["Still working...", "Hermes completed response"]),
       );
+      await getBotProgressStore().append({
+        invocationId: completed.invocationId,
+        botId: botRes.body.id,
+        conversationId: dmRes.body.id,
+        threadId: null,
+        type: "tool.started",
+        status: "running",
+        label: "stale after terminal completion",
+        preview: "stale after terminal completion",
+        toolName: "shell",
+        toolCallId: "stale-call",
+        occurredAt: new Date(progressNow),
+        payload: null,
+      });
       const runtimeRes = await req(
         "GET",
         `/bot-runtime/conversations/${dmRes.body.id}`,
@@ -1595,23 +1699,33 @@ describe("Bots: runtime state", () => {
 
       await waitForResult(async () => {
         const rows = await invocationsForMessage(failed.messageId);
-        return rows.find((row) => row.status === "failed" && row.error === "synthetic failure");
-      }, "failed Hermes invocation");
+        return rows.find(
+          (row) =>
+            row.status === "claimed" &&
+            row.error === "synthetic failure" &&
+            (row.responseJson as Record<string, any> | null)?.completion?.type === "failed",
+        );
+      }, "claimed Hermes delivery with recorded execution failure");
       await waitForResult(async () => {
         const rows = await invocationsForMessage(cancelled.messageId);
-        return rows.find((row) => row.status === "cancelled" && row.error === "synthetic cancellation");
-      }, "cancelled Hermes invocation");
+        return rows.find(
+          (row) =>
+            row.status === "claimed" &&
+            row.error === "synthetic cancellation" &&
+            (row.responseJson as Record<string, any> | null)?.completion?.type === "cancelled",
+        );
+      }, "claimed Hermes delivery with recorded execution cancellation");
 
       const cancelledRuntimeUpdate = await waitForResult(() => {
         const event = realtimeEvents.find(
           (candidate) =>
             candidate.type === "ws.event" &&
-            candidate.event.type === "bot_invocation_updated" &&
-            candidate.event.invocation.id === cancelled.invocationId &&
-            candidate.event.invocation.status === "cancelled",
+            candidate.event.type === "bot_invocation_progress" &&
+            candidate.event.invocationId === cancelled.invocationId &&
+            candidate.event.event.type === "invocation.cancelled",
         );
         return Promise.resolve(event);
-      }, "cancelled bot_invocation_updated realtime event");
+      }, "cancelled bot_invocation_progress realtime event");
       expect(cancelledRuntimeUpdate.type).toBe("ws.event");
       if (cancelledRuntimeUpdate.type !== "ws.event") {
         throw new Error("Expected realtime websocket event");
@@ -1633,11 +1747,132 @@ describe("Bots: runtime state", () => {
         throw new Error("Expected realtime websocket event");
       }
       expect(progressRuntimeEvent.targetUserIds).toContain(human.user.id);
+      expect(progressRuntimeEvent.event.type).toBe("bot_invocation_progress");
+      if (progressRuntimeEvent.event.type !== "bot_invocation_progress") {
+        throw new Error("Expected progress event");
+      }
+      expect(progressRuntimeEvent.event.invocation?.status).toBe("running");
+      expect(realtimeEvents).toContainEqual(
+        expect.objectContaining({
+          type: "ws.event",
+          event: expect.objectContaining({
+            type: "bot_invocation_updated",
+            invocation: expect.objectContaining({
+              id: completed.invocationId,
+              status: "running",
+            }),
+          }),
+        }),
+      );
     } finally {
       await unsubscribe();
       await observerBus.close();
       await closeRealtimeBusForTests();
     }
+  });
+
+  test("does not resurrect progress that races with terminal completion", async () => {
+    const human = await registerUser("RuntimeHermesProgressRaceOwner");
+    const { workspaceId } = await createWorkspaceWithGeneralChannel(
+      human.token,
+      "Runtime Hermes Progress Race",
+    );
+    const botRes = await createBot(human.token, "RuntimeHermesProgressRace", undefined, {
+      kind: "hermes",
+      workspaceId,
+    });
+    expect(botRes.status).toBe(200);
+    const dmRes = await req(
+      "POST",
+      "/conversations/dm",
+      { workspaceId, otherUserId: botRes.body.userId },
+      human.token,
+    );
+    expect(dmRes.status).toBe(200);
+    const conversationId = dmRes.body.id as string;
+
+    const delegate = createLocalBotProgressStoreForTests();
+    let releaseAppend = () => {};
+    let signalAppendStarted = () => {};
+    const appendStarted = new Promise<void>((resolve) => {
+      signalAppendStarted = resolve;
+    });
+    const appendReleased = new Promise<void>((resolve) => {
+      releaseAppend = resolve;
+    });
+    let delayed = false;
+    const delayedStore: BotProgressStore = {
+      async append(input: ProgressEventInput) {
+        const event = await delegate.append(input);
+        if (!delayed && input.type === "tool.started") {
+          delayed = true;
+          signalAppendStarted();
+          await appendReleased;
+        }
+        return event;
+      },
+      touch: (input) => delegate.touch(input),
+      listForConversation: (id) => delegate.listForConversation(id),
+      clear: (input) => delegate.clear(input),
+      close: () => delegate.close?.() ?? Promise.resolve(),
+    };
+    await setBotProgressStoreForTests(delayedStore);
+
+    const sendRes = await req(
+      "POST",
+      `/messages/${conversationId}`,
+      { content: "Race progress against completion" },
+      human.token,
+    );
+    if (sendRes.status !== 200) {
+      throw new Error(`Race test message send failed for ${conversationId}: ${sendRes.status} ${JSON.stringify(sendRes.body)}`);
+    }
+
+    await waitForResult(async () => {
+      const rows = await invocationsForMessage(sendRes.body.id);
+      return rows.find((row) => row.status === "queued");
+    }, "queued Hermes invocation for progress race");
+    const eventsRes = await req(
+      "GET",
+      "/hermes-platform/events?limit=1",
+      undefined,
+      botRes.body.apiKey,
+    );
+    expect(eventsRes.status).toBe(200);
+    const invocationId = eventsRes.body.events[0].invocationId as string;
+
+    const progressPromise = req(
+      "POST",
+      `/hermes-platform/invocations/${invocationId}/progress`,
+      {
+        type: "tool.started",
+        status: "running",
+        toolCallId: "race-tool",
+        toolName: "shell",
+      },
+      botRes.body.apiKey,
+    );
+    await appendStarted;
+    const completeRes = await req(
+      "POST",
+      `/hermes-platform/invocations/${invocationId}/completed`,
+      { reason: "race winner" },
+      botRes.body.apiKey,
+    );
+    expect(completeRes.status).toBe(200);
+    releaseAppend();
+
+    const progressRes = await progressPromise;
+    expect(progressRes.status).toBe(409);
+    const runtimeRes = await req(
+      "GET",
+      `/bot-runtime/conversations/${conversationId}`,
+      undefined,
+      human.token,
+    );
+    expect(runtimeRes.status).toBe(200);
+    expect(runtimeRes.body.invocations).toEqual([]);
+    expect(runtimeRes.body.events).toEqual([]);
   });
 
   test("fails stale queued Hermes dispatches instead of leaving Activity active forever", async () => {
@@ -1815,7 +2050,7 @@ describe("Bots: runtime state", () => {
     expect(running).toEqual(
       expect.objectContaining({
         id: queued.id,
-        status: "running",
+        status: "claimed",
         error: null,
         responseMessageId: null,
       }),
@@ -2257,10 +2492,23 @@ describe("Bots: runtime state", () => {
       human.token,
     );
     expect(runtimeRes.status).toBe(200);
-    expect(runtimeRes.body.invocations).toEqual(
+    expect(runtimeRes.body.invocations).toContainEqual(
+      expect.objectContaining({
+        id: first.invocationId,
+        threadId: first.threadId,
+        status: "running",
+      }),
+    );
+    expect(runtimeRes.body.invocations).not.toContainEqual(
+      expect.objectContaining({ id: second.invocationId }),
+    );
+    expect(runtimeRes.body.events).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ id: first.invocationId, threadId: first.threadId }),
-        expect.objectContaining({ id: second.invocationId, threadId: second.threadId }),
+        expect.objectContaining({
+          invocationId: first.invocationId,
+          threadId: first.threadId,
+          toolCallId: "first-thread-call",
+        }),
       ]),
     );
 
@@ -2295,6 +2543,43 @@ describe("Bots: runtime state", () => {
     );
     expect(firstCompleteRes.status).toBe(200);
 
+    const lateTitleRes = await req(
+      "POST",
+      `/hermes-platform/invocations/${first.invocationId}/progress`,
+      {
+        type: "session.title",
+        payload: { title: "Investigate threaded checkout complete" },
+      },
+      botRes.body.apiKey,
+    );
+    expect(lateTitleRes.status).toBe(200);
+    expect(lateTitleRes.body).toEqual({ ok: true, event: null });
+
+    const threadsAfterLateTitle = await req(
+      "GET",
+      `/conversations/threads/${dmRes.body.id}?limit=3`,
+      undefined,
+      human.token,
+    );
+    expect(threadsAfterLateTitle.status).toBe(200);
+    expect(
+      threadsAfterLateTitle.body.items.find((thread: any) => thread.id === first.threadId),
+    ).toEqual(expect.objectContaining({ title: "Investigate threaded checkout complete" }));
+
+    const runtimeAfterLateTitle = await req(
+      "GET",
+      `/bot-runtime/conversations/${dmRes.body.id}`,
+      undefined,
+      human.token,
+    );
+    expect(runtimeAfterLateTitle.status).toBe(200);
+    expect(runtimeAfterLateTitle.body.invocations).not.toContainEqual(
+      expect.objectContaining({ id: first.invocationId }),
+    );
+    expect(runtimeAfterLateTitle.body.events).not.toContainEqual(
+      expect.objectContaining({ invocationId: first.invocationId }),
+    );
+
     const asyncFollowUpRes = await req(
       "POST",
       "/hermes-platform/messages",
@@ -2326,6 +2611,32 @@ describe("Bots: runtime state", () => {
       "First threaded answer",
       "Async watcher says the AWS SSO login is complete",
     ]);
+
+    const newerFirstThread = await sendAndClaim(
+      "Newer prompt in the first thread",
+      first.threadId,
+    );
+    expect(newerFirstThread.invocationId).not.toBe(first.invocationId);
+    const staleTitleRetryRes = await req(
+      "POST",
+      `/hermes-platform/invocations/${first.invocationId}/progress`,
+      {
+        type: "session.title",
+        payload: { title: "Obsolete title from the first invocation" },
+      },
+      botRes.body.apiKey,
+    );
+    expect(staleTitleRetryRes.status).toBe(200);
+    expect(staleTitleRetryRes.body).toEqual({ ok: true, event: null });
+    const threadsAfterStaleTitle = await req(
+      "GET",
+      `/conversations/threads/${dmRes.body.id}?limit=3`,
+      undefined,
+      human.token,
+    );
+    expect(
+      threadsAfterStaleTitle.body.items.find((thread: any) => thread.id === first.threadId),
+    ).toEqual(expect.objectContaining({ title: "Investigate threaded checkout complete" }));
 
     const secondThreadMessages = await req(
       "GET",
@@ -2433,7 +2744,7 @@ describe("Bots: runtime state", () => {
       expect(delivery.payload.event.instructions).toBeNull();
       expect(delivery.payload.event.bot.id).toBe(botRes.body.id);
       const [invocation] = await invocationsForMessage(sendRes.body.id);
-      expect(invocation.status).toBe("running");
+      expect(invocation.status).toBe("claimed");
     } finally {
       webhook.stop();
     }
@@ -2494,7 +2805,7 @@ describe("Bots: runtime state", () => {
       expect(delivery.payload.type).toBe("thechat.hermes_platform.event");
       expect(delivery.payload.event.text).toBe("Deliver this through the bot worker");
       const [invocation] = await invocationsForMessage(sendRes.body.id);
-      expect(invocation.status).toBe("running");
+      expect(invocation.status).toBe("claimed");
     } finally {
       webhook.stop();
       await closeBotRuntimeForTests();

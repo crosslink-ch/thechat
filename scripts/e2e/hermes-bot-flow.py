@@ -96,47 +96,6 @@ def wait_for(predicate, timeout=60, label="condition"):
     raise RuntimeError(f"Timed out waiting for {label}. Last error: {last_error}")
 
 
-def wait_for_working_state(base: str, token: str, conversation_id: str, bot_name: str, *, timeout: int = 120):
-    """Assert the active TheChat runtime state appears before the final reply."""
-    started = time.time()
-    last_snapshot = None
-    while time.time() - started < timeout:
-        status, snapshot = http_json(
-            "GET",
-            f"{base}/bot-runtime/conversations/{conversation_id}",
-            token=token,
-        )
-        if status == 200 and isinstance(snapshot, dict):
-            last_snapshot = snapshot
-            running = [
-                invocation
-                for invocation in snapshot.get("invocations", [])
-                if isinstance(invocation, dict)
-                and invocation.get("botName") == bot_name
-                and invocation.get("status") == "running"
-            ]
-            if running:
-                message_status, messages = http_json(
-                    "GET", f"{base}/messages/{conversation_id}", token=token,
-                )
-                final_arrived = message_status == 200 and isinstance(messages, list) and any(
-                    isinstance(message, dict)
-                    and message.get("senderName") == bot_name
-                    and message.get("content", "").strip()
-                    for message in messages
-                )
-                if not final_arrived:
-                    return {
-                        "invocation": running[0],
-                        "progressEvents": snapshot.get("events", []),
-                    }
-        time.sleep(0.1)
-    raise RuntimeError(
-        f"Timed out waiting for active {bot_name} working state before final message. "
-        f"Last snapshot: {last_snapshot}"
-    )
-
-
 def http_json(method: str, url: str, body=None, token: str | None = None):
     data = None if body is None else json.dumps(body).encode()
     headers = {}
@@ -260,6 +219,9 @@ def start_hermes_gateway(env: dict[str, str], base: str, bot_token: str, bot_nam
         "THECHAT_BOT_TOKEN": bot_token,
         "THECHAT_ALLOW_ALL_USERS": "true",
         "THECHAT_POLL_INTERVAL": "0.25",
+        # The E2E harness exercises polling. Do not inherit a developer's live
+        # webhook listener settings (commonly port 8765) into the isolated bot.
+        "THECHAT_WEBHOOK_URL": "",
         "LOG_LEVEL": "info",
     }
     log = hermes_log.open("w")
@@ -383,7 +345,7 @@ def wait_for_runtime_invocations(base: str, token: str, conversation_id: str, bo
         invocations = [i for i in snapshot.get("invocations", []) if i.get("botName") == bot_name]
         if len(invocations) < count:
             return None
-        if not all(i.get("status") in {"queued", "running", "completed", "failed"} for i in invocations):
+        if not all(i.get("status") in {"queued", "running", "claimed", "completed", "failed"} for i in invocations):
             return None
         return snapshot
 
@@ -446,14 +408,23 @@ def wait_for_invocations(conversation_id: str, bot_name: str, count: int, *, sta
 
 
 def wait_for_completed_invocations(conversation_id: str, bot_name: str, count: int, *, timeout: int = 180):
-    return wait_for_invocations(
-        conversation_id,
-        bot_name,
-        count,
-        statuses={"completed"},
-        require_external_run=True,
+    def find_snapshot():
+        snapshot = invocation_snapshot(conversation_id, bot_name, {"claimed"})
+        completed = []
+        for invocation in snapshot.get("invocations", []):
+            response = invocation.get("responseJson") or {}
+            completion = response.get("completion") or {}
+            if invocation.get("externalRunId") and (
+                completion.get("type") in {"message", "silent", "failed", "cancelled"}
+                or response.get("silent") is True
+            ):
+                completed.append(invocation)
+        return snapshot if len(completed) >= count else None
+
+    return wait_for(
+        find_snapshot,
         timeout=timeout,
-        label=f"{bot_name} completed invocations",
+        label=f"{bot_name} claimed invocations with terminal execution metadata",
     )
 
 
@@ -546,11 +517,10 @@ def main():
 
         status, sent = http_json("POST", f"{base}/messages/{dm_id}", {"content": "Answer this direct message smoke test without an at mention"}, token)
         assert status == 200, (status, sent)
-        koda_dm_working_state = wait_for_working_state(base, token, dm_id, "Koda E2E")
-        koda_dm_runtime_started = wait_for_invocations(dm_id, "Koda E2E", 1, statuses={"queued", "running", "completed"})
+        koda_dm_runtime_started = wait_for_invocations(dm_id, "Koda E2E", 1, statuses={"queued", "running", "claimed"})
         koda_dm = wait_for_bot_message(base, token, dm_id, "Koda E2E")
         koda_dm_runtime = wait_for_completed_invocations(dm_id, "Koda E2E", 1)
-        koda_completed = [i for i in koda_dm_runtime.get("invocations", []) if i.get("status") == "completed"]
+        koda_completed = [i for i in koda_dm_runtime.get("invocations", []) if i.get("status") == "claimed"]
         assert any(i.get("externalRunId") for i in koda_completed), koda_dm_runtime
         koda_request = koda_completed[0].get("requestJson") or {}
         assert koda_request.get("platform") == "thechat", koda_dm_runtime
@@ -558,9 +528,9 @@ def main():
 
         status, sent = http_json("POST", f"{base}/messages/{dm_id}", {"content": "Answer this follow-up using the same session"}, token)
         assert status == 200, (status, sent)
-        wait_for_invocations(dm_id, "Koda E2E", 2, statuses={"queued", "running", "completed"})
+        wait_for_invocations(dm_id, "Koda E2E", 2, statuses={"queued", "running", "claimed"})
         koda_dm_runtime_followup = wait_for_completed_invocations(dm_id, "Koda E2E", 2)
-        koda_completed = [i for i in koda_dm_runtime_followup.get("invocations", []) if i.get("botName") == "Koda E2E" and i.get("status") == "completed"]
+        koda_completed = [i for i in koda_dm_runtime_followup.get("invocations", []) if i.get("botName") == "Koda E2E" and i.get("status") == "claimed"]
         assert len(koda_completed) >= 2, koda_dm_runtime_followup
         assert all(
             (invocation.get("requestJson") or {}).get("conversationId") == dm_id
@@ -603,7 +573,6 @@ def main():
                 "kodaChannel": koda_channel_runtime,
                 "novaChannel": nova_channel_runtime,
                 "kodaDmStarted": koda_dm_runtime_started,
-                "kodaDmWorkingState": koda_dm_working_state,
                 "kodaDm": koda_dm_runtime_followup,
                 "novaDm": nova_dm_runtime,
             },

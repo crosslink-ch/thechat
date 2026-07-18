@@ -352,7 +352,7 @@ describe("registerGlobalWsHandlers", () => {
     cleanup();
   });
 
-  it("feeds Hermes invocation lifecycle events into the indicators store", () => {
+  it("feeds Hermes invocation progress lifecycle events into the indicators store", () => {
     useHermesIndicatorsStore.getState().resetForTests();
     const invocation: BotInvocationPublic = {
       id: "inv-1",
@@ -365,13 +365,13 @@ describe("registerGlobalWsHandlers", () => {
       triggerMessageId: "msg-1",
       responseMessageId: null,
       adapterKind: "hermes",
-      status: "running",
+      status: "claimed",
       externalRunId: null,
-        requestJson: null,
+      requestJson: null,
       responseJson: null,
       error: null,
       startedAt: "2026-06-11T10:00:00.000Z",
-      completedAt: null,
+      completedAt: "2026-06-11T10:00:00.000Z",
       createdAt: "2026-06-11T10:00:00.000Z",
       updatedAt: "2026-06-11T10:00:00.000Z",
     };
@@ -395,23 +395,37 @@ describe("registerGlobalWsHandlers", () => {
 
     const cleanup = registerGlobalWsHandlers(() => {});
 
-    wsEvents.emit("ws:bot_invocation_updated", {
-      conversationId: "conv-1",
-      invocation,
-    });
     wsEvents.emit("ws:bot_invocation_progress", {
       conversationId: "conv-1",
       invocationId: "inv-1",
       event: approvalRequest,
+      invocation,
     });
 
     expect(
       useHermesIndicatorsStore.getState().pendingApprovals.map((p) => p.eventId),
     ).toEqual(["evt-1"]);
 
+    const completedInvocation = {
+      ...invocation,
+      responseJson: { completion: { type: "silent" } },
+    };
     wsEvents.emit("ws:bot_invocation_updated", {
       conversationId: "conv-1",
-      invocation: { ...invocation, status: "completed" },
+      invocation: completedInvocation,
+    });
+
+    wsEvents.emit("ws:bot_invocation_progress", {
+      conversationId: "conv-1",
+      invocationId: "inv-1",
+      event: {
+        ...approvalRequest,
+        id: "evt-terminal",
+        sequence: 2,
+        type: "invocation.completed",
+        status: "completed",
+      },
+      invocation,
     });
 
     const state = useHermesIndicatorsStore.getState();
