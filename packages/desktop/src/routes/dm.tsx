@@ -97,7 +97,7 @@ export function DmRoute() {
   const threadsRef = useRef(threads);
   threadsRef.current = threads;
   const chatConversationId = conversation ? conversationId : null;
-  const taskActive = activeHermesProgress.invocations.length > 0;
+  const taskActive = activeHermesProgress.taskActive;
 
   // Attention indicators: which tasks in this DM need approval or finished unread.
   const pendingApprovals = useHermesIndicatorsStore((s) => s.pendingApprovals);
