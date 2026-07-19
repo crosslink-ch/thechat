@@ -6,6 +6,7 @@ import type {
   ChatMessage,
 } from "@thechat/shared";
 import { HermesDmChatView } from "./HermesDmChatView";
+import { selectHermesConversationProgress } from "../lib/hermes-progress";
 import { useHermesApprovalsStore } from "../stores/hermes-approvals";
 
 beforeAll(() => {
@@ -48,19 +49,44 @@ describe("HermesDmChatView", () => {
     expect(screen.queryByText("Koda is typing...")).toBeNull();
   });
 
-  it("shows the generic typing indicator when there is no active progress", () => {
-    render(
+  it("shows typing before mounting the progress UI", () => {
+    const baseProps = {
+      messages: [],
+      loading: false,
+      typingUsers: new Map([["bot-user-1", "Koda"]]),
+      onSend: () => {},
+    };
+    const queued = selectHermesConversationProgress({
+      invocations: [invocation({ status: "queued" })],
+      events: [],
+    });
+    const { rerender } = render(
       <HermesDmChatView
-        messages={[]}
-        loading={false}
-        typingUsers={new Map([["bot-user-1", "Koda"]])}
-        progressInvocations={[]}
-        typingSuppressedUserIds={[]}
-        onSend={() => {}}
+        {...baseProps}
+        progressInvocations={queued.invocations}
+        typingSuppressedUserIds={queued.typingSuppressedUserIds}
       />,
     );
 
     expect(screen.getByText("Koda is typing...")).toBeInTheDocument();
+    expect(screen.queryByText("Koda is queued")).toBeNull();
+    expect(screen.queryByText("Koda is working")).toBeNull();
+
+    const active = selectHermesConversationProgress({
+      invocations: [invocation({ status: "running" })],
+      events: [progressEvent()],
+    });
+
+    rerender(
+      <HermesDmChatView
+        {...baseProps}
+        progressInvocations={active.invocations}
+        typingSuppressedUserIds={active.typingSuppressedUserIds}
+      />,
+    );
+
+    expect(screen.getByText("Koda is working")).toBeInTheDocument();
+    expect(screen.queryByText("Koda is typing...")).toBeNull();
   });
 
   it("defers markdown formatting for large Hermes histories", () => {

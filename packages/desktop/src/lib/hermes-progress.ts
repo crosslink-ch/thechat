@@ -8,6 +8,7 @@ import { deriveApprovalStates } from "./hermes-approvals";
 export interface ActiveHermesProgress {
   invocations: ActiveHermesInvocationProgress[];
   typingSuppressedUserIds: string[];
+  taskActive: boolean;
 }
 
 export interface ActiveHermesInvocationProgress {
@@ -56,10 +57,7 @@ function selectActiveHermesProgress(
     ) {
       return false;
     }
-    return (
-      invocation.status === "queued" ||
-      (eventsByInvocationId.get(invocation.id)?.length ?? 0) > 0
-    );
+    return (eventsByInvocationId.get(invocation.id)?.length ?? 0) > 0;
   });
 
   const invocationsByLane = new Map<string, BotInvocationPublic[]>();
@@ -104,6 +102,9 @@ function selectActiveHermesProgress(
     typingSuppressedUserIds: Array.from(
       new Set(visibleInvocations.map((invocation) => invocation.botUserId)),
     ),
+    taskActive:
+      visibleInvocations.length > 0 ||
+      scopedInvocations.some((invocation) => invocation.status === "queued"),
   };
 }
 

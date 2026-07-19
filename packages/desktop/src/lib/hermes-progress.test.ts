@@ -132,7 +132,7 @@ describe("Hermes progress selectors", () => {
     ]);
   });
 
-  it("uses queued delivery or transient progress rather than invocation status as liveness", () => {
+  it("waits for transient progress before showing the progress UI", () => {
     const snapshot = runtime({
       invocations: [
         invocation({
@@ -154,9 +154,9 @@ describe("Hermes progress selectors", () => {
     });
 
     const deliveryOnly = selectHermesConversationProgress(snapshot);
-    expect(deliveryOnly.invocations.map(({ invocation }) => invocation.id)).toEqual([
-      "queued-invocation",
-    ]);
+    expect(deliveryOnly.invocations).toEqual([]);
+    expect(deliveryOnly.typingSuppressedUserIds).toEqual([]);
+    expect(deliveryOnly.taskActive).toBe(true);
 
     const waiting = selectHermesConversationProgress(
       {
@@ -172,8 +172,8 @@ describe("Hermes progress selectors", () => {
     );
     expect(waiting.invocations.map(({ invocation }) => invocation.id)).toEqual([
       "claimed-invocation",
-      "queued-invocation",
     ]);
+    expect(waiting.taskActive).toBe(true);
   });
 
   it("scopes General progress to unthreaded Hermes invocations", () => {
