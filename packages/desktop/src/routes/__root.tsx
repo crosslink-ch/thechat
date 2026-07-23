@@ -24,6 +24,7 @@ import { ErrorBoundary } from "../components/ErrorBoundary";
 import { UpdateToast } from "../components/UpdateToast";
 import { useUpdaterStore } from "../stores/updater";
 import { useFontSizeStore } from "../stores/font-size";
+import { useCtrlWheelZoom } from "../hooks/useCtrlWheelZoom";
 import { info as logInfo } from "../log";
 
 export function RootLayout() {
@@ -87,6 +88,7 @@ export function RootLayout() {
     onPermissionDenyWithFeedback: null,
     handleRegistryCommands: Boolean(user),
   });
+  useCtrlWheelZoom();
 
   if (authLoading) {
     return (
