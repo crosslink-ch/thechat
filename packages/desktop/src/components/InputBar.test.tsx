@@ -1,10 +1,34 @@
-import { describe, expect, it, beforeAll, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { InputBar } from "./InputBar";
 import type { HermesSlashCommand } from "../lib/hermes-slash-commands";
+import {
+  cancelSharedAttachment,
+  uploadSharedAttachment,
+} from "../lib/shared-attachments";
+
+vi.mock("../lib/shared-attachments", async (importOriginal) => {
+  const original =
+    await importOriginal<typeof import("../lib/shared-attachments")>();
+  return {
+    ...original,
+    uploadSharedAttachment: vi.fn(),
+    cancelSharedAttachment: vi.fn(() => Promise.resolve()),
+  };
+});
 
 beforeAll(() => {
   Element.prototype.scrollIntoView = vi.fn();
+});
+
+afterEach(() => {
+  vi.clearAllMocks();
 });
 
 const COMMANDS: HermesSlashCommand[] = [
@@ -118,5 +142,112 @@ describe("InputBar slash command menu", () => {
     const { editor } = renderInputBar();
     expect(screen.getByTestId("input-actions")).not.toHaveClass("absolute");
     expect(editor.className).not.toContain("pb-11");
+  });
+});
+
+describe("InputBar shared attachments", () => {
+  const attachment = {
+    id: "attachment-1",
+    fileName: "report.txt",
+    name: "report.txt",
+    mediaType: "text/plain",
+    mimeType: "text/plain",
+    sizeBytes: 6,
+    kind: "file" as const,
+    status: "ready" as const,
+    contentPath: "/attachments/attachment-1/content",
+  };
+
+  function makeUploadReady() {
+    vi.mocked(uploadSharedAttachment).mockImplementation(
+      async (_input, update) => {
+        update({ phase: "ready", progress: 100, attachment });
+        return attachment;
+      },
+    );
+  }
+
+  it("sends an attachment-only message and keeps the draft until send succeeds", async () => {
+    makeUploadReady();
+    let resolveSend!: (value: boolean) => void;
+    const sendResult = new Promise<boolean>((resolve) => {
+      resolveSend = resolve;
+    });
+    const onSend = vi.fn(() => sendResult);
+    const { container } = renderInputBar({
+      onSend,
+      sharedUpload: { conversationId: "conversation-1", token: "token-1" },
+    });
+    const fileInput = container.querySelector<HTMLInputElement>(
+      'input[type="file"]',
+    );
+    if (!fileInput) throw new Error("File input not found");
+
+    fireEvent.change(fileInput, {
+      target: {
+        files: [new File(["report"], "report.txt", { type: "text/plain" })],
+      },
+    });
+    await waitFor(() => expect(screen.getByText(/Ready/)).toBeInTheDocument());
+
+    fireEvent.click(screen.getByTitle("Send message"));
+    expect(onSend).toHaveBeenCalledWith("", undefined, ["attachment-1"]);
+    expect(screen.getByText("report.txt")).toBeInTheDocument();
+
+    await act(async () => resolveSend(true));
+    await waitFor(() => expect(screen.queryByText("report.txt")).toBeNull());
+  });
+
+  it("cancels a ready draft when the user removes it", async () => {
+    makeUploadReady();
+    const { container } = renderInputBar({
+      sharedUpload: { conversationId: "conversation-1", token: "token-1" },
+    });
+    const fileInput = container.querySelector<HTMLInputElement>(
+      'input[type="file"]',
+    );
+    if (!fileInput) throw new Error("File input not found");
+
+    fireEvent.change(fileInput, {
+      target: {
+        files: [new File(["report"], "report.txt", { type: "text/plain" })],
+      },
+    });
+    await waitFor(() => expect(screen.getByText(/Ready/)).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "Remove report.txt" }));
+
+    await waitFor(() =>
+      expect(cancelSharedAttachment).toHaveBeenCalledWith(
+        "attachment-1",
+        "token-1",
+      ),
+    );
+    expect(screen.queryByText("report.txt")).toBeNull();
+  });
+
+  it("cancels a ready draft when the input unmounts", async () => {
+    makeUploadReady();
+    const { container, unmount } = renderInputBar({
+      sharedUpload: { conversationId: "conversation-1", token: "token-1" },
+    });
+    const fileInput = container.querySelector<HTMLInputElement>(
+      'input[type="file"]',
+    );
+    if (!fileInput) throw new Error("File input not found");
+
+    fireEvent.change(fileInput, {
+      target: {
+        files: [new File(["report"], "report.txt", { type: "text/plain" })],
+      },
+    });
+    await waitFor(() => expect(screen.getByText(/Ready/)).toBeInTheDocument());
+
+    unmount();
+    await waitFor(() =>
+      expect(cancelSharedAttachment).toHaveBeenCalledWith(
+        "attachment-1",
+        "token-1",
+      ),
+    );
   });
 });

@@ -27,6 +27,7 @@ interface UseChannelChatOptions {
     content: string,
     threadId?: string | null,
     clientMessageId?: string,
+    attachmentIds?: string[],
   ) => void;
   selfUser?: AuthUser | null;
 }
@@ -48,6 +49,11 @@ interface LocalSentMessage {
   clientMessageId: string;
   message: ChatMessage;
   confirmed: boolean;
+}
+
+interface SendCommand {
+  clientMessageId: string;
+  signature: string;
 }
 
 async function fetchMessages(
@@ -110,6 +116,8 @@ export function useChannelChat({
   const queryClient = useQueryClient();
   const [localSentMessages, setLocalSentMessages] = useState<LocalSentMessage[]>([]);
   const [sendError, setSendError] = useState<string | null>(null);
+  const failedSendRef = useRef<SendCommand | null>(null);
+  const pendingSendsRef = useRef(new Map<string, SendCommand>());
   const query = useInfiniteQuery<
     MessagePage,
     Error,
@@ -161,6 +169,12 @@ export function useChannelChat({
   const addMessage = useCallback(
     (msg: ChatMessage, clientMessageId?: string) => {
       if (msg.conversationId !== conversationId) return;
+      if (clientMessageId) {
+        pendingSendsRef.current.delete(clientMessageId);
+        if (failedSendRef.current?.clientMessageId === clientMessageId) {
+          failedSendRef.current = null;
+        }
+      }
       setLocalSentMessages((previous) =>
         clientMessageId
           ? confirmLocalSentMessage(previous, clientMessageId, msg)
@@ -191,13 +205,18 @@ export function useChannelChat({
   );
 
   const addOptimisticSentMessage = useCallback(
-    (content: string, targetThreadId: string | null = threadId ?? null) => {
+    (
+      content: string,
+      targetThreadId: string | null = threadId ?? null,
+      clientMessageId: string = newClientMessageId(),
+    ) => {
       if (!conversationId) return null;
       const localMessage = createLocalSentMessage(
         conversationId,
         targetThreadId,
         content,
         selfUser,
+        clientMessageId,
       );
       if (!localMessage) return null;
       setSendError(null);
@@ -209,18 +228,125 @@ export function useChannelChat({
     [conversationId, selfUser, threadId],
   );
 
-  const sendMessage = useCallback(
-    (content: string) => {
+  const sendMessageToThread = useCallback(
+    (
+      content: string,
+      targetThreadId: string | null,
+      attachmentIds: string[] = [],
+    ) => {
       if (!conversationId) return null;
-      const clientMessageId = addOptimisticSentMessage(content, threadId ?? null);
-      if (clientMessageId) {
-        wsSendMessage(conversationId, content, threadId ?? null, clientMessageId);
-      } else {
-        wsSendMessage(conversationId, content, threadId ?? null);
+      const signature = JSON.stringify([
+        conversationId,
+        targetThreadId,
+        content,
+        attachmentIds,
+      ]);
+      const failedCommand = failedSendRef.current;
+      if (failedCommand && failedCommand.signature !== signature) {
+        failedSendRef.current = null;
       }
-      return clientMessageId;
+      const preferredClientMessageId =
+        failedCommand?.signature === signature
+          ? failedCommand.clientMessageId
+          : newClientMessageId();
+      const clientMessageId =
+        addOptimisticSentMessage(
+          content,
+          targetThreadId,
+          preferredClientMessageId,
+        ) ?? preferredClientMessageId;
+      const command = { clientMessageId, signature };
+      pendingSendsRef.current.set(clientMessageId, command);
+      const markFailed = (message: string) => {
+        pendingSendsRef.current.delete(clientMessageId);
+        failedSendRef.current = command;
+        setLocalSentMessages((previous) =>
+          previous.filter(
+            (local) => local.clientMessageId !== clientMessageId,
+          ),
+        );
+        setSendError(message);
+        return false;
+      };
+      const markSucceeded = () => {
+        pendingSendsRef.current.delete(clientMessageId);
+        if (failedSendRef.current?.clientMessageId === clientMessageId) {
+          failedSendRef.current = null;
+        }
+      };
+      setSendError(null);
+      const endpoint = api.messages({ conversationId }) as unknown as {
+        post?: (
+          body: {
+            clientMessageId: string;
+            content: string;
+            threadId: string | null;
+            attachmentIds: string[];
+          },
+          options: ReturnType<typeof authHeaders>,
+        ) => Promise<{ data?: ChatMessage | null; error?: unknown }>;
+      };
+
+      // Compatibility fallback for older API clients and the existing WS
+      // protocol. Current Eden clients always expose the canonical REST post.
+      if (typeof endpoint.post !== "function" || !token) {
+        if (attachmentIds.length > 0) {
+          wsSendMessage(
+            conversationId,
+            content,
+            targetThreadId,
+            clientMessageId,
+            attachmentIds,
+          );
+        } else {
+          wsSendMessage(
+            conversationId,
+            content,
+            targetThreadId,
+            clientMessageId,
+          );
+        }
+        return clientMessageId;
+      }
+      return endpoint
+        .post(
+          {
+            clientMessageId,
+            content,
+            threadId: targetThreadId,
+            attachmentIds,
+          },
+          authHeaders(token),
+        )
+        .then(({ data, error }) => {
+          if (error || !data) {
+            return markFailed(
+              edenErrorMessage(error, "Failed to send message"),
+            );
+          }
+          markSucceeded();
+          addMessage(data, clientMessageId);
+          return true;
+        })
+        .catch((error) =>
+          markFailed(
+            error instanceof Error ? error.message : "Failed to send message",
+          ),
+        );
     },
-    [addOptimisticSentMessage, conversationId, threadId, wsSendMessage],
+    [
+      addMessage,
+      addOptimisticSentMessage,
+      conversationId,
+      token,
+      wsSendMessage,
+    ],
+  );
+
+  const sendMessage = useCallback(
+    (content: string, attachmentIds: string[] = []) =>
+      sendMessageToThread(content, threadId ?? null, attachmentIds),
+    [sendMessageToThread, threadId],
   );
 
   const refetchMessages = useCallback(() => {
@@ -245,12 +371,22 @@ export function useChannelChat({
   ]);
 
   useEffect(() => {
+    failedSendRef.current = null;
+    pendingSendsRef.current.clear();
+  }, [conversationId]);
+
+  useEffect(() => {
     const onMessageError = ({
       conversationId: failedConversationId,
       clientMessageId,
       message,
     }: WsEvents["ws:message_error"]) => {
       if (failedConversationId !== conversationId) return;
+      const command = pendingSendsRef.current.get(clientMessageId);
+      if (command) {
+        failedSendRef.current = command;
+      }
+      pendingSendsRef.current.delete(clientMessageId);
       setLocalSentMessages((previous) =>
         previous.filter((local) => local.clientMessageId !== clientMessageId),
       );
@@ -325,6 +461,7 @@ export function useChannelChat({
     addMessage,
     addOptimisticSentMessage,
     sendMessage,
+    sendMessageToThread,
     sendError,
     refetchMessages,
     loadOlderMessages,
@@ -336,9 +473,9 @@ function createLocalSentMessage(
   threadId: string | null,
   content: string,
   selfUser: AuthUser | null,
+  clientMessageId: string = newClientMessageId(),
 ): LocalSentMessage | null {
   if (!selfUser) return null;
-  const clientMessageId = newClientMessageId();
   return {
     clientMessageId,
     confirmed: false,
@@ -351,6 +488,7 @@ function createLocalSentMessage(
       senderType: selfUser.type,
       content,
       parts: null,
+      attachments: [],
       createdAt: new Date().toISOString(),
     },
   };

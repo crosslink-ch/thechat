@@ -4,6 +4,10 @@ import { loadDomainEventsConfig, type DomainEventsConfig } from "./config";
 import { logDomainEvent } from "./log";
 import { createChatMessageSentHandler } from "./message-handler";
 import {
+  createAttachmentDeletionHandler,
+  createAttachmentValidationHandler,
+} from "../attachments/handler";
+import {
   claimOutboxEvents,
   markOutboxEventPublished,
   prunePublishedOutboxEvents,
@@ -23,7 +27,10 @@ export interface DomainEventRuntimeOptions {
 }
 
 export function createDefaultDomainEventRegistry() {
-  return new DomainEventRegistry().register(createChatMessageSentHandler());
+  return new DomainEventRegistry()
+    .register(createChatMessageSentHandler())
+    .register(createAttachmentValidationHandler())
+    .register(createAttachmentDeletionHandler());
 }
 
 /**

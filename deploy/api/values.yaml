@@ -1,4 +1,5 @@
 serviceAccount:
+  name: ""
   # Annotations to add (e.g., eks.amazonaws.com/role-arn for IRSA)
   annotations: {}
 
@@ -79,10 +80,20 @@ env:
   EMAIL_FROM: "noreply@thechat.app"
   REQUIRE_EMAIL_VERIFICATION: "false"
   LOG_LEVEL: "info"
+  ATTACHMENT_S3_BUCKET: ""
+  ATTACHMENT_S3_REGION: "eu-central-1"
+  ATTACHMENT_S3_FORCE_PATH_STYLE: "false"
+  ATTACHMENT_UNATTACHED_TTL_SECONDS: "2592000"
+  ATTACHMENT_VALIDATION_CONCURRENCY: "1"
 
 worker:
   enabled: true
   replicaCount: 1
+  serviceAccount:
+    create: true
+    name: ""
+    # Bind the worker-only S3 role here. Do not reuse the API role.
+    annotations: {}
   command:
     - bun
     - run
@@ -94,6 +105,25 @@ worker:
     limits:
       memory: 512Mi
       cpu: 1000m
+  clamav:
+    enabled: true
+    serviceAccount:
+      create: true
+      name: ""
+    networkPolicy:
+      enabled: true
+    image:
+      repository: clamav/clamav
+      tag: "1.4"
+      pullPolicy: IfNotPresent
+    port: 3310
+    resources:
+      requests:
+        cpu: 100m
+        memory: 1Gi
+      limits:
+        cpu: 1000m
+        memory: 2Gi
 
 service:
   type: ClusterIP
