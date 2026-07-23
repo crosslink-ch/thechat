@@ -24,14 +24,12 @@ const createSchema = z.object({
   name: z.string().trim().min(1, "Bot name is required"),
   webhookUrl: z.string().url().nullish(),
   kind: z.enum(["webhook", "hermes"]).optional().default("webhook"),
-  attachmentAccess: z.boolean().optional().default(false),
   workspaceId: z.string().trim().min(1, "Workspace ID is required").optional(),
 });
 
 const updateSchema = z.object({
   name: z.string().trim().min(1, "Bot name is required").optional(),
   webhookUrl: z.string().url().nullish(),
-  attachmentAccess: z.boolean().optional(),
 });
 
 const registerWebhookSchema = z.object({
@@ -114,7 +112,7 @@ export const botRoutes = new Elysia({ prefix: "/bots" })
       return { error: parsed.error.issues[0]?.message ?? "Invalid input" };
     }
 
-    const { name, webhookUrl, kind, attachmentAccess, workspaceId } = parsed.data;
+    const { name, webhookUrl, kind, workspaceId } = parsed.data;
 
     try {
       if (kind === "hermes") {
@@ -123,25 +121,13 @@ export const botRoutes = new Elysia({ prefix: "/bots" })
           return { error: "Workspace ID is required for Hermes bots" };
         }
         await requireWorkspaceAdmin(workspaceId, user.id);
-        const bot = await createBot(
-          name,
-          webhookUrl ?? null,
-          user.id,
-          "hermes",
-          attachmentAccess,
-        );
+        const bot = await createBot(name, webhookUrl ?? null, user.id, "hermes");
         await ensureHermesBotConfig(bot.id);
         await addBotToWorkspace(bot.id, workspaceId, user.id);
         const { webhookSecret: _webhookSecret, ...publicBot } = bot;
         return publicBot;
       }
-      return await createBot(
-        name,
-        webhookUrl ?? null,
-        user.id,
-        kind,
-        attachmentAccess,
-      );
+      return await createBot(name, webhookUrl ?? null, user.id);
     } catch (e: any) {
       set.status = e instanceof ServiceError ? e.status : 500;
       return { error: e.message ?? "Unknown error" };
@@ -248,16 +234,10 @@ export const botRoutes = new Elysia({ prefix: "/bots" })
       return { error: parsed.error.issues[0]?.message ?? "Invalid input" };
     }
 
-    const updates: {
-      name?: string;
-      webhookUrl?: string | null;
-      attachmentAccess?: boolean;
-    } = {};
+    const updates: { name?: string; webhookUrl?: string | null } = {};
     if (parsed.data.name !== undefined) updates.name = parsed.data.name;
     if (parsed.data.webhookUrl !== undefined)
       updates.webhookUrl = parsed.data.webhookUrl ?? null;
-    if (parsed.data.attachmentAccess !== undefined)
-      updates.attachmentAccess = parsed.data.attachmentAccess;
 
     if (Object.keys(updates).length === 0) {
       set.status = 400;

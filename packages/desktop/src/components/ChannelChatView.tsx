@@ -1,5 +1,5 @@
 import { useRef, useEffect, useCallback, useMemo, useLayoutEffect } from "react";
-import { InputBar, type InputSendResult } from "./InputBar";
+import { InputBar } from "./InputBar";
 import { Markdown } from "./Markdown";
 import { useAutoScroll } from "../hooks/useAutoScroll";
 import { useOlderHistoryScroll } from "../hooks/useOlderHistoryScroll";
@@ -7,7 +7,6 @@ import { useScrollStability } from "../hooks/useScrollStability";
 import { MessageSendError } from "./MessageSendError";
 import type { ChatMessage } from "@thechat/shared";
 import type { MentionUser } from "./MentionList";
-import { SharedMessageAttachments } from "./SharedMessageAttachments";
 
 const noop = () => {};
 
@@ -18,15 +17,10 @@ interface ChannelChatViewProps {
   hasOlderMessages?: boolean;
   sendError?: string | null;
   typingUsers: Map<string, string>; // userId -> userName
-  onSend: (
-    content: string,
-    attachmentIds?: string[],
-  ) => InputSendResult | Promise<InputSendResult>;
+  onSend: (content: string) => void;
   onLoadOlderMessages?: () => boolean | void | Promise<boolean | void>;
   mentions?: MentionUser[];
   scrollKey?: string | null;
-  conversationId?: string;
-  token?: string | null;
 }
 
 function formatTime(iso: string) {
@@ -45,8 +39,6 @@ export function ChannelChatView({
   onLoadOlderMessages,
   mentions,
   scrollKey,
-  conversationId,
-  token,
 }: ChannelChatViewProps) {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const { isAtBottom, scrollToBottom } = useAutoScroll(scrollContainerRef);
@@ -100,14 +92,10 @@ export function ChannelChatView({
   }, [typingScrollSignature, scrollToBottom]);
 
   const handleSend = useCallback(
-    (content: string, attachmentIds: string[] = []) => {
+    (content: string) => {
       forceNextContentScrollRef.current = true;
-      const result =
-        attachmentIds.length > 0
-          ? onSend(content, attachmentIds)
-          : onSend(content);
+      onSend(content);
       requestAnimationFrame(() => scrollToBottom({ force: true }));
-      return result;
     },
     [onSend, scrollToBottom],
   );
@@ -152,8 +140,7 @@ export function ChannelChatView({
                   <span className="text-[0.929rem] font-semibold text-text">{msg.senderName}</span>
                   <span className="text-[0.714rem] text-text-dimmed">{formatTime(msg.createdAt)}</span>
                 </div>
-                {msg.content && <Markdown content={msg.content} />}
-                <SharedMessageAttachments attachments={msg.attachments ?? []} />
+                <Markdown content={msg.content} />
               </div>
             </div>
           ))}
@@ -174,17 +161,7 @@ export function ChannelChatView({
         )}
       </div>
       <MessageSendError error={sendError} />
-      <InputBar
-        convId={undefined}
-        onSend={(content, _images, attachmentIds) =>
-          handleSend(content, attachmentIds)
-        }
-        onStop={noop}
-        mentions={mentions}
-        sharedUpload={
-          conversationId && token ? { conversationId, token } : undefined
-        }
-      />
+      <InputBar convId={undefined} onSend={handleSend} onStop={noop} mentions={mentions} />
     </>
   );
 }

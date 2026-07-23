@@ -219,12 +219,7 @@ describe("useChannelChat", () => {
         "active live",
       ]);
     });
-    expect(wsSendMessage).toHaveBeenCalledWith(
-      "dm-hermes",
-      "next",
-      null,
-      expect.any(String),
-    );
+    expect(wsSendMessage).toHaveBeenCalledWith("dm-hermes", "next", null);
   });
 
   it("renders sent messages optimistically and replaces the server echo", async () => {
@@ -521,11 +516,9 @@ describe("useChannelChat", () => {
     expect(result.current.messages).toEqual([]);
     expect(result.current.sendError).toBe("Thread not found");
 
-    const failedClientMessageId = wsSendMessage.mock.calls[0][3];
     act(() => {
-      result.current.sendMessage("will fail");
+      result.current.sendMessage("try again");
     });
-    expect(wsSendMessage.mock.calls[1][3]).toBe(failedClientMessageId);
     expect(result.current.sendError).toBeNull();
     expect(result.current.messages).toHaveLength(1);
   });
@@ -670,12 +663,7 @@ describe("useChannelChat", () => {
         "general live",
       ]);
     });
-    expect(wsSendMessage).toHaveBeenCalledWith(
-      "dm-hermes",
-      "next general",
-      null,
-      expect.any(String),
-    );
+    expect(wsSendMessage).toHaveBeenCalledWith("dm-hermes", "next general", null);
   });
 
   it("reuses fresh cached history when remounting the same conversation", async () => {
@@ -840,48 +828,6 @@ describe("useChannelChat", () => {
         "task history",
       ]);
     });
-  });
-
-  it("reuses the client message id after an ambiguous REST failure", async () => {
-    const persisted = message("dm-retry", "retry this");
-    const post = vi
-      .fn()
-      .mockRejectedValueOnce(new Error("response lost"))
-      .mockResolvedValueOnce({ data: persisted, error: null });
-    vi.mocked(api.messages).mockReturnValue({
-      get: vi.fn(() => Promise.resolve({ data: [] })),
-      post,
-    } as any);
-
-    const { result } = renderHook(
-      () =>
-        useChannelChat({
-          conversationId: "dm-retry",
-          token: "test-token",
-          wsSendMessage: vi.fn(),
-          selfUser: selfUser(),
-        }),
-      { wrapper: createQueryWrapper() },
-    );
-
-    await waitFor(() => expect(result.current.loading).toBe(false));
-
-    let firstResult: unknown;
-    await act(async () => {
-      firstResult = await result.current.sendMessage("retry this", ["attachment-1"]);
-    });
-    expect(firstResult).toBe(false);
-    const firstClientMessageId = post.mock.calls[0][0].clientMessageId;
-
-    let retryResult: unknown;
-    await act(async () => {
-      retryResult = await result.current.sendMessage("retry this", ["attachment-1"]);
-    });
-
-    expect(retryResult).toBe(true);
-    expect(post).toHaveBeenCalledTimes(2);
-    expect(post.mock.calls[1][0].clientMessageId).toBe(firstClientMessageId);
-    expect(result.current.messages.map((item) => item.id)).toEqual([persisted.id]);
   });
 
   it("trims the visible cache on append only after the threshold", async () => {

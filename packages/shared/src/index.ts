@@ -223,40 +223,8 @@ export interface ChatMessage {
   senderType?: "human" | "bot";
   content: string;
   parts?: MessagePart[] | null;
-  attachments?: ChatAttachment[];
   createdAt: string;
 }
-
-export type AttachmentStatus =
-  | "pending_upload"
-  | "processing"
-  | "ready"
-  | "attached"
-  | "rejected"
-  | "deleting"
-  | "deleted";
-
-/**
- * Provider-neutral metadata for a shared attachment. Object-store coordinates
- * and signed URLs are intentionally never part of persisted message DTOs.
- */
-export interface ChatAttachment {
-  id: string;
-  fileName: string;
-  /** Alias retained for clients that use generic file descriptors. */
-  name: string;
-  mediaType: string;
-  /** Alias retained for Hermes and MCP adapters. */
-  mimeType: string;
-  sizeBytes: number;
-  kind: "image" | "file";
-  width?: number | null;
-  height?: number | null;
-  status?: AttachmentStatus;
-  contentPath: string;
-}
-
-export type AttachmentView = ChatAttachment;
 
 export interface DirectConversation {
   id: string;
@@ -312,7 +280,6 @@ export type WsClientEvent =
       content: string;
       threadId?: string | null;
       clientMessageId?: string;
-      attachmentIds?: string[];
     }
   | { type: "typing"; conversationId: string; threadId?: string | null }
   | { type: "ping" };
@@ -343,7 +310,6 @@ export interface Bot {
   userId: string;
   name: string;
   kind: BotKind;
-  attachmentAccess?: boolean;
   webhookUrl: string | null;
   createdAt: string;
 }
@@ -391,7 +357,6 @@ export interface WebhookPayload {
     threadId: string | null;
     senderId: string;
     senderName: string;
-    attachments: ChatAttachment[];
     createdAt: string;
   };
   conversation: {

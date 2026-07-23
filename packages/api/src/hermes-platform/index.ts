@@ -20,14 +20,10 @@ const messageSchema = z.object({
   conversationId: z.string().min(1).optional(),
   chatId: z.string().min(1).optional(),
   threadId: z.string().min(1).nullish(),
-  content: z.string().max(100_000).default(""),
-  attachmentIds: z.array(z.string().uuid()).max(5).default([]),
-  platformMessageId: z.string().trim().min(1).max(255).nullish(),
+  content: z.string().min(1),
+  platformMessageId: z.string().nullish(),
   complete: z.boolean().optional(),
-}).refine(
-  (value) => value.content.trim().length > 0 || value.attachmentIds.length > 0,
-  { message: "Message text or at least one attachment is required" },
-);
+});
 
 const typingSchema = z.object({
   invocationId: z.string().min(1),
@@ -149,7 +145,6 @@ export const hermesPlatformRoutes = new Elysia({ prefix: "/hermes-platform" })
         chatId: parsed.data.chatId,
         threadId: parsed.data.threadId ?? null,
         content: parsed.data.content,
-        attachmentIds: parsed.data.attachmentIds,
         platformMessageId: parsed.data.platformMessageId ?? null,
         complete: parsed.data.complete,
       });

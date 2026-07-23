@@ -1,5 +1,5 @@
 import { useRef, useEffect, useCallback, useMemo, useLayoutEffect, useState } from "react";
-import { InputBar, type InputSendResult } from "./InputBar";
+import { InputBar } from "./InputBar";
 import { Markdown } from "./Markdown";
 import { useAutoScroll } from "../hooks/useAutoScroll";
 import { useOlderHistoryScroll } from "../hooks/useOlderHistoryScroll";
@@ -10,7 +10,6 @@ import type { MentionUser } from "./MentionList";
 import { HermesProgressInline } from "./HermesProgressInline";
 import type { HermesSlashCommand } from "../lib/hermes-slash-commands";
 import { MessageSendError } from "./MessageSendError";
-import { SharedMessageAttachments } from "./SharedMessageAttachments";
 
 const DEFER_FORMATTING_MESSAGE_THRESHOLD = 40;
 const DEFER_FORMATTING_BATCH_SIZE = 4;
@@ -26,10 +25,7 @@ interface HermesDmChatViewProps {
   typingUsers: Map<string, string>;
   progressInvocations: ActiveHermesInvocationProgress[];
   typingSuppressedUserIds: string[];
-  onSend: (
-    content: string,
-    attachmentIds?: string[],
-  ) => InputSendResult | Promise<InputSendResult>;
+  onSend: (content: string) => void;
   onStop?: () => void;
   onLoadOlderMessages?: () => boolean | void | Promise<boolean | void>;
   mentions?: MentionUser[];
@@ -37,8 +33,6 @@ interface HermesDmChatViewProps {
   taskActive?: boolean;
   queuedCount?: number;
   slashCommands?: HermesSlashCommand[];
-  conversationId?: string;
-  token?: string | null;
 }
 
 function formatTime(iso: string) {
@@ -63,8 +57,6 @@ export function HermesDmChatView({
   taskActive = false,
   queuedCount = 0,
   slashCommands,
-  conversationId,
-  token,
 }: HermesDmChatViewProps) {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const { isAtBottom, scrollToBottom } = useAutoScroll(scrollContainerRef);
@@ -248,14 +240,10 @@ export function HermesDmChatView({
   }, [typingScrollSignature, scrollToBottom]);
 
   const handleSend = useCallback(
-    (content: string, attachmentIds: string[] = []) => {
+    (content: string) => {
       forceNextContentScrollRef.current = true;
-      const result =
-        attachmentIds.length > 0
-          ? onSend(content, attachmentIds)
-          : onSend(content);
+      onSend(content);
       requestAnimationFrame(() => scrollToBottom({ force: true }));
-      return result;
     },
     [onSend, scrollToBottom],
   );
@@ -300,23 +288,20 @@ export function HermesDmChatView({
                   <span className="text-[0.929rem] font-semibold text-text">{msg.senderName}</span>
                   <span className="text-[0.714rem] text-text-dimmed">{formatTime(msg.createdAt)}</span>
                 </div>
-                {msg.content && (
-                  <Markdown
-                    content={msg.content}
-                    defer={deferMessageFormatting}
-                    deferDelayMs={
-                      deferMessageFormatting
-                        ? deferredMarkdownDelayMs(messages.length, index)
-                        : 0
-                    }
-                    onDeferredRender={
-                      deferMessageFormatting
-                        ? () => handleDeferredMarkdownRender(msg.id)
-                        : undefined
-                    }
-                  />
-                )}
-                <SharedMessageAttachments attachments={msg.attachments ?? []} />
+                <Markdown
+                  content={msg.content}
+                  defer={deferMessageFormatting}
+                  deferDelayMs={
+                    deferMessageFormatting
+                      ? deferredMarkdownDelayMs(messages.length, index)
+                      : 0
+                  }
+                  onDeferredRender={
+                    deferMessageFormatting
+                      ? () => handleDeferredMarkdownRender(msg.id)
+                      : undefined
+                  }
+                />
               </div>
             </div>
           ))}
@@ -355,17 +340,12 @@ export function HermesDmChatView({
       <MessageSendError error={sendError} />
       <InputBar
         convId={undefined}
-        onSend={(content, _images, attachmentIds) =>
-          handleSend(content, attachmentIds)
-        }
+        onSend={handleSend}
         onStop={onStop ?? (() => {})}
         mentions={mentions}
         isStreamingOverride={taskActive}
         queuedCount={queuedCount}
         slashCommands={slashCommands}
-        sharedUpload={
-          conversationId && token ? { conversationId, token } : undefined
-        }
       />
     </>
   );

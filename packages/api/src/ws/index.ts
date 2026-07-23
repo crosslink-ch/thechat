@@ -1,8 +1,7 @@
 import { Elysia } from "elysia";
-import { z } from "zod";
 import { eq } from "drizzle-orm";
 import { db } from "../db";
-import { conversationParticipants } from "../db/schema";
+import { conversations, conversationParticipants } from "../db/schema";
 import type { WsClientEvent, WsServerEvent } from "@thechat/shared";
 import { resolveTokenToUser } from "../auth/middleware";
 import { sendMessage } from "../services/messages";
@@ -11,30 +10,6 @@ import { getRealtimeBus, publishWsEventToUsers } from "../realtime";
 import { log } from "../logging";
 
 const websocketLog = log.child({ component: "websocket" });
-
-const wsClientEventSchema = z.discriminatedUnion("type", [
-  z.object({ type: z.literal("auth"), token: z.string().min(1) }),
-  z.object({ type: z.literal("ping") }),
-  z.object({
-    type: z.literal("typing"),
-    conversationId: z.string().uuid(),
-    threadId: z.string().uuid().nullable().optional(),
-  }),
-  z
-    .object({
-      type: z.literal("send_message"),
-      conversationId: z.string().uuid(),
-      clientMessageId: z.string().min(1).max(255).optional(),
-      content: z.string().max(100_000).default(""),
-      threadId: z.string().uuid().nullable().optional(),
-      attachmentIds: z.array(z.string().uuid()).max(25).default([]),
-    })
-    .refine(
-      (event) =>
-        event.content.trim().length > 0 || event.attachmentIds.length > 0,
-      { message: "Message text or at least one attachment is required" },
-    ),
-]);
 
 // Connection tracking
 const userSockets = new Map<string, Set<WebSocket>>();
@@ -130,13 +105,11 @@ async function handleSendMessage(
   content: string,
   threadId?: string | null,
   clientMessageId?: string,
-  attachmentIds: string[] = [],
 ) {
+  let msg;
   try {
-    await sendMessage(conversationId, userId, userName, content, {
+    msg = await sendMessage(conversationId, userId, userName, content, {
       threadId: threadId ?? null,
-      clientMessageId,
-      attachmentIds,
     });
   } catch (e) {
     if (e instanceof ServiceError) {
@@ -155,6 +128,38 @@ async function handleSendMessage(
     }
     throw e;
   }
+
+  // Get conversation type for broadcast event
+  const [conv] = await db
+    .select({ type: conversations.type })
+    .from(conversations)
+    .where(eq(conversations.id, conversationId))
+    .limit(1);
+
+  // Get all participant IDs for broadcasting
+  const participants = await db
+    .select({ userId: conversationParticipants.userId })
+    .from(conversationParticipants)
+    .where(eq(conversationParticipants.conversationId, conversationId));
+
+  const event: WsServerEvent = {
+    type: "new_message",
+    message: {
+      id: msg.id,
+      conversationId: msg.conversationId,
+      threadId: msg.threadId,
+      senderId: msg.senderId,
+      senderName: msg.senderName,
+      senderType: msg.senderType,
+      content: msg.content,
+      parts: msg.parts,
+      createdAt: msg.createdAt,
+    },
+    conversationType: conv?.type ?? "group",
+    clientMessageId,
+  };
+
+  await tryBroadcastToUsers(participants.map((p) => p.userId), event);
 }
 
 async function handleTyping(
@@ -190,11 +195,10 @@ export const wsRoutes = new Elysia().ws("/ws", {
   async message(ws, rawMessage) {
     let event: WsClientEvent;
     try {
-      const candidate =
+      event =
         typeof rawMessage === "string"
           ? JSON.parse(rawMessage)
-          : rawMessage;
-      event = wsClientEventSchema.parse(candidate) as WsClientEvent;
+          : (rawMessage as WsClientEvent);
     } catch {
       sendTo(ws.raw as unknown as WebSocket, {
         type: "error",
@@ -251,7 +255,6 @@ export const wsRoutes = new Elysia().ws("/ws", {
         event.content,
         event.threadId ?? null,
         event.clientMessageId,
-        event.attachmentIds ?? [],
       );
     } else if (event.type === "typing") {
       await handleTyping(

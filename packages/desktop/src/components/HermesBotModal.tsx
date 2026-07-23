@@ -35,7 +35,6 @@ function HermesBotModalInner() {
 
   const [name, setName] = useState("");
   const [instructions, setInstructions] = useState(DEFAULT_INSTRUCTIONS);
-  const [attachmentAccess, setAttachmentAccess] = useState(false);
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [createdBotName, setCreatedBotName] = useState("");
@@ -87,7 +86,6 @@ function HermesBotModalInner() {
           kind: "hermes",
           workspaceId: activeWorkspace.id,
           name: name.trim(),
-          attachmentAccess,
         },
         auth(token),
       );
@@ -200,24 +198,6 @@ function HermesBotModalInner() {
               value={instructions}
               onChange={(e) => setInstructions(e.target.value)}
             />
-          </label>
-
-          <label className="mb-3.5 flex cursor-pointer items-start gap-2.5 rounded-lg border border-border bg-base px-3.5 py-3">
-            <input
-              className="mt-0.5 size-4 accent-accent"
-              type="checkbox"
-              checked={attachmentAccess}
-              onChange={(e) => setAttachmentAccess(e.target.checked)}
-            />
-            <span>
-              <span className="block text-[0.857rem] font-medium text-text-muted">
-                Allow message attachments
-              </span>
-              <span className="mt-0.5 block text-[0.786rem] leading-relaxed text-text-dimmed">
-                Grants this bot explicit access to attachment metadata, downloads,
-                and uploads. Lower bot quotas apply.
-              </span>
-            </span>
           </label>
 
           {error && <div className="mb-3 rounded-lg border border-error-msg-border bg-error-msg-bg px-3 py-2 text-[0.857rem] text-error-bright">{error}</div>}

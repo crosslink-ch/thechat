@@ -15,11 +15,6 @@
 {{- end }}
 {{- end }}
 
-{{- define "thechat-api.serviceAccountName" -}}
-{{- $serviceAccount := .Values.serviceAccount | default dict -}}
-{{- default (include "thechat-api.fullname" .) (get $serviceAccount "name") }}
-{{- end }}
-
 {{- define "thechat-api.labels" -}}
 helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | trunc 63 | trimSuffix "-" }}
 {{ include "thechat-api.selectorLabels" . }}
@@ -34,21 +29,6 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 
 {{- define "thechat-api.workerFullname" -}}
 {{- printf "%s-worker" (include "thechat-api.fullname" .) | trunc 63 | trimSuffix "-" }}
-{{- end }}
-
-{{- define "thechat-api.workerServiceAccountName" -}}
-{{- $serviceAccount := .Values.worker.serviceAccount | default dict -}}
-{{- default (include "thechat-api.workerFullname" .) (get $serviceAccount "name") }}
-{{- end }}
-
-{{- define "thechat-api.clamavFullname" -}}
-{{- printf "%s-clamav" (include "thechat-api.fullname" .) | trunc 63 | trimSuffix "-" }}
-{{- end }}
-
-{{- define "thechat-api.clamavServiceAccountName" -}}
-{{- $clamav := .Values.worker.clamav | default dict -}}
-{{- $serviceAccount := get $clamav "serviceAccount" | default dict -}}
-{{- default (include "thechat-api.clamavFullname" .) (get $serviceAccount "name") }}
 {{- end }}
 
 {{- define "thechat-api.migrationFullname" -}}
@@ -86,22 +66,6 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 
 {{- define "thechat-api.workerSelectorLabels" -}}
 app.kubernetes.io/name: {{ include "thechat-api.workerName" . }}
-app.kubernetes.io/instance: {{ .Release.Name }}
-{{- end }}
-
-{{- define "thechat-api.clamavName" -}}
-{{- printf "%s-clamav" (include "thechat-api.name" .) | trunc 63 | trimSuffix "-" }}
-{{- end }}
-
-{{- define "thechat-api.clamavLabels" -}}
-helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | trunc 63 | trimSuffix "-" }}
-{{ include "thechat-api.clamavSelectorLabels" . }}
-app.kubernetes.io/version: {{ .Values.worker.clamav.image.tag | default "1.4" | quote }}
-app.kubernetes.io/managed-by: {{ .Release.Service }}
-{{- end }}
-
-{{- define "thechat-api.clamavSelectorLabels" -}}
-app.kubernetes.io/name: {{ include "thechat-api.clamavName" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
 

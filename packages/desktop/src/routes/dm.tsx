@@ -169,7 +169,7 @@ export function DmRoute() {
   const channelChatRef = useRef(channelChat);
   channelChatRef.current = channelChat;
   const channelSendMessage = channelChat.sendMessage;
-  const channelSendMessageToThread = channelChat.sendMessageToThread;
+  const addOptimisticSentMessage = channelChat.addOptimisticSentMessage;
 
   // Subscribe to WebSocket messages for this DM
   useEffect(() => {
@@ -312,13 +312,15 @@ export function DmRoute() {
   );
   useScopedCommands(hermesTaskCommands);
 
-  const sendHermesMessageNow = useCallback(async (
-    content: string,
-    threadId: string | null,
-    attachmentIds: string[] = [],
-  ) => {
-    if (threadId !== null) {
+  const sendHermesMessageNow = useCallback((content: string, threadId: string | null) => {
+    if (threadId === null) {
+      channelSendMessage(content);
+      return;
+    }
+
+    void (async () => {
       const activeThread = threadsRef.current.find((thread) => thread.id === threadId);
+      const clientMessageId = addOptimisticSentMessage(content, threadId);
       if (!parseHermesSlashCommand(content) && isAutoNamedThread(activeThread)) {
         try {
           await renameThread(threadId, titleFromMessage(content));
@@ -326,13 +328,16 @@ export function DmRoute() {
           console.error("Failed to rename Hermes task thread", error);
         }
       }
+      wsSendMessage(conversationId, content, threadId, clientMessageId ?? undefined);
       touchThread(threadId);
-    }
-    return channelSendMessageToThread(content, threadId, attachmentIds);
+    })();
   }, [
-    channelSendMessageToThread,
+    addOptimisticSentMessage,
+    channelSendMessage,
+    conversationId,
     renameThread,
     touchThread,
+    wsSendMessage,
   ]);
 
   const handleStopHermesTask = useCallback(() => {
@@ -355,20 +360,19 @@ export function DmRoute() {
     if (thread) setActiveThreadId(thread.id);
   }, [activeThreadId, createThread, isHermesDm, otherParticipant?.bot?.id]);
 
-  const handleSend = useCallback((
-    content: string,
-    attachmentIds: string[] = [],
-  ) => {
+  const handleSend = useCallback((content: string) => {
     if (!isHermesDm) {
-      return channelSendMessage(content, attachmentIds);
+      channelSendMessage(content);
+      return;
     }
 
     const slash = parseHermesSlashCommand(content);
     const canonical = slash
       ? canonicalHermesSlashCommand(slash.command, slashCommands) ?? slash.command
       : null;
-    if (canonical === "/branch" && attachmentIds.length === 0) {
-      return handleBranchCommand(slash!.args).then(() => true);
+    if (canonical === "/branch") {
+      void handleBranchCommand(slash!.args);
+      return;
     }
     if (slash) {
       // Optimistically resolve approval cards: the gateway resolves pending
@@ -385,12 +389,13 @@ export function DmRoute() {
           recordApprovalDecision(event.id, approvalDecision.decision);
         }
       }
-      return sendHermesMessageNow(content, activeThreadId, attachmentIds);
+      sendHermesMessageNow(content, activeThreadId);
+      return;
     }
     // TheChat intentionally does not queue normal Hermes DM messages locally.
     // Hermes owns the busy-turn policy: default messages can interrupt/steer
     // according to gateway config, while /queue passes through to Hermes' FIFO.
-    return sendHermesMessageNow(content, activeThreadId, attachmentIds);
+    sendHermesMessageNow(content, activeThreadId);
   }, [
     activeThreadId,
     channelSendMessage,
@@ -424,8 +429,6 @@ export function DmRoute() {
             scrollKey={`${conversationId}:${activeThreadId ?? "general"}`}
             taskActive={taskActive}
             slashCommands={slashCommands}
-            conversationId={conversationId}
-            token={token}
           />
         ) : (
           <ChannelChatView
@@ -443,8 +446,6 @@ export function DmRoute() {
             onLoadOlderMessages={channelChat.loadOlderMessages}
             mentions={mentions}
             scrollKey={conversationId}
-            conversationId={conversationId}
-            token={token}
           />
         )}
       </div>

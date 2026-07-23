@@ -17,7 +17,6 @@ interface WebSocketStore {
     content: string,
     threadId?: string | null,
     clientMessageId?: string,
-    attachmentIds?: string[],
   ) => void;
   sendTyping: (conversationId: string, threadId?: string | null) => void;
 }
@@ -239,7 +238,6 @@ export const useWebSocketStore = create<WebSocketStore>()(() => ({
     content: string,
     threadId?: string | null,
     clientMessageId?: string,
-    attachmentIds?: string[],
   ) => {
     const event: WsClientEvent = {
       type: "send_message",
@@ -247,7 +245,6 @@ export const useWebSocketStore = create<WebSocketStore>()(() => ({
       content,
       threadId: threadId ?? null,
       clientMessageId,
-      attachmentIds,
     };
     if (ws?.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify(event));

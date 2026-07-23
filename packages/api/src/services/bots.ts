@@ -24,8 +24,7 @@ export async function createBot(
   name: string,
   webhookUrl: string | null,
   ownerId: string,
-  kind: "webhook" | "hermes" = "webhook",
-  attachmentAccess = false,
+  kind: "webhook" | "hermes" = "webhook"
 ) {
   const apiKey = generateApiKey();
   const webhookSecret = generateWebhookSecret();
@@ -44,7 +43,6 @@ export async function createBot(
       webhookSecret,
       apiKey,
       kind,
-      attachmentAccess,
     })
     .returning();
 
@@ -54,7 +52,6 @@ export async function createBot(
     name: botUser.name,
     apiKey,
     kind: bot.kind,
-    attachmentAccess: bot.attachmentAccess,
     webhookUrl: bot.webhookUrl,
     webhookSecret: bot.webhookSecret,
     createdAt: bot.createdAt.toISOString(),
@@ -69,7 +66,6 @@ export async function listBots(ownerId: string) {
       webhookUrl: bots.webhookUrl,
       webhookSecret: bots.webhookSecret,
       kind: bots.kind,
-      attachmentAccess: bots.attachmentAccess,
       createdAt: bots.createdAt,
       name: users.name,
     })
@@ -82,7 +78,6 @@ export async function listBots(ownerId: string) {
     userId: r.userId,
     name: r.name,
     kind: r.kind,
-    attachmentAccess: r.attachmentAccess,
     webhookUrl: r.webhookUrl,
     webhookSecret: r.webhookSecret,
     createdAt: r.createdAt.toISOString(),
@@ -305,7 +300,6 @@ export async function getBot(botId: string, ownerId: string) {
       webhookUrl: bots.webhookUrl,
       webhookSecret: bots.webhookSecret,
       kind: bots.kind,
-      attachmentAccess: bots.attachmentAccess,
       createdAt: bots.createdAt,
       ownerId: bots.ownerId,
       name: users.name,
@@ -328,7 +322,6 @@ export async function getBot(botId: string, ownerId: string) {
     userId: row.userId,
     name: row.name,
     kind: row.kind,
-    attachmentAccess: row.attachmentAccess,
     webhookUrl: row.webhookUrl,
     webhookSecret: row.webhookSecret,
     createdAt: row.createdAt.toISOString(),
@@ -338,11 +331,7 @@ export async function getBot(botId: string, ownerId: string) {
 export async function updateBot(
   botId: string,
   ownerId: string,
-  updates: {
-    name?: string;
-    webhookUrl?: string | null;
-    attachmentAccess?: boolean;
-  },
+  updates: { name?: string; webhookUrl?: string | null }
 ) {
   const [bot] = await db
     .select({ id: bots.id, ownerId: bots.ownerId, userId: bots.userId })
@@ -365,20 +354,10 @@ export async function updateBot(
       .where(eq(users.id, bot.userId));
   }
 
-  if (
-    updates.webhookUrl !== undefined ||
-    updates.attachmentAccess !== undefined
-  ) {
+  if (updates.webhookUrl !== undefined) {
     await db
       .update(bots)
-      .set({
-        ...(updates.webhookUrl !== undefined
-          ? { webhookUrl: updates.webhookUrl }
-          : {}),
-        ...(updates.attachmentAccess !== undefined
-          ? { attachmentAccess: updates.attachmentAccess }
-          : {}),
-      })
+      .set({ webhookUrl: updates.webhookUrl })
       .where(eq(bots.id, botId));
   }
 

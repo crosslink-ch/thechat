@@ -109,8 +109,6 @@ export function ChannelRoute() {
           onLoadOlderMessages={channelChat.loadOlderMessages}
           mentions={mentions}
           scrollKey={channelId}
-          conversationId={channelId}
-          token={token}
         />
       </div>
     </div>
