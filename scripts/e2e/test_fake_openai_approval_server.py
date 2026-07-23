@@ -67,7 +67,7 @@ class FakeOpenAIApprovalServerTests(unittest.TestCase):
                             "exit_code": 0,
                             "output": self.server.OUTPUT_MARKER,
                             "error": None,
-                            "approval": "Command was approved by the user.",
+                            "approval": self.server.APPROVAL_EVIDENCE,
                         }
                     ),
                 },
@@ -108,7 +108,7 @@ class FakeOpenAIApprovalServerTests(unittest.TestCase):
                             "exit_code": exit_code,
                             "output": f"Final output:\n{final_output}",
                             "error": None,
-                            "approval": "Command was approved by the user.",
+                            "approval": self.server.APPROVAL_EVIDENCE,
                         }
                     ),
                 }
@@ -119,9 +119,23 @@ class FakeOpenAIApprovalServerTests(unittest.TestCase):
             "exit_code": 0,
             "output": self.server.OUTPUT_MARKER,
             "error": None,
-            "approval": "Command was approved by the user.",
+            "approval": self.server.APPROVAL_EVIDENCE,
         }
-        for override in ({"approval": None}, {"error": "unexpected"}):
+        for override in (
+            {"exit_code": False},
+            {"approval": None},
+            {
+                "approval": (
+                    f"Command required approval ({self.server.APPROVAL_REASON_MARKER}) "
+                    "and was not approved by the user."
+                )
+            },
+            {
+                "output": "ERROR: command failed\nFinal output:\n"
+                f"{self.server.OUTPUT_MARKER}\n"
+            },
+            {"error": "unexpected"},
+        ):
             with self.subTest(override=override):
                 message = {
                     "role": "tool",

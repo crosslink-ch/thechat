@@ -470,6 +470,7 @@ def _run() -> None:
             model_api_mode="chat_completions",
             model_base_url=f"http://127.0.0.1:{MODEL_PORT}/v1",
             require_loopback_model=True,
+            isolate_runtime_environment=True,
             additional_config="""
 platform_toolsets:
   thechat:

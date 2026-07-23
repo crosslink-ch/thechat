@@ -23,6 +23,10 @@ TOOL_CALL_ID = "call_hermes_approval_ui_e2e"
 OUTPUT_MARKER = "hermes-approval-e2e-ok"
 APPROVAL_COMMAND = "/usr/bin/python3 -c 'print(\"hermes-approval-e2e-ok\")'"
 APPROVAL_REASON_MARKER = "script execution via -e/-c flag"
+APPROVAL_EVIDENCE = (
+    f"Command required approval ({APPROVAL_REASON_MARKER}) "
+    "and was approved by the user."
+)
 FINAL_MESSAGE = "Hermes approval UI E2E completed after approval."
 
 _STATE_LOCK = threading.Lock()
@@ -89,22 +93,19 @@ def _tool_result_succeeded(message: dict[str, Any]) -> bool:
         result = json.loads(raw_content)
     except (TypeError, json.JSONDecodeError):
         return False
-    if not isinstance(result, dict) or result.get("exit_code") != 0:
+    if not isinstance(result, dict):
+        return False
+    exit_code = result.get("exit_code")
+    if type(exit_code) is not int or exit_code != 0:
         return False
     if result.get("error") not in {None, ""}:
         return False
-    approval = result.get("approval")
-    if not isinstance(approval, str) or "approved by the user" not in approval:
+    if result.get("approval") != APPROVAL_EVIDENCE:
         return False
     output = result.get("output")
     if not isinstance(output, str):
         return False
-    expected_outputs = {OUTPUT_MARKER, f"{OUTPUT_MARKER}\n"}
-    if output in expected_outputs:
-        return True
-    if "Final output:\n" not in output:
-        return False
-    return output.rsplit("Final output:\n", 1)[-1] in expected_outputs
+    return output in {OUTPUT_MARKER, f"{OUTPUT_MARKER}\n"}
 
 
 def _successful_tool_result_is_present(payload: dict[str, Any]) -> bool:

@@ -228,6 +228,7 @@ def start_hermes_gateway(
     model_base_url: str | None = None,
     additional_config: str | None = None,
     require_loopback_model: bool = False,
+    isolate_runtime_environment: bool = False,
 ) -> subprocess.Popen:
     if not HERMES_SOURCE_DIR.exists():
         raise RuntimeError(f"Hermes source checkout not found: {HERMES_SOURCE_DIR}")
@@ -244,6 +245,10 @@ def start_hermes_gateway(
             raise ValueError(
                 f"Hermes E2E model endpoint must be loopback: {model_base_url!r}"
             )
+    if isolate_runtime_environment and not require_loopback_model:
+        raise ValueError(
+            "Hermes E2E runtime environment isolation requires loopback enforcement"
+        )
 
     bot_slug = slug(bot_name)
     hermes_home = HERMES_HOME_ROOT / bot_slug
@@ -252,6 +257,12 @@ def start_hermes_gateway(
         shutil.rmtree(hermes_home)
     hermes_home.mkdir(parents=True, exist_ok=True)
     hermes_log.parent.mkdir(parents=True, exist_ok=True)
+    provider_evidence = hermes_home / "e2e-provider-evidence.json"
+    disabled_managed_dir = hermes_home / ".managed-scope-disabled"
+    if isolate_runtime_environment and disabled_managed_dir.exists():
+        raise RuntimeError(
+            f"Hermes E2E disabled managed-scope path unexpectedly exists: {disabled_managed_dir}"
+        )
 
     config_lines = [
         "model:",
@@ -291,10 +302,30 @@ def start_hermes_gateway(
         "THECHAT_WEBHOOK_URL": "",
         "LOG_LEVEL": "info",
     }
+    if isolate_runtime_environment:
+        assert model_base_url is not None
+        hermes_env.update(
+            {
+                "HERMES_E2E_DISABLE_RUNTIME_ENV": "1",
+                "HERMES_E2E_EXPECTED_MODEL_BASE_URL": model_base_url,
+                "HERMES_E2E_PROVIDER_EVIDENCE_PATH": str(provider_evidence),
+                "HERMES_MANAGED_DIR": str(disabled_managed_dir),
+                "CUSTOM_BASE_URL": model_base_url,
+                "OPENAI_BASE_URL": model_base_url,
+            }
+        )
     log = hermes_log.open("w")
     try:
         proc = subprocess.Popen(
-            [UV, "run", "--frozen", "python", "-u", str(HERMES_GATEWAY_RUNTIME)],
+            [
+                UV,
+                "run",
+                "--no-env-file",
+                "--frozen",
+                "python",
+                "-u",
+                str(HERMES_GATEWAY_RUNTIME),
+            ],
             cwd=HERMES_SOURCE_DIR,
             env=hermes_env,
             stdout=log,
@@ -314,9 +345,39 @@ def start_hermes_gateway(
             raise RuntimeError(f"Hermes gateway for {bot_name} exited with {proc.returncode}\n{tail}")
         return True
 
-    try:
-        time.sleep(3)
+    def isolation_ready() -> bool:
         still_running()
+        if not provider_evidence.exists():
+            return False
+        try:
+            evidence = json.loads(provider_evidence.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise RuntimeError(f"Invalid Hermes E2E provider evidence: {exc}") from exc
+        expected = {
+            "provider": HERMES_PROVIDER,
+            "baseUrl": (model_base_url or "").rstrip("/"),
+            "requestedProvider": HERMES_PROVIDER,
+            "model": HERMES_MODEL,
+            "dotenvDisabled": True,
+            "managedScope": False,
+            "proxyKeys": ["ALL_PROXY", "HTTPS_PROXY", "HTTP_PROXY"],
+            "credentialKeys": ["OPENAI_API_KEY", "THECHAT_BOT_TOKEN"],
+        }
+        mismatches = {
+            key: {"expected": value, "actual": evidence.get(key)}
+            for key, value in expected.items()
+            if evidence.get(key) != value
+        }
+        if mismatches:
+            raise RuntimeError(f"Hermes E2E provider isolation mismatch: {mismatches}")
+        return True
+
+    try:
+        if isolate_runtime_environment:
+            wait_for(isolation_ready, timeout=20, label="Hermes provider isolation")
+        else:
+            time.sleep(3)
+            still_running()
     except BaseException:
         terminate_process(proc)
         raise

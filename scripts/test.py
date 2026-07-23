@@ -4,9 +4,11 @@
 import base64
 import json
 import os
+import signal
 import socket
 import subprocess
 import sys
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
@@ -17,6 +19,8 @@ from urllib.parse import urlencode
 ROOT = Path(__file__).resolve().parent.parent
 CREDENTIALS_FILE = ROOT / ".test-credentials.json"
 ENV_BEFORE_DOTENV = set(os.environ)
+_ACTIVE_SUITE_GROUPS: set[int] = set()
+_ACTIVE_SUITE_GROUPS_LOCK = threading.Lock()
 
 # OpenAI device auth constants (same as packages/desktop/src/core/codex-auth.ts)
 CODEX_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
@@ -164,11 +168,11 @@ SUITES = [
             "THECHAT_E2E_REDIS_PORT": explicit_env_or_default("THECHAT_E2E_REDIS_PORT", "16381"),
             "THECHAT_E2E_DATABASE_URL": explicit_env_or_default(
                 "THECHAT_E2E_DATABASE_URL",
-                "postgres://thechat:thechat@localhost:15544/thechat",
+                f"postgres://thechat:thechat@localhost:{explicit_env_or_default('THECHAT_E2E_POSTGRES_PORT', '15544')}/thechat",
             ),
             "THECHAT_E2E_REDIS_URL": explicit_env_or_default(
                 "THECHAT_E2E_REDIS_URL",
-                "redis://localhost:16381",
+                f"redis://localhost:{explicit_env_or_default('THECHAT_E2E_REDIS_PORT', '16381')}",
             ),
             "HERMES_E2E_SOURCE_DIR": explicit_env_or_default(
                 "HERMES_E2E_SOURCE_DIR",
@@ -186,11 +190,11 @@ SUITES = [
             "THECHAT_E2E_REDIS_PORT": explicit_env_or_default("THECHAT_E2E_REDIS_PORT", "16382"),
             "THECHAT_E2E_DATABASE_URL": explicit_env_or_default(
                 "THECHAT_E2E_DATABASE_URL",
-                "postgres://thechat:thechat@localhost:15545/thechat",
+                f"postgres://thechat:thechat@localhost:{explicit_env_or_default('THECHAT_E2E_POSTGRES_PORT', '15545')}/thechat",
             ),
             "THECHAT_E2E_REDIS_URL": explicit_env_or_default(
                 "THECHAT_E2E_REDIS_URL",
-                "redis://localhost:16382",
+                f"redis://localhost:{explicit_env_or_default('THECHAT_E2E_REDIS_PORT', '16382')}",
             ),
             "HERMES_APPROVAL_E2E_MODEL_PORT": explicit_env_or_default(
                 "HERMES_APPROVAL_E2E_MODEL_PORT",
@@ -205,6 +209,7 @@ SUITES = [
         "opt_in": True,
         # Command-capable desktop E2E: require the suite name, never broad --all.
         "explicit_only": True,
+        "timeout": 600,
     },
 ]
 
@@ -217,23 +222,93 @@ class Result:
     duration: float
 
 
+def _register_suite_group(pid: int) -> None:
+    with _ACTIVE_SUITE_GROUPS_LOCK:
+        _ACTIVE_SUITE_GROUPS.add(pid)
+
+
+def _unregister_suite_group(pid: int) -> None:
+    with _ACTIVE_SUITE_GROUPS_LOCK:
+        _ACTIVE_SUITE_GROUPS.discard(pid)
+
+
+def _signal_active_suite_groups(signum: int) -> None:
+    with _ACTIVE_SUITE_GROUPS_LOCK:
+        groups = tuple(_ACTIVE_SUITE_GROUPS)
+    for pid in groups:
+        try:
+            os.killpg(pid, signum)
+        except ProcessLookupError:
+            _unregister_suite_group(pid)
+
+
+def _forward_suite_shutdown(signum: int) -> None:
+    _signal_active_suite_groups(signum)
+
+    def force_kill() -> None:
+        time.sleep(30)
+        _signal_active_suite_groups(signal.SIGKILL)
+
+    threading.Thread(target=force_kill, name="suite-shutdown-watchdog", daemon=True).start()
+
+
 def run_suite(suite: dict) -> Result:
     env = {**os.environ, **suite.get("env", {})}
     start = time.monotonic()
-    proc = subprocess.run(
-        suite["cmd"],
-        capture_output=True,
-        text=True,
-        env=env,
-        cwd=ROOT,
-    )
+    timeout = suite.get("timeout")
+    timed_out = False
+    if timeout is None:
+        proc = subprocess.run(
+            suite["cmd"],
+            capture_output=True,
+            text=True,
+            env=env,
+            cwd=ROOT,
+        )
+        stdout = proc.stdout
+        stderr = proc.stderr
+        returncode = proc.returncode
+    else:
+        proc = subprocess.Popen(
+            suite["cmd"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            env=env,
+            cwd=ROOT,
+            start_new_session=True,
+        )
+        _register_suite_group(proc.pid)
+        try:
+            try:
+                stdout, stderr = proc.communicate(timeout=float(timeout))
+            except subprocess.TimeoutExpired:
+                timed_out = True
+                try:
+                    os.killpg(proc.pid, signal.SIGTERM)
+                except ProcessLookupError:
+                    pass
+                try:
+                    stdout, stderr = proc.communicate(timeout=30)
+                except subprocess.TimeoutExpired:
+                    try:
+                        os.killpg(proc.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                    stdout, stderr = proc.communicate()
+        finally:
+            _unregister_suite_group(proc.pid)
+        returncode = 124 if timed_out else proc.returncode
+
     duration = time.monotonic() - start
-    output = proc.stdout
-    if proc.stderr:
-        output += proc.stderr
+    output = stdout
+    if stderr:
+        output += stderr
+    if timed_out:
+        output += f"\nSuite exceeded its {timeout}s wall-clock timeout."
     return Result(
         name=suite["name"],
-        returncode=proc.returncode,
+        returncode=returncode,
         output=output.strip(),
         duration=duration,
     )
@@ -491,13 +566,39 @@ def main():
     print()
 
     results: list[Result] = []
-    with ThreadPoolExecutor(max_workers=len(suites)) as pool:
-        futures = {pool.submit(run_suite, s): s["name"] for s in suites}
-        for future in as_completed(futures):
-            result = future.result()
-            results.append(result)
-            status = "\033[32mPASS\033[0m" if result.returncode == 0 else "\033[31mFAIL\033[0m"
-            print(f"  {status}  {result.name} ({result.duration:.1f}s)")
+    interrupted_signal: int | None = None
+    previous_handlers = {
+        signum: signal.getsignal(signum) for signum in (signal.SIGINT, signal.SIGTERM)
+    }
+
+    def handle_shutdown(signum, _frame):
+        nonlocal interrupted_signal
+        if interrupted_signal is not None:
+            _signal_active_suite_groups(signal.SIGKILL)
+            raise KeyboardInterrupt
+        interrupted_signal = signum
+        _forward_suite_shutdown(signum)
+        raise KeyboardInterrupt
+
+    for signum in previous_handlers:
+        signal.signal(signum, handle_shutdown)
+    try:
+        with ThreadPoolExecutor(max_workers=len(suites)) as pool:
+            futures = {pool.submit(run_suite, s): s["name"] for s in suites}
+            for future in as_completed(futures):
+                result = future.result()
+                results.append(result)
+                status = "\033[32mPASS\033[0m" if result.returncode == 0 else "\033[31mFAIL\033[0m"
+                print(f"  {status}  {result.name} ({result.duration:.1f}s)")
+    except KeyboardInterrupt:
+        _signal_active_suite_groups(signal.SIGTERM)
+    finally:
+        for signum, handler in previous_handlers.items():
+            signal.signal(signum, handler)
+
+    if interrupted_signal is not None:
+        print("\nInterrupted; bounded suites were asked to clean up.", file=sys.stderr)
+        sys.exit(128 + interrupted_signal)
 
     total = time.monotonic() - start
     failed = [r for r in results if r.returncode != 0]

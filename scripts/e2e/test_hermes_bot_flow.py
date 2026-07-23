@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -94,6 +95,7 @@ class HermesBotFlowTests(unittest.TestCase):
             joined = " ".join(str(part) for part in cmd)
             self.assertNotIn("hermes gateway run", joined)
             self.assertNotIn("hermes_cli.main", joined)
+            self.assertIn("--no-env-file", cmd)
             self.assertIn("python", joined)
             self.assertEqual(captured["cwd"], harness.HERMES_SOURCE_DIR)
             self.assertIs(captured["start_new_session"], True)
@@ -131,6 +133,29 @@ class HermesBotFlowTests(unittest.TestCase):
                 start_new_session=None,
             ):
                 captured["stdout"] = stdout
+                captured["env"] = dict(env or {})
+                if env and env.get("HERMES_E2E_PROVIDER_EVIDENCE_PATH"):
+                    Path(env["HERMES_E2E_PROVIDER_EVIDENCE_PATH"]).write_text(
+                        json.dumps(
+                            {
+                                "provider": "custom",
+                                "baseUrl": "http://127.0.0.1:18081/v1",
+                                "requestedProvider": "custom",
+                                "model": "approval-e2e",
+                                "dotenvDisabled": True,
+                                "managedScope": False,
+                                "proxyKeys": [
+                                    "ALL_PROXY",
+                                    "HTTPS_PROXY",
+                                    "HTTP_PROXY",
+                                ],
+                                "credentialKeys": [
+                                    "OPENAI_API_KEY",
+                                    "THECHAT_BOT_TOKEN",
+                                ],
+                            }
+                        )
+                    )
                 return FakeGatewayProcess()
 
             try:
@@ -146,6 +171,7 @@ class HermesBotFlowTests(unittest.TestCase):
                     model_api_mode="chat_completions",
                     model_base_url="http://127.0.0.1:18081/v1",
                     require_loopback_model=True,
+                    isolate_runtime_environment=True,
                     additional_config="""
 security:
   tirith_enabled: false
@@ -161,12 +187,29 @@ auxiliary:
                 harness.subprocess.Popen = original_popen
                 harness.time.sleep = original_sleep
 
-            config = (harness.HERMES_HOME_ROOT / "approval-e2e" / "config.yaml").read_text()
+            config = (
+                harness.HERMES_HOME_ROOT / "approval-e2e" / "config.yaml"
+            ).read_text()
             self.assertIn("  api_mode: chat_completions\n", config)
             self.assertIn("  base_url: http://127.0.0.1:18081/v1\n", config)
             self.assertIn("approvals:\n  mode: manual\n  timeout: 180\n", config)
             self.assertIn("security:\n  tirith_enabled: false\n", config)
             self.assertIn("title_generation:\n    enabled: false\n", config)
+            gateway_env = cast(dict[str, str], captured["env"])
+            self.assertEqual(gateway_env["HERMES_E2E_DISABLE_RUNTIME_ENV"], "1")
+            self.assertEqual(
+                gateway_env["HERMES_E2E_EXPECTED_MODEL_BASE_URL"],
+                "http://127.0.0.1:18081/v1",
+            )
+            self.assertEqual(
+                gateway_env["CUSTOM_BASE_URL"], "http://127.0.0.1:18081/v1"
+            )
+            self.assertFalse(Path(gateway_env["HERMES_MANAGED_DIR"]).exists())
+            evidence = json.loads(
+                Path(gateway_env["HERMES_E2E_PROVIDER_EVIDENCE_PATH"]).read_text()
+            )
+            self.assertTrue(evidence["dotenvDisabled"])
+            self.assertFalse(evidence["managedScope"])
 
     def test_gateway_rejects_non_loopback_model_when_isolation_is_required(self):
         harness = load_harness()
@@ -181,6 +224,21 @@ auxiliary:
                     "Approval E2E",
                     model_base_url="https://api.example.com/v1",
                     require_loopback_model=True,
+                )
+
+    def test_runtime_isolation_requires_loopback_enforcement(self):
+        harness = load_harness()
+        with tempfile.TemporaryDirectory() as tmp:
+            harness.HERMES_SOURCE_DIR = Path(tmp)
+            harness.HERMES_PROVIDER = "custom"
+            with self.assertRaisesRegex(ValueError, "requires loopback enforcement"):
+                harness.start_hermes_gateway(
+                    {"PATH": "/usr/bin"},
+                    "http://localhost:3339",
+                    "bot_test",
+                    "Approval E2E",
+                    model_base_url="http://127.0.0.1:18081/v1",
+                    isolate_runtime_environment=True,
                 )
 
 
