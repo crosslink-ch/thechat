@@ -127,6 +127,14 @@ class HermesBotFlowTests(unittest.TestCase):
                     approval_timeout=180,
                     model_api_mode="chat_completions",
                     model_base_url="http://127.0.0.1:18081/v1",
+                    require_loopback_model=True,
+                    additional_config="""
+security:
+  tirith_enabled: false
+auxiliary:
+  title_generation:
+    enabled: false
+""",
                 )
             finally:
                 stream = captured.get("stdout")
@@ -139,6 +147,23 @@ class HermesBotFlowTests(unittest.TestCase):
             self.assertIn("  api_mode: chat_completions\n", config)
             self.assertIn("  base_url: http://127.0.0.1:18081/v1\n", config)
             self.assertIn("approvals:\n  mode: manual\n  timeout: 180\n", config)
+            self.assertIn("security:\n  tirith_enabled: false\n", config)
+            self.assertIn("title_generation:\n    enabled: false\n", config)
+
+    def test_gateway_rejects_non_loopback_model_when_isolation_is_required(self):
+        harness = load_harness()
+        with tempfile.TemporaryDirectory() as tmp:
+            harness.HERMES_SOURCE_DIR = Path(tmp)
+            harness.HERMES_PROVIDER = "custom"
+            with self.assertRaisesRegex(ValueError, "must be loopback"):
+                harness.start_hermes_gateway(
+                    {"PATH": "/usr/bin"},
+                    "http://localhost:3339",
+                    "bot_test",
+                    "Approval E2E",
+                    model_base_url="https://api.example.com/v1",
+                    require_loopback_model=True,
+                )
 
 
 if __name__ == "__main__":

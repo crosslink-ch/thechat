@@ -203,6 +203,8 @@ SUITES = [
         },
         # Real Hermes + real Tauri UI, with a deterministic local model fixture.
         "opt_in": True,
+        # Command-capable desktop E2E: require the suite name, never broad --all.
+        "explicit_only": True,
     },
 ]
 
@@ -417,8 +419,11 @@ def main():
             print(f"Available: {', '.join(s['name'] for s in SUITES)}")
             sys.exit(1)
         suites = [s for s in SUITES if s["name"] in names]
-    elif not run_all:
-        # Exclude opt-in suites unless explicitly named or --all
+    elif run_all:
+        suites = [s for s in suites if not s.get("explicit_only")]
+    else:
+        # Exclude opt-in suites unless explicitly named. Command-capable suites
+        # marked explicit_only are also excluded from broad --all.
         suites = [s for s in suites if not s.get("opt_in")]
 
     # Skip integration tests if backend is not running
@@ -473,8 +478,16 @@ def main():
 
     print(f"Running {len(suites)} test suite(s): {', '.join(s['name'] for s in suites)}")
     if not run_all:
-        opt_in_names = ", ".join(s["name"] for s in SUITES if s.get("opt_in"))
+        opt_in_names = ", ".join(
+            s["name"]
+            for s in SUITES
+            if s.get("opt_in") and not s.get("explicit_only")
+        )
+        explicit_names = ", ".join(
+            s["name"] for s in SUITES if s.get("explicit_only")
+        )
         print(f"  (pass --all to include opt-in suites: {opt_in_names})")
+        print(f"  (run command-capable suites explicitly: {explicit_names})")
     print()
 
     results: list[Result] = []

@@ -10,7 +10,7 @@ const packageDir = path.resolve(__dirname, "..");
 // Load .env from monorepo root (no dotenv dependency needed).
 // Existing env vars take precedence — this only fills in missing ones.
 const envFile = path.resolve(packageDir, "../../.env");
-if (fs.existsSync(envFile)) {
+if (process.env.THECHAT_E2E_DISABLE_DOTENV !== "1" && fs.existsSync(envFile)) {
   for (const line of fs.readFileSync(envFile, "utf8").split("\n")) {
     const trimmed = line.trim();
     if (!trimmed || trimmed.startsWith("#")) continue;
@@ -46,7 +46,7 @@ export const config = {
   port: TAURI_DRIVER_PORT,
 
   async onPrepare() {
-    if (!process.env.SKIP_BUILD) {
+    if (process.env.SKIP_BUILD !== "1") {
       console.log("Building Tauri binary (set SKIP_BUILD=1 to skip)...");
       execSync(
         "pnpm --filter @thechat/desktop tauri build --debug --no-bundle",
@@ -73,6 +73,7 @@ export const config = {
       detached: true,
     });
 
+    tauriDriver.stdout.resume();
     tauriDriver.stderr.on("data", (data) => {
       const msg = data.toString();
       if (msg.trim()) console.error("[tauri-driver]", msg.trim());
@@ -113,6 +114,9 @@ export const config = {
         proc.on("close", resolve);
         setTimeout(resolve, 5000);
       });
+      if (proc.exitCode === null && proc.signalCode === null) {
+        try { process.kill(-proc.pid, "SIGKILL"); } catch {}
+      }
     }
     delete process.env.THECHAT_DATA_DIR;
     if (tmpDataDir) {

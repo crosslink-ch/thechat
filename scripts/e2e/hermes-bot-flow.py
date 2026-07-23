@@ -17,6 +17,7 @@ import time
 import urllib.error
 import urllib.request
 from pathlib import Path
+from urllib.parse import urlparse
 
 ROOT = Path(__file__).resolve().parents[2]
 ENV_BEFORE_DOTENV = set(os.environ)
@@ -196,6 +197,8 @@ def start_hermes_gateway(
     approval_timeout: int | None = None,
     model_api_mode: str | None = None,
     model_base_url: str | None = None,
+    additional_config: str | None = None,
+    require_loopback_model: bool = False,
 ) -> subprocess.Popen:
     if not HERMES_SOURCE_DIR.exists():
         raise RuntimeError(f"Hermes source checkout not found: {HERMES_SOURCE_DIR}")
@@ -203,6 +206,15 @@ def start_hermes_gateway(
         raise RuntimeError("OPENROUTER_API_KEY is required for the Hermes e2e provider openrouter")
     if approval_mode not in {None, "manual", "smart", "off"}:
         raise ValueError(f"Unsupported approval mode: {approval_mode}")
+    if require_loopback_model:
+        parsed_model_url = urlparse(model_base_url or "")
+        if (
+            parsed_model_url.scheme not in {"http", "https"}
+            or parsed_model_url.hostname not in {"127.0.0.1", "localhost", "::1"}
+        ):
+            raise ValueError(
+                f"Hermes E2E model endpoint must be loopback: {model_base_url!r}"
+            )
 
     bot_slug = slug(bot_name)
     hermes_home = HERMES_HOME_ROOT / bot_slug
@@ -232,6 +244,8 @@ def start_hermes_gateway(
         ])
         if approval_timeout is not None:
             config_lines.append(f"  timeout: {approval_timeout}")
+    if additional_config:
+        config_lines.extend(additional_config.strip().splitlines())
     config_lines.append("")
     (hermes_home / "config.yaml").write_text("\n".join(config_lines))
 
@@ -284,7 +298,21 @@ def start_api(env: dict[str, str]) -> subprocess.Popen:
         "LOG_LEVEL": "error",
     }
     proc = subprocess.Popen([BUN, "run", "packages/api/src/index.ts"], cwd=ROOT, env=api_env)
-    wait_for(lambda: http_json("GET", f"http://localhost:{API_PORT}/health")[0] == 200, timeout=60, label="TheChat API")
+    try:
+        wait_for(
+            lambda: http_json("GET", f"http://localhost:{API_PORT}/health")[0]
+            == 200,
+            timeout=60,
+            label="TheChat API",
+        )
+    except BaseException:
+        proc.terminate()
+        try:
+            proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=5)
+        raise
     return proc
 
 

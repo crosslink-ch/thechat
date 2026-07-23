@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
@@ -19,8 +20,36 @@ from typing import Any
 MODEL = "hermes-approval-e2e"
 TRIGGER_MARKER = "HERMES_DANGER_GATE_E2E"
 TOOL_CALL_ID = "call_hermes_approval_ui_e2e"
-APPROVAL_COMMAND = "printf 'echo hermes-approval-e2e-ok\\n' | sh"
+OUTPUT_MARKER = "hermes-approval-e2e-ok"
+APPROVAL_COMMAND = "/usr/bin/python3 -c 'print(\"hermes-approval-e2e-ok\")'"
+APPROVAL_REASON_MARKER = "script execution via -e/-c flag"
 FINAL_MESSAGE = "Hermes approval UI E2E completed after approval."
+
+_STATE_LOCK = threading.Lock()
+_STATE = {
+    "requests": 0,
+    "toolCallResponses": 0,
+    "successfulFinalResponses": 0,
+    "auxiliaryResponses": 0,
+}
+
+
+def state_snapshot() -> dict[str, int]:
+    with _STATE_LOCK:
+        return dict(_STATE)
+
+
+def _record_completion(completion: dict[str, Any]) -> None:
+    choice = completion["choices"][0]
+    message = choice["message"]
+    with _STATE_LOCK:
+        _STATE["requests"] += 1
+        if choice["finish_reason"] == "tool_calls":
+            _STATE["toolCallResponses"] += 1
+        elif message.get("content") == FINAL_MESSAGE:
+            _STATE["successfulFinalResponses"] += 1
+        else:
+            _STATE["auxiliaryResponses"] += 1
 
 
 def _message_text(value: Any) -> str:
@@ -52,11 +81,35 @@ def _trigger_is_present(payload: dict[str, Any]) -> bool:
     )
 
 
+def _tool_result_succeeded(message: dict[str, Any]) -> bool:
+    if message.get("role") != "tool" or message.get("tool_call_id") != TOOL_CALL_ID:
+        return False
+    raw_content = _message_text(message.get("content"))
+    try:
+        result = json.loads(raw_content)
+    except (TypeError, json.JSONDecodeError):
+        return False
+    if not isinstance(result, dict) or result.get("exit_code") != 0:
+        return False
+    if result.get("error") not in {None, ""}:
+        return False
+    approval = result.get("approval")
+    if not isinstance(approval, str) or "approved by the user" not in approval:
+        return False
+    output = result.get("output")
+    if not isinstance(output, str):
+        return False
+    expected_outputs = {OUTPUT_MARKER, f"{OUTPUT_MARKER}\n"}
+    if output in expected_outputs:
+        return True
+    if "Final output:\n" not in output:
+        return False
+    return output.rsplit("Final output:\n", 1)[-1] in expected_outputs
+
+
 def _successful_tool_result_is_present(payload: dict[str, Any]) -> bool:
     return any(
-        message.get("role") == "tool"
-        and message.get("tool_call_id") == TOOL_CALL_ID
-        and "hermes-approval-e2e-ok" in _message_text(message.get("content"))
+        _tool_result_succeeded(message)
         for message in payload.get("messages") or []
         if isinstance(message, dict)
     )
@@ -113,9 +166,10 @@ def completion_for(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def stream_chunks_for(payload: dict[str, Any]) -> list[dict[str, Any]]:
-    """Convert the deterministic completion into OpenAI streaming chunks."""
-    completion = completion_for(payload)
+def stream_chunks_for_completion(
+    payload: dict[str, Any], completion: dict[str, Any]
+) -> list[dict[str, Any]]:
+    """Convert one deterministic completion into OpenAI streaming chunks."""
     choice = completion["choices"][0]
     message = choice["message"]
     delta = {
@@ -150,6 +204,10 @@ def stream_chunks_for(payload: dict[str, Any]) -> list[dict[str, Any]]:
     return chunks
 
 
+def stream_chunks_for(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    return stream_chunks_for_completion(payload, completion_for(payload))
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "HermesApprovalE2E/1.0"
 
@@ -176,6 +234,9 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/health":
             self._send_json(200, {"ok": True})
             return
+        if self.path == "/state":
+            self._send_json(200, state_snapshot())
+            return
         if self.path in {"/v1/models", f"/v1/models/{MODEL}"}:
             model = {"id": MODEL, "object": "model", "owned_by": "thechat-e2e"}
             self._send_json(
@@ -196,10 +257,12 @@ class Handler(BaseHTTPRequestHandler):
         try:
             length = int(self.headers.get("Content-Length", "0"))
             payload = json.loads(self.rfile.read(length) or b"{}")
+            completion = completion_for(payload)
+            _record_completion(completion)
             if payload.get("stream"):
-                self._send_sse(stream_chunks_for(payload))
+                self._send_sse(stream_chunks_for_completion(payload, completion))
             else:
-                self._send_json(200, completion_for(payload))
+                self._send_json(200, completion)
         except Exception as exc:  # noqa: BLE001 - make fixture failures visible to the caller
             self._send_json(500, {"error": {"message": f"E2E fixture error: {exc}"}})
 

@@ -326,12 +326,21 @@ direct-message responses, checks session continuity, and cleans up unless
 
 ## 9. Automated real-Hermes approval UI E2E
 
-The approval UI suite is a separate opt-in test because it builds and drives
-the real Tauri desktop app. It also starts an actual Hermes Gateway from source
-and connects it to TheChat through the native polling adapter. A deterministic
-local OpenAI-compatible fixture replaces only the model API: it makes Hermes
-request a harmless terminal command that the manual approval policy must stop.
-No provider credential is required.
+The approval UI suite must be named explicitly because it builds and drives the
+real Tauri desktop app and launches a command-capable Hermes process; broad
+`scripts/test.py --all` deliberately excludes it. Its WebDriver spec lives
+outside the default desktop-spec glob and also skips unless the orchestrator's
+`HERMES_APPROVAL_E2E=1` gate is set. The suite starts an actual Hermes Gateway
+from source and connects it to TheChat through the native polling adapter. A
+deterministic local OpenAI-compatible fixture replaces only the model API. No
+provider credential is required or inherited.
+
+The exact command is a harmless `python3 -c` print. Before the stack starts, the
+suite runs the selected Hermes checkout's built-in detectors and requires the
+command to be approval-required, not hardline-blocked, and to produce only the
+expected marker. Optional Tirith scanning is disabled, model endpoints must be
+loopback, provider credentials are removed from child environments, and Hermes
+external HTTP egress fails closed.
 
 Linux prerequisites are the same as the Tauri WebDriver suite: Rust,
 `tauri-driver`, `WebKitWebDriver`, and `xvfb-run`. Docker, Bun/pnpm, Python 3,
@@ -354,17 +363,21 @@ fixture on `18081` by default. It performs all of these assertions across the
 live stack:
 
 1. Login through the desktop UI and send a DM to the real Hermes bot.
-2. Hermes requests a dangerous command and posts `approval.request` through
-   TheChat's invocation-progress endpoint.
+2. Hermes requests the exact built-in-classified command and posts
+   `approval.request` through TheChat's invocation-progress endpoint.
 3. The desktop renders `[data-testid="hermes-approval-request"]` with the
    policy-offered approval and denial actions, while no fallback message tells
    the user to type `/approve`.
-4. Clicking **Approve** from the card resolves the request, executes the
-   harmless command, and lets the original Hermes turn complete.
+4. Clicking **Approve** from the card resolves the request and executes the
+   harmless print command. The model fixture accepts only the matching tool-call
+   ID, exit code `0`, and exact output marker.
 5. The original Hermes turn posts its final message into the DM, proving that
-   the card action resolved the blocked real-Hermes tool call.
+   the card action resolved the blocked real-Hermes tool call. The fixture also
+   requires exactly one approval-driving tool response and one successful final
+   response.
 
 A screenshot of the pending approval card is saved at
-`.tmp/hermes-approval-ui-e2e.png`. Gateway, API, worker, model, and desktop
-processes are always stopped; containers are removed by default.
-`HERMES_E2E_KEEP=1` retains the containers and Hermes state for debugging.
+`.tmp/hermes-approval-ui-e2e.png`. Container names and Hermes state/log paths
+are unique per run. Gateway, API, worker, model, and desktop processes are
+always stopped; containers are removed by default. `HERMES_E2E_KEEP=1` retains
+that run's uniquely named containers and diagnostics, never live processes.
