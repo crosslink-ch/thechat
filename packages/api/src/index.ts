@@ -14,6 +14,7 @@ import { mcpRoutes } from "./mcp";
 import { hermesRoutes } from "./hermes";
 import { hermesPlatformRoutes } from "./hermes-platform";
 import { botRuntimeRoutes } from "./bot-runtime";
+import { attachmentRoutes } from "./attachments";
 import { initObservability, shutdownObservability, withSpan } from "./observability";
 import { log } from "./logging";
 
@@ -30,6 +31,7 @@ const app = new Elysia()
   .use(workspaceConfigRoutes)
   .use(conversationRoutes)
   .use(messageRoutes)
+  .use(attachmentRoutes)
   .use(wsRoutes)
   .use(botRoutes)
   .use(hermesRoutes)

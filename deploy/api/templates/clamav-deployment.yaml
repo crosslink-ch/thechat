@@ -1,0 +1,64 @@
+{{- $clamav := .Values.worker.clamav | default dict -}}
+{{- if and .Values.worker.enabled (get $clamav "enabled") }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "thechat-api.clamavFullname" . }}
+  labels:
+    {{- include "thechat-api.clamavLabels" . | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "thechat-api.clamavSelectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "thechat-api.clamavSelectorLabels" . | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "thechat-api.clamavServiceAccountName" . }}
+      automountServiceAccountToken: false
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: clamav
+          image: "{{ $clamav.image.repository }}:{{ $clamav.image.tag }}"
+          imagePullPolicy: {{ $clamav.image.pullPolicy }}
+          ports:
+            - name: clamav
+              containerPort: {{ $clamav.port }}
+              protocol: TCP
+          readinessProbe:
+            tcpSocket:
+              port: clamav
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            failureThreshold: 18
+          livenessProbe:
+            tcpSocket:
+              port: clamav
+            initialDelaySeconds: 180
+            periodSeconds: 30
+          volumeMounts:
+            - name: clamav-data
+              mountPath: /var/lib/clamav
+          resources:
+            {{- toYaml $clamav.resources | nindent 12 }}
+      volumes:
+        - name: clamav-data
+          emptyDir: {}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

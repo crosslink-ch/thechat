@@ -40,6 +40,15 @@ export const inviteStatusEnum = pgEnum("invite_status", [
   "declined",
 ]);
 export const botKindEnum = pgEnum("bot_kind", ["webhook", "hermes"]);
+export const attachmentStatusEnum = pgEnum("attachment_status", [
+  "pending_upload",
+  "processing",
+  "ready",
+  "attached",
+  "rejected",
+  "deleting",
+  "deleted",
+]);
 
 // -- Tables --
 
@@ -196,6 +205,7 @@ export const messages = pgTable(
     senderId: uuid("sender_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
+    clientMessageId: varchar("client_message_id", { length: 255 }),
     content: text("content").notNull(),
     parts: jsonb("parts").$type<MessagePart[]>(),
     createdAt: timestamp("created_at", { withTimezone: true })
@@ -211,6 +221,10 @@ export const messages = pgTable(
     index("messages_thread_id_idx").on(t.threadId),
     index("messages_sender_id_idx").on(t.senderId),
     index("messages_created_at_idx").on(t.createdAt),
+    uniqueIndex("messages_sender_client_message_idx").on(
+      t.senderId,
+      t.clientMessageId,
+    ),
   ]
 );
 
@@ -277,6 +291,7 @@ export const bots = pgTable(
     webhookSecret: varchar("webhook_secret", { length: 128 }).notNull(),
     apiKey: varchar("api_key", { length: 128 }).notNull(),
     kind: botKindEnum("kind").notNull().default("webhook"),
+    attachmentAccess: boolean("attachment_access").notNull().default(false),
     commandsJson: jsonb("commands_json").$type<BotCommandPublic[]>(),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
@@ -404,6 +419,87 @@ export const conversationThreads = pgTable(
   ],
 );
 
+/**
+ * PostgreSQL is authoritative for attachment ownership and lifecycle. The
+ * object-store coordinates below are private implementation details and must
+ * never be serialized into messages, events, webhooks, or logs.
+ */
+export const attachments = pgTable(
+  "attachments",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    conversationId: uuid("conversation_id")
+      .notNull()
+      .references(() => conversations.id, { onDelete: "cascade" }),
+    uploaderId: uuid("uploader_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    fileName: varchar("file_name", { length: 255 }).notNull(),
+    declaredMediaType: varchar("declared_media_type", { length: 255 }).notNull(),
+    declaredSizeBytes: integer("declared_size_bytes").notNull(),
+    declaredChecksumSha256: varchar("declared_checksum_sha256", {
+      length: 64,
+    }).notNull(),
+    verifiedMediaType: varchar("verified_media_type", { length: 255 }),
+    verifiedSizeBytes: integer("verified_size_bytes"),
+    verifiedChecksumSha256: varchar("verified_checksum_sha256", {
+      length: 64,
+    }),
+    width: integer("width"),
+    height: integer("height"),
+    status: attachmentStatusEnum("status")
+      .notNull()
+      .default("pending_upload"),
+    quarantineKey: text("quarantine_key").notNull(),
+    quarantineVersionId: text("quarantine_version_id"),
+    cleanKey: text("clean_key"),
+    cleanVersionId: text("clean_version_id"),
+    failureReason: varchar("failure_reason", { length: 255 }),
+    uploadExpiresAt: timestamp("upload_expires_at", { withTimezone: true })
+      .notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    processingAt: timestamp("processing_at", { withTimezone: true }),
+    readyAt: timestamp("ready_at", { withTimezone: true }),
+    attachedAt: timestamp("attached_at", { withTimezone: true }),
+    rejectedAt: timestamp("rejected_at", { withTimezone: true }),
+    deletingAt: timestamp("deleting_at", { withTimezone: true }),
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull()
+      .$onUpdate(() => new Date()),
+  },
+  (t) => [
+    index("attachments_conversation_idx").on(t.conversationId),
+    index("attachments_uploader_idx").on(t.uploaderId),
+    index("attachments_status_expiry_idx").on(t.status, t.expiresAt),
+  ],
+);
+
+export const messageAttachments = pgTable(
+  "message_attachments",
+  {
+    messageId: uuid("message_id")
+      .notNull()
+      .references(() => messages.id, { onDelete: "cascade" }),
+    attachmentId: uuid("attachment_id")
+      .notNull()
+      .references(() => attachments.id, { onDelete: "restrict" }),
+    position: integer("position").notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.messageId, t.position] }),
+    uniqueIndex("message_attachments_attachment_idx").on(t.attachmentId),
+    uniqueIndex("message_attachments_message_attachment_idx").on(
+      t.messageId,
+      t.attachmentId,
+    ),
+  ],
+);
+
 export const sessions = pgTable(
   "sessions",
   {
@@ -476,6 +572,7 @@ export const usersRelations = relations(users, ({ many }) => ({
   emailVerifications: many(emailVerifications),
   workspaceMemberships: many(workspaceMembers),
   ownedBots: many(bots, { relationName: "botOwner" }),
+  uploadedAttachments: many(attachments),
 }));
 
 export const workspacesRelations = relations(workspaces, ({ one, many }) => ({
@@ -541,6 +638,7 @@ export const conversationsRelations = relations(
     participants: many(conversationParticipants),
     messages: many(messages),
     threads: many(conversationThreads),
+    attachments: many(attachments),
     workspace: one(workspaces, {
       fields: [conversations.workspaceId],
       references: [workspaces.id],
@@ -562,7 +660,7 @@ export const conversationParticipantsRelations = relations(
   })
 );
 
-export const messagesRelations = relations(messages, ({ one }) => ({
+export const messagesRelations = relations(messages, ({ one, many }) => ({
   conversation: one(conversations, {
     fields: [messages.conversationId],
     references: [conversations.id],
@@ -575,7 +673,37 @@ export const messagesRelations = relations(messages, ({ one }) => ({
     fields: [messages.senderId],
     references: [users.id],
   }),
+  attachments: many(messageAttachments),
 }));
+
+export const attachmentsRelations = relations(
+  attachments,
+  ({ one, many }) => ({
+    conversation: one(conversations, {
+      fields: [attachments.conversationId],
+      references: [conversations.id],
+    }),
+    uploader: one(users, {
+      fields: [attachments.uploaderId],
+      references: [users.id],
+    }),
+    messageLinks: many(messageAttachments),
+  }),
+);
+
+export const messageAttachmentsRelations = relations(
+  messageAttachments,
+  ({ one }) => ({
+    message: one(messages, {
+      fields: [messageAttachments.messageId],
+      references: [messages.id],
+    }),
+    attachment: one(attachments, {
+      fields: [messageAttachments.attachmentId],
+      references: [attachments.id],
+    }),
+  }),
+);
 
 export const botsRelations = relations(bots, ({ one }) => ({
   user: one(users, {

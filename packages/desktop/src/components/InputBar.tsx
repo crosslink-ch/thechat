@@ -6,6 +6,14 @@ import { SlashCommandMenu } from "./SlashCommandMenu";
 import type { MentionUser } from "./MentionList";
 import type { ImageAttachment } from "../lib/images";
 import {
+  cancelSharedAttachment,
+  SHARED_ATTACHMENT_MAX_BYTES,
+  SHARED_ATTACHMENT_MAX_COUNT,
+  SHARED_ATTACHMENT_MEDIA_TYPES,
+  uploadSharedAttachment,
+  type SharedAttachmentDraft,
+} from "../lib/shared-attachments";
+import {
   filterHermesSlashCommands,
   slashCommandRequiresArgs,
   type HermesSlashCommand,
@@ -26,15 +34,25 @@ function fileToAttachment(file: File): Promise<ImageAttachment> {
   });
 }
 
+export type InputSendResult = void | boolean | string | null;
+
 interface InputBarProps {
   convId: string | undefined;
-  onSend: (content: string, images?: ImageAttachment[]) => void;
+  onSend: (
+    content: string,
+    images?: ImageAttachment[],
+    attachmentIds?: string[],
+  ) => InputSendResult | Promise<InputSendResult>;
   onStop: () => void;
   mentions?: MentionUser[];
   autoFocusKey?: string;
   isStreamingOverride?: boolean;
   queuedCount?: number;
   slashCommands?: HermesSlashCommand[];
+  sharedUpload?: {
+    conversationId: string;
+    token: string;
+  };
 }
 
 export const InputBar = memo(function InputBar({
@@ -46,6 +64,7 @@ export const InputBar = memo(function InputBar({
   isStreamingOverride,
   queuedCount = 0,
   slashCommands,
+  sharedUpload,
 }: InputBarProps) {
   const storeStreaming = useIsStreaming(convId);
   const isStreaming = isStreamingOverride ?? storeStreaming;
@@ -53,12 +72,24 @@ export const InputBar = memo(function InputBar({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [canSubmit, setCanSubmit] = useState(false);
   const [images, setImages] = useState<ImageAttachment[]>([]);
+  const [sharedDrafts, setSharedDrafts] = useState<SharedAttachmentDraft[]>([]);
+  const [sharedError, setSharedError] = useState<string | null>(null);
+  const [sendingShared, setSendingShared] = useState(false);
+  const sharedControllersRef = useRef(new Map<string, AbortController>());
+  const sharedDraftsRef = useRef<SharedAttachmentDraft[]>([]);
+  const sharedScopeRef = useRef(sharedUpload);
   const [dragOver, setDragOver] = useState(false);
   const [inputText, setInputText] = useState("");
   const [slashSelectedIndex, setSlashSelectedIndex] = useState(0);
   const [slashMenuDismissed, setSlashMenuDismissed] = useState(false);
 
-  const hasContent = canSubmit || images.length > 0;
+  const sharedReady =
+    sharedDrafts.length === 0 ||
+    sharedDrafts.every((draft) => draft.phase === "ready");
+  const hasContent =
+    canSubmit || images.length > 0 || sharedDrafts.length > 0;
+  const canSend =
+    hasContent && (!sharedUpload || (sharedReady && !sendingShared));
   const slashSuggestions = slashCommands
     ? filterHermesSlashCommands(inputText, slashCommands)
     : [];
@@ -81,40 +112,287 @@ export const InputBar = memo(function InputBar({
     }
   }, [focusTick]);
 
+  const updateSharedDraft = useCallback(
+    (
+      localId: string,
+      patch: Partial<Omit<SharedAttachmentDraft, "localId" | "file" | "previewUrl">>,
+    ) => {
+      setSharedDrafts((previous) =>
+        previous.map((draft) =>
+          draft.localId === localId ? { ...draft, ...patch } : draft,
+        ),
+      );
+    },
+    [],
+  );
+
+  const startSharedUpload = useCallback(
+    (draft: SharedAttachmentDraft) => {
+      if (!sharedUpload) return;
+      const controller = new AbortController();
+      sharedControllersRef.current.set(draft.localId, controller);
+      void uploadSharedAttachment(
+        {
+          conversationId: sharedUpload.conversationId,
+          token: sharedUpload.token,
+          file: draft.file,
+          signal: controller.signal,
+        },
+        (update) =>
+          updateSharedDraft(draft.localId, {
+            phase: update.phase,
+            progress: update.progress,
+            ...(update.attachment
+              ? { attachment: update.attachment }
+              : {}),
+            error: null,
+          }),
+      )
+        .catch((error) => {
+          if (controller.signal.aborted) return;
+          updateSharedDraft(draft.localId, {
+            phase: "error",
+            error:
+              error instanceof Error ? error.message : "Attachment upload failed",
+          });
+        })
+        .finally(() => {
+          if (sharedControllersRef.current.get(draft.localId) === controller) {
+            sharedControllersRef.current.delete(draft.localId);
+          }
+        });
+    },
+    [sharedUpload, updateSharedDraft],
+  );
+
   const addFiles = useCallback(async (files: FileList | File[]) => {
+    if (sharedUpload) {
+      const remaining = Math.max(
+        0,
+        SHARED_ATTACHMENT_MAX_COUNT - sharedDrafts.length,
+      );
+      const candidates = Array.from(files).slice(0, remaining);
+      const rejected = candidates.find(
+        (file) =>
+          !SHARED_ATTACHMENT_MEDIA_TYPES.has(file.type) ||
+          file.size < 1 ||
+          file.size > SHARED_ATTACHMENT_MAX_BYTES,
+      );
+      if (remaining === 0 || candidates.length < Array.from(files).length) {
+        setSharedError(
+          `A message can contain at most ${SHARED_ATTACHMENT_MAX_COUNT} files`,
+        );
+      } else if (rejected) {
+        setSharedError(
+          `Unsupported file or file larger than ${Math.round(
+            SHARED_ATTACHMENT_MAX_BYTES / 1024 / 1024,
+          )} MiB: ${rejected.name}`,
+        );
+      } else {
+        setSharedError(null);
+      }
+      const accepted = candidates.filter(
+        (file) =>
+          SHARED_ATTACHMENT_MEDIA_TYPES.has(file.type) &&
+          file.size > 0 &&
+          file.size <= SHARED_ATTACHMENT_MAX_BYTES,
+      );
+      const drafts = accepted.map<SharedAttachmentDraft>((file) => ({
+        localId: crypto.randomUUID(),
+        file,
+        previewUrl: file.type.startsWith("image/")
+          ? URL.createObjectURL(file)
+          : null,
+        phase: "queued",
+        progress: 0,
+        attachment: null,
+        error: null,
+      }));
+      setSharedDrafts((previous) => [...previous, ...drafts]);
+      for (const draft of drafts) startSharedUpload(draft);
+      return;
+    }
     const validFiles = Array.from(files).filter((f) => ACCEPTED_MIME.has(f.type));
     if (validFiles.length === 0) return;
     const attachments = await Promise.all(validFiles.map(fileToAttachment));
     setImages((prev) => [...prev, ...attachments]);
-  }, []);
+  }, [sharedDrafts.length, sharedUpload, startSharedUpload]);
 
   const removeImage = useCallback((id: string) => {
     setImages((prev) => prev.filter((img) => img.id !== id));
+  }, []);
+
+  const removeSharedDraft = useCallback(
+    (draft: SharedAttachmentDraft) => {
+      sharedControllersRef.current.get(draft.localId)?.abort();
+      sharedControllersRef.current.delete(draft.localId);
+      if (draft.previewUrl) URL.revokeObjectURL(draft.previewUrl);
+      setSharedDrafts((previous) =>
+        previous.filter((candidate) => candidate.localId !== draft.localId),
+      );
+      if (draft.attachment && sharedUpload) {
+        void cancelSharedAttachment(
+          draft.attachment.id,
+          sharedUpload.token,
+        ).catch(() => undefined);
+      }
+    },
+    [sharedUpload],
+  );
+
+  const retrySharedDraft = useCallback(
+    (draft: SharedAttachmentDraft) => {
+      if (draft.attachment && sharedUpload) {
+        void cancelSharedAttachment(
+          draft.attachment.id,
+          sharedUpload.token,
+        ).catch(() => undefined);
+      }
+      const reset = {
+        ...draft,
+        phase: "queued" as const,
+        progress: 0,
+        attachment: null,
+        error: null,
+      };
+      setSharedDrafts((previous) =>
+        previous.map((candidate) =>
+          candidate.localId === draft.localId ? reset : candidate,
+        ),
+      );
+      startSharedUpload(reset);
+    },
+    [sharedUpload, startSharedUpload],
+  );
+
+  useEffect(() => {
+    sharedDraftsRef.current = sharedDrafts;
+  }, [sharedDrafts]);
+
+  useEffect(() => {
+    const previous = sharedScopeRef.current;
+    sharedScopeRef.current = sharedUpload;
+    if (
+      !previous ||
+      !sharedUpload ||
+      previous.conversationId === sharedUpload.conversationId
+    ) {
+      return;
+    }
+    for (const controller of sharedControllersRef.current.values()) {
+      controller.abort();
+    }
+    sharedControllersRef.current.clear();
+    for (const draft of sharedDraftsRef.current) {
+      if (draft.previewUrl) URL.revokeObjectURL(draft.previewUrl);
+      if (draft.attachment) {
+        void cancelSharedAttachment(
+          draft.attachment.id,
+          previous.token,
+        ).catch(() => undefined);
+      }
+    }
+    setSharedDrafts([]);
+    setSharedError(null);
+  }, [sharedUpload]);
+
+  useEffect(() => {
+    return () => {
+      for (const controller of sharedControllersRef.current.values()) {
+        controller.abort();
+      }
+      sharedControllersRef.current.clear();
+      const token = sharedScopeRef.current?.token;
+      for (const draft of sharedDraftsRef.current) {
+        if (draft.previewUrl) URL.revokeObjectURL(draft.previewUrl);
+        if (draft.attachment && token) {
+          void cancelSharedAttachment(draft.attachment.id, token).catch(
+            () => undefined,
+          );
+        }
+      }
+    };
   }, []);
 
   const handleSubmit = useCallback(() => {
     inputRef.current?.submit();
   }, []);
 
+  const sendSharedContent = useCallback(
+    async (text: string) => {
+      if (!sharedUpload || !sharedReady || sendingShared) return false;
+      setSendingShared(true);
+      setSharedError(null);
+      try {
+        const result = await onSend(
+          text,
+          undefined,
+          sharedDrafts.map((draft) => draft.attachment!.id),
+        );
+        if (result === false) return false;
+        for (const draft of sharedDrafts) {
+          if (draft.previewUrl) URL.revokeObjectURL(draft.previewUrl);
+        }
+        setSharedDrafts([]);
+        setInputText("");
+        return true;
+      } catch (error) {
+        setSharedError(
+          error instanceof Error ? error.message : "Failed to send message",
+        );
+        return false;
+      } finally {
+        setSendingShared(false);
+      }
+    },
+    [
+      onSend,
+      sendingShared,
+      sharedDrafts,
+      sharedReady,
+      sharedUpload,
+    ],
+  );
+
   const handleRichInputSubmit = useCallback(
     (text: string) => {
+      if (sharedUpload) {
+        void sendSharedContent(text).then((sent) => {
+          if (!sent) {
+            inputRef.current?.setText(text);
+            setInputText(text);
+          }
+        });
+        return;
+      }
       const imgs = images.length > 0 ? images : undefined;
       onSend(text, imgs);
       setImages([]);
       setInputText("");
     },
-    [images, onSend],
+    [images, onSend, sendSharedContent, sharedUpload],
   );
 
   // Called when RichInput has empty text but user presses Enter — allow if images exist
   const handleEmptySubmitAttempt = useCallback(() => {
+    if (sharedUpload && sharedDrafts.length > 0 && sharedReady) {
+      void sendSharedContent("");
+      return true;
+    }
     if (images.length > 0) {
       onSend("", images);
       setImages([]);
       return true;
     }
     return false;
-  }, [images, onSend]);
+  }, [
+    images,
+    onSend,
+    sendSharedContent,
+    sharedDrafts.length,
+    sharedReady,
+    sharedUpload,
+  ]);
 
   const handleInputTextChange = useCallback((text: string) => {
     setInputText(text);
@@ -131,10 +409,15 @@ export const InputBar = memo(function InputBar({
         inputRef.current?.setText(`${command.command} `);
         return;
       }
+      if (sharedUpload) {
+        void sendSharedContent(command.command);
+        inputRef.current?.setText("");
+        return;
+      }
       onSend(command.command);
       inputRef.current?.setText("");
     },
-    [onSend],
+    [onSend, sendSharedContent, sharedUpload],
   );
 
   // RichInput reads this through a ref, so the latest render's state is used.
@@ -192,13 +475,32 @@ export const InputBar = memo(function InputBar({
 
   // Allow submit with only images (no text)
   const handleSendClick = useCallback(() => {
+    if (sharedUpload) {
+      if (!sharedReady || sendingShared) return;
+      if (canSubmit) {
+        handleSubmit();
+      } else if (sharedDrafts.length > 0) {
+        void sendSharedContent("");
+      }
+      return;
+    }
     if (canSubmit) {
       handleSubmit();
     } else if (images.length > 0) {
       onSend("", images);
       setImages([]);
     }
-  }, [canSubmit, handleSubmit, images, onSend]);
+  }, [
+    canSubmit,
+    handleSubmit,
+    images,
+    onSend,
+    sendSharedContent,
+    sendingShared,
+    sharedDrafts.length,
+    sharedReady,
+    sharedUpload,
+  ]);
 
   const handleDragOver = useCallback((e: DragEvent) => {
     e.preventDefault();
@@ -230,7 +532,12 @@ export const InputBar = memo(function InputBar({
       if (!items) return;
       const imageFiles: File[] = [];
       for (const item of items) {
-        if (item.kind === "file" && ACCEPTED_MIME.has(item.type)) {
+        if (
+          item.kind === "file" &&
+          (sharedUpload
+            ? SHARED_ATTACHMENT_MEDIA_TYPES.has(item.type)
+            : ACCEPTED_MIME.has(item.type))
+        ) {
           const file = item.getAsFile();
           if (file) imageFiles.push(file);
         }
@@ -240,7 +547,7 @@ export const InputBar = memo(function InputBar({
         addFiles(imageFiles);
       }
     },
-    [addFiles],
+    [addFiles, sharedUpload],
   );
 
   // Attach paste listener to the container
@@ -292,6 +599,73 @@ export const InputBar = memo(function InputBar({
             ))}
           </div>
         )}
+        {sharedDrafts.length > 0 && (
+          <div
+            className="flex flex-wrap gap-2 px-3 pt-3"
+            aria-label="Attachment drafts"
+          >
+            {sharedDrafts.map((draft) => (
+              <div
+                key={draft.localId}
+                className="relative flex min-w-44 max-w-64 items-center gap-2 rounded-lg border border-border bg-background p-2 pr-8"
+              >
+                {draft.previewUrl ? (
+                  <img
+                    src={draft.previewUrl}
+                    alt=""
+                    className="size-12 shrink-0 rounded object-cover"
+                  />
+                ) : (
+                  <div className="flex size-12 shrink-0 items-center justify-center rounded bg-elevated text-lg" aria-hidden="true">
+                    📎
+                  </div>
+                )}
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-xs font-medium text-text">
+                    {draft.file.name}
+                  </div>
+                  <div className="text-[0.643rem] text-text-dimmed">
+                    {formatFileSize(draft.file.size)} ·{" "}
+                    {draft.phase === "error"
+                      ? draft.error
+                      : attachmentPhaseLabel(draft.phase)}
+                  </div>
+                  {draft.phase === "uploading" && (
+                    <progress
+                      value={draft.progress}
+                      max={100}
+                      aria-label={`Uploading ${draft.file.name}`}
+                      className="mt-1 h-1 w-full accent-accent"
+                    />
+                  )}
+                  {draft.phase === "error" && (
+                    <button
+                      type="button"
+                      className="mt-1 text-[0.714rem] text-accent hover:underline"
+                      onClick={() => retrySharedDraft(draft)}
+                    >
+                      Retry
+                    </button>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  className="absolute right-1.5 top-1.5 flex size-5 cursor-pointer items-center justify-center rounded-full border border-border bg-elevated text-[0.714rem] text-text-muted shadow-sm hover:bg-hover hover:text-text"
+                  onClick={() => removeSharedDraft(draft)}
+                  title={`Remove ${draft.file.name}`}
+                  aria-label={`Remove ${draft.file.name}`}
+                >
+                  ×
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+        {sharedError && (
+          <div role="alert" className="px-3 pt-2 text-xs text-error-bright">
+            {sharedError}
+          </div>
+        )}
         {slashMenuOpen && (
           <SlashCommandMenu
             commands={slashSuggestions}
@@ -313,7 +687,11 @@ export const InputBar = memo(function InputBar({
         <input
           ref={fileInputRef}
           type="file"
-          accept="image/png,image/jpeg,image/gif,image/webp,image/svg+xml,image/bmp"
+          accept={
+            sharedUpload
+              ? Array.from(SHARED_ATTACHMENT_MEDIA_TYPES).join(",")
+              : "image/png,image/jpeg,image/gif,image/webp,image/svg+xml,image/bmp"
+          }
           multiple
           className="hidden"
           onChange={(e) => {
@@ -334,7 +712,7 @@ export const InputBar = memo(function InputBar({
             type="button"
             className="flex size-8 cursor-pointer items-center justify-center rounded-lg border-none bg-transparent text-text-dimmed shadow-none transition-colors duration-150 hover:bg-hover hover:text-text-muted"
             onClick={() => fileInputRef.current?.click()}
-            title="Attach image"
+            title={sharedUpload ? "Attach files" : "Attach image"}
           >
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
               <rect x="2" y="2" width="12" height="12" rx="2" />
@@ -342,7 +720,7 @@ export const InputBar = memo(function InputBar({
               <path d="M14 10.5l-3.5-3.5L4 14" />
             </svg>
           </button>
-          {isStreaming && hasContent && (
+          {isStreaming && canSend && (
             <button
               className="flex size-8 cursor-pointer items-center justify-center rounded-lg border-none shadow-none transition-all duration-150 bg-accent/15 text-accent hover:bg-accent/25"
               onClick={handleSendClick}
@@ -367,7 +745,7 @@ export const InputBar = memo(function InputBar({
           ) : (
             <button
               className="flex size-8 cursor-pointer items-center justify-center rounded-lg border-none shadow-none transition-all duration-150 disabled:cursor-default disabled:opacity-25 bg-accent/15 text-accent hover:not-disabled:bg-accent/25"
-              disabled={!hasContent}
+              disabled={!canSend}
               onClick={handleSendClick}
               title="Send message"
             >
@@ -382,3 +760,28 @@ export const InputBar = memo(function InputBar({
     </div>
   );
 });
+
+function formatFileSize(bytes: number) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KiB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MiB`;
+}
+
+function attachmentPhaseLabel(
+  phase: SharedAttachmentDraft["phase"],
+) {
+  switch (phase) {
+    case "queued":
+      return "Queued";
+    case "hashing":
+      return "Preparing";
+    case "uploading":
+      return "Uploading";
+    case "processing":
+      return "Scanning";
+    case "ready":
+      return "Ready";
+    case "error":
+      return "Failed";
+  }
+}
