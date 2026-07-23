@@ -102,6 +102,12 @@ describeApproval("real Hermes approval UI", () => {
       await approveButton.waitForClickable({ timeout: 10_000 });
       await approveButton.click();
 
+      const confirmedResolution = await $(
+        '[data-testid="hermes-approval-resolved"][data-confirmed="true"]',
+      );
+      await confirmedResolution.waitForDisplayed({ timeout: 30_000 });
+      expect(await confirmedResolution.getText()).toContain("Approved");
+
       const finalReply = await $(`//*[normalize-space(text())='${finalMessage}']`);
       await finalReply.waitForDisplayed({ timeout: 120_000 });
       await approvalCard.waitForExist({ reverse: true, timeout: 30_000 });

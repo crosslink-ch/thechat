@@ -368,16 +368,20 @@ live stack:
 3. The desktop renders `[data-testid="hermes-approval-request"]` with the
    policy-offered approval and denial actions, while no fallback message tells
    the user to type `/approve`.
-4. Clicking **Approve** from the card resolves the request and executes the
-   harmless print command. The model fixture accepts only the matching tool-call
-   ID, exit code `0`, and exact output marker.
-5. The original Hermes turn posts its final message into the DM, proving that
-   the card action resolved the blocked real-Hermes tool call. The fixture also
-   requires exactly one approval-driving tool response and one successful final
-   response.
+4. Clicking **Approve** from the card must produce a server-confirmed
+   `approval.resolved` row in the rendered event timeline; an optimistic local
+   decision alone does not satisfy the test.
+5. The harmless print command executes, and the model fixture accepts only the
+   matching tool-call ID, explicit user-approval evidence, exit code `0`, an
+   empty error, and exact output marker. The original Hermes turn must then post
+   its final DM message. The fixture requires exactly one approval-driving tool
+   response and one successful final response.
 
 A screenshot of the pending approval card is saved at
 `.tmp/hermes-approval-ui-e2e.png`. Container names and Hermes state/log paths
-are unique per run. Gateway, API, worker, model, and desktop processes are
-always stopped; containers are removed by default. `HERMES_E2E_KEEP=1` retains
-that run's uniquely named containers and diagnostics, never live processes.
+are unique per run. A nonblocking suite lock prevents the fixed loopback ports
+from being used by concurrent runs. The desktop command has a wall-clock bound,
+child processes run in dedicated process groups, and SIGINT/SIGTERM enter the
+same teardown path. Gateway, API, worker, model, and desktop processes are always
+stopped; containers are removed by default. `HERMES_E2E_KEEP=1` retains that
+run's uniquely named containers and diagnostics, never live processes.

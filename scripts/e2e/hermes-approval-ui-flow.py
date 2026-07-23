@@ -9,6 +9,7 @@ structured approval card, clicks Approve, and verifies Hermes continues.
 
 from __future__ import annotations
 
+import fcntl
 import importlib.util
 import json
 import os
@@ -17,6 +18,7 @@ import signal
 import subprocess
 import sys
 import time
+from contextlib import contextmanager
 from pathlib import Path
 from types import ModuleType
 from typing import Any
@@ -102,6 +104,53 @@ _SAFE_ENV_KEYS = {
 }
 
 
+@contextmanager
+def _exclusive_run_lock():
+    TMP.mkdir(parents=True, exist_ok=True)
+    lock_path = TMP / "hermes-approval-ui-e2e.lock"
+    lock_file = lock_path.open("a+", encoding="utf-8")
+    try:
+        try:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            raise RuntimeError(
+                f"Another Hermes approval UI E2E run owns {lock_path}"
+            ) from exc
+        lock_file.seek(0)
+        lock_file.truncate()
+        lock_file.write(f"{RUN_ID}\n")
+        lock_file.flush()
+        yield
+    finally:
+        try:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+        finally:
+            lock_file.close()
+
+
+@contextmanager
+def _interruptible_cleanup():
+    previous_handlers = {
+        sig: signal.getsignal(sig) for sig in (signal.SIGINT, signal.SIGTERM)
+    }
+    interrupted = False
+
+    def handle_signal(signum, _frame):
+        nonlocal interrupted
+        if interrupted:
+            return
+        interrupted = True
+        raise KeyboardInterrupt(f"Received signal {signum}; cleaning up E2E resources")
+
+    for sig in previous_handlers:
+        signal.signal(sig, handle_signal)
+    try:
+        yield
+    finally:
+        for sig, handler in previous_handlers.items():
+            signal.signal(sig, handler)
+
+
 def _safe_child_env() -> dict[str, str]:
     env = {key: value for key, value in os.environ.items() if key in _SAFE_ENV_KEYS}
     env["PATH"] = f"{Path(harness.BUN).parent}:{env.get('PATH', '')}"
@@ -165,14 +214,7 @@ print(json.dumps({
 
 
 def _terminate(proc: subprocess.Popen[Any] | None, timeout: int = 15) -> None:
-    if proc is None or proc.poll() is not None:
-        return
-    proc.send_signal(signal.SIGTERM)
-    try:
-        proc.wait(timeout=timeout)
-    except subprocess.TimeoutExpired:
-        proc.kill()
-        proc.wait(timeout=5)
+    harness.terminate_process(proc, timeout=timeout)
 
 
 def _start_fake_model(env: dict[str, str]) -> subprocess.Popen[Any]:
@@ -192,6 +234,7 @@ def _start_fake_model(env: dict[str, str]) -> subprocess.Popen[Any]:
             stdout=log,
             stderr=subprocess.STDOUT,
             text=True,
+            start_new_session=True,
         )
 
     def ready() -> bool:
@@ -234,6 +277,31 @@ def _wait_for_gateway_registration(base: str, token: str, conversation_id: str) 
     )
 
 
+def _run_bounded_process_group(
+    cmd: list[str],
+    *,
+    env: dict[str, str],
+    cwd: Path,
+    timeout: int,
+) -> None:
+    print("$", " ".join(cmd), flush=True)
+    proc = subprocess.Popen(
+        cmd,
+        cwd=cwd,
+        env=env,
+        text=True,
+        start_new_session=True,
+    )
+    try:
+        return_code = proc.wait(timeout=timeout)
+    except BaseException:
+        harness.terminate_process(proc, timeout=10)
+        raise
+    if return_code != 0:
+        harness.terminate_process(proc, timeout=10)
+        raise subprocess.CalledProcessError(return_code, cmd)
+
+
 def _run_desktop_e2e(
     env: dict[str, str],
     *,
@@ -253,7 +321,7 @@ def _run_desktop_e2e(
         "THECHAT_E2E_DISABLE_DOTENV": "1",
         "TAURI_E2E": "1",
         "HERMES_APPROVAL_E2E": "1",
-        "WDIO_MOCHA_TIMEOUT": "240000",
+        "WDIO_MOCHA_TIMEOUT": "360000",
         "HERMES_APPROVAL_E2E_EMAIL": email,
         "HERMES_APPROVAL_E2E_PASSWORD": password,
         "HERMES_APPROVAL_E2E_BOT_NAME": bot_name,
@@ -267,7 +335,7 @@ def _run_desktop_e2e(
     # This suite embeds the backend URL at Tauri build time. Never inherit a
     # stale-build shortcut from a developer shell.
     desktop_env.pop("SKIP_BUILD", None)
-    harness.run(
+    _run_bounded_process_group(
         [
             harness.PNPM,
             "--filter",
@@ -280,6 +348,8 @@ def _run_desktop_e2e(
             "e2e/opt-in/hermes-approval.e2e.js",
         ],
         env=desktop_env,
+        cwd=ROOT,
+        timeout=480,
     )
     if not screenshot.exists() or screenshot.stat().st_size == 0:
         raise AssertionError(f"Approval UI screenshot was not produced: {screenshot}")
@@ -330,7 +400,7 @@ def _verify_model_contract() -> dict[str, int]:
     return state
 
 
-def main() -> None:
+def _run() -> None:
     env = _safe_child_env()
     env["HERMES_YOLO_MODE"] = "0"
     env["TERMINAL_ENV"] = "local"
@@ -475,6 +545,11 @@ agent:
                 "Keeping E2E resources because HERMES_E2E_KEEP=1; "
                 f"Hermes home root: {harness.HERMES_HOME_ROOT}"
             )
+
+
+def main() -> None:
+    with _exclusive_run_lock(), _interruptible_cleanup():
+        _run()
 
 
 if __name__ == "__main__":

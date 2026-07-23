@@ -588,7 +588,11 @@ function ResolvedApprovalRow({
   const denied = decision === "deny";
 
   return (
-    <div className="relative z-10 min-w-0" data-testid="hermes-approval-resolved">
+    <div
+      className="relative z-10 min-w-0"
+      data-testid="hermes-approval-resolved"
+      data-confirmed={state.confirmed ? "true" : "false"}
+    >
       <button
         type="button"
         aria-expanded={expanded}

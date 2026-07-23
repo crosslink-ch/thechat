@@ -381,7 +381,10 @@ describe("HermesProgressInline", () => {
     fireEvent.click(screen.getByRole("button", { name: "Approve" }));
 
     expect(screen.queryByTestId("hermes-approval-request")).not.toBeInTheDocument();
-    expect(screen.getByTestId("hermes-approval-resolved")).toBeInTheDocument();
+    expect(screen.getByTestId("hermes-approval-resolved")).toHaveAttribute(
+      "data-confirmed",
+      "false",
+    );
     expect(screen.getByText("Approved")).toBeInTheDocument();
     expect(screen.queryByText("action needed")).not.toBeInTheDocument();
     expect(screen.getByText(/is working/)).toBeInTheDocument();
@@ -444,6 +447,10 @@ describe("HermesProgressInline", () => {
     );
 
     expect(screen.queryByTestId("hermes-approval-request")).not.toBeInTheDocument();
+    expect(screen.getByTestId("hermes-approval-resolved")).toHaveAttribute(
+      "data-confirmed",
+      "true",
+    );
     expect(screen.getByText("Approved for session")).toBeInTheDocument();
     expect(screen.getByText("sudo systemctl restart api")).toBeInTheDocument();
   });

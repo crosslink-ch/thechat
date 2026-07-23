@@ -82,6 +82,35 @@ def output(cmd: list[str], *, env: dict[str, str] | None = None, cwd: Path = ROO
     return subprocess.check_output(cmd, cwd=cwd, env=env, text=True).strip()
 
 
+def terminate_process(proc: subprocess.Popen | None, timeout: int = 15) -> None:
+    """Terminate a tracked process and its dedicated process group."""
+    if proc is None:
+        return
+    was_running = proc.poll() is None
+
+    def send(sig: signal.Signals) -> None:
+        try:
+            os.killpg(proc.pid, sig)
+        except ProcessLookupError:
+            if proc.poll() is None:
+                try:
+                    proc.send_signal(sig)
+                except ProcessLookupError:
+                    pass
+
+    send(signal.SIGTERM)
+    if not was_running:
+        return
+    try:
+        proc.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        send(signal.SIGKILL)
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            pass
+
+
 def wait_for(predicate, timeout=60, label="condition"):
     start = time.time()
     last_error = None
@@ -263,14 +292,18 @@ def start_hermes_gateway(
         "LOG_LEVEL": "info",
     }
     log = hermes_log.open("w")
-    proc = subprocess.Popen(
-        [UV, "run", "--frozen", "python", "-u", str(HERMES_GATEWAY_RUNTIME)],
-        cwd=HERMES_SOURCE_DIR,
-        env=hermes_env,
-        stdout=log,
-        stderr=subprocess.STDOUT,
-        text=True,
-    )
+    try:
+        proc = subprocess.Popen(
+            [UV, "run", "--frozen", "python", "-u", str(HERMES_GATEWAY_RUNTIME)],
+            cwd=HERMES_SOURCE_DIR,
+            env=hermes_env,
+            stdout=log,
+            stderr=subprocess.STDOUT,
+            text=True,
+            start_new_session=True,
+        )
+    finally:
+        log.close()
 
     def still_running():
         if proc.poll() is not None:
@@ -281,8 +314,12 @@ def start_hermes_gateway(
             raise RuntimeError(f"Hermes gateway for {bot_name} exited with {proc.returncode}\n{tail}")
         return True
 
-    time.sleep(3)
-    still_running()
+    try:
+        time.sleep(3)
+        still_running()
+    except BaseException:
+        terminate_process(proc)
+        raise
     return proc
 
 
@@ -297,7 +334,12 @@ def start_api(env: dict[str, str]) -> subprocess.Popen:
         "THECHAT_BACKEND_PORT": str(API_PORT),
         "LOG_LEVEL": "error",
     }
-    proc = subprocess.Popen([BUN, "run", "packages/api/src/index.ts"], cwd=ROOT, env=api_env)
+    proc = subprocess.Popen(
+        [BUN, "run", "packages/api/src/index.ts"],
+        cwd=ROOT,
+        env=api_env,
+        start_new_session=True,
+    )
     try:
         wait_for(
             lambda: http_json("GET", f"http://localhost:{API_PORT}/health")[0]
@@ -306,12 +348,7 @@ def start_api(env: dict[str, str]) -> subprocess.Popen:
             label="TheChat API",
         )
     except BaseException:
-        proc.terminate()
-        try:
-            proc.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            proc.wait(timeout=5)
+        terminate_process(proc, timeout=10)
         raise
     return proc
 
@@ -331,10 +368,15 @@ def start_worker(env: dict[str, str]) -> subprocess.Popen:
         [BUN, "run", "packages/api/src/scripts/worker.ts"],
         cwd=ROOT,
         env=worker_env,
+        start_new_session=True,
     )
-    time.sleep(1)
-    if proc.poll() is not None:
-        raise RuntimeError(f"TheChat worker exited early with {proc.returncode}")
+    try:
+        time.sleep(1)
+        if proc.poll() is not None:
+            raise RuntimeError(f"TheChat worker exited early with {proc.returncode}")
+    except BaseException:
+        terminate_process(proc, timeout=10)
+        raise
     return proc
 
 
@@ -631,23 +673,9 @@ def main():
         }, indent=2))
     finally:
         for hermes_proc in hermes_procs:
-            hermes_proc.send_signal(signal.SIGTERM)
-            try:
-                hermes_proc.wait(timeout=15)
-            except subprocess.TimeoutExpired:
-                hermes_proc.kill()
-        if worker_proc:
-            worker_proc.send_signal(signal.SIGTERM)
-            try:
-                worker_proc.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                worker_proc.kill()
-        if api_proc:
-            api_proc.send_signal(signal.SIGTERM)
-            try:
-                api_proc.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                api_proc.kill()
+            terminate_process(hermes_proc)
+        terminate_process(worker_proc, timeout=10)
+        terminate_process(api_proc, timeout=10)
         if not KEEP:
             run(["docker", "rm", "-f", REDIS_CONTAINER], check=False)
             run(["docker", "rm", "-f", PG_CONTAINER], check=False)

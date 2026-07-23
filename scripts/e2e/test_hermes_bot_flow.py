@@ -7,7 +7,7 @@ import importlib.util
 import tempfile
 import unittest
 from pathlib import Path
-from typing import Any
+from typing import Any, IO, cast
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -54,13 +54,23 @@ class HermesBotFlowTests(unittest.TestCase):
             original_popen = harness.subprocess.Popen
             original_sleep = harness.time.sleep
 
-            def fake_popen(cmd, *, cwd=None, env=None, stdout=None, stderr=None, text=None):
+            def fake_popen(
+                cmd,
+                *,
+                cwd=None,
+                env=None,
+                stdout=None,
+                stderr=None,
+                text=None,
+                start_new_session=None,
+            ):
                 captured["cmd"] = list(cmd)
                 captured["cwd"] = cwd
                 captured["env"] = dict(env or {})
                 captured["stdout"] = stdout
                 captured["stderr"] = stderr
                 captured["text"] = text
+                captured["start_new_session"] = start_new_session
                 return FakeGatewayProcess()
 
             try:
@@ -73,22 +83,21 @@ class HermesBotFlowTests(unittest.TestCase):
                     "Nova E2E",
                 )
             finally:
-                stream = captured.get("stdout")
+                stream = cast(IO[str] | None, captured.get("stdout"))
                 if stream is not None:
                     stream.close()
                 harness.subprocess.Popen = original_popen
                 harness.time.sleep = original_sleep
 
             self.assertIsInstance(proc, FakeGatewayProcess)
-            cmd = captured["cmd"]
-            self.assertIsInstance(cmd, list)
+            cmd = cast(list[object], captured["cmd"])
             joined = " ".join(str(part) for part in cmd)
             self.assertNotIn("hermes gateway run", joined)
             self.assertNotIn("hermes_cli.main", joined)
             self.assertIn("python", joined)
             self.assertEqual(captured["cwd"], harness.HERMES_SOURCE_DIR)
-            env = captured["env"]
-            self.assertIsInstance(env, dict)
+            self.assertIs(captured["start_new_session"], True)
+            env = cast(dict[str, str], captured["env"])
             self.assertEqual(
                 env["HERMES_HOME"],
                 str(harness.HERMES_HOME_ROOT / "nova-e2e"),
@@ -111,7 +120,16 @@ class HermesBotFlowTests(unittest.TestCase):
             original_popen = harness.subprocess.Popen
             original_sleep = harness.time.sleep
 
-            def fake_popen(cmd, *, cwd=None, env=None, stdout=None, stderr=None, text=None):
+            def fake_popen(
+                cmd,
+                *,
+                cwd=None,
+                env=None,
+                stdout=None,
+                stderr=None,
+                text=None,
+                start_new_session=None,
+            ):
                 captured["stdout"] = stdout
                 return FakeGatewayProcess()
 
@@ -137,7 +155,7 @@ auxiliary:
 """,
                 )
             finally:
-                stream = captured.get("stdout")
+                stream = cast(IO[str] | None, captured.get("stdout"))
                 if stream is not None:
                     stream.close()
                 harness.subprocess.Popen = original_popen
