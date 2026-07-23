@@ -39,7 +39,7 @@ export const config = {
   reporters: ["spec"],
   mochaOpts: {
     ui: "bdd",
-    timeout: 60000,
+    timeout: Number(process.env.WDIO_MOCHA_TIMEOUT ?? "60000"),
   },
 
   hostname: "localhost",

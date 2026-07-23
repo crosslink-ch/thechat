@@ -323,3 +323,48 @@ API, creates multiple named Hermes bots, starts one Hermes Gateway process per
 bot token from `/home/bruno/projects/hermes2`, verifies channel mentions and
 direct-message responses, checks session continuity, and cleans up unless
 `HERMES_E2E_KEEP=1` is set.
+
+## 9. Automated real-Hermes approval UI E2E
+
+The approval UI suite is a separate opt-in test because it builds and drives
+the real Tauri desktop app. It also starts an actual Hermes Gateway from source
+and connects it to TheChat through the native polling adapter. A deterministic
+local OpenAI-compatible fixture replaces only the model API: it makes Hermes
+request a harmless terminal command that the manual approval policy must stop.
+No provider credential is required.
+
+Linux prerequisites are the same as the Tauri WebDriver suite: Rust,
+`tauri-driver`, `WebKitWebDriver`, and `xvfb-run`. Docker, Bun/pnpm, Python 3,
+`uv`, and an installed Hermes source checkout are also required. Run:
+
+```bash
+HERMES_E2E_SOURCE_DIR=/path/to/hermes-agent \
+  python3 scripts/test.py hermes-approval-ui
+```
+
+Or use the package script directly:
+
+```bash
+HERMES_E2E_SOURCE_DIR=/path/to/hermes-agent \
+  pnpm test:e2e:hermes:approval-ui
+```
+
+The test uses API `3339`, Postgres `15545`, Redis `16382`, and the local model
+fixture on `18081` by default. It performs all of these assertions across the
+live stack:
+
+1. Login through the desktop UI and send a DM to the real Hermes bot.
+2. Hermes requests a dangerous command and posts `approval.request` through
+   TheChat's invocation-progress endpoint.
+3. The desktop renders `[data-testid="hermes-approval-request"]` with the
+   policy-offered approval and denial actions, while no fallback message tells
+   the user to type `/approve`.
+4. Clicking **Approve** from the card resolves the request, executes the
+   harmless command, and lets the original Hermes turn complete.
+5. The original Hermes turn posts its final message into the DM, proving that
+   the card action resolved the blocked real-Hermes tool call.
+
+A screenshot of the pending approval card is saved at
+`.tmp/hermes-approval-ui-e2e.png`. Gateway, API, worker, model, and desktop
+processes are always stopped; containers are removed by default.
+`HERMES_E2E_KEEP=1` retains the containers and Hermes state for debugging.

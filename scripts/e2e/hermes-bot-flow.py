@@ -13,7 +13,6 @@ import os
 import signal
 import shutil
 import subprocess
-import sys
 import time
 import urllib.error
 import urllib.request
@@ -50,8 +49,8 @@ def explicit_env_or_default(key: str, default: str) -> str:
         return value
     return default
 
-BUN = os.environ.get("BUN", str(Path.home() / ".bun/bin/bun"))
-PNPM = os.environ.get("PNPM", "pnpm")
+BUN = os.environ.get("BUN") or shutil.which("bun") or str(Path.home() / ".bun/bin/bun")
+PNPM = os.environ.get("PNPM") or shutil.which("pnpm") or "pnpm"
 API_PORT = int(explicit_env_or_default("THECHAT_E2E_API_PORT", "3338"))
 POSTGRES_PORT = int(explicit_env_or_default("THECHAT_E2E_POSTGRES_PORT", "15544"))
 REDIS_PORT = int(explicit_env_or_default("THECHAT_E2E_REDIS_PORT", "16381"))
@@ -62,7 +61,7 @@ HERMES_SOURCE_DIR = Path(os.environ.get("HERMES_E2E_SOURCE_DIR", "/home/bruno/pr
 HERMES_HOME_ROOT = Path(os.environ.get("HERMES_E2E_HOME", str(ROOT / ".tmp" / "hermes-e2e-home")))
 HERMES_LOG_ROOT = Path(os.environ.get("HERMES_E2E_LOG_DIR", str(ROOT / ".tmp")))
 HERMES_GATEWAY_RUNTIME = ROOT / "scripts" / "e2e" / "run-hermes-gateway-runtime.py"
-UV = os.environ.get("UV", "uv")
+UV = os.environ.get("UV") or shutil.which("uv") or "uv"
 DATABASE_URL = explicit_env_or_default(
     "THECHAT_E2E_DATABASE_URL",
     f"postgres://thechat:thechat@localhost:{POSTGRES_PORT}/thechat",
@@ -187,11 +186,23 @@ def slug(value: str) -> str:
     return "".join(ch.lower() if ch.isalnum() else "-" for ch in value).strip("-") or "bot"
 
 
-def start_hermes_gateway(env: dict[str, str], base: str, bot_token: str, bot_name: str) -> subprocess.Popen:
+def start_hermes_gateway(
+    env: dict[str, str],
+    base: str,
+    bot_token: str,
+    bot_name: str,
+    *,
+    approval_mode: str | None = None,
+    approval_timeout: int | None = None,
+    model_api_mode: str | None = None,
+    model_base_url: str | None = None,
+) -> subprocess.Popen:
     if not HERMES_SOURCE_DIR.exists():
         raise RuntimeError(f"Hermes source checkout not found: {HERMES_SOURCE_DIR}")
     if HERMES_PROVIDER == "openrouter" and not env.get("OPENROUTER_API_KEY", "").strip():
         raise RuntimeError("OPENROUTER_API_KEY is required for the Hermes e2e provider openrouter")
+    if approval_mode not in {None, "manual", "smart", "off"}:
+        raise ValueError(f"Unsupported approval mode: {approval_mode}")
 
     bot_slug = slug(bot_name)
     hermes_home = HERMES_HOME_ROOT / bot_slug
@@ -200,16 +211,29 @@ def start_hermes_gateway(env: dict[str, str], base: str, bot_token: str, bot_nam
         shutil.rmtree(hermes_home)
     hermes_home.mkdir(parents=True, exist_ok=True)
     hermes_log.parent.mkdir(parents=True, exist_ok=True)
-    (hermes_home / "config.yaml").write_text(
-        "\n".join([
-            "model:",
-            f"  provider: {HERMES_PROVIDER}",
-            f"  default: {HERMES_MODEL}",
-            "streaming:",
-            "  enabled: false",
-            "",
+
+    config_lines = [
+        "model:",
+        f"  provider: {HERMES_PROVIDER}",
+        f"  default: {HERMES_MODEL}",
+    ]
+    if model_api_mode:
+        config_lines.append(f"  api_mode: {model_api_mode}")
+    if model_base_url:
+        config_lines.append(f"  base_url: {model_base_url}")
+    config_lines.extend([
+        "streaming:",
+        "  enabled: false",
+    ])
+    if approval_mode:
+        config_lines.extend([
+            "approvals:",
+            f"  mode: {approval_mode}",
         ])
-    )
+        if approval_timeout is not None:
+            config_lines.append(f"  timeout: {approval_timeout}")
+    config_lines.append("")
+    (hermes_home / "config.yaml").write_text("\n".join(config_lines))
 
     hermes_env = env | {
         "HERMES_HOME": str(hermes_home),

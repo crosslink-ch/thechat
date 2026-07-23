@@ -126,7 +126,16 @@ SUITES = [
     },
     {
         "name": "e2e-unit",
-        "cmd": ["python3", "-m", "unittest", "scripts.e2e.test_hermes_bot_flow"],
+        "cmd": [
+            "python3",
+            "-m",
+            "unittest",
+            "discover",
+            "-s",
+            "scripts/e2e",
+            "-p",
+            "test_*.py",
+        ],
     },
     {
         "name": "mcp",
@@ -167,6 +176,33 @@ SUITES = [
             ),
         },
         "opt_in": True,  # real Hermes Gateway source checkout + provider API key
+    },
+    {
+        "name": "hermes-approval-ui",
+        "cmd": ["python3", "scripts/e2e/hermes-approval-ui-flow.py"],
+        "env": {
+            "THECHAT_E2E_API_PORT": explicit_env_or_default("THECHAT_E2E_API_PORT", "3339"),
+            "THECHAT_E2E_POSTGRES_PORT": explicit_env_or_default("THECHAT_E2E_POSTGRES_PORT", "15545"),
+            "THECHAT_E2E_REDIS_PORT": explicit_env_or_default("THECHAT_E2E_REDIS_PORT", "16382"),
+            "THECHAT_E2E_DATABASE_URL": explicit_env_or_default(
+                "THECHAT_E2E_DATABASE_URL",
+                "postgres://thechat:thechat@localhost:15545/thechat",
+            ),
+            "THECHAT_E2E_REDIS_URL": explicit_env_or_default(
+                "THECHAT_E2E_REDIS_URL",
+                "redis://localhost:16382",
+            ),
+            "HERMES_APPROVAL_E2E_MODEL_PORT": explicit_env_or_default(
+                "HERMES_APPROVAL_E2E_MODEL_PORT",
+                "18081",
+            ),
+            "HERMES_E2E_SOURCE_DIR": explicit_env_or_default(
+                "HERMES_E2E_SOURCE_DIR",
+                "/home/bruno/projects/hermes2",
+            ),
+        },
+        # Real Hermes + real Tauri UI, with a deterministic local model fixture.
+        "opt_in": True,
     },
 ]
 

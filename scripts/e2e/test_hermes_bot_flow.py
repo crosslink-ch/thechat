@@ -4,17 +4,17 @@
 from __future__ import annotations
 
 import importlib.util
-import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Any
 
 
 ROOT = Path(__file__).resolve().parents[2]
 HARNESS = ROOT / "scripts" / "e2e" / "hermes-bot-flow.py"
 
 
-def load_harness():
+def load_harness() -> Any:
     spec = importlib.util.spec_from_file_location("hermes_bot_flow", HARNESS)
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
@@ -93,6 +93,52 @@ class HermesBotFlowTests(unittest.TestCase):
                 env["HERMES_HOME"],
                 str(harness.HERMES_HOME_ROOT / "nova-e2e"),
             )
+
+    def test_gateway_can_force_manual_approval_with_chat_completions(self):
+        harness = load_harness()
+        captured: dict[str, object] = {}
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            harness.HERMES_SOURCE_DIR = tmp_path / "hermes-src"
+            harness.HERMES_HOME_ROOT = tmp_path / "homes"
+            harness.HERMES_LOG_ROOT = tmp_path / "logs"
+            harness.HERMES_PROVIDER = "custom"
+            harness.HERMES_MODEL = "approval-e2e"
+            harness.UV = "uv"
+            harness.HERMES_SOURCE_DIR.mkdir()
+
+            original_popen = harness.subprocess.Popen
+            original_sleep = harness.time.sleep
+
+            def fake_popen(cmd, *, cwd=None, env=None, stdout=None, stderr=None, text=None):
+                captured["stdout"] = stdout
+                return FakeGatewayProcess()
+
+            try:
+                harness.subprocess.Popen = fake_popen
+                harness.time.sleep = lambda _seconds: None
+                harness.start_hermes_gateway(
+                    {"PATH": "/usr/bin"},
+                    "http://localhost:3339",
+                    "bot_test",
+                    "Approval E2E",
+                    approval_mode="manual",
+                    approval_timeout=180,
+                    model_api_mode="chat_completions",
+                    model_base_url="http://127.0.0.1:18081/v1",
+                )
+            finally:
+                stream = captured.get("stdout")
+                if stream is not None:
+                    stream.close()
+                harness.subprocess.Popen = original_popen
+                harness.time.sleep = original_sleep
+
+            config = (harness.HERMES_HOME_ROOT / "approval-e2e" / "config.yaml").read_text()
+            self.assertIn("  api_mode: chat_completions\n", config)
+            self.assertIn("  base_url: http://127.0.0.1:18081/v1\n", config)
+            self.assertIn("approvals:\n  mode: manual\n  timeout: 180\n", config)
 
 
 if __name__ == "__main__":
