@@ -156,10 +156,11 @@ export async function cancelSharedAttachment(
 ) {
   const item = api.attachments({ id: attachmentId }) as unknown as {
     delete(
+      body: undefined,
       options: ReturnType<typeof authHeaders>,
     ): Promise<{ data?: unknown; error?: unknown }>;
   };
-  const result = await item.delete(authHeaders(token));
+  const result = await item.delete(undefined, authHeaders(token));
   if (result.error) {
     throw new Error(
       edenErrorMessage(result.error, "Failed to cancel attachment"),

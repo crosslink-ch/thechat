@@ -171,9 +171,6 @@ export function useChannelChat({
       if (msg.conversationId !== conversationId) return;
       if (clientMessageId) {
         pendingSendsRef.current.delete(clientMessageId);
-        if (failedSendRef.current?.clientMessageId === clientMessageId) {
-          failedSendRef.current = null;
-        }
       }
       setLocalSentMessages((previous) =>
         clientMessageId

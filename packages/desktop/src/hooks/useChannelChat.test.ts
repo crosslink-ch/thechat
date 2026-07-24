@@ -884,6 +884,51 @@ describe("useChannelChat", () => {
     expect(result.current.messages.map((item) => item.id)).toEqual([persisted.id]);
   });
 
+  it("keeps the failed client message id after a delayed live echo", async () => {
+    const persisted = message("dm-retry-echo", "retry after echo");
+    const post = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("response lost"))
+      .mockResolvedValueOnce({ data: persisted, error: null });
+    vi.mocked(api.messages).mockReturnValue({
+      get: vi.fn(() => Promise.resolve({ data: [] })),
+      post,
+    } as any);
+
+    const { result } = renderHook(
+      () =>
+        useChannelChat({
+          conversationId: "dm-retry-echo",
+          token: "test-token",
+          wsSendMessage: vi.fn(),
+          selfUser: selfUser(),
+        }),
+      { wrapper: createQueryWrapper() },
+    );
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    await act(async () => {
+      expect(
+        await result.current.sendMessage("retry after echo", ["attachment-1"]),
+      ).toBe(false);
+    });
+    const firstClientMessageId = post.mock.calls[0][0].clientMessageId;
+
+    act(() => {
+      result.current.addMessage(persisted, firstClientMessageId);
+    });
+
+    await act(async () => {
+      expect(
+        await result.current.sendMessage("retry after echo", ["attachment-1"]),
+      ).toBe(true);
+    });
+
+    expect(post).toHaveBeenCalledTimes(2);
+    expect(post.mock.calls[1][0].clientMessageId).toBe(firstClientMessageId);
+    expect(result.current.messages.map((item) => item.id)).toEqual([persisted.id]);
+  });
+
   it("trims the visible cache on append only after the threshold", async () => {
     vi.mocked(api.messages).mockReturnValue({
       get: vi.fn(() =>

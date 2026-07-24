@@ -189,6 +189,10 @@ describe("InputBar shared attachments", () => {
       },
     });
     await waitFor(() => expect(screen.getByText(/Ready/)).toBeInTheDocument());
+    const draft = screen.getByTestId("attachment-draft");
+    expect(draft).toHaveAttribute("data-attachment-file-name", "report.txt");
+    expect(draft).toHaveAttribute("data-attachment-phase", "ready");
+    expect(draft).toHaveAttribute("data-attachment-id", "attachment-1");
 
     fireEvent.click(screen.getByTitle("Send message"));
     expect(onSend).toHaveBeenCalledWith("", undefined, ["attachment-1"]);
