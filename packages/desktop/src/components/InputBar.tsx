@@ -149,7 +149,16 @@ export const InputBar = memo(function InputBar({
           }),
       )
         .catch((error) => {
-          if (controller.signal.aborted) return;
+          if (controller.signal.aborted) {
+            if (!(error instanceof DOMException && error.name === "AbortError")) {
+              setSharedError(
+                error instanceof Error
+                  ? error.message
+                  : "Failed to clean up cancelled attachment",
+              );
+            }
+            return;
+          }
           updateSharedDraft(draft.localId, {
             phase: "error",
             error:
@@ -223,30 +232,61 @@ export const InputBar = memo(function InputBar({
   }, []);
 
   const removeSharedDraft = useCallback(
-    (draft: SharedAttachmentDraft) => {
+    async (draft: SharedAttachmentDraft) => {
       sharedControllersRef.current.get(draft.localId)?.abort();
       sharedControllersRef.current.delete(draft.localId);
+      if (draft.attachment && sharedUpload) {
+        updateSharedDraft(draft.localId, {
+          phase: "cancelling",
+          error: null,
+        });
+        try {
+          await cancelSharedAttachment(
+            draft.attachment.id,
+            sharedUpload.token,
+          );
+        } catch (error) {
+          const message =
+            error instanceof Error
+              ? error.message
+              : "Failed to cancel attachment";
+          updateSharedDraft(draft.localId, {
+            phase: "error",
+            error: message,
+          });
+          setSharedError(message);
+          return;
+        }
+      }
       if (draft.previewUrl) URL.revokeObjectURL(draft.previewUrl);
       setSharedDrafts((previous) =>
         previous.filter((candidate) => candidate.localId !== draft.localId),
       );
-      if (draft.attachment && sharedUpload) {
-        void cancelSharedAttachment(
-          draft.attachment.id,
-          sharedUpload.token,
-        ).catch(() => undefined);
-      }
     },
-    [sharedUpload],
+    [sharedUpload, updateSharedDraft],
   );
 
   const retrySharedDraft = useCallback(
-    (draft: SharedAttachmentDraft) => {
+    async (draft: SharedAttachmentDraft) => {
       if (draft.attachment && sharedUpload) {
-        void cancelSharedAttachment(
-          draft.attachment.id,
-          sharedUpload.token,
-        ).catch(() => undefined);
+        updateSharedDraft(draft.localId, {
+          phase: "cancelling",
+          error: null,
+        });
+        try {
+          await cancelSharedAttachment(
+            draft.attachment.id,
+            sharedUpload.token,
+          );
+        } catch (error) {
+          const message =
+            error instanceof Error
+              ? error.message
+              : "Failed to cancel attachment before retry";
+          updateSharedDraft(draft.localId, { phase: "error", error: message });
+          setSharedError(message);
+          return;
+        }
       }
       const reset = {
         ...draft,
@@ -262,7 +302,7 @@ export const InputBar = memo(function InputBar({
       );
       startSharedUpload(reset);
     },
-    [sharedUpload, startSharedUpload],
+    [sharedUpload, startSharedUpload, updateSharedDraft],
   );
 
   useEffect(() => {
@@ -646,7 +686,7 @@ export const InputBar = memo(function InputBar({
                     <button
                       type="button"
                       className="mt-1 text-[0.714rem] text-accent hover:underline"
-                      onClick={() => retrySharedDraft(draft)}
+                      onClick={() => void retrySharedDraft(draft)}
                     >
                       Retry
                     </button>
@@ -655,7 +695,8 @@ export const InputBar = memo(function InputBar({
                 <button
                   type="button"
                   className="absolute right-1.5 top-1.5 flex size-5 cursor-pointer items-center justify-center rounded-full border border-border bg-elevated text-[0.714rem] text-text-muted shadow-sm hover:bg-hover hover:text-text"
-                  onClick={() => removeSharedDraft(draft)}
+                  onClick={() => void removeSharedDraft(draft)}
+                  disabled={draft.phase === "cancelling"}
                   title={`Remove ${draft.file.name}`}
                   aria-label={`Remove ${draft.file.name}`}
                 >
@@ -783,6 +824,8 @@ function attachmentPhaseLabel(
       return "Uploading";
     case "processing":
       return "Scanning";
+    case "cancelling":
+      return "Removing";
     case "ready":
       return "Ready";
     case "error":

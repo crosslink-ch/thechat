@@ -39,6 +39,8 @@ os.environ.setdefault(
 )
 os.environ["THECHAT_E2E_PG_CONTAINER"] = f"thechat-attachment-e2e-postgres-{RUN_ID}"
 os.environ["THECHAT_E2E_REDIS_CONTAINER"] = f"thechat-attachment-e2e-redis-{RUN_ID}"
+CONTAINER_LABEL = "thechat.e2e.suite=attachment-ui"
+os.environ["THECHAT_E2E_CONTAINER_LABEL"] = CONTAINER_LABEL
 
 API_PORT = int(os.environ["THECHAT_E2E_API_PORT"])
 S3_PORT = int(os.environ["ATTACHMENT_E2E_S3_PORT"])
@@ -55,6 +57,7 @@ KEEP = os.environ.get("ATTACHMENT_E2E_KEEP") == "1"
 FIXTURE_DIR = TMP / "attachment-ui-e2e-fixtures" / RUN_ID
 SCREENSHOT = TMP / f"attachment-ui-e2e-{RUN_ID}.png"
 FAILURE_SCREENSHOT = TMP / f"attachment-ui-e2e-failure-{RUN_ID}.png"
+NATIVE_DESKTOP_E2E_LOCK = "native-desktop-e2e.lock"
 
 _SAFE_ENV_KEYS = {
     "CARGO_HOME",
@@ -76,6 +79,22 @@ _SAFE_ENV_KEYS = {
 }
 
 
+def _local_docker_env(source: dict[str, str] | None = None) -> dict[str, str]:
+    env = dict(os.environ if source is None else source)
+    for key in (
+        "DOCKER_HOST",
+        "DOCKER_TLS_VERIFY",
+        "DOCKER_CERT_PATH",
+        "DOCKER_CONFIG",
+    ):
+        env.pop(key, None)
+    env["DOCKER_CONTEXT"] = "default"
+    return env
+
+
+DOCKER_ENV = _local_docker_env()
+
+
 def _load_module(name: str, path: Path) -> ModuleType:
     spec = importlib.util.spec_from_file_location(name, path)
     if spec is None or spec.loader is None:
@@ -94,7 +113,7 @@ harness = _load_module(
 @contextmanager
 def _exclusive_run_lock():
     TMP.mkdir(parents=True, exist_ok=True)
-    lock_path = TMP / "attachment-ui-e2e.lock"
+    lock_path = TMP / NATIVE_DESKTOP_E2E_LOCK
     lock_file = lock_path.open("a+", encoding="utf-8")
     try:
         try:
@@ -149,6 +168,7 @@ def _safe_child_env() -> dict[str, str]:
             "REDIS_KEY_PREFIX": f"thechat-attachment-e2e-{RUN_ID}",
             "JWT_SECRET": "thechat-attachment-e2e-jwt-secret",
             "THECHAT_SECRET_KEY": "thechat-attachment-e2e-local-secret-key",
+            "THECHAT_BACKEND_HOST": "127.0.0.1",
             "THECHAT_BACKEND_PORT": str(API_PORT),
             "LOG_LEVEL": "error",
             "AWS_ACCESS_KEY_ID": "test",
@@ -169,10 +189,53 @@ def _safe_child_env() -> dict[str, str]:
     return env
 
 
+def _require_local_docker() -> str:
+    result = subprocess.run(
+        [
+            "docker",
+            "context",
+            "inspect",
+            "default",
+            "--format",
+            "{{.Endpoints.docker.Host}}",
+        ],
+        cwd=ROOT,
+        env=DOCKER_ENV,
+        capture_output=True,
+        text=True,
+    )
+    endpoint = result.stdout.strip()
+    if result.returncode != 0 or not endpoint.startswith("unix://"):
+        detail = (result.stderr or result.stdout).strip()
+        raise RuntimeError(
+            "Attachment E2E requires the local Docker Unix socket; "
+            f"default context resolved to {endpoint or detail or 'unknown'}"
+        )
+    return endpoint
+
+
+def _reap_stale_containers() -> None:
+    result = subprocess.run(
+        ["docker", "ps", "-aq", "--filter", f"label={CONTAINER_LABEL}"],
+        cwd=ROOT,
+        env=DOCKER_ENV,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    container_ids = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+    if container_ids:
+        harness.run(
+            ["docker", "rm", "-f", *container_ids],
+            env=DOCKER_ENV,
+        )
+
+
 def _container_running(name: str) -> bool:
     result = subprocess.run(
         ["docker", "inspect", "-f", "{{.State.Running}}", name],
         cwd=ROOT,
+        env=DOCKER_ENV,
         capture_output=True,
         text=True,
     )
@@ -184,7 +247,9 @@ def _wait_for(predicate: Callable[[], Any], *, timeout: float, label: str):
 
 
 def _start_s3(env: dict[str, str]) -> None:
-    harness.run(["docker", "rm", "-f", S3_CONTAINER], check=False)
+    harness.run(
+        ["docker", "rm", "-f", S3_CONTAINER], check=False, env=DOCKER_ENV
+    )
     harness.run(
         [
             "docker",
@@ -192,6 +257,8 @@ def _start_s3(env: dict[str, str]) -> None:
             "-d",
             "--name",
             S3_CONTAINER,
+            "--label",
+            CONTAINER_LABEL,
             "-e",
             "SERVICES=s3",
             "-e",
@@ -201,7 +268,8 @@ def _start_s3(env: dict[str, str]) -> None:
             "-p",
             f"127.0.0.1:{S3_PORT}:4566",
             S3_IMAGE,
-        ]
+        ],
+        env=DOCKER_ENV,
     )
 
     def ready() -> bool:
@@ -267,7 +335,9 @@ await client.send(new PutBucketCorsCommand({
 
 
 def _start_clamav() -> None:
-    harness.run(["docker", "rm", "-f", CLAMAV_CONTAINER], check=False)
+    harness.run(
+        ["docker", "rm", "-f", CLAMAV_CONTAINER], check=False, env=DOCKER_ENV
+    )
     harness.run(
         [
             "docker",
@@ -275,10 +345,13 @@ def _start_clamav() -> None:
             "-d",
             "--name",
             CLAMAV_CONTAINER,
+            "--label",
+            CONTAINER_LABEL,
             "-p",
             f"127.0.0.1:{CLAMAV_PORT}:3310",
             CLAMAV_IMAGE,
-        ]
+        ],
+        env=DOCKER_ENV,
     )
 
     def ready() -> bool:
@@ -411,7 +484,8 @@ def _attachment_statuses(file_names: list[str]) -> dict[str, str]:
     literals = ", ".join(harness.sql_literal(name) for name in file_names)
     return harness.db_json(
         "select coalesce(jsonb_object_agg(file_name, status::text), '{}'::jsonb) "
-        f"from attachments where file_name in ({literals});"
+        f"from attachments where file_name in ({literals});",
+        env=DOCKER_ENV,
     )
 
 
@@ -441,12 +515,9 @@ def _verify_backend(
 
     def terminal_statuses():
         statuses = _attachment_statuses(list(names.values()))
-        # The WebDriver assertion proves the rejected state while the app is
-        # alive. Session shutdown may then run InputBar's unsent-draft cleanup,
-        # so either the observed rejection or its completed deletion is valid.
         if (
             statuses.get(names["valid"]) == "attached"
-            and statuses.get(names["rejected"]) in {"rejected", "deleted"}
+            and statuses.get(names["rejected"]) == "deleted"
             and statuses.get(names["cancel"]) == "deleted"
         ):
             return statuses
@@ -469,6 +540,7 @@ def _container_log_tail(name: str) -> str:
     result = subprocess.run(
         ["docker", "logs", "--tail", "80", name],
         cwd=ROOT,
+        env=DOCKER_ENV,
         capture_output=True,
         text=True,
     )
@@ -492,7 +564,7 @@ def _cleanup() -> None:
         harness.PG_CONTAINER,
         harness.REDIS_CONTAINER,
     ):
-        harness.run(["docker", "rm", "-f", name], check=False)
+        harness.run(["docker", "rm", "-f", name], check=False, env=DOCKER_ENV)
     shutil.rmtree(FIXTURE_DIR, ignore_errors=True)
 
 
@@ -503,10 +575,13 @@ def _run() -> None:
     completed = False
     files: dict[str, Path] = {}
     try:
+        docker_endpoint = _require_local_docker()
+        print(f"Using local Docker endpoint: {docker_endpoint}", flush=True)
+        _reap_stale_containers()
         _start_s3(env)
         _start_clamav()
-        harness.start_postgres()
-        harness.start_redis()
+        harness.start_postgres(env=DOCKER_ENV)
+        harness.start_redis(env=DOCKER_ENV)
         harness.run(
             [
                 harness.PNPM,

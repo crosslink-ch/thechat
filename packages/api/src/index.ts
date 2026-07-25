@@ -63,7 +63,9 @@ const app = new Elysia()
 
 export type App = typeof app;
 
-app.listen(Number(process.env.THECHAT_BACKEND_PORT) || 3000);
+const port = Number(process.env.THECHAT_BACKEND_PORT) || 3000;
+const hostname = process.env.THECHAT_BACKEND_HOST?.trim();
+app.listen(hostname ? { port, hostname } : port);
 
 process.once("SIGTERM", () => {
   void shutdownAndExit(143);
@@ -72,7 +74,10 @@ process.once("SIGINT", () => {
   void shutdownAndExit(130);
 });
 
-apiLog.info({ port: app.server!.port }, "TheChat API is running");
+apiLog.info(
+  { hostname: app.server!.hostname, port: app.server!.port },
+  "TheChat API is running",
+);
 
 async function shutdownAndExit(code: number) {
   await shutdownObservability().catch((error) => {

@@ -18,16 +18,22 @@ The launcher starts disposable Postgres, Redis, LocalStack S3, and ClamAV contai
 runs the real API and outbox worker, builds the desktop app with the isolated
 backend URL, and executes `opt-in/attachments.e2e.js` under Xvfb. It requires
 Docker, `tauri-driver`, `WebKitWebDriver`, and `xvfb-run`, but no cloud or model
-credentials.
+credentials. It forces Docker's `default` context, refuses non-Unix (for example
+remote TCP) daemon endpoints, binds every published service and the API to loopback,
+and removes only stale containers carrying the attachment-suite ownership label.
+The attachment and Hermes-approval native suites share one non-blocking lock so
+they cannot race on Tauri build artifacts.
 
 The flow verifies:
 
-- visible draft transitions through prepare, upload, scan, and ready states;
+- ordered visible draft transitions through prepare, upload, scan, and ready states;
 - attachment-only send after a deliberately lost response, followed by an
-  idempotent retry with the same client message ID;
+  idempotent retry with the same client message ID and the same canonical server
+  message ID from both successful HTTP responses;
 - one rendered file card and an exact byte-for-byte download;
 - actual EICAR rejection by ClamAV; and
-- deletion of a ready draft cancelled before send.
+- authenticated deletion of rejected and ready drafts, observed in terminal
+  backend state before the desktop session closes.
 
 Screenshots are written under `.tmp/`. Set `ATTACHMENT_E2E_KEEP=1` to keep
 containers and generated fixtures for debugging after a run.

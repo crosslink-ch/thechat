@@ -226,7 +226,40 @@ describe("InputBar shared attachments", () => {
         "token-1",
       ),
     );
-    expect(screen.queryByText("report.txt")).toBeNull();
+    await waitFor(() => expect(screen.queryByText("report.txt")).toBeNull());
+  });
+
+  it("keeps the draft visible when cancellation fails", async () => {
+    makeUploadReady();
+    vi.mocked(cancelSharedAttachment).mockRejectedValueOnce(
+      new Error("Cancellation service unavailable"),
+    );
+    const { container } = renderInputBar({
+      sharedUpload: { conversationId: "conversation-1", token: "token-1" },
+    });
+    const fileInput = container.querySelector<HTMLInputElement>(
+      'input[type="file"]',
+    );
+    if (!fileInput) throw new Error("File input not found");
+
+    fireEvent.change(fileInput, {
+      target: {
+        files: [new File(["report"], "report.txt", { type: "text/plain" })],
+      },
+    });
+    await waitFor(() => expect(screen.getByText(/Ready/)).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "Remove report.txt" }));
+
+    await waitFor(() =>
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        "Cancellation service unavailable",
+      ),
+    );
+    expect(screen.getByText("report.txt")).toBeInTheDocument();
+    expect(screen.getByTestId("attachment-draft")).toHaveAttribute(
+      "data-attachment-phase",
+      "error",
+    );
   });
 
   it("cancels a ready draft when the input unmounts", async () => {

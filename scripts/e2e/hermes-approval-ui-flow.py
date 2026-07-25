@@ -59,6 +59,7 @@ if _sibling_hermes.exists():
 
 MODEL_PORT = int(os.environ.get("HERMES_APPROVAL_E2E_MODEL_PORT", "18081"))
 KEEP = os.environ.get("HERMES_E2E_KEEP") == "1"
+NATIVE_DESKTOP_E2E_LOCK = "native-desktop-e2e.lock"
 
 
 def _load_module(name: str, path: Path) -> ModuleType:
@@ -107,7 +108,7 @@ _SAFE_ENV_KEYS = {
 @contextmanager
 def _exclusive_run_lock():
     TMP.mkdir(parents=True, exist_ok=True)
-    lock_path = TMP / "hermes-approval-ui-e2e.lock"
+    lock_path = TMP / NATIVE_DESKTOP_E2E_LOCK
     lock_file = lock_path.open("a+", encoding="utf-8")
     try:
         try:

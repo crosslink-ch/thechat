@@ -150,7 +150,7 @@ def sql_literal(value: str) -> str:
     return "'" + value.replace("'", "''") + "'"
 
 
-def db_json(sql: str):
+def db_json(sql: str, *, env: dict[str, str] | None = None):
     text = subprocess.check_output([
         "docker",
         "exec",
@@ -164,18 +164,21 @@ def db_json(sql: str):
         "-A",
         "-c",
         sql,
-    ], cwd=ROOT, text=True).strip()
+    ], cwd=ROOT, env=env, text=True).strip()
     return json.loads(text or "null")
 
 
-def start_postgres():
-    run(["docker", "rm", "-f", PG_CONTAINER], check=False)
+def start_postgres(*, env: dict[str, str] | None = None):
+    label = os.environ.get("THECHAT_E2E_CONTAINER_LABEL", "").strip()
+    label_args = ["--label", label] if label else []
+    run(["docker", "rm", "-f", PG_CONTAINER], check=False, env=env)
     run([
         "docker",
         "run",
         "-d",
         "--name",
         PG_CONTAINER,
+        *label_args,
         "-e",
         "POSTGRES_USER=thechat",
         "-e",
@@ -185,28 +188,39 @@ def start_postgres():
         "-p",
         f"127.0.0.1:{POSTGRES_PORT}:5432",
         "postgres:16-alpine",
-    ])
+    ], env=env)
     wait_for(
-        lambda: run(["docker", "exec", PG_CONTAINER, "pg_isready", "-U", "thechat", "-d", "thechat"], check=False).returncode == 0,
+        lambda: run(
+            ["docker", "exec", PG_CONTAINER, "pg_isready", "-U", "thechat", "-d", "thechat"],
+            check=False,
+            env=env,
+        ).returncode == 0,
         timeout=45,
         label="Postgres readiness",
     )
 
 
-def start_redis():
-    run(["docker", "rm", "-f", REDIS_CONTAINER], check=False)
+def start_redis(*, env: dict[str, str] | None = None):
+    label = os.environ.get("THECHAT_E2E_CONTAINER_LABEL", "").strip()
+    label_args = ["--label", label] if label else []
+    run(["docker", "rm", "-f", REDIS_CONTAINER], check=False, env=env)
     run([
         "docker",
         "run",
         "-d",
         "--name",
         REDIS_CONTAINER,
+        *label_args,
         "-p",
         f"127.0.0.1:{REDIS_PORT}:6379",
         "redis:7-alpine",
-    ])
+    ], env=env)
     wait_for(
-        lambda: run(["docker", "exec", REDIS_CONTAINER, "redis-cli", "ping"], check=False).returncode == 0,
+        lambda: run(
+            ["docker", "exec", REDIS_CONTAINER, "redis-cli", "ping"],
+            check=False,
+            env=env,
+        ).returncode == 0,
         timeout=30,
         label="Redis readiness",
     )
@@ -392,6 +406,7 @@ def start_api(env: dict[str, str]) -> subprocess.Popen:
         "REDIS_KEY_PREFIX": "thechat-hermes-e2e",
         "JWT_SECRET": "thechat-hermes-e2e-jwt-secret",
         "THECHAT_SECRET_KEY": "thechat-hermes-e2e-secret-key",
+        "THECHAT_BACKEND_HOST": env.get("THECHAT_BACKEND_HOST", "127.0.0.1"),
         "THECHAT_BACKEND_PORT": str(API_PORT),
         "LOG_LEVEL": "error",
     }
@@ -403,7 +418,7 @@ def start_api(env: dict[str, str]) -> subprocess.Popen:
     )
     try:
         wait_for(
-            lambda: http_json("GET", f"http://localhost:{API_PORT}/health")[0]
+            lambda: http_json("GET", f"http://127.0.0.1:{API_PORT}/health")[0]
             == 200,
             timeout=60,
             label="TheChat API",

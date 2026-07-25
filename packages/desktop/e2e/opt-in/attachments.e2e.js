@@ -111,6 +111,10 @@ describe("Secure message attachments", function () {
     );
     expect(lostAttempt.requestIds).toHaveLength(1);
     expect(lostAttempt.lostResponses).toBe(1);
+    expect(lostAttempt.attempts).toHaveLength(1);
+    expect(lostAttempt.attempts[0].responseStatus).toBeGreaterThanOrEqual(200);
+    expect(lostAttempt.attempts[0].responseStatus).toBeLessThan(300);
+    expect(lostAttempt.attempts[0].responseMessageId).toBeTruthy();
     await waitForDraftPhase(validName, "ready", 10_000);
 
     await sendButton.waitForEnabled({ timeout: 10_000 });
@@ -131,6 +135,12 @@ describe("Secure message attachments", function () {
     expect(probe.requestIds[0]).toBeTruthy();
     expect(probe.requestIds[1]).toBe(probe.requestIds[0]);
     expect(probe.lostResponses).toBe(1);
+    expect(probe.attempts).toHaveLength(2);
+    expect(probe.attempts[1].responseStatus).toBeGreaterThanOrEqual(200);
+    expect(probe.attempts[1].responseStatus).toBeLessThan(300);
+    expect(probe.attempts[1].responseMessageId).toBe(
+      probe.attempts[0].responseMessageId,
+    );
 
     await browser.execute(() => {
       window.open = (url) => {
@@ -176,6 +186,7 @@ describe("Secure message attachments", function () {
     await remove.waitForClickable({ timeout: 10_000 });
     await remove.click();
     await waitForDraftRemoval(rejectedName, 30_000);
+    await waitForAttachmentStatus(rejected.attachmentId, "deleted", 120_000);
   });
 
   it("cancels a ready draft before it is attached to a message", async () => {
@@ -188,6 +199,7 @@ describe("Secure message attachments", function () {
     await remove.waitForClickable({ timeout: 10_000 });
     await remove.click();
     await waitForDraftRemoval(cancelName, 30_000);
+    await waitForAttachmentStatus(ready.attachmentId, "deleted", 120_000);
     await browser.saveScreenshot(SCREENSHOT);
 
     console.log(
@@ -280,15 +292,22 @@ async function assertTransitions(name, expected) {
     (fileName) => window.__attachmentE2E.transitions[fileName] ?? [],
     name,
   );
+  let previousIndex = -1;
   for (const phase of expected) {
-    expect(actual).toContain(phase);
+    const index = actual.indexOf(phase, previousIndex + 1);
+    if (index < 0) {
+      throw new Error(
+        `${name} did not reach ${phase} after ${actual[previousIndex] ?? "start"}: ${actual.join(" -> ")}`,
+      );
+    }
+    previousIndex = index;
   }
 }
 
 async function armLostMessageResponse(conversationId) {
   await browser.execute((targetConversationId) => {
     const originalFetch = window.fetch.bind(window);
-    const probe = { requestIds: [], lostResponses: 0 };
+    const probe = { requestIds: [], attempts: [], lostResponses: 0 };
     window.__attachmentE2E.sendProbe = probe;
 
     window.fetch = async (input, init) => {
@@ -313,6 +332,18 @@ async function armLostMessageResponse(conversationId) {
           requestId = "";
         }
         probe.requestIds.push(requestId);
+        let responseMessageId = null;
+        try {
+          const responseBody = await response.clone().json();
+          responseMessageId = responseBody?.id ?? responseBody?.message?.id ?? null;
+        } catch {
+          responseMessageId = null;
+        }
+        probe.attempts.push({
+          requestId,
+          responseStatus: response.status,
+          responseMessageId,
+        });
         if (probe.lostResponses === 0) {
           probe.lostResponses += 1;
           throw new TypeError("Simulated lost response after commit");
@@ -321,6 +352,20 @@ async function armLostMessageResponse(conversationId) {
       return response;
     };
   }, conversationId);
+}
+
+async function waitForAttachmentStatus(attachmentId, expectedStatus, timeout) {
+  await browser.waitUntil(
+    async () => {
+      const status = await apiJson(`/attachments/${attachmentId}`);
+      return status.status === expectedStatus;
+    },
+    {
+      timeout,
+      interval: 500,
+      timeoutMsg: `Attachment ${attachmentId} never reached ${expectedStatus}`,
+    },
+  );
 }
 
 async function apiJson(pathname) {

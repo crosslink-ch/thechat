@@ -26,6 +26,7 @@ export type SharedAttachmentPhase =
   | "hashing"
   | "uploading"
   | "processing"
+  | "cancelling"
   | "ready"
   | "error";
 
@@ -95,59 +96,67 @@ export async function uploadSharedAttachment(
     );
   }
   const attachment = reserved.data.attachment;
-  update({ phase: "uploading", progress: 0, attachment });
+  try {
+    throwIfAborted(input.signal);
+    update({ phase: "uploading", progress: 0, attachment });
 
-  await putPresignedObject(
-    reserved.data.upload.url,
-    reserved.data.upload.headers,
-    input.file,
-    input.signal,
-    (progress) =>
-      update({ phase: "uploading", progress, attachment }),
-  );
-  throwIfAborted(input.signal);
+    await putPresignedObject(
+      reserved.data.upload.url,
+      reserved.data.upload.headers,
+      input.file,
+      input.signal,
+      (progress) =>
+        update({ phase: "uploading", progress, attachment }),
+    );
+    throwIfAborted(input.signal);
 
-  const item = api.attachments({ id: attachment.id }) as unknown as {
-    complete: {
-      post(
-        body: Record<string, never>,
+    const item = api.attachments({ id: attachment.id }) as unknown as {
+      complete: {
+        post(
+          body: Record<string, never>,
+          options: ReturnType<typeof authHeaders>,
+        ): Promise<{ data?: AttachmentView | null; error?: unknown }>;
+      };
+      get(
         options: ReturnType<typeof authHeaders>,
       ): Promise<{ data?: AttachmentView | null; error?: unknown }>;
     };
-    get(
-      options: ReturnType<typeof authHeaders>,
-    ): Promise<{ data?: AttachmentView | null; error?: unknown }>;
-  };
-  const completed = await item.complete.post({}, authHeaders(input.token));
-  if (completed.error || !completed.data) {
-    throw new Error(
-      edenErrorMessage(completed.error, "Failed to complete attachment"),
-    );
-  }
-  update({ phase: "processing", progress: 100, attachment: completed.data });
-
-  for (let attempt = 0; attempt < 180; attempt += 1) {
-    throwIfAborted(input.signal);
-    const status = await item.get(authHeaders(input.token));
-    if (status.error || !status.data) {
+    const completed = await item.complete.post({}, authHeaders(input.token));
+    if (completed.error || !completed.data) {
       throw new Error(
-        edenErrorMessage(status.error, "Failed to check attachment status"),
+        edenErrorMessage(completed.error, "Failed to complete attachment"),
       );
     }
-    if (status.data.status === "ready" || status.data.status === "attached") {
-      update({ phase: "ready", progress: 100, attachment: status.data });
-      return status.data;
+    update({ phase: "processing", progress: 100, attachment: completed.data });
+
+    for (let attempt = 0; attempt < 180; attempt += 1) {
+      throwIfAborted(input.signal);
+      const status = await item.get(authHeaders(input.token));
+      if (status.error || !status.data) {
+        throw new Error(
+          edenErrorMessage(status.error, "Failed to check attachment status"),
+        );
+      }
+      if (status.data.status === "ready" || status.data.status === "attached") {
+        update({ phase: "ready", progress: 100, attachment: status.data });
+        return status.data;
+      }
+      if (
+        status.data.status === "rejected" ||
+        status.data.status === "deleting" ||
+        status.data.status === "deleted"
+      ) {
+        throw new Error("The attachment was rejected during validation");
+      }
+      await abortableDelay(1_000, input.signal);
     }
-    if (
-      status.data.status === "rejected" ||
-      status.data.status === "deleting" ||
-      status.data.status === "deleted"
-    ) {
-      throw new Error("The attachment was rejected during validation");
+    throw new Error("Attachment validation timed out");
+  } catch (error) {
+    if (input.signal.aborted) {
+      await cancelSharedAttachment(attachment.id, input.token);
     }
-    await abortableDelay(1_000, input.signal);
+    throw error;
   }
-  throw new Error("Attachment validation timed out");
 }
 
 export async function cancelSharedAttachment(
@@ -205,6 +214,12 @@ function putPresignedObject(
   onProgress: (progress: number) => void,
 ) {
   return new Promise<void>((resolve, reject) => {
+    try {
+      throwIfAborted(signal);
+    } catch (error) {
+      reject(error);
+      return;
+    }
     const xhr = new XMLHttpRequest();
     const abort = () => xhr.abort();
     signal.addEventListener("abort", abort, { once: true });
