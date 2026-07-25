@@ -105,25 +105,6 @@ worker:
     limits:
       memory: 512Mi
       cpu: 1000m
-  clamav:
-    enabled: true
-    serviceAccount:
-      create: true
-      name: ""
-    networkPolicy:
-      enabled: true
-    image:
-      repository: clamav/clamav
-      tag: "1.4"
-      pullPolicy: IfNotPresent
-    port: 3310
-    resources:
-      requests:
-        cpu: 100m
-        memory: 1Gi
-      limits:
-        cpu: 1000m
-        memory: 2Gi
 
 service:
   type: ClusterIP

@@ -214,9 +214,9 @@ SUITES = [
     {
         "name": "attachments-ui",
         "cmd": ["python3", "scripts/e2e/attachments-ui-flow.py"],
-        # Real compiled Tauri UI plus disposable local Postgres, Redis,
-        # LocalStack S3, and ClamAV. Keep it explicit because it downloads
-        # service images and performs a full native build.
+        # Real compiled Tauri UI plus disposable local Postgres, Redis, and
+        # LocalStack S3. Keep it explicit because it downloads service images
+        # and performs a full native build.
         "opt_in": True,
         "explicit_only": True,
         "timeout": 1500,

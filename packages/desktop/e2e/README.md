@@ -14,7 +14,7 @@ pnpm test:e2e:attachments-ui
 python3 scripts/test.py attachments-ui
 ```
 
-The launcher starts disposable Postgres, Redis, LocalStack S3, and ClamAV containers,
+The launcher starts disposable Postgres, Redis, and LocalStack S3 containers,
 runs the real API and outbox worker, builds the desktop app with the isolated
 backend URL, and executes `opt-in/attachments.e2e.js` under Xvfb. It requires
 Docker, `tauri-driver`, `WebKitWebDriver`, and `xvfb-run`, but no cloud or model
@@ -26,12 +26,12 @@ they cannot race on Tauri build artifacts.
 
 The flow verifies:
 
-- ordered visible draft transitions through prepare, upload, scan, and ready states;
+- ordered visible draft transitions through prepare, upload, validation, and ready states;
 - attachment-only send after a deliberately lost response, followed by an
   idempotent retry with the same client message ID and the same canonical server
   message ID from both successful HTTP responses;
 - one rendered file card and an exact byte-for-byte download;
-- actual EICAR rejection by ClamAV; and
+- active HTML content masquerading as text being rejected by worker validation; and
 - authenticated deletion of rejected and ready drafts, observed in terminal
   backend state before the desktop session closes.
 

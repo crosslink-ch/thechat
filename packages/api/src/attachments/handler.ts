@@ -17,8 +17,6 @@ import {
   verifyFileType,
 } from "./file-validation";
 import type { ObjectStore } from "./object-store";
-import type { AttachmentScanner } from "./scanner";
-import { createClamAvScannerFromEnv } from "./scanner";
 import { getAttachmentObjectStore } from "./service";
 
 type ValidationEvent = AttachmentLifecycleEvent & {
@@ -36,7 +34,6 @@ let activeValidations = 0;
 
 export function createAttachmentValidationHandler(options: {
   store?: ObjectStore;
-  scanner?: AttachmentScanner;
 } = {}): DomainEventHandler<ValidationEvent> {
   return {
     type: ATTACHMENT_VALIDATION_REQUESTED,
@@ -53,8 +50,6 @@ export function createAttachmentValidationHandler(options: {
       await withValidationSlot(() =>
         validateAndPromoteAttachment(event.payload.attachmentId, {
           store: options.store ?? getAttachmentObjectStore(),
-          scanner:
-            options.scanner ?? createClamAvScannerFromEnv(config.maxBytes),
           maxBytes: config.maxBytes,
         }),
       );
@@ -107,7 +102,6 @@ export async function validateAndPromoteAttachment(
   attachmentId: string,
   input: {
     store: ObjectStore;
-    scanner: AttachmentScanner;
     maxBytes: number;
   },
 ) {
@@ -173,12 +167,6 @@ export async function validateAndPromoteAttachment(
           return;
         }
         throw error;
-      }
-
-      const scan = await input.scanner.scan(bytes);
-      if (scan.status === "infected") {
-        await rejectAttachment(row, input.store, "malware_detected");
-        return;
       }
 
       // Do not probe a not-yet-created clean key: S3 intentionally returns

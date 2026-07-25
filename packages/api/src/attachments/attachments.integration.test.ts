@@ -192,7 +192,6 @@ describe("attachment lifecycle", () => {
 
     await validateAndPromoteAttachment(attachmentId, {
       store,
-      scanner: { scan: async () => ({ status: "clean" as const }) },
       maxBytes: 25 * 1024 * 1024,
     });
     const ready = await request(
@@ -327,6 +326,60 @@ describe("attachment lifecycle", () => {
     ).toBe(409);
   });
 
+  test("rejects active content during validation without promoting it", async () => {
+    const owner = await register("Unsafe attachment owner");
+    const { conversationId } = await workspaceWithMembers(owner);
+    const bytes = new TextEncoder().encode(
+      "<!doctype html><script>alert('attachment')</script>",
+    );
+    const checksum = crypto.createHash("sha256").update(bytes).digest("hex");
+
+    const reserved = await request(
+      "POST",
+      "/attachments",
+      {
+        conversationId,
+        fileName: "active-content.txt",
+        mediaType: "text/plain",
+        sizeBytes: bytes.byteLength,
+        checksumSha256: checksum,
+      },
+      owner.token,
+    );
+    expect(reserved.status).toBe(200);
+    store.acceptLatestUpload(bytes);
+    const attachmentId = reserved.body.attachment.id as string;
+
+    const completed = await request(
+      "POST",
+      `/attachments/${attachmentId}/complete`,
+      {},
+      owner.token,
+    );
+    expect(completed.status).toBe(200);
+    expect(completed.body.status).toBe("processing");
+
+    await validateAndPromoteAttachment(attachmentId, {
+      store,
+      maxBytes: 25 * 1024 * 1024,
+    });
+
+    const rejected = await request(
+      "GET",
+      `/attachments/${attachmentId}`,
+      undefined,
+      owner.token,
+    );
+    expect(rejected.status).toBe(200);
+    expect(rejected.body.status).toBe("rejected");
+    const [row] = await db
+      .select({ failureReason: attachments.failureReason })
+      .from(attachments)
+      .where(eq(attachments.id, attachmentId))
+      .limit(1);
+    expect(row?.failureReason).toBe("active_content");
+  });
+
   test("existing bot tokens are denied until their owner explicitly grants lower-quota attachment access", async () => {
     const owner = await register("Bot attachment owner");
     const { workspaceId, conversationId } = await workspaceWithMembers(owner);
@@ -411,7 +464,6 @@ describe("attachment lifecycle", () => {
     ).toBe(200);
     await validateAndPromoteAttachment(botAttachmentId, {
       store,
-      scanner: { scan: async () => ({ status: "clean" as const }) },
       maxBytes: 10 * 1024 * 1024,
     });
 

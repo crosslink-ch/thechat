@@ -26,13 +26,12 @@ import {
 } from "./service";
 import type { ObjectStore } from "./object-store";
 import { S3ObjectStore } from "./s3-object-store";
-import { createClamAvScannerFromEnv } from "./scanner";
 
 const integrationTest =
   process.env.REAL_S3_ATTACHMENT_INTEGRATION === "1" ? test : test.skip;
 
 integrationTest(
-  "real S3, ClamAV, PostgreSQL, and message binding flow",
+  "real S3, file validation, PostgreSQL, and message binding flow",
   async () => {
     const region = required("ATTACHMENT_S3_REGION");
     const bucket = required("ATTACHMENT_S3_BUCKET");
@@ -152,7 +151,6 @@ integrationTest(
 
       await validateAndPromoteAttachment(reservedAttachmentId, {
         store: workerStore,
-        scanner: createClamAvScannerFromEnv(25 * 1024 * 1024),
         maxBytes: 25 * 1024 * 1024,
       });
       const ready = await getAttachment(reservedAttachmentId, user.id);

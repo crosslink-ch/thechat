@@ -9,7 +9,6 @@ import json
 import os
 import shutil
 import signal
-import socket
 import subprocess
 import sys
 import time
@@ -27,7 +26,6 @@ os.environ.setdefault("THECHAT_E2E_API_PORT", "3340")
 os.environ.setdefault("THECHAT_E2E_POSTGRES_PORT", "15546")
 os.environ.setdefault("THECHAT_E2E_REDIS_PORT", "16383")
 os.environ.setdefault("ATTACHMENT_E2E_S3_PORT", "19000")
-os.environ.setdefault("ATTACHMENT_E2E_CLAMAV_PORT", "13310")
 os.environ.setdefault(
     "THECHAT_E2E_DATABASE_URL",
     "postgres://thechat:thechat@localhost:"
@@ -44,14 +42,11 @@ os.environ["THECHAT_E2E_CONTAINER_LABEL"] = CONTAINER_LABEL
 
 API_PORT = int(os.environ["THECHAT_E2E_API_PORT"])
 S3_PORT = int(os.environ["ATTACHMENT_E2E_S3_PORT"])
-CLAMAV_PORT = int(os.environ["ATTACHMENT_E2E_CLAMAV_PORT"])
 S3_CONTAINER = f"thechat-attachment-e2e-s3-{RUN_ID}"
-CLAMAV_CONTAINER = f"thechat-attachment-e2e-clamav-{RUN_ID}"
 S3_IMAGE = os.environ.get(
     "ATTACHMENT_E2E_S3_IMAGE",
     "localstack/localstack:4.4.0",
 )
-CLAMAV_IMAGE = os.environ.get("ATTACHMENT_E2E_CLAMAV_IMAGE", "clamav/clamav:1.4")
 BUCKET = f"thechat-attachment-e2e-{RUN_ID}".replace("_", "-").lower()
 KEEP = os.environ.get("ATTACHMENT_E2E_KEEP") == "1"
 FIXTURE_DIR = TMP / "attachment-ui-e2e-fixtures" / RUN_ID
@@ -179,9 +174,6 @@ def _safe_child_env() -> dict[str, str]:
             "ATTACHMENT_S3_REGION": "us-east-1",
             "ATTACHMENT_S3_ENDPOINT": f"http://127.0.0.1:{S3_PORT}",
             "ATTACHMENT_S3_FORCE_PATH_STYLE": "true",
-            "CLAMAV_HOST": "127.0.0.1",
-            "CLAMAV_PORT": str(CLAMAV_PORT),
-            "CLAMAV_TIMEOUT_MS": "120000",
             "NO_PROXY": "127.0.0.1,localhost,::1",
             "no_proxy": "127.0.0.1,localhost,::1",
         }
@@ -334,39 +326,6 @@ await client.send(new PutBucketCorsCommand({
     )
 
 
-def _start_clamav() -> None:
-    harness.run(
-        ["docker", "rm", "-f", CLAMAV_CONTAINER], check=False, env=DOCKER_ENV
-    )
-    harness.run(
-        [
-            "docker",
-            "run",
-            "-d",
-            "--name",
-            CLAMAV_CONTAINER,
-            "--label",
-            CONTAINER_LABEL,
-            "-p",
-            f"127.0.0.1:{CLAMAV_PORT}:3310",
-            CLAMAV_IMAGE,
-        ],
-        env=DOCKER_ENV,
-    )
-
-    def ready() -> bool:
-        if not _container_running(CLAMAV_CONTAINER):
-            raise RuntimeError("ClamAV exited before becoming ready")
-        try:
-            with socket.create_connection(("127.0.0.1", CLAMAV_PORT), timeout=2) as sock:
-                sock.sendall(b"zPING\0")
-                return b"PONG" in sock.recv(64)
-        except OSError:
-            return False
-
-    _wait_for(ready, timeout=300, label="ClamAV readiness")
-
-
 def _write_fixtures() -> dict[str, Path]:
     FIXTURE_DIR.mkdir(parents=True, exist_ok=True)
     valid = FIXTURE_DIR / f"valid-{RUN_ID}.txt"
@@ -374,9 +333,8 @@ def _write_fixtures() -> dict[str, Path]:
     cancel = FIXTURE_DIR / f"cancel-{RUN_ID}.txt"
     valid.write_bytes(f"TheChat attachment E2E payload {RUN_ID}\n".encode())
     rejected.write_text(
-        "X5O!P%@AP[4\\PZX54(P^)7CC)7}$"
-        "EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*",
-        encoding="ascii",
+        "<!doctype html><script>alert('attachment')</script>",
+        encoding="utf-8",
     )
     cancel.write_bytes(f"TheChat attachment cancellation {RUN_ID}\n".encode())
     return {"valid": valid, "rejected": rejected, "cancel": cancel}
@@ -552,7 +510,6 @@ def _cleanup() -> None:
         print(
             "Keeping attachment E2E resources:",
             S3_CONTAINER,
-            CLAMAV_CONTAINER,
             harness.PG_CONTAINER,
             harness.REDIS_CONTAINER,
             flush=True,
@@ -560,7 +517,6 @@ def _cleanup() -> None:
         return
     for name in (
         S3_CONTAINER,
-        CLAMAV_CONTAINER,
         harness.PG_CONTAINER,
         harness.REDIS_CONTAINER,
     ):
@@ -579,7 +535,6 @@ def _run() -> None:
         print(f"Using local Docker endpoint: {docker_endpoint}", flush=True)
         _reap_stale_containers()
         _start_s3(env)
-        _start_clamav()
         harness.start_postgres(env=DOCKER_ENV)
         harness.start_redis(env=DOCKER_ENV)
         harness.run(
@@ -606,7 +561,7 @@ def _run() -> None:
         harness.terminate_process(worker_proc, timeout=15)
         harness.terminate_process(api_proc, timeout=15)
         if not completed:
-            for name in (S3_CONTAINER, CLAMAV_CONTAINER):
+            for name in (S3_CONTAINER,):
                 if _container_running(name):
                     tail = _container_log_tail(name)
                     if tail:

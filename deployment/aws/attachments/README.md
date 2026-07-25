@@ -1,6 +1,6 @@
 # TheChat attachment storage on AWS
 
-This directory is the source of truth for the existing `thechat-attachments-dev` CloudFormation stack. The template keeps attachment bytes private, encrypted, versioned, and outside PostgreSQL while defining separate API signing/read and worker scanning/promotion/deletion policies.
+This directory is the source of truth for the existing `thechat-attachments-dev` CloudFormation stack. The template keeps attachment bytes private, encrypted, versioned, and outside PostgreSQL while defining separate API signing/read and worker validation/promotion/deletion policies.
 
 ## Resources
 
@@ -57,17 +57,11 @@ ATTACHMENT_WORKER_AWS_PROFILE=thechat-attachments-worker-canary \
 deployment/aws/attachments/canary.sh
 ```
 
-The canary proves API upload/head/read, worker scan-read/copy/delete, and denials for list, API delete/clean writes, and worker quarantine writes. It uses unique keys and removes both exact versions with the worker role on exit.
+The canary proves API upload/head/read, worker validation-read/copy/delete, and denials for list, API delete/clean writes, and worker quarantine writes. It uses unique keys and removes both exact versions with the worker role on exit.
 
-## ClamAV deployment
+## Validation scope
 
-The Helm chart enables a dedicated ClamAV deployment and ClusterIP service by default; the worker connects to that service on port `3310`. The scanner pod has its own service account with token automount disabled, no AWS annotations, and an ingress policy that admits only worker pods. Set `worker.serviceAccount.annotations` to the production worker workload role and `serviceAccount.annotations` to the production API workload role described above. For local development, run:
-
-```bash
-docker compose up -d clamav
-CLAMAV_INTEGRATION=1 CLAMAV_HOST=127.0.0.1 CLAMAV_PORT=3310 \
-  pnpm --filter @thechat/api exec bun test \
-  src/attachments/scanner.integration.test.ts
-```
-
-The opt-in test checks a clean payload and the harmless EICAR antivirus test signature. Normal unit suites skip it when no daemon is available.
+The worker validates pinned size and checksum metadata, re-hashes downloaded bytes,
+rejects unsupported or mismatched file signatures, blocks active text and executable
+or archive signatures, validates JSON, and enforces raster dimension limits before
+promotion. Antivirus scanning is not currently part of the attachment pipeline.

@@ -162,7 +162,7 @@ describe("Secure message attachments", function () {
     expect(sha256(downloaded)).toBe(sha256(fs.readFileSync(VALID_FIXTURE)));
   });
 
-  it("shows a real ClamAV rejection and keeps the message unsendable", async () => {
+  it("shows an active-content rejection and keeps the message unsendable", async () => {
     await attachFile(REJECTED_FIXTURE);
     await waitForDraftPhase(rejectedName, "error", 180_000);
     await expectDraftText(

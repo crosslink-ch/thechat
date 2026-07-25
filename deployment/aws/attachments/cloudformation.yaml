@@ -231,7 +231,7 @@ Resources:
           PolicyDocument:
             Version: "2012-10-17"
             Statement:
-              - Sid: ScanQuarantineAndVerifyCleanVersions
+              - Sid: ValidateQuarantineAndVerifyCleanVersions
                 Effect: Allow
                 Action:
                   - s3:GetObject

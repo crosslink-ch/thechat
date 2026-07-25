@@ -823,7 +823,7 @@ function attachmentPhaseLabel(
     case "uploading":
       return "Uploading";
     case "processing":
-      return "Scanning";
+      return "Validating";
     case "cancelling":
       return "Removing";
     case "ready":

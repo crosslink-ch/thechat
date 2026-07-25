@@ -1,5 +1,3 @@
-{{- $defaultClamav := dict "enabled" true "port" 3310 -}}
-{{- $clamav := mergeOverwrite (deepCopy $defaultClamav) (.Values.worker.clamav | default dict) -}}
 {{- if .Values.worker.enabled }}
 apiVersion: apps/v1
 kind: Deployment
@@ -33,12 +31,6 @@ spec:
           command: ["bun", "run", "dist/scripts/worker.js"]
           env:
             {{- include "thechat-api.env" . | nindent 12 }}
-            {{- if $clamav.enabled }}
-            - name: CLAMAV_HOST
-              value: {{ include "thechat-api.clamavFullname" . | quote }}
-            - name: CLAMAV_PORT
-              value: {{ $clamav.port | quote }}
-            {{- end }}
           resources:
             {{- toYaml .Values.worker.resources | nindent 12 }}
       {{- with .Values.nodeSelector }}
