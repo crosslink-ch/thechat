@@ -25,7 +25,7 @@ export async function createBot(
   webhookUrl: string | null,
   ownerId: string,
   kind: "webhook" | "hermes" = "webhook",
-  attachmentAccess = false,
+  attachmentAccess = true,
 ) {
   const apiKey = generateApiKey();
   const webhookSecret = generateWebhookSecret();

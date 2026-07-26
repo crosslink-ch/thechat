@@ -37,7 +37,7 @@ CREATE TABLE "message_attachments" (
 	CONSTRAINT "message_attachments_message_id_position_pk" PRIMARY KEY("message_id","position")
 );
 --> statement-breakpoint
-ALTER TABLE "bots" ADD COLUMN "attachment_access" boolean DEFAULT false NOT NULL;--> statement-breakpoint
+ALTER TABLE "bots" ADD COLUMN "attachment_access" boolean DEFAULT true NOT NULL;--> statement-breakpoint
 ALTER TABLE "messages" ADD COLUMN "client_message_id" varchar(255);--> statement-breakpoint
 ALTER TABLE "attachments" ADD CONSTRAINT "attachments_conversation_id_conversations_id_fk" FOREIGN KEY ("conversation_id") REFERENCES "public"."conversations"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "attachments" ADD CONSTRAINT "attachments_uploader_id_users_id_fk" FOREIGN KEY ("uploader_id") REFERENCES "public"."users"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint

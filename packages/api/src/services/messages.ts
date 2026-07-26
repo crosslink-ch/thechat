@@ -164,12 +164,6 @@ export async function sendMessage(
           true,
         );
         if (participant.senderType === "bot" && attachmentIds.length > 0) {
-          if (attachmentIds.length > config.botMaxPerMessage) {
-            throw new ServiceError(
-              `A bot message can contain at most ${config.botMaxPerMessage} attachments`,
-              400,
-            );
-          }
           const [bot] = await tx
             .select({ attachmentAccess: bots.attachmentAccess })
             .from(bots)

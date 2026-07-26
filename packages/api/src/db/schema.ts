@@ -291,7 +291,7 @@ export const bots = pgTable(
     webhookSecret: varchar("webhook_secret", { length: 128 }).notNull(),
     apiKey: varchar("api_key", { length: 128 }).notNull(),
     kind: botKindEnum("kind").notNull().default("webhook"),
-    attachmentAccess: boolean("attachment_access").notNull().default(false),
+    attachmentAccess: boolean("attachment_access").notNull().default(true),
     commandsJson: jsonb("commands_json").$type<BotCommandPublic[]>(),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()

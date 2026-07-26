@@ -24,7 +24,7 @@ const createSchema = z.object({
   name: z.string().trim().min(1, "Bot name is required"),
   webhookUrl: z.string().url().nullish(),
   kind: z.enum(["webhook", "hermes"]).optional().default("webhook"),
-  attachmentAccess: z.boolean().optional().default(false),
+  attachmentAccess: z.boolean().optional().default(true),
   workspaceId: z.string().trim().min(1, "Workspace ID is required").optional(),
 });
 

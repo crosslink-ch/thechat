@@ -4,9 +4,6 @@ export interface AttachmentConfig {
   maxBytes: number;
   maxPerMessage: number;
   draftQuotaBytes: number;
-  botMaxBytes: number;
-  botMaxPerMessage: number;
-  botDraftQuotaBytes: number;
   uploadTtlSeconds: number;
   downloadTtlSeconds: number;
   unattachedTtlSeconds: number;
@@ -41,24 +38,6 @@ export function loadAttachmentConfig(
     maxBytes,
     maxPerMessage,
     draftQuotaBytes,
-    botMaxBytes: boundedInteger(
-      env.ATTACHMENT_BOT_MAX_BYTES,
-      Math.min(maxBytes, 10 * MIB),
-      1,
-      maxBytes,
-    ),
-    botMaxPerMessage: boundedInteger(
-      env.ATTACHMENT_BOT_MAX_PER_MESSAGE,
-      Math.min(maxPerMessage, 5),
-      1,
-      maxPerMessage,
-    ),
-    botDraftQuotaBytes: boundedInteger(
-      env.ATTACHMENT_BOT_DRAFT_QUOTA_BYTES,
-      Math.min(maxBytes * maxPerMessage, 50 * MIB),
-      1,
-      draftQuotaBytes,
-    ),
     uploadTtlSeconds: boundedInteger(
       env.ATTACHMENT_UPLOAD_TTL_SECONDS,
       300,

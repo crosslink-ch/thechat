@@ -380,61 +380,52 @@ describe("attachment lifecycle", () => {
     expect(row?.failureReason).toBe("active_content");
   });
 
-  test("existing bot tokens are denied until their owner explicitly grants lower-quota attachment access", async () => {
+  test("bots get attachment access and shared limits by default, while owners can still disable access", async () => {
     const owner = await register("Bot attachment owner");
     const { workspaceId, conversationId } = await workspaceWithMembers(owner);
     const created = await request(
       "POST",
       "/bots/create",
       {
-        name: "Scoped Hermes",
+        name: "Hermes attachments by default",
         kind: "hermes",
         workspaceId,
-        attachmentAccess: false,
       },
       owner.token,
     );
     expect(created.status).toBe(200);
+    expect(created.body.attachmentAccess).toBe(true);
     createdUserIds.push(created.body.userId);
     const botToken = created.body.apiKey as string;
     const checksum = crypto.createHash("sha256").update("x").digest("hex");
 
-    const denied = await request(
+    const aboveOldBotLimit = await request(
       "POST",
       "/attachments",
       {
         conversationId,
-        fileName: "bot.txt",
-        mediaType: "text/plain",
-        sizeBytes: 1,
-        checksumSha256: checksum,
-      },
-      botToken,
-    );
-    expect(denied.status).toBe(403);
-
-    const enabled = await request(
-      "PATCH",
-      `/bots/${created.body.id}`,
-      { attachmentAccess: true },
-      owner.token,
-    );
-    expect(enabled.status).toBe(200);
-    expect(enabled.body.attachmentAccess).toBe(true);
-
-    const oversized = await request(
-      "POST",
-      "/attachments",
-      {
-        conversationId,
-        fileName: "oversized.txt",
+        fileName: "shared-limit.txt",
         mediaType: "text/plain",
         sizeBytes: 10 * 1024 * 1024 + 1,
         checksumSha256: checksum,
       },
       botToken,
     );
-    expect(oversized.status).toBe(400);
+    expect(aboveOldBotLimit.status).toBe(200);
+
+    const aboveSharedLimit = await request(
+      "POST",
+      "/attachments",
+      {
+        conversationId,
+        fileName: "oversized.txt",
+        mediaType: "text/plain",
+        sizeBytes: 25 * 1024 * 1024 + 1,
+        checksumSha256: checksum,
+      },
+      botToken,
+    );
+    expect(aboveSharedLimit.status).toBe(400);
 
     const botBytes = new TextEncoder().encode("x");
     const allowed = await request(
@@ -464,7 +455,7 @@ describe("attachment lifecycle", () => {
     ).toBe(200);
     await validateAndPromoteAttachment(botAttachmentId, {
       store,
-      maxBytes: 10 * 1024 * 1024,
+      maxBytes: 25 * 1024 * 1024,
     });
 
     const command = {

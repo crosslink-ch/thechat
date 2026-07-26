@@ -599,7 +599,7 @@
           "type": "boolean",
           "primaryKey": false,
           "notNull": true,
-          "default": false
+          "default": true
         },
         "commands_json": {
           "name": "commands_json",

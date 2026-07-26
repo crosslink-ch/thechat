@@ -35,7 +35,7 @@ function HermesBotModalInner() {
 
   const [name, setName] = useState("");
   const [instructions, setInstructions] = useState(DEFAULT_INSTRUCTIONS);
-  const [attachmentAccess, setAttachmentAccess] = useState(false);
+  const [attachmentAccess, setAttachmentAccess] = useState(true);
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [createdBotName, setCreatedBotName] = useState("");
@@ -214,8 +214,8 @@ function HermesBotModalInner() {
                 Allow message attachments
               </span>
               <span className="mt-0.5 block text-[0.786rem] leading-relaxed text-text-dimmed">
-                Grants this bot explicit access to attachment metadata, downloads,
-                and uploads. Lower bot quotas apply.
+                Lets this bot receive, download, and upload message attachments.
+                The same attachment limits apply to everyone.
               </span>
             </span>
           </label>

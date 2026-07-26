@@ -58,12 +58,7 @@ export async function reserveAttachment(
   options: { store?: ObjectStore } = {},
 ) {
   const config = loadAttachmentConfig();
-  const actor = await requireAttachmentActor(userId);
-  const maxBytes = actor.type === "bot" ? config.botMaxBytes : config.maxBytes;
-  const maxPerMessage =
-    actor.type === "bot" ? config.botMaxPerMessage : config.maxPerMessage;
-  const draftQuotaBytes =
-    actor.type === "bot" ? config.botDraftQuotaBytes : config.draftQuotaBytes;
+  await requireAttachmentActor(userId);
   const fileName = sanitizeFileName(input.fileName);
   const mediaType = normalizeDeclaredMediaType(input.mediaType);
   const checksum = normalizeSha256(input.checksumSha256);
@@ -73,10 +68,10 @@ export async function reserveAttachment(
   if (
     !Number.isSafeInteger(input.sizeBytes) ||
     input.sizeBytes < 1 ||
-    input.sizeBytes > maxBytes
+    input.sizeBytes > config.maxBytes
   ) {
     throw new ServiceError(
-      `Attachment size must be between 1 and ${maxBytes} bytes`,
+      `Attachment size must be between 1 and ${config.maxBytes} bytes`,
       400,
     );
   }
@@ -86,8 +81,8 @@ export async function reserveAttachment(
     input.conversationId,
     userId,
     input.sizeBytes,
-    maxPerMessage,
-    draftQuotaBytes,
+    config.maxPerMessage,
+    config.draftQuotaBytes,
   );
 
   return withSpan(
@@ -125,8 +120,8 @@ export async function reserveAttachment(
           input.conversationId,
           userId,
           input.sizeBytes,
-          maxPerMessage,
-          draftQuotaBytes,
+          config.maxPerMessage,
+          config.draftQuotaBytes,
         );
         return tx
           .insert(attachments)

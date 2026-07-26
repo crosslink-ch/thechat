@@ -1199,7 +1199,7 @@ export async function publishHermesPlatformMessage(input: {
         );
       }
       const attachmentConfig = loadAttachmentConfig();
-      if (attachmentIds.length > attachmentConfig.botMaxPerMessage) {
+      if (attachmentIds.length > attachmentConfig.maxPerMessage) {
         throw new ServiceError("Too many attachments", 400);
       }
       if (new Set(attachmentIds).size !== attachmentIds.length) {
