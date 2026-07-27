@@ -23,15 +23,22 @@ async function waitForJson(filePath, label) {
 }
 
 describeNewTask("client-only Hermes New task", () => {
-  it("opens a local draft while the API and database are offline", async function () {
+  it("opens an API-free local draft from an existing task with stale General history", async function () {
     this.timeout(240_000);
 
     const email = required("NEW_TASK_CLIENT_SIDE_E2E_EMAIL");
     const password = required("NEW_TASK_CLIENT_SIDE_E2E_PASSWORD");
     const botName = required("NEW_TASK_CLIENT_SIDE_E2E_BOT_NAME");
     const conversationId = required("NEW_TASK_CLIENT_SIDE_E2E_CONVERSATION_ID");
+    const existingThreadTitle = required("NEW_TASK_CLIENT_SIDE_E2E_EXISTING_THREAD_TITLE");
+    const generalCacheWitness = required("NEW_TASK_CLIENT_SIDE_E2E_GENERAL_CACHE_WITNESS");
+    const staleGeneralWaitMs = Number(
+      process.env.NEW_TASK_CLIENT_SIDE_E2E_STALE_GENERAL_WAIT_MS ?? "61500",
+    );
     const controlDir = path.resolve(required("NEW_TASK_CLIENT_SIDE_E2E_CONTROL_DIR"));
     const screenshotPath = path.resolve(required("NEW_TASK_CLIENT_SIDE_E2E_SCREENSHOT"));
+    const screenshotBeforePath = path.join(path.dirname(screenshotPath), "new-task-before-click.png");
+    const screenshotUsablePath = path.join(path.dirname(screenshotPath), "new-task-usable.png");
     const evidencePath = path.resolve(required("NEW_TASK_CLIENT_SIDE_E2E_EVIDENCE"));
     const offlineRequest = path.join(controlDir, "offline.request");
     const offlineEvidencePath = path.join(controlDir, "offline.json");
@@ -61,6 +68,27 @@ describeNewTask("client-only Hermes New task", () => {
       const chatSurface = await $("[data-testid='hermes-dm-chat-scroll']");
       await chatSurface.waitForDisplayed({ timeout: 30_000 });
       await $(`//*[normalize-space(text())='${botName}']`).waitForDisplayed({ timeout: 30_000 });
+      await $(`//*[normalize-space(text())='${generalCacheWitness}']`).waitForDisplayed({
+        timeout: 30_000,
+      });
+
+      const existingThread = await $(
+        `//button[.//span[normalize-space(text())='${existingThreadTitle}']]`,
+      );
+      await existingThread.waitForClickable({ timeout: 30_000 });
+      await existingThread.click();
+      await browser.waitUntil(
+        async () => (await existingThread.getAttribute("class")).includes("bg-accent/10"),
+        {
+          timeout: 10_000,
+          timeoutMsg: "Existing task did not become selected",
+        },
+      );
+      // General history was loaded during initial DM navigation. Keep the
+      // existing task selected beyond useChannelChat's production staleTime so
+      // the New task transition proves a stale General query remains disabled.
+      await browser.pause(staleGeneralWaitMs);
+
       const newTaskButton = await $("button[aria-label='New task']");
       await newTaskButton.waitForClickable({ timeout: 30_000 });
       const composer = await $("div[contenteditable='true']");
@@ -93,13 +121,16 @@ describeNewTask("client-only Hermes New task", () => {
       expect(offline.postgresReachable).toBe(false);
       expect(offline.redisReachable).toBe(false);
       expect(offline.postgresRunning).toBe(false);
-      expect(offline.threadCountBefore).toBe(0);
+      expect(offline.threadCountBefore).toBe(1);
 
       await browser.execute(() => {
         window.__newTaskNetworkRecords.fetches.length = 0;
         window.__newTaskNetworkRecords.websocketSends.length = 0;
       });
 
+      fs.mkdirSync(path.dirname(screenshotPath), { recursive: true });
+      await browser.saveScreenshot(screenshotBeforePath);
+      const clickStartedAt = new Date().toISOString();
       await newTaskButton.click();
 
       const draftRow = await $("[data-testid='hermes-local-task-draft']");
@@ -108,8 +139,12 @@ describeNewTask("client-only Hermes New task", () => {
       expect(await draftRow.getText()).toContain("Draft, not saved");
       expect(await composer.isDisplayed()).toBe(true);
       expect(await composer.getText()).toBe("");
+      await browser.saveScreenshot(screenshotPath);
 
-      await browser.pause(1_000);
+      // The blocking stale-General failure retried after roughly 1.1 seconds.
+      // Keep the boundary open long enough to catch both the initial request
+      // and a retry rather than only asserting the synchronous click frame.
+      await browser.pause(2_000);
       const network = await browser.execute(() => ({
         fetches: [...window.__newTaskNetworkRecords.fetches],
         websocketSends: [...window.__newTaskNetworkRecords.websocketSends],
@@ -122,20 +157,41 @@ describeNewTask("client-only Hermes New task", () => {
       expect(database.threadCountAfter).toBe(offline.threadCountBefore);
       expect(database.apiReachable).toBe(false);
 
-      fs.mkdirSync(path.dirname(screenshotPath), { recursive: true });
-      await browser.saveScreenshot(screenshotPath);
+      await composer.click();
+      await composer.addValue("unsent usability probe");
+      await browser.waitUntil(
+        async () => (await composer.getText()).includes("unsent usability probe"),
+        {
+          timeout: 5_000,
+          timeoutMsg: "Local draft composer did not accept unsent text",
+        },
+      );
+      await browser.saveScreenshot(screenshotUsablePath);
+      const postUsabilityNetwork = await browser.execute(() => ({
+        fetches: [...window.__newTaskNetworkRecords.fetches],
+        websocketSends: [...window.__newTaskNetworkRecords.websocketSends],
+      }));
       fs.writeFileSync(
         evidencePath,
         JSON.stringify(
           {
             ok: true,
             conversationId,
+            existingThreadTitle,
+            generalCacheWitness,
+            staleGeneralWaitMs,
+            clickStartedAt,
             draftVisible: true,
-            composerEmpty: true,
+            composerAcceptedUnsentProbe: true,
             network,
+            postUsabilityNetwork,
             offline,
             database,
-            screenshot: screenshotPath,
+            screenshots: {
+              before: screenshotBeforePath,
+              after: screenshotPath,
+              usable: screenshotUsablePath,
+            },
           },
           null,
           2,

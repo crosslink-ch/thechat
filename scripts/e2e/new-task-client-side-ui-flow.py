@@ -277,7 +277,23 @@ def main() -> None:
         )
         assert status == 200, (status, conversation)
         conversation_id = conversation["id"]
-        assert thread_count(conversation_id) == 0
+        existing_thread_title = "Existing persisted task"
+        status, existing_thread = harness.http_json(
+            "POST",
+            f"{base}/conversations/threads/{conversation_id}",
+            {"botId": bot["id"], "title": existing_thread_title},
+            token,
+        )
+        assert status == 200, (status, existing_thread)
+        assert thread_count(conversation_id) == 1
+        general_cache_witness = "General cache loaded before selecting the existing task"
+        status, general_message = harness.http_json(
+            "POST",
+            f"{base}/messages/{conversation_id}",
+            {"content": general_cache_witness, "threadId": None},
+            token,
+        )
+        assert status == 200, (status, general_message)
 
         control_thread = threading.Thread(
             target=control_backend,
@@ -297,6 +313,8 @@ def main() -> None:
             "NEW_TASK_CLIENT_SIDE_E2E_PASSWORD": password,
             "NEW_TASK_CLIENT_SIDE_E2E_BOT_NAME": bot["name"],
             "NEW_TASK_CLIENT_SIDE_E2E_CONVERSATION_ID": conversation_id,
+            "NEW_TASK_CLIENT_SIDE_E2E_EXISTING_THREAD_TITLE": existing_thread_title,
+            "NEW_TASK_CLIENT_SIDE_E2E_GENERAL_CACHE_WITNESS": general_cache_witness,
             "NEW_TASK_CLIENT_SIDE_E2E_CONTROL_DIR": str(CONTROL_DIR),
             "NEW_TASK_CLIENT_SIDE_E2E_SCREENSHOT": str(SCREENSHOT),
             "NEW_TASK_CLIENT_SIDE_E2E_EVIDENCE": str(UI_EVIDENCE),
@@ -340,6 +358,9 @@ def main() -> None:
                 {
                     "ok": True,
                     "conversationId": conversation_id,
+                    "existingThreadId": existing_thread["id"],
+                    "existingThreadTitle": existing_thread_title,
+                    "generalCacheWitness": general_cache_witness,
                     "screenshot": str(SCREENSHOT),
                     "evidence": str(UI_EVIDENCE),
                 },

@@ -92,8 +92,8 @@ export function DmRoute() {
     touchThread,
   } = threadState;
   const { mergeInvocationUpdate, mergeProgressEvent } = useBotRuntimeCache();
-  const generalThreadActive = isHermesDm && activeThreadId === null;
-  const generalProgressActive = generalThreadActive && !draftTaskActive;
+  const generalThreadActive = isHermesDm && !draftTaskActive && activeThreadId === null;
+  const generalProgressActive = generalThreadActive;
   const progressThreadId = draftTaskActive ? LOCAL_TASK_DRAFT_SCOPE : activeThreadId;
   const activeHermesProgress = useMemo(
     () =>
@@ -173,6 +173,7 @@ export function DmRoute() {
     conversationId: chatConversationId,
     threadId: isHermesDm ? activeThreadId : null,
     unthreadedOnly: generalThreadActive,
+    enabled: !draftTaskActive,
     token,
     wsSendMessage,
     selfUser: user,
