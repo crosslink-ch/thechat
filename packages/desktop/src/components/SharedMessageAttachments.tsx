@@ -1,6 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { ChatAttachment } from "@thechat/shared";
-import { getAttachmentDownloadUrl } from "../lib/shared-attachments";
+import type { ChatAttachment, TraceContextCarrier } from "@thechat/shared";
+import {
+  getAttachmentDownloadUrl,
+  openSharedAttachmentDownload,
+} from "../lib/shared-attachments";
+import {
+  contextFromRemoteTrace,
+  SpanStatusCode,
+  withDesktopSpan,
+} from "../lib/telemetry";
 import { useAuthStore } from "../stores/auth";
 
 export function SharedMessageAttachments({
@@ -21,11 +29,7 @@ export function SharedMessageAttachments({
             token={token}
           />
         ) : (
-          <FileCard
-            key={attachment.id}
-            attachment={attachment}
-            token={token}
-          />
+          <FileCard key={attachment.id} attachment={attachment} token={token} />
         ),
       )}
     </div>
@@ -40,21 +44,25 @@ function AuthorizedImage({
   token: string;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const renderParentRef = useRef<TraceContextCarrier | undefined>(undefined);
   const [url, setUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState(false);
 
   const authorize = useCallback(async () => {
     if (url) return url;
+    renderParentRef.current = undefined;
     try {
       const result = await getAttachmentDownloadUrl(
         attachment.id,
         token,
         "inline",
       );
+      renderParentRef.current = result.traceContext;
       setUrl(result.url);
       return result.url;
     } catch (caught) {
+      setUrl(null);
       setError(
         caught instanceof Error ? caught.message : "Failed to load image",
       );
@@ -82,10 +90,41 @@ function AuthorizedImage({
     return () => observer.disconnect();
   }, [authorize]);
 
+  const recordImageOutcome = useCallback(
+    (
+      name: "attachment.image.render" | "attachment.image.open",
+      outcome: "loaded" | "opened" | "failed",
+      view: "thumbnail" | "expanded",
+    ) => {
+      void withDesktopSpan(
+        name,
+        {
+          "thechat.attachment_id": attachment.id,
+          "thechat.attachment.image_view": view,
+          "thechat.attachment.outcome": outcome,
+        },
+        (span) => {
+          if (outcome === "failed") {
+            span.setStatus({ code: SpanStatusCode.ERROR });
+          }
+        },
+        {
+          parentContext: contextFromRemoteTrace(renderParentRef.current),
+          recordException: false,
+        },
+      );
+    },
+    [attachment.id],
+  );
+
   const download = useCallback(async () => {
-    const authorized = await getAttachmentDownloadUrl(attachment.id, token);
-    window.open(authorized.url, "_blank", "noopener,noreferrer");
-  }, [attachment.id, token]);
+    await openSharedAttachmentDownload(
+      attachment.id,
+      token,
+      "attachment",
+      attachment.fileName,
+    );
+  }, [attachment.fileName, attachment.id, token]);
 
   return (
     <div ref={containerRef} className="min-h-24 min-w-32">
@@ -104,7 +143,14 @@ function AuthorizedImage({
         <>
           <button
             type="button"
-            onClick={() => setExpanded(true)}
+            onClick={() => {
+              recordImageOutcome(
+                "attachment.image.open",
+                "opened",
+                "thumbnail",
+              );
+              setExpanded(true);
+            }}
             className="block overflow-hidden rounded-lg border border-border bg-raised"
             aria-label={`Open ${attachment.fileName}`}
           >
@@ -112,6 +158,23 @@ function AuthorizedImage({
               src={url}
               alt={attachment.fileName}
               className="max-h-64 max-w-sm object-contain"
+              onLoad={() =>
+                recordImageOutcome(
+                  "attachment.image.render",
+                  "loaded",
+                  "thumbnail",
+                )
+              }
+              onError={() => {
+                recordImageOutcome(
+                  "attachment.image.render",
+                  "failed",
+                  "thumbnail",
+                );
+                renderParentRef.current = undefined;
+                setUrl(null);
+                setError("Failed to render image");
+              }}
             />
           </button>
           {expanded && (
@@ -127,6 +190,24 @@ function AuthorizedImage({
                 alt={attachment.fileName}
                 className="max-h-[85vh] max-w-[95vw] object-contain"
                 onClick={(event) => event.stopPropagation()}
+                onLoad={() =>
+                  recordImageOutcome(
+                    "attachment.image.render",
+                    "loaded",
+                    "expanded",
+                  )
+                }
+                onError={() => {
+                  recordImageOutcome(
+                    "attachment.image.render",
+                    "failed",
+                    "expanded",
+                  );
+                  renderParentRef.current = undefined;
+                  setExpanded(false);
+                  setUrl(null);
+                  setError("Failed to render image");
+                }}
               />
               <div className="flex gap-2">
                 <button
@@ -174,14 +255,18 @@ function FileCard({
     setLoading(true);
     setError(null);
     try {
-      const result = await getAttachmentDownloadUrl(attachment.id, token);
-      window.open(result.url, "_blank", "noopener,noreferrer");
+      await openSharedAttachmentDownload(
+        attachment.id,
+        token,
+        "attachment",
+        attachment.fileName,
+      );
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Download failed");
     } finally {
       setLoading(false);
     }
-  }, [attachment.id, token]);
+  }, [attachment.fileName, attachment.id, token]);
 
   return (
     <button
@@ -197,7 +282,8 @@ function FileCard({
           {attachment.fileName}
         </span>
         <span className="block text-xs text-text-dimmed">
-          {error ?? `${formatBytes(attachment.sizeBytes)} · ${attachment.mediaType}`}
+          {error ??
+            `${formatBytes(attachment.sizeBytes)} · ${attachment.mediaType}`}
         </span>
       </span>
     </button>

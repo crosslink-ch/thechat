@@ -103,6 +103,49 @@ class AttachmentUiFlowTests(unittest.TestCase):
                     with approval._exclusive_run_lock():
                         self.fail("approval flow unexpectedly acquired native E2E lock")
 
+    def test_source_identity_rejects_build_run_races(self):
+        before = {
+            "sourceCommit": "a" * 40,
+            "sourceTree": "b" * 40,
+            "sourceDiffSha256": "c" * 64,
+            "sourceStatusLineCount": 0,
+        }
+        self.flow._assert_source_identity_unchanged(before, dict(before))
+        after = {**before, "sourceTree": "d" * 40}
+        with self.assertRaisesRegex(RuntimeError, "sourceTree"):
+            self.flow._assert_source_identity_unchanged(before, after)
+
+    def test_command_logging_redacts_tokens_headers_assignments_and_urls(self):
+        canary = "thechat-secret-canary"
+        rendered = self.flow.harness.format_command(
+            [
+                "tool",
+                "--token",
+                canary,
+                f"OPENROUTER_API_KEY={canary}",
+                f"DATABASE_URL=postgres://user:{canary}@db.invalid/thechat",
+                "-H",
+                f"Authorization: Bearer {canary}",
+                f"-HAuthorization: Bearer {canary}",
+                f"https://api.invalid/resource?token={canary}",
+                f"--password={canary} with spaces",
+                "--header=Cookie: session=" + canary,
+                "Authorization: Basic " + canary,
+                f"SERVICE_SECRET={canary} with whitespace",
+                (
+                    "PRIVATE_KEY=-----BEGIN PRIVATE KEY-----\n"
+                    f"{canary}\n-----END PRIVATE KEY-----"
+                ),
+                "--user",
+                f"user:{canary}",
+                f"--user=user:{canary}",
+            ]
+        )
+
+        self.assertNotIn(canary, rendered)
+        self.assertNotIn("BEGIN PRIVATE KEY", rendered)
+        self.assertGreaterEqual(rendered.count("REDACTED"), 8)
+
 
 if __name__ == "__main__":
     unittest.main()

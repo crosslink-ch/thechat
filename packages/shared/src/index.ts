@@ -492,6 +492,11 @@ export interface WorkspaceConfig {
 
 // -- WebSocket Event Types --
 
+export interface TraceContextCarrier {
+  traceparent: string;
+  tracestate?: string;
+}
+
 export type WsServerEvent =
   | { type: "auth_ok"; userId: string }
   | { type: "auth_error"; message: string }
@@ -500,6 +505,7 @@ export type WsServerEvent =
       message: ChatMessage;
       conversationType: "direct" | "group";
       clientMessageId?: string;
+      traceContext?: TraceContextCarrier;
     }
   | {
       type: "message_error";

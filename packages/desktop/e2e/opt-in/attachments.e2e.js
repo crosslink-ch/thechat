@@ -10,6 +10,8 @@ const VALID_FIXTURE = required("ATTACHMENT_E2E_VALID_FIXTURE");
 const REJECTED_FIXTURE = required("ATTACHMENT_E2E_REJECTED_FIXTURE");
 const CANCEL_FIXTURE = required("ATTACHMENT_E2E_CANCEL_FIXTURE");
 const SCREENSHOT = required("ATTACHMENT_E2E_SCREENSHOT");
+const SUCCESS_SCREENSHOT = required("ATTACHMENT_E2E_SUCCESS_SCREENSHOT");
+const REJECTION_SCREENSHOT = required("ATTACHMENT_E2E_REJECTION_SCREENSHOT");
 const FAILURE_SCREENSHOT = required("ATTACHMENT_E2E_FAILURE_SCREENSHOT");
 
 const validName = fileName(VALID_FIXTURE);
@@ -26,7 +28,10 @@ describe("Secure message attachments", function () {
           await browser.execute(
             () => (document.getElementById("root")?.childElementCount ?? 0) > 0,
           ),
-        { timeout: 15_000, timeoutMsg: "React never mounted children into #root" },
+        {
+          timeout: 15_000,
+          timeoutMsg: "React never mounted children into #root",
+        },
       );
     try {
       await waitForRoot();
@@ -50,15 +55,27 @@ describe("Secure message attachments", function () {
       window.location.hash = `#/channel/${conversationId}`;
     }, CONVERSATION_ID);
     await $('input[type="file"]').waitForExist({ timeout: 15_000 });
-    await $('[data-testid="channel-chat-scroll"]').waitForExist({ timeout: 15_000 });
+    await $('[data-testid="channel-chat-scroll"]').waitForExist({
+      timeout: 15_000,
+    });
 
     await browser.execute(() => {
       const state = {
         transitions: {},
-        openedUrl: null,
+        downloadBlobUrl: null,
+        downloadName: null,
         sendProbe: null,
       };
       window.__attachmentE2E = state;
+      const originalAnchorClick = HTMLAnchorElement.prototype.click;
+      HTMLAnchorElement.prototype.click = function attachmentE2EClick() {
+        if (this.href.startsWith("blob:") && this.download) {
+          state.downloadBlobUrl = this.href;
+          state.downloadName = this.download;
+          return;
+        }
+        return originalAnchorClick.call(this);
+      };
       const record = () => {
         for (const element of document.querySelectorAll(
           '[data-testid="attachment-draft"]',
@@ -79,6 +96,32 @@ describe("Secure message attachments", function () {
       });
       record();
     });
+  });
+
+  after(async () => {
+    const flushed = await browser.executeAsync((done) => {
+      const flush = window.__thechatOtelForceFlush;
+      if (typeof flush !== "function") {
+        done({ ok: false, error: "Desktop OTel force-flush hook is missing" });
+        return;
+      }
+      flush().then(
+        () => {
+          const exports = window.__thechatOtelExports ?? [];
+          done({
+            ok: exports.some(
+              (result) => result.code === 0 && result.spanCount > 0,
+            ),
+            exports,
+          });
+        },
+        (error) => done({ ok: false, error: String(error), exports: [] }),
+      );
+    });
+    if (!flushed.ok) {
+      throw new Error(`Desktop OTel export failed: ${JSON.stringify(flushed)}`);
+    }
+    console.log(JSON.stringify({ desktopOtelExports: flushed.exports }));
   });
 
   afterEach(async function () {
@@ -142,24 +185,40 @@ describe("Secure message attachments", function () {
       probe.attempts[0].responseMessageId,
     );
 
-    await browser.execute(() => {
-      window.open = (url) => {
-        window.__attachmentE2E.openedUrl = String(url);
-        return null;
-      };
-    });
     await fileCard.click();
     await browser.waitUntil(
-      async () => Boolean(await browser.execute(() => window.__attachmentE2E.openedUrl)),
-      { timeout: 30_000, timeoutMsg: "Attachment download URL was not opened" },
+      async () =>
+        Boolean(
+          await browser.execute(() => window.__attachmentE2E.downloadBlobUrl),
+        ),
+      {
+        timeout: 30_000,
+        timeoutMsg: "Application-controlled attachment transfer did not launch",
+      },
     );
-    const downloadUrl = await browser.execute(
-      () => window.__attachmentE2E.openedUrl,
-    );
-    const response = await fetch(downloadUrl);
-    expect(response.status).toBe(200);
-    const downloaded = Buffer.from(await response.arrayBuffer());
-    expect(sha256(downloaded)).toBe(sha256(fs.readFileSync(VALID_FIXTURE)));
+    const downloaded = await browser.executeAsync((done) => {
+      const state = window.__attachmentE2E;
+      fetch(state.downloadBlobUrl)
+        .then(async (response) => {
+          const bytes = await response.arrayBuffer();
+          const digest = await window.crypto.subtle.digest("SHA-256", bytes);
+          done({
+            ok: response.ok,
+            status: response.status,
+            size: bytes.byteLength,
+            name: state.downloadName,
+            sha256: Array.from(new Uint8Array(digest), (byte) =>
+              byte.toString(16).padStart(2, "0"),
+            ).join(""),
+          });
+        })
+        .catch((error) => done({ ok: false, error: String(error) }));
+    });
+    expect(downloaded.ok).toBe(true);
+    expect(downloaded.status).toBe(200);
+    expect(downloaded.name).toBe(validName);
+    expect(downloaded.sha256).toBe(sha256(fs.readFileSync(VALID_FIXTURE)));
+    await browser.saveScreenshot(SUCCESS_SCREENSHOT);
   });
 
   it("shows an active-content rejection and keeps the message unsendable", async () => {
@@ -181,6 +240,7 @@ describe("Secure message attachments", function () {
     const status = await apiJson(`/attachments/${rejected.attachmentId}`);
     expect(status.status).toBe("rejected");
     expect(await $('button[title="Send message"]').isEnabled()).toBe(false);
+    await browser.saveScreenshot(REJECTION_SCREENSHOT);
 
     const remove = await $(`button[aria-label="Remove ${rejectedName}"]`);
     await remove.waitForClickable({ timeout: 10_000 });
@@ -254,10 +314,11 @@ async function waitForDraftPhase(name, phase, timeout) {
 }
 
 async function waitForDraftRemoval(name, timeout) {
-  await browser.waitUntil(
-    async () => (await draftSnapshot(name)) === null,
-    { timeout, interval: 250, timeoutMsg: `${name} draft was not removed` },
-  );
+  await browser.waitUntil(async () => (await draftSnapshot(name)) === null, {
+    timeout,
+    interval: 250,
+    timeoutMsg: `${name} draft was not removed`,
+  });
 }
 
 async function expectDraftText(name, expected) {
@@ -324,7 +385,10 @@ async function armLostMessageResponse(conversationId) {
       }
       const response = await originalFetch(input, init);
       const pathname = new URL(url, window.location.href).pathname;
-      if (method === "POST" && pathname === `/messages/${targetConversationId}`) {
+      if (
+        method === "POST" &&
+        pathname === `/messages/${targetConversationId}`
+      ) {
         let requestId = "";
         try {
           requestId = JSON.parse(bodyText).clientMessageId ?? "";
@@ -335,7 +399,8 @@ async function armLostMessageResponse(conversationId) {
         let responseMessageId = null;
         try {
           const responseBody = await response.clone().json();
-          responseMessageId = responseBody?.id ?? responseBody?.message?.id ?? null;
+          responseMessageId =
+            responseBody?.id ?? responseBody?.message?.id ?? null;
         } catch {
           responseMessageId = null;
         }

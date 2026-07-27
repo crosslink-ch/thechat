@@ -107,6 +107,7 @@ export class DomainEventRegistry {
         logDomainEvent("info", "domain_event.handle.completed", parsed);
         return true;
       },
+      { recordException: false },
     );
   }
 }

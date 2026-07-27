@@ -3,6 +3,10 @@ import { z } from "zod";
 import { resolveTokenToUser } from "../auth/middleware";
 import { ServiceError } from "../services/errors";
 import { getMessages, sendMessage } from "../services/messages";
+import {
+  setHttpResponseStatus,
+  withHttpServerSpan,
+} from "../observability";
 
 const sendSchema = z.object({
   clientMessageId: z.string().min(1).max(255).optional(),
@@ -58,30 +62,43 @@ export const messageRoutes = new Elysia({ prefix: "/messages" })
   })
 
   // Send a message (REST fallback)
-  .post("/:conversationId", async ({ params, body, user, set }) => {
-    const parsed = sendSchema.safeParse(body);
-    if (!parsed.success) {
-      set.status = 400;
-      return { error: parsed.error.issues[0]?.message ?? "Invalid input" };
-    }
+  .post("/:conversationId", ({ headers, params, body, user, set }) =>
+    withHttpServerSpan(
+      "POST",
+      "/messages/:conversationId",
+      headers,
+      async (span) => {
+        const parsed = sendSchema.safeParse(body);
+        if (!parsed.success) {
+          set.status = 400;
+          setHttpResponseStatus(span, set.status);
+          return { error: parsed.error.issues[0]?.message ?? "Invalid input" };
+        }
 
-    try {
-      return await sendMessage(
-        params.conversationId,
-        user.id,
-        user.name,
-        parsed.data.content,
-        {
-          threadId: parsed.data.threadId ?? null,
-          clientMessageId: parsed.data.clientMessageId,
-          attachmentIds: parsed.data.attachmentIds,
-        },
-      );
-    } catch (e) {
-      if (e instanceof ServiceError) {
-        set.status = e.status;
-        return { error: e.message };
-      }
-      throw e;
-    }
-  });
+        try {
+          const result = await sendMessage(
+            params.conversationId,
+            user.id,
+            user.name,
+            parsed.data.content,
+            {
+              threadId: parsed.data.threadId ?? null,
+              clientMessageId: parsed.data.clientMessageId,
+              attachmentIds: parsed.data.attachmentIds,
+            },
+          );
+          setHttpResponseStatus(span, set.status);
+          return result;
+        } catch (e) {
+          if (e instanceof ServiceError) {
+            set.status = e.status;
+            setHttpResponseStatus(span, set.status);
+            return { error: e.message };
+          }
+          set.status = 500;
+          setHttpResponseStatus(span, set.status);
+          return { error: "Internal server error" };
+        }
+      },
+    ),
+  );

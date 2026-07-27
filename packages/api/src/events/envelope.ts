@@ -1,5 +1,6 @@
 import crypto from "crypto";
 import { z } from "zod";
+import { activeTraceContext } from "../observability";
 
 const nonEmptyString = z.string().trim().min(1);
 
@@ -24,6 +25,12 @@ export const domainEventEnvelopeSchema = z.object({
     .optional(),
   correlationId: nonEmptyString.optional(),
   causationId: nonEmptyString.optional(),
+  traceContext: z
+    .object({
+      traceparent: nonEmptyString,
+      tracestate: nonEmptyString.optional(),
+    })
+    .optional(),
   occurredAt: z.string().datetime({ offset: true }),
   payload: z.record(z.string(), z.unknown()),
 });
@@ -133,6 +140,7 @@ export function createChatMessageSentV1(input: {
   causationId?: string;
   occurredAt?: Date;
 }): ChatMessageSentV1 {
+  const traceContext = activeTraceContext();
   return chatMessageSentV1Schema.parse({
     id: crypto.randomUUID(),
     type: CHAT_MESSAGE_SENT_EVENT_TYPE,
@@ -144,6 +152,7 @@ export function createChatMessageSentV1(input: {
       : {}),
     correlationId: input.correlationId ?? input.messageId,
     ...(input.causationId ? { causationId: input.causationId } : {}),
+    ...(traceContext ? { traceContext } : {}),
     occurredAt: (input.occurredAt ?? new Date()).toISOString(),
     payload: {
       messageId: input.messageId,

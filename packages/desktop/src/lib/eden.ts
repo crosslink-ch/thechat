@@ -1,7 +1,11 @@
-export function authHeaders(token: string) {
+export function authHeaders(
+  token: string,
+  additionalHeaders: Record<string, string> = {},
+) {
   return {
     headers: {
       authorization: `Bearer ${token}`,
+      ...additionalHeaders,
     },
   };
 }
@@ -21,7 +25,8 @@ export function edenErrorMessage(error: unknown, fallback: string) {
       if (typeof message === "string" && message.trim()) return message;
     }
     // Plain-text error bodies (e.g. framework default 500s).
-    if (isTreatyError && typeof value === "string" && value.trim()) return value;
+    if (isTreatyError && typeof value === "string" && value.trim())
+      return value;
     if ("error" in error) {
       const message = (error as { error?: unknown }).error;
       if (typeof message === "string" && message.trim()) return message;
@@ -34,4 +39,14 @@ export function edenErrorMessage(error: unknown, fallback: string) {
     }
   }
   return fallback;
+}
+
+export function edenErrorStatus(error: unknown): number | undefined {
+  if (!error || typeof error !== "object" || !("status" in error)) {
+    return undefined;
+  }
+  const status = Number((error as { status?: unknown }).status);
+  return Number.isInteger(status) && status >= 100 && status <= 599
+    ? status
+    : undefined;
 }

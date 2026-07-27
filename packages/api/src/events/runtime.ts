@@ -1,5 +1,6 @@
 import crypto from "crypto";
-import { withSpan } from "../observability";
+import { SpanKind, SpanStatusCode, type Span } from "@opentelemetry/api";
+import { contextFromTraceContext, withSpan } from "../observability";
 import { loadDomainEventsConfig, type DomainEventsConfig } from "./config";
 import { logDomainEvent } from "./log";
 import { createChatMessageSentHandler } from "./message-handler";
@@ -14,6 +15,7 @@ import {
   releaseOutboxEvent,
   type ClaimedOutboxEvent,
 } from "./outbox";
+import type { DomainEventEnvelope } from "./envelope";
 import {
   DomainEventRegistry,
   InvalidDomainEventError,
@@ -50,7 +52,9 @@ export class DomainEventRuntime {
   constructor(options: DomainEventRuntimeOptions = {}) {
     this.config = options.config ?? loadDomainEventsConfig();
     this.registry = options.registry ?? createDefaultDomainEventRegistry();
-    this.workerId = options.workerId ?? `thechat-outbox:${process.pid}:${crypto.randomUUID()}`;
+    this.workerId =
+      options.workerId ??
+      `thechat-outbox:${process.pid}:${crypto.randomUUID()}`;
   }
 
   async start() {
@@ -95,11 +99,15 @@ export class DomainEventRuntime {
         }
       } catch (error) {
         if (!signal.aborted) {
-          logDomainEvent("error", "domain_event.outbox.claim_failed", undefined, {
-            workerId: this.workerId,
-            err: error,
-            error: errorMessage(error),
-          });
+          logDomainEvent(
+            "error",
+            "domain_event.outbox.claim_failed",
+            undefined,
+            {
+              workerId: this.workerId,
+              errorType: safeErrorType(error),
+            },
+          );
           await waitForAbort(signal, this.config.pollIntervalMs);
         }
       }
@@ -107,58 +115,10 @@ export class DomainEventRuntime {
   }
 
   private async processOutboxEvent(row: ClaimedOutboxEvent) {
-    try {
-      await withSpan(
-        "domain_event.outbox.consume",
-        {
-          "messaging.system": "postgresql-outbox",
-          "messaging.operation": "process",
-          "messaging.message.id": row.id,
-          "thechat.outbox.attempts": row.attempts,
-        },
-        () => this.registry.dispatch(row.event, { rejectMissing: true }),
-      );
-      const acknowledged = await markOutboxEventPublished(row.id, row.lockedBy);
-      if (acknowledged.kind === "lease_lost") {
-        logDomainEvent("warn", "domain_event.outbox.ack_lease_lost", undefined, {
-          outboxId: row.id,
-          workerId: row.lockedBy,
-        });
-      }
-    } catch (error) {
-      const permanent =
-        error instanceof InvalidDomainEventError ||
-        error instanceof PermanentDomainEventError;
-      const outcome = await releaseOutboxEvent(
-        row,
-        error,
-        new Date(),
-        permanent ? 1 : this.config.maxAttempts,
-      );
-      if (outcome.kind === "lease_lost") {
-        logDomainEvent("warn", "domain_event.outbox.release_lease_lost", undefined, {
-          outboxId: row.id,
-          workerId: row.lockedBy,
-          err: error,
-          error: errorMessage(error),
-        });
-        return;
-      }
-      logDomainEvent(
-        outcome.kind === "dead" ? "error" : "warn",
-        outcome.kind === "dead"
-          ? "domain_event.outbox.dead_lettered"
-          : "domain_event.outbox.processing_failed",
-        undefined,
-        {
-          outboxId: row.id,
-          attempts: outcome.attempts,
-          maxAttempts: permanent ? 1 : this.config.maxAttempts,
-          err: error,
-          error: errorMessage(error),
-        },
-      );
-    }
+    await processOutboxEventAttempt(row, {
+      registry: this.registry,
+      maxAttempts: this.config.maxAttempts,
+    });
   }
 
   private async pruneIfDue() {
@@ -176,6 +136,183 @@ export class DomainEventRuntime {
       });
     }
   }
+}
+
+export interface ProcessOutboxAttemptOptions {
+  registry: DomainEventRegistry;
+  maxAttempts: number;
+  markPublished?: typeof markOutboxEventPublished;
+  release?: typeof releaseOutboxEvent;
+}
+
+export async function processOutboxEventAttempt(
+  row: ClaimedOutboxEvent,
+  options: ProcessOutboxAttemptOptions,
+) {
+  const markPublished = options.markPublished ?? markOutboxEventPublished;
+  const release = options.release ?? releaseOutboxEvent;
+  const loggableEvent = loggableDomainEvent(row.event);
+
+  await withSpan(
+    "domain_event.outbox.consume",
+    {
+      "messaging.system": "postgresql-outbox",
+      "messaging.operation": "process",
+      "messaging.message.id": row.id,
+      "messaging.message.type": row.eventType,
+      "thechat.aggregate.type": row.aggregateType,
+      "thechat.aggregate.id": row.aggregateId,
+      "thechat.outbox.attempt": row.attempts + 1,
+    },
+    async (span) => {
+      try {
+        await options.registry.dispatch(row.event, { rejectMissing: true });
+        const acknowledged = await markPublished(row.id, row.lockedBy);
+        span.setAttribute("thechat.outbox.outcome", acknowledged.kind);
+        if (acknowledged.kind === "lease_lost") {
+          span.setStatus({ code: SpanStatusCode.ERROR });
+          logDomainEvent(
+            "warn",
+            "domain_event.outbox.ack_lease_lost",
+            loggableEvent,
+            outboxLogContext(row),
+          );
+        }
+        return;
+      } catch (error) {
+        const permanent =
+          error instanceof InvalidDomainEventError ||
+          error instanceof PermanentDomainEventError;
+        const maxAttempts = permanent ? 1 : options.maxAttempts;
+        let outcome: Awaited<ReturnType<typeof release>>;
+        try {
+          outcome = await release(row, error, new Date(), maxAttempts);
+        } catch (releaseError) {
+          recordAttemptFailure(span, releaseError, "release_failed");
+          logDomainEvent(
+            "error",
+            "domain_event.outbox.release_failed",
+            loggableEvent,
+            {
+              ...outboxLogContext(row),
+              errorType: safeErrorType(releaseError),
+            },
+          );
+          throw releaseError;
+        }
+
+        recordAttemptFailure(span, error, outcome.kind);
+        if (outcome.kind === "lease_lost") {
+          logDomainEvent(
+            "warn",
+            "domain_event.outbox.release_lease_lost",
+            loggableEvent,
+            {
+              ...outboxLogContext(row),
+              errorType: safeErrorType(error),
+            },
+          );
+          return;
+        }
+
+        span.setAttribute("thechat.outbox.attempts", outcome.attempts);
+        span.setAttribute("thechat.outbox.max_attempts", maxAttempts);
+        logDomainEvent(
+          outcome.kind === "dead" ? "error" : "warn",
+          outcome.kind === "dead"
+            ? "domain_event.outbox.dead_lettered"
+            : "domain_event.outbox.processing_failed",
+          loggableEvent,
+          {
+            ...outboxLogContext(row),
+            attempts: outcome.attempts,
+            maxAttempts,
+            errorType: safeErrorType(error),
+          },
+        );
+      }
+    },
+    {
+      kind: SpanKind.CONSUMER,
+      parentContext: contextFromTraceContext(traceContextFromUnknown(row.event)),
+      recordException: false,
+    },
+  );
+}
+
+function traceContextFromUnknown(
+  value: unknown,
+): DomainEventEnvelope["traceContext"] | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const candidate = (value as { traceContext?: unknown }).traceContext;
+  if (!candidate || typeof candidate !== "object") return undefined;
+  const traceparent = (candidate as { traceparent?: unknown }).traceparent;
+  const tracestate = (candidate as { tracestate?: unknown }).tracestate;
+  if (
+    typeof traceparent !== "string" ||
+    !/^[0-9a-f]{2}-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$/i.test(
+      traceparent,
+    )
+  ) {
+    return undefined;
+  }
+  return {
+    traceparent,
+    ...(typeof tracestate === "string" && tracestate.length <= 512
+      ? { tracestate }
+      : {}),
+  };
+}
+
+function loggableDomainEvent(
+  value: unknown,
+): Pick<DomainEventEnvelope, "id" | "type" | "version" | "aggregate"> | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const candidate = value as Record<string, unknown>;
+  const aggregate = candidate.aggregate;
+  if (!aggregate || typeof aggregate !== "object") return undefined;
+  const aggregateRecord = aggregate as Record<string, unknown>;
+  if (
+    typeof candidate.id !== "string" ||
+    typeof candidate.type !== "string" ||
+    typeof candidate.version !== "number" ||
+    typeof aggregateRecord.type !== "string" ||
+    typeof aggregateRecord.id !== "string"
+  ) {
+    return undefined;
+  }
+  return {
+    id: candidate.id,
+    type: candidate.type,
+    version: candidate.version,
+    aggregate: { type: aggregateRecord.type, id: aggregateRecord.id },
+  };
+}
+
+function outboxLogContext(row: ClaimedOutboxEvent) {
+  return {
+    outboxId: row.id,
+    workerId: row.lockedBy,
+    eventType: row.eventType,
+    aggregateType: row.aggregateType,
+    aggregateId: row.aggregateId,
+  };
+}
+
+function recordAttemptFailure(span: Span, error: unknown, outcome: string) {
+  span.setAttribute("thechat.outbox.outcome", outcome);
+  span.recordException({
+    name: safeErrorType(error),
+    message: "domain_event_processing_failed",
+  });
+  span.setStatus({ code: SpanStatusCode.ERROR });
+}
+
+function safeErrorType(error: unknown) {
+  return error instanceof Error &&
+    /^[A-Za-z][A-Za-z0-9_.-]{0,79}$/.test(error.name)
+    ? error.name
+    : "Error";
 }
 
 let runtime: DomainEventRuntime | null = null;
@@ -216,14 +353,4 @@ function waitForAbort(signal: AbortSignal, timeoutMs: number) {
       resolve();
     }
   });
-}
-
-function errorMessage(error: unknown): string {
-  if (error instanceof InvalidDomainEventError) {
-    return `${error.message}: ${errorMessage(error.cause)}`;
-  }
-  if (error instanceof PermanentDomainEventError && error.cause) {
-    return `${error.message}: ${errorMessage(error.cause)}`;
-  }
-  return error instanceof Error ? error.message : String(error);
 }

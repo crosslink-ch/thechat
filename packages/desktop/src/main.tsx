@@ -6,9 +6,12 @@ import { router } from "./router";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { queryClient } from "./lib/query-client";
 import { error as logError, formatError } from "./log";
+import { initDesktopObservability } from "./lib/telemetry";
 import "highlight.js/styles/github-dark.css";
 import "katex/dist/katex.min.css";
 import "./App.css";
+
+initDesktopObservability();
 
 // Connect to standalone React DevTools in development (non-blocking).
 // Vite tree-shakes this entire block out of production builds.

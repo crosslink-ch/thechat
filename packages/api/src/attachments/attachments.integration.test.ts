@@ -1,13 +1,22 @@
-import {
-  afterAll,
-  beforeAll,
-  describe,
-  expect,
-  test,
-} from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { AsyncLocalStorage } from "node:async_hooks";
 import crypto from "node:crypto";
+import {
+  context,
+  ROOT_CONTEXT,
+  SpanKind,
+  SpanStatusCode,
+  type Context,
+  type ContextManager,
+} from "@opentelemetry/api";
 import { Elysia } from "elysia";
-import { eq, inArray } from "drizzle-orm";
+import {
+  BasicTracerProvider,
+  InMemorySpanExporter,
+  type ReadableSpan,
+  SimpleSpanProcessor,
+} from "@opentelemetry/sdk-trace-base";
+import { and, eq, inArray } from "drizzle-orm";
 import { authRoutes } from "../auth";
 import { botRoutes } from "../bots";
 import { hermesPlatformRoutes } from "../hermes-platform";
@@ -15,12 +24,14 @@ import { conversationRoutes } from "../conversations";
 import { db } from "../db";
 import {
   attachments,
+  eventOutbox,
   messages,
   users,
   workspaces,
 } from "../db/schema";
 import { inviteRoutes } from "../invites";
 import { messageRoutes } from "../messages";
+import { setTracerForTests } from "../observability";
 import {
   closeRealtimeBusForTests,
   LocalRealtimeBus,
@@ -37,6 +48,7 @@ import {
   deleteAttachmentObjects,
   validateAndPromoteAttachment,
 } from "./handler";
+import { ATTACHMENT_VALIDATION_REQUESTED } from "./events";
 import { setAttachmentObjectStoreForTests } from "./service";
 
 const app = new Elysia()
@@ -52,8 +64,12 @@ const app = new Elysia()
 const createdWorkspaceIds: string[] = [];
 const createdUserIds: string[] = [];
 let store: ReturnType<typeof createFakeObjectStore>;
+let testContextManager: AsyncLocalContextManager;
 
 beforeAll(async () => {
+  testContextManager = new AsyncLocalContextManager();
+  context.disable();
+  context.setGlobalContextManager(testContextManager.enable());
   store = createFakeObjectStore();
   setAttachmentObjectStoreForTests(store);
   await setRealtimeBusForTests(new LocalRealtimeBus());
@@ -70,6 +86,8 @@ afterAll(async () => {
   if (createdUserIds.length > 0) {
     await db.delete(users).where(inArray(users.id, createdUserIds));
   }
+  testContextManager.disable();
+  context.disable();
 });
 
 async function request(
@@ -77,8 +95,9 @@ async function request(
   path: string,
   body?: unknown,
   token?: string,
+  additionalHeaders: Record<string, string> = {},
 ) {
-  const headers: Record<string, string> = {};
+  const headers: Record<string, string> = { ...additionalHeaders };
   if (body !== undefined) headers["Content-Type"] = "application/json";
   if (token) headers.Authorization = `Bearer ${token}`;
   const response = await app.handle(
@@ -98,6 +117,24 @@ async function request(
   return { status: response.status, body: parsed };
 }
 
+async function captureSpans<T>(
+  operation: () => Promise<T>,
+): Promise<{ result: T; spans: ReadableSpan[] }> {
+  const exporter = new InMemorySpanExporter();
+  const provider = new BasicTracerProvider({
+    spanProcessors: [new SimpleSpanProcessor(exporter)],
+  });
+  setTracerForTests(provider.getTracer("attachment-integration-test"));
+  try {
+    const result = await operation();
+    await provider.forceFlush();
+    return { result, spans: exporter.getFinishedSpans() };
+  } finally {
+    setTracerForTests(null);
+    await provider.shutdown();
+  }
+}
+
 async function register(name: string) {
   const response = await request("POST", "/auth/register", {
     name,
@@ -112,7 +149,10 @@ async function register(name: string) {
   };
 }
 
-async function workspaceWithMembers(owner: Awaited<ReturnType<typeof register>>, member?: Awaited<ReturnType<typeof register>>) {
+async function workspaceWithMembers(
+  owner: Awaited<ReturnType<typeof register>>,
+  member?: Awaited<ReturnType<typeof register>>,
+) {
   const created = await request(
     "POST",
     "/workspaces/create",
@@ -190,6 +230,32 @@ describe("attachment lifecycle", () => {
     expect(completed.status).toBe(200);
     expect(completed.body.status).toBe("processing");
 
+    const { result: replayedCompletion, spans: completionReplaySpans } =
+      await captureSpans(() =>
+        request(
+          "POST",
+          `/attachments/${attachmentId}/complete`,
+          {},
+          owner.token,
+        ),
+      );
+    expect(
+      completionReplaySpans.find((span) => span.name === "attachment.complete")
+        ?.attributes["thechat.attachment.outcome"],
+    ).toBe("already_processing");
+    expect(replayedCompletion.status).toBe(200);
+    expect(replayedCompletion.body.status).toBe("processing");
+    const validationEvents = await db
+      .select({ id: eventOutbox.id })
+      .from(eventOutbox)
+      .where(
+        and(
+          eq(eventOutbox.eventType, ATTACHMENT_VALIDATION_REQUESTED),
+          eq(eventOutbox.aggregateId, attachmentId),
+        ),
+      );
+    expect(validationEvents).toHaveLength(1);
+
     await validateAndPromoteAttachment(attachmentId, {
       store,
       maxBytes: 25 * 1024 * 1024,
@@ -216,18 +282,8 @@ describe("attachment lifecycle", () => {
       subscribe: async () => async () => undefined,
     });
     const [sent, concurrentReplay] = await Promise.all([
-      request(
-        "POST",
-        `/messages/${conversationId}`,
-        sendPayload,
-        owner.token,
-      ),
-      request(
-        "POST",
-        `/messages/${conversationId}`,
-        sendPayload,
-        owner.token,
-      ),
+      request("POST", `/messages/${conversationId}`, sendPayload, owner.token),
+      request("POST", `/messages/${conversationId}`, sendPayload, owner.token),
     ]).finally(async () => {
       await setRealtimeBusForTests(new LocalRealtimeBus());
     });
@@ -248,6 +304,21 @@ describe("attachment lifecycle", () => {
     expect(JSON.stringify(sent.body)).not.toContain("quarantine/");
     expect(JSON.stringify(sent.body)).not.toContain("clean/");
     expect(JSON.stringify(sent.body)).not.toContain("X-Amz-");
+
+    const { result: contentRedirect, spans: contentRedirectSpans } =
+      await captureSpans(() =>
+        request(
+          "GET",
+          `/attachments/${attachmentId}/content`,
+          undefined,
+          owner.token,
+        ),
+      );
+    expect(contentRedirect.status).toBe(302);
+    const serverSpan = contentRedirectSpans.find(
+      (span) => span.name === "HTTP GET /attachments/:id/content",
+    );
+    expect(serverSpan?.attributes["http.response.status_code"]).toBe(302);
 
     const replay = await request(
       "POST",
@@ -295,25 +366,68 @@ describe("attachment lifecycle", () => {
       member.token,
     );
     expect(history.status).toBe(200);
-    expect(history.body.find((message: any) => message.id === sent.body.id)?.attachments)
-      .toEqual(sent.body.attachments);
+    expect(
+      history.body.find((message: any) => message.id === sent.body.id)
+        ?.attachments,
+    ).toEqual(sent.body.attachments);
 
-    const memberDownload = await request(
-      "GET",
-      `/attachments/${attachmentId}/download`,
-      undefined,
-      member.token,
-    );
+    const { result: memberDownload, spans: memberDownloadSpans } =
+      await captureSpans(() =>
+        request(
+          "GET",
+          `/attachments/${attachmentId}/download`,
+          undefined,
+          member.token,
+        ),
+      );
     expect(memberDownload.status).toBe(200);
     expect(memberDownload.body.url).toContain("https://download.invalid/");
-
-    const strangerDownload = await request(
-      "GET",
-      `/attachments/${attachmentId}/download`,
-      undefined,
-      stranger.token,
+    const downloadServer = exactlyOneSpan(
+      memberDownloadSpans,
+      "HTTP GET /attachments/:id/download",
     );
+    const authorizeDownload = exactlyOneSpan(
+      memberDownloadSpans,
+      "attachment.download.authorize",
+    );
+    expect(downloadServer.attributes["http.response.status_code"]).toBe(200);
+    expect(authorizeDownload.parentSpanContext?.spanId).toBe(
+      downloadServer.spanContext().spanId,
+    );
+    expect(authorizeDownload.attributes["thechat.attachment.outcome"]).toBe(
+      "authorized",
+    );
+    expect(JSON.stringify(authorizeDownload.attributes)).not.toMatch(
+      /download\.invalid|presigned|url/i,
+    );
+
+    const { result: strangerDownload, spans: strangerDownloadSpans } =
+      await captureSpans(() =>
+        request(
+          "GET",
+          `/attachments/${attachmentId}/download`,
+          undefined,
+          stranger.token,
+        ),
+      );
     expect(strangerDownload.status).toBe(403);
+    const deniedServer = exactlyOneSpan(
+      strangerDownloadSpans,
+      "HTTP GET /attachments/:id/download",
+    );
+    const deniedAuthorization = exactlyOneSpan(
+      strangerDownloadSpans,
+      "attachment.download.authorize",
+    );
+    expect(deniedServer.attributes["http.response.status_code"]).toBe(403);
+    expect(deniedServer.status.code).toBe(SpanStatusCode.UNSET);
+    expect(deniedAuthorization.attributes["thechat.attachment.outcome"]).toBe(
+      "rejected",
+    );
+    expect(
+      deniedAuthorization.attributes["thechat.attachment.failure_reason"],
+    ).toBe("forbidden");
+    expect(deniedAuthorization.status.code).toBe(SpanStatusCode.ERROR);
     expect(
       (
         await request(
@@ -324,6 +438,227 @@ describe("attachment lifecycle", () => {
         )
       ).status,
     ).toBe(409);
+  });
+
+  test("parents attachment server and service spans to the remote desktop carrier", async () => {
+    const owner = await register("Traced attachment owner");
+    const { conversationId } = await workspaceWithMembers(owner);
+    const bytes = new TextEncoder().encode("trace attachment");
+    const remoteTraceparent =
+      "00-11111111111111111111111111111111-2222222222222222-01";
+
+    const { result, spans } = await captureSpans(() =>
+      request(
+        "POST",
+        "/attachments",
+        {
+          conversationId,
+          fileName: "traced.txt",
+          mediaType: "text/plain",
+          sizeBytes: bytes.byteLength,
+          checksumSha256: crypto
+            .createHash("sha256")
+            .update(bytes)
+            .digest("hex"),
+        },
+        owner.token,
+        { traceparent: remoteTraceparent },
+      ),
+    );
+    expect(result.status).toBe(200);
+    const server = exactlyOneSpan(spans, "HTTP POST /attachments");
+    const reserve = exactlyOneSpan(spans, "attachment.reserve");
+    expect(server.kind).toBe(SpanKind.SERVER);
+    expect(server.spanContext().traceId).toBe(
+      "11111111111111111111111111111111",
+    );
+    expect(server.parentSpanContext?.spanId).toBe("2222222222222222");
+    expect(server.attributes["http.response.status_code"]).toBe(200);
+    expect(reserve.spanContext().traceId).toBe(server.spanContext().traceId);
+    expect(reserve.parentSpanContext?.spanId).toBe(
+      server.spanContext().spanId,
+    );
+    expect(reserve.attributes["thechat.attachment.outcome"]).toBe("reserved");
+    expect(
+      JSON.stringify(
+        spans.map((span) => ({
+          name: span.name,
+          attributes: span.attributes,
+          events: span.events,
+          status: span.status,
+        })),
+      ),
+    ).not.toMatch(
+      /traced\.txt|checksum|authorization|presigned|upload\.invalid/i,
+    );
+
+    const unauthorized = await captureSpans(() =>
+      request("POST", "/attachments", {}, undefined, {
+        traceparent: remoteTraceparent,
+      }),
+    );
+    expect(unauthorized.result.status).toBe(401);
+    expect(
+      exactlyOneSpan(unauthorized.spans, "HTTP POST /attachments").attributes[
+        "http.response.status_code"
+      ],
+    ).toBe(401);
+
+    const originalCreateUploadRequest = store.createUploadRequest.bind(store);
+    store.createUploadRequest = async () => {
+      throw new Error(
+        "postgres://secret:password@db.invalid/thechat?token=never-export",
+      );
+    };
+    try {
+      const failed = await captureSpans(() =>
+        request(
+          "POST",
+          "/attachments",
+          {
+            conversationId,
+            fileName: "failed.txt",
+            mediaType: "text/plain",
+            sizeBytes: bytes.byteLength,
+            checksumSha256: "a".repeat(64),
+          },
+          owner.token,
+          { traceparent: remoteTraceparent },
+        ),
+      );
+      expect(failed.result.status).toBe(500);
+      expect(failed.result.body).toEqual({ error: "Internal server error" });
+      const failedServer = exactlyOneSpan(
+        failed.spans,
+        "HTTP POST /attachments",
+      );
+      const failedReserve = exactlyOneSpan(
+        failed.spans,
+        "attachment.reserve",
+      );
+      expect(failedServer.attributes["http.response.status_code"]).toBe(500);
+      expect(failedServer.status.code).toBe(SpanStatusCode.ERROR);
+      expect(failedServer.events).toHaveLength(0);
+      expect(failedReserve.status.code).toBe(SpanStatusCode.ERROR);
+      expect(failedReserve.events).toHaveLength(1);
+      expect(
+        JSON.stringify(
+          failed.spans.map((span) => ({
+            name: span.name,
+            attributes: span.attributes,
+            events: span.events,
+            status: span.status,
+          })),
+        ),
+      ).not.toMatch(/secret|password|never-export/i);
+    } finally {
+      store.createUploadRequest = originalCreateUploadRequest;
+    }
+  });
+
+  test("keeps attachment binding and outbox production under the remote message trace", async () => {
+    const owner = await register("Traced message owner");
+    const { conversationId } = await workspaceWithMembers(owner);
+    const bytes = new TextEncoder().encode("message attachment");
+    const checksum = crypto.createHash("sha256").update(bytes).digest("hex");
+    const reserved = await request(
+      "POST",
+      "/attachments",
+      {
+        conversationId,
+        fileName: "message-trace.txt",
+        mediaType: "text/plain",
+        sizeBytes: bytes.byteLength,
+        checksumSha256: checksum,
+      },
+      owner.token,
+    );
+    expect(reserved.status).toBe(200);
+    const attachmentId = reserved.body.attachment.id as string;
+    store.acceptLatestUpload(bytes);
+    expect(
+      (
+        await request(
+          "POST",
+          `/attachments/${attachmentId}/complete`,
+          {},
+          owner.token,
+        )
+      ).status,
+    ).toBe(200);
+    await validateAndPromoteAttachment(attachmentId, {
+      store,
+      maxBytes: 25 * 1024 * 1024,
+    });
+
+    const remoteTraceparent =
+      "00-33333333333333333333333333333333-4444444444444444-01";
+    const clientMessageId = crypto.randomUUID();
+    const traced = await captureSpans(() =>
+      request(
+        "POST",
+        `/messages/${conversationId}`,
+        { content: "", attachmentIds: [attachmentId], clientMessageId },
+        owner.token,
+        { traceparent: remoteTraceparent },
+      ),
+    );
+    expect(traced.result.status).toBe(200);
+    const server = exactlyOneSpan(
+      traced.spans,
+      "HTTP POST /messages/:conversationId",
+    );
+    const send = exactlyOneSpan(traced.spans, "message.send");
+    const bind = exactlyOneSpan(traced.spans, "attachment.bind");
+    const produce = exactlyOneSpan(
+      traced.spans,
+      "domain_event.outbox.enqueue",
+    );
+    expect(server.kind).toBe(SpanKind.SERVER);
+    expect(server.spanContext().traceId).toBe(
+      "33333333333333333333333333333333",
+    );
+    expect(server.parentSpanContext?.spanId).toBe("4444444444444444");
+    expect(server.attributes["http.response.status_code"]).toBe(200);
+    expect(send.parentSpanContext?.spanId).toBe(server.spanContext().spanId);
+    expect(send.attributes["thechat.message.outcome"]).toBe("sent");
+    expect(send.attributes["thechat.outbox.outcome"]).toBe("committed");
+    expect(send.attributes["thechat.attachment.binding_outcome"]).toBe(
+      "committed",
+    );
+    expect(bind.parentSpanContext?.spanId).toBe(send.spanContext().spanId);
+    expect(bind.attributes["thechat.attachment.binding_outcome"]).toBe(
+      "staged",
+    );
+    expect(produce.kind).toBe(SpanKind.PRODUCER);
+    expect(produce.attributes["thechat.outbox.outcome"]).toBe("staged");
+    expect(produce.parentSpanContext?.spanId).toBe(send.spanContext().spanId);
+
+    const conflict = await captureSpans(() =>
+      request(
+        "POST",
+        `/messages/${conversationId}`,
+        {
+          content: "changed",
+          attachmentIds: [attachmentId],
+          clientMessageId,
+        },
+        owner.token,
+        { traceparent: remoteTraceparent },
+      ),
+    );
+    expect(conflict.result.status).toBe(409);
+    const conflictServer = exactlyOneSpan(
+      conflict.spans,
+      "HTTP POST /messages/:conversationId",
+    );
+    const conflictSend = exactlyOneSpan(conflict.spans, "message.send");
+    expect(conflictServer.attributes["http.response.status_code"]).toBe(409);
+    expect(conflictServer.status.code).toBe(SpanStatusCode.UNSET);
+    expect(conflictSend.attributes["thechat.message.outcome"]).toBe(
+      "idempotency_conflict",
+    );
+    expect(conflictSend.status.code).toBe(SpanStatusCode.ERROR);
   });
 
   test("rejects active content during validation without promoting it", async () => {
@@ -413,19 +748,39 @@ describe("attachment lifecycle", () => {
     );
     expect(aboveOldBotLimit.status).toBe(200);
 
-    const aboveSharedLimit = await request(
-      "POST",
-      "/attachments",
-      {
-        conversationId,
-        fileName: "oversized.txt",
-        mediaType: "text/plain",
-        sizeBytes: 25 * 1024 * 1024 + 1,
-        checksumSha256: checksum,
-      },
-      botToken,
-    );
+    const { result: aboveSharedLimit, spans: oversizedSpans } =
+      await captureSpans(() =>
+        request(
+          "POST",
+          "/attachments",
+          {
+            conversationId,
+            fileName: "oversized.txt",
+            mediaType: "text/plain",
+            sizeBytes: 25 * 1024 * 1024 + 1,
+            checksumSha256: checksum,
+          },
+          botToken,
+        ),
+      );
     expect(aboveSharedLimit.status).toBe(400);
+    const oversizedServer = exactlyOneSpan(
+      oversizedSpans,
+      "HTTP POST /attachments",
+    );
+    const oversizedReservation = exactlyOneSpan(
+      oversizedSpans,
+      "attachment.reserve",
+    );
+    expect(oversizedServer.attributes["http.response.status_code"]).toBe(400);
+    expect(oversizedServer.status.code).toBe(SpanStatusCode.UNSET);
+    expect(oversizedReservation.attributes["thechat.attachment.outcome"]).toBe(
+      "rejected",
+    );
+    expect(
+      oversizedReservation.attributes["thechat.attachment.failure_reason"],
+    ).toBe("invalid_request");
+    expect(oversizedReservation.status.code).toBe(SpanStatusCode.ERROR);
 
     const botBytes = new TextEncoder().encode("x");
     const allowed = await request(
@@ -553,14 +908,34 @@ describe("attachment lifecycle", () => {
 
     store.headError = { $metadata: { httpStatusCode: 403 } };
     try {
-      const completed = await request(
-        "POST",
-        `/attachments/${reserved.body.attachment.id}/complete`,
-        undefined,
-        owner.token,
+      const { result: completed, spans: completionSpans } = await captureSpans(
+        () =>
+          request(
+            "POST",
+            `/attachments/${reserved.body.attachment.id}/complete`,
+            undefined,
+            owner.token,
+          ),
       );
       expect(completed.status).toBe(409);
       expect(completed.body.error).toBe("Uploaded object was not found");
+      const completionServer = exactlyOneSpan(
+        completionSpans,
+        "HTTP POST /attachments/:id/complete",
+      );
+      const completionOperation = exactlyOneSpan(
+        completionSpans,
+        "attachment.complete",
+      );
+      expect(completionServer.attributes["http.response.status_code"]).toBe(409);
+      expect(completionServer.status.code).toBe(SpanStatusCode.UNSET);
+      expect(completionOperation.attributes["thechat.attachment.outcome"]).toBe(
+        "rejected",
+      );
+      expect(
+        completionOperation.attributes["thechat.attachment.failure_reason"],
+      ).toBe("lifecycle_conflict");
+      expect(completionOperation.status.code).toBe(SpanStatusCode.ERROR);
     } finally {
       store.headError = null;
     }
@@ -592,7 +967,20 @@ describe("attachment lifecycle", () => {
     expect(queued.status).toBe(200);
 
     const headCallsBefore = store.headCalls;
-    await deleteAttachmentObjects(reserved.body.attachment.id, store);
+    const { spans: deletionSpans } = await captureSpans(() =>
+      deleteAttachmentObjects(reserved.body.attachment.id, store),
+    );
+    const deletionSpan = exactlyOneSpan(
+      deletionSpans,
+      "attachment.delete_objects",
+    );
+    expect(deletionSpan.attributes["thechat.attachment.outcome"]).toBe(
+      "deleted",
+    );
+    expect(deletionSpan.attributes["thechat.attachment.next_status"]).toBe(
+      "deleted",
+    );
+    expect(deletionSpan.status.code).toBe(SpanStatusCode.UNSET);
     expect(store.headCalls).toBe(headCallsBefore);
     const [remaining] = await db
       .select({ status: attachments.status })
@@ -626,7 +1014,9 @@ describe("attachment lifecycle", () => {
         ),
       );
       expect(results.filter((result) => result.status === 200)).toHaveLength(2);
-      expect(results.filter((result) => result.status === 429)).toHaveLength(10);
+      expect(results.filter((result) => result.status === 429)).toHaveLength(
+        10,
+      );
 
       const rows = await db
         .select({ id: attachments.id })
@@ -691,6 +1081,46 @@ function restoreEnv(name: string, value: string | undefined) {
   else process.env[name] = value;
 }
 
+function exactlyOneSpan(spans: ReadableSpan[], name: string) {
+  const matches = spans.filter((span) => span.name === name);
+  expect(matches, `expected exactly one ${name} span`).toHaveLength(1);
+  return matches[0]!;
+}
+
+class AsyncLocalContextManager implements ContextManager {
+  private readonly storage = new AsyncLocalStorage<Context>();
+
+  active() {
+    return this.storage.getStore() ?? ROOT_CONTEXT;
+  }
+
+  with<T extends (...args: any[]) => any>(
+    activeContext: Context,
+    fn: T,
+    thisArg?: ThisParameterType<T>,
+    ...args: Parameters<T>
+  ): ReturnType<T> {
+    return this.storage.run(activeContext, () => fn.call(thisArg, ...args));
+  }
+
+  bind<T>(activeContext: Context, target: T): T {
+    if (typeof target !== "function") return target;
+    const manager = this;
+    return function (this: unknown, ...args: unknown[]) {
+      return manager.with(activeContext, target as (...values: unknown[]) => unknown, this, ...args);
+    } as T;
+  }
+
+  enable() {
+    return this;
+  }
+
+  disable() {
+    this.storage.disable();
+    return this;
+  }
+}
+
 interface FakeStoredObject extends StoredObjectMetadata {
   bytes: Uint8Array;
 }
@@ -751,7 +1181,8 @@ class FakeObjectStore implements ObjectStore {
   async getObject(input: { key: string; versionId: string; maxBytes: number }) {
     const object = await this.headObject(input);
     if (!object) throw new Error("Object not found");
-    if (object.bytes.byteLength > input.maxBytes) throw new Error("Object too large");
+    if (object.bytes.byteLength > input.maxBytes)
+      throw new Error("Object too large");
     return object.bytes;
   }
 

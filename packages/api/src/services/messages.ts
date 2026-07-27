@@ -1,13 +1,5 @@
 import crypto from "node:crypto";
-import {
-  and,
-  asc,
-  desc,
-  eq,
-  inArray,
-  isNull,
-  lt,
-} from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, lt } from "drizzle-orm";
 import type { ChatMessage, WsServerEvent } from "@thechat/shared";
 import { attachmentsByMessageIds } from "../attachments/public";
 import { loadAttachmentConfig } from "../attachments/config";
@@ -79,8 +71,7 @@ export async function getMessages(
     .limit(limit);
   const chronological = rows.reverse();
   const includeAttachments =
-    options?.includeAttachments ??
-    (await canUserAccessAttachments(db, userId));
+    options?.includeAttachments ?? (await canUserAccessAttachments(db, userId));
   const attachmentMap = includeAttachments
     ? await attachmentsByMessageIds(rows.map((row) => row.id))
     : new Map<string, NonNullable<ChatMessage["attachments"]>>();
@@ -131,7 +122,10 @@ export async function sendMessage(
   const attachmentIds = options.attachmentIds ?? [];
   const config = loadAttachmentConfig();
   if (!normalizedContent && attachmentIds.length === 0) {
-    throw new ServiceError("Message text or at least one attachment is required", 400);
+    throw new ServiceError(
+      "Message text or at least one attachment is required",
+      400,
+    );
   }
   if (attachmentIds.length > config.maxPerMessage) {
     throw new ServiceError(
@@ -282,7 +276,18 @@ export async function sendMessage(
           conversationType: participant.conversationType,
           duplicate: false,
         };
+      }).catch((error) => {
+        span.setAttribute("thechat.message.outcome", messageFailureOutcome(error));
+        throw error;
       });
+      if (!result.duplicate) {
+        // Child spans inside the callback report only staged transactional
+        // work. The enclosing message span is the first observer of commit.
+        span.setAttribute("thechat.outbox.outcome", "committed");
+        if (attachmentIds.length > 0) {
+          span.setAttribute("thechat.attachment.binding_outcome", "committed");
+        }
+      }
 
       const attachmentMap = await attachmentsByMessageIds([result.message.id]);
       const publicMessage = toChatMessage(
@@ -295,6 +300,10 @@ export async function sendMessage(
       );
       span.setAttribute("thechat.message_id", result.message.id);
       span.setAttribute("thechat.message.idempotent_replay", result.duplicate);
+      span.setAttribute(
+        "thechat.message.outcome",
+        result.duplicate ? "idempotent_replay" : "sent",
+      );
       if (result.message.threadId) {
         span.setAttribute("thechat.thread_id", result.message.threadId);
       }
@@ -358,7 +367,7 @@ export async function sendMessage(
           // successful send into an ambiguous client failure.
           messageLog.warn(
             {
-              err: error,
+              errorType: safeErrorType(error),
               conversationId: publicMessage.conversationId,
               messageId: publicMessage.id,
             },
@@ -372,6 +381,22 @@ export async function sendMessage(
   );
 }
 
+function messageFailureOutcome(error: unknown) {
+  if (!(error instanceof ServiceError)) return "failed";
+  if (error.status === 409) return "idempotency_conflict";
+  if (error.status === 403) return "forbidden";
+  if (error.status === 404) return "not_found";
+  if (error.status === 400) return "invalid";
+  return "rejected";
+}
+
+function safeErrorType(error: unknown) {
+  return error instanceof Error &&
+    /^[A-Za-z][A-Za-z0-9_.-]{0,79}$/.test(error.name)
+    ? error.name
+    : "Error";
+}
+
 export async function attachReadyAttachments(
   tx: DbTransaction,
   input: {
@@ -382,46 +407,70 @@ export async function attachReadyAttachments(
   },
 ) {
   if (input.attachmentIds.length === 0) return [];
-  const rows = await tx
-    .select()
-    .from(attachments)
-    .where(inArray(attachments.id, input.attachmentIds))
-    .for("update");
-  const byId = new Map(rows.map((row) => [row.id, row]));
-  const ordered = input.attachmentIds.map((id) => byId.get(id));
-  if (
-    ordered.some(
-      (row) =>
-        !row ||
-        row.conversationId !== input.conversationId ||
-        row.uploaderId !== input.uploaderId ||
-        row.status !== "ready",
-    )
-  ) {
-    throw new ServiceError(
-      "Every attachment must be ready, unused, uploaded by the sender, and belong to this conversation",
-      409,
-    );
-  }
+  return withSpan(
+    "attachment.bind",
+    {
+      "thechat.attachment.binding_count": input.attachmentIds.length,
+      "thechat.attachment.from_status": "ready",
+      "thechat.attachment.to_status": "attached",
+    },
+    async (span) => {
+      const rows = await tx
+        .select()
+        .from(attachments)
+        .where(inArray(attachments.id, input.attachmentIds))
+        .for("update");
+      const byId = new Map(rows.map((row) => [row.id, row]));
+      const ordered = input.attachmentIds.map((id) => byId.get(id));
+      if (
+        ordered.some(
+          (row) =>
+            !row ||
+            row.conversationId !== input.conversationId ||
+            row.uploaderId !== input.uploaderId ||
+            row.status !== "ready",
+        )
+      ) {
+        span.setAttribute("thechat.attachment.binding_outcome", "rejected");
+        span.setAttribute(
+          "thechat.attachment.failure_reason",
+          "not_ready_or_owned",
+        );
+        throw new ServiceError(
+          "Every attachment must be ready, unused, uploaded by the sender, and belong to this conversation",
+          409,
+        );
+      }
 
-  await tx.insert(messageAttachments).values(
-    input.attachmentIds.map((attachmentId, position) => ({
-      messageId: input.messageId,
-      attachmentId,
-      position,
-    })),
+      await tx.insert(messageAttachments).values(
+        input.attachmentIds.map((attachmentId, position) => ({
+          messageId: input.messageId,
+          attachmentId,
+          position,
+        })),
+      );
+      const now = new Date();
+      const updated = await tx
+        .update(attachments)
+        .set({ status: "attached", attachedAt: now, updatedAt: now })
+        .where(
+          and(
+            inArray(attachments.id, input.attachmentIds),
+            eq(attachments.status, "ready"),
+          ),
+        )
+        .returning({ id: attachments.id });
+      if (updated.length !== input.attachmentIds.length) {
+        span.setAttribute("thechat.attachment.binding_outcome", "conflict");
+        throw new ServiceError(
+          "Attachment binding conflicted with another request",
+          409,
+        );
+      }
+      span.setAttribute("thechat.attachment.binding_outcome", "staged");
+      return ordered;
+    },
   );
-  const now = new Date();
-  await tx
-    .update(attachments)
-    .set({ status: "attached", attachedAt: now, updatedAt: now })
-    .where(
-      and(
-        inArray(attachments.id, input.attachmentIds),
-        eq(attachments.status, "ready"),
-      ),
-    );
-  return ordered;
 }
 
 export async function canUserAccessAttachments(
@@ -438,8 +487,7 @@ export async function canUserAccessAttachments(
     .where(eq(users.id, userId))
     .limit(1);
   return Boolean(
-    actor &&
-      (actor.userType !== "bot" || actor.attachmentAccess === true),
+    actor && (actor.userType !== "bot" || actor.attachmentAccess === true),
   );
 }
 
@@ -464,7 +512,9 @@ export async function assertIdempotentCommandMatches(
     existing.threadId !== command.threadId ||
     existing.content !== command.content ||
     existingAttachmentIds.length !== command.attachmentIds.length ||
-    existingAttachmentIds.some((id, index) => id !== command.attachmentIds[index])
+    existingAttachmentIds.some(
+      (id, index) => id !== command.attachmentIds[index],
+    )
   ) {
     throw new ServiceError(
       "clientMessageId was already used for a different message command",
@@ -552,7 +602,10 @@ function normalizeClientMessageId(value: string) {
     .replace(/[\u0000-\u001f\u007f-\u009f]/g, "")
     .trim();
   if (!normalized || normalized.length > 255) {
-    throw new ServiceError("clientMessageId must be between 1 and 255 characters", 400);
+    throw new ServiceError(
+      "clientMessageId must be between 1 and 255 characters",
+      400,
+    );
   }
   return normalized;
 }

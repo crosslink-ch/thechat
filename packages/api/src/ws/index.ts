@@ -9,6 +9,7 @@ import { sendMessage } from "../services/messages";
 import { ServiceError } from "../services/errors";
 import { getRealtimeBus, publishWsEventToUsers } from "../realtime";
 import { log } from "../logging";
+import { deliverWebSocketEvent } from "./delivery";
 
 const websocketLog = log.child({ component: "websocket" });
 
@@ -74,7 +75,10 @@ export function broadcastToUser(userId: string, event: WsServerEvent) {
   });
 }
 
-export async function broadcastToUsers(userIds: string[], event: WsServerEvent) {
+export async function broadcastToUsers(
+  userIds: string[],
+  event: WsServerEvent,
+) {
   await publishWsEventToUsers(userIds, event);
 }
 
@@ -86,14 +90,18 @@ async function tryBroadcastToUsers(userIds: string[], event: WsServerEvent) {
   }
 }
 
-function deliverToLocalUser(userId: string, event: WsServerEvent) {
+async function deliverToLocalUser(userId: string, event: WsServerEvent) {
   const sockets = userSockets.get(userId);
   if (!sockets) return;
-  const data = JSON.stringify(event);
-  for (const ws of sockets) {
-    if (ws.readyState === WebSocket.OPEN) {
-      ws.send(data);
-    }
+  const openSockets = [...sockets].filter(
+    (socket) => socket.readyState === WebSocket.OPEN,
+  );
+  const result = await deliverWebSocketEvent(event, openSockets);
+  if (result.failed > 0) {
+    websocketLog.warn(
+      { sent: result.sent, failed: result.failed },
+      "WebSocket event delivery was incomplete",
+    );
   }
 }
 
@@ -102,16 +110,23 @@ let realtimeSubscriptionStarted = false;
 function startRealtimeSubscription() {
   if (realtimeSubscriptionStarted) return;
   realtimeSubscriptionStarted = true;
-  void getRealtimeBus().subscribe(async (event) => {
-    if (event.type !== "ws.event") return;
-    for (const userId of event.targetUserIds) {
-      deliverToLocalUser(userId, event.event);
-    }
-  }).catch((error) => {
-    realtimeSubscriptionStarted = false;
-    websocketLog.error({ err: error }, "Failed to subscribe to realtime events");
-    setTimeout(startRealtimeSubscription, 1_000);
-  });
+  void getRealtimeBus()
+    .subscribe(async (event) => {
+      if (event.type !== "ws.event") return;
+      await Promise.all(
+        event.targetUserIds.map((userId) =>
+          deliverToLocalUser(userId, event.event),
+        ),
+      );
+    })
+    .catch((error) => {
+      realtimeSubscriptionStarted = false;
+      websocketLog.error(
+        { err: error },
+        "Failed to subscribe to realtime events",
+      );
+      setTimeout(startRealtimeSubscription, 1_000);
+    });
 }
 
 startRealtimeSubscription();
@@ -191,9 +206,7 @@ export const wsRoutes = new Elysia().ws("/ws", {
     let event: WsClientEvent;
     try {
       const candidate =
-        typeof rawMessage === "string"
-          ? JSON.parse(rawMessage)
-          : rawMessage;
+        typeof rawMessage === "string" ? JSON.parse(rawMessage) : rawMessage;
       event = wsClientEventSchema.parse(candidate) as WsClientEvent;
     } catch {
       sendTo(ws.raw as unknown as WebSocket, {

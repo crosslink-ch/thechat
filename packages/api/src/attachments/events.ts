@@ -2,6 +2,7 @@ import { z } from "zod";
 import {
   parseDomainEventEnvelope,
 } from "../events/envelope";
+import { activeTraceContext } from "../observability";
 
 export const ATTACHMENT_VALIDATION_REQUESTED = "attachment.validation_requested";
 export const ATTACHMENT_DELETION_REQUESTED = "attachment.deletion_requested";
@@ -40,12 +41,14 @@ export function createAttachmentLifecycleEvent(
   attachmentId: string,
   actorId: string,
 ): AttachmentLifecycleEvent {
+  const traceContext = activeTraceContext();
   return parseAttachmentLifecycleEvent({
     id: crypto.randomUUID(),
     type,
     version: ATTACHMENT_EVENT_VERSION,
     aggregate: { type: "attachment", id: attachmentId },
     actor: { type: "user", id: actorId },
+    ...(traceContext ? { traceContext } : {}),
     occurredAt: new Date().toISOString(),
     payload: { attachmentId },
   });

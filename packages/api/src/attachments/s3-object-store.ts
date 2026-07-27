@@ -9,6 +9,8 @@ import {
   S3Client,
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+import { SpanKind } from "@opentelemetry/api";
+import { withSpan } from "../observability";
 import type {
   ObjectStore,
   PresignedRequest,
@@ -25,6 +27,7 @@ export interface S3ObjectStoreOptions {
 
 export class S3ObjectStore implements ObjectStore {
   private readonly bucket: string;
+  private readonly region: string;
   private readonly client: S3Client;
 
   constructor(options: S3ObjectStoreOptions) {
@@ -35,6 +38,7 @@ export class S3ObjectStore implements ObjectStore {
       throw new Error("ATTACHMENT_S3_REGION is required");
     }
     this.bucket = options.bucket;
+    this.region = options.region;
     this.client =
       options.client ??
       new S3Client({
@@ -52,57 +56,77 @@ export class S3ObjectStore implements ObjectStore {
     checksumSha256Base64: string;
     expiresInSeconds: number;
   }): Promise<PresignedRequest> {
-    const command = new PutObjectCommand({
-      Bucket: this.bucket,
-      Key: input.key,
-      ContentType: input.mediaType,
-      ContentLength: input.sizeBytes,
-      IfNoneMatch: "*",
-      ChecksumAlgorithm: ChecksumAlgorithm.SHA256,
-      ChecksumSHA256: input.checksumSha256Base64,
-    });
-    const url = await getSignedUrl(this.client, command, {
-      expiresIn: input.expiresInSeconds,
-      unhoistableHeaders: new Set([
-        "x-amz-checksum-sha256",
-        "if-none-match",
-      ]),
-    });
-    return {
-      method: "PUT",
-      url,
-      headers: {
-        "content-type": input.mediaType,
-        "if-none-match": "*",
-        "x-amz-checksum-sha256": input.checksumSha256Base64,
+    return withSpan(
+      "attachment.s3.presign_upload",
+      this.s3Attributes("PutObject"),
+      async (span) => {
+        const command = new PutObjectCommand({
+          Bucket: this.bucket,
+          Key: input.key,
+          ContentType: input.mediaType,
+          ContentLength: input.sizeBytes,
+          IfNoneMatch: "*",
+          ChecksumAlgorithm: ChecksumAlgorithm.SHA256,
+          ChecksumSHA256: input.checksumSha256Base64,
+        });
+        const url = await getSignedUrl(this.client, command, {
+          expiresIn: input.expiresInSeconds,
+          unhoistableHeaders: new Set([
+            "x-amz-checksum-sha256",
+            "if-none-match",
+          ]),
+        });
+        span.setAttribute("thechat.attachment.size_bytes", input.sizeBytes);
+        span.setAttribute("thechat.capability.ttl_seconds", input.expiresInSeconds);
+        return {
+          method: "PUT",
+          url,
+          headers: {
+            "content-type": input.mediaType,
+            "if-none-match": "*",
+            "x-amz-checksum-sha256": input.checksumSha256Base64,
+          },
+          expiresAt: new Date(Date.now() + input.expiresInSeconds * 1000),
+        };
       },
-      expiresAt: new Date(Date.now() + input.expiresInSeconds * 1000),
-    };
+    );
   }
 
   async headObject(input: {
     key: string;
     versionId?: string;
   }): Promise<StoredObjectMetadata | null> {
-    try {
-      const output = await this.client.send(
-        new HeadObjectCommand({
-          Bucket: this.bucket,
-          Key: input.key,
-          ...(input.versionId ? { VersionId: input.versionId } : {}),
-          ChecksumMode: ChecksumMode.ENABLED,
-        }),
-      );
-      return {
-        versionId: output.VersionId ?? null,
-        sizeBytes: output.ContentLength ?? -1,
-        checksumSha256Base64: output.ChecksumSHA256 ?? null,
-        contentType: output.ContentType ?? null,
-      };
-    } catch (error) {
-      if (isNotFound(error)) return null;
-      throw error;
-    }
+    return withSpan(
+      "attachment.s3.head",
+      this.s3Attributes("HeadObject", Boolean(input.versionId)),
+      async (span) => {
+        try {
+          const output = await this.client.send(
+            new HeadObjectCommand({
+              Bucket: this.bucket,
+              Key: input.key,
+              ...(input.versionId ? { VersionId: input.versionId } : {}),
+              ChecksumMode: ChecksumMode.ENABLED,
+            }),
+          );
+          span.setAttribute("thechat.storage.outcome", "found");
+          span.setAttribute("thechat.attachment.size_bytes", output.ContentLength ?? -1);
+          return {
+            versionId: output.VersionId ?? null,
+            sizeBytes: output.ContentLength ?? -1,
+            checksumSha256Base64: output.ChecksumSHA256 ?? null,
+            contentType: output.ContentType ?? null,
+          };
+        } catch (error) {
+          if (isNotFound(error)) {
+            span.setAttribute("thechat.storage.outcome", "not_found");
+            return null;
+          }
+          throw error;
+        }
+      },
+      { kind: SpanKind.CLIENT },
+    );
   }
 
   async getObject(input: {
@@ -110,36 +134,46 @@ export class S3ObjectStore implements ObjectStore {
     versionId: string;
     maxBytes: number;
   }): Promise<Uint8Array> {
-    const output = await this.client.send(
-      new GetObjectCommand({
-        Bucket: this.bucket,
-        Key: input.key,
-        VersionId: input.versionId,
-        ChecksumMode: ChecksumMode.ENABLED,
-      }),
-    );
-    if (!output.Body) throw new Error("S3 object has no body");
+    return withSpan(
+      "attachment.s3.get",
+      this.s3Attributes("GetObject", true),
+      async (span) => {
+        const output = await this.client.send(
+          new GetObjectCommand({
+            Bucket: this.bucket,
+            Key: input.key,
+            VersionId: input.versionId,
+            ChecksumMode: ChecksumMode.ENABLED,
+          }),
+        );
+        if (!output.Body) throw new Error("S3 object has no body");
 
-    const chunks: Uint8Array[] = [];
-    let total = 0;
-    for await (const rawChunk of output.Body as AsyncIterable<Uint8Array>) {
-      const chunk =
-        rawChunk instanceof Uint8Array
-          ? rawChunk
-          : new Uint8Array(rawChunk as ArrayBuffer);
-      total += chunk.byteLength;
-      if (total > input.maxBytes) {
-        throw new Error("Stored object exceeds the configured attachment limit");
-      }
-      chunks.push(chunk);
-    }
-    const result = new Uint8Array(total);
-    let offset = 0;
-    for (const chunk of chunks) {
-      result.set(chunk, offset);
-      offset += chunk.byteLength;
-    }
-    return result;
+        const chunks: Uint8Array[] = [];
+        let total = 0;
+        for await (const rawChunk of output.Body as AsyncIterable<Uint8Array>) {
+          const chunk =
+            rawChunk instanceof Uint8Array
+              ? rawChunk
+              : new Uint8Array(rawChunk as ArrayBuffer);
+          total += chunk.byteLength;
+          if (total > input.maxBytes) {
+            span.setAttribute("thechat.storage.outcome", "size_limit_exceeded");
+            throw new Error("Stored object exceeds the configured attachment limit");
+          }
+          chunks.push(chunk);
+        }
+        const result = new Uint8Array(total);
+        let offset = 0;
+        for (const chunk of chunks) {
+          result.set(chunk, offset);
+          offset += chunk.byteLength;
+        }
+        span.setAttribute("thechat.storage.outcome", "read");
+        span.setAttribute("thechat.attachment.size_bytes", total);
+        return result;
+      },
+      { kind: SpanKind.CLIENT },
+    );
   }
 
   async copyObject(input: {
@@ -148,33 +182,46 @@ export class S3ObjectStore implements ObjectStore {
     destinationKey: string;
     mediaType: string;
   }): Promise<{ versionId: string | null }> {
-    const source = `${encodeS3Path(this.bucket)}/${encodeS3Path(
-      input.sourceKey,
-    )}?versionId=${encodeURIComponent(input.sourceVersionId)}`;
-    const output = await this.client.send(
-      new CopyObjectCommand({
-        Bucket: this.bucket,
-        Key: input.destinationKey,
-        CopySource: source,
-        ContentType: input.mediaType,
-        MetadataDirective: "REPLACE",
-        TaggingDirective: "REPLACE",
-        ChecksumAlgorithm: "SHA256",
-      }),
+    return withSpan(
+      "attachment.s3.copy",
+      this.s3Attributes("CopyObject", true),
+      async () => {
+        const source = `${encodeS3Path(this.bucket)}/${encodeS3Path(
+          input.sourceKey,
+        )}?versionId=${encodeURIComponent(input.sourceVersionId)}`;
+        const output = await this.client.send(
+          new CopyObjectCommand({
+            Bucket: this.bucket,
+            Key: input.destinationKey,
+            CopySource: source,
+            ContentType: input.mediaType,
+            MetadataDirective: "REPLACE",
+            TaggingDirective: "REPLACE",
+            ChecksumAlgorithm: "SHA256",
+          }),
+        );
+        return { versionId: output.VersionId ?? null };
+      },
+      { kind: SpanKind.CLIENT },
     );
-    return { versionId: output.VersionId ?? null };
   }
 
   async deleteObject(input: {
     key: string;
     versionId?: string | null;
   }): Promise<void> {
-    await this.client.send(
-      new DeleteObjectCommand({
-        Bucket: this.bucket,
-        Key: input.key,
-        ...(input.versionId ? { VersionId: input.versionId } : {}),
-      }),
+    await withSpan(
+      "attachment.s3.delete",
+      this.s3Attributes("DeleteObject", Boolean(input.versionId)),
+      () =>
+        this.client.send(
+          new DeleteObjectCommand({
+            Bucket: this.bucket,
+            Key: input.key,
+            ...(input.versionId ? { VersionId: input.versionId } : {}),
+          }),
+        ),
+      { kind: SpanKind.CLIENT },
     );
   }
 
@@ -185,22 +232,40 @@ export class S3ObjectStore implements ObjectStore {
     contentDisposition: string;
     expiresInSeconds: number;
   }): Promise<PresignedRequest> {
-    const url = await getSignedUrl(
-      this.client,
-      new GetObjectCommand({
-        Bucket: this.bucket,
-        Key: input.key,
-        VersionId: input.versionId,
-        ResponseContentType: input.mediaType,
-        ResponseContentDisposition: input.contentDisposition,
-      }),
-      { expiresIn: input.expiresInSeconds },
+    return withSpan(
+      "attachment.s3.presign_download",
+      this.s3Attributes("GetObject", true),
+      async (span) => {
+        const url = await getSignedUrl(
+          this.client,
+          new GetObjectCommand({
+            Bucket: this.bucket,
+            Key: input.key,
+            VersionId: input.versionId,
+            ResponseContentType: input.mediaType,
+            ResponseContentDisposition: input.contentDisposition,
+          }),
+          { expiresIn: input.expiresInSeconds },
+        );
+        span.setAttribute("thechat.capability.ttl_seconds", input.expiresInSeconds);
+        return {
+          method: "GET",
+          url,
+          headers: {},
+          expiresAt: new Date(Date.now() + input.expiresInSeconds * 1000),
+        };
+      },
     );
+  }
+
+  private s3Attributes(operation: string, exactVersion = false) {
     return {
-      method: "GET",
-      url,
-      headers: {},
-      expiresAt: new Date(Date.now() + input.expiresInSeconds * 1000),
+      "rpc.system": "aws-api",
+      "rpc.service": "S3",
+      "rpc.method": operation,
+      "cloud.region": this.region,
+      "thechat.storage.bucket": this.bucket,
+      "thechat.storage.exact_version": exactVersion,
     };
   }
 }

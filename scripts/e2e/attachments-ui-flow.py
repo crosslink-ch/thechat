@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import fcntl
+import hashlib
 import importlib.util
 import json
 import os
@@ -26,6 +27,9 @@ os.environ.setdefault("THECHAT_E2E_API_PORT", "3340")
 os.environ.setdefault("THECHAT_E2E_POSTGRES_PORT", "15546")
 os.environ.setdefault("THECHAT_E2E_REDIS_PORT", "16383")
 os.environ.setdefault("ATTACHMENT_E2E_S3_PORT", "19000")
+os.environ.setdefault("ATTACHMENT_E2E_OTEL_HTTP_PORT", "14328")
+os.environ.setdefault("ATTACHMENT_E2E_TEMPO_PORT", "13200")
+os.environ.setdefault("ATTACHMENT_E2E_GRAFANA_PORT", "13310")
 os.environ.setdefault(
     "THECHAT_E2E_DATABASE_URL",
     "postgres://thechat:thechat@localhost:"
@@ -42,16 +46,38 @@ os.environ["THECHAT_E2E_CONTAINER_LABEL"] = CONTAINER_LABEL
 
 API_PORT = int(os.environ["THECHAT_E2E_API_PORT"])
 S3_PORT = int(os.environ["ATTACHMENT_E2E_S3_PORT"])
+OTEL_HTTP_PORT = int(os.environ["ATTACHMENT_E2E_OTEL_HTTP_PORT"])
+TEMPO_PORT = int(os.environ["ATTACHMENT_E2E_TEMPO_PORT"])
+GRAFANA_PORT = int(os.environ["ATTACHMENT_E2E_GRAFANA_PORT"])
 S3_CONTAINER = f"thechat-attachment-e2e-s3-{RUN_ID}"
+OTEL_CONTAINER = f"thechat-attachment-e2e-otel-{RUN_ID}"
 S3_IMAGE = os.environ.get(
     "ATTACHMENT_E2E_S3_IMAGE",
     "localstack/localstack:4.4.0",
+)
+OTEL_IMAGE = os.environ.get(
+    "ATTACHMENT_E2E_OTEL_IMAGE",
+    "grafana/otel-lgtm@sha256:af7242c1a9608faf6d26e6f235392fd0c32b67258228f9a3cfc96e724974930c",
 )
 BUCKET = f"thechat-attachment-e2e-{RUN_ID}".replace("_", "-").lower()
 KEEP = os.environ.get("ATTACHMENT_E2E_KEEP") == "1"
 FIXTURE_DIR = TMP / "attachment-ui-e2e-fixtures" / RUN_ID
 SCREENSHOT = TMP / f"attachment-ui-e2e-{RUN_ID}.png"
+SUCCESS_SCREENSHOT = TMP / f"attachment-ui-e2e-success-{RUN_ID}.png"
+REJECTION_SCREENSHOT = TMP / f"attachment-ui-e2e-rejection-{RUN_ID}.png"
 FAILURE_SCREENSHOT = TMP / f"attachment-ui-e2e-failure-{RUN_ID}.png"
+RESULT_JSON = TMP / f"attachment-ui-e2e-{RUN_ID}.json"
+TRACE_EXPORTER = ROOT / "scripts/e2e/export_attachment_tempo_evidence.py"
+TRACE_EVIDENCE_DIR = (
+    Path(os.environ["ATTACHMENT_E2E_EVIDENCE_DIR"]).expanduser().resolve()
+    if os.environ.get("ATTACHMENT_E2E_EVIDENCE_DIR")
+    else None
+)
+TRACE_LOG_PATH = (
+    Path(os.environ["ATTACHMENT_E2E_LOG_PATH"]).expanduser().resolve()
+    if os.environ.get("ATTACHMENT_E2E_LOG_PATH")
+    else None
+)
 NATIVE_DESKTOP_E2E_LOCK = "native-desktop-e2e.lock"
 
 _SAFE_ENV_KEYS = {
@@ -152,7 +178,19 @@ def _interruptible_cleanup():
             signal.signal(sig, handler)
 
 
-def _safe_child_env() -> dict[str, str]:
+def _source_resource_attributes(source_identity: dict[str, Any]) -> str:
+    return ",".join(
+        (
+            "deployment.environment=e2e",
+            f"thechat.e2e.run_id={RUN_ID}",
+            f"service.version={source_identity['sourceCommit']}",
+            f"thechat.source.tree={source_identity['sourceTree']}",
+            f"thechat.source.diff_sha256={source_identity['sourceDiffSha256']}",
+        )
+    )
+
+
+def _safe_child_env(source_identity: dict[str, Any]) -> dict[str, str]:
     env = {key: value for key, value in os.environ.items() if key in _SAFE_ENV_KEYS}
     env["PATH"] = f"{Path(harness.BUN).parent}:{env.get('PATH', '')}"
     env.update(
@@ -174,6 +212,11 @@ def _safe_child_env() -> dict[str, str]:
             "ATTACHMENT_S3_REGION": "us-east-1",
             "ATTACHMENT_S3_ENDPOINT": f"http://127.0.0.1:{S3_PORT}",
             "ATTACHMENT_S3_FORCE_PATH_STYLE": "true",
+            "THECHAT_OTEL_ENABLED": "true",
+            "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": (
+                f"http://127.0.0.1:{OTEL_HTTP_PORT}/v1/traces"
+            ),
+            "OTEL_RESOURCE_ATTRIBUTES": _source_resource_attributes(source_identity),
             "NO_PROXY": "127.0.0.1,localhost,::1",
             "no_proxy": "127.0.0.1,localhost,::1",
         }
@@ -232,6 +275,117 @@ def _container_running(name: str) -> bool:
         text=True,
     )
     return result.returncode == 0 and result.stdout.strip() == "true"
+
+
+def _source_identity() -> dict[str, Any]:
+    TMP.mkdir(parents=True, exist_ok=True)
+    index_path = TMP / f"attachment-source-index-{RUN_ID}"
+    index_path.unlink(missing_ok=True)
+    env = os.environ.copy()
+    env["GIT_INDEX_FILE"] = str(index_path)
+
+    def git(*args: str, binary: bool = False) -> str | bytes:
+        result = subprocess.run(
+            ["git", *args],
+            cwd=ROOT,
+            env=env,
+            check=True,
+            capture_output=True,
+            text=not binary,
+        )
+        return result.stdout
+
+    try:
+        git("read-tree", "HEAD")
+        git("add", "-A")
+        source_tree_output = git("write-tree")
+        assert isinstance(source_tree_output, str)
+        source_tree = source_tree_output.strip()
+        source_diff = git("diff", "--binary", "HEAD", source_tree, binary=True)
+        assert isinstance(source_diff, bytes)
+        status_output = git("status", "--porcelain=v1", "--untracked-files=all")
+        assert isinstance(status_output, str)
+        status = status_output
+        source_commit_output = git("rev-parse", "HEAD")
+        assert isinstance(source_commit_output, str)
+        return {
+            "runId": RUN_ID,
+            "sourceCommit": source_commit_output.strip(),
+            "sourceTree": source_tree,
+            "sourceDiffSha256": hashlib.sha256(source_diff).hexdigest(),
+            "sourceStatusLineCount": len([line for line in status.splitlines() if line]),
+        }
+    finally:
+        index_path.unlink(missing_ok=True)
+
+
+def _assert_source_identity_unchanged(
+    before: dict[str, Any], after: dict[str, Any]
+) -> None:
+    identity_keys = (
+        "sourceCommit",
+        "sourceTree",
+        "sourceDiffSha256",
+        "sourceStatusLineCount",
+    )
+    changed = [key for key in identity_keys if before.get(key) != after.get(key)]
+    if changed:
+        raise RuntimeError(
+            "Attachment E2E source changed during build/run: " + ", ".join(changed)
+        )
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def _start_otel() -> None:
+    harness.run(
+        ["docker", "rm", "-f", OTEL_CONTAINER], check=False, env=DOCKER_ENV
+    )
+    harness.run(
+        [
+            "docker",
+            "run",
+            "-d",
+            "--name",
+            OTEL_CONTAINER,
+            "--label",
+            CONTAINER_LABEL,
+            "-p",
+            f"127.0.0.1:{GRAFANA_PORT}:3000",
+            "-p",
+            f"127.0.0.1:{OTEL_HTTP_PORT}:4318",
+            "-p",
+            f"127.0.0.1:{TEMPO_PORT}:3200",
+            "-v",
+            f"{ROOT / 'deployment/local/otelcol-config.yaml'}:/otel-lgtm/otelcol-config.yaml:ro",
+            OTEL_IMAGE,
+        ],
+        env=DOCKER_ENV,
+    )
+
+    def ready() -> bool:
+        if not _container_running(OTEL_CONTAINER):
+            raise RuntimeError("Grafana OTEL-LGTM exited before becoming ready")
+        try:
+            with urllib.request.urlopen(
+                f"http://127.0.0.1:{GRAFANA_PORT}/api/health", timeout=2
+            ) as response:
+                grafana = json.loads(response.read())
+            with urllib.request.urlopen(
+                f"http://127.0.0.1:{TEMPO_PORT}/ready", timeout=2
+            ) as response:
+                tempo_ready = response.read().decode().strip() == "ready"
+            return grafana.get("database") == "ok" and tempo_ready
+        except (OSError, ValueError):
+            return False
+
+    _wait_for(ready, timeout=120, label="Grafana OTEL-LGTM readiness")
 
 
 def _wait_for(predicate: Callable[[], Any], *, timeout: float, label: str):
@@ -377,7 +531,7 @@ def _register_fixture_workspace(base: str) -> dict[str, str]:
 
 
 def _run_bounded(cmd: list[str], *, env: dict[str, str], timeout: int) -> None:
-    print("$", " ".join(cmd), flush=True)
+    print("$", harness.format_command(cmd), flush=True)
     proc = subprocess.Popen(
         cmd,
         cwd=ROOT,
@@ -398,6 +552,8 @@ def _run_desktop_e2e(
     env: dict[str, str], fixture: dict[str, str], files: dict[str, Path]
 ) -> None:
     SCREENSHOT.unlink(missing_ok=True)
+    SUCCESS_SCREENSHOT.unlink(missing_ok=True)
+    REJECTION_SCREENSHOT.unlink(missing_ok=True)
     FAILURE_SCREENSHOT.unlink(missing_ok=True)
     desktop_env = env | {
         "THECHAT_BACKEND_URL": f"http://127.0.0.1:{API_PORT}",
@@ -411,7 +567,15 @@ def _run_desktop_e2e(
         "ATTACHMENT_E2E_REJECTED_FIXTURE": str(files["rejected"]),
         "ATTACHMENT_E2E_CANCEL_FIXTURE": str(files["cancel"]),
         "ATTACHMENT_E2E_SCREENSHOT": str(SCREENSHOT),
+        "ATTACHMENT_E2E_SUCCESS_SCREENSHOT": str(SUCCESS_SCREENSHOT),
+        "ATTACHMENT_E2E_REJECTION_SCREENSHOT": str(REJECTION_SCREENSHOT),
         "ATTACHMENT_E2E_FAILURE_SCREENSHOT": str(FAILURE_SCREENSHOT),
+        "VITE_OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": (
+            f"http://127.0.0.1:{OTEL_HTTP_PORT}/v1/traces"
+        ),
+        "VITE_OTEL_SERVICE_NAME": "thechat-desktop",
+        "VITE_OTEL_RESOURCE_ATTRIBUTES": env["OTEL_RESOURCE_ATTRIBUTES"],
+        "VITE_OTEL_E2E_FORCE_FLUSH": "true",
         "WDIO_MOCHA_TIMEOUT": "480000",
         "GDK_BACKEND": "x11",
     }
@@ -489,7 +653,11 @@ def _verify_backend(
     return {
         "messageId": matching[0]["id"],
         "attachmentId": matching[0]["attachments"][0]["id"],
-        "statuses": statuses,
+        "statuses": {
+            "valid": statuses[names["valid"]],
+            "rejected": statuses[names["rejected"]],
+            "cancelled": statuses[names["cancel"]],
+        },
         "screenshot": str(SCREENSHOT),
     }
 
@@ -505,10 +673,82 @@ def _container_log_tail(name: str) -> str:
     return (result.stdout + result.stderr)[-8000:]
 
 
+def _export_tempo_evidence(
+    source_identity: dict[str, Any], env: dict[str, str]
+) -> dict[str, Any] | None:
+    if TRACE_EVIDENCE_DIR is None:
+        return None
+    if not TRACE_EXPORTER.is_file():
+        raise RuntimeError(f"Tempo evidence exporter is missing: {TRACE_EXPORTER}")
+    source_scan_files = [SUCCESS_SCREENSHOT, REJECTION_SCREENSHOT, SCREENSHOT]
+    if TRACE_LOG_PATH is not None:
+        source_scan_files.append(TRACE_LOG_PATH)
+    missing = [str(path) for path in source_scan_files if not path.is_file()]
+    if missing:
+        raise RuntimeError("Evidence scan inputs are missing: " + ", ".join(missing))
+
+    scan_input_dir = TRACE_EVIDENCE_DIR.parent / "evidence-scan-inputs"
+    scan_input_dir.mkdir(parents=True, exist_ok=False)
+    scan_files: list[Path] = []
+    for source in source_scan_files:
+        destination = scan_input_dir / source.name
+        shutil.copy2(source, destination)
+        scan_files.append(destination)
+
+    command = [
+        sys.executable,
+        str(TRACE_EXPORTER),
+        "--tempo",
+        f"http://127.0.0.1:{TEMPO_PORT}",
+        "--lookback-seconds",
+        "3600",
+        "--run-id",
+        RUN_ID,
+        "--output",
+        str(TRACE_EVIDENCE_DIR),
+        "--source-commit",
+        str(source_identity["sourceCommit"]),
+        "--source-tree",
+        str(source_identity["sourceTree"]),
+        "--source-diff-sha256",
+        str(source_identity["sourceDiffSha256"]),
+    ]
+    for path in scan_files:
+        command.extend(("--scan-file", str(path)))
+    harness.run(command, env=env)
+
+    manifest_path = TRACE_EVIDENCE_DIR / "tempo-evidence-manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if manifest.get("run_id") != RUN_ID:
+        raise RuntimeError("Tempo evidence manifest run ID does not match the E2E run")
+    if manifest.get("source_tree") != source_identity["sourceTree"]:
+        raise RuntimeError("Tempo evidence manifest source tree does not match the E2E run")
+    return {
+        "directory": str(TRACE_EVIDENCE_DIR),
+        "manifest": str(manifest_path),
+        "manifestSha256": _sha256(manifest_path),
+        "traceCount": manifest.get("trace_count"),
+        "spanCount": manifest.get("span_count"),
+        "secretFindingCount": manifest.get("secret_scan", {}).get(
+            "forbidden_finding_count"
+        ),
+        "scanInputDirectory": str(scan_input_dir),
+        "scanInputs": [
+            {
+                "path": str(path),
+                "bytes": path.stat().st_size,
+                "sha256": _sha256(path),
+            }
+            for path in scan_files
+        ],
+    }
+
+
 def _cleanup() -> None:
     if KEEP:
         print(
             "Keeping attachment E2E resources:",
+            OTEL_CONTAINER,
             S3_CONTAINER,
             harness.PG_CONTAINER,
             harness.REDIS_CONTAINER,
@@ -516,6 +756,7 @@ def _cleanup() -> None:
         )
         return
     for name in (
+        OTEL_CONTAINER,
         S3_CONTAINER,
         harness.PG_CONTAINER,
         harness.REDIS_CONTAINER,
@@ -525,7 +766,8 @@ def _cleanup() -> None:
 
 
 def _run() -> None:
-    env = _safe_child_env()
+    source_identity = _source_identity()
+    env = _safe_child_env(source_identity)
     api_proc: subprocess.Popen[Any] | None = None
     worker_proc: subprocess.Popen[Any] | None = None
     completed = False
@@ -534,6 +776,7 @@ def _run() -> None:
         docker_endpoint = _require_local_docker()
         print(f"Using local Docker endpoint: {docker_endpoint}", flush=True)
         _reap_stale_containers()
+        _start_otel()
         _start_s3(env)
         harness.start_postgres(env=DOCKER_ENV)
         harness.start_redis(env=DOCKER_ENV)
@@ -555,13 +798,64 @@ def _run() -> None:
         files = _write_fixtures()
         _run_desktop_e2e(env, fixture, files)
         evidence = _verify_backend(base, fixture, files)
-        print(json.dumps(evidence, indent=2, sort_keys=True), flush=True)
+        _assert_source_identity_unchanged(source_identity, _source_identity())
+
+        tempo_evidence = None
+        if TRACE_EVIDENCE_DIR is not None:
+            # Graceful shutdown flushes API/worker batch processors before the
+            # self-verifying Tempo export. Containers remain up until cleanup.
+            harness.terminate_process(worker_proc, timeout=15)
+            worker_proc = None
+            harness.terminate_process(api_proc, timeout=15)
+            api_proc = None
+            time.sleep(2)
+            tempo_evidence = _export_tempo_evidence(source_identity, env)
+            _assert_source_identity_unchanged(source_identity, _source_identity())
+
+        screenshots = [SCREENSHOT, SUCCESS_SCREENSHOT, REJECTION_SCREENSHOT]
+        result = {
+            **source_identity,
+            "completedUnix": int(time.time()),
+            "screenshots": [
+                {"path": str(path), "sha256": _sha256(path)}
+                for path in screenshots
+            ],
+            "backend": evidence,
+            "tempoEvidence": tempo_evidence,
+        }
+        durable_metadata_path = None
+        if TRACE_EVIDENCE_DIR is not None:
+            artifact_root = TRACE_EVIDENCE_DIR.parent
+            screenshot_dir = artifact_root / "screenshots"
+            screenshot_dir.mkdir(parents=True, exist_ok=True)
+            durable_screenshots = []
+            for source, name in (
+                (SUCCESS_SCREENSHOT, "attachment-success.png"),
+                (REJECTION_SCREENSHOT, "attachment-rejection.png"),
+                (SCREENSHOT, "attachment-cancellation.png"),
+            ):
+                destination = screenshot_dir / name
+                shutil.copy2(source, destination)
+                durable_screenshots.append(
+                    {"path": str(destination), "sha256": _sha256(destination)}
+                )
+            durable_metadata_path = artifact_root / "run-metadata.json"
+            result["durableArtifacts"] = {
+                "root": str(artifact_root),
+                "runMetadata": str(durable_metadata_path),
+                "screenshots": durable_screenshots,
+            }
+        serialized_result = json.dumps(result, indent=2, sort_keys=True) + "\n"
+        RESULT_JSON.write_text(serialized_result, encoding="utf-8")
+        if durable_metadata_path is not None:
+            durable_metadata_path.write_text(serialized_result, encoding="utf-8")
+        print(json.dumps(result, indent=2, sort_keys=True), flush=True)
         completed = True
     finally:
         harness.terminate_process(worker_proc, timeout=15)
         harness.terminate_process(api_proc, timeout=15)
         if not completed:
-            for name in (S3_CONTAINER,):
+            for name in (OTEL_CONTAINER, S3_CONTAINER):
                 if _container_running(name):
                     tail = _container_log_tail(name)
                     if tail:

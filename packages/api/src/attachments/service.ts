@@ -1,13 +1,6 @@
 import crypto from "node:crypto";
-import {
-  and,
-  eq,
-  gt,
-  inArray,
-  lte,
-  or,
-  sql,
-} from "drizzle-orm";
+import { SpanStatusCode, type Span } from "@opentelemetry/api";
+import { and, eq, gt, inArray, lte, or, sql } from "drizzle-orm";
 import { db } from "../db";
 import {
   attachments,
@@ -57,100 +50,106 @@ export async function reserveAttachment(
   },
   options: { store?: ObjectStore } = {},
 ) {
-  const config = loadAttachmentConfig();
-  await requireAttachmentActor(userId);
-  const fileName = sanitizeFileName(input.fileName);
-  const mediaType = normalizeDeclaredMediaType(input.mediaType);
-  const checksum = normalizeSha256(input.checksumSha256);
-  if (!isAllowedDeclaredMediaType(mediaType)) {
-    throw new ServiceError("This file type is not supported", 400);
-  }
-  if (
-    !Number.isSafeInteger(input.sizeBytes) ||
-    input.sizeBytes < 1 ||
-    input.sizeBytes > config.maxBytes
-  ) {
-    throw new ServiceError(
-      `Attachment size must be between 1 and ${config.maxBytes} bytes`,
-      400,
-    );
-  }
-  await requireParticipant(input.conversationId, userId);
-  await enforceDraftQuota(
-    db,
-    input.conversationId,
-    userId,
-    input.sizeBytes,
-    config.maxPerMessage,
-    config.draftQuotaBytes,
-  );
-
   return withSpan(
     "attachment.reserve",
     {
       "messaging.system": "thechat",
       "thechat.conversation_id": input.conversationId,
-      "thechat.attachment.media_type": mediaType,
       "thechat.attachment.size_bytes": input.sizeBytes,
     },
     async (span) => {
-      const id = crypto.randomUUID();
-      const quarantineKey = `quarantine/${crypto.randomUUID()}`;
-      const cleanKey = `clean/${crypto.randomUUID()}`;
-      const store = options.store ?? getAttachmentObjectStore();
-      const upload = await store.createUploadRequest({
-        key: quarantineKey,
-        mediaType,
-        sizeBytes: input.sizeBytes,
-        checksumSha256Base64: checksum.base64,
-        expiresInSeconds: config.uploadTtlSeconds,
-      });
-      const expiresAt = new Date(
-        Date.now() + config.unattachedTtlSeconds * 1000,
-      );
-      const [row] = await db.transaction(async (tx) => {
-        // The byte quota is per uploader across conversations, so serialize
-        // every reservation for that uploader rather than only this chat.
-        const lockKey = `attachment-draft:${userId}`;
-        await tx.execute(
-          sql`select pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`,
-        );
+      try {
+        const config = loadAttachmentConfig();
+        await requireAttachmentActor(userId);
+        const fileName = sanitizeFileName(input.fileName);
+        const mediaType = normalizeDeclaredMediaType(input.mediaType);
+        const checksum = normalizeSha256(input.checksumSha256);
+        if (!isAllowedDeclaredMediaType(mediaType)) {
+          throw new ServiceError("This file type is not supported", 400);
+        }
+        span.setAttribute("thechat.attachment.media_type", mediaType);
+        if (
+          !Number.isSafeInteger(input.sizeBytes) ||
+          input.sizeBytes < 1 ||
+          input.sizeBytes > config.maxBytes
+        ) {
+          throw new ServiceError(
+            `Attachment size must be between 1 and ${config.maxBytes} bytes`,
+            400,
+          );
+        }
+        await requireParticipant(input.conversationId, userId);
         await enforceDraftQuota(
-          tx,
+          db,
           input.conversationId,
           userId,
           input.sizeBytes,
           config.maxPerMessage,
           config.draftQuotaBytes,
         );
-        return tx
-          .insert(attachments)
-          .values({
-            id,
-            conversationId: input.conversationId,
-            uploaderId: userId,
-            fileName,
-            declaredMediaType: mediaType,
-            declaredSizeBytes: input.sizeBytes,
-            declaredChecksumSha256: checksum.hex,
-            quarantineKey,
-            cleanKey,
-            uploadExpiresAt: upload.expiresAt,
-            expiresAt,
-          })
-          .returning();
-      });
-      span.setAttribute("thechat.attachment_id", row.id);
 
-      return {
-        attachment: toAttachmentView(row, { includeStatus: true }),
-        upload: {
-          method: "PUT" as const,
-          url: upload.url,
-          headers: upload.headers,
-          expiresAt: upload.expiresAt.toISOString(),
-        },
-      };
+        const id = crypto.randomUUID();
+        const quarantineKey = `quarantine/${crypto.randomUUID()}`;
+        const cleanKey = `clean/${crypto.randomUUID()}`;
+        const store = options.store ?? getAttachmentObjectStore();
+        const upload = await store.createUploadRequest({
+          key: quarantineKey,
+          mediaType,
+          sizeBytes: input.sizeBytes,
+          checksumSha256Base64: checksum.base64,
+          expiresInSeconds: config.uploadTtlSeconds,
+        });
+        const expiresAt = new Date(
+          Date.now() + config.unattachedTtlSeconds * 1000,
+        );
+        const [row] = await db.transaction(async (tx) => {
+          // The byte quota is per uploader across conversations, so serialize
+          // every reservation for that uploader rather than only this chat.
+          const lockKey = `attachment-draft:${userId}`;
+          await tx.execute(
+            sql`select pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`,
+          );
+          await enforceDraftQuota(
+            tx,
+            input.conversationId,
+            userId,
+            input.sizeBytes,
+            config.maxPerMessage,
+            config.draftQuotaBytes,
+          );
+          return tx
+            .insert(attachments)
+            .values({
+              id,
+              conversationId: input.conversationId,
+              uploaderId: userId,
+              fileName,
+              declaredMediaType: mediaType,
+              declaredSizeBytes: input.sizeBytes,
+              declaredChecksumSha256: checksum.hex,
+              quarantineKey,
+              cleanKey,
+              uploadExpiresAt: upload.expiresAt,
+              expiresAt,
+            })
+            .returning();
+        });
+        span.setAttribute("thechat.attachment_id", row.id);
+        span.setAttribute("thechat.attachment.outcome", "reserved");
+
+        return {
+          attachment: toAttachmentView(row, { includeStatus: true }),
+          upload: {
+            method: "PUT" as const,
+            url: upload.url,
+            headers: upload.headers,
+            expiresAt: upload.expiresAt.toISOString(),
+          },
+        };
+      } catch (error) {
+        setAttachmentBusinessFailure(span, error);
+        throw error;
+      }
     },
   );
 }
@@ -160,15 +159,56 @@ export async function completeAttachment(
   userId: string,
   options: { store?: ObjectStore } = {},
 ) {
+  return withSpan(
+    "attachment.complete",
+    { "thechat.attachment_id": attachmentId },
+    async (span) => {
+      try {
+        const result = await completeAttachmentOperation(
+          attachmentId,
+          userId,
+          options,
+        );
+        if (result.attachment.status) {
+          span.setAttribute(
+            "thechat.attachment.status",
+            result.attachment.status,
+          );
+        }
+        span.setAttribute("thechat.attachment.outcome", result.outcome);
+        return result.attachment;
+      } catch (error) {
+        setAttachmentBusinessFailure(span, error);
+        throw error;
+      }
+    },
+  );
+}
+
+async function completeAttachmentOperation(
+  attachmentId: string,
+  userId: string,
+  options: { store?: ObjectStore } = {},
+) {
   await requireAttachmentActor(userId);
   const row = await loadAttachment(attachmentId);
   if (!row) throw new ServiceError("Attachment not found", 404);
   if (row.uploaderId !== userId) {
-    throw new ServiceError("Only the uploader can complete this attachment", 403);
+    throw new ServiceError(
+      "Only the uploader can complete this attachment",
+      403,
+    );
   }
   await requireParticipant(row.conversationId, userId);
-  if (row.status === "processing" || row.status === "ready" || row.status === "attached") {
-    return toAttachmentView(row, { includeStatus: true });
+  if (
+    row.status === "processing" ||
+    row.status === "ready" ||
+    row.status === "attached"
+  ) {
+    return {
+      attachment: toAttachmentView(row, { includeStatus: true }),
+      outcome: `already_${row.status}`,
+    };
   }
   if (row.status !== "pending_upload") {
     throw new ServiceError("Attachment is no longer uploadable", 409);
@@ -200,9 +240,13 @@ export async function completeAttachment(
       row.declaredMediaType;
   if (mismatch) {
     await rejectAndDeleteUnverifiedAttachment(row, userId, object.versionId);
-    throw new ServiceError("Uploaded object metadata does not match the reservation", 409);
+    throw new ServiceError(
+      "Uploaded object metadata does not match the reservation",
+      409,
+    );
   }
 
+  let validationEnqueued = false;
   const updated = await db.transaction(async (tx) => {
     const [current] = await tx
       .select()
@@ -234,23 +278,70 @@ export async function completeAttachment(
       ),
       { partitionKey: `attachment:${current.id}` },
     );
+    validationEnqueued = true;
     return processing;
   });
-  return toAttachmentView(updated, { includeStatus: true });
+  return {
+    attachment: toAttachmentView(updated, { includeStatus: true }),
+    outcome: validationEnqueued
+      ? "validation_enqueued"
+      : `already_${updated.status}`,
+  };
 }
 
-export async function getAttachment(
-  attachmentId: string,
-  userId: string,
-) {
-  await requireAttachmentActor(userId);
-  const row = await loadAttachment(attachmentId);
-  if (!row) throw new ServiceError("Attachment not found", 404);
-  await authorizeAttachmentRead(row, userId);
-  return toAttachmentView(row, { includeStatus: true });
+export async function getAttachment(attachmentId: string, userId: string) {
+  return withSpan(
+    "attachment.status",
+    { "thechat.attachment_id": attachmentId },
+    async (span) => {
+      try {
+        await requireAttachmentActor(userId);
+        const row = await loadAttachment(attachmentId);
+        if (!row) throw new ServiceError("Attachment not found", 404);
+        await authorizeAttachmentRead(row, userId);
+        span.setAttribute("thechat.attachment.status", row.status);
+        span.setAttribute("thechat.attachment.outcome", "loaded");
+        return toAttachmentView(row, { includeStatus: true });
+      } catch (error) {
+        setAttachmentBusinessFailure(span, error);
+        throw error;
+      }
+    },
+  );
 }
 
 export async function getAttachmentDownload(
+  attachmentId: string,
+  userId: string,
+  options: {
+    store?: ObjectStore;
+    disposition?: "attachment" | "inline";
+  } = {},
+) {
+  return withSpan(
+    "attachment.download.authorize",
+    {
+      "thechat.attachment_id": attachmentId,
+      "thechat.attachment.disposition": options.disposition ?? "attachment",
+    },
+    async (span) => {
+      try {
+        const result = await getAttachmentDownloadOperation(
+          attachmentId,
+          userId,
+          options,
+        );
+        span.setAttribute("thechat.attachment.outcome", "authorized");
+        return result;
+      } catch (error) {
+        setAttachmentBusinessFailure(span, error);
+        throw error;
+      }
+    },
+  );
+}
+
+async function getAttachmentDownloadOperation(
   attachmentId: string,
   userId: string,
   options: {
@@ -271,45 +362,68 @@ export async function getAttachmentDownload(
     throw new ServiceError("Attachment content is not available", 409);
   }
   const config = loadAttachmentConfig();
-  const request = await (options.store ?? getAttachmentObjectStore())
-    .createDownloadRequest({
-      key: row.cleanKey,
-      versionId: row.cleanVersionId,
-      mediaType: row.verifiedMediaType,
-      contentDisposition: safeContentDisposition(
-        row.fileName,
-        options.disposition === "inline" &&
-          isInlineRaster(row.verifiedMediaType)
-          ? "inline"
-          : "attachment",
-      ),
-      expiresInSeconds: config.downloadTtlSeconds,
-    });
+  const request = await (
+    options.store ?? getAttachmentObjectStore()
+  ).createDownloadRequest({
+    key: row.cleanKey,
+    versionId: row.cleanVersionId,
+    mediaType: row.verifiedMediaType,
+    contentDisposition: safeContentDisposition(
+      row.fileName,
+      options.disposition === "inline" && isInlineRaster(row.verifiedMediaType)
+        ? "inline"
+        : "attachment",
+    ),
+    expiresInSeconds: config.downloadTtlSeconds,
+  });
   return {
     url: request.url,
     expiresAt: request.expiresAt.toISOString(),
   };
 }
 
-export async function deleteAttachment(
-  attachmentId: string,
-  userId: string,
-) {
+export async function deleteAttachment(attachmentId: string, userId: string) {
+  return withSpan(
+    "attachment.delete.request",
+    { "thechat.attachment_id": attachmentId },
+    async (span) => {
+      try {
+        const result = await deleteAttachmentOperation(attachmentId, userId);
+        span.setAttribute("thechat.attachment.outcome", result.outcome);
+        return result.response;
+      } catch (error) {
+        setAttachmentBusinessFailure(span, error);
+        throw error;
+      }
+    },
+  );
+}
+
+async function deleteAttachmentOperation(attachmentId: string, userId: string) {
   await requireAttachmentActor(userId);
   const row = await loadAttachment(attachmentId);
-  if (!row) return { ok: true };
+  if (!row) {
+    return { response: { ok: true }, outcome: "already_absent" };
+  }
   if (row.uploaderId !== userId) {
     throw new ServiceError("Only the uploader can delete this attachment", 403);
   }
   await requireParticipant(row.conversationId, userId);
   if (row.status === "attached") {
-    throw new ServiceError("Attached files cannot be deleted from the draft API", 409);
+    throw new ServiceError(
+      "Attached files cannot be deleted from the draft API",
+      409,
+    );
   }
   if (row.status === "deleted" || row.status === "deleting") {
-    return { ok: true };
+    return {
+      response: { ok: true },
+      outcome:
+        row.status === "deleted" ? "already_deleted" : "already_deleting",
+    };
   }
   await requestAttachmentDeletion(row, userId);
-  return { ok: true };
+  return { response: { ok: true }, outcome: "deletion_requested" };
 }
 
 export async function requestExpiredAttachmentCleanup(
@@ -320,11 +434,7 @@ export async function requestExpiredAttachmentCleanup(
     .from(attachments)
     .where(
       and(
-        inArray(attachments.status, [
-          "pending_upload",
-          "processing",
-          "ready",
-        ]),
+        inArray(attachments.status, ["pending_upload", "processing", "ready"]),
         lte(attachments.expiresAt, new Date()),
       ),
     )
@@ -475,12 +585,7 @@ async function enforceDraftQuota(
       bytes: sql<number>`coalesce(sum(${attachments.declaredSizeBytes}), 0)::int`,
     })
     .from(attachments)
-    .where(
-      and(
-        eq(attachments.uploaderId, userId),
-        quotaEligible,
-      ),
-    );
+    .where(and(eq(attachments.uploaderId, userId), quotaEligible));
   if ((userUsage?.bytes ?? 0) + addedBytes > quotaBytes) {
     throw new ServiceError("Attachment draft quota exceeded", 429);
   }
@@ -498,7 +603,10 @@ async function requireParticipant(conversationId: string, userId: string) {
     )
     .limit(1);
   if (!participant) {
-    throw new ServiceError("You are not a participant of this conversation", 403);
+    throw new ServiceError(
+      "You are not a participant of this conversation",
+      403,
+    );
   }
 }
 
@@ -548,15 +656,44 @@ export function safeContentDisposition(
   fileName: string,
   disposition: "attachment" | "inline" = "attachment",
 ) {
-  const ascii = fileName
-    .normalize("NFKD")
-    .replace(/[^\x20-\x7e]/g, "_")
-    .replace(/["\\]/g, "_")
-    .slice(0, 150) || "attachment";
-  const encoded = encodeURIComponent(fileName).replace(/['()*]/g, (character) =>
-    `%${character.charCodeAt(0).toString(16).toUpperCase()}`,
+  const ascii =
+    fileName
+      .normalize("NFKD")
+      .replace(/[^\x20-\x7e]/g, "_")
+      .replace(/["\\]/g, "_")
+      .slice(0, 150) || "attachment";
+  const encoded = encodeURIComponent(fileName).replace(
+    /['()*]/g,
+    (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`,
   );
   return `${disposition}; filename="${ascii}"; filename*=UTF-8''${encoded}`;
+}
+
+function setAttachmentBusinessFailure(span: Span, error: unknown) {
+  const status = error instanceof ServiceError ? error.status : 500;
+  span.setAttribute(
+    "thechat.attachment.outcome",
+    status >= 500 ? "failed" : "rejected",
+  );
+  span.setAttribute(
+    "thechat.attachment.failure_reason",
+    status === 400
+      ? "invalid_request"
+      : status === 401
+        ? "unauthenticated"
+        : status === 403
+          ? "forbidden"
+          : status === 404
+            ? "not_found"
+            : status === 409
+              ? "lifecycle_conflict"
+              : status === 429
+                ? "quota_exceeded"
+                : "system_failure",
+  );
+  if (status >= 500) {
+    span.setStatus({ code: SpanStatusCode.ERROR });
+  }
 }
 
 function s3StatusCode(error: unknown) {
@@ -577,7 +714,10 @@ export function normalizeSha256(value: string) {
       return { hex: bytes.toString("hex"), base64: trimmed };
     }
   }
-  throw new ServiceError("checksumSha256 must be a SHA-256 hex or base64 digest", 400);
+  throw new ServiceError(
+    "checksumSha256 must be a SHA-256 hex or base64 digest",
+    400,
+  );
 }
 
 export const UNATTACHED_ATTACHMENT_STATUSES: AttachmentStatus[] = [

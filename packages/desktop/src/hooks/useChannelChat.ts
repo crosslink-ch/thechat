@@ -9,8 +9,14 @@ import {
 } from "@tanstack/react-query";
 import type { AuthUser, ChatMessage } from "@thechat/shared";
 import { api } from "../lib/api";
-import { authHeaders, edenErrorMessage } from "../lib/eden";
+import { authHeaders, edenErrorMessage, edenErrorStatus } from "../lib/eden";
 import { wsEvents, type WsEvents } from "../lib/ws-events";
+import {
+  SpanKind,
+  SpanStatusCode,
+  traceHeaders,
+  withDesktopSpan,
+} from "../lib/telemetry";
 
 const MESSAGE_CACHE_TTL_MS = 60_000;
 export const MESSAGE_PAGE_SIZE = 20;
@@ -36,7 +42,12 @@ export const messagesQueryKey = (
   conversationId: string,
   threadId?: string | null,
   unthreadedOnly = false,
-) => ["messages", conversationId, unthreadedOnly ? "general" : threadId ?? "all"] as const;
+) =>
+  [
+    "messages",
+    conversationId,
+    unthreadedOnly ? "general" : (threadId ?? "all"),
+  ] as const;
 
 interface MessagePage {
   messages: ChatMessage[];
@@ -114,7 +125,9 @@ export function useChannelChat({
   selfUser = null,
 }: UseChannelChatOptions) {
   const queryClient = useQueryClient();
-  const [localSentMessages, setLocalSentMessages] = useState<LocalSentMessage[]>([]);
+  const [localSentMessages, setLocalSentMessages] = useState<
+    LocalSentMessage[]
+  >([]);
   const [sendError, setSendError] = useState<string | null>(null);
   const failedSendRef = useRef<SendCommand | null>(null);
   const pendingSendsRef = useRef(new Map<string, SendCommand>());
@@ -183,15 +196,24 @@ export function useChannelChat({
         cacheUnthreadedOnly: boolean,
         createIfMissing: boolean,
       ) => {
-        const key = messagesQueryKey(conversationId, cacheThreadId, cacheUnthreadedOnly);
-        if (!createIfMissing && queryClient.getQueryData(key) === undefined) return;
+        const key = messagesQueryKey(
+          conversationId,
+          cacheThreadId,
+          cacheUnthreadedOnly,
+        );
+        if (!createIfMissing && queryClient.getQueryData(key) === undefined)
+          return;
         queryClient.setQueryData<MessageWindow>(key, (prev) =>
           appendMessageToWindow(prev, msg),
         );
       };
 
       if (msg.threadId) {
-        updateCache(msg.threadId, false, !unthreadedOnly && msg.threadId === threadId);
+        updateCache(
+          msg.threadId,
+          false,
+          !unthreadedOnly && msg.threadId === threadId,
+        );
         updateCache(null, false, !unthreadedOnly && threadId === null);
       } else {
         updateCache(null, true, unthreadedOnly && threadId === null);
@@ -258,9 +280,7 @@ export function useChannelChat({
         pendingSendsRef.current.delete(clientMessageId);
         failedSendRef.current = command;
         setLocalSentMessages((previous) =>
-          previous.filter(
-            (local) => local.clientMessageId !== clientMessageId,
-          ),
+          previous.filter((local) => local.clientMessageId !== clientMessageId),
         );
         setSendError(message);
         return false;
@@ -305,31 +325,57 @@ export function useChannelChat({
         }
         return clientMessageId;
       }
-      return endpoint
-        .post(
-          {
-            clientMessageId,
-            content,
-            threadId: targetThreadId,
-            attachmentIds,
-          },
-          authHeaders(token),
-        )
-        .then(({ data, error }) => {
+      return withDesktopSpan(
+        "message.send.request",
+        {
+          "http.request.method": "POST",
+          "http.route": "/messages/:conversationId",
+          "thechat.conversation_id": conversationId,
+          "thechat.message.client_id": clientMessageId,
+          "thechat.message.attachment_count": attachmentIds.length,
+        },
+        async (span, requestContext) => {
+          let response: Awaited<ReturnType<NonNullable<typeof endpoint.post>>>;
+          try {
+            response = await endpoint.post!(
+              {
+                clientMessageId,
+                content,
+                threadId: targetThreadId,
+                attachmentIds,
+              },
+              authHeaders(token, traceHeaders(requestContext)),
+            );
+          } catch (error) {
+            span.setAttribute("thechat.message.outcome", "failed");
+            span.setStatus({ code: SpanStatusCode.ERROR });
+            throw error;
+          }
+          const { data, error } = response;
           if (error || !data) {
+            span.setAttribute("thechat.message.outcome", "failed");
+            const status = edenErrorStatus(error);
+            if (status) {
+              span.setAttribute("http.response.status_code", status);
+            }
+            span.setStatus({ code: SpanStatusCode.ERROR });
             return markFailed(
               edenErrorMessage(error, "Failed to send message"),
             );
           }
+          span.setAttribute("http.response.status_code", 200);
+          span.setAttribute("thechat.message_id", data.id);
+          span.setAttribute("thechat.message.outcome", "sent");
           markSucceeded();
           addMessage(data, clientMessageId);
           return true;
-        })
-        .catch((error) =>
-          markFailed(
-            error instanceof Error ? error.message : "Failed to send message",
-          ),
-        );
+        },
+        { kind: SpanKind.CLIENT },
+      ).catch((error) =>
+        markFailed(
+          error instanceof Error ? error.message : "Failed to send message",
+        ),
+      );
     },
     [
       addMessage,
@@ -352,7 +398,12 @@ export function useChannelChat({
   }, [conversationId, query.refetch, token]);
 
   const loadOlderMessages = useCallback(async () => {
-    if (!conversationId || !token || !query.hasNextPage || query.isFetchingNextPage) {
+    if (
+      !conversationId ||
+      !token ||
+      !query.hasNextPage ||
+      query.isFetchingNextPage
+    ) {
       return false;
     }
     const result = await query.fetchNextPage();
@@ -559,7 +610,8 @@ function appendVisibleLocalMessages(
   let next = messages;
   for (const local of localMessages) {
     if (local.message.conversationId !== conversationId) continue;
-    if (!messageBelongsToScope(local.message, threadId, unthreadedOnly)) continue;
+    if (!messageBelongsToScope(local.message, threadId, unthreadedOnly))
+      continue;
     next = appendMessage(next, local.message);
   }
   return next;
@@ -598,7 +650,10 @@ function appendMessageToWindow(
   }
   pages[0].messages = appendMessage(pages[0].messages, msg);
   const nextWindow = { ...window, pages };
-  return trimWindowToRecentMessages(nextWindow, MESSAGE_WINDOW_TRIM_THRESHOLD) ?? nextWindow;
+  return (
+    trimWindowToRecentMessages(nextWindow, MESSAGE_WINDOW_TRIM_THRESHOLD) ??
+    nextWindow
+  );
 }
 
 function newClientMessageId() {
@@ -608,7 +663,10 @@ function newClientMessageId() {
   );
 }
 
-function trimCachedWindowToInitialPage(queryClient: QueryClient, key: QueryKey) {
+function trimCachedWindowToInitialPage(
+  queryClient: QueryClient,
+  key: QueryKey,
+) {
   const window = queryClient.getQueryData<MessageWindow>(key);
   if (!window) return;
   const messages = flattenMessageWindow(window);
@@ -636,7 +694,9 @@ function trimWindowToRecentMessages(
   };
 }
 
-function flattenMessageWindow(window: MessageWindow | undefined): ChatMessage[] {
+function flattenMessageWindow(
+  window: MessageWindow | undefined,
+): ChatMessage[] {
   if (!window) return [];
   const seen = new Set<string>();
   const messages: ChatMessage[] = [];
@@ -682,6 +742,8 @@ function oldestMessageCursor(messages: ChatMessage[]) {
 
 function buildPageParams(pages: MessagePage[]) {
   return pages.map((_, index) =>
-    index === 0 ? null : oldestMessageCursor(pages[index - 1].messages) ?? null,
+    index === 0
+      ? null
+      : (oldestMessageCursor(pages[index - 1].messages) ?? null),
   );
 }

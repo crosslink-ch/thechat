@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import signal
+import shlex
 import shutil
 import subprocess
 import time
@@ -73,13 +75,92 @@ HERMES_MODEL = os.environ.get("HERMES_E2E_MODEL") or os.environ.get("HERMES_MODE
 
 
 def run(cmd: list[str], *, check: bool = True, env: dict[str, str] | None = None, cwd: Path = ROOT) -> subprocess.CompletedProcess:
-    print("$", " ".join(cmd), flush=True)
+    print("$", format_command(cmd), flush=True)
     return subprocess.run(cmd, cwd=cwd, env=env, text=True, check=check)
 
 
 def output(cmd: list[str], *, env: dict[str, str] | None = None, cwd: Path = ROOT) -> str:
-    print("$", " ".join(cmd), flush=True)
+    print("$", format_command(cmd), flush=True)
     return subprocess.check_output(cmd, cwd=cwd, env=env, text=True).strip()
+
+
+_SENSITIVE_ASSIGNMENT_RE = re.compile(
+    r"(?is)(\b[A-Z0-9_]*(?:PASSWORD|PASSWD|TOKEN|SECRET|API_KEY|PRIVATE_KEY|AUTHORIZATION|COOKIE)[A-Z0-9_]*=)(.*)"
+)
+_SENSITIVE_QUERY_RE = re.compile(
+    r"(?i)([?&](?:access_token|api_key|key|password|secret|token)=)([^&\s]+)"
+)
+_URL_USERINFO_RE = re.compile(r"(?i)([a-z][a-z0-9+.-]*://)[^/@\s]+@")
+_BEARER_RE = re.compile(r"(?i)(\bBearer\s+)[A-Za-z0-9._~+/=-]+")
+_BASIC_RE = re.compile(r"(?i)(\bBasic\s+)[A-Za-z0-9+/=]+")
+_SENSITIVE_FLAGS = {
+    "--api-key",
+    "--authorization",
+    "--cookie",
+    "--password",
+    "--private-key",
+    "--secret",
+    "--token",
+    "--user",
+}
+
+
+def format_command(cmd: list[str]) -> str:
+    redacted: list[str] = []
+    redact_next = False
+    header_next = False
+    for argument in cmd:
+        if redact_next:
+            redacted.append("[REDACTED]")
+            redact_next = False
+            continue
+        if header_next:
+            redacted.append(_redact_header(argument))
+            header_next = False
+            continue
+
+        normalized = argument.lower()
+        if argument.startswith("-H") and len(argument) > 2:
+            redacted.append(f"-H{_redact_header(argument[2:])}")
+            continue
+        inline_sensitive_flag = next(
+            (
+                flag
+                for flag in _SENSITIVE_FLAGS
+                if normalized.startswith(f"{flag}=")
+            ),
+            None,
+        )
+        if inline_sensitive_flag:
+            redacted.append(f"{argument.split('=', 1)[0]}=[REDACTED]")
+            continue
+        if normalized.startswith("--header="):
+            redacted.append(f"--header={_redact_header(argument.split('=', 1)[1])}")
+            continue
+        redacted.append(_redact_command_argument(argument))
+        if normalized in _SENSITIVE_FLAGS:
+            redact_next = True
+        elif argument in {"--header", "-H"}:
+            header_next = True
+    return shlex.join(redacted)
+
+
+def _redact_command_argument(argument: str) -> str:
+    redacted = _URL_USERINFO_RE.sub(r"\1[REDACTED]@", argument)
+    redacted = _SENSITIVE_ASSIGNMENT_RE.sub(r"\1[REDACTED]", redacted)
+    redacted = _SENSITIVE_QUERY_RE.sub(r"\1[REDACTED]", redacted)
+    redacted = _BEARER_RE.sub(r"\1[REDACTED]", redacted)
+    return _BASIC_RE.sub(r"\1[REDACTED]", redacted)
+
+
+def _redact_header(argument: str) -> str:
+    lowered = argument.lower()
+    if any(
+        marker in lowered for marker in ("authorization", "cookie", "x-api-key")
+    ):
+        header_name = argument.split(":", 1)[0]
+        return f"{header_name}: [REDACTED]"
+    return _redact_command_argument(argument)
 
 
 def terminate_process(proc: subprocess.Popen | None, timeout: int = 15) -> None:
@@ -122,7 +203,10 @@ def wait_for(predicate, timeout=60, label="condition"):
         except Exception as exc:  # noqa: BLE001 - printed for diagnostics
             last_error = exc
         time.sleep(1)
-    raise RuntimeError(f"Timed out waiting for {label}. Last error: {last_error}")
+    last_error_type = type(last_error).__name__ if last_error is not None else "none"
+    raise RuntimeError(
+        f"Timed out waiting for {label}. Last error type: {last_error_type}"
+    )
 
 
 def http_json(method: str, url: str, body=None, token: str | None = None):
