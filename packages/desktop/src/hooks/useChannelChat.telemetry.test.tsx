@@ -166,6 +166,50 @@ describe("message send telemetry", () => {
       /secret|password|db\.invalid|private-token|attachment-1|retry me/i,
     );
   });
+
+  it("records one sanitized exception for a non-2xx result error", async () => {
+    apiMocks.post.mockResolvedValue({
+      data: null,
+      error: {
+        status: 503,
+        value: {
+          error: "postgres://secret:password@db.invalid/thechat",
+        },
+      },
+    });
+    const { result } = renderHook(
+      () =>
+        useChannelChat({
+          conversationId: "conversation-1",
+          token: "private-token",
+          wsSendMessage: vi.fn(),
+          selfUser: selfUser(),
+        }),
+      { wrapper: createQueryWrapper() },
+    );
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    let completion: unknown;
+    act(() => {
+      completion = result.current.sendMessage("retry me", ["attachment-1"]);
+    });
+    await act(async () => {
+      await completion;
+    });
+    await provider.forceFlush();
+
+    const request = exactlyOneSpan("message.send.request");
+    expect(request.status.code).toBe(SpanStatusCode.ERROR);
+    expect(request.attributes["http.response.status_code"]).toBe(503);
+    expect(request.attributes["thechat.message.outcome"]).toBe("failed");
+    expect(request.events).toHaveLength(1);
+    expect(request.events[0]!.attributes).toEqual(
+      expect.objectContaining({ "exception.message": "operation_failed" }),
+    );
+    expect(telemetryText()).not.toMatch(
+      /secret|password|db\.invalid|private-token|attachment-1|retry me/i,
+    );
+  });
 });
 
 function createQueryWrapper() {

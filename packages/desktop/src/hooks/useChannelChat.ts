@@ -12,6 +12,7 @@ import { api } from "../lib/api";
 import { authHeaders, edenErrorMessage, edenErrorStatus } from "../lib/eden";
 import { wsEvents, type WsEvents } from "../lib/ws-events";
 import {
+  recordSanitizedException,
   SpanKind,
   SpanStatusCode,
   traceHeaders,
@@ -354,6 +355,7 @@ export function useChannelChat({
           const { data, error } = response;
           if (error || !data) {
             span.setAttribute("thechat.message.outcome", "failed");
+            recordSanitizedException(span, error);
             const status = edenErrorStatus(error);
             if (status) {
               span.setAttribute("http.response.status_code", status);
