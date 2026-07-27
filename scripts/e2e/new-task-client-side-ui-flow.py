@@ -11,27 +11,72 @@ import subprocess
 import sys
 import threading
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+E2E_HELPER_DIR = Path(__file__).resolve().parent
+if str(E2E_HELPER_DIR) not in sys.path:
+    sys.path.insert(0, str(E2E_HELPER_DIR))
+
+from e2e_run import (
+    EVIDENCE_SCHEMA_VERSION,
+    acquire_owned_directory,
+    allocate_loopback_port,
+    assert_binary_unchanged,
+    assert_source_unchanged,
+    capture_source_identity,
+    generate_run_id,
+    sha256_file,
+    validate_evidence_metadata,
+    validate_run_id,
+)
+
 ROOT = Path(__file__).resolve().parents[2]
+RUN_ID = validate_run_id(
+    os.environ.get("THECHAT_E2E_RUN_ID") or generate_run_id("new-task")
+)
+os.environ["THECHAT_E2E_RUN_ID"] = RUN_ID
 EVIDENCE_ROOT = Path(
     os.environ.get(
         "THECHAT_NEW_TASK_E2E_ROOT",
-        str(Path.home() / "thechat-e2e" / "new-task-client-side"),
+        str(
+            Path.home()
+            / ".cache"
+            / "thechat-e2e"
+            / "new-task-client-side"
+            / RUN_ID
+        ),
     )
 ).resolve()
-CONTROL_DIR = EVIDENCE_ROOT / "control"
+CONTROL_NAMESPACE = validate_run_id(
+    os.environ.get("THECHAT_E2E_CONTROL_NAMESPACE", RUN_ID)
+)
+os.environ["THECHAT_E2E_CONTROL_NAMESPACE"] = CONTROL_NAMESPACE
+CONTROL_DIR = EVIDENCE_ROOT / f"control-{CONTROL_NAMESPACE}"
 SCREENSHOT = EVIDENCE_ROOT / "new-task-client-side.png"
 UI_EVIDENCE = EVIDENCE_ROOT / "ui-evidence.json"
+BUILD_EVIDENCE = EVIDENCE_ROOT / "build-evidence.json"
+SUMMARY_EVIDENCE = EVIDENCE_ROOT / "summary.json"
+ATTACHMENT_FIXTURE = EVIDENCE_ROOT / "old-draft.png"
+RETRYABLE_PROMPT = "retryable first task prompt"
 
 # Set isolated resource identities before loading the shared harness, whose
 # constants are resolved at import time.
-os.environ.setdefault("THECHAT_E2E_API_PORT", "3348")
-os.environ.setdefault("THECHAT_E2E_POSTGRES_PORT", "15554")
-os.environ.setdefault("THECHAT_E2E_REDIS_PORT", "16391")
-os.environ.setdefault("THECHAT_E2E_PG_CONTAINER", "thechat-new-task-e2e-postgres")
-os.environ.setdefault("THECHAT_E2E_REDIS_CONTAINER", "thechat-new-task-e2e-redis")
+for port_key in (
+    "THECHAT_E2E_API_PORT",
+    "THECHAT_E2E_POSTGRES_PORT",
+    "THECHAT_E2E_REDIS_PORT",
+    "THECHAT_E2E_TAURI_DRIVER_PORT",
+):
+    os.environ.setdefault(port_key, str(allocate_loopback_port()))
+os.environ.setdefault(
+    "THECHAT_E2E_PG_CONTAINER", f"thechat-new-task-e2e-postgres-{RUN_ID}"
+)
+os.environ.setdefault(
+    "THECHAT_E2E_REDIS_CONTAINER", f"thechat-new-task-e2e-redis-{RUN_ID}"
+)
+os.environ.setdefault("THECHAT_E2E_EVIDENCE_ROOT", str(EVIDENCE_ROOT / "harness"))
 
 
 def load_harness_module():
@@ -167,14 +212,16 @@ def thread_count(conversation_id: str) -> int:
 
 
 def control_backend(
-    api_proc: subprocess.Popen[Any],
+    api_holder: list[subprocess.Popen[Any] | None],
     conversation_id: str,
+    env: dict[str, str],
     stop: threading.Event,
 ) -> None:
     try:
         wait_for_file(CONTROL_DIR / "offline.request", stop, "offline request")
         count_before = thread_count(conversation_id)
-        harness.terminate_process(api_proc, timeout=10)
+        harness.terminate_process(api_holder[0], timeout=10)
+        api_holder[0] = None
         harness.run(
             ["docker", "stop", harness.REDIS_CONTAINER, harness.PG_CONTAINER],
             check=False,
@@ -212,7 +259,69 @@ def control_backend(
                 "apiReachable": port_reachable(harness.API_PORT),
             },
         )
-        harness.run(["docker", "stop", harness.PG_CONTAINER], check=False)
+
+        wait_for_file(
+            CONTROL_DIR / "reconnect.request",
+            stop,
+            "controlled reconnect request",
+        )
+        harness.run(["docker", "start", harness.REDIS_CONTAINER])
+        harness.wait_for(
+            lambda: port_reachable(harness.REDIS_PORT),
+            timeout=30,
+            label="Redis restart",
+        )
+        api_holder[0] = harness.start_api(env, refuse_collision=False)
+        write_json(
+            CONTROL_DIR / "online.json",
+            {
+                "apiReachable": port_reachable(harness.API_PORT),
+                "postgresReachable": port_reachable(harness.POSTGRES_PORT),
+                "redisReachable": port_reachable(harness.REDIS_PORT),
+                "threadCountAfterReconnect": thread_count(conversation_id),
+            },
+        )
+
+        wait_for_file(
+            CONTROL_DIR / "final-database.request",
+            stop,
+            "final database verification request",
+        )
+        message_query = (
+            "SELECT COALESCE(json_agg(content ORDER BY created_at), '[]'::json) "
+            "FROM messages "
+            f"WHERE conversation_id = '{conversation_id}'::uuid;"
+        )
+        def read_message_contents() -> list[str]:
+            return json.loads(
+                harness.output(
+                    [
+                        "docker",
+                        "exec",
+                        harness.PG_CONTAINER,
+                        "psql",
+                        "-U",
+                        "thechat",
+                        "-d",
+                        "thechat",
+                        "-tAc",
+                        message_query,
+                    ]
+                )
+            )
+
+        harness.wait_for(
+            lambda: RETRYABLE_PROMPT in read_message_contents(),
+            timeout=30,
+            label="retried first prompt persistence",
+        )
+        write_json(
+            CONTROL_DIR / "final-database.json",
+            {
+                "threadCountFinal": thread_count(conversation_id),
+                "messageContents": read_message_contents(),
+            },
+        )
     except BaseException as error:
         write_json(
             CONTROL_DIR / "control-error.json",
@@ -222,16 +331,45 @@ def control_backend(
 
 
 def main() -> None:
+    started_at = datetime.now(timezone.utc).isoformat()
+    source_identity = capture_source_identity(ROOT)
+    acquire_owned_directory(EVIDENCE_ROOT, RUN_ID, "new-task-evidence")
     env = child_env()
-    EVIDENCE_ROOT.mkdir(parents=True, exist_ok=True)
     CONTROL_DIR.mkdir(parents=True, exist_ok=True)
-    for path in CONTROL_DIR.iterdir():
-        if path.is_file():
-            path.unlink()
-    SCREENSHOT.unlink(missing_ok=True)
-    UI_EVIDENCE.unlink(missing_ok=True)
+    # A valid 1x1 transparent PNG used to prove image/attachment state is
+    # scoped out of a newly mounted local draft.
+    ATTACHMENT_FIXTURE.write_bytes(
+        bytes.fromhex(
+            "89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4"
+            "890000000d49444154789c6360000000020001e221bc330000000049454e44ae426082"
+        )
+    )
+    resource_identities = {
+        "controlNamespace": CONTROL_NAMESPACE,
+        "evidenceRoot": str(EVIDENCE_ROOT),
+        "controlDir": str(CONTROL_DIR),
+        "apiPort": harness.API_PORT,
+        "postgresPort": harness.POSTGRES_PORT,
+        "redisPort": harness.REDIS_PORT,
+        "tauriDriverPort": int(os.environ["THECHAT_E2E_TAURI_DRIVER_PORT"]),
+        "postgresContainer": harness.PG_CONTAINER,
+        "redisContainer": harness.REDIS_CONTAINER,
+    }
+    test_command = [
+        "xvfb-run",
+        "-a",
+        harness.PNPM,
+        "--filter",
+        "@thechat/desktop",
+        "exec",
+        "wdio",
+        "run",
+        "e2e/wdio.conf.js",
+        "--spec",
+        "e2e/opt-in/new-task-client-side.e2e.js",
+    ]
 
-    api_proc: subprocess.Popen[Any] | None = None
+    api_holder: list[subprocess.Popen[Any] | None] = [None]
     control_stop = threading.Event()
     control_thread: threading.Thread | None = None
     completed = False
@@ -243,7 +381,7 @@ def main() -> None:
             [harness.PNPM, "--dir", "packages/api", "exec", "drizzle-kit", "migrate"],
             env=env,
         )
-        api_proc = harness.start_api(env)
+        api_holder[0] = harness.start_api(env)
         base = f"http://127.0.0.1:{harness.API_PORT}"
         email = f"new-task-e2e-{int(time.time())}@example.com"
         password = "password123"
@@ -297,7 +435,7 @@ def main() -> None:
 
         control_thread = threading.Thread(
             target=control_backend,
-            args=(api_proc, conversation_id, control_stop),
+            args=(api_holder, conversation_id, env, control_stop),
             daemon=True,
             name="new-task-e2e-backend-control",
         )
@@ -318,25 +456,26 @@ def main() -> None:
             "NEW_TASK_CLIENT_SIDE_E2E_CONTROL_DIR": str(CONTROL_DIR),
             "NEW_TASK_CLIENT_SIDE_E2E_SCREENSHOT": str(SCREENSHOT),
             "NEW_TASK_CLIENT_SIDE_E2E_EVIDENCE": str(UI_EVIDENCE),
+            "NEW_TASK_CLIENT_SIDE_E2E_BUILD_EVIDENCE": str(BUILD_EVIDENCE),
+            "NEW_TASK_CLIENT_SIDE_E2E_ATTACHMENT": str(ATTACHMENT_FIXTURE),
+            "NEW_TASK_CLIENT_SIDE_E2E_RETRYABLE_PROMPT": RETRYABLE_PROMPT,
             "THECHAT_E2E_DATA_ROOT": str(EVIDENCE_ROOT / "tauri-data"),
+            "THECHAT_E2E_RUN_ID": RUN_ID,
+            "THECHAT_E2E_CONTROL_NAMESPACE": CONTROL_NAMESPACE,
+            "THECHAT_E2E_TAURI_DRIVER_PORT": os.environ[
+                "THECHAT_E2E_TAURI_DRIVER_PORT"
+            ],
+            "THECHAT_E2E_BUILD_EVIDENCE": str(BUILD_EVIDENCE),
+            "THECHAT_E2E_EXPECTED_SOURCE_IDENTITY": json.dumps(source_identity),
+            "THECHAT_E2E_RESOURCE_IDENTITIES": json.dumps(resource_identities),
+            "THECHAT_E2E_STARTED_AT": started_at,
+            "THECHAT_E2E_TEST_COMMAND": json.dumps(test_command),
             "TMPDIR": str(EVIDENCE_ROOT / "tmp"),
         }
         Path(desktop_env["TMPDIR"]).mkdir(parents=True, exist_ok=True)
         desktop_env.pop("SKIP_BUILD", None)
         run_bounded(
-            [
-                "xvfb-run",
-                "-a",
-                harness.PNPM,
-                "--filter",
-                "@thechat/desktop",
-                "exec",
-                "wdio",
-                "run",
-                "e2e/wdio.conf.js",
-                "--spec",
-                "e2e/opt-in/new-task-client-side.e2e.js",
-            ],
+            test_command,
             env=desktop_env,
             timeout=600,
         )
@@ -351,27 +490,83 @@ def main() -> None:
             raise AssertionError(f"Tauri E2E screenshot was not produced: {SCREENSHOT}")
         if not UI_EVIDENCE.exists() or UI_EVIDENCE.stat().st_size == 0:
             raise AssertionError(f"Tauri E2E evidence was not produced: {UI_EVIDENCE}")
+        if not BUILD_EVIDENCE.exists() or BUILD_EVIDENCE.stat().st_size == 0:
+            raise AssertionError(
+                f"Tauri build evidence was not produced: {BUILD_EVIDENCE}"
+            )
+
+        build_evidence = json.loads(BUILD_EVIDENCE.read_text(encoding="utf-8"))
+        validate_evidence_metadata(build_evidence, expected_run_id=RUN_ID)
+        ui_evidence = json.loads(UI_EVIDENCE.read_text(encoding="utf-8"))
+        binding = ui_evidence.get("binding")
+        if not isinstance(binding, dict):
+            raise AssertionError("UI evidence is missing its self-binding metadata")
+        validate_evidence_metadata(binding, expected_run_id=RUN_ID)
+        if binding["git"] != build_evidence["git"]:
+            raise AssertionError("UI evidence Git identity does not match the build")
+        if binding["binary"] != build_evidence["binary"]:
+            raise AssertionError("UI evidence binary identity does not match the build")
+        if binding["resources"] != build_evidence["resources"]:
+            raise AssertionError("UI evidence resource identities do not match the build")
+        if binding["testCommand"] != test_command:
+            raise AssertionError("UI evidence test command does not match the invocation")
+
+        assert_source_unchanged(ROOT, source_identity)
+        assert_binary_unchanged(
+            Path(build_evidence["binary"]["path"]),
+            build_evidence["binary"]["sha256"],
+        )
+        summary_binding = {
+            "schemaVersion": EVIDENCE_SCHEMA_VERSION,
+            "runId": RUN_ID,
+            "git": source_identity,
+            "binary": build_evidence["binary"],
+            "resources": resource_identities,
+            "startedAt": started_at,
+            "endedAt": datetime.now(timezone.utc).isoformat(),
+            "testCommand": test_command,
+        }
+        validate_evidence_metadata(summary_binding, expected_run_id=RUN_ID)
+        # Re-check immediately before atomically finalizing the Python summary.
+        assert_source_unchanged(ROOT, source_identity)
+        assert_binary_unchanged(
+            Path(build_evidence["binary"]["path"]),
+            build_evidence["binary"]["sha256"],
+        )
+        write_json(
+            SUMMARY_EVIDENCE,
+            {
+                "ok": True,
+                "binding": summary_binding,
+                "uiEvidence": str(UI_EVIDENCE),
+                "uiEvidenceSha256": sha256_file(UI_EVIDENCE),
+                "buildEvidence": str(BUILD_EVIDENCE),
+                "buildEvidenceSha256": sha256_file(BUILD_EVIDENCE),
+            },
+        )
 
         completed = True
         print(
             json.dumps(
                 {
                     "ok": True,
+                    "runId": RUN_ID,
                     "conversationId": conversation_id,
                     "existingThreadId": existing_thread["id"],
                     "existingThreadTitle": existing_thread_title,
                     "generalCacheWitness": general_cache_witness,
                     "screenshot": str(SCREENSHOT),
                     "evidence": str(UI_EVIDENCE),
+                    "summary": str(SUMMARY_EVIDENCE),
                 },
                 indent=2,
             )
         )
     finally:
         control_stop.set()
-        harness.terminate_process(api_proc, timeout=10)
-        harness.run(["docker", "rm", "-f", harness.REDIS_CONTAINER], check=False)
-        harness.run(["docker", "rm", "-f", harness.PG_CONTAINER], check=False)
+        harness.terminate_process(api_holder[0], timeout=10)
+        harness.remove_owned_container(harness.REDIS_CONTAINER, "redis")
+        harness.remove_owned_container(harness.PG_CONTAINER, "postgres")
         if not completed:
             print(f"Preserved failed-run evidence under {EVIDENCE_ROOT}", file=sys.stderr)
 

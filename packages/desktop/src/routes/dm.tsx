@@ -74,6 +74,7 @@ export function DmRoute() {
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
   const [draftTaskActive, setDraftTaskActive] = useState(false);
   const [draftSendError, setDraftSendError] = useState<string | null>(null);
+  const [draftComposerRevision, setDraftComposerRevision] = useState(0);
   const activeConversationIdRef = useRef(conversationId);
   activeConversationIdRef.current = conversationId;
   const draftPersistingRef = useRef<symbol | null>(null);
@@ -183,6 +184,7 @@ export function DmRoute() {
   channelChatRef.current = channelChat;
   const channelSendMessage = channelChat.sendMessage;
   const channelSendMessageToThread = channelChat.sendMessageToThread;
+  const addOptimisticSentMessage = channelChat.addOptimisticSentMessage;
 
   // Subscribe to WebSocket messages for this DM
   useEffect(() => {
@@ -307,6 +309,7 @@ export function DmRoute() {
     setDraftSendError(null);
     setActiveThreadId(null);
     setDraftTaskActive(true);
+    setDraftComposerRevision((revision) => revision + 1);
   }, [isHermesDm]);
 
   const handleSelectThread = useCallback((threadId: string | null) => {
@@ -358,8 +361,11 @@ export function DmRoute() {
     touchThread,
   ]);
 
-  const persistDraftAndSend = useCallback(async (content: string) => {
-    if (!isHermesDm || draftPersistingRef.current) return;
+  const persistDraftAndSend = useCallback(async (
+    content: string,
+    attachmentIds: string[] = [],
+  ) => {
+    if (!isHermesDm || draftPersistingRef.current) return false;
     const persistAttempt = Symbol("persist-hermes-task-draft");
     draftPersistingRef.current = persistAttempt;
     setDraftSendError(null);
@@ -374,7 +380,7 @@ export function DmRoute() {
         activeConversationIdRef.current === conversationId;
       if (!thread) {
         if (isCurrentDraft) setDraftSendError("Could not create the task. Try again.");
-        return;
+        return false;
       }
 
       const clientMessageId = isCurrentDraft
@@ -384,8 +390,24 @@ export function DmRoute() {
         setDraftTaskActive(false);
         setActiveThreadId(thread.id);
       }
-      wsSendMessage(conversationId, content, thread.id, clientMessageId ?? undefined);
+      if (attachmentIds.length > 0) {
+        wsSendMessage(
+          conversationId,
+          content,
+          thread.id,
+          clientMessageId ?? undefined,
+          attachmentIds,
+        );
+      } else {
+        wsSendMessage(
+          conversationId,
+          content,
+          thread.id,
+          clientMessageId ?? undefined,
+        );
+      }
       touchThread(thread.id);
+      return isCurrentDraft;
     } catch {
       if (
         draftPersistingRef.current === persistAttempt &&
@@ -393,6 +415,7 @@ export function DmRoute() {
       ) {
         setDraftSendError("Could not create the task. Try again.");
       }
+      return false;
     } finally {
       if (draftPersistingRef.current === persistAttempt) {
         draftPersistingRef.current = null;
@@ -414,8 +437,8 @@ export function DmRoute() {
   }, [activeThreadId, isHermesDm, sendHermesMessageNow]);
 
   const handleBranchCommand = useCallback(async (args: string) => {
-    if (!isHermesDm) return;
-    if (draftTaskActive && draftPersistingRef.current) return;
+    if (!isHermesDm) return false;
+    if (draftTaskActive && draftPersistingRef.current) return false;
     const branchPersistAttempt = draftTaskActive
       ? Symbol("persist-hermes-branch-draft")
       : null;
@@ -441,6 +464,7 @@ export function DmRoute() {
         setDraftTaskActive(false);
         setActiveThreadId(thread.id);
       }
+      return !!thread && isCurrentConversation;
     } catch {
       if (
         activeConversationIdRef.current === conversationId &&
@@ -448,6 +472,7 @@ export function DmRoute() {
       ) {
         setDraftSendError("Could not create the task. Try again.");
       }
+      return false;
     } finally {
       if (branchPersistAttempt && draftPersistingRef.current === branchPersistAttempt) {
         draftPersistingRef.current = null;
@@ -468,18 +493,17 @@ export function DmRoute() {
     if (!isHermesDm) {
       return channelSendMessage(content, attachmentIds);
     }
-    if (draftTaskActive && !content.trim()) return;
+    if (draftTaskActive && !content.trim()) return false;
 
     const slash = parseHermesSlashCommand(content);
     const canonical = slash
       ? canonicalHermesSlashCommand(slash.command, slashCommands) ?? slash.command
       : null;
     if (canonical === "/branch" && attachmentIds.length === 0) {
-      return handleBranchCommand(slash!.args).then(() => true);
+      return handleBranchCommand(slash!.args);
     }
     if (draftTaskActive) {
-      void persistDraftAndSend(content);
-      return;
+      return persistDraftAndSend(content, attachmentIds);
     }
     if (slash) {
       // Optimistically resolve approval cards: the gateway resolves pending
@@ -542,12 +566,15 @@ export function DmRoute() {
             draftKey={composerDraftKey.dm(
               user?.id,
               conversationId,
-              draftTaskActive ? LOCAL_TASK_DRAFT_SCOPE : activeThreadId,
+              draftTaskActive
+                ? `${LOCAL_TASK_DRAFT_SCOPE}:${draftComposerRevision}`
+                : activeThreadId,
             )}
             taskActive={taskActive}
             slashCommands={slashCommands}
             conversationId={conversationId}
             token={token}
+            composerKey={draftComposerRevision}
           />
         ) : (
           <ChannelChatView

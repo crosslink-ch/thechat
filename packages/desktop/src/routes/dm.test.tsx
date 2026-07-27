@@ -161,8 +161,12 @@ vi.mock("../components/ChannelChatView", () => ({
 }));
 
 vi.mock("../components/HermesDmChatView", () => ({
-  HermesDmChatView: ({ onSend, messages, sendError }: any) => (
-    <div data-testid="hermes-chat" data-message-count={messages.length}>
+  HermesDmChatView: ({ onSend, messages, sendError, composerKey }: any) => (
+    <div
+      data-testid="hermes-chat"
+      data-message-count={messages.length}
+      data-composer-key={composerKey}
+    >
       <button type="button" onClick={() => onSend("First task prompt")}>Send first prompt</button>
       <button type="button" onClick={() => onSend("   ")}>Send empty prompt</button>
       {sendError ? <div role="alert">{sendError}</div> : null}
@@ -230,6 +234,21 @@ beforeEach(() => {
 });
 
 describe("DmRoute deferred Hermes task drafts", () => {
+  it("changes composer identity only at the local New task boundary", async () => {
+    mocks.threads = [persistedThread];
+    await renderRoute();
+    const chat = screen.getByTestId("hermes-chat");
+    expect(chat).toHaveAttribute("data-composer-key", "0");
+
+    fireEvent.click(screen.getByRole("button", { name: persistedThread.title }));
+    expect(chat).toHaveAttribute("data-composer-key", "0");
+    fireEvent.click(screen.getByRole("button", { name: "General" }));
+    expect(chat).toHaveAttribute("data-composer-key", "0");
+
+    fireEvent.click(screen.getByRole("button", { name: "New task" }));
+    expect(chat).toHaveAttribute("data-composer-key", "1");
+  });
+
   it("disables a stale General query when New task starts from an existing task", async () => {
     mocks.threads = [persistedThread];
     await renderRoute();
