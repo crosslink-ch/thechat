@@ -17,6 +17,10 @@ const mocks = vi.hoisted(() => ({
   wsSendMessage: vi.fn(),
   sendTyping: vi.fn(),
   closePaletteAndRefocus: vi.fn(),
+  channelChatOptions: vi.fn(),
+  fetchMessages: vi.fn(),
+  threads: [] as any[],
+  messageQueryStale: false,
 }));
 
 vi.mock("../stores/auth", () => ({
@@ -70,7 +74,7 @@ vi.mock("../hooks/useConversationDetail", () => ({
 
 vi.mock("../hooks/useConversationThreads", () => ({
   useConversationThreads: () => ({
-    threads: [],
+    threads: mocks.threads,
     loading: false,
     loadingMore: false,
     hasMore: false,
@@ -93,18 +97,29 @@ vi.mock("../hooks/useBotRuntime", () => ({
 }));
 
 vi.mock("../hooks/useChannelChat", () => ({
-  useChannelChat: () => ({
-    messages: [],
-    loading: false,
-    loadingOlder: false,
-    hasOlderMessages: false,
-    sendError: null,
-    sendMessage: mocks.sendChannelMessage,
-    sendTyping: mocks.sendTyping,
-    addMessage: vi.fn(),
-    addOptimisticSentMessage: mocks.addOptimisticSentMessage,
-    loadOlderMessages: vi.fn(),
-  }),
+  useChannelChat: (options: {
+    conversationId: string | null;
+    threadId: string | null;
+    unthreadedOnly: boolean;
+    enabled: boolean;
+  }) => {
+    mocks.channelChatOptions(options);
+    if (options.enabled && options.conversationId && mocks.messageQueryStale) {
+      mocks.fetchMessages(options);
+    }
+    return {
+      messages: [],
+      loading: false,
+      loadingOlder: false,
+      hasOlderMessages: false,
+      sendError: null,
+      sendMessage: mocks.sendChannelMessage,
+      sendTyping: mocks.sendTyping,
+      addMessage: vi.fn(),
+      addOptimisticSentMessage: mocks.addOptimisticSentMessage,
+      loadOlderMessages: vi.fn(),
+    };
+  },
 }));
 
 vi.mock("../hooks/useScopedCommands", () => ({
@@ -156,10 +171,20 @@ vi.mock("../components/HermesDmChatView", () => ({
 }));
 
 vi.mock("../components/HermesRuntimePanel", () => ({
-  HermesRuntimePanel: ({ onCreateThread, draftTaskActive, onSelectThread }: any) => (
+  HermesRuntimePanel: ({
+    onCreateThread,
+    draftTaskActive,
+    onSelectThread,
+    threads,
+  }: any) => (
     <aside>
       <button type="button" onClick={onCreateThread}>New task</button>
       <button type="button" onClick={() => onSelectThread(null)}>General</button>
+      {threads.map((thread: { id: string; title: string }) => (
+        <button key={thread.id} type="button" onClick={() => onSelectThread(thread.id)}>
+          {thread.title}
+        </button>
+      ))}
       {draftTaskActive ? <div data-testid="local-task-draft">New task draft</div> : null}
     </aside>
   ),
@@ -198,11 +223,56 @@ async function renderRoute() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.threads = [];
+  mocks.messageQueryStale = false;
   mocks.createThread.mockResolvedValue(persistedThread);
   mocks.addOptimisticSentMessage.mockReturnValue("client-message-1");
 });
 
 describe("DmRoute deferred Hermes task drafts", () => {
+  it("disables a stale General query when New task starts from an existing task", async () => {
+    mocks.threads = [persistedThread];
+    await renderRoute();
+
+    expect(mocks.channelChatOptions).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        conversationId: "dm-1",
+        threadId: null,
+        unthreadedOnly: true,
+        enabled: true,
+      }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: persistedThread.title }));
+    await waitFor(() =>
+      expect(mocks.channelChatOptions).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          conversationId: "dm-1",
+          threadId: "thread-1",
+          unthreadedOnly: false,
+          enabled: true,
+        }),
+      ),
+    );
+
+    mocks.messageQueryStale = true;
+    mocks.fetchMessages.mockClear();
+    fireEvent.click(screen.getByRole("button", { name: "New task" }));
+
+    expect(screen.getByTestId("local-task-draft")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Send first prompt" })).toBeEnabled();
+    expect(mocks.channelChatOptions).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        conversationId: "dm-1",
+        threadId: null,
+        unthreadedOnly: false,
+        enabled: false,
+      }),
+    );
+    expect(mocks.fetchMessages).not.toHaveBeenCalled();
+    expect(mocks.createThread).not.toHaveBeenCalled();
+    expect(mocks.wsSendMessage).not.toHaveBeenCalled();
+  });
+
   it("keeps New task client-only until the first prompt is sent", async () => {
     await renderRoute();
 
