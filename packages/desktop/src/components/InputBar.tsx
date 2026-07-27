@@ -110,6 +110,7 @@ function ScopedInputBar({
   );
   const [inputText, setInputText] = useState(initialText);
   const localTextRef = useRef(initialText);
+  const sendPendingRef = useRef(false);
   const storedText = useComposerDraftsStore(
     (state) => state.drafts[draftKey] ?? "",
   );
@@ -150,11 +151,18 @@ function ScopedInputBar({
   );
 
   useEffect(() => {
-    if (storedText === localTextRef.current) return;
+    // Ignore effects from a render that predates a synchronous local store
+    // write. Otherwise a slash-menu insertion can be overwritten by the old
+    // draft value before Zustand delivers the next subscribed render.
+    const liveStoredText =
+      useComposerDraftsStore.getState().drafts[draftKey] ?? "";
+    if (storedText !== liveStoredText || storedText === localTextRef.current) {
+      return;
+    }
     localTextRef.current = storedText;
     setInputText(storedText);
     inputRef.current?.setText(storedText);
-  }, [storedText]);
+  }, [draftKey, storedText]);
 
   const sharedReady =
     sharedDrafts.length === 0 ||
@@ -531,6 +539,29 @@ function ScopedInputBar({
     inputRef.current?.submit();
   }, []);
 
+  const requestSend = useCallback(
+    async (
+      content: string,
+      submittedImages?: ImageAttachment[],
+      attachmentIds?: string[],
+    ) => {
+      if (sendPendingRef.current) return false;
+      sendPendingRef.current = true;
+      try {
+        const result =
+          attachmentIds !== undefined
+            ? await onSend(content, submittedImages, attachmentIds)
+            : submittedImages !== undefined
+              ? await onSend(content, submittedImages)
+              : await onSend(content);
+        return result !== false;
+      } finally {
+        sendPendingRef.current = false;
+      }
+    },
+    [onSend],
+  );
+
   const sendSharedContent = useCallback(
     async (text: string) => {
       if (!sharedUpload) return false;
@@ -549,8 +580,8 @@ function ScopedInputBar({
       setSendingAttachments(draftKey, true);
       setSharedError(null);
       try {
-        const result = await onSend(text, undefined, attachmentIds);
-        if (result === false) return false;
+        const accepted = await requestSend(text, undefined, attachmentIds);
+        if (!accepted) return false;
         updateSharedDrafts((current) =>
           current.filter((draft) => !localIds.has(draft.localId)),
         );
@@ -574,71 +605,84 @@ function ScopedInputBar({
     },
     [
       draftKey,
-      onSend,
+      requestSend,
       setSendingAttachments,
       sharedUpload,
       updateSharedDrafts,
     ],
   );
 
-  const restoreSubmittedText = useCallback(
-    (text: string, submittedRevision: number) => {
-      if (!text) return;
-      const restored = restoreDraft(draftKey, submittedRevision + 1, text);
-      if (restored && mountedRef.current) {
-        inputRef.current?.setText(text);
-      }
+  const removeAcceptedImages = useCallback(
+    (acceptedImages: ImageAttachment[]) => {
+      const acceptedIds = new Set(acceptedImages.map((image) => image.id));
+      updateImages((current) =>
+        current.filter((image) => !acceptedIds.has(image.id)),
+      );
+    },
+    [updateImages],
+  );
+
+  const clearSubmittedText = useCallback(
+    (submittedRevision: number) => {
+      // This compare-and-set also clears a successfully sent draft after the
+      // composer unmounts, without erasing edits made while the send was pending.
+      restoreDraft(draftKey, submittedRevision, "");
     },
     [draftKey, restoreDraft],
   );
 
   const handleRichInputSubmit = useCallback(
-    (text: string) => {
-      if (sharedUpload) {
-        const submittedRevision =
-          useComposerDraftsStore.getState().revisions[draftKey] ?? 0;
-        void sendSharedContent(text).then((sent) => {
-          if (!sent) restoreSubmittedText(text, submittedRevision);
-        });
-        return;
+    async (text: string) => {
+      const submittedRevision =
+        useComposerDraftsStore.getState().revisions[draftKey] ?? 0;
+      const submittedImages = images.length > 0 ? [...images] : undefined;
+      try {
+        const accepted = sharedUpload
+          ? await sendSharedContent(text)
+          : await requestSend(text, submittedImages);
+        if (!accepted) return false;
+        clearSubmittedText(submittedRevision);
+        if (submittedImages) removeAcceptedImages(submittedImages);
+        return true;
+      } catch {
+        return false;
       }
-      const imgs = images.length > 0 ? images : undefined;
-      onSend(text, imgs);
-      updateImages([]);
-      updateInputText("");
     },
     [
+      clearSubmittedText,
       draftKey,
       images,
-      onSend,
-      restoreSubmittedText,
+      removeAcceptedImages,
+      requestSend,
       sendSharedContent,
       sharedUpload,
-      updateImages,
-      updateInputText,
     ],
   );
 
   // Called when RichInput has empty text but user presses Enter — allow if images exist
-  const handleEmptySubmitAttempt = useCallback(() => {
+  const handleEmptySubmitAttempt = useCallback(async () => {
     if (sharedUpload && sharedDrafts.length > 0 && sharedReady) {
-      void sendSharedContent("");
-      return true;
+      return sendSharedContent("");
     }
     if (images.length > 0) {
-      onSend("", images);
-      updateImages([]);
-      return true;
+      const submittedImages = [...images];
+      try {
+        const accepted = await requestSend("", submittedImages);
+        if (accepted) removeAcceptedImages(submittedImages);
+        return accepted;
+      } catch {
+        return false;
+      }
     }
     return false;
   }, [
     images,
-    onSend,
+    removeAcceptedImages,
+    requestSend,
     sendSharedContent,
     sharedDrafts.length,
     sharedReady,
     sharedUpload,
-    updateImages,
   ]);
 
   const handleInputTextChange = useCallback((text: string) => {
@@ -653,24 +697,18 @@ function ScopedInputBar({
   const handleSlashCommandSelect = useCallback(
     (command: HermesSlashCommand) => {
       if (slashCommandRequiresArgs(command)) {
-        inputRef.current?.setText(`${command.command} `);
+        const text = `${command.command} `;
+        inputRef.current?.setText(text);
+        updateInputText(text);
         return;
       }
-      if (sharedUpload) {
-        const submittedRevision =
-          useComposerDraftsStore.getState().revisions[draftKey] ?? 0;
-        void sendSharedContent(command.command).then((sent) => {
-          if (!sent) {
-            restoreSubmittedText(command.command, submittedRevision);
-          }
-        });
-        inputRef.current?.setText("");
-        return;
-      }
-      onSend(command.command);
-      inputRef.current?.setText("");
+      // Route command sends through the same acknowledgement-aware RichInput
+      // path so a rejected send keeps the exact command available for retry.
+      inputRef.current?.setText(command.command);
+      updateInputText(command.command);
+      inputRef.current?.submit();
     },
-    [draftKey, onSend, restoreSubmittedText, sendSharedContent, sharedUpload],
+    [updateInputText],
   );
 
   // RichInput reads this through a ref, so the latest render's state is used.
@@ -706,9 +744,12 @@ function ScopedInputBar({
           handleSlashCommandSelect(slashSuggestions[highlightedSlashIndex]);
           return true;
         }
-        case "Tab":
-          inputRef.current?.setText(`${slashSuggestions[highlightedSlashIndex].command} `);
+        case "Tab": {
+          const text = `${slashSuggestions[highlightedSlashIndex].command} `;
+          inputRef.current?.setText(text);
+          updateInputText(text);
           return true;
+        }
         case "Escape":
           setSlashMenuDismissed(true);
           return true;
@@ -731,30 +772,28 @@ function ScopedInputBar({
   const handleSendClick = useCallback(() => {
     if (sharedUpload) {
       if (!sharedReady || sendingShared) return;
-      if (canSubmit) {
+      if (canSubmit || localTextRef.current.trim().length > 0) {
         handleSubmit();
       } else if (sharedDrafts.length > 0) {
         void sendSharedContent("");
       }
       return;
     }
-    if (canSubmit) {
+    if (canSubmit || localTextRef.current.trim().length > 0) {
       handleSubmit();
     } else if (images.length > 0) {
-      onSend("", images);
-      updateImages([]);
+      void handleEmptySubmitAttempt();
     }
   }, [
     canSubmit,
+    handleEmptySubmitAttempt,
     handleSubmit,
-    images,
-    onSend,
+    images.length,
     sendSharedContent,
     sendingShared,
     sharedDrafts.length,
     sharedReady,
     sharedUpload,
-    updateImages,
   ]);
 
   const handleDragOver = useCallback((e: DragEvent) => {

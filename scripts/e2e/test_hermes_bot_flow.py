@@ -31,6 +31,42 @@ class FakeGatewayProcess:
 
 
 class HermesBotFlowTests(unittest.TestCase):
+    def test_container_cleanup_requires_exact_run_ownership(self):
+        harness = load_harness()
+        original_inspect = harness.inspect_container_labels
+        original_run = harness.run
+        removed: list[list[str]] = []
+        try:
+            harness.inspect_container_labels = lambda _name: (
+                harness.docker_ownership_labels("different-run", "postgres")
+            )
+            harness.run = lambda cmd, **_kwargs: removed.append(list(cmd))
+            with self.assertRaisesRegex(RuntimeError, "not owned"):
+                harness.remove_owned_container("postgres-fixture", "postgres")
+            self.assertEqual(removed, [])
+
+            harness.inspect_container_labels = lambda _name: (
+                harness.docker_ownership_labels(harness.RUN_ID, "postgres")
+            )
+            harness.remove_owned_container("postgres-fixture", "postgres")
+            self.assertEqual(
+                removed,
+                [["docker", "rm", "-f", "postgres-fixture"]],
+            )
+        finally:
+            harness.inspect_container_labels = original_inspect
+            harness.run = original_run
+
+    def test_container_name_collision_is_never_deleted_preflight(self):
+        harness = load_harness()
+        original_inspect = harness.inspect_container_labels
+        try:
+            harness.inspect_container_labels = lambda _name: {}
+            with self.assertRaisesRegex(RuntimeError, "container collision"):
+                harness.refuse_container_collision("occupied")
+        finally:
+            harness.inspect_container_labels = original_inspect
+
     def test_gateway_starts_without_hermes_cli_service_refresh_path(self):
         """The E2E gateway must not invoke `hermes gateway run`.
 

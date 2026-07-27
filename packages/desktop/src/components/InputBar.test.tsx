@@ -8,6 +8,7 @@ import {
 } from "@testing-library/react";
 import { InputBar } from "./InputBar";
 import type { HermesSlashCommand } from "../lib/hermes-slash-commands";
+import type { ImageAttachment } from "../lib/images";
 import { useComposerDraftsStore } from "../stores/composer-drafts";
 import {
   cancelSharedAttachment,
@@ -36,7 +37,13 @@ beforeAll(() => {
   });
 });
 
-afterEach(() => {
+afterEach(async () => {
+  // Let acknowledgement-aware sends from the just-finished test settle before
+  // resetting the shared draft store. Otherwise a late success can observe a
+  // recycled revision in the next test and clear that test's draft.
+  await act(async () => {
+    await Promise.resolve();
+  });
   vi.clearAllMocks();
   useComposerDraftsStore.setState({
     drafts: {},
@@ -54,7 +61,7 @@ const COMMANDS: HermesSlashCommand[] = [
 ];
 
 function renderInputBar(overrides: Partial<Parameters<typeof InputBar>[0]> = {}) {
-  const onSend = vi.fn();
+  const onSend = vi.fn(() => true);
   const utils = render(
     <InputBar
       convId="conv-1"
@@ -114,14 +121,16 @@ describe("InputBar slash command menu", () => {
     expect(screen.getByTestId("slash-command-item-queue").dataset.selected).toBe("true");
   });
 
-  it("sends argument-less commands immediately on Enter", () => {
+  it("sends argument-less commands immediately on Enter", async () => {
     const { editor, onSend } = renderInputBar();
     openMenu(editor);
 
-    fireEvent.keyDown(editor, { key: "Enter" });
+    await act(async () => fireEvent.keyDown(editor, { key: "Enter" }));
     expect(onSend).toHaveBeenCalledWith("/help");
-    expect(screen.queryByTestId("slash-command-menu")).toBeNull();
-    expect(editor.textContent ?? "").toBe("");
+    await waitFor(() => {
+      expect(screen.queryByTestId("slash-command-menu")).toBeNull();
+      expect(editor.textContent ?? "").toBe("");
+    });
   });
 
   it("inserts commands that require arguments instead of sending", () => {
@@ -155,11 +164,13 @@ describe("InputBar slash command menu", () => {
     expect(screen.queryByTestId("slash-command-menu")).toBeNull();
   });
 
-  it("selects a command on click", () => {
+  it("selects a command on click", async () => {
     const { editor, onSend } = renderInputBar();
     openMenu(editor);
 
-    fireEvent.mouseDown(screen.getByTestId("slash-command-item-help"));
+    await act(async () =>
+      fireEvent.mouseDown(screen.getByTestId("slash-command-item-help")),
+    );
     expect(onSend).toHaveBeenCalledWith("/help");
   });
 
@@ -167,6 +178,54 @@ describe("InputBar slash command menu", () => {
     const { editor } = renderInputBar();
     expect(screen.getByTestId("input-actions")).not.toHaveClass("absolute");
     expect(editor.className).not.toContain("pb-11");
+  });
+
+  it("retains real composer text and attachments until an async submit is accepted", async () => {
+    let rejectFirst!: (accepted: boolean) => void;
+    const onSend = vi
+      .fn(
+        (
+          _content: string,
+          _images?: ImageAttachment[],
+        ): boolean | Promise<boolean> => true,
+      )
+      .mockReturnValueOnce(
+        new Promise<boolean>((resolve) => {
+          rejectFirst = resolve;
+        }),
+      )
+      .mockResolvedValueOnce(true);
+    const { container, editor } = renderInputBar({ onSend });
+    const fileInput = container.querySelector<HTMLInputElement>("input[type='file']");
+    if (!fileInput) throw new Error("File input not found");
+
+    openMenu(editor);
+    fireEvent.keyDown(editor, { key: "ArrowDown" });
+    fireEvent.keyDown(editor, { key: "ArrowDown" });
+    fireEvent.keyDown(editor, { key: "Tab" });
+    expect(editor.textContent).toBe("/queue ");
+    fireEvent.change(fileInput, {
+      target: {
+        files: [new File(["image"], "retry.png", { type: "image/png" })],
+      },
+    });
+    await waitFor(() =>
+      expect(container.querySelector("img[src^='data:image/png;base64,']")).not.toBeNull(),
+    );
+
+    fireEvent.click(screen.getByTitle("Send message"));
+    await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
+    expect(onSend.mock.calls[0][0]).toBe("/queue");
+    expect(onSend.mock.calls[0][1]).toHaveLength(1);
+
+    await act(async () => rejectFirst(false));
+    await waitFor(() => expect(editor.textContent).toBe("/queue "));
+    expect(container.querySelector("img[src^='data:image/png;base64,']")).not.toBeNull();
+
+    fireEvent.click(screen.getByTitle("Send message"));
+    await waitFor(() => expect(editor.textContent).toBe(""));
+    expect(container.querySelector("img[src^='data:image/png;base64,']")).toBeNull();
+    expect(onSend).toHaveBeenCalledTimes(2);
   });
 });
 
