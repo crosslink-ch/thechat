@@ -137,10 +137,14 @@ export const config = {
   async beforeSession(_config, capabilities) {
     // Create isolated data directory so each run gets a fresh SQLite DB.
     // The Rust binary checks THECHAT_DATA_DIR before the default path.
-    const scratchRoot =
-      process.env.THECHAT_E2E_RUNTIME_ROOT?.trim() || os.tmpdir();
-    fs.mkdirSync(scratchRoot, { recursive: true });
-    tmpDataDir = fs.mkdtempSync(path.join(scratchRoot, "thechat-e2e-"));
+    const configuredDataRoot =
+      process.env.THECHAT_E2E_DATA_ROOT?.trim() ||
+      process.env.THECHAT_E2E_RUNTIME_ROOT?.trim();
+    const dataRoot = configuredDataRoot
+      ? path.resolve(configuredDataRoot)
+      : os.tmpdir();
+    fs.mkdirSync(dataRoot, { recursive: true });
+    tmpDataDir = fs.mkdtempSync(path.join(dataRoot, "thechat-tauri-e2e-"));
     process.env.THECHAT_DATA_DIR = tmpDataDir;
     prepareNativeOpenerProbe();
 
