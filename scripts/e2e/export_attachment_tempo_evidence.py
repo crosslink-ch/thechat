@@ -240,6 +240,15 @@ def assert_direct_parent(trace: dict[str, Any], parent_name: str, child_name: st
         raise AssertionError(f"missing direct parent edge {parent_name} -> {child_name}")
 
 
+def assert_outbox_handler_chain(trace: dict[str, Any], leaf_name: str) -> None:
+    assert_direct_parent(
+        trace,
+        "domain_event.outbox.consume",
+        "domain_event.handle",
+    )
+    assert_direct_parent(trace, "domain_event.handle", leaf_name)
+
+
 def find_trace(traces: list[dict[str, Any]], required_names: set[str]) -> dict[str, Any]:
     matches = [
         trace
@@ -325,6 +334,7 @@ EXPECTED_KINDS: dict[str, str] = {
     "domain_event.outbox.enqueue": "SPAN_KIND_PRODUCER",
     "domain_event.outbox.claim": "SPAN_KIND_CLIENT",
     "domain_event.outbox.consume": "SPAN_KIND_CONSUMER",
+    "domain_event.handle": "SPAN_KIND_INTERNAL",
     "realtime.publish": "SPAN_KIND_PRODUCER",
     "realtime.receive": "SPAN_KIND_CONSUMER",
     "realtime.websocket.send": "SPAN_KIND_PRODUCER",
@@ -615,6 +625,7 @@ def assert_graph(traces: list[dict[str, Any]], run_id: str) -> dict[str, Any]:
         "attachment.complete",
         "domain_event.outbox.enqueue",
         "domain_event.outbox.consume",
+        "domain_event.handle",
         "attachment.validate_promote",
         "attachment.validation.wait",
         "attachment.status.request",
@@ -632,7 +643,6 @@ def assert_graph(traces: list[dict[str, Any]], run_id: str) -> dict[str, Any]:
         ("HTTP POST /attachments/:id/complete", "attachment.complete"),
         ("attachment.complete", "domain_event.outbox.enqueue"),
         ("domain_event.outbox.enqueue", "domain_event.outbox.consume"),
-        ("domain_event.outbox.consume", "attachment.validate_promote"),
         ("attachment.prepare", "attachment.validation.wait"),
         ("attachment.validation.wait", "attachment.status.request"),
         ("attachment.status.request", "HTTP GET /attachments/:id"),
@@ -646,6 +656,7 @@ def assert_graph(traces: list[dict[str, Any]], run_id: str) -> dict[str, Any]:
             )
         for parent, child in upload_edges:
             assert_direct_parent(trace, parent, child)
+        assert_outbox_handler_chain(trace, "attachment.validate_promote")
 
     cleanup_names = {
         "attachment.cancel.request",
@@ -653,6 +664,7 @@ def assert_graph(traces: list[dict[str, Any]], run_id: str) -> dict[str, Any]:
         "attachment.delete.request",
         "domain_event.outbox.enqueue",
         "domain_event.outbox.consume",
+        "domain_event.handle",
         "attachment.delete_objects",
     }
     cleanup_traces = [
@@ -669,11 +681,11 @@ def assert_graph(traces: list[dict[str, Any]], run_id: str) -> dict[str, Any]:
         ("HTTP DELETE /attachments/:id", "attachment.delete.request"),
         ("attachment.delete.request", "domain_event.outbox.enqueue"),
         ("domain_event.outbox.enqueue", "domain_event.outbox.consume"),
-        ("domain_event.outbox.consume", "attachment.delete_objects"),
     )
     for trace in cleanup_traces:
         for parent, child in cleanup_edges:
             assert_direct_parent(trace, parent, child)
+        assert_outbox_handler_chain(trace, "attachment.delete_objects")
         cancel = find_spans(trace, "attachment.cancel.request")[0]
         service_delete = find_spans(trace, "attachment.delete.request")[0]
         object_delete = find_spans(trace, "attachment.delete_objects")[0]

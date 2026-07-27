@@ -71,6 +71,41 @@ class TempoEvidenceVerifierTests(unittest.TestCase):
         with self.assertRaisesRegex(AssertionError, "parent cycle"):
             self.verifier.assert_identity_and_parent_invariants([trace], "run-1")
 
+    def test_outbox_handler_chain_preserves_the_dispatch_hop(self) -> None:
+        trace = {
+            "spans": [
+                {
+                    "name": "domain_event.outbox.consume",
+                    "span_id": "aa" * 8,
+                    "parent_span_id": "",
+                },
+                {
+                    "name": "domain_event.handle",
+                    "span_id": "bb" * 8,
+                    "parent_span_id": "aa" * 8,
+                },
+                {
+                    "name": "attachment.validate_promote",
+                    "span_id": "cc" * 8,
+                    "parent_span_id": "bb" * 8,
+                },
+            ]
+        }
+        self.assertEqual(
+            self.verifier.EXPECTED_KINDS["domain_event.handle"],
+            "SPAN_KIND_INTERNAL",
+        )
+        self.verifier.assert_outbox_handler_chain(
+            trace,
+            "attachment.validate_promote",
+        )
+        with self.assertRaisesRegex(AssertionError, "missing direct parent edge"):
+            self.verifier.assert_direct_parent(
+                trace,
+                "domain_event.outbox.consume",
+                "attachment.validate_promote",
+            )
+
     def test_idle_claim_check_uses_actual_claimed_count(self) -> None:
         self.assertEqual(
             self.verifier.EXPECTED_KINDS["domain_event.outbox.claim"],
