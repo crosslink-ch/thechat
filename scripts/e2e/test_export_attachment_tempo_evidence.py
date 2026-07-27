@@ -106,6 +106,19 @@ class TempoEvidenceVerifierTests(unittest.TestCase):
                 "attachment.validate_promote",
             )
 
+    def test_recognizes_bounded_handler_storage_and_generic_error_outcomes(self) -> None:
+        for key, value in (
+            ("thechat.event.outcome", "failed"),
+            ("thechat.storage.outcome", "failed"),
+            ("thechat.operation.outcome", "error"),
+            ("realtime.delivery.outcome", "failed"),
+        ):
+            self.assertEqual(
+                self.verifier.span_outcome({"attributes": {key: value}}),
+                value,
+            )
+        self.assertIsNone(self.verifier.span_outcome({"attributes": {}}))
+
     def test_idle_claim_check_uses_actual_claimed_count(self) -> None:
         self.assertEqual(
             self.verifier.EXPECTED_KINDS["domain_event.outbox.claim"],

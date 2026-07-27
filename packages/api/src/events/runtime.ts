@@ -1,6 +1,10 @@
 import crypto from "crypto";
 import { SpanKind, SpanStatusCode, type Span } from "@opentelemetry/api";
-import { contextFromTraceContext, withSpan } from "../observability";
+import {
+  contextFromTraceContext,
+  recordSanitizedException,
+  withSpan,
+} from "../observability";
 import { loadDomainEventsConfig, type DomainEventsConfig } from "./config";
 import { logDomainEvent } from "./log";
 import { createChatMessageSentHandler } from "./message-handler";
@@ -301,10 +305,7 @@ function outboxLogContext(row: ClaimedOutboxEvent) {
 
 function recordAttemptFailure(span: Span, error: unknown, outcome: string) {
   span.setAttribute("thechat.outbox.outcome", outcome);
-  span.recordException({
-    name: safeErrorType(error),
-    message: "domain_event_processing_failed",
-  });
+  recordSanitizedException(span, error);
   span.setStatus({ code: SpanStatusCode.ERROR });
 }
 

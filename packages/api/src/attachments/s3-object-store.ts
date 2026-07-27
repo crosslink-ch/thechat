@@ -17,6 +17,10 @@ import type {
   StoredObjectMetadata,
 } from "./object-store";
 
+const STORAGE_FAILURE_ATTRIBUTES = {
+  "thechat.storage.outcome": "failed",
+} as const;
+
 export interface S3ObjectStoreOptions {
   bucket: string;
   region: string;
@@ -76,6 +80,7 @@ export class S3ObjectStore implements ObjectStore {
             "if-none-match",
           ]),
         });
+        span.setAttribute("thechat.storage.outcome", "presigned");
         span.setAttribute("thechat.attachment.size_bytes", input.sizeBytes);
         span.setAttribute("thechat.capability.ttl_seconds", input.expiresInSeconds);
         return {
@@ -89,6 +94,7 @@ export class S3ObjectStore implements ObjectStore {
           expiresAt: new Date(Date.now() + input.expiresInSeconds * 1000),
         };
       },
+      { errorAttributes: STORAGE_FAILURE_ATTRIBUTES },
     );
   }
 
@@ -125,7 +131,7 @@ export class S3ObjectStore implements ObjectStore {
           throw error;
         }
       },
-      { kind: SpanKind.CLIENT },
+      { kind: SpanKind.CLIENT, errorAttributes: STORAGE_FAILURE_ATTRIBUTES },
     );
   }
 
@@ -157,7 +163,10 @@ export class S3ObjectStore implements ObjectStore {
               : new Uint8Array(rawChunk as ArrayBuffer);
           total += chunk.byteLength;
           if (total > input.maxBytes) {
-            span.setAttribute("thechat.storage.outcome", "size_limit_exceeded");
+            span.setAttribute(
+              "thechat.storage.failure_reason",
+              "size_limit_exceeded",
+            );
             throw new Error("Stored object exceeds the configured attachment limit");
           }
           chunks.push(chunk);
@@ -172,7 +181,7 @@ export class S3ObjectStore implements ObjectStore {
         span.setAttribute("thechat.attachment.size_bytes", total);
         return result;
       },
-      { kind: SpanKind.CLIENT },
+      { kind: SpanKind.CLIENT, errorAttributes: STORAGE_FAILURE_ATTRIBUTES },
     );
   }
 
@@ -185,7 +194,7 @@ export class S3ObjectStore implements ObjectStore {
     return withSpan(
       "attachment.s3.copy",
       this.s3Attributes("CopyObject", true),
-      async () => {
+      async (span) => {
         const source = `${encodeS3Path(this.bucket)}/${encodeS3Path(
           input.sourceKey,
         )}?versionId=${encodeURIComponent(input.sourceVersionId)}`;
@@ -200,9 +209,10 @@ export class S3ObjectStore implements ObjectStore {
             ChecksumAlgorithm: "SHA256",
           }),
         );
+        span.setAttribute("thechat.storage.outcome", "copied");
         return { versionId: output.VersionId ?? null };
       },
-      { kind: SpanKind.CLIENT },
+      { kind: SpanKind.CLIENT, errorAttributes: STORAGE_FAILURE_ATTRIBUTES },
     );
   }
 
@@ -213,15 +223,17 @@ export class S3ObjectStore implements ObjectStore {
     await withSpan(
       "attachment.s3.delete",
       this.s3Attributes("DeleteObject", Boolean(input.versionId)),
-      () =>
-        this.client.send(
+      async (span) => {
+        await this.client.send(
           new DeleteObjectCommand({
             Bucket: this.bucket,
             Key: input.key,
             ...(input.versionId ? { VersionId: input.versionId } : {}),
           }),
-        ),
-      { kind: SpanKind.CLIENT },
+        );
+        span.setAttribute("thechat.storage.outcome", "deleted");
+      },
+      { kind: SpanKind.CLIENT, errorAttributes: STORAGE_FAILURE_ATTRIBUTES },
     );
   }
 
@@ -247,6 +259,7 @@ export class S3ObjectStore implements ObjectStore {
           }),
           { expiresIn: input.expiresInSeconds },
         );
+        span.setAttribute("thechat.storage.outcome", "presigned");
         span.setAttribute("thechat.capability.ttl_seconds", input.expiresInSeconds);
         return {
           method: "GET",
@@ -255,6 +268,7 @@ export class S3ObjectStore implements ObjectStore {
           expiresAt: new Date(Date.now() + input.expiresInSeconds * 1000),
         };
       },
+      { errorAttributes: STORAGE_FAILURE_ATTRIBUTES },
     );
   }
 

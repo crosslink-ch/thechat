@@ -95,7 +95,7 @@ export class DomainEventRegistry {
         "thechat.aggregate.type": event.aggregate.type,
         "thechat.aggregate.id": event.aggregate.id,
       },
-      async () => {
+      async (span) => {
         let parsed: DomainEventEnvelope;
         try {
           parsed = handler.parse(event);
@@ -105,9 +105,13 @@ export class DomainEventRegistry {
         logDomainEvent("info", "domain_event.handle.started", parsed);
         await handler.handle(parsed);
         logDomainEvent("info", "domain_event.handle.completed", parsed);
+        span.setAttribute("thechat.event.outcome", "handled");
         return true;
       },
-      { recordException: false },
+      {
+        recordException: false,
+        errorAttributes: { "thechat.event.outcome": "failed" },
+      },
     );
   }
 }

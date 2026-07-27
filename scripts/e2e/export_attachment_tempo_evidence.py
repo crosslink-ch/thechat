@@ -196,6 +196,10 @@ def span_outcome(span: dict[str, Any]) -> Any:
         "thechat.message.outcome",
         "thechat.realtime.outcome",
         "thechat.outbox.outcome",
+        "thechat.event.outcome",
+        "thechat.storage.outcome",
+        "realtime.delivery.outcome",
+        "thechat.operation.outcome",
     ):
         if key in attrs:
             return attrs[key]

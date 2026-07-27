@@ -259,6 +259,7 @@ export async function validateAndPromoteAttachment(
       // The signed PUT uses If-None-Match: *, so retaining the object makes the
       // upload URL one-shot for its entire validity window.
     },
+    { errorAttributes: { "thechat.attachment.outcome": "failed" } },
   );
 }
 

@@ -1,5 +1,6 @@
 import {
   context,
+  createContextKey,
   createTraceState,
   isSpanContextValid,
   ROOT_CONTEXT,
@@ -69,8 +70,18 @@ export interface WithSpanOptions {
   parentContext?: Context;
   links?: Link[];
   recordException?: boolean;
+  errorAttributes?: Attributes;
   startTime?: Date;
 }
+
+interface ExceptionRecordingState {
+  objects: WeakSet<object>;
+  primitives: Set<unknown>;
+}
+
+const exceptionRecordingStateKey = createContextKey(
+  "thechat.exception-recording-state",
+);
 
 export function setTracerForTests(tracer: Tracer | null) {
   testTracer = tracer;
@@ -82,7 +93,9 @@ export async function withSpan<T>(
   fn: (span: Span) => T | Promise<T>,
   options: WithSpanOptions = {},
 ): Promise<T> {
-  const parentContext = options.parentContext ?? context.active();
+  const parentContext = contextWithExceptionRecordingState(
+    options.parentContext ?? context.active(),
+  );
   return (testTracer ?? defaultTracer).startActiveSpan(
     name,
     {
@@ -96,8 +109,12 @@ export async function withSpan<T>(
       try {
         return await fn(span);
       } catch (error) {
+        span.setAttribute("thechat.operation.outcome", "error");
+        if (options.errorAttributes) {
+          span.setAttributes(options.errorAttributes);
+        }
         if (options.recordException !== false) {
-          span.recordException(safeException(error));
+          recordSanitizedException(span, error);
         }
         span.setStatus({ code: SpanStatusCode.ERROR });
         throw error;
@@ -189,8 +206,43 @@ export function setHttpResponseStatus(
   if (!Number.isFinite(parsed)) return;
   span.setAttribute("http.response.status_code", parsed);
   if (parsed >= 500) {
+    span.setAttribute("thechat.operation.outcome", "error");
     span.setStatus({ code: SpanStatusCode.ERROR, message: `HTTP ${parsed}` });
   }
+}
+
+export function recordSanitizedException(span: Span, error: unknown): boolean {
+  const state = context.active().getValue(exceptionRecordingStateKey) as
+    | ExceptionRecordingState
+    | undefined;
+  if (state && hasRecordedException(state, error)) return false;
+  span.recordException(safeException(error));
+  return true;
+}
+
+function contextWithExceptionRecordingState(source: Context): Context {
+  if (source.getValue(exceptionRecordingStateKey)) return source;
+  return source.setValue(exceptionRecordingStateKey, {
+    objects: new WeakSet<object>(),
+    primitives: new Set<unknown>(),
+  } satisfies ExceptionRecordingState);
+}
+
+function hasRecordedException(
+  state: ExceptionRecordingState,
+  error: unknown,
+): boolean {
+  if (
+    error !== null &&
+    (typeof error === "object" || typeof error === "function")
+  ) {
+    if (state.objects.has(error)) return true;
+    state.objects.add(error);
+    return false;
+  }
+  if (state.primitives.has(error)) return true;
+  state.primitives.add(error);
+  return false;
 }
 
 function safeException(error: unknown) {

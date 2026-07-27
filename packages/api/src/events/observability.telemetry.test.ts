@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "bun:test";
+import type { S3Client } from "@aws-sdk/client-s3";
 import { SpanKind, SpanStatusCode } from "@opentelemetry/api";
 import {
   InMemorySpanExporter,
@@ -7,6 +8,7 @@ import {
 } from "@opentelemetry/sdk-trace-base";
 import { NodeTracerProvider } from "@opentelemetry/sdk-trace-node";
 import type { WsServerEvent } from "@thechat/shared";
+import { S3ObjectStore } from "../attachments/s3-object-store";
 import {
   contextFromTraceContext,
   setTracerForTests,
@@ -247,6 +249,112 @@ describe("OpenTelemetry async-boundary contracts", () => {
       expect(JSON.stringify(attempt.events)).not.toContain("do-not-export");
       expect(JSON.stringify(attempt.events)).not.toContain("private.txt");
     }
+  });
+
+  it("assigns bounded nested failure outcomes and records one leaf exception", async () => {
+    let inserted: Record<string, unknown> | undefined;
+    await enqueueDomainEvent(
+      {
+        insert: () => ({
+          values: async (value: Record<string, unknown>) => {
+            inserted = value;
+          },
+        }),
+      } as never,
+      testEvent(),
+      { partitionKey: "test:storage-failure" },
+    );
+    await flush();
+    const producer = span("domain_event.outbox.enqueue");
+    const event = inserted?.event as DomainEventEnvelope;
+    exporter.reset();
+
+    const fakeClient = {
+      send: async () => {
+        throw new Error(
+          "https://signed.invalid/object?token=do-not-export filename=private.txt",
+        );
+      },
+    } as unknown as S3Client;
+    const store = new S3ObjectStore({
+      bucket: "synthetic-attachment-bucket",
+      region: "eu-central-1",
+      client: fakeClient,
+    });
+    const registry = new DomainEventRegistry().register({
+      type: event.type,
+      version: event.version,
+      parse: (value) => value as DomainEventEnvelope,
+      handle: async () => {
+        await withSpan(
+          "attachment.validate_promote",
+          { "thechat.attachment_id": "synthetic-attachment" },
+          () =>
+            store.headObject({
+              key: "quarantine/synthetic-attachment",
+              versionId: "synthetic-version",
+            }),
+          { errorAttributes: { "thechat.attachment.outcome": "failed" } },
+        );
+      },
+    });
+
+    await processOutboxEventAttempt(testRow(event), {
+      registry,
+      maxAttempts: 3,
+      release: async () => ({
+        kind: "released",
+        attempts: 1,
+        deadAt: null,
+      }),
+    });
+    await flush();
+
+    const consumer = span("domain_event.outbox.consume");
+    const handler = span("domain_event.handle");
+    const attachment = span("attachment.validate_promote");
+    const storage = span("attachment.s3.head");
+    expect(consumer.parentSpanContext?.spanId).toBe(
+      producer.spanContext().spanId,
+    );
+    expect(handler.parentSpanContext?.spanId).toBe(
+      consumer.spanContext().spanId,
+    );
+    expect(attachment.parentSpanContext?.spanId).toBe(
+      handler.spanContext().spanId,
+    );
+    expect(storage.parentSpanContext?.spanId).toBe(
+      attachment.spanContext().spanId,
+    );
+    expect(consumer.attributes["thechat.outbox.outcome"]).toBe("released");
+    expect(handler.attributes["thechat.event.outcome"]).toBe("failed");
+    expect(attachment.attributes["thechat.attachment.outcome"]).toBe("failed");
+    expect(storage.attributes["thechat.storage.outcome"]).toBe("failed");
+    for (const failed of [consumer, handler, attachment, storage]) {
+      expect(failed.status.code).toBe(SpanStatusCode.ERROR);
+    }
+    for (const failed of [handler, attachment, storage]) {
+      expect(failed.attributes["thechat.operation.outcome"]).toBe("error");
+    }
+    expect(storage.events).toHaveLength(1);
+    expect(handler.events).toHaveLength(0);
+    expect(attachment.events).toHaveLength(0);
+    expect(consumer.events).toHaveLength(0);
+    expect(
+      [consumer, handler, attachment, storage].reduce(
+        (count, failed) => count + failed.events.length,
+        0,
+      ),
+    ).toBe(1);
+    expect(
+      JSON.stringify(
+        [consumer, handler, attachment, storage].map((failed) => ({
+          attributes: failed.attributes,
+          events: failed.events,
+          status: failed.status,
+        })),
+      ),
+    ).not.toMatch(/do-not-export|private\.txt|signed\.invalid/i);
   });
 
   it("dead-letters malformed envelopes instead of poisoning their partition", async () => {
