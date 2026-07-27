@@ -1,5 +1,5 @@
-import { describe, it, expect, beforeEach } from "vitest";
-import { render, screen, act, fireEvent } from "@testing-library/react";
+import { describe, it, expect, beforeEach, vi } from "vitest";
+import { render, screen, act, fireEvent, waitFor } from "@testing-library/react";
 import {
   RouterProvider,
   createMemoryHistory,
@@ -10,6 +10,9 @@ import {
 import { useAuthStore } from "../stores/auth";
 import { useWorkspacesStore } from "../stores/workspaces";
 import { useConversationsStore } from "../stores/conversations";
+import { useHermesIndicatorsStore } from "../stores/hermes-indicators";
+import { registerGlobalWsHandlers } from "../lib/ws-global-handlers";
+import { wsEvents } from "../lib/ws-events";
 import type { Conversation } from "../core/types";
 import type {
   AuthUser,
@@ -18,6 +21,22 @@ import type {
 } from "@thechat/shared";
 
 import { Sidebar, useSidebarState } from "./Sidebar";
+
+const { dmPostMock } = vi.hoisted(() => ({
+  dmPostMock: vi.fn(),
+}));
+
+vi.mock("../lib/api", () => ({
+  api: {
+    conversations: {
+      dm: { post: dmPostMock },
+    },
+  },
+}));
+
+vi.mock("../lib/notifications", () => ({
+  fireNotification: vi.fn(),
+}));
 
 const conversations: Conversation[] = [
   { id: "c1", title: "Chat 1", project_dir: null, created_at: "2026-01-01", updated_at: "2026-01-01" },
@@ -55,6 +74,13 @@ const activeWorkspace: WorkspaceWithDetails = {
       joinedAt: "2026-01-02",
       user: { id: "u2", name: "Alice", email: "alice@example.com", avatar: null, type: "human" as const },
     },
+    {
+      userId: "u-bot",
+      role: "member",
+      joinedAt: "2026-01-03",
+      user: { id: "u-bot", name: "Koda", email: null, avatar: null, type: "bot" as const },
+      bot: { id: "bot-1", kind: "hermes" as const },
+    },
   ],
   channels: [
     {
@@ -88,15 +114,44 @@ async function renderWithRouter(component: React.ReactNode) {
   return result;
 }
 
+async function renderSidebarAt(initialEntry: string) {
+  const rootRoute = createRootRoute({
+    component: Sidebar,
+  });
+  const channelRoute = createRoute({
+    getParentRoute: () => rootRoute,
+    path: "/channel/$id",
+    component: () => null,
+  });
+  const dmRoute = createRoute({
+    getParentRoute: () => rootRoute,
+    path: "/dm/$id",
+    component: () => null,
+  });
+  const routeTree = rootRoute.addChildren([channelRoute, dmRoute]);
+  const memoryHistory = createMemoryHistory({ initialEntries: [initialEntry] });
+  const router = createRouter({ routeTree, history: memoryHistory });
+
+  let result!: ReturnType<typeof render>;
+  await act(async () => {
+    result = render(<RouterProvider router={router as any} />);
+  });
+  return { result, router };
+}
+
 beforeEach(() => {
   // Reset stores to default state
   useSidebarState.setState({ open: true, tab: "agent" });
   useAuthStore.setState({ user: null, token: null, loading: false });
   useWorkspacesStore.setState({ workspaces: [], activeWorkspace: null, loading: false });
+  useHermesIndicatorsStore.getState().resetForTests();
   useConversationsStore.setState({
     conversations: [],
     unreadAgentChats: new Set(),
     unreadChannels: new Set(),
+    directConversationIdsByUserId: {},
+    unreadBotConversations: {},
+    activeDirectConversationId: null,
   });
 });
 
@@ -174,5 +229,51 @@ describe("Sidebar", () => {
     await renderWithRouter(<Sidebar />);
     expect(screen.queryByText("Agent Chats")).not.toBeInTheDocument();
     expect(screen.queryByText("Chat 1")).not.toBeInTheDocument();
+  });
+
+  it("shows and clears a bot unread indicator across real message and route state", async () => {
+    useAuthStore.setState({ user, token: "test-token" });
+    useWorkspacesStore.setState({ workspaces: workspaceList, activeWorkspace });
+    dmPostMock.mockResolvedValue({ data: { id: "dm-bot" }, error: null });
+    const { router } = await renderSidebarAt("/channel/ch1");
+    const cleanup = registerGlobalWsHandlers(() => {});
+
+    const emitBotMessage = (id: string) => {
+      wsEvents.emit("ws:new_message", {
+        conversationType: "direct",
+        message: {
+          id,
+          conversationId: "dm-bot",
+          threadId: null,
+          senderId: "u-bot",
+          senderName: "Koda",
+          senderType: "bot",
+          content: "Background response",
+          parts: null,
+          createdAt: "2026-07-27T08:00:00.000Z",
+        },
+      });
+    };
+
+    act(() => emitBotMessage("msg-1"));
+    expect(screen.getByRole("button", { name: "Koda, unread" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Koda, unread" }));
+    await waitFor(() => expect(router.state.location.pathname).toBe("/dm/dm-bot"));
+    expect(screen.getByRole("button", { name: "Koda" })).toBeInTheDocument();
+
+    act(() => emitBotMessage("msg-2"));
+    expect(screen.queryByRole("button", { name: "Koda, unread" })).not.toBeInTheDocument();
+
+    await act(async () => {
+      await router.navigate({ to: "/channel/$id", params: { id: "ch1" } });
+    });
+    act(() => {
+      emitBotMessage("msg-3");
+      emitBotMessage("msg-4");
+    });
+    expect(screen.getAllByRole("button", { name: "Koda, unread" })).toHaveLength(1);
+
+    cleanup();
   });
 });
