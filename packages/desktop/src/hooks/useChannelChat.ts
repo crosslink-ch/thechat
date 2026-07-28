@@ -331,8 +331,6 @@ export function useChannelChat({
         {
           "http.request.method": "POST",
           "http.route": "/messages/:conversationId",
-          "thechat.conversation_id": conversationId,
-          "thechat.message.client_id": clientMessageId,
           "thechat.message.attachment_count": attachmentIds.length,
         },
         async (span, requestContext) => {
@@ -366,7 +364,6 @@ export function useChannelChat({
             );
           }
           span.setAttribute("http.response.status_code", 200);
-          span.setAttribute("thechat.message_id", data.id);
           span.setAttribute("thechat.message.outcome", "sent");
           markSucceeded();
           addMessage(data, clientMessageId);

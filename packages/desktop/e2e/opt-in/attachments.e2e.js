@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
+import path from "node:path";
 
 const API_URL = required("THECHAT_BACKEND_URL");
 const EMAIL = required("ATTACHMENT_E2E_EMAIL");
@@ -13,6 +14,8 @@ const SCREENSHOT = required("ATTACHMENT_E2E_SCREENSHOT");
 const SUCCESS_SCREENSHOT = required("ATTACHMENT_E2E_SUCCESS_SCREENSHOT");
 const REJECTION_SCREENSHOT = required("ATTACHMENT_E2E_REJECTION_SCREENSHOT");
 const FAILURE_SCREENSHOT = required("ATTACHMENT_E2E_FAILURE_SCREENSHOT");
+const DOWNLOAD_DIR = required("ATTACHMENT_E2E_DOWNLOAD_DIR");
+const OPENER_MARKER = required("ATTACHMENT_E2E_OPENER_MARKER");
 
 const validName = fileName(VALID_FIXTURE);
 const rejectedName = fileName(REJECTED_FIXTURE);
@@ -62,19 +65,14 @@ describe("Secure message attachments", function () {
     await browser.execute(() => {
       const state = {
         transitions: {},
-        downloadBlobUrl: null,
-        downloadName: null,
+        uploadAbortCalls: 0,
         sendProbe: null,
       };
       window.__attachmentE2E = state;
-      const originalAnchorClick = HTMLAnchorElement.prototype.click;
-      HTMLAnchorElement.prototype.click = function attachmentE2EClick() {
-        if (this.href.startsWith("blob:") && this.download) {
-          state.downloadBlobUrl = this.href;
-          state.downloadName = this.download;
-          return;
-        }
-        return originalAnchorClick.call(this);
+      const originalAbort = XMLHttpRequest.prototype.abort;
+      XMLHttpRequest.prototype.abort = function attachmentE2EAbort() {
+        state.uploadAbortCalls += 1;
+        return originalAbort.call(this);
       };
       const record = () => {
         for (const element of document.querySelectorAll(
@@ -187,37 +185,21 @@ describe("Secure message attachments", function () {
 
     await fileCard.click();
     await browser.waitUntil(
-      async () =>
-        Boolean(
-          await browser.execute(() => window.__attachmentE2E.downloadBlobUrl),
-        ),
+      async () => fs.existsSync(OPENER_MARKER),
       {
         timeout: 30_000,
-        timeoutMsg: "Application-controlled attachment transfer did not launch",
+        timeoutMsg: "Compiled Tauri download never reached the native opener",
       },
     );
-    const downloaded = await browser.executeAsync((done) => {
-      const state = window.__attachmentE2E;
-      fetch(state.downloadBlobUrl)
-        .then(async (response) => {
-          const bytes = await response.arrayBuffer();
-          const digest = await window.crypto.subtle.digest("SHA-256", bytes);
-          done({
-            ok: response.ok,
-            status: response.status,
-            size: bytes.byteLength,
-            name: state.downloadName,
-            sha256: Array.from(new Uint8Array(digest), (byte) =>
-              byte.toString(16).padStart(2, "0"),
-            ).join(""),
-          });
-        })
-        .catch((error) => done({ ok: false, error: String(error) }));
-    });
-    expect(downloaded.ok).toBe(true);
-    expect(downloaded.status).toBe(200);
-    expect(downloaded.name).toBe(validName);
-    expect(downloaded.sha256).toBe(sha256(fs.readFileSync(VALID_FIXTURE)));
+    const openedPath = fs.readFileSync(OPENER_MARKER, "utf8").trim();
+    expect(path.dirname(path.resolve(openedPath))).toBe(path.resolve(DOWNLOAD_DIR));
+    expect(path.basename(openedPath)).toBe(validName);
+    expect(fs.existsSync(openedPath)).toBe(true);
+    const downloadedBytes = fs.readFileSync(openedPath);
+    expect(downloadedBytes.byteLength).toBeGreaterThan(0);
+    expect(sha256(downloadedBytes)).toBe(
+      sha256(fs.readFileSync(VALID_FIXTURE)),
+    );
     await browser.saveScreenshot(SUCCESS_SCREENSHOT);
   });
 
@@ -249,17 +231,23 @@ describe("Secure message attachments", function () {
     await waitForAttachmentStatus(rejected.attachmentId, "deleted", 120_000);
   });
 
-  it("cancels a ready draft before it is attached to a message", async () => {
+  it("aborts a real in-flight object upload and cleans its server reservation", async () => {
     await attachFile(CANCEL_FIXTURE);
-    await waitForDraftPhase(cancelName, "ready", 180_000);
-    const ready = await draftSnapshot(cancelName);
-    expect(ready.attachmentId).toBeTruthy();
+    const active = await waitForActiveUpload(cancelName, 180_000);
+    expect(active.attachmentId).toBeTruthy();
+    expect(active.progress).toBeGreaterThan(0);
+    expect(active.progress).toBeLessThan(100);
 
     const remove = await $(`button[aria-label="Remove ${cancelName}"]`);
     await remove.waitForClickable({ timeout: 10_000 });
     await remove.click();
     await waitForDraftRemoval(cancelName, 30_000);
-    await waitForAttachmentStatus(ready.attachmentId, "deleted", 120_000);
+    await waitForAttachmentStatus(active.attachmentId, "deleted", 120_000);
+    const abortCalls = await browser.execute(
+      () => window.__attachmentE2E.uploadAbortCalls,
+    );
+    expect(abortCalls).toBeGreaterThan(0);
+    await assertTransitions(cancelName, ["hashing", "uploading", "cancelling"]);
     await browser.saveScreenshot(SCREENSHOT);
 
     console.log(
@@ -267,7 +255,7 @@ describe("Secure message attachments", function () {
         validName,
         rejectedName,
         cancelName,
-        cancelledAttachmentId: ready.attachmentId,
+        cancelledDuringProgress: active.progress,
         screenshot: SCREENSHOT,
       }),
     );
@@ -313,6 +301,31 @@ async function waitForDraftPhase(name, phase, timeout) {
   );
 }
 
+async function waitForActiveUpload(name, timeout) {
+  let active = null;
+  await browser.waitUntil(
+    async () => {
+      const snapshot = await draftSnapshot(name);
+      if (
+        snapshot?.phase === "uploading" &&
+        snapshot.progress > 0 &&
+        snapshot.progress < 100 &&
+        snapshot.attachmentId
+      ) {
+        active = snapshot;
+        return true;
+      }
+      return false;
+    },
+    {
+      timeout,
+      interval: 100,
+      timeoutMsg: `${name} never exposed an active partial upload`,
+    },
+  );
+  return active;
+}
+
 async function waitForDraftRemoval(name, timeout) {
   await browser.waitUntil(async () => (await draftSnapshot(name)) === null, {
     timeout,
@@ -342,6 +355,7 @@ async function draftSnapshot(name) {
     if (!draft) return null;
     return {
       phase: draft.getAttribute("data-attachment-phase"),
+      progress: Number(draft.getAttribute("data-attachment-progress") ?? "0"),
       attachmentId: draft.getAttribute("data-attachment-id"),
       text: draft.textContent ?? "",
     };

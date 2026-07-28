@@ -577,6 +577,14 @@ def assert_graph(traces: list[dict[str, Any]], run_id: str) -> dict[str, Any]:
     transfer = find_spans(download_trace, "attachment.s3.download")[0]
     if download["attributes"].get("thechat.attachment.transfer_observed") is not True:
         raise AssertionError("download flow did not record application-observed transfer")
+    if download["attributes"].get("thechat.attachment.handoff") != "native_opener":
+        raise AssertionError("compiled desktop download did not use the native opener")
+    download_events = [event["name"] for event in download["events"]]
+    if download_events != [
+        "attachment.download.transfer_completed",
+        "attachment.download.shell_handoff_completed",
+    ]:
+        raise AssertionError("compiled desktop download lacks the real shell handoff event")
     if span_outcome(transfer) != "downloaded":
         raise AssertionError("object GET did not record downloaded outcome")
     if transfer["attributes"].get("http.response.status_code") != 200:
@@ -614,8 +622,61 @@ def assert_graph(traces: list[dict[str, Any]], run_id: str) -> dict[str, Any]:
             for span in trace["spans"]
         )
     ]
-    if len(ready_traces) != 2:
-        raise AssertionError(f"expected two ready attachment traces, found {len(ready_traces)}")
+    if len(ready_traces) != 1:
+        raise AssertionError(f"expected one ready attachment trace, found {len(ready_traces)}")
+
+    cancelled_upload_traces = [
+        trace
+        for trace in traces
+        if any(
+            span["name"] == "attachment.s3.upload"
+            and span_outcome(span) == "cancelled"
+            for span in trace["spans"]
+        )
+    ]
+    if len(cancelled_upload_traces) != 1:
+        raise AssertionError(
+            f"expected one in-flight cancelled upload trace, found {len(cancelled_upload_traces)}"
+        )
+    cancelled_upload = find_spans(
+        cancelled_upload_traces[0], "attachment.s3.upload"
+    )[0]
+    if cancelled_upload["status"]["code"] != UNSET or cancelled_upload["events"]:
+        raise AssertionError("expected upload cancellation was error-marked or noisy")
+    cancelled_trace = cancelled_upload_traces[0]
+    cancelled_names = {span["name"] for span in cancelled_trace["spans"]}
+    required_cancelled_names = {
+        "attachment.prepare",
+        "attachment.hash",
+        "attachment.reserve.request",
+        "HTTP POST /attachments",
+        "attachment.reserve",
+        "attachment.s3.upload",
+        "attachment.cancel.request",
+        "HTTP DELETE /attachments/:id",
+        "attachment.delete.request",
+    }
+    if not required_cancelled_names <= cancelled_names:
+        raise AssertionError(
+            "cancelled upload trace missing "
+            + repr(sorted(required_cancelled_names - cancelled_names))
+        )
+    for parent, child in (
+        ("attachment.prepare", "attachment.hash"),
+        ("attachment.prepare", "attachment.reserve.request"),
+        ("attachment.prepare", "attachment.s3.upload"),
+        ("attachment.prepare", "attachment.cancel.request"),
+        ("attachment.cancel.request", "HTTP DELETE /attachments/:id"),
+        ("HTTP DELETE /attachments/:id", "attachment.delete.request"),
+    ):
+        assert_direct_parent(cancelled_trace, parent, child)
+    cancelled_prepare = find_spans(cancelled_trace, "attachment.prepare")[0]
+    if (
+        span_outcome(cancelled_prepare) != "cancelled"
+        or cancelled_prepare["status"]["code"] != UNSET
+        or cancelled_prepare["events"]
+    ):
+        raise AssertionError("cancelled attachment flow was not a clean expected outcome")
 
     required_upload_names = {
         "attachment.prepare",
@@ -718,6 +779,7 @@ def assert_graph(traces: list[dict[str, Any]], run_id: str) -> dict[str, Any]:
         "message_retry_trace_id": sent_traces[0]["trace_id"],
         "download_trace_id": download_trace["trace_id"],
         "rejection_trace_id": rejection_trace["trace_id"],
+        "cancelled_upload_trace_id": cancelled_trace["trace_id"],
         "ready_trace_ids": [trace["trace_id"] for trace in ready_traces],
         "cleanup_trace_ids": [trace["trace_id"] for trace in cleanup_traces],
         "claim_span_count": claim_span_count,
@@ -727,6 +789,10 @@ def assert_graph(traces: list[dict[str, Any]], run_id: str) -> dict[str, Any]:
 
 
 TELEMETRY_KEY_RULES = {
+    "entity_identifier": re.compile(
+        r"(?:^|[._-])id(?:$|[._-])",
+        re.IGNORECASE,
+    ),
     "attachment_identity": re.compile(
         r"(?:^|[._-])(?:file_?name|filename|checksum|digest|etag|content_?hash|object_?key|storage_?key)(?:$|[._-])",
         re.IGNORECASE,
@@ -760,6 +826,35 @@ TRACE_VALUE_RULES = {
     "database_dsn": re.compile(r"\b(?:postgres(?:ql)?|redis)://[^\s/@:]+:[^\s/@]+@", re.IGNORECASE),
 }
 
+IDENTIFIER_VALUE_RULES = {
+    "entity_uuid": re.compile(
+        r"(?<![A-Za-z0-9])"
+        r"[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[1-8][0-9A-Fa-f]{3}-[89ABab][0-9A-Fa-f]{3}-[0-9A-Fa-f]{12}"
+        r"(?![A-Za-z0-9])"
+    ),
+    # Covers CUID/ULID-style and application-generated opaque identifiers.
+    # The lookaheads require both a letter and a digit, avoiding long bounded
+    # outcome names while accepting identifiers whose first character is not a
+    # digit (the gap in the previous evidence gate).
+    "entity_opaque_id": re.compile(
+        r"(?<![A-Za-z0-9_-])"
+        r"(?=[A-Za-z0-9_-]{20,80}(?![A-Za-z0-9_-]))"
+        r"(?=[A-Za-z0-9_-]*[A-Za-z])"
+        r"(?=[A-Za-z0-9_-]*[0-9])"
+        r"[A-Za-z0-9][A-Za-z0-9_-]{19,79}"
+        r"(?![A-Za-z0-9_-])"
+    ),
+}
+
+SAFE_IDENTIFIER_ATTRIBUTE_KEYS = {
+    # Run/source provenance is itself verified against the requested source
+    # tuple and is not a user/domain entity identifier.
+    "thechat.e2e.run_id",
+    "service.version",
+    "thechat.source.tree",
+    "thechat.source.diff_sha256",
+}
+
 CREDENTIAL_ASSIGNMENT = re.compile(
     r"(?im)(?:^|[\s\"'`])([A-Za-z0-9_.-]*(?:password|passwd|secret|token|api[_-]?key|authorization|cookie|database_url)[A-Za-z0-9_.-]*)\s*[:=]\s*([^\s,;]+)"
 )
@@ -776,21 +871,38 @@ def _value_text(value: Any) -> str:
     return json.dumps(value, sort_keys=True, default=str)
 
 
-def _scan_value(value: Any, *, surface: str, findings: list[str]) -> None:
+def _scan_value(
+    value: Any,
+    *,
+    surface: str,
+    findings: list[str],
+    scan_identifiers: bool = False,
+) -> None:
     text = _value_text(value)
     for category, rule in TRACE_VALUE_RULES.items():
         if rule.search(text):
             findings.append(f"{category}:{surface}")
+    if scan_identifiers:
+        for category, rule in IDENTIFIER_VALUE_RULES.items():
+            if rule.search(text):
+                findings.append(f"{category}:{surface}")
 
 
 def _scan_attributes(
     values: dict[str, Any], *, surface: str, findings: list[str]
 ) -> None:
     for key, value in values.items():
-        for category, rule in TELEMETRY_KEY_RULES.items():
-            if rule.search(key):
-                findings.append(f"{category}:{surface}:{key}")
-        _scan_value(value, surface=f"{surface}:{key}", findings=findings)
+        scan_identifier = key not in SAFE_IDENTIFIER_ATTRIBUTE_KEYS
+        if scan_identifier:
+            for category, rule in TELEMETRY_KEY_RULES.items():
+                if rule.search(key):
+                    findings.append(f"{category}:{surface}:{key}")
+        _scan_value(
+            value,
+            surface=f"{surface}:{key}",
+            findings=findings,
+            scan_identifiers=scan_identifier,
+        )
 
 
 def _png_chunks(path: Path) -> list[str]:
@@ -893,11 +1005,18 @@ def assert_secret_safe(
         for span in trace["spans"]:
             trace_surface_count += 1
             span_surface = f"span:{trace['trace_id']}:{span['name']}"
+            _scan_value(
+                span["name"],
+                surface=f"span-name:{trace['trace_id']}",
+                findings=findings,
+                scan_identifiers=True,
+            )
             _scan_attributes(span["attributes"], surface=span_surface, findings=findings)
             _scan_value(
                 span["status"].get("message", ""),
                 surface=f"status:{trace['trace_id']}:{span['name']}",
                 findings=findings,
+                scan_identifiers=True,
             )
             for event in span["events"]:
                 trace_surface_count += 1
@@ -905,6 +1024,7 @@ def assert_secret_safe(
                     event["name"],
                     surface=f"event-name:{trace['trace_id']}:{span['name']}",
                     findings=findings,
+                    scan_identifiers=True,
                 )
                 _scan_attributes(
                     event["attributes"],
@@ -951,7 +1071,10 @@ def assert_secret_safe(
     return {
         "forbidden_finding_count": 0,
         "rule_categories": sorted(
-            set(TELEMETRY_KEY_RULES) | set(TRACE_VALUE_RULES) | {"credential_assignment", "png_metadata"}
+            set(TELEMETRY_KEY_RULES)
+            | set(TRACE_VALUE_RULES)
+            | set(IDENTIFIER_VALUE_RULES)
+            | {"credential_assignment", "png_metadata"}
         ),
         "trace_surface_count": trace_surface_count,
         "raw_payload_count": raw_payload_count,
@@ -976,6 +1099,7 @@ def render_report(
         graph["message_retry_trace_id"],
         graph["download_trace_id"],
         graph["rejection_trace_id"],
+        graph["cancelled_upload_trace_id"],
         *graph["ready_trace_ids"],
         *graph["cleanup_trace_ids"],
     ]
@@ -1008,6 +1132,7 @@ def render_report(
         f"- Idempotent message retry: `{graph['message_retry_trace_id']}`",
         f"- Application-observed object download: `{graph['download_trace_id']}`",
         f"- Expected active-content rejection: `{graph['rejection_trace_id']}`",
+        f"- In-flight upload cancellation: `{graph['cancelled_upload_trace_id']}`",
         f"- Ready validation traces: {', '.join(f'`{item}`' for item in graph['ready_trace_ids'])}",
         f"- Non-empty claim spans: {graph['claim_span_count']}",
         f"- Error spans with bounded outcomes: {graph['error_span_count']}",
@@ -1094,11 +1219,100 @@ th,td{{border:1px solid #ccd6e0;padding:.55rem;text-align:left}}th{{width:16rem;
 <li>Idempotent retry: <code>{html.escape(graph['message_retry_trace_id'])}</code></li>
 <li>Observed download: <code>{html.escape(graph['download_trace_id'])}</code></li>
 <li>Expected rejection: <code>{html.escape(graph['rejection_trace_id'])}</code></li>
+<li>In-flight upload cancellation: <code>{html.escape(graph['cancelled_upload_trace_id'])}</code></li>
 </ul>
 <h2>Machine-generated audit report</h2>
 <pre>{html.escape(markdown_report)}</pre>
 </body>
 </html>
+"""
+
+
+def render_readme(
+    args: argparse.Namespace,
+    graph: dict[str, Any],
+    *,
+    trace_count: int,
+    span_count: int,
+) -> str:
+    return f"""# Attachment trace evidence
+
+This directory is a source-bound export from one real compiled Tauri attachment run.
+The verifier passed the parent graph, span kind, bounded outcome, source identity,
+and secret/entity-identifier checks before writing the manifest.
+
+## Verified run
+
+- Run ID: `{args.run_id}`
+- Source commit: `{args.source_commit}`
+- Source tree: `{args.source_tree}`
+- Source diff SHA-256: `{args.source_diff_sha256}`
+- Traces: {trace_count}
+- Spans: {span_count}
+- Message flow trace: `{graph['message_trace_id']}`
+- Idempotent retry trace: `{graph['message_retry_trace_id']}`
+- Native download trace: `{graph['download_trace_id']}`
+- Active-content rejection trace: `{graph['rejection_trace_id']}`
+- In-flight cancellation trace: `{graph['cancelled_upload_trace_id']}`
+
+## Generate a fresh verified bundle
+
+Run this from the repository root on the Linux devbox. The command builds and
+drives the compiled Tauri application, starts disposable Postgres, Redis, S3,
+OpenTelemetry Collector, Tempo, and Grafana dependencies, exports the traces,
+and fails closed if the evidence cannot be verified.
+
+```bash
+mkdir -p /workspace/thechat-otel/artifacts /workspace/t
+ATTACHMENT_E2E_EVIDENCE_DIR="/workspace/thechat-otel/artifacts/attachment-e2e-$(date -u +%Y%m%dT%H%M%SZ)/tempo" \
+TMPDIR=/workspace/t \
+pnpm test:e2e:attachments-ui
+```
+
+The repository Python entrypoint is equivalent:
+
+```bash
+ATTACHMENT_E2E_EVIDENCE_DIR="/workspace/thechat-otel/artifacts/attachment-e2e-$(date -u +%Y%m%dT%H%M%SZ)/tempo" \
+TMPDIR=/workspace/t \
+python3 scripts/test.py attachments-ui
+```
+
+## View a live trace in Grafana
+
+The normal command removes the disposable observability stack after export. To
+keep it temporarily for interactive viewing, add `ATTACHMENT_E2E_KEEP=1`, then
+forward Grafana from the controller:
+
+```bash
+ssh -N -L 13310:127.0.0.1:13310 hetzner-dev-thechat-otel
+```
+
+Open `http://127.0.0.1:13310/explore`, select the Tempo data source, and paste
+one of the trace IDs above. Remove only the attachment E2E containers after the
+interactive inspection is finished.
+
+## Inspect this export offline
+
+- `tempo-evidence-report.html`: standalone human-readable graph summary.
+- `tempo-evidence-report.md`: span inventory and canonical trace trees.
+- `tempo-traces-normalized.json`: normalized spans for local inspection.
+- `tempo-export.json`: complete Tempo search responses and trace payloads.
+- `tempo-evidence-manifest.json`: file hashes, counts, graph assertions, and scan result.
+
+From this directory, print the exported trace IDs without any service:
+
+```bash
+python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print("\\n".join(sorted(d["traces"])))' tempo-export.json
+```
+
+## Cancellation boundary
+
+The cancellation proof observes a real partial object PUT, a browser XHR abort,
+terminal server-side cleanup, and no residual object versions at verification
+time. Cancellation does not revoke an already-issued presigned PUT. That
+capability remains bounded by its signed upload TTL, with the private bucket
+lifecycle as the post-expiry cleanup backstop. This evidence intentionally does
+not claim capability revocation.
 """
 
 
@@ -1195,10 +1409,20 @@ def main() -> int:
         completeness_probe_count,
     ) = wait_for_complete_graph(args)
 
+    span_count = sum(len(trace["spans"]) for trace in traces)
+    readme_path = output / "README.md"
+    readme_path.write_text(
+        render_readme(
+            args,
+            graph,
+            trace_count=len(traces),
+            span_count=span_count,
+        )
+    )
     secret_scan = assert_secret_safe(
         traces,
         args.run_id,
-        args.scan_file,
+        [*args.scan_file, readme_path],
         raw_payloads=raw_payloads,
     )
     raw_paths: list[Path] = []
@@ -1250,6 +1474,7 @@ def main() -> int:
 
     manifest_files = [
         *raw_paths,
+        readme_path,
         complete_export_path,
         normalized_path,
         search_path,
@@ -1270,7 +1495,7 @@ def main() -> int:
         "retrieval_error_count": 0,
         "completeness_probe_count": completeness_probe_count,
         "trace_count": len(traces),
-        "span_count": sum(len(trace["spans"]) for trace in traces),
+        "span_count": span_count,
         "graph": graph,
         "secret_scan": secret_scan,
         "files": [

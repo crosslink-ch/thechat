@@ -114,10 +114,12 @@ export async function withDesktopSpan<T>(
   try {
     return await fn(span, spanContext);
   } catch (error) {
-    if (options.recordException !== false) {
-      recordSanitizedException(span, error);
+    if (!isAbortError(error)) {
+      if (options.recordException !== false) {
+        recordSanitizedException(span, error);
+      }
+      span.setStatus({ code: SpanStatusCode.ERROR });
     }
-    span.setStatus({ code: SpanStatusCode.ERROR });
     throw error;
   } finally {
     span.end();
@@ -183,6 +185,13 @@ function parseResourceAttributes(value: string | undefined) {
     if (key && attributeValue) attributes[key] = attributeValue;
   }
   return attributes;
+}
+
+function isAbortError(error: unknown) {
+  return (
+    error instanceof DOMException &&
+    error.name === "AbortError"
+  );
 }
 
 function safeException(error: unknown) {

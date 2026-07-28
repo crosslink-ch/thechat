@@ -650,6 +650,7 @@ export const InputBar = memo(function InputBar({
                 data-testid="attachment-draft"
                 data-attachment-file-name={draft.file.name}
                 data-attachment-phase={draft.phase}
+                data-attachment-progress={draft.progress}
                 data-attachment-id={draft.attachment?.id ?? ""}
                 className="relative flex min-w-44 max-w-64 items-center gap-2 rounded-lg border border-border bg-background p-2 pr-8"
               >

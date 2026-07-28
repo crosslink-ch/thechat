@@ -36,10 +36,7 @@ export class BullMqAsyncBus implements AsyncBus {
         "async.driver": "bullmq",
         "async.queue": command.queue,
         "async.job.name": command.name,
-        "async.job.id": command.jobId,
-        "async.message.id": command.message.id,
         "async.aggregate.type": command.message.aggregate.type,
-        "async.aggregate.id": command.message.aggregate.id,
       },
       async () => {
         const bullmqJobId = toBullMqJobId(command.jobId);

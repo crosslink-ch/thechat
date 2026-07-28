@@ -1,5 +1,6 @@
 import type { AttachmentView } from "@thechat/shared";
 import type { Context, Span } from "@opentelemetry/api";
+import { invoke } from "@tauri-apps/api/core";
 import { api } from "./api";
 import { authHeaders, edenErrorMessage, edenErrorStatus } from "./eden";
 import {
@@ -65,7 +66,6 @@ export async function uploadSharedAttachment(
   return withDesktopSpan(
     "attachment.prepare",
     {
-      "thechat.conversation_id": input.conversationId,
       "thechat.attachment.media_type": input.file.type,
       "thechat.attachment.size_bytes": input.file.size,
     },
@@ -133,7 +133,6 @@ export async function uploadSharedAttachment(
       );
       const attachment = reserved.attachment;
       const upload = reserved.upload;
-      flowSpan.setAttribute("thechat.attachment_id", attachment.id);
       try {
         throwIfAborted(input.signal);
         update({ phase: "uploading", progress: 0, attachment });
@@ -143,7 +142,6 @@ export async function uploadSharedAttachment(
           {
             "http.request.method": "PUT",
             "server.address": "s3",
-            "thechat.attachment_id": attachment.id,
             "thechat.attachment.size_bytes": input.file.size,
           },
           async (span) => {
@@ -191,7 +189,6 @@ export async function uploadSharedAttachment(
           {
             "http.request.method": "POST",
             "http.route": "/attachments/:id/complete",
-            "thechat.attachment_id": attachment.id,
           },
           async (span, requestContext) => {
             const result = await item.complete.post(
@@ -214,7 +211,7 @@ export async function uploadSharedAttachment(
 
         const validation = await withDesktopSpan(
           "attachment.validation.wait",
-          { "thechat.attachment_id": attachment.id },
+          {},
           async (span, waitContext) => {
             for (let attempt = 0; attempt < 180; attempt += 1) {
               throwIfAborted(input.signal);
@@ -223,7 +220,6 @@ export async function uploadSharedAttachment(
                 {
                   "http.request.method": "GET",
                   "http.route": "/attachments/:id",
-                  "thechat.attachment_id": attachment.id,
                   "thechat.attachment.poll_attempt": attempt + 1,
                 },
                 async (requestSpan, requestContext) => {
@@ -316,7 +312,6 @@ export async function cancelSharedAttachment(
     {
       "http.request.method": "DELETE",
       "http.route": "/attachments/:id",
-      "thechat.attachment_id": attachmentId,
     },
     async (span, requestContext) => {
       const item = api.attachments({ id: attachmentId }) as unknown as {
@@ -356,7 +351,6 @@ export async function getAttachmentDownloadUrl(
     {
       "http.request.method": "GET",
       "http.route": "/attachments/:id/download",
-      "thechat.attachment_id": attachmentId,
       "thechat.attachment.disposition": disposition,
     },
     async (span, requestContext) => {
@@ -403,7 +397,6 @@ export async function openSharedAttachmentDownload(
   return withDesktopSpan(
     "attachment.download",
     {
-      "thechat.attachment_id": attachmentId,
       "thechat.attachment.disposition": disposition,
     },
     async (span, downloadContext) => {
@@ -413,15 +406,49 @@ export async function openSharedAttachmentDownload(
         disposition,
         { parentContext: downloadContext },
       );
-      const blob = await withDesktopSpan(
+      const transfer = await withDesktopSpan(
         "attachment.s3.download",
         {
           "http.request.method": "GET",
           "server.address": "s3",
-          "thechat.attachment_id": attachmentId,
         },
         async (transferSpan) => {
           try {
+            if (isTauriRuntime()) {
+              const native = await invoke<NativeAttachmentDownload>(
+                "download_attachment_to_file",
+                {
+                  url: result.url,
+                  suggestedFileName,
+                },
+              );
+              if (
+                native.httpStatus !== 200 ||
+                !native.savedPath ||
+                !Number.isSafeInteger(native.transferredBytes) ||
+                native.transferredBytes <= 0
+              ) {
+                throw new Error("Native attachment download returned invalid evidence");
+              }
+              transferSpan.setAttribute(
+                "http.response.status_code",
+                native.httpStatus,
+              );
+              transferSpan.setAttribute(
+                "thechat.attachment.transferred_bytes",
+                native.transferredBytes,
+              );
+              transferSpan.setAttribute(
+                "thechat.attachment.outcome",
+                "downloaded",
+              );
+              return {
+                kind: "native" as const,
+                savedPath: native.savedPath,
+                transferredBytes: native.transferredBytes,
+              };
+            }
+
             const response = await fetch(result.url, { method: "GET" });
             transferSpan.setAttribute(
               "http.response.status_code",
@@ -433,16 +460,20 @@ export async function openSharedAttachmentDownload(
                 response.status,
               );
             }
-            const downloaded = await response.blob();
+            const blob = await response.blob();
             transferSpan.setAttribute(
               "thechat.attachment.transferred_bytes",
-              downloaded.size,
+              blob.size,
             );
             transferSpan.setAttribute(
               "thechat.attachment.outcome",
               "downloaded",
             );
-            return downloaded;
+            return {
+              kind: "browser" as const,
+              blob,
+              transferredBytes: blob.size,
+            };
           } catch (error) {
             if (error instanceof ObjectStoreTransferError && error.status) {
               transferSpan.setAttribute(
@@ -461,9 +492,22 @@ export async function openSharedAttachmentDownload(
       );
       span.addEvent("attachment.download.transfer_completed");
       span.setAttribute("thechat.attachment.transfer_observed", true);
-      span.setAttribute("thechat.attachment.transferred_bytes", blob.size);
+      span.setAttribute(
+        "thechat.attachment.transferred_bytes",
+        transfer.transferredBytes,
+      );
       try {
-        launchDownloadedBlob(blob, disposition, suggestedFileName);
+        if (transfer.kind === "native") {
+          span.setAttribute("thechat.attachment.handoff", "native_opener");
+          span.addEvent("attachment.download.shell_handoff_completed");
+        } else {
+          launchDownloadedBlob(
+            transfer.blob,
+            disposition,
+            suggestedFileName,
+          );
+          span.setAttribute("thechat.attachment.handoff", "browser_download");
+        }
       } catch (error) {
         span.setAttribute("thechat.attachment.outcome", "launch_failed");
         recordSanitizedException(span, error);
@@ -472,11 +516,21 @@ export async function openSharedAttachmentDownload(
       span.setAttribute("thechat.attachment.outcome", "completed");
       return {
         expiresAt: result.expiresAt,
-        transferredBytes: blob.size,
+        transferredBytes: transfer.transferredBytes,
       };
     },
     { recordException: false },
   );
+}
+
+interface NativeAttachmentDownload {
+  savedPath: string;
+  transferredBytes: number;
+  httpStatus: number;
+}
+
+function isTauriRuntime() {
+  return "__TAURI_INTERNALS__" in window;
 }
 
 function putPresignedObject(

@@ -103,8 +103,6 @@ function doConnect() {
         {
           "messaging.system": "thechat-websocket",
           "messaging.operation": "receive",
-          "thechat.message_id": event.message.id,
-          "thechat.conversation_id": event.message.conversationId,
           "thechat.message.attachment_count":
             event.message.attachments?.length ?? 0,
         },

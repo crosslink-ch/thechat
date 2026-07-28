@@ -99,7 +99,6 @@ function AuthorizedImage({
       void withDesktopSpan(
         name,
         {
-          "thechat.attachment_id": attachment.id,
           "thechat.attachment.image_view": view,
           "thechat.attachment.outcome": outcome,
         },

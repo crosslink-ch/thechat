@@ -214,9 +214,6 @@ export async function processMessageMentions(msg: TriggerMessage) {
   await withSpan(
     "bot.invocation.detect",
     {
-      "messaging.conversation_id": msg.conversationId,
-      "messaging.message_id": msg.id,
-      "messaging.domain_event_id": msg.domainEventId,
       "thechat.automation_depth": msg.automationDepth,
     },
     async () => {
@@ -273,7 +270,6 @@ export async function listConversationBotRuntime(conversationId: string, userId:
     "bot.runtime.list",
     {
       "messaging.system": "thechat",
-      "thechat.conversation_id": conversationId,
     },
     async (span) => {
       await requireConversationParticipant(conversationId, userId);
@@ -834,7 +830,6 @@ export async function claimHermesPlatformEvents(botId: string, limit = 10): Prom
     {
       "messaging.system": "thechat",
       "messaging.operation": "receive",
-      "thechat.bot_id": botId,
     },
     async (span) => {
       const cappedLimit = Math.max(1, Math.min(limit, 50));
@@ -953,7 +948,6 @@ async function deliverHermesPlatformWebhookInvocation(
     {
       "messaging.system": "thechat",
       "messaging.destination.kind": "hermes_platform_webhook",
-      "thechat.bot_invocation_id": invocationId,
     },
     async (span) => {
       const initial = await loadInvocationContext(invocationId);
@@ -961,7 +955,6 @@ async function deliverHermesPlatformWebhookInvocation(
         span.setAttribute("thechat.hermes_platform.delivery_status", "skipped");
         return;
       }
-      span.setAttribute("thechat.bot_id", initial.bot.id);
       if (
         initial.invocation.status === "claimed" ||
         initial.invocation.status === "completed" ||
@@ -1183,9 +1176,6 @@ export async function publishHermesPlatformMessage(input: {
     {
       "messaging.system": "thechat",
       "messaging.operation": "hermes_message",
-      "thechat.bot_invocation_id": input.invocationId ?? "",
-      "thechat.bot_id": input.botId ?? input.authenticatedBotId,
-      "thechat.conversation_id": input.conversationId ?? "",
       "thechat.hermes_platform.message.has_invocation": Boolean(input.invocationId),
       "thechat.hermes_platform.message.complete": Boolean(input.invocationId && input.complete === true),
     },
@@ -1221,8 +1211,6 @@ export async function publishHermesPlatformMessage(input: {
       if (target.invocation) {
         span.setAttribute("thechat.bot_invocation.status.previous", target.invocation.status);
       }
-      span.setAttribute("thechat.conversation_id", target.conversation.id);
-      span.setAttribute("thechat.bot_id", target.bot.id);
       span.setAttribute(
         "thechat.hermes_platform.message.has_previous_response",
         Boolean(target.invocation?.responseMessageId),
@@ -1386,7 +1374,6 @@ export async function publishHermesPlatformMessage(input: {
         };
       }
 
-      span.setAttribute("thechat.message_id", responseMessage.id);
       if (target.invocation) {
         span.setAttribute(
           "thechat.bot_invocation.status.next",
@@ -1415,7 +1402,6 @@ export async function completeHermesPlatformInvocationSilently(input: {
     {
       "messaging.system": "thechat",
       "messaging.operation": "hermes_complete",
-      "thechat.bot_invocation_id": input.invocationId,
     },
     async (span) => {
       const loaded = await loadInvocationContext(input.invocationId);
@@ -1723,7 +1709,6 @@ export async function publishHermesPlatformProgress(
     {
       "messaging.system": "thechat",
       "messaging.operation": "hermes_progress",
-      "thechat.bot_invocation_id": input.invocationId,
       "thechat.hermes_progress.type": input.type,
       "thechat.hermes_progress.tool": input.toolName ?? "",
     },

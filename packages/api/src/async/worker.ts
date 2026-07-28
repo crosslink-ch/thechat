@@ -91,10 +91,7 @@ export class AsyncWorkerRuntime {
       {
         "async.queue": queueName,
         "async.job.name": bullmqJob.name,
-        "async.job.id": asyncJob.bullmqJobId,
-        "async.message.id": bullmqJob.data.id,
         "async.aggregate.type": bullmqJob.data.aggregate.type,
-        "async.aggregate.id": bullmqJob.data.aggregate.id,
       },
       async () => {
         const context: AsyncJobContext = {

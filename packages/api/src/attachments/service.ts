@@ -54,7 +54,6 @@ export async function reserveAttachment(
     "attachment.reserve",
     {
       "messaging.system": "thechat",
-      "thechat.conversation_id": input.conversationId,
       "thechat.attachment.size_bytes": input.sizeBytes,
     },
     async (span) => {
@@ -134,7 +133,6 @@ export async function reserveAttachment(
             })
             .returning();
         });
-        span.setAttribute("thechat.attachment_id", row.id);
         span.setAttribute("thechat.attachment.outcome", "reserved");
 
         return {
@@ -161,7 +159,7 @@ export async function completeAttachment(
 ) {
   return withSpan(
     "attachment.complete",
-    { "thechat.attachment_id": attachmentId },
+    {},
     async (span) => {
       try {
         const result = await completeAttachmentOperation(
@@ -292,7 +290,7 @@ async function completeAttachmentOperation(
 export async function getAttachment(attachmentId: string, userId: string) {
   return withSpan(
     "attachment.status",
-    { "thechat.attachment_id": attachmentId },
+    {},
     async (span) => {
       try {
         await requireAttachmentActor(userId);
@@ -321,7 +319,6 @@ export async function getAttachmentDownload(
   return withSpan(
     "attachment.download.authorize",
     {
-      "thechat.attachment_id": attachmentId,
       "thechat.attachment.disposition": options.disposition ?? "attachment",
     },
     async (span) => {
@@ -385,7 +382,7 @@ async function getAttachmentDownloadOperation(
 export async function deleteAttachment(attachmentId: string, userId: string) {
   return withSpan(
     "attachment.delete.request",
-    { "thechat.attachment_id": attachmentId },
+    {},
     async (span) => {
       try {
         const result = await deleteAttachmentOperation(attachmentId, userId);

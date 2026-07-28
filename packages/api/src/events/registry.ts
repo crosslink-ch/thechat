@@ -89,11 +89,9 @@ export class DomainEventRegistry {
       {
         "messaging.system": "thechat-domain-events",
         "messaging.operation": "process",
-        "messaging.message.id": event.id,
         "messaging.message.type": event.type,
         "thechat.event.version": event.version,
         "thechat.aggregate.type": event.aggregate.type,
-        "thechat.aggregate.id": event.aggregate.id,
       },
       async (span) => {
         let parsed: DomainEventEnvelope;

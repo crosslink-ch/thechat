@@ -145,8 +145,6 @@ export async function sendMessage(
     {
       "messaging.system": "thechat",
       "messaging.operation": "send",
-      "thechat.conversation_id": conversationId,
-      "thechat.user_id": userId,
       "thechat.message.attachment_count": attachmentIds.length,
     },
     async (span) => {
@@ -298,16 +296,11 @@ export async function sendMessage(
         },
         attachmentMap.get(result.message.id) ?? [],
       );
-      span.setAttribute("thechat.message_id", result.message.id);
       span.setAttribute("thechat.message.idempotent_replay", result.duplicate);
       span.setAttribute(
         "thechat.message.outcome",
         result.duplicate ? "idempotent_replay" : "sent",
       );
-      if (result.message.threadId) {
-        span.setAttribute("thechat.thread_id", result.message.threadId);
-      }
-
       // REST and compatibility WebSocket sends both arrive here. Realtime is
       // emitted only after the message/thread/attachment/outbox transaction.
       if (!result.duplicate) {

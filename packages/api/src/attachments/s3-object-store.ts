@@ -278,7 +278,6 @@ export class S3ObjectStore implements ObjectStore {
       "rpc.service": "S3",
       "rpc.method": operation,
       "cloud.region": this.region,
-      "thechat.storage.bucket": this.bucket,
       "thechat.storage.exact_version": exactVersion,
     };
   }

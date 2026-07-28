@@ -162,10 +162,8 @@ export async function processOutboxEventAttempt(
     {
       "messaging.system": "postgresql-outbox",
       "messaging.operation": "process",
-      "messaging.message.id": row.id,
       "messaging.message.type": row.eventType,
       "thechat.aggregate.type": row.aggregateType,
-      "thechat.aggregate.id": row.aggregateId,
       "thechat.outbox.attempt": row.attempts + 1,
     },
     async (span) => {

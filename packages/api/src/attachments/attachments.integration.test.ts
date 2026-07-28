@@ -694,6 +694,16 @@ describe("attachment lifecycle", () => {
     expect(completed.status).toBe(200);
     expect(completed.body.status).toBe("processing");
 
+    const [storedBeforeRejection] = await db
+      .select({
+        quarantineKey: attachments.quarantineKey,
+        quarantineVersionId: attachments.quarantineVersionId,
+      })
+      .from(attachments)
+      .where(eq(attachments.id, attachmentId))
+      .limit(1);
+    expect(storedBeforeRejection?.quarantineVersionId).toBeTruthy();
+
     await validateAndPromoteAttachment(attachmentId, {
       store,
       maxBytes: 25 * 1024 * 1024,
@@ -708,11 +718,25 @@ describe("attachment lifecycle", () => {
     expect(rejected.status).toBe(200);
     expect(rejected.body.status).toBe("rejected");
     const [row] = await db
-      .select({ failureReason: attachments.failureReason })
+      .select({
+        failureReason: attachments.failureReason,
+        quarantineVersionId: attachments.quarantineVersionId,
+        cleanVersionId: attachments.cleanVersionId,
+        deletedAt: attachments.deletedAt,
+      })
       .from(attachments)
       .where(eq(attachments.id, attachmentId))
       .limit(1);
     expect(row?.failureReason).toBe("active_content");
+    expect(row?.quarantineVersionId).toBeNull();
+    expect(row?.cleanVersionId).toBeNull();
+    expect(row?.deletedAt).toBeInstanceOf(Date);
+    expect(
+      await store.headObject({
+        key: storedBeforeRejection!.quarantineKey,
+        versionId: storedBeforeRejection!.quarantineVersionId!,
+      }),
+    ).toBeNull();
   });
 
   test("bots get attachment access and shared limits by default, while owners can still disable access", async () => {
@@ -990,6 +1014,127 @@ describe("attachment lifecycle", () => {
     expect(remaining?.status).toBe("deleted");
   });
 
+  test("keeps deletion nonterminal after a partial object-store failure and retries both exact versions", async () => {
+    const owner = await register(`Partial delete ${crypto.randomUUID()}`);
+    const { conversationId } = await workspaceWithMembers(owner);
+    const bytes = new TextEncoder().encode("partial deletion fixture");
+    const checksum = crypto.createHash("sha256").update(bytes).digest("hex");
+    const reserved = await request(
+      "POST",
+      "/attachments",
+      {
+        conversationId,
+        fileName: "partial-delete.txt",
+        mediaType: "text/plain",
+        sizeBytes: bytes.byteLength,
+        checksumSha256: checksum,
+      },
+      owner.token,
+    );
+    expect(reserved.status).toBe(200);
+    const attachmentId = reserved.body.attachment.id as string;
+    store.acceptLatestUpload(bytes);
+    expect(
+      (
+        await request(
+          "POST",
+          `/attachments/${attachmentId}/complete`,
+          undefined,
+          owner.token,
+        )
+      ).status,
+    ).toBe(200);
+    await validateAndPromoteAttachment(attachmentId, {
+      store,
+      maxBytes: 25 * 1024 * 1024,
+    });
+
+    const [coordinates] = await db
+      .select({
+        quarantineKey: attachments.quarantineKey,
+        quarantineVersionId: attachments.quarantineVersionId,
+        cleanKey: attachments.cleanKey,
+        cleanVersionId: attachments.cleanVersionId,
+      })
+      .from(attachments)
+      .where(eq(attachments.id, attachmentId))
+      .limit(1);
+    expect(coordinates?.quarantineVersionId).toBeTruthy();
+    expect(coordinates?.cleanVersionId).toBeTruthy();
+    expect(
+      (
+        await request(
+          "DELETE",
+          `/attachments/${attachmentId}`,
+          undefined,
+          owner.token,
+        )
+      ).status,
+    ).toBe(200);
+
+    store.deleteErrorKey = coordinates!.quarantineKey;
+    await expect(deleteAttachmentObjects(attachmentId, store)).rejects.toThrow(
+      "simulated attachment object delete failure",
+    );
+    const [partial] = await db
+      .select({
+        status: attachments.status,
+        deletedAt: attachments.deletedAt,
+        quarantineVersionId: attachments.quarantineVersionId,
+        cleanVersionId: attachments.cleanVersionId,
+      })
+      .from(attachments)
+      .where(eq(attachments.id, attachmentId))
+      .limit(1);
+    expect(partial).toMatchObject({
+      status: "deleting",
+      deletedAt: null,
+      quarantineVersionId: coordinates!.quarantineVersionId,
+      cleanVersionId: coordinates!.cleanVersionId,
+    });
+    expect(
+      await store.headObject({
+        key: coordinates!.cleanKey!,
+        versionId: coordinates!.cleanVersionId!,
+      }),
+    ).toBeNull();
+    expect(
+      await store.headObject({
+        key: coordinates!.quarantineKey,
+        versionId: coordinates!.quarantineVersionId!,
+      }),
+    ).not.toBeNull();
+
+    store.deleteErrorKey = null;
+    await deleteAttachmentObjects(attachmentId, store);
+    const [deleted] = await db
+      .select({
+        status: attachments.status,
+        deletedAt: attachments.deletedAt,
+        quarantineVersionId: attachments.quarantineVersionId,
+        cleanVersionId: attachments.cleanVersionId,
+      })
+      .from(attachments)
+      .where(eq(attachments.id, attachmentId))
+      .limit(1);
+    expect(deleted?.status).toBe("deleted");
+    expect(deleted?.deletedAt).toBeInstanceOf(Date);
+    expect(deleted?.quarantineVersionId).toBeNull();
+    expect(deleted?.cleanVersionId).toBeNull();
+    expect(
+      await store.headObject({
+        key: coordinates!.quarantineKey,
+        versionId: coordinates!.quarantineVersionId!,
+      }),
+    ).toBeNull();
+    expect(
+      await store.headObject({
+        key: coordinates!.cleanKey!,
+        versionId: coordinates!.cleanVersionId!,
+      }),
+    ).toBeNull();
+  });
+
   test("serializes concurrent draft quota reservations", async () => {
     const previousMaxPerMessage = process.env.ATTACHMENT_MAX_PER_MESSAGE;
     process.env.ATTACHMENT_MAX_PER_MESSAGE = "1";
@@ -1128,6 +1273,8 @@ interface FakeStoredObject extends StoredObjectMetadata {
 class FakeObjectStore implements ObjectStore {
   headCalls = 0;
   headError: unknown = null;
+  deleteErrorKey: string | null = null;
+  readonly deleteCalls: Array<{ key: string; versionId?: string | null }> = [];
   private readonly objects = new Map<string, FakeStoredObject>();
   private latestUpload: {
     key: string;
@@ -1207,6 +1354,10 @@ class FakeObjectStore implements ObjectStore {
   }
 
   async deleteObject(input: { key: string; versionId?: string | null }) {
+    this.deleteCalls.push(input);
+    if (input.key === this.deleteErrorKey) {
+      throw new Error("simulated attachment object delete failure");
+    }
     const current = this.objects.get(input.key);
     if (!input.versionId || current?.versionId === input.versionId) {
       this.objects.delete(input.key);

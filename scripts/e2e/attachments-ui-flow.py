@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import fcntl
 import hashlib
+import http.client
 import importlib.util
 import json
 import os
@@ -12,9 +13,11 @@ import shutil
 import signal
 import subprocess
 import sys
+import threading
 import time
 import urllib.request
 from contextlib import contextmanager
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from types import ModuleType
 from typing import Any, Callable
@@ -27,6 +30,7 @@ os.environ.setdefault("THECHAT_E2E_API_PORT", "3340")
 os.environ.setdefault("THECHAT_E2E_POSTGRES_PORT", "15546")
 os.environ.setdefault("THECHAT_E2E_REDIS_PORT", "16383")
 os.environ.setdefault("ATTACHMENT_E2E_S3_PORT", "19000")
+os.environ.setdefault("ATTACHMENT_E2E_S3_ORIGIN_PORT", "19001")
 os.environ.setdefault("ATTACHMENT_E2E_OTEL_HTTP_PORT", "14328")
 os.environ.setdefault("ATTACHMENT_E2E_TEMPO_PORT", "13200")
 os.environ.setdefault("ATTACHMENT_E2E_GRAFANA_PORT", "13310")
@@ -46,6 +50,7 @@ os.environ["THECHAT_E2E_CONTAINER_LABEL"] = CONTAINER_LABEL
 
 API_PORT = int(os.environ["THECHAT_E2E_API_PORT"])
 S3_PORT = int(os.environ["ATTACHMENT_E2E_S3_PORT"])
+S3_ORIGIN_PORT = int(os.environ["ATTACHMENT_E2E_S3_ORIGIN_PORT"])
 OTEL_HTTP_PORT = int(os.environ["ATTACHMENT_E2E_OTEL_HTTP_PORT"])
 TEMPO_PORT = int(os.environ["ATTACHMENT_E2E_TEMPO_PORT"])
 GRAFANA_PORT = int(os.environ["ATTACHMENT_E2E_GRAFANA_PORT"])
@@ -68,17 +73,52 @@ REJECTION_SCREENSHOT = TMP / f"attachment-ui-e2e-rejection-{RUN_ID}.png"
 FAILURE_SCREENSHOT = TMP / f"attachment-ui-e2e-failure-{RUN_ID}.png"
 RESULT_JSON = TMP / f"attachment-ui-e2e-{RUN_ID}.json"
 TRACE_EXPORTER = ROOT / "scripts/e2e/export_attachment_tempo_evidence.py"
-TRACE_EVIDENCE_DIR = (
-    Path(os.environ["ATTACHMENT_E2E_EVIDENCE_DIR"]).expanduser().resolve()
-    if os.environ.get("ATTACHMENT_E2E_EVIDENCE_DIR")
-    else None
-)
+
+
+def _resolve_evidence_dir(
+    source: dict[str, str] | None = None,
+    *,
+    run_id: str = RUN_ID,
+    home: Path | None = None,
+) -> Path:
+    """Return the mandatory durable destination for verified E2E evidence."""
+    env = os.environ if source is None else source
+    if env.get("ATTACHMENT_E2E_REQUIRE_EVIDENCE", "1") != "1":
+        raise RuntimeError("Attachment E2E evidence verification cannot be disabled")
+
+    configured = env.get("ATTACHMENT_E2E_EVIDENCE_DIR")
+    if configured is not None:
+        if not configured.strip():
+            raise RuntimeError("ATTACHMENT_E2E_EVIDENCE_DIR must not be empty")
+        return Path(configured).expanduser().resolve()
+
+    cache_value = env.get("XDG_CACHE_HOME")
+    if cache_value is not None and not cache_value.strip():
+        raise RuntimeError("XDG_CACHE_HOME must not be empty")
+    cache_root = (
+        Path(cache_value).expanduser()
+        if cache_value
+        else (home if home is not None else Path.home()) / ".cache"
+    )
+    return (cache_root / "thechat" / "e2e" / "attachments" / run_id / "tempo").resolve()
+
+
+TRACE_EVIDENCE_DIR = _resolve_evidence_dir()
+ARTIFACT_ROOT = TRACE_EVIDENCE_DIR.parent
+DOWNLOAD_DIR = ARTIFACT_ROOT / "downloads"
+OPENER_MARKER = ARTIFACT_ROOT / "native-opener-handoff.txt"
+RUNTIME_ROOT = TMP / "attachment-ui-e2e-runtime" / RUN_ID
 TRACE_LOG_PATH = (
     Path(os.environ["ATTACHMENT_E2E_LOG_PATH"]).expanduser().resolve()
     if os.environ.get("ATTACHMENT_E2E_LOG_PATH")
     else None
 )
 NATIVE_DESKTOP_E2E_LOCK = "native-desktop-e2e.lock"
+SLOW_UPLOAD_MIN_BYTES = 1024 * 1024
+SLOW_UPLOAD_CHUNK_BYTES = 64 * 1024
+SLOW_UPLOAD_CHUNK_DELAY_SECONDS = 0.05
+_s3_proxy: ThreadingHTTPServer | None = None
+_s3_proxy_thread: threading.Thread | None = None
 
 _SAFE_ENV_KEYS = {
     "CARGO_HOME",
@@ -392,6 +432,123 @@ def _wait_for(predicate: Callable[[], Any], *, timeout: float, label: str):
     return harness.wait_for(predicate, timeout=timeout, label=label)
 
 
+def _should_throttle_upload(method: str, content_length: int) -> bool:
+    return method == "PUT" and content_length >= SLOW_UPLOAD_MIN_BYTES
+
+
+class _S3ProxyHandler(BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
+
+    def log_message(self, _format: str, *_args: Any) -> None:
+        # Request paths contain presigned capability query strings.
+        return
+
+    def do_DELETE(self) -> None:
+        self._proxy()
+
+    def do_GET(self) -> None:
+        self._proxy()
+
+    def do_HEAD(self) -> None:
+        self._proxy()
+
+    def do_OPTIONS(self) -> None:
+        self._proxy()
+
+    def do_POST(self) -> None:
+        self._proxy()
+
+    def do_PUT(self) -> None:
+        self._proxy()
+
+    def _proxy(self) -> None:
+        upstream = http.client.HTTPConnection(
+            "127.0.0.1", S3_ORIGIN_PORT, timeout=180
+        )
+        try:
+            upstream.putrequest(
+                self.command,
+                self.path,
+                skip_host=True,
+                skip_accept_encoding=True,
+            )
+            for name, value in self.headers.items():
+                if name.lower() in {"connection", "proxy-connection"}:
+                    continue
+                upstream.putheader(name, value)
+            upstream.endheaders()
+
+            content_length = int(self.headers.get("Content-Length", "0") or "0")
+            remaining = content_length
+            throttled = _should_throttle_upload(self.command, content_length)
+            while remaining > 0:
+                chunk = self.rfile.read(min(SLOW_UPLOAD_CHUNK_BYTES, remaining))
+                if not chunk:
+                    raise ConnectionError("client closed the upload before completion")
+                upstream.send(chunk)
+                remaining -= len(chunk)
+                if throttled:
+                    time.sleep(SLOW_UPLOAD_CHUNK_DELAY_SECONDS)
+
+            response = upstream.getresponse()
+            body = b"" if self.command == "HEAD" else response.read()
+            self.send_response(response.status, response.reason)
+            for name, value in response.getheaders():
+                lowered = name.lower()
+                if lowered in {
+                    "connection",
+                    "proxy-connection",
+                    "transfer-encoding",
+                }:
+                    continue
+                if lowered == "content-length" and self.command != "HEAD":
+                    continue
+                self.send_header(name, value)
+            if self.command != "HEAD":
+                self.send_header("Content-Length", str(len(body)))
+            self.send_header("Connection", "close")
+            self.end_headers()
+            if body:
+                self.wfile.write(body)
+        except (BrokenPipeError, ConnectionError, OSError, http.client.HTTPException):
+            try:
+                self.send_error(502, "S3 proxy request did not complete")
+            except (BrokenPipeError, ConnectionError, OSError):
+                pass
+        finally:
+            upstream.close()
+            self.close_connection = True
+
+
+def _start_s3_proxy() -> None:
+    global _s3_proxy, _s3_proxy_thread
+    if S3_PORT == S3_ORIGIN_PORT:
+        raise RuntimeError("S3 proxy and origin ports must differ")
+    server = ThreadingHTTPServer(("127.0.0.1", S3_PORT), _S3ProxyHandler)
+    server.daemon_threads = True
+    thread = threading.Thread(
+        target=server.serve_forever,
+        name=f"attachment-s3-proxy-{RUN_ID}",
+        daemon=True,
+    )
+    thread.start()
+    _s3_proxy = server
+    _s3_proxy_thread = thread
+
+
+def _stop_s3_proxy() -> None:
+    global _s3_proxy, _s3_proxy_thread
+    server = _s3_proxy
+    thread = _s3_proxy_thread
+    _s3_proxy = None
+    _s3_proxy_thread = None
+    if server is not None:
+        server.shutdown()
+        server.server_close()
+    if thread is not None:
+        thread.join(timeout=5)
+
+
 def _start_s3(env: dict[str, str]) -> None:
     harness.run(
         ["docker", "rm", "-f", S3_CONTAINER], check=False, env=DOCKER_ENV
@@ -412,7 +569,7 @@ def _start_s3(env: dict[str, str]) -> None:
             "-e",
             "LS_LOG=warn",
             "-p",
-            f"127.0.0.1:{S3_PORT}:4566",
+            f"127.0.0.1:{S3_ORIGIN_PORT}:4566",
             S3_IMAGE,
         ],
         env=DOCKER_ENV,
@@ -423,7 +580,7 @@ def _start_s3(env: dict[str, str]) -> None:
             raise RuntimeError("LocalStack S3 exited before becoming ready")
         try:
             with urllib.request.urlopen(
-                f"http://127.0.0.1:{S3_PORT}/_localstack/health", timeout=2
+                f"http://127.0.0.1:{S3_ORIGIN_PORT}/_localstack/health", timeout=2
             ) as response:
                 health = json.loads(response.read())
                 return health.get("services", {}).get("s3") in {
@@ -475,9 +632,11 @@ await client.send(new PutBucketCorsCommand({
 """
     harness.run(
         [harness.BUN, "-e", provision],
-        env=env,
+        env=env
+        | {"ATTACHMENT_S3_ENDPOINT": f"http://127.0.0.1:{S3_ORIGIN_PORT}"},
         cwd=ROOT / "packages/api",
     )
+    _start_s3_proxy()
 
 
 def _write_fixtures() -> dict[str, Path]:
@@ -490,7 +649,7 @@ def _write_fixtures() -> dict[str, Path]:
         "<!doctype html><script>alert('attachment')</script>",
         encoding="utf-8",
     )
-    cancel.write_bytes(f"TheChat attachment cancellation {RUN_ID}\n".encode())
+    cancel.write_bytes(b"C" * (20 * 1024 * 1024))
     return {"valid": valid, "rejected": rejected, "cancel": cancel}
 
 
@@ -555,6 +714,14 @@ def _run_desktop_e2e(
     SUCCESS_SCREENSHOT.unlink(missing_ok=True)
     REJECTION_SCREENSHOT.unlink(missing_ok=True)
     FAILURE_SCREENSHOT.unlink(missing_ok=True)
+    OPENER_MARKER.unlink(missing_ok=True)
+    shutil.rmtree(DOWNLOAD_DIR, ignore_errors=True)
+    shutil.rmtree(RUNTIME_ROOT, ignore_errors=True)
+    DOWNLOAD_DIR.mkdir(parents=True, exist_ok=False)
+    runtime_tmp = RUNTIME_ROOT / "tmp"
+    xdg_runtime = RUNTIME_ROOT / "xdg"
+    runtime_tmp.mkdir(parents=True, exist_ok=True)
+    xdg_runtime.mkdir(parents=True, exist_ok=True, mode=0o700)
     desktop_env = env | {
         "THECHAT_BACKEND_URL": f"http://127.0.0.1:{API_PORT}",
         "THECHAT_E2E_DISABLE_DOTENV": "1",
@@ -570,6 +737,12 @@ def _run_desktop_e2e(
         "ATTACHMENT_E2E_SUCCESS_SCREENSHOT": str(SUCCESS_SCREENSHOT),
         "ATTACHMENT_E2E_REJECTION_SCREENSHOT": str(REJECTION_SCREENSHOT),
         "ATTACHMENT_E2E_FAILURE_SCREENSHOT": str(FAILURE_SCREENSHOT),
+        "ATTACHMENT_E2E_DOWNLOAD_DIR": str(DOWNLOAD_DIR),
+        "ATTACHMENT_E2E_OPENER_MARKER": str(OPENER_MARKER),
+        "THECHAT_ATTACHMENT_DOWNLOAD_DIR": str(DOWNLOAD_DIR),
+        "THECHAT_E2E_RUNTIME_ROOT": str(RUNTIME_ROOT),
+        "TMPDIR": str(runtime_tmp),
+        "XDG_RUNTIME_DIR": str(xdg_runtime),
         "VITE_OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": (
             f"http://127.0.0.1:{OTEL_HTTP_PORT}/v1/traces"
         ),
@@ -600,6 +773,11 @@ def _run_desktop_e2e(
     )
     if not SCREENSHOT.exists() or SCREENSHOT.stat().st_size == 0:
         raise AssertionError(f"Attachment UI screenshot was not produced: {SCREENSHOT}")
+    if not OPENER_MARKER.is_file():
+        raise AssertionError("Compiled Tauri download did not reach the native opener")
+    opened_path = Path(OPENER_MARKER.read_text(encoding="utf-8").strip()).resolve()
+    if opened_path.parent != DOWNLOAD_DIR.resolve() or not opened_path.is_file():
+        raise AssertionError("Native opener handoff did not target the verified download")
 
 
 def _attachment_statuses(file_names: list[str]) -> dict[str, str]:
@@ -611,10 +789,78 @@ def _attachment_statuses(file_names: list[str]) -> dict[str, str]:
     )
 
 
+def _attachment_cleanup_rows(file_names: list[str]) -> list[dict[str, Any]]:
+    literals = ", ".join(harness.sql_literal(name) for name in file_names)
+    return harness.db_json(
+        "select coalesce(jsonb_agg(jsonb_build_object("
+        "'fileName', file_name, 'status', status::text, 'deletedAt', deleted_at, "
+        "'quarantineKey', quarantine_key, 'quarantineVersionId', quarantine_version_id, "
+        "'cleanKey', clean_key, 'cleanVersionId', clean_version_id"
+        ") order by file_name), '[]'::jsonb) from attachments "
+        f"where file_name in ({literals});",
+        env=DOCKER_ENV,
+    )
+
+
+def _s3_residual_versions(keys: list[str], env: dict[str, str]) -> dict[str, Any]:
+    script = """
+import { ListObjectVersionsCommand, S3Client } from "@aws-sdk/client-s3";
+const expected = new Set(JSON.parse(process.env.ATTACHMENT_E2E_VERIFY_KEYS));
+const client = new S3Client({
+  region: process.env.AWS_REGION,
+  endpoint: process.env.ATTACHMENT_S3_ENDPOINT,
+  forcePathStyle: true,
+  credentials: {
+    accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+  },
+});
+const versions = [];
+const deleteMarkers = [];
+let keyMarker;
+let versionIdMarker;
+do {
+  const page = await client.send(new ListObjectVersionsCommand({
+    Bucket: process.env.ATTACHMENT_S3_BUCKET,
+    KeyMarker: keyMarker,
+    VersionIdMarker: versionIdMarker,
+  }));
+  for (const item of page.Versions ?? []) {
+    if (expected.has(item.Key)) versions.push({ key: item.Key, versionId: item.VersionId });
+  }
+  for (const item of page.DeleteMarkers ?? []) {
+    if (expected.has(item.Key)) deleteMarkers.push({ key: item.Key, versionId: item.VersionId });
+  }
+  keyMarker = page.IsTruncated ? page.NextKeyMarker : undefined;
+  versionIdMarker = page.IsTruncated ? page.NextVersionIdMarker : undefined;
+} while (keyMarker);
+console.log(JSON.stringify({ versions, deleteMarkers }));
+"""
+    result = subprocess.run(
+        [harness.BUN, "-e", script],
+        cwd=ROOT / "packages/api",
+        env=env
+        | {
+            "ATTACHMENT_S3_ENDPOINT": f"http://127.0.0.1:{S3_ORIGIN_PORT}",
+            "ATTACHMENT_E2E_VERIFY_KEYS": json.dumps(keys),
+        },
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    if result.returncode != 0:
+        raise RuntimeError("Failed to inspect attachment object versions")
+    try:
+        return json.loads(result.stdout.strip().splitlines()[-1])
+    except (IndexError, json.JSONDecodeError) as error:
+        raise RuntimeError("Attachment object-version probe returned invalid output") from error
+
+
 def _verify_backend(
     base: str,
     fixture: dict[str, str],
     files: dict[str, Path],
+    env: dict[str, str],
 ) -> dict[str, Any]:
     names = {key: path.name for key, path in files.items()}
     status, messages = harness.http_json(
@@ -650,13 +896,51 @@ def _verify_backend(
         timeout=120,
         label="attached/rejected-cleaned/cancelled attachment states",
     )
+    cleanup_rows = _attachment_cleanup_rows([names["rejected"], names["cancel"]])
+    if len(cleanup_rows) != 2:
+        raise AssertionError(f"Expected two cleanup rows, found {len(cleanup_rows)}")
+    for row in cleanup_rows:
+        if (
+            row.get("status") != "deleted"
+            or not row.get("deletedAt")
+            or row.get("quarantineVersionId") is not None
+            or row.get("cleanVersionId") is not None
+        ):
+            raise AssertionError(f"Attachment cleanup row is not truthful: {row}")
+    cleanup_keys = sorted(
+        {
+            key
+            for row in cleanup_rows
+            for key in (row.get("quarantineKey"), row.get("cleanKey"))
+            if key
+        }
+    )
+    object_cleanup = _s3_residual_versions(cleanup_keys, env)
+    if object_cleanup.get("versions"):
+        raise AssertionError("Deleted attachments retain private object versions")
+    opened_path = Path(OPENER_MARKER.read_text(encoding="utf-8").strip()).resolve()
     return {
-        "messageId": matching[0]["id"],
-        "attachmentId": matching[0]["attachments"][0]["id"],
         "statuses": {
             "valid": statuses[names["valid"]],
             "rejected": statuses[names["rejected"]],
             "cancelled": statuses[names["cancel"]],
+        },
+        "objectCleanup": {
+            "verifiedKeyCount": len(cleanup_keys),
+            "residualVersionCount": 0,
+            "deleteMarkerCount": len(object_cleanup.get("deleteMarkers", [])),
+        },
+        "lateCapabilityBoundary": {
+            "activeUploadAndBrowserAbortObserved": True,
+            "revocationClaimed": False,
+            "issuedCapabilityExpiresBy": "signed_upload_ttl",
+            "postExpiryCleanupBackstop": "private_bucket_lifecycle",
+        },
+        "nativeDownload": {
+            "fileName": opened_path.name,
+            "bytes": opened_path.stat().st_size,
+            "sha256": _sha256(opened_path),
+            "openerHandoff": True,
         },
         "screenshot": str(SCREENSHOT),
     }
@@ -675,12 +959,20 @@ def _container_log_tail(name: str) -> str:
 
 def _export_tempo_evidence(
     source_identity: dict[str, Any], env: dict[str, str]
-) -> dict[str, Any] | None:
+) -> dict[str, Any]:
     if TRACE_EVIDENCE_DIR is None:
-        return None
+        # Defensive fail-closed guard for tests or future refactors. Normal
+        # entrypoints always resolve a durable destination during module load.
+        raise RuntimeError("Attachment E2E evidence destination is required")
     if not TRACE_EXPORTER.is_file():
         raise RuntimeError(f"Tempo evidence exporter is missing: {TRACE_EXPORTER}")
-    source_scan_files = [SUCCESS_SCREENSHOT, REJECTION_SCREENSHOT, SCREENSHOT]
+    source_scan_files = [
+        SUCCESS_SCREENSHOT,
+        REJECTION_SCREENSHOT,
+        SCREENSHOT,
+        OPENER_MARKER,
+        *sorted(path for path in DOWNLOAD_DIR.iterdir() if path.is_file()),
+    ]
     if TRACE_LOG_PATH is not None:
         source_scan_files.append(TRACE_LOG_PATH)
     missing = [str(path) for path in source_scan_files if not path.is_file()]
@@ -726,6 +1018,7 @@ def _export_tempo_evidence(
     return {
         "directory": str(TRACE_EVIDENCE_DIR),
         "manifest": str(manifest_path),
+        "readme": str(TRACE_EVIDENCE_DIR / "README.md"),
         "manifestSha256": _sha256(manifest_path),
         "traceCount": manifest.get("trace_count"),
         "spanCount": manifest.get("span_count"),
@@ -745,6 +1038,8 @@ def _export_tempo_evidence(
 
 
 def _cleanup() -> None:
+    _stop_s3_proxy()
+    shutil.rmtree(RUNTIME_ROOT, ignore_errors=True)
     if KEEP:
         print(
             "Keeping attachment E2E resources:",
@@ -797,20 +1092,19 @@ def _run() -> None:
         fixture = _register_fixture_workspace(base)
         files = _write_fixtures()
         _run_desktop_e2e(env, fixture, files)
-        evidence = _verify_backend(base, fixture, files)
+        evidence = _verify_backend(base, fixture, files, env)
         _assert_source_identity_unchanged(source_identity, _source_identity())
 
-        tempo_evidence = None
-        if TRACE_EVIDENCE_DIR is not None:
-            # Graceful shutdown flushes API/worker batch processors before the
-            # self-verifying Tempo export. Containers remain up until cleanup.
-            harness.terminate_process(worker_proc, timeout=15)
-            worker_proc = None
-            harness.terminate_process(api_proc, timeout=15)
-            api_proc = None
-            time.sleep(2)
-            tempo_evidence = _export_tempo_evidence(source_identity, env)
-            _assert_source_identity_unchanged(source_identity, _source_identity())
+        # Graceful shutdown flushes API/worker batch processors before the
+        # mandatory self-verifying Tempo export. Containers remain up until
+        # cleanup, and no normal entrypoint can pass without this verifier.
+        harness.terminate_process(worker_proc, timeout=15)
+        worker_proc = None
+        harness.terminate_process(api_proc, timeout=15)
+        api_proc = None
+        time.sleep(2)
+        tempo_evidence = _export_tempo_evidence(source_identity, env)
+        _assert_source_identity_unchanged(source_identity, _source_identity())
 
         screenshots = [SCREENSHOT, SUCCESS_SCREENSHOT, REJECTION_SCREENSHOT]
         result = {
@@ -823,32 +1117,30 @@ def _run() -> None:
             "backend": evidence,
             "tempoEvidence": tempo_evidence,
         }
-        durable_metadata_path = None
-        if TRACE_EVIDENCE_DIR is not None:
-            artifact_root = TRACE_EVIDENCE_DIR.parent
-            screenshot_dir = artifact_root / "screenshots"
-            screenshot_dir.mkdir(parents=True, exist_ok=True)
-            durable_screenshots = []
-            for source, name in (
-                (SUCCESS_SCREENSHOT, "attachment-success.png"),
-                (REJECTION_SCREENSHOT, "attachment-rejection.png"),
-                (SCREENSHOT, "attachment-cancellation.png"),
-            ):
-                destination = screenshot_dir / name
-                shutil.copy2(source, destination)
-                durable_screenshots.append(
-                    {"path": str(destination), "sha256": _sha256(destination)}
-                )
-            durable_metadata_path = artifact_root / "run-metadata.json"
-            result["durableArtifacts"] = {
-                "root": str(artifact_root),
-                "runMetadata": str(durable_metadata_path),
-                "screenshots": durable_screenshots,
-            }
+        artifact_root = TRACE_EVIDENCE_DIR.parent
+        screenshot_dir = artifact_root / "screenshots"
+        screenshot_dir.mkdir(parents=True, exist_ok=True)
+        durable_screenshots = []
+        for source, name in (
+            (SUCCESS_SCREENSHOT, "attachment-success.png"),
+            (REJECTION_SCREENSHOT, "attachment-rejection.png"),
+            (SCREENSHOT, "attachment-cancellation.png"),
+        ):
+            destination = screenshot_dir / name
+            shutil.copy2(source, destination)
+            durable_screenshots.append(
+                {"path": str(destination), "sha256": _sha256(destination)}
+            )
+        durable_metadata_path = artifact_root / "run-metadata.json"
+        result["durableArtifacts"] = {
+            "root": str(artifact_root),
+            "runMetadata": str(durable_metadata_path),
+            "readme": str(TRACE_EVIDENCE_DIR / "README.md"),
+            "screenshots": durable_screenshots,
+        }
         serialized_result = json.dumps(result, indent=2, sort_keys=True) + "\n"
         RESULT_JSON.write_text(serialized_result, encoding="utf-8")
-        if durable_metadata_path is not None:
-            durable_metadata_path.write_text(serialized_result, encoding="utf-8")
+        durable_metadata_path.write_text(serialized_result, encoding="utf-8")
         print(json.dumps(result, indent=2, sort_keys=True), flush=True)
         completed = True
     finally:

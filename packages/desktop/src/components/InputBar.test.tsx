@@ -192,6 +192,7 @@ describe("InputBar shared attachments", () => {
     const draft = screen.getByTestId("attachment-draft");
     expect(draft).toHaveAttribute("data-attachment-file-name", "report.txt");
     expect(draft).toHaveAttribute("data-attachment-phase", "ready");
+    expect(draft).toHaveAttribute("data-attachment-progress", "100");
     expect(draft).toHaveAttribute("data-attachment-id", "attachment-1");
 
     fireEvent.click(screen.getByTitle("Send message"));

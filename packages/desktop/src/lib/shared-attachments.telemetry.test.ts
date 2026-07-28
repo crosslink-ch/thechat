@@ -23,6 +23,11 @@ const apiMocks = vi.hoisted(() => ({
   deleteAttachment: vi.fn(),
   downloadAttachment: vi.fn(),
 }));
+const tauriMocks = vi.hoisted(() => ({
+  invoke: vi.fn(),
+}));
+
+vi.mock("@tauri-apps/api/core", () => ({ invoke: tauriMocks.invoke }));
 
 vi.mock("./api", () => ({
   api: {
@@ -50,7 +55,11 @@ beforeAll(() => {
 
 beforeEach(() => {
   exporter.reset();
-  for (const mock of Object.values(apiMocks)) mock.mockReset();
+  for (const mock of [...Object.values(apiMocks), ...Object.values(tauriMocks)]) {
+    mock.mockReset();
+  }
+  delete (window as Window & { __TAURI_INTERNALS__?: unknown })
+    .__TAURI_INTERNALS__;
   apiMocks.attachments.mockReturnValue({
     complete: { post: apiMocks.completeAttachment },
     get: apiMocks.getAttachment,
@@ -243,6 +252,37 @@ describe("desktop attachment telemetry", () => {
     );
   });
 
+  it("records an in-flight upload abort as expected cancellation without exception noise", async () => {
+    mockReservation();
+    vi.stubGlobal("XMLHttpRequest", PendingXmlHttpRequest);
+    const controller = new AbortController();
+    const updates = vi.fn();
+    const upload = uploadSharedAttachment(
+      { ...uploadInput(), signal: controller.signal },
+      updates,
+    );
+    await vi.waitFor(() =>
+      expect(updates).toHaveBeenCalledWith(
+        expect.objectContaining({ phase: "uploading", progress: 50 }),
+      ),
+    );
+
+    controller.abort();
+    await expect(upload).rejects.toMatchObject({ name: "AbortError" });
+    await provider.forceFlush();
+
+    for (const name of ["attachment.s3.upload", "attachment.prepare"]) {
+      const item = span(name);
+      expect(item.attributes["thechat.attachment.outcome"]).toBe("cancelled");
+      expect(item.status.code).toBe(SpanStatusCode.UNSET);
+      expect(item.events).toHaveLength(0);
+    }
+    expectClientSpan(
+      "attachment.cancel.request",
+      "cancellation_requested",
+    );
+  });
+
   it("observes the actual object GET before launching the downloaded bytes", async () => {
     apiMocks.downloadAttachment.mockResolvedValue({
       data: {
@@ -275,6 +315,46 @@ describe("desktop attachment telemetry", () => {
     expect(download.attributes["thechat.attachment.outcome"]).toBe("completed");
     expect(telemetryText()).not.toMatch(
       /private-report|never-export|storage\.invalid/i,
+    );
+  });
+
+  it("uses the compiled Tauri download command and native opener handoff", async () => {
+    mockDownloadAuthorization();
+    Object.defineProperty(window, "__TAURI_INTERNALS__", {
+      configurable: true,
+      value: {},
+    });
+    tauriMocks.invoke.mockResolvedValue({
+      savedPath: "/downloads/private-report.txt",
+      transferredBytes: 16,
+      httpStatus: 200,
+    });
+
+    const result = await openSharedAttachmentDownload(
+      "attachment-1",
+      "token-1",
+      "attachment",
+      "private-report.txt",
+    );
+    expect(result.transferredBytes).toBe(16);
+    expect(tauriMocks.invoke).toHaveBeenCalledWith(
+      "download_attachment_to_file",
+      expect.objectContaining({ suggestedFileName: "private-report.txt" }),
+    );
+    await provider.forceFlush();
+
+    expectClientSpan("attachment.s3.download", "downloaded");
+    const download = span("attachment.download");
+    expect(download.attributes["thechat.attachment.handoff"]).toBe(
+      "native_opener",
+    );
+    expect(download.events.map((event) => event.name)).toEqual([
+      "attachment.download.transfer_completed",
+      "attachment.download.shell_handoff_completed",
+    ]);
+    expect(download.attributes["thechat.attachment.outcome"]).toBe("completed");
+    expect(telemetryText()).not.toMatch(
+      /private-report|never-export|storage\.invalid|\/downloads/i,
     );
   });
 
@@ -505,6 +585,27 @@ function mockDownloadAuthorization() {
     },
     error: null,
   });
+}
+
+class PendingXmlHttpRequest {
+  status = 0;
+  upload: { onprogress?: (event: ProgressEvent) => void } = {};
+  onerror?: () => void;
+  onabort?: () => void;
+  onload?: () => void;
+
+  open() {}
+  setRequestHeader() {}
+  abort() {
+    this.onabort?.();
+  }
+  send() {
+    this.upload.onprogress?.({
+      lengthComputable: true,
+      loaded: 3,
+      total: 6,
+    } as ProgressEvent);
+  }
 }
 
 class SuccessfulXmlHttpRequest {

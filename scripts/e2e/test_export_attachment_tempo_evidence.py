@@ -206,6 +206,33 @@ class TempoEvidenceVerifierTests(unittest.TestCase):
         with self.assertRaisesRegex(AssertionError, "source resource mismatch"):
             self.verifier.assert_source_resources([trace], args)
 
+    def test_readme_contains_tested_generation_live_view_and_offline_paths(self) -> None:
+        args = self.verifier.argparse.Namespace(
+            run_id="run-1",
+            source_commit="a" * 40,
+            source_tree="b" * 40,
+            source_diff_sha256="c" * 64,
+        )
+        graph = {
+            "message_trace_id": "1" * 32,
+            "message_retry_trace_id": "2" * 32,
+            "download_trace_id": "3" * 32,
+            "rejection_trace_id": "4" * 32,
+            "cancelled_upload_trace_id": "5" * 32,
+        }
+        readme = self.verifier.render_readme(
+            args,
+            graph,
+            trace_count=5,
+            span_count=50,
+        )
+        self.assertIn("pnpm test:e2e:attachments-ui", readme)
+        self.assertIn("python3 scripts/test.py attachments-ui", readme)
+        self.assertIn("ATTACHMENT_E2E_KEEP=1", readme)
+        self.assertIn("http://127.0.0.1:13310/explore", readme)
+        self.assertIn("tempo-export.json", readme)
+        self.assertIn("does not revoke an already-issued presigned PUT", readme)
+
     def test_trace_secret_scan_rejects_url_attributes(self) -> None:
         trace = {
             "trace_id": "11" * 16,
@@ -221,6 +248,44 @@ class TempoEvidenceVerifierTests(unittest.TestCase):
             ],
         }
         with self.assertRaisesRegex(AssertionError, "capability_or_url"):
+            self.verifier.assert_secret_safe([trace], "run-1")
+
+    def test_identifier_scan_allows_only_verified_source_provenance(self) -> None:
+        trace = self.telemetry_trace()
+        result = self.verifier.assert_secret_safe([trace], "run-1")
+        self.assertEqual(result["forbidden_finding_count"], 0)
+
+    def test_identifier_scan_rejects_entity_id_keys(self) -> None:
+        trace = self.telemetry_trace(
+            attributes={"thechat.attachment_id": "[REDACTED]"}
+        )
+        with self.assertRaisesRegex(AssertionError, "entity_identifier"):
+            self.verifier.assert_secret_safe([trace], "run-1")
+
+    def test_identifier_scan_rejects_letter_leading_uuid_on_every_trace_surface(self) -> None:
+        entity_id = "abcdef01-2345-6789-abcd-ef0123456789"
+        traces = {
+            "attribute": self.telemetry_trace(
+                attributes={"thechat.note": entity_id}
+            ),
+            "status": self.telemetry_trace(status_message=entity_id),
+            "event": self.telemetry_trace(
+                events=[{"name": entity_id, "attributes": {}}]
+            ),
+            "link": self.telemetry_trace(
+                links=[{"attributes": {"thechat.note": entity_id}}]
+            ),
+        }
+        for surface, trace in traces.items():
+            with self.subTest(surface=surface):
+                with self.assertRaisesRegex(AssertionError, "entity_uuid"):
+                    self.verifier.assert_secret_safe([trace], "run-1")
+
+    def test_identifier_scan_rejects_letter_leading_opaque_id_in_span_name(self) -> None:
+        trace = self.telemetry_trace(
+            name="attachment.download Z1234567890ABCDEFGHIJKLMNO"
+        )
+        with self.assertRaisesRegex(AssertionError, "entity_opaque_id"):
             self.verifier.assert_secret_safe([trace], "run-1")
 
     def test_raw_trace_payload_scan_rejects_omitted_secret_surfaces(self) -> None:
@@ -250,6 +315,36 @@ class TempoEvidenceVerifierTests(unittest.TestCase):
             self.verifier.assert_secret_safe(
                 [], "run-1", raw_payloads=raw_payloads
             )
+
+    @staticmethod
+    def telemetry_trace(
+        *,
+        name: str = "attachment.download",
+        attributes: dict[str, Any] | None = None,
+        status_message: str = "",
+        events: list[dict[str, Any]] | None = None,
+        links: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        return {
+            "trace_id": "11" * 16,
+            "resources": [
+                {
+                    "thechat.e2e.run_id": "run-1",
+                    "service.version": "a" * 40,
+                    "thechat.source.tree": "b" * 40,
+                    "thechat.source.diff_sha256": "c" * 64,
+                }
+            ],
+            "spans": [
+                {
+                    "name": name,
+                    "attributes": attributes or {},
+                    "status": {"message": status_message},
+                    "events": events or [],
+                    "links": links or [],
+                }
+            ],
+        }
 
     @staticmethod
     def span(trace_id: str, span_id: str, parent_span_id: str) -> dict[str, Any]:

@@ -43,7 +43,6 @@ export async function enqueueDomainEvent(
     {
       "messaging.system": "postgresql-outbox",
       "messaging.operation": "publish",
-      "messaging.message.id": event.id,
       "messaging.message.type": event.type,
       "thechat.aggregate.type": event.aggregate.type,
       "thechat.outbox.delayed": Boolean(options.availableAt),
@@ -206,7 +205,6 @@ function claimSpanAttributes(
   return {
     "messaging.system": "postgresql-outbox",
     "messaging.operation": "receive",
-    "thechat.outbox.worker_id": options.workerId,
     "thechat.outbox.batch_size": options.batchSize,
     "thechat.outbox.claimed_count": claimedCount,
     "thechat.outbox.claim_duration_ms": durationMs,

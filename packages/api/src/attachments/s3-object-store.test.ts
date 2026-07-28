@@ -112,4 +112,30 @@ describe("S3 attachment object store", () => {
     expect(commandInput?.TaggingDirective).toBe("REPLACE");
     expect(commandInput?.ChecksumAlgorithm).toBe("SHA256");
   });
+
+  test("deletes the exact private-object version instead of adding a key-only marker", async () => {
+    let commandInput: any = null;
+    const fakeClient = {
+      send: async (command: { input: Record<string, unknown> }) => {
+        commandInput = command.input;
+        return {};
+      },
+    } as unknown as S3Client;
+    const store = new S3ObjectStore({
+      bucket: "private-attachment-bucket",
+      region: "eu-central-1",
+      client: fakeClient,
+    });
+
+    await store.deleteObject({
+      key: "quarantine/opaque-id",
+      versionId: "quarantine-version-1",
+    });
+
+    expect(commandInput).toEqual({
+      Bucket: "private-attachment-bucket",
+      Key: "quarantine/opaque-id",
+      VersionId: "quarantine-version-1",
+    });
+  });
 });

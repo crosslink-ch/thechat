@@ -288,7 +288,7 @@ describe("OpenTelemetry async-boundary contracts", () => {
       handle: async () => {
         await withSpan(
           "attachment.validate_promote",
-          { "thechat.attachment_id": "synthetic-attachment" },
+          {},
           () =>
             store.headObject({
               key: "quarantine/synthetic-attachment",

@@ -109,7 +109,6 @@ export async function validateAndPromoteAttachment(
     "attachment.validate_promote",
     {
       "messaging.system": "thechat",
-      "thechat.attachment_id": attachmentId,
     },
     async (span) => {
       const row = await loadAttachment(attachmentId);
@@ -271,7 +270,6 @@ export async function deleteAttachmentObjects(
     "attachment.delete_objects",
     {
       "messaging.system": "thechat",
-      "thechat.attachment_id": attachmentId,
     },
     async (span) => {
       try {
@@ -290,12 +288,7 @@ export async function deleteAttachmentObjects(
           return;
         }
 
-        if (row.cleanKey && row.cleanVersionId) {
-          await store.deleteObject({
-            key: row.cleanKey,
-            versionId: row.cleanVersionId,
-          });
-        }
+        await deletePinnedAttachmentObjects(row, store);
 
         const nextStatus = row.status === "rejected" ? "rejected" : "deleted";
         const now = new Date();
@@ -303,10 +296,14 @@ export async function deleteAttachmentObjects(
           .update(attachments)
           .set({
             ...(row.status === "rejected" ? {} : { status: "deleted" }),
+            quarantineVersionId: null,
+            cleanVersionId: null,
             deletedAt: now,
             updatedAt: now,
           })
-          .where(eq(attachments.id, row.id));
+          .where(
+            and(eq(attachments.id, row.id), eq(attachments.status, row.status)),
+          );
         span.setAttribute("thechat.attachment.next_status", nextStatus);
         span.setAttribute(
           "thechat.attachment.outcome",
@@ -325,23 +322,38 @@ async function rejectAttachment(
   store: ObjectStore,
   reason: string,
 ) {
+  await deletePinnedAttachmentObjects(row, store);
+  const now = new Date();
+  await db
+    .update(attachments)
+    .set({
+      status: "rejected",
+      quarantineVersionId: null,
+      cleanVersionId: null,
+      failureReason: reason,
+      rejectedAt: now,
+      deletedAt: now,
+      updatedAt: now,
+    })
+    .where(
+      and(eq(attachments.id, row.id), eq(attachments.status, "processing")),
+    );
+}
+
+async function deletePinnedAttachmentObjects(
+  row: typeof attachments.$inferSelect,
+  store: ObjectStore,
+) {
   if (row.cleanKey && row.cleanVersionId) {
     await store.deleteObject({
       key: row.cleanKey,
       versionId: row.cleanVersionId,
     });
   }
-  const now = new Date();
-  await db
-    .update(attachments)
-    .set({
-      status: "rejected",
-      failureReason: reason,
-      rejectedAt: now,
-      deletedAt: now,
-      updatedAt: now,
-    })
-    .where(eq(attachments.id, row.id));
+  await store.deleteObject({
+    key: row.quarantineKey,
+    versionId: row.quarantineVersionId,
+  });
 }
 
 async function loadAttachment(id: string) {
