@@ -74,6 +74,15 @@ export function Sidebar() {
   const activeWorkspace = useWorkspacesStore((s) => s.activeWorkspace);
   const selectWorkspace = useWorkspacesStore((s) => s.selectWorkspace);
   const unreadChannels = useConversationsStore((s) => s.unreadChannels);
+  const directConversationIdsByUserId = useConversationsStore(
+    (s) => s.directConversationIdsByUserId,
+  );
+  const unreadBotConversations = useConversationsStore(
+    (s) => s.unreadBotConversations,
+  );
+  const setActiveDirectConversation = useConversationsStore(
+    (s) => s.setActiveDirectConversation,
+  );
   const notificationCount = useNotificationsStore((s) => s.notifications.length);
   const codexStatus = useCodexAuthStore((s) => s.status);
 
@@ -82,7 +91,11 @@ export function Sidebar() {
   const isDm = routePath.startsWith("/dm");
   const isSettings = routePath === "/settings";
   const activeChannelId = isChannel ? routeParams.id : null;
-  const activeDmUserId = isDm ? routeParams.id : null;
+  const activeDmConversationId = isDm ? routeParams.id : null;
+
+  useEffect(() => {
+    setActiveDirectConversation(activeDmConversationId);
+  }, [activeDmConversationId, setActiveDirectConversation]);
 
   // Local UI state
   const [dropdownOpen, setDropdownOpen] = useState(false);
@@ -120,6 +133,10 @@ export function Sidebar() {
       );
       if (error) throw error;
       if (data && "id" in data) {
+        useConversationsStore
+          .getState()
+          .rememberDirectConversation(member.userId, data.id!);
+        useConversationsStore.getState().setActiveDirectConversation(data.id!);
         navigate({ to: "/dm/$id", params: { id: data.id! } });
       }
     } catch {
@@ -267,17 +284,29 @@ export function Sidebar() {
                 const bots = others.filter((m) => m.user.type === "bot");
 
                 const renderMember = (m: WorkspaceMember) => {
-                  const isActive = activeDmUserId === m.userId;
+                  const isActive =
+                    activeDmConversationId === directConversationIdsByUserId[m.userId];
+                  const isUnread =
+                    m.user.type === "bot" &&
+                    Object.values(unreadBotConversations).includes(m.userId);
                   return (
                     <button
                       key={m.userId}
-                      className={itemClassName(isActive)}
+                      className={itemClassName(isActive, isUnread)}
                       onClick={() => handleSelectDm(m)}
+                      aria-label={isUnread ? `${m.user.name}, unread` : m.user.name}
+                      aria-current={isActive ? "page" : undefined}
                     >
                       <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-elevated text-[0.714rem] font-semibold text-text-muted">
                         {m.user.name.charAt(0).toUpperCase()}
                       </span>
                       <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap">{m.user.name}</span>
+                      {isUnread && (
+                        <span
+                          className="size-1.5 shrink-0 rounded-full bg-accent"
+                          aria-hidden="true"
+                        />
+                      )}
                     </button>
                   );
                 };
