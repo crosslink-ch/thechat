@@ -63,6 +63,7 @@ quarantine_version="$(
     --bucket "$bucket" \
     --key "$quarantine_key" \
     --body "$workdir/payload.txt" \
+    --if-none-match '*' \
     --content-type text/plain \
     --checksum-algorithm SHA256 \
     --checksum-sha256 "$checksum" \
@@ -72,9 +73,9 @@ quarantine_version="$(
 printf 'PASS allowed: API PutObject quarantine (version %s)\n' "$quarantine_version"
 
 aws_api s3api head-object \
-  --bucket "$bucket" --key "$quarantine_key" --version-id "$quarantine_version" \
+  --bucket "$bucket" --key "$quarantine_key" \
   >/dev/null
-printf 'PASS allowed: API HeadObject quarantine version\n'
+printf 'PASS allowed: API HeadObject latest quarantine object\n'
 
 aws_worker s3api get-object \
   --bucket "$bucket" --key "$quarantine_key" --version-id "$quarantine_version" \
@@ -108,12 +109,24 @@ expect_denied "API PutObject clean" \
   aws_api s3api put-object \
   --bucket "$bucket" --key "clean/canary/forbidden-${run_id}" \
   --body "$workdir/payload.txt"
+expect_denied "API PutObject quarantine without If-None-Match" \
+  aws_api s3api put-object \
+  --bucket "$bucket" --key "quarantine/canary/non-conditional-${run_id}" \
+  --body "$workdir/payload.txt"
 expect_denied "API ListBucket" \
   aws_api s3api list-objects-v2 --bucket "$bucket" --max-items 1
 expect_denied "worker PutObject quarantine" \
   aws_worker s3api put-object \
   --bucket "$bucket" --key "quarantine/canary/forbidden-${run_id}" \
   --body "$workdir/payload.txt"
+expect_denied "worker direct PutObject clean without a quarantine copy source" \
+  aws_worker s3api put-object \
+  --bucket "$bucket" --key "clean/canary/direct-put-forbidden-${run_id}" \
+  --body "$workdir/payload.txt"
+expect_denied "worker CopyObject clean from a clean source" \
+  aws_worker s3api copy-object \
+  --bucket "$bucket" --key "clean/canary/clean-copy-forbidden-${run_id}" \
+  --copy-source "${bucket}/${clean_key}?versionId=${clean_version}"
 expect_denied "worker ListBucket" \
   aws_worker s3api list-objects-v2 --bucket "$bucket" --max-items 1
 

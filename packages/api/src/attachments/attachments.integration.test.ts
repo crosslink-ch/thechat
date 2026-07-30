@@ -25,6 +25,7 @@ import { db } from "../db";
 import {
   attachments,
   eventOutbox,
+  messageAttachments,
   messages,
   users,
   workspaces,
@@ -62,6 +63,7 @@ const app = new Elysia()
   .use(hermesPlatformRoutes);
 
 const createdWorkspaceIds: string[] = [];
+const createdConversationIds: string[] = [];
 const createdUserIds: string[] = [];
 let store: ReturnType<typeof createFakeObjectStore>;
 let testContextManager: AsyncLocalContextManager;
@@ -78,6 +80,20 @@ beforeAll(async () => {
 afterAll(async () => {
   setAttachmentObjectStoreForTests(null);
   await closeRealtimeBusForTests();
+  if (createdConversationIds.length > 0) {
+    const createdAttachmentIds = await db
+      .select({ id: attachments.id })
+      .from(attachments)
+      .where(inArray(attachments.conversationId, createdConversationIds));
+    if (createdAttachmentIds.length > 0) {
+      await db.delete(messageAttachments).where(
+        inArray(
+          messageAttachments.attachmentId,
+          createdAttachmentIds.map(({ id }) => id),
+        ),
+      );
+    }
+  }
   if (createdWorkspaceIds.length > 0) {
     await db
       .delete(workspaces)
@@ -187,6 +203,7 @@ async function workspaceWithMembers(
     owner.token,
   );
   expect(detail.status).toBe(200);
+  createdConversationIds.push(detail.body.channels[0].id);
   return {
     workspaceId: created.body.id as string,
     conversationId: detail.body.channels[0].id as string,

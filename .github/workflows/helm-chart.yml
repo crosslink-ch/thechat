@@ -1,25 +1,46 @@
-name: Helm chart
+name: Deployment definitions
 
 on:
   pull_request:
     paths:
       - "deploy/api/**"
+      - "deployment/aws/attachments/**"
+      - "packages/desktop/src-tauri/tauri*.conf.json"
+      - "packages/api/src/attachments/s3-object-store.ts"
       - ".github/workflows/helm-chart.yml"
   push:
     branches: [main]
     paths:
       - "deploy/api/**"
+      - "deployment/aws/attachments/**"
+      - "packages/desktop/src-tauri/tauri*.conf.json"
+      - "packages/api/src/attachments/s3-object-store.ts"
       - ".github/workflows/helm-chart.yml"
+
+permissions:
+  contents: read
 
 jobs:
   validate:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: azure/setup-helm@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.12"
+      - uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4.3.1
         with:
           version: v3.18.6
-      - name: Lint chart
+      - name: Install CloudFormation linter
+        run: python -m pip install --disable-pip-version-check cfn-lint==1.53.2
+      - name: Lint CloudFormation templates
+        run: cfn-lint deployment/aws/attachments/cloudformation*.yaml
+      - name: Test attachment IAM policy boundaries
+        run: python deployment/aws/attachments/test_cloudformation.py
+      - name: Lint Helm chart
         run: helm lint deploy/api
-      - name: Test rendered migration hook
-        run: python3 deploy/api/tests/test_migration_hook.py
+      - name: Test rendered Helm resources
+        run: |
+          python deploy/api/tests/test_migration_hook.py
+          python deploy/api/tests/test_attachment_credentials.py

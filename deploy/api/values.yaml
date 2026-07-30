@@ -86,6 +86,38 @@ env:
   ATTACHMENT_UNATTACHED_TTL_SECONDS: "2592000"
   ATTACHMENT_VALIDATION_CONCURRENCY: "1"
 
+# Static AWS credentials for attachment storage. The chart only references
+# existing Secrets; it never accepts or renders credential values.
+attachments:
+  credentials:
+    enabled: false
+    api:
+      # Defaults to <release-fullname>-attachments-api-aws.
+      secretName: ""
+      accessKeyIdKey: AWS_ACCESS_KEY_ID
+      secretAccessKeyKey: AWS_SECRET_ACCESS_KEY
+    worker:
+      # Defaults to <release-fullname>-attachments-worker-aws.
+      secretName: ""
+      accessKeyIdKey: AWS_ACCESS_KEY_ID
+      secretAccessKeyKey: AWS_SECRET_ACCESS_KEY
+
+  # Optional Infisical Operator synchronization for the two credential Secrets.
+  # Each path must contain only AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY.
+  infisical:
+    enabled: false
+    hostAPI: "https://infisical.testkopie.dev/api"
+    resyncInterval: "60s"
+    # Use two distinct Kubernetes Auth machine identities. Scope each identity to
+    # one service account and one Infisical path.
+    apiIdentityId: ""
+    workerIdentityId: ""
+    projectSlug: ""
+    envSlug: "prod"
+    apiSecretsPath: "/attachments/api"
+    workerSecretsPath: "/attachments/worker"
+    creationPolicy: "Orphan"
+
 worker:
   enabled: true
   replicaCount: 1

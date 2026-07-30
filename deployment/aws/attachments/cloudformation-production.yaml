@@ -1,0 +1,274 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Production S3 attachment storage and dedicated static-key IAM users for TheChat
+
+Parameters:
+  BucketName:
+    Type: String
+    MinLength: 3
+    MaxLength: 63
+    AllowedPattern: '^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$'
+    ConstraintDescription: Use a globally unique DNS-compatible S3 bucket name without dots
+    Description: Globally unique production attachment bucket name
+  ApiUserName:
+    Type: String
+    Default: thechat-attachments-prod-api
+    AllowedPattern: '[\w+=,.@-]{1,64}'
+    Description: Dedicated IAM user used only by the TheChat API workload
+  WorkerUserName:
+    Type: String
+    Default: thechat-attachments-prod-worker
+    AllowedPattern: '[\w+=,.@-]{1,64}'
+    Description: Dedicated IAM user used only by the TheChat attachment worker
+  CleanObjectRetentionDays:
+    Type: Number
+    Default: 30
+    MinValue: 30
+    MaxValue: 3650
+    Description: Days to retain both current and noncurrent clean object versions
+
+Rules:
+  DedicatedAttachmentUsersMustDiffer:
+    Assertions:
+      - Assert: !Not [!Equals [!Ref ApiUserName, !Ref WorkerUserName]]
+        AssertDescription: ApiUserName and WorkerUserName must be different
+
+Resources:
+  AttachmentsBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: !Ref BucketName
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+            BucketKeyEnabled: false
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        IgnorePublicAcls: true
+        BlockPublicPolicy: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration:
+        Status: Enabled
+      CorsConfiguration:
+        CorsRules:
+          - Id: TheChatPackagedDesktopClients
+            AllowedOrigins:
+              - http://tauri.localhost
+              - tauri://localhost
+            AllowedMethods:
+              - GET
+              - PUT
+            AllowedHeaders:
+              - Content-Type
+              - If-None-Match
+              - x-amz-checksum-sha256
+            MaxAge: 300
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireQuarantineObjectVersions
+            Status: Enabled
+            Prefix: quarantine/
+            ExpirationInDays: 1
+            NoncurrentVersionExpiration:
+              NoncurrentDays: 1
+          - Id: RemoveExpiredQuarantineDeleteMarkers
+            Status: Enabled
+            Prefix: quarantine/
+            ExpiredObjectDeleteMarker: true
+          - Id: ExpireCleanObjectVersions
+            Status: Enabled
+            Prefix: clean/
+            ExpirationInDays: !Ref CleanObjectRetentionDays
+            NoncurrentVersionExpiration:
+              NoncurrentDays: !Ref CleanObjectRetentionDays
+          - Id: RemoveExpiredCleanDeleteMarkers
+            Status: Enabled
+            Prefix: clean/
+            ExpiredObjectDeleteMarker: true
+          - Id: AbortIncompleteMultipartUploads
+            Status: Enabled
+            Prefix: ""
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 1
+      Tags:
+        - Key: application
+          Value: thechat
+        - Key: environment
+          Value: production
+        - Key: managed-by
+          Value: cloudformation
+        - Key: data-classification
+          Value: private-user-content
+
+  AttachmentsBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      Bucket: !Ref AttachmentsBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: "*"
+            Action: s3:*
+            Resource:
+              - !GetAtt AttachmentsBucket.Arn
+              - !Sub "${AttachmentsBucket.Arn}/*"
+            Condition:
+              Bool:
+                aws:SecureTransport: "false"
+                aws:PrincipalIsAWSService: "false"
+          - Sid: DenyStalePresignedObjectRequests
+            Effect: Deny
+            Principal: "*"
+            Action:
+              - s3:GetObject
+              - s3:PutObject
+            Resource: !Sub "${AttachmentsBucket.Arn}/*"
+            Condition:
+              StringEquals:
+                s3:authType: REST-QUERY-STRING
+              NumericGreaterThan:
+                s3:signatureAge: "900000"
+          - Sid: DenySseCustomerProvidedKeys
+            Effect: Deny
+            Principal: "*"
+            Action: s3:PutObject
+            Resource: !Sub "${AttachmentsBucket.Arn}/*"
+            Condition:
+              "Null":
+                s3:x-amz-server-side-encryption-customer-algorithm: "false"
+          - Sid: DenyExplicitNonSseS3Encryption
+            Effect: Deny
+            Principal: "*"
+            Action: s3:PutObject
+            Resource: !Sub "${AttachmentsBucket.Arn}/*"
+            Condition:
+              "Null":
+                s3:x-amz-server-side-encryption: "false"
+              StringNotEquals:
+                s3:x-amz-server-side-encryption: AES256
+
+  AttachmentApiUser:
+    Type: AWS::IAM::User
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      UserName: !Ref ApiUserName
+      Path: /thechat/attachments/
+      Tags:
+        - Key: application
+          Value: thechat
+        - Key: workload
+          Value: api
+        - Key: environment
+          Value: production
+        - Key: managed-by
+          Value: cloudformation
+
+  AttachmentApiPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: thechat-attachment-api-objects
+      Users:
+        - !Ref AttachmentApiUser
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: ReserveOneShotQuarantineUploads
+            Effect: Allow
+            Action: s3:PutObject
+            Resource: !Sub "${AttachmentsBucket.Arn}/quarantine/*"
+            Condition:
+              StringEquals:
+                s3:if-none-match: "*"
+              "Null":
+                s3:x-amz-copy-source: "true"
+          - Sid: VerifyLatestQuarantineUpload
+            Effect: Allow
+            Action: s3:GetObject
+            Resource: !Sub "${AttachmentsBucket.Arn}/quarantine/*"
+          - Sid: AuthorizePinnedCleanDownloads
+            Effect: Allow
+            Action: s3:GetObjectVersion
+            Resource: !Sub "${AttachmentsBucket.Arn}/clean/*"
+
+  AttachmentWorkerUser:
+    Type: AWS::IAM::User
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      UserName: !Ref WorkerUserName
+      Path: /thechat/attachments/
+      Tags:
+        - Key: application
+          Value: thechat
+        - Key: workload
+          Value: attachment-worker
+        - Key: environment
+          Value: production
+        - Key: managed-by
+          Value: cloudformation
+
+  AttachmentWorkerPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: thechat-attachment-worker-objects
+      Users:
+        - !Ref AttachmentWorkerUser
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: ValidatePinnedAttachmentVersions
+            Effect: Allow
+            Action: s3:GetObjectVersion
+            Resource:
+              - !Sub "${AttachmentsBucket.Arn}/quarantine/*"
+              - !Sub "${AttachmentsBucket.Arn}/clean/*"
+          - Sid: PromoteQuarantineObjectsToClean
+            Effect: Allow
+            Action: s3:PutObject
+            Resource: !Sub "${AttachmentsBucket.Arn}/clean/*"
+            Condition:
+              StringLike:
+                s3:x-amz-copy-source: !Sub "${AttachmentsBucket}/quarantine/*"
+          - Sid: DeleteUnversionedQuarantineObjects
+            Effect: Allow
+            Action: s3:DeleteObject
+            Resource: !Sub "${AttachmentsBucket.Arn}/quarantine/*"
+          - Sid: DeletePinnedAttachmentVersions
+            Effect: Allow
+            Action: s3:DeleteObjectVersion
+            Resource:
+              - !Sub "${AttachmentsBucket.Arn}/quarantine/*"
+              - !Sub "${AttachmentsBucket.Arn}/clean/*"
+
+Outputs:
+  BucketName:
+    Description: Production attachment bucket
+    Value: !Ref AttachmentsBucket
+  BucketArn:
+    Description: Production attachment bucket ARN
+    Value: !GetAtt AttachmentsBucket.Arn
+  Region:
+    Description: Bucket region
+    Value: !Ref AWS::Region
+  AttachmentApiUserName:
+    Description: IAM user name for the API workload; no access key is created by this stack
+    Value: !Ref AttachmentApiUser
+  AttachmentApiUserArn:
+    Description: IAM user ARN for the API workload
+    Value: !GetAtt AttachmentApiUser.Arn
+  AttachmentWorkerUserName:
+    Description: IAM user name for the attachment worker; no access key is created by this stack
+    Value: !Ref AttachmentWorkerUser
+  AttachmentWorkerUserArn:
+    Description: IAM user ARN for the attachment worker
+    Value: !GetAtt AttachmentWorkerUser.Arn

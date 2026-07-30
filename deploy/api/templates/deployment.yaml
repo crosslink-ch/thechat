@@ -1,9 +1,15 @@
+{{- $attachments := .Values.attachments | default dict -}}
+{{- $infisical := get $attachments "infisical" | default dict -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: {{ include "thechat-api.fullname" . }}
   labels:
     {{- include "thechat-api.labels" . | nindent 4 }}
+  {{- if get $infisical "enabled" }}
+  annotations:
+    secrets.infisical.com/auto-reload: "true"
+  {{- end }}
 spec:
   {{- if not .Values.autoscaling.enabled }}
   replicas: {{ .Values.replicaCount }}
@@ -29,6 +35,7 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       serviceAccountName: {{ include "thechat-api.serviceAccountName" . }}
+      automountServiceAccountToken: false
       containers:
         - name: api
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
@@ -39,6 +46,7 @@ spec:
               protocol: TCP
           env:
             {{- include "thechat-api.env" . | trim | nindent 12 }}
+            {{- include "thechat-api.apiAwsCredentialEnv" . | trim | nindent 12 }}
           livenessProbe:
             httpGet:
               path: /health

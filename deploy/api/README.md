@@ -8,11 +8,12 @@ Deploys the TheChat API server and bot worker to Kubernetes.
 - Helm 3+
 - An external PostgreSQL database
 - An external Redis instance for realtime fanout and BullMQ workers
-- Secrets pre-created in the target namespace (see below)
+- Existing application Secrets in the target namespace
+- Infisical Secrets Operator when `attachments.infisical.enabled=true`
 
 ## Secrets
 
-The chart references existing Kubernetes secrets by name — it does not create them. Create them before installing:
+By default, the chart references existing Kubernetes Secrets by name. With the optional Infisical integration below, the Infisical operator creates the two attachment credential Secrets. Create the remaining Secrets before installing:
 
 ```bash
 # Required
@@ -47,10 +48,10 @@ run before ordinary chart resources are created.
 
 Set `image.tag` and `migrateImage.tag` to the same immutable build tag (for
 example, a `sha-*` tag) in production. The chart rejects mismatched tag strings,
-but matching mutable tags such as `latest` does not guarantee that both images
-contain artifacts from the same build. During an upgrade, the old workloads keep
-serving while the hook runs, so schema changes must remain backward compatible
-with the currently deployed version.
+and enabling static attachment credentials additionally rejects mutable or
+non-SHA tags. During an upgrade, the old workloads keep serving while the hook
+runs, so schema changes must remain backward compatible with the currently
+deployed version.
 
 Migration files must be generated and committed to git before building the image:
 
@@ -73,15 +74,53 @@ Validate chart rendering locally with:
 ```bash
 helm lint deploy/api
 python3 deploy/api/tests/test_migration_hook.py
+python3 deploy/api/tests/test_attachment_credentials.py
 ```
 
 ## Worker
 
-The API Deployment only serves HTTP traffic. Bot jobs are consumed by a separate
-worker Deployment controlled by `worker.enabled` in `values.yaml`. The worker
-uses the same API image and runs `bun run dist/scripts/worker.js`.
+With `worker.enabled=true` (the default), the chart also renders:
 
-## Install
+- a dedicated worker `Deployment` running `bun run dist/scripts/worker.js`;
+- a dedicated worker `ServiceAccount` (override with `worker.serviceAccount.name`);
+- shared runtime configuration through the same Redis and application Secret references.
+
+## Production attachment credentials
+
+The API and attachment worker use separate Kubernetes service accounts and can use
+separate existing Secrets for static AWS IAM-user credentials:
+
+```yaml
+attachments:
+  credentials:
+    enabled: true
+    api:
+      secretName: thechat-attachments-api-aws
+    worker:
+      secretName: thechat-attachments-worker-aws
+```
+
+Only `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` are injected, through explicit
+`secretKeyRef` entries. The API Deployment never references the worker Secret, and
+the worker Deployment never references the API Secret. No Secret values belong in
+Helm values.
+
+`attachments.infisical.enabled=true` additionally renders two
+`secrets.infisical.com/v1alpha1` `InfisicalSecret` resources. They authenticate with
+two different machine identities bound to the workload-specific service accounts,
+read separate Infisical paths, copy only the two named AWS keys into their managed
+Kubernetes Secrets, and annotate both Deployments for auto-reload after rotation.
+The chart rejects reused ServiceAccounts, Secrets, paths, or machine identities,
+and rejects literal `AWS_*` environment overrides.
+
+Preserve the current release values, layer `values-production.example.yaml` on
+top, set its blank non-secret bucket, project, and two identity coordinates
+outside Git, and render before applying. Infisical sync fails closed if any
+coordinate is missing or credential injection is disabled. The full provisioning
+and rotation procedure is in
+[`deployment/aws/attachments/PRODUCTION.md`](../../deployment/aws/attachments/PRODUCTION.md).
+
+## Installation
 
 ```bash
 helm install thechat-api ./deploy/api
