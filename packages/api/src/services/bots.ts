@@ -402,35 +402,38 @@ export async function updateAuthenticatedBotWebhook(
   botUserId: string,
   webhookUrl: string | null
 ) {
-  const [bot] = await db
-    .select({
+  const [updatedBot] = await db
+    .update(bots)
+    .set({ webhookUrl })
+    .where(eq(bots.userId, botUserId))
+    .returning({
       id: bots.id,
       userId: bots.userId,
       kind: bots.kind,
       webhookSecret: bots.webhookSecret,
-      name: users.name,
-    })
-    .from(bots)
-    .innerJoin(users, eq(bots.userId, users.id))
-    .where(eq(bots.userId, botUserId))
-    .limit(1);
+    });
 
-  if (!bot) {
+  if (!updatedBot) {
     throw new ServiceError("Bot not found", 404);
   }
 
-  await db
-    .update(bots)
-    .set({ webhookUrl })
-    .where(eq(bots.id, bot.id));
+  const [botUser] = await db
+    .select({ name: users.name })
+    .from(users)
+    .where(eq(users.id, botUserId))
+    .limit(1);
+
+  if (!botUser) {
+    throw new ServiceError("Bot not found", 404);
+  }
 
   return {
-    id: bot.id,
-    userId: bot.userId,
-    name: bot.name,
-    kind: bot.kind,
+    id: updatedBot.id,
+    userId: updatedBot.userId,
+    name: botUser.name,
+    kind: updatedBot.kind,
     webhookUrl,
-    ...(webhookUrl ? { webhookSecret: bot.webhookSecret } : {}),
+    ...(webhookUrl ? { webhookSecret: updatedBot.webhookSecret } : {}),
   };
 }
 

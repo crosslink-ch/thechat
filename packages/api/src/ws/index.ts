@@ -289,7 +289,20 @@ export const wsRoutes = new Elysia().ws("/ws", {
     }
 
     if (event.type === "auth") {
-      const user = await validateToken(event.token);
+      let user: Awaited<ReturnType<typeof validateToken>>;
+      try {
+        user = await validateToken(event.token);
+      } catch (error) {
+        websocketLog.error(
+          { err: error },
+          "WebSocket authentication store unavailable",
+        );
+        sendTo(socket, {
+          type: "auth_error",
+          message: "Authentication service temporarily unavailable",
+        });
+        return;
+      }
       if (!user) {
         sendTo(socket, {
           type: "auth_error",
@@ -323,7 +336,30 @@ export const wsRoutes = new Elysia().ws("/ws", {
     // Session rows are shared by all replicas, so revalidating before every
     // client-originated state/event mutation observes logout and expiry even
     // when the socket and logout request reached different API pods.
-    const currentUser = await validateToken(socketUser.token);
+    let currentUser: Awaited<ReturnType<typeof validateToken>>;
+    try {
+      currentUser = await validateToken(socketUser.token);
+    } catch (error) {
+      websocketLog.error(
+        { err: error, userId: socketUser.id },
+        "WebSocket authentication store unavailable during revalidation",
+      );
+      sendTo(
+        socket,
+        event.type === "send_message" && event.clientMessageId
+          ? {
+              type: "message_error",
+              conversationId: event.conversationId,
+              clientMessageId: event.clientMessageId,
+              message: "Authentication service temporarily unavailable",
+            }
+          : {
+              type: "auth_error",
+              message: "Authentication service temporarily unavailable",
+            },
+      );
+      return;
+    }
     if (!currentUser || currentUser.id !== socketUser.id) {
       sendTo(
         socket,

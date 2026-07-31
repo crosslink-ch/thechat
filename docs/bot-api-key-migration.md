@@ -56,6 +56,42 @@ and verifies `X-Webhook-Timestamp` plus `X-Webhook-Signature` on deliveries.
 Polling mode and Hermes calls back to TheChat continue to use the Better Auth
 bot credential as a Bearer token.
 
-Deploy the corresponding Hermes adapter update before or together with this
-migration if any bots use webhook delivery. Polling-only Hermes bots do not
-need that adapter update.
+Polling-only Hermes bots do not need the signed-webhook adapter update. For
+webhook bots, use this exact maintenance sequence:
+
+1. Quiesce bot traffic: stop the TheChat bot worker and stop existing Hermes
+   TheChat adapters. Scale old TheChat API pods down before the migration so no
+   process still queries `bots.api_key` after it is dropped.
+2. Stage the upgraded Hermes artifact first, but keep its TheChat adapter
+   stopped. The new receiver intentionally does not accept the old Bearer
+   webhook contract.
+3. Deploy PR #16's Better Auth/Infisical baseline and this change together. Let
+   the migration hook complete, then bring up the new TheChat API while the bot
+   worker remains stopped.
+4. Have each bot owner call `POST /bots/:botId/regenerate-key`. Put that one-time
+   raw `bot_...` result into the bot's Hermes configuration; never write it to
+   Helm values or logs.
+5. Start the upgraded Hermes adapter. Its authenticated `POST /bots/me/webhook`
+   registration stores the URL and returns the current `whsec_...` secret to
+   Hermes.
+6. Confirm Hermes registered successfully, then start the new TheChat bot worker
+   and resume bot traffic. Deliveries now use timestamped HMAC signatures and
+   are deduplicated by `invocationId` at the receiver.
+
+Do not run the signed TheChat sender against an old Hermes receiver, and do not
+start the new Hermes adapter against an old TheChat API. Neither side has a
+legacy fallback.
+
+## Rollback limitations
+
+Migration `0010_better_auth_bot_api_keys.sql` is destructive. Rolling only TheChat
+back after it runs is unsafe because old application code requires
+`bots.api_key`, and the dropped plaintext values cannot be reconstructed.
+Rolling only Hermes back is also unsafe because new TheChat no longer sends bot
+Bearer credentials on webhook requests.
+
+Prefer roll-forward. A true rollback requires stopping bot traffic again,
+rolling back both applications, restoring a pre-migration database backup
+(including the old plaintext keys), and then restarting the old pair. If that
+backup is unavailable, keep the new schema and recover by fixing forward and
+explicitly reissuing affected bot credentials.

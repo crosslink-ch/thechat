@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { db } from "../db";
 import { apikey } from "../db/schema";
 import {
@@ -33,7 +33,17 @@ export async function verifyBotApiKey(rawKey: string): Promise<string | null> {
     },
   });
 
-  return result.valid && result.key ? result.key.referenceId : null;
+  if (!result.valid || !result.key) {
+    if (result.error?.code === "INVALID_API_KEY") {
+      // Better Auth 1.6.20 maps both an unknown key and unexpected adapter
+      // failures to INVALID_API_KEY. Probe the same store before classifying
+      // that result as ordinary bad credentials so outages propagate as 503.
+      await db.execute(sql`select id from "apikey" limit 1`);
+    }
+    return null;
+  }
+
+  return result.key.referenceId;
 }
 
 export async function rotateBotApiKey(referenceId: string): Promise<string> {

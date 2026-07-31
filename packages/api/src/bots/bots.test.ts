@@ -28,6 +28,7 @@ import {
   closeBotRuntimeForTests,
   startBotWorker,
 } from "../services/bot-runtime";
+import { updateAuthenticatedBotWebhook } from "../services/bots";
 import {
   closeBotProgressStoreForTests,
   createLocalBotProgressStoreForTests,
@@ -1030,6 +1031,17 @@ describe("Bots: Update bot", () => {
       expect(botRes.status).toBe(200);
       await addBotToWorkspace(botRes.body.id, workspaceId, human.token);
 
+      const rotateSecretRes = await req(
+        "POST",
+        `/bots/${botRes.body.id}/regenerate-secret`,
+        {},
+        human.token,
+      );
+      expect(rotateSecretRes.status).toBe(200);
+      expect(rotateSecretRes.body.webhookSecret).not.toBe(
+        botRes.body.webhookSecret,
+      );
+
       const humanRegisterRes = await req(
         "POST",
         "/bots/me/webhook",
@@ -1046,6 +1058,9 @@ describe("Bots: Update bot", () => {
       );
       expect(registerRes.status).toBe(200);
       expect(registerRes.body.webhookUrl).toBe(webhook.url);
+      expect(registerRes.body.webhookSecret).toBe(
+        rotateSecretRes.body.webhookSecret,
+      );
 
       await startBotWorkerForTest();
       const sendRes = await req(
@@ -1064,6 +1079,7 @@ describe("Bots: Update bot", () => {
       const clearRes = await req("DELETE", "/bots/me/webhook", undefined, botRes.body.apiKey);
       expect(clearRes.status).toBe(200);
       expect(clearRes.body.webhookUrl).toBeNull();
+      expect(clearRes.body).not.toHaveProperty("webhookSecret");
 
       const detailRes = await req("GET", `/bots/${botRes.body.id}`, undefined, human.token);
       expect(detailRes.status).toBe(200);
@@ -1231,6 +1247,13 @@ describe("Bots: Delete bot", () => {
     const listRes = await req("GET", "/bots/list", undefined, human.token);
     const ids = listRes.body.map((b: any) => b.id);
     expect(ids).not.toContain(botRes.body.id);
+
+    await expect(
+      updateAuthenticatedBotWebhook(
+        botUserId,
+        "https://deleted.example.com/webhook",
+      ),
+    ).rejects.toMatchObject({ status: 404 });
 
     // Remove from cleanup list since we already deleted it
     const idx = createdBotUserIds.indexOf(botUserId);
