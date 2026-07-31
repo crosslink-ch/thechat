@@ -12,6 +12,7 @@ services:
       - "${OTEL_HTTP_PORT:-14318}:4318"
     volumes:
       - otel-lgtm-data:/data
+      - ./deployment/local/otelcol-config.yaml:/otel-lgtm/otelcol-config.yaml:ro
       - ./deployment/local/grafana/provisioning/dashboards/thechat.yml:/otel-lgtm/grafana/conf/provisioning/dashboards/thechat.yml:ro
       - ./deployment/local/grafana/dashboards:/otel-lgtm/thechat-dashboards:ro
 

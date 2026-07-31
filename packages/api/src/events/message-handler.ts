@@ -14,6 +14,7 @@ import {
   type DomainEventHandler,
 } from "./registry";
 import { logDomainEvent } from "./log";
+import { attachmentsByMessageIds } from "../attachments/public";
 
 export function createChatMessageSentHandler(): DomainEventHandler<ChatMessageSentV1> {
   return {
@@ -65,6 +66,7 @@ export function createChatMessageSentHandler(): DomainEventHandler<ChatMessageSe
         );
       }
 
+      const attachmentMap = await attachmentsByMessageIds([message.id]);
       await processMessageMentions({
         id: message.id,
         content: message.content,
@@ -73,6 +75,7 @@ export function createChatMessageSentHandler(): DomainEventHandler<ChatMessageSe
         senderId: message.senderId,
         senderName: message.senderName,
         createdAt: message.createdAt.toISOString(),
+        attachments: attachmentMap.get(message.id) ?? [],
         targetBotIds: event.payload.targetBotIds,
         automationDepth: event.payload.automationDepth,
         domainEventId: event.id,

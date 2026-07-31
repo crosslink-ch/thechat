@@ -28,7 +28,7 @@ spec:
       tolerations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      serviceAccountName: {{ include "thechat-api.fullname" . }}
+      serviceAccountName: {{ include "thechat-api.serviceAccountName" . }}
       containers:
         - name: api
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"

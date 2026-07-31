@@ -26,6 +26,7 @@ const TAURI_DRIVER_PORT = 4444;
 
 let tauriDriver;
 let tmpDataDir;
+let originalPath;
 
 async function stopTauriDriver() {
   if (!tauriDriver) return;
@@ -52,9 +53,45 @@ async function stopTauriDriver() {
 
 function removeTmpDataDir() {
   delete process.env.THECHAT_DATA_DIR;
+  if (originalPath !== undefined) {
+    process.env.PATH = originalPath;
+    originalPath = undefined;
+  }
   if (!tmpDataDir) return;
   fs.rmSync(tmpDataDir, { recursive: true, force: true });
   tmpDataDir = null;
+}
+
+function prepareNativeOpenerProbe() {
+  const marker = process.env.ATTACHMENT_E2E_OPENER_MARKER?.trim();
+  if (!marker || !tmpDataDir) return;
+  fs.mkdirSync(path.dirname(marker), { recursive: true });
+  fs.rmSync(marker, { force: true });
+  const binDir = path.join(tmpDataDir, "native-opener-bin");
+  fs.mkdirSync(binDir, { recursive: true });
+  const script = [
+    "#!/bin/sh",
+    "set -eu",
+    'marker="${ATTACHMENT_E2E_OPENER_MARKER:?}"',
+    'target=""',
+    'for argument in "$@"; do target="$argument"; done',
+    'test -n "$target"',
+    'printf "%s" "$target" > "$marker"',
+    "exit 0",
+    "",
+  ].join("\n");
+  for (const command of [
+    "xdg-open",
+    "gio",
+    "gnome-open",
+    "kde-open",
+    "kde-open5",
+  ]) {
+    const executable = path.join(binDir, command);
+    fs.writeFileSync(executable, script, { mode: 0o700 });
+  }
+  originalPath = process.env.PATH ?? "";
+  process.env.PATH = `${binDir}${path.delimiter}${originalPath}`;
 }
 
 export const config = {
@@ -91,8 +128,12 @@ export const config = {
   async beforeSession(_config, capabilities) {
     // Create isolated data directory so each run gets a fresh SQLite DB.
     // The Rust binary checks THECHAT_DATA_DIR before the default path.
-    tmpDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "thechat-e2e-"));
+    const scratchRoot =
+      process.env.THECHAT_E2E_RUNTIME_ROOT?.trim() || os.tmpdir();
+    fs.mkdirSync(scratchRoot, { recursive: true });
+    tmpDataDir = fs.mkdtempSync(path.join(scratchRoot, "thechat-e2e-"));
     process.env.THECHAT_DATA_DIR = tmpDataDir;
+    prepareNativeOpenerProbe();
 
     capabilities["tauri:options"] = {
       application: path.resolve(packageDir, "src-tauri/target/debug/thechat"),

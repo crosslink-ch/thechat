@@ -18,6 +18,7 @@ import type {
   BotInvocationProgressEventPublic,
   BotRuntimeSnapshot,
   ChatMessage,
+  ChatAttachment,
   ConversationThreadPublic,
   WebhookPayload,
   WsServerEvent,
@@ -48,6 +49,13 @@ import {
 import { createChatMessageSentV1 } from "../events/envelope";
 import { enqueueDomainEvent } from "../events/outbox";
 import { resolveMessageBotTargetIds } from "./message-bot-targets";
+import { attachmentsByMessageIds } from "../attachments/public";
+import { loadAttachmentConfig } from "../attachments/config";
+import {
+  assertIdempotentCommandMatches,
+  attachReadyAttachments,
+  findIdempotentMessage,
+} from "./messages";
 
 export const BOT_QUEUE_NAME = "thechat:bots";
 export const BOT_INVOKE_JOB_NAME = "bot.invoke";
@@ -67,6 +75,7 @@ interface TriggerMessage {
   senderId: string;
   senderName: string;
   createdAt: string;
+  attachments: ChatAttachment[];
   targetBotIds: string[];
   automationDepth: number;
   domainEventId: string;
@@ -80,6 +89,7 @@ interface TriggeredBot {
   webhookUrl: string | null;
   webhookSecret: string;
   botName: string;
+  attachmentAccess: boolean;
 }
 
 interface ConversationRow {
@@ -204,9 +214,6 @@ export async function processMessageMentions(msg: TriggerMessage) {
   await withSpan(
     "bot.invocation.detect",
     {
-      "messaging.conversation_id": msg.conversationId,
-      "messaging.message_id": msg.id,
-      "messaging.domain_event_id": msg.domainEventId,
       "thechat.automation_depth": msg.automationDepth,
     },
     async () => {
@@ -219,6 +226,7 @@ export async function processMessageMentions(msg: TriggerMessage) {
           kind: bots.kind,
           webhookUrl: bots.webhookUrl,
           webhookSecret: bots.webhookSecret,
+          attachmentAccess: bots.attachmentAccess,
           botName: users.name,
         })
         .from(bots)
@@ -262,7 +270,6 @@ export async function listConversationBotRuntime(conversationId: string, userId:
     "bot.runtime.list",
     {
       "messaging.system": "thechat",
-      "thechat.conversation_id": conversationId,
     },
     async (span) => {
       await requireConversationParticipant(conversationId, userId);
@@ -564,6 +571,7 @@ async function getOrCreateInvocation(
         messageId: message.id,
         threadId: message.threadId,
         messageContent: message.content,
+        attachments: bot.attachmentAccess ? message.attachments : [],
         domainEventId: message.domainEventId,
         correlationId: message.correlationId,
         automationDepth: message.automationDepth,
@@ -704,6 +712,9 @@ async function handleWebhookInvocation(invocationId: string) {
       threadId: loaded.triggerMessage.threadId,
       senderId: loaded.triggerMessage.senderId,
       senderName: loaded.triggerSender.name,
+      attachments: loaded.bot.attachmentAccess
+        ? await messageAttachmentsForBotDelivery(loaded.triggerMessage.id)
+        : [],
       createdAt: loaded.triggerMessage.createdAt.toISOString(),
     },
     conversation: {
@@ -749,6 +760,7 @@ export interface HermesPlatformEvent {
   threadId: string | null;
   sessionIntent?: Record<string, unknown>;
   text: string;
+  attachments: ChatAttachment[];
   messageId: string;
   instructions: string | null;
   sender: { id: string; name: string };
@@ -818,7 +830,6 @@ export async function claimHermesPlatformEvents(botId: string, limit = 10): Prom
     {
       "messaging.system": "thechat",
       "messaging.operation": "receive",
-      "thechat.bot_id": botId,
     },
     async (span) => {
       const cappedLimit = Math.max(1, Math.min(limit, 50));
@@ -867,6 +878,9 @@ async function prepareHermesPlatformEvent(
     .limit(1);
 
   const text = stripBotMention(loaded.triggerMessage.content, loaded.botName) || loaded.triggerMessage.content;
+  const attachmentMetadata = loaded.bot.attachmentAccess
+    ? await messageAttachmentsForBotDelivery(loaded.triggerMessage.id)
+    : [];
   const chatId = conversationChatId(loaded.conversation);
   const threadId = loaded.invocation.threadId ?? loaded.triggerMessage.threadId ?? null;
   const sessionIntent = loaded.thread?.branchPending
@@ -888,6 +902,7 @@ async function prepareHermesPlatformEvent(
     messageId: loaded.triggerMessage.id,
     messageContent: loaded.triggerMessage.content,
     text,
+    attachments: attachmentMetadata,
     triggeredAt: loaded.triggerMessage.createdAt.toISOString(),
   };
 
@@ -902,6 +917,7 @@ async function prepareHermesPlatformEvent(
       threadId,
       ...(sessionIntent ? { sessionIntent } : {}),
       text,
+      attachments: attachmentMetadata,
       messageId: loaded.triggerMessage.id,
       instructions: config?.defaultInstructions ?? null,
       sender: {
@@ -932,7 +948,6 @@ async function deliverHermesPlatformWebhookInvocation(
     {
       "messaging.system": "thechat",
       "messaging.destination.kind": "hermes_platform_webhook",
-      "thechat.bot_invocation_id": invocationId,
     },
     async (span) => {
       const initial = await loadInvocationContext(invocationId);
@@ -940,7 +955,6 @@ async function deliverHermesPlatformWebhookInvocation(
         span.setAttribute("thechat.hermes_platform.delivery_status", "skipped");
         return;
       }
-      span.setAttribute("thechat.bot_id", initial.bot.id);
       if (
         initial.invocation.status === "claimed" ||
         initial.invocation.status === "completed" ||
@@ -1149,6 +1163,7 @@ export async function publishHermesPlatformMessage(input: {
   authenticatedBotId: string;
   invocationId?: string | null;
   content: string;
+  attachmentIds?: string[];
   platformMessageId?: string | null;
   botId?: string;
   conversationId?: string;
@@ -1161,17 +1176,33 @@ export async function publishHermesPlatformMessage(input: {
     {
       "messaging.system": "thechat",
       "messaging.operation": "hermes_message",
-      "thechat.bot_invocation_id": input.invocationId ?? "",
-      "thechat.bot_id": input.botId ?? input.authenticatedBotId,
-      "thechat.conversation_id": input.conversationId ?? "",
       "thechat.hermes_platform.message.has_invocation": Boolean(input.invocationId),
       "thechat.hermes_platform.message.complete": Boolean(input.invocationId && input.complete === true),
     },
     async (span) => {
       const content = input.content.trim();
-      if (!content) throw new ServiceError("Message content is required", 400);
+      const attachmentIds = input.attachmentIds ?? [];
+      if (!content && attachmentIds.length === 0) {
+        throw new ServiceError(
+          "Message text or at least one attachment is required",
+          400,
+        );
+      }
+      const attachmentConfig = loadAttachmentConfig();
+      if (attachmentIds.length > attachmentConfig.maxPerMessage) {
+        throw new ServiceError("Too many attachments", 400);
+      }
+      if (new Set(attachmentIds).size !== attachmentIds.length) {
+        throw new ServiceError("attachmentIds must be unique", 400);
+      }
 
       const target = await resolveHermesPlatformMessageTarget(input);
+      if (attachmentIds.length > 0 && !target.bot.attachmentAccess) {
+        throw new ServiceError(
+          "Attachment access is not enabled for this bot",
+          403,
+        );
+      }
       const shouldComplete = Boolean(target.invocation && input.complete === true);
       const previousResponseJson = recordFromJson(target.invocation?.responseJson);
       const shouldFinalize = shouldComplete &&
@@ -1180,8 +1211,6 @@ export async function publishHermesPlatformMessage(input: {
       if (target.invocation) {
         span.setAttribute("thechat.bot_invocation.status.previous", target.invocation.status);
       }
-      span.setAttribute("thechat.conversation_id", target.conversation.id);
-      span.setAttribute("thechat.bot_id", target.bot.id);
       span.setAttribute(
         "thechat.hermes_platform.message.has_previous_response",
         Boolean(target.invocation?.responseMessageId),
@@ -1195,6 +1224,23 @@ export async function publishHermesPlatformMessage(input: {
         previousPlatformMessageId === input.platformMessageId &&
         hasHermesExecutionCompletion(previousResponseJson)
       ) {
+        const existing = await findIdempotentMessage(
+          db,
+          target.bot.userId,
+          input.platformMessageId,
+        );
+        if (
+          !existing ||
+          existing.id !== target.invocation.responseMessageId
+        ) {
+          throw new ServiceError("Idempotent Hermes response was not found", 409);
+        }
+        await assertIdempotentCommandMatches(db, existing, {
+          conversationId: target.conversation.id,
+          threadId: target.threadId,
+          content,
+          attachmentIds,
+        });
         span.setAttribute("thechat.hermes_platform.message.duplicate", true);
         await finishHermesProgress(target.invocation.id, "invocation.completed", {
           reason: "duplicate message completion",
@@ -1207,17 +1253,47 @@ export async function publishHermesPlatformMessage(input: {
       }
 
       const now = new Date();
-      const responseMessage = await db.transaction(async (tx) => {
+      const clientMessageId = input.platformMessageId ?? crypto.randomUUID();
+      const transactionResult = await db.transaction(async (tx) => {
         const [inserted] = await tx
           .insert(messages)
           .values({
             conversationId: target.conversation.id,
             threadId: target.threadId,
             senderId: target.bot.userId,
+            clientMessageId,
             content,
-            parts: [{ type: "text", text: content }],
+            parts: content ? [{ type: "text", text: content }] : null,
+          })
+          .onConflictDoNothing({
+            target: [messages.senderId, messages.clientMessageId],
           })
           .returning();
+
+        if (!inserted) {
+          const existing = await findIdempotentMessage(
+            tx,
+            target.bot.userId,
+            clientMessageId,
+          );
+          if (!existing) {
+            throw new Error("Failed to resolve idempotent Hermes message");
+          }
+          await assertIdempotentCommandMatches(tx, existing, {
+            conversationId: target.conversation.id,
+            threadId: target.threadId,
+            content,
+            attachmentIds,
+          });
+          return { message: existing, duplicate: true };
+        }
+
+        await attachReadyAttachments(tx, {
+          messageId: inserted.id,
+          attachmentIds,
+          conversationId: target.conversation.id,
+          uploaderId: target.bot.userId,
+        });
 
         if (target.invocation) {
           await tx
@@ -1285,10 +1361,19 @@ export async function publishHermesPlatformMessage(input: {
         await enqueueDomainEvent(tx, event, {
           partitionKey: inserted.conversationId,
         });
-        return inserted;
+        return { message: inserted, duplicate: false };
       });
 
-      span.setAttribute("thechat.message_id", responseMessage.id);
+      const responseMessage = transactionResult.message;
+      if (transactionResult.duplicate) {
+        span.setAttribute("thechat.hermes_platform.message.duplicate", true);
+        return {
+          messageId: responseMessage.id,
+          threadId: responseMessage.threadId,
+          duplicate: true,
+        };
+      }
+
       if (target.invocation) {
         span.setAttribute(
           "thechat.bot_invocation.status.next",
@@ -1317,7 +1402,6 @@ export async function completeHermesPlatformInvocationSilently(input: {
     {
       "messaging.system": "thechat",
       "messaging.operation": "hermes_complete",
-      "thechat.bot_invocation_id": input.invocationId,
     },
     async (span) => {
       const loaded = await loadInvocationContext(input.invocationId);
@@ -1625,7 +1709,6 @@ export async function publishHermesPlatformProgress(
     {
       "messaging.system": "thechat",
       "messaging.operation": "hermes_progress",
-      "thechat.bot_invocation_id": input.invocationId,
       "thechat.hermes_progress.type": input.type,
       "thechat.hermes_progress.tool": input.toolName ?? "",
     },
@@ -1971,9 +2054,16 @@ async function publishBotMessage(
   senderName: string,
   conversationType: ConversationType,
 ) {
+  const attachmentMetadata = await messageAttachmentsForBotDelivery(message.id);
   const participants = await db
-    .select({ userId: conversationParticipants.userId })
+    .select({
+      userId: conversationParticipants.userId,
+      userType: users.type,
+      attachmentAccess: bots.attachmentAccess,
+    })
     .from(conversationParticipants)
+    .innerJoin(users, eq(users.id, conversationParticipants.userId))
+    .leftJoin(bots, eq(bots.userId, users.id))
     .where(eq(conversationParticipants.conversationId, message.conversationId));
   const event: WsServerEvent = {
     type: "new_message",
@@ -1986,11 +2076,41 @@ async function publishBotMessage(
       senderType: "bot",
       content: message.content,
       parts: message.parts ?? null,
+      attachments: attachmentMetadata,
       createdAt: message.createdAt.toISOString(),
     } as ChatMessage,
     conversationType,
   };
-  await publishWsEventToUsers(participants.map((p) => p.userId), event);
+  const scopedRecipients = participants
+    .filter(
+      (participant) =>
+        participant.userType !== "bot" ||
+        participant.attachmentAccess === true,
+    )
+    .map((participant) => participant.userId);
+  const restrictedRecipients = participants
+    .filter(
+      (participant) =>
+        participant.userType === "bot" &&
+        participant.attachmentAccess !== true,
+    )
+    .map((participant) => participant.userId);
+  await Promise.all([
+    scopedRecipients.length > 0
+      ? publishWsEventToUsers(scopedRecipients, event)
+      : Promise.resolve(),
+    restrictedRecipients.length > 0
+      ? publishWsEventToUsers(restrictedRecipients, {
+          ...event,
+          message: { ...event.message, attachments: [] },
+        })
+      : Promise.resolve(),
+  ]);
+}
+
+async function messageAttachmentsForBotDelivery(messageId: string) {
+  const attachmentMap = await attachmentsByMessageIds([messageId]);
+  return attachmentMap.get(messageId) ?? [];
 }
 
 async function requireConversationParticipant(conversationId: string, userId: string) {

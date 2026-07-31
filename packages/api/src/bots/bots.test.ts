@@ -301,6 +301,7 @@ describe("Bots: Create", () => {
     expect(res.body.webhookSecret).toStartWith("whsec_");
     expect(res.body.id).toBeDefined();
     expect(res.body.userId).toBeDefined();
+    expect(res.body.attachmentAccess).toBe(true);
   });
 
   test("only humans can create bots — bot tries to create bot → 403", async () => {

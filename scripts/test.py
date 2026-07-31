@@ -211,6 +211,17 @@ SUITES = [
         "explicit_only": True,
         "timeout": 600,
     },
+    {
+        "name": "attachments-ui",
+        "cmd": ["python3", "scripts/e2e/attachments-ui-flow.py"],
+        "env": {"ATTACHMENT_E2E_REQUIRE_EVIDENCE": "1"},
+        # Real compiled Tauri UI plus disposable local Postgres, Redis, and
+        # LocalStack S3. Keep it explicit because it downloads service images
+        # and performs a full native build.
+        "opt_in": True,
+        "explicit_only": True,
+        "timeout": 1500,
+    },
 ]
 
 

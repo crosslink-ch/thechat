@@ -9,8 +9,15 @@ import {
 } from "@tanstack/react-query";
 import type { AuthUser, ChatMessage } from "@thechat/shared";
 import { api } from "../lib/api";
-import { authHeaders, edenErrorMessage } from "../lib/eden";
+import { authHeaders, edenErrorMessage, edenErrorStatus } from "../lib/eden";
 import { wsEvents, type WsEvents } from "../lib/ws-events";
+import {
+  recordSanitizedException,
+  SpanKind,
+  SpanStatusCode,
+  traceHeaders,
+  withDesktopSpan,
+} from "../lib/telemetry";
 
 const MESSAGE_CACHE_TTL_MS = 60_000;
 export const MESSAGE_PAGE_SIZE = 20;
@@ -27,6 +34,7 @@ interface UseChannelChatOptions {
     content: string,
     threadId?: string | null,
     clientMessageId?: string,
+    attachmentIds?: string[],
   ) => void;
   selfUser?: AuthUser | null;
 }
@@ -35,7 +43,12 @@ export const messagesQueryKey = (
   conversationId: string,
   threadId?: string | null,
   unthreadedOnly = false,
-) => ["messages", conversationId, unthreadedOnly ? "general" : threadId ?? "all"] as const;
+) =>
+  [
+    "messages",
+    conversationId,
+    unthreadedOnly ? "general" : (threadId ?? "all"),
+  ] as const;
 
 interface MessagePage {
   messages: ChatMessage[];
@@ -48,6 +61,11 @@ interface LocalSentMessage {
   clientMessageId: string;
   message: ChatMessage;
   confirmed: boolean;
+}
+
+interface SendCommand {
+  clientMessageId: string;
+  signature: string;
 }
 
 async function fetchMessages(
@@ -108,8 +126,12 @@ export function useChannelChat({
   selfUser = null,
 }: UseChannelChatOptions) {
   const queryClient = useQueryClient();
-  const [localSentMessages, setLocalSentMessages] = useState<LocalSentMessage[]>([]);
+  const [localSentMessages, setLocalSentMessages] = useState<
+    LocalSentMessage[]
+  >([]);
   const [sendError, setSendError] = useState<string | null>(null);
+  const failedSendRef = useRef<SendCommand | null>(null);
+  const pendingSendsRef = useRef(new Map<string, SendCommand>());
   const query = useInfiniteQuery<
     MessagePage,
     Error,
@@ -161,6 +183,9 @@ export function useChannelChat({
   const addMessage = useCallback(
     (msg: ChatMessage, clientMessageId?: string) => {
       if (msg.conversationId !== conversationId) return;
+      if (clientMessageId) {
+        pendingSendsRef.current.delete(clientMessageId);
+      }
       setLocalSentMessages((previous) =>
         clientMessageId
           ? confirmLocalSentMessage(previous, clientMessageId, msg)
@@ -172,15 +197,24 @@ export function useChannelChat({
         cacheUnthreadedOnly: boolean,
         createIfMissing: boolean,
       ) => {
-        const key = messagesQueryKey(conversationId, cacheThreadId, cacheUnthreadedOnly);
-        if (!createIfMissing && queryClient.getQueryData(key) === undefined) return;
+        const key = messagesQueryKey(
+          conversationId,
+          cacheThreadId,
+          cacheUnthreadedOnly,
+        );
+        if (!createIfMissing && queryClient.getQueryData(key) === undefined)
+          return;
         queryClient.setQueryData<MessageWindow>(key, (prev) =>
           appendMessageToWindow(prev, msg),
         );
       };
 
       if (msg.threadId) {
-        updateCache(msg.threadId, false, !unthreadedOnly && msg.threadId === threadId);
+        updateCache(
+          msg.threadId,
+          false,
+          !unthreadedOnly && msg.threadId === threadId,
+        );
         updateCache(null, false, !unthreadedOnly && threadId === null);
       } else {
         updateCache(null, true, unthreadedOnly && threadId === null);
@@ -191,13 +225,18 @@ export function useChannelChat({
   );
 
   const addOptimisticSentMessage = useCallback(
-    (content: string, targetThreadId: string | null = threadId ?? null) => {
+    (
+      content: string,
+      targetThreadId: string | null = threadId ?? null,
+      clientMessageId: string = newClientMessageId(),
+    ) => {
       if (!conversationId) return null;
       const localMessage = createLocalSentMessage(
         conversationId,
         targetThreadId,
         content,
         selfUser,
+        clientMessageId,
       );
       if (!localMessage) return null;
       setSendError(null);
@@ -209,18 +248,147 @@ export function useChannelChat({
     [conversationId, selfUser, threadId],
   );
 
-  const sendMessage = useCallback(
-    (content: string) => {
+  const sendMessageToThread = useCallback(
+    (
+      content: string,
+      targetThreadId: string | null,
+      attachmentIds: string[] = [],
+    ) => {
       if (!conversationId) return null;
-      const clientMessageId = addOptimisticSentMessage(content, threadId ?? null);
-      if (clientMessageId) {
-        wsSendMessage(conversationId, content, threadId ?? null, clientMessageId);
-      } else {
-        wsSendMessage(conversationId, content, threadId ?? null);
+      const signature = JSON.stringify([
+        conversationId,
+        targetThreadId,
+        content,
+        attachmentIds,
+      ]);
+      const failedCommand = failedSendRef.current;
+      if (failedCommand && failedCommand.signature !== signature) {
+        failedSendRef.current = null;
       }
-      return clientMessageId;
+      const preferredClientMessageId =
+        failedCommand?.signature === signature
+          ? failedCommand.clientMessageId
+          : newClientMessageId();
+      const clientMessageId =
+        addOptimisticSentMessage(
+          content,
+          targetThreadId,
+          preferredClientMessageId,
+        ) ?? preferredClientMessageId;
+      const command = { clientMessageId, signature };
+      pendingSendsRef.current.set(clientMessageId, command);
+      const markFailed = (message: string) => {
+        pendingSendsRef.current.delete(clientMessageId);
+        failedSendRef.current = command;
+        setLocalSentMessages((previous) =>
+          previous.filter((local) => local.clientMessageId !== clientMessageId),
+        );
+        setSendError(message);
+        return false;
+      };
+      const markSucceeded = () => {
+        pendingSendsRef.current.delete(clientMessageId);
+        if (failedSendRef.current?.clientMessageId === clientMessageId) {
+          failedSendRef.current = null;
+        }
+      };
+      setSendError(null);
+      const endpoint = api.messages({ conversationId }) as unknown as {
+        post?: (
+          body: {
+            clientMessageId: string;
+            content: string;
+            threadId: string | null;
+            attachmentIds: string[];
+          },
+          options: ReturnType<typeof authHeaders>,
+        ) => Promise<{ data?: ChatMessage | null; error?: unknown }>;
+      };
+
+      // Compatibility fallback for older API clients and the existing WS
+      // protocol. Current Eden clients always expose the canonical REST post.
+      if (typeof endpoint.post !== "function" || !token) {
+        if (attachmentIds.length > 0) {
+          wsSendMessage(
+            conversationId,
+            content,
+            targetThreadId,
+            clientMessageId,
+            attachmentIds,
+          );
+        } else {
+          wsSendMessage(
+            conversationId,
+            content,
+            targetThreadId,
+            clientMessageId,
+          );
+        }
+        return clientMessageId;
+      }
+      return withDesktopSpan(
+        "message.send.request",
+        {
+          "http.request.method": "POST",
+          "http.route": "/messages/:conversationId",
+          "thechat.message.attachment_count": attachmentIds.length,
+        },
+        async (span, requestContext) => {
+          let response: Awaited<ReturnType<NonNullable<typeof endpoint.post>>>;
+          try {
+            response = await endpoint.post!(
+              {
+                clientMessageId,
+                content,
+                threadId: targetThreadId,
+                attachmentIds,
+              },
+              authHeaders(token, traceHeaders(requestContext)),
+            );
+          } catch (error) {
+            span.setAttribute("thechat.message.outcome", "failed");
+            span.setStatus({ code: SpanStatusCode.ERROR });
+            throw error;
+          }
+          const { data, error } = response;
+          if (error || !data) {
+            span.setAttribute("thechat.message.outcome", "failed");
+            recordSanitizedException(span, error);
+            const status = edenErrorStatus(error);
+            if (status) {
+              span.setAttribute("http.response.status_code", status);
+            }
+            span.setStatus({ code: SpanStatusCode.ERROR });
+            return markFailed(
+              edenErrorMessage(error, "Failed to send message"),
+            );
+          }
+          span.setAttribute("http.response.status_code", 200);
+          span.setAttribute("thechat.message.outcome", "sent");
+          markSucceeded();
+          addMessage(data, clientMessageId);
+          return true;
+        },
+        { kind: SpanKind.CLIENT },
+      ).catch((error) =>
+        markFailed(
+          error instanceof Error ? error.message : "Failed to send message",
+        ),
+      );
     },
-    [addOptimisticSentMessage, conversationId, threadId, wsSendMessage],
+    [
+      addMessage,
+      addOptimisticSentMessage,
+      conversationId,
+      token,
+      wsSendMessage,
+    ],
+  );
+
+  const sendMessage = useCallback(
+    (content: string, attachmentIds: string[] = []) =>
+      sendMessageToThread(content, threadId ?? null, attachmentIds),
+    [sendMessageToThread, threadId],
   );
 
   const refetchMessages = useCallback(() => {
@@ -229,7 +397,12 @@ export function useChannelChat({
   }, [conversationId, query.refetch, token]);
 
   const loadOlderMessages = useCallback(async () => {
-    if (!conversationId || !token || !query.hasNextPage || query.isFetchingNextPage) {
+    if (
+      !conversationId ||
+      !token ||
+      !query.hasNextPage ||
+      query.isFetchingNextPage
+    ) {
       return false;
     }
     const result = await query.fetchNextPage();
@@ -245,12 +418,22 @@ export function useChannelChat({
   ]);
 
   useEffect(() => {
+    failedSendRef.current = null;
+    pendingSendsRef.current.clear();
+  }, [conversationId]);
+
+  useEffect(() => {
     const onMessageError = ({
       conversationId: failedConversationId,
       clientMessageId,
       message,
     }: WsEvents["ws:message_error"]) => {
       if (failedConversationId !== conversationId) return;
+      const command = pendingSendsRef.current.get(clientMessageId);
+      if (command) {
+        failedSendRef.current = command;
+      }
+      pendingSendsRef.current.delete(clientMessageId);
       setLocalSentMessages((previous) =>
         previous.filter((local) => local.clientMessageId !== clientMessageId),
       );
@@ -325,6 +508,7 @@ export function useChannelChat({
     addMessage,
     addOptimisticSentMessage,
     sendMessage,
+    sendMessageToThread,
     sendError,
     refetchMessages,
     loadOlderMessages,
@@ -336,9 +520,9 @@ function createLocalSentMessage(
   threadId: string | null,
   content: string,
   selfUser: AuthUser | null,
+  clientMessageId: string = newClientMessageId(),
 ): LocalSentMessage | null {
   if (!selfUser) return null;
-  const clientMessageId = newClientMessageId();
   return {
     clientMessageId,
     confirmed: false,
@@ -351,6 +535,7 @@ function createLocalSentMessage(
       senderType: selfUser.type,
       content,
       parts: null,
+      attachments: [],
       createdAt: new Date().toISOString(),
     },
   };
@@ -424,7 +609,8 @@ function appendVisibleLocalMessages(
   let next = messages;
   for (const local of localMessages) {
     if (local.message.conversationId !== conversationId) continue;
-    if (!messageBelongsToScope(local.message, threadId, unthreadedOnly)) continue;
+    if (!messageBelongsToScope(local.message, threadId, unthreadedOnly))
+      continue;
     next = appendMessage(next, local.message);
   }
   return next;
@@ -463,7 +649,10 @@ function appendMessageToWindow(
   }
   pages[0].messages = appendMessage(pages[0].messages, msg);
   const nextWindow = { ...window, pages };
-  return trimWindowToRecentMessages(nextWindow, MESSAGE_WINDOW_TRIM_THRESHOLD) ?? nextWindow;
+  return (
+    trimWindowToRecentMessages(nextWindow, MESSAGE_WINDOW_TRIM_THRESHOLD) ??
+    nextWindow
+  );
 }
 
 function newClientMessageId() {
@@ -473,7 +662,10 @@ function newClientMessageId() {
   );
 }
 
-function trimCachedWindowToInitialPage(queryClient: QueryClient, key: QueryKey) {
+function trimCachedWindowToInitialPage(
+  queryClient: QueryClient,
+  key: QueryKey,
+) {
   const window = queryClient.getQueryData<MessageWindow>(key);
   if (!window) return;
   const messages = flattenMessageWindow(window);
@@ -501,7 +693,9 @@ function trimWindowToRecentMessages(
   };
 }
 
-function flattenMessageWindow(window: MessageWindow | undefined): ChatMessage[] {
+function flattenMessageWindow(
+  window: MessageWindow | undefined,
+): ChatMessage[] {
   if (!window) return [];
   const seen = new Set<string>();
   const messages: ChatMessage[] = [];
@@ -547,6 +741,8 @@ function oldestMessageCursor(messages: ChatMessage[]) {
 
 function buildPageParams(pages: MessagePage[]) {
   return pages.map((_, index) =>
-    index === 0 ? null : oldestMessageCursor(pages[index - 1].messages) ?? null,
+    index === 0
+      ? null
+      : (oldestMessageCursor(pages[index - 1].messages) ?? null),
   );
 }

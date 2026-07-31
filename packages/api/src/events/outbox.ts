@@ -1,14 +1,18 @@
 import { and, eq, sql } from "drizzle-orm";
+import { SpanKind } from "@opentelemetry/api";
 import { db } from "../db";
 import { eventOutbox } from "../db/schema";
 import type { DomainEventEnvelope } from "./envelope";
-import { withSpan } from "../observability";
+import { activeTraceContext, withSpan } from "../observability";
 import { retryDelayMs } from "./retry";
 
 export interface ClaimedOutboxEvent {
   [key: string]: unknown;
   id: string;
   event: unknown;
+  eventType: string;
+  aggregateType: string;
+  aggregateId: string;
   partitionKey: string;
   attempts: number;
   lockedBy: string;
@@ -27,26 +31,46 @@ export type ReleaseOutboxOutcome =
 
 type OutboxInsertExecutor = Pick<typeof db, "insert">;
 
+export const OUTBOX_SLOW_CLAIM_MS = 100;
+
 export async function enqueueDomainEvent(
   executor: OutboxInsertExecutor,
   event: DomainEventEnvelope,
   options: { partitionKey: string; availableAt?: Date },
 ) {
-  await executor.insert(eventOutbox).values({
-    id: event.id,
-    eventType: event.type,
-    eventVersion: event.version,
-    aggregateType: event.aggregate.type,
-    aggregateId: event.aggregate.id,
-    actorType: event.actor?.type,
-    actorId: event.actor?.id,
-    tenantId: event.tenant?.workspaceId,
-    correlationId: event.correlationId,
-    causationId: event.causationId,
-    partitionKey: options.partitionKey,
-    event,
-    availableAt: options.availableAt,
-  });
+  return withSpan(
+    "domain_event.outbox.enqueue",
+    {
+      "messaging.system": "postgresql-outbox",
+      "messaging.operation": "publish",
+      "messaging.message.type": event.type,
+      "thechat.aggregate.type": event.aggregate.type,
+      "thechat.outbox.delayed": Boolean(options.availableAt),
+    },
+    async (span) => {
+      const traceContext = activeTraceContext();
+      const persistedEvent = traceContext ? { ...event, traceContext } : event;
+      await executor.insert(eventOutbox).values({
+        id: persistedEvent.id,
+        eventType: persistedEvent.type,
+        eventVersion: persistedEvent.version,
+        aggregateType: persistedEvent.aggregate.type,
+        aggregateId: persistedEvent.aggregate.id,
+        actorType: persistedEvent.actor?.type,
+        actorId: persistedEvent.actor?.id,
+        tenantId: persistedEvent.tenant?.workspaceId,
+        correlationId: persistedEvent.correlationId,
+        causationId: persistedEvent.causationId,
+        partitionKey: options.partitionKey,
+        event: persistedEvent,
+        availableAt: options.availableAt,
+      });
+      // The insert is still inside the caller's transaction here. Do not
+      // claim durability until the enclosing business span observes commit.
+      span.setAttribute("thechat.outbox.outcome", "staged");
+    },
+    { kind: SpanKind.PRODUCER },
+  );
 }
 
 /**
@@ -67,61 +91,129 @@ export async function claimOutboxEvents(options: {
   ).toISOString();
   const batchSize = Math.max(1, Math.min(options.batchSize, 500));
 
-  return withSpan(
-    "domain_event.outbox.claim",
-    {
-      "messaging.system": "thechat-domain-events",
-      "messaging.operation": "receive",
-      "thechat.outbox.worker_id": options.workerId,
-      "thechat.outbox.batch_size": batchSize,
-    },
-    async (span) => {
-      const rows = await db.transaction(async (tx) => {
+  const startedAt = new Date();
+  return traceOutboxClaimOperation(
+    () =>
+      db.transaction(async (tx) => {
         const claimed = await tx.execute<ClaimedOutboxEvent>(sql`
-          WITH candidates AS (
-            SELECT pending.id
-            FROM event_outbox AS pending
-            WHERE pending.published_at IS NULL
-              AND pending.dead_at IS NULL
-              AND pending.available_at <= ${nowIso}
-              AND (pending.locked_at IS NULL OR pending.locked_at < ${staleBeforeIso})
-              AND NOT EXISTS (
-                SELECT 1
-                FROM event_outbox AS earlier
-                WHERE earlier.partition_key = pending.partition_key
-                  AND earlier.published_at IS NULL
-                  AND earlier.dead_at IS NULL
-                  AND (
-                    earlier.created_at < pending.created_at
-                    OR (
-                      earlier.created_at = pending.created_at
-                      AND earlier.id < pending.id
-                    )
-                  )
+      WITH candidates AS (
+        SELECT pending.id
+        FROM event_outbox AS pending
+        WHERE pending.published_at IS NULL
+          AND pending.dead_at IS NULL
+          AND pending.available_at <= ${nowIso}
+          AND (pending.locked_at IS NULL OR pending.locked_at < ${staleBeforeIso})
+          AND NOT EXISTS (
+            SELECT 1
+            FROM event_outbox AS earlier
+            WHERE earlier.partition_key = pending.partition_key
+              AND earlier.published_at IS NULL
+              AND earlier.dead_at IS NULL
+              AND (
+                earlier.created_at < pending.created_at
+                OR (
+                  earlier.created_at = pending.created_at
+                  AND earlier.id < pending.id
+                )
               )
-            ORDER BY pending.created_at, pending.id
-            FOR UPDATE OF pending SKIP LOCKED
-            LIMIT ${batchSize}
           )
-          UPDATE event_outbox AS outbox
-          SET locked_by = ${options.workerId}, locked_at = ${nowIso}
-          FROM candidates
-          WHERE outbox.id = candidates.id
-          RETURNING
-            outbox.id,
-            outbox.event,
-            outbox.partition_key AS "partitionKey",
-            outbox.attempts,
-            outbox.locked_by AS "lockedBy",
-            outbox.locked_at AS "lockedAt",
-            outbox.created_at AS "createdAt"
-        `);
+        ORDER BY pending.created_at, pending.id
+        FOR UPDATE OF pending SKIP LOCKED
+        LIMIT ${batchSize}
+      )
+      UPDATE event_outbox AS outbox
+      SET locked_by = ${options.workerId}, locked_at = ${nowIso}
+      FROM candidates
+      WHERE outbox.id = candidates.id
+      RETURNING
+        outbox.id,
+        outbox.event,
+        outbox.event_type AS "eventType",
+        outbox.aggregate_type AS "aggregateType",
+        outbox.aggregate_id AS "aggregateId",
+        outbox.partition_key AS "partitionKey",
+        outbox.attempts,
+        outbox.locked_by AS "lockedBy",
+        outbox.locked_at AS "lockedAt",
+        outbox.created_at AS "createdAt"
+    `);
         return Array.from(claimed);
-      });
-      span.setAttribute("thechat.outbox.claimed_count", rows.length);
-      return rows;
+      }),
+    {
+      workerId: options.workerId,
+      batchSize,
+      startedAt,
     },
   );
+}
+
+export async function traceOutboxClaimOperation(
+  operation: () => Promise<ClaimedOutboxEvent[]>,
+  options: {
+    workerId: string;
+    batchSize: number;
+    startedAt?: Date;
+    slowThresholdMs?: number;
+  },
+): Promise<ClaimedOutboxEvent[]> {
+  const startedAt = options.startedAt ?? new Date();
+  const slowThresholdMs = options.slowThresholdMs ?? OUTBOX_SLOW_CLAIM_MS;
+  try {
+    const rows = await operation();
+    const durationMs = elapsedMs(startedAt);
+    if (rows.length === 0 && durationMs < slowThresholdMs) return rows;
+
+    return traceOutboxClaimResult(rows, options, startedAt, durationMs);
+  } catch (error) {
+    const durationMs = elapsedMs(startedAt);
+    return withSpan(
+      "domain_event.outbox.claim",
+      claimSpanAttributes(options, 0, durationMs, "error"),
+      async () => {
+        throw error;
+      },
+      { kind: SpanKind.CLIENT, startTime: startedAt },
+    );
+  }
+}
+
+function traceOutboxClaimResult(
+  rows: ClaimedOutboxEvent[],
+  options: { workerId: string; batchSize: number },
+  startedAt: Date,
+  durationMs: number,
+): Promise<ClaimedOutboxEvent[]> {
+  return withSpan(
+    "domain_event.outbox.claim",
+    claimSpanAttributes(
+      options,
+      rows.length,
+      durationMs,
+      rows.length > 0 ? "claimed" : "slow_empty",
+    ),
+    () => rows,
+    { kind: SpanKind.CLIENT, startTime: startedAt },
+  );
+}
+
+function claimSpanAttributes(
+  options: { workerId: string; batchSize: number },
+  claimedCount: number,
+  durationMs: number,
+  outcome: "claimed" | "slow_empty" | "error",
+) {
+  return {
+    "messaging.system": "postgresql-outbox",
+    "messaging.operation": "receive",
+    "thechat.outbox.batch_size": options.batchSize,
+    "thechat.outbox.claimed_count": claimedCount,
+    "thechat.outbox.claim_duration_ms": durationMs,
+    "thechat.outbox.outcome": outcome,
+  };
+}
+
+function elapsedMs(startedAt: Date) {
+  return Math.max(0, Date.now() - startedAt.getTime());
 }
 
 export async function markOutboxEventPublished(
@@ -137,9 +229,7 @@ export async function markOutboxEventPublished(
       lockedAt: null,
       lastError: null,
     })
-    .where(
-      and(eq(eventOutbox.id, id), eq(eventOutbox.lockedBy, workerId)),
-    )
+    .where(and(eq(eventOutbox.id, id), eq(eventOutbox.lockedBy, workerId)))
     .returning({ publishedAt: eventOutbox.publishedAt });
 
   return updated?.publishedAt

@@ -260,20 +260,39 @@ export function registerTools(server: McpServer) {
   server.registerTool(
     "send_message",
     {
-      description: "Send a message to a conversation.",
+      description:
+        "Send a message to a conversation with optional ready attachment IDs.",
       inputSchema: {
         conversationId: z.string().uuid().describe("The conversation ID"),
-        content: z.string().min(1).describe("Message content"),
+        clientMessageId: z
+          .string()
+          .min(1)
+          .max(255)
+          .optional()
+          .describe("Stable sender-scoped idempotency key"),
+        content: z.string().optional().describe("Message content"),
+        attachmentIds: z
+          .array(z.string().uuid())
+          .max(25)
+          .optional()
+          .describe("Ready attachment IDs in display order"),
       },
     },
-    async ({ conversationId, content }, extra) => {
+    async (
+      { conversationId, clientMessageId, content, attachmentIds },
+      extra,
+    ) => {
       const user = getUser(extra);
       return withService(() =>
         sendMessage(
           conversationId as string,
           user.id,
           user.name,
-          (content as string).trim()
+          ((content as string | undefined) ?? "").trim(),
+          {
+            clientMessageId: clientMessageId as string | undefined,
+            attachmentIds: attachmentIds as string[] | undefined,
+          },
         )
       );
     }

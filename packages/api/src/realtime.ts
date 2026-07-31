@@ -1,29 +1,38 @@
 import Redis from "ioredis";
-import type { WsServerEvent } from "@thechat/shared";
-import { withSpan } from "./observability";
+import { SpanKind } from "@opentelemetry/api";
+import type { TraceContextCarrier, WsServerEvent } from "@thechat/shared";
+import {
+  activeTraceContext,
+  contextFromTraceContext,
+  withSpan,
+} from "./observability";
 import { log } from "./logging";
 
 const realtimeLog = log.child({ component: "realtime" });
 
-export type RealtimeEvent =
-  | {
-      id: string;
-      type: "ws.event";
-      targetUserIds: string[];
-      event: WsServerEvent;
-      occurredAt: string;
-    };
+export type RealtimeEvent = {
+  id: string;
+  type: "ws.event";
+  targetUserIds: string[];
+  event: WsServerEvent;
+  occurredAt: string;
+  traceContext?: TraceContextCarrier;
+};
 
 export interface RealtimeBus {
   publish(event: RealtimeEvent): Promise<void>;
-  subscribe(handler: (event: RealtimeEvent) => void | Promise<void>): Promise<() => Promise<void>>;
+  subscribe(
+    handler: (event: RealtimeEvent) => void | Promise<void>,
+  ): Promise<() => Promise<void>>;
   close?(): Promise<void>;
 }
 
 type RealtimeDriver = "auto" | "local" | "redis";
 
 export class LocalRealtimeBus implements RealtimeBus {
-  private readonly handlers = new Set<(event: RealtimeEvent) => void | Promise<void>>();
+  private readonly handlers = new Set<
+    (event: RealtimeEvent) => void | Promise<void>
+  >();
 
   async publish(event: RealtimeEvent): Promise<void> {
     await withSpan(
@@ -34,12 +43,28 @@ export class LocalRealtimeBus implements RealtimeBus {
         "realtime.target_users": event.targetUserIds.length,
       },
       async () => {
-        await Promise.all([...this.handlers].map((handler) => handler(event)));
+        const propagated = withActiveRealtimeTrace(event);
+        await Promise.all(
+          [...this.handlers].map((handler) =>
+            withSpan(
+              "realtime.receive",
+              realtimeAttributes("local", propagated),
+              () => handler(propagated),
+              {
+                kind: SpanKind.CONSUMER,
+                parentContext: contextFromTraceContext(propagated.traceContext),
+              },
+            ),
+          ),
+        );
       },
+      { kind: SpanKind.PRODUCER },
     );
   }
 
-  async subscribe(handler: (event: RealtimeEvent) => void | Promise<void>): Promise<() => Promise<void>> {
+  async subscribe(
+    handler: (event: RealtimeEvent) => void | Promise<void>,
+  ): Promise<() => Promise<void>> {
     this.handlers.add(handler);
     return async () => {
       this.handlers.delete(handler);
@@ -56,16 +81,26 @@ export interface RedisRealtimeBusOptions {
 export class RedisRealtimeBus implements RealtimeBus {
   private readonly publisher: Redis;
   private readonly subscriber: Redis;
-  private readonly handlers = new Set<(event: RealtimeEvent) => void | Promise<void>>();
+  private readonly handlers = new Set<
+    (event: RealtimeEvent) => void | Promise<void>
+  >();
   private readonly channel: string;
   private subscribePromise: Promise<void> | null = null;
 
   constructor(options: RedisRealtimeBusOptions = {}) {
-    const redisUrl = options.redisUrl ?? process.env.REDIS_URL ?? "redis://localhost:16380";
-    const keyPrefix = options.redisKeyPrefix ?? process.env.REDIS_KEY_PREFIX ?? "thechat";
+    const redisUrl =
+      options.redisUrl ?? process.env.REDIS_URL ?? "redis://localhost:16380";
+    const keyPrefix =
+      options.redisKeyPrefix ?? process.env.REDIS_KEY_PREFIX ?? "thechat";
     this.channel = options.channel ?? `${keyPrefix}:realtime`;
-    this.publisher = new Redis(redisUrl, { lazyConnect: true, maxRetriesPerRequest: null });
-    this.subscriber = new Redis(redisUrl, { lazyConnect: true, maxRetriesPerRequest: null });
+    this.publisher = new Redis(redisUrl, {
+      lazyConnect: true,
+      maxRetriesPerRequest: null,
+    });
+    this.subscriber = new Redis(redisUrl, {
+      lazyConnect: true,
+      maxRetriesPerRequest: null,
+    });
     this.subscriber.on("message", (_channel, message) => {
       void this.handleMessage(message);
     });
@@ -82,18 +117,21 @@ export class RedisRealtimeBus implements RealtimeBus {
       "realtime.publish",
       {
         "realtime.driver": "redis",
-        "realtime.channel": this.channel,
         "realtime.event.type": event.type,
         "realtime.target_users": event.targetUserIds.length,
       },
       async () => {
+        const propagated = withActiveRealtimeTrace(event);
         await connectRedisIfNeeded(this.publisher);
-        await this.publisher.publish(this.channel, JSON.stringify(event));
+        await this.publisher.publish(this.channel, JSON.stringify(propagated));
       },
+      { kind: SpanKind.PRODUCER },
     );
   }
 
-  async subscribe(handler: (event: RealtimeEvent) => void | Promise<void>): Promise<() => Promise<void>> {
+  async subscribe(
+    handler: (event: RealtimeEvent) => void | Promise<void>,
+  ): Promise<() => Promise<void>> {
     this.handlers.add(handler);
     await this.ensureSubscribed();
     return async () => {
@@ -128,19 +166,27 @@ export class RedisRealtimeBus implements RealtimeBus {
       "realtime.receive",
       {
         "realtime.driver": "redis",
-        "realtime.channel": this.channel,
         "realtime.event.type": event.type,
         "realtime.target_users": event.targetUserIds.length,
       },
       async () => {
         await Promise.all([...this.handlers].map((handler) => handler(event)));
       },
+      {
+        kind: SpanKind.CONSUMER,
+        parentContext: contextFromTraceContext(event.traceContext),
+      },
     );
   }
 }
 
 async function connectRedisIfNeeded(redis: Redis): Promise<void> {
-  if (redis.status === "ready" || redis.status === "connecting" || redis.status === "connect") return;
+  if (
+    redis.status === "ready" ||
+    redis.status === "connecting" ||
+    redis.status === "connect"
+  )
+    return;
   await redis.connect();
 }
 
@@ -170,7 +216,10 @@ export async function closeRealtimeBusForTests(): Promise<void> {
   realtimeBus = null;
 }
 
-export async function publishWsEventToUsers(targetUserIds: string[], event: WsServerEvent): Promise<void> {
+export async function publishWsEventToUsers(
+  targetUserIds: string[],
+  event: WsServerEvent,
+): Promise<void> {
   const uniqueTargetUserIds = [...new Set(targetUserIds)];
   if (uniqueTargetUserIds.length === 0) return;
   await getRealtimeBus().publish({
@@ -180,4 +229,21 @@ export async function publishWsEventToUsers(targetUserIds: string[], event: WsSe
     event,
     occurredAt: new Date().toISOString(),
   });
+}
+
+function withActiveRealtimeTrace(event: RealtimeEvent): RealtimeEvent {
+  const traceContext = activeTraceContext();
+  if (!traceContext) return event;
+  return {
+    ...event,
+    traceContext,
+  };
+}
+
+function realtimeAttributes(driver: string, event: RealtimeEvent) {
+  return {
+    "realtime.driver": driver,
+    "realtime.event.type": event.type,
+    "realtime.target_users": event.targetUserIds.length,
+  };
 }

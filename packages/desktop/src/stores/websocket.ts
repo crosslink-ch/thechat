@@ -1,5 +1,10 @@
 import { create } from "zustand";
 import type { WsClientEvent, WsServerEvent } from "@thechat/shared";
+import {
+  contextFromRemoteTrace,
+  SpanKind,
+  withDesktopSpan,
+} from "../lib/telemetry";
 import { wsEvents } from "../lib/ws-events";
 
 const WS_URL = __BACKEND_URL__.replace(/^http/, "ws");
@@ -17,6 +22,7 @@ interface WebSocketStore {
     content: string,
     threadId?: string | null,
     clientMessageId?: string,
+    attachmentIds?: string[],
   ) => void;
   sendTyping: (conversationId: string, threadId?: string | null) => void;
 }
@@ -92,11 +98,27 @@ function doConnect() {
       currentToken = null;
       socket.close();
     } else if (event.type === "new_message") {
-      wsEvents.emit("ws:new_message", {
-        message: event.message,
-        conversationType: event.conversationType,
-        clientMessageId: event.clientMessageId,
-      });
+      void withDesktopSpan(
+        "realtime.message.receive",
+        {
+          "messaging.system": "thechat-websocket",
+          "messaging.operation": "receive",
+          "thechat.message.attachment_count":
+            event.message.attachments?.length ?? 0,
+        },
+        (span) => {
+          wsEvents.emit("ws:new_message", {
+            message: event.message,
+            conversationType: event.conversationType,
+            clientMessageId: event.clientMessageId,
+          });
+          span.setAttribute("thechat.realtime.outcome", "handled");
+        },
+        {
+          kind: SpanKind.CONSUMER,
+          parentContext: contextFromRemoteTrace(event.traceContext),
+        },
+      );
     } else if (event.type === "message_error") {
       wsEvents.emit("ws:message_error", {
         conversationId: event.conversationId,
@@ -238,6 +260,7 @@ export const useWebSocketStore = create<WebSocketStore>()(() => ({
     content: string,
     threadId?: string | null,
     clientMessageId?: string,
+    attachmentIds?: string[],
   ) => {
     const event: WsClientEvent = {
       type: "send_message",
@@ -245,6 +268,7 @@ export const useWebSocketStore = create<WebSocketStore>()(() => ({
       content,
       threadId: threadId ?? null,
       clientMessageId,
+      attachmentIds,
     };
     if (ws?.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify(event));
@@ -255,7 +279,11 @@ export const useWebSocketStore = create<WebSocketStore>()(() => ({
 
   sendTyping: (conversationId: string, threadId?: string | null) => {
     if (ws?.readyState === WebSocket.OPEN) {
-      const event: WsClientEvent = { type: "typing", conversationId, threadId: threadId ?? null };
+      const event: WsClientEvent = {
+        type: "typing",
+        conversationId,
+        threadId: threadId ?? null,
+      };
       ws.send(JSON.stringify(event));
     }
   },

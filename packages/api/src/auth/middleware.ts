@@ -26,7 +26,11 @@ export async function resolveTokenToUser(token: string) {
   // 2. Bot API keys (no expiry)
   if (token.startsWith("bot_")) {
     const [bot] = await db
-      .select({ userId: bots.userId })
+      .select({
+        id: bots.id,
+        userId: bots.userId,
+        attachmentAccess: bots.attachmentAccess,
+      })
       .from(bots)
       .where(eq(bots.apiKey, token))
       .limit(1);
@@ -44,7 +48,13 @@ export async function resolveTokenToUser(token: string) {
         .where(eq(users.id, bot.userId))
         .limit(1);
 
-      return user ?? null;
+      return user
+        ? {
+            ...user,
+            botId: bot.id,
+            attachmentAccess: bot.attachmentAccess,
+          }
+        : null;
     }
   }
 

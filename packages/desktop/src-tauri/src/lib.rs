@@ -1,3 +1,4 @@
+mod attachment_download;
 mod config;
 mod db;
 mod env;
@@ -467,6 +468,7 @@ pub fn run() {
         .manage(oauth_state)
         .manage(InitialProjectDir(initial_project_dir))
         .invoke_handler(tauri::generate_handler![
+            attachment_download::download_attachment_to_file,
             get_config,
             get_config_path,
             save_config,

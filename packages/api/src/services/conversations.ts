@@ -9,7 +9,9 @@ import {
   users,
   workspaceMembers,
 } from "../db/schema";
+import { attachmentsByMessageIds } from "../attachments/public";
 import { ServiceError } from "./errors";
+import { canUserAccessAttachments } from "./messages";
 
 export async function createOrGetDm(
   workspaceId: string,
@@ -148,6 +150,7 @@ export async function createOrGetDm(
 }
 
 export async function listUserDms(workspaceId: string, userId: string) {
+  const includeAttachments = await canUserAccessAttachments(db, userId);
   // Check user is workspace member
   const [membership] = await db
     .select()
@@ -234,6 +237,9 @@ export async function listUserDms(workspaceId: string, userId: string) {
       .orderBy(desc(messages.createdAt))
       .limit(1);
 
+    const lastMessageAttachments = includeAttachments && lastMsg
+      ? (await attachmentsByMessageIds([lastMsg.id])).get(lastMsg.id) ?? []
+      : [];
     results.push({
       id: conv.id,
       otherUser: {
@@ -252,6 +258,7 @@ export async function listUserDms(workspaceId: string, userId: string) {
             senderId: lastMsg.senderId,
             senderName: lastMsg.senderName,
             content: lastMsg.content,
+            attachments: lastMessageAttachments,
             createdAt: lastMsg.createdAt.toISOString(),
           }
         : null,

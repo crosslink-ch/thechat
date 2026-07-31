@@ -89,13 +89,11 @@ export class DomainEventRegistry {
       {
         "messaging.system": "thechat-domain-events",
         "messaging.operation": "process",
-        "messaging.message.id": event.id,
         "messaging.message.type": event.type,
         "thechat.event.version": event.version,
         "thechat.aggregate.type": event.aggregate.type,
-        "thechat.aggregate.id": event.aggregate.id,
       },
-      async () => {
+      async (span) => {
         let parsed: DomainEventEnvelope;
         try {
           parsed = handler.parse(event);
@@ -105,7 +103,12 @@ export class DomainEventRegistry {
         logDomainEvent("info", "domain_event.handle.started", parsed);
         await handler.handle(parsed);
         logDomainEvent("info", "domain_event.handle.completed", parsed);
+        span.setAttribute("thechat.event.outcome", "handled");
         return true;
+      },
+      {
+        recordException: false,
+        errorAttributes: { "thechat.event.outcome": "failed" },
       },
     );
   }
