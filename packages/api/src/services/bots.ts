@@ -11,10 +11,11 @@ import {
 } from "../db/schema";
 import { ServiceError } from "./errors";
 import { broadcastToUser } from "../ws";
-
-export function generateApiKey(): string {
-  return `bot_${crypto.randomBytes(32).toString("hex")}`;
-}
+import {
+  createBotApiKey,
+  revokeBotApiKey,
+  rotateBotApiKey,
+} from "../auth/bot-api-keys";
 
 export function generateWebhookSecret(): string {
   return `whsec_${crypto.randomBytes(32).toString("hex")}`;
@@ -27,26 +28,38 @@ export async function createBot(
   kind: "webhook" | "hermes" = "webhook",
   attachmentAccess = true,
 ) {
-  const apiKey = generateApiKey();
   const webhookSecret = generateWebhookSecret();
 
-  const [botUser] = await db
-    .insert(users)
-    .values({ name, type: "bot" })
-    .returning({ id: users.id, name: users.name });
+  const { botUser, bot } = await db.transaction(async (tx) => {
+    const [createdUser] = await tx
+      .insert(users)
+      .values({ name, type: "bot" })
+      .returning({ id: users.id, name: users.name });
 
-  const [bot] = await db
-    .insert(bots)
-    .values({
-      userId: botUser.id,
-      ownerId,
-      webhookUrl,
-      webhookSecret,
-      apiKey,
-      kind,
-      attachmentAccess,
-    })
-    .returning();
+    const [createdBot] = await tx
+      .insert(bots)
+      .values({
+        userId: createdUser.id,
+        ownerId,
+        webhookUrl,
+        webhookSecret,
+        kind,
+        attachmentAccess,
+      })
+      .returning();
+
+    return { botUser: createdUser, bot: createdBot };
+  });
+
+  let apiKey: string;
+  try {
+    apiKey = await createBotApiKey(botUser.id);
+  } catch (error) {
+    // Better Auth uses the same database but manages its own transaction. Roll
+    // back the domain records if credential creation fails.
+    await db.delete(users).where(eq(users.id, botUser.id));
+    throw error;
+  }
 
   return {
     id: bot.id,
@@ -394,6 +407,7 @@ export async function updateAuthenticatedBotWebhook(
       id: bots.id,
       userId: bots.userId,
       kind: bots.kind,
+      webhookSecret: bots.webhookSecret,
       name: users.name,
     })
     .from(bots)
@@ -416,6 +430,7 @@ export async function updateAuthenticatedBotWebhook(
     name: bot.name,
     kind: bot.kind,
     webhookUrl,
+    ...(webhookUrl ? { webhookSecret: bot.webhookSecret } : {}),
   };
 }
 
@@ -496,16 +511,18 @@ export async function deleteBot(botId: string, ownerId: string) {
     throw new ServiceError("Only the bot owner can delete the bot", 403);
   }
 
-  // Delete bot record first (references user), then the user record
-  await db.delete(bots).where(eq(bots.id, botId));
-  await db.delete(users).where(eq(users.id, bot.userId));
+  // The Better Auth API-key row cascades with the bot user.
+  await db.transaction(async (tx) => {
+    await tx.delete(bots).where(eq(bots.id, botId));
+    await tx.delete(users).where(eq(users.id, bot.userId));
+  });
 
   return { success: true };
 }
 
 export async function regenerateBotKey(botId: string, ownerId: string) {
   const [bot] = await db
-    .select({ id: bots.id, ownerId: bots.ownerId })
+    .select({ id: bots.id, ownerId: bots.ownerId, userId: bots.userId })
     .from(bots)
     .where(eq(bots.id, botId))
     .limit(1);
@@ -521,10 +538,25 @@ export async function regenerateBotKey(botId: string, ownerId: string) {
     );
   }
 
-  const newApiKey = generateApiKey();
-  await db.update(bots).set({ apiKey: newApiKey }).where(eq(bots.id, botId));
+  const newApiKey = await rotateBotApiKey(bot.userId);
 
   return { apiKey: newApiKey };
+}
+
+export async function revokeBotKey(botId: string, ownerId: string) {
+  const [bot] = await db
+    .select({ id: bots.id, ownerId: bots.ownerId, userId: bots.userId })
+    .from(bots)
+    .where(eq(bots.id, botId))
+    .limit(1);
+
+  if (!bot) throw new ServiceError("Bot not found", 404);
+  if (bot.ownerId !== ownerId) {
+    throw new ServiceError("Only the bot owner can revoke the API key", 403);
+  }
+
+  await revokeBotApiKey(bot.userId);
+  return { success: true };
 }
 
 export async function regenerateBotSecret(botId: string, ownerId: string) {

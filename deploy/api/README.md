@@ -57,9 +57,16 @@ disabled, `betterAuthSecret` must reference an existing Kubernetes Secret.
 
 Set `env.BETTER_AUTH_URL` to the public origin of the API. The chart injects
 `BETTER_AUTH_SECRET` explicitly from `betterAuthSecret`; production startup
-fails without it. Human credentials and opaque bearer sessions are owned only
-by Better Auth; bot API keys remain in the application bot tables and are never
-passed to Better Auth.
+fails without it. Better Auth owns human credentials, opaque human sessions,
+and bot API keys. Bot keys are hashed in the Better Auth `apikey` table and are
+returned in plaintext only when created or reissued.
+
+The bot-key migration intentionally does not copy credentials from
+`bots.api_key`. Deploying it invalidates every existing bot token. Owners must
+reissue each bot credential through the existing regenerate-key action before
+restarting Hermes or other bot clients with the new value. See
+[`docs/bot-api-key-migration.md`](../../docs/bot-api-key-migration.md) for the
+rollout and Hermes webhook cutover.
 
 ## Better Auth security
 

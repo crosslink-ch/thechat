@@ -289,7 +289,6 @@ export const bots = pgTable(
       .references(() => users.id, { onDelete: "cascade" }),
     webhookUrl: text("webhook_url"),
     webhookSecret: varchar("webhook_secret", { length: 128 }).notNull(),
-    apiKey: varchar("api_key", { length: 128 }).notNull(),
     kind: botKindEnum("kind").notNull().default("webhook"),
     attachmentAccess: boolean("attachment_access").notNull().default(true),
     commandsJson: jsonb("commands_json").$type<BotCommandPublic[]>(),
@@ -303,7 +302,6 @@ export const bots = pgTable(
   },
   (t) => [
     uniqueIndex("bots_user_id_idx").on(t.userId),
-    uniqueIndex("bots_api_key_idx").on(t.apiKey),
     index("bots_owner_id_idx").on(t.ownerId),
   ]
 );
@@ -500,7 +498,7 @@ export const messageAttachments = pgTable(
   ],
 );
 
-// Better Auth owns human sessions and credentials.
+// Better Auth owns human sessions and credentials as well as bot API keys.
 export const session = pgTable(
   "session",
   {
@@ -581,6 +579,48 @@ export const verification = pgTable(
   (t) => [index("verification_identifier_idx").on(t.identifier)]
 );
 
+// Better Auth API-key plugin storage. The raw credential is returned once and
+// only its hash is stored here. One bot credential is active per bot user.
+export const apikey = pgTable(
+  "apikey",
+  {
+    id: text("id").primaryKey(),
+    configId: text("config_id").notNull().default("default"),
+    name: text("name"),
+    start: text("start"),
+    prefix: text("prefix"),
+    key: text("key").notNull(),
+    referenceId: uuid("reference_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    refillInterval: integer("refill_interval"),
+    refillAmount: integer("refill_amount"),
+    lastRefillAt: timestamp("last_refill_at", { withTimezone: true }),
+    enabled: boolean("enabled").notNull().default(true),
+    rateLimitEnabled: boolean("rate_limit_enabled").notNull().default(true),
+    rateLimitTimeWindow: integer("rate_limit_time_window"),
+    rateLimitMax: integer("rate_limit_max"),
+    requestCount: integer("request_count").notNull().default(0),
+    remaining: integer("remaining"),
+    lastRequest: timestamp("last_request", { withTimezone: true }),
+    expiresAt: timestamp("expires_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull()
+      .$onUpdate(() => new Date()),
+    permissions: text("permissions"),
+    metadata: text("metadata"),
+  },
+  (t) => [
+    uniqueIndex("apikey_key_idx").on(t.key),
+    uniqueIndex("apikey_config_reference_idx").on(t.configId, t.referenceId),
+    index("apikey_reference_id_idx").on(t.referenceId),
+  ]
+);
+
 // Shared Better Auth rate-limit state. Database storage keeps enforcement
 // consistent and atomic across API replicas.
 export const rateLimit = pgTable(
@@ -630,6 +670,7 @@ export const usersRelations = relations(users, ({ many }) => ({
   messages: many(messages),
   sessions: many(session),
   accounts: many(account),
+  apiKeys: many(apikey),
   workspaceMemberships: many(workspaceMembers),
   ownedBots: many(bots, { relationName: "botOwner" }),
   uploadedAttachments: many(attachments),
@@ -834,6 +875,13 @@ export const sessionRelations = relations(session, ({ one }) => ({
 export const accountRelations = relations(account, ({ one }) => ({
   user: one(users, {
     fields: [account.userId],
+    references: [users.id],
+  }),
+}));
+
+export const apikeyRelations = relations(apikey, ({ one }) => ({
+  user: one(users, {
+    fields: [apikey.referenceId],
     references: [users.id],
   }),
 }));

@@ -1,8 +1,9 @@
 import { Elysia } from "elysia";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { db } from "../db";
 import { bots, session, users } from "../db/schema";
 import { auth, isEmailVerificationRequired } from "./better-auth";
+import { verifyBotApiKey } from "./bot-api-keys";
 import { log } from "../logging";
 
 const authMiddlewareLog = log.child({ component: "auth-middleware" });
@@ -78,21 +79,11 @@ export async function resolveTokenToUser(
   const includeBotTokens = options.includeBotTokens ?? true;
 
   try {
-    // Bot API keys are deliberately never handed to Better Auth.
     if (token.startsWith("bot_")) {
       if (!includeBotTokens) return null;
 
-      const [bot] = await db
-        .select({
-          id: bots.id,
-          userId: bots.userId,
-          attachmentAccess: bots.attachmentAccess,
-        })
-        .from(bots)
-        .where(eq(bots.apiKey, token))
-        .limit(1);
-
-      if (!bot) return null;
+      const botUserId = await verifyBotApiKey(token);
+      if (!botUserId) return null;
 
       const [user] = await db
         .select({
@@ -101,18 +92,21 @@ export async function resolveTokenToUser(
           email: users.email,
           avatar: users.avatar,
           type: users.type,
+          botId: bots.id,
+          attachmentAccess: bots.attachmentAccess,
         })
         .from(users)
-        .where(eq(users.id, bot.userId))
+        .innerJoin(bots, eq(bots.userId, users.id))
+        .where(
+          and(
+            eq(users.id, botUserId),
+            eq(users.type, "bot"),
+            eq(bots.userId, botUserId),
+          ),
+        )
         .limit(1);
 
-      return user
-        ? {
-            ...user,
-            botId: bot.id,
-            attachmentAccess: bot.attachmentAccess,
-          }
-        : null;
+      return user ?? null;
     }
 
     const betterAuthSession = await auth.api.getSession({

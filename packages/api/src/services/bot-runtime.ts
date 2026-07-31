@@ -1003,12 +1003,15 @@ async function deliverHermesPlatformWebhookInvocation(
       }
 
       const body = JSON.stringify({ type: "thechat.hermes_platform.event", event });
+      const timestamp = Math.floor(Date.now() / 1000);
+      const signature = signWebhookPayload(body, loaded.bot.webhookSecret, timestamp);
       try {
         const response = await fetch(loaded.bot.webhookUrl, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            "Authorization": `Bearer ${loaded.bot.apiKey}`,
+            "X-Webhook-Timestamp": String(timestamp),
+            "X-Webhook-Signature": signature,
             "X-TheChat-Bot-Id": loaded.bot.id,
             "X-TheChat-Invocation-Id": invocationId,
           },

@@ -13,6 +13,7 @@ import {
   publishHermesPlatformTyping,
 } from "../services/bot-runtime";
 import { ServiceError } from "../services/errors";
+import { resolveTokenToUser } from "../auth/middleware";
 
 const messageSchema = z.object({
   invocationId: z.string().min(1).optional(),
@@ -83,6 +84,9 @@ async function resolveHermesPlatformBot(headers: Record<string, string | undefin
   const token = authHeader.slice(7);
   if (!token.startsWith("bot_")) return null;
 
+  const user = await resolveTokenToUser(token);
+  if (!user || user.type !== "bot") return null;
+
   const [bot] = await db
     .select({
       id: bots.id,
@@ -92,7 +96,7 @@ async function resolveHermesPlatformBot(headers: Record<string, string | undefin
     })
     .from(bots)
     .innerJoin(users, eq(bots.userId, users.id))
-    .where(eq(bots.apiKey, token))
+    .where(eq(bots.userId, user.id))
     .limit(1);
 
   if (!bot) return null;

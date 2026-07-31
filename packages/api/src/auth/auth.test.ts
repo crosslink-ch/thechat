@@ -5,6 +5,7 @@ import { Elysia } from "elysia";
 import { db } from "../db";
 import { account, bots, session, users } from "../db/schema";
 import { auth } from "./better-auth";
+import { createBotApiKey } from "./bot-api-keys";
 import { authRoutes } from "./index";
 import { resolveTokenToUser } from "./middleware";
 
@@ -215,7 +216,7 @@ describe("Better Auth session facade", () => {
 });
 
 describe("bot API-key isolation", () => {
-  test("bot_ keys use the bot table and can be excluded from human-only routes", async () => {
+  test("Better Auth bot keys can be excluded from human-only routes", async () => {
     const getSessionSpy = spyOn(auth.api, "getSession");
     const ownerEmail = uniqueEmail();
     createdUserEmails.push(ownerEmail);
@@ -228,14 +229,12 @@ describe("bot API-key isolation", () => {
       .values({ name: "Auth Bot", type: "bot" })
       .returning({ id: users.id });
     createdUserIds.push(botUser.id);
-    const apiKey = `bot_${crypto.randomUUID()}`;
-
     await db.insert(bots).values({
       userId: botUser.id,
       ownerId: owner.id,
       webhookSecret: "whsec_auth_test",
-      apiKey,
     });
+    const apiKey = await createBotApiKey(botUser.id);
 
     expect(await resolveTokenToUser(apiKey)).toMatchObject({
       id: botUser.id,

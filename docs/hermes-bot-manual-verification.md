@@ -146,7 +146,10 @@ uv run --frozen python -u /home/bruno/agent-worktrees/thechat-hermes-integration
 ```
 
 In webhook mode, Hermes registers `THECHAT_WEBHOOK_URL` through the generic bot
-webhook endpoint `POST /bots/me/webhook`.
+webhook endpoint `POST /bots/me/webhook`. The authenticated response presents
+the bot's `whsec_` secret once to the adapter, which keeps it in memory and
+uses it to verify timestamped HMAC signatures on subsequent deliveries. The
+bot API token is never echoed back in webhook requests.
 
 Health check TheChat's platform bridge:
 

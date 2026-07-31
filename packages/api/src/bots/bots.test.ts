@@ -3,6 +3,7 @@ import { Elysia } from "elysia";
 import { and, asc, eq, inArray } from "drizzle-orm";
 import { db } from "../db";
 import {
+  apikey,
   botInvocations,
   bots,
   conversationParticipants,
@@ -11,6 +12,10 @@ import {
   users,
   workspaces,
 } from "../db/schema";
+import {
+  BOT_API_KEY_CONFIG_ID,
+  BOT_API_KEY_PREFIX,
+} from "../auth/better-auth";
 import { authRoutes } from "../auth";
 import { workspaceRoutes } from "../workspaces";
 import { conversationRoutes } from "../conversations";
@@ -296,12 +301,29 @@ describe("Bots: Create", () => {
     expect(res.status).toBe(200);
     expect(res.body.name).toBe("MyBot");
     expect(res.body.apiKey).toBeDefined();
-    expect(res.body.apiKey).toStartWith("bot_");
+    expect(res.body.apiKey).toMatch(/^bot_[0-9a-f]{64}$/);
     expect(res.body.webhookSecret).toBeDefined();
     expect(res.body.webhookSecret).toStartWith("whsec_");
     expect(res.body.id).toBeDefined();
     expect(res.body.userId).toBeDefined();
     expect(res.body.attachmentAccess).toBe(true);
+
+    const [storedKey] = await db
+      .select({
+        configId: apikey.configId,
+        key: apikey.key,
+        prefix: apikey.prefix,
+        referenceId: apikey.referenceId,
+      })
+      .from(apikey)
+      .where(eq(apikey.referenceId, res.body.userId));
+    expect(storedKey).toMatchObject({
+      configId: BOT_API_KEY_CONFIG_ID,
+      prefix: BOT_API_KEY_PREFIX,
+      referenceId: res.body.userId,
+    });
+    expect(storedKey.key).not.toBe(res.body.apiKey);
+    expect(storedKey.key).not.toContain(res.body.apiKey);
   });
 
   test("only humans can create bots — bot tries to create bot → 403", async () => {
@@ -513,6 +535,10 @@ describe("Bots: Regenerate key", () => {
 
     const botRes = await createBot(human.token, "RegenBot");
     const oldKey = botRes.body.apiKey;
+    const [beforeRotation] = await db
+      .select({ id: apikey.id, key: apikey.key })
+      .from(apikey)
+      .where(eq(apikey.referenceId, botRes.body.userId));
 
     // Verify old key works
     const meRes1 = await req("GET", "/auth/me", undefined, oldKey);
@@ -530,6 +556,15 @@ describe("Bots: Regenerate key", () => {
     expect(regenRes.body.apiKey).not.toBe(oldKey);
 
     const newKey = regenRes.body.apiKey;
+    expect(newKey).toMatch(/^bot_[0-9a-f]{64}$/);
+    const storedAfterRotation = await db
+      .select({ id: apikey.id, key: apikey.key })
+      .from(apikey)
+      .where(eq(apikey.referenceId, botRes.body.userId));
+    expect(storedAfterRotation).toHaveLength(1);
+    expect(storedAfterRotation[0].id).toBe(beforeRotation.id);
+    expect(storedAfterRotation[0].key).not.toBe(beforeRotation.key);
+    expect(storedAfterRotation[0].key).not.toBe(newKey);
 
     // New key works
     const meRes2 = await req("GET", "/auth/me", undefined, newKey);
@@ -539,6 +574,90 @@ describe("Bots: Regenerate key", () => {
     // Old key fails
     const meRes3 = await req("GET", "/auth/me", undefined, oldKey);
     expect(meRes3.status).toBe(401);
+  });
+
+  test("first reissue creates a Better Auth key for a migrated bot", async () => {
+    const human = await registerUser("MigratedReissueOwner");
+    const [botUser] = await db
+      .insert(users)
+      .values({ name: "MigratedReissueBot", type: "bot" })
+      .returning({ id: users.id });
+    createdBotUserIds.push(botUser.id);
+    const [bot] = await db
+      .insert(bots)
+      .values({
+        userId: botUser.id,
+        ownerId: human.user.id,
+        webhookSecret: `whsec_${crypto.randomBytes(16).toString("hex")}`,
+      })
+      .returning({ id: bots.id });
+
+    expect(
+      await db
+        .select({ id: apikey.id })
+        .from(apikey)
+        .where(eq(apikey.referenceId, botUser.id)),
+    ).toHaveLength(0);
+
+    const reissue = await req(
+      "POST",
+      `/bots/${bot.id}/regenerate-key`,
+      {},
+      human.token
+    );
+    expect(reissue.status).toBe(200);
+    expect(reissue.body.apiKey).toMatch(/^bot_[0-9a-f]{64}$/);
+
+    const me = await req("GET", "/auth/me", undefined, reissue.body.apiKey);
+    expect(me.status).toBe(200);
+    expect(me.body.user.id).toBe(botUser.id);
+    expect(
+      await db
+        .select({ id: apikey.id })
+        .from(apikey)
+        .where(eq(apikey.referenceId, botUser.id)),
+    ).toHaveLength(1);
+  });
+
+  test("revocation disables the key without deleting the bot and reissue restores access", async () => {
+    const human = await registerUser("RevokeOwner");
+    const botRes = await createBot(human.token, "RevokedBot");
+    const oldKey = botRes.body.apiKey;
+
+    const revoke = await req(
+      "DELETE",
+      `/bots/${botRes.body.id}/api-key`,
+      undefined,
+      human.token
+    );
+    expect(revoke.status).toBe(200);
+    expect(revoke.body.success).toBe(true);
+
+    const [revokedRow] = await db
+      .select({ enabled: apikey.enabled })
+      .from(apikey)
+      .where(eq(apikey.referenceId, botRes.body.userId));
+    expect(revokedRow.enabled).toBe(false);
+    expect((await req("GET", "/auth/me", undefined, oldKey)).status).toBe(401);
+
+    const listed = await req("GET", "/bots/list", undefined, human.token);
+    expect(listed.body.some((bot: any) => bot.id === botRes.body.id)).toBe(true);
+
+    const reissue = await req(
+      "POST",
+      `/bots/${botRes.body.id}/regenerate-key`,
+      {},
+      human.token
+    );
+    expect(reissue.status).toBe(200);
+    expect((await req("GET", "/auth/me", undefined, reissue.body.apiKey)).status).toBe(200);
+    expect((await req("GET", "/auth/me", undefined, oldKey)).status).toBe(401);
+
+    const [reissuedRow] = await db
+      .select({ enabled: apikey.enabled })
+      .from(apikey)
+      .where(eq(apikey.referenceId, botRes.body.userId));
+    expect(reissuedRow.enabled).toBe(true);
   });
 });
 
@@ -1096,6 +1215,13 @@ describe("Bots: Delete bot", () => {
     );
     expect(delRes.status).toBe(200);
     expect(delRes.body.success).toBe(true);
+
+    expect(
+      await db
+        .select({ id: apikey.id })
+        .from(apikey)
+        .where(eq(apikey.referenceId, botUserId)),
+    ).toHaveLength(0);
 
     // API key should no longer work
     const meRes2 = await req("GET", "/auth/me", undefined, apiKey);
@@ -2687,8 +2813,14 @@ describe("Bots: runtime state", () => {
 
   test("Hermes platform supports regular bot webhook delivery while polling remains available", async () => {
     let receivedAuthorization = "";
-    const webhook = startWebhookServer((request) => {
+    let receivedTimestamp = "";
+    let receivedSignature = "";
+    let receivedBody = "";
+    const webhook = startWebhookServer((request, body) => {
       receivedAuthorization = request.headers.get("authorization") ?? "";
+      receivedTimestamp = request.headers.get("x-webhook-timestamp") ?? "";
+      receivedSignature = request.headers.get("x-webhook-signature") ?? "";
+      receivedBody = body;
       return new Response(JSON.stringify({ ok: true }), {
         headers: { "Content-Type": "application/json" },
       });
@@ -2712,6 +2844,7 @@ describe("Bots: runtime state", () => {
     );
     expect(registerRes.status).toBe(200);
     expect(registerRes.body.webhookUrl).toBe(webhook.url);
+    expect(registerRes.body.webhookSecret).toStartWith("whsec_");
 
     const pollingRes = await req("GET", "/hermes-platform/events?limit=1", undefined, botRes.body.apiKey);
     expect(pollingRes.status).toBe(200);
@@ -2739,7 +2872,14 @@ describe("Bots: runtime state", () => {
         return webhook.requests.find((request) => request.payload.event?.messageId === sendRes.body.id);
       }, "Hermes platform webhook event");
 
-      expect(receivedAuthorization).toBe(`Bearer ${botRes.body.apiKey}`);
+      expect(receivedAuthorization).toBe("");
+      expect(receivedTimestamp).toMatch(/^\d+$/);
+      expect(receivedSignature).toBe(
+        crypto
+          .createHmac("sha256", registerRes.body.webhookSecret)
+          .update(`${receivedTimestamp}.${receivedBody}`)
+          .digest("hex"),
+      );
       expect(delivery.payload.type).toBe("thechat.hermes_platform.event");
       expect(delivery.payload.event.text).toBe("Handle this over the platform webhook");
       expect(delivery.payload.event.instructions).toBeNull();

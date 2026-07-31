@@ -1,6 +1,7 @@
 import crypto from "crypto";
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
+import { apiKey, defaultKeyHasher } from "@better-auth/api-key";
 import { bearer, emailOTP } from "better-auth/plugins";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { db } from "../db";
@@ -44,6 +45,13 @@ export function betterAuthBaseURL() {
 }
 
 export const BETTER_AUTH_SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 30;
+export const BOT_API_KEY_CONFIG_ID = "bot";
+export const BOT_API_KEY_PREFIX = "bot_";
+export const BOT_API_KEY_HASHER = defaultKeyHasher;
+
+export function generateBotApiKey(): string {
+  return `${BOT_API_KEY_PREFIX}${crypto.randomBytes(32).toString("hex")}`;
+}
 
 export function betterAuthRequestURL(path: string) {
   return `${betterAuthBaseURL()}${INTERNAL_AUTH_PATH}${path}`;
@@ -143,6 +151,21 @@ export const auth = betterAuth({
   },
   plugins: [
     bearer(),
+    apiKey({
+      configId: BOT_API_KEY_CONFIG_ID,
+      defaultPrefix: BOT_API_KEY_PREFIX,
+      defaultKeyLength: 64,
+      customKeyGenerator: generateBotApiKey,
+      requireName: false,
+      references: "user",
+      rateLimit: { enabled: false },
+      keyExpiration: {
+        defaultExpiresIn: null,
+        disableCustomExpiresTime: true,
+      },
+      enableMetadata: false,
+      enableSessionForAPIKeys: false,
+    }),
     emailOTP({
       otpLength: 6,
       expiresIn: 15 * 60,
