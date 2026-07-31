@@ -1,10 +1,16 @@
 {{- if .Values.worker.enabled }}
+{{- $attachments := .Values.attachments | default dict -}}
+{{- $infisical := get $attachments "infisical" | default dict -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: {{ include "thechat-api.workerFullname" . }}
   labels:
     {{- include "thechat-api.workerLabels" . | nindent 4 }}
+  {{- if get $infisical "enabled" }}
+  annotations:
+    secrets.infisical.com/auto-reload: "true"
+  {{- end }}
 spec:
   replicas: {{ .Values.worker.replicaCount }}
   selector:
@@ -20,6 +26,7 @@ spec:
       {{- end }}
     spec:
       serviceAccountName: {{ include "thechat-api.workerServiceAccountName" . }}
+      automountServiceAccountToken: false
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
@@ -31,6 +38,7 @@ spec:
           command: ["bun", "run", "dist/scripts/worker.js"]
           env:
             {{- include "thechat-api.env" . | nindent 12 }}
+            {{- include "thechat-api.workerAwsCredentialEnv" . | trim | nindent 12 }}
           resources:
             {{- toYaml .Values.worker.resources | nindent 12 }}
       {{- with .Values.nodeSelector }}

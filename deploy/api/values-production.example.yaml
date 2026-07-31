@@ -1,0 +1,42 @@
+# Production attachment overlay. Copy this file, fill every required blank
+# non-secret value, and keep the resulting environment-specific values outside Git.
+image:
+  tag: "" # Required: immutable application image SHA/digest tag
+migrateImage:
+  tag: "" # Required: exactly the same immutable tag
+
+env:
+  ATTACHMENT_S3_BUCKET: "" # Required: CloudFormation BucketName output
+  ATTACHMENT_S3_REGION: "eu-central-1"
+  ATTACHMENT_S3_FORCE_PATH_STYLE: "false"
+  ATTACHMENT_UNATTACHED_TTL_SECONDS: "2592000"
+
+attachments:
+  credentials:
+    enabled: true
+    api:
+      secretName: thechat-attachments-api-aws
+      accessKeyIdKey: AWS_ACCESS_KEY_ID
+      secretAccessKeyKey: AWS_SECRET_ACCESS_KEY
+    worker:
+      secretName: thechat-attachments-worker-aws
+      accessKeyIdKey: AWS_ACCESS_KEY_ID
+      secretAccessKeyKey: AWS_SECRET_ACCESS_KEY
+  infisical:
+    enabled: true
+    hostAPI: "https://infisical.testkopie.dev/api"
+    resyncInterval: "60s"
+    # Required: shared Kubernetes Auth identity used by both InfisicalSecret
+    # resources.
+    identityId: ""
+    projectSlug: "" # Required: non-secret Infisical project slug
+    envSlug: "prod"
+    apiSecretsPath: "/attachments/api"
+    workerSecretsPath: "/attachments/worker"
+    creationPolicy: "Orphan"
+
+worker:
+  enabled: true
+  serviceAccount:
+    create: true
+    name: "" # Defaults to thechat-api-worker for release thechat-api
