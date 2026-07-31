@@ -1,12 +1,13 @@
 {{- $attachments := .Values.attachments | default dict -}}
 {{- $infisical := get $attachments "infisical" | default dict -}}
+{{- $betterAuthInfisical := .Values.betterAuthInfisical | default dict -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: {{ include "thechat-api.fullname" . }}
   labels:
     {{- include "thechat-api.labels" . | nindent 4 }}
-  {{- if get $infisical "enabled" }}
+  {{- if or (get $infisical "enabled") (get $betterAuthInfisical "enabled") }}
   annotations:
     secrets.infisical.com/auto-reload: "true"
   {{- end }}
@@ -21,6 +22,7 @@ spec:
     metadata:
       labels:
         {{- include "thechat-api.selectorLabels" . | nindent 8 }}
+
     spec:
       {{- with .Values.nodeSelector }}
       nodeSelector:

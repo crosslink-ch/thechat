@@ -32,9 +32,23 @@ migrationJob:
 # The secret must have a key called DATABASE_URL
 databaseSecret: thechat-db
 
-# Name of an existing Kubernetes Secret containing BETTER_AUTH_SECRET.
-# Generate at least 32 bytes of high-entropy random data.
+# Name of the Kubernetes Secret containing BETTER_AUTH_SECRET.
+# When betterAuthInfisical.enabled=true, the Infisical operator creates and
+# reconciles this Secret. Otherwise it must already exist in the namespace.
 betterAuthSecret: thechat-better-auth
+
+# Recommended production source for BETTER_AUTH_SECRET. The referenced
+# Infisical path must contain a BETTER_AUTH_SECRET value with at least 32 bytes
+# of high-entropy random data. The Kubernetes Secret above remains the runtime
+# delivery target; it is not maintained manually when this integration is on.
+betterAuthInfisical:
+  enabled: false
+  hostAPI: "https://eu.infisical.com/api"
+  identityId: ""
+  projectSlug: ""
+  envSlug: "prod"
+  secretsPath: "/auth"
+  resyncInterval: "60s"
 
 # Name of a Kubernetes Secret containing REDIS_URL.
 # When redis.enabled=true, this chart creates the secret.

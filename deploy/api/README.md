@@ -9,16 +9,18 @@ Deploys the TheChat API server and bot worker to Kubernetes.
 - An external PostgreSQL database
 - An external Redis instance for realtime fanout and BullMQ workers
 - Existing application Secrets in the target namespace
-- Infisical Secrets Operator when `attachments.infisical.enabled=true`
+- Infisical Secrets Operator when `attachments.infisical.enabled=true` or
+  `betterAuthInfisical.enabled=true`
 
 ## Secrets
 
-By default, the chart references existing Kubernetes Secrets by name. With the optional Infisical integration below, the Infisical operator creates the two attachment credential Secrets. Create the remaining Secrets before installing:
+By default, the chart references existing Kubernetes Secrets by name. The
+optional Infisical integrations create the two attachment credential Secrets
+and the Better Auth Secret. Create the remaining Secrets before installing:
 
 ```bash
 # Required
 kubectl create secret generic thechat-db --from-literal=DATABASE_URL='postgresql://user:pass@host:5432/thechat'
-kubectl create secret generic thechat-better-auth --from-literal=BETTER_AUTH_SECRET="$(openssl rand -base64 32)"
 kubectl create secret generic thechat-redis --from-literal=REDIS_URL='redis://redis-host:6379'
 
 # Optional — SMTP credentials
@@ -31,6 +33,27 @@ kubectl create secret generic thechat-smtp \
 # Optional — Postmark (alternative to SMTP)
 kubectl create secret generic thechat-postmark --from-literal=POSTMARK_API_TOKEN='your-token'
 ```
+
+In production, store `BETTER_AUTH_SECRET` in Infisical and let the Infisical
+Secrets Operator materialize the Kubernetes Secret consumed by the API:
+
+```yaml
+betterAuthSecret: thechat-better-auth
+betterAuthInfisical:
+  enabled: true
+  hostAPI: https://eu.infisical.com/api
+  identityId: <thechat-kubernetes-auth-identity-id>
+  projectSlug: <thechat-project-slug>
+  envSlug: prod
+  secretsPath: /auth
+  resyncInterval: 60s
+```
+
+The Infisical path must contain `BETTER_AUTH_SECRET` with at least 32 bytes of
+high-entropy random data. The operator uses the chart-managed API ServiceAccount
+for Kubernetes Auth, writes only that key to `thechat-better-auth`, and restarts
+the API and worker workloads when the value changes. If the integration is
+disabled, `betterAuthSecret` must reference an existing Kubernetes Secret.
 
 Set `env.BETTER_AUTH_URL` to the public origin of the API. The chart injects
 `BETTER_AUTH_SECRET` explicitly from `betterAuthSecret`; production startup
