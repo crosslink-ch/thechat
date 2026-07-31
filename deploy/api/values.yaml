@@ -108,10 +108,9 @@ attachments:
     enabled: false
     hostAPI: "https://infisical.testkopie.dev/api"
     resyncInterval: "60s"
-    # Use two distinct Kubernetes Auth machine identities. Scope each identity to
-    # one service account and one Infisical path.
-    apiIdentityId: ""
-    workerIdentityId: ""
+    # Kubernetes Auth machine identity used by the Infisical operator for both
+    # attachment paths (in production, the shared cluster-operator identity).
+    identityId: ""
     projectSlug: ""
     envSlug: "prod"
     apiSecretsPath: "/attachments/api"

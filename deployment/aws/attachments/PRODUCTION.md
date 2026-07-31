@@ -6,9 +6,9 @@ It does **not** create access keys in CloudFormation or place secret values in
 Git, Helm values, shell history, CloudFormation outputs, or logs.
 
 The production cluster is K3s, not EKS. The API and worker therefore use
-separate static IAM users, separate Infisical machine identities, separate
-Infisical paths, separate Kubernetes ServiceAccounts, and separate Kubernetes
-Secrets.
+separate static IAM users, one shared `cluster-operator` Infisical machine
+identity, separate Infisical paths, separate Kubernetes ServiceAccounts, and
+separate Kubernetes Secrets.
 
 ## 0. Fixed production contract
 
@@ -42,11 +42,10 @@ stack as a cleanup shortcut.
 - Infisical Operator installed. The current production operator exposes
   `secrets.infisical.com/v1alpha1`; the rendered resources are validated against
   that installed CRD in CI/manual preflight.
-- Two **different** Infisical machine identities using Kubernetes auth:
-  - API identity: bound only to namespace `thechat`, ServiceAccount
-    `thechat-api`, and read access to `/attachments/api`.
-  - Worker identity: bound only to namespace `thechat`, ServiceAccount
-    `thechat-api-worker`, and read access to `/attachments/worker`.
+- The existing `cluster-operator` Infisical machine identity using Kubernetes
+  auth, permitted for namespace `thechat` and ServiceAccounts `thechat-api` and
+  `thechat-api-worker`, with project read access to `/attachments/api` and
+  `/attachments/worker`.
 - A reviewed immutable application image tag in `sha-<git-sha>` form. Use the
   same tag for `image.tag` and `migrateImage.tag`.
 - An encrypted operator workstation. Secret-bearing work files below are mode
@@ -73,10 +72,8 @@ export IMAGE_TAG=sha-<reviewed-git-sha>
 export INFISICAL_API_URL=https://infisical.testkopie.dev/api
 export INFISICAL_PROJECT_ID=<production-project-id>
 export INFISICAL_PROJECT_SLUG=<production-project-slug>
-export API_INFISICAL_ID=<dedicated-api-machine-identity-id>
-export WORKER_INFISICAL_ID=<dedicated-worker-machine-identity-id>
+export INFISICAL_ID=<cluster-operator-machine-identity-id>
 
-test "$API_INFISICAL_ID" != "$WORKER_INFISICAL_ID"
 WORKDIR="${XDG_CACHE_HOME:-$HOME/.cache}/thechat-attachments-production"
 install -d -m 0700 "$WORKDIR"
 ```
@@ -160,8 +157,7 @@ If the shell's lowercase expansion is unavailable, use
 ## 3. Create each initial access key transactionally
 
 Authenticate the Infisical CLI before creating AWS keys. Confirm that both
-secret paths exist and each dedicated machine identity can read only its own
-path.
+secret paths exist and the shared `cluster-operator` identity can read both.
 
 The helper below deletes a newly created key automatically if a failure happens
 **before** Infisical accepts it. Once Infisical accepts it, the key is retained
@@ -256,8 +252,7 @@ HELM_COORDINATES=(
   --set-string "env.ATTACHMENT_S3_BUCKET=$BUCKET_NAME"
   --set-string "env.ATTACHMENT_S3_REGION=$AWS_REGION"
   --set-string "attachments.infisical.projectSlug=$INFISICAL_PROJECT_SLUG"
-  --set-string "attachments.infisical.apiIdentityId=$API_INFISICAL_ID"
-  --set-string "attachments.infisical.workerIdentityId=$WORKER_INFISICAL_ID"
+  --set-string "attachments.infisical.identityId=$INFISICAL_ID"
 )
 
 helm lint deploy/api \
@@ -288,7 +283,8 @@ Review the rendered diff. In particular verify:
 
 - only the API Deployment references `thechat-attachments-api-aws`;
 - only the worker Deployment references `thechat-attachments-worker-aws`;
-- ServiceAccounts and Infisical identity IDs are different;
+- ServiceAccounts are different and both Infisical resources use the expected
+  shared `cluster-operator` identity ID;
 - both pod specs use `automountServiceAccountToken: false`;
 - Infisical resources use `/attachments/api` and `/attachments/worker`;
 - image and migration tags are the same immutable SHA;
@@ -518,7 +514,8 @@ Before any deliberate CloudFormation deletion:
 - [ ] Bucket and bucket policy are retained, private, versioned, and encrypted.
 - [ ] Clean current/noncurrent retention is at least 30 days.
 - [ ] IAM users, policies, and access-key IDs are distinct.
-- [ ] API/worker Infisical identities and paths are distinct.
+- [ ] Both Infisical resources use `cluster-operator`; API/worker paths remain
+  distinct.
 - [ ] Installed CRD accepted both rendered `InfisicalSecret` resources.
 - [ ] Kubernetes Secrets exist and only expose the matching non-secret key ID.
 - [ ] API and worker rolled out independently with immutable SHA images.

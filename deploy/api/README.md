@@ -107,14 +107,14 @@ Helm values.
 
 `attachments.infisical.enabled=true` additionally renders two
 `secrets.infisical.com/v1alpha1` `InfisicalSecret` resources. They authenticate with
-two different machine identities bound to the workload-specific service accounts,
-read separate Infisical paths, copy only the two named AWS keys into their managed
-Kubernetes Secrets, and annotate both Deployments for auto-reload after rotation.
-The chart rejects reused ServiceAccounts, Secrets, paths, or machine identities,
-and rejects literal `AWS_*` environment overrides.
+one shared Kubernetes Auth machine identity using the workload-specific service
+account tokens, read separate Infisical paths, copy only the two named AWS keys
+into their managed Kubernetes Secrets, and annotate both Deployments for
+auto-reload after rotation. The chart rejects reused ServiceAccounts, Secrets,
+or paths, and rejects literal `AWS_*` environment overrides.
 
 Preserve the current release values, layer `values-production.example.yaml` on
-top, set its blank non-secret bucket, project, and two identity coordinates
+top, set its blank non-secret bucket, project, and identity coordinates
 outside Git, and render before applying. Infisical sync fails closed if any
 coordinate is missing or credential injection is disabled. The full provisioning
 and rotation procedure is in

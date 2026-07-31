@@ -23,8 +23,7 @@ def credential_values(*extra: str) -> tuple[str, ...]:
 def infisical_values(*extra: str) -> tuple[str, ...]:
     return credential_values(
         "attachments.infisical.enabled=true",
-        "attachments.infisical.apiIdentityId=11111111-1111-4111-8111-111111111111",
-        "attachments.infisical.workerIdentityId=22222222-2222-4222-8222-222222222222",
+        "attachments.infisical.identityId=11111111-1111-4111-8111-111111111111",
         "attachments.infisical.projectSlug=thechat-production",
         *extra,
     )
@@ -142,15 +141,15 @@ class AttachmentCredentialRenderTests(unittest.TestCase):
         self.assertIn("name: thechat-api-attachments-worker-aws", worker)
         self.assertNotIn("thechat-api-attachments-api-aws", worker)
 
-    def test_infisical_sync_uses_separate_identities_paths_accounts_and_secrets(self) -> None:
+    def test_infisical_sync_uses_shared_identity_with_isolated_targets(self) -> None:
         rendered = render(*infisical_values())
 
         self.assertEqual(rendered.count("kind: InfisicalSecret"), 2)
-        self.assertIn(
-            'identityId: "11111111-1111-4111-8111-111111111111"', rendered
-        )
-        self.assertIn(
-            'identityId: "22222222-2222-4222-8222-222222222222"', rendered
+        self.assertEqual(
+            rendered.count(
+                'identityId: "11111111-1111-4111-8111-111111111111"'
+            ),
+            2,
         )
         self.assertIn('hostAPI: "https://infisical.testkopie.dev/api"', rendered)
         self.assertIn('projectSlug: "thechat-production"', rendered)
@@ -190,15 +189,13 @@ class AttachmentCredentialRenderTests(unittest.TestCase):
 
     def test_production_example_renders_only_after_coordinates_are_supplied(self) -> None:
         source = PRODUCTION_VALUES.read_text(encoding="utf-8")
-        self.assertIn("apiIdentityId: \"\"", source)
-        self.assertIn("workerIdentityId: \"\"", source)
+        self.assertIn("identityId: \"\"", source)
         self.assertIn("projectSlug: \"\"", source)
         self.assertIn("ATTACHMENT_S3_BUCKET: \"\"", source)
 
         rendered = render(
             "attachments.infisical.projectSlug=thechat-production",
-            "attachments.infisical.apiIdentityId=11111111-1111-4111-8111-111111111111",
-            "attachments.infisical.workerIdentityId=22222222-2222-4222-8222-222222222222",
+            "attachments.infisical.identityId=11111111-1111-4111-8111-111111111111",
             "env.ATTACHMENT_S3_BUCKET=thechat-attachments-production",
             values_file=PRODUCTION_VALUES,
         )
@@ -255,12 +252,6 @@ class AttachmentCredentialRenderTests(unittest.TestCase):
                 ),
                 "API and worker Infisical paths must be distinct",
             ),
-            (
-                infisical_values(
-                    "attachments.infisical.workerIdentityId=11111111-1111-4111-8111-111111111111",
-                ),
-                "API and worker Infisical machine identities must be distinct",
-            ),
         )
 
         for values, message in cases:
@@ -275,6 +266,15 @@ class AttachmentCredentialRenderTests(unittest.TestCase):
 
         self.assertIn(
             "attachments.infisical.projectSlug is required",
+            error.exception.stderr,
+        )
+
+    def test_infisical_requires_an_identity_id(self) -> None:
+        with self.assertRaises(subprocess.CalledProcessError) as error:
+            render(*infisical_values("attachments.infisical.identityId="))
+
+        self.assertIn(
+            "attachments.infisical.identityId is required",
             error.exception.stderr,
         )
 

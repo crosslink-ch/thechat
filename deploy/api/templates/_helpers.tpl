@@ -126,11 +126,7 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- if eq $apiPath $workerPath -}}
 {{- fail "API and worker Infisical paths must be distinct" -}}
 {{- end -}}
-{{- $apiIdentityId := required "attachments.infisical.apiIdentityId is required when Infisical synchronization is enabled" (get $infisical "apiIdentityId") -}}
-{{- $workerIdentityId := required "attachments.infisical.workerIdentityId is required when Infisical synchronization is enabled" (get $infisical "workerIdentityId") -}}
-{{- if eq $apiIdentityId $workerIdentityId -}}
-{{- fail "API and worker Infisical machine identities must be distinct" -}}
-{{- end -}}
+{{- $identityId := required "attachments.infisical.identityId is required when Infisical synchronization is enabled" (get $infisical "identityId") -}}
 {{- $apiSecretName := include "thechat-api.attachmentApiSecretName" . -}}
 {{- $workerSecretName := include "thechat-api.attachmentWorkerSecretName" . -}}
 {{- if gt (len $apiSecretName) 48 -}}

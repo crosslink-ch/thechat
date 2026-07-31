@@ -26,10 +26,9 @@ attachments:
     enabled: true
     hostAPI: "https://infisical.testkopie.dev/api"
     resyncInterval: "60s"
-    # Required and different: scope each Kubernetes Auth identity to only its
-    # matching ServiceAccount and Infisical path.
-    apiIdentityId: ""
-    workerIdentityId: ""
+    # Required: shared Kubernetes Auth identity used by both InfisicalSecret
+    # resources.
+    identityId: ""
     projectSlug: "" # Required: non-secret Infisical project slug
     envSlug: "prod"
     apiSecretsPath: "/attachments/api"
