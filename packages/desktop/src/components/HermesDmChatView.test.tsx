@@ -1,5 +1,11 @@
 import { describe, expect, it, beforeAll, beforeEach, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import type {
   BotInvocationProgressEventPublic,
   BotInvocationPublic,
@@ -8,6 +14,36 @@ import type {
 import { HermesDmChatView } from "./HermesDmChatView";
 import { selectHermesConversationProgress } from "../lib/hermes-progress";
 import { useHermesApprovalsStore } from "../stores/hermes-approvals";
+import {
+  cancelSharedAttachment,
+  uploadSharedAttachment,
+} from "../lib/shared-attachments";
+
+const tauriMocks = vi.hoisted(() => ({
+  invoke: vi.fn(),
+  onDragDropEvent: vi.fn(),
+  unlisten: vi.fn(),
+}));
+
+vi.mock("@tauri-apps/api/core", () => ({
+  invoke: tauriMocks.invoke,
+}));
+
+vi.mock("@tauri-apps/api/webviewWindow", () => ({
+  getCurrentWebviewWindow: () => ({
+    onDragDropEvent: tauriMocks.onDragDropEvent,
+  }),
+}));
+
+vi.mock("../lib/shared-attachments", async (importOriginal) => {
+  const original =
+    await importOriginal<typeof import("../lib/shared-attachments")>();
+  return {
+    ...original,
+    uploadSharedAttachment: vi.fn(),
+    cancelSharedAttachment: vi.fn(() => Promise.resolve()),
+  };
+});
 
 beforeAll(() => {
   Element.prototype.scrollIntoView = vi.fn();
@@ -17,6 +53,14 @@ let scrollToMock: ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
   useHermesApprovalsStore.getState().resetForTests();
+  vi.mocked(uploadSharedAttachment).mockReset();
+  vi.mocked(cancelSharedAttachment).mockReset();
+  vi.mocked(cancelSharedAttachment).mockResolvedValue();
+  tauriMocks.invoke.mockReset();
+  tauriMocks.onDragDropEvent.mockReset();
+  tauriMocks.unlisten.mockReset();
+  delete (window as Window & { __TAURI_INTERNALS__?: unknown })
+    .__TAURI_INTERNALS__;
   vi.mocked(Element.prototype.scrollIntoView).mockClear();
   scrollToMock = vi.fn(function scrollTo(
     this: Element,
@@ -47,6 +91,101 @@ describe("HermesDmChatView", () => {
 
     expect(screen.getByText("Koda is working")).toBeInTheDocument();
     expect(screen.queryByText("Koda is typing...")).toBeNull();
+  });
+
+  it("accepts native file drops anywhere in a Hermes workspace DM", async () => {
+    const attachment = {
+      id: "attachment-1",
+      fileName: "workspace-note.txt",
+      name: "workspace-note.txt",
+      mediaType: "text/plain",
+      mimeType: "text/plain",
+      sizeBytes: 9,
+      kind: "file" as const,
+      status: "ready" as const,
+      contentPath: "/attachments/attachment-1/content",
+    };
+    vi.mocked(uploadSharedAttachment).mockImplementation(
+      async (_input, update) => {
+        update({ phase: "ready", progress: 100, attachment });
+        return attachment;
+      },
+    );
+    Object.defineProperty(window, "__TAURI_INTERNALS__", {
+      configurable: true,
+      value: {},
+    });
+    const droppedPath = "C:\\Users\\Bruno\\workspace-note.txt";
+    tauriMocks.invoke.mockResolvedValue(
+      new TextEncoder().encode("workspace").buffer,
+    );
+    type NativeDropHandler = (event: {
+      payload:
+        | { type: "enter"; paths: string[] }
+        | { type: "drop"; paths: string[] };
+    }) => void | Promise<void>;
+    let nativeDropHandler: NativeDropHandler | undefined;
+    tauriMocks.onDragDropEvent.mockImplementation(
+      async (handler: NativeDropHandler) => {
+        nativeDropHandler = handler;
+        return tauriMocks.unlisten;
+      },
+    );
+
+    const onSend = vi.fn(() => true);
+    const { container } = render(
+      <HermesDmChatView
+        messages={[]}
+        loading={false}
+        typingUsers={new Map()}
+        progressInvocations={[]}
+        typingSuppressedUserIds={[]}
+        onSend={onSend}
+        conversationId="conversation-1"
+        token="token-1"
+      />,
+    );
+    const fileInput = container.querySelector<HTMLInputElement>(
+      'input[type="file"]',
+    );
+    if (!fileInput?.parentElement) throw new Error("File drop zone not found");
+    const dropZone = fileInput.parentElement;
+    await waitFor(() => expect(nativeDropHandler).toBeDefined());
+
+    await act(async () => {
+      await nativeDropHandler?.({
+        payload: { type: "enter", paths: [droppedPath] },
+      });
+    });
+    expect(dropZone).toHaveClass("border-accent");
+    await act(async () => {
+      await nativeDropHandler?.({
+        payload: { type: "drop", paths: [droppedPath] },
+      });
+    });
+
+    await waitFor(() =>
+      expect(screen.getByTestId("attachment-draft")).toHaveAttribute(
+        "data-attachment-phase",
+        "ready",
+      ),
+    );
+    expect(tauriMocks.invoke).toHaveBeenCalledWith("read_dropped_file", {
+      filePath: droppedPath,
+    });
+    const uploadInput = vi.mocked(uploadSharedAttachment).mock.calls[0][0];
+    expect(uploadInput).toMatchObject({
+      conversationId: "conversation-1",
+      token: "token-1",
+    });
+    expect(uploadInput.file.name).toBe("workspace-note.txt");
+    expect(uploadInput.file.type).toBe("text/plain");
+    expect(uploadInput.file.size).toBe(9);
+
+    fireEvent.click(screen.getByTitle("Send message"));
+    await waitFor(() =>
+      expect(onSend).toHaveBeenCalledWith("", ["attachment-1"]),
+    );
   });
 
   it("shows typing before mounting the progress UI", () => {

@@ -18,6 +18,10 @@ import {
   slashCommandRequiresArgs,
   type HermesSlashCommand,
 } from "../lib/hermes-slash-commands";
+import {
+  isTauriRuntime,
+  listenForNativeFileDrops,
+} from "../lib/native-file-drop";
 
 const ACCEPTED_MIME = new Set(["image/png", "image/jpeg", "image/gif", "image/webp", "image/svg+xml", "image/bmp"]);
 
@@ -226,6 +230,47 @@ export const InputBar = memo(function InputBar({
     const attachments = await Promise.all(validFiles.map(fileToAttachment));
     setImages((prev) => [...prev, ...attachments]);
   }, [sharedDrafts.length, sharedUpload, startSharedUpload]);
+
+  const addFilesRef = useRef(addFiles);
+  useEffect(() => {
+    addFilesRef.current = addFiles;
+  }, [addFiles]);
+
+  useEffect(() => {
+    if (!isTauriRuntime()) return;
+
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    void listenForNativeFileDrops({
+      onDragStateChange: (dragging) => {
+        if (!disposed) setDragOver(dragging);
+      },
+      onFiles: (files) => {
+        if (!disposed) return addFilesRef.current(files);
+      },
+      onError: (message) => {
+        if (!disposed) setSharedError(message);
+      },
+    })
+      .then((stopListening) => {
+        if (disposed) stopListening();
+        else unlisten = stopListening;
+      })
+      .catch((error) => {
+        if (!disposed) {
+          setSharedError(
+            error instanceof Error
+              ? error.message
+              : "Failed to listen for dropped files",
+          );
+        }
+      });
+
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, []);
 
   const removeImage = useCallback((id: string) => {
     setImages((prev) => prev.filter((img) => img.id !== id));
