@@ -128,8 +128,8 @@ describe("Secure message attachments", function () {
     }
   });
 
-  it("uploads, retries an ambiguous send idempotently, renders, and downloads exact bytes", async () => {
-    await attachFile(VALID_FIXTURE);
+  it("drag-drops, uploads, retries an ambiguous send idempotently, renders, and downloads exact bytes", async () => {
+    await dropFile(VALID_FIXTURE);
     await waitForDraftPhase(validName, "ready", 180_000);
     await expectDraftText(validName, "Ready");
     await assertTransitions(validName, [
@@ -261,6 +261,28 @@ describe("Secure message attachments", function () {
     );
   });
 });
+
+async function dropFile(filePath) {
+  await browser.execute(async (targetPath) => {
+    const input = document.querySelector('input[type="file"]');
+    const dropZone = input?.parentElement;
+    if (!dropZone) throw new Error("Attachment drop zone not found");
+    if (!window.__TAURI_INTERNALS__) {
+      throw new Error("Tauri IPC is unavailable");
+    }
+    const bounds = dropZone.getBoundingClientRect();
+    const position = {
+      x: Math.round((bounds.left + bounds.width / 2) * devicePixelRatio),
+      y: Math.round((bounds.top + bounds.height / 2) * devicePixelRatio),
+    };
+    for (const event of ["tauri://drag-enter", "tauri://drag-drop"]) {
+      await window.__TAURI_INTERNALS__.invoke("plugin:event|emit", {
+        event,
+        payload: { paths: [targetPath], position },
+      });
+    }
+  }, filePath);
+}
 
 async function attachFile(path) {
   const input = await $('input[type="file"]');
