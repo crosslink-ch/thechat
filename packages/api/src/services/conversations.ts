@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, isNull, lt, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, isNull, lt, ne, or, sql } from "drizzle-orm";
 import type { WsServerEvent } from "@thechat/shared";
 import { db } from "../db";
 import {
@@ -17,7 +17,8 @@ import {
 import { attachmentsByMessageIds } from "../attachments/public";
 import { log } from "../logging";
 import { publishWsEventToUsers } from "../realtime";
-import { failTimedOutHermesDispatchesForConversation } from "./bot-runtime";
+import { currentHermesDispatchTimeoutCutoff } from "./bot-runtime";
+import { requireConversationMutationAccess } from "./conversation-mutation-access";
 import { ServiceError } from "./errors";
 import { canUserAccessAttachments } from "./messages";
 
@@ -487,30 +488,33 @@ export async function createConversationThread(
   conversationId: string,
   userId: string,
   input: { botId?: string | null; title?: string | null; branchFromThreadId?: string | null },
+  options: { afterWorkspaceLocked?: () => Promise<void> } = {},
 ) {
-  await requireConversationParticipant(conversationId, userId);
-  const botId = input.botId ?? (await inferHermesBotId(conversationId));
-  await requireHermesBotParticipant(conversationId, botId);
+  return db.transaction(async (tx) => {
+    await requireConversationMutationAccess(tx, conversationId, userId, options);
+    const botId = input.botId ?? (await inferHermesBotId(tx, conversationId));
+    await requireHermesBotParticipant(tx, conversationId, botId);
 
-  const title = normalizeThreadTitle(input.title);
-  const branchPending = input.branchFromThreadId !== undefined;
-  const branchFromThreadId = input.branchFromThreadId ?? null;
-  if (branchFromThreadId) {
-    await requireConversationThread(conversationId, branchFromThreadId, botId);
-  }
-  const [thread] = await db
-    .insert(conversationThreads)
-    .values({
-      conversationId,
-      botId,
-      title,
-      branchPending,
-      branchFromThreadId,
-      createdById: userId,
-    })
-    .returning();
+    const title = normalizeThreadTitle(input.title);
+    const branchPending = input.branchFromThreadId !== undefined;
+    const branchFromThreadId = input.branchFromThreadId ?? null;
+    if (branchFromThreadId) {
+      await requireConversationThread(tx, conversationId, branchFromThreadId, botId);
+    }
+    const [thread] = await tx
+      .insert(conversationThreads)
+      .values({
+        conversationId,
+        botId,
+        title,
+        branchPending,
+        branchFromThreadId,
+        createdById: userId,
+      })
+      .returning();
 
-  return toPublicThread(thread);
+    return toPublicThread(thread);
+  });
 }
 
 export async function updateConversationThread(
@@ -518,29 +522,32 @@ export async function updateConversationThread(
   threadId: string,
   userId: string,
   input: { title: string },
+  options: { afterWorkspaceLocked?: () => Promise<void> } = {},
 ) {
-  await requireConversationParticipant(conversationId, userId);
+  return db.transaction(async (tx) => {
+    await requireConversationMutationAccess(tx, conversationId, userId, options);
 
-  const now = new Date();
-  const [thread] = await db
-    .update(conversationThreads)
-    .set({
-      title: normalizeThreadTitle(input.title),
-      updatedAt: now,
-    })
-    .where(
-      and(
-        eq(conversationThreads.id, threadId),
-        eq(conversationThreads.conversationId, conversationId),
-      ),
-    )
-    .returning();
+    const now = new Date();
+    const [thread] = await tx
+      .update(conversationThreads)
+      .set({
+        title: normalizeThreadTitle(input.title),
+        updatedAt: now,
+      })
+      .where(
+        and(
+          eq(conversationThreads.id, threadId),
+          eq(conversationThreads.conversationId, conversationId),
+        ),
+      )
+      .returning();
 
-  if (!thread) {
-    throw new ServiceError("Thread not found", 404);
-  }
+    if (!thread) {
+      throw new ServiceError("Thread not found", 404);
+    }
 
-  return toPublicThread(thread);
+    return toPublicThread(thread);
+  });
 }
 
 export async function requireConversationParticipant(conversationId: string, userId: string) {
@@ -579,11 +586,12 @@ export async function requireConversationParticipant(conversationId: string, use
 }
 
 async function requireConversationThread(
+  executor: typeof db | Parameters<Parameters<typeof db.transaction>[0]>[0],
   conversationId: string,
   threadId: string,
   botId: string,
 ) {
-  const [thread] = await db
+  const [thread] = await executor
     .select({ id: conversationThreads.id })
     .from(conversationThreads)
     .where(
@@ -599,8 +607,11 @@ async function requireConversationThread(
   }
 }
 
-async function inferHermesBotId(conversationId: string) {
-  const [row] = await db
+async function inferHermesBotId(
+  executor: typeof db | Parameters<Parameters<typeof db.transaction>[0]>[0],
+  conversationId: string,
+) {
+  const [row] = await executor
     .select({ botId: bots.id })
     .from(conversationParticipants)
     .innerJoin(bots, eq(bots.userId, conversationParticipants.userId))
@@ -618,8 +629,12 @@ async function inferHermesBotId(conversationId: string) {
   return row.botId;
 }
 
-async function requireHermesBotParticipant(conversationId: string, botId: string) {
-  const [row] = await db
+async function requireHermesBotParticipant(
+  executor: typeof db | Parameters<Parameters<typeof db.transaction>[0]>[0],
+  conversationId: string,
+  botId: string,
+) {
+  const [row] = await executor
     .select({ botId: bots.id })
     .from(bots)
     .innerJoin(conversationParticipants, eq(conversationParticipants.userId, bots.userId))
@@ -917,7 +932,7 @@ export async function deleteChannel(
   userId: string,
   options: { afterWorkspaceLocked?: () => Promise<void> } = {},
 ) {
-  await failTimedOutHermesDispatchesForConversation(conversationId);
+  const hermesDispatchCutoff = currentHermesDispatchTimeoutCutoff();
 
   const result = await db.transaction(async (tx) => {
     const [candidate] = await tx
@@ -974,7 +989,13 @@ export async function deleteChannel(
         and(
           eq(botInvocations.conversationId, channel.id),
           or(
-            eq(botInvocations.status, "queued"),
+            and(
+              eq(botInvocations.status, "queued"),
+              or(
+                ne(botInvocations.adapterKind, "hermes"),
+                gt(botInvocations.createdAt, hermesDispatchCutoff),
+              ),
+            ),
             eq(botInvocations.status, "running"),
             and(
               eq(botInvocations.status, "claimed"),
@@ -984,7 +1005,6 @@ export async function deleteChannel(
           ),
         ),
       )
-      .for("update")
       .limit(1);
 
     const [pendingTargetedEvent] = await tx
@@ -1000,7 +1020,6 @@ export async function deleteChannel(
           sql`jsonb_array_length(${eventOutbox.event}->'payload'->'targetBotIds') > 0`,
         ),
       )
-      .for("update")
       .limit(1);
 
     if (activeInvocation || pendingTargetedEvent) {

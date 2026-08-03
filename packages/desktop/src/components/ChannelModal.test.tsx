@@ -8,9 +8,10 @@ import {
   createRouter,
 } from "@tanstack/react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { WorkspaceChannel, WorkspaceWithDetails } from "@thechat/shared";
+import type { AuthUser, WorkspaceChannel, WorkspaceWithDetails } from "@thechat/shared";
 import { useConversationsStore } from "../stores/conversations";
 import { useWorkspacesStore } from "../stores/workspaces";
+import { useAuthStore } from "../stores/auth";
 import {
   ChannelModal,
   closeChannelModal,
@@ -37,12 +38,27 @@ const product: WorkspaceChannel = {
   updatedAt: "2026-01-02",
 };
 
+const user: AuthUser = {
+  id: "u1",
+  name: "Test User",
+  email: "test@example.com",
+  avatar: null,
+  type: "human",
+};
+
 const workspace: WorkspaceWithDetails = {
   id: "ws-1",
   name: "Team Alpha",
   createdAt: "2026-01-01",
   updatedAt: "2026-01-01",
-  members: [],
+  members: [
+    {
+      userId: user.id,
+      role: "owner",
+      joinedAt: "2026-01-01",
+      user,
+    },
+  ],
   channels: [general, product],
 };
 
@@ -80,6 +96,7 @@ async function renderModal(initialEntry = "/") {
 
 beforeEach(() => {
   closeChannelModal();
+  useAuthStore.setState({ user, token: "token", loading: false });
   useWorkspacesStore.setState({
     workspaces: [],
     activeWorkspace: workspace,
@@ -164,6 +181,57 @@ describe("ChannelModal", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
     await waitFor(() => expect(renameChannel).toHaveBeenLastCalledWith(product.id, "Design"));
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  });
+
+  it("keeps channel creation available to regular workspace members", async () => {
+    const createChannel = vi.fn().mockResolvedValue(general);
+    useWorkspacesStore.setState({
+      createChannel,
+      activeWorkspace: {
+        ...workspace,
+        members: workspace.members.map((member) => ({
+          ...member,
+          role: "member" as const,
+        })),
+      },
+    });
+    await renderModal();
+
+    await act(async () => openCreateChannelModal());
+    fireEvent.change(screen.getByRole("textbox", { name: "Channel name" }), {
+      target: { value: "Member Channel" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Create channel" }));
+
+    await waitFor(() => {
+      expect(createChannel).toHaveBeenCalledWith("Member Channel");
+    });
+  });
+
+  it("closes an open channel mutation when the current user loses manager access", async () => {
+    const renameChannel = vi.fn();
+    useWorkspacesStore.setState({ renameChannel });
+    await renderModal();
+
+    act(() => openRenameChannelModal(product));
+    expect(screen.getByRole("dialog", { name: "Rename channel" })).toBeInTheDocument();
+
+    act(() => {
+      useWorkspacesStore.setState({
+        activeWorkspace: {
+          ...workspace,
+          members: workspace.members.map((member) => ({
+            ...member,
+            role: "member" as const,
+          })),
+        },
+      });
+    });
+
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+    );
+    expect(renameChannel).not.toHaveBeenCalled();
   });
 
   it("confirms deletion and moves away from the deleted active channel", async () => {

@@ -4,6 +4,7 @@ import * as Dialog from "@radix-ui/react-dialog";
 import type { WorkspaceChannel } from "@thechat/shared";
 import { useWorkspacesStore } from "../stores/workspaces";
 import { useConversationsStore } from "../stores/conversations";
+import { useAuthStore } from "../stores/auth";
 
 function HashIcon({ className = "" }: { className?: string }) {
   return (
@@ -115,6 +116,7 @@ export function ChannelModal() {
     .map((match) => (match.params as Record<string, string>).id)
     .find(Boolean);
   const activeWorkspace = useWorkspacesStore((store) => store.activeWorkspace);
+  const currentUserId = useAuthStore((store) => store.user?.id);
   const createChannel = useWorkspacesStore((store) => store.createChannel);
   const renameChannel = useWorkspacesStore((store) => store.renameChannel);
   const deleteChannel = useWorkspacesStore((store) => store.deleteChannel);
@@ -124,12 +126,27 @@ export function ChannelModal() {
   const [submitting, setSubmitting] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const cancelRef = useRef<HTMLButtonElement>(null);
+  const currentMembership = activeWorkspace?.members.find(
+    (member) => member.userId === currentUserId,
+  );
+  const canUseChannelModal = Boolean(
+    currentMembership &&
+    (state?.mode === "create" ||
+      currentMembership.role === "owner" ||
+      currentMembership.role === "admin"),
+  );
 
   useEffect(() => {
     setName(state?.mode === "rename" ? (state.channel.title ?? state.channel.name) : "");
     setError("");
     setSubmitting(false);
   }, [state]);
+
+  useEffect(() => {
+    if (state && currentUserId && !canUseChannelModal) {
+      closeChannelModal();
+    }
+  }, [canUseChannelModal, currentUserId, state]);
 
   if (!state) return <Dialog.Root open={false} />;
   const currentState = state;
@@ -152,6 +169,21 @@ export function ChannelModal() {
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
     if (submitting) return;
+    const latestWorkspace = useWorkspacesStore.getState().activeWorkspace;
+    const latestUserId = useAuthStore.getState().user?.id;
+    const latestMembership = latestWorkspace?.members.find(
+      (member) => member.userId === latestUserId,
+    );
+    const stillAuthorized = Boolean(
+      latestMembership &&
+      (currentState.mode === "create" ||
+        latestMembership.role === "owner" ||
+        latestMembership.role === "admin"),
+    );
+    if (!stillAuthorized) {
+      closeChannelModal();
+      return;
+    }
     if (!isDelete && !slug) {
       setError("Enter a name with at least one letter or number.");
       return;

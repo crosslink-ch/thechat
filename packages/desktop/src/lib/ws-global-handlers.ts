@@ -24,7 +24,10 @@ function auth(token: string) {
   return { headers: { authorization: `Bearer ${token}` } };
 }
 
-async function refreshWorkspaceDetails(workspaceId: string) {
+async function refreshWorkspaceDetails(
+  workspaceId: string,
+  isLatestRequest: () => boolean = () => true,
+) {
   const token = useAuthStore.getState().token;
   if (!token) return;
 
@@ -37,7 +40,11 @@ async function refreshWorkspaceDetails(workspaceId: string) {
 
     const latest = data as WorkspaceWithDetails;
     const stillCurrent = useWorkspacesStore.getState().activeWorkspace;
-    if (!stillCurrent || stillCurrent.id !== workspaceId) return;
+    if (
+      !stillCurrent ||
+      stillCurrent.id !== workspaceId ||
+      !isLatestRequest()
+    ) return;
 
     useWorkspacesStore.setState({ activeWorkspace: latest });
   } catch {
@@ -55,6 +62,21 @@ export function registerGlobalWsHandlers(
   currentPath: () => string = currentWindowRoutePath,
 ): () => void {
   const deletedChannelIds = new Set<string>();
+  let workspaceRefreshGeneration = 0;
+
+  const reconcileWorkspace = (workspaceId: string) => {
+    if (useWorkspacesStore.getState().activeWorkspace?.id !== workspaceId) return;
+    const generation = ++workspaceRefreshGeneration;
+    void refreshWorkspaceDetails(
+      workspaceId,
+      () => generation === workspaceRefreshGeneration,
+    );
+  };
+
+  const onAuthenticated = () => {
+    const workspaceId = useWorkspacesStore.getState().activeWorkspace?.id;
+    if (workspaceId) reconcileWorkspace(workspaceId);
+  };
 
   const onNewMessage = ({
     message: msg,
@@ -166,6 +188,7 @@ export function registerGlobalWsHandlers(
         },
       };
     });
+    reconcileWorkspace(workspaceId);
   };
 
   const onChannelRenamed = ({
@@ -185,6 +208,7 @@ export function registerGlobalWsHandlers(
         },
       };
     });
+    reconcileWorkspace(workspaceId);
   };
 
   const onChannelDeleted = ({
@@ -215,6 +239,7 @@ export function registerGlobalWsHandlers(
         to: fallbackChannelId ? `/channel/${fallbackChannelId}` : "/",
       });
     }
+    reconcileWorkspace(workspaceId);
   };
 
   const onInviteReceived = ({
@@ -244,6 +269,7 @@ export function registerGlobalWsHandlers(
     useHermesIndicatorsStore.getState().trackProgressEvent(event, invocation);
   };
 
+  wsEvents.on("ws:authenticated", onAuthenticated);
   wsEvents.on("ws:new_message", onNewMessage);
   wsEvents.on("ws:member_joined", onMemberJoined);
   wsEvents.on("ws:member_role_changed", onMemberRoleChanged);
@@ -256,6 +282,8 @@ export function registerGlobalWsHandlers(
   wsEvents.on("ws:bot_invocation_progress", onBotInvocationProgress);
 
   return () => {
+    workspaceRefreshGeneration += 1;
+    wsEvents.off("ws:authenticated", onAuthenticated);
     wsEvents.off("ws:new_message", onNewMessage);
     wsEvents.off("ws:member_joined", onMemberJoined);
     wsEvents.off("ws:member_role_changed", onMemberRoleChanged);

@@ -40,6 +40,8 @@ import {
   type RealtimeEvent,
 } from "../realtime";
 import { closeDomainEventRuntime, startDomainEventRuntime } from "../events/runtime";
+import { createChatMessageSentV1 } from "../events/envelope";
+import { enqueueDomainEvent } from "../events/outbox";
 import crypto from "crypto";
 
 const app = new Elysia()
@@ -441,6 +443,133 @@ describe("Bots: Workspace management", () => {
       (m: any) => m.userId === botRes.body.userId
     );
     expect(botMember).toBeUndefined();
+  });
+
+  test("removing a Hermes bot revokes queued channel work and cancels deletion blockers", async () => {
+    const human = await registerUser("HermesRevocationOwner");
+    const { workspaceId } = await createWorkspaceWithGeneralChannel(
+      human.token,
+      "Hermes Revocation WS",
+    );
+    const channelRes = await req(
+      "POST",
+      "/conversations/channel",
+      { workspaceId, name: "revocation" },
+      human.token,
+    );
+    expect(channelRes.status).toBe(200);
+    const botRes = await createBot(human.token, "RevokedHermes", undefined, {
+      kind: "hermes",
+      workspaceId,
+    });
+    expect(botRes.status).toBe(200);
+    const dmRes = await req(
+      "POST",
+      "/conversations/dm",
+      { workspaceId, otherUserId: botRes.body.userId },
+      human.token,
+    );
+    expect(dmRes.status).toBe(200);
+
+    const sendRes = await req(
+      "POST",
+      `/messages/${channelRes.body.id}`,
+      { content: "@RevokedHermes handle this queued task" },
+      human.token,
+    );
+    expect(sendRes.status).toBe(200);
+    const invocation = await waitForResult(async () => {
+      const rows = await invocationsForMessage(sendRes.body.id);
+      return rows.find((row) => row.botId === botRes.body.id);
+    }, "queued invocation before bot removal");
+    const delayedEvent = createChatMessageSentV1({
+      messageId: sendRes.body.id,
+      conversationId: channelRes.body.id,
+      targetBotIds: [botRes.body.id],
+      messageKind: "user",
+      automationDepth: 0,
+      senderId: human.user.id,
+      senderType: "human",
+      workspaceId,
+    });
+    await enqueueDomainEvent(db, delayedEvent, {
+      partitionKey: channelRes.body.id,
+      availableAt: new Date(Date.now() + 60 * 60 * 1000),
+    });
+
+    const removeRes = await req(
+      "DELETE",
+      `/bots/${botRes.body.id}/workspaces/${workspaceId}`,
+      undefined,
+      human.token,
+    );
+    expect(removeRes.status).toBe(200);
+
+    const [cancelled] = await db
+      .select({ status: botInvocations.status, error: botInvocations.error })
+      .from(botInvocations)
+      .where(eq(botInvocations.id, invocation.id))
+      .limit(1);
+    expect(cancelled).toEqual({
+      status: "cancelled",
+      error: "Bot removed from workspace",
+    });
+    const [revokedEvent] = await db
+      .select({
+        event: eventOutbox.event,
+        deadAt: eventOutbox.deadAt,
+        lastError: eventOutbox.lastError,
+      })
+      .from(eventOutbox)
+      .where(eq(eventOutbox.id, delayedEvent.id))
+      .limit(1);
+    expect((revokedEvent.event as any).payload.targetBotIds).toEqual([]);
+    expect(revokedEvent.deadAt).toBeInstanceOf(Date);
+    expect(revokedEvent.lastError).toBe("Target bot removed from workspace");
+
+    const pollRes = await req(
+      "GET",
+      "/hermes-platform/events?limit=10",
+      undefined,
+      botRes.body.apiKey,
+    );
+    expect(pollRes.status).toBe(200);
+    expect(pollRes.body.events).toEqual([]);
+
+    const publishRes = await req(
+      "POST",
+      "/hermes-platform/messages",
+      {
+        invocationId: invocation.id,
+        content: "This response must be revoked",
+      },
+      botRes.body.apiKey,
+    );
+    expect(publishRes.status).toBe(403);
+
+    const directWriteRes = await req(
+      "POST",
+      `/messages/${channelRes.body.id}`,
+      { content: "This direct channel write must be revoked" },
+      botRes.body.apiKey,
+    );
+    expect(directWriteRes.status).toBe(403);
+
+    const directMessageWriteRes = await req(
+      "POST",
+      `/messages/${dmRes.body.id}`,
+      { content: "Workspace removal must revoke direct-message access too" },
+      botRes.body.apiKey,
+    );
+    expect(directMessageWriteRes.status).toBe(403);
+
+    const deleteRes = await req(
+      "DELETE",
+      `/conversations/channel/${channelRes.body.id}`,
+      undefined,
+      human.token,
+    );
+    expect(deleteRes.status).toBe(200);
   });
 });
 

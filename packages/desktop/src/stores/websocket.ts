@@ -94,6 +94,7 @@ function doConnect() {
       reconnectAttempt = 0;
       startHeartbeat();
       flushPendingMessages();
+      wsEvents.emit("ws:authenticated", {});
     } else if (event.type === "auth_error") {
       currentToken = null;
       socket.close();

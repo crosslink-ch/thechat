@@ -1,5 +1,5 @@
 import crypto from "crypto";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, or, sql } from "drizzle-orm";
 import type { BotCommandPublic, WsServerEvent } from "@thechat/shared";
 import { db } from "../db";
 import {
@@ -9,6 +9,8 @@ import {
   workspaces,
   conversations,
   conversationParticipants,
+  botInvocations,
+  eventOutbox,
 } from "../db/schema";
 import { ServiceError } from "./errors";
 import { broadcastToUser } from "../ws";
@@ -287,24 +289,109 @@ export async function removeBotFromWorkspace(
       throw new ServiceError("You are not a member of this workspace", 403);
     }
 
-    const channels = await tx
+    const workspaceConversations = await tx
       .select({ id: conversations.id })
       .from(conversations)
+      .where(eq(conversations.workspaceId, workspaceId));
+
+    const activeInvocations = await tx
+      .select({ id: botInvocations.id })
+      .from(botInvocations)
+      .innerJoin(
+        conversations,
+        eq(botInvocations.conversationId, conversations.id),
+      )
       .where(
         and(
+          eq(botInvocations.botId, botId),
           eq(conversations.workspaceId, workspaceId),
-          eq(conversations.type, "group"),
+          or(
+            eq(botInvocations.status, "queued"),
+            eq(botInvocations.status, "running"),
+            and(
+              eq(botInvocations.status, "claimed"),
+              sql`NULLIF(${botInvocations.responseJson}->'completion'->>'type', '') IS NULL`,
+              sql`COALESCE(${botInvocations.responseJson}->>'silent', 'false') <> 'true'`,
+            ),
+          ),
         ),
       );
+    if (activeInvocations.length > 0) {
+      const cancelledAt = new Date();
+      await tx
+        .update(botInvocations)
+        .set({
+          status: "cancelled",
+          error: "Bot removed from workspace",
+          completedAt: cancelledAt,
+          updatedAt: cancelledAt,
+        })
+        .where(
+          inArray(
+            botInvocations.id,
+            activeInvocations.map((invocation) => invocation.id),
+          ),
+        );
+    }
 
-    if (channels.length > 0) {
+    // Revoke durable work that was committed before this exclusive workspace
+    // lock was acquired but has not yet been consumed. This prevents removed
+    // bots from receiving it and avoids phantom work blocking channel deletion.
+    await tx.execute(sql`
+      with revoked as (
+        select pending.id,
+          coalesce(
+            (
+              select jsonb_agg(target.value)
+              from jsonb_array_elements(
+                pending.event->'payload'->'targetBotIds'
+              ) as target(value)
+              where target.value <> to_jsonb(${botId}::text)
+            ),
+            '[]'::jsonb
+          ) as remaining_targets
+        from ${eventOutbox} as pending
+        where pending.event_type = 'chat.message.sent'
+          and pending.published_at is null
+          and pending.dead_at is null
+          and pending.event->'tenant'->>'workspaceId' = ${workspaceId}
+          and pending.event->'payload'->'targetBotIds' @> jsonb_build_array(${botId}::text)
+      )
+      update ${eventOutbox} as pending
+      set event = jsonb_set(
+            pending.event,
+            '{payload,targetBotIds}',
+            revoked.remaining_targets
+          ),
+          dead_at = case
+            when jsonb_array_length(revoked.remaining_targets) = 0 then now()
+            else pending.dead_at
+          end,
+          last_error = case
+            when jsonb_array_length(revoked.remaining_targets) = 0
+              then 'Target bot removed from workspace'
+            else pending.last_error
+          end,
+          locked_by = case
+            when jsonb_array_length(revoked.remaining_targets) = 0 then null
+            else pending.locked_by
+          end,
+          locked_at = case
+            when jsonb_array_length(revoked.remaining_targets) = 0 then null
+            else pending.locked_at
+          end
+      from revoked
+      where pending.id = revoked.id
+    `);
+
+    if (workspaceConversations.length > 0) {
       await tx
         .delete(conversationParticipants)
         .where(
           and(
             inArray(
               conversationParticipants.conversationId,
-              channels.map((channel) => channel.id),
+              workspaceConversations.map((conversation) => conversation.id),
             ),
             eq(conversationParticipants.userId, bot.userId),
           ),

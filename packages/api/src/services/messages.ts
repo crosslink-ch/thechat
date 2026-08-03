@@ -21,6 +21,7 @@ import { log } from "../logging";
 import { withSpan } from "../observability";
 import { publishWsEventToUsers } from "../realtime";
 import { ServiceError } from "./errors";
+import { requireConversationMutationAccess } from "./conversation-mutation-access";
 import { resolveMessageBotTargetIds } from "./message-bot-targets";
 
 const messageLog = log.child({ component: "messages" });
@@ -117,6 +118,7 @@ export async function sendMessage(
     threadId?: string | null;
     clientMessageId?: string | null;
     attachmentIds?: string[];
+    afterWorkspaceLocked?: () => Promise<void>;
   } = {},
 ) {
   const normalizedContent = content.trim();
@@ -150,11 +152,11 @@ export async function sendMessage(
     },
     async (span) => {
       const result = await db.transaction(async (tx) => {
-        const participant = await requireParticipant(
+        const participant = await requireConversationMutationAccess(
           tx,
           conversationId,
           userId,
-          true,
+          { afterWorkspaceLocked: options.afterWorkspaceLocked },
         );
         if (participant.senderType === "bot" && attachmentIds.length > 0) {
           const [bot] = await tx

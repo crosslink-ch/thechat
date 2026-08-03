@@ -11,6 +11,7 @@ import {
   bots,
   conversationParticipants,
   eventOutbox,
+  messages,
   users,
   workspaces,
 } from "../db/schema";
@@ -19,7 +20,13 @@ import { messageRoutes } from "../messages";
 import { workspaceRoutes } from "../workspaces";
 import { createChatMessageSentV1 } from "../events/envelope";
 import { enqueueDomainEvent } from "../events/outbox";
-import { createChannel, renameChannel } from "../services/conversations";
+import {
+  createChannel,
+  createConversationThread,
+  renameChannel,
+} from "../services/conversations";
+import { sendMessage } from "../services/messages";
+import { failTimedOutHermesDispatchesForConversation } from "../services/bot-runtime";
 import { addBotToWorkspace, removeBotFromWorkspace } from "../services/bots";
 import { removeMember, updateMemberRole } from "../services/workspaces";
 import {
@@ -522,6 +529,93 @@ describe("Channel management", () => {
     ).toBe(false);
   });
 
+  test("removal-first serialization rejects channel messages and thread creation", async () => {
+    const owner = await registerUser("Write Race Owner");
+    const member = await registerUser("Write Race Member");
+    const workspaceId = await createWorkspace(
+      owner.token,
+      `Write Race ${crypto.randomUUID()}`,
+    );
+    await addMember(workspaceId, owner.token, member);
+    const channel = await createChannel(
+      workspaceId,
+      "Write Race",
+      owner.user.id,
+    );
+    const bot = await createHermesBot(owner.user.id);
+    await addBotToWorkspace(bot.id, workspaceId, owner.user.id);
+
+    let releaseRemoval!: () => void;
+    const removalGate = new Promise<void>((resolve) => {
+      releaseRemoval = resolve;
+    });
+    let resolveRemovalLocked!: () => void;
+    const removalLocked = new Promise<void>((resolve) => {
+      resolveRemovalLocked = resolve;
+    });
+    const removing = removeMember(
+      workspaceId,
+      owner.user.id,
+      member.user.id,
+      {
+        afterWorkspaceLocked: async () => {
+          resolveRemovalLocked();
+          await removalGate;
+        },
+      },
+    );
+    await removalLocked;
+
+    let sendAcquiredWorkspaceLock = false;
+    let threadAcquiredWorkspaceLock = false;
+    const sending = sendMessage(
+      channel.id,
+      member.user.id,
+      "Write Race Member",
+      "This stale write must not commit",
+      {
+        afterWorkspaceLocked: async () => {
+          sendAcquiredWorkspaceLock = true;
+        },
+      },
+    );
+    const creatingThread = createConversationThread(
+      channel.id,
+      member.user.id,
+      { botId: bot.id, title: "This stale thread must not commit" },
+      {
+        afterWorkspaceLocked: async () => {
+          threadAcquiredWorkspaceLock = true;
+        },
+      },
+    );
+    const outcomes = Promise.all([
+      sending.then(
+        () => ({ status: "fulfilled" as const }),
+        (error: unknown) => ({ status: "rejected" as const, error }),
+      ),
+      creatingThread.then(
+        () => ({ status: "fulfilled" as const }),
+        (error: unknown) => ({ status: "rejected" as const, error }),
+      ),
+    ]);
+
+    await Bun.sleep(100);
+    expect(sendAcquiredWorkspaceLock).toBe(false);
+    expect(threadAcquiredWorkspaceLock).toBe(false);
+    releaseRemoval();
+    await removing;
+
+    for (const outcome of await outcomes) {
+      expect(outcome.status).toBe("rejected");
+      if (outcome.status === "rejected") {
+        expect(outcome.error).toMatchObject({ status: 403 });
+      }
+    }
+    expect(sendAcquiredWorkspaceLock).toBe(true);
+    expect(threadAcquiredWorkspaceLock).toBe(true);
+  });
+
   test("serializes bot membership changes with channel participant snapshots", async () => {
     const owner = await registerUser("Bot Race Owner");
     const workspaceId = await createWorkspace(
@@ -883,13 +977,15 @@ describe("Channel management", () => {
     }
   });
 
-  test("delete reconciles stale queued Hermes dispatches instead of blocking forever", async () => {
+  test("delete ignores stale queued Hermes dispatches without pre-authorization mutation", async () => {
     const owner = await registerUser("Stale Invocation Owner");
+    const outsider = await registerUser("Stale Invocation Outsider");
     const workspaceId = await createWorkspace(
       owner.token,
       `Stale Invocations ${crypto.randomUUID()}`,
     );
     const bot = await createHermesBot(owner.user.id);
+    await addBotToWorkspace(bot.id, workspaceId, owner.user.id);
     const created = await req(
       "POST",
       "/conversations/channel",
@@ -904,16 +1000,19 @@ describe("Channel management", () => {
     );
     expect(created.status).toBe(200);
     expect(message.status).toBe(200);
-    await db.insert(botInvocations).values({
-      botId: bot.id,
-      conversationId: created.body.id,
-      triggerMessageId: message.body.id,
-      adapterKind: "hermes",
-      status: "queued",
-      requestJson: { platform: "thechat" },
-      responseJson: { status: "dispatch_pending" },
-      createdAt: new Date(Date.now() - 10 * 60 * 1000),
-    });
+    const [invocation] = await db
+      .insert(botInvocations)
+      .values({
+        botId: bot.id,
+        conversationId: created.body.id,
+        triggerMessageId: message.body.id,
+        adapterKind: "hermes",
+        status: "queued",
+        requestJson: { platform: "thechat" },
+        responseJson: { status: "dispatch_pending" },
+        createdAt: new Date(Date.now() - 10 * 60 * 1000),
+      })
+      .returning({ id: botInvocations.id });
 
     expect(
       (
@@ -921,10 +1020,46 @@ describe("Channel management", () => {
           "DELETE",
           `/conversations/channel/${created.body.id}`,
           undefined,
-          owner.token,
+          outsider.token,
         )
       ).status,
-    ).toBe(200);
+    ).toBe(403);
+    expect(
+      await db
+        .select({ status: botInvocations.status })
+        .from(botInvocations)
+        .where(eq(botInvocations.id, invocation.id)),
+    ).toEqual([{ status: "queued" }]);
+    expect(
+      await db
+        .select({ id: messages.id })
+        .from(messages)
+        .where(
+          and(
+            eq(messages.conversationId, created.body.id),
+            eq(messages.senderId, bot.userId),
+          ),
+        ),
+    ).toHaveLength(0);
+
+    const [, authorizedDelete] = await Promise.race([
+      Promise.all([
+        failTimedOutHermesDispatchesForConversation(created.body.id),
+        req(
+          "DELETE",
+          `/conversations/channel/${created.body.id}`,
+          undefined,
+          owner.token,
+        ),
+      ]),
+      new Promise<never>((_, reject) => {
+        setTimeout(
+          () => reject(new Error("stale cleanup/delete deadlocked")),
+          2_000,
+        );
+      }),
+    ]);
+    expect(authorizedDelete.status).toBe(200);
     await db
       .delete(eventOutbox)
       .where(eq(eventOutbox.partitionKey, created.body.id));

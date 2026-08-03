@@ -356,6 +356,32 @@ describe("registerGlobalWsHandlers", () => {
     cleanup();
   });
 
+  it("reconciles channel state from the server after websocket authentication", async () => {
+    const recovered: WorkspaceChannel = {
+      id: "ch-recovered",
+      workspaceId: "ws-1",
+      name: "recovered",
+      title: "Recovered",
+      createdAt: "2026-01-02T00:00:00.000Z",
+      updatedAt: "2026-01-02T00:00:00.000Z",
+    };
+    workspacesGetMock.mockResolvedValueOnce({
+      data: { ...baseWorkspace, channels: [recovered] },
+      error: null,
+    });
+    const cleanup = registerGlobalWsHandlers(() => {});
+
+    wsEvents.emit("ws:authenticated", {});
+
+    await vi.waitFor(() => {
+      expect(
+        useWorkspacesStore.getState().activeWorkspace?.channels,
+      ).toEqual([recovered]);
+    });
+    expect(workspacesRouteMock).toHaveBeenCalledWith({ id: "ws-1" });
+    cleanup();
+  });
+
   it("applies channel lifecycle events idempotently and reroutes a deleted active channel", () => {
     const general: WorkspaceChannel = {
       id: "ch-general",
