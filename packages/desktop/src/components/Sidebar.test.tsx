@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render, screen, act, fireEvent, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import {
   RouterProvider,
   createMemoryHistory,
@@ -22,8 +23,16 @@ import type {
 
 import { Sidebar, useSidebarState } from "./Sidebar";
 
-const { dmPostMock } = vi.hoisted(() => ({
+const {
+  dmPostMock,
+  openCreateChannelModalMock,
+  openRenameChannelModalMock,
+  openDeleteChannelModalMock,
+} = vi.hoisted(() => ({
   dmPostMock: vi.fn(),
+  openCreateChannelModalMock: vi.fn(),
+  openRenameChannelModalMock: vi.fn(),
+  openDeleteChannelModalMock: vi.fn(),
 }));
 
 vi.mock("../lib/api", () => ({
@@ -36,6 +45,12 @@ vi.mock("../lib/api", () => ({
 
 vi.mock("../lib/notifications", () => ({
   fireNotification: vi.fn(),
+}));
+
+vi.mock("./ChannelModal", () => ({
+  openCreateChannelModal: openCreateChannelModalMock,
+  openRenameChannelModal: openRenameChannelModalMock,
+  openDeleteChannelModal: openDeleteChannelModalMock,
 }));
 
 const conversations: Conversation[] = [
@@ -153,6 +168,7 @@ beforeEach(() => {
     unreadBotConversations: {},
     activeDirectConversationId: null,
   });
+  vi.clearAllMocks();
 });
 
 describe("Sidebar", () => {
@@ -205,6 +221,89 @@ describe("Sidebar", () => {
 
     // Notifications button remains available at the top.
     expect(screen.getByLabelText("Notifications")).toBeInTheDocument();
+  });
+
+  it("opens create, rename, and delete channel controls for workspace owners", async () => {
+    const ui = userEvent.setup();
+    useAuthStore.setState({ user, token: "test-token" });
+    useWorkspacesStore.setState({ workspaces: workspaceList, activeWorkspace });
+
+    await renderWithRouter(<Sidebar />);
+
+    await ui.click(screen.getByRole("button", { name: "Create channel" }));
+    expect(openCreateChannelModalMock).toHaveBeenCalledOnce();
+
+    await ui.click(screen.getByRole("button", { name: "Manage #general" }));
+    await ui.click(screen.getByRole("menuitem", { name: "Rename channel" }));
+    expect(openRenameChannelModalMock).toHaveBeenCalledWith(
+      activeWorkspace.channels[0],
+    );
+
+    await ui.click(screen.getByRole("button", { name: "Manage #general" }));
+    await ui.click(screen.getByRole("menuitem", { name: "Delete channel" }));
+    expect(openDeleteChannelModalMock).toHaveBeenCalledWith(
+      activeWorkspace.channels[0],
+    );
+  });
+
+  it("gives workspace admins channel manager controls", async () => {
+    const adminWorkspace: WorkspaceWithDetails = {
+      ...activeWorkspace,
+      members: activeWorkspace.members.map((member) =>
+        member.userId === user.id ? { ...member, role: "admin" } : member,
+      ),
+    };
+    useAuthStore.setState({ user, token: "test-token" });
+    useWorkspacesStore.setState({
+      workspaces: [{ ...workspaceList[0], role: "admin" }],
+      activeWorkspace: adminWorkspace,
+    });
+
+    await renderWithRouter(<Sidebar />);
+
+    expect(
+      screen.getByRole("button", { name: "Manage #general" }),
+    ).toBeInTheDocument();
+  });
+
+  it("supports keyboard navigation and restores focus in channel menus", async () => {
+    const ui = userEvent.setup();
+    useAuthStore.setState({ user, token: "test-token" });
+    useWorkspacesStore.setState({ workspaces: workspaceList, activeWorkspace });
+    await renderWithRouter(<Sidebar />);
+
+    const trigger = screen.getByRole("button", { name: "Manage #general" });
+    trigger.focus();
+    await ui.keyboard("{Enter}");
+    const renameItem = await screen.findByRole("menuitem", {
+      name: "Rename channel",
+    });
+    const deleteItem = screen.getByRole("menuitem", { name: "Delete channel" });
+    expect(renameItem).toHaveFocus();
+
+    await ui.keyboard("{ArrowDown}");
+    expect(deleteItem).toHaveFocus();
+    await ui.keyboard("{Escape}");
+    expect(trigger).toHaveFocus();
+  });
+
+  it("allows members to create channels without exposing manager actions", async () => {
+    const memberWorkspace: WorkspaceWithDetails = {
+      ...activeWorkspace,
+      members: activeWorkspace.members.map((member) =>
+        member.userId === user.id ? { ...member, role: "member" } : member,
+      ),
+    };
+    useAuthStore.setState({ user, token: "test-token" });
+    useWorkspacesStore.setState({
+      workspaces: [{ ...workspaceList[0], role: "member" }],
+      activeWorkspace: memberWorkspace,
+    });
+
+    await renderWithRouter(<Sidebar />);
+
+    expect(screen.getByRole("button", { name: "Create channel" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Manage #general" })).not.toBeInTheDocument();
   });
 
   it("does not show agent chats in the sidebar UI", async () => {

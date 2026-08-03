@@ -5,12 +5,12 @@ import { db } from "../db";
 import {
   attachments,
   bots,
-  conversationParticipants,
   users,
 } from "../db/schema";
 import { enqueueDomainEvent } from "../events/outbox";
 import { withSpan } from "../observability";
 import { ServiceError } from "../services/errors";
+import { requireConversationParticipant } from "../services/conversations";
 import { loadAttachmentConfig } from "./config";
 import {
   ATTACHMENT_DELETION_REQUESTED,
@@ -589,22 +589,7 @@ async function enforceDraftQuota(
 }
 
 async function requireParticipant(conversationId: string, userId: string) {
-  const [participant] = await db
-    .select({ userId: conversationParticipants.userId })
-    .from(conversationParticipants)
-    .where(
-      and(
-        eq(conversationParticipants.conversationId, conversationId),
-        eq(conversationParticipants.userId, userId),
-      ),
-    )
-    .limit(1);
-  if (!participant) {
-    throw new ServiceError(
-      "You are not a participant of this conversation",
-      403,
-    );
-  }
+  await requireConversationParticipant(conversationId, userId);
 }
 
 async function requireAttachmentActor(userId: string) {

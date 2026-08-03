@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   BotInvocationProgressEventPublic,
   BotInvocationPublic,
+  WorkspaceChannel,
   WorkspaceWithDetails,
 } from "@thechat/shared";
 import { registerGlobalWsHandlers } from "./ws-global-handlers";
@@ -10,6 +11,7 @@ import { fireNotification } from "./notifications";
 import { useAuthStore } from "../stores/auth";
 import { useWorkspacesStore } from "../stores/workspaces";
 import { useNotificationsStore } from "../stores/notifications";
+import { useConversationsStore } from "../stores/conversations";
 import {
   hermesScopeKey,
   useHermesIndicatorsStore,
@@ -58,9 +60,11 @@ const baseWorkspace: WorkspaceWithDetails = {
 describe("registerGlobalWsHandlers", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    window.location.hash = "";
     useAuthStore.setState({ token: "token-1", user: null, loading: false });
     useHermesIndicatorsStore.getState().resetForTests();
     useNotificationsStore.setState({ notifications: [], loading: false });
+    useConversationsStore.setState({ unreadChannels: new Set() });
     useWorkspacesStore.setState({
       workspaces: [],
       activeWorkspace: structuredClone(baseWorkspace),
@@ -350,6 +354,104 @@ describe("registerGlobalWsHandlers", () => {
     expect(useNotificationsStore.getState().notifications).toHaveLength(1);
 
     cleanup();
+  });
+
+  it("applies channel lifecycle events idempotently and reroutes a deleted active channel", () => {
+    const general: WorkspaceChannel = {
+      id: "ch-general",
+      workspaceId: "ws-1",
+      name: "general",
+      title: "General",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    };
+    const product: WorkspaceChannel = {
+      ...general,
+      id: "ch-product",
+      name: "product",
+      title: "Product",
+    };
+    useWorkspacesStore.setState({
+      activeWorkspace: { ...structuredClone(baseWorkspace), channels: [general] },
+    });
+    useConversationsStore.setState({
+      unreadChannels: new Set([general.id]),
+    });
+    window.location.hash = `#/channel/${general.id}`;
+    const navigate = vi.fn(({ to }: { to: string }) => {
+      window.location.hash = `#${to}`;
+    });
+    const cleanup = registerGlobalWsHandlers(navigate);
+
+    wsEvents.emit("ws:channel_created", {
+      workspaceId: "ws-1",
+      channel: product,
+    });
+    wsEvents.emit("ws:channel_created", {
+      workspaceId: "ws-1",
+      channel: product,
+    });
+    expect(
+      useWorkspacesStore.getState().activeWorkspace?.channels.map((channel) =>
+        channel.id,
+      ),
+    ).toEqual([general.id, product.id]);
+
+    const renamedProduct = {
+      ...product,
+      name: "product-updates",
+      title: "Product Updates",
+    };
+    wsEvents.emit("ws:channel_renamed", {
+      workspaceId: "ws-1",
+      channel: renamedProduct,
+    });
+    expect(
+      useWorkspacesStore.getState().activeWorkspace?.channels[1],
+    ).toEqual(renamedProduct);
+
+    wsEvents.emit("ws:channel_deleted", {
+      workspaceId: "ws-1",
+      channelId: general.id,
+    });
+    expect(
+      useWorkspacesStore.getState().activeWorkspace?.channels,
+    ).toEqual([renamedProduct]);
+    expect(useConversationsStore.getState().unreadChannels.has(general.id)).toBe(
+      false,
+    );
+    expect(navigate).toHaveBeenCalledWith({ to: `/channel/${product.id}` });
+
+    wsEvents.emit("ws:channel_renamed", {
+      workspaceId: "ws-1",
+      channel: { ...general, name: "late-rename", title: "Late Rename" },
+    });
+    wsEvents.emit("ws:channel_created", {
+      workspaceId: "ws-1",
+      channel: general,
+    });
+    wsEvents.emit("ws:channel_renamed", {
+      workspaceId: "ws-1",
+      channel: {
+        ...product,
+        id: "ch-never-created",
+        name: "never-created",
+        title: "Never Created",
+      },
+    });
+    expect(
+      useWorkspacesStore.getState().activeWorkspace?.channels,
+    ).toEqual([renamedProduct]);
+
+    cleanup();
+    window.location.hash = "";
+    wsEvents.emit("ws:channel_created", {
+      workspaceId: "ws-1",
+      channel: { ...product, id: "ch-after-cleanup" },
+    });
+    expect(
+      useWorkspacesStore.getState().activeWorkspace?.channels,
+    ).toEqual([renamedProduct]);
   });
 
   it("feeds Hermes invocation progress lifecycle events into the indicators store", () => {

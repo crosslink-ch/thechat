@@ -4,15 +4,14 @@ import type { StreamResult, StreamEvent } from "./types";
 
 describe("isOverflow", () => {
   it("returns true when tokens exceed the usable context limit", async () => {
-    // claude-sonnet-4-6: contextWindow=1M, maxOutput=min(64K,32_768)=32_768
-    // usable = 1M - 32_768 - 20K(buffer) = 947_232
-    expect(await isOverflow(947_232, "claude-sonnet-4-6")).toBe(true);
-    expect(await isOverflow(950_000, "claude-sonnet-4-6")).toBe(true);
+    // gpt-5.4 has an explicit 922K input limit; reserve a 20K buffer.
+    expect(await isOverflow(902_000, "gpt-5.4")).toBe(true);
+    expect(await isOverflow(950_000, "gpt-5.4")).toBe(true);
   });
 
   it("returns false when tokens are below the limit", async () => {
-    expect(await isOverflow(947_231, "claude-sonnet-4-6")).toBe(false);
-    expect(await isOverflow(500_000, "claude-sonnet-4-6")).toBe(false);
+    expect(await isOverflow(901_999, "gpt-5.4")).toBe(false);
+    expect(await isOverflow(500_000, "gpt-5.4")).toBe(false);
   });
 
   it("returns false for unknown models", async () => {
@@ -20,10 +19,10 @@ describe("isOverflow", () => {
   });
 
   it("accounts for model-specific maxOutputTokens", async () => {
-    // claude-haiku-4-5: contextWindow=200K, maxOutput=min(64K,32_768)=32_768, no inputLimit
-    // usable = (200K - 32_768) - 20K = 147_232
-    expect(await isOverflow(147_232, "claude-haiku-4-5-20251001")).toBe(true);
-    expect(await isOverflow(147_231, "claude-haiku-4-5-20251001")).toBe(false);
+    // glm-4.7: contextWindow=128K, maxOutput=16_384, no inputLimit.
+    // usable = (128K - 16_384) - 20K = 91_616.
+    expect(await isOverflow(91_616, "glm-4.7")).toBe(true);
+    expect(await isOverflow(91_615, "glm-4.7")).toBe(false);
   });
 
   it("uses inputLimit when available (GPT-5.x Codex models)", async () => {

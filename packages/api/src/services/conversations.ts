@@ -1,17 +1,27 @@
-import { and, asc, desc, eq, inArray, lt, or } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, lt, or, sql } from "drizzle-orm";
+import type { WsServerEvent } from "@thechat/shared";
 import { db } from "../db";
 import {
+  attachments,
+  botInvocations,
   bots,
   conversations,
   conversationParticipants,
   conversationThreads,
+  eventOutbox,
   messages,
   users,
   workspaceMembers,
+  workspaces,
 } from "../db/schema";
 import { attachmentsByMessageIds } from "../attachments/public";
+import { log } from "../logging";
+import { publishWsEventToUsers } from "../realtime";
+import { failTimedOutHermesDispatchesForConversation } from "./bot-runtime";
 import { ServiceError } from "./errors";
 import { canUserAccessAttachments } from "./messages";
+
+const channelLog = log.child({ component: "channels" });
 
 export async function createOrGetDm(
   workspaceId: string,
@@ -330,8 +340,23 @@ async function repairCorruptedDirectDms(workspaceId: string, userId: string) {
 
 export async function getConversationDetail(conversationId: string, userId: string) {
   const [participant] = await db
-    .select({ userId: conversationParticipants.userId })
+    .select({
+      userId: conversationParticipants.userId,
+      conversationType: conversations.type,
+      workspaceMemberUserId: workspaceMembers.userId,
+    })
     .from(conversationParticipants)
+    .innerJoin(
+      conversations,
+      eq(conversationParticipants.conversationId, conversations.id),
+    )
+    .leftJoin(
+      workspaceMembers,
+      and(
+        eq(workspaceMembers.workspaceId, conversations.workspaceId),
+        eq(workspaceMembers.userId, userId),
+      ),
+    )
     .where(
       and(
         eq(conversationParticipants.conversationId, conversationId),
@@ -340,7 +365,10 @@ export async function getConversationDetail(conversationId: string, userId: stri
     )
     .limit(1);
 
-  if (!participant) {
+  if (
+    !participant ||
+    (participant.conversationType === "group" && !participant.workspaceMemberUserId)
+  ) {
     throw new ServiceError("You are not a participant of this conversation", 403);
   }
 
@@ -515,10 +543,25 @@ export async function updateConversationThread(
   return toPublicThread(thread);
 }
 
-async function requireConversationParticipant(conversationId: string, userId: string) {
+export async function requireConversationParticipant(conversationId: string, userId: string) {
   const [participant] = await db
-    .select({ userId: conversationParticipants.userId })
+    .select({
+      userId: conversationParticipants.userId,
+      conversationType: conversations.type,
+      workspaceMemberUserId: workspaceMembers.userId,
+    })
     .from(conversationParticipants)
+    .innerJoin(
+      conversations,
+      eq(conversationParticipants.conversationId, conversations.id),
+    )
+    .leftJoin(
+      workspaceMembers,
+      and(
+        eq(workspaceMembers.workspaceId, conversations.workspaceId),
+        eq(workspaceMembers.userId, userId),
+      ),
+    )
     .where(
       and(
         eq(conversationParticipants.conversationId, conversationId),
@@ -527,7 +570,10 @@ async function requireConversationParticipant(conversationId: string, userId: st
     )
     .limit(1);
 
-  if (!participant) {
+  if (
+    !participant ||
+    (participant.conversationType === "group" && !participant.workspaceMemberUserId)
+  ) {
     throw new ServiceError("You are not a participant of this conversation", 403);
   }
 }
@@ -671,55 +717,382 @@ function toPublicThread(thread: typeof conversationThreads.$inferSelect) {
 export async function createChannel(
   workspaceId: string,
   name: string,
-  userId: string
+  userId: string,
+  options: { afterWorkspaceLocked?: () => Promise<void> } = {},
 ) {
-  // Check user is workspace member
-  const [membership] = await db
-    .select()
-    .from(workspaceMembers)
-    .where(
-      and(
-        eq(workspaceMembers.workspaceId, workspaceId),
-        eq(workspaceMembers.userId, userId)
-      )
-    )
-    .limit(1);
+  const normalized = normalizeChannelName(name);
 
-  if (!membership) {
-    throw new ServiceError("You are not a member of this workspace", 403);
-  }
+  try {
+    const result = await db.transaction(async (tx) => {
+      const [workspace] = await tx
+        .select({ id: workspaces.id })
+        .from(workspaces)
+        .where(eq(workspaces.id, workspaceId))
+        .for("update")
+        .limit(1);
+      if (!workspace) {
+        throw new ServiceError("Workspace not found", 404);
+      }
 
-  const slug = name
-    .toLowerCase()
-    .replace(/[^a-z0-9\s-]/g, "")
-    .replace(/\s+/g, "-");
+      await options.afterWorkspaceLocked?.();
 
-  const [channel] = await db
-    .insert(conversations)
-    .values({
-      title: name,
-      type: "group",
+      const [membership] = await tx
+        .select({ role: workspaceMembers.role })
+        .from(workspaceMembers)
+        .where(
+          and(
+            eq(workspaceMembers.workspaceId, workspaceId),
+            eq(workspaceMembers.userId, userId),
+          ),
+        )
+        .limit(1);
+
+      if (!membership) {
+        throw new ServiceError("You are not a member of this workspace", 403);
+      }
+
+      const [existing] = await tx
+        .select({ id: conversations.id })
+        .from(conversations)
+        .where(
+          and(
+            eq(conversations.workspaceId, workspaceId),
+            eq(conversations.name, normalized.slug),
+          ),
+        )
+        .limit(1);
+      if (existing) {
+        throw new ServiceError("A channel with this name already exists", 409);
+      }
+
+      const [channel] = await tx
+        .insert(conversations)
+        .values({
+          title: normalized.title,
+          type: "group",
+          workspaceId,
+          name: normalized.slug,
+        })
+        .returning();
+
+      const allMembers = await tx
+        .select({
+          userId: workspaceMembers.userId,
+          role: workspaceMembers.role,
+        })
+        .from(workspaceMembers)
+        .where(eq(workspaceMembers.workspaceId, workspaceId));
+
+      if (allMembers.length > 0) {
+        await tx.insert(conversationParticipants).values(
+          allMembers.map((member) => ({
+            conversationId: channel.id,
+            userId: member.userId,
+            role: member.role,
+          })),
+        );
+      }
+
+      return {
+        channel: toWorkspaceChannel(channel),
+        targetUserIds: allMembers.map((member) => member.userId),
+      };
+    });
+
+    await publishChannelLifecycleEvent(result.targetUserIds, {
+      type: "channel_created",
       workspaceId,
-      name: slug,
-    })
-    .returning();
+      channel: result.channel,
+    });
+    return result.channel;
+  } catch (error) {
+    if (isUniqueViolation(error)) {
+      throw new ServiceError("A channel with this name already exists", 409);
+    }
+    throw error;
+  }
+}
 
-  // Add all workspace members as participants
-  const allMembers = await db
-    .select({ userId: workspaceMembers.userId })
-    .from(workspaceMembers)
-    .where(eq(workspaceMembers.workspaceId, workspaceId));
+export async function renameChannel(
+  conversationId: string,
+  name: string,
+  userId: string,
+  options: { afterWorkspaceLocked?: () => Promise<void> } = {},
+) {
+  const normalized = normalizeChannelName(name);
 
-  if (allMembers.length > 0) {
-    await db.insert(conversationParticipants).values(
-      allMembers.map((m) => ({
-        conversationId: channel.id,
-        userId: m.userId,
-        role: "member" as const,
-      }))
+  try {
+    const result = await db.transaction(async (tx) => {
+      const [candidate] = await tx
+        .select({ workspaceId: conversations.workspaceId })
+        .from(conversations)
+        .where(
+          and(
+            eq(conversations.id, conversationId),
+            eq(conversations.type, "group"),
+          ),
+        )
+        .limit(1);
+      if (!candidate?.workspaceId) {
+        throw new ServiceError("Channel not found", 404);
+      }
+
+      const [workspace] = await tx
+        .select({ id: workspaces.id })
+        .from(workspaces)
+        .where(eq(workspaces.id, candidate.workspaceId))
+        .for("update")
+        .limit(1);
+      if (!workspace) {
+        throw new ServiceError("Channel not found", 404);
+      }
+
+      await options.afterWorkspaceLocked?.();
+
+      const [channel] = await tx
+        .select()
+        .from(conversations)
+        .where(
+          and(
+            eq(conversations.id, conversationId),
+            eq(conversations.type, "group"),
+            eq(conversations.workspaceId, workspace.id),
+          ),
+        )
+        .for("update")
+        .limit(1);
+      if (!channel?.workspaceId) {
+        throw new ServiceError("Channel not found", 404);
+      }
+
+      await requireChannelManager(tx, workspace.id, userId);
+
+      const [existing] = await tx
+        .select({ id: conversations.id })
+        .from(conversations)
+        .where(
+          and(
+            eq(conversations.workspaceId, workspace.id),
+            eq(conversations.name, normalized.slug),
+          ),
+        )
+        .limit(1);
+      if (existing && existing.id !== channel.id) {
+        throw new ServiceError("A channel with this name already exists", 409);
+      }
+
+      const [updated] = await tx
+        .update(conversations)
+        .set({ name: normalized.slug, title: normalized.title })
+        .where(eq(conversations.id, channel.id))
+        .returning();
+      const targetUsers = await tx
+        .select({ userId: workspaceMembers.userId })
+        .from(workspaceMembers)
+        .where(eq(workspaceMembers.workspaceId, workspace.id));
+
+      return {
+        channel: toWorkspaceChannel(updated),
+        targetUserIds: targetUsers.map((member) => member.userId),
+        workspaceId: workspace.id,
+      };
+    });
+
+    await publishChannelLifecycleEvent(result.targetUserIds, {
+      type: "channel_renamed",
+      workspaceId: result.workspaceId,
+      channel: result.channel,
+    });
+    return result.channel;
+  } catch (error) {
+    if (isUniqueViolation(error)) {
+      throw new ServiceError("A channel with this name already exists", 409);
+    }
+    throw error;
+  }
+}
+
+export async function deleteChannel(
+  conversationId: string,
+  userId: string,
+  options: { afterWorkspaceLocked?: () => Promise<void> } = {},
+) {
+  await failTimedOutHermesDispatchesForConversation(conversationId);
+
+  const result = await db.transaction(async (tx) => {
+    const [candidate] = await tx
+      .select({ workspaceId: conversations.workspaceId })
+      .from(conversations)
+      .where(
+        and(
+          eq(conversations.id, conversationId),
+          eq(conversations.type, "group"),
+        ),
+      )
+      .limit(1);
+    if (!candidate?.workspaceId) {
+      throw new ServiceError("Channel not found", 404);
+    }
+
+    const [workspace] = await tx
+      .select({ id: workspaces.id })
+      .from(workspaces)
+      .where(eq(workspaces.id, candidate.workspaceId))
+      .for("update")
+      .limit(1);
+    if (!workspace) {
+      throw new ServiceError("Channel not found", 404);
+    }
+
+    await options.afterWorkspaceLocked?.();
+
+    // This row lock also blocks new messages and attachment reservations from
+    // acquiring their foreign-key key-share lock while deletion is decided.
+    const [channel] = await tx
+      .select()
+      .from(conversations)
+      .where(
+        and(
+          eq(conversations.id, conversationId),
+          eq(conversations.type, "group"),
+          eq(conversations.workspaceId, workspace.id),
+        ),
+      )
+      .for("update")
+      .limit(1);
+
+    if (!channel?.workspaceId) {
+      throw new ServiceError("Channel not found", 404);
+    }
+
+    await requireChannelManager(tx, workspace.id, userId);
+
+    const [activeInvocation] = await tx
+      .select({ id: botInvocations.id })
+      .from(botInvocations)
+      .where(
+        and(
+          eq(botInvocations.conversationId, channel.id),
+          or(
+            eq(botInvocations.status, "queued"),
+            eq(botInvocations.status, "running"),
+            and(
+              eq(botInvocations.status, "claimed"),
+              sql`NULLIF(${botInvocations.responseJson}->'completion'->>'type', '') IS NULL`,
+              sql`COALESCE(${botInvocations.responseJson}->>'silent', 'false') <> 'true'`,
+            ),
+          ),
+        ),
+      )
+      .for("update")
+      .limit(1);
+
+    const [pendingTargetedEvent] = await tx
+      .select({ id: eventOutbox.id })
+      .from(eventOutbox)
+      .where(
+        and(
+          eq(eventOutbox.eventType, "chat.message.sent"),
+          eq(eventOutbox.partitionKey, channel.id),
+          isNull(eventOutbox.publishedAt),
+          isNull(eventOutbox.deadAt),
+          sql`jsonb_typeof(${eventOutbox.event}->'payload'->'targetBotIds') = 'array'`,
+          sql`jsonb_array_length(${eventOutbox.event}->'payload'->'targetBotIds') > 0`,
+        ),
+      )
+      .for("update")
+      .limit(1);
+
+    if (activeInvocation || pendingTargetedEvent) {
+      throw new ServiceError(
+        "Wait for active bot runs to finish before deleting this channel",
+        409,
+      );
+    }
+
+    // Attachment rows own private object-store coordinates. Cascading them
+    // away would make their exact S3 versions impossible to clean up safely.
+    const [attachment] = await tx
+      .select({ id: attachments.id })
+      .from(attachments)
+      .where(eq(attachments.conversationId, channel.id))
+      .limit(1);
+    if (attachment) {
+      throw new ServiceError(
+        "Channels with attachments cannot be deleted",
+        409,
+      );
+    }
+
+    const targetUsers = await tx
+      .select({ userId: workspaceMembers.userId })
+      .from(workspaceMembers)
+      .where(eq(workspaceMembers.workspaceId, workspace.id));
+    await tx.delete(conversations).where(eq(conversations.id, channel.id));
+    return {
+      ok: true as const,
+      deletedChannelId: channel.id,
+      workspaceId: workspace.id,
+      targetUserIds: targetUsers.map((member) => member.userId),
+    };
+  });
+
+  await publishChannelLifecycleEvent(result.targetUserIds, {
+    type: "channel_deleted",
+    workspaceId: result.workspaceId,
+    channelId: result.deletedChannelId,
+  });
+  return { ok: result.ok, deletedChannelId: result.deletedChannelId };
+}
+
+type ChannelLifecycleEvent = Extract<
+  WsServerEvent,
+  { type: "channel_created" | "channel_renamed" | "channel_deleted" }
+>;
+
+async function publishChannelLifecycleEvent(
+  targetUserIds: string[],
+  event: ChannelLifecycleEvent,
+) {
+  try {
+    await publishWsEventToUsers(targetUserIds, event);
+  } catch (error) {
+    // The channel mutation has already committed. Realtime fanout failure must
+    // not turn a successful REST mutation into an ambiguous client failure.
+    channelLog.warn(
+      {
+        err: error,
+        eventType: event.type,
+        workspaceId: event.workspaceId,
+      },
+      "channel.realtime_publish_failed",
     );
   }
+}
 
+function normalizeChannelName(name: string) {
+  const title = name.trim().replace(/\s+/g, " ");
+  const slug = title
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, "")
+    .replace(/\s+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 100);
+
+  if (!slug) {
+    throw new ServiceError(
+      "Channel name must include at least one letter or number",
+      400,
+    );
+  }
+  return { title, slug };
+}
+
+function toWorkspaceChannel(channel: typeof conversations.$inferSelect) {
+  if (!channel.workspaceId || !channel.name) {
+    throw new ServiceError("Channel data is incomplete", 500);
+  }
   return {
     id: channel.id,
     workspaceId: channel.workspaceId,
@@ -728,4 +1101,49 @@ export async function createChannel(
     createdAt: channel.createdAt.toISOString(),
     updatedAt: channel.updatedAt.toISOString(),
   };
+}
+
+async function requireChannelManager(
+  executor: Pick<typeof db, "select">,
+  workspaceId: string,
+  userId: string,
+) {
+  const [membership] = await executor
+    .select({ role: workspaceMembers.role })
+    .from(workspaceMembers)
+    .where(
+      and(
+        eq(workspaceMembers.workspaceId, workspaceId),
+        eq(workspaceMembers.userId, userId),
+      ),
+    )
+    .limit(1);
+
+  if (!membership) {
+    throw new ServiceError("You are not a member of this workspace", 403);
+  }
+  if (membership.role !== "owner" && membership.role !== "admin") {
+    throw new ServiceError(
+      "Only workspace owners and admins can manage channels",
+      403,
+    );
+  }
+}
+
+function isUniqueViolation(error: unknown) {
+  let current = error;
+  for (let depth = 0; depth < 4 && current; depth += 1) {
+    if (
+      typeof current === "object" &&
+      "code" in current &&
+      (current as { code?: unknown }).code === "23505"
+    ) {
+      return true;
+    }
+    current =
+      typeof current === "object" && "cause" in current
+        ? (current as { cause?: unknown }).cause
+        : null;
+  }
+  return false;
 }

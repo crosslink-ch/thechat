@@ -13,6 +13,7 @@ import {
   messageAttachments,
   messages,
   users,
+  workspaceMembers,
 } from "../db/schema";
 import { createChatMessageSentV1 } from "../events/envelope";
 import { enqueueDomainEvent } from "../events/outbox";
@@ -546,6 +547,7 @@ async function requireParticipant(
       senderType: users.type,
       workspaceId: conversations.workspaceId,
       conversationType: conversations.type,
+      workspaceMemberUserId: workspaceMembers.userId,
     })
     .from(conversationParticipants)
     .innerJoin(
@@ -553,6 +555,13 @@ async function requireParticipant(
       eq(conversationParticipants.conversationId, conversations.id),
     )
     .innerJoin(users, eq(conversationParticipants.userId, users.id))
+    .leftJoin(
+      workspaceMembers,
+      and(
+        eq(workspaceMembers.workspaceId, conversations.workspaceId),
+        eq(workspaceMembers.userId, userId),
+      ),
+    )
     .where(
       and(
         eq(conversationParticipants.conversationId, conversationId),
@@ -560,7 +569,10 @@ async function requireParticipant(
       ),
     )
     .limit(1);
-  if (!participant) {
+  if (
+    !participant ||
+    (participant.conversationType === "group" && !participant.workspaceMemberUserId)
+  ) {
     throw new ServiceError(
       "You are not a participant of this conversation",
       403,

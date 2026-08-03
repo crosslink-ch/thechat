@@ -6,6 +6,7 @@ import { conversationParticipants } from "../db/schema";
 import type { WsClientEvent, WsServerEvent } from "@thechat/shared";
 import { resolveTokenToUser } from "../auth/middleware";
 import { sendMessage } from "../services/messages";
+import { requireConversationParticipant } from "../services/conversations";
 import { ServiceError } from "../services/errors";
 import { getRealtimeBus, publishWsEventToUsers } from "../realtime";
 import { log } from "../logging";
@@ -173,29 +174,39 @@ async function handleSendMessage(
 }
 
 async function handleTyping(
-  _ws: WebSocket,
+  ws: WebSocket,
   userId: string,
   userName: string,
   conversationId: string,
   threadId?: string | null,
 ) {
-  const participants = await db
-    .select({ userId: conversationParticipants.userId })
-    .from(conversationParticipants)
-    .where(eq(conversationParticipants.conversationId, conversationId));
+  try {
+    await requireConversationParticipant(conversationId, userId);
 
-  const event: WsServerEvent = {
-    type: "typing",
-    conversationId,
-    threadId: threadId ?? null,
-    userId,
-    userName,
-  };
+    const participants = await db
+      .select({ userId: conversationParticipants.userId })
+      .from(conversationParticipants)
+      .where(eq(conversationParticipants.conversationId, conversationId));
 
-  await tryBroadcastToUsers(
-    participants.filter((p) => p.userId !== userId).map((p) => p.userId),
-    event,
-  );
+    const event: WsServerEvent = {
+      type: "typing",
+      conversationId,
+      threadId: threadId ?? null,
+      userId,
+      userName,
+    };
+
+    await tryBroadcastToUsers(
+      participants.filter((p) => p.userId !== userId).map((p) => p.userId),
+      event,
+    );
+  } catch (error) {
+    if (error instanceof ServiceError) {
+      sendTo(ws, { type: "error", message: error.message });
+      return;
+    }
+    throw error;
+  }
 }
 
 export const wsRoutes = new Elysia().ws("/ws", {

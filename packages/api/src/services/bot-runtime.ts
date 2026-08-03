@@ -36,6 +36,7 @@ import {
   hermesBotConfigs,
   messages,
   users,
+  workspaceMembers,
   workspaces,
 } from "../db/schema";
 import { publishWsEventToUsers } from "../realtime";
@@ -405,7 +406,7 @@ function hermesDispatchTimeoutError(timeoutMs: number) {
   );
 }
 
-async function failTimedOutHermesDispatchesForConversation(conversationId: string) {
+export async function failTimedOutHermesDispatchesForConversation(conversationId: string) {
   const timeoutMs = hermesDispatchTimeoutMs();
   const staleQueued = await db
     .select({ id: botInvocations.id })
@@ -2115,11 +2116,36 @@ async function messageAttachmentsForBotDelivery(messageId: string) {
 
 async function requireConversationParticipant(conversationId: string, userId: string) {
   const [participant] = await db
-    .select({ userId: conversationParticipants.userId })
+    .select({
+      userId: conversationParticipants.userId,
+      conversationType: conversations.type,
+      workspaceMemberUserId: workspaceMembers.userId,
+    })
     .from(conversationParticipants)
-    .where(and(eq(conversationParticipants.conversationId, conversationId), eq(conversationParticipants.userId, userId)))
+    .innerJoin(
+      conversations,
+      eq(conversationParticipants.conversationId, conversations.id),
+    )
+    .leftJoin(
+      workspaceMembers,
+      and(
+        eq(workspaceMembers.workspaceId, conversations.workspaceId),
+        eq(workspaceMembers.userId, userId),
+      ),
+    )
+    .where(
+      and(
+        eq(conversationParticipants.conversationId, conversationId),
+        eq(conversationParticipants.userId, userId),
+      ),
+    )
     .limit(1);
-  if (!participant) throw new ServiceError("You are not a participant of this conversation", 403);
+  if (
+    !participant ||
+    (participant.conversationType === "group" && !participant.workspaceMemberUserId)
+  ) {
+    throw new ServiceError("You are not a participant of this conversation", 403);
+  }
 }
 
 async function requireConversationThread(conversationId: string, threadId: string) {

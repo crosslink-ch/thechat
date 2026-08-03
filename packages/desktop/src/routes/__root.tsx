@@ -15,6 +15,7 @@ import { PermissionModePicker } from "../PermissionModePicker";
 import { AuthModal, AuthOnboarding } from "../components/AuthModal";
 import { CodexAuthModal } from "../components/CodexAuthModal";
 import { WorkspaceModal } from "../components/WorkspaceModal";
+import { ChannelModal } from "../components/ChannelModal";
 import { HermesBotModal } from "../components/HermesBotModal";
 import { McpConfigDialog } from "../McpConfigDialog";
 import { useCodexAuthStore } from "../stores/codex-auth";
@@ -127,6 +128,7 @@ export function RootLayout() {
       <AuthModal />
       <CodexAuthModal />
       <WorkspaceModal />
+      <ChannelModal />
       <HermesBotModal />
       <McpConfigDialog />
       <UpdateToast />
