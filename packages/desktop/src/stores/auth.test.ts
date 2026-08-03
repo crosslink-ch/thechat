@@ -185,6 +185,7 @@ describe("auth store initialization", () => {
   it("preserves cached state on a returned 503", async () => {
     const values = useKv({
       auth_access_token: "still-valid-session",
+      auth_refresh_token: "legacy-refresh-jwt",
       auth_user: JSON.stringify(user),
     });
     vi.mocked(api.auth.me.get).mockResolvedValue({

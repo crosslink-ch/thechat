@@ -7,6 +7,7 @@ import { queryClient } from "../lib/query-client";
 
 const KV_ACCESS_TOKEN = "auth_access_token";
 const KV_USER = "auth_user";
+const LEGACY_KV_REFRESH_TOKEN = "auth_refresh_token";
 
 async function kvGet(key: string): Promise<string | null> {
   return invoke<string | null>("kv_get", { key });
@@ -21,7 +22,11 @@ async function kvDelete(key: string): Promise<void> {
 }
 
 async function clearStoredAuth() {
-  await Promise.all([kvDelete(KV_ACCESS_TOKEN), kvDelete(KV_USER)]);
+  await Promise.all([
+    kvDelete(KV_ACCESS_TOKEN),
+    kvDelete(KV_USER),
+    kvDelete(LEGACY_KV_REFRESH_TOKEN),
+  ]);
 }
 
 async function persistCredentials(accessToken: string, user: AuthUser) {
@@ -52,6 +57,13 @@ export const useAuthStore = create<AuthStore>()((set) => ({
   loading: true,
 
   initialize: async () => {
+    // The custom refresh JWT was removed with Better Auth. Purge it even when
+    // the current session cannot be validated because of a network outage.
+    try {
+      await kvDelete(LEGACY_KV_REFRESH_TOKEN);
+    } catch {
+      // A KV failure must not prevent restoring the current Better Auth token.
+    }
     const restoreCachedState = (
       accessToken: string | null,
       cachedUser: string | null,
