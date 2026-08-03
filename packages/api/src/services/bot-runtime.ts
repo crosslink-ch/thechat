@@ -62,6 +62,7 @@ export const BOT_INVOKE_JOB_NAME = "bot.invoke";
 export const HERMES_WEBHOOK_DELIVERY_JOB_NAME = "bot.hermes_webhook.deliver";
 const MAX_THREAD_TITLE_LENGTH = 255;
 const DEFAULT_HERMES_DISPATCH_TIMEOUT_MS = 2 * 60 * 1000;
+const HERMES_WEBHOOK_BODY_FIELD = "hermesWebhookBody";
 
 type BotKind = "webhook" | "hermes";
 type ConversationType = "direct" | "group";
@@ -795,6 +796,16 @@ async function claimHermesPlatformInvocation(
   }
 
   const now = new Date();
+  const persistedRequestJson =
+    deliveryMode === "webhook"
+      ? {
+          ...prepared.requestJson,
+          [HERMES_WEBHOOK_BODY_FIELD]: JSON.stringify({
+            type: "thechat.hermes_platform.event",
+            event: prepared.event,
+          }),
+        }
+      : prepared.requestJson;
   const [claimed] = await db
     .update(botInvocations)
     .set({
@@ -803,7 +814,7 @@ async function claimHermesPlatformInvocation(
       completedAt: deliveryMode === "polling" ? now : null,
       externalRunId: `thechat:${invocationId}`,
       error: null,
-      requestJson: prepared.requestJson,
+      requestJson: persistedRequestJson,
       updatedAt: now,
     })
     .where(
@@ -983,11 +994,45 @@ async function deliverHermesPlatformWebhookInvocation(
         return;
       }
 
-      const event =
-        initial.invocation.status === "running"
-          ? (await prepareHermesPlatformEvent(invocationId, "webhook"))?.event ?? null
-          : await claimHermesPlatformInvocation(invocationId, "webhook");
-      if (!event) {
+      let body: string | null = null;
+      if (initial.invocation.status === "running") {
+        body = storedHermesWebhookBody(initial.invocation.requestJson);
+        if (!body) {
+          // Compatibility for an invocation claimed by a pre-fix worker. New
+          // claims persist the body before any delivery attempt.
+          const prepared = await prepareHermesPlatformEvent(invocationId, "webhook");
+          if (prepared) {
+            body = JSON.stringify({
+              type: "thechat.hermes_platform.event",
+              event: prepared.event,
+            });
+            await db
+              .update(botInvocations)
+              .set({
+                requestJson: {
+                  ...prepared.requestJson,
+                  [HERMES_WEBHOOK_BODY_FIELD]: body,
+                },
+                updatedAt: new Date(),
+              })
+              .where(
+                and(
+                  eq(botInvocations.id, invocationId),
+                  eq(botInvocations.status, "running"),
+                ),
+              );
+          }
+        }
+      } else {
+        const event = await claimHermesPlatformInvocation(invocationId, "webhook");
+        if (event) {
+          const claimed = await loadInvocationContext(invocationId);
+          body =
+            storedHermesWebhookBody(claimed?.invocation.requestJson) ??
+            JSON.stringify({ type: "thechat.hermes_platform.event", event });
+        }
+      }
+      if (!body) {
         span.setAttribute("thechat.hermes_platform.delivery_status", "claim_missed");
         return;
       }
@@ -1002,7 +1047,6 @@ async function deliverHermesPlatformWebhookInvocation(
         return;
       }
 
-      const body = JSON.stringify({ type: "thechat.hermes_platform.event", event });
       const timestamp = Math.floor(Date.now() / 1000);
       const signature = signWebhookPayload(body, loaded.bot.webhookSecret, timestamp);
       try {
@@ -1059,6 +1103,13 @@ async function deliverHermesPlatformWebhookInvocation(
 function getHermesPlatformDeliveryMode(requestJson: Record<string, unknown> | null): HermesPlatformDeliveryMode | null {
   const deliveryMode = requestJson?.deliveryMode;
   return deliveryMode === "polling" || deliveryMode === "webhook" ? deliveryMode : null;
+}
+
+function storedHermesWebhookBody(
+  requestJson: Record<string, unknown> | null | undefined,
+): string | null {
+  const body = requestJson?.[HERMES_WEBHOOK_BODY_FIELD];
+  return typeof body === "string" && body.length > 0 ? body : null;
 }
 
 function conversationChatId(conversation: { id: string }) {

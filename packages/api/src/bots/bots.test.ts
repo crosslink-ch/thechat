@@ -7,6 +7,7 @@ import {
   botInvocations,
   bots,
   conversationParticipants,
+  conversations,
   eventOutbox,
   messages,
   users,
@@ -575,6 +576,25 @@ describe("Bots: Regenerate key", () => {
     // Old key fails
     const meRes3 = await req("GET", "/auth/me", undefined, oldKey);
     expect(meRes3.status).toBe(401);
+  });
+
+  test("concurrent rotations expose at most one new usable credential", async () => {
+    const human = await registerUser("ConcurrentRegenOwner");
+    const botRes = await createBot(human.token, "ConcurrentRegenBot");
+
+    const rotations = await Promise.all(
+      Array.from({ length: 12 }, () =>
+        req("POST", `/bots/${botRes.body.id}/regenerate-key`, {}, human.token),
+      ),
+    );
+    const successful = rotations.filter((response) => response.status === 200);
+    const conflicts = rotations.filter((response) => response.status === 409);
+
+    expect(successful).toHaveLength(1);
+    expect(conflicts).toHaveLength(rotations.length - 1);
+    expect(
+      (await req("GET", "/auth/me", undefined, successful[0].body.apiKey)).status,
+    ).toBe(200);
   });
 
   test("first reissue creates a Better Auth key for a migrated bot", async () => {
@@ -2911,6 +2931,89 @@ describe("Bots: runtime state", () => {
       expect(invocation.status).toBe("claimed");
     } finally {
       webhook.stop();
+    }
+  });
+
+  test("Hermes webhook retries reuse the exact persisted body after mutable state changes", async () => {
+    await closeBotRuntimeForTests();
+    const deliveryHeaders: Array<{ timestamp: string; signature: string }> = [];
+    let botUserId = "";
+    let conversationId = "";
+    const webhook = startWebhookServer(async (request) => {
+      deliveryHeaders.push({
+        timestamp: request.headers.get("x-webhook-timestamp") ?? "",
+        signature: request.headers.get("x-webhook-signature") ?? "",
+      });
+      if (deliveryHeaders.length === 1) {
+        await db.update(users).set({ name: "Renamed after first attempt" }).where(eq(users.id, botUserId));
+        await db
+          .update(conversations)
+          .set({ name: "Renamed conversation after first attempt" })
+          .where(eq(conversations.id, conversationId));
+        return new Response("retry", { status: 503 });
+      }
+      return new Response(JSON.stringify({ ok: true }), {
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+    const human = await registerUser("RuntimeHermesStableRetryOwner");
+    const { workspaceId } = await createWorkspaceWithGeneralChannel(
+      human.token,
+      "Runtime Hermes Stable Retry",
+    );
+    const botRes = await createBot(human.token, "StableRetryHermes", undefined, {
+      kind: "hermes",
+      workspaceId,
+    });
+    expect(botRes.status).toBe(200);
+    botUserId = botRes.body.userId;
+
+    const registerRes = await req(
+      "POST",
+      "/bots/me/webhook",
+      { url: webhook.url },
+      botRes.body.apiKey,
+    );
+    expect(registerRes.status).toBe(200);
+    const dmRes = await req(
+      "POST",
+      "/conversations/dm",
+      { workspaceId, otherUserId: botRes.body.userId },
+      human.token,
+    );
+    expect(dmRes.status).toBe(200);
+    conversationId = dmRes.body.id;
+
+    try {
+      await startBotWorkerForTest();
+      const sendRes = await req(
+        "POST",
+        `/messages/${conversationId}`,
+        { content: "Retry this exact signed body" },
+        human.token,
+      );
+      expect(sendRes.status).toBe(200);
+
+      await waitForResult(
+        async () => (webhook.requests.length >= 2 ? webhook.requests[1] : null),
+        "second Hermes webhook delivery attempt",
+      );
+      expect(webhook.requests[0].body).toBe(webhook.requests[1].body);
+      expect(webhook.requests[0].payload.event.bot.name).toBe("StableRetryHermes");
+      expect(webhook.requests[1].payload.event.bot.name).toBe("StableRetryHermes");
+      for (const [index, headers] of deliveryHeaders.entries()) {
+        expect(headers.signature).toBe(
+          crypto
+            .createHmac("sha256", registerRes.body.webhookSecret)
+            .update(`${headers.timestamp}.${webhook.requests[index].body}`)
+            .digest("hex"),
+        );
+      }
+      const [invocation] = await invocationsForMessage(sendRes.body.id);
+      expect(invocation.status).toBe("claimed");
+    } finally {
+      webhook.stop();
+      await closeBotRuntimeForTests();
     }
   });
 

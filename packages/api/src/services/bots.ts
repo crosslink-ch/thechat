@@ -8,11 +8,13 @@ import {
   workspaceMembers,
   conversations,
   conversationParticipants,
+  apikey,
 } from "../db/schema";
 import { ServiceError } from "./errors";
 import { broadcastToUser } from "../ws";
 import {
-  createBotApiKey,
+  BotApiKeyRotationConflictError,
+  prepareBotApiKey,
   revokeBotApiKey,
   rotateBotApiKey,
 } from "../auth/bot-api-keys";
@@ -29,11 +31,13 @@ export async function createBot(
   attachmentAccess = true,
 ) {
   const webhookSecret = generateWebhookSecret();
+  const botUserId = crypto.randomUUID();
+  const credential = await prepareBotApiKey(botUserId);
 
   const { botUser, bot } = await db.transaction(async (tx) => {
     const [createdUser] = await tx
       .insert(users)
-      .values({ name, type: "bot" })
+      .values({ id: botUserId, name, type: "bot" })
       .returning({ id: users.id, name: users.name });
 
     const [createdBot] = await tx
@@ -48,24 +52,16 @@ export async function createBot(
       })
       .returning();
 
+    await tx.insert(apikey).values(credential.values);
+
     return { botUser: createdUser, bot: createdBot };
   });
-
-  let apiKey: string;
-  try {
-    apiKey = await createBotApiKey(botUser.id);
-  } catch (error) {
-    // Better Auth uses the same database but manages its own transaction. Roll
-    // back the domain records if credential creation fails.
-    await db.delete(users).where(eq(users.id, botUser.id));
-    throw error;
-  }
 
   return {
     id: bot.id,
     userId: botUser.id,
     name: botUser.name,
-    apiKey,
+    apiKey: credential.rawKey,
     kind: bot.kind,
     attachmentAccess: bot.attachmentAccess,
     webhookUrl: bot.webhookUrl,
@@ -541,7 +537,15 @@ export async function regenerateBotKey(botId: string, ownerId: string) {
     );
   }
 
-  const newApiKey = await rotateBotApiKey(bot.userId);
+  let newApiKey: string;
+  try {
+    newApiKey = await rotateBotApiKey(bot.userId);
+  } catch (error) {
+    if (error instanceof BotApiKeyRotationConflictError) {
+      throw new ServiceError("Bot API key changed concurrently; retry from fresh state", 409);
+    }
+    throw error;
+  }
 
   return { apiKey: newApiKey };
 }
