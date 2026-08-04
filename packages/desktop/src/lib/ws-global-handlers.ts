@@ -136,13 +136,41 @@ export function registerGlobalWsHandlers(
     userId,
     newRole,
   }: WsEvents["ws:member_role_changed"]) => {
+    const { activeWorkspace, workspaces } = useWorkspacesStore.getState();
+    const currentUserId = useAuthStore.getState().user?.id;
+    useWorkspacesStore.setState({
+      workspaces:
+        userId === currentUserId
+          ? workspaces.map((workspace) =>
+              workspace.id === workspaceId ? { ...workspace, role: newRole } : workspace,
+            )
+          : workspaces,
+      activeWorkspace:
+        activeWorkspace?.id === workspaceId
+          ? {
+              ...activeWorkspace,
+              members: activeWorkspace.members.map((member) =>
+                member.userId === userId ? { ...member, role: newRole } : member,
+              ),
+            }
+          : activeWorkspace,
+    });
+  };
+
+  const onMemberUpdated = ({
+    workspaceId,
+    userId,
+    name,
+  }: WsEvents["ws:member_updated"]) => {
     const { activeWorkspace } = useWorkspacesStore.getState();
     if (!activeWorkspace || activeWorkspace.id !== workspaceId) return;
     useWorkspacesStore.setState({
       activeWorkspace: {
         ...activeWorkspace,
-        members: activeWorkspace.members.map((m) =>
-          m.userId === userId ? { ...m, role: newRole } : m,
+        members: activeWorkspace.members.map((member) =>
+          member.userId === userId
+            ? { ...member, user: { ...member.user, name } }
+            : member,
         ),
       },
     });
@@ -273,6 +301,7 @@ export function registerGlobalWsHandlers(
   wsEvents.on("ws:new_message", onNewMessage);
   wsEvents.on("ws:member_joined", onMemberJoined);
   wsEvents.on("ws:member_role_changed", onMemberRoleChanged);
+  wsEvents.on("ws:member_updated", onMemberUpdated);
   wsEvents.on("ws:member_removed", onMemberRemoved);
   wsEvents.on("ws:channel_created", onChannelCreated);
   wsEvents.on("ws:channel_renamed", onChannelRenamed);
@@ -287,6 +316,7 @@ export function registerGlobalWsHandlers(
     wsEvents.off("ws:new_message", onNewMessage);
     wsEvents.off("ws:member_joined", onMemberJoined);
     wsEvents.off("ws:member_role_changed", onMemberRoleChanged);
+    wsEvents.off("ws:member_updated", onMemberUpdated);
     wsEvents.off("ws:member_removed", onMemberRemoved);
     wsEvents.off("ws:channel_created", onChannelCreated);
     wsEvents.off("ws:channel_renamed", onChannelRenamed);

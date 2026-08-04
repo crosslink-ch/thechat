@@ -12,6 +12,7 @@ import {
   apikey,
   botInvocations,
   eventOutbox,
+  hermesBotConfigs,
 } from "../db/schema";
 import { ServiceError } from "./errors";
 import { broadcastToUser } from "../ws";
@@ -59,6 +60,127 @@ export async function createBot(
     await tx.insert(apikey).values(credential.values);
 
     return { botUser: createdUser, bot: createdBot };
+  });
+
+  return {
+    id: bot.id,
+    userId: botUser.id,
+    name: botUser.name,
+    apiKey: credential.rawKey,
+    kind: bot.kind,
+    attachmentAccess: bot.attachmentAccess,
+    webhookUrl: bot.webhookUrl,
+    webhookSecret: bot.webhookSecret,
+    createdAt: bot.createdAt.toISOString(),
+  };
+}
+
+export async function createHermesBotInWorkspace(
+  name: string,
+  webhookUrl: string | null,
+  ownerId: string,
+  workspaceId: string,
+  attachmentAccess = true,
+  options: { afterWorkspaceLocked?: () => Promise<void> } = {},
+) {
+  const webhookSecret = generateWebhookSecret();
+  const botUserId = crypto.randomUUID();
+  const credential = await prepareBotApiKey(botUserId);
+
+  const { botUser, bot, joinedAt } = await db.transaction(async (tx) => {
+    const [workspace] = await tx
+      .select({ id: workspaces.id })
+      .from(workspaces)
+      .where(eq(workspaces.id, workspaceId))
+      .for("update")
+      .limit(1);
+    if (!workspace) {
+      throw new ServiceError("Workspace not found", 404);
+    }
+
+    await options.afterWorkspaceLocked?.();
+
+    const [callerMembership] = await tx
+      .select({ role: workspaceMembers.role })
+      .from(workspaceMembers)
+      .where(
+        and(
+          eq(workspaceMembers.workspaceId, workspaceId),
+          eq(workspaceMembers.userId, ownerId),
+        ),
+      )
+      .limit(1);
+    if (!callerMembership) {
+      throw new ServiceError("You are not a member of this workspace", 403);
+    }
+    if (callerMembership.role !== "owner" && callerMembership.role !== "admin") {
+      throw new ServiceError("Only workspace admins can add bots", 403);
+    }
+
+    const [createdUser] = await tx
+      .insert(users)
+      .values({ id: botUserId, name, type: "bot" })
+      .returning({ id: users.id, name: users.name });
+    const [createdBot] = await tx
+      .insert(bots)
+      .values({
+        userId: createdUser.id,
+        ownerId,
+        webhookUrl,
+        webhookSecret,
+        kind: "hermes",
+        attachmentAccess,
+      })
+      .returning();
+    await tx.insert(apikey).values(credential.values);
+    await tx.insert(hermesBotConfigs).values({
+      botId: createdBot.id,
+      baseUrl: null,
+      apiKeyEncrypted: null,
+      defaultMode: "run",
+    });
+    const [membership] = await tx
+      .insert(workspaceMembers)
+      .values({
+        workspaceId,
+        userId: createdUser.id,
+        role: "member",
+      })
+      .returning({ joinedAt: workspaceMembers.joinedAt });
+
+    const channels = await tx
+      .select({ id: conversations.id })
+      .from(conversations)
+      .where(
+        and(
+          eq(conversations.workspaceId, workspaceId),
+          eq(conversations.type, "group"),
+        ),
+      );
+    if (channels.length > 0) {
+      await tx.insert(conversationParticipants).values(
+        channels.map((channel) => ({
+          conversationId: channel.id,
+          userId: createdUser.id,
+          role: "member" as const,
+        })),
+      );
+    }
+
+    return {
+      botUser: createdUser,
+      bot: createdBot,
+      joinedAt: membership.joinedAt,
+    };
+  });
+
+  await broadcastBotJoinedWorkspace({
+    workspaceId,
+    botId: bot.id,
+    botKind: "hermes",
+    botUserId: botUser.id,
+    botName: botUser.name,
+    joinedAt,
   });
 
   return {
@@ -556,42 +678,86 @@ export async function updateBot(
     attachmentAccess?: boolean;
   },
 ) {
-  const [bot] = await db
-    .select({ id: bots.id, ownerId: bots.ownerId, userId: bots.userId })
-    .from(bots)
-    .where(eq(bots.id, botId))
-    .limit(1);
+  const result = await db.transaction(async (tx) => {
+    const [bot] = await tx
+      .select({ id: bots.id, ownerId: bots.ownerId, userId: bots.userId })
+      .from(bots)
+      .where(eq(bots.id, botId))
+      .limit(1);
 
-  if (!bot) {
-    throw new ServiceError("Bot not found", 404);
-  }
+    if (!bot) {
+      throw new ServiceError("Bot not found", 404);
+    }
+    if (bot.ownerId !== ownerId) {
+      throw new ServiceError("Only the bot owner can update the bot", 403);
+    }
 
-  if (bot.ownerId !== ownerId) {
-    throw new ServiceError("Only the bot owner can update the bot", 403);
-  }
+    let renameNotifications: Array<{
+      workspaceId: string;
+      recipients: Array<{ userId: string }>;
+    }> = [];
+    if (updates.name !== undefined) {
+      await tx
+        .update(users)
+        .set({ name: updates.name })
+        .where(eq(users.id, bot.userId));
+
+      const memberships = await tx
+        .select({ workspaceId: workspaceMembers.workspaceId })
+        .from(workspaceMembers)
+        .where(eq(workspaceMembers.userId, bot.userId));
+      const workspaceIds = memberships.map((membership) => membership.workspaceId);
+      if (workspaceIds.length > 0) {
+        const recipientRows = await tx
+          .select({
+            workspaceId: workspaceMembers.workspaceId,
+            userId: workspaceMembers.userId,
+          })
+          .from(workspaceMembers)
+          .where(inArray(workspaceMembers.workspaceId, workspaceIds));
+        renameNotifications = workspaceIds.map((workspaceId) => ({
+          workspaceId,
+          recipients: recipientRows
+            .filter((recipient) => recipient.workspaceId === workspaceId)
+            .map(({ userId }) => ({ userId })),
+        }));
+      }
+    }
+
+    if (
+      updates.webhookUrl !== undefined ||
+      updates.attachmentAccess !== undefined
+    ) {
+      await tx
+        .update(bots)
+        .set({
+          ...(updates.webhookUrl !== undefined
+            ? { webhookUrl: updates.webhookUrl }
+            : {}),
+          ...(updates.attachmentAccess !== undefined
+            ? { attachmentAccess: updates.attachmentAccess }
+            : {}),
+        })
+        .where(eq(bots.id, botId));
+    }
+
+    return { botUserId: bot.userId, renameNotifications };
+  });
 
   if (updates.name !== undefined) {
-    await db
-      .update(users)
-      .set({ name: updates.name })
-      .where(eq(users.id, bot.userId));
-  }
-
-  if (
-    updates.webhookUrl !== undefined ||
-    updates.attachmentAccess !== undefined
-  ) {
-    await db
-      .update(bots)
-      .set({
-        ...(updates.webhookUrl !== undefined
-          ? { webhookUrl: updates.webhookUrl }
-          : {}),
-        ...(updates.attachmentAccess !== undefined
-          ? { attachmentAccess: updates.attachmentAccess }
-          : {}),
-      })
-      .where(eq(bots.id, botId));
+    for (const notification of result.renameNotifications) {
+      const event: WsServerEvent = {
+        type: "member_updated",
+        workspaceId: notification.workspaceId,
+        userId: result.botUserId,
+        name: updates.name,
+      };
+      for (const recipient of notification.recipients) {
+        if (recipient.userId !== result.botUserId) {
+          broadcastToUser(recipient.userId, event);
+        }
+      }
+    }
   }
 
   return getBot(botId, ownerId);
@@ -698,7 +864,11 @@ export async function updateAuthenticatedBotCommands(
   };
 }
 
-export async function deleteBot(botId: string, ownerId: string) {
+export async function deleteBot(
+  botId: string,
+  ownerId: string,
+  options: { afterWorkspaceLocked?: (workspaceId: string) => Promise<void> } = {},
+) {
   const [bot] = await db
     .select({ id: bots.id, ownerId: bots.ownerId, userId: bots.userId })
     .from(bots)
@@ -708,34 +878,31 @@ export async function deleteBot(botId: string, ownerId: string) {
   if (!bot) {
     throw new ServiceError("Bot not found", 404);
   }
-
   if (bot.ownerId !== ownerId) {
     throw new ServiceError("Only the bot owner can delete the bot", 403);
   }
 
+  // Detach through the same workspace-locked revocation path as an explicit
+  // disconnect. This cancels active invocations and scrubs durable outbox
+  // targets before the bot identity and credentials disappear.
   const workspaceMemberships = await db
     .select({ workspaceId: workspaceMembers.workspaceId })
     .from(workspaceMembers)
     .where(eq(workspaceMembers.userId, bot.userId));
-  const workspaceNotifications = await Promise.all(
-    workspaceMemberships.map(async ({ workspaceId }) => ({
-      workspaceId,
-      recipients: await db
-        .select({ userId: workspaceMembers.userId })
-        .from(workspaceMembers)
-        .where(eq(workspaceMembers.workspaceId, workspaceId)),
-    })),
-  );
+  workspaceMemberships.sort((a, b) => a.workspaceId.localeCompare(b.workspaceId));
+  for (const { workspaceId } of workspaceMemberships) {
+    await removeBotFromWorkspace(botId, workspaceId, ownerId, {
+      afterWorkspaceLocked: options.afterWorkspaceLocked
+        ? () => options.afterWorkspaceLocked!(workspaceId)
+        : undefined,
+    });
+  }
 
   // The Better Auth API-key row cascades with the bot user.
   await db.transaction(async (tx) => {
     await tx.delete(bots).where(eq(bots.id, botId));
     await tx.delete(users).where(eq(users.id, bot.userId));
   });
-
-  for (const { workspaceId, recipients } of workspaceNotifications) {
-    broadcastBotRemovedFromWorkspace(workspaceId, bot.userId, recipients);
-  }
 
   return { success: true };
 }

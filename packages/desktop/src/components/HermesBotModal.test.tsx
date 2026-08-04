@@ -104,6 +104,24 @@ describe("HermesBotModal", () => {
     expect(screen.queryByText("Allow message attachments")).not.toBeInTheDocument();
   });
 
+  it("uses modal dialog semantics and restores focus to its launcher on Escape", async () => {
+    const launcher = document.createElement("button");
+    launcher.textContent = "Add Hermes bot";
+    document.body.appendChild(launcher);
+    launcher.focus();
+    openHermesBotModal();
+
+    render(<HermesBotModal />);
+    const dialog = screen.getByRole("dialog", { name: "Add Hermes Bot" });
+    expect(dialog).toHaveAttribute("aria-modal", "true");
+    expect(screen.getByPlaceholderText("Koda")).toHaveFocus();
+
+    fireEvent.keyDown(dialog, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(launcher).toHaveFocus();
+    launcher.remove();
+  });
+
   it("creates a Hermes bot without overriding attachment access or bot instructions", async () => {
     render(<HermesBotModal />);
 

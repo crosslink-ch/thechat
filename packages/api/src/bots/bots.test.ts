@@ -30,7 +30,12 @@ import {
   closeBotRuntimeForTests,
   startBotWorker,
 } from "../services/bot-runtime";
-import { updateAuthenticatedBotWebhook } from "../services/bots";
+import {
+  createHermesBotInWorkspace,
+  deleteBot as deleteBotService,
+  updateAuthenticatedBotWebhook,
+} from "../services/bots";
+import { updateMemberRole } from "../services/workspaces";
 import {
   closeBotProgressStoreForTests,
   createLocalBotProgressStoreForTests,
@@ -347,6 +352,68 @@ describe("Bots: Create", () => {
   test("rejects unauthenticated request", async () => {
     const res = await req("POST", "/bots/create", { name: "NoAuth" });
     expect(res.status).toBe(401);
+  });
+
+  test("Hermes creation leaves no orphan identity when workspace authorization changes", async () => {
+    const workspaceOwner = await registerUser("AtomicWorkspaceOwner");
+    const botOwner = await registerUser("AtomicBotOwner");
+    const wsRes = await req(
+      "POST",
+      "/workspaces/create",
+      { name: "Atomic Hermes Workspace" },
+      workspaceOwner.token,
+    );
+    expect(wsRes.status).toBe(200);
+    createdWorkspaceIds.push(wsRes.body.id);
+    await db.insert(workspaceMembers).values({
+      workspaceId: wsRes.body.id,
+      userId: botOwner.user.id,
+      role: "admin",
+    });
+
+    let signalLocked!: () => void;
+    let releaseDemotion!: () => void;
+    const demotionLocked = new Promise<void>((resolve) => {
+      signalLocked = resolve;
+    });
+    const demotionReleased = new Promise<void>((resolve) => {
+      releaseDemotion = resolve;
+    });
+    const demotion = updateMemberRole(
+      wsRes.body.id,
+      workspaceOwner.user.id,
+      botOwner.user.id,
+      "member",
+      {
+        afterWorkspaceLocked: async () => {
+          signalLocked();
+          await demotionReleased;
+        },
+      },
+    );
+    await demotionLocked;
+
+    const botName = `AtomicHermes-${crypto.randomUUID()}`;
+    const creation = createHermesBotInWorkspace(
+      botName,
+      null,
+      botOwner.user.id,
+      wsRes.body.id,
+    );
+    releaseDemotion();
+    await demotion;
+    await expect(creation).rejects.toMatchObject({ status: 403 });
+
+    const ownedBots = await db
+      .select({ id: bots.id })
+      .from(bots)
+      .where(eq(bots.ownerId, botOwner.user.id));
+    expect(ownedBots).toEqual([]);
+    const orphanUsers = await db
+      .select({ id: users.id })
+      .from(users)
+      .where(eq(users.name, botName));
+    expect(orphanUsers).toEqual([]);
   });
 });
 
@@ -684,6 +751,108 @@ describe("Bots: Workspace management", () => {
       human.token,
     );
     expect(deleteRes.status).toBe(200);
+  });
+
+  test("deleting a Hermes bot revokes queued work while serializing concurrent sends", async () => {
+    const human = await registerUser("HermesDeletionOwner");
+    const { workspaceId } = await createWorkspaceWithGeneralChannel(
+      human.token,
+      "Hermes Deletion WS",
+    );
+    const channelRes = await req(
+      "POST",
+      "/conversations/channel",
+      { workspaceId, name: "deletion-race" },
+      human.token,
+    );
+    expect(channelRes.status).toBe(200);
+    const botRes = await createBot(human.token, "DeletedHermes", undefined, {
+      kind: "hermes",
+      workspaceId,
+    });
+    expect(botRes.status).toBe(200);
+
+    const seedMessage = await req(
+      "POST",
+      `/messages/${channelRes.body.id}`,
+      { content: "@DeletedHermes queue this before deletion" },
+      human.token,
+    );
+    expect(seedMessage.status).toBe(200);
+    const delayedEvent = createChatMessageSentV1({
+      messageId: seedMessage.body.id,
+      conversationId: channelRes.body.id,
+      targetBotIds: [botRes.body.id],
+      messageKind: "user",
+      automationDepth: 0,
+      senderId: human.user.id,
+      senderType: "human",
+      workspaceId,
+    });
+    await enqueueDomainEvent(db, delayedEvent, {
+      partitionKey: channelRes.body.id,
+      availableAt: new Date(Date.now() + 60 * 60 * 1000),
+    });
+
+    let signalLocked!: () => void;
+    let releaseDeletion!: () => void;
+    const workspaceLocked = new Promise<void>((resolve) => {
+      signalLocked = resolve;
+    });
+    const deletionReleased = new Promise<void>((resolve) => {
+      releaseDeletion = resolve;
+    });
+    const deletion = deleteBotService(botRes.body.id, human.user.id, {
+      afterWorkspaceLocked: async (lockedWorkspaceId) => {
+        expect(lockedWorkspaceId).toBe(workspaceId);
+        signalLocked();
+        await deletionReleased;
+      },
+    });
+    await workspaceLocked;
+
+    const racingSend = req(
+      "POST",
+      `/messages/${channelRes.body.id}`,
+      { content: "@DeletedHermes this races with deletion" },
+      human.token,
+    );
+    releaseDeletion();
+    await deletion;
+    const racingSendRes = await racingSend;
+    expect(racingSendRes.status).toBe(200);
+
+    const [revokedEvent] = await db
+      .select({
+        event: eventOutbox.event,
+        deadAt: eventOutbox.deadAt,
+        lastError: eventOutbox.lastError,
+      })
+      .from(eventOutbox)
+      .where(eq(eventOutbox.id, delayedEvent.id))
+      .limit(1);
+    expect((revokedEvent.event as any).payload.targetBotIds).toEqual([]);
+    expect(revokedEvent.deadAt).toBeInstanceOf(Date);
+    expect(revokedEvent.lastError).toBe("Target bot removed from workspace");
+
+    const racingEvents = await db
+      .select({ event: eventOutbox.event })
+      .from(eventOutbox)
+      .where(eq(eventOutbox.tenantId, workspaceId));
+    const racingEvent = racingEvents.find(
+      ({ event }) => (event as any).payload?.messageId === racingSendRes.body.id,
+    );
+    expect((racingEvent?.event as any)?.payload?.targetBotIds ?? []).not.toContain(
+      botRes.body.id,
+    );
+
+    const deleteChannelRes = await req(
+      "DELETE",
+      `/conversations/channel/${channelRes.body.id}`,
+      undefined,
+      human.token,
+    );
+    expect(deleteChannelRes.status).toBe(200);
   });
 });
 
@@ -1235,6 +1404,61 @@ describe("Bots: Update bot", () => {
 
     expect(res.status).toBe(200);
     expect(res.body.name).toBe("NewName");
+  });
+
+  test("renaming a workspace bot publishes member_updated after commit", async () => {
+    const human = await registerUser("RealtimeRenameOwner");
+    const { workspaceId } = await createWorkspaceWithGeneralChannel(
+      human.token,
+      "Realtime Rename Workspace",
+    );
+    const botRes = await createBot(human.token, "RealtimeOldName", undefined, {
+      kind: "hermes",
+      workspaceId,
+    });
+    expect(botRes.status).toBe(200);
+
+    const redisKeyPrefix = `thechat-rename-test-${crypto.randomUUID()}`;
+    const serviceBus = new RedisRealtimeBus({ redisKeyPrefix });
+    const observerBus = new RedisRealtimeBus({ redisKeyPrefix });
+    const realtimeEvents: RealtimeEvent[] = [];
+    await setRealtimeBusForTests(serviceBus);
+    const unsubscribe = await observerBus.subscribe((event) => {
+      realtimeEvents.push(event);
+    });
+
+    try {
+      const res = await req(
+        "PATCH",
+        `/bots/${botRes.body.id}`,
+        { name: "RealtimeNewName" },
+        human.token,
+      );
+      expect(res.status).toBe(200);
+
+      const renameEvent = await waitForResult(async () => {
+        return realtimeEvents.find(
+          (event) =>
+            event.type === "ws.event" &&
+            event.targetUserIds.includes(human.user.id) &&
+            event.event.type === "member_updated",
+        );
+      }, "bot member rename realtime event");
+      expect(renameEvent).toEqual(
+        expect.objectContaining({
+          event: {
+            type: "member_updated",
+            workspaceId,
+            userId: botRes.body.userId,
+            name: "RealtimeNewName",
+          },
+        }),
+      );
+    } finally {
+      await unsubscribe();
+      await observerBus.close();
+      await closeRealtimeBusForTests();
+    }
   });
 
   test("owner can update webhook URL", async () => {

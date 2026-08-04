@@ -264,6 +264,129 @@ describe("registerGlobalWsHandlers", () => {
     cleanup();
   });
 
+  it("updates the current user's role for a non-active workspace", () => {
+    useAuthStore.setState({
+      token: "token-1",
+      loading: false,
+      user: {
+        id: "u-owner",
+        name: "Owner",
+        email: "owner@example.com",
+        avatar: null,
+        type: "human",
+      },
+    });
+    useWorkspacesStore.setState({
+      workspaces: [
+        {
+          id: "ws-1",
+          name: "Workspace",
+          role: "owner",
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        },
+        {
+          id: "ws-2",
+          name: "Other Workspace",
+          role: "member",
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        },
+      ],
+    });
+    const cleanup = registerGlobalWsHandlers(() => {});
+
+    wsEvents.emit("ws:member_role_changed", {
+      workspaceId: "ws-2",
+      userId: "u-owner",
+      newRole: "admin",
+    });
+
+    expect(
+      useWorkspacesStore.getState().workspaces.find((workspace) => workspace.id === "ws-2")
+        ?.role,
+    ).toBe("admin");
+    expect(useWorkspacesStore.getState().activeWorkspace?.id).toBe("ws-1");
+    cleanup();
+  });
+
+  it("updates both workspace-list and active-member roles after demotion", () => {
+    useAuthStore.setState({
+      token: "token-1",
+      loading: false,
+      user: {
+        id: "u-owner",
+        name: "Owner",
+        email: "owner@example.com",
+        avatar: null,
+        type: "human",
+      },
+    });
+    useWorkspacesStore.setState({
+      workspaces: [
+        {
+          id: "ws-1",
+          name: "Workspace",
+          role: "owner",
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        },
+      ],
+    });
+    const cleanup = registerGlobalWsHandlers(() => {});
+
+    wsEvents.emit("ws:member_role_changed", {
+      workspaceId: "ws-1",
+      userId: "u-owner",
+      newRole: "member",
+    });
+
+    expect(useWorkspacesStore.getState().workspaces[0]?.role).toBe("member");
+    expect(
+      useWorkspacesStore
+        .getState()
+        .activeWorkspace?.members.find((member) => member.userId === "u-owner")?.role,
+    ).toBe("member");
+    cleanup();
+  });
+
+  it("updates an active workspace member name after a bot rename", () => {
+    useWorkspacesStore.setState({
+      activeWorkspace: {
+        ...structuredClone(baseWorkspace),
+        members: [
+          ...structuredClone(baseWorkspace.members),
+          {
+            userId: "u-bot",
+            role: "member",
+            joinedAt: "2026-01-02T00:00:00.000Z",
+            user: {
+              id: "u-bot",
+              name: "Old Bot Name",
+              email: null,
+              avatar: null,
+              type: "bot",
+            },
+          },
+        ],
+      },
+    });
+    const cleanup = registerGlobalWsHandlers(() => {});
+
+    wsEvents.emit("ws:member_updated", {
+      workspaceId: "ws-1",
+      userId: "u-bot",
+      name: "Renamed Bot",
+    });
+
+    expect(
+      useWorkspacesStore
+        .getState()
+        .activeWorkspace?.members.find((member) => member.userId === "u-bot")?.user.name,
+    ).toBe("Renamed Bot");
+    cleanup();
+  });
+
   it("fires direct-message notifications with a stable message dedupe key", () => {
     useAuthStore.setState({
       token: "token-1",

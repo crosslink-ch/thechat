@@ -12,7 +12,9 @@ function auth(token: string) {
 }
 
 type Notice = { kind: "success" | "error"; text: string };
-type ConfirmAction = "rotate-key" | "revoke-key" | "rotate-secret" | "delete" | null;
+type ConfirmActionKind = "rotate-key" | "revoke-key" | "rotate-secret" | "delete";
+type ConfirmAction = { botId: string; action: ConfirmActionKind } | null;
+type RevealedApiKey = { botId: string; value: string } | null;
 
 type WorkspaceRow = {
   id: string;
@@ -68,9 +70,9 @@ export function BotsManageRoute() {
   const [name, setName] = useState("");
   const [webhookUrl, setWebhookUrl] = useState("");
   const [attachmentAccess, setAttachmentAccess] = useState(true);
-  const [showSecret, setShowSecret] = useState(false);
-  const [revealedApiKey, setRevealedApiKey] = useState<string | null>(null);
-  const [copied, setCopied] = useState<string | null>(null);
+  const [showSecretForBotId, setShowSecretForBotId] = useState<string | null>(null);
+  const [revealedApiKey, setRevealedApiKey] = useState<RevealedApiKey>(null);
+  const [copied, setCopied] = useState<{ botId: string; label: string } | null>(null);
 
   const selectedBot = useMemo(
     () => bots.find((bot) => bot.id === selectedId) ?? null,
@@ -119,11 +121,12 @@ export function BotsManageRoute() {
     setWebhookUrl(selectedBot.webhookUrl ?? "");
     setAttachmentAccess(selectedBot.attachmentAccess);
     setConfirmAction(null);
-    setShowSecret(false);
-    setRevealedApiKey(null);
     setCopied(null);
     setNotice(null);
   }, [selectedBot?.id]);
+
+  const isConfirming = (action: ConfirmActionKind) =>
+    confirmAction?.botId === selectedBot?.id && confirmAction?.action === action;
 
   const workspaceRows = useMemo<WorkspaceRow[]>(() => {
     if (!selectedBot) return [];
@@ -227,89 +230,106 @@ export function BotsManageRoute() {
 
   const rotateApiKey = () => {
     if (!token || !selectedBot) return;
-    if (confirmAction !== "rotate-key") {
-      setConfirmAction("rotate-key");
+    const botId = selectedBot.id;
+    if (!isConfirming("rotate-key")) {
+      setConfirmAction({ botId, action: "rotate-key" });
       return;
     }
     void runAction("rotate-key", async () => {
       const { data, error } = await api
-        .bots({ botId: selectedBot.id })["regenerate-key"]
+        .bots({ botId })["regenerate-key"]
         .post({}, auth(token));
       if (error) throw new Error(edenErrorMessage(error, "Failed to issue API key"));
       const apiKey = data && "apiKey" in data ? data.apiKey : null;
       if (!apiKey) throw new Error("The API returned no credential");
-      setRevealedApiKey(apiKey);
-      await refreshBot(selectedBot.id);
-      setConfirmAction(null);
+      setRevealedApiKey({ botId, value: apiKey });
+      await refreshBot(botId);
+      setConfirmAction((current) =>
+        current?.botId === botId && current.action === "rotate-key" ? null : current,
+      );
       setNotice({ kind: "success", text: "A new API key was issued." });
     });
   };
 
   const revokeApiKey = () => {
     if (!token || !selectedBot) return;
-    if (confirmAction !== "revoke-key") {
-      setConfirmAction("revoke-key");
+    const botId = selectedBot.id;
+    if (!isConfirming("revoke-key")) {
+      setConfirmAction({ botId, action: "revoke-key" });
       return;
     }
     void runAction("revoke-key", async () => {
       const { error } = await api
-        .bots({ botId: selectedBot.id })["api-key"]
+        .bots({ botId })["api-key"]
         .delete(undefined, auth(token));
       if (error) throw new Error(edenErrorMessage(error, "Failed to revoke API key"));
-      setRevealedApiKey(null);
-      await refreshBot(selectedBot.id);
-      setConfirmAction(null);
+      setRevealedApiKey((current) => (current?.botId === botId ? null : current));
+      await refreshBot(botId);
+      setConfirmAction((current) =>
+        current?.botId === botId && current.action === "revoke-key" ? null : current,
+      );
       setNotice({ kind: "success", text: "API key revoked." });
     });
   };
 
   const rotateWebhookSecret = () => {
     if (!token || !selectedBot) return;
-    if (confirmAction !== "rotate-secret") {
-      setConfirmAction("rotate-secret");
+    const botId = selectedBot.id;
+    if (!isConfirming("rotate-secret")) {
+      setConfirmAction({ botId, action: "rotate-secret" });
       return;
     }
     void runAction("rotate-secret", async () => {
       const { data, error } = await api
-        .bots({ botId: selectedBot.id })["regenerate-secret"]
+        .bots({ botId })["regenerate-secret"]
         .post({}, auth(token));
       if (error) throw new Error(edenErrorMessage(error, "Failed to rotate webhook secret"));
       const secret = data && "webhookSecret" in data ? data.webhookSecret : null;
       if (!secret) throw new Error("The API returned no webhook secret");
       setBots((current) =>
         current.map((bot) =>
-          bot.id === selectedBot.id ? { ...bot, webhookSecret: secret } : bot,
+          bot.id === botId ? { ...bot, webhookSecret: secret } : bot,
         ),
       );
-      setShowSecret(true);
-      setConfirmAction(null);
+      setShowSecretForBotId(botId);
+      setConfirmAction((current) =>
+        current?.botId === botId && current.action === "rotate-secret" ? null : current,
+      );
       setNotice({ kind: "success", text: "Webhook secret rotated." });
     });
   };
 
   const deleteBot = () => {
     if (!token || !selectedBot) return;
-    if (confirmAction !== "delete") {
-      setConfirmAction("delete");
+    const botId = selectedBot.id;
+    const botName = selectedBot.name;
+    if (!isConfirming("delete")) {
+      setConfirmAction({ botId, action: "delete" });
       return;
     }
     void runAction("delete", async () => {
-      const { error } = await api.bots({ botId: selectedBot.id }).delete(undefined, auth(token));
+      const { error } = await api.bots({ botId }).delete(undefined, auth(token));
       if (error) throw new Error(edenErrorMessage(error, "Failed to delete bot"));
-      const remaining = bots.filter((bot) => bot.id !== selectedBot.id);
+      const remaining = bots.filter((bot) => bot.id !== botId);
       setBots(remaining);
-      setSelectedId(remaining[0]?.id ?? null);
-      setConfirmAction(null);
-      setNotice({ kind: "success", text: `${selectedBot.name} was deleted.` });
+      setSelectedId((current) => (current === botId ? remaining[0]?.id ?? null : current));
+      setConfirmAction((current) => (current?.botId === botId ? null : current));
+      setNotice({ kind: "success", text: `${botName} was deleted.` });
       if (activeWorkspace) await selectWorkspace(activeWorkspace.id);
     });
   };
 
-  const copyValue = async (label: string, value: string) => {
+  const copyValue = async (botId: string, label: string, value: string) => {
     try {
       await navigator.clipboard.writeText(value);
-      setCopied(label);
-      window.setTimeout(() => setCopied((current) => (current === label ? null : current)), 1500);
+      setCopied({ botId, label });
+      window.setTimeout(
+        () =>
+          setCopied((current) =>
+            current?.botId === botId && current.label === label ? null : current,
+          ),
+        1500,
+      );
     } catch {
       setNotice({ kind: "error", text: "Could not copy to the clipboard." });
     }
@@ -522,22 +542,26 @@ export function BotsManageRoute() {
                   title="Credentials"
                   description="Rotated credentials take effect immediately. API keys are shown only once when issued."
                 >
-                  {revealedApiKey && (
+                  {revealedApiKey?.botId === selectedBot.id && (
                     <div className="mb-4 rounded-lg border border-amber-400/30 bg-amber-400/10 p-3">
                       <div className="text-[0.786rem] font-semibold text-amber-300">Copy this API key now</div>
                       <div className="mt-2 flex gap-2">
                         <input
                           aria-label="New API key"
                           readOnly
-                          value={revealedApiKey}
+                          value={revealedApiKey.value}
                           className="min-w-0 flex-1 rounded-md border border-border bg-base px-2.5 py-1.5 font-mono text-[0.714rem] text-text outline-none"
                         />
                         <button
                           type="button"
-                          onClick={() => copyValue("api-key", revealedApiKey)}
+                          onClick={() =>
+                            copyValue(selectedBot.id, "api-key", revealedApiKey.value)
+                          }
                           className="cursor-pointer rounded-md border border-border bg-raised px-3 py-1.5 text-[0.786rem] text-text-muted hover:bg-hover hover:text-text"
                         >
-                          {copied === "api-key" ? "Copied" : "Copy"}
+                          {copied?.botId === selectedBot.id && copied.label === "api-key"
+                            ? "Copied"
+                            : "Copy"}
                         </button>
                       </div>
                     </div>
@@ -561,7 +585,7 @@ export function BotsManageRoute() {
                           >
                             {busy === "rotate-key"
                               ? "Issuing..."
-                              : confirmAction === "rotate-key"
+                              : isConfirming("rotate-key")
                                 ? "Confirm new key"
                                 : selectedBot.apiKeyEnabled ? "Rotate" : "Issue new key"}
                           </button>
@@ -574,7 +598,7 @@ export function BotsManageRoute() {
                             >
                               {busy === "revoke-key"
                                 ? "Revoking..."
-                                : confirmAction === "revoke-key" ? "Confirm revoke" : "Revoke"}
+                                : isConfirming("revoke-key") ? "Confirm revoke" : "Revoke"}
                             </button>
                           )}
                         </div>
@@ -586,23 +610,38 @@ export function BotsManageRoute() {
                         <div className="min-w-0 flex-1">
                           <div className="text-[0.857rem] font-medium text-text">Webhook secret</div>
                           <div className="mt-1 truncate font-mono text-[0.714rem] text-text-dimmed">
-                            {showSecret ? selectedBot.webhookSecret : "••••••••••••••••••••••••"}
+                            {showSecretForBotId === selectedBot.id
+                              ? selectedBot.webhookSecret
+                              : "••••••••••••••••••••••••"}
                           </div>
                         </div>
                         <div className="flex flex-wrap gap-2">
                           <button
                             type="button"
-                            onClick={() => setShowSecret((shown) => !shown)}
+                            onClick={() =>
+                              setShowSecretForBotId((shownFor) =>
+                                shownFor === selectedBot.id ? null : selectedBot.id,
+                              )
+                            }
                             className="cursor-pointer rounded-md border border-border bg-raised px-3 py-1.5 text-[0.786rem] text-text-muted hover:bg-hover hover:text-text"
                           >
-                            {showSecret ? "Hide" : "Reveal"}
+                            {showSecretForBotId === selectedBot.id ? "Hide" : "Reveal"}
                           </button>
                           <button
                             type="button"
-                            onClick={() => copyValue("webhook-secret", selectedBot.webhookSecret)}
+                            onClick={() =>
+                              copyValue(
+                                selectedBot.id,
+                                "webhook-secret",
+                                selectedBot.webhookSecret,
+                              )
+                            }
                             className="cursor-pointer rounded-md border border-border bg-raised px-3 py-1.5 text-[0.786rem] text-text-muted hover:bg-hover hover:text-text"
                           >
-                            {copied === "webhook-secret" ? "Copied" : "Copy"}
+                            {copied?.botId === selectedBot.id &&
+                            copied.label === "webhook-secret"
+                              ? "Copied"
+                              : "Copy"}
                           </button>
                           <button
                             type="button"
@@ -612,7 +651,7 @@ export function BotsManageRoute() {
                           >
                             {busy === "rotate-secret"
                               ? "Rotating..."
-                              : confirmAction === "rotate-secret" ? "Confirm rotate" : "Rotate"}
+                              : isConfirming("rotate-secret") ? "Confirm rotate" : "Rotate"}
                           </button>
                         </div>
                       </div>
@@ -634,9 +673,11 @@ export function BotsManageRoute() {
                     >
                       {busy === "delete"
                         ? "Deleting..."
-                        : confirmAction === "delete" ? `Confirm delete ${selectedBot.name}` : "Delete bot"}
+                        : isConfirming("delete")
+                          ? `Confirm delete ${selectedBot.name}`
+                          : "Delete bot"}
                     </button>
-                    {confirmAction === "delete" && (
+                    {isConfirming("delete") && (
                       <button
                         type="button"
                         onClick={() => setConfirmAction(null)}

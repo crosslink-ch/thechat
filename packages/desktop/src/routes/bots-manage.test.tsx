@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { OwnedBot } from "@thechat/shared";
 
 const mocks = vi.hoisted(() => ({
@@ -53,6 +53,14 @@ const ownedBot: OwnedBot = {
   apiKeyEnabled: true,
   workspaces: [{ id: "ws-1", name: "Primary Workspace" }],
   createdAt: "2026-08-04T10:00:00.000Z",
+};
+
+const secondOwnedBot: OwnedBot = {
+  ...ownedBot,
+  id: "bot-2",
+  userId: "bot-user-2",
+  name: "Operations Bot",
+  webhookSecret: "whsec_second",
 };
 
 function withWorkspaces(bot: OwnedBot, workspaceIds: string[]): OwnedBot {
@@ -178,6 +186,36 @@ describe("BotsManageRoute", () => {
 
     expect(await screen.findByDisplayValue("tc_new_api_key")).toBeInTheDocument();
     expect(mocks.rotateKeyPost).toHaveBeenCalledOnce();
+  });
+
+  it("never displays a delayed API-key response under a different bot", async () => {
+    let resolveRotation!: (value: {
+      data: { apiKey: string };
+      error: null;
+    }) => void;
+    mocks.listGet.mockResolvedValue({ data: [ownedBot, secondOwnedBot], error: null });
+    mocks.rotateKeyPost.mockReturnValue(
+      new Promise((resolve) => {
+        resolveRotation = resolve;
+      }),
+    );
+
+    render(<BotsManageRoute />);
+    await screen.findByRole("heading", { name: "Research Bot" });
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Rotate" })[0]);
+    fireEvent.click(screen.getByRole("button", { name: "Confirm new key" }));
+    fireEvent.click(screen.getByTestId("bot-list-item-bot-2"));
+    expect(await screen.findByRole("heading", { name: "Operations Bot" })).toBeInTheDocument();
+
+    await act(async () => {
+      resolveRotation({ data: { apiKey: "tc_key_for_research_bot" }, error: null });
+    });
+    await waitFor(() => expect(mocks.rotateKeyPost).toHaveBeenCalledOnce());
+    expect(screen.queryByDisplayValue("tc_key_for_research_bot")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId("bot-list-item-bot-1"));
+    expect(await screen.findByDisplayValue("tc_key_for_research_bot")).toBeInTheDocument();
   });
 
   it("sends authentication as request options for bodyless delete operations", async () => {
