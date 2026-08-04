@@ -36,6 +36,7 @@ import {
   hermesBotConfigs,
   messages,
   users,
+  workspaceMembers,
   workspaces,
 } from "../db/schema";
 import { publishWsEventToUsers } from "../realtime";
@@ -56,6 +57,7 @@ import {
   attachReadyAttachments,
   findIdempotentMessage,
 } from "./messages";
+import { requireConversationMutationAccess } from "./conversation-mutation-access";
 
 export const BOT_QUEUE_NAME = "thechat:bots";
 export const BOT_INVOKE_JOB_NAME = "bot.invoke";
@@ -396,6 +398,10 @@ function hermesDispatchTimeoutCutoff(timeoutMs: number) {
   return new Date(Date.now() - timeoutMs);
 }
 
+export function currentHermesDispatchTimeoutCutoff() {
+  return hermesDispatchTimeoutCutoff(hermesDispatchTimeoutMs());
+}
+
 function hermesDispatchTimedOut(createdAt: Date, timeoutMs: number) {
   return createdAt.getTime() <= Date.now() - timeoutMs;
 }
@@ -406,7 +412,7 @@ function hermesDispatchTimeoutError(timeoutMs: number) {
   );
 }
 
-async function failTimedOutHermesDispatchesForConversation(conversationId: string) {
+export async function failTimedOutHermesDispatchesForConversation(conversationId: string) {
   const timeoutMs = hermesDispatchTimeoutMs();
   const staleQueued = await db
     .select({ id: botInvocations.id })
@@ -530,6 +536,7 @@ async function enqueueBotInvocation(input: {
   message: TriggerMessage;
 }) {
   const invocation = await getOrCreateInvocation(input.bot, input.conversation, input.message);
+  if (!invocation) return;
   await publishInvocationUpdate(invocation.id);
 
   if (input.bot.kind === "hermes") {
@@ -559,40 +566,58 @@ async function getOrCreateInvocation(
   conversation: ConversationRow,
   message: TriggerMessage,
 ) {
-  const inserted = await db
-    .insert(botInvocations)
-    .values({
-      botId: bot.botId,
-      conversationId: conversation.id,
-      threadId: message.threadId,
-      triggerMessageId: message.id,
-      adapterKind: bot.kind,
-      status: "queued",
-      requestJson: {
-        messageId: message.id,
+  return db.transaction(async (tx) => {
+    try {
+      await requireConversationMutationAccess(
+        tx,
+        conversation.id,
+        bot.botUserId,
+      );
+    } catch (error) {
+      if (error instanceof ServiceError && error.status === 403) return null;
+      throw error;
+    }
+
+    const inserted = await tx
+      .insert(botInvocations)
+      .values({
+        botId: bot.botId,
+        conversationId: conversation.id,
         threadId: message.threadId,
-        messageContent: message.content,
-        attachments: bot.attachmentAccess ? message.attachments : [],
-        domainEventId: message.domainEventId,
-        correlationId: message.correlationId,
-        automationDepth: message.automationDepth,
-        triggeredAt: new Date().toISOString(),
-      },
-    })
-    .onConflictDoNothing({
-      target: [botInvocations.botId, botInvocations.triggerMessageId],
-    })
-    .returning();
+        triggerMessageId: message.id,
+        adapterKind: bot.kind,
+        status: "queued",
+        requestJson: {
+          messageId: message.id,
+          threadId: message.threadId,
+          messageContent: message.content,
+          attachments: bot.attachmentAccess ? message.attachments : [],
+          domainEventId: message.domainEventId,
+          correlationId: message.correlationId,
+          automationDepth: message.automationDepth,
+          triggeredAt: new Date().toISOString(),
+        },
+      })
+      .onConflictDoNothing({
+        target: [botInvocations.botId, botInvocations.triggerMessageId],
+      })
+      .returning();
 
-  if (inserted[0]) return inserted[0];
+    if (inserted[0]) return inserted[0];
 
-  const [existing] = await db
-    .select()
-    .from(botInvocations)
-    .where(and(eq(botInvocations.botId, bot.botId), eq(botInvocations.triggerMessageId, message.id)))
-    .limit(1);
-  if (!existing) throw new Error("Failed to create bot invocation");
-  return existing;
+    const [existing] = await tx
+      .select()
+      .from(botInvocations)
+      .where(
+        and(
+          eq(botInvocations.botId, bot.botId),
+          eq(botInvocations.triggerMessageId, message.id),
+        ),
+      )
+      .limit(1);
+    if (!existing) throw new Error("Failed to create bot invocation");
+    return existing;
+  });
 }
 
 function createBotInvokeCommand(
@@ -661,6 +686,15 @@ async function handleQueuedBotInvocation(invocationId: string, context: { setPro
     await context.setProgress(100, { status: "missing" });
     return;
   }
+  try {
+    await requireCurrentBotConversationAccess(
+      loaded.conversation.id,
+      loaded.bot.userId,
+    );
+  } catch (error) {
+    if (error instanceof ServiceError && error.status === 403) return;
+    throw error;
+  }
   if (
     loaded.invocation.status === "claimed" ||
     loaded.invocation.status === "completed" ||
@@ -674,7 +708,11 @@ async function handleQueuedBotInvocation(invocationId: string, context: { setPro
     if (ageMs < 10 * 60 * 1000) return;
   }
 
-  await markInvocationStatus(invocationId, "running", { startedAt: new Date(), error: null });
+  const started = await markInvocationStatus(invocationId, "running", {
+    startedAt: new Date(),
+    error: null,
+  });
+  if (!started) return;
   await publishInvocationUpdate(invocationId);
   await context.setProgress(15, { status: "running" });
 
@@ -806,26 +844,54 @@ async function claimHermesPlatformInvocation(
           }),
         }
       : prepared.requestJson;
-  const [claimed] = await db
-    .update(botInvocations)
-    .set({
-      status: deliveryMode === "polling" ? "claimed" : "running",
-      startedAt: now,
-      completedAt: deliveryMode === "polling" ? now : null,
-      externalRunId: `thechat:${invocationId}`,
-      error: null,
-      requestJson: persistedRequestJson,
-      updatedAt: now,
-    })
-    .where(
-      and(
-        eq(botInvocations.id, invocationId),
-        eq(botInvocations.status, "queued"),
-        eq(botInvocations.adapterKind, "hermes"),
-        gt(botInvocations.createdAt, hermesDispatchTimeoutCutoff(timeoutMs)),
-      ),
-    )
-    .returning({ id: botInvocations.id });
+  const claimed = await db.transaction(async (tx) => {
+    try {
+      await requireConversationMutationAccess(
+        tx,
+        prepared.event.conversation.id,
+        prepared.event.bot.userId,
+      );
+    } catch (error) {
+      if (!(error instanceof ServiceError) || error.status !== 403) throw error;
+      await tx
+        .update(botInvocations)
+        .set({
+          status: "cancelled",
+          error: "Bot no longer has access to this conversation",
+          completedAt: now,
+          updatedAt: now,
+        })
+        .where(
+          and(
+            eq(botInvocations.id, invocationId),
+            eq(botInvocations.status, "queued"),
+          ),
+        );
+      return null;
+    }
+
+    const [row] = await tx
+      .update(botInvocations)
+      .set({
+        status: deliveryMode === "polling" ? "claimed" : "running",
+        startedAt: now,
+        completedAt: deliveryMode === "polling" ? now : null,
+        externalRunId: `thechat:${invocationId}`,
+        error: null,
+        requestJson: persistedRequestJson,
+        updatedAt: now,
+      })
+      .where(
+        and(
+          eq(botInvocations.id, invocationId),
+          eq(botInvocations.status, "queued"),
+          eq(botInvocations.adapterKind, "hermes"),
+          gt(botInvocations.createdAt, hermesDispatchTimeoutCutoff(timeoutMs)),
+        ),
+      )
+      .returning({ id: botInvocations.id });
+    return row ?? null;
+  });
   if (!claimed) {
     await failHermesDispatchIfTimedOut(invocationId, timeoutMs);
     return null;
@@ -1251,6 +1317,13 @@ export async function publishHermesPlatformMessage(input: {
       }
 
       const target = await resolveHermesPlatformMessageTarget(input);
+      await db.transaction((tx) =>
+        requireConversationMutationAccess(
+          tx,
+          target.conversation.id,
+          target.bot.userId,
+        ),
+      );
       if (attachmentIds.length > 0 && !target.bot.attachmentAccess) {
         throw new ServiceError(
           "Attachment access is not enabled for this bot",
@@ -1309,6 +1382,11 @@ export async function publishHermesPlatformMessage(input: {
       const now = new Date();
       const clientMessageId = input.platformMessageId ?? crypto.randomUUID();
       const transactionResult = await db.transaction(async (tx) => {
+        await requireConversationMutationAccess(
+          tx,
+          target.conversation.id,
+          target.bot.userId,
+        );
         const [inserted] = await tx
           .insert(messages)
           .values({
@@ -1462,6 +1540,10 @@ export async function completeHermesPlatformInvocationSilently(input: {
       if (!loaded) throw new ServiceError("Invocation not found", 404);
       if (loaded.bot.kind !== "hermes") throw new ServiceError("Invocation is not for a Hermes bot", 400);
       if (loaded.bot.id !== input.authenticatedBotId) throw new ServiceError("Bot token does not match invocation", 403);
+      await requireCurrentBotConversationAccess(
+        loaded.conversation.id,
+        loaded.bot.userId,
+      );
 
       span.setAttribute("thechat.bot_invocation.status.previous", loaded.invocation.status);
       const previousResponseJson = recordFromJson(loaded.invocation.responseJson);
@@ -1485,33 +1567,54 @@ export async function completeHermesPlatformInvocationSilently(input: {
 
       const hasPriorResponse = Object.keys(previousResponseJson).length > 0;
       const completedAt = new Date();
-      await db
-        .update(botInvocations)
-        .set({
-          status: "claimed",
-          responseJson: hasPriorResponse
-            ? {
-                ...previousResponseJson,
-                completion: {
-                  type: "silent",
+      const completed = await db.transaction(async (tx) => {
+        await requireConversationMutationAccess(
+          tx,
+          loaded.conversation.id,
+          loaded.bot.userId,
+        );
+        const [updated] = await tx
+          .update(botInvocations)
+          .set({
+            status: "claimed",
+            responseJson: hasPriorResponse
+              ? {
+                  ...previousResponseJson,
+                  completion: {
+                    type: "silent",
+                    reason: input.reason ?? null,
+                  },
+                }
+              : {
+                  platform: "thechat",
+                  output: null,
+                  silent: true,
                   reason: input.reason ?? null,
+                  completion: {
+                    type: "silent",
+                    reason: input.reason ?? null,
+                  },
                 },
-              }
-            : {
-                platform: "thechat",
-                output: null,
-                silent: true,
-                reason: input.reason ?? null,
-                completion: {
-                  type: "silent",
-                  reason: input.reason ?? null,
-                },
-              },
-          error: null,
-          completedAt: loaded.invocation.completedAt ?? completedAt,
-          updatedAt: completedAt,
-        })
-        .where(eq(botInvocations.id, input.invocationId));
+            error: null,
+            completedAt: loaded.invocation.completedAt ?? completedAt,
+            updatedAt: completedAt,
+          })
+          .where(
+            and(
+              eq(botInvocations.id, input.invocationId),
+              notInArray(botInvocations.status, [
+                "completed",
+                "failed",
+                "cancelled",
+              ]),
+            ),
+          )
+          .returning({ id: botInvocations.id });
+        return updated ?? null;
+      });
+      if (!completed) {
+        return { ok: true, duplicate: true };
+      }
 
       await publishInvocationUpdate(input.invocationId);
       await finishHermesProgress(input.invocationId, "invocation.completed", {
@@ -1531,6 +1634,10 @@ export async function failHermesPlatformInvocation(input: {
   if (!loaded) throw new ServiceError("Invocation not found", 404);
   if (loaded.bot.kind !== "hermes") throw new ServiceError("Invocation is not for a Hermes bot", 400);
   if (loaded.bot.id !== input.authenticatedBotId) throw new ServiceError("Bot token does not match invocation", 403);
+  await requireCurrentBotConversationAccess(
+    loaded.conversation.id,
+    loaded.bot.userId,
+  );
   return recordHermesExecutionFailure(loaded, input.error);
 }
 
@@ -1543,6 +1650,10 @@ export async function cancelHermesPlatformInvocation(input: {
   if (!loaded) throw new ServiceError("Invocation not found", 404);
   if (loaded.bot.kind !== "hermes") throw new ServiceError("Invocation is not for a Hermes bot", 400);
   if (loaded.bot.id !== input.authenticatedBotId) throw new ServiceError("Bot token does not match invocation", 403);
+  await requireCurrentBotConversationAccess(
+    loaded.conversation.id,
+    loaded.bot.userId,
+  );
 
   const previousResponseJson = recordFromJson(loaded.invocation.responseJson);
   if (
@@ -1564,22 +1675,39 @@ export async function cancelHermesPlatformInvocation(input: {
 
   const reason = input.reason?.trim() || "Hermes gateway cancelled the message";
   const cancelledAt = new Date();
-  await db
-    .update(botInvocations)
-    .set({
-      status: "claimed",
-      responseJson: {
-        ...previousResponseJson,
-        platform: "thechat",
-        cancelled: true,
-        reason,
-        completion: { type: "cancelled", reason },
-      },
-      error: reason,
-      completedAt: loaded.invocation.completedAt ?? cancelledAt,
-      updatedAt: cancelledAt,
-    })
-    .where(eq(botInvocations.id, input.invocationId));
+  const cancelled = await db.transaction(async (tx) => {
+    await requireConversationMutationAccess(
+      tx,
+      loaded.conversation.id,
+      loaded.bot.userId,
+    );
+    const [updated] = await tx
+      .update(botInvocations)
+      .set({
+        status: "claimed",
+        responseJson: {
+          ...previousResponseJson,
+          platform: "thechat",
+          cancelled: true,
+          reason,
+          completion: { type: "cancelled", reason },
+        },
+        error: reason,
+        completedAt: loaded.invocation.completedAt ?? cancelledAt,
+        updatedAt: cancelledAt,
+      })
+      .where(
+        and(
+          eq(botInvocations.id, input.invocationId),
+          notInArray(botInvocations.status, ["completed", "failed", "cancelled"]),
+        ),
+      )
+      .returning({ id: botInvocations.id });
+    return updated ?? null;
+  });
+  if (!cancelled) {
+    return { ok: true, duplicate: true };
+  }
 
   await publishInvocationUpdate(input.invocationId);
   await finishHermesProgress(input.invocationId, "invocation.cancelled", { reason });
@@ -1611,6 +1739,11 @@ async function recordHermesExecutionFailure(
   const failedAt = new Date();
   const content = `Hermes run failed: ${error}`;
   const responseMessage = await db.transaction(async (tx) => {
+    await requireConversationMutationAccess(
+      tx,
+      loaded.conversation.id,
+      loaded.bot.userId,
+    );
     const [inserted] = await tx
       .insert(messages)
       .values({
@@ -1731,6 +1864,10 @@ export async function publishHermesPlatformTyping(input: {
   if (input.conversationId && input.conversationId !== loaded.conversation.id) {
     throw new ServiceError("Conversation does not match invocation", 400);
   }
+  await requireCurrentBotConversationAccess(
+    loaded.conversation.id,
+    loaded.bot.userId,
+  );
   const threadId = resolveInvocationThreadId(loaded);
   if (input.threadId && input.threadId !== threadId) {
     throw new ServiceError("Thread does not match invocation", 400);
@@ -1775,6 +1912,10 @@ export async function publishHermesPlatformProgress(
       if (input.conversationId && input.conversationId !== loaded.conversation.id) {
         throw new ServiceError("Conversation does not match invocation", 400);
       }
+      await requireCurrentBotConversationAccess(
+        loaded.conversation.id,
+        loaded.bot.userId,
+      );
       const responseJson = recordFromJson(loaded.invocation.responseJson);
       const generatedTitle = titleFromProgressInput(input);
       const executionAlreadyTerminal =
@@ -1866,33 +2007,41 @@ async function updateHermesThreadTitleFromProgress(
   const threadId = resolveInvocationThreadId(loaded);
   if (!threadId || !title) return null;
 
-  const latestInvocationId = db
-    .select({ id: botInvocations.id })
-    .from(botInvocations)
-    .where(
-      and(
-        eq(botInvocations.botId, loaded.bot.id),
-        eq(botInvocations.conversationId, loaded.conversation.id),
-        eq(botInvocations.threadId, threadId),
-      ),
-    )
-    .orderBy(desc(botInvocations.createdAt), desc(botInvocations.id))
-    .limit(1);
   const now = new Date();
-  const [thread] = await db
-    .update(conversationThreads)
-    .set({
-      title,
-      updatedAt: now,
-    })
-    .where(
-      and(
-        eq(conversationThreads.id, threadId),
-        eq(conversationThreads.conversationId, loaded.conversation.id),
-        sql`${loaded.invocation.id} = (${latestInvocationId})`,
-      ),
-    )
-    .returning();
+  const thread = await db.transaction(async (tx) => {
+    await requireConversationMutationAccess(
+      tx,
+      loaded.conversation.id,
+      loaded.bot.userId,
+    );
+    const latestInvocationId = tx
+      .select({ id: botInvocations.id })
+      .from(botInvocations)
+      .where(
+        and(
+          eq(botInvocations.botId, loaded.bot.id),
+          eq(botInvocations.conversationId, loaded.conversation.id),
+          eq(botInvocations.threadId, threadId),
+        ),
+      )
+      .orderBy(desc(botInvocations.createdAt), desc(botInvocations.id))
+      .limit(1);
+    const [updated] = await tx
+      .update(conversationThreads)
+      .set({
+        title,
+        updatedAt: now,
+      })
+      .where(
+        and(
+          eq(conversationThreads.id, threadId),
+          eq(conversationThreads.conversationId, loaded.conversation.id),
+          sql`${loaded.invocation.id} = (${latestInvocationId})`,
+        ),
+      )
+      .returning();
+    return updated ?? null;
+  });
   if (!thread) return null;
 
   await publishConversationThreadUpdate(loaded.conversation.id, thread);
@@ -1929,8 +2078,25 @@ async function failInvocation(
         eq(botInvocations.adapterKind, "hermes"),
         eq(botInvocations.status, "queued"),
       )
-    : eq(botInvocations.id, invocationId);
+    : and(
+        eq(botInvocations.id, invocationId),
+        notInArray(botInvocations.status, ["completed", "failed", "cancelled"]),
+      );
   const result = await db.transaction(async (tx) => {
+    if (loaded) {
+      try {
+        await requireConversationMutationAccess(
+          tx,
+          loaded.conversation.id,
+          loaded.bot.userId,
+        );
+      } catch (accessError) {
+        if (accessError instanceof ServiceError && accessError.status === 403) {
+          return { failed: false as const, responseMessage: null };
+        }
+        throw accessError;
+      }
+    }
     const [failed] = await tx
       .update(botInvocations)
       .set({
@@ -2054,10 +2220,17 @@ async function markInvocationStatus(
   status: BotInvocationStatus,
   fields: Partial<typeof botInvocations.$inferInsert> = {},
 ) {
-  await db
+  const [updated] = await db
     .update(botInvocations)
     .set({ ...fields, status, updatedAt: new Date() })
-    .where(eq(botInvocations.id, invocationId));
+    .where(
+      and(
+        eq(botInvocations.id, invocationId),
+        notInArray(botInvocations.status, ["completed", "failed", "cancelled"]),
+      ),
+    )
+    .returning({ id: botInvocations.id });
+  return Boolean(updated);
 }
 
 async function publishInvocationUpdate(invocationId: string) {
@@ -2167,13 +2340,47 @@ async function messageAttachmentsForBotDelivery(messageId: string) {
   return attachmentMap.get(messageId) ?? [];
 }
 
+async function requireCurrentBotConversationAccess(
+  conversationId: string,
+  botUserId: string,
+) {
+  return db.transaction((tx) =>
+    requireConversationMutationAccess(tx, conversationId, botUserId),
+  );
+}
+
 async function requireConversationParticipant(conversationId: string, userId: string) {
   const [participant] = await db
-    .select({ userId: conversationParticipants.userId })
+    .select({
+      userId: conversationParticipants.userId,
+      conversationType: conversations.type,
+      workspaceMemberUserId: workspaceMembers.userId,
+    })
     .from(conversationParticipants)
-    .where(and(eq(conversationParticipants.conversationId, conversationId), eq(conversationParticipants.userId, userId)))
+    .innerJoin(
+      conversations,
+      eq(conversationParticipants.conversationId, conversations.id),
+    )
+    .leftJoin(
+      workspaceMembers,
+      and(
+        eq(workspaceMembers.workspaceId, conversations.workspaceId),
+        eq(workspaceMembers.userId, userId),
+      ),
+    )
+    .where(
+      and(
+        eq(conversationParticipants.conversationId, conversationId),
+        eq(conversationParticipants.userId, userId),
+      ),
+    )
     .limit(1);
-  if (!participant) throw new ServiceError("You are not a participant of this conversation", 403);
+  if (
+    !participant ||
+    (participant.conversationType === "group" && !participant.workspaceMemberUserId)
+  ) {
+    throw new ServiceError("You are not a participant of this conversation", 403);
+  }
 }
 
 async function requireConversationThread(conversationId: string, threadId: string) {

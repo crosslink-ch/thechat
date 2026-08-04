@@ -13,6 +13,7 @@ import {
   messageAttachments,
   messages,
   users,
+  workspaceMembers,
 } from "../db/schema";
 import { createChatMessageSentV1 } from "../events/envelope";
 import { enqueueDomainEvent } from "../events/outbox";
@@ -20,6 +21,7 @@ import { log } from "../logging";
 import { withSpan } from "../observability";
 import { publishWsEventToUsers } from "../realtime";
 import { ServiceError } from "./errors";
+import { requireConversationMutationAccess } from "./conversation-mutation-access";
 import { resolveMessageBotTargetIds } from "./message-bot-targets";
 
 const messageLog = log.child({ component: "messages" });
@@ -116,6 +118,7 @@ export async function sendMessage(
     threadId?: string | null;
     clientMessageId?: string | null;
     attachmentIds?: string[];
+    afterWorkspaceLocked?: () => Promise<void>;
   } = {},
 ) {
   const normalizedContent = content.trim();
@@ -149,11 +152,11 @@ export async function sendMessage(
     },
     async (span) => {
       const result = await db.transaction(async (tx) => {
-        const participant = await requireParticipant(
+        const participant = await requireConversationMutationAccess(
           tx,
           conversationId,
           userId,
-          true,
+          { afterWorkspaceLocked: options.afterWorkspaceLocked },
         );
         if (participant.senderType === "bot" && attachmentIds.length > 0) {
           const [bot] = await tx
@@ -546,6 +549,7 @@ async function requireParticipant(
       senderType: users.type,
       workspaceId: conversations.workspaceId,
       conversationType: conversations.type,
+      workspaceMemberUserId: workspaceMembers.userId,
     })
     .from(conversationParticipants)
     .innerJoin(
@@ -553,6 +557,13 @@ async function requireParticipant(
       eq(conversationParticipants.conversationId, conversations.id),
     )
     .innerJoin(users, eq(conversationParticipants.userId, users.id))
+    .leftJoin(
+      workspaceMembers,
+      and(
+        eq(workspaceMembers.workspaceId, conversations.workspaceId),
+        eq(workspaceMembers.userId, userId),
+      ),
+    )
     .where(
       and(
         eq(conversationParticipants.conversationId, conversationId),
@@ -560,7 +571,10 @@ async function requireParticipant(
       ),
     )
     .limit(1);
-  if (!participant) {
+  if (
+    !participant ||
+    (participant.conversationType === "group" && !participant.workspaceMemberUserId)
+  ) {
     throw new ServiceError(
       "You are not a participant of this conversation",
       403,

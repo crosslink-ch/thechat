@@ -50,7 +50,11 @@ import {
   validateAndPromoteAttachment,
 } from "./handler";
 import { ATTACHMENT_VALIDATION_REQUESTED } from "./events";
-import { setAttachmentObjectStoreForTests } from "./service";
+import {
+  reserveAttachment,
+  setAttachmentObjectStoreForTests,
+} from "./service";
+import { removeMember } from "../services/workspaces";
 
 const app = new Elysia()
   .use(authRoutes)
@@ -211,6 +215,78 @@ async function workspaceWithMembers(
 }
 
 describe("attachment lifecycle", () => {
+  test("removal-first serialization rejects stale attachment reservations", async () => {
+    const owner = await register("Attachment race owner");
+    const member = await register("Attachment race member");
+    const { workspaceId, conversationId } = await workspaceWithMembers(
+      owner,
+      member,
+    );
+
+    let releaseRemoval!: () => void;
+    const removalGate = new Promise<void>((resolve) => {
+      releaseRemoval = resolve;
+    });
+    let resolveRemovalLocked!: () => void;
+    const removalLocked = new Promise<void>((resolve) => {
+      resolveRemovalLocked = resolve;
+    });
+    const removing = removeMember(
+      workspaceId,
+      owner.user.id,
+      member.user.id,
+      {
+        afterWorkspaceLocked: async () => {
+          resolveRemovalLocked();
+          await removalGate;
+        },
+      },
+    );
+    await removalLocked;
+
+    let reservationAcquiredWorkspaceLock = false;
+    const reservation = reserveAttachment(
+      member.user.id,
+      {
+        conversationId,
+        fileName: "stale.txt",
+        mediaType: "text/plain",
+        sizeBytes: 5,
+        checksumSha256: crypto
+          .createHash("sha256")
+          .update("stale")
+          .digest("hex"),
+      },
+      {
+        store,
+        afterWorkspaceLocked: async () => {
+          reservationAcquiredWorkspaceLock = true;
+        },
+      },
+    ).then(
+      () => ({ status: "fulfilled" as const }),
+      (error: unknown) => ({ status: "rejected" as const, error }),
+    );
+
+    await Bun.sleep(100);
+    expect(reservationAcquiredWorkspaceLock).toBe(false);
+    releaseRemoval();
+    await removing;
+
+    const outcome = await reservation;
+    expect(reservationAcquiredWorkspaceLock).toBe(true);
+    expect(outcome.status).toBe("rejected");
+    if (outcome.status === "rejected") {
+      expect(outcome.error).toMatchObject({ status: 403 });
+    }
+    expect(
+      await db
+        .select({ id: attachments.id })
+        .from(attachments)
+        .where(eq(attachments.conversationId, conversationId)),
+    ).toHaveLength(0);
+  });
+
   test("authorizes, validates, atomically binds, replays, and downloads without leaking storage coordinates", async () => {
     const owner = await register("Attachment owner");
     const member = await register("Attachment member");

@@ -94,6 +94,7 @@ function doConnect() {
       reconnectAttempt = 0;
       startHeartbeat();
       flushPendingMessages();
+      wsEvents.emit("ws:authenticated", {});
     } else if (event.type === "auth_error") {
       currentToken = null;
       socket.close();
@@ -164,6 +165,21 @@ function doConnect() {
       wsEvents.emit("ws:member_removed", {
         workspaceId: event.workspaceId,
         userId: event.userId,
+      });
+    } else if (event.type === "channel_created") {
+      wsEvents.emit("ws:channel_created", {
+        workspaceId: event.workspaceId,
+        channel: event.channel,
+      });
+    } else if (event.type === "channel_renamed") {
+      wsEvents.emit("ws:channel_renamed", {
+        workspaceId: event.workspaceId,
+        channel: event.channel,
+      });
+    } else if (event.type === "channel_deleted") {
+      wsEvents.emit("ws:channel_deleted", {
+        workspaceId: event.workspaceId,
+        channelId: event.channelId,
       });
     } else if (event.type === "invite_received") {
       wsEvents.emit("ws:invite_received", {

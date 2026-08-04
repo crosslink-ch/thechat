@@ -5,12 +5,13 @@ import { db } from "../db";
 import {
   attachments,
   bots,
-  conversationParticipants,
   users,
 } from "../db/schema";
 import { enqueueDomainEvent } from "../events/outbox";
 import { withSpan } from "../observability";
+import { requireConversationMutationAccess } from "../services/conversation-mutation-access";
 import { ServiceError } from "../services/errors";
+import { requireConversationParticipant } from "../services/conversations";
 import { loadAttachmentConfig } from "./config";
 import {
   ATTACHMENT_DELETION_REQUESTED,
@@ -48,7 +49,10 @@ export async function reserveAttachment(
     sizeBytes: number;
     checksumSha256: string;
   },
-  options: { store?: ObjectStore } = {},
+  options: {
+    store?: ObjectStore;
+    afterWorkspaceLocked?: () => Promise<void>;
+  } = {},
 ) {
   return withSpan(
     "attachment.reserve",
@@ -102,6 +106,12 @@ export async function reserveAttachment(
           Date.now() + config.unattachedTtlSeconds * 1000,
         );
         const [row] = await db.transaction(async (tx) => {
+          await requireConversationMutationAccess(
+            tx,
+            input.conversationId,
+            userId,
+            { afterWorkspaceLocked: options.afterWorkspaceLocked },
+          );
           // The byte quota is per uploader across conversations, so serialize
           // every reservation for that uploader rather than only this chat.
           const lockKey = `attachment-draft:${userId}`;
@@ -589,22 +599,7 @@ async function enforceDraftQuota(
 }
 
 async function requireParticipant(conversationId: string, userId: string) {
-  const [participant] = await db
-    .select({ userId: conversationParticipants.userId })
-    .from(conversationParticipants)
-    .where(
-      and(
-        eq(conversationParticipants.conversationId, conversationId),
-        eq(conversationParticipants.userId, userId),
-      ),
-    )
-    .limit(1);
-  if (!participant) {
-    throw new ServiceError(
-      "You are not a participant of this conversation",
-      403,
-    );
-  }
+  await requireConversationParticipant(conversationId, userId);
 }
 
 async function requireAttachmentActor(userId: string) {

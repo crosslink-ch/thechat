@@ -1,14 +1,17 @@
 import crypto from "crypto";
-import { eq, and } from "drizzle-orm";
+import { and, eq, inArray, or, sql } from "drizzle-orm";
 import type { BotCommandPublic, WsServerEvent } from "@thechat/shared";
 import { db } from "../db";
 import {
   users,
   bots,
   workspaceMembers,
+  workspaces,
   conversations,
   conversationParticipants,
   apikey,
+  botInvocations,
+  eventOutbox,
 } from "../db/schema";
 import { ServiceError } from "./errors";
 import { broadcastToUser } from "../ws";
@@ -101,9 +104,9 @@ export async function listBots(ownerId: string) {
 export async function addBotToWorkspace(
   botId: string,
   workspaceId: string,
-  callerId: string
+  callerId: string,
+  options: { afterWorkspaceLocked?: () => Promise<void> } = {},
 ) {
-  // Verify bot exists
   const [bot] = await db
     .select({ id: bots.id, userId: bots.userId, kind: bots.kind, name: users.name })
     .from(bots)
@@ -115,85 +118,93 @@ export async function addBotToWorkspace(
     throw new ServiceError("Bot not found", 404);
   }
 
-  // Caller must be a workspace member
-  const [callerMembership] = await db
-    .select()
-    .from(workspaceMembers)
-    .where(
-      and(
-        eq(workspaceMembers.workspaceId, workspaceId),
-        eq(workspaceMembers.userId, callerId)
+  const result = await db.transaction(async (tx) => {
+    const [workspace] = await tx
+      .select({ id: workspaces.id })
+      .from(workspaces)
+      .where(eq(workspaces.id, workspaceId))
+      .for("update")
+      .limit(1);
+    if (!workspace) {
+      throw new ServiceError("Workspace not found", 404);
+    }
+
+    await options.afterWorkspaceLocked?.();
+
+    const [callerMembership] = await tx
+      .select({ userId: workspaceMembers.userId })
+      .from(workspaceMembers)
+      .where(
+        and(
+          eq(workspaceMembers.workspaceId, workspaceId),
+          eq(workspaceMembers.userId, callerId),
+        ),
       )
-    )
-    .limit(1);
+      .limit(1);
+    if (!callerMembership) {
+      throw new ServiceError("You are not a member of this workspace", 403);
+    }
 
-  if (!callerMembership) {
-    throw new ServiceError("You are not a member of this workspace", 403);
-  }
-
-  // Add bot user as workspace member (idempotent)
-  const [existingMember] = await db
-    .select()
-    .from(workspaceMembers)
-    .where(
-      and(
-        eq(workspaceMembers.workspaceId, workspaceId),
-        eq(workspaceMembers.userId, bot.userId)
+    const [existingMember] = await tx
+      .select({ joinedAt: workspaceMembers.joinedAt })
+      .from(workspaceMembers)
+      .where(
+        and(
+          eq(workspaceMembers.workspaceId, workspaceId),
+          eq(workspaceMembers.userId, bot.userId),
+        ),
       )
-    )
-    .limit(1);
+      .limit(1);
 
-  if (!existingMember) {
-    const [member] = await db
-      .insert(workspaceMembers)
-      .values({
-        workspaceId,
-        userId: bot.userId,
-        role: "member",
-      })
-      .returning({ joinedAt: workspaceMembers.joinedAt });
+    const [insertedMember] = existingMember
+      ? []
+      : await tx
+          .insert(workspaceMembers)
+          .values({
+            workspaceId,
+            userId: bot.userId,
+            role: "member",
+          })
+          .returning({ joinedAt: workspaceMembers.joinedAt });
 
+    const channels = await tx
+      .select({ id: conversations.id })
+      .from(conversations)
+      .where(
+        and(
+          eq(conversations.workspaceId, workspaceId),
+          eq(conversations.type, "group"),
+        ),
+      );
+
+    if (channels.length > 0) {
+      await tx
+        .insert(conversationParticipants)
+        .values(
+          channels.map((channel) => ({
+            conversationId: channel.id,
+            userId: bot.userId,
+            role: "member" as const,
+          })),
+        )
+        .onConflictDoNothing();
+    }
+
+    return {
+      added: !existingMember,
+      joinedAt: existingMember?.joinedAt ?? insertedMember?.joinedAt ?? new Date(),
+    };
+  });
+
+  if (result.added) {
     await broadcastBotJoinedWorkspace({
       workspaceId,
       botId,
       botKind: bot.kind,
       botUserId: bot.userId,
       botName: bot.name,
-      joinedAt: member?.joinedAt ?? new Date(),
+      joinedAt: result.joinedAt,
     });
-  }
-
-  // Add bot to all channels in the workspace. Direct conversations are owned
-  // by their participants and must not gain newly-added workspace bots.
-  const channels = await db
-    .select({ id: conversations.id })
-    .from(conversations)
-    .where(
-      and(
-        eq(conversations.workspaceId, workspaceId),
-        eq(conversations.type, "group")
-      )
-    );
-
-  for (const channel of channels) {
-    const [existingParticipant] = await db
-      .select()
-      .from(conversationParticipants)
-      .where(
-        and(
-          eq(conversationParticipants.conversationId, channel.id),
-          eq(conversationParticipants.userId, bot.userId)
-        )
-      )
-      .limit(1);
-
-    if (!existingParticipant) {
-      await db.insert(conversationParticipants).values({
-        conversationId: channel.id,
-        userId: bot.userId,
-        role: "member",
-      });
-    }
   }
 
   return { success: true };
@@ -247,9 +258,9 @@ async function broadcastBotJoinedWorkspace({
 export async function removeBotFromWorkspace(
   botId: string,
   workspaceId: string,
-  callerId: string
+  callerId: string,
+  options: { afterWorkspaceLocked?: () => Promise<void> } = {},
 ) {
-  // Verify bot exists
   const [bot] = await db
     .select({ userId: bots.userId, ownerId: bots.ownerId })
     .from(bots)
@@ -260,50 +271,153 @@ export async function removeBotFromWorkspace(
     throw new ServiceError("Bot not found", 404);
   }
 
-  // Caller must be a workspace member
-  const [callerMembership] = await db
-    .select()
-    .from(workspaceMembers)
-    .where(
-      and(
-        eq(workspaceMembers.workspaceId, workspaceId),
-        eq(workspaceMembers.userId, callerId)
-      )
-    )
-    .limit(1);
+  return db.transaction(async (tx) => {
+    const [workspace] = await tx
+      .select({ id: workspaces.id })
+      .from(workspaces)
+      .where(eq(workspaces.id, workspaceId))
+      .for("update")
+      .limit(1);
+    if (!workspace) {
+      throw new ServiceError("Workspace not found", 404);
+    }
 
-  if (!callerMembership) {
-    throw new ServiceError("You are not a member of this workspace", 403);
-  }
+    await options.afterWorkspaceLocked?.();
 
-  // Remove bot from all channels in the workspace
-  const channels = await db
-    .select({ id: conversations.id })
-    .from(conversations)
-    .where(eq(conversations.workspaceId, workspaceId));
-
-  for (const channel of channels) {
-    await db
-      .delete(conversationParticipants)
+    const [callerMembership] = await tx
+      .select({ userId: workspaceMembers.userId })
+      .from(workspaceMembers)
       .where(
         and(
-          eq(conversationParticipants.conversationId, channel.id),
-          eq(conversationParticipants.userId, bot.userId)
-        )
-      );
-  }
-
-  // Remove bot from workspace members
-  await db
-    .delete(workspaceMembers)
-    .where(
-      and(
-        eq(workspaceMembers.workspaceId, workspaceId),
-        eq(workspaceMembers.userId, bot.userId)
+          eq(workspaceMembers.workspaceId, workspaceId),
+          eq(workspaceMembers.userId, callerId),
+        ),
       )
-    );
+      .limit(1);
+    if (!callerMembership) {
+      throw new ServiceError("You are not a member of this workspace", 403);
+    }
 
-  return { success: true };
+    const workspaceConversations = await tx
+      .select({ id: conversations.id })
+      .from(conversations)
+      .where(eq(conversations.workspaceId, workspaceId));
+
+    const activeInvocations = await tx
+      .select({ id: botInvocations.id })
+      .from(botInvocations)
+      .innerJoin(
+        conversations,
+        eq(botInvocations.conversationId, conversations.id),
+      )
+      .where(
+        and(
+          eq(botInvocations.botId, botId),
+          eq(conversations.workspaceId, workspaceId),
+          or(
+            eq(botInvocations.status, "queued"),
+            eq(botInvocations.status, "running"),
+            and(
+              eq(botInvocations.status, "claimed"),
+              sql`NULLIF(${botInvocations.responseJson}->'completion'->>'type', '') IS NULL`,
+              sql`COALESCE(${botInvocations.responseJson}->>'silent', 'false') <> 'true'`,
+            ),
+          ),
+        ),
+      );
+    if (activeInvocations.length > 0) {
+      const cancelledAt = new Date();
+      await tx
+        .update(botInvocations)
+        .set({
+          status: "cancelled",
+          error: "Bot removed from workspace",
+          completedAt: cancelledAt,
+          updatedAt: cancelledAt,
+        })
+        .where(
+          inArray(
+            botInvocations.id,
+            activeInvocations.map((invocation) => invocation.id),
+          ),
+        );
+    }
+
+    // Revoke durable work that was committed before this exclusive workspace
+    // lock was acquired but has not yet been consumed. This prevents removed
+    // bots from receiving it and avoids phantom work blocking channel deletion.
+    await tx.execute(sql`
+      with revoked as (
+        select pending.id,
+          coalesce(
+            (
+              select jsonb_agg(target.value)
+              from jsonb_array_elements(
+                pending.event->'payload'->'targetBotIds'
+              ) as target(value)
+              where target.value <> to_jsonb(${botId}::text)
+            ),
+            '[]'::jsonb
+          ) as remaining_targets
+        from ${eventOutbox} as pending
+        where pending.event_type = 'chat.message.sent'
+          and pending.published_at is null
+          and pending.dead_at is null
+          and pending.event->'tenant'->>'workspaceId' = ${workspaceId}
+          and pending.event->'payload'->'targetBotIds' @> jsonb_build_array(${botId}::text)
+      )
+      update ${eventOutbox} as pending
+      set event = jsonb_set(
+            pending.event,
+            '{payload,targetBotIds}',
+            revoked.remaining_targets
+          ),
+          dead_at = case
+            when jsonb_array_length(revoked.remaining_targets) = 0 then now()
+            else pending.dead_at
+          end,
+          last_error = case
+            when jsonb_array_length(revoked.remaining_targets) = 0
+              then 'Target bot removed from workspace'
+            else pending.last_error
+          end,
+          locked_by = case
+            when jsonb_array_length(revoked.remaining_targets) = 0 then null
+            else pending.locked_by
+          end,
+          locked_at = case
+            when jsonb_array_length(revoked.remaining_targets) = 0 then null
+            else pending.locked_at
+          end
+      from revoked
+      where pending.id = revoked.id
+    `);
+
+    if (workspaceConversations.length > 0) {
+      await tx
+        .delete(conversationParticipants)
+        .where(
+          and(
+            inArray(
+              conversationParticipants.conversationId,
+              workspaceConversations.map((conversation) => conversation.id),
+            ),
+            eq(conversationParticipants.userId, bot.userId),
+          ),
+        );
+    }
+
+    await tx
+      .delete(workspaceMembers)
+      .where(
+        and(
+          eq(workspaceMembers.workspaceId, workspaceId),
+          eq(workspaceMembers.userId, bot.userId),
+        ),
+      );
+
+    return { success: true };
+  });
 }
 
 export async function getBot(botId: string, ownerId: string) {

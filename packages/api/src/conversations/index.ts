@@ -9,6 +9,8 @@ import {
   listConversationThreads,
   listUserDms,
   createChannel,
+  deleteChannel,
+  renameChannel,
   updateConversationThread,
 } from "../services/conversations";
 
@@ -112,6 +114,42 @@ export const conversationRoutes = new Elysia({ prefix: "/conversations" })
         parsed.data.name,
         user.id
       );
+    } catch (e) {
+      if (e instanceof ServiceError) {
+        set.status = e.status;
+        return { error: e.message };
+      }
+      throw e;
+    }
+  })
+
+  // Rename a channel. Channel-wide mutations are limited to workspace managers.
+  .patch("/channel/:conversationId", async ({ params, body, user, set }) => {
+    const parsed = channelSchema.pick({ name: true }).safeParse(body);
+    if (!parsed.success) {
+      set.status = 400;
+      return { error: parsed.error.issues[0]?.message ?? "Invalid input" };
+    }
+
+    try {
+      return await renameChannel(
+        params.conversationId,
+        parsed.data.name,
+        user.id,
+      );
+    } catch (e) {
+      if (e instanceof ServiceError) {
+        set.status = e.status;
+        return { error: e.message };
+      }
+      throw e;
+    }
+  })
+
+  // Permanently delete a channel and its message history.
+  .delete("/channel/:conversationId", async ({ params, user, set }) => {
+    try {
+      return await deleteChannel(params.conversationId, user.id);
     } catch (e) {
       if (e instanceof ServiceError) {
         set.status = e.status;

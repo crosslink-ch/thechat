@@ -1,6 +1,10 @@
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
-import type { WorkspaceListItem, WorkspaceWithDetails } from "@thechat/shared";
+import type {
+  WorkspaceChannel,
+  WorkspaceListItem,
+  WorkspaceWithDetails,
+} from "@thechat/shared";
 import { api } from "../lib/api";
 import { useAuthStore } from "./auth";
 
@@ -29,7 +33,43 @@ interface WorkspacesStore {
   initialize: () => Promise<void>;
   selectWorkspace: (id: string) => Promise<void>;
   createWorkspace: (name: string) => Promise<void>;
+  createChannel: (name: string) => Promise<WorkspaceChannel>;
+  renameChannel: (channelId: string, name: string) => Promise<WorkspaceChannel>;
+  deleteChannel: (channelId: string) => Promise<void>;
   reset: () => void;
+}
+
+function apiErrorMessage(error: unknown, fallback = "Request failed") {
+  if (!error || typeof error !== "object") return fallback;
+  const direct = (error as { error?: unknown }).error;
+  if (typeof direct === "string") return direct;
+  const value = (error as { value?: unknown }).value;
+  if (value && typeof value === "object") {
+    const nested = (value as { error?: unknown }).error;
+    if (typeof nested === "string") return nested;
+  }
+  return fallback;
+}
+
+export function upsertWorkspaceChannel(
+  channels: WorkspaceChannel[],
+  channel: WorkspaceChannel,
+) {
+  const index = channels.findIndex((existing) => existing.id === channel.id);
+  if (index < 0) return [...channels, channel];
+  return channels.map((existing, currentIndex) =>
+    currentIndex === index ? channel : existing,
+  );
+}
+
+export function updateExistingWorkspaceChannel(
+  channels: WorkspaceChannel[],
+  channel: WorkspaceChannel,
+) {
+  if (!channels.some((existing) => existing.id === channel.id)) return channels;
+  return channels.map((existing) =>
+    existing.id === channel.id ? channel : existing,
+  );
 }
 
 async function fetchWorkspacesList(token: string): Promise<WorkspaceListItem[]> {
@@ -111,6 +151,82 @@ export const useWorkspacesStore = create<WorkspacesStore>()((set) => ({
     } catch {
       // ignore
     }
+  },
+
+  createChannel: async (name: string) => {
+    const token = useAuthStore.getState().token;
+    const workspace = useWorkspacesStore.getState().activeWorkspace;
+    if (!token || !workspace) throw new Error("Select a workspace first");
+
+    const { data, error } = await api.conversations.channel.post(
+      { workspaceId: workspace.id, name },
+      auth(token),
+    );
+    if (error) throw new Error(apiErrorMessage(error));
+
+    const channel = data as WorkspaceChannel;
+    set((state) => ({
+      activeWorkspace:
+        state.activeWorkspace?.id === workspace.id
+          ? {
+              ...state.activeWorkspace,
+              channels: upsertWorkspaceChannel(
+                state.activeWorkspace.channels,
+                channel,
+              ),
+            }
+          : state.activeWorkspace,
+    }));
+    return channel;
+  },
+
+  renameChannel: async (channelId: string, name: string) => {
+    const token = useAuthStore.getState().token;
+    const workspaceId = useWorkspacesStore.getState().activeWorkspace?.id;
+    if (!token || !workspaceId) throw new Error("Select a workspace first");
+
+    const { data, error } = await api.conversations
+      .channel({ conversationId: channelId })
+      .patch({ name }, auth(token));
+    if (error) throw new Error(apiErrorMessage(error));
+
+    const channel = data as WorkspaceChannel;
+    set((state) => ({
+      activeWorkspace:
+        state.activeWorkspace?.id === workspaceId
+          ? {
+              ...state.activeWorkspace,
+              channels: updateExistingWorkspaceChannel(
+                state.activeWorkspace.channels,
+                channel,
+              ),
+            }
+          : state.activeWorkspace,
+    }));
+    return channel;
+  },
+
+  deleteChannel: async (channelId: string) => {
+    const token = useAuthStore.getState().token;
+    const workspaceId = useWorkspacesStore.getState().activeWorkspace?.id;
+    if (!token || !workspaceId) throw new Error("Select a workspace first");
+
+    const { error } = await api.conversations
+      .channel({ conversationId: channelId })
+      .delete(undefined, auth(token));
+    if (error) throw new Error(apiErrorMessage(error));
+
+    set((state) => ({
+      activeWorkspace:
+        state.activeWorkspace?.id === workspaceId
+          ? {
+              ...state.activeWorkspace,
+              channels: state.activeWorkspace.channels.filter(
+                (item) => item.id !== channelId,
+              ),
+            }
+          : state.activeWorkspace,
+    }));
   },
 
   reset: () => {

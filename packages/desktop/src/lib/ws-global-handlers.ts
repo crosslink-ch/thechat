@@ -1,6 +1,10 @@
 import { wsEvents } from "./ws-events";
 import { useAuthStore } from "../stores/auth";
-import { useWorkspacesStore } from "../stores/workspaces";
+import {
+  updateExistingWorkspaceChannel,
+  upsertWorkspaceChannel,
+  useWorkspacesStore,
+} from "../stores/workspaces";
 import { useNotificationsStore } from "../stores/notifications";
 import { useConversationsStore } from "../stores/conversations";
 import {
@@ -20,7 +24,10 @@ function auth(token: string) {
   return { headers: { authorization: `Bearer ${token}` } };
 }
 
-async function refreshWorkspaceDetails(workspaceId: string) {
+async function refreshWorkspaceDetails(
+  workspaceId: string,
+  isLatestRequest: () => boolean = () => true,
+) {
   const token = useAuthStore.getState().token;
   if (!token) return;
 
@@ -33,7 +40,11 @@ async function refreshWorkspaceDetails(workspaceId: string) {
 
     const latest = data as WorkspaceWithDetails;
     const stillCurrent = useWorkspacesStore.getState().activeWorkspace;
-    if (!stillCurrent || stillCurrent.id !== workspaceId) return;
+    if (
+      !stillCurrent ||
+      stillCurrent.id !== workspaceId ||
+      !isLatestRequest()
+    ) return;
 
     useWorkspacesStore.setState({ activeWorkspace: latest });
   } catch {
@@ -41,7 +52,32 @@ async function refreshWorkspaceDetails(workspaceId: string) {
   }
 }
 
-export function registerGlobalWsHandlers(navigate: Navigate): () => void {
+function currentWindowRoutePath() {
+  const hashPath = window.location.hash.replace(/^#/, "").split("?")[0];
+  return hashPath.startsWith("/") ? hashPath : window.location.pathname;
+}
+
+export function registerGlobalWsHandlers(
+  navigate: Navigate,
+  currentPath: () => string = currentWindowRoutePath,
+): () => void {
+  const deletedChannelIds = new Set<string>();
+  let workspaceRefreshGeneration = 0;
+
+  const reconcileWorkspace = (workspaceId: string) => {
+    if (useWorkspacesStore.getState().activeWorkspace?.id !== workspaceId) return;
+    const generation = ++workspaceRefreshGeneration;
+    void refreshWorkspaceDetails(
+      workspaceId,
+      () => generation === workspaceRefreshGeneration,
+    );
+  };
+
+  const onAuthenticated = () => {
+    const workspaceId = useWorkspacesStore.getState().activeWorkspace?.id;
+    if (workspaceId) reconcileWorkspace(workspaceId);
+  };
+
   const onNewMessage = ({
     message: msg,
     conversationType,
@@ -135,6 +171,77 @@ export function registerGlobalWsHandlers(navigate: Navigate): () => void {
     });
   };
 
+  const onChannelCreated = ({
+    workspaceId,
+    channel,
+  }: WsEvents["ws:channel_created"]) => {
+    if (deletedChannelIds.has(channel.id)) return;
+    useWorkspacesStore.setState((state) => {
+      if (state.activeWorkspace?.id !== workspaceId) return state;
+      return {
+        activeWorkspace: {
+          ...state.activeWorkspace,
+          channels: upsertWorkspaceChannel(
+            state.activeWorkspace.channels,
+            channel,
+          ),
+        },
+      };
+    });
+    reconcileWorkspace(workspaceId);
+  };
+
+  const onChannelRenamed = ({
+    workspaceId,
+    channel,
+  }: WsEvents["ws:channel_renamed"]) => {
+    if (deletedChannelIds.has(channel.id)) return;
+    useWorkspacesStore.setState((state) => {
+      if (state.activeWorkspace?.id !== workspaceId) return state;
+      return {
+        activeWorkspace: {
+          ...state.activeWorkspace,
+          channels: updateExistingWorkspaceChannel(
+            state.activeWorkspace.channels,
+            channel,
+          ),
+        },
+      };
+    });
+    reconcileWorkspace(workspaceId);
+  };
+
+  const onChannelDeleted = ({
+    workspaceId,
+    channelId,
+  }: WsEvents["ws:channel_deleted"]) => {
+    deletedChannelIds.add(channelId);
+    let fallbackChannelId: string | null = null;
+    useWorkspacesStore.setState((state) => {
+      if (state.activeWorkspace?.id !== workspaceId) return state;
+      const deletedIndex = state.activeWorkspace.channels.findIndex(
+        (channel) => channel.id === channelId,
+      );
+      const channels = state.activeWorkspace.channels.filter(
+        (channel) => channel.id !== channelId,
+      );
+      fallbackChannelId =
+        channels[Math.min(Math.max(deletedIndex, 0), channels.length - 1)]?.id ??
+        null;
+      return {
+        activeWorkspace: { ...state.activeWorkspace, channels },
+      };
+    });
+    useConversationsStore.getState().markChannelRead(channelId);
+
+    if (currentPath() === `/channel/${channelId}`) {
+      navigate({
+        to: fallbackChannelId ? `/channel/${fallbackChannelId}` : "/",
+      });
+    }
+    reconcileWorkspace(workspaceId);
+  };
+
   const onInviteReceived = ({
     invite,
   }: WsEvents["ws:invite_received"]) => {
@@ -162,19 +269,28 @@ export function registerGlobalWsHandlers(navigate: Navigate): () => void {
     useHermesIndicatorsStore.getState().trackProgressEvent(event, invocation);
   };
 
+  wsEvents.on("ws:authenticated", onAuthenticated);
   wsEvents.on("ws:new_message", onNewMessage);
   wsEvents.on("ws:member_joined", onMemberJoined);
   wsEvents.on("ws:member_role_changed", onMemberRoleChanged);
   wsEvents.on("ws:member_removed", onMemberRemoved);
+  wsEvents.on("ws:channel_created", onChannelCreated);
+  wsEvents.on("ws:channel_renamed", onChannelRenamed);
+  wsEvents.on("ws:channel_deleted", onChannelDeleted);
   wsEvents.on("ws:invite_received", onInviteReceived);
   wsEvents.on("ws:bot_invocation_updated", onBotInvocationUpdated);
   wsEvents.on("ws:bot_invocation_progress", onBotInvocationProgress);
 
   return () => {
+    workspaceRefreshGeneration += 1;
+    wsEvents.off("ws:authenticated", onAuthenticated);
     wsEvents.off("ws:new_message", onNewMessage);
     wsEvents.off("ws:member_joined", onMemberJoined);
     wsEvents.off("ws:member_role_changed", onMemberRoleChanged);
     wsEvents.off("ws:member_removed", onMemberRemoved);
+    wsEvents.off("ws:channel_created", onChannelCreated);
+    wsEvents.off("ws:channel_renamed", onChannelRenamed);
+    wsEvents.off("ws:channel_deleted", onChannelDeleted);
     wsEvents.off("ws:invite_received", onInviteReceived);
     wsEvents.off("ws:bot_invocation_updated", onBotInvocationUpdated);
     wsEvents.off("ws:bot_invocation_progress", onBotInvocationProgress);

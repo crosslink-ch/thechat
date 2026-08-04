@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { create } from "zustand";
 import { useNavigate, useMatches } from "@tanstack/react-router";
+import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { useAuthStore } from "../stores/auth";
 import { useWorkspacesStore } from "../stores/workspaces";
 import { useConversationsStore } from "../stores/conversations";
@@ -8,6 +9,11 @@ import { useNotificationsStore } from "../stores/notifications";
 import { openAuthModal } from "./AuthModal";
 import { openCodexAuthModal } from "./CodexAuthModal";
 import { openWorkspaceModal } from "./WorkspaceModal";
+import {
+  openCreateChannelModal,
+  openDeleteChannelModal,
+  openRenameChannelModal,
+} from "./ChannelModal";
 import { useCodexAuthStore } from "../stores/codex-auth";
 import { api } from "../lib/api";
 import type { WorkspaceChannel, WorkspaceMember } from "@thechat/shared";
@@ -19,6 +25,33 @@ function PlusIcon({ className = "" }: { className?: string }) {
     <svg className={className} width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round">
       <path d="M7 3v8" />
       <path d="M3 7h8" />
+    </svg>
+  );
+}
+
+function MoreIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+      <circle cx="3" cy="8" r="1.2" />
+      <circle cx="8" cy="8" r="1.2" />
+      <circle cx="13" cy="8" r="1.2" />
+    </svg>
+  );
+}
+
+function PencilIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="m9.6 2.3 2.1 2.1-6.8 6.8-2.8.7.7-2.8Z" />
+      <path d="m8.2 3.7 2.1 2.1" />
+    </svg>
+  );
+}
+
+function TrashIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M2.5 4h9M5.3 2.2h3.4L9.3 4H4.7ZM4 6v5M7 6v5M10 6v5M3.5 4l.5 8h6l.5-8" />
     </svg>
   );
 }
@@ -100,6 +133,7 @@ export function Sidebar() {
   // Local UI state
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
+  const [channelMenuId, setChannelMenuId] = useState<string | null>(null);
   const profileMenuRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -116,8 +150,15 @@ export function Sidebar() {
     return () => window.removeEventListener("mousedown", handleClickOutside);
   }, [profileMenuOpen]);
 
+  useEffect(() => setChannelMenuId(null), [activeWorkspace?.id]);
+
   const initials = user?.name?.trim().charAt(0).toUpperCase() ?? "?";
   const workspaceInitial = (activeWorkspace?.name ?? "TheChat").trim().charAt(0).toUpperCase();
+  const currentMembership = activeWorkspace?.members.find(
+    (member) => member.userId === user?.id,
+  );
+  const canManageChannels =
+    currentMembership?.role === "owner" || currentMembership?.role === "admin";
 
   const handleSelectChannel = (channel: WorkspaceChannel) => {
     navigate({ to: "/channel/$id", params: { id: channel.id } });
@@ -189,9 +230,20 @@ export function Sidebar() {
     </div>
   );
 
-  const renderSectionLabel = (label: string) => (
-    <div className="px-1 pt-4 pb-2 text-[0.786rem] font-semibold uppercase tracking-[0.04em] text-text-dimmed">
-      {label}
+  const renderSectionLabel = (label: string, onAdd?: () => void) => (
+    <div className="flex items-center justify-between px-1 pb-2 pt-4 text-[0.786rem] font-semibold uppercase tracking-[0.04em] text-text-dimmed">
+      <span>{label}</span>
+      {onAdd && (
+        <button
+          type="button"
+          onClick={onAdd}
+          className="flex size-5 items-center justify-center rounded text-text-dimmed transition-colors hover:bg-hover hover:text-text"
+          aria-label={`Create ${label.toLowerCase().replace(/s$/, "")}`}
+          title={`Create ${label.toLowerCase().replace(/s$/, "")}`}
+        >
+          <PlusIcon />
+        </button>
+      )}
     </div>
   );
 
@@ -258,21 +310,78 @@ export function Sidebar() {
           {user && activeWorkspace ? (
             <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
               <div>
-                {renderSectionLabel("Channels")}
+                {renderSectionLabel("Channels", openCreateChannelModal)}
                 <div className="space-y-0.5 pb-1">
                   {activeWorkspace.channels.map((ch) => {
                     const isActive = activeChannelId === ch.id;
                     const isUnread = unreadChannels.has(ch.id);
+                    const menuOpen = channelMenuId === ch.id;
                     return (
-                      <button
-                        key={ch.id}
-                        className={itemClassName(isActive, isUnread)}
-                        onClick={() => handleSelectChannel(ch)}
-                      >
-                        <span className="w-4 shrink-0 text-center text-text-dimmed">#</span>
-                        <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap">{ch.name}</span>
-                        {isUnread && <span className="size-1.5 shrink-0 rounded-full bg-accent" />}
-                      </button>
+                      <div key={ch.id} className="group relative">
+                        <button
+                          data-channel-id={ch.id}
+                          className={`${itemClassName(isActive, isUnread)} ${canManageChannels ? "pr-9" : ""}`}
+                          onClick={() => handleSelectChannel(ch)}
+                          aria-current={isActive ? "page" : undefined}
+                        >
+                          <span className="w-4 shrink-0 text-center text-text-dimmed">#</span>
+                          <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap">{ch.name}</span>
+                          {isUnread && <span className="size-1.5 shrink-0 rounded-full bg-accent" />}
+                        </button>
+                        {canManageChannels && (
+                          <DropdownMenu.Root
+                            open={menuOpen}
+                            onOpenChange={(nextOpen) =>
+                              setChannelMenuId(nextOpen ? ch.id : null)
+                            }
+                          >
+                            <DropdownMenu.Trigger asChild>
+                              <button
+                                type="button"
+                                className={`absolute right-1 top-1/2 flex size-7 -translate-y-1/2 items-center justify-center rounded text-text-dimmed transition-all hover:bg-raised hover:text-text focus:opacity-100 ${
+                                  menuOpen ? "bg-raised text-text opacity-100" : "opacity-0 group-hover:opacity-100"
+                                }`}
+                                aria-label={`Manage #${ch.name}`}
+                              >
+                                <MoreIcon />
+                              </button>
+                            </DropdownMenu.Trigger>
+                            <DropdownMenu.Portal>
+                              <DropdownMenu.Content
+                                align="end"
+                                sideOffset={4}
+                                loop
+                                className="z-50 min-w-[160px] overflow-hidden rounded-lg border border-border-strong bg-surface py-1 shadow-card animate-fade-in"
+                              >
+                                <DropdownMenu.Item
+                                  asChild
+                                  onSelect={() => openRenameChannelModal(ch)}
+                                >
+                                  <button
+                                    type="button"
+                                    className="flex w-full cursor-pointer items-center gap-2 border-none bg-transparent px-3 py-2 text-left text-[0.821rem] text-text-secondary outline-none transition-colors data-[highlighted]:bg-hover data-[highlighted]:text-text"
+                                  >
+                                    <span className="text-text-dimmed"><PencilIcon /></span>
+                                    Rename channel
+                                  </button>
+                                </DropdownMenu.Item>
+                                <DropdownMenu.Item
+                                  asChild
+                                  onSelect={() => openDeleteChannelModal(ch)}
+                                >
+                                  <button
+                                    type="button"
+                                    className="flex w-full cursor-pointer items-center gap-2 border-none bg-transparent px-3 py-2 text-left text-[0.821rem] text-red-400 outline-none transition-colors data-[highlighted]:bg-red-500/10 data-[highlighted]:text-red-300"
+                                  >
+                                    <TrashIcon />
+                                    Delete channel
+                                  </button>
+                                </DropdownMenu.Item>
+                              </DropdownMenu.Content>
+                            </DropdownMenu.Portal>
+                          </DropdownMenu.Root>
+                        )}
+                      </div>
                     );
                   })}
                 </div>

@@ -4,12 +4,14 @@ import type {
   BotInvocationProgressEventPublic,
   ChatMessage,
   ConversationThreadPublic,
+  WorkspaceChannel,
   WorkspaceMember,
   WorkspaceMemberRole,
   WorkspaceInvite,
 } from "@thechat/shared";
 
 export type WsEvents = {
+  "ws:authenticated": Record<string, never>;
   "ws:new_message": {
     message: ChatMessage;
     conversationType: "direct" | "group";
@@ -52,6 +54,18 @@ export type WsEvents = {
   "ws:member_removed": {
     workspaceId: string;
     userId: string;
+  };
+  "ws:channel_created": {
+    workspaceId: string;
+    channel: WorkspaceChannel;
+  };
+  "ws:channel_renamed": {
+    workspaceId: string;
+    channel: WorkspaceChannel;
+  };
+  "ws:channel_deleted": {
+    workspaceId: string;
+    channelId: string;
   };
   "ws:invite_received": {
     invite: WorkspaceInvite;

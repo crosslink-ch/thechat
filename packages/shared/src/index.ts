@@ -538,6 +538,21 @@ export type WsServerEvent =
   | { type: "member_joined"; workspaceId: string; member: WorkspaceMember }
   | { type: "member_role_changed"; workspaceId: string; userId: string; newRole: WorkspaceMemberRole }
   | { type: "member_removed"; workspaceId: string; userId: string }
+  | {
+      type: "channel_created";
+      workspaceId: string;
+      channel: WorkspaceChannel;
+    }
+  | {
+      type: "channel_renamed";
+      workspaceId: string;
+      channel: WorkspaceChannel;
+    }
+  | {
+      type: "channel_deleted";
+      workspaceId: string;
+      channelId: string;
+    }
   | { type: "invite_received"; invite: WorkspaceInvite }
   | { type: "pong" }
   | { type: "error"; message: string };
