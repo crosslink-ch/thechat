@@ -33,7 +33,6 @@ import {
   conversationParticipants,
   conversationThreads,
   conversations,
-  hermesBotConfigs,
   messages,
   users,
   workspaceMembers,
@@ -801,7 +800,6 @@ export interface HermesPlatformEvent {
   text: string;
   attachments: ChatAttachment[];
   messageId: string;
-  instructions: string | null;
   sender: { id: string; name: string };
   bot: { id: string; userId: string; name: string };
   conversation: {
@@ -946,14 +944,6 @@ async function prepareHermesPlatformEvent(
   const loaded = await loadInvocationContext(invocationId);
   if (!loaded || loaded.bot.kind !== "hermes") return null;
 
-  const [config] = await db
-    .select({
-      defaultInstructions: hermesBotConfigs.defaultInstructions,
-    })
-    .from(hermesBotConfigs)
-    .where(eq(hermesBotConfigs.botId, loaded.bot.id))
-    .limit(1);
-
   const text = stripBotMention(loaded.triggerMessage.content, loaded.botName) || loaded.triggerMessage.content;
   const attachmentMetadata = loaded.bot.attachmentAccess
     ? await messageAttachmentsForBotDelivery(loaded.triggerMessage.id)
@@ -996,7 +986,6 @@ async function prepareHermesPlatformEvent(
       text,
       attachments: attachmentMetadata,
       messageId: loaded.triggerMessage.id,
-      instructions: config?.defaultInstructions ?? null,
       sender: {
         id: loaded.triggerMessage.senderId,
         name: loaded.triggerSender.name,

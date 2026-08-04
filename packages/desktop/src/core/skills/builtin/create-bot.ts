@@ -24,7 +24,6 @@ Webhook bots have:
 Hermes bots have:
 - A **name** — any user-facing bot name, not necessarily "Hermes"
 - A **bot token** — the created bot's \`apiKey\`, prefixed with \`bot_\`, used by Hermes Gateway to connect as that bot
-- Optional default instructions
 - A running Hermes Gateway configured with TheChat platform adapter credentials for that specific bot
 
 ## Steps
@@ -136,21 +135,12 @@ Each Hermes bot gets its own token. To run multiple Hermes bots, repeat the bot 
 
 Do not put Hermes connection settings in generic bot creation. Runtime connectivity belongs to the Hermes Gateway TheChat platform adapter, not the bot record.
 
-### 3. Configure bot defaults
+### 3. Configure Hermes behavior
 
-Optionally configure TheChat-side defaults for the created Hermes bot:
-
-\`\`\`
-PATCH /bots/:botId/hermes
-Authorization: Bearer <human-user-token>
-Body: {
-  "defaultMode": "run",
-  "defaultInstructions": "Reply concisely in TheChat."
-}
-\`\`\`
-
-Hermes Gateway's TheChat platform hint includes TheChat LaTeX math formatting
-rules, so default instructions only need bot-specific behavior.
+TheChat does not store or send bot-specific default instructions. Configure
+the bot's behavior in its Hermes profile, memory, or skills instead. Hermes
+Gateway's TheChat platform hint already includes TheChat LaTeX math formatting
+rules.
 
 To validate TheChat-side bot configuration:
 

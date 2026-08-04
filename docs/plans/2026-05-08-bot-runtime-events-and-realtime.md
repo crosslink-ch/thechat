@@ -371,7 +371,6 @@ For Hermes specifically, the adapter should call `/v1/runs` with:
 {
   "input": "<cleaned current message>",
   "session_id": "<externalSessionId>",
-  "instructions": "<Hermes default instructions>",
   "conversation_history": [
     { "role": "user", "content": "Alice: earlier message" },
     { "role": "assistant", "content": "previous bot reply" }

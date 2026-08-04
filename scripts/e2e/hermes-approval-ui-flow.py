@@ -459,7 +459,6 @@ def _run() -> None:
             token,
             workspace["id"],
             bot_name,
-            "Follow the deterministic E2E model response and use the terminal tool when requested.",
         )
         hermes_proc = harness.start_hermes_gateway(
             gateway_env,

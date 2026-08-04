@@ -1,0 +1,1 @@
+ALTER TABLE "hermes_bot_configs" DROP COLUMN "default_instructions";
