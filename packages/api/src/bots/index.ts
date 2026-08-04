@@ -11,8 +11,6 @@ import {
   getBot,
   updateBot,
   deleteBot,
-  addBotToWorkspace,
-  removeBotFromWorkspace,
   regenerateBotKey,
   revokeBotKey,
   regenerateBotSecret,
@@ -20,6 +18,10 @@ import {
   updateAuthenticatedBotCommands,
 } from "../services/bots";
 import { ensureHermesBotConfig } from "../services/hermes";
+import {
+  addOwnedBotToWorkspace,
+  removeBotWorkspaceMembership,
+} from "../services/bot-workspace-memberships";
 
 const createSchema = z.object({
   name: z.string().trim().min(1, "Bot name is required"),
@@ -132,7 +134,7 @@ export const botRoutes = new Elysia({ prefix: "/bots" })
           attachmentAccess,
         );
         await ensureHermesBotConfig(bot.id);
-        await addBotToWorkspace(bot.id, workspaceId, user.id);
+        await addOwnedBotToWorkspace(bot.id, workspaceId, user.id);
         const { webhookSecret: _webhookSecret, ...publicBot } = bot;
         return publicBot;
       }
@@ -292,13 +294,16 @@ export const botRoutes = new Elysia({ prefix: "/bots" })
     }
 
     try {
-      return await addBotToWorkspace(
+      return await addOwnedBotToWorkspace(
         params.botId,
         parsed.data.workspaceId,
-        user.id
+        user.id,
       );
     } catch (e: any) {
-      set.status = e instanceof ServiceError ? e.status : 500;
+      set.status =
+        e instanceof ServiceError
+          ? e.status
+          : 500;
       return { error: e.message ?? "Unknown error" };
     }
   })
@@ -306,13 +311,16 @@ export const botRoutes = new Elysia({ prefix: "/bots" })
   // Remove bot from workspace
   .delete("/:botId/workspaces/:workspaceId", async ({ params, user, set }) => {
     try {
-      return await removeBotFromWorkspace(
+      return await removeBotWorkspaceMembership(
         params.botId,
         params.workspaceId,
-        user.id
+        user.id,
       );
     } catch (e: any) {
-      set.status = e instanceof ServiceError ? e.status : 500;
+      set.status =
+        e instanceof ServiceError
+          ? e.status
+          : 500;
       return { error: e.message ?? "Unknown error" };
     }
   })

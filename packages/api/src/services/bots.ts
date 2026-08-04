@@ -108,7 +108,13 @@ export async function addBotToWorkspace(
   options: { afterWorkspaceLocked?: () => Promise<void> } = {},
 ) {
   const [bot] = await db
-    .select({ id: bots.id, userId: bots.userId, kind: bots.kind, name: users.name })
+    .select({
+      id: bots.id,
+      userId: bots.userId,
+      ownerId: bots.ownerId,
+      kind: bots.kind,
+      name: users.name,
+    })
     .from(bots)
     .innerJoin(users, eq(bots.userId, users.id))
     .where(eq(bots.id, botId))
@@ -116,6 +122,9 @@ export async function addBotToWorkspace(
 
   if (!bot) {
     throw new ServiceError("Bot not found", 404);
+  }
+  if (bot.ownerId !== callerId) {
+    throw new ServiceError("Only the bot owner can add it directly", 403);
   }
 
   const result = await db.transaction(async (tx) => {
@@ -132,7 +141,7 @@ export async function addBotToWorkspace(
     await options.afterWorkspaceLocked?.();
 
     const [callerMembership] = await tx
-      .select({ userId: workspaceMembers.userId })
+      .select({ role: workspaceMembers.role })
       .from(workspaceMembers)
       .where(
         and(
@@ -141,8 +150,11 @@ export async function addBotToWorkspace(
         ),
       )
       .limit(1);
-    if (!callerMembership) {
-      throw new ServiceError("You are not a member of this workspace", 403);
+    if (
+      !callerMembership ||
+      (callerMembership.role !== "owner" && callerMembership.role !== "admin")
+    ) {
+      throw new ServiceError("Only workspace admins can add bots", 403);
     }
 
     const [existingMember] = await tx
@@ -285,7 +297,7 @@ export async function removeBotFromWorkspace(
     await options.afterWorkspaceLocked?.();
 
     const [callerMembership] = await tx
-      .select({ userId: workspaceMembers.userId })
+      .select({ role: workspaceMembers.role })
       .from(workspaceMembers)
       .where(
         and(
@@ -294,8 +306,13 @@ export async function removeBotFromWorkspace(
         ),
       )
       .limit(1);
-    if (!callerMembership) {
-      throw new ServiceError("You are not a member of this workspace", 403);
+    const callerIsWorkspaceAdmin =
+      callerMembership?.role === "owner" || callerMembership?.role === "admin";
+    if (bot.ownerId !== callerId && !callerIsWorkspaceAdmin) {
+      throw new ServiceError(
+        "Only the bot owner or a workspace admin can remove it",
+        403,
+      );
     }
 
     const workspaceConversations = await tx

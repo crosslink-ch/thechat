@@ -256,6 +256,29 @@ export function registerGlobalWsHandlers(
     );
   };
 
+  const onBotWorkspaceInviteReceived = ({
+    invite,
+  }: WsEvents["ws:bot_workspace_invite_received"]) => {
+    useNotificationsStore.getState().addNotification({
+      type: "bot_workspace_invite",
+      invite,
+    });
+    fireNotification(
+      "Bot approval requested",
+      `${invite.requesterName} wants to add ${invite.botName} to ${invite.workspaceName}`,
+      { dedupeKey: `bot-workspace-invite:${invite.id}` },
+    );
+  };
+
+  const onBotWorkspaceInviteResolved = (
+    event: WsEvents["ws:bot_workspace_invite_resolved"],
+  ) => {
+    useNotificationsStore.getState().handleRealtimeEvent({
+      type: "bot_workspace_invite_resolved",
+      ...event,
+    });
+  };
+
   const onBotInvocationUpdated = ({
     invocation,
   }: WsEvents["ws:bot_invocation_updated"]) => {
@@ -278,6 +301,8 @@ export function registerGlobalWsHandlers(
   wsEvents.on("ws:channel_renamed", onChannelRenamed);
   wsEvents.on("ws:channel_deleted", onChannelDeleted);
   wsEvents.on("ws:invite_received", onInviteReceived);
+  wsEvents.on("ws:bot_workspace_invite_received", onBotWorkspaceInviteReceived);
+  wsEvents.on("ws:bot_workspace_invite_resolved", onBotWorkspaceInviteResolved);
   wsEvents.on("ws:bot_invocation_updated", onBotInvocationUpdated);
   wsEvents.on("ws:bot_invocation_progress", onBotInvocationProgress);
 
@@ -292,6 +317,8 @@ export function registerGlobalWsHandlers(
     wsEvents.off("ws:channel_renamed", onChannelRenamed);
     wsEvents.off("ws:channel_deleted", onChannelDeleted);
     wsEvents.off("ws:invite_received", onInviteReceived);
+    wsEvents.off("ws:bot_workspace_invite_received", onBotWorkspaceInviteReceived);
+    wsEvents.off("ws:bot_workspace_invite_resolved", onBotWorkspaceInviteResolved);
     wsEvents.off("ws:bot_invocation_updated", onBotInvocationUpdated);
     wsEvents.off("ws:bot_invocation_progress", onBotInvocationProgress);
   };
