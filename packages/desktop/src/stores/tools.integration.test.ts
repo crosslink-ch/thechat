@@ -48,7 +48,14 @@ async function registerUser(name: string) {
     password: "password123",
   });
   if (error) throw new Error("Registration failed");
-  return { token: data.accessToken!, user: data.user! };
+  if (!data || !("accessToken" in data) || !("user" in data)) {
+    throw new Error("Registration did not return a session");
+  }
+  const session = data as {
+    accessToken: string;
+    user: { id: string; name: string; email: string | null };
+  };
+  return { token: session.accessToken, user: session.user };
 }
 
 /**

@@ -39,10 +39,19 @@ const wsClientEventSchema = z.discriminatedUnion("type", [
 
 // Connection tracking
 const userSockets = new Map<string, Set<WebSocket>>();
-const socketUsers = new Map<WebSocket, { id: string; name: string }>();
+const socketUsers = new Map<
+  WebSocket,
+  { id: string; name: string; token: string }
+>();
 
-function addSocket(userId: string, userName: string, ws: WebSocket) {
-  socketUsers.set(ws, { id: userId, name: userName });
+function addSocket(
+  userId: string,
+  userName: string,
+  token: string,
+  ws: WebSocket,
+) {
+  removeSocket(ws);
+  socketUsers.set(ws, { id: userId, name: userName, token });
   let sockets = userSockets.get(userId);
   if (!sockets) {
     sockets = new Set();
@@ -93,7 +102,53 @@ async function tryBroadcastToUsers(userIds: string[], event: WsServerEvent) {
 async function deliverToLocalUser(userId: string, event: WsServerEvent) {
   const sockets = userSockets.get(userId);
   if (!sockets) return;
-  const openSockets = [...sockets].filter(
+
+  // Revalidate each distinct session token before delivering private inbound
+  // events. Session rows are shared by every replica, so this closes the gap
+  // where a logged-out/expired socket could no longer mutate state but could
+  // continue receiving messages indefinitely. Dedupe lookups for multiple
+  // local sockets sharing one session token within this delivery.
+  const validations = new Map<
+    string,
+    Promise<Awaited<ReturnType<typeof validateToken>>>
+  >();
+  const validSockets: WebSocket[] = [];
+  await Promise.all(
+    [...sockets].map(async (ws) => {
+      const socketUser = socketUsers.get(ws);
+      if (!socketUser || socketUser.id !== userId) {
+        removeSocket(ws);
+        return;
+      }
+
+      let validation = validations.get(socketUser.token);
+      if (!validation) {
+        validation = validateToken(socketUser.token);
+        validations.set(socketUser.token, validation);
+      }
+
+      try {
+        const currentUser = await validation;
+        if (!currentUser || currentUser.id !== socketUser.id) {
+          removeSocket(ws);
+          ws.close();
+          return;
+        }
+        socketUser.name = currentUser.name;
+        validSockets.push(ws);
+      } catch (error) {
+        // An authentication-store outage is not proof that the token is
+        // invalid. Fail closed for this event without misclassifying or
+        // permanently disconnecting the session; the next event retries.
+        websocketLog.error(
+          { err: error, userId },
+          "WebSocket inbound session revalidation failed",
+        );
+      }
+    }),
+  );
+
+  const openSockets = validSockets.filter(
     (socket) => socket.readyState === WebSocket.OPEN,
   );
   const result = await deliverWebSocketEvent(event, openSockets);
@@ -133,7 +188,17 @@ startRealtimeSubscription();
 
 async function validateToken(token: string) {
   const user = await resolveTokenToUser(token);
-  if (!user) return null;
+  if (!user) {
+    websocketLog.warn(
+      {
+        tokenType: typeof token,
+        tokenLength: typeof token === "string" ? token.length : null,
+        tokenParts: typeof token === "string" ? token.split(".").length : null,
+      },
+      "WebSocket bearer token validation failed",
+    );
+    return null;
+  }
   return { id: user.id, name: user.name };
 }
 
@@ -224,7 +289,20 @@ export const wsRoutes = new Elysia().ws("/ws", {
     }
 
     if (event.type === "auth") {
-      const user = await validateToken(event.token);
+      let user: Awaited<ReturnType<typeof validateToken>>;
+      try {
+        user = await validateToken(event.token);
+      } catch (error) {
+        websocketLog.error(
+          { err: error },
+          "WebSocket authentication store unavailable",
+        );
+        sendTo(socket, {
+          type: "auth_error",
+          message: "Authentication service temporarily unavailable",
+        });
+        return;
+      }
       if (!user) {
         sendTo(socket, {
           type: "auth_error",
@@ -233,7 +311,7 @@ export const wsRoutes = new Elysia().ws("/ws", {
         ws.close();
         return;
       }
-      addSocket(user.id, user.name, socket);
+      addSocket(user.id, user.name, event.token, socket);
       sendTo(socket, { type: "auth_ok", userId: user.id });
       return;
     }
@@ -254,6 +332,51 @@ export const wsRoutes = new Elysia().ws("/ws", {
       );
       return;
     }
+
+    // Session rows are shared by all replicas, so revalidating before every
+    // client-originated state/event mutation observes logout and expiry even
+    // when the socket and logout request reached different API pods.
+    let currentUser: Awaited<ReturnType<typeof validateToken>>;
+    try {
+      currentUser = await validateToken(socketUser.token);
+    } catch (error) {
+      websocketLog.error(
+        { err: error, userId: socketUser.id },
+        "WebSocket authentication store unavailable during revalidation",
+      );
+      sendTo(
+        socket,
+        event.type === "send_message" && event.clientMessageId
+          ? {
+              type: "message_error",
+              conversationId: event.conversationId,
+              clientMessageId: event.clientMessageId,
+              message: "Authentication service temporarily unavailable",
+            }
+          : {
+              type: "auth_error",
+              message: "Authentication service temporarily unavailable",
+            },
+      );
+      return;
+    }
+    if (!currentUser || currentUser.id !== socketUser.id) {
+      sendTo(
+        socket,
+        event.type === "send_message" && event.clientMessageId
+          ? {
+              type: "message_error",
+              conversationId: event.conversationId,
+              clientMessageId: event.clientMessageId,
+              message: "Session expired or revoked",
+            }
+          : { type: "auth_error", message: "Session expired or revoked" },
+      );
+      removeSocket(socket);
+      ws.close();
+      return;
+    }
+    socketUser.name = currentUser.name;
 
     if (event.type === "send_message") {
       await handleSendMessage(

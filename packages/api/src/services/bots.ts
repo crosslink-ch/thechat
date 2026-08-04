@@ -8,13 +8,16 @@ import {
   workspaceMembers,
   conversations,
   conversationParticipants,
+  apikey,
 } from "../db/schema";
 import { ServiceError } from "./errors";
 import { broadcastToUser } from "../ws";
-
-export function generateApiKey(): string {
-  return `bot_${crypto.randomBytes(32).toString("hex")}`;
-}
+import {
+  BotApiKeyRotationConflictError,
+  prepareBotApiKey,
+  revokeBotApiKey,
+  rotateBotApiKey,
+} from "../auth/bot-api-keys";
 
 export function generateWebhookSecret(): string {
   return `whsec_${crypto.randomBytes(32).toString("hex")}`;
@@ -27,32 +30,38 @@ export async function createBot(
   kind: "webhook" | "hermes" = "webhook",
   attachmentAccess = true,
 ) {
-  const apiKey = generateApiKey();
   const webhookSecret = generateWebhookSecret();
+  const botUserId = crypto.randomUUID();
+  const credential = await prepareBotApiKey(botUserId);
 
-  const [botUser] = await db
-    .insert(users)
-    .values({ name, type: "bot" })
-    .returning({ id: users.id, name: users.name });
+  const { botUser, bot } = await db.transaction(async (tx) => {
+    const [createdUser] = await tx
+      .insert(users)
+      .values({ id: botUserId, name, type: "bot" })
+      .returning({ id: users.id, name: users.name });
 
-  const [bot] = await db
-    .insert(bots)
-    .values({
-      userId: botUser.id,
-      ownerId,
-      webhookUrl,
-      webhookSecret,
-      apiKey,
-      kind,
-      attachmentAccess,
-    })
-    .returning();
+    const [createdBot] = await tx
+      .insert(bots)
+      .values({
+        userId: createdUser.id,
+        ownerId,
+        webhookUrl,
+        webhookSecret,
+        kind,
+        attachmentAccess,
+      })
+      .returning();
+
+    await tx.insert(apikey).values(credential.values);
+
+    return { botUser: createdUser, bot: createdBot };
+  });
 
   return {
     id: bot.id,
     userId: botUser.id,
     name: botUser.name,
-    apiKey,
+    apiKey: credential.rawKey,
     kind: bot.kind,
     attachmentAccess: bot.attachmentAccess,
     webhookUrl: bot.webhookUrl,
@@ -389,33 +398,38 @@ export async function updateAuthenticatedBotWebhook(
   botUserId: string,
   webhookUrl: string | null
 ) {
-  const [bot] = await db
-    .select({
+  const [updatedBot] = await db
+    .update(bots)
+    .set({ webhookUrl })
+    .where(eq(bots.userId, botUserId))
+    .returning({
       id: bots.id,
       userId: bots.userId,
       kind: bots.kind,
-      name: users.name,
-    })
-    .from(bots)
-    .innerJoin(users, eq(bots.userId, users.id))
-    .where(eq(bots.userId, botUserId))
-    .limit(1);
+      webhookSecret: bots.webhookSecret,
+    });
 
-  if (!bot) {
+  if (!updatedBot) {
     throw new ServiceError("Bot not found", 404);
   }
 
-  await db
-    .update(bots)
-    .set({ webhookUrl })
-    .where(eq(bots.id, bot.id));
+  const [botUser] = await db
+    .select({ name: users.name })
+    .from(users)
+    .where(eq(users.id, botUserId))
+    .limit(1);
+
+  if (!botUser) {
+    throw new ServiceError("Bot not found", 404);
+  }
 
   return {
-    id: bot.id,
-    userId: bot.userId,
-    name: bot.name,
-    kind: bot.kind,
+    id: updatedBot.id,
+    userId: updatedBot.userId,
+    name: botUser.name,
+    kind: updatedBot.kind,
     webhookUrl,
+    ...(webhookUrl ? { webhookSecret: updatedBot.webhookSecret } : {}),
   };
 }
 
@@ -496,16 +510,18 @@ export async function deleteBot(botId: string, ownerId: string) {
     throw new ServiceError("Only the bot owner can delete the bot", 403);
   }
 
-  // Delete bot record first (references user), then the user record
-  await db.delete(bots).where(eq(bots.id, botId));
-  await db.delete(users).where(eq(users.id, bot.userId));
+  // The Better Auth API-key row cascades with the bot user.
+  await db.transaction(async (tx) => {
+    await tx.delete(bots).where(eq(bots.id, botId));
+    await tx.delete(users).where(eq(users.id, bot.userId));
+  });
 
   return { success: true };
 }
 
 export async function regenerateBotKey(botId: string, ownerId: string) {
   const [bot] = await db
-    .select({ id: bots.id, ownerId: bots.ownerId })
+    .select({ id: bots.id, ownerId: bots.ownerId, userId: bots.userId })
     .from(bots)
     .where(eq(bots.id, botId))
     .limit(1);
@@ -521,10 +537,33 @@ export async function regenerateBotKey(botId: string, ownerId: string) {
     );
   }
 
-  const newApiKey = generateApiKey();
-  await db.update(bots).set({ apiKey: newApiKey }).where(eq(bots.id, botId));
+  let newApiKey: string;
+  try {
+    newApiKey = await rotateBotApiKey(bot.userId);
+  } catch (error) {
+    if (error instanceof BotApiKeyRotationConflictError) {
+      throw new ServiceError("Bot API key changed concurrently; retry from fresh state", 409);
+    }
+    throw error;
+  }
 
   return { apiKey: newApiKey };
+}
+
+export async function revokeBotKey(botId: string, ownerId: string) {
+  const [bot] = await db
+    .select({ id: bots.id, ownerId: bots.ownerId, userId: bots.userId })
+    .from(bots)
+    .where(eq(bots.id, botId))
+    .limit(1);
+
+  if (!bot) throw new ServiceError("Bot not found", 404);
+  if (bot.ownerId !== ownerId) {
+    throw new ServiceError("Only the bot owner can revoke the API key", 403);
+  }
+
+  await revokeBotApiKey(bot.userId);
+  return { success: true };
 }
 
 export async function regenerateBotSecret(botId: string, ownerId: string) {

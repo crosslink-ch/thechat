@@ -64,6 +64,20 @@
       "when": 1784813979186,
       "tag": "0008_flimsy_swordsman",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1785766633994,
+      "tag": "0009_better_auth_humans",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1785767104759,
+      "tag": "0010_better_auth_bot_api_keys",
+      "breakpoints": true
     }
   ]
 }

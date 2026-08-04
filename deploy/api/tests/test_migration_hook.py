@@ -15,6 +15,7 @@ def render(
     template: str,
     *values: str,
     json_values: tuple[str, ...] = (),
+    set_migrate_tag: bool = True,
 ) -> str:
     command = [
         "helm",
@@ -27,9 +28,9 @@ def render(
         template,
         "--set",
         "image.tag=sha-test",
-        "--set",
-        "migrateImage.tag=sha-test",
     ]
+    if set_migrate_tag:
+        command.extend(("--set", "migrateImage.tag=sha-test"))
     for value in values:
         command.extend(("--set", value))
     for value in json_values:
@@ -83,7 +84,7 @@ class MigrationHookRenderTests(unittest.TestCase):
         self.assertIn("activeDeadlineSeconds: 123", job)
         self.assertIn("backoffLimit: 4", job)
 
-    def test_migration_job_defaults_support_reused_legacy_values(self) -> None:
+    def test_migration_job_defaults_support_reused_release_values(self) -> None:
         job = render(
             "templates/migration-job.yaml",
             json_values=("migrationJob=null",),
@@ -121,11 +122,65 @@ class MigrationHookRenderTests(unittest.TestCase):
             job,
         )
 
+    def test_reused_release_values_receive_safe_better_auth_defaults(self) -> None:
+        deployment = render(
+            "templates/deployment.yaml",
+            json_values=(
+                "betterAuthSecret=null",
+                'env={"THECHAT_BACKEND_URL":"https://api.example",'
+                '"BETTER_AUTH_URL":null,"NODE_ENV":null}',
+            ),
+        )
+
+        self.assertIn("name: thechat-better-auth", deployment)
+        self.assertRegex(
+            deployment,
+            re.compile(r'name: NODE_ENV\s+value: "production"'),
+        )
+        self.assertRegex(
+            deployment,
+            re.compile(
+                r'name: BETTER_AUTH_URL\s+value: "https://api.example"'
+            ),
+        )
+
+    def test_reused_release_values_receive_migration_image_defaults(self) -> None:
+        job = render(
+            "templates/migration-job.yaml",
+            json_values=("migrateImage=null",),
+            set_migrate_tag=False,
+        )
+
+        self.assertIn(
+            'image: "ghcr.io/crosslink-ch/thechat-api-migrate:sha-test"',
+            job,
+        )
+        self.assertIn("imagePullPolicy: IfNotPresent", job)
+
     def test_api_no_longer_runs_migrations_in_an_init_container(self) -> None:
         deployment = render("templates/deployment.yaml")
 
         self.assertNotIn("initContainers:", deployment)
         self.assertNotIn("thechat-api-migrate", deployment)
+
+    def test_api_receives_explicit_better_auth_configuration(self) -> None:
+        deployment = render("templates/deployment.yaml")
+
+        self.assertIn("name: BETTER_AUTH_SECRET", deployment)
+        self.assertIn("name: thechat-better-auth", deployment)
+        self.assertIn("key: BETTER_AUTH_SECRET", deployment)
+        self.assertIn("name: BETTER_AUTH_URL", deployment)
+        self.assertIn('value: "https://api.thechat.app"', deployment)
+        self.assertNotIn("name: JWT_SECRET", deployment)
+        self.assertNotIn("name: ENABLE_LEGACY_AUTH_BRIDGE", deployment)
+        self.assertIn("name: AUTH_TRUST_PROXY", deployment)
+        self.assertIn("name: AUTH_TRUSTED_IP_HEADER", deployment)
+
+    def test_better_auth_secret_is_required_when_explicitly_empty(self) -> None:
+        with self.assertRaises(subprocess.CalledProcessError) as error:
+            render("templates/deployment.yaml", "betterAuthSecret=")
+
+        self.assertIn("betterAuthSecret is required", error.exception.stderr)
 
 
 if __name__ == "__main__":
