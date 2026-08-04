@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type {
   Bot,
@@ -144,6 +144,14 @@ function setWorkspace(activeWorkspace = workspace) {
   });
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((resolver) => {
+    resolve = resolver;
+  });
+  return { promise, resolve };
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   setWorkspace();
@@ -270,6 +278,88 @@ describe("WorkspaceManageRoute", () => {
         headers: { authorization: "Bearer test-token" },
       });
     });
+  });
+
+  it("ignores late management responses after switching workspaces", async () => {
+    const workspaceBeta: WorkspaceWithDetails = {
+      ...workspace,
+      id: "workspace-beta-b2c3",
+      name: "Workspace Beta",
+      members: workspace.members.filter(
+        (member) => member.userId === ownerUser.id,
+      ),
+    };
+    const staleInvite: BotWorkspaceInvite = {
+      id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      workspaceId: workspace.id,
+      workspaceName: workspace.name,
+      botId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      botName: "Stale Helper",
+      requesterId: ownerUser.id,
+      requesterName: ownerUser.name,
+      status: "pending",
+      createdAt: "2026-08-04T00:00:00.000Z",
+    };
+    const currentInvite: BotWorkspaceInvite = {
+      ...staleInvite,
+      id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+      workspaceId: workspaceBeta.id,
+      workspaceName: workspaceBeta.name,
+      botId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+      botName: "Current Helper",
+    };
+    const staleWorkspaceResponse = deferred<{
+      data: WorkspaceWithDetails;
+      error: null;
+    }>();
+    const staleInviteResponse = deferred<{
+      data: BotWorkspaceInvite[];
+      error: null;
+    }>();
+    apiMocks.workspaceGet
+      .mockReturnValueOnce(staleWorkspaceResponse.promise)
+      .mockResolvedValueOnce({ data: workspaceBeta, error: null });
+    apiMocks.listBotInvites
+      .mockReturnValueOnce(staleInviteResponse.promise)
+      .mockResolvedValueOnce({ data: [currentInvite], error: null });
+
+    render(<WorkspaceManageRoute />);
+    await waitFor(() => expect(apiMocks.workspaceGet).toHaveBeenCalledTimes(1));
+
+    act(() => {
+      useWorkspacesStore.setState({
+        workspaces: [
+          {
+            id: workspace.id,
+            name: workspace.name,
+            role: "owner",
+            createdAt: workspace.createdAt,
+            updatedAt: workspace.updatedAt,
+          },
+          {
+            id: workspaceBeta.id,
+            name: workspaceBeta.name,
+            role: "owner",
+            createdAt: workspaceBeta.createdAt,
+            updatedAt: workspaceBeta.updatedAt,
+          },
+        ],
+        activeWorkspace: workspaceBeta,
+      });
+    });
+
+    expect(await screen.findByText("Current Helper")).toBeVisible();
+    await act(async () => {
+      staleWorkspaceResponse.resolve({ data: workspace, error: null });
+      staleInviteResponse.resolve({ data: [staleInvite], error: null });
+      await Promise.resolve();
+    });
+
+    expect(useWorkspacesStore.getState().activeWorkspace?.id).toBe(
+      workspaceBeta.id,
+    );
+    expect(screen.queryByText("Stale Helper")).not.toBeInTheDocument();
+    expect(screen.getByText("Current Helper")).toBeVisible();
   });
 
   it("is read-only for regular members", async () => {

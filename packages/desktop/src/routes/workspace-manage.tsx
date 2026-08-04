@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   Bot,
   BotWorkspaceInvite,
@@ -51,6 +51,8 @@ export function WorkspaceManageRoute() {
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [confirmingAction, setConfirmingAction] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const workspaceRefreshGeneration = useRef(0);
+  const adminLoadGeneration = useRef(0);
 
   const actorRole = activeWorkspace?.members.find(
     (member) => member.userId === currentUser?.id,
@@ -76,9 +78,17 @@ export function WorkspaceManageRoute() {
 
   const refreshWorkspace = useCallback(async () => {
     if (!token || !activeWorkspace) return;
+    const requestedWorkspaceId = activeWorkspace.id;
+    const requestGeneration = ++workspaceRefreshGeneration.current;
     const result = await api
-      .workspaces({ id: activeWorkspace.id })
+      .workspaces({ id: requestedWorkspaceId })
       .get({ headers: authHeaders(token) });
+    if (
+      requestGeneration !== workspaceRefreshGeneration.current ||
+      useWorkspacesStore.getState().activeWorkspace?.id !== requestedWorkspaceId
+    ) {
+      return;
+    }
     if (result.error || !result.data) {
       throw new Error(apiError(result.error, "Failed to refresh workspace"));
     }
@@ -88,7 +98,9 @@ export function WorkspaceManageRoute() {
   }, [activeWorkspace?.id, token]);
 
   const loadAdminData = useCallback(async () => {
-    if (!token || !activeWorkspace || !canManage) {
+    const requestGeneration = ++adminLoadGeneration.current;
+    const requestedWorkspaceId = activeWorkspace?.id;
+    if (!token || !requestedWorkspaceId || !canManage) {
       setOwnedBots([]);
       setPendingBotInvites([]);
       return;
@@ -97,10 +109,16 @@ export function WorkspaceManageRoute() {
     const [botsResult, pendingResult] = await Promise.all([
       api.bots.list.get({ headers: authHeaders(token) }),
       api
-        .workspaces({ id: activeWorkspace.id })["bot-invites"].get({
+        .workspaces({ id: requestedWorkspaceId })["bot-invites"].get({
           headers: authHeaders(token),
         }),
     ]);
+    if (
+      requestGeneration !== adminLoadGeneration.current ||
+      useWorkspacesStore.getState().activeWorkspace?.id !== requestedWorkspaceId
+    ) {
+      return;
+    }
     if (botsResult.error) {
       throw new Error(apiError(botsResult.error, "Failed to load your bots"));
     }
@@ -132,6 +150,8 @@ export function WorkspaceManageRoute() {
       });
     return () => {
       cancelled = true;
+      workspaceRefreshGeneration.current += 1;
+      adminLoadGeneration.current += 1;
     };
   }, [loadAdminData, refreshWorkspace]);
 

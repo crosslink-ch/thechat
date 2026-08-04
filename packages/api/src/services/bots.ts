@@ -11,6 +11,7 @@ import {
   conversationParticipants,
   apikey,
   botInvocations,
+  botWorkspaceInvites,
   eventOutbox,
 } from "../db/schema";
 import { ServiceError } from "./errors";
@@ -424,16 +425,36 @@ export async function removeBotFromWorkspace(
         );
     }
 
-    await tx
+    const removedMemberships = await tx
       .delete(workspaceMembers)
       .where(
         and(
           eq(workspaceMembers.workspaceId, workspaceId),
           eq(workspaceMembers.userId, bot.userId),
         ),
-      );
+      )
+      .returning({ userId: workspaceMembers.userId });
 
-    return { success: true };
+    const recipients =
+      removedMemberships.length === 0
+        ? []
+        : await tx
+            .select({ userId: workspaceMembers.userId })
+            .from(workspaceMembers)
+            .innerJoin(users, eq(users.id, workspaceMembers.userId))
+            .where(
+              and(
+                eq(workspaceMembers.workspaceId, workspaceId),
+                eq(users.type, "human"),
+              ),
+            );
+
+    return {
+      success: true,
+      removed: removedMemberships.length > 0,
+      botUserId: bot.userId,
+      recipientIds: recipients.map((recipient) => recipient.userId),
+    };
   });
 }
 
@@ -627,22 +648,45 @@ export async function updateAuthenticatedBotCommands(
 }
 
 export async function deleteBot(botId: string, ownerId: string) {
-  const [bot] = await db
-    .select({ id: bots.id, ownerId: bots.ownerId, userId: bots.userId })
-    .from(bots)
-    .where(eq(bots.id, botId))
-    .limit(1);
-
-  if (!bot) {
-    throw new ServiceError("Bot not found", 404);
-  }
-
-  if (bot.ownerId !== ownerId) {
-    throw new ServiceError("Only the bot owner can delete the bot", 403);
-  }
-
-  // The Better Auth API-key row cascades with the bot user.
   await db.transaction(async (tx) => {
+    const [bot] = await tx
+      .select({ id: bots.id, ownerId: bots.ownerId, userId: bots.userId })
+      .from(bots)
+      .where(eq(bots.id, botId))
+      .for("update")
+      .limit(1);
+
+    if (!bot) {
+      throw new ServiceError("Bot not found", 404);
+    }
+
+    if (bot.ownerId !== ownerId) {
+      throw new ServiceError("Only the bot owner can delete the bot", 403);
+    }
+
+    const [workspaceMembership] = await tx
+      .select({ workspaceId: workspaceMembers.workspaceId })
+      .from(workspaceMembers)
+      .where(eq(workspaceMembers.userId, bot.userId))
+      .limit(1);
+    const [pendingInvite] = await tx
+      .select({ id: botWorkspaceInvites.id })
+      .from(botWorkspaceInvites)
+      .where(
+        and(
+          eq(botWorkspaceInvites.botId, botId),
+          eq(botWorkspaceInvites.status, "pending"),
+        ),
+      )
+      .limit(1);
+    if (workspaceMembership || pendingInvite) {
+      throw new ServiceError(
+        "Remove the bot from all workspaces and resolve pending workspace requests before deleting it",
+        409,
+      );
+    }
+
+    // The Better Auth API-key row cascades with the bot user.
     await tx.delete(bots).where(eq(bots.id, botId));
     await tx.delete(users).where(eq(users.id, bot.userId));
   });

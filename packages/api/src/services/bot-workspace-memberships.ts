@@ -47,7 +47,14 @@ const requesterUsers = alias(users, "bot_workspace_invite_requester_users");
 
 function serializeInvite(invite: InviteRecord): BotWorkspaceInvite {
   return {
-    ...invite,
+    id: invite.id,
+    workspaceId: invite.workspaceId,
+    workspaceName: invite.workspaceName,
+    botId: invite.botId,
+    botName: invite.botName,
+    requesterId: invite.requesterId,
+    requesterName: invite.requesterName,
+    status: invite.status,
     createdAt: invite.createdAt.toISOString(),
   };
 }
@@ -726,30 +733,13 @@ export async function removeBotWorkspaceMembership(
   workspaceId: string,
   callerId: string,
 ) {
-  const [bot] = await db
-    .select({ userId: bots.userId })
-    .from(bots)
-    .where(eq(bots.id, botId))
-    .limit(1);
-  if (!bot) {
-    throw new ServiceError("Bot not found", 404);
-  }
-
-  const recipients = await db
-    .select({ userId: workspaceMembers.userId })
-    .from(workspaceMembers)
-    .innerJoin(users, eq(workspaceMembers.userId, users.id))
-    .where(
-      and(
-        eq(workspaceMembers.workspaceId, workspaceId),
-        eq(users.type, "human"),
-      ),
-    );
-
   const result = await removeBotFromWorkspace(botId, workspaceId, callerId);
-  broadcastToRecipients(
-    recipients.map((recipient) => recipient.userId),
-    { type: "member_removed", workspaceId, userId: bot.userId },
-  );
-  return result;
+  if (result.removed) {
+    broadcastToRecipients(result.recipientIds, {
+      type: "member_removed",
+      workspaceId,
+      userId: result.botUserId,
+    });
+  }
+  return { success: result.success };
 }

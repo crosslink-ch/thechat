@@ -1,10 +1,13 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useNotificationsStore } from "../stores/notifications";
 
 export function NotificationsRoute() {
   const notifications = useNotificationsStore((state) => state.notifications);
   const loading = useNotificationsStore((state) => state.loading);
   const error = useNotificationsStore((state) => state.error);
+  const fetchNotifications = useNotificationsStore(
+    (state) => state.fetchNotifications,
+  );
   const acceptInvite = useNotificationsStore((state) => state.acceptInvite);
   const declineInvite = useNotificationsStore((state) => state.declineInvite);
   const acceptBotWorkspaceInvite = useNotificationsStore(
@@ -15,6 +18,10 @@ export function NotificationsRoute() {
   );
   const [processingId, setProcessingId] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+
+  useEffect(() => {
+    void fetchNotifications();
+  }, [fetchNotifications]);
 
   const runAction = async (inviteId: string, action: () => Promise<void>) => {
     setProcessingId(inviteId);

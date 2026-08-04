@@ -181,6 +181,7 @@ describe("bot workspace membership approvals", () => {
     expect(ownerInbox.status).toBe(200);
     expect(ownerInbox.body).toHaveLength(1);
     expect(ownerInbox.body[0].id).toBe(requested.body.invite.id);
+    expect(ownerInbox.body[0]).not.toHaveProperty("ownerId");
 
     const unauthorized = await request(
       "POST",
@@ -412,6 +413,82 @@ describe("bot workspace membership approvals", () => {
         ),
       );
     expect(remaining).toHaveLength(0);
+  });
+
+  test("blocks bot deletion until pending requests are resolved", async () => {
+    const workspaceOwner = await register("Deletion requester");
+    const botOwner = await register("Deletion bot owner");
+    const workspace = await createWorkspace(
+      workspaceOwner.token,
+      "Deletion request workspace",
+    );
+    const bot = await createBot(botOwner.token, "Deletion pending helper");
+    const requested = await request(
+      "POST",
+      `/workspaces/${workspace.id}/bots`,
+      { botId: bot.id },
+      workspaceOwner.token,
+    );
+
+    const blocked = await request(
+      "DELETE",
+      `/bots/${bot.id}`,
+      undefined,
+      botOwner.token,
+    );
+    expect(blocked.status).toBe(409);
+    expect(blocked.body.error).toContain("resolve pending workspace requests");
+
+    const declined = await request(
+      "POST",
+      "/bot-workspace-invites/decline",
+      { inviteId: requested.body.invite.id },
+      botOwner.token,
+    );
+    expect(declined.status).toBe(200);
+    const deleted = await request(
+      "DELETE",
+      `/bots/${bot.id}`,
+      undefined,
+      botOwner.token,
+    );
+    expect(deleted.status).toBe(200);
+  });
+
+  test("blocks bot deletion until workspace memberships are removed", async () => {
+    const owner = await register("Attached bot owner");
+    const workspace = await createWorkspace(owner.token, "Attached bot workspace");
+    const bot = await createBot(owner.token, "Attached helper");
+    const attached = await request(
+      "POST",
+      `/workspaces/${workspace.id}/bots`,
+      { botId: bot.id },
+      owner.token,
+    );
+    expect(attached.status).toBe(200);
+
+    const blocked = await request(
+      "DELETE",
+      `/bots/${bot.id}`,
+      undefined,
+      owner.token,
+    );
+    expect(blocked.status).toBe(409);
+
+    const removed = await request(
+      "DELETE",
+      `/workspaces/${workspace.id}/bots/${bot.id}`,
+      undefined,
+      owner.token,
+    );
+    expect(removed.status).toBe(200);
+    const deleted = await request(
+      "DELETE",
+      `/bots/${bot.id}`,
+      undefined,
+      owner.token,
+    );
+    expect(deleted.status).toBe(200);
   });
 
   test("serializes direct bot attachment with channel participant snapshots", async () => {

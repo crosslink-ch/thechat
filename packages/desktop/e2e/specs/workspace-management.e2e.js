@@ -20,8 +20,30 @@ async function clickButtonWithin(element, label) {
   await button.click();
 }
 
+async function login(email, password) {
+  const sidebarLogin = await $("button*=Log in");
+  await sidebarLogin.waitForClickable({ timeout: 10000 });
+  await sidebarLogin.click();
+  const emailInput = await $("#auth-email");
+  await emailInput.waitForExist({ timeout: 5000 });
+  await emailInput.setValue(email);
+  await $("#auth-password").setValue(password);
+  await $("button[type='submit']").click();
+  await emailInput.waitForExist({ reverse: true, timeout: 10000 });
+}
+
+async function logout(displayName) {
+  const profile = await $(`button*=${displayName}`);
+  await profile.waitForClickable({ timeout: 10000 });
+  await profile.click();
+  const logoutButton = await $("button*=Log out");
+  await logoutButton.waitForClickable({ timeout: 5000 });
+  await logoutButton.click();
+  await $("button*=Log in").waitForExist({ timeout: 10000 });
+}
+
 describe("Workspace access management", function () {
-  this.timeout(120_000);
+  this.timeout(180_000);
 
   it("manages people and bot approvals from Manage workspace", async () => {
     const suffix = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -113,15 +135,7 @@ describe("Workspace access management", function () {
       workspaceName,
     );
 
-    const sidebarLogin = await $("button*=Log in");
-    await sidebarLogin.waitForClickable({ timeout: 10000 });
-    await sidebarLogin.click();
-    const emailInput = await $("#auth-email");
-    await emailInput.waitForExist({ timeout: 5000 });
-    await emailInput.setValue(ownerEmail);
-    await $("#auth-password").setValue(password);
-    await $("button[type='submit']").click();
-    await emailInput.waitForExist({ reverse: true, timeout: 10000 });
+    await login(ownerEmail, password);
 
     // Visiting the workspace home lets the one-workspace auto-selection run.
     // Directly opening Manage workspace before that would correctly render the
@@ -193,31 +207,44 @@ describe("Workspace access management", function () {
     await (await waitForTestId("add-bot-submit")).click();
     await $("div*=Approval requested").waitForExist({ timeout: 10000 });
 
-    const approvedBot = await browser.execute(
-      async (apiUrl, token, expectedBotId) => {
-        const headers = {
-          "content-type": "application/json",
-          authorization: `Bearer ${token}`,
-        };
-        const pending = await fetch(`${apiUrl}/bot-workspace-invites/pending`, {
-          headers,
-        }).then((response) => response.json());
-        const invite = pending.find((candidate) => candidate.botId === expectedBotId);
-        if (!invite) return { error: "bot approval request was not pending" };
-        const response = await fetch(`${apiUrl}/bot-workspace-invites/accept`, {
-          method: "POST",
-          headers,
-          body: JSON.stringify({ inviteId: invite.id }),
-        });
-        return { ok: response.ok, status: response.status };
-      },
-      API_URL,
-      setup.botOwner.token,
-      setup.externalBot.id,
+    // The external bot owner recovers the durable request after login and
+    // approves it through the real Notifications UI and Eden Treaty action.
+    await logout("E2E Workspace Owner");
+    await login(botOwnerEmail, password);
+    await browser.execute(() => {
+      window.location.hash = "#/notifications";
+    });
+    const approvalCard = await waitForTestId(
+      "bot-workspace-invite-notification",
+      10000,
     );
-    if (!approvedBot.ok) {
-      throw new Error(`Bot approval failed: ${JSON.stringify(approvedBot)}`);
-    }
+    await browser.waitUntil(
+      async () =>
+        (await approvalCard.getText()).includes("E2E External Bot") &&
+        (await approvalCard.getText()).includes(setup.workspace.name),
+      {
+        timeout: 10000,
+        timeoutMsg: "bot approval request was not recovered in Notifications",
+      },
+    );
+    await clickButtonWithin(approvalCard, "Approve");
+    await approvalCard.waitForExist({ reverse: true, timeout: 10000 });
+
+    await logout("E2E Bot Owner");
+    await login(ownerEmail, password);
+    await browser.execute(() => {
+      window.location.hash = "#/";
+    });
+    await browser.waitUntil(
+      async () => (await browser.getPageSource()).includes(setup.workspace.name),
+      {
+        timeout: 20000,
+        timeoutMsg: "workspace did not recover after owner login",
+      },
+    );
+    await browser.execute(() => {
+      window.location.hash = "#/workspace/manage";
+    });
     await waitForTestId(`bot-row-${setup.externalBot.id}`, 10000);
 
     // Remove the invited person and the externally-owned bot through the UI.

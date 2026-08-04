@@ -28,9 +28,21 @@ const workspaceInvite: WorkspaceInvite = {
 
 beforeEach(() => {
   useNotificationsStore.setState(useNotificationsStore.getInitialState(), true);
+  useNotificationsStore.setState({
+    fetchNotifications: vi.fn().mockResolvedValue(undefined),
+  });
 });
 
 describe("NotificationsRoute", () => {
+  it("reconciles durable notifications when the route opens", async () => {
+    const fetchNotifications = vi.fn().mockResolvedValue(undefined);
+    useNotificationsStore.setState({ fetchNotifications });
+
+    render(<NotificationsRoute />);
+
+    await waitFor(() => expect(fetchNotifications).toHaveBeenCalledTimes(1));
+  });
+
   it("lets a bot owner approve a workspace request", async () => {
     const user = userEvent.setup();
     const approve = vi.fn().mockResolvedValue(undefined);

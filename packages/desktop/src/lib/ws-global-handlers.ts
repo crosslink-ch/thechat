@@ -76,6 +76,7 @@ export function registerGlobalWsHandlers(
   const onAuthenticated = () => {
     const workspaceId = useWorkspacesStore.getState().activeWorkspace?.id;
     if (workspaceId) reconcileWorkspace(workspaceId);
+    void useNotificationsStore.getState().fetchNotifications();
   };
 
   const onNewMessage = ({

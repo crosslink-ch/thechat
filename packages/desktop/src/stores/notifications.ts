@@ -23,6 +23,13 @@ interface NotificationsState {
   reset: () => void;
 }
 
+let notificationMutationGeneration = 0;
+let notificationFetchGeneration = 0;
+
+function markNotificationsChanged() {
+  notificationMutationGeneration += 1;
+}
+
 function notificationKey(notification: AppNotification) {
   return `${notification.type}:${notification.invite.id}`;
 }
@@ -41,6 +48,14 @@ function errorMessage(error: unknown, fallback: string) {
   return fallback;
 }
 
+function errorStatus(error: unknown) {
+  if (error && typeof error === "object" && "status" in error) {
+    const status = (error as { status?: unknown }).status;
+    return typeof status === "number" ? status : undefined;
+  }
+  return undefined;
+}
+
 export const useNotificationsStore = create<NotificationsState>((set, get) => ({
   notifications: [],
   loading: false,
@@ -50,68 +65,105 @@ export const useNotificationsStore = create<NotificationsState>((set, get) => ({
     const token = useAuthStore.getState().token;
     if (!token) return;
 
+    const requestGeneration = ++notificationFetchGeneration;
+    const mutationGeneration = notificationMutationGeneration;
     set({ loading: true, error: null });
-    const [workspaceInvites, botInvites] = await Promise.all([
-      api.invites.pending.get({ headers: authHeaders(token) }),
-      api["bot-workspace-invites"].pending.get({
-        headers: authHeaders(token),
-      }),
-    ]);
 
-    if (workspaceInvites.error) {
+    try {
+      const [workspaceInvites, botInvites] = await Promise.all([
+        api.invites.pending.get({ headers: authHeaders(token) }),
+        api["bot-workspace-invites"].pending.get({
+          headers: authHeaders(token),
+        }),
+      ]);
+
+      if (
+        requestGeneration !== notificationFetchGeneration ||
+        useAuthStore.getState().token !== token
+      ) {
+        return;
+      }
+
+      if (workspaceInvites.error) {
+        throw new Error(
+          errorMessage(
+            workspaceInvites.error,
+            "Failed to load workspace invitations",
+          ),
+        );
+      }
+      if (botInvites.error) {
+        throw new Error(
+          errorMessage(botInvites.error, "Failed to load bot approval requests"),
+        );
+      }
+
+      const workspaceData = workspaceInvites.data;
+      const botData = botInvites.data;
+      if (!Array.isArray(workspaceData) || !Array.isArray(botData)) {
+        throw new Error("Failed to load notifications");
+      }
+
+      if (mutationGeneration !== notificationMutationGeneration) {
+        void get().fetchNotifications();
+        return;
+      }
+
       set({
-        loading: false,
-        error: errorMessage(
-          workspaceInvites.error,
-          "Failed to load workspace invitations",
-        ),
+        notifications: [
+          ...(workspaceData as WorkspaceInvite[]).map(
+            (invite): AppNotification => ({ type: "workspace_invite", invite }),
+          ),
+          ...(botData as BotWorkspaceInvite[]).map(
+            (invite): AppNotification => ({
+              type: "bot_workspace_invite",
+              invite,
+            }),
+          ),
+        ],
+        error: null,
       });
-      return;
+    } catch (error) {
+      if (
+        requestGeneration === notificationFetchGeneration &&
+        useAuthStore.getState().token === token
+      ) {
+        set({
+          error:
+            error instanceof Error
+              ? error.message
+              : "Failed to load notifications",
+        });
+      }
+    } finally {
+      if (
+        requestGeneration === notificationFetchGeneration &&
+        useAuthStore.getState().token === token
+      ) {
+        set({ loading: false });
+      }
     }
-    if (botInvites.error) {
-      set({
-        loading: false,
-        error: errorMessage(
-          botInvites.error,
-          "Failed to load bot approval requests",
-        ),
-      });
-      return;
-    }
-
-    const workspaceData = workspaceInvites.data;
-    const botData = botInvites.data;
-    if (!Array.isArray(workspaceData) || !Array.isArray(botData)) {
-      set({ loading: false, error: "Failed to load notifications" });
-      return;
-    }
-
-    set({
-      notifications: [
-        ...(workspaceData as WorkspaceInvite[]).map(
-          (invite): AppNotification => ({ type: "workspace_invite", invite }),
-        ),
-        ...(botData as BotWorkspaceInvite[]).map(
-          (invite): AppNotification => ({
-            type: "bot_workspace_invite",
-            invite,
-          }),
-        ),
-      ],
-      loading: false,
-    });
   },
 
   acceptInvite: async (inviteId) => {
     const token = useAuthStore.getState().token;
     if (!token) return;
 
+    markNotificationsChanged();
     const result = await api.invites.accept.post(
       { inviteId },
       { headers: authHeaders(token) },
     );
-    if (result.error) throw new Error("Failed to accept invite");
+    if (result.error) {
+      if ([404, 409].includes(errorStatus(result.error) ?? 0)) {
+        await get().fetchNotifications();
+      }
+      throw new Error(
+        errorMessage(result.error, "Failed to accept workspace invitation"),
+      );
+    }
 
+    markNotificationsChanged();
     set((state) => ({
       notifications: state.notifications.filter(
         (notification) =>
@@ -128,12 +180,21 @@ export const useNotificationsStore = create<NotificationsState>((set, get) => ({
     const token = useAuthStore.getState().token;
     if (!token) return;
 
+    markNotificationsChanged();
     const result = await api.invites.decline.post(
       { inviteId },
       { headers: authHeaders(token) },
     );
-    if (result.error) throw new Error("Failed to decline invite");
+    if (result.error) {
+      if ([404, 409].includes(errorStatus(result.error) ?? 0)) {
+        await get().fetchNotifications();
+      }
+      throw new Error(
+        errorMessage(result.error, "Failed to decline workspace invitation"),
+      );
+    }
 
+    markNotificationsChanged();
     set((state) => ({
       notifications: state.notifications.filter(
         (notification) =>
@@ -149,12 +210,21 @@ export const useNotificationsStore = create<NotificationsState>((set, get) => ({
     const token = useAuthStore.getState().token;
     if (!token) return;
 
+    markNotificationsChanged();
     const result = await api["bot-workspace-invites"].accept.post(
       { inviteId },
       { headers: authHeaders(token) },
     );
-    if (result.error) throw new Error("Failed to approve bot request");
+    if (result.error) {
+      if ([404, 409].includes(errorStatus(result.error) ?? 0)) {
+        await get().fetchNotifications();
+      }
+      throw new Error(
+        errorMessage(result.error, "Failed to approve bot request"),
+      );
+    }
 
+    markNotificationsChanged();
     set((state) => ({
       notifications: state.notifications.filter(
         (notification) =>
@@ -170,12 +240,21 @@ export const useNotificationsStore = create<NotificationsState>((set, get) => ({
     const token = useAuthStore.getState().token;
     if (!token) return;
 
+    markNotificationsChanged();
     const result = await api["bot-workspace-invites"].decline.post(
       { inviteId },
       { headers: authHeaders(token) },
     );
-    if (result.error) throw new Error("Failed to decline bot request");
+    if (result.error) {
+      if ([404, 409].includes(errorStatus(result.error) ?? 0)) {
+        await get().fetchNotifications();
+      }
+      throw new Error(
+        errorMessage(result.error, "Failed to decline bot request"),
+      );
+    }
 
+    markNotificationsChanged();
     set((state) => ({
       notifications: state.notifications.filter(
         (notification) =>
@@ -188,6 +267,7 @@ export const useNotificationsStore = create<NotificationsState>((set, get) => ({
   },
 
   addNotification: (notification) => {
+    markNotificationsChanged();
     const key = notificationKey(notification);
     if (get().notifications.some((candidate) => notificationKey(candidate) === key)) {
       return;
@@ -207,6 +287,7 @@ export const useNotificationsStore = create<NotificationsState>((set, get) => ({
         invite: event.invite,
       };
     } else if (event.type === "bot_workspace_invite_resolved") {
+      markNotificationsChanged();
       set((state) => ({
         notifications: state.notifications.filter(
           (candidate) => candidate.invite.id !== event.inviteId,
@@ -216,6 +297,7 @@ export const useNotificationsStore = create<NotificationsState>((set, get) => ({
     }
 
     if (!notification) return;
+    markNotificationsChanged();
     const key = notificationKey(notification);
     if (get().notifications.some((candidate) => notificationKey(candidate) === key)) {
       return;
@@ -225,5 +307,9 @@ export const useNotificationsStore = create<NotificationsState>((set, get) => ({
     }));
   },
 
-  reset: () => set({ notifications: [], loading: false, error: null }),
+  reset: () => {
+    markNotificationsChanged();
+    notificationFetchGeneration += 1;
+    set({ notifications: [], loading: false, error: null });
+  },
 }));
