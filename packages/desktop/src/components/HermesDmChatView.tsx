@@ -34,6 +34,7 @@ interface HermesDmChatViewProps {
   onLoadOlderMessages?: () => boolean | void | Promise<boolean | void>;
   mentions?: MentionUser[];
   scrollKey?: string | null;
+  draftKey?: string;
   taskActive?: boolean;
   queuedCount?: number;
   slashCommands?: HermesSlashCommand[];
@@ -60,6 +61,7 @@ export function HermesDmChatView({
   onLoadOlderMessages,
   mentions,
   scrollKey,
+  draftKey,
   taskActive = false,
   queuedCount = 0,
   slashCommands,
@@ -355,6 +357,7 @@ export function HermesDmChatView({
       <MessageSendError error={sendError} />
       <InputBar
         convId={undefined}
+        draftKey={draftKey ?? `dm:${conversationId ?? scrollScopeKey}`}
         onSend={(content, _images, attachmentIds) =>
           handleSend(content, attachmentIds)
         }

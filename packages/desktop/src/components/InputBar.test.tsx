@@ -8,6 +8,7 @@ import {
 } from "@testing-library/react";
 import { InputBar } from "./InputBar";
 import type { HermesSlashCommand } from "../lib/hermes-slash-commands";
+import { useComposerDraftsStore } from "../stores/composer-drafts";
 import {
   cancelSharedAttachment,
   uploadSharedAttachment,
@@ -29,6 +30,13 @@ beforeAll(() => {
 
 afterEach(() => {
   vi.clearAllMocks();
+  useComposerDraftsStore.setState({
+    drafts: {},
+    revisions: {},
+    imageDrafts: {},
+    attachmentDrafts: {},
+    sendingAttachments: {},
+  });
 });
 
 const COMMANDS: HermesSlashCommand[] = [
@@ -42,6 +50,7 @@ function renderInputBar(overrides: Partial<Parameters<typeof InputBar>[0]> = {})
   const utils = render(
     <InputBar
       convId="conv-1"
+      draftKey="conversation:conv-1"
       onSend={onSend}
       onStop={() => {}}
       slashCommands={COMMANDS}
@@ -51,6 +60,14 @@ function renderInputBar(overrides: Partial<Parameters<typeof InputBar>[0]> = {})
   const editor = utils.container.querySelector<HTMLElement>(".ProseMirror");
   if (!editor) throw new Error("ProseMirror editor not found");
   return { ...utils, onSend, editor };
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
 }
 
 function openMenu(editor: HTMLElement) {
@@ -203,6 +220,137 @@ describe("InputBar shared attachments", () => {
     await waitFor(() => expect(screen.queryByText("report.txt")).toBeNull());
   });
 
+  it("restores a ready attachment when switching away from and back to a thread", async () => {
+    makeUploadReady();
+    const onSend = vi.fn();
+    const onStop = vi.fn();
+    const sharedUpload = {
+      conversationId: "conversation-1",
+      token: "token-1",
+    };
+    const { container, rerender } = renderInputBar({
+      draftKey: "dm:conversation-1:thread:task-1",
+      onSend,
+      onStop,
+      sharedUpload,
+    });
+    const fileInput = container.querySelector<HTMLInputElement>(
+      'input[type="file"]',
+    );
+    if (!fileInput) throw new Error("File input not found");
+
+    fireEvent.change(fileInput, {
+      target: {
+        files: [new File(["report"], "report.txt", { type: "text/plain" })],
+      },
+    });
+    await waitFor(() => expect(screen.getByText(/Ready/)).toBeInTheDocument());
+
+    rerender(
+      <InputBar
+        convId="conversation-1"
+        draftKey="dm:conversation-1:thread:task-2"
+        onSend={onSend}
+        onStop={onStop}
+        slashCommands={COMMANDS}
+        sharedUpload={sharedUpload}
+      />,
+    );
+    expect(screen.queryByText("report.txt")).toBeNull();
+    expect(cancelSharedAttachment).not.toHaveBeenCalled();
+
+    rerender(
+      <InputBar
+        convId="conversation-1"
+        draftKey="dm:conversation-1:thread:task-1"
+        onSend={onSend}
+        onStop={onStop}
+        slashCommands={COMMANDS}
+        sharedUpload={sharedUpload}
+      />,
+    );
+    expect(screen.getByText("report.txt")).toBeInTheDocument();
+    expect(screen.getByTestId("attachment-draft")).toHaveAttribute(
+      "data-attachment-phase",
+      "ready",
+    );
+    expect(cancelSharedAttachment).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Remove report.txt" }));
+    await waitFor(() =>
+      expect(cancelSharedAttachment).toHaveBeenCalledWith(
+        "attachment-1",
+        "token-1",
+      ),
+    );
+    expect(cancelSharedAttachment).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(screen.queryByText("report.txt")).toBeNull());
+  });
+
+  it("continues an upload while its thread is inactive and restores the result", async () => {
+    const upload = deferred<typeof attachment>();
+    let updateUpload!: Parameters<typeof uploadSharedAttachment>[1];
+    let uploadSignal!: AbortSignal;
+    vi.mocked(uploadSharedAttachment).mockImplementation((input, update) => {
+      updateUpload = update;
+      uploadSignal = input.signal;
+      update({ phase: "uploading", progress: 25, attachment });
+      return upload.promise;
+    });
+    const sharedUpload = {
+      conversationId: "conversation-1",
+      token: "token-1",
+    };
+    const { container, rerender } = renderInputBar({
+      draftKey: "dm:conversation-1:thread:task-1",
+      sharedUpload,
+    });
+    const fileInput = container.querySelector<HTMLInputElement>(
+      'input[type="file"]',
+    );
+    if (!fileInput) throw new Error("File input not found");
+
+    fireEvent.change(fileInput, {
+      target: {
+        files: [new File(["report"], "report.txt", { type: "text/plain" })],
+      },
+    });
+    await waitFor(() => expect(screen.getByText(/Uploading/)).toBeInTheDocument());
+
+    rerender(
+      <InputBar
+        convId="conversation-1"
+        draftKey="dm:conversation-1:thread:task-2"
+        onSend={() => undefined}
+        onStop={() => undefined}
+        slashCommands={COMMANDS}
+        sharedUpload={sharedUpload}
+      />,
+    );
+    expect(uploadSignal.aborted).toBe(false);
+    expect(screen.queryByText("report.txt")).toBeNull();
+
+    await act(async () => {
+      updateUpload({ phase: "ready", progress: 100, attachment });
+      upload.resolve(attachment);
+      await upload.promise;
+    });
+    rerender(
+      <InputBar
+        convId="conversation-1"
+        draftKey="dm:conversation-1:thread:task-1"
+        onSend={() => undefined}
+        onStop={() => undefined}
+        slashCommands={COMMANDS}
+        sharedUpload={sharedUpload}
+      />,
+    );
+
+    await waitFor(() => expect(screen.getByText(/Ready/)).toBeInTheDocument());
+    expect(screen.getByText("report.txt")).toBeInTheDocument();
+    expect(cancelSharedAttachment).not.toHaveBeenCalled();
+  });
+
   it("cancels a ready draft when the user removes it", async () => {
     makeUploadReady();
     const { container } = renderInputBar({
@@ -263,7 +411,7 @@ describe("InputBar shared attachments", () => {
     );
   });
 
-  it("cancels a ready draft when the input unmounts", async () => {
+  it("keeps a ready draft owned by its scope when the input unmounts", async () => {
     makeUploadReady();
     const { container, unmount } = renderInputBar({
       sharedUpload: { conversationId: "conversation-1", token: "token-1" },
@@ -281,11 +429,123 @@ describe("InputBar shared attachments", () => {
     await waitFor(() => expect(screen.getByText(/Ready/)).toBeInTheDocument());
 
     unmount();
-    await waitFor(() =>
-      expect(cancelSharedAttachment).toHaveBeenCalledWith(
-        "attachment-1",
-        "token-1",
-      ),
+    expect(cancelSharedAttachment).not.toHaveBeenCalled();
+    expect(
+      useComposerDraftsStore.getState().attachmentDrafts[
+        "conversation:conv-1"
+      ]?.[0]?.attachment?.id,
+    ).toBe("attachment-1");
+  });
+
+  it("does not cancel an in-flight attachment when the composer scope changes", async () => {
+    makeUploadReady();
+    const send = deferred<boolean>();
+    const onSend = vi.fn(() => send.promise);
+    const { container, rerender } = renderInputBar({
+      draftKey: "dm:conversation-1:thread:task-1",
+      onSend,
+      sharedUpload: { conversationId: "conversation-1", token: "token-1" },
+    });
+    const fileInput = container.querySelector<HTMLInputElement>(
+      'input[type="file"]',
+    );
+    if (!fileInput) throw new Error("File input not found");
+
+    fireEvent.change(fileInput, {
+      target: {
+        files: [new File(["report"], "report.txt", { type: "text/plain" })],
+      },
+    });
+    await waitFor(() => expect(screen.getByText(/Ready/)).toBeInTheDocument());
+    fireEvent.click(screen.getByTitle("Send message"));
+
+    rerender(
+      <InputBar
+        convId="conversation-2"
+        draftKey="dm:conversation-2:thread:task-2"
+        onSend={onSend}
+        onStop={() => undefined}
+        slashCommands={COMMANDS}
+        sharedUpload={{ conversationId: "conversation-2", token: "token-2" }}
+      />,
+    );
+    expect(cancelSharedAttachment).not.toHaveBeenCalled();
+
+    rerender(
+      <InputBar
+        convId="conversation-1"
+        draftKey="dm:conversation-1:thread:task-1"
+        onSend={onSend}
+        onStop={() => undefined}
+        slashCommands={COMMANDS}
+        sharedUpload={{ conversationId: "conversation-1", token: "token-1" }}
+      />,
+    );
+    expect(screen.getByText("report.txt")).toBeInTheDocument();
+    expect(screen.getByTitle("Send message")).toBeDisabled();
+    expect(screen.getByTitle("Attach files")).toBeDisabled();
+
+    await act(async () => {
+      send.resolve(true);
+      await send.promise;
+    });
+    await waitFor(() => expect(screen.queryByText("report.txt")).toBeNull());
+    expect(cancelSharedAttachment).not.toHaveBeenCalled();
+  });
+
+  it("restores an in-flight attachment when its send fails after a scope change", async () => {
+    makeUploadReady();
+    const send = deferred<boolean>();
+    const onSend = vi.fn(() => send.promise);
+    const { container, rerender } = renderInputBar({
+      draftKey: "dm:conversation-1:thread:task-1",
+      onSend,
+      sharedUpload: { conversationId: "conversation-1", token: "token-1" },
+    });
+    const fileInput = container.querySelector<HTMLInputElement>(
+      'input[type="file"]',
+    );
+    if (!fileInput) throw new Error("File input not found");
+
+    fireEvent.change(fileInput, {
+      target: {
+        files: [new File(["report"], "report.txt", { type: "text/plain" })],
+      },
+    });
+    await waitFor(() => expect(screen.getByText(/Ready/)).toBeInTheDocument());
+    fireEvent.click(screen.getByTitle("Send message"));
+    rerender(
+      <InputBar
+        convId="conversation-2"
+        draftKey="dm:conversation-2:thread:task-2"
+        onSend={onSend}
+        onStop={() => undefined}
+        slashCommands={COMMANDS}
+        sharedUpload={{ conversationId: "conversation-2", token: "token-2" }}
+      />,
+    );
+    expect(cancelSharedAttachment).not.toHaveBeenCalled();
+
+    await act(async () => {
+      send.resolve(false);
+      await send.promise;
+    });
+    expect(cancelSharedAttachment).not.toHaveBeenCalled();
+
+    rerender(
+      <InputBar
+        convId="conversation-1"
+        draftKey="dm:conversation-1:thread:task-1"
+        onSend={onSend}
+        onStop={() => undefined}
+        slashCommands={COMMANDS}
+        sharedUpload={{ conversationId: "conversation-1", token: "token-1" }}
+      />,
+    );
+    expect(screen.getByText("report.txt")).toBeInTheDocument();
+    expect(screen.getByTestId("attachment-draft")).toHaveAttribute(
+      "data-attachment-phase",
+      "ready",
     );
   });
 });

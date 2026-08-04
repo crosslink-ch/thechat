@@ -1,6 +1,7 @@
 import { memo, useEffect, useRef, useState, useCallback, type DragEvent } from "react";
 import { useIsStreaming } from "../stores/streaming";
 import { useInputFocusStore } from "../stores/input-focus";
+import { useComposerDraftsStore } from "../stores/composer-drafts";
 import { RichInput, type RichInputHandle } from "./RichInput";
 import { SlashCommandMenu } from "./SlashCommandMenu";
 import type { MentionUser } from "./MentionList";
@@ -24,6 +25,12 @@ import {
 } from "../lib/native-file-drop";
 
 const ACCEPTED_MIME = new Set(["image/png", "image/jpeg", "image/gif", "image/webp", "image/svg+xml", "image/bmp"]);
+const EMPTY_IMAGE_DRAFTS: ImageAttachment[] = [];
+const EMPTY_SHARED_DRAFTS: SharedAttachmentDraft[] = [];
+const sharedUploadControllers = new Map<string, AbortController>();
+
+const sharedUploadControllerKey = (draftKey: string, localId: string) =>
+  `${draftKey}\u0000${localId}`;
 
 function fileToAttachment(file: File): Promise<ImageAttachment> {
   return new Promise((resolve, reject) => {
@@ -42,6 +49,7 @@ export type InputSendResult = void | boolean | string | null;
 
 interface InputBarProps {
   convId: string | undefined;
+  draftKey: string;
   onSend: (
     content: string,
     images?: ImageAttachment[],
@@ -59,8 +67,13 @@ interface InputBarProps {
   };
 }
 
-export const InputBar = memo(function InputBar({
+export const InputBar = memo(function InputBar(props: InputBarProps) {
+  return <ScopedInputBar key={props.draftKey} {...props} />;
+});
+
+function ScopedInputBar({
   convId,
+  draftKey,
   onSend,
   onStop,
   mentions,
@@ -75,17 +88,74 @@ export const InputBar = memo(function InputBar({
   const inputRef = useRef<RichInputHandle>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [canSubmit, setCanSubmit] = useState(false);
-  const [images, setImages] = useState<ImageAttachment[]>([]);
-  const [sharedDrafts, setSharedDrafts] = useState<SharedAttachmentDraft[]>([]);
+  const storedImages = useComposerDraftsStore(
+    (state) => state.imageDrafts[draftKey],
+  );
+  const images = storedImages ?? EMPTY_IMAGE_DRAFTS;
+  const storedSharedDrafts = useComposerDraftsStore(
+    (state) => state.attachmentDrafts[draftKey],
+  );
+  const sharedDrafts = storedSharedDrafts ?? EMPTY_SHARED_DRAFTS;
+  const sendingShared = useComposerDraftsStore(
+    (state) => state.sendingAttachments[draftKey] ?? false,
+  );
   const [sharedError, setSharedError] = useState<string | null>(null);
-  const [sendingShared, setSendingShared] = useState(false);
-  const sharedControllersRef = useRef(new Map<string, AbortController>());
-  const sharedDraftsRef = useRef<SharedAttachmentDraft[]>([]);
+  const sharedDraftsRef = useRef<SharedAttachmentDraft[]>(sharedDrafts);
+  sharedDraftsRef.current = sharedDrafts;
+  const inFlightAttachmentIdsRef = useRef(new Set<string>());
+  const mountedRef = useRef(true);
   const sharedScopeRef = useRef(sharedUpload);
   const [dragOver, setDragOver] = useState(false);
-  const [inputText, setInputText] = useState("");
+  const [initialText] = useState(
+    () => useComposerDraftsStore.getState().drafts[draftKey] ?? "",
+  );
+  const [inputText, setInputText] = useState(initialText);
+  const localTextRef = useRef(initialText);
+  const storedText = useComposerDraftsStore(
+    (state) => state.drafts[draftKey] ?? "",
+  );
+  const setDraft = useComposerDraftsStore((state) => state.setDraft);
+  const restoreDraft = useComposerDraftsStore((state) => state.restoreDraft);
+  const setImageDrafts = useComposerDraftsStore((state) => state.setImageDrafts);
+  const setAttachmentDrafts = useComposerDraftsStore(
+    (state) => state.setAttachmentDrafts,
+  );
+  const setSendingAttachments = useComposerDraftsStore(
+    (state) => state.setSendingAttachments,
+  );
   const [slashSelectedIndex, setSlashSelectedIndex] = useState(0);
   const [slashMenuDismissed, setSlashMenuDismissed] = useState(false);
+
+  const updateImages = useCallback(
+    (
+      update:
+        | ImageAttachment[]
+        | ((current: ImageAttachment[]) => ImageAttachment[]),
+    ) => {
+      const current =
+        useComposerDraftsStore.getState().imageDrafts[draftKey] ??
+        EMPTY_IMAGE_DRAFTS;
+      const next = typeof update === "function" ? update(current) : update;
+      setImageDrafts(draftKey, next);
+    },
+    [draftKey, setImageDrafts],
+  );
+
+  const updateInputText = useCallback(
+    (text: string) => {
+      localTextRef.current = text;
+      setInputText(text);
+      setDraft(draftKey, text);
+    },
+    [draftKey, setDraft],
+  );
+
+  useEffect(() => {
+    if (storedText === localTextRef.current) return;
+    localTextRef.current = storedText;
+    setInputText(storedText);
+    inputRef.current?.setText(storedText);
+  }, [storedText]);
 
   const sharedReady =
     sharedDrafts.length === 0 ||
@@ -116,25 +186,46 @@ export const InputBar = memo(function InputBar({
     }
   }, [focusTick]);
 
+  const updateSharedDrafts = useCallback(
+    (
+      update:
+        | SharedAttachmentDraft[]
+        | ((current: SharedAttachmentDraft[]) => SharedAttachmentDraft[]),
+    ) => {
+      const current =
+        useComposerDraftsStore.getState().attachmentDrafts[draftKey] ??
+        EMPTY_SHARED_DRAFTS;
+      const next =
+        typeof update === "function"
+          ? update(current)
+          : update;
+      sharedDraftsRef.current = next;
+      setAttachmentDrafts(draftKey, next);
+    },
+    [draftKey, setAttachmentDrafts],
+  );
+
   const updateSharedDraft = useCallback(
     (
       localId: string,
       patch: Partial<Omit<SharedAttachmentDraft, "localId" | "file" | "previewUrl">>,
     ) => {
-      setSharedDrafts((previous) =>
+      updateSharedDrafts((previous) =>
         previous.map((draft) =>
           draft.localId === localId ? { ...draft, ...patch } : draft,
         ),
       );
     },
-    [],
+    [updateSharedDrafts],
   );
 
   const startSharedUpload = useCallback(
     (draft: SharedAttachmentDraft) => {
       if (!sharedUpload) return;
       const controller = new AbortController();
-      sharedControllersRef.current.set(draft.localId, controller);
+      const controllerKey = sharedUploadControllerKey(draftKey, draft.localId);
+      sharedUploadControllers.get(controllerKey)?.abort();
+      sharedUploadControllers.set(controllerKey, controller);
       void uploadSharedAttachment(
         {
           conversationId: sharedUpload.conversationId,
@@ -154,7 +245,10 @@ export const InputBar = memo(function InputBar({
       )
         .catch((error) => {
           if (controller.signal.aborted) {
-            if (!(error instanceof DOMException && error.name === "AbortError")) {
+            if (
+              mountedRef.current &&
+              !(error instanceof DOMException && error.name === "AbortError")
+            ) {
               setSharedError(
                 error instanceof Error
                   ? error.message
@@ -168,18 +262,24 @@ export const InputBar = memo(function InputBar({
             error:
               error instanceof Error ? error.message : "Attachment upload failed",
           });
+          if (mountedRef.current) {
+            setSharedError(
+              error instanceof Error ? error.message : "Attachment upload failed",
+            );
+          }
         })
         .finally(() => {
-          if (sharedControllersRef.current.get(draft.localId) === controller) {
-            sharedControllersRef.current.delete(draft.localId);
+          if (sharedUploadControllers.get(controllerKey) === controller) {
+            sharedUploadControllers.delete(controllerKey);
           }
         });
     },
-    [sharedUpload, updateSharedDraft],
+    [draftKey, sharedUpload, updateSharedDraft],
   );
 
   const addFiles = useCallback(async (files: FileList | File[]) => {
     if (sharedUpload) {
+      if (sendingShared) return;
       const remaining = Math.max(
         0,
         SHARED_ATTACHMENT_MAX_COUNT - sharedDrafts.length,
@@ -221,15 +321,22 @@ export const InputBar = memo(function InputBar({
         attachment: null,
         error: null,
       }));
-      setSharedDrafts((previous) => [...previous, ...drafts]);
+      updateSharedDrafts((previous) => [...previous, ...drafts]);
       for (const draft of drafts) startSharedUpload(draft);
       return;
     }
     const validFiles = Array.from(files).filter((f) => ACCEPTED_MIME.has(f.type));
     if (validFiles.length === 0) return;
     const attachments = await Promise.all(validFiles.map(fileToAttachment));
-    setImages((prev) => [...prev, ...attachments]);
-  }, [sharedDrafts.length, sharedUpload, startSharedUpload]);
+    updateImages((previous) => [...previous, ...attachments]);
+  }, [
+    sendingShared,
+    sharedDrafts.length,
+    sharedUpload,
+    startSharedUpload,
+    updateImages,
+    updateSharedDrafts,
+  ]);
 
   const addFilesRef = useRef(addFiles);
   useEffect(() => {
@@ -273,13 +380,15 @@ export const InputBar = memo(function InputBar({
   }, []);
 
   const removeImage = useCallback((id: string) => {
-    setImages((prev) => prev.filter((img) => img.id !== id));
-  }, []);
+    updateImages((previous) => previous.filter((image) => image.id !== id));
+  }, [updateImages]);
 
   const removeSharedDraft = useCallback(
     async (draft: SharedAttachmentDraft) => {
-      sharedControllersRef.current.get(draft.localId)?.abort();
-      sharedControllersRef.current.delete(draft.localId);
+      if (sendingShared) return;
+      const controllerKey = sharedUploadControllerKey(draftKey, draft.localId);
+      sharedUploadControllers.get(controllerKey)?.abort();
+      sharedUploadControllers.delete(controllerKey);
       if (draft.attachment && sharedUpload) {
         updateSharedDraft(draft.localId, {
           phase: "cancelling",
@@ -304,15 +413,25 @@ export const InputBar = memo(function InputBar({
         }
       }
       if (draft.previewUrl) URL.revokeObjectURL(draft.previewUrl);
-      setSharedDrafts((previous) =>
+      updateSharedDrafts((previous) =>
         previous.filter((candidate) => candidate.localId !== draft.localId),
       );
     },
-    [sharedUpload, updateSharedDraft],
+    [
+      draftKey,
+      sendingShared,
+      sharedUpload,
+      updateSharedDraft,
+      updateSharedDrafts,
+    ],
   );
 
   const retrySharedDraft = useCallback(
     async (draft: SharedAttachmentDraft) => {
+      if (sendingShared) return;
+      const controllerKey = sharedUploadControllerKey(draftKey, draft.localId);
+      sharedUploadControllers.get(controllerKey)?.abort();
+      sharedUploadControllers.delete(controllerKey);
       if (draft.attachment && sharedUpload) {
         updateSharedDraft(draft.localId, {
           phase: "cancelling",
@@ -340,19 +459,22 @@ export const InputBar = memo(function InputBar({
         attachment: null,
         error: null,
       };
-      setSharedDrafts((previous) =>
+      updateSharedDrafts((previous) =>
         previous.map((candidate) =>
           candidate.localId === draft.localId ? reset : candidate,
         ),
       );
       startSharedUpload(reset);
     },
-    [sharedUpload, startSharedUpload, updateSharedDraft],
+    [
+      draftKey,
+      sendingShared,
+      sharedUpload,
+      startSharedUpload,
+      updateSharedDraft,
+      updateSharedDrafts,
+    ],
   );
-
-  useEffect(() => {
-    sharedDraftsRef.current = sharedDrafts;
-  }, [sharedDrafts]);
 
   useEffect(() => {
     const previous = sharedScopeRef.current;
@@ -364,38 +486,31 @@ export const InputBar = memo(function InputBar({
     ) {
       return;
     }
-    for (const controller of sharedControllersRef.current.values()) {
-      controller.abort();
-    }
-    sharedControllersRef.current.clear();
     for (const draft of sharedDraftsRef.current) {
+      const controllerKey = sharedUploadControllerKey(draftKey, draft.localId);
+      const controller = sharedUploadControllers.get(controllerKey);
+      controller?.abort();
+      sharedUploadControllers.delete(controllerKey);
       if (draft.previewUrl) URL.revokeObjectURL(draft.previewUrl);
-      if (draft.attachment) {
+      if (
+        !controller &&
+        draft.attachment &&
+        !inFlightAttachmentIdsRef.current.has(draft.attachment.id)
+      ) {
         void cancelSharedAttachment(
           draft.attachment.id,
           previous.token,
         ).catch(() => undefined);
       }
     }
-    setSharedDrafts([]);
+    updateSharedDrafts([]);
     setSharedError(null);
-  }, [sharedUpload]);
+  }, [draftKey, sharedUpload, updateSharedDrafts]);
 
   useEffect(() => {
+    mountedRef.current = true;
     return () => {
-      for (const controller of sharedControllersRef.current.values()) {
-        controller.abort();
-      }
-      sharedControllersRef.current.clear();
-      const token = sharedScopeRef.current?.token;
-      for (const draft of sharedDraftsRef.current) {
-        if (draft.previewUrl) URL.revokeObjectURL(draft.previewUrl);
-        if (draft.attachment && token) {
-          void cancelSharedAttachment(draft.attachment.id, token).catch(
-            () => undefined,
-          );
-        }
-      }
+      mountedRef.current = false;
     };
   }, []);
 
@@ -405,57 +520,90 @@ export const InputBar = memo(function InputBar({
 
   const sendSharedContent = useCallback(
     async (text: string) => {
-      if (!sharedUpload || !sharedReady || sendingShared) return false;
-      setSendingShared(true);
+      if (!sharedUpload) return false;
+      const state = useComposerDraftsStore.getState();
+      if (state.sendingAttachments[draftKey]) return false;
+      const draftsToSend =
+        state.attachmentDrafts[draftKey] ?? EMPTY_SHARED_DRAFTS;
+      if (draftsToSend.some((draft) => draft.phase !== "ready")) return false;
+      const attachmentIds = draftsToSend.map(
+        (draft) => draft.attachment!.id,
+      );
+      const localIds = new Set(draftsToSend.map((draft) => draft.localId));
+      for (const id of attachmentIds) {
+        inFlightAttachmentIdsRef.current.add(id);
+      }
+      setSendingAttachments(draftKey, true);
       setSharedError(null);
       try {
-        const result = await onSend(
-          text,
-          undefined,
-          sharedDrafts.map((draft) => draft.attachment!.id),
-        );
+        const result = await onSend(text, undefined, attachmentIds);
         if (result === false) return false;
-        for (const draft of sharedDrafts) {
+        updateSharedDrafts((current) =>
+          current.filter((draft) => !localIds.has(draft.localId)),
+        );
+        for (const draft of draftsToSend) {
           if (draft.previewUrl) URL.revokeObjectURL(draft.previewUrl);
         }
-        setSharedDrafts([]);
-        setInputText("");
         return true;
       } catch (error) {
-        setSharedError(
-          error instanceof Error ? error.message : "Failed to send message",
-        );
+        if (mountedRef.current) {
+          setSharedError(
+            error instanceof Error ? error.message : "Failed to send message",
+          );
+        }
         return false;
       } finally {
-        setSendingShared(false);
+        for (const id of attachmentIds) {
+          inFlightAttachmentIdsRef.current.delete(id);
+        }
+        setSendingAttachments(draftKey, false);
       }
     },
     [
+      draftKey,
       onSend,
-      sendingShared,
-      sharedDrafts,
-      sharedReady,
+      setSendingAttachments,
       sharedUpload,
+      updateSharedDrafts,
     ],
+  );
+
+  const restoreSubmittedText = useCallback(
+    (text: string, submittedRevision: number) => {
+      if (!text) return;
+      const restored = restoreDraft(draftKey, submittedRevision + 1, text);
+      if (restored && mountedRef.current) {
+        inputRef.current?.setText(text);
+      }
+    },
+    [draftKey, restoreDraft],
   );
 
   const handleRichInputSubmit = useCallback(
     (text: string) => {
       if (sharedUpload) {
+        const submittedRevision =
+          useComposerDraftsStore.getState().revisions[draftKey] ?? 0;
         void sendSharedContent(text).then((sent) => {
-          if (!sent) {
-            inputRef.current?.setText(text);
-            setInputText(text);
-          }
+          if (!sent) restoreSubmittedText(text, submittedRevision);
         });
         return;
       }
       const imgs = images.length > 0 ? images : undefined;
       onSend(text, imgs);
-      setImages([]);
-      setInputText("");
+      updateImages([]);
+      updateInputText("");
     },
-    [images, onSend, sendSharedContent, sharedUpload],
+    [
+      draftKey,
+      images,
+      onSend,
+      restoreSubmittedText,
+      sendSharedContent,
+      sharedUpload,
+      updateImages,
+      updateInputText,
+    ],
   );
 
   // Called when RichInput has empty text but user presses Enter — allow if images exist
@@ -466,7 +614,7 @@ export const InputBar = memo(function InputBar({
     }
     if (images.length > 0) {
       onSend("", images);
-      setImages([]);
+      updateImages([]);
       return true;
     }
     return false;
@@ -477,14 +625,15 @@ export const InputBar = memo(function InputBar({
     sharedDrafts.length,
     sharedReady,
     sharedUpload,
+    updateImages,
   ]);
 
   const handleInputTextChange = useCallback((text: string) => {
-    setInputText(text);
+    updateInputText(text);
     // Typing re-opens an Esc-dismissed menu and resets the highlight.
     setSlashMenuDismissed(false);
     setSlashSelectedIndex(0);
-  }, []);
+  }, [updateInputText]);
 
   // Telegram-style selection: commands that need arguments are inserted for
   // further typing, argument-less commands are sent immediately.
@@ -495,14 +644,20 @@ export const InputBar = memo(function InputBar({
         return;
       }
       if (sharedUpload) {
-        void sendSharedContent(command.command);
+        const submittedRevision =
+          useComposerDraftsStore.getState().revisions[draftKey] ?? 0;
+        void sendSharedContent(command.command).then((sent) => {
+          if (!sent) {
+            restoreSubmittedText(command.command, submittedRevision);
+          }
+        });
         inputRef.current?.setText("");
         return;
       }
       onSend(command.command);
       inputRef.current?.setText("");
     },
-    [onSend, sendSharedContent, sharedUpload],
+    [draftKey, onSend, restoreSubmittedText, sendSharedContent, sharedUpload],
   );
 
   // RichInput reads this through a ref, so the latest render's state is used.
@@ -518,7 +673,7 @@ export const InputBar = memo(function InputBar({
           slashCommands &&
           slashCommands.length > 0
         ) {
-          setInputText("/");
+          updateInputText("/");
           setSlashMenuDismissed(false);
           setSlashSelectedIndex(0);
         }
@@ -555,6 +710,7 @@ export const InputBar = memo(function InputBar({
       slashCommands,
       slashMenuOpen,
       slashSuggestions,
+      updateInputText,
     ],
   );
 
@@ -573,7 +729,7 @@ export const InputBar = memo(function InputBar({
       handleSubmit();
     } else if (images.length > 0) {
       onSend("", images);
-      setImages([]);
+      updateImages([]);
     }
   }, [
     canSubmit,
@@ -585,6 +741,7 @@ export const InputBar = memo(function InputBar({
     sharedDrafts.length,
     sharedReady,
     sharedUpload,
+    updateImages,
   ]);
 
   const handleDragOver = useCallback((e: DragEvent) => {
@@ -733,6 +890,7 @@ export const InputBar = memo(function InputBar({
                       type="button"
                       className="mt-1 text-[0.714rem] text-accent hover:underline"
                       onClick={() => void retrySharedDraft(draft)}
+                      disabled={sendingShared}
                     >
                       Retry
                     </button>
@@ -742,7 +900,7 @@ export const InputBar = memo(function InputBar({
                   type="button"
                   className="absolute right-1.5 top-1.5 flex size-5 cursor-pointer items-center justify-center rounded-full border border-border bg-elevated text-[0.714rem] text-text-muted shadow-sm hover:bg-hover hover:text-text"
                   onClick={() => void removeSharedDraft(draft)}
-                  disabled={draft.phase === "cancelling"}
+                  disabled={draft.phase === "cancelling" || sendingShared}
                   title={`Remove ${draft.file.name}`}
                   aria-label={`Remove ${draft.file.name}`}
                 >
@@ -767,6 +925,7 @@ export const InputBar = memo(function InputBar({
         )}
         <RichInput
           ref={inputRef}
+          initialText={initialText}
           onSubmit={handleRichInputSubmit}
           onEmptySubmitAttempt={handleEmptySubmitAttempt}
           placeholder={isStreaming ? "Queue a message..." : "Send a message..."}
@@ -801,8 +960,9 @@ export const InputBar = memo(function InputBar({
           )}
           <button
             type="button"
-            className="flex size-8 cursor-pointer items-center justify-center rounded-lg border-none bg-transparent text-text-dimmed shadow-none transition-colors duration-150 hover:bg-hover hover:text-text-muted"
+            className="flex size-8 cursor-pointer items-center justify-center rounded-lg border-none bg-transparent text-text-dimmed shadow-none transition-colors duration-150 hover:bg-hover hover:text-text-muted disabled:cursor-default disabled:opacity-25"
             onClick={() => fileInputRef.current?.click()}
+            disabled={Boolean(sharedUpload && sendingShared)}
             title={sharedUpload ? "Attach files" : "Attach image"}
           >
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
@@ -850,7 +1010,7 @@ export const InputBar = memo(function InputBar({
       </div>
     </div>
   );
-});
+}
 
 function formatFileSize(bytes: number) {
   if (bytes < 1024) return `${bytes} B`;

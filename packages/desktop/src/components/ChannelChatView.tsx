@@ -25,6 +25,7 @@ interface ChannelChatViewProps {
   onLoadOlderMessages?: () => boolean | void | Promise<boolean | void>;
   mentions?: MentionUser[];
   scrollKey?: string | null;
+  draftKey?: string;
   conversationId?: string;
   token?: string | null;
 }
@@ -45,6 +46,7 @@ export function ChannelChatView({
   onLoadOlderMessages,
   mentions,
   scrollKey,
+  draftKey,
   conversationId,
   token,
 }: ChannelChatViewProps) {
@@ -176,6 +178,7 @@ export function ChannelChatView({
       <MessageSendError error={sendError} />
       <InputBar
         convId={undefined}
+        draftKey={draftKey ?? `channel:${conversationId ?? scrollScopeKey}`}
         onSend={(content, _images, attachmentIds) =>
           handleSend(content, attachmentIds)
         }

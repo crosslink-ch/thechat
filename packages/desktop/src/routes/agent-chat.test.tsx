@@ -10,6 +10,10 @@ import {
 import { useTodoStore, setTodos } from "../core/todo";
 import { usePermissionStore } from "../core/permission";
 import { useQuestionStore } from "../core/question";
+import {
+  composerDraftKey,
+  useComposerDraftsStore,
+} from "../stores/composer-drafts";
 
 // -- Mocks --
 
@@ -38,7 +42,9 @@ vi.mock("../components/ProjectPicker", () => ({
 }));
 
 vi.mock("../components/InputBar", () => ({
-  InputBar: () => <div data-testid="input-bar" />,
+  InputBar: ({ draftKey }: { draftKey: string }) => (
+    <div data-testid="input-bar" data-draft-key={draftKey} />
+  ),
 }));
 
 vi.mock("../ChatMessage", () => ({
@@ -100,6 +106,13 @@ beforeEach(() => {
   useTodoStore.setState({ todos: {} });
   usePermissionStore.setState({ pending: {} });
   useQuestionStore.setState({ pending: {} });
+  useComposerDraftsStore.setState({
+    drafts: {},
+    revisions: {},
+    imageDrafts: {},
+    attachmentDrafts: {},
+    sendingAttachments: {},
+  });
 
   // Default useChat mock — no conversation
   mockUseChat.mockReturnValue({
@@ -269,5 +282,65 @@ describe("AgentChatRoute", () => {
     // Should render without infinite loop / error
     await renderRoute();
     expect(screen.getByText("Send a message to start chatting")).toBeInTheDocument();
+  });
+
+  it("uses the route id for the draft while stale conversation details are loading", async () => {
+    mockUseChat.mockReturnValue({
+      messages: [],
+      conversation: {
+        id: "conversation-a",
+        title: "Previous conversation",
+        project_dir: null,
+        created_at: "",
+        updated_at: "",
+      },
+      error: null,
+      queuedMessages: [],
+      sendMessage: vi.fn(),
+      stopStreaming: vi.fn(),
+      loadConversation: vi.fn(),
+      startNewConversation: vi.fn(),
+    } as any);
+
+    await renderRoute("/chat/conversation-b");
+
+    expect(screen.getByTestId("input-bar")).toHaveAttribute(
+      "data-draft-key",
+      composerDraftKey.agent("conversation-b"),
+    );
+  });
+
+  it("moves the provisional draft before promoting a new conversation route", async () => {
+    const provisionalKey = composerDraftKey.agent(undefined);
+    const durableKey = composerDraftKey.agent("conversation-created");
+    useComposerDraftsStore
+      .getState()
+      .setDraft(provisionalKey, "typed while the conversation was created");
+    mockUseChat.mockReturnValue({
+      messages: [],
+      conversation: {
+        id: "conversation-created",
+        title: "Created conversation",
+        project_dir: null,
+        created_at: "",
+        updated_at: "",
+      },
+      error: null,
+      queuedMessages: [],
+      sendMessage: vi.fn(),
+      stopStreaming: vi.fn(),
+      loadConversation: vi.fn(),
+      startNewConversation: vi.fn(),
+    } as any);
+
+    await renderRoute();
+
+    expect(screen.getByTestId("input-bar")).toHaveAttribute(
+      "data-draft-key",
+      durableKey,
+    );
+    expect(useComposerDraftsStore.getState().drafts).toEqual({
+      [durableKey]: "typed while the conversation was created",
+    });
   });
 });
