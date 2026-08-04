@@ -265,7 +265,7 @@ export function ChannelModal() {
         >
           <form
             onSubmit={handleSubmit}
-            className="fixed left-1/2 top-1/2 z-50 w-[calc(100%-2rem)] max-w-[440px] -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-xl border border-border bg-sidebar shadow-2xl"
+            className="fixed left-1/2 top-1/2 z-50 w-[calc(100%-2rem)] max-w-[440px] -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-xl border border-border bg-surface shadow-2xl"
           >
             <div className="flex items-start gap-3 px-5 pb-4 pt-5">
               <div
