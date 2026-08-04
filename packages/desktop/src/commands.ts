@@ -148,6 +148,16 @@ export function createCommands(
       },
     },
     {
+      id: "manage-bots",
+      label: "Manage Bots",
+      shortcut: null,
+      keybinding: null,
+      execute: () => {
+        navigate({ to: "/bots/manage" });
+        closePaletteAndRefocus();
+      },
+    },
+    {
       id: "add-hermes-bot",
       label: "Add Hermes Bot",
       shortcut: null,

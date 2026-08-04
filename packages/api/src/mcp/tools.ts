@@ -431,7 +431,7 @@ export function registerTools(server: McpServer) {
     "add_bot_to_workspace",
     {
       description:
-        "Add a bot to a workspace. The caller must be a workspace member. The bot is added to all channels.",
+        "Add one of your bots to a workspace where you are an owner or admin. The bot is added to all channels.",
       inputSchema: {
         botId: z.string().uuid().describe("The bot ID"),
         workspaceId: z.string().min(1).describe("The workspace ID"),
@@ -454,7 +454,7 @@ export function registerTools(server: McpServer) {
     "remove_bot_from_workspace",
     {
       description:
-        "Remove a bot from a workspace. The caller must be a workspace member. The bot is removed from all channels.",
+        "Remove one of your bots from a workspace. The bot is removed from all workspace channels.",
       inputSchema: {
         botId: z.string().uuid().describe("The bot ID"),
         workspaceId: z.string().min(1).describe("The workspace ID"),

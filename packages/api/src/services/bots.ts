@@ -21,6 +21,7 @@ import {
   revokeBotApiKey,
   rotateBotApiKey,
 } from "../auth/bot-api-keys";
+import { BOT_API_KEY_CONFIG_ID } from "../auth/better-auth";
 
 export function generateWebhookSecret(): string {
   return `whsec_${crypto.randomBytes(32).toString("hex")}`;
@@ -89,16 +90,88 @@ export async function listBots(ownerId: string) {
     .innerJoin(users, eq(bots.userId, users.id))
     .where(eq(bots.ownerId, ownerId));
 
-  return rows.map((r) => ({
-    id: r.id,
-    userId: r.userId,
-    name: r.name,
-    kind: r.kind,
-    attachmentAccess: r.attachmentAccess,
-    webhookUrl: r.webhookUrl,
-    webhookSecret: r.webhookSecret,
-    createdAt: r.createdAt.toISOString(),
-  }));
+  const metadata = await getBotManagementMetadata(rows.map((row) => row.userId));
+  return rows.map((row) => serializeOwnedBot(row, metadata));
+}
+
+type OwnedBotRow = {
+  id: string;
+  userId: string;
+  webhookUrl: string | null;
+  webhookSecret: string;
+  kind: "webhook" | "hermes";
+  attachmentAccess: boolean;
+  createdAt: Date;
+  name: string;
+};
+
+type BotManagementMetadata = {
+  workspacesByUserId: Map<string, Array<{ id: string; name: string }>>;
+  apiKeyEnabledByUserId: Map<string, boolean>;
+};
+
+async function getBotManagementMetadata(
+  botUserIds: string[],
+): Promise<BotManagementMetadata> {
+  const workspacesByUserId = new Map<string, Array<{ id: string; name: string }>>();
+  const apiKeyEnabledByUserId = new Map<string, boolean>();
+
+  if (botUserIds.length === 0) {
+    return { workspacesByUserId, apiKeyEnabledByUserId };
+  }
+
+  const [memberships, credentials] = await Promise.all([
+    db
+      .select({
+        userId: workspaceMembers.userId,
+        id: workspaces.id,
+        name: workspaces.name,
+      })
+      .from(workspaceMembers)
+      .innerJoin(workspaces, eq(workspaces.id, workspaceMembers.workspaceId))
+      .where(inArray(workspaceMembers.userId, botUserIds)),
+    db
+      .select({ userId: apikey.referenceId, enabled: apikey.enabled })
+      .from(apikey)
+      .where(
+        and(
+          eq(apikey.configId, BOT_API_KEY_CONFIG_ID),
+          inArray(apikey.referenceId, botUserIds),
+        ),
+      ),
+  ]);
+
+  for (const membership of memberships) {
+    const existing = workspacesByUserId.get(membership.userId) ?? [];
+    existing.push({ id: membership.id, name: membership.name });
+    workspacesByUserId.set(membership.userId, existing);
+  }
+  for (const workspaceList of workspacesByUserId.values()) {
+    workspaceList.sort((a, b) => a.name.localeCompare(b.name));
+  }
+  for (const credential of credentials) {
+    apiKeyEnabledByUserId.set(
+      credential.userId,
+      Boolean(apiKeyEnabledByUserId.get(credential.userId)) || credential.enabled,
+    );
+  }
+
+  return { workspacesByUserId, apiKeyEnabledByUserId };
+}
+
+function serializeOwnedBot(row: OwnedBotRow, metadata: BotManagementMetadata) {
+  return {
+    id: row.id,
+    userId: row.userId,
+    name: row.name,
+    kind: row.kind,
+    attachmentAccess: row.attachmentAccess,
+    webhookUrl: row.webhookUrl,
+    webhookSecret: row.webhookSecret,
+    apiKeyEnabled: metadata.apiKeyEnabledByUserId.get(row.userId) ?? false,
+    workspaces: metadata.workspacesByUserId.get(row.userId) ?? [],
+    createdAt: row.createdAt.toISOString(),
+  };
 }
 
 export async function addBotToWorkspace(
@@ -108,7 +181,13 @@ export async function addBotToWorkspace(
   options: { afterWorkspaceLocked?: () => Promise<void> } = {},
 ) {
   const [bot] = await db
-    .select({ id: bots.id, userId: bots.userId, kind: bots.kind, name: users.name })
+    .select({
+      id: bots.id,
+      userId: bots.userId,
+      ownerId: bots.ownerId,
+      kind: bots.kind,
+      name: users.name,
+    })
     .from(bots)
     .innerJoin(users, eq(bots.userId, users.id))
     .where(eq(bots.id, botId))
@@ -116,6 +195,9 @@ export async function addBotToWorkspace(
 
   if (!bot) {
     throw new ServiceError("Bot not found", 404);
+  }
+  if (bot.ownerId !== callerId) {
+    throw new ServiceError("Only the bot owner can add it to a workspace", 403);
   }
 
   const result = await db.transaction(async (tx) => {
@@ -132,7 +214,7 @@ export async function addBotToWorkspace(
     await options.afterWorkspaceLocked?.();
 
     const [callerMembership] = await tx
-      .select({ userId: workspaceMembers.userId })
+      .select({ role: workspaceMembers.role })
       .from(workspaceMembers)
       .where(
         and(
@@ -143,6 +225,9 @@ export async function addBotToWorkspace(
       .limit(1);
     if (!callerMembership) {
       throw new ServiceError("You are not a member of this workspace", 403);
+    }
+    if (callerMembership.role !== "owner" && callerMembership.role !== "admin") {
+      throw new ServiceError("Only workspace admins can add bots", 403);
     }
 
     const [existingMember] = await tx
@@ -255,6 +340,21 @@ async function broadcastBotJoinedWorkspace({
   }
 }
 
+function broadcastBotRemovedFromWorkspace(
+  workspaceId: string,
+  botUserId: string,
+  recipients: Array<{ userId: string }>,
+) {
+  const event: WsServerEvent = {
+    type: "member_removed",
+    workspaceId,
+    userId: botUserId,
+  };
+  for (const recipient of recipients) {
+    broadcastToUser(recipient.userId, event);
+  }
+}
+
 export async function removeBotFromWorkspace(
   botId: string,
   workspaceId: string,
@@ -270,8 +370,11 @@ export async function removeBotFromWorkspace(
   if (!bot) {
     throw new ServiceError("Bot not found", 404);
   }
+  if (bot.ownerId !== callerId) {
+    throw new ServiceError("Only the bot owner can remove it from a workspace", 403);
+  }
 
-  return db.transaction(async (tx) => {
+  const result = await db.transaction(async (tx) => {
     const [workspace] = await tx
       .select({ id: workspaces.id })
       .from(workspaces)
@@ -284,19 +387,10 @@ export async function removeBotFromWorkspace(
 
     await options.afterWorkspaceLocked?.();
 
-    const [callerMembership] = await tx
+    const recipients = await tx
       .select({ userId: workspaceMembers.userId })
       .from(workspaceMembers)
-      .where(
-        and(
-          eq(workspaceMembers.workspaceId, workspaceId),
-          eq(workspaceMembers.userId, callerId),
-        ),
-      )
-      .limit(1);
-    if (!callerMembership) {
-      throw new ServiceError("You are not a member of this workspace", 403);
-    }
+      .where(eq(workspaceMembers.workspaceId, workspaceId));
 
     const workspaceConversations = await tx
       .select({ id: conversations.id })
@@ -416,8 +510,11 @@ export async function removeBotFromWorkspace(
         ),
       );
 
-    return { success: true };
+    return recipients;
   });
+
+  broadcastBotRemovedFromWorkspace(workspaceId, bot.userId, result);
+  return { success: true };
 }
 
 export async function getBot(botId: string, ownerId: string) {
@@ -446,16 +543,8 @@ export async function getBot(botId: string, ownerId: string) {
     throw new ServiceError("Only the bot owner can view bot details", 403);
   }
 
-  return {
-    id: row.id,
-    userId: row.userId,
-    name: row.name,
-    kind: row.kind,
-    attachmentAccess: row.attachmentAccess,
-    webhookUrl: row.webhookUrl,
-    webhookSecret: row.webhookSecret,
-    createdAt: row.createdAt.toISOString(),
-  };
+  const metadata = await getBotManagementMetadata([row.userId]);
+  return serializeOwnedBot(row, metadata);
 }
 
 export async function updateBot(
@@ -624,11 +713,29 @@ export async function deleteBot(botId: string, ownerId: string) {
     throw new ServiceError("Only the bot owner can delete the bot", 403);
   }
 
+  const workspaceMemberships = await db
+    .select({ workspaceId: workspaceMembers.workspaceId })
+    .from(workspaceMembers)
+    .where(eq(workspaceMembers.userId, bot.userId));
+  const workspaceNotifications = await Promise.all(
+    workspaceMemberships.map(async ({ workspaceId }) => ({
+      workspaceId,
+      recipients: await db
+        .select({ userId: workspaceMembers.userId })
+        .from(workspaceMembers)
+        .where(eq(workspaceMembers.workspaceId, workspaceId)),
+    })),
+  );
+
   // The Better Auth API-key row cascades with the bot user.
   await db.transaction(async (tx) => {
     await tx.delete(bots).where(eq(bots.id, botId));
     await tx.delete(users).where(eq(users.id, bot.userId));
   });
+
+  for (const { workspaceId, recipients } of workspaceNotifications) {
+    broadcastBotRemovedFromWorkspace(workspaceId, bot.userId, recipients);
+  }
 
   return { success: true };
 }

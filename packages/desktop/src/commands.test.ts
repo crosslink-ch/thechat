@@ -69,6 +69,19 @@ describe("createCommands", () => {
     expect(shortcuts).not.toContain(removedProjectShortcut);
   });
 
+  it("opens user-scoped bot management without an active workspace", () => {
+    const navigate = vi.fn();
+    const command = createCommands(navigate).find((c) => c.id === "manage-bots");
+
+    expect(useWorkspacesStore.getState().activeWorkspace).toBeNull();
+    expect(command).toMatchObject({ id: "manage-bots", label: "Manage Bots" });
+
+    command!.execute();
+
+    expect(navigate).toHaveBeenCalledWith({ to: "/bots/manage" });
+    expect(closePaletteAndRefocusMock).toHaveBeenCalledOnce();
+  });
+
   it("opens the Add Hermes Bot flow from a dedicated command", () => {
     const navigate = vi.fn();
     const command = createCommands(navigate).find((c) => c.id === "add-hermes-bot");

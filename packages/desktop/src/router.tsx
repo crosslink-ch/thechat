@@ -14,6 +14,7 @@ import { HermesDebugRoute } from "./routes/hermes-debug";
 import { ScrollDebugRoute } from "./routes/scroll-debug";
 import { SettingsRoute } from "./routes/settings";
 import { WorkspaceManageRoute } from "./routes/workspace-manage";
+import { BotsManageRoute } from "./routes/bots-manage";
 
 const rootRoute = createRootRoute({
   component: RootLayout,
@@ -71,6 +72,12 @@ const workspaceManageRoute = createRoute({
   component: WorkspaceManageRoute,
 });
 
+const botsManageRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/bots/manage",
+  component: BotsManageRoute,
+});
+
 const scrollDebugRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/debug/scroll",
@@ -102,6 +109,7 @@ const routeTree = rootRoute.addChildren([
   notificationsRoute,
   settingsRoute,
   workspaceManageRoute,
+  botsManageRoute,
   scrollDebugRoute,
   hermesDebugRoute,
 ]);

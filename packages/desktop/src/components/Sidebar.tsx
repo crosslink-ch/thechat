@@ -515,6 +515,15 @@ export function Sidebar() {
                   <button
                     className="block w-full cursor-pointer border-none bg-transparent px-3 py-2.5 text-left font-[inherit] text-[0.857rem] text-text-secondary transition-colors duration-100 hover:bg-hover hover:text-text"
                     onClick={() => {
+                      navigate({ to: "/bots/manage" });
+                      setProfileMenuOpen(false);
+                    }}
+                  >
+                    Manage bots
+                  </button>
+                  <button
+                    className="block w-full cursor-pointer border-none bg-transparent px-3 py-2.5 text-left font-[inherit] text-[0.857rem] text-text-secondary transition-colors duration-100 hover:bg-hover hover:text-text"
+                    onClick={() => {
                       navigate({ to: "/settings" });
                       setProfileMenuOpen(false);
                     }}

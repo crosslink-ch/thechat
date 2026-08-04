@@ -12,6 +12,7 @@ import {
   messages,
   users,
   workspaces,
+  workspaceMembers,
 } from "../db/schema";
 import {
   BOT_API_KEY_CONFIG_ID,
@@ -426,6 +427,57 @@ describe("Bots: Workspace management", () => {
     expect(addRes.status).toBe(403);
   });
 
+  test("workspace admin cannot connect a bot owned by another user", async () => {
+    const botOwner = await registerUser("ExternalBotOwner");
+    const workspaceOwner = await registerUser("ExternalWorkspaceOwner");
+    const wsRes = await req(
+      "POST",
+      "/workspaces/create",
+      { name: "Owned Workspace" },
+      workspaceOwner.token,
+    );
+    createdWorkspaceIds.push(wsRes.body.id);
+    const botRes = await createBot(botOwner.token, "ExternalBot");
+
+    const addRes = await req(
+      "POST",
+      `/bots/${botRes.body.id}/workspaces`,
+      { workspaceId: wsRes.body.id },
+      workspaceOwner.token,
+    );
+
+    expect(addRes.status).toBe(403);
+    expect(addRes.body.error).toContain("bot owner");
+  });
+
+  test("bot owner must be a workspace admin to connect the bot", async () => {
+    const botOwner = await registerUser("MemberBotOwner");
+    const workspaceOwner = await registerUser("AdminWorkspaceOwner");
+    const wsRes = await req(
+      "POST",
+      "/workspaces/create",
+      { name: "Admin Only Workspace" },
+      workspaceOwner.token,
+    );
+    createdWorkspaceIds.push(wsRes.body.id);
+    await db.insert(workspaceMembers).values({
+      workspaceId: wsRes.body.id,
+      userId: botOwner.user.id,
+      role: "member",
+    });
+    const botRes = await createBot(botOwner.token, "MemberOwnedBot");
+
+    const addRes = await req(
+      "POST",
+      `/bots/${botRes.body.id}/workspaces`,
+      { workspaceId: wsRes.body.id },
+      botOwner.token,
+    );
+
+    expect(addRes.status).toBe(403);
+    expect(addRes.body.error).toContain("workspace admins");
+  });
+
   test("remove bot from workspace — removed from members + channels", async () => {
     const human = await registerUser("RemOwner");
 
@@ -467,6 +519,44 @@ describe("Bots: Workspace management", () => {
       (m: any) => m.userId === botRes.body.userId
     );
     expect(botMember).toBeUndefined();
+  });
+
+  test("non-owner cannot disconnect a bot from a workspace", async () => {
+    const botOwner = await registerUser("DisconnectOwner");
+    const otherAdmin = await registerUser("DisconnectAdmin");
+    const wsRes = await req(
+      "POST",
+      "/workspaces/create",
+      { name: "Protected Bot Workspace" },
+      botOwner.token,
+    );
+    createdWorkspaceIds.push(wsRes.body.id);
+    await db.insert(workspaceMembers).values({
+      workspaceId: wsRes.body.id,
+      userId: otherAdmin.user.id,
+      role: "admin",
+    });
+    const botRes = await createBot(botOwner.token, "ProtectedBot");
+    await addBotToWorkspace(botRes.body.id, wsRes.body.id, botOwner.token);
+
+    const removeRes = await req(
+      "DELETE",
+      `/bots/${botRes.body.id}/workspaces/${wsRes.body.id}`,
+      undefined,
+      otherAdmin.token,
+    );
+
+    expect(removeRes.status).toBe(403);
+    expect(removeRes.body.error).toContain("bot owner");
+    const detailRes = await req(
+      "GET",
+      `/workspaces/${wsRes.body.id}`,
+      undefined,
+      botOwner.token,
+    );
+    expect(
+      detailRes.body.members.some((member: any) => member.userId === botRes.body.userId),
+    ).toBe(true);
   });
 
   test("removing a Hermes bot revokes queued channel work and cancels deletion blockers", async () => {
@@ -644,11 +734,20 @@ describe("Bots: Send messages", () => {
 });
 
 describe("Bots: List", () => {
-  test("lists bots owned by current user", async () => {
+  test("lists only owned bots with workspace and credential status", async () => {
     const human = await registerUser("ListOwner");
-
-    await createBot(human.token, "ListBot1");
+    const firstBot = await createBot(human.token, "ListBot1");
     await createBot(human.token, "ListBot2");
+    const otherOwner = await registerUser("OtherListOwner");
+    await createBot(otherOwner.token, "NotOwnedBot");
+    const wsRes = await req(
+      "POST",
+      "/workspaces/create",
+      { name: "Listed Bot Workspace" },
+      human.token,
+    );
+    createdWorkspaceIds.push(wsRes.body.id);
+    await addBotToWorkspace(firstBot.body.id, wsRes.body.id, human.token);
 
     const res = await req("GET", "/bots/list", undefined, human.token);
 
@@ -657,6 +756,24 @@ describe("Bots: List", () => {
     const names = res.body.map((b: any) => b.name);
     expect(names).toContain("ListBot1");
     expect(names).toContain("ListBot2");
+    expect(names).not.toContain("NotOwnedBot");
+    expect(res.body.find((bot: any) => bot.id === firstBot.body.id)).toMatchObject({
+      apiKeyEnabled: true,
+      workspaces: [{ id: wsRes.body.id, name: "Listed Bot Workspace" }],
+    });
+
+    expect(
+      (await req(
+        "DELETE",
+        `/bots/${firstBot.body.id}/api-key`,
+        undefined,
+        human.token,
+      )).status,
+    ).toBe(200);
+    const afterRevoke = await req("GET", "/bots/list", undefined, human.token);
+    expect(
+      afterRevoke.body.find((bot: any) => bot.id === firstBot.body.id).apiKeyEnabled,
+    ).toBe(false);
   });
 });
 
