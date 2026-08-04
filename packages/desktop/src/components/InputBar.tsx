@@ -1,6 +1,7 @@
 import { memo, useEffect, useRef, useState, useCallback, type DragEvent } from "react";
 import { useIsStreaming } from "../stores/streaming";
 import { useInputFocusStore } from "../stores/input-focus";
+import { useComposerDraftsStore } from "../stores/composer-drafts";
 import { RichInput, type RichInputHandle } from "./RichInput";
 import { SlashCommandMenu } from "./SlashCommandMenu";
 import type { MentionUser } from "./MentionList";
@@ -42,6 +43,7 @@ export type InputSendResult = void | boolean | string | null;
 
 interface InputBarProps {
   convId: string | undefined;
+  draftKey: string;
   onSend: (
     content: string,
     images?: ImageAttachment[],
@@ -59,8 +61,13 @@ interface InputBarProps {
   };
 }
 
-export const InputBar = memo(function InputBar({
+export const InputBar = memo(function InputBar(props: InputBarProps) {
+  return <ScopedInputBar key={props.draftKey} {...props} />;
+});
+
+function ScopedInputBar({
   convId,
+  draftKey,
   onSend,
   onStop,
   mentions,
@@ -81,11 +88,38 @@ export const InputBar = memo(function InputBar({
   const [sendingShared, setSendingShared] = useState(false);
   const sharedControllersRef = useRef(new Map<string, AbortController>());
   const sharedDraftsRef = useRef<SharedAttachmentDraft[]>([]);
+  const inFlightAttachmentIdsRef = useRef(new Set<string>());
+  const mountedRef = useRef(true);
   const sharedScopeRef = useRef(sharedUpload);
   const [dragOver, setDragOver] = useState(false);
-  const [inputText, setInputText] = useState("");
+  const [initialText] = useState(
+    () => useComposerDraftsStore.getState().drafts[draftKey] ?? "",
+  );
+  const [inputText, setInputText] = useState(initialText);
+  const localTextRef = useRef(initialText);
+  const storedText = useComposerDraftsStore(
+    (state) => state.drafts[draftKey] ?? "",
+  );
+  const setDraft = useComposerDraftsStore((state) => state.setDraft);
+  const restoreDraft = useComposerDraftsStore((state) => state.restoreDraft);
   const [slashSelectedIndex, setSlashSelectedIndex] = useState(0);
   const [slashMenuDismissed, setSlashMenuDismissed] = useState(false);
+
+  const updateInputText = useCallback(
+    (text: string) => {
+      localTextRef.current = text;
+      setInputText(text);
+      setDraft(draftKey, text);
+    },
+    [draftKey, setDraft],
+  );
+
+  useEffect(() => {
+    if (storedText === localTextRef.current) return;
+    localTextRef.current = storedText;
+    setInputText(storedText);
+    inputRef.current?.setText(storedText);
+  }, [storedText]);
 
   const sharedReady =
     sharedDrafts.length === 0 ||
@@ -116,18 +150,34 @@ export const InputBar = memo(function InputBar({
     }
   }, [focusTick]);
 
+  const updateSharedDrafts = useCallback(
+    (
+      update:
+        | SharedAttachmentDraft[]
+        | ((current: SharedAttachmentDraft[]) => SharedAttachmentDraft[]),
+    ) => {
+      const next =
+        typeof update === "function"
+          ? update(sharedDraftsRef.current)
+          : update;
+      sharedDraftsRef.current = next;
+      setSharedDrafts(next);
+    },
+    [],
+  );
+
   const updateSharedDraft = useCallback(
     (
       localId: string,
       patch: Partial<Omit<SharedAttachmentDraft, "localId" | "file" | "previewUrl">>,
     ) => {
-      setSharedDrafts((previous) =>
+      updateSharedDrafts((previous) =>
         previous.map((draft) =>
           draft.localId === localId ? { ...draft, ...patch } : draft,
         ),
       );
     },
-    [],
+    [updateSharedDrafts],
   );
 
   const startSharedUpload = useCallback(
@@ -221,7 +271,7 @@ export const InputBar = memo(function InputBar({
         attachment: null,
         error: null,
       }));
-      setSharedDrafts((previous) => [...previous, ...drafts]);
+      updateSharedDrafts((previous) => [...previous, ...drafts]);
       for (const draft of drafts) startSharedUpload(draft);
       return;
     }
@@ -229,7 +279,7 @@ export const InputBar = memo(function InputBar({
     if (validFiles.length === 0) return;
     const attachments = await Promise.all(validFiles.map(fileToAttachment));
     setImages((prev) => [...prev, ...attachments]);
-  }, [sharedDrafts.length, sharedUpload, startSharedUpload]);
+  }, [sharedDrafts.length, sharedUpload, startSharedUpload, updateSharedDrafts]);
 
   const addFilesRef = useRef(addFiles);
   useEffect(() => {
@@ -278,6 +328,7 @@ export const InputBar = memo(function InputBar({
 
   const removeSharedDraft = useCallback(
     async (draft: SharedAttachmentDraft) => {
+      if (sendingShared) return;
       sharedControllersRef.current.get(draft.localId)?.abort();
       sharedControllersRef.current.delete(draft.localId);
       if (draft.attachment && sharedUpload) {
@@ -304,15 +355,16 @@ export const InputBar = memo(function InputBar({
         }
       }
       if (draft.previewUrl) URL.revokeObjectURL(draft.previewUrl);
-      setSharedDrafts((previous) =>
+      updateSharedDrafts((previous) =>
         previous.filter((candidate) => candidate.localId !== draft.localId),
       );
     },
-    [sharedUpload, updateSharedDraft],
+    [sendingShared, sharedUpload, updateSharedDraft, updateSharedDrafts],
   );
 
   const retrySharedDraft = useCallback(
     async (draft: SharedAttachmentDraft) => {
+      if (sendingShared) return;
       if (draft.attachment && sharedUpload) {
         updateSharedDraft(draft.localId, {
           phase: "cancelling",
@@ -340,19 +392,21 @@ export const InputBar = memo(function InputBar({
         attachment: null,
         error: null,
       };
-      setSharedDrafts((previous) =>
+      updateSharedDrafts((previous) =>
         previous.map((candidate) =>
           candidate.localId === draft.localId ? reset : candidate,
         ),
       );
       startSharedUpload(reset);
     },
-    [sharedUpload, startSharedUpload, updateSharedDraft],
+    [
+      sendingShared,
+      sharedUpload,
+      startSharedUpload,
+      updateSharedDraft,
+      updateSharedDrafts,
+    ],
   );
-
-  useEffect(() => {
-    sharedDraftsRef.current = sharedDrafts;
-  }, [sharedDrafts]);
 
   useEffect(() => {
     const previous = sharedScopeRef.current;
@@ -370,19 +424,24 @@ export const InputBar = memo(function InputBar({
     sharedControllersRef.current.clear();
     for (const draft of sharedDraftsRef.current) {
       if (draft.previewUrl) URL.revokeObjectURL(draft.previewUrl);
-      if (draft.attachment) {
+      if (
+        draft.attachment &&
+        !inFlightAttachmentIdsRef.current.has(draft.attachment.id)
+      ) {
         void cancelSharedAttachment(
           draft.attachment.id,
           previous.token,
         ).catch(() => undefined);
       }
     }
-    setSharedDrafts([]);
+    updateSharedDrafts([]);
     setSharedError(null);
-  }, [sharedUpload]);
+  }, [sharedUpload, updateSharedDrafts]);
 
   useEffect(() => {
+    mountedRef.current = true;
     return () => {
+      mountedRef.current = false;
       for (const controller of sharedControllersRef.current.values()) {
         controller.abort();
       }
@@ -390,7 +449,11 @@ export const InputBar = memo(function InputBar({
       const token = sharedScopeRef.current?.token;
       for (const draft of sharedDraftsRef.current) {
         if (draft.previewUrl) URL.revokeObjectURL(draft.previewUrl);
-        if (draft.attachment && token) {
+        if (
+          draft.attachment &&
+          token &&
+          !inFlightAttachmentIdsRef.current.has(draft.attachment.id)
+        ) {
           void cancelSharedAttachment(draft.attachment.id, token).catch(
             () => undefined,
           );
@@ -406,28 +469,47 @@ export const InputBar = memo(function InputBar({
   const sendSharedContent = useCallback(
     async (text: string) => {
       if (!sharedUpload || !sharedReady || sendingShared) return false;
+      const draftsToSend = sharedDrafts;
+      const attachmentIds = draftsToSend.map(
+        (draft) => draft.attachment!.id,
+      );
+      for (const id of attachmentIds) {
+        inFlightAttachmentIdsRef.current.add(id);
+      }
+      let sent = false;
       setSendingShared(true);
       setSharedError(null);
       try {
-        const result = await onSend(
-          text,
-          undefined,
-          sharedDrafts.map((draft) => draft.attachment!.id),
-        );
+        const result = await onSend(text, undefined, attachmentIds);
         if (result === false) return false;
-        for (const draft of sharedDrafts) {
+        sent = true;
+        for (const draft of draftsToSend) {
           if (draft.previewUrl) URL.revokeObjectURL(draft.previewUrl);
         }
-        setSharedDrafts([]);
-        setInputText("");
+        if (mountedRef.current) updateSharedDrafts([]);
         return true;
       } catch (error) {
-        setSharedError(
-          error instanceof Error ? error.message : "Failed to send message",
-        );
+        if (mountedRef.current) {
+          setSharedError(
+            error instanceof Error ? error.message : "Failed to send message",
+          );
+        }
         return false;
       } finally {
-        setSendingShared(false);
+        for (const id of attachmentIds) {
+          inFlightAttachmentIdsRef.current.delete(id);
+        }
+        if (!sent && !mountedRef.current) {
+          for (const draft of draftsToSend) {
+            if (draft.attachment) {
+              void cancelSharedAttachment(
+                draft.attachment.id,
+                sharedUpload.token,
+              ).catch(() => undefined);
+            }
+          }
+        }
+        if (mountedRef.current) setSendingShared(false);
       }
     },
     [
@@ -436,26 +518,45 @@ export const InputBar = memo(function InputBar({
       sharedDrafts,
       sharedReady,
       sharedUpload,
+      updateSharedDrafts,
     ],
+  );
+
+  const restoreSubmittedText = useCallback(
+    (text: string, submittedRevision: number) => {
+      if (!text) return;
+      const restored = restoreDraft(draftKey, submittedRevision + 1, text);
+      if (restored && mountedRef.current) {
+        inputRef.current?.setText(text);
+      }
+    },
+    [draftKey, restoreDraft],
   );
 
   const handleRichInputSubmit = useCallback(
     (text: string) => {
       if (sharedUpload) {
+        const submittedRevision =
+          useComposerDraftsStore.getState().revisions[draftKey] ?? 0;
         void sendSharedContent(text).then((sent) => {
-          if (!sent) {
-            inputRef.current?.setText(text);
-            setInputText(text);
-          }
+          if (!sent) restoreSubmittedText(text, submittedRevision);
         });
         return;
       }
       const imgs = images.length > 0 ? images : undefined;
       onSend(text, imgs);
       setImages([]);
-      setInputText("");
+      updateInputText("");
     },
-    [images, onSend, sendSharedContent, sharedUpload],
+    [
+      draftKey,
+      images,
+      onSend,
+      restoreSubmittedText,
+      sendSharedContent,
+      sharedUpload,
+      updateInputText,
+    ],
   );
 
   // Called when RichInput has empty text but user presses Enter — allow if images exist
@@ -480,11 +581,11 @@ export const InputBar = memo(function InputBar({
   ]);
 
   const handleInputTextChange = useCallback((text: string) => {
-    setInputText(text);
+    updateInputText(text);
     // Typing re-opens an Esc-dismissed menu and resets the highlight.
     setSlashMenuDismissed(false);
     setSlashSelectedIndex(0);
-  }, []);
+  }, [updateInputText]);
 
   // Telegram-style selection: commands that need arguments are inserted for
   // further typing, argument-less commands are sent immediately.
@@ -495,14 +596,20 @@ export const InputBar = memo(function InputBar({
         return;
       }
       if (sharedUpload) {
-        void sendSharedContent(command.command);
+        const submittedRevision =
+          useComposerDraftsStore.getState().revisions[draftKey] ?? 0;
+        void sendSharedContent(command.command).then((sent) => {
+          if (!sent) {
+            restoreSubmittedText(command.command, submittedRevision);
+          }
+        });
         inputRef.current?.setText("");
         return;
       }
       onSend(command.command);
       inputRef.current?.setText("");
     },
-    [onSend, sendSharedContent, sharedUpload],
+    [draftKey, onSend, restoreSubmittedText, sendSharedContent, sharedUpload],
   );
 
   // RichInput reads this through a ref, so the latest render's state is used.
@@ -518,7 +625,7 @@ export const InputBar = memo(function InputBar({
           slashCommands &&
           slashCommands.length > 0
         ) {
-          setInputText("/");
+          updateInputText("/");
           setSlashMenuDismissed(false);
           setSlashSelectedIndex(0);
         }
@@ -555,6 +662,7 @@ export const InputBar = memo(function InputBar({
       slashCommands,
       slashMenuOpen,
       slashSuggestions,
+      updateInputText,
     ],
   );
 
@@ -733,6 +841,7 @@ export const InputBar = memo(function InputBar({
                       type="button"
                       className="mt-1 text-[0.714rem] text-accent hover:underline"
                       onClick={() => void retrySharedDraft(draft)}
+                      disabled={sendingShared}
                     >
                       Retry
                     </button>
@@ -742,7 +851,7 @@ export const InputBar = memo(function InputBar({
                   type="button"
                   className="absolute right-1.5 top-1.5 flex size-5 cursor-pointer items-center justify-center rounded-full border border-border bg-elevated text-[0.714rem] text-text-muted shadow-sm hover:bg-hover hover:text-text"
                   onClick={() => void removeSharedDraft(draft)}
-                  disabled={draft.phase === "cancelling"}
+                  disabled={draft.phase === "cancelling" || sendingShared}
                   title={`Remove ${draft.file.name}`}
                   aria-label={`Remove ${draft.file.name}`}
                 >
@@ -767,6 +876,7 @@ export const InputBar = memo(function InputBar({
         )}
         <RichInput
           ref={inputRef}
+          initialText={initialText}
           onSubmit={handleRichInputSubmit}
           onEmptySubmitAttempt={handleEmptySubmitAttempt}
           placeholder={isStreaming ? "Queue a message..." : "Send a message..."}
@@ -850,7 +960,7 @@ export const InputBar = memo(function InputBar({
       </div>
     </div>
   );
-});
+}
 
 function formatFileSize(bytes: number) {
   if (bytes < 1024) return `${bytes} B`;

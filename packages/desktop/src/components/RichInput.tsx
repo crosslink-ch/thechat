@@ -18,10 +18,22 @@ interface RichInputProps {
   onTextChange?: (text: string) => void;
   /** Pre-editor key hook (e.g. for a command menu). Return true to consume the event. */
   onKeyIntercept?: (event: KeyboardEvent) => boolean;
+  /** Text used when this editor instance is created. */
+  initialText?: string;
 }
 
 /** Newlines are paragraph splits, so serialize blocks with single "\n". */
 const TEXT_OPTIONS = { blockSeparator: "\n" } as const;
+
+function textDocument(text: string) {
+  return {
+    type: "doc",
+    content: text.split("\n").map((line) => ({
+      type: "paragraph",
+      content: line ? [{ type: "text", text: line }] : [],
+    })),
+  };
+}
 
 export interface RichInputHandle {
   submit: () => void;
@@ -39,6 +51,7 @@ export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function Ri
     onCanSubmitChange,
     onTextChange,
     onKeyIntercept,
+    initialText = "",
   }: RichInputProps,
   ref,
 ) {
@@ -61,18 +74,22 @@ export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function Ri
   mentionsRef.current = mentions;
 
   const submitIfNotEmpty = (text: string, clearContent: () => void) => {
+    const clearAndNotify = () => {
+      clearContent();
+      onCanSubmitChangeRef.current?.(false);
+      onTextChangeRef.current?.("");
+    };
     const trimmed = text.trim();
     if (!trimmed) {
       // Allow empty-text submission when parent signals it's OK (e.g., images attached)
       if (onEmptySubmitAttemptRef.current?.()) {
-        clearContent();
+        clearAndNotify();
         return true;
       }
       return false;
     }
     onSubmitRef.current(trimmed);
-    clearContent();
-    onCanSubmitChangeRef.current?.(false);
+    clearAndNotify();
     return true;
   };
 
@@ -138,6 +155,7 @@ export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function Ri
 
   const editor = useEditor({
     extensions,
+    content: textDocument(initialText),
     editorProps: {
       attributes: {
         class:
@@ -171,13 +189,7 @@ export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function Ri
       },
       setText: (text: string) => {
         if (!editor) return;
-        editor.commands.setContent({
-          type: "doc",
-          content: text.split("\n").map((line) => ({
-            type: "paragraph",
-            content: line ? [{ type: "text", text: line }] : [],
-          })),
-        });
+        editor.commands.setContent(textDocument(text));
         onCanSubmitChangeRef.current?.(text.trim().length > 0);
         onTextChangeRef.current?.(text);
         editor.commands.focus("end");

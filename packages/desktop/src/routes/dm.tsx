@@ -10,6 +10,7 @@ import { useConversationDetail } from "../hooks/useConversationDetail";
 import { useScopedCommands } from "../hooks/useScopedCommands";
 import { useWebSocketStore } from "../stores/websocket";
 import { useWorkspacesStore } from "../stores/workspaces";
+import { composerDraftKey } from "../stores/composer-drafts";
 import { useChannelChat } from "../hooks/useChannelChat";
 import { ChannelChatView } from "../components/ChannelChatView";
 import { HermesDmChatView } from "../components/HermesDmChatView";
@@ -422,6 +423,11 @@ export function DmRoute() {
             onLoadOlderMessages={channelChat.loadOlderMessages}
             mentions={mentions}
             scrollKey={`${conversationId}:${activeThreadId ?? "general"}`}
+            draftKey={composerDraftKey.dm(
+              user?.id,
+              conversationId,
+              activeThreadId,
+            )}
             taskActive={taskActive}
             slashCommands={slashCommands}
             conversationId={conversationId}
@@ -443,6 +449,7 @@ export function DmRoute() {
             onLoadOlderMessages={channelChat.loadOlderMessages}
             mentions={mentions}
             scrollKey={conversationId}
+            draftKey={composerDraftKey.dm(user?.id, conversationId)}
             conversationId={conversationId}
             token={token}
           />

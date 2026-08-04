@@ -8,6 +8,7 @@ import {
 } from "@testing-library/react";
 import { InputBar } from "./InputBar";
 import type { HermesSlashCommand } from "../lib/hermes-slash-commands";
+import { useComposerDraftsStore } from "../stores/composer-drafts";
 import {
   cancelSharedAttachment,
   uploadSharedAttachment,
@@ -29,6 +30,7 @@ beforeAll(() => {
 
 afterEach(() => {
   vi.clearAllMocks();
+  useComposerDraftsStore.setState({ drafts: {}, revisions: {} });
 });
 
 const COMMANDS: HermesSlashCommand[] = [
@@ -42,6 +44,7 @@ function renderInputBar(overrides: Partial<Parameters<typeof InputBar>[0]> = {})
   const utils = render(
     <InputBar
       convId="conv-1"
+      draftKey="conversation:conv-1"
       onSend={onSend}
       onStop={() => {}}
       slashCommands={COMMANDS}
@@ -51,6 +54,14 @@ function renderInputBar(overrides: Partial<Parameters<typeof InputBar>[0]> = {})
   const editor = utils.container.querySelector<HTMLElement>(".ProseMirror");
   if (!editor) throw new Error("ProseMirror editor not found");
   return { ...utils, onSend, editor };
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
 }
 
 function openMenu(editor: HTMLElement) {
@@ -281,6 +292,92 @@ describe("InputBar shared attachments", () => {
     await waitFor(() => expect(screen.getByText(/Ready/)).toBeInTheDocument());
 
     unmount();
+    await waitFor(() =>
+      expect(cancelSharedAttachment).toHaveBeenCalledWith(
+        "attachment-1",
+        "token-1",
+      ),
+    );
+  });
+
+  it("does not cancel an in-flight attachment when the composer scope changes", async () => {
+    makeUploadReady();
+    const send = deferred<boolean>();
+    const onSend = vi.fn(() => send.promise);
+    const { container, rerender } = renderInputBar({
+      draftKey: "dm:conversation-1:thread:task-1",
+      onSend,
+      sharedUpload: { conversationId: "conversation-1", token: "token-1" },
+    });
+    const fileInput = container.querySelector<HTMLInputElement>(
+      'input[type="file"]',
+    );
+    if (!fileInput) throw new Error("File input not found");
+
+    fireEvent.change(fileInput, {
+      target: {
+        files: [new File(["report"], "report.txt", { type: "text/plain" })],
+      },
+    });
+    await waitFor(() => expect(screen.getByText(/Ready/)).toBeInTheDocument());
+    fireEvent.click(screen.getByTitle("Send message"));
+
+    rerender(
+      <InputBar
+        convId="conversation-2"
+        draftKey="dm:conversation-2:thread:task-2"
+        onSend={onSend}
+        onStop={() => undefined}
+        slashCommands={COMMANDS}
+        sharedUpload={{ conversationId: "conversation-2", token: "token-2" }}
+      />,
+    );
+    expect(cancelSharedAttachment).not.toHaveBeenCalled();
+
+    await act(async () => {
+      send.resolve(true);
+      await send.promise;
+    });
+    expect(cancelSharedAttachment).not.toHaveBeenCalled();
+  });
+
+  it("cancels an in-flight attachment when its send fails after unmount", async () => {
+    makeUploadReady();
+    const send = deferred<boolean>();
+    const onSend = vi.fn(() => send.promise);
+    const { container, rerender } = renderInputBar({
+      draftKey: "dm:conversation-1:thread:task-1",
+      onSend,
+      sharedUpload: { conversationId: "conversation-1", token: "token-1" },
+    });
+    const fileInput = container.querySelector<HTMLInputElement>(
+      'input[type="file"]',
+    );
+    if (!fileInput) throw new Error("File input not found");
+
+    fireEvent.change(fileInput, {
+      target: {
+        files: [new File(["report"], "report.txt", { type: "text/plain" })],
+      },
+    });
+    await waitFor(() => expect(screen.getByText(/Ready/)).toBeInTheDocument());
+    fireEvent.click(screen.getByTitle("Send message"));
+    rerender(
+      <InputBar
+        convId="conversation-2"
+        draftKey="dm:conversation-2:thread:task-2"
+        onSend={onSend}
+        onStop={() => undefined}
+        slashCommands={COMMANDS}
+        sharedUpload={{ conversationId: "conversation-2", token: "token-2" }}
+      />,
+    );
+    expect(cancelSharedAttachment).not.toHaveBeenCalled();
+
+    await act(async () => {
+      send.resolve(false);
+      await send.promise;
+    });
     await waitFor(() =>
       expect(cancelSharedAttachment).toHaveBeenCalledWith(
         "attachment-1",

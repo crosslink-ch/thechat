@@ -7,6 +7,10 @@ import { useIsStreaming, subscribeToStream } from "../stores/streaming";
 import { useAutoScroll } from "../hooks/useAutoScroll";
 import { useToolsStore } from "../stores/tools";
 import { useConversationsStore } from "../stores/conversations";
+import {
+  composerDraftKey,
+  useComposerDraftsStore,
+} from "../stores/composer-drafts";
 import { useKeybindings } from "../hooks/useKeybindings";
 import { setAgentChatTitle, setAgentChatProjectDir } from "../components/ChatHeader";
 import { ProjectPicker } from "../components/ProjectPicker";
@@ -207,8 +211,14 @@ export function AgentChatRoute() {
 
   // Update URL when new conversation is created
   const prevConvId = useRef<string | undefined>(undefined);
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (conversation?.id && !routeId && conversation.id !== prevConvId.current) {
+      useComposerDraftsStore
+        .getState()
+        .moveDraft(
+          composerDraftKey.agent(undefined),
+          composerDraftKey.agent(conversation.id),
+        );
       prevConvId.current = conversation.id;
       loadedIdRef.current = conversation.id;
       navigate({ to: "/chat/$id", params: { id: conversation.id }, replace: true });
@@ -431,6 +441,7 @@ export function AgentChatRoute() {
 
       <InputBar
         convId={conversation?.id}
+        draftKey={composerDraftKey.agent(routeId)}
         onSend={sendMessage}
         onStop={stopStreaming}
         autoFocusKey={routeId ?? "new-chat"}

@@ -4,6 +4,7 @@ import { useAuthStore } from "../stores/auth";
 import { useWebSocketStore } from "../stores/websocket";
 import { useConversationsStore } from "../stores/conversations";
 import { useWorkspacesStore } from "../stores/workspaces";
+import { composerDraftKey } from "../stores/composer-drafts";
 import { useChannelChat } from "../hooks/useChannelChat";
 import { ChannelChatView } from "../components/ChannelChatView";
 import { wsEvents, type WsEvents } from "../lib/ws-events";
@@ -109,6 +110,7 @@ export function ChannelRoute() {
           onLoadOlderMessages={channelChat.loadOlderMessages}
           mentions={mentions}
           scrollKey={channelId}
+          draftKey={composerDraftKey.channel(user?.id, channelId)}
           conversationId={channelId}
           token={token}
         />

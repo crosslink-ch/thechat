@@ -3,16 +3,31 @@ import { createRef } from "react";
 import { fireEvent, render } from "@testing-library/react";
 import { RichInput, type RichInputHandle } from "./RichInput";
 
-function renderRichInput() {
+function renderRichInput(initialText?: string) {
   const ref = createRef<RichInputHandle>();
   const onSubmit = vi.fn();
-  const utils = render(<RichInput ref={ref} onSubmit={onSubmit} />);
+  const onTextChange = vi.fn();
+  const utils = render(
+    <RichInput
+      ref={ref}
+      onSubmit={onSubmit}
+      onTextChange={onTextChange}
+      initialText={initialText}
+    />,
+  );
   const editor = utils.container.querySelector<HTMLElement>(".ProseMirror");
   if (!editor) throw new Error("ProseMirror editor not found");
-  return { ...utils, ref, onSubmit, editor };
+  return { ...utils, ref, onSubmit, onTextChange, editor };
 }
 
 describe("RichInput", () => {
+  it("renders an initial multiline draft", () => {
+    const { editor } = renderRichInput("first line\nsecond line");
+
+    expect(editor.textContent).toBe("first linesecond line");
+    expect(editor.querySelectorAll("p")).toHaveLength(2);
+  });
+
   it("round-trips multiline text with single newlines", () => {
     const { ref, onSubmit } = renderRichInput();
 
@@ -23,12 +38,13 @@ describe("RichInput", () => {
   });
 
   it("submits on Enter", () => {
-    const { ref, onSubmit, editor } = renderRichInput();
+    const { ref, onSubmit, onTextChange, editor } = renderRichInput();
 
     ref.current!.setText("hello");
     fireEvent.keyDown(editor, { key: "Enter" });
 
     expect(onSubmit).toHaveBeenCalledWith("hello");
+    expect(onTextChange).toHaveBeenLastCalledWith("");
   });
 
   // Regression: Shift+Enter used to insert hard breaks; WebKitGTK renders the
