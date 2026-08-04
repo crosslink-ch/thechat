@@ -4,6 +4,7 @@ import { eq } from "drizzle-orm";
 import { Elysia } from "elysia";
 import { authRoutes } from "../auth";
 import { db } from "../db";
+import { createBotApiKey } from "../auth/bot-api-keys";
 import {
   bots,
   users,
@@ -80,13 +81,12 @@ describe("workspace provider configuration human/bot boundary", () => {
       .values({ name: "Config Bot", type: "bot" })
       .returning({ id: users.id });
     createdUserIds.push(botUser.id);
-    const botToken = `bot_${crypto.randomBytes(32).toString("hex")}`;
     await db.insert(bots).values({
       userId: botUser.id,
       ownerId: owner.user.id,
       webhookSecret: `whsec_${crypto.randomBytes(16).toString("hex")}`,
-      apiKey: botToken,
     });
+    const botToken = await createBotApiKey(botUser.id);
     await db.insert(workspaceMembers).values({
       workspaceId,
       userId: botUser.id,

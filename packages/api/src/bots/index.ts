@@ -14,6 +14,7 @@ import {
   addBotToWorkspace,
   removeBotFromWorkspace,
   regenerateBotKey,
+  revokeBotKey,
   regenerateBotSecret,
   updateAuthenticatedBotWebhook,
   updateAuthenticatedBotCommands,
@@ -310,6 +311,16 @@ export const botRoutes = new Elysia({ prefix: "/bots" })
         params.workspaceId,
         user.id
       );
+    } catch (e: any) {
+      set.status = e instanceof ServiceError ? e.status : 500;
+      return { error: e.message ?? "Unknown error" };
+    }
+  })
+
+  // Revoke API key without deleting the bot (owner only)
+  .delete("/:botId/api-key", async ({ params, user, set }) => {
+    try {
+      return await revokeBotKey(params.botId, user.id);
     } catch (e: any) {
       set.status = e instanceof ServiceError ? e.status : 500;
       return { error: e.message ?? "Unknown error" };
