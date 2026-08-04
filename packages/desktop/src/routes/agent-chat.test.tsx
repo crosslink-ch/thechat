@@ -106,7 +106,13 @@ beforeEach(() => {
   useTodoStore.setState({ todos: {} });
   usePermissionStore.setState({ pending: {} });
   useQuestionStore.setState({ pending: {} });
-  useComposerDraftsStore.setState({ drafts: {}, revisions: {} });
+  useComposerDraftsStore.setState({
+    drafts: {},
+    revisions: {},
+    imageDrafts: {},
+    attachmentDrafts: {},
+    sendingAttachments: {},
+  });
 
   // Default useChat mock — no conversation
   mockUseChat.mockReturnValue({

@@ -67,7 +67,13 @@ vi.mock("./RichInput", async () => {
 });
 
 afterEach(() => {
-  useComposerDraftsStore.setState({ drafts: {}, revisions: {} });
+  useComposerDraftsStore.setState({
+    drafts: {},
+    revisions: {},
+    imageDrafts: {},
+    attachmentDrafts: {},
+    sendingAttachments: {},
+  });
   vi.clearAllMocks();
 });
 
@@ -125,6 +131,47 @@ describe("InputBar composer draft scoping", () => {
       "dm:conversation-1:thread:task-1": "draft for task one",
       "dm:conversation-1:thread:task-2": "draft for task two",
     });
+  });
+
+  it("isolates local image attachments by scope and restores them", () => {
+    const firstKey = "agent:conversation-1";
+    const secondKey = "agent:conversation-2";
+    useComposerDraftsStore.getState().setImageDrafts(firstKey, [
+      {
+        id: "image-1",
+        mimeType: "image/png",
+        base64: "cG5n",
+      },
+    ]);
+    const { container, rerender } = render(
+      <InputBar
+        convId="conversation-1"
+        draftKey={firstKey}
+        onSend={() => undefined}
+        onStop={() => undefined}
+      />,
+    );
+    expect(container.querySelector('img[src="data:image/png;base64,cG5n"]')).not.toBeNull();
+
+    rerender(
+      <InputBar
+        convId="conversation-2"
+        draftKey={secondKey}
+        onSend={() => undefined}
+        onStop={() => undefined}
+      />,
+    );
+    expect(container.querySelector("img")).toBeNull();
+
+    rerender(
+      <InputBar
+        convId="conversation-1"
+        draftKey={firstKey}
+        onSend={() => undefined}
+        onStop={() => undefined}
+      />,
+    );
+    expect(container.querySelector('img[src="data:image/png;base64,cG5n"]')).not.toBeNull();
   });
 
   it("clears the active draft after it is sent", () => {

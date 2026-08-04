@@ -25,6 +25,12 @@ import {
 } from "../lib/native-file-drop";
 
 const ACCEPTED_MIME = new Set(["image/png", "image/jpeg", "image/gif", "image/webp", "image/svg+xml", "image/bmp"]);
+const EMPTY_IMAGE_DRAFTS: ImageAttachment[] = [];
+const EMPTY_SHARED_DRAFTS: SharedAttachmentDraft[] = [];
+const sharedUploadControllers = new Map<string, AbortController>();
+
+const sharedUploadControllerKey = (draftKey: string, localId: string) =>
+  `${draftKey}\u0000${localId}`;
 
 function fileToAttachment(file: File): Promise<ImageAttachment> {
   return new Promise((resolve, reject) => {
@@ -82,12 +88,20 @@ function ScopedInputBar({
   const inputRef = useRef<RichInputHandle>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [canSubmit, setCanSubmit] = useState(false);
-  const [images, setImages] = useState<ImageAttachment[]>([]);
-  const [sharedDrafts, setSharedDrafts] = useState<SharedAttachmentDraft[]>([]);
+  const storedImages = useComposerDraftsStore(
+    (state) => state.imageDrafts[draftKey],
+  );
+  const images = storedImages ?? EMPTY_IMAGE_DRAFTS;
+  const storedSharedDrafts = useComposerDraftsStore(
+    (state) => state.attachmentDrafts[draftKey],
+  );
+  const sharedDrafts = storedSharedDrafts ?? EMPTY_SHARED_DRAFTS;
+  const sendingShared = useComposerDraftsStore(
+    (state) => state.sendingAttachments[draftKey] ?? false,
+  );
   const [sharedError, setSharedError] = useState<string | null>(null);
-  const [sendingShared, setSendingShared] = useState(false);
-  const sharedControllersRef = useRef(new Map<string, AbortController>());
-  const sharedDraftsRef = useRef<SharedAttachmentDraft[]>([]);
+  const sharedDraftsRef = useRef<SharedAttachmentDraft[]>(sharedDrafts);
+  sharedDraftsRef.current = sharedDrafts;
   const inFlightAttachmentIdsRef = useRef(new Set<string>());
   const mountedRef = useRef(true);
   const sharedScopeRef = useRef(sharedUpload);
@@ -102,8 +116,30 @@ function ScopedInputBar({
   );
   const setDraft = useComposerDraftsStore((state) => state.setDraft);
   const restoreDraft = useComposerDraftsStore((state) => state.restoreDraft);
+  const setImageDrafts = useComposerDraftsStore((state) => state.setImageDrafts);
+  const setAttachmentDrafts = useComposerDraftsStore(
+    (state) => state.setAttachmentDrafts,
+  );
+  const setSendingAttachments = useComposerDraftsStore(
+    (state) => state.setSendingAttachments,
+  );
   const [slashSelectedIndex, setSlashSelectedIndex] = useState(0);
   const [slashMenuDismissed, setSlashMenuDismissed] = useState(false);
+
+  const updateImages = useCallback(
+    (
+      update:
+        | ImageAttachment[]
+        | ((current: ImageAttachment[]) => ImageAttachment[]),
+    ) => {
+      const current =
+        useComposerDraftsStore.getState().imageDrafts[draftKey] ??
+        EMPTY_IMAGE_DRAFTS;
+      const next = typeof update === "function" ? update(current) : update;
+      setImageDrafts(draftKey, next);
+    },
+    [draftKey, setImageDrafts],
+  );
 
   const updateInputText = useCallback(
     (text: string) => {
@@ -156,14 +192,17 @@ function ScopedInputBar({
         | SharedAttachmentDraft[]
         | ((current: SharedAttachmentDraft[]) => SharedAttachmentDraft[]),
     ) => {
+      const current =
+        useComposerDraftsStore.getState().attachmentDrafts[draftKey] ??
+        EMPTY_SHARED_DRAFTS;
       const next =
         typeof update === "function"
-          ? update(sharedDraftsRef.current)
+          ? update(current)
           : update;
       sharedDraftsRef.current = next;
-      setSharedDrafts(next);
+      setAttachmentDrafts(draftKey, next);
     },
-    [],
+    [draftKey, setAttachmentDrafts],
   );
 
   const updateSharedDraft = useCallback(
@@ -184,7 +223,9 @@ function ScopedInputBar({
     (draft: SharedAttachmentDraft) => {
       if (!sharedUpload) return;
       const controller = new AbortController();
-      sharedControllersRef.current.set(draft.localId, controller);
+      const controllerKey = sharedUploadControllerKey(draftKey, draft.localId);
+      sharedUploadControllers.get(controllerKey)?.abort();
+      sharedUploadControllers.set(controllerKey, controller);
       void uploadSharedAttachment(
         {
           conversationId: sharedUpload.conversationId,
@@ -204,7 +245,10 @@ function ScopedInputBar({
       )
         .catch((error) => {
           if (controller.signal.aborted) {
-            if (!(error instanceof DOMException && error.name === "AbortError")) {
+            if (
+              mountedRef.current &&
+              !(error instanceof DOMException && error.name === "AbortError")
+            ) {
               setSharedError(
                 error instanceof Error
                   ? error.message
@@ -218,18 +262,24 @@ function ScopedInputBar({
             error:
               error instanceof Error ? error.message : "Attachment upload failed",
           });
+          if (mountedRef.current) {
+            setSharedError(
+              error instanceof Error ? error.message : "Attachment upload failed",
+            );
+          }
         })
         .finally(() => {
-          if (sharedControllersRef.current.get(draft.localId) === controller) {
-            sharedControllersRef.current.delete(draft.localId);
+          if (sharedUploadControllers.get(controllerKey) === controller) {
+            sharedUploadControllers.delete(controllerKey);
           }
         });
     },
-    [sharedUpload, updateSharedDraft],
+    [draftKey, sharedUpload, updateSharedDraft],
   );
 
   const addFiles = useCallback(async (files: FileList | File[]) => {
     if (sharedUpload) {
+      if (sendingShared) return;
       const remaining = Math.max(
         0,
         SHARED_ATTACHMENT_MAX_COUNT - sharedDrafts.length,
@@ -278,8 +328,15 @@ function ScopedInputBar({
     const validFiles = Array.from(files).filter((f) => ACCEPTED_MIME.has(f.type));
     if (validFiles.length === 0) return;
     const attachments = await Promise.all(validFiles.map(fileToAttachment));
-    setImages((prev) => [...prev, ...attachments]);
-  }, [sharedDrafts.length, sharedUpload, startSharedUpload, updateSharedDrafts]);
+    updateImages((previous) => [...previous, ...attachments]);
+  }, [
+    sendingShared,
+    sharedDrafts.length,
+    sharedUpload,
+    startSharedUpload,
+    updateImages,
+    updateSharedDrafts,
+  ]);
 
   const addFilesRef = useRef(addFiles);
   useEffect(() => {
@@ -323,14 +380,15 @@ function ScopedInputBar({
   }, []);
 
   const removeImage = useCallback((id: string) => {
-    setImages((prev) => prev.filter((img) => img.id !== id));
-  }, []);
+    updateImages((previous) => previous.filter((image) => image.id !== id));
+  }, [updateImages]);
 
   const removeSharedDraft = useCallback(
     async (draft: SharedAttachmentDraft) => {
       if (sendingShared) return;
-      sharedControllersRef.current.get(draft.localId)?.abort();
-      sharedControllersRef.current.delete(draft.localId);
+      const controllerKey = sharedUploadControllerKey(draftKey, draft.localId);
+      sharedUploadControllers.get(controllerKey)?.abort();
+      sharedUploadControllers.delete(controllerKey);
       if (draft.attachment && sharedUpload) {
         updateSharedDraft(draft.localId, {
           phase: "cancelling",
@@ -359,12 +417,21 @@ function ScopedInputBar({
         previous.filter((candidate) => candidate.localId !== draft.localId),
       );
     },
-    [sendingShared, sharedUpload, updateSharedDraft, updateSharedDrafts],
+    [
+      draftKey,
+      sendingShared,
+      sharedUpload,
+      updateSharedDraft,
+      updateSharedDrafts,
+    ],
   );
 
   const retrySharedDraft = useCallback(
     async (draft: SharedAttachmentDraft) => {
       if (sendingShared) return;
+      const controllerKey = sharedUploadControllerKey(draftKey, draft.localId);
+      sharedUploadControllers.get(controllerKey)?.abort();
+      sharedUploadControllers.delete(controllerKey);
       if (draft.attachment && sharedUpload) {
         updateSharedDraft(draft.localId, {
           phase: "cancelling",
@@ -400,6 +467,7 @@ function ScopedInputBar({
       startSharedUpload(reset);
     },
     [
+      draftKey,
       sendingShared,
       sharedUpload,
       startSharedUpload,
@@ -418,13 +486,14 @@ function ScopedInputBar({
     ) {
       return;
     }
-    for (const controller of sharedControllersRef.current.values()) {
-      controller.abort();
-    }
-    sharedControllersRef.current.clear();
     for (const draft of sharedDraftsRef.current) {
+      const controllerKey = sharedUploadControllerKey(draftKey, draft.localId);
+      const controller = sharedUploadControllers.get(controllerKey);
+      controller?.abort();
+      sharedUploadControllers.delete(controllerKey);
       if (draft.previewUrl) URL.revokeObjectURL(draft.previewUrl);
       if (
+        !controller &&
         draft.attachment &&
         !inFlightAttachmentIdsRef.current.has(draft.attachment.id)
       ) {
@@ -436,29 +505,12 @@ function ScopedInputBar({
     }
     updateSharedDrafts([]);
     setSharedError(null);
-  }, [sharedUpload, updateSharedDrafts]);
+  }, [draftKey, sharedUpload, updateSharedDrafts]);
 
   useEffect(() => {
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
-      for (const controller of sharedControllersRef.current.values()) {
-        controller.abort();
-      }
-      sharedControllersRef.current.clear();
-      const token = sharedScopeRef.current?.token;
-      for (const draft of sharedDraftsRef.current) {
-        if (draft.previewUrl) URL.revokeObjectURL(draft.previewUrl);
-        if (
-          draft.attachment &&
-          token &&
-          !inFlightAttachmentIdsRef.current.has(draft.attachment.id)
-        ) {
-          void cancelSharedAttachment(draft.attachment.id, token).catch(
-            () => undefined,
-          );
-        }
-      }
     };
   }, []);
 
@@ -468,25 +520,30 @@ function ScopedInputBar({
 
   const sendSharedContent = useCallback(
     async (text: string) => {
-      if (!sharedUpload || !sharedReady || sendingShared) return false;
-      const draftsToSend = sharedDrafts;
+      if (!sharedUpload) return false;
+      const state = useComposerDraftsStore.getState();
+      if (state.sendingAttachments[draftKey]) return false;
+      const draftsToSend =
+        state.attachmentDrafts[draftKey] ?? EMPTY_SHARED_DRAFTS;
+      if (draftsToSend.some((draft) => draft.phase !== "ready")) return false;
       const attachmentIds = draftsToSend.map(
         (draft) => draft.attachment!.id,
       );
+      const localIds = new Set(draftsToSend.map((draft) => draft.localId));
       for (const id of attachmentIds) {
         inFlightAttachmentIdsRef.current.add(id);
       }
-      let sent = false;
-      setSendingShared(true);
+      setSendingAttachments(draftKey, true);
       setSharedError(null);
       try {
         const result = await onSend(text, undefined, attachmentIds);
         if (result === false) return false;
-        sent = true;
+        updateSharedDrafts((current) =>
+          current.filter((draft) => !localIds.has(draft.localId)),
+        );
         for (const draft of draftsToSend) {
           if (draft.previewUrl) URL.revokeObjectURL(draft.previewUrl);
         }
-        if (mountedRef.current) updateSharedDrafts([]);
         return true;
       } catch (error) {
         if (mountedRef.current) {
@@ -499,24 +556,13 @@ function ScopedInputBar({
         for (const id of attachmentIds) {
           inFlightAttachmentIdsRef.current.delete(id);
         }
-        if (!sent && !mountedRef.current) {
-          for (const draft of draftsToSend) {
-            if (draft.attachment) {
-              void cancelSharedAttachment(
-                draft.attachment.id,
-                sharedUpload.token,
-              ).catch(() => undefined);
-            }
-          }
-        }
-        if (mountedRef.current) setSendingShared(false);
+        setSendingAttachments(draftKey, false);
       }
     },
     [
+      draftKey,
       onSend,
-      sendingShared,
-      sharedDrafts,
-      sharedReady,
+      setSendingAttachments,
       sharedUpload,
       updateSharedDrafts,
     ],
@@ -545,7 +591,7 @@ function ScopedInputBar({
       }
       const imgs = images.length > 0 ? images : undefined;
       onSend(text, imgs);
-      setImages([]);
+      updateImages([]);
       updateInputText("");
     },
     [
@@ -555,6 +601,7 @@ function ScopedInputBar({
       restoreSubmittedText,
       sendSharedContent,
       sharedUpload,
+      updateImages,
       updateInputText,
     ],
   );
@@ -567,7 +614,7 @@ function ScopedInputBar({
     }
     if (images.length > 0) {
       onSend("", images);
-      setImages([]);
+      updateImages([]);
       return true;
     }
     return false;
@@ -578,6 +625,7 @@ function ScopedInputBar({
     sharedDrafts.length,
     sharedReady,
     sharedUpload,
+    updateImages,
   ]);
 
   const handleInputTextChange = useCallback((text: string) => {
@@ -681,7 +729,7 @@ function ScopedInputBar({
       handleSubmit();
     } else if (images.length > 0) {
       onSend("", images);
-      setImages([]);
+      updateImages([]);
     }
   }, [
     canSubmit,
@@ -693,6 +741,7 @@ function ScopedInputBar({
     sharedDrafts.length,
     sharedReady,
     sharedUpload,
+    updateImages,
   ]);
 
   const handleDragOver = useCallback((e: DragEvent) => {
@@ -911,8 +960,9 @@ function ScopedInputBar({
           )}
           <button
             type="button"
-            className="flex size-8 cursor-pointer items-center justify-center rounded-lg border-none bg-transparent text-text-dimmed shadow-none transition-colors duration-150 hover:bg-hover hover:text-text-muted"
+            className="flex size-8 cursor-pointer items-center justify-center rounded-lg border-none bg-transparent text-text-dimmed shadow-none transition-colors duration-150 hover:bg-hover hover:text-text-muted disabled:cursor-default disabled:opacity-25"
             onClick={() => fileInputRef.current?.click()}
+            disabled={Boolean(sharedUpload && sendingShared)}
             title={sharedUpload ? "Attach files" : "Attach image"}
           >
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
