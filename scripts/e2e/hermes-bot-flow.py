@@ -542,7 +542,7 @@ def start_worker(env: dict[str, str]) -> subprocess.Popen:
     return proc
 
 
-def create_hermes_bot(base: str, token: str, workspace_id: str, name: str, instructions: str):
+def create_hermes_bot(base: str, token: str, workspace_id: str, name: str):
     status, bot = http_json(
         "POST",
         f"{base}/bots/create",
@@ -559,16 +559,6 @@ def create_hermes_bot(base: str, token: str, workspace_id: str, name: str, instr
     assert bot["apiKey"].startswith("bot_"), bot
     assert "webhookSecret" not in bot
 
-    status, config = http_json(
-        "PATCH",
-        f"{base}/bots/{bot['id']}/hermes",
-        {
-            "defaultInstructions": instructions,
-        },
-        token,
-    )
-    assert status == 200, (status, config)
-    assert "apiKey" not in config
     return bot
 
 
@@ -715,14 +705,12 @@ def main():
             token,
             workspace_id,
             "Koda E2E",
-            "You are Koda E2E. Reply in one short sentence.",
         )
         nova = create_hermes_bot(
             base,
             token,
             workspace_id,
             "Nova E2E",
-            "You are Nova E2E. Reply in one short sentence.",
         )
         hermes_procs.append(start_hermes_gateway(env, base, koda["apiKey"], koda["name"]))
         hermes_procs.append(start_hermes_gateway(env, base, nova["apiKey"], nova["name"]))

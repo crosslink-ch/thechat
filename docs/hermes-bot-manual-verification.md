@@ -256,13 +256,7 @@ BOT_JSON=$(curl -sS -X POST "$API/bots/create" \
   -H 'Content-Type: application/json' \
   -d "{\"kind\":\"hermes\",\"workspaceId\":\"$WORKSPACE_ID\",\"name\":\"Koda\"}")
 
-BOT_ID=$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["id"])' "$BOT_JSON")
 THECHAT_BOT_TOKEN=$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["apiKey"])' "$BOT_JSON")
-
-curl -sS -X PATCH "$API/bots/$BOT_ID/hermes" \
-  -H "Authorization: Bearer $TOKEN" \
-  -H 'Content-Type: application/json' \
-  -d '{"defaultInstructions":"Reply concisely in TheChat."}'
 
 CHANNEL_ID=$(curl -sS "$API/workspaces/$WORKSPACE_ID" \
   -H "Authorization: Bearer $TOKEN" \

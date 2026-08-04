@@ -313,7 +313,6 @@ export const hermesBotConfigs = pgTable("hermes_bot_configs", {
   baseUrl: text("base_url"),
   apiKeyEncrypted: text("api_key_encrypted"),
   defaultMode: varchar("default_mode", { length: 20 }).notNull().default("run"),
-  defaultInstructions: text("default_instructions"),
   createdAt: timestamp("created_at", { withTimezone: true })
     .defaultNow()
     .notNull(),

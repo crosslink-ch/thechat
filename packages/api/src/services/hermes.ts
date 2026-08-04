@@ -9,7 +9,6 @@ function toPublicConfig(row: typeof hermesBotConfigs.$inferSelect) {
   return {
     botId: row.botId,
     defaultMode: row.defaultMode as HermesDefaultMode,
-    defaultInstructions: row.defaultInstructions,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
@@ -30,7 +29,6 @@ async function requireBotOwner(botId: string, userId: string) {
 
 export async function ensureHermesBotConfig(botId: string, defaults: {
   defaultMode?: HermesDefaultMode;
-  defaultInstructions?: string | null;
 } = {}) {
   const [existing] = await db
     .select()
@@ -46,7 +44,6 @@ export async function ensureHermesBotConfig(botId: string, defaults: {
       baseUrl: null,
       apiKeyEncrypted: null,
       defaultMode: defaults.defaultMode ?? "run",
-      defaultInstructions: defaults.defaultInstructions ?? null,
     })
     .returning();
   return created;
@@ -59,14 +56,12 @@ export async function getHermesBotConfig(botId: string, userId: string) {
 
 export async function updateHermesBotConfig(botId: string, userId: string, updates: {
   defaultMode?: HermesDefaultMode;
-  defaultInstructions?: string | null;
 }) {
   await requireBotOwner(botId, userId);
   await ensureHermesBotConfig(botId);
 
   const set: Partial<typeof hermesBotConfigs.$inferInsert> = {};
   if (updates.defaultMode !== undefined) set.defaultMode = updates.defaultMode;
-  if (updates.defaultInstructions !== undefined) set.defaultInstructions = updates.defaultInstructions;
   if (Object.keys(set).length > 0) {
     await db.update(hermesBotConfigs).set(set).where(eq(hermesBotConfigs.botId, botId));
   }

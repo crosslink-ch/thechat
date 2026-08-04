@@ -370,12 +370,9 @@ export const THECHAT_LATEX_FORMATTING_INSTRUCTIONS = `# LaTeX math formatting
 - Escape literal dollar signs as \`\\$\` when needed.
 - Keep LaTeX out of code fences unless you intentionally want a math block.`;
 
-export const DEFAULT_HERMES_THECHAT_INSTRUCTIONS = "Reply concisely in TheChat.";
-
 export interface HermesBotConfigPublic {
   botId: string;
   defaultMode: HermesDefaultMode;
-  defaultInstructions: string | null;
   createdAt: string;
   updatedAt: string;
 }

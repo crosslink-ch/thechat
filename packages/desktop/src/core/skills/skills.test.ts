@@ -147,7 +147,8 @@ describe("loadSkill", () => {
     const skill = await loadSkill("create-bot");
     expect(skill!.content).toContain("Hermes bot wiring");
     expect(skill!.content).toContain('"kind": "hermes"');
-    expect(skill!.content).toContain("PATCH /bots/:botId/hermes");
+    expect(skill!.content).toContain("does not store or send bot-specific default instructions");
+    expect(skill!.content).not.toContain("PATCH /bots/:botId/hermes");
     expect(skill!.content).toContain("direct messages");
   });
 

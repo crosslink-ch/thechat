@@ -11,10 +11,9 @@ import {
 
 const modeSchema = z.enum(["run", "response"]);
 
-const updateSchema = z.object({
+export const hermesBotUpdateSchema = z.object({
   defaultMode: modeSchema.optional(),
-  defaultInstructions: z.string().nullish(),
-});
+}).strict();
 
 export const hermesRoutes = new Elysia({ prefix: "/bots" })
   .derive(async ({ headers }) => {
@@ -38,7 +37,7 @@ export const hermesRoutes = new Elysia({ prefix: "/bots" })
     }
   })
   .patch("/:botId/hermes", async ({ params, body, user, set }) => {
-    const parsed = updateSchema.safeParse(body);
+    const parsed = hermesBotUpdateSchema.safeParse(body);
     if (!parsed.success) {
       set.status = 400;
       return { error: parsed.error.issues[0]?.message ?? "Invalid input" };
@@ -46,7 +45,6 @@ export const hermesRoutes = new Elysia({ prefix: "/bots" })
     try {
       return await updateHermesBotConfig(params.botId, user.id, {
         defaultMode: parsed.data.defaultMode,
-        defaultInstructions: parsed.data.defaultInstructions,
       });
     } catch (e: any) {
       set.status = e instanceof ServiceError ? e.status : 500;

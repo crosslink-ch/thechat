@@ -1,12 +1,9 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { DEFAULT_HERMES_THECHAT_INSTRUCTIONS } from "@thechat/shared";
 import { create } from "zustand";
 import { API_URL, api } from "../lib/api";
 import { useAuthStore } from "../stores/auth";
 import { requestInputBarFocus } from "../stores/input-focus";
 import { useWorkspacesStore } from "../stores/workspaces";
-
-const DEFAULT_INSTRUCTIONS = DEFAULT_HERMES_THECHAT_INSTRUCTIONS;
 
 const useHermesBotModalState = create(() => ({ open: false }));
 
@@ -34,8 +31,6 @@ function HermesBotModalInner() {
   const selectWorkspace = useWorkspacesStore((s) => s.selectWorkspace);
 
   const [name, setName] = useState("");
-  const [instructions, setInstructions] = useState(DEFAULT_INSTRUCTIONS);
-  const [attachmentAccess, setAttachmentAccess] = useState(true);
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [createdBotName, setCreatedBotName] = useState("");
@@ -87,7 +82,6 @@ function HermesBotModalInner() {
           kind: "hermes",
           workspaceId: activeWorkspace.id,
           name: name.trim(),
-          attachmentAccess,
         },
         auth(token),
       );
@@ -95,21 +89,8 @@ function HermesBotModalInner() {
         throw new Error((createError as any).error || "Failed to create Hermes bot");
       }
 
-      const botId = (bot as any)?.id;
       const apiKey = (bot as any)?.apiKey;
-      if (!botId) throw new Error("Hermes bot was created without an ID");
       if (!apiKey) throw new Error("Hermes bot was created without a bot token");
-
-      const { error: connectError } = await api.bots({ botId }).hermes.patch(
-        {
-          defaultMode: "run",
-          defaultInstructions: instructions.trim() || null,
-        },
-        auth(token),
-      );
-      if (connectError) {
-        throw new Error((connectError as any).error || "Failed to connect Hermes runtime");
-      }
 
       await selectWorkspace(activeWorkspace.id);
       setCreatedBotName(name.trim());
@@ -191,33 +172,6 @@ function HermesBotModalInner() {
               value={name}
               onChange={(e) => setName(e.target.value)}
             />
-          </label>
-
-          <label className="mb-3.5 block">
-            <span className="mb-1.5 block text-[0.857rem] font-medium text-text-muted">Default instructions</span>
-            <textarea
-              className="block min-h-20 w-full resize-y rounded-lg border border-border bg-base px-3.5 py-2.5 font-[inherit] text-[0.929rem] text-text outline-none transition-colors duration-150 placeholder:text-text-placeholder focus:border-border-focus"
-              value={instructions}
-              onChange={(e) => setInstructions(e.target.value)}
-            />
-          </label>
-
-          <label className="mb-3.5 flex cursor-pointer items-start gap-2.5 rounded-lg border border-border bg-base px-3.5 py-3">
-            <input
-              className="mt-0.5 size-4 accent-accent"
-              type="checkbox"
-              checked={attachmentAccess}
-              onChange={(e) => setAttachmentAccess(e.target.checked)}
-            />
-            <span>
-              <span className="block text-[0.857rem] font-medium text-text-muted">
-                Allow message attachments
-              </span>
-              <span className="mt-0.5 block text-[0.786rem] leading-relaxed text-text-dimmed">
-                Lets this bot receive, download, and upload message attachments.
-                The same attachment limits apply to everyone.
-              </span>
-            </span>
           </label>
 
           {error && <div className="mb-3 rounded-lg border border-error-msg-border bg-error-msg-bg px-3 py-2 text-[0.857rem] text-error-bright">{error}</div>}

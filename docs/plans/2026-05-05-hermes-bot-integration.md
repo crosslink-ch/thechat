@@ -21,7 +21,7 @@ TheChat owns only product/chat concerns:
 - normal bot user identity for mentions/avatar/channel membership
 - Hermes bot configuration and secret boundary
 
-The only Hermes-specific table in the MVP is `hermes_bot_configs`, keyed by TheChat `bot_id`, with Hermes base URL, encrypted API key, default instructions, and default session scope.
+The only Hermes-specific table in the MVP is `hermes_bot_configs`, keyed by TheChat `bot_id`, with Hermes base URL, encrypted API key, and default session scope.
 
 ## API shape
 

@@ -78,6 +78,13 @@
       "when": 1785767104759,
       "tag": "0010_better_auth_bot_api_keys",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1785834448160,
+      "tag": "0011_drop-hermes-default-instructions",
+      "breakpoints": true
     }
   ]
 }
