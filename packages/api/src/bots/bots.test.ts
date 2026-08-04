@@ -3,14 +3,20 @@ import { Elysia } from "elysia";
 import { and, asc, eq, inArray } from "drizzle-orm";
 import { db } from "../db";
 import {
+  apikey,
   botInvocations,
   bots,
   conversationParticipants,
+  conversations,
   eventOutbox,
   messages,
   users,
   workspaces,
 } from "../db/schema";
+import {
+  BOT_API_KEY_CONFIG_ID,
+  BOT_API_KEY_PREFIX,
+} from "../auth/better-auth";
 import { authRoutes } from "../auth";
 import { workspaceRoutes } from "../workspaces";
 import { conversationRoutes } from "../conversations";
@@ -23,6 +29,7 @@ import {
   closeBotRuntimeForTests,
   startBotWorker,
 } from "../services/bot-runtime";
+import { updateAuthenticatedBotWebhook } from "../services/bots";
 import {
   closeBotProgressStoreForTests,
   createLocalBotProgressStoreForTests,
@@ -298,12 +305,29 @@ describe("Bots: Create", () => {
     expect(res.status).toBe(200);
     expect(res.body.name).toBe("MyBot");
     expect(res.body.apiKey).toBeDefined();
-    expect(res.body.apiKey).toStartWith("bot_");
+    expect(res.body.apiKey).toMatch(/^bot_[0-9a-f]{64}$/);
     expect(res.body.webhookSecret).toBeDefined();
     expect(res.body.webhookSecret).toStartWith("whsec_");
     expect(res.body.id).toBeDefined();
     expect(res.body.userId).toBeDefined();
     expect(res.body.attachmentAccess).toBe(true);
+
+    const [storedKey] = await db
+      .select({
+        configId: apikey.configId,
+        key: apikey.key,
+        prefix: apikey.prefix,
+        referenceId: apikey.referenceId,
+      })
+      .from(apikey)
+      .where(eq(apikey.referenceId, res.body.userId));
+    expect(storedKey).toMatchObject({
+      configId: BOT_API_KEY_CONFIG_ID,
+      prefix: BOT_API_KEY_PREFIX,
+      referenceId: res.body.userId,
+    });
+    expect(storedKey.key).not.toBe(res.body.apiKey);
+    expect(storedKey.key).not.toContain(res.body.apiKey);
   });
 
   test("only humans can create bots — bot tries to create bot → 403", async () => {
@@ -642,6 +666,10 @@ describe("Bots: Regenerate key", () => {
 
     const botRes = await createBot(human.token, "RegenBot");
     const oldKey = botRes.body.apiKey;
+    const [beforeRotation] = await db
+      .select({ id: apikey.id, key: apikey.key })
+      .from(apikey)
+      .where(eq(apikey.referenceId, botRes.body.userId));
 
     // Verify old key works
     const meRes1 = await req("GET", "/auth/me", undefined, oldKey);
@@ -659,6 +687,15 @@ describe("Bots: Regenerate key", () => {
     expect(regenRes.body.apiKey).not.toBe(oldKey);
 
     const newKey = regenRes.body.apiKey;
+    expect(newKey).toMatch(/^bot_[0-9a-f]{64}$/);
+    const storedAfterRotation = await db
+      .select({ id: apikey.id, key: apikey.key })
+      .from(apikey)
+      .where(eq(apikey.referenceId, botRes.body.userId));
+    expect(storedAfterRotation).toHaveLength(1);
+    expect(storedAfterRotation[0].id).toBe(beforeRotation.id);
+    expect(storedAfterRotation[0].key).not.toBe(beforeRotation.key);
+    expect(storedAfterRotation[0].key).not.toBe(newKey);
 
     // New key works
     const meRes2 = await req("GET", "/auth/me", undefined, newKey);
@@ -668,6 +705,109 @@ describe("Bots: Regenerate key", () => {
     // Old key fails
     const meRes3 = await req("GET", "/auth/me", undefined, oldKey);
     expect(meRes3.status).toBe(401);
+  });
+
+  test("concurrent rotations expose at most one new usable credential", async () => {
+    const human = await registerUser("ConcurrentRegenOwner");
+    const botRes = await createBot(human.token, "ConcurrentRegenBot");
+
+    const rotations = await Promise.all(
+      Array.from({ length: 12 }, () =>
+        req("POST", `/bots/${botRes.body.id}/regenerate-key`, {}, human.token),
+      ),
+    );
+    const successful = rotations.filter((response) => response.status === 200);
+    const conflicts = rotations.filter((response) => response.status === 409);
+
+    expect(successful).toHaveLength(1);
+    expect(conflicts).toHaveLength(rotations.length - 1);
+    expect(
+      (await req("GET", "/auth/me", undefined, successful[0].body.apiKey)).status,
+    ).toBe(200);
+  });
+
+  test("first reissue creates a Better Auth key for a migrated bot", async () => {
+    const human = await registerUser("MigratedReissueOwner");
+    const [botUser] = await db
+      .insert(users)
+      .values({ name: "MigratedReissueBot", type: "bot" })
+      .returning({ id: users.id });
+    createdBotUserIds.push(botUser.id);
+    const [bot] = await db
+      .insert(bots)
+      .values({
+        userId: botUser.id,
+        ownerId: human.user.id,
+        webhookSecret: `whsec_${crypto.randomBytes(16).toString("hex")}`,
+      })
+      .returning({ id: bots.id });
+
+    expect(
+      await db
+        .select({ id: apikey.id })
+        .from(apikey)
+        .where(eq(apikey.referenceId, botUser.id)),
+    ).toHaveLength(0);
+
+    const reissue = await req(
+      "POST",
+      `/bots/${bot.id}/regenerate-key`,
+      {},
+      human.token
+    );
+    expect(reissue.status).toBe(200);
+    expect(reissue.body.apiKey).toMatch(/^bot_[0-9a-f]{64}$/);
+
+    const me = await req("GET", "/auth/me", undefined, reissue.body.apiKey);
+    expect(me.status).toBe(200);
+    expect(me.body.user.id).toBe(botUser.id);
+    expect(
+      await db
+        .select({ id: apikey.id })
+        .from(apikey)
+        .where(eq(apikey.referenceId, botUser.id)),
+    ).toHaveLength(1);
+  });
+
+  test("revocation disables the key without deleting the bot and reissue restores access", async () => {
+    const human = await registerUser("RevokeOwner");
+    const botRes = await createBot(human.token, "RevokedBot");
+    const oldKey = botRes.body.apiKey;
+
+    const revoke = await req(
+      "DELETE",
+      `/bots/${botRes.body.id}/api-key`,
+      undefined,
+      human.token
+    );
+    expect(revoke.status).toBe(200);
+    expect(revoke.body.success).toBe(true);
+
+    const [revokedRow] = await db
+      .select({ enabled: apikey.enabled })
+      .from(apikey)
+      .where(eq(apikey.referenceId, botRes.body.userId));
+    expect(revokedRow.enabled).toBe(false);
+    expect((await req("GET", "/auth/me", undefined, oldKey)).status).toBe(401);
+
+    const listed = await req("GET", "/bots/list", undefined, human.token);
+    expect(listed.body.some((bot: any) => bot.id === botRes.body.id)).toBe(true);
+
+    const reissue = await req(
+      "POST",
+      `/bots/${botRes.body.id}/regenerate-key`,
+      {},
+      human.token
+    );
+    expect(reissue.status).toBe(200);
+    expect((await req("GET", "/auth/me", undefined, reissue.body.apiKey)).status).toBe(200);
+    expect((await req("GET", "/auth/me", undefined, oldKey)).status).toBe(401);
+
+    const [reissuedRow] = await db
+      .select({ enabled: apikey.enabled })
+      .from(apikey)
+      .where(eq(apikey.referenceId, botRes.body.userId));
+    expect(reissuedRow.enabled).toBe(true);
   });
 });
 
@@ -1040,6 +1180,17 @@ describe("Bots: Update bot", () => {
       expect(botRes.status).toBe(200);
       await addBotToWorkspace(botRes.body.id, workspaceId, human.token);
 
+      const rotateSecretRes = await req(
+        "POST",
+        `/bots/${botRes.body.id}/regenerate-secret`,
+        {},
+        human.token,
+      );
+      expect(rotateSecretRes.status).toBe(200);
+      expect(rotateSecretRes.body.webhookSecret).not.toBe(
+        botRes.body.webhookSecret,
+      );
+
       const humanRegisterRes = await req(
         "POST",
         "/bots/me/webhook",
@@ -1056,6 +1207,9 @@ describe("Bots: Update bot", () => {
       );
       expect(registerRes.status).toBe(200);
       expect(registerRes.body.webhookUrl).toBe(webhook.url);
+      expect(registerRes.body.webhookSecret).toBe(
+        rotateSecretRes.body.webhookSecret,
+      );
 
       await startBotWorkerForTest();
       const sendRes = await req(
@@ -1074,6 +1228,7 @@ describe("Bots: Update bot", () => {
       const clearRes = await req("DELETE", "/bots/me/webhook", undefined, botRes.body.apiKey);
       expect(clearRes.status).toBe(200);
       expect(clearRes.body.webhookUrl).toBeNull();
+      expect(clearRes.body).not.toHaveProperty("webhookSecret");
 
       const detailRes = await req("GET", `/bots/${botRes.body.id}`, undefined, human.token);
       expect(detailRes.status).toBe(200);
@@ -1226,6 +1381,13 @@ describe("Bots: Delete bot", () => {
     expect(delRes.status).toBe(200);
     expect(delRes.body.success).toBe(true);
 
+    expect(
+      await db
+        .select({ id: apikey.id })
+        .from(apikey)
+        .where(eq(apikey.referenceId, botUserId)),
+    ).toHaveLength(0);
+
     // API key should no longer work
     const meRes2 = await req("GET", "/auth/me", undefined, apiKey);
     expect(meRes2.status).toBe(401);
@@ -1234,6 +1396,13 @@ describe("Bots: Delete bot", () => {
     const listRes = await req("GET", "/bots/list", undefined, human.token);
     const ids = listRes.body.map((b: any) => b.id);
     expect(ids).not.toContain(botRes.body.id);
+
+    await expect(
+      updateAuthenticatedBotWebhook(
+        botUserId,
+        "https://deleted.example.com/webhook",
+      ),
+    ).rejects.toMatchObject({ status: 404 });
 
     // Remove from cleanup list since we already deleted it
     const idx = createdBotUserIds.indexOf(botUserId);
@@ -2816,8 +2985,14 @@ describe("Bots: runtime state", () => {
 
   test("Hermes platform supports regular bot webhook delivery while polling remains available", async () => {
     let receivedAuthorization = "";
-    const webhook = startWebhookServer((request) => {
+    let receivedTimestamp = "";
+    let receivedSignature = "";
+    let receivedBody = "";
+    const webhook = startWebhookServer((request, body) => {
       receivedAuthorization = request.headers.get("authorization") ?? "";
+      receivedTimestamp = request.headers.get("x-webhook-timestamp") ?? "";
+      receivedSignature = request.headers.get("x-webhook-signature") ?? "";
+      receivedBody = body;
       return new Response(JSON.stringify({ ok: true }), {
         headers: { "Content-Type": "application/json" },
       });
@@ -2841,6 +3016,7 @@ describe("Bots: runtime state", () => {
     );
     expect(registerRes.status).toBe(200);
     expect(registerRes.body.webhookUrl).toBe(webhook.url);
+    expect(registerRes.body.webhookSecret).toStartWith("whsec_");
 
     const pollingRes = await req("GET", "/hermes-platform/events?limit=1", undefined, botRes.body.apiKey);
     expect(pollingRes.status).toBe(200);
@@ -2868,7 +3044,14 @@ describe("Bots: runtime state", () => {
         return webhook.requests.find((request) => request.payload.event?.messageId === sendRes.body.id);
       }, "Hermes platform webhook event");
 
-      expect(receivedAuthorization).toBe(`Bearer ${botRes.body.apiKey}`);
+      expect(receivedAuthorization).toBe("");
+      expect(receivedTimestamp).toMatch(/^\d+$/);
+      expect(receivedSignature).toBe(
+        crypto
+          .createHmac("sha256", registerRes.body.webhookSecret)
+          .update(`${receivedTimestamp}.${receivedBody}`)
+          .digest("hex"),
+      );
       expect(delivery.payload.type).toBe("thechat.hermes_platform.event");
       expect(delivery.payload.event.text).toBe("Handle this over the platform webhook");
       expect(delivery.payload.event.instructions).toBeNull();
@@ -2877,6 +3060,89 @@ describe("Bots: runtime state", () => {
       expect(invocation.status).toBe("claimed");
     } finally {
       webhook.stop();
+    }
+  });
+
+  test("Hermes webhook retries reuse the exact persisted body after mutable state changes", async () => {
+    await closeBotRuntimeForTests();
+    const deliveryHeaders: Array<{ timestamp: string; signature: string }> = [];
+    let botUserId = "";
+    let conversationId = "";
+    const webhook = startWebhookServer(async (request) => {
+      deliveryHeaders.push({
+        timestamp: request.headers.get("x-webhook-timestamp") ?? "",
+        signature: request.headers.get("x-webhook-signature") ?? "",
+      });
+      if (deliveryHeaders.length === 1) {
+        await db.update(users).set({ name: "Renamed after first attempt" }).where(eq(users.id, botUserId));
+        await db
+          .update(conversations)
+          .set({ name: "Renamed conversation after first attempt" })
+          .where(eq(conversations.id, conversationId));
+        return new Response("retry", { status: 503 });
+      }
+      return new Response(JSON.stringify({ ok: true }), {
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+    const human = await registerUser("RuntimeHermesStableRetryOwner");
+    const { workspaceId } = await createWorkspaceWithGeneralChannel(
+      human.token,
+      "Runtime Hermes Stable Retry",
+    );
+    const botRes = await createBot(human.token, "StableRetryHermes", undefined, {
+      kind: "hermes",
+      workspaceId,
+    });
+    expect(botRes.status).toBe(200);
+    botUserId = botRes.body.userId;
+
+    const registerRes = await req(
+      "POST",
+      "/bots/me/webhook",
+      { url: webhook.url },
+      botRes.body.apiKey,
+    );
+    expect(registerRes.status).toBe(200);
+    const dmRes = await req(
+      "POST",
+      "/conversations/dm",
+      { workspaceId, otherUserId: botRes.body.userId },
+      human.token,
+    );
+    expect(dmRes.status).toBe(200);
+    conversationId = dmRes.body.id;
+
+    try {
+      await startBotWorkerForTest();
+      const sendRes = await req(
+        "POST",
+        `/messages/${conversationId}`,
+        { content: "Retry this exact signed body" },
+        human.token,
+      );
+      expect(sendRes.status).toBe(200);
+
+      await waitForResult(
+        async () => (webhook.requests.length >= 2 ? webhook.requests[1] : null),
+        "second Hermes webhook delivery attempt",
+      );
+      expect(webhook.requests[0].body).toBe(webhook.requests[1].body);
+      expect(webhook.requests[0].payload.event.bot.name).toBe("StableRetryHermes");
+      expect(webhook.requests[1].payload.event.bot.name).toBe("StableRetryHermes");
+      for (const [index, headers] of deliveryHeaders.entries()) {
+        expect(headers.signature).toBe(
+          crypto
+            .createHmac("sha256", registerRes.body.webhookSecret)
+            .update(`${headers.timestamp}.${webhook.requests[index].body}`)
+            .digest("hex"),
+        );
+      }
+      const [invocation] = await invocationsForMessage(sendRes.body.id);
+      expect(invocation.status).toBe("claimed");
+    } finally {
+      webhook.stop();
+      await closeBotRuntimeForTests();
     }
   });
 

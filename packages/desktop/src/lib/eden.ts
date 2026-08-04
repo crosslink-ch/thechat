@@ -50,3 +50,8 @@ export function edenErrorStatus(error: unknown): number | undefined {
     ? status
     : undefined;
 }
+
+export function isAuthoritativeAuthRejection(error: unknown) {
+  const status = edenErrorStatus(error);
+  return status === 401 || status === 403;
+}

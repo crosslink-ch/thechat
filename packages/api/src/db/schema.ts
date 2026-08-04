@@ -8,6 +8,7 @@ import {
   jsonb,
   boolean,
   integer,
+  bigint,
   primaryKey,
   index,
   uniqueIndex,
@@ -58,10 +59,9 @@ export const users = pgTable(
     id: uuid("id").defaultRandom().primaryKey(),
     name: varchar("name", { length: 255 }).notNull(),
     email: varchar("email", { length: 255 }),
-    type: userTypeEnum("type").notNull(),
+    type: userTypeEnum("type").notNull().default("human"),
     avatar: text("avatar"),
-    passwordHash: text("password_hash"),
-    emailVerifiedAt: timestamp("email_verified_at", { withTimezone: true }),
+    emailVerified: boolean("email_verified").notNull().default(false),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
       .notNull(),
@@ -289,7 +289,6 @@ export const bots = pgTable(
       .references(() => users.id, { onDelete: "cascade" }),
     webhookUrl: text("webhook_url"),
     webhookSecret: varchar("webhook_secret", { length: 128 }).notNull(),
-    apiKey: varchar("api_key", { length: 128 }).notNull(),
     kind: botKindEnum("kind").notNull().default("webhook"),
     attachmentAccess: boolean("attachment_access").notNull().default(true),
     commandsJson: jsonb("commands_json").$type<BotCommandPublic[]>(),
@@ -303,7 +302,6 @@ export const bots = pgTable(
   },
   (t) => [
     uniqueIndex("bots_user_id_idx").on(t.userId),
-    uniqueIndex("bots_api_key_idx").on(t.apiKey),
     index("bots_owner_id_idx").on(t.ownerId),
   ]
 );
@@ -500,20 +498,140 @@ export const messageAttachments = pgTable(
   ],
 );
 
-export const sessions = pgTable(
-  "sessions",
+// Better Auth owns human sessions and credentials as well as bot API keys.
+export const session = pgTable(
+  "session",
   {
-    id: uuid("id").defaultRandom().primaryKey(),
+    id: text("id").primaryKey(),
     userId: uuid("user_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
-    token: varchar("token", { length: 64 }).notNull(),
+    token: text("token").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    ipAddress: text("ip_address"),
+    userAgent: text("user_agent"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull()
+      .$onUpdate(() => new Date()),
+  },
+  (t) => [
+    uniqueIndex("session_token_idx").on(t.token),
+    index("session_user_id_idx").on(t.userId),
+  ]
+);
+
+export const account = pgTable(
+  "account",
+  {
+    id: text("id").primaryKey(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    accountId: text("account_id").notNull(),
+    providerId: text("provider_id").notNull(),
+    accessToken: text("access_token"),
+    refreshToken: text("refresh_token"),
+    idToken: text("id_token"),
+    accessTokenExpiresAt: timestamp("access_token_expires_at", {
+      withTimezone: true,
+    }),
+    refreshTokenExpiresAt: timestamp("refresh_token_expires_at", {
+      withTimezone: true,
+    }),
+    scope: text("scope"),
+    password: text("password"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull()
+      .$onUpdate(() => new Date()),
+  },
+  (t) => [
+    uniqueIndex("account_provider_account_idx").on(
+      t.providerId,
+      t.accountId,
+    ),
+    index("account_user_id_idx").on(t.userId),
+  ]
+);
+
+export const verification = pgTable(
+  "verification",
+  {
+    id: text("id").primaryKey(),
+    identifier: text("identifier").notNull(),
+    value: text("value").notNull(),
     expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
       .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull()
+      .$onUpdate(() => new Date()),
   },
-  (t) => [uniqueIndex("sessions_token_idx").on(t.token)]
+  (t) => [index("verification_identifier_idx").on(t.identifier)]
+);
+
+// Better Auth API-key plugin storage. The raw credential is returned once and
+// only its hash is stored here. One bot credential is active per bot user.
+export const apikey = pgTable(
+  "apikey",
+  {
+    id: text("id").primaryKey(),
+    configId: text("config_id").notNull().default("default"),
+    name: text("name"),
+    start: text("start"),
+    prefix: text("prefix"),
+    key: text("key").notNull(),
+    referenceId: uuid("reference_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    refillInterval: integer("refill_interval"),
+    refillAmount: integer("refill_amount"),
+    lastRefillAt: timestamp("last_refill_at", { withTimezone: true }),
+    enabled: boolean("enabled").notNull().default(true),
+    rateLimitEnabled: boolean("rate_limit_enabled").notNull().default(true),
+    rateLimitTimeWindow: integer("rate_limit_time_window"),
+    rateLimitMax: integer("rate_limit_max"),
+    requestCount: integer("request_count").notNull().default(0),
+    remaining: integer("remaining"),
+    lastRequest: timestamp("last_request", { withTimezone: true }),
+    expiresAt: timestamp("expires_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull()
+      .$onUpdate(() => new Date()),
+    permissions: text("permissions"),
+    metadata: text("metadata"),
+  },
+  (t) => [
+    uniqueIndex("apikey_key_idx").on(t.key),
+    uniqueIndex("apikey_config_reference_idx").on(t.configId, t.referenceId),
+    index("apikey_reference_id_idx").on(t.referenceId),
+  ]
+);
+
+// Shared Better Auth rate-limit state. Database storage keeps enforcement
+// consistent and atomic across API replicas.
+export const rateLimit = pgTable(
+  "rate_limit",
+  {
+    id: text("id").primaryKey(),
+    key: text("key").notNull(),
+    count: integer("count").notNull(),
+    lastRequest: bigint("last_request", { mode: "number" }).notNull(),
+  },
+  (t) => [uniqueIndex("rate_limit_key_idx").on(t.key)],
 );
 
 export const workspaceProviderEnum = pgEnum("workspace_provider", [
@@ -545,31 +663,14 @@ export const workspaceConfigs = pgTable("workspace_configs", {
     .$onUpdate(() => new Date()),
 });
 
-export const emailVerifications = pgTable(
-  "email_verifications",
-  {
-    id: uuid("id").defaultRandom().primaryKey(),
-    userId: uuid("user_id")
-      .notNull()
-      .references(() => users.id, { onDelete: "cascade" }),
-    code: varchar("code", { length: 6 }).notNull(),
-    attempts: integer("attempts").notNull().default(0),
-    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
-    createdAt: timestamp("created_at", { withTimezone: true })
-      .defaultNow()
-      .notNull(),
-  },
-  // One outstanding code per user — resends delete the previous row first.
-  (t) => [uniqueIndex("email_verifications_user_id_idx").on(t.userId)]
-);
-
 // -- Relations --
 
 export const usersRelations = relations(users, ({ many }) => ({
   participations: many(conversationParticipants),
   messages: many(messages),
-  sessions: many(sessions),
-  emailVerifications: many(emailVerifications),
+  sessions: many(session),
+  accounts: many(account),
+  apiKeys: many(apikey),
   workspaceMemberships: many(workspaceMembers),
   ownedBots: many(bots, { relationName: "botOwner" }),
   uploadedAttachments: many(attachments),
@@ -764,19 +865,23 @@ export const conversationThreadsRelations = relations(
   }),
 );
 
-export const sessionsRelations = relations(sessions, ({ one }) => ({
+export const sessionRelations = relations(session, ({ one }) => ({
   user: one(users, {
-    fields: [sessions.userId],
+    fields: [session.userId],
     references: [users.id],
   }),
 }));
 
-export const emailVerificationsRelations = relations(
-  emailVerifications,
-  ({ one }) => ({
-    user: one(users, {
-      fields: [emailVerifications.userId],
-      references: [users.id],
-    }),
-  })
-);
+export const accountRelations = relations(account, ({ one }) => ({
+  user: one(users, {
+    fields: [account.userId],
+    references: [users.id],
+  }),
+}));
+
+export const apikeyRelations = relations(apikey, ({ one }) => ({
+  user: one(users, {
+    fields: [apikey.referenceId],
+    references: [users.id],
+  }),
+}));

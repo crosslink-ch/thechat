@@ -2,6 +2,7 @@ mod attachment_download;
 mod config;
 mod db;
 mod env;
+mod file_drop;
 mod fs;
 mod mcp;
 mod oauth;
@@ -469,6 +470,7 @@ pub fn run() {
         .manage(InitialProjectDir(initial_project_dir))
         .invoke_handler(tauri::generate_handler![
             attachment_download::download_attachment_to_file,
+            file_drop::read_dropped_file,
             get_config,
             get_config_path,
             save_config,
@@ -575,6 +577,7 @@ mod tests {
             .invoke_handler(tauri::generate_handler![
                 // Note: get_config, get_config_path, save_config, get_app_config_dir
                 // are excluded because they use AppHandle which isn't supported by MockRuntime
+                file_drop::read_dropped_file,
                 get_initial_project_dir,
                 create_conversation,
                 get_conversation,

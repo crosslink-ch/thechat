@@ -45,7 +45,9 @@ export const workspaceConfigRoutes = new Elysia({
       return { user: null } as any;
     }
     const token = authHeader.slice(7);
-    const user = await resolveTokenToUser(token);
+    // Provider credentials are control-plane secrets. Bot API keys remain
+    // valid for messaging/runtime routes but are never accepted here.
+    const user = await resolveTokenToUser(token, { includeBotTokens: false });
     if (!user) return { user: null } as any;
     return { user };
   })

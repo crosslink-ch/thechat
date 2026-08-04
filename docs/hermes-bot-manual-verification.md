@@ -25,7 +25,8 @@ Create a local `.env` if you do not already have one:
 cat > .env <<'EOF'
 DATABASE_URL=postgres://thechat:thechat@localhost:15543/thechat
 REDIS_URL=redis://localhost:16380
-JWT_SECRET=change-me-local-thechat-jwt-secret
+BETTER_AUTH_SECRET=change-me-local-thechat-better-auth-secret
+BETTER_AUTH_URL=http://localhost:3337
 THECHAT_SECRET_KEY=change-me-local-thechat-secret-key
 THECHAT_BACKEND_PORT=3337
 OPENROUTER_API_KEY=...
@@ -145,7 +146,10 @@ uv run --frozen python -u /home/bruno/agent-worktrees/thechat-hermes-integration
 ```
 
 In webhook mode, Hermes registers `THECHAT_WEBHOOK_URL` through the generic bot
-webhook endpoint `POST /bots/me/webhook`.
+webhook endpoint `POST /bots/me/webhook`. The authenticated response presents
+the bot's `whsec_` secret once to the adapter, which keeps it in memory and
+uses it to verify timestamped HMAC signatures on subsequent deliveries. The
+bot API token is never echoed back in webhook requests.
 
 Health check TheChat's platform bridge:
 

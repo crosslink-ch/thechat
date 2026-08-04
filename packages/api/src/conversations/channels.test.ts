@@ -148,7 +148,6 @@ async function createHermesBot(ownerId: string) {
       userId: botUser.id,
       ownerId,
       kind: "hermes",
-      apiKey: `bot_${crypto.randomBytes(32).toString("hex")}`,
       webhookSecret: `whsec_${crypto.randomBytes(32).toString("hex")}`,
     })
     .returning({ id: bots.id });

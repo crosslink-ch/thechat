@@ -1,13 +1,14 @@
 {{- if .Values.worker.enabled }}
 {{- $attachments := .Values.attachments | default dict -}}
 {{- $infisical := get $attachments "infisical" | default dict -}}
+{{- $betterAuthInfisical := .Values.betterAuthInfisical | default dict -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: {{ include "thechat-api.workerFullname" . }}
   labels:
     {{- include "thechat-api.workerLabels" . | nindent 4 }}
-  {{- if get $infisical "enabled" }}
+  {{- if or (get $infisical "enabled") (get $betterAuthInfisical "enabled") }}
   annotations:
     secrets.infisical.com/auto-reload: "true"
   {{- end }}
