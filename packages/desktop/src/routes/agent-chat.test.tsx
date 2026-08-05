@@ -17,6 +17,13 @@ import {
 
 // -- Mocks --
 
+const lifecycleMocks = vi.hoisted(() => ({
+  activateAgentChatMcp: vi.fn(),
+  syncAgentChatMcpAuth: vi.fn(),
+}));
+
+vi.mock("../desktop-lifecycle", () => lifecycleMocks);
+
 // Mock Tauri invoke — used by the route for list_conversations, get_initial_project_dir, etc.
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(() => Promise.resolve(null)),
@@ -131,6 +138,7 @@ describe("AgentChatRoute", () => {
   it("renders without crashing (no conversation)", async () => {
     await renderRoute();
     expect(screen.getByText("Send a message to start chatting")).toBeInTheDocument();
+    expect(lifecycleMocks.activateAgentChatMcp).toHaveBeenCalledOnce();
   });
 
   it("does not show TodoPanel when there are no todos", async () => {
