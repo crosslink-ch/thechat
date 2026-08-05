@@ -1,12 +1,12 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
-  activateMcp: vi.fn(),
+  activateMcp: vi.fn(() => Promise.resolve()),
   checkForUpdates: vi.fn(),
   discoverSkills: vi.fn(),
   fetchConversations: vi.fn(),
   initializeAuth: vi.fn(),
-  initializeAuthMcp: vi.fn(),
+  initializeAuthMcp: vi.fn(() => Promise.resolve()),
   initializeCodexAuth: vi.fn(),
   initializeFontSize: vi.fn(),
   logInfo: vi.fn(),
@@ -46,19 +46,24 @@ vi.mock("./stores/updater", () => ({
   },
 }));
 
-import {
-  activateAgentChatMcp,
-  initializeDesktopStartup,
-  syncAgentChatMcpAuth,
-} from "./desktop-lifecycle";
+type DesktopLifecycle = typeof import("./desktop-lifecycle");
+let lifecycle: DesktopLifecycle;
 
 describe("desktop lifecycle", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
+    vi.useFakeTimers();
     vi.clearAllMocks();
+    vi.resetModules();
+    lifecycle = await import("./desktop-lifecycle");
+  });
+
+  afterEach(() => {
+    vi.runOnlyPendingTimers();
+    vi.useRealTimers();
   });
 
   it("does not activate Agent Chat MCP integrations during normal startup", () => {
-    const cleanup = initializeDesktopStartup();
+    const cleanup = lifecycle.initializeDesktopStartup();
 
     expect(mocks.initializeAuth).toHaveBeenCalledOnce();
     expect(mocks.discoverSkills).toHaveBeenCalledOnce();
@@ -73,15 +78,58 @@ describe("desktop lifecycle", () => {
     expect(mocks.resetUpdater).toHaveBeenCalledOnce();
   });
 
-  it("activates MCP integrations only through the explicit Agent Chat lifecycle", () => {
-    activateAgentChatMcp();
-    syncAgentChatMcpAuth(null);
+  it("ignores auth synchronization until Agent Chat is explicitly activated", () => {
+    lifecycle.syncAgentChatMcpAuth("startup-token");
+    lifecycle.syncAgentChatMcpAuth(null);
+
+    expect(mocks.activateMcp).not.toHaveBeenCalled();
+    expect(mocks.initializeAuthMcp).not.toHaveBeenCalled();
+  });
+
+  it("coalesces the StrictMode setup-cleanup-setup cycle", () => {
+    const firstCleanup = lifecycle.activateAgentChatMcp("user-a-token");
+    firstCleanup();
+    const secondCleanup = lifecycle.activateAgentChatMcp("user-a-token");
+
+    vi.runAllTimers();
 
     expect(mocks.activateMcp).toHaveBeenCalledOnce();
-    expect(mocks.initializeAuthMcp).not.toHaveBeenCalled();
-
-    syncAgentChatMcpAuth("access-token");
     expect(mocks.initializeAuthMcp).toHaveBeenCalledOnce();
-    expect(mocks.initializeAuthMcp).toHaveBeenCalledWith("access-token");
+    expect(mocks.initializeAuthMcp).toHaveBeenLastCalledWith("user-a-token");
+
+    secondCleanup();
+    vi.runAllTimers();
+
+    expect(mocks.initializeAuthMcp).toHaveBeenLastCalledWith(null);
+  });
+
+  it("keeps global MCP initialization idempotent across route unmount and remount", () => {
+    const firstCleanup = lifecycle.activateAgentChatMcp("user-a-token");
+    firstCleanup();
+    vi.runAllTimers();
+
+    const secondCleanup = lifecycle.activateAgentChatMcp("user-b-token");
+
+    expect(mocks.activateMcp).toHaveBeenCalledOnce();
+    expect(mocks.initializeAuthMcp.mock.calls).toEqual([
+      ["user-a-token"],
+      [null],
+      ["user-b-token"],
+    ]);
+
+    secondCleanup();
+  });
+
+  it("refreshes account tokens and clears authenticated clients on logout", () => {
+    lifecycle.activateAgentChatMcp("user-a-token");
+    lifecycle.syncAgentChatMcpAuth("user-b-token");
+    lifecycle.syncAgentChatMcpAuth(null);
+    lifecycle.syncAgentChatMcpAuth(null);
+
+    expect(mocks.initializeAuthMcp.mock.calls).toEqual([
+      ["user-a-token"],
+      ["user-b-token"],
+      [null],
+    ]);
   });
 });
