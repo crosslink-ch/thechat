@@ -156,6 +156,122 @@ describe("Better Auth session facade", () => {
     ).toHaveLength(0);
   });
 
+  test("PATCH /me updates only the signed-in human's display name", async () => {
+    const { email, response: registered } = await register("Original Name");
+    const token = registered.body.accessToken;
+
+    const updated = await req(
+      "PATCH",
+      "/auth/me",
+      { name: "  Updated Name  " },
+      token,
+    );
+
+    expect(updated).toMatchObject({
+      status: 200,
+      body: {
+        user: {
+          id: registered.body.user.id,
+          name: "Updated Name",
+          email,
+          type: "human",
+        },
+      },
+    });
+    expect(await req("GET", "/auth/me", undefined, token)).toMatchObject({
+      status: 200,
+      body: { user: { name: "Updated Name", email } },
+    });
+    expect(
+      await db
+        .select({ name: users.name, email: users.email })
+        .from(users)
+        .where(eq(users.id, registered.body.user.id)),
+    ).toEqual([{ name: "Updated Name", email }]);
+  });
+
+  test("PATCH /me validates the name and does not accept email changes", async () => {
+    const { email, response: registered } = await register("Unchanged Name");
+    const token = registered.body.accessToken;
+
+    expect(
+      await req("PATCH", "/auth/me", { name: "   " }, token),
+    ).toMatchObject({ status: 400, body: { error: "Name is required" } });
+    expect(
+      await req("PATCH", "/auth/me", { name: "x".repeat(256) }, token),
+    ).toMatchObject({
+      status: 400,
+      body: { error: "Name must be 255 characters or fewer" },
+    });
+    expect(
+      (
+        await req(
+          "PATCH",
+          "/auth/me",
+          { name: "Changed", email: "other@example.com" },
+          token,
+        )
+      ).status,
+    ).toBe(400);
+    expect((await req("PATCH", "/auth/me", { name: "Changed" })).status).toBe(
+      401,
+    );
+    expect(
+      (
+        await req(
+          "PATCH",
+          "/auth/me",
+          { name: "Changed" },
+          "not-a-session-token",
+        )
+      ).status,
+    ).toBe(401);
+    expect(await req("GET", "/auth/me", undefined, token)).toMatchObject({
+      status: 200,
+      body: { user: { name: "Unchanged Name", email } },
+    });
+  });
+
+  test("PATCH /me forwards Better Auth rate-limit metadata", async () => {
+    const { response: registered } = await register("Rate Limited Profile");
+    const token = registered.body.accessToken;
+    const originalHandler = auth.handler.bind(auth);
+    const handlerSpy = spyOn(auth, "handler").mockImplementation((request) => {
+      if (new URL(request.url).pathname.endsWith("/update-user")) {
+        return Promise.resolve(
+          new Response(JSON.stringify({ message: "Too many requests" }), {
+            status: 429,
+            headers: {
+              "content-type": "application/json",
+              "retry-after": "17",
+              "x-retry-after": "17",
+            },
+          }),
+        );
+      }
+      return originalHandler(request);
+    });
+
+    try {
+      const response = await app.handle(
+        new Request("http://localhost/auth/me", {
+          method: "PATCH",
+          headers: {
+            authorization: `Bearer ${token}`,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({ name: "Blocked Update" }),
+        }),
+      );
+
+      expect(response.status).toBe(429);
+      expect(response.headers.get("retry-after")).toBe("17");
+      expect(response.headers.get("x-retry-after")).toBe("17");
+    } finally {
+      handlerSpy.mockRestore();
+    }
+  });
+
   test("logout returns 503 when Better Auth reports success without revoking", async () => {
     const { response: registered } = await register("Failed Revocation");
     const token = registered.body.accessToken;
@@ -243,6 +359,9 @@ describe("bot API-key isolation", () => {
     expect(
       await resolveTokenToUser(apiKey, { includeBotTokens: false }),
     ).toBeNull();
+    expect(
+      (await req("PATCH", "/auth/me", { name: "Renamed Bot" }, apiKey)).status,
+    ).toBe(401);
     expect(await resolveTokenToUser("bot_not-a-real-key")).toBeNull();
     expect(getSessionSpy).not.toHaveBeenCalled();
     getSessionSpy.mockRestore();

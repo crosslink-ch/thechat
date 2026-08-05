@@ -11,7 +11,7 @@ vi.mock("../lib/api", () => ({
       register: { post: vi.fn() },
       login: { post: vi.fn() },
       "verify-email": { post: vi.fn() },
-      me: { get: vi.fn() },
+      me: { get: vi.fn(), patch: vi.fn() },
       logout: { post: vi.fn() },
     },
   },
@@ -36,13 +36,25 @@ function treatyError(status: number, value: unknown) {
   return error;
 }
 
-function useKv(initial: Record<string, string> = {}) {
+function deferred() {
+  let resolve!: () => void;
+  const promise = new Promise<void>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
+function useKv(
+  initial: Record<string, string> = {},
+  beforeSet?: (key: string, value: string) => Promise<void>,
+) {
   const values = { ...initial };
   vi.mocked(invoke).mockImplementation(async (command, args) => {
     const input = args as { key?: string; value?: string } | undefined;
     const key = input?.key ?? "";
     if (command === "kv_get") return values[key] ?? null;
     if (command === "kv_set" && input?.key && input.value !== undefined) {
+      await beforeSet?.(input.key, input.value);
       values[input.key] = input.value;
     }
     if (command === "kv_delete" && input?.key) delete values[input.key];
@@ -132,6 +144,242 @@ describe("auth store account operations", () => {
     });
     expect(values.auth_access_token).toBe("verified-session");
     expect(values.auth_user).toBe(JSON.stringify(user));
+  });
+});
+
+describe("auth store profile updates", () => {
+  it("updates and persists the signed-in user returned by the API", async () => {
+    const values = useKv({
+      auth_access_token: "profile-session",
+      auth_user: JSON.stringify(user),
+    });
+    const updatedUser = { ...user, name: "Jane Updated" };
+    useAuthStore.setState({
+      token: "profile-session",
+      user,
+      loading: false,
+    });
+    vi.mocked(api.auth.me.patch).mockResolvedValue({
+      data: { user: updatedUser },
+      error: null,
+    } as any);
+
+    await useAuthStore.getState().updateName("Jane Updated");
+
+    expect(api.auth.me.patch).toHaveBeenCalledWith(
+      { name: "Jane Updated" },
+      { headers: { authorization: "Bearer profile-session" } },
+    );
+    expect(values).toEqual({
+      auth_access_token: "profile-session",
+      auth_user: JSON.stringify(updatedUser),
+    });
+    expect(useAuthStore.getState()).toMatchObject({
+      token: "profile-session",
+      user: updatedUser,
+    });
+  });
+
+  it.each([
+    [400, "Name is required"],
+    [503, "Authentication service temporarily unavailable"],
+  ])(
+    "keeps the current profile and cache after a retryable %s",
+    async (status, message) => {
+      const values = useKv({
+        auth_access_token: "profile-session",
+        auth_user: JSON.stringify(user),
+      });
+      useAuthStore.setState({
+        token: "profile-session",
+        user,
+        loading: false,
+      });
+      vi.mocked(api.auth.me.patch).mockResolvedValue({
+        data: null,
+        error: treatyError(status, { error: message }),
+      } as any);
+
+      await expect(useAuthStore.getState().updateName("Jane Updated")).rejects
+        .toThrow(message);
+
+      expect(values).toEqual({
+        auth_access_token: "profile-session",
+        auth_user: JSON.stringify(user),
+      });
+      expect(queryClient.clear).not.toHaveBeenCalled();
+      expect(useAuthStore.getState()).toMatchObject({
+        token: "profile-session",
+        user,
+      });
+    },
+  );
+
+  it("keeps the current profile and cache after a transport failure", async () => {
+    const values = useKv({
+      auth_access_token: "profile-session",
+      auth_user: JSON.stringify(user),
+    });
+    useAuthStore.setState({
+      token: "profile-session",
+      user,
+      loading: false,
+    });
+    vi.mocked(api.auth.me.patch).mockRejectedValue(new TypeError("fetch failed"));
+
+    await expect(useAuthStore.getState().updateName("Jane Updated")).rejects
+      .toThrow("fetch failed");
+
+    expect(values).toEqual({
+      auth_access_token: "profile-session",
+      auth_user: JSON.stringify(user),
+    });
+    expect(queryClient.clear).not.toHaveBeenCalled();
+    expect(useAuthStore.getState()).toMatchObject({
+      token: "profile-session",
+      user,
+    });
+  });
+
+  it.each([401, 403])(
+    "clears credentials after an authoritative profile-update %s",
+    async (status) => {
+      const values = useKv({
+        auth_access_token: "profile-session",
+        auth_user: JSON.stringify(user),
+      });
+      useAuthStore.setState({
+        token: "profile-session",
+        user,
+        loading: false,
+      });
+      vi.mocked(api.auth.me.patch).mockResolvedValue({
+        data: null,
+        error: treatyError(status, { error: "Authentication required" }),
+      } as any);
+
+      await expect(useAuthStore.getState().updateName("Jane Updated")).rejects
+        .toThrow("Authentication required");
+
+      expect(values).toEqual({});
+      expect(queryClient.clear).toHaveBeenCalledOnce();
+      expect(useAuthStore.getState()).toMatchObject({
+        token: null,
+        user: null,
+        loading: false,
+      });
+    },
+  );
+
+  it("serializes a profile save followed by logout", async () => {
+    const writeStarted = deferred();
+    const releaseWrite = deferred();
+    let shouldBlock = true;
+    const values = useKv(
+      {
+        auth_access_token: "profile-session",
+        auth_user: JSON.stringify(user),
+      },
+      async (key) => {
+        if (key === "auth_access_token" && shouldBlock) {
+          shouldBlock = false;
+          writeStarted.resolve();
+          await releaseWrite.promise;
+        }
+      },
+    );
+    const updatedUser = { ...user, name: "Jane Updated" };
+    useAuthStore.setState({
+      token: "profile-session",
+      user,
+      loading: false,
+    });
+    vi.mocked(api.auth.me.patch).mockResolvedValue({
+      data: { user: updatedUser },
+      error: null,
+    } as any);
+    vi.mocked(api.auth.logout.post).mockResolvedValue({
+      data: { success: true },
+      error: null,
+    } as any);
+
+    const save = useAuthStore.getState().updateName("Jane Updated");
+    await writeStarted.promise;
+    const logout = useAuthStore.getState().logout();
+    expect(api.auth.logout.post).not.toHaveBeenCalled();
+
+    releaseWrite.resolve();
+    await save;
+    await logout;
+
+    expect(values).toEqual({});
+    expect(useAuthStore.getState()).toMatchObject({ token: null, user: null });
+  });
+
+  it("serializes a profile save followed by a different login", async () => {
+    const writeStarted = deferred();
+    const releaseWrite = deferred();
+    let shouldBlock = true;
+    const values = useKv(
+      {
+        auth_access_token: "profile-session",
+        auth_user: JSON.stringify(user),
+      },
+      async (key) => {
+        if (key === "auth_access_token" && shouldBlock) {
+          shouldBlock = false;
+          writeStarted.resolve();
+          await releaseWrite.promise;
+        }
+      },
+    );
+    const updatedUser = { ...user, name: "Jane Updated" };
+    const nextUser = {
+      ...user,
+      id: "user-2",
+      name: "Alex",
+      email: "alex@example.com",
+    };
+    useAuthStore.setState({
+      token: "profile-session",
+      user,
+      loading: false,
+    });
+    vi.mocked(api.auth.me.patch).mockResolvedValue({
+      data: { user: updatedUser },
+      error: null,
+    } as any);
+    vi.mocked(api.auth.login.post).mockResolvedValue({
+      data: { accessToken: "next-session", user: nextUser },
+      error: null,
+    } as any);
+
+    const save = useAuthStore.getState().updateName("Jane Updated");
+    await writeStarted.promise;
+    const login = useAuthStore.getState().login(nextUser.email, "password123");
+    expect(api.auth.login.post).not.toHaveBeenCalled();
+
+    releaseWrite.resolve();
+    await save;
+    await login;
+
+    expect(values).toEqual({
+      auth_access_token: "next-session",
+      auth_user: JSON.stringify(nextUser),
+    });
+    expect(useAuthStore.getState()).toMatchObject({
+      token: "next-session",
+      user: nextUser,
+    });
+  });
+
+  it("requires a current bearer token", async () => {
+    useAuthStore.setState({ token: null, user: null, loading: false });
+
+    await expect(useAuthStore.getState().updateName("Jane")).rejects.toThrow(
+      "Authentication required",
+    );
+    expect(api.auth.me.patch).not.toHaveBeenCalled();
   });
 });
 

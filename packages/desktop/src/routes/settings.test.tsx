@@ -1,11 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { useAuthStore } from "../stores/auth";
 import { SettingsRoute } from "./settings";
 
 const { invokeMock } = vi.hoisted(() => ({
   invokeMock: vi.fn(),
 }));
+const updateNameMock = vi.fn();
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: invokeMock,
@@ -13,6 +15,12 @@ vi.mock("@tauri-apps/api/core", () => ({
 
 beforeEach(() => {
   invokeMock.mockClear();
+  updateNameMock.mockReset();
+  updateNameMock.mockImplementation(async (name: string) => {
+    useAuthStore.setState((state) => ({
+      user: state.user ? { ...state.user, name } : null,
+    }));
+  });
   useAuthStore.setState({
     user: {
       id: "user-1",
@@ -23,22 +31,59 @@ beforeEach(() => {
     },
     token: "better-auth-session",
     loading: false,
+    updateName: updateNameMock,
   });
 });
 
 describe("SettingsRoute", () => {
-  it("presents the current account name and email as intentionally read-only", () => {
+  it("allows name editing while keeping the email address read-only", () => {
     render(<SettingsRoute />);
 
     expect(screen.getByRole("heading", { name: "Profile" })).toBeInTheDocument();
-    expect(screen.getByText("Read-only")).toBeInTheDocument();
+    expect(screen.getByText("Editable name")).toBeInTheDocument();
     expect(screen.getByLabelText("Name")).toHaveValue("Bruno Example");
-    expect(screen.getByLabelText("Name")).toHaveAttribute("readonly");
-    expect(screen.getByLabelText("Email address")).toHaveValue("bruno@example.com");
+    expect(screen.getByLabelText("Name")).not.toHaveAttribute("readonly");
+    expect(screen.getByLabelText("Email address")).toHaveValue(
+      "bruno@example.com",
+    );
     expect(screen.getByLabelText("Email address")).toHaveAttribute("readonly");
+    expect(screen.getByRole("button", { name: "Save name" })).toBeDisabled();
     expect(
-      screen.getByText(/Profile editing is not available in TheChat yet/i),
+      screen.getByText(/Your email address cannot be changed here/i),
     ).toBeInTheDocument();
+  });
+
+  it("saves a changed name and reflects the returned profile", async () => {
+    const user = userEvent.setup();
+    render(<SettingsRoute />);
+
+    const nameInput = screen.getByLabelText("Name");
+    await user.clear(nameInput);
+    await user.type(nameInput, "Bruno Updated");
+    await user.click(screen.getByRole("button", { name: "Save name" }));
+
+    expect(updateNameMock).toHaveBeenCalledWith("Bruno Updated");
+    expect(await screen.findByRole("status")).toHaveTextContent("Name saved.");
+    expect(screen.getByText("Bruno Updated")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save name" })).toBeDisabled();
+  });
+
+  it("shows a retryable error without replacing the current profile", async () => {
+    updateNameMock.mockRejectedValueOnce(new Error("Could not update profile"));
+    const user = userEvent.setup();
+    render(<SettingsRoute />);
+
+    const nameInput = screen.getByLabelText("Name");
+    await user.clear(nameInput);
+    await user.type(nameInput, "Failed Update");
+    await user.click(screen.getByRole("button", { name: "Save name" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Could not update profile",
+    );
+    expect(screen.getByText("Bruno Example")).toBeInTheDocument();
+    expect(nameInput).toHaveValue("Failed Update");
+    expect(screen.getByRole("button", { name: "Save name" })).toBeEnabled();
   });
 
   it("does not expose Agent Chat, model, provider, credential, or MCP settings", () => {
@@ -57,7 +102,6 @@ describe("SettingsRoute", () => {
     ]) {
       expect(screen.queryByText(removedLabel, { exact: false })).not.toBeInTheDocument();
     }
-    expect(screen.queryByRole("button", { name: "Save" })).not.toBeInTheDocument();
     expect(invokeMock).not.toHaveBeenCalled();
   });
 
@@ -69,5 +113,6 @@ describe("SettingsRoute", () => {
     expect(screen.getByRole("heading", { name: "Profile" })).toBeInTheDocument();
     expect(screen.getByText("Sign in to view your profile")).toBeInTheDocument();
     expect(screen.queryByText("Provider", { exact: false })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Save name" })).not.toBeInTheDocument();
   });
 });

@@ -1,3 +1,4 @@
+import { type FormEvent, useEffect, useState } from "react";
 import { useAuthStore } from "../stores/auth";
 
 function LockIcon() {
@@ -33,6 +34,52 @@ function getInitials(name: string) {
 
 export function SettingsRoute() {
   const user = useAuthStore((state) => state.user);
+  const updateName = useAuthStore((state) => state.updateName);
+  const [name, setName] = useState(user?.name ?? "");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
+
+  useEffect(() => {
+    setName(user?.name ?? "");
+  }, [user?.name]);
+
+  const trimmedName = name.trim();
+  const canSave = Boolean(
+    user && trimmedName && trimmedName !== user.name && !saving,
+  );
+
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!user || saving) return;
+    if (!trimmedName) {
+      setError("Name is required");
+      setSaved(false);
+      return;
+    }
+    if (trimmedName.length > 255) {
+      setError("Name must be 255 characters or fewer");
+      setSaved(false);
+      return;
+    }
+    if (trimmedName === user.name) return;
+
+    setSaving(true);
+    setError(null);
+    setSaved(false);
+    try {
+      await updateName(trimmedName);
+      setSaved(true);
+    } catch (updateError) {
+      setError(
+        updateError instanceof Error
+          ? updateError.message
+          : "Could not update profile",
+      );
+    } finally {
+      setSaving(false);
+    }
+  };
 
   return (
     <main
@@ -51,7 +98,7 @@ export function SettingsRoute() {
             Profile
           </h1>
           <p className="max-w-[560px] text-[0.929rem] leading-6 text-text-muted">
-            View the identity associated with your signed-in TheChat account.
+            Manage the profile associated with your signed-in TheChat account.
           </p>
         </header>
 
@@ -65,7 +112,11 @@ export function SettingsRoute() {
             </p>
           </section>
         ) : (
-          <section className="overflow-hidden rounded-xl border border-border-subtle bg-surface shadow-sm">
+          <form
+            className="overflow-hidden rounded-xl border border-border-subtle bg-surface shadow-sm"
+            aria-label="Profile settings"
+            onSubmit={handleSubmit}
+          >
             <div className="flex flex-col gap-4 border-b border-border-subtle bg-gradient-to-br from-accent/[0.12] via-surface to-surface p-5 sm:flex-row sm:items-center sm:justify-between sm:p-6">
               <div className="flex min-w-0 items-center gap-3.5">
                 <div className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-accent text-[0.929rem] font-semibold text-white shadow-sm">
@@ -80,9 +131,8 @@ export function SettingsRoute() {
                   </div>
                 </div>
               </div>
-              <span className="inline-flex w-fit items-center gap-1.5 rounded-full border border-border bg-base/70 px-2.5 py-1 text-[0.714rem] font-medium text-text-muted">
-                <LockIcon />
-                Read-only
+              <span className="inline-flex w-fit items-center rounded-full border border-border bg-base/70 px-2.5 py-1 text-[0.714rem] font-medium text-text-muted">
+                Editable name
               </span>
             </div>
 
@@ -96,10 +146,18 @@ export function SettingsRoute() {
                 </label>
                 <input
                   id="profile-name"
-                  value={user.name}
-                  readOnly
-                  aria-readonly="true"
-                  className="h-10 w-full min-w-0 cursor-default rounded-lg border border-border-subtle bg-base px-3 text-[0.929rem] text-text outline-none"
+                  value={name}
+                  onChange={(event) => {
+                    setName(event.target.value);
+                    setError(null);
+                    setSaved(false);
+                  }}
+                  autoComplete="name"
+                  maxLength={255}
+                  required
+                  disabled={saving}
+                  aria-invalid={error ? "true" : undefined}
+                  className="h-10 w-full min-w-0 rounded-lg border border-border-subtle bg-base px-3 text-[0.929rem] text-text outline-none transition-colors focus:border-accent disabled:cursor-wait disabled:opacity-70"
                 />
               </div>
 
@@ -122,15 +180,37 @@ export function SettingsRoute() {
               </div>
             </div>
 
-            <div className="border-t border-border-subtle px-5 py-4 sm:px-6">
-              <p className="flex items-start gap-2 text-[0.786rem] leading-5 text-text-dimmed">
-                <span className="mt-0.5 shrink-0 text-text-muted">
-                  <LockIcon />
-                </span>
-                Profile editing is not available in TheChat yet. These details come from your signed-in account.
-              </p>
+            <div className="flex flex-col gap-3 border-t border-border-subtle px-5 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6">
+              <div className="min-w-0">
+                <p className="flex items-start gap-2 text-[0.786rem] leading-5 text-text-dimmed">
+                  <span className="mt-0.5 shrink-0 text-text-muted">
+                    <LockIcon />
+                  </span>
+                  Your display name appears across TheChat. Your email address cannot be changed here.
+                </p>
+                {error && (
+                  <p className="mt-1.5 text-[0.786rem] text-red-400" role="alert">
+                    {error}
+                  </p>
+                )}
+                {saved && !error && (
+                  <p
+                    className="mt-1.5 text-[0.786rem] text-emerald-400"
+                    role="status"
+                  >
+                    Name saved.
+                  </p>
+                )}
+              </div>
+              <button
+                type="submit"
+                disabled={!canSave}
+                className="inline-flex h-9 shrink-0 items-center justify-center rounded-lg bg-accent px-4 text-[0.857rem] font-semibold text-white transition-colors hover:bg-accent/90 disabled:cursor-not-allowed disabled:opacity-45"
+              >
+                {saving ? "Saving..." : "Save name"}
+              </button>
             </div>
-          </section>
+          </form>
         )}
       </div>
     </main>
