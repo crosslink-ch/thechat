@@ -13,6 +13,7 @@ import { NotificationsRoute } from "./routes/notifications";
 import { HermesDebugRoute } from "./routes/hermes-debug";
 import { ScrollDebugRoute } from "./routes/scroll-debug";
 import { SettingsRoute } from "./routes/settings";
+import { WorkspaceManageRoute } from "./routes/workspace-manage";
 
 const rootRoute = createRootRoute({
   component: RootLayout,
@@ -67,9 +68,7 @@ const settingsRoute = createRoute({
 const workspaceManageRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/workspace/manage",
-  beforeLoad: () => {
-    throw redirect({ to: "/" });
-  },
+  component: WorkspaceManageRoute,
 });
 
 const scrollDebugRoute = createRoute({

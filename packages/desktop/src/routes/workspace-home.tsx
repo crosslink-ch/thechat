@@ -45,6 +45,15 @@ export function WorkspaceHomeRoute() {
         <p className="mt-2 text-[0.929rem] leading-relaxed text-text-muted">
           This workspace has no channels yet.
         </p>
+        <div className="mt-5 flex gap-2">
+          <button
+            type="button"
+            className="cursor-pointer rounded-lg border border-border bg-raised px-3 py-2 text-[0.929rem] font-medium text-text-secondary transition-colors hover:bg-hover hover:text-text"
+            onClick={() => navigate({ to: "/workspace/manage" })}
+          >
+            Manage workspace
+          </button>
+        </div>
       </div>
     );
   }

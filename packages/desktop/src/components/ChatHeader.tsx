@@ -24,11 +24,14 @@ export function ChatHeader() {
   const isAgentChat = routePath.startsWith("/chat");
   const isSettings = routePath === "/settings";
   const isWorkspaceHome = routePath === "/";
+  const isWorkspaceManage = routePath === "/workspace/manage";
   const isNotifications = routePath === "/notifications";
 
   let chatTitle = "Workspace";
   if (isSettings) {
     chatTitle = "Settings";
+  } else if (isWorkspaceManage) {
+    chatTitle = activeWorkspace?.name ?? "Workspace";
   } else if (isNotifications) {
     chatTitle = "Notifications";
   } else if (isChannel) {

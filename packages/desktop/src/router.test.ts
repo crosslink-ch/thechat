@@ -6,9 +6,9 @@ describe("production router", () => {
     await router.navigate({ to: "/", replace: true });
   });
 
-  it("redirects the retired workspace LLM configuration route", async () => {
+  it("keeps the workspace access management route available", async () => {
     await router.navigate({ to: "/workspace/manage" });
 
-    expect(router.state.location.pathname).toBe("/");
+    expect(router.state.location.pathname).toBe("/workspace/manage");
   });
 });
