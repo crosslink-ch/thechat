@@ -5,7 +5,6 @@ import { useToolsStore } from "../stores/tools";
 import { useWebSocketStore } from "../stores/websocket";
 import { useWorkspacesStore } from "../stores/workspaces";
 import { useNotificationsStore } from "../stores/notifications";
-import { useConversationsStore } from "../stores/conversations";
 import { useKeybindings } from "../hooks/useKeybindings";
 import { Sidebar } from "../components/Sidebar";
 import { ChatHeader } from "../components/ChatHeader";
@@ -18,15 +17,12 @@ import { WorkspaceModal } from "../components/WorkspaceModal";
 import { ChannelModal } from "../components/ChannelModal";
 import { HermesBotModal } from "../components/HermesBotModal";
 import { McpConfigDialog } from "../McpConfigDialog";
-import { useCodexAuthStore } from "../stores/codex-auth";
 import { registerGlobalWsHandlers } from "../lib/ws-global-handlers";
 import { createCommands, useCommandsStore } from "../commands";
 import { ErrorBoundary } from "../components/ErrorBoundary";
 import { UpdateToast } from "../components/UpdateToast";
-import { useUpdaterStore } from "../stores/updater";
-import { useFontSizeStore } from "../stores/font-size";
 import { useCtrlWheelZoom } from "../hooks/useCtrlWheelZoom";
-import { info as logInfo } from "../log";
+import { initializeDesktopStartup } from "../desktop-lifecycle";
 
 export function RootLayout() {
   const navigate = useNavigate();
@@ -38,27 +34,15 @@ export function RootLayout() {
 
   // Initialize auth on mount
   useEffect(() => {
-    logInfo("[root] Initializing app");
-    useAuthStore.getState().initialize();
-    useToolsStore.getState().initializeMcp();
-    useToolsStore.getState().discoverSkills();
-    useCodexAuthStore.getState().initialize();
-    useConversationsStore.getState().fetchConversations();
-    useFontSizeStore.getState().initialize();
-    void useUpdaterStore.getState().checkForUpdates();
-
-    return () => {
-      void useUpdaterStore.getState().reset();
-    };
+    return initializeDesktopStartup();
   }, []);
 
-  // React to token changes: connect/disconnect WebSocket, initialize workspaces, auth MCP
+  // React to token changes: connect/disconnect WebSocket and initialize workspaces
   useEffect(() => {
     if (token && token !== prevTokenRef.current) {
       useWebSocketStore.getState().connect(token);
       useWorkspacesStore.getState().initialize();
       useNotificationsStore.getState().fetchNotifications();
-      useToolsStore.getState().initializeAuthMcp(token);
     } else if (!token && prevTokenRef.current) {
       useWebSocketStore.getState().disconnect();
       useWorkspacesStore.getState().reset();

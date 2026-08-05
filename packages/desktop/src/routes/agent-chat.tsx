@@ -6,6 +6,7 @@ import { openCodexAuthModal } from "../components/CodexAuthModal";
 import { useIsStreaming, subscribeToStream } from "../stores/streaming";
 import { useAutoScroll } from "../hooks/useAutoScroll";
 import { useToolsStore } from "../stores/tools";
+import { useAuthStore } from "../stores/auth";
 import { useConversationsStore } from "../stores/conversations";
 import {
   composerDraftKey,
@@ -24,11 +25,13 @@ import { useTodoStore, EMPTY_TODOS } from "../core/todo";
 import { buildSystemPrompt, type ProjectInfo } from "../core/system-prompt";
 import { fireNotification } from "../lib/notifications";
 import type { Conversation, Message } from "../core/types";
+import { activateAgentChatMcp, syncAgentChatMcpAuth } from "../desktop-lifecycle";
 
 const TOP_LOAD_THRESHOLD_PX = 80;
 
 export function AgentChatRoute() {
   const navigate = useNavigate();
+  const token = useAuthStore((s) => s.token);
   const matches = useMatches();
   const lastMatch = matches[matches.length - 1];
   const routeId = (lastMatch?.params as Record<string, string>)?.id as string | undefined;
@@ -37,6 +40,15 @@ export function AgentChatRoute() {
   });
 
   const getTools = useCallback(() => useToolsStore.getState().tools, []);
+
+  // Agent Chat MCP integrations stay dormant until this route is explicitly used.
+  useEffect(() => {
+    activateAgentChatMcp();
+  }, []);
+
+  useEffect(() => {
+    syncAgentChatMcpAuth(token);
+  }, [token]);
 
   // Project mode state (for new chats before conversation is created)
   const [projectDir, setProjectDir] = useState<string | null>(null);
