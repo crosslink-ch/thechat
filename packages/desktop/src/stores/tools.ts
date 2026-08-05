@@ -59,7 +59,7 @@ interface McpServerError {
 }
 
 interface ToolsStore {
-  /** MCP tools loaded eagerly at startup (always available) */
+  /** Global MCP tools loaded after explicit Agent Chat activation. */
   mcpTools: ToolDefinition[];
   /** Runtime status of each MCP server (connecting/connected/error) */
   mcpServerStatus: Record<string, McpServerStatus>;
@@ -71,8 +71,8 @@ interface ToolsStore {
   activeCwd: string | null;
   skills: SkillMeta[];
   tools: ToolDefinition[];
-  initializeMcp: () => void;
-  initializeAuthMcp: (token: string) => void;
+  initializeMcp: () => Promise<void>;
+  initializeAuthMcp: (token: string | null) => Promise<void>;
   discoverSkills: () => Promise<void>;
   initializeTaskRunner: () => void;
   /** Set the active conversation, loading its session tools from DB if needed. */
@@ -122,6 +122,8 @@ function getActiveSessionInfos(state: ToolsStore): McpToolInfo[] {
 
 let mcpUnlistenReady: (() => void) | null = null;
 let mcpUnlistenError: (() => void) | null = null;
+let mcpInitialization: Promise<void> | null = null;
+let authMcpSync: Promise<void> = Promise.resolve();
 
 export const useToolsStore = create<ToolsStore>()((set, get) => ({
   mcpTools: [],
@@ -133,59 +135,77 @@ export const useToolsStore = create<ToolsStore>()((set, get) => ({
   tools: [...builtinTools],
 
   initializeMcp: () => {
-    // Clean up previous listeners
-    if (mcpUnlistenReady) {
-      mcpUnlistenReady();
-      mcpUnlistenReady = null;
-    }
-    if (mcpUnlistenError) {
-      mcpUnlistenError();
-      mcpUnlistenError = null;
-    }
+    if (mcpInitialization) return mcpInitialization;
 
-    set({ mcpTools: [], mcpServerStatus: {} });
+    set({ mcpServerStatus: {} });
+    mcpInitialization = (async () => {
+      mcpUnlistenReady = await listen<McpToolInfo[]>("mcp-tools-ready", (event) => {
+        const newTools: ToolDefinition[] = event.payload.map(mcpInfoToToolDef);
+        // Derive the server name from the first tool in the batch
+        const serverName = event.payload[0]?.server;
 
-    listen<McpToolInfo[]>("mcp-tools-ready", (event) => {
-      const newTools: ToolDefinition[] = event.payload.map(mcpInfoToToolDef);
-      // Derive the server name from the first tool in the batch
-      const serverName = event.payload[0]?.server;
-
-      set((state) => {
-        const existing = new Set(state.mcpTools.map((t) => t.name));
-        const unique = newTools.filter((t) => !existing.has(t.name));
-        if (unique.length === 0) return state;
-        const mcpTools = [...state.mcpTools, ...unique];
-        const tools = computeTools(state.skills, mcpTools, getActiveSessionInfos(state));
-        setBatchToolRegistry(tools);
-        const mcpServerStatus = serverName
-          ? { ...state.mcpServerStatus, [serverName]: { state: "connected" as const, toolCount: event.payload.length } }
-          : state.mcpServerStatus;
-        return { mcpTools, tools, mcpServerStatus };
+        set((state) => {
+          const existing = new Set(state.mcpTools.map((t) => t.name));
+          const unique = newTools.filter((t) => !existing.has(t.name));
+          if (unique.length === 0) return state;
+          const mcpTools = [...state.mcpTools, ...unique];
+          const tools = computeTools(state.skills, mcpTools, getActiveSessionInfos(state));
+          setBatchToolRegistry(tools);
+          const mcpServerStatus = serverName
+            ? { ...state.mcpServerStatus, [serverName]: { state: "connected" as const, toolCount: event.payload.length } }
+            : state.mcpServerStatus;
+          return { mcpTools, tools, mcpServerStatus };
+        });
       });
-    }).then((unlisten) => {
-      mcpUnlistenReady = unlisten;
+
+      mcpUnlistenError = await listen<McpServerError>("mcp-server-error", (event) => {
+        const { server, error } = event.payload;
+        logError(`[tools] MCP server '${server}' failed: ${error}`);
+
+        set((state) => ({
+          mcpServerStatus: { ...state.mcpServerStatus, [server]: { state: "error" as const, error } },
+        }));
+      });
+
+      await invoke("mcp_initialize");
+    })().catch((e) => {
+      mcpUnlistenReady?.();
+      mcpUnlistenReady = null;
+      mcpUnlistenError?.();
+      mcpUnlistenError = null;
+      mcpInitialization = null;
+      logError(`[tools] MCP initialization failed: ${formatError(e)}`);
     });
 
-    listen<McpServerError>("mcp-server-error", (event) => {
-      const { server, error } = event.payload;
-      logError(`[tools] MCP server '${server}' failed: ${error}`);
-
-      set((state) => ({
-        mcpServerStatus: { ...state.mcpServerStatus, [server]: { state: "error" as const, error } },
-      }));
-    }).then((unlisten) => {
-      mcpUnlistenError = unlisten;
-    });
-
-    invoke("mcp_initialize").catch((e) =>
-      logError(`[tools] MCP initialization failed: ${formatError(e)}`),
-    );
+    return mcpInitialization;
   },
 
-  initializeAuthMcp: (token: string) => {
-    invoke("mcp_initialize_authed", { token }).catch((e) =>
-      logError(`[tools] Auth MCP initialization failed: ${formatError(e)}`),
-    );
+  initializeAuthMcp: (token: string | null) => {
+    const operation = authMcpSync.then(async () => {
+      const removedServers =
+        (await invoke<string[]>("mcp_initialize_authed", { token })) ?? [];
+      if (token !== null || removedServers.length === 0) return;
+
+      const removed = new Set(removedServers);
+      set((state) => {
+        const mcpTools = state.mcpTools.filter((tool) => {
+          const separator = tool.name.indexOf("__");
+          const server = separator >= 0 ? tool.name.slice(0, separator) : "";
+          return !removed.has(server);
+        });
+        const mcpServerStatus = Object.fromEntries(
+          Object.entries(state.mcpServerStatus).filter(([server]) => !removed.has(server)),
+        );
+        const tools = computeTools(state.skills, mcpTools, getActiveSessionInfos(state));
+        setBatchToolRegistry(tools);
+        return { mcpTools, mcpServerStatus, tools };
+      });
+    }).catch((e) => {
+      logError(`[tools] Auth MCP synchronization failed: ${formatError(e)}`);
+    });
+
+    authMcpSync = operation;
+    return operation;
   },
 
   discoverSkills: async () => {

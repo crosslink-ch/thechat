@@ -43,7 +43,7 @@ export function AgentChatRoute() {
 
   // Agent Chat MCP integrations stay dormant until this route is explicitly used.
   useEffect(() => {
-    activateAgentChatMcp();
+    return activateAgentChatMcp(token);
   }, []);
 
   useEffect(() => {

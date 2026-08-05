@@ -22,7 +22,10 @@ import { createCommands, useCommandsStore } from "../commands";
 import { ErrorBoundary } from "../components/ErrorBoundary";
 import { UpdateToast } from "../components/UpdateToast";
 import { useCtrlWheelZoom } from "../hooks/useCtrlWheelZoom";
-import { initializeDesktopStartup } from "../desktop-lifecycle";
+import {
+  initializeDesktopStartup,
+  syncAgentChatMcpAuth,
+} from "../desktop-lifecycle";
 
 export function RootLayout() {
   const navigate = useNavigate();
@@ -49,6 +52,11 @@ export function RootLayout() {
       useNotificationsStore.getState().reset();
     }
     prevTokenRef.current = token;
+  }, [token]);
+
+  // Keep credentials current only after Agent Chat has explicitly activated MCP.
+  useEffect(() => {
+    syncAgentChatMcpAuth(token);
   }, [token]);
 
   // React to tools changes: initialize task runner
