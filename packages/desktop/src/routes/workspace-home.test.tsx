@@ -44,12 +44,7 @@ async function renderHome(initialEntry = "/") {
     path: "/channel/$id",
     component: () => <div>Channel route</div>,
   });
-  const manageRoute = createRoute({
-    getParentRoute: () => rootRoute,
-    path: "/workspace/manage",
-    component: () => <div>Manage route</div>,
-  });
-  const routeTree = rootRoute.addChildren([indexRoute, channelRoute, manageRoute]);
+  const routeTree = rootRoute.addChildren([indexRoute, channelRoute]);
   const router = createRouter({
     routeTree,
     history: createMemoryHistory({ initialEntries: [initialEntry] }),
@@ -91,5 +86,18 @@ describe("WorkspaceHomeRoute", () => {
     expect(screen.getByText("Workspace")).toBeInTheDocument();
     expect(screen.getByText("Create workspace")).toBeInTheDocument();
     expect(screen.queryByText("Channel route")).not.toBeInTheDocument();
+  });
+
+  it("does not expose workspace configuration when the active workspace has no channels", async () => {
+    useWorkspacesStore.setState({
+      workspaces: [{ id: "ws-1", name: "Team Alpha", role: "owner", createdAt: "2026-01-01", updatedAt: "2026-01-01" }],
+      activeWorkspace: { ...activeWorkspace, channels: [] },
+      loading: false,
+    });
+
+    await renderHome();
+
+    expect(screen.getByText("This workspace has no channels yet.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Manage workspace" })).not.toBeInTheDocument();
   });
 });
