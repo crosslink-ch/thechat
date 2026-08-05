@@ -211,11 +211,20 @@ describe("WorkspaceManageRoute", () => {
     const controls = screen.getByTestId("invite-user-controls");
     const input = screen.getByTestId("invite-user-email");
     const button = screen.getByTestId("invite-user-submit");
+    const hint = screen.getByText("The person must already have a TheChat account.");
 
-    expect(controls).toContainElement(input);
-    expect(controls).toContainElement(button);
-    expect(controls).toHaveClass("sm:flex-row", "sm:items-stretch");
-    expect(button).toHaveClass("sm:self-stretch");
+    expect(Array.from(controls.children)).toEqual([input, hint, button]);
+    expect(controls).toHaveClass(
+      "grid",
+      "grid-cols-1",
+      "sm:grid-cols-[minmax(0,1fr)_auto]",
+    );
+    expect(input).toHaveAttribute("aria-describedby", hint.id);
+    expect(button).toHaveClass(
+      "sm:col-start-2",
+      "sm:row-start-1",
+      "sm:self-stretch",
+    );
   });
 
   it("adds an owned bot immediately", async () => {

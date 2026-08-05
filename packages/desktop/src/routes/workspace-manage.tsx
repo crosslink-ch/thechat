@@ -390,29 +390,33 @@ export function WorkspaceManageRoute() {
                 </label>
                 <div
                   data-testid="invite-user-controls"
-                  className="mt-1 flex flex-col gap-2 sm:flex-row sm:items-stretch"
+                  className="mt-1 grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_auto] sm:gap-x-2"
                 >
                   <input
                     id="workspace-invite-email"
                     data-testid="invite-user-email"
+                    aria-describedby="workspace-invite-email-help"
                     type="email"
                     required
                     value={inviteEmail}
                     onChange={(event) => setInviteEmail(event.target.value)}
                     placeholder="person@example.com"
-                    className="w-full rounded-md border border-border bg-base px-2.5 py-2 text-[0.857rem] text-text outline-none placeholder:text-text-dimmed focus:border-accent sm:min-w-0 sm:flex-1"
+                    className="w-full rounded-md border border-border bg-base px-2.5 py-2 text-[0.857rem] text-text outline-none placeholder:text-text-dimmed focus:border-accent sm:col-start-1 sm:row-start-1 sm:min-w-0"
                   />
+                  <div
+                    id="workspace-invite-email-help"
+                    className="mt-1 text-[0.643rem] text-text-dimmed sm:col-start-1 sm:row-start-2"
+                  >
+                    The person must already have a TheChat account.
+                  </div>
                   <button
                     data-testid="invite-user-submit"
                     type="submit"
                     disabled={busyAction === "invite-user"}
-                    className="w-full cursor-pointer rounded-md bg-accent px-3 py-2 text-[0.786rem] font-medium text-white disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto sm:self-stretch"
+                    className="mt-2 w-full cursor-pointer rounded-md bg-accent px-3 py-2 text-[0.786rem] font-medium text-white disabled:cursor-not-allowed disabled:opacity-50 sm:col-start-2 sm:row-start-1 sm:mt-0 sm:w-auto sm:self-stretch"
                   >
                     {busyAction === "invite-user" ? "Inviting..." : "Invite"}
                   </button>
-                </div>
-                <div className="mt-1 text-[0.643rem] text-text-dimmed">
-                  The person must already have a TheChat account.
                 </div>
               </form>
             )}
