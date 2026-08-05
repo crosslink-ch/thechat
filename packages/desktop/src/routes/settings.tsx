@@ -117,26 +117,18 @@ export function SettingsRoute() {
             aria-label="Profile settings"
             onSubmit={handleSubmit}
           >
-            <div className="flex flex-col gap-4 border-b border-border-subtle bg-gradient-to-br from-accent/[0.12] via-surface to-surface p-5 sm:flex-row sm:items-center sm:justify-between sm:p-6">
+            <div className="border-b border-border-subtle bg-gradient-to-br from-accent/[0.12] via-surface to-surface p-5 sm:p-6">
               <div className="flex min-w-0 items-center gap-3.5">
                 <div className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-accent text-[0.929rem] font-semibold text-white shadow-sm">
                   {getInitials(user.name)}
                 </div>
-                <div className="min-w-0">
-                  <div className="truncate text-[1rem] font-semibold text-text">
-                    {user.name}
-                  </div>
-                  <div className="truncate text-[0.857rem] text-text-muted">
-                    {user.email ?? "No email address"}
-                  </div>
+                <div className="truncate text-[1rem] font-semibold text-text">
+                  {user.name}
                 </div>
               </div>
-              <span className="inline-flex w-fit items-center rounded-full border border-border bg-base/70 px-2.5 py-1 text-[0.714rem] font-medium text-text-muted">
-                Editable name
-              </span>
             </div>
 
-            <div className="grid gap-5 p-5 sm:grid-cols-2 sm:p-6">
+            <div className="p-5 sm:p-6">
               <div className="flex min-w-0 flex-col gap-2">
                 <label
                   htmlFor="profile-name"
@@ -161,41 +153,45 @@ export function SettingsRoute() {
                 />
               </div>
 
-              <div className="flex min-w-0 flex-col gap-2">
-                <label
-                  htmlFor="profile-email"
-                  className="text-[0.786rem] font-medium text-text-muted"
-                >
-                  Email address
-                </label>
-                <input
-                  id="profile-email"
-                  type="email"
-                  value={user.email ?? ""}
-                  placeholder="No email address"
-                  readOnly
-                  aria-readonly="true"
-                  className="h-10 w-full min-w-0 cursor-default rounded-lg border border-border-subtle bg-base px-3 text-[0.929rem] text-text outline-none placeholder:text-text-dimmed"
-                />
-              </div>
+              <dl
+                className="mt-5 overflow-hidden rounded-lg border border-border-subtle bg-base/60"
+                aria-label="Account information"
+              >
+                <div className="min-w-0 px-3.5 py-3">
+                  <dt className="flex items-center justify-between gap-4">
+                    <span className="text-[0.714rem] font-medium uppercase tracking-[0.08em] text-text-dimmed">
+                      Email address
+                    </span>
+                    <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-border bg-surface px-2.5 py-1 text-[0.714rem] font-medium text-text-dimmed">
+                      <LockIcon />
+                      Read only
+                    </span>
+                  </dt>
+                  <dd className="mt-1 break-all text-[0.857rem] text-text-muted">
+                    {user.email ?? "No email address"}
+                  </dd>
+                </div>
+                <div className="border-t border-border-subtle px-3.5 py-3">
+                  <dt className="text-[0.714rem] font-medium uppercase tracking-[0.08em] text-text-dimmed">
+                    User ID
+                  </dt>
+                  <dd className="mt-1 break-all font-mono text-[0.786rem] text-text-muted">
+                    {user.id}
+                  </dd>
+                </div>
+              </dl>
             </div>
 
             <div className="flex flex-col gap-3 border-t border-border-subtle px-5 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6">
-              <div className="min-w-0">
-                <p className="flex items-start gap-2 text-[0.786rem] leading-5 text-text-dimmed">
-                  <span className="mt-0.5 shrink-0 text-text-muted">
-                    <LockIcon />
-                  </span>
-                  Your display name appears across TheChat. Your email address cannot be changed here.
-                </p>
+              <div className="min-w-0 sm:mr-auto">
                 {error && (
-                  <p className="mt-1.5 text-[0.786rem] text-red-400" role="alert">
+                  <p className="text-[0.786rem] text-red-400" role="alert">
                     {error}
                   </p>
                 )}
                 {saved && !error && (
                   <p
-                    className="mt-1.5 text-[0.786rem] text-emerald-400"
+                    className="text-[0.786rem] text-emerald-400"
                     role="status"
                   >
                     Name saved.

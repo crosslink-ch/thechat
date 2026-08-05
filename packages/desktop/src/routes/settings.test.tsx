@@ -8,6 +8,8 @@ const { invokeMock } = vi.hoisted(() => ({
   invokeMock: vi.fn(),
 }));
 const updateNameMock = vi.fn();
+const profileEmail =
+  "bruno.with.a.long.profile.address@example-organization.ch";
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: invokeMock,
@@ -25,7 +27,7 @@ beforeEach(() => {
     user: {
       id: "user-1",
       name: "Bruno Example",
-      email: "bruno@example.com",
+      email: profileEmail,
       avatar: null,
       type: "human",
     },
@@ -36,21 +38,26 @@ beforeEach(() => {
 });
 
 describe("SettingsRoute", () => {
-  it("allows name editing while keeping the email address read-only", () => {
+  it("keeps the name editable and presents immutable account information", () => {
     render(<SettingsRoute />);
 
     expect(screen.getByRole("heading", { name: "Profile" })).toBeInTheDocument();
-    expect(screen.getByText("Editable name")).toBeInTheDocument();
+    expect(screen.queryByText("Editable name")).not.toBeInTheDocument();
     expect(screen.getByLabelText("Name")).toHaveValue("Bruno Example");
     expect(screen.getByLabelText("Name")).not.toHaveAttribute("readonly");
-    expect(screen.getByLabelText("Email address")).toHaveValue(
-      "bruno@example.com",
-    );
-    expect(screen.getByLabelText("Email address")).toHaveAttribute("readonly");
-    expect(screen.getByRole("button", { name: "Save name" })).toBeDisabled();
     expect(
-      screen.getByText(/Your email address cannot be changed here/i),
-    ).toBeInTheDocument();
+      screen.queryByRole("textbox", { name: "Email address" }),
+    ).not.toBeInTheDocument();
+    const email = screen.getByText(profileEmail);
+    expect(email.tagName).toBe("DD");
+    expect(email).toHaveClass("break-all");
+    expect(screen.getByText("Read only")).toBeInTheDocument();
+    expect(screen.getByText("User ID")).toBeInTheDocument();
+    expect(screen.getByText("user-1").tagName).toBe("DD");
+    expect(
+      screen.queryByText(/Your display name appears across TheChat/i),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save name" })).toBeDisabled();
   });
 
   it("saves a changed name and reflects the returned profile", async () => {
