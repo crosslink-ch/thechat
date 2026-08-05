@@ -204,6 +204,20 @@ describe("WorkspaceManageRoute", () => {
     expect(await screen.findByText("Invitation sent to new@example.com.")).toBeVisible();
   });
 
+  it("aligns the invite action with the email input", async () => {
+    render(<WorkspaceManageRoute />);
+    await screen.findByTestId("workspace-id");
+
+    const controls = screen.getByTestId("invite-user-controls");
+    const input = screen.getByTestId("invite-user-email");
+    const button = screen.getByTestId("invite-user-submit");
+
+    expect(controls).toContainElement(input);
+    expect(controls).toContainElement(button);
+    expect(controls).toHaveClass("sm:flex-row", "sm:items-stretch");
+    expect(button).toHaveClass("sm:self-stretch");
+  });
+
   it("adds an owned bot immediately", async () => {
     const user = userEvent.setup();
     render(<WorkspaceManageRoute />);

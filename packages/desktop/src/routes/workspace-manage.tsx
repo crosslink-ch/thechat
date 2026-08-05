@@ -376,19 +376,22 @@ export function WorkspaceManageRoute() {
 
             {canManage && (
               <form
-                className="mt-3 flex flex-col gap-2 rounded-lg border border-border bg-raised p-3 sm:flex-row"
+                className="mt-3 rounded-lg border border-border bg-raised p-3"
                 onSubmit={(event) => {
                   event.preventDefault();
                   void runAction("invite-user", inviteUser);
                 }}
               >
-                <div className="min-w-0 flex-1">
-                  <label
-                    htmlFor="workspace-invite-email"
-                    className="text-[0.714rem] font-medium text-text-secondary"
-                  >
-                    Invite by email
-                  </label>
+                <label
+                  htmlFor="workspace-invite-email"
+                  className="text-[0.714rem] font-medium text-text-secondary"
+                >
+                  Invite by email
+                </label>
+                <div
+                  data-testid="invite-user-controls"
+                  className="mt-1 flex flex-col gap-2 sm:flex-row sm:items-stretch"
+                >
                   <input
                     id="workspace-invite-email"
                     data-testid="invite-user-email"
@@ -397,20 +400,20 @@ export function WorkspaceManageRoute() {
                     value={inviteEmail}
                     onChange={(event) => setInviteEmail(event.target.value)}
                     placeholder="person@example.com"
-                    className="mt-1 w-full rounded-md border border-border bg-base px-2.5 py-2 text-[0.857rem] text-text outline-none placeholder:text-text-dimmed focus:border-accent"
+                    className="w-full rounded-md border border-border bg-base px-2.5 py-2 text-[0.857rem] text-text outline-none placeholder:text-text-dimmed focus:border-accent sm:min-w-0 sm:flex-1"
                   />
-                  <div className="mt-1 text-[0.643rem] text-text-dimmed">
-                    The person must already have a TheChat account.
-                  </div>
+                  <button
+                    data-testid="invite-user-submit"
+                    type="submit"
+                    disabled={busyAction === "invite-user"}
+                    className="w-full cursor-pointer rounded-md bg-accent px-3 py-2 text-[0.786rem] font-medium text-white disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto sm:self-stretch"
+                  >
+                    {busyAction === "invite-user" ? "Inviting..." : "Invite"}
+                  </button>
                 </div>
-                <button
-                  data-testid="invite-user-submit"
-                  type="submit"
-                  disabled={busyAction === "invite-user"}
-                  className="mt-auto cursor-pointer rounded-md bg-accent px-3 py-2 text-[0.786rem] font-medium text-white disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  {busyAction === "invite-user" ? "Inviting..." : "Invite"}
-                </button>
+                <div className="mt-1 text-[0.643rem] text-text-dimmed">
+                  The person must already have a TheChat account.
+                </div>
               </form>
             )}
 
