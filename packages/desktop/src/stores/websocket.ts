@@ -161,6 +161,12 @@ function doConnect() {
         userId: event.userId,
         newRole: event.newRole,
       });
+    } else if (event.type === "member_updated") {
+      wsEvents.emit("ws:member_updated", {
+        workspaceId: event.workspaceId,
+        userId: event.userId,
+        name: event.name,
+      });
     } else if (event.type === "member_removed") {
       wsEvents.emit("ws:member_removed", {
         workspaceId: event.workspaceId,

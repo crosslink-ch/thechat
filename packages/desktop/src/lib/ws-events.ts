@@ -53,6 +53,11 @@ export type WsEvents = {
     userId: string;
     newRole: WorkspaceMemberRole;
   };
+  "ws:member_updated": {
+    workspaceId: string;
+    userId: string;
+    name: string;
+  };
   "ws:member_removed": {
     workspaceId: string;
     userId: string;

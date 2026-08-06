@@ -1,12 +1,10 @@
 import { Elysia } from "elysia";
 import { z } from "zod";
-import { and, eq } from "drizzle-orm";
-import { db } from "../db";
-import { workspaceMembers } from "../db/schema";
 import { resolveTokenToUser } from "../auth/middleware";
 import { ServiceError } from "../services/errors";
 import {
   createBot,
+  createHermesBotInWorkspace,
   listBots,
   getBot,
   updateBot,
@@ -17,7 +15,6 @@ import {
   updateAuthenticatedBotWebhook,
   updateAuthenticatedBotCommands,
 } from "../services/bots";
-import { ensureHermesBotConfig } from "../services/hermes";
 import {
   addOwnedBotToWorkspace,
   removeBotWorkspaceMembership,
@@ -68,18 +65,6 @@ const addToWorkspaceSchema = z.object({
   workspaceId: z.string().trim().min(1, "Workspace ID is required"),
 });
 
-async function requireWorkspaceAdmin(workspaceId: string, userId: string) {
-  const [member] = await db
-    .select({ role: workspaceMembers.role })
-    .from(workspaceMembers)
-    .where(and(eq(workspaceMembers.workspaceId, workspaceId), eq(workspaceMembers.userId, userId)))
-    .limit(1);
-  if (!member) throw new ServiceError("You are not a member of this workspace", 403);
-  if (!["admin", "owner"].includes(member.role)) {
-    throw new ServiceError("Only workspace admins can connect Hermes bots", 403);
-  }
-}
-
 export const botRoutes = new Elysia({ prefix: "/bots" })
   .derive(async ({ headers }) => {
     const authHeader = headers.authorization;
@@ -125,16 +110,13 @@ export const botRoutes = new Elysia({ prefix: "/bots" })
           set.status = 400;
           return { error: "Workspace ID is required for Hermes bots" };
         }
-        await requireWorkspaceAdmin(workspaceId, user.id);
-        const bot = await createBot(
+        const bot = await createHermesBotInWorkspace(
           name,
           webhookUrl ?? null,
           user.id,
-          "hermes",
+          workspaceId,
           attachmentAccess,
         );
-        await ensureHermesBotConfig(bot.id);
-        await addOwnedBotToWorkspace(bot.id, workspaceId, user.id);
         const { webhookSecret: _webhookSecret, ...publicBot } = bot;
         return publicBot;
       }

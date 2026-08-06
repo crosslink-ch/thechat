@@ -28,6 +28,7 @@ vi.mock("./components/HermesBotModal", () => ({
 }));
 
 import { createCommands } from "./commands";
+import { useWorkspacesStore } from "./stores/workspaces";
 
 describe("createCommands", () => {
   beforeEach(() => {
@@ -53,6 +54,19 @@ describe("createCommands", () => {
     expect(ids).not.toContain(removedSelectProjectId);
     expect(shortcuts).not.toContain(removedPrimaryShortcut);
     expect(shortcuts).not.toContain(removedProjectShortcut);
+  });
+
+  it("opens user-scoped bot management without an active workspace", () => {
+    const navigate = vi.fn();
+    const command = createCommands(navigate).find((c) => c.id === "manage-bots");
+
+    expect(useWorkspacesStore.getState().activeWorkspace).toBeNull();
+    expect(command).toMatchObject({ id: "manage-bots", label: "Manage Bots" });
+
+    command!.execute();
+
+    expect(navigate).toHaveBeenCalledWith({ to: "/bots/manage" });
+    expect(closePaletteAndRefocusMock).toHaveBeenCalledOnce();
   });
 
   it("navigates to workspace access management", () => {

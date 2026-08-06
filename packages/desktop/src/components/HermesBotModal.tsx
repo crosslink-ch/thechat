@@ -1,18 +1,35 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
+import * as Dialog from "@radix-ui/react-dialog";
 import { create } from "zustand";
 import { API_URL, api } from "../lib/api";
+import { announceBotCreated } from "../lib/bot-events";
 import { useAuthStore } from "../stores/auth";
 import { requestInputBarFocus } from "../stores/input-focus";
 import { useWorkspacesStore } from "../stores/workspaces";
 
-const useHermesBotModalState = create(() => ({ open: false }));
+type HermesBotModalState = {
+  open: boolean;
+  returnFocus: HTMLElement | null;
+};
 
-export const openHermesBotModal = () =>
-  useHermesBotModalState.setState({ open: true });
+const useHermesBotModalState = create<HermesBotModalState>(() => ({
+  open: false,
+  returnFocus: null,
+}));
+
+export const openHermesBotModal = () => {
+  const activeElement = document.activeElement;
+  useHermesBotModalState.setState({
+    open: true,
+    returnFocus:
+      activeElement instanceof HTMLElement && activeElement !== document.body
+        ? activeElement
+        : null,
+  });
+};
 
 const closeHermesBotModal = () => {
   useHermesBotModalState.setState({ open: false });
-  requestInputBarFocus();
 };
 
 function auth(token: string) {
@@ -20,16 +37,35 @@ function auth(token: string) {
 }
 
 export function HermesBotModal() {
-  const open = useHermesBotModalState((s) => s.open);
-  if (!open) return null;
-  return <HermesBotModalInner />;
+  const open = useHermesBotModalState((state) => state.open);
+  const returnFocus = useHermesBotModalState((state) => state.returnFocus);
+  return (
+    <Dialog.Root
+      open={open}
+      onOpenChange={(nextOpen) => {
+        if (!nextOpen) closeHermesBotModal();
+      }}
+    >
+      {open && <HermesBotModalInner returnFocus={returnFocus} />}
+    </Dialog.Root>
+  );
 }
 
-function HermesBotModalInner() {
+function HermesBotModalInner({ returnFocus }: { returnFocus: HTMLElement | null }) {
   const token = useAuthStore((s) => s.token);
+  const workspaces = useWorkspacesStore((s) => s.workspaces);
   const activeWorkspace = useWorkspacesStore((s) => s.activeWorkspace);
   const selectWorkspace = useWorkspacesStore((s) => s.selectWorkspace);
+  const eligibleWorkspaces = workspaces.filter(
+    (workspace) => workspace.role === "owner" || workspace.role === "admin",
+  );
 
+  const [workspaceId, setWorkspaceId] = useState(
+    () =>
+      eligibleWorkspaces.find((workspace) => workspace.id === activeWorkspace?.id)?.id ??
+      eligibleWorkspaces[0]?.id ??
+      "",
+  );
   const [name, setName] = useState("");
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -38,22 +74,16 @@ function HermesBotModalInner() {
   const [copied, setCopied] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const currentRole = activeWorkspace?.members.find(
-    (m) => m.userId === useAuthStore.getState().user?.id,
-  )?.role;
-  const isAdmin = currentRole === "owner" || currentRole === "admin";
-
   useEffect(() => {
-    inputRef.current?.focus();
-  }, []);
-
-  useEffect(() => {
-    const handleKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") closeHermesBotModal();
-    };
-    window.addEventListener("keydown", handleKey);
-    return () => window.removeEventListener("keydown", handleKey);
-  }, []);
+    setWorkspaceId((current) => {
+      if (eligibleWorkspaces.some((workspace) => workspace.id === current)) return current;
+      return (
+        eligibleWorkspaces.find((workspace) => workspace.id === activeWorkspace?.id)?.id ??
+        eligibleWorkspaces[0]?.id ??
+        ""
+      );
+    });
+  }, [workspaces, activeWorkspace?.id]);
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -63,12 +93,8 @@ function HermesBotModalInner() {
       setError("Log in before adding a bot.");
       return;
     }
-    if (!activeWorkspace) {
-      setError("Select a workspace before adding a bot.");
-      return;
-    }
-    if (!isAdmin) {
-      setError("Only workspace admins can add Hermes bots.");
+    if (!workspaceId) {
+      setError("Choose a workspace where you are an owner or admin.");
       return;
     }
     if (!name.trim()) {
@@ -80,7 +106,7 @@ function HermesBotModalInner() {
       const { data: bot, error: createError } = await api.bots.create.post(
         {
           kind: "hermes",
-          workspaceId: activeWorkspace.id,
+          workspaceId,
           name: name.trim(),
         },
         auth(token),
@@ -92,9 +118,12 @@ function HermesBotModalInner() {
       const apiKey = (bot as any)?.apiKey;
       if (!apiKey) throw new Error("Hermes bot was created without a bot token");
 
-      await selectWorkspace(activeWorkspace.id);
+      if (activeWorkspace?.id === workspaceId) {
+        await selectWorkspace(workspaceId);
+      }
       setCreatedBotName(name.trim());
       setBotToken(apiKey);
+      announceBotCreated();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong");
     } finally {
@@ -125,9 +154,39 @@ function HermesBotModalInner() {
   };
 
   return (
-    <div className="fixed inset-0 z-20 flex items-center justify-center bg-overlay p-4 backdrop-blur-[2px] animate-fade-in" onClick={closeHermesBotModal}>
-      <div className="w-full max-w-[460px] rounded-xl border border-border-strong bg-surface p-6 shadow-card animate-slide-up" onClick={(e) => e.stopPropagation()}>
-        <h2 className="mb-5 text-[1.214rem] font-semibold tracking-tight text-text">Add Hermes Bot</h2>
+    <Dialog.Portal>
+      <Dialog.Overlay className="fixed inset-0 z-20 bg-overlay backdrop-blur-[2px] animate-fade-in" />
+      <Dialog.Content
+        asChild
+        onOpenAutoFocus={(event) => {
+          event.preventDefault();
+          inputRef.current?.focus();
+        }}
+        onCloseAutoFocus={(event) => {
+          event.preventDefault();
+          if (returnFocus?.isConnected) {
+            returnFocus.focus();
+          } else {
+            requestInputBarFocus();
+          }
+        }}
+        onEscapeKeyDown={(event) => {
+          if (submitting) event.preventDefault();
+        }}
+        onPointerDownOutside={(event) => {
+          if (submitting) event.preventDefault();
+        }}
+      >
+        <div
+          aria-modal="true"
+          className="fixed left-1/2 top-1/2 z-20 w-[calc(100%-2rem)] max-w-[460px] -translate-x-1/2 -translate-y-1/2 rounded-xl border border-border-strong bg-surface p-6 shadow-card animate-slide-up"
+        >
+          <Dialog.Title asChild>
+            <h2 className="mb-5 text-[1.214rem] font-semibold tracking-tight text-text">Add Hermes Bot</h2>
+          </Dialog.Title>
+          <Dialog.Description className="sr-only">
+            Choose an eligible workspace and create a Hermes bot. Its setup credential is shown once.
+          </Dialog.Description>
 
         {botToken ? (
           <div>
@@ -163,6 +222,27 @@ function HermesBotModalInner() {
         ) : (
         <form onSubmit={handleSubmit} noValidate>
           <label className="mb-3.5 block">
+            <span className="mb-1.5 block text-[0.857rem] font-medium text-text-muted">Workspace</span>
+            <select
+              aria-label="Workspace"
+              className="block w-full rounded-lg border border-border bg-base px-3.5 py-2.5 font-[inherit] text-[0.929rem] text-text outline-none transition-colors duration-150 focus:border-border-focus disabled:opacity-50"
+              value={workspaceId}
+              onChange={(event) => setWorkspaceId(event.target.value)}
+              disabled={eligibleWorkspaces.length === 0}
+            >
+              {eligibleWorkspaces.length === 0 ? (
+                <option value="">No admin workspaces available</option>
+              ) : (
+                eligibleWorkspaces.map((workspace) => (
+                  <option key={workspace.id} value={workspace.id}>
+                    {workspace.name}
+                  </option>
+                ))
+              )}
+            </select>
+          </label>
+
+          <label className="mb-3.5 block">
             <span className="mb-1.5 block text-[0.857rem] font-medium text-text-muted">Bot name</span>
             <input
               ref={inputRef}
@@ -174,13 +254,20 @@ function HermesBotModalInner() {
             />
           </label>
 
-          {error && <div className="mb-3 rounded-lg border border-error-msg-border bg-error-msg-bg px-3 py-2 text-[0.857rem] text-error-bright">{error}</div>}
+          {error && (
+            <div
+              role="alert"
+              className="mb-3 rounded-lg border border-error-msg-border bg-error-msg-bg px-3 py-2 text-[0.857rem] text-error-bright"
+            >
+              {error}
+            </div>
+          )}
 
           <div className="mt-1 flex gap-2">
             <button
               className="block flex-1 cursor-pointer rounded-lg border border-border-strong bg-elevated px-3 py-2.5 font-[inherit] text-[0.929rem] font-medium text-text transition-colors duration-150 hover:not-disabled:bg-button disabled:cursor-default disabled:opacity-40"
               type="submit"
-              disabled={submitting}
+              disabled={submitting || !workspaceId}
             >
               {submitting ? "Adding..." : "Add Bot"}
             </button>
@@ -188,13 +275,15 @@ function HermesBotModalInner() {
               className="cursor-pointer rounded-lg border border-border bg-raised px-3 py-2.5 font-[inherit] text-[0.929rem] text-text-muted transition-colors duration-150 hover:bg-hover hover:text-text"
               type="button"
               onClick={closeHermesBotModal}
+              disabled={submitting}
             >
               Cancel
             </button>
           </div>
         </form>
         )}
-      </div>
-    </div>
+        </div>
+      </Dialog.Content>
+    </Dialog.Portal>
   );
 }

@@ -319,6 +319,11 @@ export type WsClientEvent =
 
 export type BotKind = "webhook" | "hermes";
 
+export interface BotWorkspaceMembership {
+  id: string;
+  name: string;
+}
+
 /**
  * A slash command registered by a bot (Telegram setMyCommands-style).
  * Bots replace their full command list via `POST /bots/me/commands`;
@@ -344,6 +349,14 @@ export interface Bot {
   attachmentAccess?: boolean;
   webhookUrl: string | null;
   createdAt: string;
+}
+
+/** Owner-only bot details returned by the bot-management API. */
+export interface OwnedBot extends Bot {
+  attachmentAccess: boolean;
+  webhookSecret: string;
+  apiKeyEnabled: boolean;
+  workspaces: BotWorkspaceMembership[];
 }
 
 export interface BotWithApiKey extends Bot {
@@ -562,6 +575,7 @@ export type WsServerEvent =
       userId: string;
       newRole: WorkspaceMemberRole;
     }
+  | { type: "member_updated"; workspaceId: string; userId: string; name: string }
   | { type: "member_removed"; workspaceId: string; userId: string }
   | {
       type: "channel_created";

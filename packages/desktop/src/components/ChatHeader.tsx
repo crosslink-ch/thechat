@@ -25,6 +25,7 @@ export function ChatHeader() {
   const isSettings = routePath === "/settings";
   const isWorkspaceHome = routePath === "/";
   const isWorkspaceManage = routePath === "/workspace/manage";
+  const isBotsManage = routePath === "/bots/manage";
   const isNotifications = routePath === "/notifications";
 
   let chatTitle = "Workspace";
@@ -32,6 +33,8 @@ export function ChatHeader() {
     chatTitle = "Settings";
   } else if (isWorkspaceManage) {
     chatTitle = activeWorkspace?.name ?? "Workspace";
+  } else if (isBotsManage) {
+    chatTitle = "Bots";
   } else if (isNotifications) {
     chatTitle = "Notifications";
   } else if (isChannel) {
