@@ -63,7 +63,11 @@ describe("registerGlobalWsHandlers", () => {
     window.location.hash = "";
     useAuthStore.setState({ token: "token-1", user: null, loading: false });
     useHermesIndicatorsStore.getState().resetForTests();
-    useNotificationsStore.setState({ notifications: [], loading: false });
+    useNotificationsStore.setState({
+      notifications: [],
+      loading: false,
+      fetchNotifications: vi.fn().mockResolvedValue(undefined),
+    });
     useConversationsStore.setState({ unreadChannels: new Set() });
     useWorkspacesStore.setState({
       workspaces: [],
@@ -379,6 +383,9 @@ describe("registerGlobalWsHandlers", () => {
       ).toEqual([recovered]);
     });
     expect(workspacesRouteMock).toHaveBeenCalledWith({ id: "ws-1" });
+    expect(
+      useNotificationsStore.getState().fetchNotifications,
+    ).toHaveBeenCalledTimes(1);
     cleanup();
   });
 

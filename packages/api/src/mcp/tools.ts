@@ -20,11 +20,13 @@ import {
   getBot,
   updateBot,
   deleteBot,
-  addBotToWorkspace,
-  removeBotFromWorkspace,
   regenerateBotKey,
   regenerateBotSecret,
 } from "../services/bots";
+import {
+  addOwnedBotToWorkspace,
+  removeBotWorkspaceMembership,
+} from "../services/bot-workspace-memberships";
 import type { McpUser } from "./auth";
 
 function getUser(extra: { authInfo?: unknown }): McpUser {
@@ -431,7 +433,7 @@ export function registerTools(server: McpServer) {
     "add_bot_to_workspace",
     {
       description:
-        "Add a bot to a workspace. The caller must be a workspace member. The bot is added to all channels.",
+        "Add a bot you own to a workspace you administer. The bot is added to all channels and any matching pending approval request is resolved.",
       inputSchema: {
         botId: z.string().uuid().describe("The bot ID"),
         workspaceId: z.string().min(1).describe("The workspace ID"),
@@ -440,7 +442,7 @@ export function registerTools(server: McpServer) {
     async ({ botId, workspaceId }, extra) => {
       const user = getUser(extra);
       return withService(() =>
-        addBotToWorkspace(
+        addOwnedBotToWorkspace(
           botId as string,
           workspaceId as string,
           user.id
@@ -454,7 +456,7 @@ export function registerTools(server: McpServer) {
     "remove_bot_from_workspace",
     {
       description:
-        "Remove a bot from a workspace. The caller must be a workspace member. The bot is removed from all channels.",
+        "Remove a bot from a workspace as the bot owner or a workspace administrator. The bot is removed from all channels and connected workspace clients are updated.",
       inputSchema: {
         botId: z.string().uuid().describe("The bot ID"),
         workspaceId: z.string().min(1).describe("The workspace ID"),
@@ -463,7 +465,7 @@ export function registerTools(server: McpServer) {
     async ({ botId, workspaceId }, extra) => {
       const user = getUser(extra);
       return withService(() =>
-        removeBotFromWorkspace(
+        removeBotWorkspaceMembership(
           botId as string,
           workspaceId as string,
           user.id

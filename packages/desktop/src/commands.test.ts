@@ -47,14 +47,26 @@ describe("createCommands", () => {
     expect(ids).not.toContain("login");
     expect(commands.map((command) => command.label)).not.toContain("Log In");
     expect(ids).not.toContain("configure-mcp");
-    expect(ids).not.toContain("manage-workspace");
-    expect(commands.map((command) => command.label)).not.toContain("Manage Workspace");
     expect(ids).not.toContain("switch-permission-mode");
     expect(ids).not.toContain(removedPrimaryId);
     expect(ids).not.toContain(removedProjectId);
     expect(ids).not.toContain(removedSelectProjectId);
     expect(shortcuts).not.toContain(removedPrimaryShortcut);
     expect(shortcuts).not.toContain(removedProjectShortcut);
+  });
+
+  it("navigates to workspace access management", () => {
+    const navigate = vi.fn();
+    const command = createCommands(navigate).find((c) => c.id === "manage-workspace");
+
+    expect(command).toMatchObject({
+      id: "manage-workspace",
+      label: "Manage Workspace",
+    });
+
+    command!.execute();
+    expect(navigate).toHaveBeenCalledWith({ to: "/workspace/manage" });
+    expect(closePaletteAndRefocusMock).toHaveBeenCalledOnce();
   });
 
   it("opens the Add Hermes Bot flow from a dedicated command", () => {

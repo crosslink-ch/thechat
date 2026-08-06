@@ -464,8 +464,31 @@ export interface WorkspaceInvite {
   createdAt: string;
 }
 
+export type BotWorkspaceInviteStatus =
+  | "pending"
+  | "accepted"
+  | "declined"
+  | "cancelled";
+
+export interface BotWorkspaceInvite {
+  id: string;
+  workspaceId: string;
+  workspaceName: string;
+  botId: string;
+  botName: string;
+  requesterId: string;
+  requesterName: string;
+  status: BotWorkspaceInviteStatus;
+  createdAt: string;
+}
+
+export type BotWorkspaceInviteResult =
+  | { status: "added"; botId: string }
+  | { status: "pending"; invite: BotWorkspaceInvite };
+
 export type AppNotification =
-  | { type: "workspace_invite"; invite: WorkspaceInvite };
+  | { type: "workspace_invite"; invite: WorkspaceInvite }
+  | { type: "bot_workspace_invite"; invite: BotWorkspaceInvite };
 
 // -- Workspace Config Types --
 
@@ -533,7 +556,12 @@ export type WsServerEvent =
       userName: string;
     }
   | { type: "member_joined"; workspaceId: string; member: WorkspaceMember }
-  | { type: "member_role_changed"; workspaceId: string; userId: string; newRole: WorkspaceMemberRole }
+  | {
+      type: "member_role_changed";
+      workspaceId: string;
+      userId: string;
+      newRole: WorkspaceMemberRole;
+    }
   | { type: "member_removed"; workspaceId: string; userId: string }
   | {
       type: "channel_created";
@@ -551,5 +579,13 @@ export type WsServerEvent =
       channelId: string;
     }
   | { type: "invite_received"; invite: WorkspaceInvite }
+  | { type: "bot_workspace_invite_received"; invite: BotWorkspaceInvite }
+  | {
+      type: "bot_workspace_invite_resolved";
+      inviteId: string;
+      workspaceId: string;
+      botId: string;
+      status: Exclude<BotWorkspaceInviteStatus, "pending">;
+    }
   | { type: "pong" }
   | { type: "error"; message: string };

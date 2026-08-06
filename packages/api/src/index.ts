@@ -11,6 +11,7 @@ import { messageRoutes } from "./messages";
 import { wsRoutes } from "./ws";
 import { botRoutes } from "./bots";
 import { inviteRoutes } from "./invites";
+import { botWorkspaceInviteRoutes } from "./bot-workspace-invites";
 import { mcpRoutes } from "./mcp";
 import { hermesRoutes } from "./hermes";
 import { hermesPlatformRoutes } from "./hermes-platform";
@@ -40,6 +41,7 @@ const app = new Elysia()
   .use(hermesPlatformRoutes)
   .use(botRuntimeRoutes)
   .use(inviteRoutes)
+  .use(botWorkspaceInviteRoutes)
   .use(mcpRoutes)
   .get("/", () => "TheChat API")
   .get("/health", async ({ db }) => {

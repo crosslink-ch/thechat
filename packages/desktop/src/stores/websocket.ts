@@ -185,6 +185,17 @@ function doConnect() {
       wsEvents.emit("ws:invite_received", {
         invite: event.invite,
       });
+    } else if (event.type === "bot_workspace_invite_received") {
+      wsEvents.emit("ws:bot_workspace_invite_received", {
+        invite: event.invite,
+      });
+    } else if (event.type === "bot_workspace_invite_resolved") {
+      wsEvents.emit("ws:bot_workspace_invite_resolved", {
+        inviteId: event.inviteId,
+        workspaceId: event.workspaceId,
+        botId: event.botId,
+        status: event.status,
+      });
     }
   };
 

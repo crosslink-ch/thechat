@@ -2,6 +2,8 @@ import mitt from "mitt";
 import type {
   BotInvocationPublic,
   BotInvocationProgressEventPublic,
+  BotWorkspaceInvite,
+  BotWorkspaceInviteStatus,
   ChatMessage,
   ConversationThreadPublic,
   WorkspaceChannel,
@@ -69,6 +71,15 @@ export type WsEvents = {
   };
   "ws:invite_received": {
     invite: WorkspaceInvite;
+  };
+  "ws:bot_workspace_invite_received": {
+    invite: BotWorkspaceInvite;
+  };
+  "ws:bot_workspace_invite_resolved": {
+    inviteId: string;
+    workspaceId: string;
+    botId: string;
+    status: Exclude<BotWorkspaceInviteStatus, "pending">;
   };
 };
 
