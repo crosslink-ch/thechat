@@ -198,7 +198,9 @@ describe("Sidebar", () => {
 
     fireEvent.click(screen.getByText("Test User"));
     expect(screen.getByText("Manage bots")).toBeInTheDocument();
+    expect(screen.getByText("Settings")).toBeInTheDocument();
     expect(screen.getByText("Log out")).toBeInTheDocument();
+    expect(screen.queryByText("ChatGPT")).not.toBeInTheDocument();
   });
 
   it("renders channels and members when workspace is active", async () => {

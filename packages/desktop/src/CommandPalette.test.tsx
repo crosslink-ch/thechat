@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, act } from "@testing-library/react";
-import { useCommandsStore, type Command } from "./commands";
+import { createCommands, useCommandsStore, type Command } from "./commands";
 import { CommandPalette, togglePalette, closePalette } from "./CommandPalette";
 
 function makeCommand(overrides: Partial<Command> & { id: string; label: string }): Command {
@@ -66,6 +66,16 @@ describe("CommandPalette", () => {
 
     expect(screen.queryByText("Hidden Command")).not.toBeInTheDocument();
     expect(screen.queryByText("Ctrl+H")).not.toBeInTheDocument();
+  });
+
+  it("shows and opens the restored workspace management entrypoint", async () => {
+    const navigate = vi.fn();
+    useCommandsStore.getState().setCommands(createCommands(navigate));
+    await renderPalette();
+
+    fireEvent.click(screen.getByText("Manage Workspace"));
+
+    expect(navigate).toHaveBeenCalledWith({ to: "/workspace/manage" });
   });
 
   it("filters commands by label", async () => {

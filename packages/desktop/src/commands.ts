@@ -3,9 +3,6 @@ import { togglePalette, closePalette, closePaletteAndRefocus, openPaletteInComma
 import { toggleSidebar } from "./components/Sidebar";
 import { openWorkspaceModal } from "./components/WorkspaceModal";
 import { openHermesBotModal } from "./components/HermesBotModal";
-import { openPermissionModePicker } from "./PermissionModePicker";
-import { openMcpConfigDialog } from "./McpConfigDialog";
-import { useWorkspacesStore } from "./stores/workspaces";
 import { useFontSizeStore } from "./stores/font-size";
 
 export interface Keybinding {
@@ -140,11 +137,8 @@ export function createCommands(
       shortcut: null,
       keybinding: null,
       execute: () => {
-        const ws = useWorkspacesStore.getState().activeWorkspace;
-        if (ws) {
-          navigate({ to: "/workspace/manage" });
-          closePaletteAndRefocus();
-        }
+        navigate({ to: "/workspace/manage" });
+        closePaletteAndRefocus();
       },
     },
     {
@@ -211,26 +205,6 @@ export function createCommands(
           },
         ]
       : []),
-    {
-      id: "configure-mcp",
-      label: "Configure MCP Server",
-      shortcut: null,
-      keybinding: null,
-      execute: () => {
-        closePalette();
-        openMcpConfigDialog();
-      },
-    },
-    {
-      id: "switch-permission-mode",
-      label: "Switch Permission Mode",
-      shortcut: null,
-      keybinding: null,
-      execute: () => {
-        closePalette();
-        openPermissionModePicker();
-      },
-    },
     {
       id: "zoom-in",
       label: "Increase Font Size",

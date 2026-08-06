@@ -92,4 +92,17 @@ describe("WorkspaceHomeRoute", () => {
     expect(screen.getByText("Create workspace")).toBeInTheDocument();
     expect(screen.queryByText("Channel route")).not.toBeInTheDocument();
   });
+
+  it("exposes workspace access management when the active workspace has no channels", async () => {
+    useWorkspacesStore.setState({
+      workspaces: [{ id: "ws-1", name: "Team Alpha", role: "owner", createdAt: "2026-01-01", updatedAt: "2026-01-01" }],
+      activeWorkspace: { ...activeWorkspace, channels: [] },
+      loading: false,
+    });
+
+    await renderHome();
+
+    expect(screen.getByText("This workspace has no channels yet.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Manage workspace" })).toBeInTheDocument();
+  });
 });

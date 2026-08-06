@@ -21,6 +21,7 @@ export function ChatHeader() {
 
   const isChannel = routePath.startsWith("/channel");
   const isDm = routePath.startsWith("/dm");
+  const isAgentChat = routePath.startsWith("/chat");
   const isSettings = routePath === "/settings";
   const isWorkspaceHome = routePath === "/";
   const isWorkspaceManage = routePath === "/workspace/manage";
@@ -59,12 +60,12 @@ export function ChatHeader() {
         </button>
       )}
       <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-[0.929rem] text-text-muted">{chatTitle}</span>
-      {permissionMode === "allow-edits" && (
+      {isAgentChat && permissionMode === "allow-edits" && (
         <span className="rounded-md bg-warning-bg px-2 py-0.5 text-[0.786rem] font-medium text-warning-text">
           Allow Edits
         </span>
       )}
-      {permissionMode === "bypass" && (
+      {isAgentChat && permissionMode === "bypass" && (
         <span className="rounded-md bg-danger-bg px-2 py-0.5 text-[0.786rem] font-medium text-error-bright">
           Bypass
         </span>

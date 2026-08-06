@@ -14,7 +14,7 @@ import {
   uniqueIndex,
   foreignKey,
 } from "drizzle-orm/pg-core";
-import { relations } from "drizzle-orm";
+import { relations, sql } from "drizzle-orm";
 import type { BotCommandPublic, MessagePart } from "@thechat/shared";
 import type { DomainEventEnvelope } from "../events/envelope";
 
@@ -40,6 +40,10 @@ export const inviteStatusEnum = pgEnum("invite_status", [
   "accepted",
   "declined",
 ]);
+export const botWorkspaceInviteStatusEnum = pgEnum(
+  "bot_workspace_invite_status",
+  ["pending", "accepted", "declined", "cancelled"],
+);
 export const botKindEnum = pgEnum("bot_kind", ["webhook", "hermes"]);
 export const attachmentStatusEnum = pgEnum("attachment_status", [
   "pending_upload",
@@ -304,6 +308,38 @@ export const bots = pgTable(
     uniqueIndex("bots_user_id_idx").on(t.userId),
     index("bots_owner_id_idx").on(t.ownerId),
   ]
+);
+
+export const botWorkspaceInvites = pgTable(
+  "bot_workspace_invites",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    workspaceId: varchar("workspace_id", { length: 100 })
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    botId: uuid("bot_id")
+      .notNull()
+      .references(() => bots.id, { onDelete: "cascade" }),
+    requesterId: uuid("requester_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    status: botWorkspaceInviteStatusEnum("status").notNull().default("pending"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull()
+      .$onUpdate(() => new Date()),
+  },
+  (t) => [
+    index("bwi_workspace_id_idx").on(t.workspaceId),
+    index("bwi_bot_id_idx").on(t.botId),
+    index("bwi_requester_id_idx").on(t.requesterId),
+    uniqueIndex("bwi_workspace_bot_pending_idx")
+      .on(t.workspaceId, t.botId)
+      .where(sql`${t.status} = 'pending'`),
+  ],
 );
 
 export const hermesBotConfigs = pgTable("hermes_bot_configs", {

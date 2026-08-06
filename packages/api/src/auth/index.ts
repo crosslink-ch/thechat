@@ -28,6 +28,16 @@ const loginSchema = z.object({
   password: z.string().min(1, "Password is required"),
 });
 
+const updateProfileSchema = z
+  .object({
+    name: z
+      .string()
+      .trim()
+      .min(1, "Name is required")
+      .max(255, "Name must be 255 characters or fewer"),
+  })
+  .strict();
+
 const resendVerificationSchema = z.object({
   email: z.email("Please enter a valid email address"),
 });
@@ -568,6 +578,72 @@ export const authRoutes = new Elysia({ prefix: "/auth" })
     if (!user) {
       set.status = 401;
       return { error: "Authentication required" };
+    }
+
+    return { user };
+  })
+
+  .patch("/me", async ({ body, headers, set, request, server }) => {
+    const parsed = updateProfileSchema.safeParse(body);
+    if (!parsed.success) {
+      set.status = 400;
+      return { error: formatZodError(parsed.error) };
+    }
+
+    const token = extractBearerToken(headers);
+    if (!token) {
+      set.status = 401;
+      return { error: "Authentication required" };
+    }
+
+    const currentUser = await resolveTokenToUser(token, {
+      includeBotTokens: false,
+    });
+    if (!currentUser) {
+      set.status = 401;
+      return { error: "Authentication required" };
+    }
+
+    const result = await callBetterAuth(
+      "POST",
+      "/update-user",
+      { name: parsed.data.name },
+      internalAuthHeaders(clientMetadata({ headers, request, server }), {
+        authorization: `Bearer ${token}`,
+      }),
+    );
+    if (!result.ok) {
+      if (result.status >= 500) {
+        authRouteLog.error(
+          { upstreamStatus: result.status },
+          "Better Auth profile update failed",
+        );
+        set.status = 503;
+        return authServiceUnavailable;
+      }
+      if (result.status === 401 || result.status === 403) {
+        set.status = 401;
+        return { error: "Authentication required" };
+      }
+      if (result.status === 429) {
+        forwardRateLimitMetadata(set, result.retryAfter);
+      }
+      set.status = result.status;
+      return {
+        error: authErrorMessage(result.data, "Could not update profile"),
+      };
+    }
+
+    const user = await resolveTokenToUser(token, {
+      includeBotTokens: false,
+    });
+    if (!user) {
+      authRouteLog.error(
+        { userId: currentUser.id },
+        "Profile update succeeded but the user could not be reloaded",
+      );
+      set.status = 503;
+      return authServiceUnavailable;
     }
 
     return { user };

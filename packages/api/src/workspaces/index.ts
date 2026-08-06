@@ -10,6 +10,12 @@ import {
   updateMemberRole,
   removeMember,
 } from "../services/workspaces";
+import {
+  cancelBotWorkspaceInvite,
+  listWorkspaceBotInvites,
+  removeBotWorkspaceMembership,
+  requestBotForWorkspace,
+} from "../services/bot-workspace-memberships";
 import { broadcastToUser } from "../ws";
 import { db } from "../db";
 import { workspaceMembers } from "../db/schema";
@@ -66,6 +72,72 @@ export const workspaceRoutes = new Elysia({ prefix: "/workspaces" })
   .get("/:id", async ({ params, user, set }) => {
     try {
       return await getWorkspaceDetail(params.id, user.id);
+    } catch (e) {
+      if (e instanceof ServiceError) {
+        set.status = e.status;
+        return { error: e.message };
+      }
+      throw e;
+    }
+  })
+
+  // Add a bot directly when it belongs to the caller, otherwise request approval.
+  .post("/:id/bots", async ({ params, body, user, set }) => {
+    const parsed = z.object({ botId: z.string().uuid() }).safeParse(body);
+    if (!parsed.success) {
+      set.status = 400;
+      return { error: parsed.error.issues[0]?.message ?? "Invalid bot ID" };
+    }
+
+    try {
+      return await requestBotForWorkspace(params.id, parsed.data.botId, user.id);
+    } catch (e) {
+      if (e instanceof ServiceError) {
+        set.status = e.status;
+        return { error: e.message };
+      }
+      throw e;
+    }
+  })
+
+  // List approval requests initiated by workspace admins.
+  .get("/:id/bot-invites", async ({ params, user, set }) => {
+    try {
+      return await listWorkspaceBotInvites(params.id, user.id);
+    } catch (e) {
+      if (e instanceof ServiceError) {
+        set.status = e.status;
+        return { error: e.message };
+      }
+      throw e;
+    }
+  })
+
+  // Cancel a pending bot approval request.
+  .delete("/:id/bot-invites/:inviteId", async ({ params, user, set }) => {
+    try {
+      return await cancelBotWorkspaceInvite(
+        params.id,
+        params.inviteId,
+        user.id,
+      );
+    } catch (e) {
+      if (e instanceof ServiceError) {
+        set.status = e.status;
+        return { error: e.message };
+      }
+      throw e;
+    }
+  })
+
+  // Remove a bot from this workspace. Bot owners and workspace admins may do so.
+  .delete("/:id/bots/:botId", async ({ params, user, set }) => {
+    try {
+      return await removeBotWorkspaceMembership(
+        params.botId,
+        params.id,
+        user.id,
+      );
     } catch (e) {
       if (e instanceof ServiceError) {
         set.status = e.status;

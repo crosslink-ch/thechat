@@ -7,14 +7,12 @@ import { useWorkspacesStore } from "../stores/workspaces";
 import { useConversationsStore } from "../stores/conversations";
 import { useNotificationsStore } from "../stores/notifications";
 import { openAuthModal } from "./AuthModal";
-import { openCodexAuthModal } from "./CodexAuthModal";
 import { openWorkspaceModal } from "./WorkspaceModal";
 import {
   openCreateChannelModal,
   openDeleteChannelModal,
   openRenameChannelModal,
 } from "./ChannelModal";
-import { useCodexAuthStore } from "../stores/codex-auth";
 import { api } from "../lib/api";
 import type { WorkspaceChannel, WorkspaceMember } from "@thechat/shared";
 
@@ -117,7 +115,6 @@ export function Sidebar() {
     (s) => s.setActiveDirectConversation,
   );
   const notificationCount = useNotificationsStore((s) => s.notifications.length);
-  const codexStatus = useCodexAuthStore((s) => s.status);
 
   // Determine current active IDs from route
   const isChannel = routePath.startsWith("/channel");
@@ -489,18 +486,6 @@ export function Sidebar() {
                   <button
                     className="flex w-full cursor-pointer items-center justify-between gap-2 border-none bg-transparent px-3 py-2.5 text-left font-[inherit] text-[0.857rem] text-text-secondary transition-colors duration-100 hover:bg-hover hover:text-text"
                     onClick={() => {
-                      openCodexAuthModal();
-                      setProfileMenuOpen(false);
-                    }}
-                  >
-                    <span>ChatGPT</span>
-                    <span className={`text-[0.786rem] ${codexStatus === "authenticated" ? "text-success" : "text-text-dimmed"}`}>
-                      {codexStatus === "authenticated" ? "Connected" : "Not connected"}
-                    </span>
-                  </button>
-                  <button
-                    className="flex w-full cursor-pointer items-center justify-between gap-2 border-none bg-transparent px-3 py-2.5 text-left font-[inherit] text-[0.857rem] text-text-secondary transition-colors duration-100 hover:bg-hover hover:text-text"
-                    onClick={() => {
                       navigate({ to: "/notifications" });
                       setProfileMenuOpen(false);
                     }}
@@ -550,20 +535,6 @@ export function Sidebar() {
               >
                 <SettingsIcon />
                 Settings
-              </button>
-              <button
-                className="flex w-full cursor-pointer items-center justify-between rounded-md border-none bg-transparent px-2 py-1.5 text-left font-[inherit] text-[0.857rem] text-text-secondary transition-colors duration-150 hover:bg-hover hover:text-text"
-                onClick={openCodexAuthModal}
-              >
-                <span className="flex items-center gap-2">
-                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M7 1.17 8.46 4.7l3.87.34-2.95 2.54.88 3.8L7 9.42l-3.26 1.96.88-3.8-2.95-2.54 3.87-.34Z" />
-                  </svg>
-                  ChatGPT
-                </span>
-                <span className={`text-[0.786rem] ${codexStatus === "authenticated" ? "text-success" : "text-text-dimmed"}`}>
-                  {codexStatus === "authenticated" ? "Connected" : "Not connected"}
-                </span>
               </button>
               <button
                 className="mt-1 flex w-full cursor-pointer items-center justify-center gap-1.5 rounded-md border border-border bg-raised px-2.5 py-2 font-[inherit] text-[0.857rem] font-medium text-text-secondary transition-colors duration-150 hover:bg-hover hover:text-text"

@@ -11,6 +11,7 @@ import {
   conversationParticipants,
   apikey,
   botInvocations,
+  botWorkspaceInvites,
   eventOutbox,
   hermesBotConfigs,
 } from "../db/schema";
@@ -319,7 +320,7 @@ export async function addBotToWorkspace(
     throw new ServiceError("Bot not found", 404);
   }
   if (bot.ownerId !== callerId) {
-    throw new ServiceError("Only the bot owner can add it to a workspace", 403);
+    throw new ServiceError("Only the bot owner can add it directly", 403);
   }
 
   const result = await db.transaction(async (tx) => {
@@ -345,10 +346,10 @@ export async function addBotToWorkspace(
         ),
       )
       .limit(1);
-    if (!callerMembership) {
-      throw new ServiceError("You are not a member of this workspace", 403);
-    }
-    if (callerMembership.role !== "owner" && callerMembership.role !== "admin") {
+    if (
+      !callerMembership ||
+      (callerMembership.role !== "owner" && callerMembership.role !== "admin")
+    ) {
       throw new ServiceError("Only workspace admins can add bots", 403);
     }
 
@@ -462,21 +463,6 @@ async function broadcastBotJoinedWorkspace({
   }
 }
 
-function broadcastBotRemovedFromWorkspace(
-  workspaceId: string,
-  botUserId: string,
-  recipients: Array<{ userId: string }>,
-) {
-  const event: WsServerEvent = {
-    type: "member_removed",
-    workspaceId,
-    userId: botUserId,
-  };
-  for (const recipient of recipients) {
-    broadcastToUser(recipient.userId, event);
-  }
-}
-
 export async function removeBotFromWorkspace(
   botId: string,
   workspaceId: string,
@@ -492,9 +478,6 @@ export async function removeBotFromWorkspace(
   if (!bot) {
     throw new ServiceError("Bot not found", 404);
   }
-  if (bot.ownerId !== callerId) {
-    throw new ServiceError("Only the bot owner can remove it from a workspace", 403);
-  }
 
   const result = await db.transaction(async (tx) => {
     const [workspace] = await tx
@@ -509,10 +492,24 @@ export async function removeBotFromWorkspace(
 
     await options.afterWorkspaceLocked?.();
 
-    const recipients = await tx
-      .select({ userId: workspaceMembers.userId })
+    const [callerMembership] = await tx
+      .select({ role: workspaceMembers.role })
       .from(workspaceMembers)
-      .where(eq(workspaceMembers.workspaceId, workspaceId));
+      .where(
+        and(
+          eq(workspaceMembers.workspaceId, workspaceId),
+          eq(workspaceMembers.userId, callerId),
+        ),
+      )
+      .limit(1);
+    const callerIsWorkspaceAdmin =
+      callerMembership?.role === "owner" || callerMembership?.role === "admin";
+    if (bot.ownerId !== callerId && !callerIsWorkspaceAdmin) {
+      throw new ServiceError(
+        "Only the bot owner or a workspace admin can remove it",
+        403,
+      );
+    }
 
     const workspaceConversations = await tx
       .select({ id: conversations.id })
@@ -623,20 +620,39 @@ export async function removeBotFromWorkspace(
         );
     }
 
-    await tx
+    const removedMemberships = await tx
       .delete(workspaceMembers)
       .where(
         and(
           eq(workspaceMembers.workspaceId, workspaceId),
           eq(workspaceMembers.userId, bot.userId),
         ),
-      );
+      )
+      .returning({ userId: workspaceMembers.userId });
 
-    return recipients;
+    const recipients =
+      removedMemberships.length === 0
+        ? []
+        : await tx
+            .select({ userId: workspaceMembers.userId })
+            .from(workspaceMembers)
+            .innerJoin(users, eq(users.id, workspaceMembers.userId))
+            .where(
+              and(
+                eq(workspaceMembers.workspaceId, workspaceId),
+                eq(users.type, "human"),
+              ),
+            );
+
+    return {
+      success: true,
+      removed: removedMemberships.length > 0,
+      botUserId: bot.userId,
+      recipientIds: recipients.map((recipient) => recipient.userId),
+    };
   });
 
-  broadcastBotRemovedFromWorkspace(workspaceId, bot.userId, result);
-  return { success: true };
+  return result;
 }
 
 export async function getBot(botId: string, ownerId: string) {
@@ -864,42 +880,46 @@ export async function updateAuthenticatedBotCommands(
   };
 }
 
-export async function deleteBot(
-  botId: string,
-  ownerId: string,
-  options: { afterWorkspaceLocked?: (workspaceId: string) => Promise<void> } = {},
-) {
-  const [bot] = await db
-    .select({ id: bots.id, ownerId: bots.ownerId, userId: bots.userId })
-    .from(bots)
-    .where(eq(bots.id, botId))
-    .limit(1);
-
-  if (!bot) {
-    throw new ServiceError("Bot not found", 404);
-  }
-  if (bot.ownerId !== ownerId) {
-    throw new ServiceError("Only the bot owner can delete the bot", 403);
-  }
-
-  // Detach through the same workspace-locked revocation path as an explicit
-  // disconnect. This cancels active invocations and scrubs durable outbox
-  // targets before the bot identity and credentials disappear.
-  const workspaceMemberships = await db
-    .select({ workspaceId: workspaceMembers.workspaceId })
-    .from(workspaceMembers)
-    .where(eq(workspaceMembers.userId, bot.userId));
-  workspaceMemberships.sort((a, b) => a.workspaceId.localeCompare(b.workspaceId));
-  for (const { workspaceId } of workspaceMemberships) {
-    await removeBotFromWorkspace(botId, workspaceId, ownerId, {
-      afterWorkspaceLocked: options.afterWorkspaceLocked
-        ? () => options.afterWorkspaceLocked!(workspaceId)
-        : undefined,
-    });
-  }
-
-  // The Better Auth API-key row cascades with the bot user.
+export async function deleteBot(botId: string, ownerId: string) {
   await db.transaction(async (tx) => {
+    const [bot] = await tx
+      .select({ id: bots.id, ownerId: bots.ownerId, userId: bots.userId })
+      .from(bots)
+      .where(eq(bots.id, botId))
+      .for("update")
+      .limit(1);
+
+    if (!bot) {
+      throw new ServiceError("Bot not found", 404);
+    }
+
+    if (bot.ownerId !== ownerId) {
+      throw new ServiceError("Only the bot owner can delete the bot", 403);
+    }
+
+    const [workspaceMembership] = await tx
+      .select({ workspaceId: workspaceMembers.workspaceId })
+      .from(workspaceMembers)
+      .where(eq(workspaceMembers.userId, bot.userId))
+      .limit(1);
+    const [pendingInvite] = await tx
+      .select({ id: botWorkspaceInvites.id })
+      .from(botWorkspaceInvites)
+      .where(
+        and(
+          eq(botWorkspaceInvites.botId, botId),
+          eq(botWorkspaceInvites.status, "pending"),
+        ),
+      )
+      .limit(1);
+    if (workspaceMembership || pendingInvite) {
+      throw new ServiceError(
+        "Remove the bot from all workspaces and resolve pending workspace requests before deleting it",
+        409,
+      );
+    }
+
+    // The Better Auth API-key row cascades with the bot user.
     await tx.delete(bots).where(eq(bots.id, botId));
     await tx.delete(users).where(eq(users.id, bot.userId));
   });

@@ -32,7 +32,6 @@ import {
 } from "../services/bot-runtime";
 import {
   createHermesBotInWorkspace,
-  deleteBot as deleteBotService,
   updateAuthenticatedBotWebhook,
 } from "../services/bots";
 import { updateMemberRole } from "../services/workspaces";
@@ -588,7 +587,7 @@ describe("Bots: Workspace management", () => {
     expect(botMember).toBeUndefined();
   });
 
-  test("non-owner cannot disconnect a bot from a workspace", async () => {
+  test("workspace admins can disconnect a bot owned by another user", async () => {
     const botOwner = await registerUser("DisconnectOwner");
     const otherAdmin = await registerUser("DisconnectAdmin");
     const wsRes = await req(
@@ -613,8 +612,7 @@ describe("Bots: Workspace management", () => {
       otherAdmin.token,
     );
 
-    expect(removeRes.status).toBe(403);
-    expect(removeRes.body.error).toContain("bot owner");
+    expect(removeRes.status).toBe(200);
     const detailRes = await req(
       "GET",
       `/workspaces/${wsRes.body.id}`,
@@ -623,7 +621,7 @@ describe("Bots: Workspace management", () => {
     );
     expect(
       detailRes.body.members.some((member: any) => member.userId === botRes.body.userId),
-    ).toBe(true);
+    ).toBe(false);
   });
 
   test("removing a Hermes bot revokes queued channel work and cancels deletion blockers", async () => {
@@ -753,107 +751,6 @@ describe("Bots: Workspace management", () => {
     expect(deleteRes.status).toBe(200);
   });
 
-  test("deleting a Hermes bot revokes queued work while serializing concurrent sends", async () => {
-    const human = await registerUser("HermesDeletionOwner");
-    const { workspaceId } = await createWorkspaceWithGeneralChannel(
-      human.token,
-      "Hermes Deletion WS",
-    );
-    const channelRes = await req(
-      "POST",
-      "/conversations/channel",
-      { workspaceId, name: "deletion-race" },
-      human.token,
-    );
-    expect(channelRes.status).toBe(200);
-    const botRes = await createBot(human.token, "DeletedHermes", undefined, {
-      kind: "hermes",
-      workspaceId,
-    });
-    expect(botRes.status).toBe(200);
-
-    const seedMessage = await req(
-      "POST",
-      `/messages/${channelRes.body.id}`,
-      { content: "@DeletedHermes queue this before deletion" },
-      human.token,
-    );
-    expect(seedMessage.status).toBe(200);
-    const delayedEvent = createChatMessageSentV1({
-      messageId: seedMessage.body.id,
-      conversationId: channelRes.body.id,
-      targetBotIds: [botRes.body.id],
-      messageKind: "user",
-      automationDepth: 0,
-      senderId: human.user.id,
-      senderType: "human",
-      workspaceId,
-    });
-    await enqueueDomainEvent(db, delayedEvent, {
-      partitionKey: channelRes.body.id,
-      availableAt: new Date(Date.now() + 60 * 60 * 1000),
-    });
-
-    let signalLocked!: () => void;
-    let releaseDeletion!: () => void;
-    const workspaceLocked = new Promise<void>((resolve) => {
-      signalLocked = resolve;
-    });
-    const deletionReleased = new Promise<void>((resolve) => {
-      releaseDeletion = resolve;
-    });
-    const deletion = deleteBotService(botRes.body.id, human.user.id, {
-      afterWorkspaceLocked: async (lockedWorkspaceId) => {
-        expect(lockedWorkspaceId).toBe(workspaceId);
-        signalLocked();
-        await deletionReleased;
-      },
-    });
-    await workspaceLocked;
-
-    const racingSend = req(
-      "POST",
-      `/messages/${channelRes.body.id}`,
-      { content: "@DeletedHermes this races with deletion" },
-      human.token,
-    );
-    releaseDeletion();
-    await deletion;
-    const racingSendRes = await racingSend;
-    expect(racingSendRes.status).toBe(200);
-
-    const [revokedEvent] = await db
-      .select({
-        event: eventOutbox.event,
-        deadAt: eventOutbox.deadAt,
-        lastError: eventOutbox.lastError,
-      })
-      .from(eventOutbox)
-      .where(eq(eventOutbox.id, delayedEvent.id))
-      .limit(1);
-    expect((revokedEvent.event as any).payload.targetBotIds).toEqual([]);
-    expect(revokedEvent.deadAt).toBeInstanceOf(Date);
-    expect(revokedEvent.lastError).toBe("Target bot removed from workspace");
-
-    const racingEvents = await db
-      .select({ event: eventOutbox.event })
-      .from(eventOutbox)
-      .where(eq(eventOutbox.tenantId, workspaceId));
-    const racingEvent = racingEvents.find(
-      ({ event }) => (event as any).payload?.messageId === racingSendRes.body.id,
-    );
-    expect((racingEvent?.event as any)?.payload?.targetBotIds ?? []).not.toContain(
-      botRes.body.id,
-    );
-
-    const deleteChannelRes = await req(
-      "DELETE",
-      `/conversations/channel/${channelRes.body.id}`,
-      undefined,
-      human.token,
-    );
-    expect(deleteChannelRes.status).toBe(200);
-  });
 });
 
 describe("Bots: Send messages", () => {
