@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test";
+import crypto from "crypto";
 import type { BotProgressStore } from "./bot-progress-store";
 import {
   createLocalBotProgressStoreForTests,
+  createRedisBotProgressStoreForTests,
   createResilientBotProgressStoreForTests,
 } from "./bot-progress-store";
 
@@ -108,6 +110,55 @@ describe("local bot progress store", () => {
     expect(await store.listForConversation("conversation-1")).toEqual([]);
   });
 
+  test("reuses one stable request event for an ambiguous retry", async () => {
+    const store = createLocalBotProgressStoreForTests();
+    const input = progressInput({
+      type: "approval.request",
+      toolCallId: null,
+      payload: { requestId: "approval-stable", sessionKey: "session-1" },
+    });
+
+    const first = await store.append(input);
+    const retry = await store.append({ ...input, occurredAt: new Date() });
+
+    expect(retry).toEqual(first);
+    expect(await store.listForConversation("conversation-1")).toEqual([first]);
+  });
+
+  test("never compacts an unresolved interaction request at the event cap", async () => {
+    const store = createLocalBotProgressStoreForTests({ maxEvents: 3 });
+    const request = await store.append(progressInput({
+      type: "clarify.request",
+      toolCallId: null,
+      payload: { requestId: "clarify-overflow", sessionKey: "session-1" },
+    }));
+    for (let index = 0; index < 8; index += 1) {
+      await store.append(progressInput({
+        toolCallId: `call-${index}`,
+        payload: { index },
+      }));
+    }
+
+    const retained = await store.listForConversation("conversation-1");
+    expect(retained).toHaveLength(4);
+    expect(retained).toContainEqual(request);
+
+    await store.append(progressInput({
+      type: "clarify.resolved",
+      toolCallId: null,
+      payload: {
+        requestId: "clarify-overflow",
+        sessionKey: "session-1",
+        response: "done",
+      },
+    }));
+    expect(
+      (await store.listForConversation("conversation-1")).some(
+        (event) => event.id === request.id,
+      ),
+    ).toBe(false);
+  });
+
   test("clear removes events and the conversation index", async () => {
     const store = createLocalBotProgressStoreForTests();
     await store.append(progressInput());
@@ -118,6 +169,44 @@ describe("local bot progress store", () => {
     });
 
     expect(await store.listForConversation("conversation-1")).toEqual([]);
+  });
+});
+
+const redisTestUrl = process.env.TEST_REDIS_URL;
+const redisTest = redisTestUrl ? test : test.skip;
+
+describe("redis bot progress store", () => {
+  redisTest("deduplicates retries and retains a live request beyond the list cap", async () => {
+    const store = createRedisBotProgressStoreForTests({
+      redisUrl: redisTestUrl!,
+      redisKeyPrefix: `thechat-test-${crypto.randomUUID()}`,
+      maxEvents: 3,
+    });
+    try {
+      const input = progressInput({
+        type: "approval.request",
+        toolCallId: null,
+        payload: { requestId: "redis-stable", sessionKey: "session-redis" },
+      });
+      const first = await Promise.all([
+        store.append(input),
+        store.append({ ...input, occurredAt: new Date() }),
+      ]);
+      expect(first[1]).toEqual(first[0]);
+
+      for (let index = 0; index < 8; index += 1) {
+        await store.append(progressInput({ toolCallId: `redis-call-${index}` }));
+      }
+      const retained = await store.listForConversation("conversation-1");
+      expect(retained.filter((event) => event.id === first[0].id)).toHaveLength(1);
+      expect(retained).toHaveLength(4);
+    } finally {
+      await store.clear({
+        invocationId: "invocation-1",
+        conversationId: "conversation-1",
+      });
+      await store.close?.();
+    }
   });
 });
 

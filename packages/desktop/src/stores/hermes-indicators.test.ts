@@ -325,6 +325,103 @@ describe("useHermesIndicatorsStore", () => {
     });
   });
 
+  describe("pending clarifications", () => {
+    it("tracks another thread and clears only the exact resolved request", () => {
+      const otherThread = makeInvocation({
+        id: "inv-other-thread",
+        conversationId: "conv-other",
+        threadId: "thread-other",
+        status: "queued",
+      });
+      store().trackInvocation(otherThread);
+      store().trackProgressEvent(
+        makeEvent({
+          id: "clarify-first-event",
+          invocationId: otherThread.id,
+          conversationId: otherThread.conversationId,
+          threadId: otherThread.threadId,
+          type: "clarify.request",
+          payload: {
+            requestId: "clarify-first",
+            sessionKey: "session-other",
+          },
+        }),
+      );
+      store().trackProgressEvent(
+        makeEvent({
+          id: "clarify-second-event",
+          invocationId: otherThread.id,
+          conversationId: otherThread.conversationId,
+          threadId: otherThread.threadId,
+          sequence: 2,
+          type: "clarify.request",
+          payload: {
+            requestId: "clarify-second",
+            sessionKey: "session-other",
+          },
+        }),
+      );
+
+      expect(store().pendingClarifications.map((item) => item.eventId)).toEqual([
+        "clarify-first-event",
+        "clarify-second-event",
+      ]);
+      expect(store().pendingClarifications[0]).toMatchObject({
+        conversationId: "conv-other",
+        threadId: "thread-other",
+        botUserId: "u-bot",
+      });
+
+      store().trackProgressEvent(
+        makeEvent({
+          id: "clarify-resolution",
+          invocationId: otherThread.id,
+          conversationId: otherThread.conversationId,
+          threadId: otherThread.threadId,
+          sequence: 3,
+          type: "clarify.resolved",
+          payload: {
+            requestId: "clarify-second",
+            sessionKey: "session-other",
+            response: "B",
+          },
+        }),
+      );
+
+      expect(store().pendingClarifications.map((item) => item.eventId)).toEqual([
+        "clarify-first-event",
+      ]);
+    });
+
+    it("seeds a clarification requested before this client connected", () => {
+      const invocation = makeInvocation({ status: "claimed", threadId: "thread-2" });
+      store().seedFromSnapshot(
+        "conv-1",
+        {
+          invocations: [invocation],
+          events: [
+            makeEvent({
+              type: "clarify.request",
+              threadId: "thread-2",
+              payload: {
+                requestId: "clarify-snapshot",
+                sessionKey: "session-snapshot",
+              },
+            }),
+          ],
+        },
+        {},
+      );
+
+      expect(store().pendingClarifications).toEqual([
+        expect.objectContaining({
+          requestId: "clarify-snapshot",
+          threadId: "thread-2",
+        }),
+      ]);
+    });
+  });
+
   describe("seedFromSnapshot", () => {
     it("seeds pending approvals from active invocations only", () => {
       const active = makeInvocation({ id: "inv-1", threadId: "t-1", status: "claimed" });

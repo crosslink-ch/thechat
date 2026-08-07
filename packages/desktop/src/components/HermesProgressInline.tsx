@@ -51,6 +51,12 @@ type ClarifyRow = { kind: "clarify"; key: string; state: ClarifyRequestState };
 type ActivityRow = EventRow | ApprovalRow | ClarifyRow;
 
 const MAX_VISIBLE_ROWS = 8;
+const MAX_UI_LABEL_CHARS = 4_000;
+const MAX_UI_DESCRIPTION_CHARS = 10_000;
+const MAX_UI_COMMAND_CHARS = 100_000;
+const MAX_UI_DETAIL_CHARS = 20_000;
+const MAX_UI_CHOICE_CHARS = 500;
+const MAX_UI_CHOICES = 20;
 
 export function HermesProgressInline({
   invocations,
@@ -568,7 +574,10 @@ function ApprovalRequestCard({
   onDecision: (decision: ApprovalDecision) => void | Promise<void>;
 }) {
   const command = approvalCommandText(event);
-  const description = stringField(event.payload, "description");
+  const description = boundedUiText(
+    stringField(event.payload, "description"),
+    MAX_UI_DESCRIPTION_CHARS,
+  );
   const choices = approvalChoices(event);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -678,7 +687,10 @@ function ClarifyRequestCard({
   onResponse: (response: ClarifyResponse) => void | Promise<void>;
 }) {
   const event = state.event;
-  const question = stringField(event.payload, "question") || eventText(event);
+  const question = boundedUiText(
+    stringField(event.payload, "question") || eventText(event),
+    MAX_UI_DETAIL_CHARS,
+  );
   const choices = clarifyChoices(event);
   const multiSelect = event.payload?.multiSelect === true;
   const [selected, setSelected] = useState<string[]>([]);
@@ -1056,7 +1068,9 @@ function StatusDot({ status }: { status: string | null }) {
 }
 
 function eventLabel(event: BotInvocationProgressEventPublic) {
-  if (event.label?.trim()) return event.label.trim();
+  if (event.label?.trim()) {
+    return boundedUiText(event.label.trim(), MAX_UI_LABEL_CHARS);
+  }
   if (event.toolName) {
     const args = recordField(event.payload, "args");
     const call: ToolCallPart = {
@@ -1065,9 +1079,11 @@ function eventLabel(event: BotInvocationProgressEventPublic) {
       toolName: event.toolName,
       args,
     };
-    return formatToolSummary(call);
+    return boundedUiText(formatToolSummary(call), MAX_UI_LABEL_CHARS);
   }
-  if (event.preview?.trim()) return event.preview.trim();
+  if (event.preview?.trim()) {
+    return boundedUiText(event.preview.trim(), MAX_UI_LABEL_CHARS);
+  }
   return event.type.replace(/\./g, " ");
 }
 
@@ -1079,18 +1095,25 @@ function toolDetailText(event: BotInvocationProgressEventPublic) {
     stringField(recordField(event.payload, "args"), "command"),
     eventLabel(event),
   ];
-  return candidates.reduce(
-    (longest, candidate) =>
-      candidate.length > longest.length ? candidate : longest,
-    "",
+  return boundedUiText(
+    candidates.reduce(
+      (longest, candidate) =>
+        candidate.length > longest.length ? candidate : longest,
+      "",
+    ),
+    MAX_UI_DETAIL_CHARS,
   );
 }
 
 function eventText(event: BotInvocationProgressEventPublic) {
-  if (event.label?.trim()) return event.label.trim();
-  if (event.preview?.trim()) return event.preview.trim();
+  if (event.label?.trim()) {
+    return boundedUiText(event.label.trim(), MAX_UI_LABEL_CHARS);
+  }
+  if (event.preview?.trim()) {
+    return boundedUiText(event.preview.trim(), MAX_UI_LABEL_CHARS);
+  }
   const payloadText = stringField(event.payload, "text");
-  if (payloadText) return payloadText;
+  if (payloadText) return boundedUiText(payloadText, MAX_UI_DETAIL_CHARS);
   return event.type.replace(/\./g, " ");
 }
 
@@ -1100,17 +1123,18 @@ function stringField(source: Record<string, unknown> | null, key: string) {
 }
 
 function approvalCommandText(event: BotInvocationProgressEventPublic) {
-  return (
+  return boundedUiText(
     stringField(event.payload, "command") ||
-    event.preview?.trim() ||
-    ""
+      event.preview?.trim() ||
+      "",
+    MAX_UI_COMMAND_CHARS,
   );
 }
 
 function approvalChoices(event: BotInvocationProgressEventPublic): ApprovalDecision[] {
   const value = event.payload?.choices;
   const choices = Array.isArray(value)
-    ? value.filter(isApprovalDecision)
+    ? [...new Set(value.slice(0, 4).filter(isApprovalDecision))]
     : [];
   return choices.length > 0 ? choices : ["once", "session", "always", "deny"];
 }
@@ -1121,10 +1145,14 @@ function clarifyChoices(
   const value = event.payload?.choices;
   if (value === null) return null;
   if (!Array.isArray(value)) return null;
-  const choices = value.filter(
-    (choice): choice is string =>
-      typeof choice === "string" && choice.trim().length > 0,
-  );
+  const choices = value
+    .slice(0, MAX_UI_CHOICES)
+    .filter(
+      (choice): choice is string =>
+        typeof choice === "string" &&
+        choice.trim().length > 0 &&
+        choice.length <= MAX_UI_CHOICE_CHARS,
+    );
   return choices.length > 0 ? choices : null;
 }
 
@@ -1134,9 +1162,24 @@ function clarifyRowKey(event: BotInvocationProgressEventPublic) {
 }
 
 function clarifyResponseSummary(response: ClarifyResponse | null) {
-  if (Array.isArray(response)) return response.join(", ");
-  if (response?.trim()) return response.trim();
+  if (Array.isArray(response)) {
+    return boundedUiText(
+      response
+        .slice(0, MAX_UI_CHOICES)
+        .map((item) => boundedUiText(item, MAX_UI_CHOICE_CHARS))
+        .join(", "),
+      MAX_UI_LABEL_CHARS,
+    );
+  }
+  if (response?.trim()) {
+    return boundedUiText(response.trim(), MAX_UI_LABEL_CHARS);
+  }
   return "Response recorded";
+}
+
+function boundedUiText(value: string, maxChars: number) {
+  if (value.length <= maxChars) return value;
+  return `${value.slice(0, Math.max(0, maxChars - 1))}…`;
 }
 
 function interactionErrorMessage(cause: unknown) {

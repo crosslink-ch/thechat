@@ -3606,6 +3606,142 @@ describe("Bots: runtime state", () => {
 });
 
 describe("Bot runtime: direct Hermes interactions", () => {
+  test("deduplicates stable interaction progress and retains it through overflow", async () => {
+    await setBotProgressStoreForTests(
+      createLocalBotProgressStoreForTests({ maxEvents: 3 }),
+    );
+    const webhook = startWebhookServer();
+    try {
+      const fixture = await createHermesInteractionFixture(
+        "DirectInteractionIdempotentProgress",
+        webhook.url,
+      );
+      const payload = {
+        requestId: "approval-idempotent-overflow",
+        sessionKey: "session-idempotent-overflow",
+        command: "pnpm test",
+        description: "Run tests once",
+        choices: ["once", "deny"],
+      };
+      const first = await publishInteractionProgress(
+        fixture,
+        "approval.request",
+        payload,
+      );
+      const retry = await publishInteractionProgress(
+        fixture,
+        "approval.request",
+        payload,
+      );
+      expect(retry).toEqual(first);
+
+      for (let index = 0; index < 8; index += 1) {
+        const progress = await req(
+          "POST",
+          `/hermes-platform/invocations/${fixture.invocationId}/progress`,
+          {
+            type: "tool.started",
+            status: "running",
+            toolCallId: `overflow-call-${index}`,
+            toolName: "shell",
+            payload: { index },
+          },
+          fixture.botRes.body.apiKey,
+        );
+        expect(progress.status).toBe(200);
+      }
+
+      const retained = await getBotProgressStore().listForConversation(
+        fixture.conversationId,
+      );
+      expect(retained.filter((event) => event.id === first.id)).toHaveLength(1);
+      expect(retained).toHaveLength(4);
+
+      const interaction = await req(
+        "POST",
+        interactionPath(fixture.invocationId, first.id),
+        { response: "once" },
+        fixture.human.token,
+      );
+      expect(interaction.status).toBe(200);
+      expect(webhook.requests).toHaveLength(1);
+    } finally {
+      webhook.stop();
+    }
+  });
+
+  test("validates and bounds interaction and generic progress before storage", async () => {
+    await setBotProgressStoreForTests(createLocalBotProgressStoreForTests());
+    const fixture = await createHermesInteractionFixture(
+      "DirectInteractionProgressBounds",
+    );
+
+    const validGeneric = await req(
+      "POST",
+      `/hermes-platform/invocations/${fixture.invocationId}/progress`,
+      {
+        type: "custom.existing",
+        status: "running",
+        label: "Compatible progress",
+        payload: { nested: { count: 1 }, items: ["a", "b"] },
+      },
+      fixture.botRes.body.apiKey,
+    );
+    expect(validGeneric.status).toBe(200);
+
+    const oversizedGeneric = await req(
+      "POST",
+      `/hermes-platform/invocations/${fixture.invocationId}/progress`,
+      {
+        type: "custom.oversized",
+        payload: { text: "x".repeat(128 * 1024) },
+      },
+      fixture.botRes.body.apiKey,
+    );
+    expect(oversizedGeneric.status).toBe(400);
+
+    const malformedApproval = await req(
+      "POST",
+      `/hermes-platform/invocations/${fixture.invocationId}/progress`,
+      {
+        type: "approval.request",
+        status: "waiting",
+        payload: {
+          requestId: "approval-malformed",
+          sessionKey: "session-malformed",
+          command: "pwd",
+          description: "Missing choices",
+        },
+      },
+      fixture.botRes.body.apiKey,
+    );
+    expect(malformedApproval.status).toBe(400);
+
+    const oversizedClarify = await req(
+      "POST",
+      `/hermes-platform/invocations/${fixture.invocationId}/progress`,
+      {
+        type: "clarify.request",
+        status: "waiting",
+        payload: {
+          requestId: "clarify-too-many",
+          sessionKey: "session-malformed",
+          question: "Pick one",
+          choices: Array.from({ length: 21 }, (_, index) => `choice-${index}`),
+          multiSelect: false,
+          allowOther: true,
+        },
+      },
+      fixture.botRes.body.apiKey,
+    );
+    expect(oversizedClarify.status).toBe(400);
+
+    const retained = await getBotProgressStore().listForConversation(
+      fixture.conversationId,
+    );
+    expect(retained.map((event) => event.type)).toEqual(["custom.existing"]);
+  });
+
   test("delivers signed approval and all clarify modes without creating chat records", async () => {
     await setBotProgressStoreForTests(createLocalBotProgressStoreForTests());
     const webhook = startWebhookServer();
@@ -3942,24 +4078,23 @@ describe("Bot runtime: direct Hermes interactions", () => {
       );
       expect(stale.status).toBe(409);
 
-      const malformed = await publishInteractionProgress(
-        fixture,
-        "clarify.request",
-        {
-          sessionKey: "session-validation",
-          question: "Missing request id",
-          choices: null,
-          multiSelect: false,
-          allowOther: true,
-        },
-      );
-      const malformedRes = await req(
+      const malformed = await req(
         "POST",
-        interactionPath(fixture.invocationId, malformed.id),
-        { response: "answer" },
-        fixture.human.token,
+        `/hermes-platform/invocations/${fixture.invocationId}/progress`,
+        {
+          type: "clarify.request",
+          status: "waiting",
+          payload: {
+            sessionKey: "session-validation",
+            question: "Missing request id",
+            choices: null,
+            multiSelect: false,
+            allowOther: true,
+          },
+        },
+        fixture.botRes.body.apiKey,
       );
-      expect(malformedRes.status).toBe(409);
+      expect(malformed.status).toBe(400);
 
       const singleClarify = await publishInteractionProgress(
         fixture,
@@ -4038,6 +4173,107 @@ describe("Bot runtime: direct Hermes interactions", () => {
         ).status,
       ).toBe(400);
       expect(webhook.requests).toEqual([]);
+    } finally {
+      webhook.stop();
+    }
+  });
+
+  test("enforces the oldest approval across reordered cross-invocation history", async () => {
+    const baseStore = createLocalBotProgressStoreForTests();
+    const reorderedStore: BotProgressStore = {
+      append: (input) => baseStore.append(input),
+      touch: (input) => baseStore.touch(input),
+      listForConversation: async (conversationId, candidates) =>
+        (await baseStore.listForConversation(conversationId, candidates)).reverse(),
+      clear: (input) => baseStore.clear(input),
+      close: () => baseStore.close?.() ?? Promise.resolve(),
+    };
+    await setBotProgressStoreForTests(reorderedStore);
+    const webhook = startWebhookServer();
+    try {
+      const firstFixture = await createHermesInteractionFixture(
+        "DirectInteractionCrossInvocation",
+        webhook.url,
+      );
+      const first = await publishInteractionProgress(
+        firstFixture,
+        "approval.request",
+        {
+          requestId: "approval-cross-first",
+          sessionKey: "session-cross-invocation",
+          command: "first",
+          description: "First command",
+          choices: ["once", "deny"],
+        },
+      );
+      await sleep(5);
+
+      const secondSend = await req(
+        "POST",
+        `/messages/${firstFixture.conversationId}`,
+        { content: "Create the later approval" },
+        firstFixture.human.token,
+      );
+      expect(secondSend.status).toBe(200);
+      await waitForResult(async () => {
+        const rows = await invocationsForMessage(secondSend.body.id);
+        return rows.find((row) => row.status === "queued");
+      }, "queued cross-invocation approval");
+      const secondClaim = await req(
+        "GET",
+        "/hermes-platform/events?limit=1",
+        undefined,
+        firstFixture.botRes.body.apiKey,
+      );
+      expect(secondClaim.status).toBe(200);
+      const secondFixture = {
+        ...firstFixture,
+        invocationId: secondClaim.body.events[0].invocationId as string,
+      };
+      const second = await publishInteractionProgress(
+        secondFixture,
+        "approval.request",
+        {
+          requestId: "approval-cross-second",
+          sessionKey: "session-cross-invocation",
+          command: "second",
+          description: "Second command",
+          choices: ["once", "deny"],
+        },
+      );
+
+      const blocked = await req(
+        "POST",
+        interactionPath(secondFixture.invocationId, second.id),
+        { response: "once" },
+        firstFixture.human.token,
+      );
+      expect(blocked.status).toBe(409);
+      expect(blocked.body.error).toContain("earlier approval");
+      expect(webhook.requests).toHaveLength(0);
+
+      await publishInteractionProgress(
+        firstFixture,
+        "approval.resolved",
+        {
+          requestId: "approval-cross-first",
+          sessionKey: "session-cross-invocation",
+          choice: "once",
+          resolvedCount: 1,
+        },
+      );
+      const accepted = await req(
+        "POST",
+        interactionPath(secondFixture.invocationId, second.id),
+        { response: "once" },
+        firstFixture.human.token,
+      );
+      expect(accepted.status).toBe(200);
+      expect(webhook.requests).toHaveLength(1);
+      expect(webhook.requests[0].payload.interaction.requestId).toBe(
+        "approval-cross-second",
+      );
+      expect(first.id).not.toBe(second.id);
     } finally {
       webhook.stop();
     }
@@ -4122,6 +4358,79 @@ describe("Bot runtime: direct Hermes interactions", () => {
     expect(JSON.stringify(connectivityRes.body)).not.toContain(
       failureFixture.webhookSecret!,
     );
+  });
+
+  test("rejects non-http callback schemes and refuses redirects without forwarding", async () => {
+    await setBotProgressStoreForTests(createLocalBotProgressStoreForTests());
+    const redirectTarget = startWebhookServer();
+    const redirector = startWebhookServer(
+      () => new Response(null, {
+        status: 302,
+        headers: { Location: redirectTarget.url },
+      }),
+    );
+    try {
+      const fixture = await createHermesInteractionFixture(
+        "DirectInteractionRedirect",
+        redirector.url,
+      );
+      const approval = await publishInteractionProgress(
+        fixture,
+        "approval.request",
+        {
+          requestId: "approval-no-redirect",
+          sessionKey: "session-no-redirect",
+          command: "pwd",
+          description: "Show the directory",
+          choices: ["once"],
+        },
+      );
+
+      const redirected = await req(
+        "POST",
+        interactionPath(fixture.invocationId, approval.id),
+        { response: "once" },
+        fixture.human.token,
+      );
+      expect(redirected.status).toBe(502);
+      expect(redirected.body.error).toBe(
+        "Could not reach Hermes to deliver the interaction",
+      );
+      expect(redirector.requests).toHaveLength(1);
+      expect(redirectTarget.requests).toHaveLength(0);
+      expect(JSON.stringify(redirected.body)).not.toContain(redirectTarget.url);
+
+      const invalidRegistration = await req(
+        "POST",
+        "/bots/me/webhook",
+        { url: "ftp://example.test/hermes" },
+        fixture.botRes.body.apiKey,
+      );
+      expect(invalidRegistration.status).toBe(400);
+      const malformedRegistration = await req(
+        "POST",
+        "/bots/me/webhook",
+        { url: "not a url" },
+        fixture.botRes.body.apiKey,
+      );
+      expect(malformedRegistration.status).toBe(400);
+
+      await db.update(bots).set({ webhookUrl: "file:///tmp/hermes.sock" })
+        .where(eq(bots.id, fixture.botRes.body.id));
+      const invalidStored = await req(
+        "POST",
+        interactionPath(fixture.invocationId, approval.id),
+        { response: "once" },
+        fixture.human.token,
+      );
+      expect(invalidStored.status).toBe(409);
+      expect(invalidStored.body.error).toBe(
+        "Hermes webhook URL must use http or https",
+      );
+    } finally {
+      redirector.stop();
+      redirectTarget.stop();
+    }
   });
 
   test("preserves a sanitized Hermes interaction conflict as HTTP 409", async () => {

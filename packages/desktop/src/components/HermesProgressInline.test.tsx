@@ -377,6 +377,33 @@ describe("HermesProgressInline", () => {
     expect(onInteraction.mock.calls.flat()).not.toContain("/deny");
   });
 
+  it("shows the full bounded approval command instead of hiding its tail", () => {
+    const tailMarker = "__VISIBLE_COMMAND_TAIL__";
+    const command = `${"x".repeat(25_000)}${tailMarker}`;
+    const approval = progressEvent({
+      id: "approval-long-command",
+      type: "approval.request",
+      status: "waiting",
+      toolCallId: null,
+      toolName: null,
+      payload: {
+        command,
+        description: "Inspect the complete command before approving",
+        choices: ["once", "deny"],
+      },
+    });
+
+    render(
+      <HermesProgressInline
+        invocations={[{ invocation: invocation(), events: [approval] }]}
+      />,
+    );
+
+    expect(screen.getByTestId("hermes-approval-request")).toHaveTextContent(
+      tailMarker,
+    );
+  });
+
   it("collapses the approval card only after the direct response is accepted", async () => {
     const onInteraction = vi.fn().mockResolvedValue(undefined);
     const approval = progressEvent({
@@ -618,6 +645,40 @@ describe("HermesProgressInline", () => {
       expect(onInteraction).toHaveBeenCalledWith(open, "Ship the focused fix"),
     );
     expect(screen.getAllByTestId("hermes-clarify-resolved")).toHaveLength(3);
+  });
+
+  it("defensively caps clarification choices from retained progress", () => {
+    const choices = Array.from({ length: 25 }, (_, index) => `Choice ${index + 1}`);
+    choices[5] = "x".repeat(501);
+    const clarify = progressEvent({
+      id: "clarify-bounded-ui",
+      type: "clarify.request",
+      status: "waiting",
+      toolCallId: null,
+      toolName: null,
+      payload: {
+        requestId: "request-bounded-ui",
+        sessionKey: "session-1",
+        question: "Choose one",
+        choices,
+        multiSelect: false,
+        allowOther: true,
+      },
+    });
+
+    render(
+      <HermesProgressInline
+        invocations={[{ invocation: invocation(), events: [clarify] }]}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Choice 20" })).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Choice 21" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: choices[5] }),
+    ).not.toBeInTheDocument();
   });
 
   it("offers an Other path and recovers from direct callback errors", async () => {

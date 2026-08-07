@@ -105,22 +105,30 @@ export function DmRoute() {
 
   // Attention indicators: which tasks in this DM need approval or finished unread.
   const pendingApprovals = useHermesIndicatorsStore((s) => s.pendingApprovals);
+  const pendingClarifications = useHermesIndicatorsStore(
+    (state) => state.pendingClarifications,
+  );
+  const pendingInteractions = useMemo(
+    () => [...pendingApprovals, ...pendingClarifications],
+    [pendingApprovals, pendingClarifications],
+  );
   const unreadScopes = useHermesIndicatorsStore((s) => s.unreadScopes);
   const approvalThreadIds = useMemo(() => {
     const ids = new Set<string>();
-    for (const approval of pendingApprovals) {
-      if (approval.conversationId !== conversationId) continue;
-      if (approval.threadId) ids.add(approval.threadId);
+    for (const interaction of pendingInteractions) {
+      if (interaction.conversationId !== conversationId) continue;
+      if (interaction.threadId) ids.add(interaction.threadId);
     }
     return ids;
-  }, [conversationId, pendingApprovals]);
+  }, [conversationId, pendingInteractions]);
   const generalNeedsApproval = useMemo(
     () =>
-      pendingApprovals.some(
-        (approval) =>
-          approval.conversationId === conversationId && approval.threadId === null,
+      pendingInteractions.some(
+        (interaction) =>
+          interaction.conversationId === conversationId &&
+          interaction.threadId === null,
       ),
-    [conversationId, pendingApprovals],
+    [conversationId, pendingInteractions],
   );
   const unreadThreadIds = useMemo(() => {
     const ids = new Set<string>();

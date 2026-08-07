@@ -313,6 +313,18 @@ export async function submitHermesPlatformInteraction(input: {
   if (!webhookUrl) {
     throw new ServiceError("Hermes webhook is not configured", 409);
   }
+  let parsedWebhookUrl: URL;
+  try {
+    parsedWebhookUrl = new URL(webhookUrl);
+  } catch {
+    throw new ServiceError("Hermes webhook URL is invalid", 409);
+  }
+  if (
+    parsedWebhookUrl.protocol !== "http:" &&
+    parsedWebhookUrl.protocol !== "https:"
+  ) {
+    throw new ServiceError("Hermes webhook URL must use http or https", 409);
+  }
 
   const envelope: HermesInteractionEnvelope = {
     type: "thechat.hermes_platform.interaction",
@@ -349,6 +361,7 @@ export async function submitHermesPlatformInteraction(input: {
       },
       body,
       signal: controller.signal,
+      redirect: "error",
     });
     if (!upstream.ok) {
       throw new ServiceError(
