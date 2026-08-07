@@ -71,6 +71,12 @@
   --animate-shimmer: shimmer 2s linear infinite;
 }
 
+@layer base {
+  button {
+    cursor: pointer;
+  }
+}
+
 @keyframes spin {
   from { transform: rotate(0deg); }
   to { transform: rotate(360deg); }
