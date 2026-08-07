@@ -139,6 +139,9 @@ describeApproval("real Hermes approval UI", () => {
         path.dirname(screenshotPath),
         "hermes-clarify-ui-e2e.png",
       );
+      // WebView screenshots can otherwise capture the previous compositor
+      // frame even though WebDriver already sees the mounted card.
+      await browser.pause(150);
       await browser.saveScreenshot(clarifyScreenshotPath);
 
       for (const choice of clarifyResponse) {
