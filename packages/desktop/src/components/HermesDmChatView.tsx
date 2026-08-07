@@ -4,7 +4,10 @@ import { Markdown } from "./Markdown";
 import { useAutoScroll } from "../hooks/useAutoScroll";
 import { useOlderHistoryScroll } from "../hooks/useOlderHistoryScroll";
 import { useScrollStability } from "../hooks/useScrollStability";
-import type { ChatMessage } from "@thechat/shared";
+import type {
+  BotInvocationProgressEventPublic,
+  ChatMessage,
+} from "@thechat/shared";
 import type { ActiveHermesInvocationProgress } from "../lib/hermes-progress";
 import type { MentionUser } from "./MentionList";
 import { HermesProgressInline } from "./HermesProgressInline";
@@ -30,6 +33,10 @@ interface HermesDmChatViewProps {
     content: string,
     attachmentIds?: string[],
   ) => InputSendResult | Promise<InputSendResult>;
+  onInteraction?: (
+    event: BotInvocationProgressEventPublic,
+    response: string | string[],
+  ) => void | Promise<void>;
   onStop?: () => void;
   onLoadOlderMessages?: () => boolean | void | Promise<boolean | void>;
   mentions?: MentionUser[];
@@ -57,6 +64,7 @@ export function HermesDmChatView({
   progressInvocations,
   typingSuppressedUserIds,
   onSend,
+  onInteraction,
   onStop,
   onLoadOlderMessages,
   mentions,
@@ -324,7 +332,7 @@ export function HermesDmChatView({
           ))}
           <HermesProgressInline
             invocations={progressInvocations}
-            onApprovalCommand={handleSend}
+            onInteraction={onInteraction}
             onStop={onStop}
           />
           {visibleTypingNames.length > 0 && (

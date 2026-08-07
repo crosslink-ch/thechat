@@ -9,6 +9,36 @@ const DEFAULT_PROGRESS_TTL_SECONDS = 60 * 60;
 const DEFAULT_PROGRESS_MAX_EVENTS = 100;
 const DEFAULT_PROGRESS_ACTIVITY_TIMEOUT_MS = 30_000;
 
+const APPEND_IDEMPOTENT_REQUEST_SCRIPT = `
+local existing = redis.call('HGET', KEYS[1], ARGV[1])
+if existing then
+  redis.call('EXPIRE', KEYS[1], ARGV[4])
+  redis.call('EXPIRE', KEYS[2], ARGV[4])
+  redis.call('EXPIRE', KEYS[3], ARGV[4])
+  redis.call('EXPIRE', KEYS[4], ARGV[4])
+  redis.call('SET', KEYS[5], ARGV[5], 'EX', ARGV[4])
+  redis.call('SADD', KEYS[6], ARGV[6])
+  redis.call('EXPIRE', KEYS[6], ARGV[4])
+  return existing
+end
+local sequence = redis.call('INCR', KEYS[3])
+local event = cjson.decode(ARGV[2])
+event.sequence = sequence
+local encoded = cjson.encode(event)
+redis.call('RPUSH', KEYS[2], encoded)
+redis.call('LTRIM', KEYS[2], -tonumber(ARGV[3]), -1)
+redis.call('HSET', KEYS[1], ARGV[1], encoded)
+redis.call('HSET', KEYS[4], ARGV[1], encoded)
+redis.call('EXPIRE', KEYS[1], ARGV[4])
+redis.call('EXPIRE', KEYS[2], ARGV[4])
+redis.call('EXPIRE', KEYS[3], ARGV[4])
+redis.call('EXPIRE', KEYS[4], ARGV[4])
+redis.call('SET', KEYS[5], ARGV[5], 'EX', ARGV[4])
+redis.call('SADD', KEYS[6], ARGV[6])
+redis.call('EXPIRE', KEYS[6], ARGV[4])
+return encoded
+`;
+
 export function botProgressRetentionMs() {
   return readPositiveInt(
     process.env.HERMES_PROGRESS_TTL_SECONDS,
@@ -80,15 +110,17 @@ class RedisBotProgressStore implements BotProgressStore {
     await connectRedisIfNeeded(this.redis);
     const sequenceKey = this.sequenceKey(input.invocationId);
     const eventKey = this.eventKey(input.invocationId);
-    const sequence = await this.redis.incr(sequenceKey);
     const now = new Date(this.now());
+    const requestIdentity = interactionRequestIdentity(input);
     const event: BotInvocationProgressEventPublic = {
-      id: crypto.randomUUID(),
+      id: requestIdentity
+        ? stableInteractionEventId(input.invocationId, requestIdentity)
+        : crypto.randomUUID(),
       invocationId: input.invocationId,
       botId: input.botId,
       conversationId: input.conversationId,
       threadId: input.threadId,
-      sequence,
+      sequence: 0,
       type: input.type,
       status: input.status,
       toolCallId: input.toolCallId,
@@ -100,6 +132,31 @@ class RedisBotProgressStore implements BotProgressStore {
       createdAt: now.toISOString(),
     };
 
+    if (requestIdentity) {
+      const raw = await this.redis.eval(
+        APPEND_IDEMPOTENT_REQUEST_SCRIPT,
+        6,
+        this.requestIdentityKey(input.invocationId),
+        eventKey,
+        sequenceKey,
+        this.pendingRequestKey(input.invocationId),
+        this.activityKey(input.invocationId),
+        this.conversationKey(input.conversationId),
+        requestIdentity,
+        JSON.stringify(event),
+        String(this.maxEvents),
+        String(this.ttlSeconds),
+        String(now.getTime()),
+        input.invocationId,
+      );
+      const parsed = parseProgressEvent(raw);
+      if (!parsed) throw new Error("Redis returned invalid idempotent progress event");
+      return parsed;
+    }
+
+    const sequence = await this.redis.incr(sequenceKey);
+    event.sequence = sequence;
+
     const pipeline = this.redis.pipeline();
     pipeline.rpush(eventKey, JSON.stringify(event));
     pipeline.ltrim(eventKey, -this.maxEvents, -1);
@@ -108,6 +165,10 @@ class RedisBotProgressStore implements BotProgressStore {
     pipeline.set(this.activityKey(input.invocationId), String(now.getTime()), "EX", this.ttlSeconds);
     pipeline.sadd(this.conversationKey(input.conversationId), input.invocationId);
     pipeline.expire(this.conversationKey(input.conversationId), this.ttlSeconds);
+    for (const identity of await this.pendingResolutionIdentities(input)) {
+      pipeline.hdel(this.pendingRequestKey(input.invocationId), identity);
+    }
+    pipeline.expire(this.pendingRequestKey(input.invocationId), this.ttlSeconds);
     const pipelineResult = await pipeline.exec();
     throwOnRedisPipelineError(pipelineResult);
 
@@ -120,6 +181,8 @@ class RedisBotProgressStore implements BotProgressStore {
     pipeline.set(this.activityKey(input.invocationId), String(this.now()), "EX", this.ttlSeconds);
     pipeline.expire(this.eventKey(input.invocationId), this.ttlSeconds);
     pipeline.expire(this.sequenceKey(input.invocationId), this.ttlSeconds);
+    pipeline.expire(this.requestIdentityKey(input.invocationId), this.ttlSeconds);
+    pipeline.expire(this.pendingRequestKey(input.invocationId), this.ttlSeconds);
     pipeline.sadd(this.conversationKey(input.conversationId), input.invocationId);
     pipeline.expire(this.conversationKey(input.conversationId), this.ttlSeconds);
     const pipelineResult = await pipeline.exec();
@@ -141,6 +204,7 @@ class RedisBotProgressStore implements BotProgressStore {
     const pipeline = this.redis.pipeline();
     for (const invocationId of invocationIds) {
       pipeline.lrange(this.eventKey(invocationId), 0, -1);
+      pipeline.hvals(this.pendingRequestKey(invocationId));
       pipeline.get(this.activityKey(invocationId));
     }
     const results = await pipeline.exec();
@@ -150,16 +214,23 @@ class RedisBotProgressStore implements BotProgressStore {
     const backfillActivities = new Map<string, number>();
     const now = this.now();
     for (let index = 0; index < invocationIds.length; index += 1) {
-      const eventResult = results?.[index * 2];
-      const activityResult = results?.[index * 2 + 1];
+      const eventResult = results?.[index * 3];
+      const pendingResult = results?.[index * 3 + 1];
+      const activityResult = results?.[index * 3 + 2];
       const rawEvents = eventResult && !eventResult[0] && Array.isArray(eventResult[1])
         ? eventResult[1]
         : [];
+      const rawPending = pendingResult && !pendingResult[0] && Array.isArray(pendingResult[1])
+        ? pendingResult[1]
+        : [];
       const invocationEvents: BotInvocationProgressEventPublic[] = [];
-      for (const raw of rawEvents) {
+      for (const raw of [...rawEvents, ...rawPending]) {
         const parsed = parseProgressEvent(raw);
-        if (parsed) invocationEvents.push(parsed);
+        if (parsed && !invocationEvents.some((event) => event.id === parsed.id)) {
+          invocationEvents.push(parsed);
+        }
       }
+      invocationEvents.sort(compareProgressEvents);
       const rawActivityAt = activityResult && !activityResult[0]
         ? activityResult[1]
         : null;
@@ -180,7 +251,7 @@ class RedisBotProgressStore implements BotProgressStore {
       }
       if (
         isRecentlyActive(effectiveActivityAt, now, this.activityTimeoutMs) ||
-        hasUnresolvedApproval(invocationEvents)
+        hasUnresolvedInteraction(invocationEvents)
       ) {
         events.push(...invocationEvents);
       }
@@ -209,6 +280,8 @@ class RedisBotProgressStore implements BotProgressStore {
       this.eventKey(input.invocationId),
       this.sequenceKey(input.invocationId),
       this.activityKey(input.invocationId),
+      this.requestIdentityKey(input.invocationId),
+      this.pendingRequestKey(input.invocationId),
     );
     pipeline.srem(this.conversationKey(input.conversationId), input.invocationId);
     const pipelineResult = await pipeline.exec();
@@ -231,8 +304,42 @@ class RedisBotProgressStore implements BotProgressStore {
     return `${this.keyPrefix}:invocation:${invocationId}:activity`;
   }
 
+  private requestIdentityKey(invocationId: string) {
+    return `${this.keyPrefix}:invocation:${invocationId}:request-identities`;
+  }
+
+  private pendingRequestKey(invocationId: string) {
+    return `${this.keyPrefix}:invocation:${invocationId}:pending-requests`;
+  }
+
   private conversationKey(conversationId: string) {
     return `${this.keyPrefix}:conversation:${conversationId}:invocations`;
+  }
+
+  private async pendingResolutionIdentities(input: ProgressEventInput) {
+    const resolution = interactionResolution(input);
+    if (!resolution) return [];
+    if (resolution.requestId) {
+      return [`${resolution.requestType}:${resolution.requestId}`];
+    }
+
+    const pending = await this.redis.hgetall(
+      this.pendingRequestKey(input.invocationId),
+    );
+    const candidates = Object.entries(pending)
+      .map(([identity, raw]) => ({ identity, event: parseProgressEvent(raw) }))
+      .filter(
+        (item): item is { identity: string; event: BotInvocationProgressEventPublic } =>
+          item.event !== null &&
+          item.event.type === resolution.requestType &&
+          (!resolution.sessionKey ||
+            stringField(item.event.payload, "sessionKey") === resolution.sessionKey),
+      )
+      .sort((left, right) => compareProgressEvents(left.event, right.event));
+    const count = resolution.resolveAll
+      ? candidates.length
+      : Math.max(1, resolution.resolvedCount);
+    return candidates.slice(0, count).map((candidate) => candidate.identity);
   }
 }
 
@@ -243,6 +350,10 @@ class LocalBotProgressStore implements BotProgressStore {
   private readonly activityAtByInvocation = new Map<string, number>();
   private readonly invocationIdsByConversation = new Map<string, Set<string>>();
   private readonly conversationByInvocation = new Map<string, string>();
+  private readonly requestEventsByInvocation = new Map<
+    string,
+    Map<string, BotInvocationProgressEventPublic>
+  >();
   private readonly ttlMs: number;
   private readonly maxEvents: number;
   private readonly activityTimeoutMs: number;
@@ -262,12 +373,21 @@ class LocalBotProgressStore implements BotProgressStore {
 
   async append(input: ProgressEventInput): Promise<BotInvocationProgressEventPublic> {
     this.pruneExpired();
-    const sequence = (this.sequenceByInvocation.get(input.invocationId) ?? 0) + 1;
-    this.sequenceByInvocation.set(input.invocationId, sequence);
     const now = this.now();
     this.indexInvocation(input.invocationId, input.conversationId, now);
+    const requestIdentity = interactionRequestIdentity(input);
+    if (requestIdentity) {
+      const existing = this.requestEventsByInvocation
+        .get(input.invocationId)
+        ?.get(requestIdentity);
+      if (existing) return existing;
+    }
+    const sequence = (this.sequenceByInvocation.get(input.invocationId) ?? 0) + 1;
+    this.sequenceByInvocation.set(input.invocationId, sequence);
     const event: BotInvocationProgressEventPublic = {
-      id: crypto.randomUUID(),
+      id: requestIdentity
+        ? stableInteractionEventId(input.invocationId, requestIdentity)
+        : crypto.randomUUID(),
       invocationId: input.invocationId,
       botId: input.botId,
       conversationId: input.conversationId,
@@ -283,9 +403,18 @@ class LocalBotProgressStore implements BotProgressStore {
       occurredAt: input.occurredAt.toISOString(),
       createdAt: new Date(now).toISOString(),
     };
+    if (requestIdentity) {
+      const requestEvents = this.requestEventsByInvocation.get(input.invocationId) ??
+        new Map<string, BotInvocationProgressEventPublic>();
+      requestEvents.set(requestIdentity, event);
+      this.requestEventsByInvocation.set(input.invocationId, requestEvents);
+    }
     const events = this.eventsByInvocation.get(input.invocationId) ?? [];
     events.push(event);
-    this.eventsByInvocation.set(input.invocationId, events.slice(-this.maxEvents));
+    this.eventsByInvocation.set(
+      input.invocationId,
+      compactProgressEvents(events, this.maxEvents),
+    );
     return event;
   }
 
@@ -305,7 +434,7 @@ class LocalBotProgressStore implements BotProgressStore {
         const events = this.eventsByInvocation.get(invocationId) ?? [];
         const activityAt = this.activityAtByInvocation.get(invocationId) ?? Number.NaN;
         return isRecentlyActive(activityAt, now, this.activityTimeoutMs) ||
-          hasUnresolvedApproval(events)
+          hasUnresolvedInteraction(events)
           ? events
           : [];
       })
@@ -348,6 +477,7 @@ class LocalBotProgressStore implements BotProgressStore {
     this.activityAtByInvocation.delete(invocationId);
     this.expiresAtByInvocation.delete(invocationId);
     this.sequenceByInvocation.delete(invocationId);
+    this.requestEventsByInvocation.delete(invocationId);
     this.eventsByInvocation.delete(invocationId);
   }
 }
@@ -465,6 +595,19 @@ export function createLocalBotProgressStoreForTests(
   return new LocalBotProgressStore(options);
 }
 
+export function createRedisBotProgressStoreForTests(
+  options: {
+    redisUrl: string;
+    redisKeyPrefix?: string;
+    ttlSeconds?: number;
+    maxEvents?: number;
+    activityTimeoutMs?: number;
+    now?: () => number;
+  },
+): BotProgressStore {
+  return new RedisBotProgressStore(options);
+}
+
 export function createResilientBotProgressStoreForTests(
   primary: BotProgressStore,
   fallback: BotProgressStore,
@@ -558,31 +701,110 @@ function isRecentlyActive(activityAt: number, now: number, timeoutMs: number) {
   return Number.isFinite(activityAt) && now - activityAt <= timeoutMs;
 }
 
-function hasUnresolvedApproval(events: BotInvocationProgressEventPublic[]) {
-  const pending: BotInvocationProgressEventPublic[] = [];
+function hasUnresolvedInteraction(events: BotInvocationProgressEventPublic[]) {
+  return unresolvedInteractionRequestIds(events).size > 0;
+}
+
+function compactProgressEvents(
+  events: BotInvocationProgressEventPublic[],
+  maxEvents: number,
+) {
+  if (events.length <= maxEvents) return events;
+  const pendingIds = unresolvedInteractionRequestIds(events);
+  const compactable = events.filter((event) => !pendingIds.has(event.id));
+  const retainedCompactableIds = new Set(
+    compactable.slice(-maxEvents).map((event) => event.id),
+  );
+  return events.filter(
+    (event) => pendingIds.has(event.id) || retainedCompactableIds.has(event.id),
+  );
+}
+
+function unresolvedInteractionRequestIds(
+  events: BotInvocationProgressEventPublic[],
+) {
+  const pendingByType = new Map<string, BotInvocationProgressEventPublic[]>([
+    ["approval", []],
+    ["clarify", []],
+  ]);
   for (const event of [...events].sort(compareProgressEvents)) {
-    if (event.type === "approval.request") {
-      pending.push(event);
+    const requestKind = event.type === "approval.request"
+      ? "approval"
+      : event.type === "clarify.request"
+        ? "clarify"
+        : null;
+    if (requestKind) {
+      pendingByType.get(requestKind)!.push(event);
       continue;
     }
-    if (event.type !== "approval.resolved") continue;
+    const resolutionKind = event.type === "approval.resolved"
+      ? "approval"
+      : event.type === "clarify.resolved"
+        ? "clarify"
+        : null;
+    if (!resolutionKind) continue;
+    const pending = pendingByType.get(resolutionKind)!;
+    const requestId = stringField(event.payload, "requestId");
     const sessionKey = stringField(event.payload, "sessionKey");
-    const candidates = pending.filter(
-      (request) =>
-        !sessionKey ||
-        !stringField(request.payload, "sessionKey") ||
-        stringField(request.payload, "sessionKey") === sessionKey,
-    );
+    const candidates = requestId
+      ? pending.filter(
+          (request) => stringField(request.payload, "requestId") === requestId,
+        )
+      : pending.filter(
+          (request) =>
+            request.invocationId === event.invocationId &&
+            (!sessionKey ||
+              !stringField(request.payload, "sessionKey") ||
+              stringField(request.payload, "sessionKey") === sessionKey),
+        );
     const requestedCount = numberField(event.payload, "resolvedCount");
-    const count = event.payload?.resolveAll === true
+    const count = resolutionKind === "approval" && event.payload?.resolveAll === true
       ? candidates.length
-      : Math.max(1, requestedCount ?? 1);
+      : resolutionKind === "approval"
+        ? Math.max(1, requestedCount ?? 1)
+        : 1;
     const resolved = candidates.slice(0, count);
     for (const request of resolved) {
       pending.splice(pending.indexOf(request), 1);
     }
   }
-  return pending.length > 0;
+  return new Set(
+    Array.from(pendingByType.values())
+      .flat()
+      .map((event) => event.id),
+  );
+}
+
+function interactionRequestIdentity(input: ProgressEventInput) {
+  if (input.type !== "approval.request" && input.type !== "clarify.request") {
+    return null;
+  }
+  const requestId = stringField(input.payload, "requestId");
+  return requestId ? `${input.type}:${requestId}` : null;
+}
+
+function interactionResolution(input: ProgressEventInput) {
+  const requestType = input.type === "approval.resolved"
+    ? "approval.request"
+    : input.type === "clarify.resolved"
+      ? "clarify.request"
+      : null;
+  if (!requestType) return null;
+  return {
+    requestType,
+    requestId: stringField(input.payload, "requestId"),
+    sessionKey: stringField(input.payload, "sessionKey"),
+    resolveAll: input.type === "approval.resolved" && input.payload?.resolveAll === true,
+    resolvedCount: numberField(input.payload, "resolvedCount") ?? 1,
+  };
+}
+
+function stableInteractionEventId(invocationId: string, requestIdentity: string) {
+  const hex = crypto
+    .createHash("sha256")
+    .update(`${invocationId}\0${requestIdentity}`)
+    .digest("hex");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-a${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
 }
 
 function numberField(source: Record<string, unknown> | null, key: string) {

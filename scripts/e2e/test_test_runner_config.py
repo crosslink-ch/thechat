@@ -25,6 +25,9 @@ class TestRunnerConfigTests(unittest.TestCase):
                 "THECHAT_E2E_REDIS_PORT",
                 "THECHAT_E2E_DATABASE_URL",
                 "THECHAT_E2E_REDIS_URL",
+                "HERMES_APPROVAL_E2E_MODEL_PORT",
+                "HERMES_APPROVAL_E2E_WEBHOOK_PORT",
+                "HERMES_E2E_SOURCE_DIR",
             ):
                 os.environ.pop(key, None)
             os.environ.update(overrides)
@@ -54,6 +57,21 @@ class TestRunnerConfigTests(unittest.TestCase):
         self.assertEqual(
             approval["env"]["THECHAT_E2E_REDIS_URL"],
             "redis://localhost:26379",
+        )
+
+    def test_approval_defaults_to_sibling_hermes_and_dedicated_webhook_port(self):
+        approval = next(
+            suite
+            for suite in self._load_suites({})
+            if suite["name"] == "hermes-approval-ui"
+        )
+        self.assertEqual(
+            approval["env"]["HERMES_E2E_SOURCE_DIR"],
+            str(ROOT.parent / "hermes-agent"),
+        )
+        self.assertEqual(
+            approval["env"]["HERMES_APPROVAL_E2E_WEBHOOK_PORT"],
+            "18082",
         )
 
     def test_explicit_service_urls_still_win_over_derived_defaults(self):

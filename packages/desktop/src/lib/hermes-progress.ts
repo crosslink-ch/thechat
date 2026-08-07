@@ -4,6 +4,7 @@ import type {
   BotRuntimeSnapshot,
 } from "@thechat/shared";
 import { deriveApprovalStates } from "./hermes-approvals";
+import { deriveClarifyStates } from "./hermes-clarifications";
 
 export interface ActiveHermesProgress {
   invocations: ActiveHermesInvocationProgress[];
@@ -82,18 +83,24 @@ function selectActiveHermesProgress(
         invocation: displayInvocation,
         events: eventsByInvocationId.get(displayInvocation.id) ?? [],
       };
-      const pendingApprovalRows = laneInvocations
+      const pendingInteractionRows = laneInvocations
         .filter((invocation) => invocation.id !== displayInvocation.id)
-        .filter((invocation) =>
-          deriveApprovalStates(eventsByInvocationId.get(invocation.id) ?? [], {}).some(
-            (approval) => approval.status === "pending",
-          ),
-        )
+        .filter((invocation) => {
+          const events = eventsByInvocationId.get(invocation.id) ?? [];
+          return (
+            deriveApprovalStates(events, {}).some(
+              (approval) => approval.status === "pending",
+            ) ||
+            deriveClarifyStates(events, {}).some(
+              (clarify) => clarify.status === "pending",
+            )
+          );
+        })
         .map((invocation) => ({
           invocation,
           events: eventsByInvocationId.get(invocation.id) ?? [],
         }));
-      return [displayRow, ...pendingApprovalRows];
+      return [displayRow, ...pendingInteractionRows];
     })
     .sort((left, right) => compareInvocationsByRecency(left.invocation, right.invocation));
 

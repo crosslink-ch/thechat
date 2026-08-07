@@ -76,6 +76,32 @@ describe("deriveApprovalStates", () => {
     expect(states.map((state) => state.status)).toEqual(["pending", "resolved"]);
   });
 
+  it("uses an explicit requestId instead of FIFO when present", () => {
+    const states = deriveApprovalStates(
+      [
+        approvalRequest({
+          id: "a-1",
+          sequence: 1,
+          payload: { command: "x", requestId: "request-1" },
+        }),
+        approvalRequest({
+          id: "a-2",
+          sequence: 2,
+          payload: { command: "y", requestId: "request-2" },
+        }),
+        resolution({
+          id: "r-1",
+          sequence: 3,
+          payload: { response: "deny", requestId: "request-2" },
+        }),
+      ],
+      {},
+    );
+
+    expect(states.map((state) => state.status)).toEqual(["pending", "resolved"]);
+    expect(states[1].decision).toBe("deny");
+  });
+
   it("applies local decisions without shifting event-based FIFO resolution", () => {
     // The user answered a-1 locally; the gateway's resolution event for that
     // same answer must still target a-1, not fall through to a-2.

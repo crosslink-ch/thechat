@@ -20,9 +20,18 @@ import {
   removeBotWorkspaceMembership,
 } from "../services/bot-workspace-memberships";
 
+const httpWebhookUrlSchema = z.string().url().refine((value) => {
+  try {
+    const protocol = new URL(value).protocol;
+    return protocol === "http:" || protocol === "https:";
+  } catch {
+    return false;
+  }
+}, "Webhook URL must use http or https");
+
 const createSchema = z.object({
   name: z.string().trim().min(1, "Bot name is required"),
-  webhookUrl: z.string().url().nullish(),
+  webhookUrl: httpWebhookUrlSchema.nullish(),
   kind: z.enum(["webhook", "hermes"]).optional().default("webhook"),
   attachmentAccess: z.boolean().optional().default(true),
   workspaceId: z.string().trim().min(1, "Workspace ID is required").optional(),
@@ -30,12 +39,12 @@ const createSchema = z.object({
 
 const updateSchema = z.object({
   name: z.string().trim().min(1, "Bot name is required").optional(),
-  webhookUrl: z.string().url().nullish(),
+  webhookUrl: httpWebhookUrlSchema.nullish(),
   attachmentAccess: z.boolean().optional(),
 });
 
 const registerWebhookSchema = z.object({
-  url: z.string().url(),
+  url: httpWebhookUrlSchema,
 });
 
 const commandNameSchema = z

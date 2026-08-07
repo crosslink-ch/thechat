@@ -6,7 +6,6 @@ import type {
 } from "@thechat/shared";
 import type { ActiveHermesInvocationProgress } from "../lib/hermes-progress";
 import {
-  approvalCommandForDecision,
   approvalDecisionLabel,
   deriveApprovalStates,
   isApprovalRequestEvent,
@@ -15,9 +14,20 @@ import {
   type ApprovalRequestState,
 } from "../lib/hermes-approvals";
 import {
+  deriveClarifyStates,
+  isClarifyRequestEvent,
+  isClarifyResolutionEvent,
+  type ClarifyRequestState,
+  type ClarifyResponse,
+} from "../lib/hermes-clarifications";
+import {
   recordApprovalDecision,
   useHermesApprovalsStore,
 } from "../stores/hermes-approvals";
+import {
+  recordClarifyResponse,
+  useHermesClarificationsStore,
+} from "../stores/hermes-clarifications";
 import { formatToolSummary } from "../lib/tool-summary";
 
 type ToolCallPart = Extract<MessagePart, { type: "tool-call" }>;
@@ -37,20 +47,33 @@ type EventRow = {
   event: BotInvocationProgressEventPublic;
 };
 type ApprovalRow = { kind: "approval"; key: string; state: ApprovalRequestState };
-type ActivityRow = EventRow | ApprovalRow;
+type ClarifyRow = { kind: "clarify"; key: string; state: ClarifyRequestState };
+type ActivityRow = EventRow | ApprovalRow | ClarifyRow;
 
 const MAX_VISIBLE_ROWS = 8;
+const MAX_UI_LABEL_CHARS = 4_000;
+const MAX_UI_DESCRIPTION_CHARS = 10_000;
+const MAX_UI_COMMAND_CHARS = 100_000;
+const MAX_UI_DETAIL_CHARS = 20_000;
+const MAX_UI_CHOICE_CHARS = 500;
+const MAX_UI_CHOICES = 20;
 
 export function HermesProgressInline({
   invocations,
-  onApprovalCommand,
+  onInteraction,
   onStop,
 }: {
   invocations: ActiveHermesInvocationProgress[];
-  onApprovalCommand?: (command: string) => void;
+  onInteraction?: (
+    event: BotInvocationProgressEventPublic,
+    response: string | string[],
+  ) => void | Promise<void>;
   onStop?: () => void;
 }) {
   const decisions = useHermesApprovalsStore((state) => state.decisions);
+  const clarifyResponses = useHermesClarificationsStore(
+    (state) => state.responses,
+  );
   const nowMs = useNowTick(invocations.length > 0);
   const [expandedRowKeys, setExpandedRowKeys] = useState<Set<string>>(
     () => new Set(),
@@ -72,26 +95,33 @@ export function HermesProgressInline({
       deriveApprovalStates(events, decisions),
     ]),
   );
-  // The gateway resolves approvals oldest-first across the whole session, so
-  // only the globally oldest pending request gets active buttons.
-  const actionableApprovalId =
-    [...approvalStatesByInvocation.values()]
-      .flat()
-      .filter((state) => state.status === "pending")
-      .sort(
-        (a, b) => Date.parse(a.event.createdAt) - Date.parse(b.event.createdAt),
-      )[0]?.event.id ?? null;
+  const clarifyStatesByInvocation = new Map(
+    invocations.map(({ invocation, events }) => [
+      invocation.id,
+      deriveClarifyStates(events, clarifyResponses),
+    ]),
+  );
+  // Approval ordering is scoped to the Hermes session. Independent sessions
+  // may each expose their oldest pending request.
+  const actionableApprovalIds = oldestPendingApprovalsBySession(
+    [...approvalStatesByInvocation.values()].flat(),
+  );
 
-  const handleApprovalDecision = (
+  const handleInteraction = async (
     event: BotInvocationProgressEventPublic,
-    decision: ApprovalDecision,
+    response: ApprovalDecision | ClarifyResponse,
   ) => {
-    // The command flows through the regular send pipeline, where the DM route
-    // records the optimistic decision for the oldest pending approval — the
-    // same event this button targets. Recording here afterwards is a no-op in
-    // that case and a fallback for consumers that don't record.
-    onApprovalCommand?.(approvalCommandForDecision(decision));
-    recordApprovalDecision(event.id, decision);
+    if (!onInteraction) {
+      throw new Error("Hermes interactions are unavailable");
+    }
+    await onInteraction(event, response);
+    // Persist optimistic state only after the callback was accepted. Gateway
+    // resolution events remain authoritative and mark the row confirmed.
+    if (event.type === "approval.request") {
+      recordApprovalDecision(event.id, response as ApprovalDecision);
+    } else {
+      recordClarifyResponse(event.id, response);
+    }
   };
 
   return (
@@ -100,16 +130,26 @@ export function HermesProgressInline({
         const invocationEvents = [...events].sort(compareEvents);
         const approvalStates =
           approvalStatesByInvocation.get(invocation.id) ?? [];
+        const clarifyStates =
+          clarifyStatesByInvocation.get(invocation.id) ?? [];
         const needsApproval = approvalStates.some(
           (state) => state.status === "pending",
         );
-        const rows = buildActivityRows(invocationEvents, approvalStates);
+        const needsClarification = clarifyStates.some(
+          (state) => state.status === "pending",
+        );
+        const needsInteraction = needsApproval || needsClarification;
+        const rows = buildActivityRows(
+          invocationEvents,
+          approvalStates,
+          clarifyStates,
+        );
         let visibleRows = rows.slice(-MAX_VISIBLE_ROWS);
         // Pending approvals must stay actionable even when older than the
         // visible window (e.g. parallel tools kept emitting afterwards).
         const hiddenPending = rows.filter(
           (row) =>
-            row.kind === "approval" &&
+            (row.kind === "approval" || row.kind === "clarify") &&
             row.state.status === "pending" &&
             !visibleRows.includes(row),
         );
@@ -118,13 +158,15 @@ export function HermesProgressInline({
         const elapsedLabel = invocation.startedAt
           ? formatElapsed(nowMs - Date.parse(invocation.startedAt))
           : null;
-        const statusLabel = needsApproval
+        const statusLabel = needsInteraction
           ? "action needed"
           : invocation.status === "queued"
             ? "queued"
             : "active";
         const title = needsApproval
           ? "is waiting for your approval"
+          : needsClarification
+            ? "is waiting for your response"
           : invocation.status === "queued"
             ? "is queued"
             : "is working";
@@ -144,14 +186,14 @@ export function HermesProgressInline({
                 </span>
                 <span
                   className={`inline-block size-1.5 shrink-0 rounded-full ${
-                    needsApproval
+                    needsInteraction
                       ? "bg-warning-text"
                       : "animate-pulse bg-[#54894a]"
                   }`}
                 />
                 <span
                   className={`shrink-0 rounded-sm px-1.5 py-0.5 text-[0.714rem] font-medium ${
-                    needsApproval
+                    needsInteraction
                       ? "bg-warning-bg text-warning-text"
                       : "bg-[#54894a]/10 text-[#8fcf84]"
                   }`}
@@ -198,11 +240,11 @@ export function HermesProgressInline({
                             <ApprovalRequestCard
                               event={row.state.event}
                               botName={invocation.botName}
-                              isActionable={
-                                row.state.event.id === actionableApprovalId
-                              }
+                              isActionable={actionableApprovalIds.has(
+                                row.state.event.id,
+                              )}
                               onDecision={(decision) =>
-                                handleApprovalDecision(row.state.event, decision)
+                                handleInteraction(row.state.event, decision)
                               }
                             />
                           ) : (
@@ -211,6 +253,18 @@ export function HermesProgressInline({
                               expanded={expandedRowKeys.has(row.key)}
                               onToggle={() => toggleRow(row.key)}
                             />
+                          )
+                        ) : row.kind === "clarify" ? (
+                          row.state.status === "pending" ? (
+                            <ClarifyRequestCard
+                              state={row.state}
+                              botName={invocation.botName}
+                              onResponse={(response) =>
+                                handleInteraction(row.state.event, response)
+                              }
+                            />
+                          ) : (
+                            <ResolvedClarifyRow state={row.state} />
                           )
                         ) : row.kind === "notice" ? (
                           <NoticeEventRow event={row.event} />
@@ -261,9 +315,13 @@ function useNowTick(active: boolean) {
 function buildActivityRows(
   sortedEvents: BotInvocationProgressEventPublic[],
   approvalStates: ApprovalRequestState[],
+  clarifyStates: ClarifyRequestState[],
 ): ActivityRow[] {
   const approvalStateByEventId = new Map(
     approvalStates.map((state) => [state.event.id, state]),
+  );
+  const clarifyStateByEventId = new Map(
+    clarifyStates.map((state) => [state.event.id, state]),
   );
   const rows: ActivityRow[] = [];
   const toolRowByCallId = new Map<string, EventRow>();
@@ -275,6 +333,14 @@ function buildActivityRows(
       continue;
     }
     if (isApprovalResolutionEvent(event)) continue; // consumed by deriveApprovalStates
+    if (isClarifyRequestEvent(event)) {
+      const state = clarifyStateByEventId.get(event.id);
+      if (state) {
+        rows.push({ kind: "clarify", key: clarifyRowKey(state.event), state });
+      }
+      continue;
+    }
+    if (isClarifyResolutionEvent(event)) continue;
 
     if (isNoticeEvent(event)) {
       rows.push({ kind: "notice", key: event.id, event });
@@ -327,6 +393,9 @@ function buildActivityRows(
 function rowKind(row: ActivityRow) {
   if (row.kind === "approval") {
     return row.state.status === "pending" ? "approval-pending" : "approval-resolved";
+  }
+  if (row.kind === "clarify") {
+    return row.state.status === "pending" ? "clarify-pending" : "clarify-resolved";
   }
   return row.kind;
 }
@@ -502,11 +571,28 @@ function ApprovalRequestCard({
   event: BotInvocationProgressEventPublic;
   botName: string;
   isActionable: boolean;
-  onDecision: (decision: ApprovalDecision) => void;
+  onDecision: (decision: ApprovalDecision) => void | Promise<void>;
 }) {
   const command = approvalCommandText(event);
-  const description = stringField(event.payload, "description");
+  const description = boundedUiText(
+    stringField(event.payload, "description"),
+    MAX_UI_DESCRIPTION_CHARS,
+  );
   const choices = approvalChoices(event);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const submit = async (decision: ApprovalDecision) => {
+    if (submitting) return;
+    setSubmitting(true);
+    setError(null);
+    try {
+      await onDecision(decision);
+    } catch (cause) {
+      setError(interactionErrorMessage(cause));
+      setSubmitting(false);
+    }
+  };
 
   return (
     <div className="relative z-10 flex min-w-0 items-start gap-2.5">
@@ -539,28 +625,32 @@ function ApprovalRequestCard({
               <ApprovalButton
                 label="Approve"
                 tone="primary"
-                onClick={() => onDecision("once")}
+                disabled={submitting}
+                onClick={() => void submit("once")}
               />
             )}
             {choices.includes("session") && (
               <ApprovalButton
                 label="Approve for session"
                 tone="secondary"
-                onClick={() => onDecision("session")}
+                disabled={submitting}
+                onClick={() => void submit("session")}
               />
             )}
             {choices.includes("always") && (
               <ApprovalButton
                 label="Always approve"
                 tone="secondary"
-                onClick={() => onDecision("always")}
+                disabled={submitting}
+                onClick={() => void submit("always")}
               />
             )}
             {choices.includes("deny") && (
               <ApprovalButton
                 label="Deny"
                 tone="danger"
-                onClick={() => onDecision("deny")}
+                disabled={submitting}
+                onClick={() => void submit("deny")}
               />
             )}
           </div>
@@ -569,7 +659,227 @@ function ApprovalRequestCard({
             Waiting for the earlier approval to be resolved first.
           </div>
         )}
+        {submitting && (
+          <div role="status" className="mt-2 text-[0.786rem] text-text-dimmed">
+            Sending response…
+          </div>
+        )}
+        {error && (
+          <div
+            role="alert"
+            className="mt-2 text-[0.786rem] text-error-light"
+          >
+            {error}
+          </div>
+        )}
       </div>
+    </div>
+  );
+}
+
+function ClarifyRequestCard({
+  state,
+  botName,
+  onResponse,
+}: {
+  state: ClarifyRequestState;
+  botName: string;
+  onResponse: (response: ClarifyResponse) => void | Promise<void>;
+}) {
+  const event = state.event;
+  const question = boundedUiText(
+    stringField(event.payload, "question") || eventText(event),
+    MAX_UI_DETAIL_CHARS,
+  );
+  const choices = clarifyChoices(event);
+  const multiSelect = event.payload?.multiSelect === true;
+  const [selected, setSelected] = useState<string[]>([]);
+  const [showOther, setShowOther] = useState(choices === null);
+  const [customAnswer, setCustomAnswer] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const submit = async (response: ClarifyResponse) => {
+    if (submitting) return;
+    const normalized =
+      typeof response === "string" ? response.trim() : response;
+    if (
+      (typeof normalized === "string" && !normalized) ||
+      (Array.isArray(normalized) && normalized.length === 0)
+    ) {
+      setError("Enter or select a response.");
+      return;
+    }
+    setSubmitting(true);
+    setError(null);
+    try {
+      await onResponse(normalized);
+    } catch (cause) {
+      setError(interactionErrorMessage(cause));
+      setSubmitting(false);
+    }
+  };
+
+  const toggleChoice = (choice: string) => {
+    setSelected((previous) =>
+      previous.includes(choice)
+        ? previous.filter((item) => item !== choice)
+        : [...previous, choice],
+    );
+    setError(null);
+  };
+
+  const customField = (
+    <div className="mt-2">
+      <label
+        htmlFor={`clarify-other-${event.id}`}
+        className="sr-only"
+      >
+        {choices === null ? "Your response" : "Other response"}
+      </label>
+      <div className="flex min-w-0 flex-col gap-1.5 sm:flex-row sm:items-end">
+        <textarea
+          id={`clarify-other-${event.id}`}
+          aria-label={choices === null ? "Your response" : "Other response"}
+          rows={choices === null ? 2 : 1}
+          maxLength={4_000}
+          value={customAnswer}
+          disabled={submitting}
+          onChange={(event) => {
+            setCustomAnswer(event.target.value);
+            setError(null);
+          }}
+          onKeyDown={(keyboardEvent) => {
+            if (
+              keyboardEvent.key === "Enter" &&
+              !keyboardEvent.shiftKey &&
+              !keyboardEvent.nativeEvent.isComposing
+            ) {
+              keyboardEvent.preventDefault();
+              void submit(customAnswer);
+            }
+          }}
+          placeholder={choices === null ? "Type your response" : "Type another answer"}
+          className="min-h-9 min-w-0 flex-1 resize-y rounded border border-border bg-base px-2.5 py-2 text-[0.857rem] text-text outline-none placeholder:text-text-placeholder focus:border-accent disabled:opacity-60"
+        />
+        <ApprovalButton
+          label="Submit"
+          tone="primary"
+          disabled={submitting || customAnswer.trim().length === 0}
+          onClick={() => void submit(customAnswer)}
+        />
+      </div>
+      <div className="mt-1 text-[0.714rem] text-text-dimmed">
+        Enter to submit · Shift+Enter for a new line
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="relative z-10 flex min-w-0 items-start gap-2.5">
+      <TimelineDot tone="warning" pulse />
+      <div
+        data-testid="hermes-clarify-request"
+        className="min-w-0 flex-1 border-l-2 border-warning-text bg-warning-bg/25 py-2 pl-3 pr-2.5 text-[0.929rem] text-text-secondary"
+      >
+        <div className="text-[0.786rem] font-medium text-warning-text">
+          {botName} needs your input
+        </div>
+        <div className="mt-1 whitespace-pre-wrap break-words font-medium text-text">
+          {question}
+        </div>
+
+        {choices && !multiSelect && (
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {choices.map((choice) => (
+              <ApprovalButton
+                key={choice}
+                label={choice}
+                tone="secondary"
+                disabled={submitting}
+                onClick={() => void submit(choice)}
+              />
+            ))}
+            <ApprovalButton
+              label={showOther ? "Hide other" : "Other"}
+              tone="secondary"
+              disabled={submitting}
+              onClick={() => {
+                setShowOther((visible) => !visible);
+                setError(null);
+              }}
+            />
+          </div>
+        )}
+
+        {choices && multiSelect && (
+          <fieldset className="mt-2 min-w-0" disabled={submitting}>
+            <legend className="sr-only">Select one or more answers</legend>
+            <div className="flex flex-wrap gap-1.5">
+              {choices.map((choice) => (
+                <label
+                  key={choice}
+                  className="inline-flex min-h-8 cursor-pointer items-center gap-2 rounded border border-border bg-button/70 px-2.5 py-1 text-[0.786rem] text-text-muted hover:bg-button-hover has-[:checked]:border-accent/60 has-[:checked]:bg-accent/15 has-[:checked]:text-accent"
+                >
+                  <input
+                    type="checkbox"
+                    checked={selected.includes(choice)}
+                    onChange={() => toggleChoice(choice)}
+                    className="size-3.5 accent-accent"
+                  />
+                  <span className="break-words">{choice}</span>
+                </label>
+              ))}
+            </div>
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              <ApprovalButton
+                label="Submit selected"
+                tone="primary"
+                disabled={submitting || selected.length === 0}
+                onClick={() => void submit(selected)}
+              />
+              <ApprovalButton
+                label={showOther ? "Hide custom answer" : "Custom answer"}
+                tone="secondary"
+                disabled={submitting}
+                onClick={() => {
+                  setShowOther((visible) => !visible);
+                  setError(null);
+                }}
+              />
+            </div>
+          </fieldset>
+        )}
+
+        {showOther && customField}
+        {submitting && (
+          <div role="status" className="mt-2 text-[0.786rem] text-text-dimmed">
+            Sending response…
+          </div>
+        )}
+        {error && (
+          <div role="alert" className="mt-2 text-[0.786rem] text-error-light">
+            {error}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ResolvedClarifyRow({ state }: { state: ClarifyRequestState }) {
+  const summary = clarifyResponseSummary(state.response);
+  return (
+    <div
+      className="relative z-10 flex min-w-0 items-start gap-2.5 text-[0.929rem]"
+      data-testid="hermes-clarify-resolved"
+      data-confirmed={state.confirmed ? "true" : "false"}
+    >
+      <TimelineDot tone="success" />
+      <span className="shrink-0 font-medium text-success-light">Answered</span>
+      <span className="min-w-0 flex-1 truncate text-text-dimmed" title={summary}>
+        {summary}
+      </span>
     </div>
   );
 }
@@ -633,11 +943,13 @@ function ApprovalButton({
   label,
   tone,
   className = "",
+  disabled = false,
   onClick,
 }: {
   label: string;
   tone: "primary" | "secondary" | "danger";
   className?: string;
+  disabled?: boolean;
   onClick: () => void;
 }) {
   const toneClass =
@@ -650,7 +962,8 @@ function ApprovalButton({
   return (
     <button
       type="button"
-      className={`inline-flex min-h-7 cursor-pointer items-center rounded border border-border px-2.5 py-1 text-[0.786rem] font-medium transition-colors ${toneClass} ${className}`}
+      disabled={disabled}
+      className={`inline-flex min-h-7 cursor-pointer items-center rounded border border-border px-2.5 py-1 text-[0.786rem] font-medium transition-colors disabled:cursor-default disabled:opacity-55 ${toneClass} ${className}`}
       onClick={onClick}
     >
       {label}
@@ -755,7 +1068,9 @@ function StatusDot({ status }: { status: string | null }) {
 }
 
 function eventLabel(event: BotInvocationProgressEventPublic) {
-  if (event.label?.trim()) return event.label.trim();
+  if (event.label?.trim()) {
+    return boundedUiText(event.label.trim(), MAX_UI_LABEL_CHARS);
+  }
   if (event.toolName) {
     const args = recordField(event.payload, "args");
     const call: ToolCallPart = {
@@ -764,9 +1079,11 @@ function eventLabel(event: BotInvocationProgressEventPublic) {
       toolName: event.toolName,
       args,
     };
-    return formatToolSummary(call);
+    return boundedUiText(formatToolSummary(call), MAX_UI_LABEL_CHARS);
   }
-  if (event.preview?.trim()) return event.preview.trim();
+  if (event.preview?.trim()) {
+    return boundedUiText(event.preview.trim(), MAX_UI_LABEL_CHARS);
+  }
   return event.type.replace(/\./g, " ");
 }
 
@@ -778,18 +1095,25 @@ function toolDetailText(event: BotInvocationProgressEventPublic) {
     stringField(recordField(event.payload, "args"), "command"),
     eventLabel(event),
   ];
-  return candidates.reduce(
-    (longest, candidate) =>
-      candidate.length > longest.length ? candidate : longest,
-    "",
+  return boundedUiText(
+    candidates.reduce(
+      (longest, candidate) =>
+        candidate.length > longest.length ? candidate : longest,
+      "",
+    ),
+    MAX_UI_DETAIL_CHARS,
   );
 }
 
 function eventText(event: BotInvocationProgressEventPublic) {
-  if (event.label?.trim()) return event.label.trim();
-  if (event.preview?.trim()) return event.preview.trim();
+  if (event.label?.trim()) {
+    return boundedUiText(event.label.trim(), MAX_UI_LABEL_CHARS);
+  }
+  if (event.preview?.trim()) {
+    return boundedUiText(event.preview.trim(), MAX_UI_LABEL_CHARS);
+  }
   const payloadText = stringField(event.payload, "text");
-  if (payloadText) return payloadText;
+  if (payloadText) return boundedUiText(payloadText, MAX_UI_DETAIL_CHARS);
   return event.type.replace(/\./g, " ");
 }
 
@@ -799,19 +1123,102 @@ function stringField(source: Record<string, unknown> | null, key: string) {
 }
 
 function approvalCommandText(event: BotInvocationProgressEventPublic) {
-  return (
+  return boundedUiText(
     stringField(event.payload, "command") ||
-    event.preview?.trim() ||
-    ""
+      event.preview?.trim() ||
+      "",
+    MAX_UI_COMMAND_CHARS,
   );
 }
 
 function approvalChoices(event: BotInvocationProgressEventPublic): ApprovalDecision[] {
   const value = event.payload?.choices;
   const choices = Array.isArray(value)
-    ? value.filter(isApprovalDecision)
+    ? [...new Set(value.slice(0, 4).filter(isApprovalDecision))]
     : [];
   return choices.length > 0 ? choices : ["once", "session", "always", "deny"];
+}
+
+function clarifyChoices(
+  event: BotInvocationProgressEventPublic,
+): string[] | null {
+  const value = event.payload?.choices;
+  if (value === null) return null;
+  if (!Array.isArray(value)) return null;
+  const choices = value
+    .slice(0, MAX_UI_CHOICES)
+    .filter(
+      (choice): choice is string =>
+        typeof choice === "string" &&
+        choice.trim().length > 0 &&
+        choice.length <= MAX_UI_CHOICE_CHARS,
+    );
+  return choices.length > 0 ? choices : null;
+}
+
+function clarifyRowKey(event: BotInvocationProgressEventPublic) {
+  const requestId = stringField(event.payload, "requestId");
+  return requestId ? `clarify:${requestId}` : `clarify:${event.id}`;
+}
+
+function clarifyResponseSummary(response: ClarifyResponse | null) {
+  if (Array.isArray(response)) {
+    return boundedUiText(
+      response
+        .slice(0, MAX_UI_CHOICES)
+        .map((item) => boundedUiText(item, MAX_UI_CHOICE_CHARS))
+        .join(", "),
+      MAX_UI_LABEL_CHARS,
+    );
+  }
+  if (response?.trim()) {
+    return boundedUiText(response.trim(), MAX_UI_LABEL_CHARS);
+  }
+  return "Response recorded";
+}
+
+function boundedUiText(value: string, maxChars: number) {
+  if (value.length <= maxChars) return value;
+  return `${value.slice(0, Math.max(0, maxChars - 1))}…`;
+}
+
+function interactionErrorMessage(cause: unknown) {
+  return cause instanceof Error && cause.message.trim()
+    ? cause.message
+    : "Could not send the response. Try again.";
+}
+
+function oldestPendingApprovalsBySession(states: ApprovalRequestState[]) {
+  const oldestBySession = new Map<string, ApprovalRequestState>();
+  for (const state of states) {
+    if (state.status !== "pending") continue;
+    const sessionKey =
+      state.event.botId +
+      ":" +
+      (stringField(state.event.payload, "sessionKey") || "__legacy__");
+    const existing = oldestBySession.get(sessionKey);
+    if (
+      !existing ||
+      compareInteractionRequestAge(state.event, existing.event) < 0
+    ) {
+      oldestBySession.set(sessionKey, state);
+    }
+  }
+  return new Set(
+    Array.from(oldestBySession.values()).map((state) => state.event.id),
+  );
+}
+
+function compareInteractionRequestAge(
+  left: BotInvocationProgressEventPublic,
+  right: BotInvocationProgressEventPublic,
+) {
+  const createdDelta = Date.parse(left.createdAt) - Date.parse(right.createdAt);
+  if (createdDelta !== 0) return createdDelta;
+  if (left.invocationId === right.invocationId) {
+    return left.sequence - right.sequence;
+  }
+  return left.id.localeCompare(right.id);
 }
 
 function isApprovalDecision(value: unknown): value is ApprovalDecision {

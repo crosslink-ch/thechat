@@ -200,9 +200,13 @@ SUITES = [
                 "HERMES_APPROVAL_E2E_MODEL_PORT",
                 "18081",
             ),
+            "HERMES_APPROVAL_E2E_WEBHOOK_PORT": explicit_env_or_default(
+                "HERMES_APPROVAL_E2E_WEBHOOK_PORT",
+                "18082",
+            ),
             "HERMES_E2E_SOURCE_DIR": explicit_env_or_default(
                 "HERMES_E2E_SOURCE_DIR",
-                "/home/bruno/projects/hermes2",
+                str(ROOT.parent / "hermes-agent"),
             ),
         },
         # Real Hermes + real Tauri UI, with a deterministic local model fixture.

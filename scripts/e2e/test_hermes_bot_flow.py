@@ -104,6 +104,7 @@ class HermesBotFlowTests(unittest.TestCase):
                 env["HERMES_HOME"],
                 str(harness.HERMES_HOME_ROOT / "nova-e2e"),
             )
+            self.assertEqual(env["THECHAT_WEBHOOK_URL"], "")
 
     def test_gateway_can_force_manual_approval_with_chat_completions(self):
         harness = load_harness()
@@ -172,6 +173,7 @@ class HermesBotFlowTests(unittest.TestCase):
                     model_base_url="http://127.0.0.1:18081/v1",
                     require_loopback_model=True,
                     isolate_runtime_environment=True,
+                    webhook_url="http://127.0.0.1:18082/thechat/webhook",
                     additional_config="""
 security:
   tirith_enabled: false
@@ -203,6 +205,15 @@ auxiliary:
             )
             self.assertEqual(
                 gateway_env["CUSTOM_BASE_URL"], "http://127.0.0.1:18081/v1"
+            )
+            self.assertEqual(
+                gateway_env["THECHAT_WEBHOOK_URL"],
+                "http://127.0.0.1:18082/thechat/webhook",
+            )
+            self.assertEqual(gateway_env["THECHAT_WEBHOOK_HOST"], "127.0.0.1")
+            self.assertEqual(gateway_env["THECHAT_WEBHOOK_PORT"], "18082")
+            self.assertEqual(
+                gateway_env["THECHAT_WEBHOOK_PATH"], "/thechat/webhook"
             )
             self.assertFalse(Path(gateway_env["HERMES_MANAGED_DIR"]).exists())
             evidence = json.loads(
@@ -239,6 +250,20 @@ auxiliary:
                     "Approval E2E",
                     model_base_url="http://127.0.0.1:18081/v1",
                     isolate_runtime_environment=True,
+                )
+
+    def test_gateway_rejects_non_loopback_webhook_endpoint(self):
+        harness = load_harness()
+        with tempfile.TemporaryDirectory() as tmp:
+            harness.HERMES_SOURCE_DIR = Path(tmp)
+            harness.HERMES_PROVIDER = "custom"
+            with self.assertRaisesRegex(ValueError, "must be a loopback HTTP URL"):
+                harness.start_hermes_gateway(
+                    {"PATH": "/usr/bin"},
+                    "http://localhost:3339",
+                    "bot_test",
+                    "Approval E2E",
+                    webhook_url="https://gateway.example.com/thechat/webhook",
                 )
 
 
