@@ -140,7 +140,10 @@ describe("ChannelModal", () => {
     const router = await renderModal();
 
     act(() => openCreateChannelModal());
-    expect(screen.getByRole("dialog", { name: "Create a channel" })).toBeInTheDocument();
+    const dialog = screen.getByRole("dialog", { name: "Create a channel" });
+    expect(dialog).toBeInTheDocument();
+    expect(dialog).toHaveClass("bg-surface");
+    expect(dialog).not.toHaveClass("bg-sidebar");
     await waitFor(() =>
       expect(screen.getByLabelText("Channel name")).toHaveFocus(),
     );

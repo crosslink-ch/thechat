@@ -151,6 +151,19 @@ describe("Channel management", function () {
     await createButton.click();
     const nameInput = await $('input[aria-label="Channel name"]');
     await nameInput.waitForExist({ timeout: 5_000 });
+    const dialogBackgroundColor = await browser.execute(() => {
+      const dialog = document.querySelector('[role="dialog"]');
+      return dialog ? window.getComputedStyle(dialog).backgroundColor : null;
+    });
+    if (
+      !dialogBackgroundColor ||
+      dialogBackgroundColor === "transparent" ||
+      dialogBackgroundColor === "rgba(0, 0, 0, 0)"
+    ) {
+      throw new Error(
+        `Channel dialog must have an opaque background, got ${dialogBackgroundColor}`,
+      );
+    }
     await saveEvidence("channel-management-1-create-dialog.png");
     await nameInput.setValue("Launch Room");
     await $("button=Create channel").click();
