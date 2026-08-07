@@ -180,7 +180,7 @@ class RedisBotProgressStore implements BotProgressStore {
       }
       if (
         isRecentlyActive(effectiveActivityAt, now, this.activityTimeoutMs) ||
-        hasUnresolvedApproval(invocationEvents)
+        hasUnresolvedInteraction(invocationEvents)
       ) {
         events.push(...invocationEvents);
       }
@@ -305,7 +305,7 @@ class LocalBotProgressStore implements BotProgressStore {
         const events = this.eventsByInvocation.get(invocationId) ?? [];
         const activityAt = this.activityAtByInvocation.get(invocationId) ?? Number.NaN;
         return isRecentlyActive(activityAt, now, this.activityTimeoutMs) ||
-          hasUnresolvedApproval(events)
+          hasUnresolvedInteraction(events)
           ? events
           : [];
       })
@@ -558,31 +558,53 @@ function isRecentlyActive(activityAt: number, now: number, timeoutMs: number) {
   return Number.isFinite(activityAt) && now - activityAt <= timeoutMs;
 }
 
-function hasUnresolvedApproval(events: BotInvocationProgressEventPublic[]) {
-  const pending: BotInvocationProgressEventPublic[] = [];
+function hasUnresolvedInteraction(events: BotInvocationProgressEventPublic[]) {
+  const pendingByType = new Map<string, BotInvocationProgressEventPublic[]>([
+    ["approval", []],
+    ["clarify", []],
+  ]);
   for (const event of [...events].sort(compareProgressEvents)) {
-    if (event.type === "approval.request") {
-      pending.push(event);
+    const requestKind = event.type === "approval.request"
+      ? "approval"
+      : event.type === "clarify.request"
+        ? "clarify"
+        : null;
+    if (requestKind) {
+      pendingByType.get(requestKind)!.push(event);
       continue;
     }
-    if (event.type !== "approval.resolved") continue;
+    const resolutionKind = event.type === "approval.resolved"
+      ? "approval"
+      : event.type === "clarify.resolved"
+        ? "clarify"
+        : null;
+    if (!resolutionKind) continue;
+    const pending = pendingByType.get(resolutionKind)!;
+    const requestId = stringField(event.payload, "requestId");
     const sessionKey = stringField(event.payload, "sessionKey");
-    const candidates = pending.filter(
-      (request) =>
-        !sessionKey ||
-        !stringField(request.payload, "sessionKey") ||
-        stringField(request.payload, "sessionKey") === sessionKey,
-    );
+    const candidates = requestId
+      ? pending.filter(
+          (request) => stringField(request.payload, "requestId") === requestId,
+        )
+      : pending.filter(
+          (request) =>
+            request.invocationId === event.invocationId &&
+            (!sessionKey ||
+              !stringField(request.payload, "sessionKey") ||
+              stringField(request.payload, "sessionKey") === sessionKey),
+        );
     const requestedCount = numberField(event.payload, "resolvedCount");
-    const count = event.payload?.resolveAll === true
+    const count = resolutionKind === "approval" && event.payload?.resolveAll === true
       ? candidates.length
-      : Math.max(1, requestedCount ?? 1);
+      : resolutionKind === "approval"
+        ? Math.max(1, requestedCount ?? 1)
+        : 1;
     const resolved = candidates.slice(0, count);
     for (const request of resolved) {
       pending.splice(pending.indexOf(request), 1);
     }
   }
-  return pending.length > 0;
+  return Array.from(pendingByType.values()).some((pending) => pending.length > 0);
 }
 
 function numberField(source: Record<string, unknown> | null, key: string) {

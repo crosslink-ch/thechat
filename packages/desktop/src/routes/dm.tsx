@@ -4,7 +4,9 @@ import { useAuthStore } from "../stores/auth";
 import {
   useBotRuntime,
   useBotRuntimeCache,
+  submitHermesInteraction,
 } from "../hooks/useBotRuntime";
+import type { BotInvocationProgressEventPublic } from "@thechat/shared";
 import { useConversationThreads } from "../hooks/useConversationThreads";
 import { useConversationDetail } from "../hooks/useConversationDetail";
 import { useScopedCommands } from "../hooks/useScopedCommands";
@@ -84,7 +86,8 @@ export function DmRoute() {
     renameThread,
     touchThread,
   } = threadState;
-  const { mergeInvocationUpdate, mergeProgressEvent } = useBotRuntimeCache();
+  const { mergeInvocationUpdate, mergeProgressEvent, invalidate } =
+    useBotRuntimeCache();
   const generalThreadActive = isHermesDm && activeThreadId === null;
   const activeHermesProgress = useMemo(
     () =>
@@ -372,9 +375,9 @@ export function DmRoute() {
       return handleBranchCommand(slash!.args).then(() => true);
     }
     if (slash) {
-      // Optimistically resolve approval cards: the gateway resolves pending
-      // approvals oldest-first, so mirror that here. Covers both the inline
-      // approval buttons (which send these commands) and typed commands.
+      // Manual typed approval commands remain regular visible chat messages.
+      // Record their optimistic state only after the send pipeline accepts
+      // the message; inline buttons use the direct interaction route instead.
       const approvalDecision = decisionFromApprovalCommand(content);
       if (approvalDecision) {
         const pending = pendingApprovalEvents(
@@ -382,9 +385,16 @@ export function DmRoute() {
           useHermesApprovalsStore.getState().decisions,
         );
         const targets = approvalDecision.all ? pending : pending.slice(0, 1);
-        for (const event of targets) {
-          recordApprovalDecision(event.id, approvalDecision.decision);
-        }
+        return sendHermesMessageNow(content, activeThreadId, attachmentIds).then(
+          (accepted) => {
+            if (accepted !== false) {
+              for (const event of targets) {
+                recordApprovalDecision(event.id, approvalDecision.decision);
+              }
+            }
+            return accepted;
+          },
+        );
       }
       return sendHermesMessageNow(content, activeThreadId, attachmentIds);
     }
@@ -400,6 +410,25 @@ export function DmRoute() {
     sendHermesMessageNow,
     slashCommands,
   ]);
+
+  const handleHermesInteraction = useCallback(
+    async (
+      event: BotInvocationProgressEventPublic,
+      response: string | string[],
+    ) => {
+      if (!isHermesDm || !token) {
+        throw new Error("Sign in to respond to Hermes");
+      }
+      await submitHermesInteraction(
+        event.invocationId,
+        event.id,
+        response,
+        token,
+      );
+      invalidate(conversationId);
+    },
+    [conversationId, invalidate, isHermesDm, token],
+  );
 
   return (
     <div className="flex min-h-0 flex-1">
@@ -419,6 +448,7 @@ export function DmRoute() {
             progressInvocations={activeHermesProgress.invocations}
             typingSuppressedUserIds={activeHermesProgress.typingSuppressedUserIds}
             onSend={handleSend}
+            onInteraction={handleHermesInteraction}
             onStop={handleStopHermesTask}
             onLoadOlderMessages={channelChat.loadOlderMessages}
             mentions={mentions}

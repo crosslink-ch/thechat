@@ -4,7 +4,8 @@
 This is intentionally only a model fixture. The E2E still runs the real Hermes
 Gateway, TheChat API/worker, and Tauri desktop application. The fixture forces
 one harmless terminal call whose shell shape requires manual approval, then
-returns a final response after Hermes reports the tool result.
+one multi-select clarify call, then returns a final response after Hermes
+reports both tool results.
 """
 
 from __future__ import annotations
@@ -20,6 +21,7 @@ from typing import Any
 MODEL = "hermes-approval-e2e"
 TRIGGER_MARKER = "HERMES_DANGER_GATE_E2E"
 TOOL_CALL_ID = "call_hermes_approval_ui_e2e"
+CLARIFY_TOOL_CALL_ID = "call_hermes_clarify_ui_e2e"
 OUTPUT_MARKER = "hermes-approval-e2e-ok"
 APPROVAL_COMMAND = "/usr/bin/python3 -c 'print(\"hermes-approval-e2e-ok\")'"
 APPROVAL_REASON_MARKER = "script execution via -e/-c flag"
@@ -28,11 +30,16 @@ APPROVAL_EVIDENCE = (
     "and was approved by the user."
 )
 FINAL_MESSAGE = "Hermes approval UI E2E completed after approval."
+CLARIFY_QUESTION = "Which verification checks should Hermes record?"
+CLARIFY_CHOICES = ["Unit tests", "Typecheck", "Real-stack E2E"]
+CLARIFY_RESPONSE = ["Unit tests", "Real-stack E2E"]
 
 _STATE_LOCK = threading.Lock()
 _STATE = {
     "requests": 0,
     "toolCallResponses": 0,
+    "terminalToolCallResponses": 0,
+    "clarifyToolCallResponses": 0,
     "successfulFinalResponses": 0,
     "auxiliaryResponses": 0,
 }
@@ -50,6 +57,16 @@ def _record_completion(completion: dict[str, Any]) -> None:
         _STATE["requests"] += 1
         if choice["finish_reason"] == "tool_calls":
             _STATE["toolCallResponses"] += 1
+            tool_calls = message.get("tool_calls") or []
+            tool_name = (
+                (tool_calls[0].get("function") or {}).get("name")
+                if tool_calls and isinstance(tool_calls[0], dict)
+                else None
+            )
+            if tool_name == "terminal":
+                _STATE["terminalToolCallResponses"] += 1
+            elif tool_name == "clarify":
+                _STATE["clarifyToolCallResponses"] += 1
         elif message.get("content") == FINAL_MESSAGE:
             _STATE["successfulFinalResponses"] += 1
         else:
@@ -73,6 +90,14 @@ def _terminal_is_offered(payload: dict[str, Any]) -> bool:
     for tool in payload.get("tools") or []:
         function = tool.get("function") if isinstance(tool, dict) else None
         if isinstance(function, dict) and function.get("name") == "terminal":
+            return True
+    return False
+
+
+def _clarify_is_offered(payload: dict[str, Any]) -> bool:
+    for tool in payload.get("tools") or []:
+        function = tool.get("function") if isinstance(tool, dict) else None
+        if isinstance(function, dict) and function.get("name") == "clarify":
             return True
     return False
 
@@ -116,6 +141,32 @@ def _successful_tool_result_is_present(payload: dict[str, Any]) -> bool:
     )
 
 
+def _clarify_result_succeeded(message: dict[str, Any]) -> bool:
+    if (
+        message.get("role") != "tool"
+        or message.get("tool_call_id") != CLARIFY_TOOL_CALL_ID
+    ):
+        return False
+    try:
+        result = json.loads(_message_text(message.get("content")))
+    except (TypeError, json.JSONDecodeError):
+        return False
+    return (
+        isinstance(result, dict)
+        and result.get("question") == CLARIFY_QUESTION
+        and result.get("choices_offered") == CLARIFY_CHOICES
+        and result.get("user_response") == CLARIFY_RESPONSE
+    )
+
+
+def _successful_clarify_result_is_present(payload: dict[str, Any]) -> bool:
+    return any(
+        _clarify_result_succeeded(message)
+        for message in payload.get("messages") or []
+        if isinstance(message, dict)
+    )
+
+
 def completion_for(payload: dict[str, Any]) -> dict[str, Any]:
     """Build the deterministic chat-completion response for one request."""
     if _terminal_is_offered(payload) and _trigger_is_present(payload):
@@ -135,6 +186,35 @@ def completion_for(payload: dict[str, Any]) -> dict[str, Any]:
                 ],
             }
             finish_reason = "tool_calls"
+        elif not _successful_clarify_result_is_present(payload):
+            if not _clarify_is_offered(payload):
+                message = {
+                    "role": "assistant",
+                    "content": "Hermes approval E2E requires the clarify tool.",
+                }
+                finish_reason = "stop"
+            else:
+                message = {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": CLARIFY_TOOL_CALL_ID,
+                            "type": "function",
+                            "function": {
+                                "name": "clarify",
+                                "arguments": json.dumps(
+                                    {
+                                        "question": CLARIFY_QUESTION,
+                                        "choices": CLARIFY_CHOICES,
+                                        "multi_select": True,
+                                    }
+                                ),
+                            },
+                        }
+                    ],
+                }
+                finish_reason = "tool_calls"
         else:
             message = {"role": "assistant", "content": FINAL_MESSAGE}
             finish_reason = "stop"

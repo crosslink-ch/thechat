@@ -327,6 +327,7 @@ def start_hermes_gateway(
     additional_config: str | None = None,
     require_loopback_model: bool = False,
     isolate_runtime_environment: bool = False,
+    webhook_url: str | None = None,
 ) -> subprocess.Popen:
     if not HERMES_SOURCE_DIR.exists():
         raise RuntimeError(f"Hermes source checkout not found: {HERMES_SOURCE_DIR}")
@@ -347,6 +348,28 @@ def start_hermes_gateway(
         raise ValueError(
             "Hermes E2E runtime environment isolation requires loopback enforcement"
         )
+    parsed_webhook_url = None
+    if webhook_url:
+        parsed_webhook_url = urlparse(webhook_url)
+        try:
+            webhook_port = parsed_webhook_url.port
+        except ValueError as exc:
+            raise ValueError(
+                f"Hermes E2E webhook URL has an invalid port: {webhook_url!r}"
+            ) from exc
+        if (
+            parsed_webhook_url.scheme != "http"
+            or parsed_webhook_url.hostname not in {"127.0.0.1", "localhost", "::1"}
+            or webhook_port is None
+            or not parsed_webhook_url.path.startswith("/")
+            or parsed_webhook_url.username is not None
+            or parsed_webhook_url.password is not None
+            or parsed_webhook_url.query
+            or parsed_webhook_url.fragment
+        ):
+            raise ValueError(
+                f"Hermes E2E webhook endpoint must be a loopback HTTP URL: {webhook_url!r}"
+            )
 
     bot_slug = slug(bot_name)
     hermes_home = HERMES_HOME_ROOT / bot_slug
@@ -395,11 +418,22 @@ def start_hermes_gateway(
         "THECHAT_BOT_TOKEN": bot_token,
         "THECHAT_ALLOW_ALL_USERS": "true",
         "THECHAT_POLL_INTERVAL": "0.25",
-        # The E2E harness exercises polling. Do not inherit a developer's live
-        # webhook listener settings (commonly port 8765) into the isolated bot.
+        # Polling remains the default for existing E2Es. Do not inherit a
+        # developer's live webhook listener unless this run opted in below.
         "THECHAT_WEBHOOK_URL": "",
         "LOG_LEVEL": "info",
     }
+    if parsed_webhook_url is not None:
+        assert parsed_webhook_url.hostname is not None
+        assert parsed_webhook_url.port is not None
+        hermes_env.update(
+            {
+                "THECHAT_WEBHOOK_URL": webhook_url,
+                "THECHAT_WEBHOOK_HOST": parsed_webhook_url.hostname,
+                "THECHAT_WEBHOOK_PORT": str(parsed_webhook_url.port),
+                "THECHAT_WEBHOOK_PATH": parsed_webhook_url.path,
+            }
+        )
     if isolate_runtime_environment:
         assert model_base_url is not None
         hermes_env.update(

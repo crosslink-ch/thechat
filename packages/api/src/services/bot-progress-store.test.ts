@@ -69,6 +69,45 @@ describe("local bot progress store", () => {
     expect(await store.listForConversation("conversation-1")).toEqual([]);
   });
 
+  test("retains clarifications and resolves an explicit requestId", async () => {
+    let now = Date.parse("2026-01-01T00:00:00.000Z");
+    const store = createLocalBotProgressStoreForTests({
+      activityTimeoutMs: 30_000,
+      now: () => now,
+    });
+    await store.append(progressInput({
+      type: "clarify.request",
+      toolCallId: null,
+      payload: { requestId: "clarify-1", sessionKey: "session-1" },
+    }));
+    await store.append(progressInput({
+      type: "clarify.request",
+      toolCallId: null,
+      payload: { requestId: "clarify-2", sessionKey: "session-1" },
+    }));
+    await store.append(progressInput({
+      type: "clarify.resolved",
+      toolCallId: null,
+      payload: { requestId: "clarify-2", sessionKey: "session-1" },
+    }));
+    now += 30_001;
+
+    const retained = await store.listForConversation("conversation-1");
+    expect(retained.map((event) => event.type)).toEqual([
+      "clarify.request",
+      "clarify.request",
+      "clarify.resolved",
+    ]);
+
+    await store.append(progressInput({
+      type: "clarify.resolved",
+      toolCallId: null,
+      payload: { requestId: "clarify-1", sessionKey: "session-1" },
+    }));
+    now += 30_001;
+    expect(await store.listForConversation("conversation-1")).toEqual([]);
+  });
+
   test("clear removes events and the conversation index", async () => {
     const store = createLocalBotProgressStoreForTests();
     await store.append(progressInput());

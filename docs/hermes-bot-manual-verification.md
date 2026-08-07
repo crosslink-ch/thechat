@@ -329,9 +329,10 @@ real Tauri desktop app and launches a command-capable Hermes process; broad
 `scripts/test.py --all` deliberately excludes it. Its WebDriver spec lives
 outside the default desktop-spec glob and also skips unless the orchestrator's
 `HERMES_APPROVAL_E2E=1` gate is set. The suite starts an actual Hermes Gateway
-from source and connects it to TheChat through the native polling adapter. A
-deterministic local OpenAI-compatible fixture replaces only the model API. No
-provider credential is required or inherited.
+from the pinned sibling `../hermes-agent` checkout and connects it to TheChat
+through the native webhook adapter on loopback. A deterministic local
+OpenAI-compatible fixture replaces only the model API. No provider credential
+is required or inherited.
 
 The exact command is a harmless `python3 -c` print. Before the stack starts, the
 suite runs the selected Hermes checkout's built-in detectors and requires the
@@ -347,39 +348,45 @@ validates that evidence.
 
 Linux prerequisites are the same as the Tauri WebDriver suite: Rust,
 `tauri-driver`, `WebKitWebDriver`, and `xvfb-run`. Docker, Bun/pnpm, Python 3,
-`uv`, and an installed Hermes source checkout are also required. Run:
+`uv`, and the sibling Hermes source checkout are also required. Run:
 
 ```bash
-HERMES_E2E_SOURCE_DIR=/path/to/hermes-agent \
-  python3 scripts/test.py hermes-approval-ui
+python3 scripts/test.py hermes-approval-ui
 ```
 
 Or use the package script directly:
 
 ```bash
-HERMES_E2E_SOURCE_DIR=/path/to/hermes-agent \
-  pnpm test:e2e:hermes:approval-ui
+pnpm test:e2e:hermes:approval-ui
 ```
 
 The test uses API `3339`, Postgres `15545`, Redis `16382`, and the local model
-fixture on `18081` by default. Port environment overrides automatically update
-the derived database and Redis URLs unless those URLs are themselves explicitly
-set. It performs all of these assertions across the live stack:
+fixture on `18081` by default. The real Hermes webhook listener binds only to
+`127.0.0.1` on `18082`. Port environment overrides automatically update the
+derived database and Redis URLs unless those URLs are themselves explicitly
+set. `HERMES_APPROVAL_E2E_WEBHOOK_PORT` overrides the listener port. It performs
+all of these assertions across the live stack:
 
 1. Login through the desktop UI and send a DM to the real Hermes bot.
-2. Hermes requests the exact built-in-classified command and posts
-   `approval.request` through TheChat's invocation-progress endpoint.
+2. The Hermes adapter registers its loopback webhook, receives the invocation
+   there instead of polling, requests the exact built-in-classified command,
+   and posts `approval.request` through TheChat's invocation-progress endpoint.
 3. The desktop renders `[data-testid="hermes-approval-request"]` with the
    policy-offered approval and denial actions, while no fallback message tells
    the user to type `/approve`.
-4. Clicking **Approve** from the card must produce a server-confirmed
-   `approval.resolved` row in the rendered event timeline; an optimistic local
-   decision alone does not satisfy the test.
-5. The harmless print command executes, and the model fixture accepts only the
-   matching tool-call ID, explicit user-approval evidence, exit code `0`, an
-   empty error, and exact output marker. The original Hermes turn must then post
-   its final DM message. The fixture requires exactly one approval-driving tool
-   response and one successful final response.
+4. Clicking **Approve** sends no human `/approve`, `/approve session`,
+   `/approve always`, or `/deny` message. The API signs a direct interaction
+   envelope to the real Hermes webhook; only its resulting server-confirmed
+   `approval.resolved` row satisfies the test.
+5. The harmless print command executes, then the fixture requests one
+   multi-select `clarify` interaction. The desktop submits two selections
+   through the structured Clarify UI and must observe server-confirmed
+   `clarify.resolved` before the final answer.
+6. The model fixture accepts only the matching tool-call IDs, explicit
+   user-approval evidence, exit code `0`, an empty error, exact output marker,
+   and exact Clarify response. The original Hermes turn must then post its final
+   DM message. The fixture requires exactly one approval-driving tool call, one
+   Clarify tool call, and one successful final response.
 
 A screenshot of the pending approval card is saved at
 `.tmp/hermes-approval-ui-e2e.png`. Container names and Hermes state/log paths

@@ -238,6 +238,28 @@ describe("useHermesIndicatorsStore", () => {
       expect(store().pendingApprovals.map((p) => p.eventId)).toEqual(["evt-2"]);
     });
 
+    it("resolves the approval named by requestId when present", () => {
+      store().trackProgressEvent(makeEvent({
+        id: "evt-1",
+        sequence: 1,
+        payload: { requestId: "request-1", sessionKey: "session-1" },
+      }));
+      store().trackProgressEvent(makeEvent({
+        id: "evt-2",
+        sequence: 2,
+        payload: { requestId: "request-2", sessionKey: "session-1" },
+      }));
+
+      store().trackProgressEvent(makeEvent({
+        id: "evt-3",
+        sequence: 3,
+        type: "approval.resolved",
+        payload: { requestId: "request-2", sessionKey: "session-1" },
+      }));
+
+      expect(store().pendingApprovals.map((p) => p.eventId)).toEqual(["evt-1"]);
+    });
+
     it("resolves all pending approvals when the resolution carries resolveAll", () => {
       store().trackProgressEvent(makeEvent({ id: "evt-1", sequence: 1 }));
       store().trackProgressEvent(makeEvent({ id: "evt-2", sequence: 2 }));

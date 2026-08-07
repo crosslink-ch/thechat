@@ -63,7 +63,16 @@ export const BOT_INVOKE_JOB_NAME = "bot.invoke";
 export const HERMES_WEBHOOK_DELIVERY_JOB_NAME = "bot.hermes_webhook.deliver";
 const MAX_THREAD_TITLE_LENGTH = 255;
 const DEFAULT_HERMES_DISPATCH_TIMEOUT_MS = 2 * 60 * 1000;
+const HERMES_INTERACTION_TIMEOUT_MS = 5_000;
 const HERMES_WEBHOOK_BODY_FIELD = "hermesWebhookBody";
+const MAX_INTERACTION_REQUEST_ID_LENGTH = 255;
+const MAX_INTERACTION_SESSION_KEY_LENGTH = 1_000;
+const MAX_INTERACTION_QUESTION_LENGTH = 10_000;
+const MAX_INTERACTION_COMMAND_LENGTH = 100_000;
+const MAX_INTERACTION_DESCRIPTION_LENGTH = 10_000;
+const MAX_INTERACTION_RESPONSE_LENGTH = 4_000;
+const MAX_CLARIFY_CHOICE_LENGTH = 500;
+const MAX_CLARIFY_CHOICES = 20;
 
 type BotKind = "webhook" | "hermes";
 type ConversationType = "direct" | "group";
@@ -210,6 +219,426 @@ function titleFromProgressInput(input: HermesPlatformProgressInput): string | nu
 export function signWebhookPayload(body: string, secret: string, timestamp: number): string {
   const signedContent = `${timestamp}.${body}`;
   return crypto.createHmac("sha256", secret).update(signedContent).digest("hex");
+}
+
+type HermesInteractionRequestType = "approval.request" | "clarify.request";
+type HermesInteractionResponse = string | string[];
+
+interface HermesInteractionEnvelope {
+  type: "thechat.hermes_platform.interaction";
+  interaction: {
+    id: string;
+    requestType: HermesInteractionRequestType;
+    requestId: string;
+    invocationId: string;
+    conversationId: string;
+    threadId: string | null;
+    sessionKey: string;
+    response: HermesInteractionResponse;
+  };
+}
+
+/**
+ * Deliver a human response to a pending Hermes interaction without creating a
+ * chat message or a second bot invocation. All routing and session context is
+ * loaded from the stored invocation and progress event.
+ */
+export async function submitHermesPlatformInteraction(input: {
+  userId: string;
+  userType: "human" | "bot";
+  invocationId: string;
+  eventId: string;
+  response: HermesInteractionResponse;
+}): Promise<{ ok: true }> {
+  if (input.userType !== "human") {
+    throw new ServiceError("A human participant is required", 403);
+  }
+
+  const loaded = await loadInvocationContext(input.invocationId);
+  if (!loaded) throw new ServiceError("Invocation not found", 404);
+  await requireConversationParticipant(loaded.conversation.id, input.userId);
+  if (loaded.bot.kind !== "hermes" || loaded.invocation.adapterKind !== "hermes") {
+    throw new ServiceError("Invocation is not for a Hermes bot", 400);
+  }
+  if (interactionInvocationIsTerminal(loaded.invocation)) {
+    throw new ServiceError("Interaction request is no longer active", 409);
+  }
+
+  const events = await getBotProgressStore().listForConversation(
+    loaded.conversation.id,
+    [loaded.invocation.id],
+  );
+  const requestEvent = events.find(
+    (event) =>
+      event.id === input.eventId &&
+      event.invocationId === loaded.invocation.id &&
+      event.conversationId === loaded.conversation.id &&
+      event.botId === loaded.bot.id &&
+      isHermesInteractionRequestType(event.type),
+  );
+  if (!requestEvent) {
+    throw new ServiceError("Interaction request not found", 404);
+  }
+  if (!isHermesInteractionRequestType(requestEvent.type)) {
+    throw new ServiceError("Interaction request not found", 404);
+  }
+
+  const botEvents = events.filter((event) => event.botId === loaded.bot.id);
+  const pending = pendingHermesInteractionRequests(botEvents, requestEvent.type);
+  if (!pending.some((event) => event.id === requestEvent.id)) {
+    throw new ServiceError("Interaction request is no longer active", 409);
+  }
+
+  const request = validateHermesInteractionRequest(requestEvent);
+  if (request.type === "approval.request") {
+    const oldestForSession = pending
+      .filter(
+        (event) =>
+          stringPayloadField(event.payload, "sessionKey") === request.sessionKey,
+      )
+      .sort(compareProgressEventsByCreatedAt)[0];
+    if (oldestForSession?.id !== requestEvent.id) {
+      throw new ServiceError(
+        "An earlier approval must be resolved first",
+        409,
+      );
+    }
+  }
+
+  const response = validateHermesInteractionResponse(
+    request,
+    input.response,
+  );
+  const webhookUrl = loaded.bot.webhookUrl?.trim();
+  if (!webhookUrl) {
+    throw new ServiceError("Hermes webhook is not configured", 409);
+  }
+
+  const envelope: HermesInteractionEnvelope = {
+    type: "thechat.hermes_platform.interaction",
+    interaction: {
+      id: requestEvent.id,
+      requestType: request.type,
+      requestId: request.requestId,
+      invocationId: requestEvent.invocationId,
+      conversationId: requestEvent.conversationId,
+      threadId: requestEvent.threadId,
+      sessionKey: request.sessionKey,
+      response,
+    },
+  };
+  const body = JSON.stringify(envelope);
+  const timestamp = Math.floor(Date.now() / 1000);
+  const signature = signWebhookPayload(body, loaded.bot.webhookSecret, timestamp);
+  const controller = new AbortController();
+  let timedOut = false;
+  const timeout = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, HERMES_INTERACTION_TIMEOUT_MS);
+
+  try {
+    const upstream = await fetch(webhookUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Webhook-Timestamp": String(timestamp),
+        "X-Webhook-Signature": signature,
+        "X-TheChat-Bot-Id": loaded.bot.id,
+        "X-TheChat-Invocation-Id": loaded.invocation.id,
+      },
+      body,
+      signal: controller.signal,
+    });
+    if (!upstream.ok) {
+      throw new ServiceError(
+        upstream.status >= 500
+          ? "Hermes is temporarily unavailable"
+          : "Hermes rejected the interaction response",
+        upstream.status === 409 ? 409 : 502,
+      );
+    }
+  } catch (error) {
+    if (error instanceof ServiceError) throw error;
+    throw new ServiceError(
+      timedOut
+        ? "Hermes did not accept the interaction in time"
+        : "Could not reach Hermes to deliver the interaction",
+      timedOut ? 504 : 502,
+    );
+  } finally {
+    clearTimeout(timeout);
+  }
+
+  return { ok: true };
+}
+
+type ValidatedHermesInteractionRequest =
+  | {
+      type: "approval.request";
+      requestId: string;
+      sessionKey: string;
+      choices: ApprovalInteractionChoice[];
+    }
+  | {
+      type: "clarify.request";
+      requestId: string;
+      sessionKey: string;
+      choices: string[] | null;
+      multiSelect: boolean;
+    };
+
+type ApprovalInteractionChoice = "once" | "session" | "always" | "deny";
+
+function validateHermesInteractionRequest(
+  event: BotInvocationProgressEventPublic,
+): ValidatedHermesInteractionRequest {
+  const payload = event.payload;
+  const requestId = requiredBoundedPayloadString(
+    payload,
+    "requestId",
+    MAX_INTERACTION_REQUEST_ID_LENGTH,
+  );
+  const sessionKey = requiredBoundedPayloadString(
+    payload,
+    "sessionKey",
+    MAX_INTERACTION_SESSION_KEY_LENGTH,
+  );
+
+  if (event.type === "approval.request") {
+    requiredPayloadString(payload, "command", MAX_INTERACTION_COMMAND_LENGTH, false);
+    requiredPayloadString(
+      payload,
+      "description",
+      MAX_INTERACTION_DESCRIPTION_LENGTH,
+      false,
+    );
+    const rawChoices = payload?.choices;
+    if (
+      !Array.isArray(rawChoices) ||
+      rawChoices.length === 0 ||
+      rawChoices.length > 4 ||
+      new Set(rawChoices).size !== rawChoices.length ||
+      !rawChoices.every(isApprovalInteractionChoice)
+    ) {
+      throw malformedInteractionRequest();
+    }
+    return {
+      type: event.type,
+      requestId,
+      sessionKey,
+      choices: rawChoices,
+    };
+  }
+
+  if (event.type !== "clarify.request") {
+    throw malformedInteractionRequest();
+  }
+
+  requiredBoundedPayloadString(
+    payload,
+    "question",
+    MAX_INTERACTION_QUESTION_LENGTH,
+  );
+  if (payload?.allowOther !== true || typeof payload.multiSelect !== "boolean") {
+    throw malformedInteractionRequest();
+  }
+  const rawChoices = payload.choices;
+  if (rawChoices !== null && !Array.isArray(rawChoices)) {
+    throw malformedInteractionRequest();
+  }
+  const choices = rawChoices as unknown[] | null;
+  if (
+    choices &&
+    (choices.length === 0 ||
+      choices.length > MAX_CLARIFY_CHOICES ||
+      !choices.every(
+        (choice) =>
+          typeof choice === "string" &&
+          choice.trim().length > 0 &&
+          choice.length <= MAX_CLARIFY_CHOICE_LENGTH,
+      ) ||
+      new Set(choices).size !== choices.length)
+  ) {
+    throw malformedInteractionRequest();
+  }
+  if (payload.multiSelect && choices === null) {
+    throw malformedInteractionRequest();
+  }
+  return {
+    type: event.type,
+    requestId,
+    sessionKey,
+    choices: choices as string[] | null,
+    multiSelect: payload.multiSelect,
+  };
+}
+
+function validateHermesInteractionResponse(
+  request: ValidatedHermesInteractionRequest,
+  response: HermesInteractionResponse,
+): HermesInteractionResponse {
+  if (request.type === "approval.request") {
+    if (
+      typeof response !== "string" ||
+      !request.choices.includes(response as ApprovalInteractionChoice)
+    ) {
+      throw new ServiceError("Response is not allowed for this approval", 400);
+    }
+    return response;
+  }
+
+  if (typeof response === "string") {
+    const normalized = response.trim();
+    if (!normalized || normalized.length > MAX_INTERACTION_RESPONSE_LENGTH) {
+      throw new ServiceError("A valid clarification response is required", 400);
+    }
+    return normalized;
+  }
+  if (
+    !request.multiSelect ||
+    request.choices === null ||
+    response.length === 0 ||
+    response.length > MAX_CLARIFY_CHOICES ||
+    new Set(response).size !== response.length ||
+    response.some(
+      (choice) =>
+        choice.length > MAX_CLARIFY_CHOICE_LENGTH ||
+        !request.choices!.includes(choice),
+    )
+  ) {
+    throw new ServiceError("Response is not allowed for this clarification", 400);
+  }
+  return response;
+}
+
+function pendingHermesInteractionRequests(
+  events: BotInvocationProgressEventPublic[],
+  requestType: HermesInteractionRequestType,
+) {
+  const resolutionType = requestType === "approval.request"
+    ? "approval.resolved"
+    : "clarify.resolved";
+  const pending: BotInvocationProgressEventPublic[] = [];
+  for (const event of [...events].sort(compareProgressEventsByCreatedAt)) {
+    if (event.type === requestType) {
+      pending.push(event);
+      continue;
+    }
+    if (event.type !== resolutionType) continue;
+
+    const explicitRequestId = stringPayloadField(event.payload, "requestId");
+    let candidates: BotInvocationProgressEventPublic[];
+    if (explicitRequestId) {
+      candidates = pending.filter(
+        (request) =>
+          stringPayloadField(request.payload, "requestId") === explicitRequestId,
+      );
+    } else {
+      const sessionKey = stringPayloadField(event.payload, "sessionKey");
+      candidates = pending.filter(
+        (request) =>
+          request.invocationId === event.invocationId &&
+          (!sessionKey ||
+            stringPayloadField(request.payload, "sessionKey") === sessionKey),
+      );
+    }
+    const count =
+      requestType === "approval.request" && event.payload?.resolveAll === true
+        ? candidates.length
+        : requestType === "approval.request"
+          ? Math.max(1, numberPayloadField(event.payload, "resolvedCount") ?? 1)
+          : 1;
+    for (const request of candidates.slice(0, count)) {
+      pending.splice(pending.indexOf(request), 1);
+    }
+  }
+  return pending;
+}
+
+function interactionInvocationIsTerminal(
+  invocation: typeof botInvocations.$inferSelect,
+) {
+  return (
+    invocation.status === "completed" ||
+    invocation.status === "failed" ||
+    invocation.status === "cancelled" ||
+    hasHermesExecutionCompletion(recordFromJson(invocation.responseJson))
+  );
+}
+
+function isHermesInteractionRequestType(
+  type: string,
+): type is HermesInteractionRequestType {
+  return type === "approval.request" || type === "clarify.request";
+}
+
+function isApprovalInteractionChoice(
+  value: unknown,
+): value is ApprovalInteractionChoice {
+  return (
+    value === "once" ||
+    value === "session" ||
+    value === "always" ||
+    value === "deny"
+  );
+}
+
+function requiredBoundedPayloadString(
+  payload: Record<string, unknown> | null,
+  key: string,
+  maxLength: number,
+) {
+  return requiredPayloadString(payload, key, maxLength, true);
+}
+
+function requiredPayloadString(
+  payload: Record<string, unknown> | null,
+  key: string,
+  maxLength: number,
+  requireNonEmpty: boolean,
+) {
+  const value = payload?.[key];
+  if (
+    typeof value !== "string" ||
+    value.length > maxLength ||
+    (requireNonEmpty && value.trim().length === 0)
+  ) {
+    throw malformedInteractionRequest();
+  }
+  return requireNonEmpty ? value.trim() : value;
+}
+
+function malformedInteractionRequest() {
+  return new ServiceError("Interaction request is malformed", 409);
+}
+
+function stringPayloadField(
+  payload: Record<string, unknown> | null,
+  key: string,
+) {
+  const value = payload?.[key];
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function numberPayloadField(
+  payload: Record<string, unknown> | null,
+  key: string,
+) {
+  const value = payload?.[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function compareProgressEventsByCreatedAt(
+  left: BotInvocationProgressEventPublic,
+  right: BotInvocationProgressEventPublic,
+) {
+  const createdDelta = Date.parse(left.createdAt) - Date.parse(right.createdAt);
+  if (createdDelta !== 0) return createdDelta;
+  if (left.invocationId === right.invocationId) {
+    return left.sequence - right.sequence;
+  }
+  return left.id.localeCompare(right.id);
 }
 
 export async function processMessageMentions(msg: TriggerMessage) {

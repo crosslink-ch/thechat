@@ -33,6 +33,23 @@ export async function fetchBotRuntime(
   return data as BotRuntimeSnapshot;
 }
 
+export async function submitHermesInteraction(
+  invocationId: string,
+  eventId: string,
+  response: string | string[],
+  token: string,
+): Promise<void> {
+  const { error } = await api["bot-runtime"]
+    .invocations({ invocationId })
+    .interactions({ eventId })
+    .post({ response }, authHeaders(token));
+  if (error) {
+    throw new Error(
+      edenErrorMessage(error, "Failed to deliver the Hermes response"),
+    );
+  }
+}
+
 export function useBotRuntime(
   conversationId: string | null,
   token: string | null,

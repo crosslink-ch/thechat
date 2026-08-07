@@ -14,6 +14,7 @@ import type {
 import { HermesDmChatView } from "./HermesDmChatView";
 import { selectHermesConversationProgress } from "../lib/hermes-progress";
 import { useHermesApprovalsStore } from "../stores/hermes-approvals";
+import { useHermesClarificationsStore } from "../stores/hermes-clarifications";
 import {
   cancelSharedAttachment,
   uploadSharedAttachment,
@@ -53,6 +54,7 @@ let scrollToMock: ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
   useHermesApprovalsStore.getState().resetForTests();
+  useHermesClarificationsStore.getState().resetForTests();
   vi.mocked(uploadSharedAttachment).mockReset();
   vi.mocked(cancelSharedAttachment).mockReset();
   vi.mocked(cancelSharedAttachment).mockResolvedValue();
@@ -274,8 +276,25 @@ describe("HermesDmChatView", () => {
     expect(screen.queryByText("Koda is typing...")).toBeNull();
   });
 
-  it("sends approval slash commands from approval buttons", () => {
+  it("routes approval buttons directly without sending a slash message", async () => {
     const onSend = vi.fn();
+    const onInteraction = vi.fn().mockResolvedValue(undefined);
+    const approval = progressEvent({
+      id: "approval-1",
+      type: "approval.request",
+      status: "waiting",
+      toolCallId: null,
+      toolName: null,
+      label: "Command approval required",
+      preview: "rm -rf /important",
+      payload: {
+        requestId: "approval-request-1",
+        sessionKey: "session-1",
+        command: "rm -rf /important",
+        description: "recursive delete",
+        choices: ["once", "deny"],
+      },
+    });
     render(
       <HermesDmChatView
         messages={[]}
@@ -284,31 +303,21 @@ describe("HermesDmChatView", () => {
         progressInvocations={[
           {
             invocation: invocation({ status: "running" }),
-            events: [
-              progressEvent({
-                id: "approval-1",
-                type: "approval.request",
-                status: "waiting",
-                toolCallId: null,
-                toolName: null,
-                label: "Command approval required",
-                preview: "rm -rf /important",
-                payload: {
-                  command: "rm -rf /important",
-                  description: "recursive delete",
-                },
-              }),
-            ],
+            events: [approval],
           },
         ]}
         typingSuppressedUserIds={[]}
         onSend={onSend}
+        onInteraction={onInteraction}
       />,
     );
 
     fireEvent.click(screen.getByRole("button", { name: "Approve" }));
 
-    expect(onSend).toHaveBeenCalledWith("/approve");
+    await waitFor(() =>
+      expect(onInteraction).toHaveBeenCalledWith(approval, "once"),
+    );
+    expect(onSend).not.toHaveBeenCalled();
   });
 
   it("does not jump for Hermes progress props with unchanged visible content", () => {

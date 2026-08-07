@@ -31,6 +31,8 @@ export interface HermesPendingApproval {
   threadId: string | null;
   botUserId: string | null;
   createdAt: string;
+  requestId: string | null;
+  sessionKey: string | null;
 }
 
 export interface HermesUnreadScope {
@@ -264,6 +266,8 @@ export const useHermesIndicatorsStore = create<HermesIndicatorsStore>()((set, ge
               threadId: event.threadId ?? meta?.threadId ?? null,
               botUserId: meta?.botUserId ?? null,
               createdAt: event.createdAt,
+              requestId: payloadString(event, "requestId"),
+              sessionKey: payloadString(event, "sessionKey"),
             },
           ],
         };
@@ -274,9 +278,17 @@ export const useHermesIndicatorsStore = create<HermesIndicatorsStore>()((set, ge
     set((state) => {
       // Mirror the gateway: resolutions apply to the invocation's pending
       // approvals oldest-first; resolveAll clears them all.
-      const pending = state.pendingApprovals.filter(
+      const invocationPending = state.pendingApprovals.filter(
         (p) => p.invocationId === event.invocationId,
       );
+      if (invocationPending.length === 0) return state;
+      const requestId = payloadString(event, "requestId");
+      const sessionKey = payloadString(event, "sessionKey");
+      const pending = requestId
+        ? invocationPending.filter((approval) => approval.requestId === requestId)
+        : invocationPending.filter(
+            (approval) => !sessionKey || approval.sessionKey === sessionKey,
+          );
       if (pending.length === 0) return state;
       const resolveAll = event.payload?.resolveAll === true;
       const resolved = new Set(
@@ -357,6 +369,8 @@ export const useHermesIndicatorsStore = create<HermesIndicatorsStore>()((set, ge
             threadId: approval.event.threadId ?? invocation.threadId,
             botUserId: invocation.botUserId,
             createdAt: approval.event.createdAt,
+            requestId: payloadString(approval.event, "requestId"),
+            sessionKey: payloadString(approval.event, "sessionKey"),
           });
         }
       }
@@ -398,4 +412,12 @@ export const useHermesIndicatorsStore = create<HermesIndicatorsStore>()((set, ge
 /** Resolve a pending approval without subscribing — for event handlers. */
 export function resolveHermesApprovalIndicator(eventId: string) {
   useHermesIndicatorsStore.getState().resolveApproval(eventId);
+}
+
+function payloadString(
+  event: BotInvocationProgressEventPublic,
+  key: string,
+) {
+  const value = event.payload?.[key];
+  return typeof value === "string" && value.trim() ? value.trim() : null;
 }
