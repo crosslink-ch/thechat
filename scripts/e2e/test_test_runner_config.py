@@ -21,10 +21,15 @@ class TestRunnerConfigTests(unittest.TestCase):
         original = dict(os.environ)
         try:
             for key in (
+                "THECHAT_E2E_API_PORT",
                 "THECHAT_E2E_POSTGRES_PORT",
                 "THECHAT_E2E_REDIS_PORT",
                 "THECHAT_E2E_DATABASE_URL",
                 "THECHAT_E2E_REDIS_URL",
+                "THECHAT_APPROVAL_E2E_API_PORT",
+                "THECHAT_APPROVAL_E2E_POSTGRES_PORT",
+                "THECHAT_APPROVAL_E2E_REDIS_PORT",
+                "HERMES_APPROVAL_E2E_MODEL_PORT",
             ):
                 os.environ.pop(key, None)
             os.environ.update(overrides)
@@ -76,6 +81,25 @@ class TestRunnerConfigTests(unittest.TestCase):
             approval["env"]["THECHAT_E2E_REDIS_URL"],
             "redis://explicit.invalid:6379",
         )
+
+    def test_default_opt_in_runs_receive_distinct_service_ports(self):
+        first = self._load_suites({})
+        second = self._load_suites({})
+        first_hermes = next(suite for suite in first if suite["name"] == "hermes")
+        second_hermes = next(suite for suite in second if suite["name"] == "hermes")
+        first_ports = {
+            first_hermes["env"]["THECHAT_E2E_API_PORT"],
+            first_hermes["env"]["THECHAT_E2E_POSTGRES_PORT"],
+            first_hermes["env"]["THECHAT_E2E_REDIS_PORT"],
+        }
+        second_ports = {
+            second_hermes["env"]["THECHAT_E2E_API_PORT"],
+            second_hermes["env"]["THECHAT_E2E_POSTGRES_PORT"],
+            second_hermes["env"]["THECHAT_E2E_REDIS_PORT"],
+        }
+        self.assertEqual(len(first_ports), 3)
+        self.assertEqual(len(second_ports), 3)
+        self.assertTrue(first_ports.isdisjoint(second_ports))
 
     def test_bounded_suite_returns_timeout_failure(self):
         namespace = self._load_runner({})

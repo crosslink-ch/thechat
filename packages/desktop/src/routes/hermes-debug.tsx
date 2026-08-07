@@ -304,7 +304,7 @@ export function HermesDebugRoute() {
         );
         if (pending.length === 0) {
           schedule(400, () => appendMessage("bot", "No pending approvals."));
-          return;
+          return true;
         }
         const targets = approval.all ? pending : pending.slice(0, 1);
         const command = String(targets[0]?.payload?.command ?? "the command");
@@ -342,12 +342,12 @@ export function HermesDebugRoute() {
             schedule(1600, () => completeLastTool());
           }
         });
-        return;
+        return true;
       }
 
       if (content.trim() === "/stop") {
         completeInvocation();
-        return;
+        return true;
       }
 
       if (primary.status === "idle") {
@@ -355,6 +355,7 @@ export function HermesDebugRoute() {
         schedule(500, () => addReasoning());
         schedule(1200, () => addToolStarted());
       }
+      return true;
     },
     [
       addReasoning,

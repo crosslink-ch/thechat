@@ -35,6 +35,28 @@ let pongTimer: ReturnType<typeof setTimeout> | undefined;
 let currentToken: string | null = null;
 let pendingMessages: WsClientEvent[] = [];
 
+export const WEBSOCKET_BOUNDARY_EVENT = "thechat:websocket-boundary";
+
+type WebSocketBoundaryDetail = {
+  operation:
+    | "send_message_requested"
+    | "message_queued"
+    | "pending_flush_started"
+    | "message_transported";
+  conversationId?: string;
+  threadId?: string | null;
+  pendingMessageCount: number;
+  pendingEventTypes?: string[];
+};
+
+function recordWebSocketBoundary(detail: WebSocketBoundaryDetail) {
+  window.dispatchEvent(
+    new CustomEvent<WebSocketBoundaryDetail>(WEBSOCKET_BOUNDARY_EVENT, {
+      detail,
+    }),
+  );
+}
+
 function clearTimers() {
   clearTimeout(reconnectTimer);
   clearInterval(pingTimer);
@@ -59,9 +81,22 @@ function startHeartbeat() {
 function flushPendingMessages() {
   if (!ws || ws.readyState !== WebSocket.OPEN) return;
   const messages = pendingMessages;
+  recordWebSocketBoundary({
+    operation: "pending_flush_started",
+    pendingMessageCount: messages.length,
+    pendingEventTypes: messages.map((message) => message.type),
+  });
   pendingMessages = [];
   for (const msg of messages) {
     ws.send(JSON.stringify(msg));
+    if (msg.type === "send_message") {
+      recordWebSocketBoundary({
+        operation: "message_transported",
+        conversationId: msg.conversationId,
+        threadId: msg.threadId,
+        pendingMessageCount: pendingMessages.length,
+      });
+    }
   }
 }
 
@@ -295,6 +330,12 @@ export const useWebSocketStore = create<WebSocketStore>()(() => ({
     clientMessageId?: string,
     attachmentIds?: string[],
   ) => {
+    recordWebSocketBoundary({
+      operation: "send_message_requested",
+      conversationId,
+      threadId: threadId ?? null,
+      pendingMessageCount: pendingMessages.length,
+    });
     const event: WsClientEvent = {
       type: "send_message",
       conversationId,
@@ -305,8 +346,20 @@ export const useWebSocketStore = create<WebSocketStore>()(() => ({
     };
     if (ws?.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify(event));
+      recordWebSocketBoundary({
+        operation: "message_transported",
+        conversationId,
+        threadId: threadId ?? null,
+        pendingMessageCount: pendingMessages.length,
+      });
     } else {
       pendingMessages.push(event);
+      recordWebSocketBoundary({
+        operation: "message_queued",
+        conversationId,
+        threadId: threadId ?? null,
+        pendingMessageCount: pendingMessages.length,
+      });
     }
   },
 
