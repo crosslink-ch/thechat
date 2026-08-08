@@ -26,14 +26,19 @@ they cannot race on Tauri build artifacts.
 
 The flow verifies:
 
-- ordered visible draft transitions through prepare, upload, validation, and ready states;
+- ordered visible draft transitions through prepare, upload, validation, and ready states
+  for an opaque EML, an image, and active HTML content;
 - attachment-only send after a deliberately lost response, followed by an
   idempotent retry with the same client message ID and the same canonical server
   message ID from both successful HTTP responses;
-- one rendered file card and an exact byte-for-byte download;
-- active HTML content masquerading as text being rejected by worker validation; and
-- authenticated deletion of rejected and ready drafts, observed in terminal
-  backend state before the desktop session closes.
+- one rendered opaque file card and an exact byte-for-byte native download that
+  is saved without invoking a desktop opener;
+- a narrow expanded-image viewer whose 44px icon controls remain outside the
+  image pixels;
+- active HTML content being accepted as a ready opaque file with no inline
+  preview; and
+- authenticated cancellation of a real in-flight upload, followed by terminal
+  deleted state and object-store cleanup before the desktop session closes.
 
 Screenshots are written under `.tmp/`. Set `ATTACHMENT_E2E_KEEP=1` to keep
 containers and generated fixtures for debugging after a run.

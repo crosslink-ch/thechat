@@ -9,16 +9,19 @@ const TOKEN = required("ATTACHMENT_E2E_TOKEN");
 const CONVERSATION_ID = required("ATTACHMENT_E2E_CONVERSATION_ID");
 const VALID_FIXTURE = required("ATTACHMENT_E2E_VALID_FIXTURE");
 const OPAQUE_FIXTURE = required("ATTACHMENT_E2E_OPAQUE_FIXTURE");
+const IMAGE_FIXTURE = required("ATTACHMENT_E2E_IMAGE_FIXTURE");
 const CANCEL_FIXTURE = required("ATTACHMENT_E2E_CANCEL_FIXTURE");
 const SCREENSHOT = required("ATTACHMENT_E2E_SCREENSHOT");
 const SUCCESS_SCREENSHOT = required("ATTACHMENT_E2E_SUCCESS_SCREENSHOT");
 const OPAQUE_SCREENSHOT = required("ATTACHMENT_E2E_OPAQUE_SCREENSHOT");
+const VIEWER_SCREENSHOT = required("ATTACHMENT_E2E_VIEWER_SCREENSHOT");
 const FAILURE_SCREENSHOT = required("ATTACHMENT_E2E_FAILURE_SCREENSHOT");
 const DOWNLOAD_DIR = required("ATTACHMENT_E2E_DOWNLOAD_DIR");
 const OPENER_MARKER = required("ATTACHMENT_E2E_OPENER_MARKER");
 
 const validName = fileName(VALID_FIXTURE);
 const opaqueName = fileName(OPAQUE_FIXTURE);
+const imageName = fileName(IMAGE_FIXTURE);
 const cancelName = fileName(CANCEL_FIXTURE);
 
 describe("Secure message attachments", function () {
@@ -138,6 +141,14 @@ describe("Secure message attachments", function () {
       "processing",
       "ready",
     ]);
+    await attachFile(IMAGE_FIXTURE);
+    await waitForDraftPhase(imageName, "ready", 180_000);
+    await assertTransitions(imageName, [
+      "hashing",
+      "uploading",
+      "processing",
+      "ready",
+    ]);
 
     await armLostMessageResponse(CONVERSATION_ID);
     const sendButton = await $('button[title="Send message"]');
@@ -161,6 +172,7 @@ describe("Secure message attachments", function () {
     await sendButton.waitForEnabled({ timeout: 10_000 });
     await sendButton.click();
     await waitForDraftRemoval(validName, 30_000);
+    await waitForDraftRemoval(imageName, 30_000);
     await sendError.waitForExist({ reverse: true, timeout: 30_000 });
 
     const fileCard = await $(`button[title="Download ${validName}"]`);
@@ -202,6 +214,95 @@ describe("Secure message attachments", function () {
       sha256(fs.readFileSync(VALID_FIXTURE)),
     );
     await browser.saveScreenshot(SUCCESS_SCREENSHOT);
+  });
+
+  it("keeps 44px controls outside image pixels in a narrow compiled WebView", async () => {
+    const thumbnail = await $(`button[aria-label="Open ${imageName}"]`);
+    await thumbnail.waitForClickable({ timeout: 30_000 });
+    await browser.setWindowSize(390, 700);
+    await thumbnail.click();
+    await $('[role="dialog"]').waitForExist({ timeout: 10_000 });
+    await browser.waitUntil(
+      async () =>
+        await browser.execute(() => {
+          const image = document.querySelector(
+            '[data-testid="image-viewer-expanded-image"]',
+          );
+          return image instanceof HTMLImageElement && image.complete && image.naturalWidth > 0;
+        }),
+      {
+        timeout: 30_000,
+        timeoutMsg: "Expanded image did not render in the compiled WebView",
+      },
+    );
+
+    const geometry = await browser.execute((fileName) => {
+      const requiredElement = (selector) => {
+        const element = document.querySelector(selector);
+        if (!(element instanceof HTMLElement)) {
+          throw new Error(`Missing image viewer element: ${selector}`);
+        }
+        return element;
+      };
+      const rect = (element) => {
+        const bounds = element.getBoundingClientRect();
+        return {
+          left: bounds.left,
+          top: bounds.top,
+          right: bounds.right,
+          bottom: bounds.bottom,
+          width: bounds.width,
+          height: bounds.height,
+        };
+      };
+      const overlaps = (first, second) =>
+        first.left < second.right &&
+        first.right > second.left &&
+        first.top < second.bottom &&
+        first.bottom > second.top;
+      const toolbar = rect(requiredElement('[data-testid="image-viewer-toolbar"]'));
+      const image = rect(requiredElement('[data-testid="image-viewer-expanded-image"]'));
+      const downloadElement = requiredElement(
+        `button[aria-label="Download ${CSS.escape(fileName)}"]`,
+      );
+      const closeElement = requiredElement('button[aria-label="Close image viewer"]');
+      const download = rect(downloadElement);
+      const close = rect(closeElement);
+      return {
+        viewport: { width: innerWidth, height: innerHeight },
+        toolbar,
+        image,
+        download,
+        close,
+        downloadComputed: {
+          width: getComputedStyle(downloadElement).width,
+          height: getComputedStyle(downloadElement).height,
+        },
+        closeComputed: {
+          width: getComputedStyle(closeElement).width,
+          height: getComputedStyle(closeElement).height,
+        },
+        toolbarOverlapsImage: overlaps(toolbar, image),
+        downloadOverlapsImage: overlaps(download, image),
+        closeOverlapsImage: overlaps(close, image),
+      };
+    }, imageName);
+
+    expect(geometry.viewport.width).toBeLessThanOrEqual(430);
+    for (const control of [geometry.download, geometry.close]) {
+      expect(control.width).toBeGreaterThanOrEqual(44);
+      expect(control.height).toBeGreaterThanOrEqual(44);
+    }
+    expect(geometry.downloadComputed).toEqual({ width: "44px", height: "44px" });
+    expect(geometry.closeComputed).toEqual({ width: "44px", height: "44px" });
+    expect(geometry.toolbarOverlapsImage).toBe(false);
+    expect(geometry.downloadOverlapsImage).toBe(false);
+    expect(geometry.closeOverlapsImage).toBe(false);
+    await browser.saveScreenshot(VIEWER_SCREENSHOT);
+
+    await $('button[aria-label="Close image viewer"]').click();
+    await $('[role="dialog"]').waitForExist({ reverse: true, timeout: 10_000 });
+    await browser.setWindowSize(1100, 800);
   });
 
   it("accepts active content as an opaque downloadable attachment", async () => {
@@ -256,6 +357,7 @@ describe("Secure message attachments", function () {
     console.log(
       JSON.stringify({
         validName,
+        imageName,
         opaqueName,
         cancelName,
         cancelledDuringProgress: active.progress,

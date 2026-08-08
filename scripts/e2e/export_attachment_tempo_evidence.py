@@ -46,6 +46,12 @@ def parse_args() -> argparse.Namespace:
         help="Delay between Tempo completeness probes",
     )
     parser.add_argument("--run-id", required=True)
+    parser.add_argument(
+        "--expected-ready-attachments",
+        type=int,
+        default=1,
+        help="Exact number of successful attachment lifecycle traces expected",
+    )
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--source-commit", required=True)
     parser.add_argument("--source-tree", required=True)
@@ -57,7 +63,10 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         help="Additional E2E/test/build log or PNG evidence to scan for secrets",
     )
-    return parser.parse_args()
+    args = parser.parse_args()
+    if args.expected_ready_attachments < 1:
+        parser.error('--expected-ready-attachments must be at least 1')
+    return args
 
 
 def http_json(url: str) -> dict[str, Any]:
@@ -463,7 +472,11 @@ def assert_no_idle_claim_spans(all_spans: list[dict[str, Any]]) -> int:
     return productive
 
 
-def assert_graph(traces: list[dict[str, Any]], run_id: str) -> dict[str, Any]:
+def assert_graph(
+    traces: list[dict[str, Any]],
+    run_id: str,
+    expected_ready_attachments: int = 1,
+) -> dict[str, Any]:
     structure = assert_identity_and_parent_invariants(traces, run_id)
     all_spans = [span for trace in traces for span in trace["spans"]]
     observed_services = {span["service"] for span in all_spans}
@@ -630,8 +643,11 @@ def assert_graph(traces: list[dict[str, Any]], run_id: str) -> dict[str, Any]:
             for span in trace["spans"]
         )
     ]
-    if len(ready_traces) != 2:
-        raise AssertionError(f"expected two ready attachment traces, found {len(ready_traces)}")
+    if len(ready_traces) != expected_ready_attachments:
+        raise AssertionError(
+            f"expected {expected_ready_attachments} ready attachment traces, "
+            f"found {len(ready_traces)}"
+        )
 
     cancelled_upload_traces = [
         trace
@@ -1382,7 +1398,11 @@ def wait_for_complete_graph(
             trace_ids, search_responses, traces, raw_payloads = fetch_run_snapshot(args)
             if not traces:
                 raise AssertionError(f"no traces found for run {args.run_id}")
-            graph = assert_graph(traces, args.run_id)
+            graph = assert_graph(
+                traces,
+                args.run_id,
+                expected_ready_attachments=args.expected_ready_attachments,
+            )
             graph["source_resource_count"] = assert_source_resources(traces, args)
             return (
                 trace_ids,
