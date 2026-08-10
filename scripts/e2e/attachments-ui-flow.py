@@ -69,7 +69,7 @@ KEEP = os.environ.get("ATTACHMENT_E2E_KEEP") == "1"
 FIXTURE_DIR = TMP / "attachment-ui-e2e-fixtures" / RUN_ID
 SCREENSHOT = TMP / f"attachment-ui-e2e-{RUN_ID}.png"
 SUCCESS_SCREENSHOT = TMP / f"attachment-ui-e2e-success-{RUN_ID}.png"
-REJECTION_SCREENSHOT = TMP / f"attachment-ui-e2e-rejection-{RUN_ID}.png"
+OPAQUE_SCREENSHOT = TMP / f"attachment-ui-e2e-opaque-{RUN_ID}.png"
 FAILURE_SCREENSHOT = TMP / f"attachment-ui-e2e-failure-{RUN_ID}.png"
 RESULT_JSON = TMP / f"attachment-ui-e2e-{RUN_ID}.json"
 TRACE_EXPORTER = ROOT / "scripts/e2e/export_attachment_tempo_evidence.py"
@@ -641,16 +641,19 @@ await client.send(new PutBucketCorsCommand({
 
 def _write_fixtures() -> dict[str, Path]:
     FIXTURE_DIR.mkdir(parents=True, exist_ok=True)
-    valid = FIXTURE_DIR / f"valid-{RUN_ID}.txt"
-    rejected = FIXTURE_DIR / f"rejected-{RUN_ID}.txt"
+    valid = FIXTURE_DIR / f"valid-{RUN_ID}.eml"
+    opaque = FIXTURE_DIR / f"opaque-{RUN_ID}.html"
     cancel = FIXTURE_DIR / f"cancel-{RUN_ID}.txt"
-    valid.write_bytes(f"TheChat attachment E2E payload {RUN_ID}\n".encode())
-    rejected.write_text(
+    valid.write_text(
+        f"From: sender@example.com\nTo: recipient@example.com\nSubject: TheChat {RUN_ID}\n\nAttachment payload\n",
+        encoding="utf-8",
+    )
+    opaque.write_text(
         "<!doctype html><script>alert('attachment')</script>",
         encoding="utf-8",
     )
     cancel.write_bytes(b"C" * (20 * 1024 * 1024))
-    return {"valid": valid, "rejected": rejected, "cancel": cancel}
+    return {"valid": valid, "opaque": opaque, "cancel": cancel}
 
 
 def _register_fixture_workspace(base: str) -> dict[str, str]:
@@ -712,7 +715,7 @@ def _run_desktop_e2e(
 ) -> None:
     SCREENSHOT.unlink(missing_ok=True)
     SUCCESS_SCREENSHOT.unlink(missing_ok=True)
-    REJECTION_SCREENSHOT.unlink(missing_ok=True)
+    OPAQUE_SCREENSHOT.unlink(missing_ok=True)
     FAILURE_SCREENSHOT.unlink(missing_ok=True)
     OPENER_MARKER.unlink(missing_ok=True)
     shutil.rmtree(DOWNLOAD_DIR, ignore_errors=True)
@@ -731,11 +734,11 @@ def _run_desktop_e2e(
         "ATTACHMENT_E2E_TOKEN": fixture["token"],
         "ATTACHMENT_E2E_CONVERSATION_ID": fixture["conversationId"],
         "ATTACHMENT_E2E_VALID_FIXTURE": str(files["valid"]),
-        "ATTACHMENT_E2E_REJECTED_FIXTURE": str(files["rejected"]),
+        "ATTACHMENT_E2E_OPAQUE_FIXTURE": str(files["opaque"]),
         "ATTACHMENT_E2E_CANCEL_FIXTURE": str(files["cancel"]),
         "ATTACHMENT_E2E_SCREENSHOT": str(SCREENSHOT),
         "ATTACHMENT_E2E_SUCCESS_SCREENSHOT": str(SUCCESS_SCREENSHOT),
-        "ATTACHMENT_E2E_REJECTION_SCREENSHOT": str(REJECTION_SCREENSHOT),
+        "ATTACHMENT_E2E_OPAQUE_SCREENSHOT": str(OPAQUE_SCREENSHOT),
         "ATTACHMENT_E2E_FAILURE_SCREENSHOT": str(FAILURE_SCREENSHOT),
         "ATTACHMENT_E2E_DOWNLOAD_DIR": str(DOWNLOAD_DIR),
         "ATTACHMENT_E2E_OPENER_MARKER": str(OPENER_MARKER),
@@ -773,11 +776,11 @@ def _run_desktop_e2e(
     )
     if not SCREENSHOT.exists() or SCREENSHOT.stat().st_size == 0:
         raise AssertionError(f"Attachment UI screenshot was not produced: {SCREENSHOT}")
-    if not OPENER_MARKER.is_file():
-        raise AssertionError("Compiled Tauri download did not reach the native opener")
-    opened_path = Path(OPENER_MARKER.read_text(encoding="utf-8").strip()).resolve()
-    if opened_path.parent != DOWNLOAD_DIR.resolve() or not opened_path.is_file():
-        raise AssertionError("Native opener handoff did not target the verified download")
+    downloaded_path = DOWNLOAD_DIR / files["valid"].name
+    if not downloaded_path.is_file():
+        raise AssertionError("Compiled Tauri download did not save the verified file")
+    if OPENER_MARKER.exists():
+        raise AssertionError("Compiled Tauri download invoked a native file opener")
 
 
 def _attachment_statuses(file_names: list[str]) -> dict[str, str]:
@@ -869,23 +872,27 @@ def _verify_backend(
         token=fixture["token"],
     )
     assert status == 200, (status, messages)
-    matching = [
-        message
-        for message in messages
-        if any(
-            attachment.get("fileName") == names["valid"]
-            for attachment in message.get("attachments") or []
-        )
-    ]
-    assert len(matching) == 1, matching
-    assert matching[0].get("content") == "", matching[0]
-    assert len(matching[0].get("attachments") or []) == 1, matching[0]
+    matching = {
+        name: [
+            message
+            for message in messages
+            if any(
+                attachment.get("fileName") == name
+                for attachment in message.get("attachments") or []
+            )
+        ]
+        for name in (names["valid"], names["opaque"])
+    }
+    for name, matched_messages in matching.items():
+        assert len(matched_messages) == 1, (name, matched_messages)
+        assert matched_messages[0].get("content") == "", matched_messages[0]
+        assert len(matched_messages[0].get("attachments") or []) == 1, matched_messages[0]
 
     def terminal_statuses():
         statuses = _attachment_statuses(list(names.values()))
         if (
             statuses.get(names["valid"]) == "attached"
-            and statuses.get(names["rejected"]) == "deleted"
+            and statuses.get(names["opaque"]) == "attached"
             and statuses.get(names["cancel"]) == "deleted"
         ):
             return statuses
@@ -894,11 +901,11 @@ def _verify_backend(
     statuses = _wait_for(
         terminal_statuses,
         timeout=120,
-        label="attached/rejected-cleaned/cancelled attachment states",
+        label="valid/opaque attached and cancelled attachment deleted",
     )
-    cleanup_rows = _attachment_cleanup_rows([names["rejected"], names["cancel"]])
-    if len(cleanup_rows) != 2:
-        raise AssertionError(f"Expected two cleanup rows, found {len(cleanup_rows)}")
+    cleanup_rows = _attachment_cleanup_rows([names["cancel"]])
+    if len(cleanup_rows) != 1:
+        raise AssertionError(f"Expected one cleanup row, found {len(cleanup_rows)}")
     for row in cleanup_rows:
         if (
             row.get("status") != "deleted"
@@ -918,11 +925,13 @@ def _verify_backend(
     object_cleanup = _s3_residual_versions(cleanup_keys, env)
     if object_cleanup.get("versions"):
         raise AssertionError("Deleted attachments retain private object versions")
-    opened_path = Path(OPENER_MARKER.read_text(encoding="utf-8").strip()).resolve()
+    downloaded_path = (DOWNLOAD_DIR / names["valid"]).resolve()
+    if OPENER_MARKER.exists():
+        raise AssertionError("Native attachment download unexpectedly invoked an opener")
     return {
         "statuses": {
             "valid": statuses[names["valid"]],
-            "rejected": statuses[names["rejected"]],
+            "opaque": statuses[names["opaque"]],
             "cancelled": statuses[names["cancel"]],
         },
         "objectCleanup": {
@@ -937,10 +946,10 @@ def _verify_backend(
             "postExpiryCleanupBackstop": "private_bucket_lifecycle",
         },
         "nativeDownload": {
-            "fileName": opened_path.name,
-            "bytes": opened_path.stat().st_size,
-            "sha256": _sha256(opened_path),
-            "openerHandoff": True,
+            "fileName": downloaded_path.name,
+            "bytes": downloaded_path.stat().st_size,
+            "sha256": _sha256(downloaded_path),
+            "openerHandoff": False,
         },
         "screenshot": str(SCREENSHOT),
     }
@@ -968,9 +977,8 @@ def _export_tempo_evidence(
         raise RuntimeError(f"Tempo evidence exporter is missing: {TRACE_EXPORTER}")
     source_scan_files = [
         SUCCESS_SCREENSHOT,
-        REJECTION_SCREENSHOT,
+        OPAQUE_SCREENSHOT,
         SCREENSHOT,
-        OPENER_MARKER,
         *sorted(path for path in DOWNLOAD_DIR.iterdir() if path.is_file()),
     ]
     if TRACE_LOG_PATH is not None:
@@ -1106,7 +1114,7 @@ def _run() -> None:
         tempo_evidence = _export_tempo_evidence(source_identity, env)
         _assert_source_identity_unchanged(source_identity, _source_identity())
 
-        screenshots = [SCREENSHOT, SUCCESS_SCREENSHOT, REJECTION_SCREENSHOT]
+        screenshots = [SCREENSHOT, SUCCESS_SCREENSHOT, OPAQUE_SCREENSHOT]
         result = {
             **source_identity,
             "completedUnix": int(time.time()),
@@ -1123,7 +1131,7 @@ def _run() -> None:
         durable_screenshots = []
         for source, name in (
             (SUCCESS_SCREENSHOT, "attachment-success.png"),
-            (REJECTION_SCREENSHOT, "attachment-rejection.png"),
+            (OPAQUE_SCREENSHOT, "attachment-opaque.png"),
             (SCREENSHOT, "attachment-cancellation.png"),
         ):
             destination = screenshot_dir / name

@@ -14,22 +14,11 @@ import {
 
 export const SHARED_ATTACHMENT_MAX_BYTES = 25 * 1024 * 1024;
 export const SHARED_ATTACHMENT_MAX_COUNT = 10;
+export const OPAQUE_ATTACHMENT_MEDIA_TYPE = "application/octet-stream";
 
-export const SHARED_ATTACHMENT_MEDIA_TYPES = new Set([
-  "image/png",
-  "image/jpeg",
-  "image/gif",
-  "image/webp",
-  "application/pdf",
-  "text/plain",
-  "text/csv",
-  "application/json",
-  "audio/mpeg",
-  "audio/ogg",
-  "audio/wav",
-  "video/mp4",
-  "video/webm",
-]);
+export function normalizeAttachmentMediaType(value: string) {
+  return value.trim().toLowerCase() || OPAQUE_ATTACHMENT_MEDIA_TYPE;
+}
 
 export type SharedAttachmentPhase =
   | "queued"
@@ -63,10 +52,11 @@ export async function uploadSharedAttachment(
     attachment?: AttachmentView;
   }) => void,
 ): Promise<AttachmentView> {
+  const mediaType = normalizeAttachmentMediaType(input.file.type);
   return withDesktopSpan(
     "attachment.prepare",
     {
-      "thechat.attachment.media_type": input.file.type,
+      "thechat.attachment.media_type": mediaType,
       "thechat.attachment.size_bytes": input.file.size,
     },
     async (flowSpan, flowContext) => {
@@ -113,7 +103,7 @@ export async function uploadSharedAttachment(
             {
               conversationId: input.conversationId,
               fileName: input.file.name,
-              mediaType: input.file.type,
+              mediaType,
               sizeBytes: input.file.size,
               checksumSha256,
             },
@@ -496,22 +486,22 @@ export async function openSharedAttachmentDownload(
         "thechat.attachment.transferred_bytes",
         transfer.transferredBytes,
       );
-      try {
-        if (transfer.kind === "native") {
-          span.setAttribute("thechat.attachment.handoff", "native_opener");
-          span.addEvent("attachment.download.shell_handoff_completed");
-        } else {
+      if (transfer.kind === "native") {
+        span.setAttribute("thechat.attachment.handoff", "native_file");
+        span.addEvent("attachment.download.file_saved");
+      } else {
+        try {
           launchDownloadedBlob(
             transfer.blob,
             disposition,
             suggestedFileName,
           );
           span.setAttribute("thechat.attachment.handoff", "browser_download");
+        } catch (error) {
+          span.setAttribute("thechat.attachment.outcome", "launch_failed");
+          recordSanitizedException(span, error);
+          throw error;
         }
-      } catch (error) {
-        span.setAttribute("thechat.attachment.outcome", "launch_failed");
-        recordSanitizedException(span, error);
-        throw error;
       }
       span.setAttribute("thechat.attachment.outcome", "completed");
       return {

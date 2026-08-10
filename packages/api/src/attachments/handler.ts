@@ -12,10 +12,7 @@ import {
   parseAttachmentLifecycleEvent,
   type AttachmentLifecycleEvent,
 } from "./events";
-import {
-  UnsafeAttachmentError,
-  verifyFileType,
-} from "./file-validation";
+import { verifyFileType } from "./file-validation";
 import type { ObjectStore } from "./object-store";
 import { getAttachmentObjectStore } from "./service";
 
@@ -179,19 +176,7 @@ export async function validateAndPromoteAttachment(
         return;
       }
 
-      let verified;
-      try {
-        verified = await verifyFileType(bytes, row.declaredMediaType);
-      } catch (error) {
-        if (error instanceof UnsafeAttachmentError) {
-          span.setAttribute("thechat.attachment.outcome", "rejected");
-          span.setAttribute("thechat.attachment.failure_reason", error.reason);
-          span.setAttribute("thechat.attachment.next_status", "rejected");
-          await rejectAttachment(row, input.store, error.reason);
-          return;
-        }
-        throw error;
-      }
+      const verified = await verifyFileType(bytes, row.declaredMediaType);
 
       // Do not probe a not-yet-created clean key: S3 intentionally returns
       // AccessDenied rather than NotFound to identities without ListBucket.
@@ -201,7 +186,7 @@ export async function validateAndPromoteAttachment(
         sourceKey: row.quarantineKey,
         sourceVersionId: row.quarantineVersionId,
         destinationKey: row.cleanKey,
-        mediaType: verified.mediaType,
+        mediaType: verified.storageMediaType,
       });
       if (!copied.versionId) {
         throw new Error(

@@ -16,6 +16,7 @@ vi.mock("./api", () => ({
 
 import {
   cancelSharedAttachment,
+  normalizeAttachmentMediaType,
   uploadSharedAttachment,
 } from "./shared-attachments";
 
@@ -89,5 +90,14 @@ describe("cancelSharedAttachment", () => {
     expect(apiMocks.deleteAttachment).toHaveBeenCalledWith(undefined, {
       headers: { authorization: "Bearer token-1" },
     });
+  });
+});
+
+describe("normalizeAttachmentMediaType", () => {
+  it("uses an opaque type when the browser does not recognize the file", () => {
+    expect(normalizeAttachmentMediaType("")).toBe("application/octet-stream");
+    expect(normalizeAttachmentMediaType(" Message/RFC822 ")).toBe(
+      "message/rfc822",
+    );
   });
 });
