@@ -7,7 +7,10 @@ import {
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { SharedMessageAttachments } from "./SharedMessageAttachments";
-import { getAttachmentDownloadUrl } from "../lib/shared-attachments";
+import {
+  getAttachmentDownloadUrl,
+  openSharedAttachmentDownload,
+} from "../lib/shared-attachments";
 import { setDesktopTracerForTests } from "../lib/telemetry";
 import { useAuthStore } from "../stores/auth";
 
@@ -19,6 +22,7 @@ const authorizationParentSpanId = "2222222222222222";
 
 vi.mock("../lib/shared-attachments", () => ({
   getAttachmentDownloadUrl: vi.fn(),
+  openSharedAttachmentDownload: vi.fn(),
 }));
 
 describe("SharedMessageAttachments", () => {
@@ -37,6 +41,10 @@ describe("SharedMessageAttachments", () => {
       traceContext: {
         traceparent: `00-${"1".repeat(32)}-${authorizationParentSpanId}-01`,
       },
+    });
+    vi.mocked(openSharedAttachmentDownload).mockResolvedValue({
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      transferredBytes: 42,
     });
   });
 
@@ -70,6 +78,38 @@ describe("SharedMessageAttachments", () => {
         "inline",
       ),
     );
+  });
+
+  it("shows that an opaque attachment was saved without opening it", async () => {
+    render(
+      <SharedMessageAttachments
+        attachments={[
+          {
+            id: "attachment-file",
+            fileName: "message.eml",
+            name: "message.eml",
+            mediaType: "message/rfc822",
+            mimeType: "message/rfc822",
+            sizeBytes: 42,
+            kind: "file",
+            contentPath: "/attachments/attachment-file/content",
+          },
+        ]}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /message\.eml/i }));
+
+    await waitFor(() =>
+      expect(openSharedAttachmentDownload).toHaveBeenCalledWith(
+        "attachment-file",
+        "test-token",
+        "attachment",
+        "message.eml",
+      ),
+    );
+    expect(await screen.findByText("Saved to Downloads")).toBeInTheDocument();
+    expect(screen.getByTitle("Downloaded message.eml")).toBeInTheDocument();
   });
 
   it("records image render and open outcomes under the authorization span", async () => {

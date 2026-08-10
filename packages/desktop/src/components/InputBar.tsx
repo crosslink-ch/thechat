@@ -10,7 +10,6 @@ import {
   cancelSharedAttachment,
   SHARED_ATTACHMENT_MAX_BYTES,
   SHARED_ATTACHMENT_MAX_COUNT,
-  SHARED_ATTACHMENT_MEDIA_TYPES,
   uploadSharedAttachment,
   type SharedAttachmentDraft,
 } from "../lib/shared-attachments";
@@ -208,7 +207,7 @@ function ScopedInputBar({
   const updateSharedDraft = useCallback(
     (
       localId: string,
-      patch: Partial<Omit<SharedAttachmentDraft, "localId" | "file" | "previewUrl">>,
+      patch: Partial<Omit<SharedAttachmentDraft, "localId" | "file">>,
     ) => {
       updateSharedDrafts((previous) =>
         previous.map((draft) =>
@@ -233,15 +232,33 @@ function ScopedInputBar({
           file: draft.file,
           signal: controller.signal,
         },
-        (update) =>
+        (update) => {
+          const current = sharedDraftsRef.current.find(
+            (candidate) => candidate.localId === draft.localId,
+          );
+          const previewUrl =
+            current &&
+            update.phase === "ready" &&
+            update.attachment?.kind === "image" &&
+            !current.previewUrl
+              ? URL.createObjectURL(
+                  draft.file.slice(
+                    0,
+                    draft.file.size,
+                    update.attachment.mediaType,
+                  ),
+                )
+              : null;
           updateSharedDraft(draft.localId, {
             phase: update.phase,
             progress: update.progress,
             ...(update.attachment
               ? { attachment: update.attachment }
               : {}),
+            ...(previewUrl ? { previewUrl } : {}),
             error: null,
-          }),
+          });
+        },
       )
         .catch((error) => {
           if (controller.signal.aborted) {
@@ -287,7 +304,6 @@ function ScopedInputBar({
       const candidates = Array.from(files).slice(0, remaining);
       const rejected = candidates.find(
         (file) =>
-          !SHARED_ATTACHMENT_MEDIA_TYPES.has(file.type) ||
           file.size < 1 ||
           file.size > SHARED_ATTACHMENT_MAX_BYTES,
       );
@@ -297,7 +313,7 @@ function ScopedInputBar({
         );
       } else if (rejected) {
         setSharedError(
-          `Unsupported file or file larger than ${Math.round(
+          `File must be non-empty and no larger than ${Math.round(
             SHARED_ATTACHMENT_MAX_BYTES / 1024 / 1024,
           )} MiB: ${rejected.name}`,
         );
@@ -306,16 +322,13 @@ function ScopedInputBar({
       }
       const accepted = candidates.filter(
         (file) =>
-          SHARED_ATTACHMENT_MEDIA_TYPES.has(file.type) &&
           file.size > 0 &&
           file.size <= SHARED_ATTACHMENT_MAX_BYTES,
       );
       const drafts = accepted.map<SharedAttachmentDraft>((file) => ({
         localId: crypto.randomUUID(),
         file,
-        previewUrl: file.type.startsWith("image/")
-          ? URL.createObjectURL(file)
-          : null,
+        previewUrl: null,
         phase: "queued",
         progress: 0,
         attachment: null,
@@ -776,9 +789,7 @@ function ScopedInputBar({
       for (const item of items) {
         if (
           item.kind === "file" &&
-          (sharedUpload
-            ? SHARED_ATTACHMENT_MEDIA_TYPES.has(item.type)
-            : ACCEPTED_MIME.has(item.type))
+          (sharedUpload || ACCEPTED_MIME.has(item.type))
         ) {
           const file = item.getAsFile();
           if (file) imageFiles.push(file);
@@ -939,7 +950,7 @@ function ScopedInputBar({
           type="file"
           accept={
             sharedUpload
-              ? Array.from(SHARED_ATTACHMENT_MEDIA_TYPES).join(",")
+              ? undefined
               : "image/png,image/jpeg,image/gif,image/webp,image/svg+xml,image/bmp"
           }
           multiple

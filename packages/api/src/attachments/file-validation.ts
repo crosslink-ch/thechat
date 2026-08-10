@@ -1,5 +1,7 @@
 import { fileTypeFromBuffer } from "file-type";
 
+export const OPAQUE_ATTACHMENT_MEDIA_TYPE = "application/octet-stream";
+
 const RASTER_MEDIA_TYPES = new Set([
   "image/png",
   "image/jpeg",
@@ -8,28 +10,19 @@ const RASTER_MEDIA_TYPES = new Set([
 ]);
 const MAX_RASTER_DIMENSION = 16_384;
 const MAX_RASTER_PIXELS = 40_000_000;
-
-const ALLOWED_MEDIA_TYPES = new Set([
-  ...RASTER_MEDIA_TYPES,
-  "application/pdf",
-  "text/plain",
-  "text/csv",
-  "application/json",
-  "audio/mpeg",
-  "audio/ogg",
-  "audio/wav",
-  "video/mp4",
-  "video/webm",
-]);
+const MEDIA_TYPE_PATTERN =
+  /^[!#$%&'*+.^_`|~0-9a-z-]+\/[!#$%&'*+.^_`|~0-9a-z-]+$/;
 
 const MEDIA_TYPE_ALIASES: Record<string, string> = {
   "audio/x-wav": "audio/wav",
   "audio/wave": "audio/wav",
   "image/jpg": "image/jpeg",
+  "text/x-markdown": "text/markdown",
 };
 
 export interface VerifiedFile {
   mediaType: string;
+  storageMediaType: string;
   kind: "image" | "file";
   width: number | null;
   height: number | null;
@@ -37,11 +30,10 @@ export interface VerifiedFile {
 
 export function normalizeDeclaredMediaType(value: string) {
   const normalized = value.split(";", 1)[0]?.trim().toLowerCase() ?? "";
-  return MEDIA_TYPE_ALIASES[normalized] ?? normalized;
-}
-
-export function isAllowedDeclaredMediaType(value: string) {
-  return ALLOWED_MEDIA_TYPES.has(normalizeDeclaredMediaType(value));
+  const aliased = MEDIA_TYPE_ALIASES[normalized] ?? normalized;
+  return MEDIA_TYPE_PATTERN.test(aliased)
+    ? aliased
+    : OPAQUE_ATTACHMENT_MEDIA_TYPE;
 }
 
 export async function verifyFileType(
@@ -49,112 +41,45 @@ export async function verifyFileType(
   declaredMediaType: string,
 ): Promise<VerifiedFile> {
   const declared = normalizeDeclaredMediaType(declaredMediaType);
-  if (!ALLOWED_MEDIA_TYPES.has(declared)) {
-    throw new UnsafeAttachmentError("unsupported_media_type");
-  }
-  if (hasExecutableOrArchiveSignature(bytes)) {
-    throw new UnsafeAttachmentError("executable_or_archive");
-  }
-  if (looksLikeActiveText(bytes)) {
-    throw new UnsafeAttachmentError("active_content");
-  }
-
-  const detected = await fileTypeFromBuffer(bytes);
-  const detectedMediaType = detected
-    ? normalizeDeclaredMediaType(detected.mime)
-    : null;
-  if (detectedMediaType && detectedMediaType !== declared) {
-    throw new UnsafeAttachmentError("media_type_mismatch");
-  }
-  if (!detectedMediaType && !isTextMediaType(declared)) {
-    throw new UnsafeAttachmentError("unrecognized_binary");
-  }
-  if (isTextMediaType(declared) && !looksLikePlainText(bytes)) {
-    throw new UnsafeAttachmentError("invalid_text");
-  }
-  if (declared === "application/json") {
-    try {
-      JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
-    } catch {
-      throw new UnsafeAttachmentError("invalid_json");
-    }
-  }
-
-  const dimensions = RASTER_MEDIA_TYPES.has(declared)
-    ? readRasterDimensions(bytes, declared)
-    : null;
-  if (RASTER_MEDIA_TYPES.has(declared)) {
-    if (!dimensions || dimensions.width < 1 || dimensions.height < 1) {
-      throw new UnsafeAttachmentError("invalid_image_dimensions");
-    }
-    if (
-      dimensions.width > MAX_RASTER_DIMENSION ||
-      dimensions.height > MAX_RASTER_DIMENSION ||
-      dimensions.width * dimensions.height > MAX_RASTER_PIXELS
-    ) {
-      throw new UnsafeAttachmentError("image_dimensions_exceeded");
-    }
-  }
-  return {
-    mediaType: detectedMediaType ?? declared,
-    kind: RASTER_MEDIA_TYPES.has(declared) ? "image" : "file",
-    width: dimensions?.width ?? null,
-    height: dimensions?.height ?? null,
-  };
-}
-
-export class UnsafeAttachmentError extends Error {
-  constructor(public readonly reason: string) {
-    super(`Attachment rejected: ${reason}`);
-  }
-}
-
-function isTextMediaType(mediaType: string) {
-  return (
-    mediaType === "text/plain" ||
-    mediaType === "text/csv" ||
-    mediaType === "application/json"
-  );
-}
-
-function looksLikePlainText(bytes: Uint8Array) {
+  let detectedMediaType: string | null = null;
   try {
-    const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-    return !text.includes("\0");
+    const detected = await fileTypeFromBuffer(bytes);
+    detectedMediaType = detected
+      ? normalizeDeclaredMediaType(detected.mime)
+      : null;
   } catch {
-    return false;
+    // A detector failure must not turn an otherwise valid opaque upload into a
+    // rejection. Only positively identified safe raster formats are previewed.
   }
-}
 
-function looksLikeActiveText(bytes: Uint8Array) {
-  const prefix = new TextDecoder("utf-8", { fatal: false })
-    .decode(bytes.subarray(0, Math.min(bytes.byteLength, 8192)))
-    .replace(/^\uFEFF/, "")
-    .trimStart()
-    .toLowerCase();
-  return (
-    prefix.startsWith("<!doctype html") ||
-    prefix.startsWith("<html") ||
-    prefix.startsWith("<script") ||
-    prefix.startsWith("<svg") ||
-    (prefix.startsWith("<?xml") && prefix.includes("<svg"))
-  );
-}
+  const mediaType = detectedMediaType ?? declared;
+  if (detectedMediaType && RASTER_MEDIA_TYPES.has(detectedMediaType)) {
+    const dimensions = readRasterDimensions(bytes, detectedMediaType);
+    if (
+      dimensions &&
+      dimensions.width > 0 &&
+      dimensions.height > 0 &&
+      dimensions.width <= MAX_RASTER_DIMENSION &&
+      dimensions.height <= MAX_RASTER_DIMENSION &&
+      dimensions.width * dimensions.height <= MAX_RASTER_PIXELS
+    ) {
+      return {
+        mediaType,
+        storageMediaType: mediaType,
+        kind: "image",
+        width: dimensions.width,
+        height: dimensions.height,
+      };
+    }
+  }
 
-function hasExecutableOrArchiveSignature(bytes: Uint8Array) {
-  if (bytes.byteLength < 4) return false;
-  const b = bytes;
-  return (
-    (b[0] === 0x4d && b[1] === 0x5a) || // PE
-    (b[0] === 0x7f && b[1] === 0x45 && b[2] === 0x4c && b[3] === 0x46) || // ELF
-    (b[0] === 0x50 && b[1] === 0x4b && (b[2] === 0x03 || b[2] === 0x05 || b[2] === 0x07)) || // ZIP
-    (b[0] === 0x52 && b[1] === 0x61 && b[2] === 0x72 && b[3] === 0x21) || // RAR
-    (b[0] === 0x37 && b[1] === 0x7a && b[2] === 0xbc && b[3] === 0xaf) || // 7z
-    (b[0] === 0xca && b[1] === 0xfe && b[2] === 0xba && b[3] === 0xbe) || // Mach/Java
-    (b[0] === 0xcf && b[1] === 0xfa && b[2] === 0xed && b[3] === 0xfe) ||
-    (b[0] === 0xfe && b[1] === 0xed && b[2] === 0xfa && b[3] === 0xcf) ||
-    (b[0] === 0x23 && b[1] === 0x21) // executable script
-  );
+  return {
+    mediaType,
+    storageMediaType: OPAQUE_ATTACHMENT_MEDIA_TYPE,
+    kind: "file",
+    width: null,
+    height: null,
+  };
 }
 
 function readRasterDimensions(

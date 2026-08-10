@@ -18,12 +18,13 @@ import {
   ATTACHMENT_VALIDATION_REQUESTED,
   createAttachmentLifecycleEvent,
 } from "./events";
-import {
-  isAllowedDeclaredMediaType,
-  normalizeDeclaredMediaType,
-} from "./file-validation";
+import { normalizeDeclaredMediaType } from "./file-validation";
 import type { ObjectStore } from "./object-store";
-import { isInlineRaster, toAttachmentView } from "./public";
+import {
+  isInlinePreview,
+  safeDownloadMediaType,
+  toAttachmentView,
+} from "./public";
 import { createS3ObjectStoreFromEnv } from "./s3-object-store";
 
 type AttachmentStatus = typeof attachments.$inferSelect.status;
@@ -67,9 +68,6 @@ export async function reserveAttachment(
         const fileName = sanitizeFileName(input.fileName);
         const mediaType = normalizeDeclaredMediaType(input.mediaType);
         const checksum = normalizeSha256(input.checksumSha256);
-        if (!isAllowedDeclaredMediaType(mediaType)) {
-          throw new ServiceError("This file type is not supported", 400);
-        }
         span.setAttribute("thechat.attachment.media_type", mediaType);
         if (
           !Number.isSafeInteger(input.sizeBytes) ||
@@ -369,15 +367,24 @@ async function getAttachmentDownloadOperation(
     throw new ServiceError("Attachment content is not available", 409);
   }
   const config = loadAttachmentConfig();
+  const inlinePreview = isInlinePreview(
+    row.verifiedMediaType,
+    row.width,
+    row.height,
+  );
   const request = await (
     options.store ?? getAttachmentObjectStore()
   ).createDownloadRequest({
     key: row.cleanKey,
     versionId: row.cleanVersionId,
-    mediaType: row.verifiedMediaType,
+    mediaType: safeDownloadMediaType(
+      row.verifiedMediaType,
+      row.width,
+      row.height,
+    ),
     contentDisposition: safeContentDisposition(
       row.fileName,
-      options.disposition === "inline" && isInlineRaster(row.verifiedMediaType)
+      options.disposition === "inline" && inlinePreview
         ? "inline"
         : "attachment",
     ),
@@ -634,7 +641,10 @@ async function loadAttachment(id: string) {
 export function sanitizeFileName(value: string) {
   const normalized = value
     .normalize("NFC")
-    .replace(/[\u0000-\u001f\u007f-\u009f]/g, "")
+    .replace(
+      /[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/g,
+      "",
+    )
     .replace(/[\\/]/g, "_")
     .replace(/\s+/g, " ")
     .trim();

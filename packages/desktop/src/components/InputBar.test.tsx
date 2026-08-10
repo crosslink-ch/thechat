@@ -26,6 +26,14 @@ vi.mock("../lib/shared-attachments", async (importOriginal) => {
 
 beforeAll(() => {
   Element.prototype.scrollIntoView = vi.fn();
+  Object.defineProperty(URL, "createObjectURL", {
+    configurable: true,
+    value: vi.fn(() => "blob:verified-attachment"),
+  });
+  Object.defineProperty(URL, "revokeObjectURL", {
+    configurable: true,
+    value: vi.fn(),
+  });
 });
 
 afterEach(() => {
@@ -183,6 +191,90 @@ describe("InputBar shared attachments", () => {
       },
     );
   }
+
+  it("leaves the shared file chooser unrestricted by MIME type", () => {
+    const { container } = renderInputBar({
+      sharedUpload: { conversationId: "conversation-1", token: "token-1" },
+    });
+    const fileInput = container.querySelector<HTMLInputElement>(
+      'input[type="file"]',
+    );
+    expect(fileInput).not.toBeNull();
+    expect(fileInput).not.toHaveAttribute("accept");
+  });
+
+  it("uploads a file when the browser provides no MIME type", async () => {
+    makeUploadReady();
+    const { container } = renderInputBar({
+      sharedUpload: { conversationId: "conversation-1", token: "token-1" },
+    });
+    const fileInput = container.querySelector<HTMLInputElement>(
+      'input[type="file"]',
+    );
+    if (!fileInput) throw new Error("File input not found");
+    const file = new File(["raw email"], "message.eml");
+
+    fireEvent.change(fileInput, { target: { files: [file] } });
+
+    await waitFor(() => expect(uploadSharedAttachment).toHaveBeenCalledOnce());
+    expect(vi.mocked(uploadSharedAttachment).mock.calls[0]?.[0].file).toBe(file);
+    expect(screen.getByText("message.eml")).toBeInTheDocument();
+  });
+
+  it("previews an image only after the server classifies it as a raster", async () => {
+    vi.mocked(uploadSharedAttachment).mockImplementation(
+      async (_input, onUpdate) => {
+        const pending = {
+          id: "attachment-image",
+          name: "preview.bin",
+          fileName: "preview.bin",
+          mediaType: "application/octet-stream",
+          mimeType: "application/octet-stream",
+          sizeBytes: 4,
+          kind: "file" as const,
+          width: null,
+          height: null,
+          status: "processing" as const,
+          contentPath: "/attachments/attachment-image/content",
+          downloadPath: "/attachments/attachment-image/download",
+        };
+        onUpdate({ phase: "uploading", progress: 100, attachment: pending });
+        expect(URL.createObjectURL).not.toHaveBeenCalled();
+        const ready = {
+          ...pending,
+          mediaType: "image/png",
+          mimeType: "image/png",
+          kind: "image" as const,
+          width: 1,
+          height: 1,
+          status: "ready" as const,
+        };
+        onUpdate({ phase: "ready", progress: 100, attachment: ready });
+        return ready;
+      },
+    );
+    const { container } = renderInputBar({
+      sharedUpload: { conversationId: "conversation-1", token: "token-1" },
+    });
+    const fileInput = container.querySelector<HTMLInputElement>(
+      'input[type="file"]',
+    );
+    if (!fileInput) throw new Error("File input not found");
+    const file = new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], "preview.bin", {
+      type: "application/octet-stream",
+    });
+
+    fireEvent.change(fileInput, { target: { files: [file] } });
+
+    await waitFor(() => expect(URL.createObjectURL).toHaveBeenCalledOnce());
+    const previewBlob = vi.mocked(URL.createObjectURL).mock.calls[0]?.[0];
+    if (!(previewBlob instanceof Blob)) {
+      throw new Error("Expected a Blob preview");
+    }
+    expect(previewBlob.type).toBe("image/png");
+    const preview = screen.getByTestId("attachment-draft").querySelector("img");
+    expect(preview).toHaveAttribute("src", "blob:verified-attachment");
+  });
 
   it("sends an attachment-only message and keeps the draft until send succeeds", async () => {
     makeUploadReady();
