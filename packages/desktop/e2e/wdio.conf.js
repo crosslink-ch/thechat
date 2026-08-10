@@ -116,7 +116,7 @@ export const config = {
     if (process.env.SKIP_BUILD !== "1") {
       console.log("Building Tauri binary (set SKIP_BUILD=1 to skip)...");
       execSync(
-        "pnpm --filter @thechat/desktop tauri build --debug --no-bundle",
+        "pnpm --filter @thechat/desktop tauri build --debug --no-bundle --config src-tauri/tauri.dev.conf.json",
         {
           stdio: "inherit",
           cwd: path.resolve(packageDir, "../.."),
