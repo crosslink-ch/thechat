@@ -85,6 +85,8 @@ export class RedisRealtimeBus implements RealtimeBus {
     (event: RealtimeEvent) => void | Promise<void>
   >();
   private readonly channel: string;
+  private readonly closeController = new AbortController();
+  private readonly connectionPromises = new Map<Redis, Promise<void>>();
   private subscribePromise: Promise<void> | null = null;
 
   constructor(options: RedisRealtimeBusOptions = {}) {
@@ -122,7 +124,7 @@ export class RedisRealtimeBus implements RealtimeBus {
       },
       async () => {
         const propagated = withActiveRealtimeTrace(event);
-        await connectRedisIfNeeded(this.publisher);
+        await this.connectRedisIfNeeded(this.publisher);
         await this.publisher.publish(this.channel, JSON.stringify(propagated));
       },
       { kind: SpanKind.PRODUCER },
@@ -133,25 +135,78 @@ export class RedisRealtimeBus implements RealtimeBus {
     handler: (event: RealtimeEvent) => void | Promise<void>,
   ): Promise<() => Promise<void>> {
     this.handlers.add(handler);
-    await this.ensureSubscribed();
+    try {
+      await this.ensureSubscribed();
+    } catch (error) {
+      this.handlers.delete(handler);
+      throw error;
+    }
     return async () => {
       this.handlers.delete(handler);
     };
   }
 
   async close(): Promise<void> {
+    this.closeController.abort();
     this.handlers.clear();
-    await Promise.allSettled([this.publisher.quit(), this.subscriber.quit()]);
+    this.subscribePromise = null;
+    await Promise.allSettled([
+      closeRedisClient(this.publisher),
+      closeRedisClient(this.subscriber),
+    ]);
+    this.connectionPromises.clear();
   }
 
   private async ensureSubscribed(): Promise<void> {
     if (!this.subscribePromise) {
       this.subscribePromise = (async () => {
-        await connectRedisIfNeeded(this.subscriber);
+        await this.connectRedisIfNeeded(this.subscriber);
         await this.subscriber.subscribe(this.channel);
       })();
     }
-    await this.subscribePromise;
+    const attempt = this.subscribePromise;
+    try {
+      await attempt;
+    } catch (error) {
+      if (this.subscribePromise === attempt) {
+        this.subscribePromise = null;
+      }
+      throw error;
+    }
+  }
+
+  private async connectRedisIfNeeded(redis: Redis): Promise<void> {
+    if (this.closeController.signal.aborted) {
+      throw new Error("Redis realtime bus is closed");
+    }
+    if (redis.status === "ready") return;
+
+    let attempt = this.connectionPromises.get(redis);
+    if (!attempt) {
+      attempt = (async () => {
+        if (
+          redis.status === "connecting" ||
+          redis.status === "reconnecting" ||
+          redis.status === "connect"
+        ) {
+          await waitForRedisReady(redis, this.closeController.signal);
+          return;
+        }
+        await redis.connect();
+      })();
+      this.connectionPromises.set(redis, attempt);
+      const clearAttempt = () => {
+        if (this.connectionPromises.get(redis) === attempt) {
+          this.connectionPromises.delete(redis);
+        }
+      };
+      void attempt.then(clearAttempt, clearAttempt);
+    }
+
+    await attempt;
+    if (this.closeController.signal.aborted) {
+      throw new Error("Redis realtime bus is closed");
+    }
   }
 
   private async handleMessage(message: string): Promise<void> {
@@ -180,14 +235,50 @@ export class RedisRealtimeBus implements RealtimeBus {
   }
 }
 
-async function connectRedisIfNeeded(redis: Redis): Promise<void> {
-  if (
-    redis.status === "ready" ||
-    redis.status === "connecting" ||
-    redis.status === "connect"
-  )
+async function closeRedisClient(redis: Redis): Promise<void> {
+  if (redis.status !== "ready") {
+    redis.disconnect();
     return;
-  await redis.connect();
+  }
+  try {
+    await redis.quit();
+  } finally {
+    redis.disconnect();
+  }
+}
+
+async function waitForRedisReady(
+  redis: Redis,
+  signal: AbortSignal,
+): Promise<void> {
+  if (signal.aborted) throw new Error("Redis realtime bus is closed");
+  if (redis.status === "ready") return;
+  await new Promise<void>((resolve, reject) => {
+    function cleanup() {
+      redis.off("ready", handleReady);
+      redis.off("end", handleEnd);
+      signal.removeEventListener("abort", handleAbort);
+    }
+    function handleReady() {
+      cleanup();
+      resolve();
+    }
+    function handleEnd() {
+      cleanup();
+      reject(new Error("Redis connection ended before becoming ready"));
+    }
+    function handleAbort() {
+      cleanup();
+      reject(new Error("Redis realtime bus is closed"));
+    }
+
+    redis.once("ready", handleReady);
+    redis.once("end", handleEnd);
+    signal.addEventListener("abort", handleAbort, { once: true });
+    if (signal.aborted) handleAbort();
+    else if (redis.status === "ready") handleReady();
+    else if (redis.status === "end") handleEnd();
+  });
 }
 
 let realtimeBus: RealtimeBus | null = null;
