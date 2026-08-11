@@ -9,6 +9,9 @@ import {
   conversationParticipants,
   conversations,
   eventOutbox,
+  hermesBotConfigs,
+  hermesRpcBotConfigs,
+  hermesRpcSessionLinks,
   messages,
   users,
   workspaces,
@@ -24,6 +27,7 @@ import { conversationRoutes } from "../conversations";
 import { messageRoutes } from "../messages";
 import { botRuntimeRoutes } from "../bot-runtime";
 import { hermesPlatformRoutes } from "../hermes-platform";
+import { hermesRpcRoutes } from "../hermes-rpc";
 import { botRoutes } from "./index";
 import {
   __botRuntimeInternalsForTests,
@@ -55,6 +59,10 @@ import { closeDomainEventRuntime, startDomainEventRuntime } from "../events/runt
 import { createChatMessageSentV1 } from "../events/envelope";
 import { enqueueDomainEvent } from "../events/outbox";
 import crypto from "crypto";
+import {
+  getHermesRpcBotConfig,
+  linkHermesRpcSession,
+} from "../services/hermes-rpc";
 
 const app = new Elysia()
   .use(authRoutes)
@@ -63,6 +71,7 @@ const app = new Elysia()
   .use(messageRoutes)
   .use(botRuntimeRoutes)
   .use(hermesPlatformRoutes)
+  .use(hermesRpcRoutes)
   .use(botRoutes);
 
 function uniqueEmail() {
@@ -283,6 +292,104 @@ function startWebhookServer(
   };
 }
 
+function startHermesRpcCatalogServer(
+  sessions: Array<{
+    id: string;
+    title: string;
+    preview: string;
+    started_at: number;
+    message_count: number;
+    source: string;
+  }>,
+) {
+  const methods: string[] = [];
+  const server = Bun.serve({
+    port: 0,
+    fetch(request, bunServer) {
+      if (bunServer.upgrade(request)) return;
+      return new Response("WebSocket required", { status: 426 });
+    },
+    websocket: {
+      open(socket) {
+        socket.send(JSON.stringify({
+          jsonrpc: "2.0",
+          method: "event",
+          params: { type: "gateway.ready", payload: { version: "test" } },
+        }));
+      },
+      message(socket, raw) {
+        const frame = JSON.parse(String(raw));
+        methods.push(frame.method);
+        if (frame.method === "session.list") {
+          socket.send(JSON.stringify({
+            jsonrpc: "2.0",
+            id: frame.id,
+            result: { sessions },
+          }));
+          return;
+        }
+        if (frame.method === "session.resume") {
+          socket.send(JSON.stringify({
+            jsonrpc: "2.0",
+            id: frame.id,
+            result: { session_id: `runtime-${frame.params.session_id}` },
+          }));
+          return;
+        }
+        socket.send(JSON.stringify({
+          jsonrpc: "2.0",
+          id: frame.id,
+          error: { code: -32601, message: `Unsupported method: ${frame.method}` },
+        }));
+      },
+    },
+  });
+  return {
+    endpoint: `http://127.0.0.1:${server.port}`,
+    methods,
+    stop: () => server.stop(true),
+  };
+}
+
+async function createRunningHermesRpcInvocation(label: string) {
+  process.env.THECHAT_SECRET_KEY ??= "thechat-hermes-rpc-test-secret";
+  const owner = await registerUser(`${label}Owner`);
+  const { workspaceId } = await createWorkspaceWithGeneralChannel(
+    owner.token,
+    `${label} workspace`,
+  );
+  const rpc = await createBot(owner.token, `${label}Bot`, undefined, {
+    kind: "hermes-rpc",
+    workspaceId,
+    hermesRpc: { endpoint: "http://127.0.0.1:9" },
+  });
+  expect(rpc.status).toBe(200);
+  const dm = await req(
+    "POST",
+    "/conversations/dm",
+    { workspaceId, otherUserId: rpc.body.userId },
+    owner.token,
+  );
+  expect(dm.status).toBe(200);
+  const sent = await req(
+    "POST",
+    `/messages/${dm.body.id}`,
+    { content: `${label} prompt` },
+    owner.token,
+  );
+  expect(sent.status).toBe(200);
+  const invocation = await waitForResult(async () => {
+    const rows = await invocationsForMessage(sent.body.id);
+    return rows.find((row) => row.status === "queued");
+  }, `${label} queued RPC invocation`);
+  const staleStartedAt = new Date(Date.now() - 20 * 60 * 1000);
+  await db
+    .update(botInvocations)
+    .set({ status: "running", startedAt: staleStartedAt, updatedAt: staleStartedAt })
+    .where(eq(botInvocations.id, invocation.id));
+  return { owner, workspaceId, rpc, dm, sent, invocation };
+}
+
 async function createWorkspaceWithGeneralChannel(token: string, name: string) {
   const wsRes = await req("POST", "/workspaces/create", { name }, token);
   expect(wsRes.status).toBe(200);
@@ -413,6 +520,456 @@ describe("Bots: Create", () => {
       .from(users)
       .where(eq(users.name, botName));
     expect(orphanUsers).toEqual([]);
+  });
+});
+
+describe("Bots: Hermes RPC configuration", () => {
+  test("creates and serializes Hermes RPC separately with an encrypted, write-only token", async () => {
+    process.env.THECHAT_SECRET_KEY ??= "thechat-hermes-rpc-test-secret";
+    const owner = await registerUser("RpcConfigOwner");
+    const outsider = await registerUser("RpcConfigOutsider");
+    const { workspaceId } = await createWorkspaceWithGeneralChannel(
+      owner.token,
+      "Hermes RPC config workspace",
+    );
+    const gatewayToken = `rpc-token-${crypto.randomUUID()}`;
+    const rpc = await createBot(owner.token, "UpstreamHermes", undefined, {
+      kind: "hermes-rpc",
+      workspaceId,
+      hermesRpc: {
+        endpoint: "https://hermes.example/base/",
+        gatewayToken,
+      },
+    });
+    expect(rpc.status).toBe(200);
+    expect(rpc.body.kind).toBe("hermes-rpc");
+    expect(rpc.body.apiKey).toBeUndefined();
+    expect(rpc.body.webhookSecret).toBeUndefined();
+    expect(JSON.stringify(rpc.body)).not.toContain(gatewayToken);
+
+    const [stored] = await db
+      .select()
+      .from(hermesRpcBotConfigs)
+      .where(eq(hermesRpcBotConfigs.botId, rpc.body.id));
+    expect(stored.endpoint).toBe("wss://hermes.example/base/api/ws");
+    expect(stored.gatewayTokenEncrypted).toStartWith("v1:");
+    expect(stored.gatewayTokenEncrypted).not.toContain(gatewayToken);
+    expect(await db.select().from(hermesBotConfigs).where(eq(hermesBotConfigs.botId, rpc.body.id)))
+      .toEqual([]);
+    expect(await db.select().from(apikey).where(eq(apikey.referenceId, rpc.body.userId)))
+      .toEqual([]);
+
+    const ownerConfig = await req(
+      "GET",
+      `/bots/${rpc.body.id}/hermes-rpc`,
+      undefined,
+      owner.token,
+    );
+    expect(ownerConfig.status).toBe(200);
+    expect(ownerConfig.body).toMatchObject({
+      botId: rpc.body.id,
+      endpoint: "wss://hermes.example/base/api/ws",
+      gatewayTokenConfigured: true,
+    });
+    expect(JSON.stringify(ownerConfig.body)).not.toContain(gatewayToken);
+
+    const forbidden = await req(
+      "GET",
+      `/bots/${rpc.body.id}/hermes-rpc`,
+      undefined,
+      outsider.token,
+    );
+    expect(forbidden.status).toBe(403);
+
+    const list = await req("GET", "/bots/list", undefined, owner.token);
+    expect(list.status).toBe(200);
+    expect(list.body.find((bot: any) => bot.id === rpc.body.id)).toMatchObject({
+      kind: "hermes-rpc",
+      apiKeyEnabled: false,
+    });
+    expect(JSON.stringify(list.body)).not.toContain(gatewayToken);
+  });
+
+  test("validates endpoint forms and keeps legacy Hermes on its original config path", async () => {
+    process.env.THECHAT_SECRET_KEY ??= "thechat-hermes-rpc-test-secret";
+    const owner = await registerUser("RpcSeparationOwner");
+    const { workspaceId } = await createWorkspaceWithGeneralChannel(
+      owner.token,
+      "Hermes RPC separation workspace",
+    );
+    const invalid = await createBot(owner.token, "InvalidRpc", undefined, {
+      kind: "hermes-rpc",
+      workspaceId,
+      hermesRpc: { endpoint: "ws://hermes.example/api/ws?token=must-not-be-here" },
+    });
+    expect(invalid.status).toBe(400);
+    expect(invalid.body.error).toContain("query string");
+
+    const legacy = await createBot(owner.token, "LegacyHermes", undefined, {
+      kind: "hermes",
+      workspaceId,
+    });
+    expect(legacy.status).toBe(200);
+    expect(legacy.body.kind).toBe("hermes");
+    expect(await db.select().from(hermesBotConfigs).where(eq(hermesBotConfigs.botId, legacy.body.id)))
+      .toHaveLength(1);
+    expect(await db.select().from(hermesRpcBotConfigs).where(eq(hermesRpcBotConfigs.botId, legacy.body.id)))
+      .toEqual([]);
+    await expect(getHermesRpcBotConfig(legacy.body.id, owner.user.id)).rejects.toMatchObject({
+      status: 400,
+    });
+  });
+
+  test("persists lane correlation idempotently without process-local session state", async () => {
+    process.env.THECHAT_SECRET_KEY ??= "thechat-hermes-rpc-test-secret";
+    const owner = await registerUser("RpcCorrelationOwner");
+    const { workspaceId } = await createWorkspaceWithGeneralChannel(
+      owner.token,
+      "Hermes RPC correlation workspace",
+    );
+    const rpc = await createBot(owner.token, "CorrelatedHermes", undefined, {
+      kind: "hermes-rpc",
+      workspaceId,
+      hermesRpc: { endpoint: "localhost:8642" },
+    });
+    expect(rpc.status).toBe(200);
+    const dm = await req(
+      "POST",
+      "/conversations/dm",
+      { workspaceId, otherUserId: rpc.body.userId },
+      owner.token,
+    );
+    expect(dm.status).toBe(200);
+
+    const input = {
+      botId: rpc.body.id as string,
+      conversationId: dm.body.id as string,
+      threadId: null,
+      upstreamSessionId: "durable-stored-session-1",
+    };
+    const first = await linkHermesRpcSession(input);
+    const second = await linkHermesRpcSession(input);
+    expect(second.id).toBe(first.id);
+    expect(second.upstreamSessionId).toBe("durable-stored-session-1");
+    expect(
+      await db
+        .select()
+        .from(hermesRpcSessionLinks)
+        .where(eq(hermesRpcSessionLinks.botId, rpc.body.id)),
+    ).toHaveLength(1);
+    await expect(
+      linkHermesRpcSession({ ...input, upstreamSessionId: "different-session" }),
+    ).rejects.toMatchObject({ status: 409 });
+  });
+
+  test("scopes non-owner session browsing and imports to their exact DM", async () => {
+    process.env.THECHAT_SECRET_KEY ??= "thechat-hermes-rpc-test-secret";
+    const upstream = startHermesRpcCatalogServer([
+      {
+        id: "owner-session",
+        title: "Owner private session",
+        preview: "owner-only preview",
+        started_at: 3,
+        message_count: 3,
+        source: "thechat",
+      },
+      {
+        id: "participant-session",
+        title: "Participant session",
+        preview: "participant preview",
+        started_at: 2,
+        message_count: 2,
+        source: "thechat",
+      },
+      {
+        id: "unlinked-session",
+        title: "Unlinked owner-importable session",
+        preview: "catalog preview",
+        started_at: 1,
+        message_count: 1,
+        source: "cli",
+      },
+    ]);
+    try {
+      const owner = await registerUser("RpcPrivacyOwner");
+      const participant = await registerUser("RpcPrivacyParticipant");
+      const { workspaceId } = await createWorkspaceWithGeneralChannel(
+        owner.token,
+        "Hermes RPC private DM boundary",
+      );
+      await db.insert(workspaceMembers).values({
+        workspaceId,
+        userId: participant.user.id,
+        role: "member",
+      });
+      const rpc = await createBot(owner.token, "PrivateRpcHermes", undefined, {
+        kind: "hermes-rpc",
+        workspaceId,
+        hermesRpc: { endpoint: upstream.endpoint },
+      });
+      expect(rpc.status).toBe(200);
+      const ownerDm = await req(
+        "POST",
+        "/conversations/dm",
+        { workspaceId, otherUserId: rpc.body.userId },
+        owner.token,
+      );
+      const participantDm = await req(
+        "POST",
+        "/conversations/dm",
+        { workspaceId, otherUserId: rpc.body.userId },
+        participant.token,
+      );
+      expect(ownerDm.status).toBe(200);
+      expect(participantDm.status).toBe(200);
+      expect(participantDm.body.id).not.toBe(ownerDm.body.id);
+
+      await linkHermesRpcSession({
+        botId: rpc.body.id,
+        conversationId: ownerDm.body.id,
+        threadId: null,
+        upstreamSessionId: "owner-session",
+      });
+      await linkHermesRpcSession({
+        botId: rpc.body.id,
+        conversationId: participantDm.body.id,
+        threadId: null,
+        upstreamSessionId: "participant-session",
+      });
+
+      const ownerCatalog = await req(
+        "GET",
+        `/bots/${rpc.body.id}/hermes-rpc/sessions?conversationId=${ownerDm.body.id}`,
+        undefined,
+        owner.token,
+      );
+      expect(ownerCatalog.status).toBe(200);
+      expect(ownerCatalog.body.sessions.map((session: any) => session.id)).toEqual([
+        "owner-session",
+        "participant-session",
+        "unlinked-session",
+      ]);
+
+      const participantCatalog = await req(
+        "GET",
+        `/bots/${rpc.body.id}/hermes-rpc/sessions?conversationId=${participantDm.body.id}`,
+        undefined,
+        participant.token,
+      );
+      expect(participantCatalog.status).toBe(200);
+      expect(participantCatalog.body.sessions).toEqual([
+        expect.objectContaining({
+          id: "participant-session",
+          linked: true,
+          threadId: null,
+        }),
+      ]);
+
+      for (const guessedId of ["owner-session", "unlinked-session", "made-up-session"]) {
+        const denied = await req(
+          "POST",
+          `/bots/${rpc.body.id}/hermes-rpc/sessions/select`,
+          {
+            conversationId: participantDm.body.id,
+            upstreamSessionId: guessedId,
+          },
+          participant.token,
+        );
+        expect(denied.status).toBe(404);
+        expect(denied.body.error).toBe("Hermes session not found");
+      }
+
+      const selectedOwn = await req(
+        "POST",
+        `/bots/${rpc.body.id}/hermes-rpc/sessions/select`,
+        {
+          conversationId: participantDm.body.id,
+          upstreamSessionId: "participant-session",
+        },
+        participant.token,
+      );
+      expect(selectedOwn.status).toBe(200);
+      expect(selectedOwn.body.session).toMatchObject({
+        id: "participant-session",
+        linked: true,
+      });
+
+      const imported = await req(
+        "POST",
+        `/bots/${rpc.body.id}/hermes-rpc/sessions/select`,
+        {
+          conversationId: ownerDm.body.id,
+          upstreamSessionId: "unlinked-session",
+        },
+        owner.token,
+      );
+      expect(imported.status).toBe(200);
+      expect(imported.body.session).toMatchObject({
+        id: "unlinked-session",
+        linked: true,
+      });
+      expect(imported.body.thread?.conversationId).toBe(ownerDm.body.id);
+
+      const crossConversationConflict = await req(
+        "POST",
+        `/bots/${rpc.body.id}/hermes-rpc/sessions/select`,
+        {
+          conversationId: ownerDm.body.id,
+          upstreamSessionId: "participant-session",
+        },
+        owner.token,
+      );
+      expect(crossConversationConflict.status).toBe(409);
+      expect(crossConversationConflict.body.error).toContain("another conversation");
+
+      await expect(linkHermesRpcSession({
+        botId: rpc.body.id,
+        conversationId: participantDm.body.id,
+        threadId: null,
+        upstreamSessionId: "owner-session",
+      })).rejects.toMatchObject({ status: 409 });
+      expect(upstream.methods.filter((method) => method === "session.resume")).toEqual([]);
+    } finally {
+      upstream.stop();
+    }
+  });
+
+  test("fails a redelivered running RPC invocation once without resubmitting", async () => {
+    const recordedProgress: ProgressEventInput[] = [];
+    let progressNow = Date.parse("2026-08-11T00:00:00.000Z");
+    const local = createLocalBotProgressStoreForTests({
+      activityTimeoutMs: 30_000,
+      now: () => progressNow,
+    });
+    const recordingStore: BotProgressStore = {
+      append(input) {
+        recordedProgress.push(input);
+        return local.append(input);
+      },
+      touch: (input) => local.touch(input),
+      listForConversation: (conversationId, candidates) =>
+        local.listForConversation(conversationId, candidates),
+      clear: (input) => local.clear(input),
+      close: () => local.close?.() ?? Promise.resolve(),
+    };
+    await setBotProgressStoreForTests(recordingStore);
+    try {
+      const created = await createRunningHermesRpcInvocation("RpcRedelivery");
+      await recordingStore.append({
+        invocationId: created.invocation.id,
+        botId: created.rpc.body.id,
+        conversationId: created.dm.body.id,
+        threadId: null,
+        type: "tool.started",
+        status: "running",
+        toolCallId: "quiet-call",
+        toolName: "terminal",
+        label: "Quiet terminal",
+        preview: null,
+        payload: { upstreamEventIdentity: "runtime:tool.start:quiet-call" },
+        occurredAt: new Date(progressNow),
+      });
+      progressNow += 30_001;
+      const quietRuntime = await req(
+        "GET",
+        `/bot-runtime/conversations/${created.dm.body.id}`,
+        undefined,
+        created.owner.token,
+      );
+      expect(quietRuntime.status).toBe(200);
+      expect(quietRuntime.body.events).toEqual([]);
+      expect(quietRuntime.body.invocations).toContainEqual(
+        expect.objectContaining({
+          id: created.invocation.id,
+          botKind: "hermes-rpc",
+          status: "running",
+        }),
+      );
+      const progress: number[] = [];
+      const context = {
+        async setProgress(value: number) {
+          progress.push(value);
+        },
+      };
+
+      await __botRuntimeInternalsForTests.handleQueuedBotInvocation(
+        created.invocation.id,
+        context,
+      );
+      await __botRuntimeInternalsForTests.handleQueuedBotInvocation(
+        created.invocation.id,
+        context,
+      );
+
+      const [failed] = await invocationsForMessage(created.sent.body.id);
+      expect(failed).toMatchObject({
+        id: created.invocation.id,
+        status: "failed",
+        error: expect.stringContaining("ownership was lost"),
+      });
+      expect(recordedProgress.filter((event) => event.type === "invocation.failed"))
+        .toHaveLength(1);
+      const botMessages = await botMessagesForConversation(
+        created.dm.body.id,
+        created.rpc.body.userId,
+      );
+      expect(botMessages.filter((message) => message.content.includes("ownership was lost")))
+        .toHaveLength(1);
+      expect(progress).toEqual([]);
+    } finally {
+      await setBotProgressStoreForTests(createLocalBotProgressStoreForTests());
+    }
+  });
+
+  test("does not insert a final RPC message when cancellation wins completion", async () => {
+    const created = await createRunningHermesRpcInvocation("RpcCompletionRace");
+    let signalBeforeClaim!: () => void;
+    let releaseClaim!: () => void;
+    const beforeClaim = new Promise<void>((resolve) => {
+      signalBeforeClaim = resolve;
+    });
+    const claimReleased = new Promise<void>((resolve) => {
+      releaseClaim = resolve;
+    });
+    const completion = __botRuntimeInternalsForTests.completeHermesRpcInvocation(
+      created.invocation.id,
+      "This response must not be committed",
+      { storedSessionId: "stored-race", runtimeSessionId: "runtime-race" },
+      {
+        beforeClaim: async () => {
+          signalBeforeClaim();
+          await claimReleased;
+        },
+      },
+    );
+    await beforeClaim;
+    await db
+      .update(botInvocations)
+      .set({
+        status: "cancelled",
+        error: "Stopped by user",
+        completedAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .where(eq(botInvocations.id, created.invocation.id));
+    releaseClaim();
+
+    expect(await completion).toEqual({ duplicate: true });
+    const finalMessages = await db
+      .select({ id: messages.id })
+      .from(messages)
+      .where(
+        and(
+          eq(messages.senderId, created.rpc.body.userId),
+          eq(messages.clientMessageId, `hermes-rpc:${created.invocation.id}:final`),
+        ),
+      );
+    expect(finalMessages).toEqual([]);
+    const [cancelled] = await invocationsForMessage(created.sent.body.id);
+    expect(cancelled).toMatchObject({
+      status: "cancelled",
+      responseMessageId: null,
+    });
   });
 });
 

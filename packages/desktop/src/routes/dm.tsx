@@ -6,6 +6,7 @@ import {
   useBotRuntimeCache,
 } from "../hooks/useBotRuntime";
 import { useConversationThreads } from "../hooks/useConversationThreads";
+import { useHermesRpcSessions } from "../hooks/useHermesRpcSessions";
 import { useConversationDetail } from "../hooks/useConversationDetail";
 import { useScopedCommands } from "../hooks/useScopedCommands";
 import { useWebSocketStore } from "../stores/websocket";
@@ -36,6 +37,8 @@ import {
   canonicalHermesSlashCommand,
   parseHermesSlashCommand,
 } from "../lib/hermes-slash-commands";
+import { api } from "../lib/api";
+import { authHeaders, edenErrorMessage } from "../lib/eden";
 
 export function DmRoute() {
   const { id: conversationId } = useParams({ from: "/dm/$id" });
@@ -63,13 +66,19 @@ export function DmRoute() {
     () => conversation?.participants.find((p) => p.userId !== user?.id) ?? null,
     [conversation, user?.id],
   );
-  const isHermesDm = conversation?.type === "direct" && otherParticipant?.bot?.kind === "hermes";
+  const isLegacyHermesDm =
+    conversation?.type === "direct" && otherParticipant?.bot?.kind === "hermes";
+  const isHermesRpcDm =
+    conversation?.type === "direct" && otherParticipant?.bot?.kind === "hermes-rpc";
+  const isHermesDm = isLegacyHermesDm || isHermesRpcDm;
   const registeredBotCommands = otherParticipant?.bot?.commands;
   const slashCommands = useMemo(
-    () => buildHermesSlashCommands(registeredBotCommands),
-    [registeredBotCommands],
+    () => isLegacyHermesDm ? buildHermesSlashCommands(registeredBotCommands) : [],
+    [isLegacyHermesDm, registeredBotCommands],
   );
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
+  const [selectedRpcSessionId, setSelectedRpcSessionId] = useState<string | null>(null);
+  const [selectingRpcSessionId, setSelectingRpcSessionId] = useState<string | null>(null);
   const runtimeQuery = useBotRuntime(conversationId, token, isHermesDm);
   const runtime = runtimeQuery.data ?? null;
   const runtimeLoading = runtimeQuery.isLoading;
@@ -84,6 +93,12 @@ export function DmRoute() {
     renameThread,
     touchThread,
   } = threadState;
+  const rpcSessions = useHermesRpcSessions({
+    botId: isHermesRpcDm ? otherParticipant?.bot?.id ?? null : null,
+    conversationId,
+    token,
+    enabled: isHermesRpcDm,
+  });
   const { mergeInvocationUpdate, mergeProgressEvent } = useBotRuntimeCache();
   const generalThreadActive = isHermesDm && activeThreadId === null;
   const activeHermesProgress = useMemo(
@@ -276,6 +291,7 @@ export function DmRoute() {
   // Reset task selection when the visible DM changes.
   useEffect(() => {
     setActiveThreadId(null);
+    setSelectedRpcSessionId(null);
   }, [conversationId]);
 
   useEffect(() => {
@@ -285,12 +301,23 @@ export function DmRoute() {
     }
   }, [activeThreadId, isHermesDm, threads]);
 
+  useEffect(() => {
+    if (!isHermesRpcDm) return;
+    const linked = rpcSessions.sessions.find(
+      (session) => session.linked && session.threadId === activeThreadId,
+    );
+    setSelectedRpcSessionId(linked?.id ?? null);
+  }, [activeThreadId, isHermesRpcDm, rpcSessions.sessions]);
+
   const handleCreateThread = useCallback(() => {
     if (!isHermesDm) return;
     void createThread({
       botId: otherParticipant?.bot?.id,
     }).then((thread) => {
-      if (thread) setActiveThreadId(thread.id);
+      if (thread) {
+        setActiveThreadId(thread.id);
+        setSelectedRpcSessionId(null);
+      }
     });
   }, [createThread, isHermesDm, otherParticipant?.bot?.id]);
 
@@ -338,8 +365,46 @@ export function DmRoute() {
 
   const handleStopHermesTask = useCallback(() => {
     if (!isHermesDm) return;
-    sendHermesMessageNow("/stop", activeThreadId);
-  }, [activeThreadId, isHermesDm, sendHermesMessageNow]);
+    if (isLegacyHermesDm) {
+      void sendHermesMessageNow("/stop", activeThreadId);
+      return;
+    }
+    if (!token) return;
+    const invocation = [...(runtime?.invocations ?? [])]
+      .filter((candidate) =>
+        candidate.botKind === "hermes-rpc" &&
+        candidate.threadId === activeThreadId &&
+        (candidate.status === "queued" || candidate.status === "running"),
+      )
+      .sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt))[0];
+    if (!invocation) return;
+    void api["bot-runtime"]
+      .invocations({ invocationId: invocation.id })
+      .stop.post({}, authHeaders(token))
+      .then(({ error }) => {
+        if (error) throw new Error(edenErrorMessage(error, "Could not stop Hermes RPC"));
+        runtimeQuery.refetch();
+      })
+      .catch((error) => console.error("Failed to stop Hermes RPC invocation", error));
+  }, [activeThreadId, isHermesDm, isLegacyHermesDm, runtime?.invocations, runtimeQuery, sendHermesMessageNow, token]);
+
+  const handleSelectRpcSession = useCallback(async (
+    session: (typeof rpcSessions.sessions)[number],
+  ) => {
+    if (!isHermesRpcDm || selectingRpcSessionId) return;
+    setSelectingRpcSessionId(session.id);
+    try {
+      const selected = await rpcSessions.selectSession(session.id);
+      if (!selected) return;
+      await threadState.refetchThreads();
+      setSelectedRpcSessionId(session.id);
+      setActiveThreadId(selected.session.threadId);
+    } catch (error) {
+      console.error("Failed to select Hermes RPC session", error);
+    } finally {
+      setSelectingRpcSessionId(null);
+    }
+  }, [isHermesRpcDm, rpcSessions, selectingRpcSessionId, threadState]);
 
   const handleBranchCommand = useCallback(async (args: string) => {
     if (!isHermesDm) return;
@@ -368,10 +433,10 @@ export function DmRoute() {
     const canonical = slash
       ? canonicalHermesSlashCommand(slash.command, slashCommands) ?? slash.command
       : null;
-    if (canonical === "/branch" && attachmentIds.length === 0) {
+    if (isLegacyHermesDm && canonical === "/branch" && attachmentIds.length === 0) {
       return handleBranchCommand(slash!.args).then(() => true);
     }
-    if (slash) {
+    if (isLegacyHermesDm && slash) {
       // Optimistically resolve approval cards: the gateway resolves pending
       // approvals oldest-first, so mirror that here. Covers both the inline
       // approval buttons (which send these commands) and typed commands.
@@ -397,6 +462,7 @@ export function DmRoute() {
     channelSendMessage,
     handleBranchCommand,
     isHermesDm,
+    isLegacyHermesDm,
     sendHermesMessageNow,
     slashCommands,
   ]);
@@ -471,6 +537,19 @@ export function DmRoute() {
           generalNeedsApproval={generalNeedsApproval}
           unreadThreadIds={unreadThreadIds}
           generalUnread={generalUnread}
+          rpcMode={isHermesRpcDm}
+          rpcSessions={rpcSessions.sessions}
+          rpcSessionsLoading={rpcSessions.loading}
+          rpcSessionsRefreshing={rpcSessions.refreshing}
+          rpcSessionsError={rpcSessions.error}
+          selectedRpcSessionId={selectedRpcSessionId}
+          selectingRpcSessionId={selectingRpcSessionId}
+          onSelectRpcSession={(session) => {
+            void handleSelectRpcSession(session);
+          }}
+          onRefreshRpcSessions={() => {
+            void rpcSessions.refetch();
+          }}
           onLoadMoreThreads={() => {
             void loadMoreThreads();
           }}

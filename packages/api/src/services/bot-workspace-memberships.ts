@@ -4,6 +4,7 @@ import type {
   BotWorkspaceInvite,
   BotWorkspaceInviteResult,
   BotWorkspaceInviteStatus,
+  BotKind,
   WorkspaceMember,
   WsServerEvent,
 } from "@thechat/shared";
@@ -27,7 +28,7 @@ type BotRecord = {
   userId: string;
   ownerId: string;
   name: string;
-  kind: "webhook" | "hermes";
+  kind: BotKind;
 };
 
 type InviteRecord = {

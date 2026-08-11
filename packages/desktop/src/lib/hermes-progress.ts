@@ -35,7 +35,7 @@ function selectActiveHermesProgress(
 ): ActiveHermesProgress {
   const scopedInvocations = (runtime?.invocations ?? []).filter(
     (invocation) =>
-      invocation.botKind === "hermes" &&
+      (invocation.botKind === "hermes" || invocation.botKind === "hermes-rpc") &&
       matchesThreadScope(invocation.threadId, threadId, options.unthreadedOnly === true),
   );
   const scopedInvocationIds = new Set(
@@ -57,7 +57,10 @@ function selectActiveHermesProgress(
     ) {
       return false;
     }
-    return (eventsByInvocationId.get(invocation.id)?.length ?? 0) > 0;
+    return (
+      (eventsByInvocationId.get(invocation.id)?.length ?? 0) > 0 ||
+      (invocation.botKind === "hermes-rpc" && invocation.status === "running")
+    );
   });
 
   const invocationsByLane = new Map<string, BotInvocationPublic[]>();

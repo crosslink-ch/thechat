@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { OwnedBot, WorkspaceListItem } from "@thechat/shared";
+import type {
+  HermesRpcBotConfigPublic,
+  OwnedBot,
+  WorkspaceListItem,
+} from "@thechat/shared";
 import { api } from "../lib/api";
 import { BOT_CREATED_EVENT } from "../lib/bot-events";
 import { edenErrorMessage } from "../lib/eden";
@@ -26,9 +30,15 @@ type WorkspaceRow = {
 function BotKindBadge({ kind }: { kind: OwnedBot["kind"] }) {
   return (
     <span className="rounded-full border border-border bg-base px-2 py-0.5 text-[0.714rem] font-semibold uppercase tracking-wide text-text-dimmed">
-      {kind === "hermes" ? "Hermes" : "Webhook"}
+      {botKindLabel(kind)}
     </span>
   );
+}
+
+function botKindLabel(kind: OwnedBot["kind"]) {
+  if (kind === "hermes-rpc") return "Hermes RPC";
+  if (kind === "hermes") return "Hermes Gateway";
+  return "Webhook";
 }
 
 function Section({
@@ -52,6 +62,156 @@ function Section({
       </div>
       {children}
     </section>
+  );
+}
+
+function HermesRpcConnectionSection({ botId, token }: { botId: string; token: string }) {
+  const [config, setConfig] = useState<HermesRpcBotConfigPublic | null>(null);
+  const [endpoint, setEndpoint] = useState("");
+  const [gatewayToken, setGatewayToken] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState<"save" | "test" | "clear" | null>(null);
+  const [notice, setNotice] = useState<Notice | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const { data, error } = await api.bots({ botId })["hermes-rpc"].get(auth(token));
+      if (error) throw new Error(edenErrorMessage(error, "Failed to load Hermes RPC connection"));
+      const next = data as HermesRpcBotConfigPublic;
+      setConfig(next);
+      setEndpoint(next.endpoint);
+      setGatewayToken("");
+      setNotice(null);
+    } catch (error) {
+      setNotice({
+        kind: "error",
+        text: error instanceof Error ? error.message : "Failed to load Hermes RPC connection",
+      });
+    } finally {
+      setLoading(false);
+    }
+  }, [botId, token]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const run = async (
+    operation: "save" | "test" | "clear",
+    action: () => Promise<void>,
+  ) => {
+    setBusy(operation);
+    setNotice(null);
+    try {
+      await action();
+    } catch (error) {
+      setNotice({
+        kind: "error",
+        text: error instanceof Error ? error.message : "Hermes RPC operation failed",
+      });
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const save = () => void run("save", async () => {
+    const input: { endpoint: string; gatewayToken?: string } = { endpoint: endpoint.trim() };
+    if (gatewayToken.trim()) input.gatewayToken = gatewayToken.trim();
+    const { data, error } = await api.bots({ botId })["hermes-rpc"].patch(
+      input,
+      auth(token),
+    );
+    if (error) throw new Error(edenErrorMessage(error, "Failed to save Hermes RPC connection"));
+    const next = data as HermesRpcBotConfigPublic;
+    setConfig(next);
+    setEndpoint(next.endpoint);
+    setGatewayToken("");
+    setNotice({ kind: "success", text: "Hermes RPC connection saved." });
+  });
+
+  const testConnection = () => void run("test", async () => {
+    const { data, error } = await api.bots({ botId })["hermes-rpc"].test.post(
+      {},
+      auth(token),
+    );
+    if (error) throw new Error(edenErrorMessage(error, "Hermes RPC connection test failed"));
+    const result = data as { latencyMs: number; sessionCountSampled: number; gatewayReady: boolean };
+    setNotice({
+      kind: "success",
+      text: `Connected in ${result.latencyMs} ms · gateway ${result.gatewayReady ? "ready" : "reachable"} · ${result.sessionCountSampled} session${result.sessionCountSampled === 1 ? "" : "s"} sampled.`,
+    });
+  });
+
+  const clearToken = () => void run("clear", async () => {
+    const { data, error } = await api.bots({ botId })["hermes-rpc"].patch(
+      { gatewayToken: null },
+      auth(token),
+    );
+    if (error) throw new Error(edenErrorMessage(error, "Failed to clear Hermes RPC token"));
+    const next = data as HermesRpcBotConfigPublic;
+    setConfig(next);
+    setGatewayToken("");
+    setNotice({ kind: "success", text: "Gateway token cleared." });
+  });
+
+  return (
+    <Section
+      title="Hermes RPC connection"
+      description="Owner-managed connection to the upstream hermes serve JSON-RPC WebSocket API. Tokens are encrypted and never returned."
+    >
+      <div data-testid="hermes-rpc-connection" className="grid gap-3">
+        {loading ? (
+          <div className="text-[0.857rem] text-text-muted">Loading connection...</div>
+        ) : (
+          <>
+            <label className="grid gap-1.5">
+              <span className="text-[0.786rem] font-medium text-text-muted">Endpoint</span>
+              <input
+                aria-label="Hermes RPC endpoint"
+                value={endpoint}
+                onChange={(event) => setEndpoint(event.target.value)}
+                spellCheck={false}
+                className="rounded-lg border border-border bg-base px-3 py-2 font-mono text-[0.857rem] text-text outline-none focus:border-border-focus"
+              />
+            </label>
+            <label className="grid gap-1.5">
+              <span className="text-[0.786rem] font-medium text-text-muted">Replace gateway token</span>
+              <input
+                aria-label="Replace Hermes RPC gateway token"
+                type="password"
+                autoComplete="new-password"
+                value={gatewayToken}
+                onChange={(event) => setGatewayToken(event.target.value)}
+                placeholder={config?.gatewayTokenConfigured ? "Token configured · enter to replace" : "Optional"}
+                className="rounded-lg border border-border bg-base px-3 py-2 font-mono text-[0.857rem] text-text outline-none placeholder:text-text-placeholder focus:border-border-focus"
+              />
+              <span data-testid="hermes-rpc-token-status" className="text-[0.714rem] text-text-dimmed">
+                {config?.gatewayTokenConfigured ? "A gateway token is configured." : "No gateway token is configured."}
+              </span>
+            </label>
+            {notice && (
+              <div role={notice.kind === "error" ? "alert" : "status"} className={`rounded-lg border px-3 py-2 text-[0.786rem] ${notice.kind === "error" ? "border-error-msg-border bg-error-msg-bg text-error-bright" : "border-green-500/30 bg-green-500/10 text-green-400"}`}>
+                {notice.text}
+              </div>
+            )}
+            <div className="flex flex-wrap gap-2">
+              <button type="button" onClick={save} disabled={busy !== null || !endpoint.trim()} className="cursor-pointer rounded-md border border-border-strong bg-elevated px-3 py-1.5 text-[0.786rem] font-medium text-text hover:not-disabled:bg-button disabled:opacity-50">
+                {busy === "save" ? "Saving..." : "Save connection"}
+              </button>
+              <button type="button" aria-label="Test Hermes RPC connection" onClick={testConnection} disabled={busy !== null} className="cursor-pointer rounded-md border border-border bg-raised px-3 py-1.5 text-[0.786rem] text-text-muted hover:not-disabled:bg-hover hover:not-disabled:text-text disabled:opacity-50">
+                {busy === "test" ? "Testing..." : "Test connection"}
+              </button>
+              {config?.gatewayTokenConfigured && (
+                <button type="button" onClick={clearToken} disabled={busy !== null} className="cursor-pointer rounded-md border border-error-msg-border bg-error-msg-bg px-3 py-1.5 text-[0.786rem] text-error-bright disabled:opacity-50">
+                  {busy === "clear" ? "Clearing..." : "Clear token"}
+                </button>
+              )}
+            </div>
+          </>
+        )}
+      </div>
+    </Section>
   );
 }
 
@@ -184,12 +344,15 @@ export function BotsManageRoute() {
   const saveDetails = () => {
     if (!token || !selectedBot || !name.trim()) return;
     void runAction("save", async () => {
+      const details = selectedBot.kind === "hermes-rpc"
+        ? { name: name.trim(), attachmentAccess }
+        : {
+            name: name.trim(),
+            webhookUrl: webhookUrl.trim() || null,
+            attachmentAccess,
+          };
       const { data, error } = await api.bots({ botId: selectedBot.id }).patch(
-        {
-          name: name.trim(),
-          webhookUrl: webhookUrl.trim() || null,
-          attachmentAccess,
-        },
+        details,
         auth(token),
       );
       if (error) throw new Error(edenErrorMessage(error, "Failed to update bot"));
@@ -410,12 +573,20 @@ export function BotsManageRoute() {
                       <div className="flex items-start justify-between gap-2">
                         <span className="min-w-0 truncate text-[0.929rem] font-medium text-text">{bot.name}</span>
                         <span
-                          className={`mt-1 size-2 shrink-0 rounded-full ${bot.apiKeyEnabled ? "bg-green-400" : "bg-text-dimmed"}`}
-                          title={bot.apiKeyEnabled ? "API key active" : "API key revoked"}
+                          className={`mt-1 size-2 shrink-0 rounded-full ${
+                            bot.kind === "hermes-rpc"
+                              ? "bg-cyan-400"
+                              : bot.apiKeyEnabled ? "bg-green-400" : "bg-text-dimmed"
+                          }`}
+                          title={
+                            bot.kind === "hermes-rpc"
+                              ? "Hermes RPC connection"
+                              : bot.apiKeyEnabled ? "API key active" : "API key revoked"
+                          }
                         />
                       </div>
                       <div className="mt-1.5 flex items-center gap-2 text-[0.714rem] text-text-dimmed">
-                        <span>{bot.kind === "hermes" ? "Hermes" : "Webhook"}</span>
+                        <span>{botKindLabel(bot.kind)}</span>
                         <span>·</span>
                         <span>{bot.workspaces.length} workspace{bot.workspaces.length === 1 ? "" : "s"}</span>
                       </div>
@@ -446,18 +617,20 @@ export function BotsManageRoute() {
                         className="rounded-lg border border-border bg-base px-3 py-2 text-[0.929rem] text-text outline-none transition-colors focus:border-border-focus"
                       />
                     </label>
-                    <label className="grid gap-1.5">
-                      <span className="text-[0.786rem] font-medium text-text-muted">Webhook URL</span>
-                      <input
-                        aria-label="Webhook URL"
-                        value={webhookUrl}
-                        onChange={(event) => setWebhookUrl(event.target.value)}
-                        placeholder="https://bot.example.com/webhook"
-                        className="rounded-lg border border-border bg-base px-3 py-2 text-[0.929rem] text-text outline-none transition-colors placeholder:text-text-placeholder focus:border-border-focus"
-                        spellCheck={false}
-                      />
-                      <span className="text-[0.714rem] text-text-dimmed">Leave blank when the bot uses polling.</span>
-                    </label>
+                    {selectedBot.kind !== "hermes-rpc" && (
+                      <label className="grid gap-1.5">
+                        <span className="text-[0.786rem] font-medium text-text-muted">Webhook URL</span>
+                        <input
+                          aria-label="Webhook URL"
+                          value={webhookUrl}
+                          onChange={(event) => setWebhookUrl(event.target.value)}
+                          placeholder="https://bot.example.com/webhook"
+                          className="rounded-lg border border-border bg-base px-3 py-2 text-[0.929rem] text-text outline-none transition-colors placeholder:text-text-placeholder focus:border-border-focus"
+                          spellCheck={false}
+                        />
+                        <span className="text-[0.714rem] text-text-dimmed">Leave blank when the bot uses polling.</span>
+                      </label>
+                    )}
                     <label className="flex cursor-pointer items-start gap-2.5 rounded-lg border border-border bg-base px-3 py-3">
                       <input
                         aria-label="Allow message attachments"
@@ -485,6 +658,14 @@ export function BotsManageRoute() {
                     </div>
                   </div>
                 </Section>
+
+                {selectedBot.kind === "hermes-rpc" && token && (
+                  <HermesRpcConnectionSection
+                    key={selectedBot.id}
+                    botId={selectedBot.id}
+                    token={token}
+                  />
+                )}
 
                 <Section
                   title="Workspaces"
@@ -538,6 +719,7 @@ export function BotsManageRoute() {
                   )}
                 </Section>
 
+                {selectedBot.kind !== "hermes-rpc" && (
                 <Section
                   title="Credentials"
                   description="Rotated credentials take effect immediately. API keys are shown only once when issued."
@@ -658,6 +840,7 @@ export function BotsManageRoute() {
                     </div>
                   </div>
                 </Section>
+                )}
 
                 <section className="rounded-xl border border-error-msg-border bg-error-msg-bg/35 p-4">
                   <h3 className="text-[0.929rem] font-semibold text-error-bright">Danger zone</h3>

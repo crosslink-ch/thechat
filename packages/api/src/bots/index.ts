@@ -23,9 +23,13 @@ import {
 const createSchema = z.object({
   name: z.string().trim().min(1, "Bot name is required"),
   webhookUrl: z.string().url().nullish(),
-  kind: z.enum(["webhook", "hermes"]).optional().default("webhook"),
+  kind: z.enum(["webhook", "hermes", "hermes-rpc"]).optional().default("webhook"),
   attachmentAccess: z.boolean().optional().default(true),
   workspaceId: z.string().trim().min(1, "Workspace ID is required").optional(),
+  hermesRpc: z.object({
+    endpoint: z.string().trim().min(1, "Hermes RPC endpoint is required"),
+    gatewayToken: z.string().trim().max(4096).nullable().optional(),
+  }).strict().optional(),
 });
 
 const updateSchema = z.object({
@@ -102,13 +106,21 @@ export const botRoutes = new Elysia({ prefix: "/bots" })
       return { error: parsed.error.issues[0]?.message ?? "Invalid input" };
     }
 
-    const { name, webhookUrl, kind, attachmentAccess, workspaceId } = parsed.data;
+    const { name, webhookUrl, kind, attachmentAccess, workspaceId, hermesRpc } = parsed.data;
 
     try {
-      if (kind === "hermes") {
+      if (kind === "hermes" || kind === "hermes-rpc") {
         if (!workspaceId) {
           set.status = 400;
           return { error: "Workspace ID is required for Hermes bots" };
+        }
+        if (kind === "hermes-rpc" && !hermesRpc) {
+          set.status = 400;
+          return { error: "Hermes RPC connection settings are required" };
+        }
+        if (kind === "hermes" && hermesRpc) {
+          set.status = 400;
+          return { error: "Hermes RPC settings are only valid for Hermes RPC bots" };
         }
         const bot = await createHermesBotInWorkspace(
           name,
@@ -116,7 +128,18 @@ export const botRoutes = new Elysia({ prefix: "/bots" })
           user.id,
           workspaceId,
           attachmentAccess,
+          kind === "hermes-rpc"
+            ? { kind, hermesRpc }
+            : undefined,
         );
+        if (kind === "hermes-rpc") {
+          const {
+            webhookSecret: _webhookSecret,
+            apiKey: _apiKey,
+            ...publicBot
+          } = bot;
+          return publicBot;
+        }
         const { webhookSecret: _webhookSecret, ...publicBot } = bot;
         return publicBot;
       }

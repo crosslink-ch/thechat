@@ -174,4 +174,45 @@ describe("HermesBotModal", () => {
 
     window.removeEventListener(BOT_CREATED_EVENT, botCreated);
   });
+
+  it("creates Hermes RPC as a separate connection-driven adapter", async () => {
+    createPostMock.mockResolvedValue({
+      data: { id: "rpc-bot-1", kind: "hermes-rpc", name: "Rpc Koda" },
+      error: null,
+    });
+    render(<HermesBotModal />);
+
+    fireEvent.click(screen.getByRole("radio", { name: /Hermes RPC/ }));
+    expect(screen.getByTestId("hermes-rpc-connection-fields")).toBeInTheDocument();
+    expect(screen.getByLabelText("Hermes RPC endpoint")).toHaveValue(
+      "http://127.0.0.1:8642",
+    );
+    expect(screen.queryByText("Default instructions")).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Bot name"), { target: { value: "Rpc Koda" } });
+    fireEvent.change(screen.getByLabelText("Hermes RPC endpoint"), {
+      target: { value: "https://hermes.example" },
+    });
+    fireEvent.change(screen.getByLabelText("Hermes RPC gateway token"), {
+      target: { value: "write-only-token" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Add Bot" }));
+
+    await waitFor(() => expect(createPostMock).toHaveBeenCalledWith(
+      {
+        kind: "hermes-rpc",
+        workspaceId: activeWorkspace.id,
+        name: "Rpc Koda",
+        hermesRpc: {
+          endpoint: "https://hermes.example",
+          gatewayToken: "write-only-token",
+        },
+      },
+      { headers: { authorization: "Bearer human-token" } },
+    ));
+    expect(await screen.findByTestId("hermes-rpc-created")).toHaveTextContent(
+      "token is encrypted and will not be shown again",
+    );
+    expect(screen.queryByRole("button", { name: "Copy .env" })).not.toBeInTheDocument();
+  });
 });
