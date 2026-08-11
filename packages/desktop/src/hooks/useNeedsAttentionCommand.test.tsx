@@ -20,10 +20,22 @@ beforeEach(async () => {
   vi.clearAllMocks();
   const values: Record<string, string> = {};
   vi.mocked(invoke).mockImplementation(async (command, args) => {
-    const input = args as { key?: string; value?: string } | undefined;
+    const input = args as
+      | {
+          key?: string;
+          expectedValue?: string | null;
+          value?: string | null;
+        }
+      | undefined;
     const key = input?.key ?? "";
     if (command === "kv_get") return values[key] ?? null;
-    if (command === "kv_set" && input?.value !== undefined) {
+    if (command === "kv_compare_and_set") {
+      if ((values[key] ?? null) !== (input?.expectedValue ?? null)) return false;
+      if (input?.value == null) delete values[key];
+      else values[key] = input.value;
+      return true;
+    }
+    if (command === "kv_set" && typeof input?.value === "string") {
       values[key] = input.value;
       return null;
     }
@@ -69,8 +81,9 @@ describe("useNeedsAttentionCommand", () => {
         ),
       ).toBe(true),
     );
-    expect(vi.mocked(invoke)).toHaveBeenCalledWith("kv_set", {
+    expect(vi.mocked(invoke)).toHaveBeenCalledWith("kv_compare_and_set", {
       key: needsAttentionKvKey("user-1"),
+      expectedValue: null,
       value: expect.stringContaining("channel-1"),
     });
   });

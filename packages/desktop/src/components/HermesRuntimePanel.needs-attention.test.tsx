@@ -31,7 +31,7 @@ describe("HermesRuntimePanel needs-attention markers", () => {
 
     expect(
       screen.getByRole("button", {
-        name: "Review launch checklist, needs attention",
+        name: /Review launch checklist, .*needs attention/,
       }),
     ).toBeInTheDocument();
     expect(screen.getByTestId("task-needs-attention")).toHaveTextContent(
@@ -39,7 +39,7 @@ describe("HermesRuntimePanel needs-attention markers", () => {
     );
   });
 
-  it("keeps the unread indicator alongside the attention badge", () => {
+  it("keeps attention, approval, activity, and unread status accessible", () => {
     render(
       <HermesRuntimePanel
         botName="Koda"
@@ -47,11 +47,20 @@ describe("HermesRuntimePanel needs-attention markers", () => {
         loading={false}
         threads={[task]}
         needsAttentionThreadIds={new Set(["task-1"])}
+        approvalThreadIds={new Set(["task-1"])}
+        queuedCountsByThread={new Map([["task-1", 2]])}
         unreadThreadIds={new Set(["task-1"])}
       />,
     );
 
+    expect(
+      screen.getByRole("button", {
+        name: /Review launch checklist, .*, needs attention, waiting for your approval, 2 active runs, unread/,
+      }),
+    ).toBeInTheDocument();
     expect(screen.getByTestId("task-needs-attention")).toBeInTheDocument();
+    expect(screen.getByText("Review")).toBeInTheDocument();
+    expect(screen.getByText("2")).toBeInTheDocument();
     expect(screen.getByLabelText("Unread")).toBeInTheDocument();
   });
 
@@ -67,7 +76,7 @@ describe("HermesRuntimePanel needs-attention markers", () => {
     );
 
     expect(
-      screen.getByRole("button", { name: "General, needs attention" }),
+      screen.getByRole("button", { name: "General, Inbox, needs attention" }),
     ).toBeInTheDocument();
     expect(screen.getAllByTestId("task-needs-attention")).toHaveLength(1);
   });

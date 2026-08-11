@@ -409,6 +409,22 @@ async fn kv_delete(key: String, db: State<'_, DbState>) -> Result<(), String> {
 }
 
 #[tauri::command]
+#[tracing::instrument(skip(db, expected_value, value))]
+async fn kv_compare_and_set(
+    key: String,
+    expected_value: Option<String>,
+    value: Option<String>,
+    db: State<'_, DbState>,
+) -> Result<bool, String> {
+    let db = Arc::clone(&db);
+    tokio::task::spawn_blocking(move || {
+        db.kv_compare_and_set(&key, expected_value.as_deref(), value.as_deref())
+    })
+    .await
+    .map_err(|e| format!("Task join error: {}", e))?
+}
+
+#[tauri::command]
 fn get_initial_project_dir(state: State<InitialProjectDir>) -> Option<String> {
     state.0.clone()
 }
@@ -507,6 +523,7 @@ pub fn run() {
             kv_get,
             kv_set,
             kv_delete,
+            kv_compare_and_set,
             mcp::mcp_initialize,
             mcp::mcp_initialize_authed,
             mcp::mcp_initialize_servers,
@@ -610,6 +627,7 @@ mod tests {
                 kv_get,
                 kv_set,
                 kv_delete,
+                kv_compare_and_set,
                 mcp::mcp_initialize,
                 mcp::mcp_initialize_servers,
                 mcp::mcp_call_tool,

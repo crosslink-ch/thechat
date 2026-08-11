@@ -15,10 +15,22 @@ vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 function useKv(initial: Record<string, string> = {}) {
   const values = { ...initial };
   vi.mocked(invoke).mockImplementation(async (command, args) => {
-    const input = args as { key?: string; value?: string } | undefined;
+    const input = args as
+      | {
+          key?: string;
+          expectedValue?: string | null;
+          value?: string | null;
+        }
+      | undefined;
     const key = input?.key ?? "";
     if (command === "kv_get") return values[key] ?? null;
-    if (command === "kv_set" && input?.value !== undefined) {
+    if (command === "kv_compare_and_set") {
+      if ((values[key] ?? null) !== (input?.expectedValue ?? null)) return false;
+      if (input?.value == null) delete values[key];
+      else values[key] = input.value;
+      return true;
+    }
+    if (command === "kv_set" && typeof input?.value === "string") {
       values[key] = input.value;
       return null;
     }
@@ -133,15 +145,14 @@ describe("needs attention store", () => {
     let persisted: string | undefined;
     let writeCount = 0;
     vi.mocked(invoke).mockImplementation(async (command, args) => {
-      const input = args as { value?: string } | undefined;
-      if (command === "kv_get") return null;
-      if (command === "kv_set") {
+      const input = args as { value?: string | null } | undefined;
+      if (command === "kv_get") return persisted ?? null;
+      if (command === "kv_compare_and_set") {
         writeCount += 1;
         if (writeCount > 1) throw new Error("write failed");
-        persisted = input?.value;
-        return null;
+        persisted = input?.value ?? undefined;
+        return true;
       }
-      if (command === "kv_delete") throw new Error("write failed");
       throw new Error(`Unexpected command: ${command}`);
     });
     await useNeedsAttentionStore.getState().initialize("user-1");
@@ -173,6 +184,72 @@ describe("needs attention store", () => {
       },
       error: "write failed",
     });
+  });
+
+  it("fails closed when the initial SQLite read fails", async () => {
+    vi.mocked(invoke).mockRejectedValue(new Error("database unavailable"));
+
+    await useNeedsAttentionStore.getState().initialize("user-1");
+    const result = await useNeedsAttentionStore.getState().toggle({
+      conversationId: "channel-a",
+      threadId: null,
+    });
+
+    expect(result).toBe(false);
+    expect(useNeedsAttentionStore.getState()).toMatchObject({
+      activeUserId: "user-1",
+      initialized: false,
+      scopes: {},
+      error: "database unavailable",
+    });
+    expect(vi.mocked(invoke)).toHaveBeenCalledTimes(1);
+  });
+
+  it("merges a concurrent desktop write before committing its own marker", async () => {
+    let persisted = JSON.stringify({
+      version: 1,
+      scopes: [{ conversationId: "channel-a", threadId: null }],
+    });
+    let compareAttempts = 0;
+    vi.mocked(invoke).mockImplementation(async (command, args) => {
+      const input = args as
+        | { expectedValue?: string | null; value?: string | null }
+        | undefined;
+      if (command === "kv_get") return persisted;
+      if (command === "kv_compare_and_set") {
+        compareAttempts += 1;
+        if (compareAttempts === 1) {
+          persisted = JSON.stringify({
+            version: 1,
+            scopes: [
+              { conversationId: "channel-a", threadId: null },
+              { conversationId: "channel-b", threadId: null },
+            ],
+          });
+          return false;
+        }
+        expect(input?.expectedValue).toBe(persisted);
+        persisted = input?.value ?? "";
+        return true;
+      }
+      throw new Error(`Unexpected command: ${command}`);
+    });
+
+    await useNeedsAttentionStore.getState().initialize("user-1");
+    await useNeedsAttentionStore.getState().toggle({
+      conversationId: "channel-c",
+      threadId: null,
+    });
+
+    expect(compareAttempts).toBe(2);
+    expect(Object.keys(useNeedsAttentionStore.getState().scopes).sort()).toEqual(
+      [
+        needsAttentionScopeKey("channel-a"),
+        needsAttentionScopeKey("channel-b"),
+        needsAttentionScopeKey("channel-c"),
+      ].sort(),
+    );
+    expect(JSON.parse(persisted).scopes).toHaveLength(3);
   });
 
   it("recovers safely from malformed local data", async () => {

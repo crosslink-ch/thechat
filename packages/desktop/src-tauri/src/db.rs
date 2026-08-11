@@ -219,6 +219,53 @@ impl Database {
         Ok(())
     }
 
+    #[instrument(skip(self, expected_value, value))]
+    pub fn kv_compare_and_set(
+        &self,
+        key: &str,
+        expected_value: Option<&str>,
+        value: Option<&str>,
+    ) -> Result<bool, String> {
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        let changed = match (expected_value, value) {
+            (None, Some(value)) => {
+                conn.execute(
+                    "INSERT INTO kv_store (key, value) VALUES (?1, ?2) ON CONFLICT(key) DO NOTHING",
+                    params![key, value],
+                )
+                .map_err(|e| format!("Failed to compare and set kv: {}", e))?
+                    == 1
+            }
+            (Some(expected), Some(value)) => {
+                conn.execute(
+                    "UPDATE kv_store SET value = ?1 WHERE key = ?2 AND value = ?3",
+                    params![value, key, expected],
+                )
+                .map_err(|e| format!("Failed to compare and set kv: {}", e))?
+                    == 1
+            }
+            (Some(expected), None) => {
+                conn.execute(
+                    "DELETE FROM kv_store WHERE key = ?1 AND value = ?2",
+                    params![key, expected],
+                )
+                .map_err(|e| format!("Failed to compare and delete kv: {}", e))?
+                    == 1
+            }
+            (None, None) => {
+                let exists: bool = conn
+                    .query_row(
+                        "SELECT EXISTS(SELECT 1 FROM kv_store WHERE key = ?1)",
+                        params![key],
+                        |row| row.get(0),
+                    )
+                    .map_err(|e| format!("Failed to compare kv: {}", e))?;
+                !exists
+            }
+        };
+        Ok(changed)
+    }
+
     #[instrument(skip(self))]
     pub fn get_messages(
         &self,
@@ -468,6 +515,25 @@ mod tests {
         let db = test_db();
         // Should not error
         db.kv_delete("nonexistent").unwrap();
+    }
+
+    #[test]
+    fn kv_compare_and_set_requires_the_expected_value() {
+        let db = test_db();
+
+        assert!(db.kv_compare_and_set("key", None, Some("first")).unwrap());
+        assert!(!db.kv_compare_and_set("key", None, Some("second")).unwrap());
+        assert!(!db
+            .kv_compare_and_set("key", Some("wrong"), Some("second"))
+            .unwrap());
+        assert_eq!(db.kv_get("key").unwrap(), Some("first".to_string()));
+
+        assert!(db
+            .kv_compare_and_set("key", Some("first"), Some("second"))
+            .unwrap());
+        assert!(!db.kv_compare_and_set("key", Some("first"), None).unwrap());
+        assert!(db.kv_compare_and_set("key", Some("second"), None).unwrap());
+        assert!(db.kv_compare_and_set("key", None, None).unwrap());
     }
 
     #[test]

@@ -236,6 +236,31 @@ function TaskIcon() {
   );
 }
 
+function rowAccessibleName({
+  title,
+  subtitle,
+  activeCount,
+  needsApproval,
+  needsAttention,
+  unread,
+}: {
+  title: string;
+  subtitle: string;
+  activeCount: number;
+  needsApproval?: boolean;
+  needsAttention?: boolean;
+  unread?: boolean;
+}) {
+  const parts = [title, subtitle];
+  if (needsAttention) parts.push("needs attention");
+  if (needsApproval) parts.push("waiting for your approval");
+  if (activeCount > 0) {
+    parts.push(`${activeCount} active ${activeCount === 1 ? "run" : "runs"}`);
+  }
+  if (unread) parts.push("unread");
+  return parts.join(", ");
+}
+
 function ThreadRow({
   thread,
   active,
@@ -253,6 +278,7 @@ function ThreadRow({
   unread?: boolean;
   onSelect?: (threadId: string | null) => void;
 }) {
+  const activityTime = formatSessionTime(thread.lastActivityAt);
   const rowTone = active
     ? "bg-accent/10 text-text"
     : needsApproval
@@ -273,7 +299,14 @@ function ThreadRow({
       type="button"
       className={`group relative flex w-full cursor-pointer items-center gap-2.5 px-2.5 py-2.5 text-left transition-colors duration-150 ${rowTone}`}
       onClick={() => onSelect?.(thread.id)}
-      aria-label={`${thread.title}${needsAttention ? ", needs attention" : ""}`}
+      aria-label={rowAccessibleName({
+        title: thread.title,
+        subtitle: activityTime,
+        activeCount,
+        needsApproval,
+        needsAttention,
+        unread,
+      })}
     >
       <span
         className={`absolute top-2 bottom-2 left-0 w-0.5 rounded-r-sm ${
@@ -293,7 +326,7 @@ function ThreadRow({
           {thread.title}
         </span>
         <span className="mt-0.5 text-[0.714rem] text-text-dimmed">
-          {formatSessionTime(thread.lastActivityAt)}
+          {activityTime}
         </span>
       </span>
       <ThreadRowBadges
@@ -341,7 +374,14 @@ function GeneralThreadRow({
       type="button"
       className={`relative flex w-full cursor-pointer items-center gap-3 rounded-md border px-3 py-3 text-left transition-colors duration-150 ${rowTone}`}
       onClick={() => onSelect?.(null)}
-      aria-label={`General${needsAttention ? ", needs attention" : ""}`}
+      aria-label={rowAccessibleName({
+        title: "General",
+        subtitle: "Inbox",
+        activeCount,
+        needsApproval,
+        needsAttention,
+        unread,
+      })}
     >
       <span
         className={`absolute top-2 bottom-2 left-0 w-0.5 rounded-r-sm ${
@@ -409,7 +449,7 @@ function ThreadRowBadges({
           {activeCount}
         </span>
       )}
-      {unread && !needsApproval && (
+      {unread && (
         <span
           className="size-1.5 rounded-full bg-accent"
           title="Unread"

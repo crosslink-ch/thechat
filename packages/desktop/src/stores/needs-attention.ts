@@ -25,6 +25,7 @@ interface NeedsAttentionStore {
 }
 
 const KV_PREFIX = "needs_attention_v1:";
+const MAX_PERSISTENCE_ATTEMPTS = 8;
 let initializationGeneration = 0;
 let persistenceQueue: Promise<void> = Promise.resolve();
 const persistedScopesByUserId = new Map<
@@ -143,16 +144,29 @@ function enqueuePersistence(operation: () => Promise<void>) {
   return result;
 }
 
-async function persistScopes(
+async function persistScopeMutation(
   userId: string,
-  scopes: Record<string, NeedsAttentionScope>,
+  scopeKey: string,
+  scope: NeedsAttentionScope | null,
 ) {
   const key = needsAttentionKvKey(userId);
-  if (Object.keys(scopes).length === 0) {
-    await invoke("kv_delete", { key });
-    return;
+  for (let attempt = 0; attempt < MAX_PERSISTENCE_ATTEMPTS; attempt += 1) {
+    const expectedValue = await invoke<string | null>("kv_get", { key });
+    const scopes = parsePersistedScopes(expectedValue);
+    if (scope) scopes[scopeKey] = scope;
+    else delete scopes[scopeKey];
+
+    const value =
+      Object.keys(scopes).length === 0 ? null : serializedScopes(scopes);
+    const updated = await invoke<boolean>("kv_compare_and_set", {
+      key,
+      expectedValue,
+      value,
+    });
+    if (updated) return scopes;
   }
-  await invoke("kv_set", { key, value: serializedScopes(scopes) });
+
+  throw new Error("Needs attention state changed too frequently; try again");
 }
 
 function errorMessage(error: unknown) {
@@ -208,8 +222,7 @@ export const useNeedsAttentionStore = create<NeedsAttentionStore>()((set, get) =
       ) {
         return;
       }
-      persistedScopesByUserId.set(userId, {});
-      set({ scopes: {}, initialized: true, error: errorMessage(error) });
+      set({ scopes: {}, initialized: false, error: errorMessage(error) });
     }
   },
 
@@ -230,8 +243,16 @@ export const useNeedsAttentionStore = create<NeedsAttentionStore>()((set, get) =
 
     try {
       await enqueuePersistence(async () => {
-        await persistScopes(userId, nextScopes);
-        persistedScopesByUserId.set(userId, nextScopes);
+        const persistedScopes = await persistScopeMutation(
+          userId,
+          key,
+          needsAttention ? scope : null,
+        );
+        persistedScopesByUserId.set(userId, persistedScopes);
+        const latest = get();
+        if (latest.activeUserId === userId && latest.revision === revision) {
+          set({ scopes: persistedScopes });
+        }
       });
       return needsAttention;
     } catch (error) {
