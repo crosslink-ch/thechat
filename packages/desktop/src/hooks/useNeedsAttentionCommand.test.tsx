@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { act, renderHook, waitFor } from "@testing-library/react";
+import { act, fireEvent, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useCommandsStore } from "../commands";
 import {
@@ -11,6 +11,7 @@ import {
   NEEDS_ATTENTION_SHORTCUT,
   useNeedsAttentionCommand,
 } from "./useNeedsAttentionCommand";
+import { useKeybindings } from "./useKeybindings";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 
@@ -55,7 +56,7 @@ describe("useNeedsAttentionCommand", () => {
     expect(command).toMatchObject({
       label: "Needs Attention",
       shortcut: NEEDS_ATTENTION_SHORTCUT,
-      keybinding: { prefix: "C-x", key: "!" },
+      keybinding: { prefix: "C-x", key: "m" },
     });
 
     act(() => command?.execute());
@@ -104,5 +105,38 @@ describe("useNeedsAttentionCommand", () => {
         "task-1",
       ),
     ).toBe(true);
+  });
+
+  it("toggles the current scope from the C-x m key sequence", async () => {
+    renderHook(() => {
+      useKeybindings({
+        onPermissionAllow: () => undefined,
+        onPermissionDeny: () => undefined,
+        onPermissionDenyWithFeedback: () => undefined,
+        handleRegistryCommands: true,
+      });
+      useNeedsAttentionCommand({
+        userId: "user-1",
+        conversationId: "dm-1",
+        threadId: "task-1",
+      });
+    });
+
+    await waitFor(() => {
+      expect(useCommandsStore.getState().commands[0]?.enabled).toBe(true);
+    });
+
+    fireEvent.keyDown(window, { key: "x", ctrlKey: true });
+    fireEvent.keyDown(window, { key: "m" });
+
+    await waitFor(() => {
+      expect(
+        scopeNeedsAttention(
+          useNeedsAttentionStore.getState().scopes,
+          "dm-1",
+          "task-1",
+        ),
+      ).toBe(true);
+    });
   });
 });

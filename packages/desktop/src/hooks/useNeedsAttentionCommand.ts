@@ -7,7 +7,7 @@ import {
 } from "../stores/needs-attention";
 import { useScopedCommands } from "./useScopedCommands";
 
-export const NEEDS_ATTENTION_SHORTCUT = "C-x !";
+export const NEEDS_ATTENTION_SHORTCUT = "C-x m";
 
 export function useNeedsAttentionCommand({
   userId,
@@ -31,7 +31,7 @@ export function useNeedsAttentionCommand({
         id: "needs-attention",
         label: marked ? "Clear Needs Attention" : "Needs Attention",
         shortcut: NEEDS_ATTENTION_SHORTCUT,
-        keybinding: { prefix: "C-x", key: "!" },
+        keybinding: { prefix: "C-x", key: "m" },
         enabled: Boolean(userId) && ready,
         priority: 90,
         execute: () => {
