@@ -601,5 +601,7 @@ export type WsServerEvent =
       botId: string;
       status: Exclude<BotWorkspaceInviteStatus, "pending">;
     }
+  | { type: "presence_snapshot"; userIds: string[] }
+  | { type: "presence_changed"; userId: string; online: boolean }
   | { type: "pong" }
   | { type: "error"; message: string };
