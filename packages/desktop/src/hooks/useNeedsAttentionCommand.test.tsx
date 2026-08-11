@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useCommandsStore } from "../commands";
 import {
   needsAttentionKvKey,
+  needsAttentionScopeKey,
   scopeNeedsAttention,
   useNeedsAttentionStore,
 } from "../stores/needs-attention";
@@ -80,6 +81,8 @@ describe("useNeedsAttentionCommand", () => {
         userId: "user-1",
         conversationId: "dm-1",
         threadId: "task-1",
+        workspaceId: "workspace-1",
+        directUserId: "bot-user-1",
       }),
     );
 
@@ -105,6 +108,14 @@ describe("useNeedsAttentionCommand", () => {
         "task-1",
       ),
     ).toBe(true);
+    expect(
+      useNeedsAttentionStore.getState().scopes[
+        needsAttentionScopeKey("dm-1", "task-1")
+      ],
+    ).toMatchObject({
+      workspaceId: "workspace-1",
+      directUserId: "bot-user-1",
+    });
   });
 
   it("toggles the current scope from the C-x m key sequence", async () => {

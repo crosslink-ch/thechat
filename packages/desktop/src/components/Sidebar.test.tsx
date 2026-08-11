@@ -235,7 +235,7 @@ describe("Sidebar", () => {
     useAuthStore.setState({ user, token: "test-token" });
     useWorkspacesStore.setState({ workspaces: workspaceList, activeWorkspace });
     useConversationsStore.setState({
-      directConversationIdsByUserId: { "u-bot": "dm-bot" },
+      directConversationIdsByUserId: {},
     });
     useNeedsAttentionStore.setState({
       activeUserId: user.id,
@@ -248,6 +248,8 @@ describe("Sidebar", () => {
         [needsAttentionScopeKey("dm-bot", "task-1")]: {
           conversationId: "dm-bot",
           threadId: "task-1",
+          workspaceId: "ws-1",
+          directUserId: "u-bot",
         },
       },
     });
@@ -261,7 +263,38 @@ describe("Sidebar", () => {
       screen.getByRole("button", { name: "Koda, needs attention" }),
     ).toBeInTheDocument();
     expect(screen.getByTestId("needs-attention-ch1")).toHaveTextContent("!");
-    expect(screen.getByTestId("needs-attention-dm-bot")).toHaveTextContent("!");
+    expect(screen.getByTestId("needs-attention-member-u-bot")).toHaveTextContent(
+      "!",
+    );
+  });
+
+  it("does not attribute a persisted DM marker to another workspace", async () => {
+    useAuthStore.setState({ user, token: "test-token" });
+    useWorkspacesStore.setState({
+      workspaces: workspaceList,
+      activeWorkspace: { ...activeWorkspace, id: "ws-2" },
+    });
+    useConversationsStore.setState({
+      directConversationIdsByUserId: { "u-bot": "dm-bot" },
+    });
+    useNeedsAttentionStore.setState({
+      activeUserId: user.id,
+      initialized: true,
+      scopes: {
+        [needsAttentionScopeKey("dm-bot", "task-1")]: {
+          conversationId: "dm-bot",
+          threadId: "task-1",
+          workspaceId: "ws-1",
+          directUserId: "u-bot",
+        },
+      },
+    });
+
+    await renderWithRouter(<Sidebar />);
+
+    expect(
+      screen.queryByRole("button", { name: "Koda, needs attention" }),
+    ).not.toBeInTheDocument();
   });
 
   it("opens create, rename, and delete channel controls for workspace owners", async () => {

@@ -409,7 +409,7 @@ function ThreadRowBadges({
           {activeCount}
         </span>
       )}
-      {unread && !needsApproval && !needsAttention && (
+      {unread && !needsApproval && (
         <span
           className="size-1.5 rounded-full bg-accent"
           title="Unread"

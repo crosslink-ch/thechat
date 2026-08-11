@@ -16,7 +16,7 @@ import {
 import { api } from "../lib/api";
 import type { WorkspaceChannel, WorkspaceMember } from "@thechat/shared";
 import {
-  conversationNeedsAttention,
+  directMemberNeedsAttention,
   scopeNeedsAttention,
   useNeedsAttentionStore,
 } from "../stores/needs-attention";
@@ -422,11 +422,11 @@ export function Sidebar() {
                     m.user.type === "bot" &&
                     Object.values(unreadBotConversations).includes(m.userId);
                   const needsAttention = Boolean(
-                    conversationId &&
-                      conversationNeedsAttention(
-                        needsAttentionScopes,
-                        conversationId,
-                      ),
+                    directMemberNeedsAttention(
+                      needsAttentionScopes,
+                      activeWorkspace.id,
+                      m.userId,
+                    ),
                   );
                   return (
                     <button
@@ -447,7 +447,9 @@ export function Sidebar() {
                       </span>
                       <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap">{m.user.name}</span>
                       {needsAttention && (
-                        <NeedsAttentionIndicator scopeId={conversationId!} />
+                        <NeedsAttentionIndicator
+                          scopeId={conversationId ?? `member-${m.userId}`}
+                        />
                       )}
                       {isUnread && (
                         <span

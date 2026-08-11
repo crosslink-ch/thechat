@@ -4,6 +4,8 @@ import { create } from "zustand";
 export interface NeedsAttentionScope {
   conversationId: string;
   threadId: string | null;
+  workspaceId?: string;
+  directUserId?: string;
 }
 
 interface PersistedNeedsAttention {
@@ -25,6 +27,10 @@ interface NeedsAttentionStore {
 const KV_PREFIX = "needs_attention_v1:";
 let initializationGeneration = 0;
 let persistenceQueue: Promise<void> = Promise.resolve();
+const persistedScopesByUserId = new Map<
+  string,
+  Record<string, NeedsAttentionScope>
+>();
 
 export function needsAttentionKvKey(userId: string) {
   return `${KV_PREFIX}${userId}`;
@@ -51,6 +57,17 @@ export function conversationNeedsAttention(
 ) {
   return Object.values(scopes).some(
     (scope) => scope.conversationId === conversationId,
+  );
+}
+
+export function directMemberNeedsAttention(
+  scopes: Record<string, NeedsAttentionScope>,
+  workspaceId: string,
+  directUserId: string,
+) {
+  return Object.values(scopes).some(
+    (scope) =>
+      scope.workspaceId === workspaceId && scope.directUserId === directUserId,
   );
 }
 
@@ -86,7 +103,19 @@ function parsePersistedScopes(value: string | null) {
       const conversationId = candidate.conversationId.trim();
       const threadId = candidate.threadId?.trim() || null;
       if (!conversationId) continue;
-      const scope = { conversationId, threadId };
+      const workspaceId =
+        typeof candidate.workspaceId === "string"
+          ? candidate.workspaceId.trim()
+          : undefined;
+      const directUserId =
+        typeof candidate.directUserId === "string"
+          ? candidate.directUserId.trim()
+          : undefined;
+      const scope: NeedsAttentionScope = { conversationId, threadId };
+      if (workspaceId && directUserId) {
+        scope.workspaceId = workspaceId;
+        scope.directUserId = directUserId;
+      }
       scopes[needsAttentionScopeKey(conversationId, threadId)] = scope;
     }
   } catch {
@@ -169,7 +198,9 @@ export const useNeedsAttentionStore = create<NeedsAttentionStore>()((set, get) =
       ) {
         return;
       }
-      set({ scopes: parsePersistedScopes(value), initialized: true, error: null });
+      const scopes = parsePersistedScopes(value);
+      persistedScopesByUserId.set(userId, scopes);
+      set({ scopes, initialized: true, error: null });
     } catch (error) {
       if (
         generation !== initializationGeneration ||
@@ -177,6 +208,7 @@ export const useNeedsAttentionStore = create<NeedsAttentionStore>()((set, get) =
       ) {
         return;
       }
+      persistedScopesByUserId.set(userId, {});
       set({ scopes: {}, initialized: true, error: errorMessage(error) });
     }
   },
@@ -197,24 +229,29 @@ export const useNeedsAttentionStore = create<NeedsAttentionStore>()((set, get) =
     set({ scopes: nextScopes, revision, error: null });
 
     try {
-      await enqueuePersistence(() => persistScopes(userId, nextScopes));
+      await enqueuePersistence(async () => {
+        await persistScopes(userId, nextScopes);
+        persistedScopesByUserId.set(userId, nextScopes);
+      });
       return needsAttention;
     } catch (error) {
       const latest = get();
+      const persistedScopes = persistedScopesByUserId.get(userId) ?? {};
       if (latest.activeUserId === userId && latest.revision === revision) {
         set({
-          scopes: previousScopes,
+          scopes: persistedScopes,
           error: errorMessage(error),
           revision: revision + 1,
         });
       }
-      return Boolean(previousScopes[key]);
+      return Boolean(persistedScopes[key]);
     }
   },
 
   resetForTests: () => {
     initializationGeneration += 1;
     persistenceQueue = Promise.resolve();
+    persistedScopesByUserId.clear();
     set({
       activeUserId: null,
       initialized: false,

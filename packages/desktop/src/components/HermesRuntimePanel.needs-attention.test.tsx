@@ -39,6 +39,22 @@ describe("HermesRuntimePanel needs-attention markers", () => {
     );
   });
 
+  it("keeps the unread indicator alongside the attention badge", () => {
+    render(
+      <HermesRuntimePanel
+        botName="Koda"
+        runtime={null}
+        loading={false}
+        threads={[task]}
+        needsAttentionThreadIds={new Set(["task-1"])}
+        unreadThreadIds={new Set(["task-1"])}
+      />,
+    );
+
+    expect(screen.getByTestId("task-needs-attention")).toBeInTheDocument();
+    expect(screen.getByLabelText("Unread")).toBeInTheDocument();
+  });
+
   it("can mark the general DM independently of its tasks", () => {
     render(
       <HermesRuntimePanel

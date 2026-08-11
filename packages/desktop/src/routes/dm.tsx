@@ -80,6 +80,9 @@ export function DmRoute() {
     userId: user?.id,
     conversationId,
     threadId: isHermesDm ? activeThreadId : null,
+    workspaceId: conversation?.workspaceId ?? undefined,
+    directUserId: otherParticipant?.userId,
+    enabled: Boolean(conversation?.workspaceId && otherParticipant?.userId),
   });
   const runtimeQuery = useBotRuntime(conversationId, token, isHermesDm);
   const runtime = runtimeQuery.data ?? null;

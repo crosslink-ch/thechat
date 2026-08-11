@@ -13,10 +13,16 @@ export function useNeedsAttentionCommand({
   userId,
   conversationId,
   threadId = null,
+  workspaceId,
+  directUserId,
+  enabled = true,
 }: {
   userId: string | null | undefined;
   conversationId: string;
   threadId?: string | null;
+  workspaceId?: string;
+  directUserId?: string;
+  enabled?: boolean;
 }) {
   const scopeKey = needsAttentionScopeKey(conversationId, threadId);
   const marked = useNeedsAttentionStore((state) => Boolean(state.scopes[scopeKey]));
@@ -32,15 +38,25 @@ export function useNeedsAttentionCommand({
         label: marked ? "Clear Needs Attention" : "Needs Attention",
         shortcut: NEEDS_ATTENTION_SHORTCUT,
         keybinding: { prefix: "C-x", key: "m" },
-        enabled: Boolean(userId) && ready,
+        enabled: Boolean(userId) && ready && enabled,
         priority: 90,
         execute: () => {
-          void toggle({ conversationId, threadId });
+          void toggle({ conversationId, threadId, workspaceId, directUserId });
           closePaletteAndRefocus();
         },
       },
     ],
-    [conversationId, marked, ready, threadId, toggle, userId],
+    [
+      conversationId,
+      directUserId,
+      enabled,
+      marked,
+      ready,
+      threadId,
+      toggle,
+      userId,
+      workspaceId,
+    ],
   );
 
   useScopedCommands(commands);
