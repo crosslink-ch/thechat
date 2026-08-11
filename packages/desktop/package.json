@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "tauri": "tauri",
+    "tauri": "node scripts/tauri-cli.mjs",
     "test": "vitest run --exclude '**/*.integration.test.ts' && INTEGRATION=true vitest run integration",
     "test:unit": "vitest run --exclude '**/*.integration.test.ts'",
     "test:integration": "INTEGRATION=true vitest run integration",

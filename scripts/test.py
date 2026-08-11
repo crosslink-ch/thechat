@@ -142,6 +142,10 @@ SUITES = [
         ],
     },
     {
+        "name": "tauri-config",
+        "cmd": ["python3", "scripts/test_tauri_flavors.py"],
+    },
+    {
         "name": "mcp",
         "cmd": [
             "cargo", "test",
