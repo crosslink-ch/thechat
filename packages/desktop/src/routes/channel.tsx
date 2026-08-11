@@ -6,6 +6,7 @@ import { useConversationsStore } from "../stores/conversations";
 import { useWorkspacesStore } from "../stores/workspaces";
 import { composerDraftKey } from "../stores/composer-drafts";
 import { useChannelChat } from "../hooks/useChannelChat";
+import { useNeedsAttentionCommand } from "../hooks/useNeedsAttentionCommand";
 import { ChannelChatView } from "../components/ChannelChatView";
 import { wsEvents, type WsEvents } from "../lib/ws-events";
 
@@ -29,6 +30,10 @@ export function ChannelRoute() {
     token,
     wsSendMessage,
     selfUser: user,
+  });
+  useNeedsAttentionCommand({
+    userId: user?.id,
+    conversationId: channelId,
   });
 
   const channelChatRef = useRef(channelChat);

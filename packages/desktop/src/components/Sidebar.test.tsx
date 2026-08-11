@@ -12,6 +12,10 @@ import { useAuthStore } from "../stores/auth";
 import { useWorkspacesStore } from "../stores/workspaces";
 import { useConversationsStore } from "../stores/conversations";
 import { useHermesIndicatorsStore } from "../stores/hermes-indicators";
+import {
+  needsAttentionScopeKey,
+  useNeedsAttentionStore,
+} from "../stores/needs-attention";
 import { registerGlobalWsHandlers } from "../lib/ws-global-handlers";
 import { wsEvents } from "../lib/ws-events";
 import type { Conversation } from "../core/types";
@@ -160,6 +164,7 @@ beforeEach(() => {
   useAuthStore.setState({ user: null, token: null, loading: false });
   useWorkspacesStore.setState({ workspaces: [], activeWorkspace: null, loading: false });
   useHermesIndicatorsStore.getState().resetForTests();
+  useNeedsAttentionStore.getState().resetForTests();
   useConversationsStore.setState({
     conversations: [],
     unreadAgentChats: new Set(),
@@ -224,6 +229,39 @@ describe("Sidebar", () => {
 
     // Notifications button remains available at the top.
     expect(screen.getByLabelText("Notifications")).toBeInTheDocument();
+  });
+
+  it("shows local attention markers for channels and DMs containing marked tasks", async () => {
+    useAuthStore.setState({ user, token: "test-token" });
+    useWorkspacesStore.setState({ workspaces: workspaceList, activeWorkspace });
+    useConversationsStore.setState({
+      directConversationIdsByUserId: { "u-bot": "dm-bot" },
+    });
+    useNeedsAttentionStore.setState({
+      activeUserId: user.id,
+      initialized: true,
+      scopes: {
+        [needsAttentionScopeKey("ch1")]: {
+          conversationId: "ch1",
+          threadId: null,
+        },
+        [needsAttentionScopeKey("dm-bot", "task-1")]: {
+          conversationId: "dm-bot",
+          threadId: "task-1",
+        },
+      },
+    });
+
+    await renderWithRouter(<Sidebar />);
+
+    expect(
+      screen.getByRole("button", { name: "#general, needs attention" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Koda, needs attention" }),
+    ).toBeInTheDocument();
+    expect(screen.getByTestId("needs-attention-ch1")).toHaveTextContent("!");
+    expect(screen.getByTestId("needs-attention-dm-bot")).toHaveTextContent("!");
   });
 
   it("opens create, rename, and delete channel controls for workspace owners", async () => {

@@ -21,6 +21,8 @@ export function HermesRuntimePanel({
   generalNeedsApproval = false,
   unreadThreadIds,
   generalUnread = false,
+  needsAttentionThreadIds,
+  generalNeedsAttention = false,
   onSelectThread,
   onCreateThread,
   onLoadMoreThreads,
@@ -40,6 +42,8 @@ export function HermesRuntimePanel({
   generalNeedsApproval?: boolean;
   unreadThreadIds?: Set<string>;
   generalUnread?: boolean;
+  needsAttentionThreadIds?: Set<string>;
+  generalNeedsAttention?: boolean;
   onSelectThread?: (threadId: string | null) => void;
   onCreateThread?: () => void;
   onLoadMoreThreads?: () => void;
@@ -83,6 +87,7 @@ export function HermesRuntimePanel({
             activeCount={generalActiveCount + generalQueuedCount}
             needsApproval={generalNeedsApproval}
             unread={generalUnread && activeThreadId !== null}
+            needsAttention={generalNeedsAttention}
             onSelect={onSelectThread}
           />
         </section>
@@ -124,6 +129,9 @@ export function HermesRuntimePanel({
                       (queuedCountsByThread?.get(thread.id) ?? 0)
                     }
                     needsApproval={approvalThreadIds?.has(thread.id) ?? false}
+                    needsAttention={
+                      needsAttentionThreadIds?.has(thread.id) ?? false
+                    }
                     unread={
                       thread.id !== activeThreadId &&
                       (unreadThreadIds?.has(thread.id) ?? false)
@@ -233,6 +241,7 @@ function ThreadRow({
   active,
   activeCount,
   needsApproval,
+  needsAttention,
   unread,
   onSelect,
 }: {
@@ -240,6 +249,7 @@ function ThreadRow({
   active: boolean;
   activeCount: number;
   needsApproval?: boolean;
+  needsAttention?: boolean;
   unread?: boolean;
   onSelect?: (threadId: string | null) => void;
 }) {
@@ -247,22 +257,31 @@ function ThreadRow({
     ? "bg-accent/10 text-text"
     : needsApproval
       ? "bg-warning-bg/50 text-text hover:bg-warning-bg/75"
-      : "bg-transparent text-text-secondary hover:bg-hover/70 hover:text-text";
+      : needsAttention
+        ? "bg-warning-bg/30 text-text hover:bg-warning-bg/55"
+        : "bg-transparent text-text-secondary hover:bg-hover/70 hover:text-text";
   const iconTone = active
     ? "border-accent/35 bg-accent/10 text-accent"
     : needsApproval
       ? "border-warning-text/35 bg-warning-bg text-warning-text"
-      : "border-border-subtle bg-raised/60 text-text-dimmed group-hover:text-text-muted";
+      : needsAttention
+        ? "border-warning-text/30 bg-warning-bg/70 text-warning-text"
+        : "border-border-subtle bg-raised/60 text-text-dimmed group-hover:text-text-muted";
 
   return (
     <button
       type="button"
       className={`group relative flex w-full cursor-pointer items-center gap-2.5 px-2.5 py-2.5 text-left transition-colors duration-150 ${rowTone}`}
       onClick={() => onSelect?.(thread.id)}
+      aria-label={`${thread.title}${needsAttention ? ", needs attention" : ""}`}
     >
       <span
         className={`absolute top-2 bottom-2 left-0 w-0.5 rounded-r-sm ${
-          active ? "bg-accent" : needsApproval ? "bg-warning-text" : "bg-transparent"
+          active
+            ? "bg-accent"
+            : needsApproval || needsAttention
+              ? "bg-warning-text"
+              : "bg-transparent"
         }`}
         aria-hidden="true"
       />
@@ -280,6 +299,7 @@ function ThreadRow({
       <ThreadRowBadges
         activeCount={activeCount}
         needsApproval={needsApproval}
+        needsAttention={needsAttention}
         unread={unread}
       />
     </button>
@@ -290,12 +310,14 @@ function GeneralThreadRow({
   active,
   activeCount,
   needsApproval,
+  needsAttention,
   unread,
   onSelect,
 }: {
   active: boolean;
   activeCount: number;
   needsApproval?: boolean;
+  needsAttention?: boolean;
   unread?: boolean;
   onSelect?: (threadId: string | null) => void;
 }) {
@@ -303,22 +325,31 @@ function GeneralThreadRow({
     ? "border-accent/45 bg-accent/10 text-text"
     : needsApproval
       ? "border-warning-text/40 bg-warning-bg/55 text-text hover:bg-warning-bg/80"
-      : "border-border bg-raised/55 text-text-secondary hover:bg-hover hover:text-text";
+      : needsAttention
+        ? "border-warning-text/35 bg-warning-bg/35 text-text hover:bg-warning-bg/60"
+        : "border-border bg-raised/55 text-text-secondary hover:bg-hover hover:text-text";
   const iconTone = active
     ? "border-accent/35 bg-accent/10 text-accent"
     : needsApproval
       ? "border-warning-text/35 bg-warning-bg text-warning-text"
-      : "border-border-subtle bg-base/35 text-text-dimmed";
+      : needsAttention
+        ? "border-warning-text/30 bg-warning-bg/70 text-warning-text"
+        : "border-border-subtle bg-base/35 text-text-dimmed";
 
   return (
     <button
       type="button"
       className={`relative flex w-full cursor-pointer items-center gap-3 rounded-md border px-3 py-3 text-left transition-colors duration-150 ${rowTone}`}
       onClick={() => onSelect?.(null)}
+      aria-label={`General${needsAttention ? ", needs attention" : ""}`}
     >
       <span
         className={`absolute top-2 bottom-2 left-0 w-0.5 rounded-r-sm ${
-          active ? "bg-accent" : needsApproval ? "bg-warning-text" : "bg-transparent"
+          active
+            ? "bg-accent"
+            : needsApproval || needsAttention
+              ? "bg-warning-text"
+              : "bg-transparent"
         }`}
         aria-hidden="true"
       />
@@ -336,6 +367,7 @@ function GeneralThreadRow({
       <ThreadRowBadges
         activeCount={activeCount}
         needsApproval={needsApproval}
+        needsAttention={needsAttention}
         unread={unread}
       />
     </button>
@@ -345,14 +377,25 @@ function GeneralThreadRow({
 function ThreadRowBadges({
   activeCount,
   needsApproval,
+  needsAttention,
   unread,
 }: {
   activeCount: number;
   needsApproval?: boolean;
+  needsAttention?: boolean;
   unread?: boolean;
 }) {
   return (
     <span className="flex shrink-0 items-center gap-1.5">
+      {needsAttention && (
+        <span
+          className="rounded-full border border-warning-text/40 bg-warning-bg px-2 py-0.5 text-[0.643rem] font-medium uppercase text-warning-text"
+          title="Needs attention"
+          data-testid="task-needs-attention"
+        >
+          Attention
+        </span>
+      )}
       {needsApproval && (
         <span
           className="rounded-full border border-warning-text/40 bg-warning-bg px-2 py-0.5 text-[0.643rem] font-medium uppercase text-warning-text"
@@ -366,7 +409,7 @@ function ThreadRowBadges({
           {activeCount}
         </span>
       )}
-      {unread && !needsApproval && (
+      {unread && !needsApproval && !needsAttention && (
         <span
           className="size-1.5 rounded-full bg-accent"
           title="Unread"

@@ -15,6 +15,11 @@ import {
 } from "./ChannelModal";
 import { api } from "../lib/api";
 import type { WorkspaceChannel, WorkspaceMember } from "@thechat/shared";
+import {
+  conversationNeedsAttention,
+  scopeNeedsAttention,
+  useNeedsAttentionStore,
+} from "../stores/needs-attention";
 
 const SIDEBAR_WIDTH = 347;
 
@@ -71,6 +76,19 @@ function BellIcon() {
   );
 }
 
+function NeedsAttentionIndicator({ scopeId }: { scopeId: string }) {
+  return (
+    <span
+      className="flex size-4 shrink-0 items-center justify-center rounded-full border border-warning-text/45 bg-warning-bg text-[0.643rem] font-bold leading-none text-warning-text"
+      title="Needs attention"
+      data-testid={`needs-attention-${scopeId}`}
+      aria-hidden="true"
+    >
+      !
+    </span>
+  );
+}
+
 function SettingsIcon() {
   return (
     <svg width="15" height="15" viewBox="0 0 15 15" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
@@ -115,6 +133,7 @@ export function Sidebar() {
     (s) => s.setActiveDirectConversation,
   );
   const notificationCount = useNotificationsStore((s) => s.notifications.length);
+  const needsAttentionScopes = useNeedsAttentionStore((s) => s.scopes);
 
   // Determine current active IDs from route
   const isChannel = routePath.startsWith("/channel");
@@ -312,6 +331,10 @@ export function Sidebar() {
                   {activeWorkspace.channels.map((ch) => {
                     const isActive = activeChannelId === ch.id;
                     const isUnread = unreadChannels.has(ch.id);
+                    const needsAttention = scopeNeedsAttention(
+                      needsAttentionScopes,
+                      ch.id,
+                    );
                     const menuOpen = channelMenuId === ch.id;
                     return (
                       <div key={ch.id} className="group relative">
@@ -320,9 +343,11 @@ export function Sidebar() {
                           className={`${itemClassName(isActive, isUnread)} ${canManageChannels ? "pr-9" : ""}`}
                           onClick={() => handleSelectChannel(ch)}
                           aria-current={isActive ? "page" : undefined}
+                          aria-label={`#${ch.name}${needsAttention ? ", needs attention" : ""}`}
                         >
                           <span className="w-4 shrink-0 text-center text-text-dimmed">#</span>
                           <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap">{ch.name}</span>
+                          {needsAttention && <NeedsAttentionIndicator scopeId={ch.id} />}
                           {isUnread && <span className="size-1.5 shrink-0 rounded-full bg-accent" />}
                         </button>
                         {canManageChannels && (
@@ -390,23 +415,40 @@ export function Sidebar() {
                 const bots = others.filter((m) => m.user.type === "bot");
 
                 const renderMember = (m: WorkspaceMember) => {
+                  const conversationId = directConversationIdsByUserId[m.userId];
                   const isActive =
-                    activeDmConversationId === directConversationIdsByUserId[m.userId];
+                    activeDmConversationId === conversationId;
                   const isUnread =
                     m.user.type === "bot" &&
                     Object.values(unreadBotConversations).includes(m.userId);
+                  const needsAttention = Boolean(
+                    conversationId &&
+                      conversationNeedsAttention(
+                        needsAttentionScopes,
+                        conversationId,
+                      ),
+                  );
                   return (
                     <button
                       key={m.userId}
                       className={itemClassName(isActive, isUnread)}
                       onClick={() => handleSelectDm(m)}
-                      aria-label={isUnread ? `${m.user.name}, unread` : m.user.name}
+                      aria-label={[
+                        m.user.name,
+                        isUnread ? "unread" : null,
+                        needsAttention ? "needs attention" : null,
+                      ]
+                        .filter(Boolean)
+                        .join(", ")}
                       aria-current={isActive ? "page" : undefined}
                     >
                       <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-elevated text-[0.714rem] font-semibold text-text-muted">
                         {m.user.name.charAt(0).toUpperCase()}
                       </span>
                       <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap">{m.user.name}</span>
+                      {needsAttention && (
+                        <NeedsAttentionIndicator scopeId={conversationId!} />
+                      )}
                       {isUnread && (
                         <span
                           className="size-1.5 shrink-0 rounded-full bg-accent"

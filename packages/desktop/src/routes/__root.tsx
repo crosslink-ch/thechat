@@ -27,6 +27,7 @@ import { useUpdaterStore } from "../stores/updater";
 import { useFontSizeStore } from "../stores/font-size";
 import { useCtrlWheelZoom } from "../hooks/useCtrlWheelZoom";
 import { info as logInfo } from "../log";
+import { useNeedsAttentionStore } from "../stores/needs-attention";
 
 export function RootLayout() {
   const navigate = useNavigate();
@@ -51,6 +52,10 @@ export function RootLayout() {
       void useUpdaterStore.getState().reset();
     };
   }, []);
+
+  useEffect(() => {
+    void useNeedsAttentionStore.getState().initialize(user?.id ?? null);
+  }, [user?.id]);
 
   // React to token changes: connect/disconnect WebSocket, initialize workspaces, auth MCP
   useEffect(() => {

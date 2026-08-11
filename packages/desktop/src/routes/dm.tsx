@@ -36,6 +36,12 @@ import {
   canonicalHermesSlashCommand,
   parseHermesSlashCommand,
 } from "../lib/hermes-slash-commands";
+import { useNeedsAttentionCommand } from "../hooks/useNeedsAttentionCommand";
+import {
+  attentionThreadIds,
+  scopeNeedsAttention,
+  useNeedsAttentionStore,
+} from "../stores/needs-attention";
 
 export function DmRoute() {
   const { id: conversationId } = useParams({ from: "/dm/$id" });
@@ -70,6 +76,11 @@ export function DmRoute() {
     [registeredBotCommands],
   );
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
+  useNeedsAttentionCommand({
+    userId: user?.id,
+    conversationId,
+    threadId: isHermesDm ? activeThreadId : null,
+  });
   const runtimeQuery = useBotRuntime(conversationId, token, isHermesDm);
   const runtime = runtimeQuery.data ?? null;
   const runtimeLoading = runtimeQuery.isLoading;
@@ -133,6 +144,15 @@ export function DmRoute() {
         (scope) => scope.conversationId === conversationId && scope.threadId === null,
       ),
     [conversationId, unreadScopes],
+  );
+  const needsAttentionScopes = useNeedsAttentionStore((state) => state.scopes);
+  const needsAttentionThreadIds = useMemo(
+    () => attentionThreadIds(needsAttentionScopes, conversationId),
+    [conversationId, needsAttentionScopes],
+  );
+  const generalNeedsAttention = scopeNeedsAttention(
+    needsAttentionScopes,
+    conversationId,
   );
 
   // Keep the indicators store in sync with what the user is looking at, and
@@ -471,6 +491,8 @@ export function DmRoute() {
           generalNeedsApproval={generalNeedsApproval}
           unreadThreadIds={unreadThreadIds}
           generalUnread={generalUnread}
+          needsAttentionThreadIds={needsAttentionThreadIds}
+          generalNeedsAttention={generalNeedsAttention}
           onLoadMoreThreads={() => {
             void loadMoreThreads();
           }}
