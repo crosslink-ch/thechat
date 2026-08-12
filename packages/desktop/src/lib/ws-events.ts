@@ -86,6 +86,13 @@ export type WsEvents = {
     botId: string;
     status: Exclude<BotWorkspaceInviteStatus, "pending">;
   };
+  "ws:presence_snapshot": {
+    userIds: string[];
+  };
+  "ws:presence_changed": {
+    userId: string;
+    online: boolean;
+  };
 };
 
 export const wsEvents = mitt<WsEvents>();

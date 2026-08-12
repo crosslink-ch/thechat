@@ -6,6 +6,7 @@ import { useAuthStore } from "../stores/auth";
 import { useWorkspacesStore } from "../stores/workspaces";
 import { useConversationsStore } from "../stores/conversations";
 import { useNotificationsStore } from "../stores/notifications";
+import { usePresenceStore } from "../stores/presence";
 import { openAuthModal } from "./AuthModal";
 import { openWorkspaceModal } from "./WorkspaceModal";
 import {
@@ -115,6 +116,7 @@ export function Sidebar() {
     (s) => s.setActiveDirectConversation,
   );
   const notificationCount = useNotificationsStore((s) => s.notifications.length);
+  const onlineUserIds = usePresenceStore((s) => s.onlineUserIds);
 
   // Determine current active IDs from route
   const isChannel = routePath.startsWith("/channel");
@@ -395,16 +397,33 @@ export function Sidebar() {
                   const isUnread =
                     m.user.type === "bot" &&
                     Object.values(unreadBotConversations).includes(m.userId);
+                  const isOnline =
+                    m.user.type === "human" && onlineUserIds.has(m.userId);
+                  const ariaLabel = [
+                    m.user.name,
+                    isUnread ? "unread" : null,
+                    isOnline ? "online" : null,
+                  ]
+                    .filter(Boolean)
+                    .join(", ");
                   return (
                     <button
                       key={m.userId}
                       className={itemClassName(isActive, isUnread)}
                       onClick={() => handleSelectDm(m)}
-                      aria-label={isUnread ? `${m.user.name}, unread` : m.user.name}
+                      aria-label={ariaLabel}
                       aria-current={isActive ? "page" : undefined}
                     >
-                      <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-elevated text-[0.714rem] font-semibold text-text-muted">
+                      <span className="relative flex size-5 shrink-0 items-center justify-center rounded-full bg-elevated text-[0.714rem] font-semibold text-text-muted">
                         {m.user.name.charAt(0).toUpperCase()}
+                        {isOnline && (
+                          <span
+                            data-testid={`online-indicator-${m.userId}`}
+                            className="absolute -right-0.5 -bottom-0.5 size-2.5 rounded-full border-2 border-surface bg-success"
+                            title="Online"
+                            aria-hidden="true"
+                          />
+                        )}
                       </span>
                       <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap">{m.user.name}</span>
                       {isUnread && (

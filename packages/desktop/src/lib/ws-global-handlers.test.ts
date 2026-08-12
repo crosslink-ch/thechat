@@ -12,6 +12,7 @@ import { useAuthStore } from "../stores/auth";
 import { useWorkspacesStore } from "../stores/workspaces";
 import { useNotificationsStore } from "../stores/notifications";
 import { useConversationsStore } from "../stores/conversations";
+import { usePresenceStore } from "../stores/presence";
 import {
   hermesScopeKey,
   useHermesIndicatorsStore,
@@ -63,6 +64,7 @@ describe("registerGlobalWsHandlers", () => {
     window.location.hash = "";
     useAuthStore.setState({ token: "token-1", user: null, loading: false });
     useHermesIndicatorsStore.getState().resetForTests();
+    usePresenceStore.getState().clear();
     useNotificationsStore.setState({
       notifications: [],
       loading: false,
@@ -74,6 +76,23 @@ describe("registerGlobalWsHandlers", () => {
       activeWorkspace: structuredClone(baseWorkspace),
       loading: false,
     });
+  });
+
+  it("applies presence snapshots and incremental changes", () => {
+    const cleanup = registerGlobalWsHandlers(() => {});
+
+    wsEvents.emit("ws:presence_snapshot", { userIds: ["u-1", "u-2"] });
+    wsEvents.emit("ws:presence_changed", { userId: "u-2", online: false });
+    wsEvents.emit("ws:presence_changed", { userId: "u-3", online: true });
+
+    expect([...usePresenceStore.getState().onlineUserIds].sort()).toEqual([
+      "u-1",
+      "u-3",
+    ]);
+
+    wsEvents.emit("ws:presence_snapshot", { userIds: [] });
+    expect([...usePresenceStore.getState().onlineUserIds]).toEqual([]);
+    cleanup();
   });
 
   it("does not fire a desktop notification for a background Hermes task in the visible DM", () => {
