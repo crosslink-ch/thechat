@@ -14,6 +14,7 @@ import {
 } from "../services/bot-runtime";
 import { ServiceError } from "../services/errors";
 import { resolveTokenToUser } from "../auth/middleware";
+import type { BotKind } from "@thechat/shared";
 
 const messageSchema = z.object({
   invocationId: z.string().min(1).optional(),
@@ -66,7 +67,7 @@ type HermesPlatformBot = {
   id: string;
   userId: string;
   name: string;
-  kind: "webhook" | "hermes";
+  kind: BotKind;
 };
 
 function authHeaderFrom(headers: Record<string, string | undefined> | Headers) {

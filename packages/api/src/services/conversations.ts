@@ -618,7 +618,7 @@ async function inferHermesBotId(
     .where(
       and(
         eq(conversationParticipants.conversationId, conversationId),
-        eq(bots.kind, "hermes"),
+        inArray(bots.kind, ["hermes", "hermes-rpc"]),
       ),
     )
     .limit(1);
@@ -641,7 +641,7 @@ async function requireHermesBotParticipant(
     .where(
       and(
         eq(bots.id, botId),
-        eq(bots.kind, "hermes"),
+        inArray(bots.kind, ["hermes", "hermes-rpc"]),
         eq(conversationParticipants.conversationId, conversationId),
       ),
     )

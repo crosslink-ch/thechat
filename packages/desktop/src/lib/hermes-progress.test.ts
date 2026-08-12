@@ -176,6 +176,23 @@ describe("Hermes progress selectors", () => {
     expect(waiting.taskActive).toBe(true);
   });
 
+  it("keeps a quiet durable Hermes RPC run active without a recent event", () => {
+    const quietRpc = invocation({
+      botKind: "hermes-rpc",
+      adapterKind: "hermes-rpc",
+      status: "running",
+    });
+
+    const selected = selectHermesConversationProgress(runtime({
+      invocations: [quietRpc],
+      events: [],
+    }));
+
+    expect(selected.invocations).toEqual([{ invocation: quietRpc, events: [] }]);
+    expect(selected.typingSuppressedUserIds).toEqual([quietRpc.botUserId]);
+    expect(selected.taskActive).toBe(true);
+  });
+
   it("scopes General progress to unthreaded Hermes invocations", () => {
     const snapshot = runtime({
       invocations: [

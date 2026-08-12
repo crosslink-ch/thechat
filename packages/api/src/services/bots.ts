@@ -1,6 +1,6 @@
 import crypto from "crypto";
 import { and, eq, inArray, or, sql } from "drizzle-orm";
-import type { BotCommandPublic, WsServerEvent } from "@thechat/shared";
+import type { BotCommandPublic, BotKind, WsServerEvent } from "@thechat/shared";
 import { db } from "../db";
 import {
   users,
@@ -14,6 +14,7 @@ import {
   botWorkspaceInvites,
   eventOutbox,
   hermesBotConfigs,
+  hermesRpcBotConfigs,
 } from "../db/schema";
 import { ServiceError } from "./errors";
 import { broadcastToUser } from "../ws";
@@ -24,6 +25,8 @@ import {
   rotateBotApiKey,
 } from "../auth/bot-api-keys";
 import { BOT_API_KEY_CONFIG_ID } from "../auth/better-auth";
+import { normalizeHermesRpcEndpoint } from "./hermes-rpc-client";
+import { encryptSecret } from "./secrets";
 
 export function generateWebhookSecret(): string {
   return `whsec_${crypto.randomBytes(32).toString("hex")}`;
@@ -33,7 +36,7 @@ export async function createBot(
   name: string,
   webhookUrl: string | null,
   ownerId: string,
-  kind: "webhook" | "hermes" = "webhook",
+  kind: "webhook" = "webhook",
   attachmentAccess = true,
 ) {
   const webhookSecret = generateWebhookSecret();
@@ -82,11 +85,30 @@ export async function createHermesBotInWorkspace(
   ownerId: string,
   workspaceId: string,
   attachmentAccess = true,
-  options: { afterWorkspaceLocked?: () => Promise<void> } = {},
+  options: {
+    afterWorkspaceLocked?: () => Promise<void>;
+    kind?: "hermes" | "hermes-rpc";
+    hermesRpc?: { endpoint: string; gatewayToken?: string | null };
+  } = {},
 ) {
+  const kind = options.kind ?? "hermes";
+  let rpcEndpoint: string | null = null;
+  if (kind === "hermes-rpc") {
+    try {
+      rpcEndpoint = normalizeHermesRpcEndpoint(options.hermesRpc?.endpoint ?? "");
+    } catch (error) {
+      throw new ServiceError(
+        error instanceof Error ? error.message : "Invalid Hermes RPC endpoint",
+        400,
+      );
+    }
+  }
+  const rpcTokenEncrypted = kind === "hermes-rpc" && options.hermesRpc?.gatewayToken?.trim()
+    ? encryptSecret(options.hermesRpc.gatewayToken.trim())
+    : null;
   const webhookSecret = generateWebhookSecret();
   const botUserId = crypto.randomUUID();
-  const credential = await prepareBotApiKey(botUserId);
+  const credential = kind === "hermes" ? await prepareBotApiKey(botUserId) : null;
 
   const { botUser, bot, joinedAt } = await db.transaction(async (tx) => {
     const [workspace] = await tx
@@ -129,17 +151,25 @@ export async function createHermesBotInWorkspace(
         ownerId,
         webhookUrl,
         webhookSecret,
-        kind: "hermes",
+        kind,
         attachmentAccess,
       })
       .returning();
-    await tx.insert(apikey).values(credential.values);
-    await tx.insert(hermesBotConfigs).values({
-      botId: createdBot.id,
-      baseUrl: null,
-      apiKeyEncrypted: null,
-      defaultMode: "run",
-    });
+    if (credential) await tx.insert(apikey).values(credential.values);
+    if (kind === "hermes") {
+      await tx.insert(hermesBotConfigs).values({
+        botId: createdBot.id,
+        baseUrl: null,
+        apiKeyEncrypted: null,
+        defaultMode: "run",
+      });
+    } else {
+      await tx.insert(hermesRpcBotConfigs).values({
+        botId: createdBot.id,
+        endpoint: rpcEndpoint!,
+        gatewayTokenEncrypted: rpcTokenEncrypted,
+      });
+    }
     const [membership] = await tx
       .insert(workspaceMembers)
       .values({
@@ -178,7 +208,7 @@ export async function createHermesBotInWorkspace(
   await broadcastBotJoinedWorkspace({
     workspaceId,
     botId: bot.id,
-    botKind: "hermes",
+    botKind: kind,
     botUserId: botUser.id,
     botName: botUser.name,
     joinedAt,
@@ -188,7 +218,7 @@ export async function createHermesBotInWorkspace(
     id: bot.id,
     userId: botUser.id,
     name: botUser.name,
-    apiKey: credential.rawKey,
+    apiKey: credential?.rawKey,
     kind: bot.kind,
     attachmentAccess: bot.attachmentAccess,
     webhookUrl: bot.webhookUrl,
@@ -222,7 +252,7 @@ type OwnedBotRow = {
   userId: string;
   webhookUrl: string | null;
   webhookSecret: string;
-  kind: "webhook" | "hermes";
+  kind: BotKind;
   attachmentAccess: boolean;
   createdAt: Date;
   name: string;
@@ -428,7 +458,7 @@ async function broadcastBotJoinedWorkspace({
 }: {
   workspaceId: string;
   botId: string;
-  botKind: "webhook" | "hermes";
+  botKind: BotKind;
   botUserId: string;
   botName: string;
   joinedAt: Date;

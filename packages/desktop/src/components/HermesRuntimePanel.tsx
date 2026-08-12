@@ -3,6 +3,7 @@ import type {
   BotInvocationPublic,
   BotRuntimeSnapshot,
   ConversationThreadPublic,
+  HermesRpcSessionPublic,
 } from "@thechat/shared";
 
 export function HermesRuntimePanel({
@@ -24,6 +25,15 @@ export function HermesRuntimePanel({
   onSelectThread,
   onCreateThread,
   onLoadMoreThreads,
+  rpcMode = false,
+  rpcSessions = [],
+  rpcSessionsLoading = false,
+  rpcSessionsRefreshing = false,
+  rpcSessionsError = null,
+  selectedRpcSessionId = null,
+  selectingRpcSessionId = null,
+  onSelectRpcSession,
+  onRefreshRpcSessions,
 }: {
   title?: string;
   botName: string;
@@ -43,9 +53,20 @@ export function HermesRuntimePanel({
   onSelectThread?: (threadId: string | null) => void;
   onCreateThread?: () => void;
   onLoadMoreThreads?: () => void;
+  rpcMode?: boolean;
+  rpcSessions?: HermesRpcSessionPublic[];
+  rpcSessionsLoading?: boolean;
+  rpcSessionsRefreshing?: boolean;
+  rpcSessionsError?: string | null;
+  selectedRpcSessionId?: string | null;
+  selectingRpcSessionId?: string | null;
+  onSelectRpcSession?: (session: HermesRpcSessionPublic) => void;
+  onRefreshRpcSessions?: () => void;
 }) {
   const invocations = useMemo(
-    () => (runtime?.invocations ?? []).filter((invocation) => invocation.botKind === "hermes"),
+    () => (runtime?.invocations ?? []).filter(
+      (invocation) => invocation.botKind === "hermes" || invocation.botKind === "hermes-rpc",
+    ),
     [runtime],
   );
   const progressInvocationIds = new Set(
@@ -53,7 +74,9 @@ export function HermesRuntimePanel({
   );
   const activeInvocations = invocations.filter(
     (invocation) =>
-      invocation.status === "queued" || progressInvocationIds.has(invocation.id),
+      invocation.status === "queued" ||
+      (invocation.botKind === "hermes-rpc" && invocation.status === "running") ||
+      progressInvocationIds.has(invocation.id),
   );
   const activeCountsByThread = useMemo(() => {
     const counts = new Map<string, number>();
@@ -74,6 +97,19 @@ export function HermesRuntimePanel({
         <div className="truncate text-[1rem] font-semibold text-text">{botName}</div>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto px-3.5 py-4">
+        {rpcMode ? (
+          <RpcSessionsSection
+            sessions={rpcSessions}
+            loading={rpcSessionsLoading}
+            refreshing={rpcSessionsRefreshing}
+            error={rpcSessionsError}
+            selectedSessionId={selectedRpcSessionId}
+            selectingSessionId={selectingRpcSessionId}
+            onSelect={onSelectRpcSession}
+            onRefresh={onRefreshRpcSessions}
+            onCreate={onCreateThread}
+          />
+        ) : (<>
         <section className="mb-5">
           <div className="mb-2 px-1 text-[0.786rem] font-medium uppercase text-text-dimmed">
             General
@@ -86,6 +122,7 @@ export function HermesRuntimePanel({
             onSelect={onSelectThread}
           />
         </section>
+        </>)}
 
         <section className="mb-5">
           <div className="mb-2 flex items-center justify-between gap-2 px-1">
@@ -167,6 +204,107 @@ export function HermesRuntimePanel({
       </div>
     </aside>
   );
+}
+
+function RpcSessionsSection({
+  sessions,
+  loading,
+  refreshing,
+  error,
+  selectedSessionId,
+  selectingSessionId,
+  onSelect,
+  onRefresh,
+  onCreate,
+}: {
+  sessions: HermesRpcSessionPublic[];
+  loading: boolean;
+  refreshing: boolean;
+  error: string | null;
+  selectedSessionId: string | null;
+  selectingSessionId: string | null;
+  onSelect?: (session: HermesRpcSessionPublic) => void;
+  onRefresh?: () => void;
+  onCreate?: () => void;
+}) {
+  return (
+    <section className="mb-5" data-testid="hermes-rpc-sessions-panel" aria-label="Hermes RPC sessions">
+      <div className="mb-2 flex items-center justify-between gap-2 px-1">
+        <div className="text-[0.786rem] font-medium uppercase text-text-dimmed">Upstream sessions</div>
+        <div className="flex gap-1.5">
+          <button
+            type="button"
+            aria-label="Refresh Hermes sessions"
+            onClick={onRefresh}
+            disabled={refreshing}
+            className="cursor-pointer rounded-md border border-border bg-raised px-2 py-1 text-[0.714rem] text-text-muted hover:not-disabled:bg-hover hover:not-disabled:text-text disabled:opacity-50"
+          >
+            {refreshing ? "Refreshing..." : "Refresh"}
+          </button>
+          <button
+            type="button"
+            aria-label="New Hermes session"
+            onClick={onCreate}
+            className="flex cursor-pointer items-center gap-1 rounded-md border border-accent/35 bg-accent/10 px-2 py-1 text-[0.714rem] font-medium text-accent hover:bg-accent/15"
+          >
+            <PlusIcon className="size-3" /> New
+          </button>
+        </div>
+      </div>
+      {loading ? (
+        <div data-testid="hermes-rpc-sessions-loading"><PanelSkeleton /></div>
+      ) : error ? (
+        <div data-testid="hermes-rpc-sessions-unavailable" className="rounded-md border border-error-msg-border bg-error-msg-bg px-3 py-3 text-[0.786rem] leading-relaxed text-error-bright">
+          <div>Sessions unavailable</div>
+          <div className="mt-1 text-text-muted">{error}</div>
+        </div>
+      ) : sessions.length === 0 ? (
+        <div data-testid="hermes-rpc-sessions-empty" className="rounded-md border border-dashed border-border-subtle bg-base/20 px-3 py-3 text-[0.857rem] text-text-placeholder">
+          No upstream sessions yet. Start a new session with your first prompt.
+        </div>
+      ) : (
+        <div className="overflow-hidden rounded-md border border-border-subtle bg-base/20">
+          <div className="divide-y divide-border-subtle">
+            {sessions.map((session) => {
+              const selected = session.id === selectedSessionId;
+              const selecting = session.id === selectingSessionId;
+              return (
+                <button
+                  key={session.id}
+                  type="button"
+                  data-testid={`hermes-rpc-session-${session.id}`}
+                  aria-label={`Select Hermes session ${session.title || session.id}`}
+                  aria-pressed={selected}
+                  onClick={() => onSelect?.(session)}
+                  disabled={Boolean(selectingSessionId)}
+                  className={`block w-full cursor-pointer px-3 py-2.5 text-left transition-colors disabled:cursor-wait ${selected ? "bg-accent/10" : "hover:bg-hover/70"}`}
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <span className="min-w-0 truncate text-[0.857rem] font-medium text-text">{session.title || "Untitled session"}</span>
+                    {selected && <span className="shrink-0 text-[0.643rem] font-semibold uppercase text-accent">Selected</span>}
+                  </div>
+                  <div className="mt-1 line-clamp-2 text-[0.714rem] leading-snug text-text-dimmed">
+                    {selecting ? "Selecting..." : session.preview || "No preview"}
+                  </div>
+                  <div className="mt-1.5 flex gap-2 text-[0.643rem] text-text-placeholder">
+                    <span>{session.messageCount} message{session.messageCount === 1 ? "" : "s"}</span>
+                    <span>·</span>
+                    <span>{formatRpcSessionTime(session.startedAt)}</span>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function formatRpcSessionTime(value: number) {
+  const milliseconds = value > 10_000_000_000 ? value : value * 1_000;
+  const date = new Date(milliseconds);
+  return Number.isNaN(date.getTime()) ? "Unknown time" : formatSessionTime(date.toISOString());
 }
 
 function PlusIcon({ className = "" }: { className?: string }) {

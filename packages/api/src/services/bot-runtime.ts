@@ -17,6 +17,7 @@ import type {
   BotInvocationPublic,
   BotInvocationProgressEventPublic,
   BotRuntimeSnapshot,
+  BotKind,
   ChatMessage,
   ChatAttachment,
   ConversationThreadPublic,
@@ -57,6 +58,16 @@ import {
   findIdempotentMessage,
 } from "./messages";
 import { requireConversationMutationAccess } from "./conversation-mutation-access";
+import {
+  getHermesRpcConnection,
+  getHermesRpcSessionLink,
+  linkHermesRpcSession,
+} from "./hermes-rpc";
+import {
+  HermesRpcClient,
+  redactHermesRpcText,
+  type HermesRpcEvent,
+} from "./hermes-rpc-client";
 
 export const BOT_QUEUE_NAME = "thechat:bots";
 export const BOT_INVOKE_JOB_NAME = "bot.invoke";
@@ -64,8 +75,11 @@ export const HERMES_WEBHOOK_DELIVERY_JOB_NAME = "bot.hermes_webhook.deliver";
 const MAX_THREAD_TITLE_LENGTH = 255;
 const DEFAULT_HERMES_DISPATCH_TIMEOUT_MS = 2 * 60 * 1000;
 const HERMES_WEBHOOK_BODY_FIELD = "hermesWebhookBody";
+const DEFAULT_HERMES_RPC_TURN_TIMEOUT_MS = 10 * 60 * 1000;
+const HERMES_RPC_PROGRESS_LEASE_INTERVAL_MS = 10_000;
+const HERMES_RPC_REDELIVERY_ERROR =
+  "Hermes RPC worker ownership was lost; the disconnected upstream runtime was closed before redelivery.";
 
-type BotKind = "webhook" | "hermes";
 type ConversationType = "direct" | "group";
 type BotInvocationStatus = "queued" | "running" | "claimed" | "completed" | "failed" | "cancelled";
 
@@ -107,6 +121,17 @@ interface BotInvokePayload {
 
 interface HermesWebhookDeliveryPayload {
   invocationId: string;
+}
+
+export interface HermesRpcMappedEvent {
+  type: string;
+  status: string | null;
+  toolCallId: string | null;
+  toolName: string | null;
+  label: string | null;
+  preview: string | null;
+  payload: Record<string, unknown>;
+  terminal?: { status: "completed" | "failed" | "cancelled"; text?: string; error?: string };
 }
 
 interface HermesPlatformProgressInput {
@@ -702,6 +727,19 @@ async function handleQueuedBotInvocation(invocationId: string, context: { setPro
   ) {
     return;
   }
+  if (loaded.invocation.status === "running" && loaded.bot.kind === "hermes-rpc") {
+    const failed = await failInvocation(
+      invocationId,
+      new Error(HERMES_RPC_REDELIVERY_ERROR),
+      { onlyRunningHermesRpc: true },
+    );
+    if (failed) {
+      await finishHermesRpcProgress(invocationId, "invocation.failed", {
+        error: HERMES_RPC_REDELIVERY_ERROR,
+      });
+    }
+    return;
+  }
   if (loaded.invocation.status === "running" && loaded.invocation.startedAt) {
     const ageMs = Date.now() - loaded.invocation.startedAt.getTime();
     if (ageMs < 10 * 60 * 1000) return;
@@ -718,6 +756,8 @@ async function handleQueuedBotInvocation(invocationId: string, context: { setPro
   try {
     if (loaded.bot.kind === "hermes") {
       await context.setProgress(100, { status: "claimed_by_hermes_platform" });
+    } else if (loaded.bot.kind === "hermes-rpc") {
+      await handleHermesRpcInvocation(invocationId, context);
     } else {
       await handleWebhookInvocation(invocationId);
     }
@@ -788,6 +828,584 @@ async function handleWebhookInvocation(invocationId: string) {
     responseJson: { status: response.status },
   });
   await publishInvocationUpdate(invocationId);
+}
+
+function hermesRpcTurnTimeoutMs() {
+  const configured = Number(process.env.HERMES_RPC_TURN_TIMEOUT_MS);
+  return Number.isFinite(configured) && configured > 0
+    ? Math.trunc(configured)
+    : DEFAULT_HERMES_RPC_TURN_TIMEOUT_MS;
+}
+
+/** Exact upstream event projection into the existing TheChat progress model. */
+export function mapHermesRpcEvent(
+  event: HermesRpcEvent,
+  runtimeSessionId: string,
+  eventOrdinal: number,
+): HermesRpcMappedEvent | null {
+  const payload = recordFromJson(event.payload);
+  const text = typeof payload.text === "string" ? payload.text : "";
+  const toolCallId = typeof payload.tool_id === "string" && payload.tool_id
+    ? payload.tool_id
+    : null;
+  const toolName = typeof payload.name === "string" && payload.name
+    ? payload.name
+    : null;
+  const identity = `${runtimeSessionId}:${event.type}:${toolCallId ?? eventOrdinal}`;
+  const eventIdentity = { upstreamEventIdentity: identity };
+  const textPayload = text ? { ...eventIdentity, text } : eventIdentity;
+  const toolPayload = projectedHermesRpcToolPayload(payload, toolName, eventIdentity);
+
+  switch (event.type) {
+    case "message.start":
+      return {
+        type: "message.started",
+        status: "running",
+        toolCallId: null,
+        toolName: null,
+        label: "Hermes started responding",
+        preview: null,
+        payload: eventIdentity,
+      };
+    case "message.delta":
+      return {
+        type: "message.delta",
+        status: "running",
+        toolCallId: null,
+        toolName: null,
+        label: "Streaming response",
+        preview: text || null,
+        payload: textPayload,
+      };
+    case "message.complete": {
+      const upstreamStatus = typeof payload.status === "string" ? payload.status : "complete";
+      const terminalStatus = upstreamStatus === "interrupted"
+        ? "cancelled"
+        : upstreamStatus === "error"
+          ? "failed"
+          : "completed";
+      const error = typeof payload.error === "string" ? payload.error : text;
+      return {
+        type: "message.completed",
+        status: terminalStatus,
+        toolCallId: null,
+        toolName: null,
+        label: terminalStatus === "completed" ? "Response complete" : `Response ${terminalStatus}`,
+        preview: text || null,
+        payload: {
+          ...textPayload,
+          status: upstreamStatus,
+          ...(terminalStatus === "failed" && error ? { error } : {}),
+        },
+        terminal: {
+          status: terminalStatus,
+          text,
+          ...(terminalStatus === "failed" ? { error: error || "Hermes RPC turn failed" } : {}),
+        },
+      };
+    }
+    case "tool.start":
+      return {
+        type: "tool.started",
+        status: "running",
+        toolCallId,
+        toolName,
+        label: stringField(payload, "context") || toolName || "Tool started",
+        preview: stringField(payload, "context") || null,
+        payload: toolPayload,
+      };
+    case "tool.progress":
+      return {
+        type: "tool.progress",
+        status: "running",
+        toolCallId,
+        toolName,
+        label: stringField(payload, "context") || stringField(payload, "summary") || toolName,
+        preview: stringField(payload, "preview") || stringField(payload, "context") || null,
+        payload: toolPayload,
+      };
+    case "tool.complete":
+      return {
+        type: "tool.completed",
+        status: "completed",
+        toolCallId,
+        toolName,
+        label: stringField(payload, "summary") || stringField(payload, "context") || toolName,
+        preview: stringField(payload, "summary") || null,
+        payload: {
+          ...toolPayload,
+          ...(typeof payload.duration_s === "number" ? { duration: payload.duration_s } : {}),
+        },
+      };
+    case "reasoning.delta":
+    case "reasoning.available":
+    case "thinking.delta":
+      return {
+        type: event.type,
+        status: "running",
+        toolCallId: null,
+        toolName: "_thinking",
+        label: "Thinking",
+        preview: text || null,
+        payload: textPayload,
+      };
+    case "status.update":
+      return {
+        type: "status.update",
+        status: stringField(payload, "kind") || "info",
+        toolCallId: null,
+        toolName: null,
+        label: text || "Hermes status update",
+        preview: text || null,
+        payload: {
+          ...textPayload,
+          ...(stringField(payload, "kind") ? { kind: stringField(payload, "kind") } : {}),
+        },
+      };
+    case "error": {
+      const message = stringField(payload, "message") || "Hermes RPC turn failed";
+      return {
+        type: "notice.error",
+        status: "failed",
+        toolCallId: null,
+        toolName: null,
+        label: message,
+        preview: message,
+        payload: { ...eventIdentity, message },
+        terminal: { status: "failed", error: message },
+      };
+    }
+    default:
+      return null;
+  }
+}
+
+function projectedHermesRpcToolPayload(
+  payload: Record<string, unknown>,
+  toolName: string | null,
+  eventIdentity: { upstreamEventIdentity: string },
+): Record<string, unknown> {
+  const context = stringField(payload, "context");
+  const summary = stringField(payload, "summary");
+  const preview = stringField(payload, "preview");
+  const command = toolName === "terminal"
+    ? stringField(recordFromJson(payload.args), "command")
+    : "";
+  return {
+    ...eventIdentity,
+    ...(context ? { context } : {}),
+    ...(summary ? { summary } : {}),
+    ...(preview ? { preview } : {}),
+    ...(command ? { args: { command } } : {}),
+  };
+}
+
+/** Observe an early rejection without changing the promise's later await semantics. */
+export function observePromiseRejection<T>(promise: Promise<T>): Promise<T> {
+  void promise.catch(() => {});
+  return promise;
+}
+
+function startHermesRpcProgressLease(invocationId: string, conversationId: string) {
+  const store = getBotProgressStore();
+  let stopped = false;
+  const touch = () => {
+    if (stopped) return;
+    void store.touch({ invocationId, conversationId }).catch(() => {
+      // Activity is best effort; durable invocation state remains authoritative.
+    });
+  };
+  touch();
+  const timer = setInterval(touch, HERMES_RPC_PROGRESS_LEASE_INTERVAL_MS);
+  return () => {
+    stopped = true;
+    clearInterval(timer);
+  };
+}
+
+async function handleHermesRpcInvocation(
+  invocationId: string,
+  context: { setProgress(progress: number, detail?: unknown): Promise<void> },
+) {
+  const loaded = await loadInvocationContext(invocationId);
+  if (!loaded) throw new Error(`Bot invocation not found: ${invocationId}`);
+  if (loaded.bot.kind !== "hermes-rpc") {
+    throw new Error("Invocation is not for a Hermes RPC bot");
+  }
+
+  const connection = await getHermesRpcConnection(loaded.bot.id);
+  const client = new HermesRpcClient(connection.endpoint, connection.gatewayToken);
+  const stopProgressLease = startHermesRpcProgressLease(
+    invocationId,
+    loaded.conversation.id,
+  );
+  let runtimeSessionId = "";
+  let storedSessionId = "";
+  let eventOrdinal = 0;
+  let eventChain = Promise.resolve();
+  let resolveTerminal!: (terminal: NonNullable<HermesRpcMappedEvent["terminal"]>) => void;
+  let rejectTerminal!: (error: Error) => void;
+  let terminalSettled = false;
+  const terminalPromise = observePromiseRejection(
+    new Promise<NonNullable<HermesRpcMappedEvent["terminal"]>>((resolve, reject) => {
+      resolveTerminal = (terminal) => {
+        if (terminalSettled) return;
+        terminalSettled = true;
+        resolve(terminal);
+      };
+      rejectTerminal = (error) => {
+        if (terminalSettled) return;
+        terminalSettled = true;
+        reject(error);
+      };
+    }),
+  );
+  const detachEvent = client.onEvent((event) => {
+    if (!runtimeSessionId || event.session_id !== runtimeSessionId) return;
+    const mapped = mapHermesRpcEvent(event, runtimeSessionId, ++eventOrdinal);
+    if (!mapped) return;
+    eventChain = eventChain
+      .then(() => publishHermesRpcProgress(invocationId, mapped))
+      .then(() => {
+        if (mapped.terminal) resolveTerminal(mapped.terminal);
+      })
+      .catch((error) => rejectTerminal(error instanceof Error ? error : new Error(String(error))));
+  });
+  const detachDisconnect = client.onDisconnect((error) => {
+    rejectTerminal(error);
+  });
+
+  try {
+    await context.setProgress(25, { status: "connecting_to_hermes_rpc" });
+    await client.connect();
+    const link = await getHermesRpcSessionLink({
+      botId: loaded.bot.id,
+      conversationId: loaded.conversation.id,
+      threadId: resolveInvocationThreadId(loaded),
+    });
+
+    if (link) {
+      const resumed = await client.sessionResume(link.upstreamSessionId);
+      runtimeSessionId = resumed.session_id;
+      storedSessionId = link.upstreamSessionId;
+    } else {
+      const created = await client.sessionCreate();
+      runtimeSessionId = created.session_id;
+      storedSessionId = created.stored_session_id;
+      await linkHermesRpcSession({
+        botId: loaded.bot.id,
+        conversationId: loaded.conversation.id,
+        threadId: resolveInvocationThreadId(loaded),
+        upstreamSessionId: storedSessionId,
+      });
+    }
+
+    const currentResponse = recordFromJson(loaded.invocation.responseJson);
+    await db
+      .update(botInvocations)
+      .set({
+        externalRunId: runtimeSessionId,
+        responseJson: {
+          ...currentResponse,
+          upstreamSessionId: storedSessionId,
+        },
+        updatedAt: new Date(),
+      })
+      .where(eq(botInvocations.id, invocationId));
+    await publishInvocationUpdate(invocationId);
+    await context.setProgress(45, { status: "submitting_prompt" });
+
+    const prompt = stripBotMention(loaded.triggerMessage.content, loaded.botName)
+      || loaded.triggerMessage.content;
+    await client.submitPrompt(runtimeSessionId, prompt);
+    await context.setProgress(60, { status: "streaming" });
+
+    const terminal = await withTimeout(
+      terminalPromise,
+      hermesRpcTurnTimeoutMs(),
+      async () => {
+        try {
+          await client.interrupt(runtimeSessionId);
+        } catch {
+          // The timeout itself is the user-visible failure; interrupt is best effort.
+        }
+      },
+    );
+    await eventChain;
+
+    if (terminal.status === "completed") {
+      await completeHermesRpcInvocation(invocationId, terminal.text ?? "", {
+        storedSessionId,
+        runtimeSessionId,
+      });
+    } else if (terminal.status === "cancelled") {
+      await cancelHermesRpcInvocationRecord(invocationId, "Hermes RPC turn interrupted");
+    } else {
+      throw new Error(terminal.error || "Hermes RPC turn failed");
+    }
+  } catch (error) {
+    const safeError = new Error(redactHermesRpcText(error, connection.gatewayToken));
+    const current = await loadInvocationContext(invocationId);
+    // The interrupt path owns the one durable/realtime cancellation transition;
+    // its active worker merely observes that transition through a rejected wait.
+    if (
+      current?.invocation.status !== "cancelled" &&
+      await failInvocation(invocationId, safeError)
+    ) {
+      await finishHermesRpcProgress(invocationId, "invocation.failed", {
+        error: safeError.message,
+      });
+    }
+    throw safeError;
+  } finally {
+    stopProgressLease();
+    detachEvent();
+    detachDisconnect();
+    client.close();
+  }
+}
+
+async function cancelHermesRpcInvocationRecord(invocationId: string, reason: string) {
+  const cancelledAt = new Date();
+  const [cancelled] = await db
+    .update(botInvocations)
+    .set({
+      status: "cancelled",
+      error: reason,
+      completedAt: cancelledAt,
+      updatedAt: cancelledAt,
+    })
+    .where(
+      and(
+        eq(botInvocations.id, invocationId),
+        eq(botInvocations.adapterKind, "hermes-rpc"),
+        notInArray(botInvocations.status, ["completed", "failed", "cancelled"]),
+      ),
+    )
+    .returning({ id: botInvocations.id });
+  if (!cancelled) return false;
+  await publishInvocationUpdate(invocationId);
+  await finishHermesRpcProgress(invocationId, "invocation.cancelled", { reason });
+  return true;
+}
+
+export async function stopHermesRpcInvocation(invocationId: string, userId: string) {
+  const loaded = await loadInvocationContext(invocationId);
+  if (!loaded) throw new ServiceError("Invocation not found", 404);
+  await requireConversationParticipant(loaded.conversation.id, userId);
+  if (loaded.bot.kind !== "hermes-rpc" || loaded.invocation.adapterKind !== "hermes-rpc") {
+    throw new ServiceError("Invocation is not for a Hermes RPC bot", 400);
+  }
+  if (["completed", "failed", "cancelled"].includes(loaded.invocation.status)) {
+    return { ok: true as const, status: loaded.invocation.status, alreadyTerminal: true };
+  }
+  if (!loaded.invocation.externalRunId) {
+    throw new ServiceError("Hermes RPC session is not ready to interrupt", 409);
+  }
+
+  const connection = await getHermesRpcConnection(loaded.bot.id);
+  const client = new HermesRpcClient(connection.endpoint, connection.gatewayToken);
+  try {
+    await client.connect();
+    await client.interrupt(loaded.invocation.externalRunId);
+    await cancelHermesRpcInvocationRecord(invocationId, "Stopped by user");
+    return { ok: true as const, status: "cancelled" as const, alreadyTerminal: false };
+  } catch (error) {
+    throw new ServiceError(
+      `Could not interrupt Hermes RPC: ${redactHermesRpcText(error, connection.gatewayToken)}`,
+      502,
+    );
+  } finally {
+    client.close();
+  }
+}
+
+async function publishHermesRpcProgress(
+  invocationId: string,
+  mapped: HermesRpcMappedEvent,
+) {
+  const loaded = await loadInvocationContext(invocationId);
+  if (!loaded || loaded.bot.kind !== "hermes-rpc") return null;
+  if (["completed", "failed", "cancelled"].includes(loaded.invocation.status)) return null;
+
+  const event = await getBotProgressStore().append({
+    invocationId,
+    botId: loaded.bot.id,
+    conversationId: loaded.conversation.id,
+    threadId: resolveInvocationThreadId(loaded),
+    type: mapped.type,
+    status: mapped.status,
+    toolCallId: mapped.toolCallId,
+    toolName: mapped.toolName,
+    label: mapped.label,
+    preview: mapped.preview,
+    payload: mapped.payload,
+    occurredAt: new Date(),
+  });
+  const participants = await db
+    .select({ userId: conversationParticipants.userId })
+    .from(conversationParticipants)
+    .where(eq(conversationParticipants.conversationId, loaded.conversation.id));
+  const invocation = toPublicInvocationFromContext(loaded);
+  await publishWsEventToUsers(participants.map((row) => row.userId), {
+    type: "bot_invocation_progress",
+    conversationId: loaded.conversation.id,
+    invocationId,
+    event,
+    invocation,
+  });
+  return event;
+}
+
+async function completeHermesRpcInvocation(
+  invocationId: string,
+  rawContent: string,
+  upstream: { storedSessionId: string; runtimeSessionId: string },
+  testHooks: { beforeClaim?: () => Promise<void> } = {},
+) {
+  const loaded = await loadInvocationContext(invocationId);
+  if (!loaded || loaded.bot.kind !== "hermes-rpc") return { duplicate: true };
+  if (["completed", "failed", "cancelled"].includes(loaded.invocation.status)) {
+    return { duplicate: true };
+  }
+  const content = rawContent.trim() || "Hermes completed without a final message.";
+  const completedAt = new Date();
+  await testHooks.beforeClaim?.();
+  const result = await db.transaction(async (tx) => {
+    await requireConversationMutationAccess(tx, loaded.conversation.id, loaded.bot.userId);
+    const [completed] = await tx
+      .update(botInvocations)
+      .set({
+        status: "completed",
+        responseJson: {
+          platform: "hermes-rpc",
+          output: content,
+          upstreamSessionId: upstream.storedSessionId,
+          completion: { type: "message" },
+        },
+        error: null,
+        completedAt,
+        updatedAt: completedAt,
+      })
+      .where(
+        and(
+          eq(botInvocations.id, invocationId),
+          notInArray(botInvocations.status, ["completed", "failed", "cancelled"]),
+        ),
+      )
+      .returning({ id: botInvocations.id });
+    if (!completed) return null;
+
+    const clientMessageId = `hermes-rpc:${invocationId}:final`;
+    const [message] = await tx
+      .insert(messages)
+      .values({
+        conversationId: loaded.conversation.id,
+        threadId: resolveInvocationThreadId(loaded),
+        senderId: loaded.bot.userId,
+        clientMessageId,
+        content,
+        parts: [{ type: "text", text: content }],
+      })
+      .returning();
+    await tx
+      .update(botInvocations)
+      .set({
+        responseMessageId: message.id,
+        updatedAt: completedAt,
+      })
+      .where(eq(botInvocations.id, invocationId));
+
+    const automation = nextAutomationContext(loaded.invocation, loaded.triggerMessage.id);
+    const event = createChatMessageSentV1({
+      messageId: message.id,
+      conversationId: message.conversationId,
+      targetBotIds: [],
+      messageKind: "bot_response",
+      automationDepth: automation.automationDepth,
+      senderId: message.senderId,
+      senderType: "bot",
+      workspaceId: loaded.conversation.workspaceId,
+      correlationId: automation.correlationId,
+      causationId: invocationId,
+      occurredAt: message.createdAt,
+    });
+    await enqueueDomainEvent(tx, event, { partitionKey: message.conversationId });
+    return message;
+  });
+  if (!result) return { duplicate: true };
+
+  await publishBotMessage(result, loaded.botName, loaded.conversation.type);
+  await publishInvocationUpdate(invocationId);
+  await finishHermesRpcProgress(invocationId, "invocation.completed", {
+    upstreamSessionId: upstream.storedSessionId,
+  });
+  return { duplicate: false, messageId: result.id };
+}
+
+async function finishHermesRpcProgress(
+  invocationId: string,
+  type: "invocation.completed" | "invocation.failed" | "invocation.cancelled",
+  payload: Record<string, unknown>,
+) {
+  const loaded = await loadInvocationContext(invocationId);
+  if (!loaded || loaded.bot.kind !== "hermes-rpc") return;
+  const store = getBotProgressStore();
+  const event = await store.append({
+    invocationId,
+    botId: loaded.bot.id,
+    conversationId: loaded.conversation.id,
+    threadId: resolveInvocationThreadId(loaded),
+    type,
+    status: type.slice("invocation.".length),
+    toolCallId: null,
+    toolName: null,
+    label: null,
+    preview: null,
+    payload,
+    occurredAt: new Date(),
+  });
+  const participants = await db
+    .select({ userId: conversationParticipants.userId })
+    .from(conversationParticipants)
+    .where(eq(conversationParticipants.conversationId, loaded.conversation.id));
+  await publishWsEventToUsers(participants.map((row) => row.userId), {
+    type: "bot_invocation_progress",
+    conversationId: loaded.conversation.id,
+    invocationId,
+    event,
+    invocation: toPublicInvocationFromContext(loaded),
+  });
+  await store.clear({ invocationId, conversationId: loaded.conversation.id });
+}
+
+function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  onTimeout: () => Promise<void>,
+): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      void onTimeout().finally(() => {
+        reject(new Error(`Hermes RPC turn timed out after ${Math.round(timeoutMs / 1000)}s`));
+      });
+    }, timeoutMs);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+}
+
+function stringField(value: Record<string, unknown>, key: string) {
+  const field = value[key];
+  return typeof field === "string" ? field.trim() : "";
 }
 
 export interface HermesPlatformEvent {
@@ -2056,7 +2674,7 @@ async function publishConversationThreadUpdate(
 async function failInvocation(
   invocationId: string,
   error: any,
-  options: { onlyQueuedHermes?: boolean } = {},
+  options: { onlyQueuedHermes?: boolean; onlyRunningHermesRpc?: boolean } = {},
 ) {
   const message = error?.message ?? String(error);
   const loaded = await loadInvocationContext(invocationId);
@@ -2067,6 +2685,12 @@ async function failInvocation(
         eq(botInvocations.adapterKind, "hermes"),
         eq(botInvocations.status, "queued"),
       )
+    : options.onlyRunningHermesRpc
+      ? and(
+          eq(botInvocations.id, invocationId),
+          eq(botInvocations.adapterKind, "hermes-rpc"),
+          eq(botInvocations.status, "running"),
+        )
     : and(
         eq(botInvocations.id, invocationId),
         notInArray(botInvocations.status, ["completed", "failed", "cancelled"]),
@@ -2098,7 +2722,7 @@ async function failInvocation(
       .returning({ id: botInvocations.id });
     if (!failed) return { failed: false as const, responseMessage: null };
 
-    if (loaded?.bot.kind !== "hermes") {
+    if (loaded?.bot.kind !== "hermes" && loaded?.bot.kind !== "hermes-rpc") {
       return { failed: true as const, responseMessage: null };
     }
 
@@ -2158,6 +2782,8 @@ export const __botRuntimeInternalsForTests = {
   failQueuedHermesDispatch(invocationId: string, error: Error) {
     return failInvocation(invocationId, error, { onlyQueuedHermes: true });
   },
+  handleQueuedBotInvocation,
+  completeHermesRpcInvocation,
 };
 
 async function loadInvocationContext(invocationId: string) {

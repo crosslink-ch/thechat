@@ -3,6 +3,7 @@ import { resolveTokenToUser } from "../auth/middleware";
 import { ServiceError } from "../services/errors";
 import {
   listConversationBotRuntime,
+  stopHermesRpcInvocation,
 } from "../services/bot-runtime";
 
 export const botRuntimeRoutes = new Elysia({ prefix: "/bot-runtime" })
@@ -21,6 +22,18 @@ export const botRuntimeRoutes = new Elysia({ prefix: "/bot-runtime" })
   .get("/conversations/:conversationId", async ({ params, user, set }) => {
     try {
       return await listConversationBotRuntime(params.conversationId, user.id);
+    } catch (e: any) {
+      set.status = e instanceof ServiceError ? e.status : 500;
+      return { error: e.message ?? "Unknown error" };
+    }
+  })
+  .post("/invocations/:invocationId/stop", async ({ params, user, set }) => {
+    if (user.type !== "human") {
+      set.status = 403;
+      return { error: "Only people can stop Hermes RPC invocations" };
+    }
+    try {
+      return await stopHermesRpcInvocation(params.invocationId, user.id);
     } catch (e: any) {
       set.status = e instanceof ServiceError ? e.status : 500;
       return { error: e.message ?? "Unknown error" };

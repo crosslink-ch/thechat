@@ -149,6 +149,25 @@ describe("useHermesIndicatorsStore", () => {
       expect(store().unreadScopes).toEqual({});
     });
 
+    it("marks completion unread for a durable Hermes RPC invocation", () => {
+      store().trackInvocation(makeInvocation({
+        botKind: "hermes-rpc",
+        adapterKind: "hermes-rpc",
+        status: "running",
+      }));
+      store().trackInvocation(makeInvocation({
+        botKind: "hermes-rpc",
+        adapterKind: "hermes-rpc",
+        status: "completed",
+      }));
+
+      expect(store().unreadScopes[hermesScopeKey("conv-1", null)]).toEqual({
+        conversationId: "conv-1",
+        threadId: null,
+        botUserId: "u-bot",
+      });
+    });
+
     it("ignores non-hermes invocations", () => {
       store().trackInvocation(makeInvocation({ botKind: "webhook", status: "running" }));
       store().trackInvocation(makeInvocation({ botKind: "webhook", status: "failed" }));
@@ -204,6 +223,18 @@ describe("useHermesIndicatorsStore", () => {
   });
 
   describe("pending approvals", () => {
+    it("does not create unsupported approval controls for Hermes RPC", () => {
+      const invocation = makeInvocation({
+        botKind: "hermes-rpc",
+        adapterKind: "hermes-rpc",
+        status: "running",
+      });
+      store().trackInvocation(invocation);
+      store().trackProgressEvent(makeEvent(), invocation);
+
+      expect(store().pendingApprovals).toEqual([]);
+    });
+
     it("tracks approval requests and dedupes by event id", () => {
       store().trackProgressEvent(makeEvent({ id: "evt-1" }));
       store().trackProgressEvent(makeEvent({ id: "evt-1" }));

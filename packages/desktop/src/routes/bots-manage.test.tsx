@@ -12,12 +12,15 @@ const mocks = vi.hoisted(() => ({
   rotateKeyPost: vi.fn(),
   revokeKeyDelete: vi.fn(),
   rotateSecretPost: vi.fn(),
+  rpcConfigGet: vi.fn(),
+  rpcConfigPatch: vi.fn(),
+  rpcTestPost: vi.fn(),
   openHermesBotModal: vi.fn(),
 }));
 
 vi.mock("../lib/api", () => {
   const bots = Object.assign(
-    () => ({
+    ({ botId }: { botId: string }) => ({
       get: mocks.botGet,
       patch: mocks.botPatch,
       delete: mocks.botDelete,
@@ -28,6 +31,11 @@ vi.mock("../lib/api", () => {
       "regenerate-key": { post: mocks.rotateKeyPost },
       "api-key": { delete: mocks.revokeKeyDelete },
       "regenerate-secret": { post: mocks.rotateSecretPost },
+      "hermes-rpc": {
+        get: (options: unknown) => mocks.rpcConfigGet(botId, options),
+        patch: mocks.rpcConfigPatch,
+        test: { post: mocks.rpcTestPost },
+      },
     }),
     { list: { get: mocks.listGet } },
   );
@@ -61,6 +69,21 @@ const secondOwnedBot: OwnedBot = {
   userId: "bot-user-2",
   name: "Operations Bot",
   webhookSecret: "whsec_second",
+};
+
+const rpcOwnedBot: OwnedBot = {
+  ...ownedBot,
+  id: "bot-rpc",
+  userId: "bot-user-rpc",
+  name: "Upstream Hermes",
+  kind: "hermes-rpc",
+};
+
+const secondRpcOwnedBot: OwnedBot = {
+  ...rpcOwnedBot,
+  id: "bot-rpc-2",
+  userId: "bot-user-rpc-2",
+  name: "Second Upstream Hermes",
 };
 
 function withWorkspaces(bot: OwnedBot, workspaceIds: string[]): OwnedBot {
@@ -119,6 +142,30 @@ describe("BotsManageRoute", () => {
       data: { webhookSecret: "whsec_rotated" },
       error: null,
     });
+    mocks.rpcConfigGet.mockResolvedValue({
+      data: {
+        botId: rpcOwnedBot.id,
+        endpoint: "ws://127.0.0.1:8642/api/ws",
+        gatewayTokenConfigured: true,
+        createdAt: "2026-08-01T00:00:00.000Z",
+        updatedAt: "2026-08-01T00:00:00.000Z",
+      },
+      error: null,
+    });
+    mocks.rpcConfigPatch.mockResolvedValue({
+      data: {
+        botId: rpcOwnedBot.id,
+        endpoint: "wss://hermes.example/api/ws",
+        gatewayTokenConfigured: true,
+        createdAt: "2026-08-01T00:00:00.000Z",
+        updatedAt: "2026-08-02T00:00:00.000Z",
+      },
+      error: null,
+    });
+    mocks.rpcTestPost.mockResolvedValue({
+      data: { latencyMs: 24, sessionCountSampled: 1, gatewayReady: true },
+      error: null,
+    });
   });
 
   it("loads owned bots without requiring an active workspace", async () => {
@@ -134,6 +181,94 @@ describe("BotsManageRoute", () => {
     );
     expect(screen.getByTestId("bot-workspace-ws-3").querySelector("button")).toBeDisabled();
     expect(mocks.listGet).toHaveBeenCalledOnce();
+  });
+
+  it("manages Hermes RPC connection without webhook or bot API-key controls", async () => {
+    mocks.listGet.mockResolvedValue({ data: [rpcOwnedBot], error: null });
+    mocks.botGet.mockResolvedValue({ data: rpcOwnedBot, error: null });
+    render(<BotsManageRoute />);
+
+    expect(await screen.findByTestId("hermes-rpc-connection")).toBeInTheDocument();
+    expect(screen.getAllByText("Hermes RPC", { selector: "span" }).length).toBeGreaterThan(0);
+    expect(screen.getByTitle("Hermes RPC connection")).toBeInTheDocument();
+    expect(screen.queryByTitle(/API key/)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Webhook URL")).not.toBeInTheDocument();
+    expect(screen.queryByText("Bot API key")).not.toBeInTheDocument();
+    expect(screen.queryByText("Webhook secret")).not.toBeInTheDocument();
+    expect(await screen.findByTestId("hermes-rpc-token-status")).toHaveTextContent(
+      "A gateway token is configured",
+    );
+    expect(screen.queryByDisplayValue(/token/i)).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Hermes RPC endpoint"), {
+      target: { value: "https://hermes.example" },
+    });
+    fireEvent.change(screen.getByLabelText("Replace Hermes RPC gateway token"), {
+      target: { value: "replacement-write-only" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save connection" }));
+    await waitFor(() => expect(mocks.rpcConfigPatch).toHaveBeenCalledWith(
+      {
+        endpoint: "https://hermes.example",
+        gatewayToken: "replacement-write-only",
+      },
+      expect.objectContaining({ headers: { authorization: "Bearer user-token" } }),
+    ));
+
+    fireEvent.click(screen.getByRole("button", { name: "Test Hermes RPC connection" }));
+    expect(await screen.findByText(/Connected in 24 ms/)).toBeInTheDocument();
+    expect(mocks.rpcTestPost).toHaveBeenCalledOnce();
+  });
+
+  it("remounts the RPC editor so a delayed prior-bot load cannot overwrite it", async () => {
+    mocks.listGet.mockResolvedValue({
+      data: [rpcOwnedBot, secondRpcOwnedBot],
+      error: null,
+    });
+    let resolveFirst!: (value: unknown) => void;
+    const firstLoad = new Promise((resolve) => {
+      resolveFirst = resolve;
+    });
+    mocks.rpcConfigGet.mockImplementation((botId: string) => {
+      if (botId === rpcOwnedBot.id) return firstLoad;
+      return Promise.resolve({
+        data: {
+          botId: secondRpcOwnedBot.id,
+          endpoint: "ws://second.example/api/ws",
+          gatewayTokenConfigured: false,
+          createdAt: "2026-08-01T00:00:00.000Z",
+          updatedAt: "2026-08-01T00:00:00.000Z",
+        },
+        error: null,
+      });
+    });
+
+    render(<BotsManageRoute />);
+    await waitFor(() => expect(mocks.rpcConfigGet).toHaveBeenCalledWith(
+      rpcOwnedBot.id,
+      expect.anything(),
+    ));
+    fireEvent.click(await screen.findByTestId(`bot-list-item-${secondRpcOwnedBot.id}`));
+    expect(await screen.findByDisplayValue("ws://second.example/api/ws")).toBeInTheDocument();
+
+    await act(async () => {
+      resolveFirst({
+        data: {
+          botId: rpcOwnedBot.id,
+          endpoint: "ws://first-delayed.example/api/ws",
+          gatewayTokenConfigured: true,
+          createdAt: "2026-08-01T00:00:00.000Z",
+          updatedAt: "2026-08-01T00:00:00.000Z",
+        },
+        error: null,
+      });
+      await firstLoad;
+    });
+
+    expect(screen.getByLabelText("Hermes RPC endpoint")).toHaveValue(
+      "ws://second.example/api/ws",
+    );
+    expect(screen.queryByDisplayValue("ws://first-delayed.example/api/ws")).not.toBeInTheDocument();
   });
 
   it("updates bot details", async () => {

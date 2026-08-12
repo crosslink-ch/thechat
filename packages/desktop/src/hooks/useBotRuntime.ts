@@ -102,7 +102,7 @@ export function hasActiveBotRuntimeActivity(snapshot: BotRuntimeSnapshot | undef
     snapshot?.invocations.some(
       (invocation) =>
         invocation.status === "queued" ||
-        (invocation.botKind !== "hermes" && invocation.status === "running"),
+        ((invocation.botKind !== "hermes") && invocation.status === "running"),
     ) || (snapshot?.events.length ?? 0) > 0
   );
 }

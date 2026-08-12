@@ -317,7 +317,7 @@ export type WsClientEvent =
 
 // -- Bot Types --
 
-export type BotKind = "webhook" | "hermes";
+export type BotKind = "webhook" | "hermes" | "hermes-rpc";
 
 export interface BotWorkspaceMembership {
   id: string;
@@ -388,6 +388,31 @@ export interface HermesBotConfigPublic {
   defaultMode: HermesDefaultMode;
   createdAt: string;
   updatedAt: string;
+}
+
+/** Owner-visible connection settings for an upstream `hermes serve` backend. */
+export interface HermesRpcBotConfigPublic {
+  botId: string;
+  endpoint: string;
+  gatewayTokenConfigured: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Exact projection returned by upstream Hermes `session.list`, plus its local lane link. */
+export interface HermesRpcSessionPublic {
+  id: string;
+  title: string;
+  preview: string;
+  startedAt: number;
+  messageCount: number;
+  source: string;
+  threadId: string | null;
+  linked: boolean;
+}
+
+export interface HermesRpcSessionsResponse {
+  sessions: HermesRpcSessionPublic[];
 }
 
 export interface WebhookPayload {

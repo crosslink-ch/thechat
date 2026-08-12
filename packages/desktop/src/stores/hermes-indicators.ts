@@ -3,6 +3,7 @@ import type {
   BotInvocationProgressEventPublic,
   BotInvocationPublic,
   BotRuntimeSnapshot,
+  BotKind,
 } from "@thechat/shared";
 import {
   deriveApprovalStates,
@@ -43,6 +44,11 @@ interface InvocationMeta {
   conversationId: string;
   threadId: string | null;
   botUserId: string;
+  botKind: "hermes" | "hermes-rpc";
+}
+
+function hermesIndicatorBotKind(kind: BotKind): InvocationMeta["botKind"] | null {
+  return kind === "hermes" || kind === "hermes-rpc" ? kind : null;
 }
 
 interface HermesIndicatorsStore {
@@ -103,9 +109,12 @@ export const useHermesIndicatorsStore = create<HermesIndicatorsStore>()((set, ge
   ...initialState,
 
   trackInvocation: (invocation) => {
-    if (invocation.botKind !== "hermes") return;
+    const botKind = hermesIndicatorBotKind(invocation.botKind);
+    if (!botKind) return;
     set((state) => {
-      const isActive = invocation.status === "queued";
+      const isActive =
+        invocation.status === "queued" ||
+        (invocation.botKind === "hermes-rpc" && invocation.status === "running");
       if (isActive) {
         const existing = state.invocationMeta[invocation.id];
         if (
@@ -122,6 +131,7 @@ export const useHermesIndicatorsStore = create<HermesIndicatorsStore>()((set, ge
               conversationId: invocation.conversationId,
               threadId: invocation.threadId,
               botUserId: invocation.botUserId,
+              botKind,
             },
           },
         };
@@ -191,11 +201,12 @@ export const useHermesIndicatorsStore = create<HermesIndicatorsStore>()((set, ge
       set((state) => {
         const wasActive = !!state.invocationMeta[event.invocationId];
         const meta = state.invocationMeta[event.invocationId] ??
-          (invocation?.botKind === "hermes"
+          (invocation?.botKind === "hermes" || invocation?.botKind === "hermes-rpc"
             ? {
                 conversationId: invocation.conversationId,
                 threadId: invocation.threadId,
                 botUserId: invocation.botUserId,
+                botKind: invocation.botKind,
               }
             : null);
         const invocationMeta = { ...state.invocationMeta };
@@ -237,7 +248,10 @@ export const useHermesIndicatorsStore = create<HermesIndicatorsStore>()((set, ge
       return;
     }
 
-    if (invocation?.botKind === "hermes") {
+    const botKind = invocation
+      ? hermesIndicatorBotKind(invocation.botKind)
+      : null;
+    if (invocation && botKind) {
       set((state) => ({
         invocationMeta: {
           ...state.invocationMeta,
@@ -245,6 +259,7 @@ export const useHermesIndicatorsStore = create<HermesIndicatorsStore>()((set, ge
             conversationId: invocation.conversationId,
             threadId: invocation.threadId,
             botUserId: invocation.botUserId,
+            botKind,
           },
         },
       }));
@@ -254,6 +269,7 @@ export const useHermesIndicatorsStore = create<HermesIndicatorsStore>()((set, ge
       set((state) => {
         if (state.pendingApprovals.some((p) => p.eventId === event.id)) return state;
         const meta = state.invocationMeta[event.invocationId];
+        if ((invocation?.botKind ?? meta?.botKind) === "hermes-rpc") return state;
         return {
           pendingApprovals: [
             ...state.pendingApprovals,
@@ -321,7 +337,7 @@ export const useHermesIndicatorsStore = create<HermesIndicatorsStore>()((set, ge
       const activeInvocations = snapshot.invocations.filter(
         (invocation) => {
           if (
-            invocation.botKind !== "hermes" ||
+            (invocation.botKind !== "hermes" && invocation.botKind !== "hermes-rpc") ||
             invocation.status === "completed" ||
             invocation.status === "failed" ||
             invocation.status === "cancelled"
@@ -330,6 +346,7 @@ export const useHermesIndicatorsStore = create<HermesIndicatorsStore>()((set, ge
           }
           return (
             invocation.status === "queued" ||
+            (invocation.botKind === "hermes-rpc" && invocation.status === "running") ||
             snapshot.events.some((event) => event.invocationId === invocation.id)
           );
         },
@@ -340,11 +357,13 @@ export const useHermesIndicatorsStore = create<HermesIndicatorsStore>()((set, ge
           conversationId: invocation.conversationId,
           threadId: invocation.threadId,
           botUserId: invocation.botUserId,
+          botKind: hermesIndicatorBotKind(invocation.botKind)!,
         };
       }
 
       const pending: HermesPendingApproval[] = [];
       for (const invocation of activeInvocations) {
+        if (invocation.botKind !== "hermes") continue;
         const events = snapshot.events.filter(
           (event) => event.invocationId === invocation.id,
         );

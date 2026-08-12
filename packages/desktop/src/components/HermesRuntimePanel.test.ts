@@ -63,6 +63,19 @@ describe("Hermes runtime progress state", () => {
     });
   });
 
+  it("keeps a durable running Hermes RPC invocation after transient activity expires", () => {
+    const runningRpc = invocation({
+      botKind: "hermes-rpc",
+      adapterKind: "hermes-rpc",
+      status: "running",
+    });
+
+    expect(mergeRuntimeUpdate(null, runningRpc)).toEqual({
+      invocations: [runningRpc],
+      events: [],
+    });
+  });
+
   it("removes invocation metadata and approvals on terminal progress", () => {
     const claimed = invocation({ status: "claimed" });
     const active = mergeRuntimeProgressEvent(null, progressEvent(1), claimed);

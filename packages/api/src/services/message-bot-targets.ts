@@ -66,7 +66,7 @@ export async function resolveMessageBotTargetIds(
       const isDirectHermesDm =
         input.senderType !== "bot" &&
         conversation.type === "direct" &&
-        bot.kind === "hermes";
+        (bot.kind === "hermes" || bot.kind === "hermes-rpc");
       return isMentioned || isDirectHermesDm;
     })
     .map((bot) => bot.botId)

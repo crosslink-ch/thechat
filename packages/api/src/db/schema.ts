@@ -44,7 +44,7 @@ export const botWorkspaceInviteStatusEnum = pgEnum(
   "bot_workspace_invite_status",
   ["pending", "accepted", "declined", "cancelled"],
 );
-export const botKindEnum = pgEnum("bot_kind", ["webhook", "hermes"]);
+export const botKindEnum = pgEnum("bot_kind", ["webhook", "hermes", "hermes-rpc"]);
 export const attachmentStatusEnum = pgEnum("attachment_status", [
   "pending_upload",
   "processing",
@@ -357,6 +357,62 @@ export const hermesBotConfigs = pgTable("hermes_bot_configs", {
     .notNull()
     .$onUpdate(() => new Date()),
 });
+
+export const hermesRpcBotConfigs = pgTable("hermes_rpc_bot_configs", {
+  botId: uuid("bot_id")
+    .primaryKey()
+    .references(() => bots.id, { onDelete: "cascade" }),
+  endpoint: text("endpoint").notNull(),
+  gatewayTokenEncrypted: text("gateway_token_encrypted"),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .defaultNow()
+    .notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .defaultNow()
+    .notNull()
+    .$onUpdate(() => new Date()),
+});
+
+/**
+ * TheChat stores only lane-to-session correlation. Hermes remains authoritative
+ * for the transcript and session metadata. `upstreamSessionId` is the durable
+ * stored_session_id; ephemeral upstream runtime IDs never belong here.
+ */
+export const hermesRpcSessionLinks = pgTable(
+  "hermes_rpc_session_links",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    botId: uuid("bot_id")
+      .notNull()
+      .references(() => bots.id, { onDelete: "cascade" }),
+    conversationId: uuid("conversation_id")
+      .notNull()
+      .references(() => conversations.id, { onDelete: "cascade" }),
+    threadId: uuid("thread_id").references(() => conversationThreads.id, {
+      onDelete: "cascade",
+    }),
+    upstreamSessionId: text("upstream_session_id").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull()
+      .$onUpdate(() => new Date()),
+  },
+  (t) => [
+    uniqueIndex("hermes_rpc_session_links_upstream_idx").on(
+      t.botId,
+      t.upstreamSessionId,
+    ),
+    uniqueIndex("hermes_rpc_session_links_thread_idx")
+      .on(t.botId, t.conversationId, t.threadId)
+      .where(sql`${t.threadId} is not null`),
+    uniqueIndex("hermes_rpc_session_links_general_idx")
+      .on(t.botId, t.conversationId)
+      .where(sql`${t.threadId} is null`),
+  ],
+);
 
 export const botInvocations = pgTable(
   "bot_invocations",
