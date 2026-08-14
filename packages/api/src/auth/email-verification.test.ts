@@ -270,6 +270,7 @@ describe("Email Verification: Login blocked until verified", () => {
 
     expect(res.status).toBe(403);
     expect(res.body.error).toContain("verify");
+    expect(res.body.verificationRequired).toBe(true);
   });
 });
 

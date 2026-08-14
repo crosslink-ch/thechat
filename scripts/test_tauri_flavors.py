@@ -55,6 +55,9 @@ class TauriFlavorTests(unittest.TestCase):
         cls.e2e_config = (
             ROOT / "packages" / "desktop" / "e2e" / "wdio.conf.js"
         ).read_text(encoding="utf-8")
+        cls.release_workflow = (
+            ROOT / ".github" / "workflows" / "release.yml"
+        ).read_text(encoding="utf-8")
 
     @staticmethod
     def wrapper_args(*args: str) -> list[str]:
@@ -90,6 +93,15 @@ class TauriFlavorTests(unittest.TestCase):
         self.assertEqual(self.release["productName"], "thechat")
         self.assertEqual(self.release["app"]["windows"][0]["title"], "TheChat")
         self.assertTrue(self.release["bundle"]["createUpdaterArtifacts"])
+
+    def test_release_action_pins_the_production_backend(self) -> None:
+        release_action = self.release_workflow.split(
+            "- uses: tauri-apps/tauri-action@v0", 1
+        )[1]
+        self.assertIn(
+            "THECHAT_BACKEND_URL: https://thechat.testkopie.dev",
+            release_action,
+        )
 
     def test_canonical_development_commands_apply_the_overlay(self) -> None:
         expected = "--config src-tauri/tauri.dev.conf.json"

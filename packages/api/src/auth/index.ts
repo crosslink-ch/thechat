@@ -424,7 +424,10 @@ export const authRoutes = new Elysia({ prefix: "/auth" })
       }
       if (result.status === 403) {
         set.status = 403;
-        return { error: "Please verify your email before logging in" };
+        return {
+          error: "Please verify your email before logging in",
+          verificationRequired: true as const,
+        };
       }
       set.status = 401;
       return { error: "Invalid email or password" };

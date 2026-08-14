@@ -1,7 +1,10 @@
 import { useState, useEffect, useRef, useCallback, type FormEvent, type ReactNode } from "react";
 import { create } from "zustand";
 import { z } from "zod";
-import { useAuthStore } from "../stores/auth";
+import {
+  EmailVerificationRequiredError,
+  useAuthStore,
+} from "../stores/auth";
 import { api } from "../lib/api";
 import { edenErrorMessage } from "../lib/eden";
 import { requestInputBarFocus } from "../stores/input-focus";
@@ -192,8 +195,9 @@ function VerificationPendingPanel({
           Check your email
         </h2>
         <p className="mb-5 text-[0.929rem] leading-relaxed text-text-muted">
-          We sent a 6-digit code to{" "}
-          <span className="font-medium text-text">{email}</span>
+          Enter the 6-digit verification code for{" "}
+          <span className="font-medium text-text">{email}</span>, or send a new
+          code.
         </p>
 
         <form onSubmit={handleSubmit} className="w-full" noValidate>
@@ -307,7 +311,11 @@ function AuthPanel({
         }
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Something went wrong");
+      if (err instanceof EmailVerificationRequiredError) {
+        setVerificationEmail(err.email);
+      } else {
+        setError(err instanceof Error ? err.message : "Something went wrong");
+      }
     } finally {
       setSubmitting(false);
     }
