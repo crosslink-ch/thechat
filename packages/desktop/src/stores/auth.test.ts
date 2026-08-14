@@ -2,7 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { api } from "../lib/api";
 import { queryClient } from "../lib/query-client";
-import { useAuthStore } from "./auth";
+import { EmailVerificationRequiredError, useAuthStore } from "./auth";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 vi.mock("../lib/api", () => ({
@@ -110,6 +110,26 @@ describe("auth store account operations", () => {
     expect(useAuthStore.getState()).toMatchObject({
       token: "opaque-session-token",
       user,
+    });
+  });
+
+  it("surfaces the typed recovery state for an accepted unverified login", async () => {
+    vi.mocked(api.auth.login.post).mockResolvedValue({
+      data: null,
+      error: treatyError(403, {
+        error: "Please verify your email before logging in",
+        verificationRequired: true,
+      }),
+    } as any);
+
+    const attempt = useAuthStore
+      .getState()
+      .login("Jane@Example.com", "password123");
+    await expect(attempt).rejects.toBeInstanceOf(
+      EmailVerificationRequiredError,
+    );
+    await expect(attempt).rejects.toMatchObject({
+      email: "jane@example.com",
     });
   });
 
