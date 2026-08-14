@@ -22,6 +22,15 @@ if (process.env.THECHAT_E2E_DISABLE_DOTENV !== "1" && fs.existsSync(envFile)) {
   }
 }
 
+if (process.env.THECHAT_E2E_LOOPBACK_ONLY === "1") {
+  if (process.env.THECHAT_E2E_DISABLE_DOTENV !== "1") {
+    throw new Error("Loopback-only E2E runs must disable dotenv loading");
+  }
+  if (process.env.SKIP_BUILD === "1") {
+    throw new Error("Loopback-only E2E runs must build a fresh Tauri binary");
+  }
+}
+
 const TAURI_DRIVER_PORT = 4444;
 
 let tauriDriver;

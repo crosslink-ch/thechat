@@ -1,3 +1,11 @@
+import { afterAll, beforeEach, describe, expect, test } from "bun:test";
+import crypto from "crypto";
+import { desc, eq, like } from "drizzle-orm";
+import { Elysia } from "elysia";
+import { assertDisposablePasswordResetTestEnvironment } from "../test-safety";
+
+assertDisposablePasswordResetTestEnvironment();
+
 const previousEnv = {
   nodeEnv: process.env.NODE_ENV,
   secret: process.env.BETTER_AUTH_SECRET,
@@ -12,16 +20,16 @@ process.env.BETTER_AUTH_RATE_LIMIT_ENABLED = "true";
 process.env.AUTH_TRUST_PROXY = "true";
 process.env.REQUIRE_EMAIL_VERIFICATION = "true";
 
-import { afterAll, beforeEach, describe, expect, test } from "bun:test";
-import crypto from "crypto";
-import { eq } from "drizzle-orm";
-import { Elysia } from "elysia";
-import { db } from "../db";
-import { rateLimit, users } from "../db/schema";
-
+const [{ db }, schema] = await Promise.all([
+  import("../db"),
+  import("../db/schema"),
+]);
+const { rateLimit, users, verification } = schema;
 const { authRoutes } = await import("./index");
+const { __setPasswordResetCodeSenderForTests } = await import("./better-auth");
 const app = new Elysia().use(authRoutes);
 const createdEmails: string[] = [];
+let passwordResetDeliveryCount = 0;
 
 async function request(path: string, body: unknown, ip: string) {
   const response = await app.handle(
@@ -47,7 +55,7 @@ async function request(path: string, body: unknown, ip: string) {
 }
 
 async function createLoginUser() {
-  const email = `rate-${crypto.randomUUID()}@test.com`;
+  const email = `rate-${crypto.randomUUID()}@example.invalid`;
   createdEmails.push(email);
   const registered = await request(
     "/auth/register",
@@ -61,12 +69,20 @@ async function createLoginUser() {
 
 beforeEach(async () => {
   process.env.AUTH_TRUST_PROXY = "true";
+  passwordResetDeliveryCount = 0;
+  __setPasswordResetCodeSenderForTests(async () => {
+    passwordResetDeliveryCount += 1;
+  });
   await db.delete(rateLimit);
 });
 
 afterAll(async () => {
+  __setPasswordResetCodeSenderForTests(null);
   await db.delete(rateLimit);
   for (const email of createdEmails) {
+    await db
+      .delete(verification)
+      .where(like(verification.identifier, `%${email}`));
     await db.delete(users).where(eq(users.email, email));
   }
   if (previousEnv.nodeEnv === undefined) delete process.env.NODE_ENV;
@@ -90,7 +106,7 @@ describe("Better Auth shared rate limiting", () => {
   test("preserves the upstream 429 when verified registration delivery was not attempted", async () => {
     let last: Awaited<ReturnType<typeof request>> | null = null;
     for (let attempt = 0; attempt < 4; attempt++) {
-      const email = `rate-register-${crypto.randomUUID()}@test.com`;
+      const email = `rate-register-${crypto.randomUUID()}@example.invalid`;
       createdEmails.push(email);
       last = await request(
         "/auth/register",
@@ -125,7 +141,7 @@ describe("Better Auth shared rate limiting", () => {
 
   test("rate limits unknown-email login attempts through the same shared path", async () => {
     const body = {
-      email: `unknown-login-${crypto.randomUUID()}@test.com`,
+      email: `unknown-login-${crypto.randomUUID()}@example.invalid`,
       password: "wrong-password",
     };
 
@@ -147,7 +163,7 @@ describe("Better Auth shared rate limiting", () => {
       .set({ emailVerified: true })
       .where(eq(users.email, verifiedEmail));
     const unverifiedEmail = await createLoginUser();
-    const unknownEmail = `unknown-${crypto.randomUUID()}@test.com`;
+    const unknownEmail = `unknown-${crypto.randomUUID()}@example.invalid`;
 
     const cases = [
       { email: verifiedEmail, ip: "198.51.100.30" },
@@ -207,6 +223,108 @@ describe("Better Auth shared rate limiting", () => {
     expect(unknownLimited?.status).toBe(429);
     expect(Number(knownLimited?.retryAfter)).toBeGreaterThan(0);
     expect(Number(unknownLimited?.retryAfter)).toBeGreaterThan(0);
+  });
+
+  test("applies the same password reset request limiter before OTP creation or delivery", async () => {
+    const knownEmail = await createLoginUser();
+    const unknownEmail = `unknown-reset-${crypto.randomUUID()}@example.invalid`;
+    const cases = [
+      { email: knownEmail, ip: "198.51.100.40" },
+      { email: unknownEmail, ip: "198.51.100.41" },
+    ];
+
+    for (let attempt = 0; attempt < 3; attempt++) {
+      for (const entry of cases) {
+        expect(
+          (
+            await request(
+              "/auth/request-password-reset",
+              { email: entry.email },
+              entry.ip,
+            )
+          ).status,
+        ).toBe(200);
+      }
+    }
+
+    expect(passwordResetDeliveryCount).toBe(3);
+    const identifier = `forget-password-otp-${knownEmail}`;
+    const before = await db
+      .select({
+        id: verification.id,
+        value: verification.value,
+        expiresAt: verification.expiresAt,
+      })
+      .from(verification)
+      .where(eq(verification.identifier, identifier))
+      .orderBy(desc(verification.createdAt), desc(verification.id));
+    expect(before.length).toBeGreaterThan(0);
+
+    for (const entry of cases) {
+      const limited = await request(
+        "/auth/request-password-reset",
+        { email: entry.email },
+        entry.ip,
+      );
+      expect(limited.status).toBe(429);
+      expect(Number(limited.retryAfter)).toBeGreaterThan(0);
+    }
+
+    const after = await db
+      .select({
+        id: verification.id,
+        value: verification.value,
+        expiresAt: verification.expiresAt,
+      })
+      .from(verification)
+      .where(eq(verification.identifier, identifier))
+      .orderBy(desc(verification.createdAt), desc(verification.id));
+    expect(after).toEqual(before);
+    expect(passwordResetDeliveryCount).toBe(3);
+  });
+
+  test("applies the same password reset attempt limiter before account lookup", async () => {
+    const knownEmail = await createLoginUser();
+    const unknownEmail = `unknown-confirm-${crypto.randomUUID()}@example.invalid`;
+    expect(
+      (
+        await request(
+          "/auth/request-password-reset",
+          { email: knownEmail },
+          "198.51.100.50",
+        )
+      ).status,
+    ).toBe(200);
+
+    const cases = [
+      { email: knownEmail, ip: "198.51.100.51" },
+      { email: unknownEmail, ip: "198.51.100.52" },
+    ];
+    const body = { code: "000000", password: "new-password-456" };
+
+    for (let attempt = 0; attempt < 3; attempt++) {
+      for (const entry of cases) {
+        expect(
+          (
+            await request(
+              "/auth/reset-password",
+              { ...body, email: entry.email },
+              entry.ip,
+            )
+          ).status,
+        ).toBe(400);
+      }
+    }
+
+    for (const entry of cases) {
+      const limited = await request(
+        "/auth/reset-password",
+        { ...body, email: entry.email },
+        entry.ip,
+      );
+      expect(limited.status).toBe(429);
+      expect(Number(limited.retryAfter)).toBeGreaterThan(0);
+    }
   });
 
   test("ignores proxy headers when trusted-proxy mode is disabled", async () => {

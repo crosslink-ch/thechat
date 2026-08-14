@@ -27,7 +27,9 @@
     "test:e2e:headless": "pnpm --filter @thechat/desktop test:e2e:headless",
     "test:e2e:hermes": "python3 scripts/e2e/hermes-bot-flow.py",
     "test:e2e:hermes:approval-ui": "python3 scripts/e2e/hermes-approval-ui-flow.py",
-    "test:e2e:attachments-ui": "ATTACHMENT_E2E_REQUIRE_EVIDENCE=1 python3 scripts/e2e/attachments-ui-flow.py"
+    "test:e2e:attachments-ui": "ATTACHMENT_E2E_REQUIRE_EVIDENCE=1 python3 scripts/e2e/attachments-ui-flow.py",
+    "test:api:password-reset": "python3 scripts/e2e/password-reset-ui-flow.py --api-only",
+    "test:e2e:password-reset-ui": "python3 scripts/e2e/password-reset-ui-flow.py"
   },
   "packageManager": "pnpm@10.28.2",
   "devDependencies": {

@@ -10,6 +10,7 @@ import { edenErrorMessage } from "../lib/eden";
 import { requestInputBarFocus } from "../stores/input-focus";
 
 type AuthMode = "login" | "register";
+type AuthView = AuthMode | "password-reset";
 
 interface AuthModalState {
   open: boolean;
@@ -69,16 +70,37 @@ function AuthModalContent({ initialMode }: { initialMode: AuthMode }) {
 }
 
 export function AuthOnboarding() {
+  const [view, setView] = useState<AuthView>("register");
+  const onboardingCopy =
+    view === "register"
+      ? {
+          heading: "Create your TheChat account",
+          description:
+            "Register to set up your workspace and start using the desktop app.",
+        }
+      : view === "login"
+        ? {
+            heading: "Welcome back",
+            description: "Log in to continue to your workspaces and chats.",
+          }
+        : {
+            heading: "Reset your TheChat password",
+            description:
+              "Request a reset code, then choose a new password for your account.",
+          };
+
   return (
     <div className="flex min-h-0 flex-1 items-center justify-center bg-base px-4 py-8">
       <div className="w-full max-w-[420px]">
         <div className="mb-5 text-center">
-          <h1 className="text-[1.5rem] font-semibold tracking-tight text-text">Create your TheChat account</h1>
+          <h1 className="text-[1.5rem] font-semibold tracking-tight text-text">
+            {onboardingCopy.heading}
+          </h1>
           <p className="mt-2 text-[0.929rem] leading-relaxed text-text-muted">
-            Register to set up your workspace and start using the desktop app.
+            {onboardingCopy.description}
           </p>
         </div>
-        <AuthPanel initialMode="register" />
+        <AuthPanel initialMode="register" onViewChange={setView} />
       </div>
     </div>
   );
@@ -239,21 +261,308 @@ function VerificationPendingPanel({
   );
 }
 
+const passwordResetEmailSchema = z.object({
+  email: z.string().trim().email("Please enter a valid email address"),
+});
+
+const passwordResetCodeSchema = z
+  .object({
+    code: z.string().regex(/^\d{6}$/, "Reset code must be 6 digits"),
+    password: z
+      .string()
+      .min(8, "Password must be at least 8 characters")
+      .max(128, "Password must be 128 characters or fewer"),
+    confirmPassword: z.string(),
+  })
+  .refine((values) => values.password === values.confirmPassword, {
+    message: "Passwords do not match",
+    path: ["confirmPassword"],
+  });
+
+function PasswordResetPanel({
+  initialEmail,
+  onBackToLogin,
+}: {
+  initialEmail: string;
+  onBackToLogin: (email: string, notice?: string) => void;
+}) {
+  const requestPasswordReset = useAuthStore(
+    (state) => state.requestPasswordReset,
+  );
+  const resetPassword = useAuthStore((state) => state.resetPassword);
+  const [stage, setStage] = useState<"request" | "code">("request");
+  const [email, setEmail] = useState(initialEmail);
+  const [code, setCode] = useState("");
+  const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const codeInputRef = useRef<HTMLInputElement>(null);
+
+  const normalizedEmail = email.trim().toLowerCase();
+
+  const requestCode = async () => {
+    const shouldRefocusCode = stage === "code";
+    const parsed = passwordResetEmailSchema.safeParse({ email });
+    if (!parsed.success) {
+      setError(parsed.error.issues[0]?.message ?? "Invalid email");
+      return;
+    }
+
+    setError(null);
+    setMessage(null);
+    setSubmitting(true);
+    try {
+      const responseMessage = await requestPasswordReset(
+        parsed.data.email.toLowerCase(),
+      );
+      setEmail(parsed.data.email.toLowerCase());
+      setCode("");
+      setMessage(responseMessage);
+      setStage("code");
+      if (shouldRefocusCode) codeInputRef.current?.focus();
+    } catch (requestError) {
+      setError(
+        requestError instanceof Error
+          ? requestError.message
+          : "Could not request a password reset",
+      );
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleRequest = async (event: FormEvent) => {
+    event.preventDefault();
+    await requestCode();
+  };
+
+  const handleReset = async (event: FormEvent) => {
+    event.preventDefault();
+    const parsed = passwordResetCodeSchema.safeParse({
+      code,
+      password,
+      confirmPassword,
+    });
+    if (!parsed.success) {
+      setError(parsed.error.issues[0]?.message ?? "Invalid reset details");
+      return;
+    }
+
+    setError(null);
+    setSubmitting(true);
+    try {
+      const responseMessage = await resetPassword(
+        normalizedEmail,
+        parsed.data.code,
+        parsed.data.password,
+      );
+      onBackToLogin(normalizedEmail, responseMessage);
+    } catch (resetError) {
+      setError(
+        resetError instanceof Error
+          ? resetError.message
+          : "Could not reset password",
+      );
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div>
+      <h2 className="m-0 mb-1 text-[1.15rem] font-semibold text-text">
+        {stage === "request" ? "Reset password" : "Enter reset code"}
+      </h2>
+      <p className="m-0 mb-5 text-[0.84rem] leading-relaxed text-text-muted">
+        {stage === "request"
+          ? "Enter your account email and we'll send a 6-digit reset code."
+          : "Enter the code from your email, then choose a new password."}
+      </p>
+
+      {stage === "request" ? (
+        <form noValidate onSubmit={handleRequest}>
+          <label
+            className="mb-1.5 block text-[0.78rem] font-medium text-text-secondary"
+            htmlFor="reset-email"
+          >
+            Email
+          </label>
+          <input
+            autoComplete="email"
+            autoFocus
+            className="mb-5 w-full rounded-lg border border-border bg-base px-3 py-2.5 font-[inherit] text-[0.875rem] text-text outline-none transition-colors duration-150 placeholder:text-text-faint focus:border-accent"
+            id="reset-email"
+            onChange={(event) => setEmail(event.target.value)}
+            placeholder="you@example.com"
+            type="email"
+            value={email}
+          />
+
+          {error && (
+            <div
+              className="mb-4 rounded-md border border-error-msg-border bg-error-msg-bg px-3 py-2 text-[0.8rem] text-error-bright"
+              role="alert"
+            >
+              {error}
+            </div>
+          )}
+
+          <button
+            className="w-full cursor-pointer rounded-lg border-none bg-accent px-3 py-2.5 font-[inherit] text-[0.875rem] font-semibold text-white transition-opacity disabled:cursor-not-allowed disabled:opacity-50"
+            disabled={submitting}
+            type="submit"
+          >
+            {submitting ? "Sending..." : "Send reset code"}
+          </button>
+        </form>
+      ) : (
+        <form noValidate onSubmit={handleReset}>
+          {message && (
+            <div
+              aria-live="polite"
+              className="mb-4 rounded-md border border-accent/30 bg-accent/10 px-3 py-2 text-[0.8rem] text-text-secondary"
+              role="status"
+            >
+              {message}
+            </div>
+          )}
+
+          <label
+            className="mb-1.5 block text-[0.78rem] font-medium text-text-secondary"
+            htmlFor="reset-code"
+          >
+            Reset code
+          </label>
+          <input
+            autoComplete="one-time-code"
+            autoFocus
+            className="mb-3 w-full rounded-lg border border-border bg-base px-3 py-2.5 text-center font-mono text-lg tracking-[0.35em] text-text outline-none transition-colors duration-150 placeholder:text-text-faint focus:border-accent"
+            id="reset-code"
+            inputMode="numeric"
+            maxLength={6}
+            onChange={(event) =>
+              setCode(event.target.value.replace(/\D/g, "").slice(0, 6))
+            }
+            placeholder="000000"
+            ref={codeInputRef}
+            value={code}
+          />
+
+          <label
+            className="mb-1.5 block text-[0.78rem] font-medium text-text-secondary"
+            htmlFor="reset-password"
+          >
+            New password
+          </label>
+          <input
+            autoComplete="new-password"
+            className="mb-3 w-full rounded-lg border border-border bg-base px-3 py-2.5 font-[inherit] text-[0.875rem] text-text outline-none transition-colors duration-150 placeholder:text-text-faint focus:border-accent"
+            id="reset-password"
+            maxLength={128}
+            minLength={8}
+            onChange={(event) => setPassword(event.target.value)}
+            placeholder="At least 8 characters"
+            type="password"
+            value={password}
+          />
+
+          <label
+            className="mb-1.5 block text-[0.78rem] font-medium text-text-secondary"
+            htmlFor="reset-password-confirmation"
+          >
+            Confirm new password
+          </label>
+          <input
+            autoComplete="new-password"
+            className="mb-4 w-full rounded-lg border border-border bg-base px-3 py-2.5 font-[inherit] text-[0.875rem] text-text outline-none transition-colors duration-150 placeholder:text-text-faint focus:border-accent"
+            id="reset-password-confirmation"
+            maxLength={128}
+            minLength={8}
+            onChange={(event) => setConfirmPassword(event.target.value)}
+            placeholder="Repeat your new password"
+            type="password"
+            value={confirmPassword}
+          />
+
+          {error && (
+            <div
+              className="mb-4 rounded-md border border-error-msg-border bg-error-msg-bg px-3 py-2 text-[0.8rem] text-error-bright"
+              role="alert"
+            >
+              {error}
+            </div>
+          )}
+
+          <button
+            className="w-full cursor-pointer rounded-lg border-none bg-accent px-3 py-2.5 font-[inherit] text-[0.875rem] font-semibold text-white transition-opacity disabled:cursor-not-allowed disabled:opacity-50"
+            disabled={submitting}
+            type="submit"
+          >
+            {submitting ? "Resetting..." : "Reset password"}
+          </button>
+
+          <div className="mt-3 flex items-center justify-between gap-3">
+            <button
+              className="cursor-pointer border-none bg-transparent p-0 text-[0.78rem] text-accent hover:underline disabled:cursor-not-allowed disabled:opacity-50"
+              disabled={submitting}
+              onClick={() => {
+                setStage("request");
+                setCode("");
+                setPassword("");
+                setConfirmPassword("");
+                setError(null);
+                setMessage(null);
+              }}
+              type="button"
+            >
+              Use a different email
+            </button>
+            <button
+              className="cursor-pointer border-none bg-transparent p-0 text-[0.78rem] text-accent hover:underline disabled:cursor-not-allowed disabled:opacity-50"
+              disabled={submitting}
+              onClick={requestCode}
+              type="button"
+            >
+              Send another code
+            </button>
+          </div>
+        </form>
+      )}
+
+      <div className="mt-5 border-t border-border pt-4 text-center text-[0.8rem] text-text-muted">
+        Remembered your password?{" "}
+        <button
+          className="cursor-pointer border-none bg-transparent p-0 font-[inherit] text-accent hover:underline"
+          onClick={() => onBackToLogin(normalizedEmail)}
+          type="button"
+        >
+          Back to login
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function AuthPanel({
   initialMode,
   onAuthenticated = () => {},
+  onViewChange,
 }: {
   initialMode: AuthMode;
   onAuthenticated?: () => void;
+  onViewChange?: (view: AuthView) => void;
 }) {
   const login = useAuthStore((s) => s.login);
   const register = useAuthStore((s) => s.register);
 
-  const [mode, setMode] = useState<AuthMode>(initialMode);
+  const [mode, setMode] = useState<AuthView>(initialMode);
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [verificationEmail, setVerificationEmail] = useState<string | null>(null);
   const firstInputRef = useRef<HTMLInputElement>(null);
@@ -264,8 +573,13 @@ function AuthPanel({
     setEmail("");
     setPassword("");
     setError("");
+    setNotice(null);
     setVerificationEmail(null);
   }, [initialMode]);
+
+  useEffect(() => {
+    onViewChange?.(mode);
+  }, [mode, onViewChange]);
 
   useEffect(() => {
     firstInputRef.current?.focus();
@@ -277,12 +591,14 @@ function AuthPanel({
     setEmail("");
     setPassword("");
     setError("");
+    setNotice(null);
     setVerificationEmail(null);
   };
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setError("");
+    setNotice(null);
 
     const parsed =
       mode === "register"
@@ -331,6 +647,23 @@ function AuthPanel({
     );
   }
 
+  if (mode === "password-reset") {
+    return (
+      <div className="w-full max-w-[400px] rounded-xl border border-border-strong bg-surface p-6 shadow-card animate-slide-up">
+        <PasswordResetPanel
+          initialEmail={email}
+          onBackToLogin={(resetEmail, resetNotice) => {
+            setMode("login");
+            setEmail(resetEmail);
+            setPassword("");
+            setError("");
+            setNotice(resetNotice ?? null);
+          }}
+        />
+      </div>
+    );
+  }
+
   return (
     <div className="w-full max-w-[400px] rounded-xl border border-border-strong bg-surface p-6 shadow-card animate-slide-up">
       <h2 className="mb-5 text-[1.214rem] font-semibold tracking-tight text-text">
@@ -369,9 +702,28 @@ function AuthPanel({
           />
         </div>
         <div className="mb-3.5">
-          <label className="mb-1.5 block text-[0.857rem] font-medium text-text-muted" htmlFor="auth-password">
-            Password
-          </label>
+          <div className="mb-1.5 flex items-center justify-between gap-3">
+            <label
+              className="block text-[0.857rem] font-medium text-text-muted"
+              htmlFor="auth-password"
+            >
+              Password
+            </label>
+            {mode === "login" && (
+              <button
+                className="cursor-pointer border-none bg-transparent p-0 font-[inherit] text-[0.78rem] text-accent hover:underline"
+                onClick={() => {
+                  setMode("password-reset");
+                  setPassword("");
+                  setError("");
+                  setNotice(null);
+                }}
+                type="button"
+              >
+                Forgot password?
+              </button>
+            )}
+          </div>
           <input
             id="auth-password"
             className="block w-full rounded-lg border border-border bg-base px-3.5 py-2.5 font-[inherit] text-[0.929rem] text-text outline-none transition-colors duration-150 placeholder:text-text-placeholder focus:border-border-focus"
@@ -382,7 +734,21 @@ function AuthPanel({
           />
         </div>
 
-        {error && <div className="mb-3 rounded-lg border border-error-msg-border bg-error-msg-bg px-3 py-2 text-[0.857rem] text-error-bright">{error}</div>}
+        {notice && (
+          <div
+            aria-live="polite"
+            className="mb-3 rounded-lg border border-accent/30 bg-accent/10 px-3 py-2 text-[0.857rem] text-text-secondary"
+            role="status"
+          >
+            {notice}
+          </div>
+        )}
+
+        {error && (
+          <div className="mb-3 rounded-lg border border-error-msg-border bg-error-msg-bg px-3 py-2 text-[0.857rem] text-error-bright">
+            {error}
+          </div>
+        )}
 
         <button
           className="mt-1 block w-full cursor-pointer rounded-lg border border-border-strong bg-elevated px-3 py-2.5 font-[inherit] text-[0.929rem] font-medium text-text transition-colors duration-150 hover:not-disabled:bg-button disabled:cursor-default disabled:opacity-40"
