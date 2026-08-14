@@ -3,6 +3,7 @@ import { cors } from "@elysiajs/cors";
 import { sql } from "drizzle-orm";
 import { db } from "./db";
 import { authRoutes } from "./auth";
+import { drainAuthenticationCodeDeliveries } from "./auth/better-auth";
 import { authInfrastructureErrors } from "./auth/middleware";
 import { workspaceRoutes } from "./workspaces";
 import { workspaceConfigRoutes } from "./workspaces/config";
@@ -21,6 +22,35 @@ import { initObservability, shutdownObservability, withSpan } from "./observabil
 import { log } from "./logging";
 
 const apiLog = log.child({ component: "api" });
+
+function installLoopbackOnlyE2EGuard() {
+  if (process.env.THECHAT_E2E_LOOPBACK_ONLY !== "1") return;
+
+  for (const [name, value] of [
+    ["DATABASE_URL", process.env.DATABASE_URL],
+    ["REDIS_URL", process.env.REDIS_URL],
+    ["THECHAT_BACKEND_URL", process.env.THECHAT_BACKEND_URL],
+    ["BETTER_AUTH_URL", process.env.BETTER_AUTH_URL],
+  ] as const) {
+    if (!value || new URL(value).hostname !== "127.0.0.1") {
+      throw new Error(`${name} must use explicit loopback in E2E mode`);
+    }
+  }
+
+  const originalFetch = globalThis.fetch.bind(globalThis);
+  const loopbackHosts = new Set(["127.0.0.1", "::1", "localhost"]);
+  globalThis.fetch = ((input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+    const url = new URL(input instanceof Request ? input.url : String(input));
+    if (!loopbackHosts.has(url.hostname)) {
+      return Promise.reject(
+        new Error("Loopback-only E2E mode blocked an outbound HTTP request"),
+      );
+    }
+    return originalFetch(input, init);
+  }) as typeof fetch;
+}
+
+installLoopbackOnlyE2EGuard();
 
 await initObservability("thechat-api");
 
@@ -54,7 +84,15 @@ const app = new Elysia()
       async () => {
         try {
           await db.execute(sql`SELECT 1`);
-          return { status: "ok", db: "connected" };
+          const e2eRunId =
+            process.env.THECHAT_E2E_LOOPBACK_ONLY === "1"
+              ? process.env.THECHAT_E2E_RUN_ID
+              : undefined;
+          return {
+            status: "ok",
+            db: "connected",
+            ...(e2eRunId ? { e2eRunId } : {}),
+          };
         } catch (e) {
           return Response.json(
             { status: "error", db: "disconnected" },
@@ -84,6 +122,16 @@ apiLog.info(
 );
 
 async function shutdownAndExit(code: number) {
+  app.stop();
+  await drainAuthenticationCodeDeliveries().catch((error) => {
+    apiLog.error(
+      {
+        errorClass:
+          error instanceof Error ? error.constructor.name : "UnknownError",
+      },
+      "Failed to drain authentication code deliveries",
+    );
+  });
   await shutdownObservability().catch((error) => {
     apiLog.error({ err: error }, "Failed to shut down observability");
   });

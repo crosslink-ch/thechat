@@ -37,3 +37,20 @@ The flow verifies:
 
 Screenshots are written under `.tmp/`. Set `ATTACHMENT_E2E_KEEP=1` to keep
 containers and generated fixtures for debugging after a run.
+
+## Password reset
+
+Run the focused API tests or the compiled desktop flow with:
+
+```bash
+pnpm test:api:password-reset
+pnpm test:e2e:password-reset-ui
+```
+
+The launcher starts fresh Postgres, Redis, and Mailpit containers on a dedicated
+Docker bridge with IP masquerading disabled, publishes them only on explicit
+loopback addresses, and refuses occupied ports. It builds the Tauri binary from
+source, disables dotenv, telemetry, package-manager network access, and inherited
+provider credentials, and verifies API-process ownership before driving the UI.
+Test addresses use the reserved `example.invalid` domain; no external mailbox or
+production account is used.

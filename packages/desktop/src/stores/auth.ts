@@ -86,6 +86,12 @@ interface AuthStore {
     password: string,
   ) => Promise<string | null>;
   verifyEmailOtp: (email: string, code: string) => Promise<void>;
+  requestPasswordReset: (email: string) => Promise<string>;
+  resetPassword: (
+    email: string,
+    code: string,
+    password: string,
+  ) => Promise<string>;
   updateName: (name: string) => Promise<void>;
   logout: () => Promise<void>;
 }
@@ -203,6 +209,45 @@ export const useAuthStore = create<AuthStore>()((set, get) => ({
     await persistCredentials(data.accessToken, data.user);
     set({ token: data.accessToken, user: data.user });
   }),
+
+  requestPasswordReset: (email: string) => runAuthMutation(async () => {
+    const { data, error } = await api.auth["request-password-reset"].post({
+      email,
+    });
+    if (error) {
+      throw new Error(
+        edenErrorMessage(error, "Could not request a password reset"),
+      );
+    }
+    if (
+      !data ||
+      !("message" in data) ||
+      typeof data.message !== "string"
+    ) {
+      throw new Error("Could not request a password reset");
+    }
+    return data.message;
+  }),
+
+  resetPassword: (email: string, code: string, password: string) =>
+    runAuthMutation(async () => {
+      const { data, error } = await api.auth["reset-password"].post({
+        email,
+        code,
+        password,
+      });
+      if (error) {
+        throw new Error(edenErrorMessage(error, "Could not reset password"));
+      }
+      if (
+        !data ||
+        !("message" in data) ||
+        typeof data.message !== "string"
+      ) {
+        throw new Error("Could not reset password");
+      }
+      return data.message;
+    }),
 
   updateName: (name: string) => runAuthMutation(async () => {
     const accessToken = get().token;
