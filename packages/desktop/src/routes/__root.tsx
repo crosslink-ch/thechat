@@ -91,46 +91,45 @@ export function RootLayout() {
   });
   useCtrlWheelZoom();
 
-  if (authLoading) {
-    return (
-      <div className="relative flex h-screen flex-col overflow-hidden bg-base">
-        <WindowTitlebar />
-        <div className="flex min-h-0 flex-1 items-center justify-center text-[0.929rem] text-text-placeholder">
-          Loading...
-        </div>
-      </div>
-    );
-  }
+  return <RootView authLoading={authLoading} authenticated={Boolean(user)} />;
+}
 
-  if (!user) {
-    return (
-      <div className="relative flex h-screen flex-col overflow-hidden bg-base">
-        <WindowTitlebar />
-        <AuthOnboarding />
-      </div>
-    );
-  }
+interface RootViewProps {
+  authLoading: boolean;
+  authenticated: boolean;
+}
 
+export function RootView({ authLoading, authenticated }: RootViewProps) {
   return (
     <div className="relative flex h-screen flex-col overflow-hidden bg-base">
       <WindowTitlebar />
-      <div className="flex min-h-0 flex-1 overflow-hidden">
-        <Sidebar />
-        <div className="flex min-w-0 flex-1 flex-col">
-          <ChatHeader />
-          <ErrorBoundary name="Route">
-            <Outlet />
-          </ErrorBoundary>
+      {authLoading ? (
+        <div className="flex min-h-0 flex-1 items-center justify-center text-[0.929rem] text-text-placeholder">
+          Loading...
         </div>
-      </div>
-      <CommandPalette />
-      <PermissionModePicker />
-      <AuthModal />
-      <CodexAuthModal />
-      <WorkspaceModal />
-      <ChannelModal />
-      <HermesBotModal />
-      <McpConfigDialog />
+      ) : !authenticated ? (
+        <AuthOnboarding />
+      ) : (
+        <>
+          <div className="flex min-h-0 flex-1 overflow-hidden">
+            <Sidebar />
+            <div className="flex min-w-0 flex-1 flex-col">
+              <ChatHeader />
+              <ErrorBoundary name="Route">
+                <Outlet />
+              </ErrorBoundary>
+            </div>
+          </div>
+          <CommandPalette />
+          <PermissionModePicker />
+          <AuthModal />
+          <CodexAuthModal />
+          <WorkspaceModal />
+          <ChannelModal />
+          <HermesBotModal />
+          <McpConfigDialog />
+        </>
+      )}
       <UpdateToast />
     </div>
   );
