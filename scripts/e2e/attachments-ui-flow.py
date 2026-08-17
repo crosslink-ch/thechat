@@ -11,11 +11,13 @@ import json
 import os
 import shutil
 import signal
+import struct
 import subprocess
 import sys
 import threading
 import time
 import urllib.request
+import zlib
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -70,6 +72,7 @@ FIXTURE_DIR = TMP / "attachment-ui-e2e-fixtures" / RUN_ID
 SCREENSHOT = TMP / f"attachment-ui-e2e-{RUN_ID}.png"
 SUCCESS_SCREENSHOT = TMP / f"attachment-ui-e2e-success-{RUN_ID}.png"
 OPAQUE_SCREENSHOT = TMP / f"attachment-ui-e2e-opaque-{RUN_ID}.png"
+VIEWER_SCREENSHOT = TMP / f"attachment-ui-e2e-viewer-{RUN_ID}.png"
 FAILURE_SCREENSHOT = TMP / f"attachment-ui-e2e-failure-{RUN_ID}.png"
 RESULT_JSON = TMP / f"attachment-ui-e2e-{RUN_ID}.json"
 TRACE_EXPORTER = ROOT / "scripts/e2e/export_attachment_tempo_evidence.py"
@@ -643,6 +646,7 @@ def _write_fixtures() -> dict[str, Path]:
     FIXTURE_DIR.mkdir(parents=True, exist_ok=True)
     valid = FIXTURE_DIR / f"valid-{RUN_ID}.eml"
     opaque = FIXTURE_DIR / f"opaque-{RUN_ID}.html"
+    image = FIXTURE_DIR / f"viewer-{RUN_ID}.png"
     cancel = FIXTURE_DIR / f"cancel-{RUN_ID}.txt"
     valid.write_text(
         f"From: sender@example.com\nTo: recipient@example.com\nSubject: TheChat {RUN_ID}\n\nAttachment payload\n",
@@ -652,8 +656,31 @@ def _write_fixtures() -> dict[str, Path]:
         "<!doctype html><script>alert('attachment')</script>",
         encoding="utf-8",
     )
+    image.write_bytes(_png_fixture(800, 600))
     cancel.write_bytes(b"C" * (20 * 1024 * 1024))
-    return {"valid": valid, "opaque": opaque, "cancel": cancel}
+    return {"valid": valid, "opaque": opaque, "image": image, "cancel": cancel}
+
+
+def _png_fixture(width: int, height: int) -> bytes:
+    def chunk(kind: bytes, payload: bytes) -> bytes:
+        return (
+            struct.pack(">I", len(payload))
+            + kind
+            + payload
+            + struct.pack(">I", zlib.crc32(kind + payload) & 0xFFFFFFFF)
+        )
+
+    rows = bytearray()
+    for y in range(height):
+        rows.append(0)
+        for x in range(width):
+            rows.extend((30 + (x * 120 // width), 70 + (y * 100 // height), 190, 255))
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 6, 0, 0, 0))
+        + chunk(b"IDAT", zlib.compress(bytes(rows), level=9))
+        + chunk(b"IEND", b"")
+    )
 
 
 def _register_fixture_workspace(base: str) -> dict[str, str]:
@@ -716,6 +743,7 @@ def _run_desktop_e2e(
     SCREENSHOT.unlink(missing_ok=True)
     SUCCESS_SCREENSHOT.unlink(missing_ok=True)
     OPAQUE_SCREENSHOT.unlink(missing_ok=True)
+    VIEWER_SCREENSHOT.unlink(missing_ok=True)
     FAILURE_SCREENSHOT.unlink(missing_ok=True)
     OPENER_MARKER.unlink(missing_ok=True)
     shutil.rmtree(DOWNLOAD_DIR, ignore_errors=True)
@@ -735,10 +763,12 @@ def _run_desktop_e2e(
         "ATTACHMENT_E2E_CONVERSATION_ID": fixture["conversationId"],
         "ATTACHMENT_E2E_VALID_FIXTURE": str(files["valid"]),
         "ATTACHMENT_E2E_OPAQUE_FIXTURE": str(files["opaque"]),
+        "ATTACHMENT_E2E_IMAGE_FIXTURE": str(files["image"]),
         "ATTACHMENT_E2E_CANCEL_FIXTURE": str(files["cancel"]),
         "ATTACHMENT_E2E_SCREENSHOT": str(SCREENSHOT),
         "ATTACHMENT_E2E_SUCCESS_SCREENSHOT": str(SUCCESS_SCREENSHOT),
         "ATTACHMENT_E2E_OPAQUE_SCREENSHOT": str(OPAQUE_SCREENSHOT),
+        "ATTACHMENT_E2E_VIEWER_SCREENSHOT": str(VIEWER_SCREENSHOT),
         "ATTACHMENT_E2E_FAILURE_SCREENSHOT": str(FAILURE_SCREENSHOT),
         "ATTACHMENT_E2E_DOWNLOAD_DIR": str(DOWNLOAD_DIR),
         "ATTACHMENT_E2E_OPENER_MARKER": str(OPENER_MARKER),
@@ -776,6 +806,10 @@ def _run_desktop_e2e(
     )
     if not SCREENSHOT.exists() or SCREENSHOT.stat().st_size == 0:
         raise AssertionError(f"Attachment UI screenshot was not produced: {SCREENSHOT}")
+    if not OPAQUE_SCREENSHOT.exists() or OPAQUE_SCREENSHOT.stat().st_size == 0:
+        raise AssertionError(f"Opaque attachment screenshot was not produced: {OPAQUE_SCREENSHOT}")
+    if not VIEWER_SCREENSHOT.exists() or VIEWER_SCREENSHOT.stat().st_size == 0:
+        raise AssertionError(f"Image viewer screenshot was not produced: {VIEWER_SCREENSHOT}")
     downloaded_path = DOWNLOAD_DIR / files["valid"].name
     if not downloaded_path.is_file():
         raise AssertionError("Compiled Tauri download did not save the verified file")
@@ -872,27 +906,45 @@ def _verify_backend(
         token=fixture["token"],
     )
     assert status == 200, (status, messages)
-    matching = {
-        name: [
-            message
-            for message in messages
-            if any(
-                attachment.get("fileName") == name
-                for attachment in message.get("attachments") or []
-            )
-        ]
-        for name in (names["valid"], names["opaque"])
-    }
-    for name, matched_messages in matching.items():
-        assert len(matched_messages) == 1, (name, matched_messages)
-        assert matched_messages[0].get("content") == "", matched_messages[0]
-        assert len(matched_messages[0].get("attachments") or []) == 1, matched_messages[0]
+    valid_matching = [
+        message
+        for message in messages
+        if any(
+            attachment.get("fileName") == names["valid"]
+            for attachment in message.get("attachments") or []
+        )
+    ]
+    image_matching = [
+        message
+        for message in messages
+        if any(
+            attachment.get("fileName") == names["image"]
+            for attachment in message.get("attachments") or []
+        )
+    ]
+    opaque_matching = [
+        message
+        for message in messages
+        if any(
+            attachment.get("fileName") == names["opaque"]
+            for attachment in message.get("attachments") or []
+        )
+    ]
+    assert len(valid_matching) == 1, valid_matching
+    assert len(image_matching) == 1, image_matching
+    assert image_matching == valid_matching, (valid_matching, image_matching)
+    assert valid_matching[0].get("content") == "", valid_matching[0]
+    assert len(valid_matching[0].get("attachments") or []) == 2, valid_matching[0]
+    assert len(opaque_matching) == 1, opaque_matching
+    assert opaque_matching[0].get("content") == "", opaque_matching[0]
+    assert len(opaque_matching[0].get("attachments") or []) == 1, opaque_matching[0]
 
     def terminal_statuses():
         statuses = _attachment_statuses(list(names.values()))
         if (
             statuses.get(names["valid"]) == "attached"
             and statuses.get(names["opaque"]) == "attached"
+            and statuses.get(names["image"]) == "attached"
             and statuses.get(names["cancel"]) == "deleted"
         ):
             return statuses
@@ -901,7 +953,7 @@ def _verify_backend(
     statuses = _wait_for(
         terminal_statuses,
         timeout=120,
-        label="valid/opaque attached and cancelled attachment deleted",
+        label="valid/image/opaque attached and cancelled attachment deleted",
     )
     cleanup_rows = _attachment_cleanup_rows([names["cancel"]])
     if len(cleanup_rows) != 1:
@@ -932,6 +984,7 @@ def _verify_backend(
         "statuses": {
             "valid": statuses[names["valid"]],
             "opaque": statuses[names["opaque"]],
+            "image": statuses[names["image"]],
             "cancelled": statuses[names["cancel"]],
         },
         "objectCleanup": {
@@ -952,6 +1005,8 @@ def _verify_backend(
             "openerHandoff": False,
         },
         "screenshot": str(SCREENSHOT),
+        "opaqueScreenshot": str(OPAQUE_SCREENSHOT),
+        "viewerScreenshot": str(VIEWER_SCREENSHOT),
     }
 
 
@@ -978,6 +1033,7 @@ def _export_tempo_evidence(
     source_scan_files = [
         SUCCESS_SCREENSHOT,
         OPAQUE_SCREENSHOT,
+        VIEWER_SCREENSHOT,
         SCREENSHOT,
         *sorted(path for path in DOWNLOAD_DIR.iterdir() if path.is_file()),
     ]
@@ -1004,6 +1060,8 @@ def _export_tempo_evidence(
         "3600",
         "--run-id",
         RUN_ID,
+        "--expected-ready-attachments",
+        "3",
         "--output",
         str(TRACE_EVIDENCE_DIR),
         "--source-commit",
@@ -1114,7 +1172,12 @@ def _run() -> None:
         tempo_evidence = _export_tempo_evidence(source_identity, env)
         _assert_source_identity_unchanged(source_identity, _source_identity())
 
-        screenshots = [SCREENSHOT, SUCCESS_SCREENSHOT, OPAQUE_SCREENSHOT]
+        screenshots = [
+            SCREENSHOT,
+            SUCCESS_SCREENSHOT,
+            OPAQUE_SCREENSHOT,
+            VIEWER_SCREENSHOT,
+        ]
         result = {
             **source_identity,
             "completedUnix": int(time.time()),
@@ -1132,6 +1195,7 @@ def _run() -> None:
         for source, name in (
             (SUCCESS_SCREENSHOT, "attachment-success.png"),
             (OPAQUE_SCREENSHOT, "attachment-opaque.png"),
+            (VIEWER_SCREENSHOT, "image-viewer-narrow.png"),
             (SCREENSHOT, "attachment-cancellation.png"),
         ):
             destination = screenshot_dir / name
