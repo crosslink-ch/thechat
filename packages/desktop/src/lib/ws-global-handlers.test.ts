@@ -477,6 +477,86 @@ describe("registerGlobalWsHandlers", () => {
     cleanup();
   });
 
+  it("does not mark the current user's group message unread", () => {
+    useAuthStore.setState({
+      token: "token-1",
+      user: {
+        id: "u-current",
+        name: "Current User",
+        email: "current@example.com",
+        avatar: null,
+        type: "human",
+      },
+      loading: false,
+    });
+    const cleanup = registerGlobalWsHandlers(() => {}, () => "/channel/ch-other");
+
+    wsEvents.emit("ws:new_message", {
+      conversationType: "group",
+      message: {
+        id: "msg-self",
+        conversationId: "ch-active",
+        threadId: null,
+        senderId: "u-current",
+        senderName: "Current User",
+        content: "hello",
+        createdAt: "2026-01-01T00:00:00.000Z",
+      },
+    });
+
+    expect(useConversationsStore.getState().unreadChannels).toEqual(new Set());
+
+    cleanup();
+  });
+
+  it("marks another user's group message unread only for a background channel", () => {
+    useAuthStore.setState({
+      token: "token-1",
+      user: {
+        id: "u-current",
+        name: "Current User",
+        email: "current@example.com",
+        avatar: null,
+        type: "human",
+      },
+      loading: false,
+    });
+    const path = "/channel/ch-active";
+    const cleanup = registerGlobalWsHandlers(() => {}, () => path);
+
+    wsEvents.emit("ws:new_message", {
+      conversationType: "group",
+      message: {
+        id: "msg-visible",
+        conversationId: "ch-active",
+        threadId: null,
+        senderId: "u-other",
+        senderName: "Other User",
+        content: "visible",
+        createdAt: "2026-01-01T00:00:00.000Z",
+      },
+    });
+    expect(useConversationsStore.getState().unreadChannels).toEqual(new Set());
+
+    wsEvents.emit("ws:new_message", {
+      conversationType: "group",
+      message: {
+        id: "msg-background",
+        conversationId: "ch-background",
+        threadId: null,
+        senderId: "u-other",
+        senderName: "Other User",
+        content: "background",
+        createdAt: "2026-01-01T00:01:00.000Z",
+      },
+    });
+    expect(useConversationsStore.getState().unreadChannels).toEqual(
+      new Set(["ch-background"]),
+    );
+
+    cleanup();
+  });
+
   it("dedupes workspace invite OS notifications by invite id", () => {
     const cleanup = registerGlobalWsHandlers(() => {});
 
