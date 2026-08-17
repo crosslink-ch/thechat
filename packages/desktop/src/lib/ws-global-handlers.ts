@@ -98,7 +98,11 @@ export function registerGlobalWsHandlers(
     conversationType,
   }: WsEvents["ws:new_message"]) => {
     const currentUserId = useAuthStore.getState().user?.id;
-    if (conversationType === "group") {
+    if (
+      conversationType === "group" &&
+      msg.senderId !== currentUserId &&
+      currentPath() !== `/channel/${msg.conversationId}`
+    ) {
       useConversationsStore.getState().markChannelUnread(msg.conversationId);
     }
     if (conversationType === "direct" && msg.senderId !== currentUserId) {
