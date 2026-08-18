@@ -54,7 +54,28 @@ function CopyButton({
   );
 }
 
-export function DeveloperAccessSettings() {
+function KeyIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.7"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <circle cx="7.5" cy="15.5" r="3.5" />
+      <path d="m10 13 9-9" />
+      <path d="m15 8 2 2" />
+      <path d="m12.5 10.5 2 2" />
+    </svg>
+  );
+}
+
+export function ApiAccessSettings() {
   const sessionToken = useAuthStore((state) => state.token);
   const [tokens, setTokens] = useState<PersonalAccessToken[]>([]);
   const [name, setName] = useState("");
@@ -243,17 +264,17 @@ export function DeveloperAccessSettings() {
   return (
     <section
       className="overflow-hidden rounded-xl border border-border-subtle bg-surface shadow-sm"
-      aria-labelledby="developer-access-heading"
+      aria-labelledby="api-access-heading"
     >
       <div className="border-b border-border-subtle p-5 sm:p-6">
         <div className="text-[0.714rem] font-semibold uppercase tracking-[0.16em] text-accent">
-          Developer
+          Integrations
         </div>
         <h2
-          id="developer-access-heading"
+          id="api-access-heading"
           className="mt-1 text-[1.214rem] font-semibold tracking-[-0.02em] text-text"
         >
-          Developer access
+          API access
         </h2>
         <p className="mt-2 max-w-[600px] text-[0.857rem] leading-5 text-text-muted">
           Create named, non-expiring credentials for TheChat REST and MCP clients.
@@ -263,12 +284,6 @@ export function DeveloperAccessSettings() {
       </div>
 
       <div className="space-y-5 p-5 sm:p-6">
-        <div className="rounded-lg border border-amber-400/30 bg-amber-400/10 p-3.5 text-[0.786rem] leading-5 text-amber-200">
-          Store tokens in a password manager or secret store. Never commit them,
-          paste them into chat, or include them in logs. A lost token cannot be
-          recovered; revoke it and create a replacement.
-        </div>
-
         {notice && (
           <div
             role={notice.kind === "error" ? "alert" : "status"}
@@ -367,48 +382,88 @@ export function DeveloperAccessSettings() {
               No personal access tokens yet.
             </div>
           ) : (
-            <ul className="space-y-2" aria-label="Personal access tokens">
+            <ul className="space-y-3" aria-label="Personal access tokens">
               {tokens.map((item) => (
                 <li
                   key={item.id}
-                  className="flex min-w-0 flex-col gap-3 rounded-lg border border-border-subtle bg-base/60 p-3.5 sm:flex-row sm:items-center sm:justify-between"
+                  aria-label={`${item.name} personal access token`}
+                  className="min-w-0 overflow-hidden rounded-lg border border-border-subtle bg-base/60"
                 >
-                  <div className="min-w-0">
-                    <div className="truncate text-[0.857rem] font-medium text-text">
-                      {item.name}
+                  <div className="flex min-w-0 flex-col gap-3 p-4 sm:flex-row sm:items-start sm:justify-between">
+                    <div className="flex min-w-0 flex-1 items-start gap-3">
+                      <div className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-accent/20 bg-accent/10 text-accent">
+                        <KeyIcon />
+                      </div>
+                      <div className="min-w-0 flex-1 pt-0.5">
+                        <div className="flex min-w-0 items-center gap-2">
+                          <div className="min-w-0 flex-1 truncate text-[0.857rem] font-semibold text-text">
+                            {item.name}
+                          </div>
+                          <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2 py-0.5 text-[0.643rem] font-medium text-emerald-400">
+                            <span className="size-1.5 rounded-full bg-emerald-400" />
+                            Active
+                          </span>
+                        </div>
+                        <div className="mt-2 inline-flex max-w-full rounded-md border border-border bg-raised px-2 py-1">
+                          <span className="truncate font-mono text-[0.714rem] text-text-dimmed">
+                            {item.start
+                              ? `${item.start}…`
+                              : "Identifier unavailable"}
+                          </span>
+                        </div>
+                      </div>
                     </div>
-                    <div className="mt-1 break-all font-mono text-[0.714rem] text-text-dimmed">
-                      {item.start ? `${item.start}…` : "Identifier unavailable"}
-                    </div>
-                    <div className="mt-1 text-[0.714rem] text-text-dimmed">
-                      Created {formatDate(item.createdAt)} · Last used{" "}
-                      {formatDate(item.lastUsedAt)}
-                    </div>
-                  </div>
-                  <div className="flex shrink-0 items-center gap-2">
-                    {confirmingId === item.id && (
+                    <div className="flex shrink-0 items-center justify-end gap-2 border-t border-border-subtle pt-3 sm:border-0 sm:pt-0">
+                      {confirmingId === item.id && (
+                        <button
+                          type="button"
+                          onClick={() => setConfirmingId(null)}
+                          className="cursor-pointer border-none bg-transparent px-2 py-1.5 text-[0.786rem] text-text-muted hover:text-text"
+                        >
+                          Cancel
+                        </button>
+                      )}
                       <button
                         type="button"
-                        onClick={() => setConfirmingId(null)}
-                        className="cursor-pointer border-none bg-transparent px-2 py-1.5 text-[0.786rem] text-text-muted hover:text-text"
+                        onClick={() => void revokeToken(item.id)}
+                        disabled={revokingId !== null}
+                        className="cursor-pointer rounded-md border border-error-msg-border bg-error-msg-bg px-3 py-1.5 text-[0.786rem] font-medium text-error-bright transition-colors hover:not-disabled:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
+                        aria-label={`Revoke ${item.name}`}
                       >
-                        Cancel
+                        {revokingId === item.id
+                          ? "Revoking..."
+                          : confirmingId === item.id
+                            ? "Confirm revoke"
+                            : "Revoke"}
                       </button>
-                    )}
-                    <button
-                      type="button"
-                      onClick={() => void revokeToken(item.id)}
-                      disabled={revokingId !== null}
-                      className="cursor-pointer rounded-md border border-error-msg-border bg-error-msg-bg px-3 py-1.5 text-[0.786rem] font-medium text-error-bright transition-colors hover:not-disabled:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
-                      aria-label={`Revoke ${item.name}`}
-                    >
-                      {revokingId === item.id
-                        ? "Revoking..."
-                        : confirmingId === item.id
-                          ? "Confirm revoke"
-                          : "Revoke"}
-                    </button>
+                    </div>
                   </div>
+                  <dl className="grid grid-cols-2 border-t border-border-subtle bg-raised/30">
+                    <div className="min-w-0 px-4 py-3">
+                      <dt className="text-[0.643rem] font-medium uppercase tracking-[0.08em] text-text-dimmed">
+                        Created
+                      </dt>
+                      <dd className="mt-1 text-[0.714rem] leading-4 text-text-muted">
+                        <time dateTime={item.createdAt}>
+                          {formatDate(item.createdAt)}
+                        </time>
+                      </dd>
+                    </div>
+                    <div className="min-w-0 border-l border-border-subtle px-4 py-3">
+                      <dt className="text-[0.643rem] font-medium uppercase tracking-[0.08em] text-text-dimmed">
+                        Last used
+                      </dt>
+                      <dd className="mt-1 text-[0.714rem] leading-4 text-text-muted">
+                        {item.lastUsedAt ? (
+                          <time dateTime={item.lastUsedAt}>
+                            {formatDate(item.lastUsedAt)}
+                          </time>
+                        ) : (
+                          "Never"
+                        )}
+                      </dd>
+                    </div>
+                  </dl>
                 </li>
               ))}
             </ul>
@@ -454,10 +509,6 @@ export function DeveloperAccessSettings() {
             </pre>
           </div>
         </div>
-
-        <p className="text-[0.786rem] leading-5 text-text-dimmed">
-          Revocation takes effect immediately for future REST and MCP requests.
-        </p>
       </div>
     </section>
   );

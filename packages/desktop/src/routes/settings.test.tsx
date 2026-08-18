@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useAuthStore } from "../stores/auth";
 import { SettingsRoute } from "./settings";
@@ -134,11 +134,11 @@ describe("SettingsRoute", () => {
     expect(screen.getByRole("button", { name: "Save name" })).toBeEnabled();
   });
 
-  it("shows Developer access without restoring unrelated Agent Chat settings", async () => {
+  it("shows API access without restoring unrelated Agent Chat settings", async () => {
     render(<SettingsRoute />);
 
     expect(
-      screen.getByRole("heading", { name: "Developer access" }),
+      screen.getByRole("heading", { name: "API access" }),
     ).toBeInTheDocument();
     expect(screen.getByText("REST")).toBeInTheDocument();
     expect(screen.getByText("MCP")).toBeInTheDocument();
@@ -198,7 +198,14 @@ describe("SettingsRoute", () => {
     render(<SettingsRoute />);
 
     expect(await screen.findByText("Existing CLI")).toBeInTheDocument();
-    expect(screen.getByText("tchat_pat_abcd12…")).toBeInTheDocument();
+    const existingToken = screen.getByRole("listitem", {
+      name: "Existing CLI personal access token",
+    });
+    expect(within(existingToken).getByText("Active")).toBeInTheDocument();
+    expect(within(existingToken).getByText("Created")).toBeInTheDocument();
+    expect(within(existingToken).getByText("Last used")).toBeInTheDocument();
+    expect(within(existingToken).getByText("Never")).toBeInTheDocument();
+    expect(within(existingToken).getByText("tchat_pat_abcd12…")).toBeInTheDocument();
     expect(screen.queryByText(rawToken)).not.toBeInTheDocument();
 
     await user.type(screen.getByLabelText("Token name"), "  MCP laptop  ");

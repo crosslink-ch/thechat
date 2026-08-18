@@ -1,6 +1,6 @@
 import { type FormEvent, useEffect, useState } from "react";
 import { useAuthStore } from "../stores/auth";
-import { DeveloperAccessSettings } from "./settings-developer-access";
+import { ApiAccessSettings } from "./settings-api-access";
 
 function LockIcon() {
   return (
@@ -209,7 +209,7 @@ export function SettingsRoute() {
               </button>
             </div>
           </form>
-          <DeveloperAccessSettings key={user.id} />
+          <ApiAccessSettings key={user.id} />
           </>
         )}
       </div>

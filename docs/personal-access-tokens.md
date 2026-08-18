@@ -1,11 +1,11 @@
 # Personal access tokens
 
-Personal access tokens (PATs) are named, non-expiring credentials for TheChat's REST API and Streamable HTTP MCP endpoint. A PAT acts as the human user who created it and has that user's full permissions. TheChat does not currently offer token scopes or an OAuth flow for developer access.
+Personal access tokens (PATs) are named, non-expiring credentials for TheChat's REST API and Streamable HTTP MCP endpoint. A PAT acts as the human user who created it and has that user's full permissions. TheChat does not currently offer token scopes or OAuth-based API authorization.
 
 ## Create a token
 
 1. Sign in to the desktop app with your human account.
-2. Open **Settings** and scroll to **Developer access**.
+2. Open **Settings** and scroll to **API access**.
 3. Enter a descriptive name such as `Work laptop MCP` or `Release automation`.
 4. Select **Create token**.
 5. Copy the value beginning with `tchat_pat_` immediately.
@@ -61,7 +61,7 @@ MCP tool calls pass through the same TheChat service authorization checks used b
 
 ## Revoke a token
 
-1. Return to **Settings → Developer access** using a signed-in session.
+1. Return to **Settings → API access** using a signed-in session.
 2. Find the token by its name and visible starting characters.
 3. Select **Revoke**, then **Confirm revoke**.
 

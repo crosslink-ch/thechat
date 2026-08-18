@@ -84,7 +84,7 @@ pnpm dev -- --no-worker
 
 ### API and MCP access
 
-Human users can create named personal access tokens under **Settings → Developer access** for REST automation and the Streamable HTTP MCP endpoint. Tokens are non-expiring, carry the creator's permissions, and are shown only once. See [Personal access tokens](docs/personal-access-tokens.md) for secure storage, revocation, and ready-to-use REST/MCP examples.
+Human users can create named personal access tokens under **Settings → API access** for REST automation and the Streamable HTTP MCP endpoint. Tokens are non-expiring, carry the creator's permissions, and are shown only once. See [Personal access tokens](docs/personal-access-tokens.md) for secure storage, revocation, and ready-to-use REST/MCP examples.
 
 For the desktop app:
 
