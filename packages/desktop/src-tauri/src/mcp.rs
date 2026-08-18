@@ -1,7 +1,7 @@
 use crate::config::{load_config, McpServerConfig};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -586,6 +586,10 @@ impl McpClient {
 pub struct McpManager {
     clients: Mutex<HashMap<String, Arc<Mutex<McpClient>>>>,
     initialized: AtomicBool,
+    /// Names of live clients that were initialized with a user token.
+    authenticated_clients: Mutex<HashSet<String>>,
+    /// Serialize authenticated client init, token refresh, and shutdown.
+    auth_sync: Mutex<()>,
     /// Per-server initialization lock to prevent concurrent init of the same server.
     /// Each entry is an (is_done, condvar) pair. Waiters block on the condvar until
     /// is_done becomes true, then read the client from `clients`.
@@ -597,8 +601,62 @@ impl McpManager {
         McpManager {
             clients: Mutex::new(HashMap::new()),
             initialized: AtomicBool::new(false),
+            authenticated_clients: Mutex::new(HashSet::new()),
+            auth_sync: Mutex::new(()),
             initializing: Mutex::new(HashMap::new()),
         }
+    }
+
+    fn refresh_authenticated_clients(&self, token: &str) -> Result<Vec<String>, String> {
+        let server_names: Vec<String> = self
+            .authenticated_clients
+            .lock()
+            .map_err(|e| format!("Lock error: {}", e))?
+            .iter()
+            .cloned()
+            .collect();
+        let tracked_clients: Vec<(String, Arc<Mutex<McpClient>>)> = {
+            let clients = self
+                .clients
+                .lock()
+                .map_err(|e| format!("Lock error: {}", e))?;
+            server_names
+                .into_iter()
+                .filter_map(|name| clients.get(&name).cloned().map(|client| (name, client)))
+                .collect()
+        };
+
+        let mut refreshed = Vec::with_capacity(tracked_clients.len());
+        for (server_name, client_arc) in tracked_clients {
+            client_arc
+                .lock()
+                .map_err(|e| format!("Lock error: {}", e))?
+                .set_auth_token(token);
+            refreshed.push(server_name);
+        }
+        Ok(refreshed)
+    }
+
+    fn drain_authenticated_clients(
+        &self,
+    ) -> Result<(Vec<String>, Vec<(String, Arc<Mutex<McpClient>>)>), String> {
+        let server_names: Vec<String> = self
+            .authenticated_clients
+            .lock()
+            .map_err(|e| format!("Lock error: {}", e))?
+            .drain()
+            .collect();
+        let removed_clients = {
+            let mut clients = self
+                .clients
+                .lock()
+                .map_err(|e| format!("Lock error: {}", e))?;
+            server_names
+                .iter()
+                .filter_map(|name| clients.remove(name).map(|client| (name.clone(), client)))
+                .collect()
+        };
+        Ok((server_names, removed_clients))
     }
 }
 
@@ -791,78 +849,111 @@ pub async fn mcp_initialize<R: tauri::Runtime>(
     Ok(())
 }
 
-/// Initialize MCP servers that require authentication, or update the token for
-/// already-initialized auth servers. Called when the user logs in or when the JWT
-/// refreshes (every ~15 minutes).
+/// Initialize MCP servers that require authentication, update their token, or
+/// shut them down when the token is cleared. The operation is blocking and
+/// serialized so a completed logout cannot be followed by a stale in-flight init.
 #[tauri::command]
 #[tracing::instrument(skip(app, token, manager, shell_env))]
 pub async fn mcp_initialize_authed<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
-    token: String,
+    token: Option<String>,
     manager: tauri::State<'_, Arc<McpManager>>,
     shell_env: tauri::State<'_, Arc<crate::env::ShellEnv>>,
-) -> Result<(), String> {
+) -> Result<Vec<String>, String> {
     use tauri::Emitter;
 
     let config_dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
-    let config = tokio::task::spawn_blocking(move || load_config(&config_dir))
-        .await
-        .map_err(|e| format!("Task join error: {}", e))??;
+    let manager = Arc::clone(&manager);
     let env_vars = shell_env.vars.clone();
     let bundled_node = bundled_node_bin_dir(&app);
 
-    for (server_name, server_config) in config.mcp_servers {
-        if server_config.disabled {
-            tracing::info!(server = %server_name, "skipping auth MCP server (disabled)");
-            continue;
-        }
-        if !server_config.requires_auth {
-            continue;
-        }
-        if server_config.lazy {
-            tracing::info!(
-                server = %server_name,
-                "skipping auth MCP server (lazy, will load on demand)"
-            );
-            continue;
+    tokio::task::spawn_blocking(move || {
+        let _auth_sync = manager
+            .auth_sync
+            .lock()
+            .map_err(|e| format!("Lock error: {}", e))?;
+
+        let Some(token) = token else {
+            let (server_names, removed_clients) = manager.drain_authenticated_clients()?;
+
+            for (name, client_arc) in removed_clients {
+                tracing::info!(server = %name, "shutting down authenticated MCP server");
+                if let Ok(mut client) = client_arc.lock() {
+                    client.shutdown();
+                }
+            }
+
+            return Ok(server_names);
+        };
+
+        // Refresh every tracked authenticated client before consulting the
+        // current config. A removed or newly disabled server must not retain
+        // the previous account's token while it is still alive.
+        for server_name in manager.refresh_authenticated_clients(&token)? {
+            tracing::info!(server = %server_name, "updated auth token for tracked MCP server");
         }
 
-        // If already initialized, just update the token
-        {
-            let clients = manager
+        let config = load_config(&config_dir)?;
+        for (server_name, server_config) in config.mcp_servers {
+            if server_config.disabled {
+                tracing::info!(server = %server_name, "skipping auth MCP server (disabled)");
+                continue;
+            }
+            if !server_config.requires_auth {
+                continue;
+            }
+            if server_config.lazy {
+                tracing::info!(
+                    server = %server_name,
+                    "skipping auth MCP server (lazy, will load on demand)"
+                );
+                continue;
+            }
+
+            let existing = manager
                 .clients
                 .lock()
-                .map_err(|e| format!("Lock error: {}", e))?;
-            if let Some(client_arc) = clients.get(&server_name) {
-                if let Ok(mut client) = client_arc.lock() {
-                    client.set_auth_token(&token);
-                }
+                .map_err(|e| format!("Lock error: {}", e))?
+                .get(&server_name)
+                .cloned();
+            if let Some(client_arc) = existing {
+                client_arc
+                    .lock()
+                    .map_err(|e| format!("Lock error: {}", e))?
+                    .set_auth_token(&token);
+                manager
+                    .authenticated_clients
+                    .lock()
+                    .map_err(|e| format!("Lock error: {}", e))?
+                    .insert(server_name.clone());
                 tracing::info!(server = %server_name, "updated auth token for MCP server");
                 continue;
             }
-        }
 
-        // Not yet initialized — initialize with the auth token
-        let token = token.clone();
-        let manager = Arc::clone(&manager);
-        let app = app.clone();
-        let env = env_vars.clone();
-        let node = bundled_node.clone();
-
-        std::thread::spawn(move || {
             tracing::info!(server = %server_name, "initializing auth MCP server");
-
-            match init_server(&server_name, &server_config, Some(&token), &env, node) {
+            match init_server(
+                &server_name,
+                &server_config,
+                Some(&token),
+                &env_vars,
+                bundled_node.clone(),
+            ) {
                 Ok((client, tools)) => {
                     tracing::info!(
                         server = %server_name,
                         tool_count = tools.len(),
                         "auth MCP server ready"
                     );
-
-                    if let Ok(mut clients) = manager.clients.lock() {
-                        clients.insert(server_name.clone(), Arc::new(Mutex::new(client)));
-                    }
+                    manager
+                        .clients
+                        .lock()
+                        .map_err(|e| format!("Lock error: {}", e))?
+                        .insert(server_name.clone(), Arc::new(Mutex::new(client)));
+                    manager
+                        .authenticated_clients
+                        .lock()
+                        .map_err(|e| format!("Lock error: {}", e))?
+                        .insert(server_name.clone());
 
                     if let Err(e) = app.emit("mcp-tools-ready", &tools) {
                         tracing::error!(
@@ -876,16 +967,21 @@ pub async fn mcp_initialize_authed<R: tauri::Runtime>(
                         server = %server_name, error = %e,
                         "failed to initialize auth MCP server"
                     );
-                    let _ = app.emit("mcp-server-error", McpServerError {
-                        server: server_name.clone(),
-                        error: e,
-                    });
+                    let _ = app.emit(
+                        "mcp-server-error",
+                        McpServerError {
+                            server: server_name.clone(),
+                            error: e,
+                        },
+                    );
                 }
             }
-        });
-    }
+        }
 
-    Ok(())
+        Ok(Vec::new())
+    })
+    .await
+    .map_err(|e| format!("Task join error: {}", e))?
 }
 
 /// Initialize specific MCP servers by name (blocking).
@@ -909,9 +1005,33 @@ pub async fn mcp_initialize_servers<R: tauri::Runtime>(
 
     // Run blocking I/O (process spawn, handshake, list_tools) off the main thread.
     tokio::task::spawn_blocking(move || {
+        // Any lazy operation touching an auth server participates in the same
+        // lifecycle barrier as root auth refresh and logout, even when the
+        // current caller has no token.
+        let touches_authenticated_server = names.iter().any(|name| {
+            config
+                .mcp_servers
+                .get(name)
+                .is_some_and(|server| server.requires_auth)
+        });
+        let _auth_sync = if touches_authenticated_server {
+            Some(
+                manager
+                    .auth_sync
+                    .lock()
+                    .map_err(|e| format!("Lock error: {}", e))?,
+            )
+        } else {
+            None
+        };
         let mut all_tools: Vec<McpToolInfo> = Vec::new();
 
         for name in &names {
+            let server_config = config
+                .mcp_servers
+                .get(name)
+                .ok_or_else(|| format!("MCP server '{}' not found in config", name))?;
+
             // Helper closure to list tools from an already-initialized client
             let list_from_client = |name: &str, token: &Option<String>| -> Result<Vec<McpToolInfo>, String> {
                 let clients = manager
@@ -949,6 +1069,13 @@ pub async fn mcp_initialize_servers<R: tauri::Runtime>(
                     drop(clients);
                     tracing::info!(server = %name, "MCP server already initialized, re-listing tools");
                     all_tools.extend(list_from_client(name, &token)?);
+                    if server_config.requires_auth && token.is_some() {
+                        manager
+                            .authenticated_clients
+                            .lock()
+                            .map_err(|e| format!("Lock error: {}", e))?
+                            .insert(name.clone());
+                    }
                     continue;
                 }
             }
@@ -993,14 +1120,15 @@ pub async fn mcp_initialize_servers<R: tauri::Runtime>(
                     "MCP server initialization completed by another caller, re-listing tools"
                 );
                 all_tools.extend(list_from_client(name, &token)?);
+                if server_config.requires_auth && token.is_some() {
+                    manager
+                        .authenticated_clients
+                        .lock()
+                        .map_err(|e| format!("Lock error: {}", e))?
+                        .insert(name.clone());
+                }
                 continue;
             }
-
-            // We are the initializer for this server
-            let server_config = config
-                .mcp_servers
-                .get(name)
-                .ok_or_else(|| format!("MCP server '{}' not found in config", name))?;
 
             // Use provided token for auth servers, or None
             let auth_token = if server_config.requires_auth {
@@ -1038,6 +1166,13 @@ pub async fn mcp_initialize_servers<R: tauri::Runtime>(
 
                     if let Ok(mut clients) = manager.clients.lock() {
                         clients.insert(name.clone(), Arc::new(Mutex::new(client)));
+                    }
+                    if auth_token.is_some() {
+                        manager
+                            .authenticated_clients
+                            .lock()
+                            .map_err(|e| format!("Lock error: {}", e))?
+                            .insert(name.clone());
                     }
 
                     all_tools.extend(tools);
@@ -1093,6 +1228,10 @@ pub async fn mcp_call_tool(
 pub async fn mcp_shutdown(manager: tauri::State<'_, Arc<McpManager>>) -> Result<(), String> {
     let manager = Arc::clone(&manager);
     tokio::task::spawn_blocking(move || {
+        let _auth_sync = manager
+            .auth_sync
+            .lock()
+            .map_err(|e| format!("Lock error: {}", e))?;
         let mut clients = manager
             .clients
             .lock()
@@ -1105,6 +1244,11 @@ pub async fn mcp_shutdown(manager: tauri::State<'_, Arc<McpManager>>) -> Result<
             }
         }
 
+        manager
+            .authenticated_clients
+            .lock()
+            .map_err(|e| format!("Lock error: {}", e))?
+            .clear();
         manager.initialized.store(false, Ordering::SeqCst);
 
         Ok(())
@@ -1192,6 +1336,52 @@ mod tests {
         let manager = McpManager::new();
         let clients = manager.clients.lock().unwrap();
         assert!(clients.is_empty());
+    }
+
+    #[test]
+    fn authenticated_clients_refresh_on_account_change_and_drain_on_logout() {
+        let manager = McpManager::new();
+        let mut authenticated =
+            McpClient::connect_http("http://127.0.0.1:1/mcp", &HashMap::new()).unwrap();
+        authenticated.set_auth_token("user-a-token");
+        let public = McpClient::connect_http("http://127.0.0.1:2/mcp", &HashMap::new()).unwrap();
+
+        manager
+            .clients
+            .lock()
+            .unwrap()
+            .insert("authenticated".into(), Arc::new(Mutex::new(authenticated)));
+        manager
+            .clients
+            .lock()
+            .unwrap()
+            .insert("public".into(), Arc::new(Mutex::new(public)));
+        manager
+            .authenticated_clients
+            .lock()
+            .unwrap()
+            .insert("authenticated".into());
+
+        let refreshed = manager
+            .refresh_authenticated_clients("user-b-token")
+            .unwrap();
+        assert_eq!(refreshed, vec!["authenticated"]);
+        {
+            let clients = manager.clients.lock().unwrap();
+            let client = clients["authenticated"].lock().unwrap();
+            let Transport::Http { auth_token, .. } = &client.transport else {
+                panic!("expected HTTP MCP client");
+            };
+            assert_eq!(auth_token.as_deref(), Some("user-b-token"));
+        }
+
+        let (removed_names, removed_clients) = manager.drain_authenticated_clients().unwrap();
+        assert_eq!(removed_names, vec!["authenticated"]);
+        assert_eq!(removed_clients.len(), 1);
+        assert!(manager.authenticated_clients.lock().unwrap().is_empty());
+        let clients = manager.clients.lock().unwrap();
+        assert!(!clients.contains_key("authenticated"));
+        assert!(clients.contains_key("public"));
     }
 
     #[test]
