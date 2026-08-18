@@ -3,13 +3,19 @@
 
 from __future__ import annotations
 
+import json
 import os
 import runpy
 import signal
 import subprocess
 import sys
+import threading
+import time
 import unittest
+from contextlib import redirect_stderr, redirect_stdout
+from io import StringIO
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Any, cast
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -43,6 +49,39 @@ class TestRunnerConfigTests(unittest.TestCase):
     def _load_suites(self, overrides: dict[str, str]) -> list[dict[str, Any]]:
         namespace = self._load_runner(overrides)
         return cast(list[dict[str, Any]], namespace["SUITES"])
+
+    def test_suite_worker_count_leaves_capacity_for_parallel_test_tools(self):
+        suite_worker_count = self._load_runner({})["suite_worker_count"]
+        cases = (
+            (1, 6, 1),
+            (2, 6, 1),
+            (3, 6, 1),
+            (4, 6, 2),
+            (8, 6, 4),
+            (32, 6, 6),
+            (8, 1, 1),
+        )
+        for cpu_count, suite_count, expected in cases:
+            with self.subTest(cpu_count=cpu_count, suite_count=suite_count):
+                self.assertEqual(
+                    suite_worker_count(suite_count, cpu_count=cpu_count),
+                    expected,
+                )
+
+    def test_default_api_suite_uses_integration_timeout_and_skips_guarded_tests(self):
+        package = json.loads(
+            (ROOT / "packages" / "api" / "package.json").read_text()
+        )
+        command = package["scripts"]["test"]
+        self.assertIn("--timeout=30000", command)
+        self.assertIn(
+            "--path-ignore-patterns=src/auth/rate-limit.test.ts",
+            command,
+        )
+        self.assertIn(
+            "--path-ignore-patterns=src/auth/password-reset.test.ts",
+            command,
+        )
 
     def test_approval_urls_follow_explicit_port_overrides(self):
         suites = self._load_suites(
@@ -157,6 +196,69 @@ class TestRunnerConfigTests(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 124)
         self.assertIn("wall-clock timeout", result.output)
+
+    def test_interrupted_main_stops_running_suite_and_cancels_queued_suite(self):
+        namespace = self._load_runner({})
+        runner_globals = namespace["main"].__globals__
+        with TemporaryDirectory() as temporary_directory:
+            temporary_path = Path(temporary_directory)
+            running_marker = temporary_path / "running"
+            queued_marker = temporary_path / "queued"
+            runner_globals["available_cpu_count"] = lambda: 2
+            runner_globals["SUITES"] = [
+                {
+                    "name": "running",
+                    "cmd": [
+                        sys.executable,
+                        "-c",
+                        (
+                            "from pathlib import Path; import sys, time; "
+                            "Path(sys.argv[1]).write_text('running'); time.sleep(60)"
+                        ),
+                        str(running_marker),
+                    ],
+                },
+                {
+                    "name": "queued",
+                    "cmd": [
+                        sys.executable,
+                        "-c",
+                        (
+                            "from pathlib import Path; import sys; "
+                            "Path(sys.argv[1]).write_text('started')"
+                        ),
+                        str(queued_marker),
+                    ],
+                },
+            ]
+
+            def interrupt_when_running() -> None:
+                deadline = time.monotonic() + 5
+                while time.monotonic() < deadline and not running_marker.exists():
+                    time.sleep(0.01)
+                os.kill(os.getpid(), signal.SIGINT)
+
+            interrupt_thread = threading.Thread(
+                target=interrupt_when_running,
+                daemon=True,
+            )
+            previous_argv = sys.argv
+            interrupt_thread.start()
+            try:
+                sys.argv = ["scripts/test.py", "running", "queued"]
+                started = time.monotonic()
+                with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
+                    with self.assertRaises(SystemExit) as raised:
+                        namespace["main"]()
+                duration = time.monotonic() - started
+            finally:
+                sys.argv = previous_argv
+            interrupt_thread.join(timeout=5)
+
+            self.assertEqual(raised.exception.code, 128 + signal.SIGINT)
+            self.assertTrue(running_marker.exists())
+            self.assertFalse(queued_marker.exists())
+            self.assertLess(duration, 10)
 
     def test_shutdown_forwarding_terminates_registered_suite_group(self):
         namespace = self._load_runner({})
