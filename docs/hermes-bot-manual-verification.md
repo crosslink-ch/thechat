@@ -360,12 +360,15 @@ Or use the package script directly:
 pnpm test:e2e:hermes:approval-ui
 ```
 
-The test uses API `3339`, Postgres `15545`, Redis `16382`, and the local model
-fixture on `18081` by default. The real Hermes webhook listener binds only to
-`127.0.0.1` on `18082`. Port environment overrides automatically update the
+The test allocates distinct loopback ports for the API, Postgres, Redis, local
+model fixture, and real Hermes webhook listener on each run. Use
+`THECHAT_APPROVAL_E2E_API_PORT`, `THECHAT_APPROVAL_E2E_POSTGRES_PORT`,
+`THECHAT_APPROVAL_E2E_REDIS_PORT`, `HERMES_APPROVAL_E2E_MODEL_PORT`, and
+`HERMES_APPROVAL_E2E_WEBHOOK_PORT` to override them. Legacy `THECHAT_E2E_*`
+port overrides remain supported. Port overrides automatically update the
 derived database and Redis URLs unless those URLs are themselves explicitly
-set. `HERMES_APPROVAL_E2E_WEBHOOK_PORT` overrides the listener port. It performs
-all of these assertions across the live stack:
+set. The webhook listener always binds to a loopback address. It performs all
+of these assertions across the live stack:
 
 1. Login through the desktop UI and send a DM to the real Hermes bot.
 2. The Hermes adapter registers its loopback webhook, receives the invocation
@@ -388,13 +391,14 @@ all of these assertions across the live stack:
    DM message. The fixture requires exactly one approval-driving tool call, one
    Clarify tool call, and one successful final response.
 
-A screenshot of the pending approval card is saved at
-`.tmp/hermes-approval-ui-e2e.png`. Container names and Hermes state/log paths
-are unique per run. A nonblocking suite lock prevents the fixed loopback ports
-from being used by concurrent runs. Both the desktop command and the explicit
-suite runner have wall-clock bounds; failed driver readiness kills the detached
-driver group and cancels its poll. Child processes run in dedicated process
-groups, and SIGINT/SIGTERM enter the same teardown path. Gateway, API, worker,
-model, and desktop processes are always stopped; containers are removed by
-default. `HERMES_E2E_KEEP=1` retains that run's uniquely named containers and
-diagnostics, never live processes.
+A screenshot of the pending approval card is saved under
+`~/.cache/thechat-e2e/hermes-approval/<run-id>/` by default, with the run ID in
+the filename. `HERMES_APPROVAL_E2E_ROOT` can override that run-owned evidence
+directory. Container names, ports, and Hermes state/log paths are unique per
+run, and explicit collision checks fail closed before each service starts.
+Both the desktop command and the explicit suite runner have wall-clock bounds;
+failed driver readiness kills the detached driver group and cancels its poll.
+Child processes run in dedicated process groups, and SIGINT/SIGTERM enter the
+same teardown path. Gateway, API, worker, model, and desktop processes are
+always stopped; containers are removed by default. `HERMES_E2E_KEEP=1` retains
+that run's uniquely named containers and diagnostics, never live processes.

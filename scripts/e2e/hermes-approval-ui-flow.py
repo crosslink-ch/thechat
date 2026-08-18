@@ -14,7 +14,6 @@ import fcntl
 import importlib.util
 import json
 import os
-import shutil
 import signal
 import subprocess
 import sys
@@ -24,17 +23,38 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any
 
+E2E_HELPER_DIR = Path(__file__).resolve().parent
+if str(E2E_HELPER_DIR) not in sys.path:
+    sys.path.insert(0, str(E2E_HELPER_DIR))
+
+from e2e_run import (
+    acquire_owned_directory,
+    allocate_loopback_port,
+    generate_run_id,
+    refuse_port_collision,
+    validate_run_id,
+)
+
 ROOT = Path(__file__).resolve().parents[2]
-TMP = ROOT / ".tmp"
-RUN_ID = f"{os.getpid()}-{time.time_ns()}"
+RUN_ID = validate_run_id(
+    os.environ.get("THECHAT_E2E_RUN_ID") or generate_run_id("approval")
+)
+os.environ["THECHAT_E2E_RUN_ID"] = RUN_ID
+TMP = Path(
+    os.environ.get(
+        "HERMES_APPROVAL_E2E_ROOT",
+        str(Path.home() / ".cache" / "thechat-e2e" / "hermes-approval" / RUN_ID),
+    )
+).resolve()
 FAKE_MODEL_LOG = TMP / f"hermes-approval-ui-e2e-fake-model-{RUN_ID}.log"
 
 # Give this heavier UI flow its own ports and uniquely owned resources so it
 # can run alongside the API-only Hermes smoke test without deleting another
 # run's containers or reusing approval/session state.
-os.environ.setdefault("THECHAT_E2E_API_PORT", "3339")
-os.environ.setdefault("THECHAT_E2E_POSTGRES_PORT", "15545")
-os.environ.setdefault("THECHAT_E2E_REDIS_PORT", "16382")
+os.environ.setdefault("THECHAT_E2E_API_PORT", str(allocate_loopback_port()))
+os.environ.setdefault("THECHAT_E2E_POSTGRES_PORT", str(allocate_loopback_port()))
+os.environ.setdefault("THECHAT_E2E_REDIS_PORT", str(allocate_loopback_port()))
+os.environ.setdefault("THECHAT_E2E_TAURI_DRIVER_PORT", str(allocate_loopback_port()))
 os.environ.setdefault(
     "THECHAT_E2E_DATABASE_URL",
     "postgres://thechat:thechat@localhost:"
@@ -58,8 +78,12 @@ _sibling_hermes = ROOT.parent / "hermes-agent"
 if _sibling_hermes.exists():
     os.environ.setdefault("HERMES_E2E_SOURCE_DIR", str(_sibling_hermes))
 
-MODEL_PORT = int(os.environ.get("HERMES_APPROVAL_E2E_MODEL_PORT", "18081"))
-WEBHOOK_PORT = int(os.environ.get("HERMES_APPROVAL_E2E_WEBHOOK_PORT", "18082"))
+MODEL_PORT = int(
+    os.environ.get("HERMES_APPROVAL_E2E_MODEL_PORT", str(allocate_loopback_port()))
+)
+WEBHOOK_PORT = int(
+    os.environ.get("HERMES_APPROVAL_E2E_WEBHOOK_PORT", str(allocate_loopback_port()))
+)
 if not 1 <= WEBHOOK_PORT <= 65535:
     raise ValueError(f"Invalid Hermes approval E2E webhook port: {WEBHOOK_PORT}")
 WEBHOOK_URL = f"http://127.0.0.1:{WEBHOOK_PORT}/thechat/webhook"
@@ -224,6 +248,7 @@ def _terminate(proc: subprocess.Popen[Any] | None, timeout: int = 15) -> None:
 
 
 def _start_fake_model(env: dict[str, str]) -> subprocess.Popen[Any]:
+    refuse_port_collision(MODEL_PORT, "approval model port")
     TMP.mkdir(parents=True, exist_ok=True)
     log_path = FAKE_MODEL_LOG
     with log_path.open("w") as log:
@@ -335,11 +360,9 @@ def _run_desktop_e2e(
     bot_name: str,
     conversation_id: str,
 ) -> None:
-    screenshot = TMP / "hermes-approval-ui-e2e.png"
-    failure_screenshot = TMP / "hermes-approval-ui-e2e-failure.png"
+    screenshot = TMP / f"hermes-approval-ui-e2e-{RUN_ID}.png"
+    failure_screenshot = TMP / f"hermes-approval-ui-e2e-failure-{RUN_ID}.png"
     screenshot.parent.mkdir(parents=True, exist_ok=True)
-    screenshot.unlink(missing_ok=True)
-    failure_screenshot.unlink(missing_ok=True)
     desktop_env = env | {
         "THECHAT_BACKEND_URL": base,
         "THECHAT_E2E_DISABLE_DOTENV": "1",
@@ -447,7 +470,7 @@ def _verify_backend_contract(
         "finalMessage": fake_model.FINAL_MESSAGE,
         "interactionDelivery": "signed-webhook",
         "humanMessages": len(human_messages),
-        "screenshot": str(TMP / "hermes-approval-ui-e2e.png"),
+        "screenshot": str(TMP / f"hermes-approval-ui-e2e-{RUN_ID}.png"),
     }
 
 
@@ -478,7 +501,6 @@ def _run() -> None:
     api_proc: subprocess.Popen[Any] | None = None
     worker_proc: subprocess.Popen[Any] | None = None
     hermes_proc: subprocess.Popen[Any] | None = None
-    completed = False
 
     try:
         harness.start_postgres()
@@ -520,6 +542,7 @@ def _run() -> None:
             workspace["id"],
             bot_name,
         )
+        refuse_port_collision(WEBHOOK_PORT, "approval webhook port")
         hermes_proc = harness.start_hermes_gateway(
             gateway_env,
             base,
@@ -594,28 +617,14 @@ agent:
                 indent=2,
             )
         )
-        completed = True
     finally:
         _terminate(hermes_proc)
         _terminate(model_proc)
         _terminate(worker_proc, timeout=10)
         _terminate(api_proc, timeout=10)
         if not KEEP:
-            harness.run(["docker", "rm", "-f", harness.REDIS_CONTAINER], check=False)
-            harness.run(["docker", "rm", "-f", harness.PG_CONTAINER], check=False)
-            if completed:
-                shutil.rmtree(harness.HERMES_HOME_ROOT, ignore_errors=True)
-                shutil.rmtree(harness.HERMES_LOG_ROOT, ignore_errors=True)
-                for parent in (
-                    harness.HERMES_HOME_ROOT.parent,
-                    harness.HERMES_LOG_ROOT.parent,
-                ):
-                    try:
-                        parent.rmdir()
-                    except OSError:
-                        # Another concurrent/retained run may still own a sibling.
-                        pass
-                FAKE_MODEL_LOG.unlink(missing_ok=True)
+            harness.remove_owned_container(harness.REDIS_CONTAINER, "redis")
+            harness.remove_owned_container(harness.PG_CONTAINER, "postgres")
         else:
             print(
                 "Keeping E2E resources because HERMES_E2E_KEEP=1; "
@@ -624,6 +633,7 @@ agent:
 
 
 def main() -> None:
+    acquire_owned_directory(TMP, RUN_ID, "hermes-approval-evidence")
     with _exclusive_run_lock(), _interruptible_cleanup():
         _run()
 

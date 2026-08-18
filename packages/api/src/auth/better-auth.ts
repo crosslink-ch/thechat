@@ -7,7 +7,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { db } from "../db";
 import * as schema from "../db/schema";
 import { log } from "../logging";
-import { sendVerificationCode } from "./email";
+import { sendPasswordResetCode, sendVerificationCode } from "./email";
 
 const INTERNAL_AUTH_PATH = "/_better-auth";
 const DEFAULT_BETTER_AUTH_SECRET =
@@ -16,6 +16,53 @@ const authLog = log.child({ component: "auth" });
 
 type VerificationCodeSender = (email: string, otp: string) => Promise<void>;
 let verificationCodeSender: VerificationCodeSender = sendVerificationCode;
+type PasswordResetCodeSender = (email: string, otp: string) => Promise<void>;
+let passwordResetCodeSender: PasswordResetCodeSender = sendPasswordResetCode;
+const pendingAuthenticationCodeDeliveries = new Set<Promise<void>>();
+const maximumPendingAuthenticationCodeDeliveries = 25;
+
+function authenticationCodeDeliveryTimeoutMs() {
+  const configured = Number(process.env.AUTH_CODE_DELIVERY_TIMEOUT_MS ?? 10_000);
+  if (!Number.isFinite(configured)) return 10_000;
+  return Math.min(30_000, Math.max(250, Math.floor(configured)));
+}
+
+async function deliverAuthenticationCode(
+  sender: VerificationCodeSender,
+  email: string,
+  otp: string,
+) {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      sender(email, otp),
+      new Promise<never>((_, reject) => {
+        timeout = setTimeout(
+          () => reject(new Error("Authentication code delivery timed out")),
+          authenticationCodeDeliveryTimeoutMs(),
+        );
+      }),
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
+
+export async function drainAuthenticationCodeDeliveries(
+  timeoutMs = 10_000,
+) {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      Promise.allSettled([...pendingAuthenticationCodeDeliveries]),
+      new Promise<void>((resolve) => {
+        timeout = setTimeout(resolve, timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
 
 type VerificationDeliveryContext = {
   attempted: boolean;
@@ -30,6 +77,14 @@ export function __setVerificationCodeSenderForTests(
   sender: VerificationCodeSender | null,
 ) {
   verificationCodeSender = sender ?? sendVerificationCode;
+}
+
+// Test seam: password-reset tests capture the outbound OTP without invoking a
+// real SMTP or Postmark transport.
+export function __setPasswordResetCodeSenderForTests(
+  sender: PasswordResetCodeSender | null,
+) {
+  passwordResetCodeSender = sender ?? sendPasswordResetCode;
 }
 
 export function isEmailVerificationRequired() {
@@ -69,6 +124,34 @@ function betterAuthSecret() {
     "BETTER_AUTH_SECRET is not set; using an insecure development-only fallback",
   );
   return DEFAULT_BETTER_AUTH_SECRET;
+}
+
+function authenticationOtpHmacKey() {
+  const dedicatedPepper = process.env.BETTER_AUTH_OTP_PEPPER?.trim();
+  if (dedicatedPepper) return dedicatedPepper;
+
+  // A domain-separated subkey prevents the low-entropy OTP space from being
+  // enumerable by anyone who can read the verification table. Deployments may
+  // provide a dedicated pepper without making it a rollout prerequisite.
+  return crypto
+    .createHmac("sha256", betterAuthSecret())
+    .update("thechat:better-auth:email-otp-pepper:v1")
+    .digest();
+}
+
+export async function hashAuthenticationOtp(otp: string) {
+  return crypto
+    .createHmac("sha256", authenticationOtpHmacKey())
+    .update(otp)
+    .digest("hex");
+}
+
+export function hashAuthPassword(password: string) {
+  return Bun.password.hash(password, { algorithm: "argon2id" });
+}
+
+export function verifyAuthPassword(password: string, hash: string) {
+  return Bun.password.verify(password, hash);
 }
 
 const requireEmailVerification = isEmailVerificationRequired();
@@ -121,16 +204,20 @@ export const auth = betterAuth({
     customRules: {
       "/email-otp/send-verification-otp": false,
       "/email-otp/verify-email": false,
+      "/email-otp/request-password-reset": false,
+      "/email-otp/reset-password": false,
     },
   },
   emailAndPassword: {
     enabled: true,
     requireEmailVerification,
     autoSignIn: !requireEmailVerification,
+    minPasswordLength: 8,
+    maxPasswordLength: 128,
+    revokeSessionsOnPasswordReset: true,
     password: {
-      hash: (password) =>
-        Bun.password.hash(password, { algorithm: "argon2id" }),
-      verify: ({ password, hash }) => Bun.password.verify(password, hash),
+      hash: hashAuthPassword,
+      verify: ({ password, hash }) => verifyAuthPassword(password, hash),
     },
   },
   emailVerification: {
@@ -170,21 +257,65 @@ export const auth = betterAuth({
       otpLength: 6,
       expiresIn: 15 * 60,
       allowedAttempts: 5,
-      storeOTP: "hashed",
+      storeOTP: { hash: hashAuthenticationOtp },
       resendStrategy: "rotate",
       overrideDefaultEmailVerification: true,
-      async sendVerificationOTP({ email, otp }) {
+      async sendVerificationOTP({ email, otp, type }) {
         const delivery = verificationDeliveryContext.getStore();
         if (delivery) delivery.attempted = true;
-        try {
-          await verificationCodeSender(email, otp);
-        } catch (error) {
+        const sender =
+          type === "forget-password"
+            ? passwordResetCodeSender
+            : verificationCodeSender;
+        const deliver = async () => {
+          let lastError: unknown;
+          for (let attempt = 1; attempt <= 2; attempt++) {
+            try {
+              await deliverAuthenticationCode(sender, email, otp);
+              return;
+            } catch (error) {
+              lastError = error;
+            }
+          }
           if (delivery) delivery.failed = true;
-          authLog.error({ err: error }, "Failed to send verification code");
-          // Better Auth intentionally swallows background-task failures. The
-          // public wrapper reads the request-scoped result and returns
-          // a sanitized retryable 503 instead of falsely claiming delivery.
+          authLog.error(
+            {
+              errorClass:
+                lastError instanceof Error
+                  ? lastError.constructor.name
+                  : "UnknownError",
+              otpType: type,
+            },
+            "Failed to send authentication code after bounded retry",
+          );
+        };
+
+        if (type === "forget-password") {
+          // Reset requests cannot await provider I/O because latency would reveal
+          // account existence. Keep a bounded queue, timeout, retry, and shutdown
+          // drain rather than creating untracked promises without backpressure.
+          if (
+            pendingAuthenticationCodeDeliveries.size >=
+            maximumPendingAuthenticationCodeDeliveries
+          ) {
+            if (delivery) delivery.failed = true;
+            authLog.error(
+              { otpType: type },
+              "Authentication code delivery queue is full",
+            );
+            return;
+          }
+          const task = deliver();
+          pendingAuthenticationCodeDeliveries.add(task);
+          void task.finally(() => {
+            pendingAuthenticationCodeDeliveries.delete(task);
+          });
+          return;
         }
+
+        await deliver();
+        // Verification registration/resend intentionally awaits delivery so its
+        // public wrapper can return a sanitized retryable failure to that user.
       },
     }),
   ],

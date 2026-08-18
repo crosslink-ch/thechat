@@ -18,7 +18,10 @@ fn main() {
     }
 
     if args.iter().any(|a| a == "--get-api-token") {
-        match thechat_lib::get_api_token() {
+        // Resolve the build's effective flavor before opening any app-owned database.
+        let context: tauri::Context<tauri::Wry> = tauri::generate_context!();
+        let app_identifier = context.config().identifier.clone();
+        match thechat_lib::get_api_token(&app_identifier) {
             Ok(Some(token)) => {
                 print!("{}", token);
                 std::process::exit(0);

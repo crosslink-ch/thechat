@@ -505,22 +505,34 @@ def assert_graph(traces: list[dict[str, Any]], run_id: str) -> dict[str, Any]:
     if orphans:
         raise AssertionError(f"orphan parent references: {orphans[:5]}")
 
-    message_trace = find_trace(
-        traces,
-        {
-            "message.send.request",
-            "HTTP POST /messages/:conversationId",
-            "message.send",
-            "attachment.bind",
-            "domain_event.outbox.enqueue",
-            "domain_event.outbox.consume",
-            "realtime.publish",
-            "realtime.receive",
-            "realtime.websocket.send",
-            "realtime.message.receive",
-        },
-    )
-    for parent, child in (
+    required_message_names = {
+        "message.send.request",
+        "HTTP POST /messages/:conversationId",
+        "message.send",
+        "attachment.bind",
+        "domain_event.outbox.enqueue",
+        "domain_event.outbox.consume",
+        "realtime.publish",
+        "realtime.receive",
+        "realtime.websocket.send",
+        "realtime.message.receive",
+    }
+    message_traces = [
+        trace
+        for trace in traces
+        if required_message_names <= {span["name"] for span in trace["spans"]}
+        and any(
+            span["name"] == "message.send.request"
+            and span_outcome(span) == "failed"
+            for span in trace["spans"]
+        )
+    ]
+    if len(message_traces) != 1:
+        raise AssertionError(
+            f"expected one ambiguous message trace, found {len(message_traces)}"
+        )
+    message_trace = message_traces[0]
+    message_edges = (
         ("message.send.request", "HTTP POST /messages/:conversationId"),
         ("HTTP POST /messages/:conversationId", "message.send"),
         ("message.send", "attachment.bind"),
@@ -530,7 +542,8 @@ def assert_graph(traces: list[dict[str, Any]], run_id: str) -> dict[str, Any]:
         ("realtime.publish", "realtime.receive"),
         ("realtime.receive", "realtime.websocket.send"),
         ("realtime.websocket.send", "realtime.message.receive"),
-    ):
+    )
+    for parent, child in message_edges:
         assert_direct_parent(message_trace, parent, child)
 
     failed_message = find_spans(message_trace, "message.send.request")[0]
@@ -542,7 +555,7 @@ def assert_graph(traces: list[dict[str, Any]], run_id: str) -> dict[str, Any]:
     if exception_attributes.get("exception.message") != "operation_failed":
         raise AssertionError("ambiguous message exception was not sanitized")
 
-    sent_traces = [
+    successful_message_traces = [
         trace
         for trace in traces
         if any(
@@ -550,11 +563,27 @@ def assert_graph(traces: list[dict[str, Any]], run_id: str) -> dict[str, Any]:
             for span in trace["spans"]
         )
     ]
-    if len(sent_traces) != 1:
-        raise AssertionError(f"expected one successful retry trace, found {len(sent_traces)}")
-    sent_names = {span["name"] for span in sent_traces[0]["spans"]}
-    if "attachment.bind" in sent_names or "domain_event.outbox.enqueue" in sent_names:
-        raise AssertionError("idempotent message retry repeated attachment binding or outbox enqueue")
+    retry_traces = [
+        trace
+        for trace in successful_message_traces
+        if "attachment.bind" not in {span["name"] for span in trace["spans"]}
+        and "domain_event.outbox.enqueue"
+        not in {span["name"] for span in trace["spans"]}
+    ]
+    if len(retry_traces) != 1:
+        raise AssertionError(f"expected one successful retry trace, found {len(retry_traces)}")
+    opaque_message_traces = [
+        trace
+        for trace in successful_message_traces
+        if required_message_names <= {span["name"] for span in trace["spans"]}
+    ]
+    if len(opaque_message_traces) != 1:
+        raise AssertionError(
+            f"expected one successful opaque-message trace, found {len(opaque_message_traces)}"
+        )
+    opaque_message_trace = opaque_message_traces[0]
+    for parent, child in message_edges:
+        assert_direct_parent(opaque_message_trace, parent, child)
 
     download_trace = find_trace(
         traces,
@@ -577,41 +606,20 @@ def assert_graph(traces: list[dict[str, Any]], run_id: str) -> dict[str, Any]:
     transfer = find_spans(download_trace, "attachment.s3.download")[0]
     if download["attributes"].get("thechat.attachment.transfer_observed") is not True:
         raise AssertionError("download flow did not record application-observed transfer")
-    if download["attributes"].get("thechat.attachment.handoff") != "native_opener":
-        raise AssertionError("compiled desktop download did not use the native opener")
+    if download["attributes"].get("thechat.attachment.handoff") != "native_file":
+        raise AssertionError("compiled desktop download did not persist a native file")
     download_events = [event["name"] for event in download["events"]]
     if download_events != [
         "attachment.download.transfer_completed",
-        "attachment.download.shell_handoff_completed",
+        "attachment.download.file_saved",
     ]:
-        raise AssertionError("compiled desktop download lacks the real shell handoff event")
+        raise AssertionError("compiled desktop download lacks the file-saved event")
     if span_outcome(transfer) != "downloaded":
         raise AssertionError("object GET did not record downloaded outcome")
     if transfer["attributes"].get("http.response.status_code") != 200:
         raise AssertionError("object GET did not record HTTP 200")
     if transfer["attributes"].get("thechat.attachment.transferred_bytes", 0) <= 0:
         raise AssertionError("object GET did not record transferred bytes")
-
-    rejection_traces = [
-        trace
-        for trace in traces
-        if any(
-            span["name"] == "attachment.validation.wait"
-            and span_outcome(span) == "rejected"
-            for span in trace["spans"]
-        )
-    ]
-    if len(rejection_traces) != 1:
-        raise AssertionError(f"expected one rejection trace, found {len(rejection_traces)}")
-    rejection_trace = rejection_traces[0]
-    for name in ("attachment.validation.wait", "attachment.validate_promote"):
-        candidate = [
-            span
-            for span in find_spans(rejection_trace, name)
-            if span_outcome(span) == "rejected"
-        ][0]
-        if candidate["status"]["code"] != UNSET or candidate["events"]:
-            raise AssertionError(f"expected policy rejection span {name} is noisy/error-marked")
 
     ready_traces = [
         trace
@@ -622,8 +630,8 @@ def assert_graph(traces: list[dict[str, Any]], run_id: str) -> dict[str, Any]:
             for span in trace["spans"]
         )
     ]
-    if len(ready_traces) != 1:
-        raise AssertionError(f"expected one ready attachment trace, found {len(ready_traces)}")
+    if len(ready_traces) != 2:
+        raise AssertionError(f"expected two ready attachment traces, found {len(ready_traces)}")
 
     cancelled_upload_traces = [
         trace
@@ -713,7 +721,7 @@ def assert_graph(traces: list[dict[str, Any]], run_id: str) -> dict[str, Any]:
         ("attachment.status.request", "HTTP GET /attachments/:id"),
         ("HTTP GET /attachments/:id", "attachment.status"),
     )
-    for trace in [rejection_trace, *ready_traces]:
+    for trace in ready_traces:
         names = {span["name"] for span in trace["spans"]}
         if not required_upload_names <= names:
             raise AssertionError(
@@ -737,9 +745,9 @@ def assert_graph(traces: list[dict[str, Any]], run_id: str) -> dict[str, Any]:
         for trace in traces
         if cleanup_names <= {span["name"] for span in trace["spans"]}
     ]
-    if len(cleanup_traces) != 2:
+    if len(cleanup_traces) != 1:
         raise AssertionError(
-            f"expected two attachment cleanup traces, found {len(cleanup_traces)}"
+            f"expected one attachment cleanup trace, found {len(cleanup_traces)}"
         )
     cleanup_edges = (
         ("attachment.cancel.request", "HTTP DELETE /attachments/:id"),
@@ -776,9 +784,9 @@ def assert_graph(traces: list[dict[str, Any]], run_id: str) -> dict[str, Any]:
     return {
         "structure": structure,
         "message_trace_id": message_trace["trace_id"],
-        "message_retry_trace_id": sent_traces[0]["trace_id"],
+        "message_retry_trace_id": retry_traces[0]["trace_id"],
+        "opaque_message_trace_id": opaque_message_trace["trace_id"],
         "download_trace_id": download_trace["trace_id"],
-        "rejection_trace_id": rejection_trace["trace_id"],
         "cancelled_upload_trace_id": cancelled_trace["trace_id"],
         "ready_trace_ids": [trace["trace_id"] for trace in ready_traces],
         "cleanup_trace_ids": [trace["trace_id"] for trace in cleanup_traces],
@@ -853,6 +861,9 @@ SAFE_IDENTIFIER_ATTRIBUTE_KEYS = {
     "service.version",
     "thechat.source.tree",
     "thechat.source.diff_sha256",
+    # Better Auth's operation ID is a bounded route/handler name, not a user or
+    # domain entity identifier. Its instrumentation emits this on auth spans.
+    "better_auth.operation_id",
 }
 
 CREDENTIAL_ASSIGNMENT = re.compile(
@@ -963,7 +974,7 @@ def _scan_text_evidence(
         text.count(marker)
         for marker in (
             f"valid-{run_id}",
-            f"rejected-{run_id}",
+            f"opaque-{run_id}",
             f"cancel-{run_id}",
         )
     )
@@ -1097,8 +1108,8 @@ def render_report(
     canonical_trace_ids = [
         graph["message_trace_id"],
         graph["message_retry_trace_id"],
+        graph["opaque_message_trace_id"],
         graph["download_trace_id"],
-        graph["rejection_trace_id"],
         graph["cancelled_upload_trace_id"],
         *graph["ready_trace_ids"],
         *graph["cleanup_trace_ids"],
@@ -1130,8 +1141,8 @@ def render_report(
         "",
         f"- Message + attachment binding + outbox + realtime + WebSocket + desktop: `{graph['message_trace_id']}`",
         f"- Idempotent message retry: `{graph['message_retry_trace_id']}`",
+        f"- Opaque attachment message: `{graph['opaque_message_trace_id']}`",
         f"- Application-observed object download: `{graph['download_trace_id']}`",
-        f"- Expected active-content rejection: `{graph['rejection_trace_id']}`",
         f"- In-flight upload cancellation: `{graph['cancelled_upload_trace_id']}`",
         f"- Ready validation traces: {', '.join(f'`{item}`' for item in graph['ready_trace_ids'])}",
         f"- Non-empty claim spans: {graph['claim_span_count']}",
@@ -1158,7 +1169,7 @@ def render_report(
             for tree in canonical_trees
             for item in ("```text", tree, "```", "")
         ],
-        "The verifier required exact direct parent edges across HTTP, outbox, Redis/realtime, WebSocket, and desktop boundaries. It also required retries to avoid repeating attachment binding/outbox enqueue, policy rejection spans to remain UNSET without exception events, all retained claim spans to have positive actual claimed counts, and the desktop download trace to include an observed HTTP 200 object GET with non-zero transferred bytes.",
+        "The verifier required exact direct parent edges across HTTP, outbox, Redis/realtime, WebSocket, and desktop boundaries. It also required retries to avoid repeating attachment binding/outbox enqueue, both ordinary and opaque attachment uploads to reach ready without noisy error spans, all retained claim spans to have positive actual claimed counts, and the desktop download trace to include an observed HTTP 200 object GET with non-zero transferred bytes and a file-saved event.",
         "",
     ]
     return "\n".join(lines)
@@ -1217,8 +1228,9 @@ th,td{{border:1px solid #ccd6e0;padding:.55rem;text-align:left}}th{{width:16rem;
 <ul>
 <li>Message flow: <code>{html.escape(graph['message_trace_id'])}</code></li>
 <li>Idempotent retry: <code>{html.escape(graph['message_retry_trace_id'])}</code></li>
+<li>Opaque attachment message: <code>{html.escape(graph['opaque_message_trace_id'])}</code></li>
 <li>Observed download: <code>{html.escape(graph['download_trace_id'])}</code></li>
-<li>Expected rejection: <code>{html.escape(graph['rejection_trace_id'])}</code></li>
+<li>Ready attachment validation traces: <code>{html.escape(', '.join(graph['ready_trace_ids']))}</code></li>
 <li>In-flight upload cancellation: <code>{html.escape(graph['cancelled_upload_trace_id'])}</code></li>
 </ul>
 <h2>Machine-generated audit report</h2>
@@ -1251,8 +1263,9 @@ and secret/entity-identifier checks before writing the manifest.
 - Spans: {span_count}
 - Message flow trace: `{graph['message_trace_id']}`
 - Idempotent retry trace: `{graph['message_retry_trace_id']}`
+- Opaque attachment message trace: `{graph['opaque_message_trace_id']}`
 - Native download trace: `{graph['download_trace_id']}`
-- Active-content rejection trace: `{graph['rejection_trace_id']}`
+- Ready attachment validation traces: {', '.join(f'`{item}`' for item in graph['ready_trace_ids'])}
 - In-flight cancellation trace: `{graph['cancelled_upload_trace_id']}`
 
 ## Generate a fresh verified bundle

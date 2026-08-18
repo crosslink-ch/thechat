@@ -2,7 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { api } from "../lib/api";
 import { queryClient } from "../lib/query-client";
-import { useAuthStore } from "./auth";
+import { EmailVerificationRequiredError, useAuthStore } from "./auth";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 vi.mock("../lib/api", () => ({
@@ -11,6 +11,8 @@ vi.mock("../lib/api", () => ({
       register: { post: vi.fn() },
       login: { post: vi.fn() },
       "verify-email": { post: vi.fn() },
+      "request-password-reset": { post: vi.fn() },
+      "reset-password": { post: vi.fn() },
       me: { get: vi.fn(), patch: vi.fn() },
       logout: { post: vi.fn() },
     },
@@ -113,6 +115,26 @@ describe("auth store account operations", () => {
     });
   });
 
+  it("surfaces the typed recovery state for an accepted unverified login", async () => {
+    vi.mocked(api.auth.login.post).mockResolvedValue({
+      data: null,
+      error: treatyError(403, {
+        error: "Please verify your email before logging in",
+        verificationRequired: true,
+      }),
+    } as any);
+
+    const attempt = useAuthStore
+      .getState()
+      .login("Jane@Example.com", "password123");
+    await expect(attempt).rejects.toBeInstanceOf(
+      EmailVerificationRequiredError,
+    );
+    await expect(attempt).rejects.toMatchObject({
+      email: "jane@example.com",
+    });
+  });
+
   it("persists the same one-token contract after registration", async () => {
     const values = useKv();
     vi.mocked(api.auth.register.post).mockResolvedValue({
@@ -144,6 +166,63 @@ describe("auth store account operations", () => {
     });
     expect(values.auth_access_token).toBe("verified-session");
     expect(values.auth_user).toBe(JSON.stringify(user));
+  });
+
+  it("uses the public password reset request and confirmation endpoints", async () => {
+    vi.mocked(api.auth["request-password-reset"].post).mockResolvedValue({
+      data: {
+        message:
+          "If an account exists for that email, a password reset code will be sent.",
+      },
+      error: null,
+    } as any);
+    vi.mocked(api.auth["reset-password"].post).mockResolvedValue({
+      data: {
+        message: "Password reset. You can now log in with your new password.",
+      },
+      error: null,
+    } as any);
+
+    await expect(
+      useAuthStore.getState().requestPasswordReset(user.email),
+    ).resolves.toContain("If an account exists");
+    expect(api.auth["request-password-reset"].post).toHaveBeenCalledWith({
+      email: user.email,
+    });
+
+    await expect(
+      useAuthStore
+        .getState()
+        .resetPassword(user.email, "123456", "new-password-456"),
+    ).resolves.toContain("Password reset");
+    expect(api.auth["reset-password"].post).toHaveBeenCalledWith({
+      email: user.email,
+      code: "123456",
+      password: "new-password-456",
+    });
+    expect(useAuthStore.getState()).toMatchObject({ user: null, token: null });
+  });
+
+  it("surfaces sanitized password reset API failures", async () => {
+    vi.mocked(api.auth["request-password-reset"].post).mockResolvedValue({
+      data: null,
+      error: treatyError(429, { error: "Too many requests" }),
+    } as any);
+    await expect(
+      useAuthStore.getState().requestPasswordReset(user.email),
+    ).rejects.toThrow("Too many requests");
+
+    vi.mocked(api.auth["reset-password"].post).mockResolvedValue({
+      data: null,
+      error: treatyError(400, {
+        error: "Invalid or expired password reset code",
+      }),
+    } as any);
+    await expect(
+      useAuthStore
+        .getState()
+        .resetPassword(user.email, "000000", "new-password-456"),
+    ).rejects.toThrow("Invalid or expired password reset code");
   });
 });
 

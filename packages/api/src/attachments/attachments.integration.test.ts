@@ -300,7 +300,7 @@ describe("attachment lifecycle", () => {
       "/attachments",
       {
         conversationId,
-        fileName: "../safe report.txt",
+        fileName: "../safe\u202e report.txt",
         mediaType: "text/plain",
         sizeBytes: bytes.byteLength,
         checksumSha256: checksum,
@@ -533,6 +533,218 @@ describe("attachment lifecycle", () => {
     ).toBe(409);
   });
 
+  test("accepts arbitrary file types but keeps unpreviewed content opaque", async () => {
+    const owner = await register("Arbitrary attachment owner");
+    const { conversationId } = await workspaceWithMembers(owner);
+    const cases = [
+      {
+        fileName: "message.eml",
+        mediaType: "message/rfc822",
+        bytes: new TextEncoder().encode("From: sender@example.test\r\n\r\nHello"),
+      },
+      {
+        fileName: "notes.md",
+        mediaType: "text/markdown",
+        bytes: new TextEncoder().encode("# Notes"),
+      },
+      {
+        fileName: "active.html",
+        mediaType: "text/html",
+        bytes: new TextEncoder().encode("<script>alert(1)</script>"),
+      },
+      {
+        fileName: "archive.zip",
+        mediaType: "application/zip",
+        bytes: new Uint8Array([0x50, 0x4b, 0x03, 0x04, 0, 0]),
+      },
+      {
+        fileName: "future.unknown",
+        mediaType: "",
+        bytes: new TextEncoder().encode("future format"),
+      },
+    ];
+    const copyCallStart = store.copyCalls.length;
+    const attachmentIds: string[] = [];
+
+    for (const entry of cases) {
+      const reserved = await request(
+        "POST",
+        "/attachments",
+        {
+          conversationId,
+          fileName: entry.fileName,
+          mediaType: entry.mediaType,
+          sizeBytes: entry.bytes.byteLength,
+          checksumSha256: crypto
+            .createHash("sha256")
+            .update(entry.bytes)
+            .digest("hex"),
+        },
+        owner.token,
+      );
+      expect(reserved.status).toBe(200);
+      const attachmentId = reserved.body.attachment.id as string;
+      attachmentIds.push(attachmentId);
+      store.acceptLatestUpload(entry.bytes);
+      expect(
+        (
+          await request(
+            "POST",
+            `/attachments/${attachmentId}/complete`,
+            {},
+            owner.token,
+          )
+        ).status,
+      ).toBe(200);
+      await validateAndPromoteAttachment(attachmentId, {
+        store,
+        maxBytes: 25 * 1024 * 1024,
+      });
+      const ready = await request(
+        "GET",
+        `/attachments/${attachmentId}`,
+        undefined,
+        owner.token,
+      );
+      expect(ready.status).toBe(200);
+      expect(ready.body).toMatchObject({
+        fileName: entry.fileName,
+        kind: "file",
+        status: "ready",
+      });
+    }
+
+    expect(store.copyCalls.slice(copyCallStart)).toHaveLength(cases.length);
+    expect(
+      store.copyCalls.slice(copyCallStart).map((call) => call.mediaType),
+    ).toEqual(cases.map(() => "application/octet-stream"));
+
+    const sent = await request(
+      "POST",
+      `/messages/${conversationId}`,
+      {
+        content: "",
+        attachmentIds,
+        clientMessageId: crypto.randomUUID(),
+      },
+      owner.token,
+    );
+    expect(sent.status).toBe(200);
+
+    const downloadCallStart = store.downloadCalls.length;
+    for (const attachmentId of attachmentIds) {
+      const content = await request(
+        "GET",
+        `/attachments/${attachmentId}/content`,
+        undefined,
+        owner.token,
+      );
+      expect(content.status).toBe(302);
+    }
+    const downloads = store.downloadCalls.slice(downloadCallStart);
+    expect(downloads).toHaveLength(cases.length);
+    expect(downloads.map((call) => call.mediaType)).toEqual(
+      cases.map(() => "application/octet-stream"),
+    );
+    expect(
+      downloads.every((call) => call.contentDisposition.startsWith("attachment;")),
+    ).toBe(true);
+  });
+
+  test("previews only a server-detected raster with verified dimensions", async () => {
+    const owner = await register("Verified raster owner");
+    const { conversationId } = await workspaceWithMembers(owner);
+    const bytes = new Uint8Array(24);
+    bytes.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    bytes.set([0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52], 8);
+    const view = new DataView(bytes.buffer);
+    view.setUint32(16, 32, false);
+    view.setUint32(20, 16, false);
+    const checksum = crypto.createHash("sha256").update(bytes).digest("hex");
+    const copyCallStart = store.copyCalls.length;
+
+    const reserved = await request(
+      "POST",
+      "/attachments",
+      {
+        conversationId,
+        fileName: "verified.png",
+        mediaType: "application/octet-stream",
+        sizeBytes: bytes.byteLength,
+        checksumSha256: checksum,
+      },
+      owner.token,
+    );
+    expect(reserved.status).toBe(200);
+    expect(reserved.body.attachment.kind).toBe("file");
+    const attachmentId = reserved.body.attachment.id as string;
+    store.acceptLatestUpload(bytes);
+    expect(
+      (
+        await request(
+          "POST",
+          `/attachments/${attachmentId}/complete`,
+          {},
+          owner.token,
+        )
+      ).status,
+    ).toBe(200);
+    await validateAndPromoteAttachment(attachmentId, {
+      store,
+      maxBytes: 25 * 1024 * 1024,
+    });
+
+    const ready = await request(
+      "GET",
+      `/attachments/${attachmentId}`,
+      undefined,
+      owner.token,
+    );
+    expect(ready.status).toBe(200);
+    expect(ready.body).toMatchObject({
+      mediaType: "image/png",
+      kind: "image",
+      width: 32,
+      height: 16,
+      status: "ready",
+    });
+    expect(store.copyCalls.slice(copyCallStart)).toEqual([
+      expect.objectContaining({ mediaType: "image/png" }),
+    ]);
+
+    expect(
+      (
+        await request(
+          "POST",
+          `/messages/${conversationId}`,
+          {
+            content: "",
+            attachmentIds: [attachmentId],
+            clientMessageId: crypto.randomUUID(),
+          },
+          owner.token,
+        )
+      ).status,
+    ).toBe(200);
+    const downloadCallStart = store.downloadCalls.length;
+    expect(
+      (
+        await request(
+          "GET",
+          `/attachments/${attachmentId}/content`,
+          undefined,
+          owner.token,
+        )
+      ).status,
+    ).toBe(302);
+    expect(store.downloadCalls.slice(downloadCallStart)).toEqual([
+      expect.objectContaining({
+        mediaType: "image/png",
+        contentDisposition: expect.stringMatching(/^inline;/),
+      }),
+    ]);
+  });
+
   test("parents attachment server and service spans to the remote desktop carrier", async () => {
     const owner = await register("Traced attachment owner");
     const { conversationId } = await workspaceWithMembers(owner);
@@ -754,21 +966,22 @@ describe("attachment lifecycle", () => {
     expect(conflictSend.status.code).toBe(SpanStatusCode.ERROR);
   });
 
-  test("rejects active content during validation without promoting it", async () => {
-    const owner = await register("Unsafe attachment owner");
+  test("promotes active content as an opaque file without previewing it", async () => {
+    const owner = await register("Opaque active attachment owner");
     const { conversationId } = await workspaceWithMembers(owner);
     const bytes = new TextEncoder().encode(
       "<!doctype html><script>alert('attachment')</script>",
     );
     const checksum = crypto.createHash("sha256").update(bytes).digest("hex");
+    const copyCallStart = store.copyCalls.length;
 
     const reserved = await request(
       "POST",
       "/attachments",
       {
         conversationId,
-        fileName: "active-content.txt",
-        mediaType: "text/plain",
+        fileName: "active-content.html",
+        mediaType: "text/html",
         sizeBytes: bytes.byteLength,
         checksumSha256: checksum,
       },
@@ -787,29 +1000,26 @@ describe("attachment lifecycle", () => {
     expect(completed.status).toBe(200);
     expect(completed.body.status).toBe("processing");
 
-    const [storedBeforeRejection] = await db
-      .select({
-        quarantineKey: attachments.quarantineKey,
-        quarantineVersionId: attachments.quarantineVersionId,
-      })
-      .from(attachments)
-      .where(eq(attachments.id, attachmentId))
-      .limit(1);
-    expect(storedBeforeRejection?.quarantineVersionId).toBeTruthy();
-
     await validateAndPromoteAttachment(attachmentId, {
       store,
       maxBytes: 25 * 1024 * 1024,
     });
 
-    const rejected = await request(
+    const ready = await request(
       "GET",
       `/attachments/${attachmentId}`,
       undefined,
       owner.token,
     );
-    expect(rejected.status).toBe(200);
-    expect(rejected.body.status).toBe("rejected");
+    expect(ready.status).toBe(200);
+    expect(ready.body).toMatchObject({
+      status: "ready",
+      kind: "file",
+      mediaType: "text/html",
+    });
+    expect(store.copyCalls.slice(copyCallStart)).toEqual([
+      expect.objectContaining({ mediaType: "application/octet-stream" }),
+    ]);
     const [row] = await db
       .select({
         failureReason: attachments.failureReason,
@@ -820,16 +1030,10 @@ describe("attachment lifecycle", () => {
       .from(attachments)
       .where(eq(attachments.id, attachmentId))
       .limit(1);
-    expect(row?.failureReason).toBe("active_content");
-    expect(row?.quarantineVersionId).toBeNull();
-    expect(row?.cleanVersionId).toBeNull();
-    expect(row?.deletedAt).toBeInstanceOf(Date);
-    expect(
-      await store.headObject({
-        key: storedBeforeRejection!.quarantineKey,
-        versionId: storedBeforeRejection!.quarantineVersionId!,
-      }),
-    ).toBeNull();
+    expect(row?.failureReason).toBeNull();
+    expect(row?.quarantineVersionId).toBeTruthy();
+    expect(row?.cleanVersionId).toBeTruthy();
+    expect(row?.deletedAt).toBeNull();
   });
 
   test("bots get attachment access and shared limits by default, while owners can still disable access", async () => {
@@ -1368,6 +1572,19 @@ class FakeObjectStore implements ObjectStore {
   headError: unknown = null;
   deleteErrorKey: string | null = null;
   readonly deleteCalls: Array<{ key: string; versionId?: string | null }> = [];
+  readonly copyCalls: Array<{
+    sourceKey: string;
+    sourceVersionId: string;
+    destinationKey: string;
+    mediaType: string;
+  }> = [];
+  readonly downloadCalls: Array<{
+    key: string;
+    versionId: string;
+    mediaType: string;
+    contentDisposition: string;
+    expiresInSeconds: number;
+  }> = [];
   private readonly objects = new Map<string, FakeStoredObject>();
   private latestUpload: {
     key: string;
@@ -1432,6 +1649,7 @@ class FakeObjectStore implements ObjectStore {
     destinationKey: string;
     mediaType: string;
   }) {
+    this.copyCalls.push(input);
     const source = await this.headObject({
       key: input.sourceKey,
       versionId: input.sourceVersionId,
@@ -1464,6 +1682,7 @@ class FakeObjectStore implements ObjectStore {
     contentDisposition: string;
     expiresInSeconds: number;
   }): Promise<PresignedRequest> {
+    this.downloadCalls.push(input);
     const object = await this.headObject({
       key: input.key,
       versionId: input.versionId,

@@ -15,11 +15,26 @@ import signal
 import shlex
 import shutil
 import subprocess
+import sys
 import time
 import urllib.error
 import urllib.request
 from pathlib import Path
 from urllib.parse import urlparse
+
+E2E_HELPER_DIR = Path(__file__).resolve().parent
+if str(E2E_HELPER_DIR) not in sys.path:
+    sys.path.insert(0, str(E2E_HELPER_DIR))
+
+from e2e_run import (
+    acquire_owned_directory,
+    allocate_loopback_port,
+    docker_ownership_labels,
+    generate_run_id,
+    ownership_labels_match,
+    refuse_port_collision,
+    validate_run_id,
+)
 
 ROOT = Path(__file__).resolve().parents[2]
 ENV_BEFORE_DOTENV = set(os.environ)
@@ -54,15 +69,42 @@ def explicit_env_or_default(key: str, default: str) -> str:
 
 BUN = os.environ.get("BUN") or shutil.which("bun") or str(Path.home() / ".bun/bin/bun")
 PNPM = os.environ.get("PNPM") or shutil.which("pnpm") or "pnpm"
-API_PORT = int(explicit_env_or_default("THECHAT_E2E_API_PORT", "3338"))
-POSTGRES_PORT = int(explicit_env_or_default("THECHAT_E2E_POSTGRES_PORT", "15544"))
-REDIS_PORT = int(explicit_env_or_default("THECHAT_E2E_REDIS_PORT", "16381"))
+RUN_ID = validate_run_id(
+    os.environ.get("THECHAT_E2E_RUN_ID") or generate_run_id("hermes")
+)
+CONTROL_NAMESPACE = validate_run_id(
+    os.environ.get("THECHAT_E2E_CONTROL_NAMESPACE", RUN_ID)
+)
+EVIDENCE_ROOT = Path(
+    os.environ.get(
+        "THECHAT_E2E_EVIDENCE_ROOT",
+        str(Path.home() / ".cache" / "thechat-e2e" / "hermes-bot" / RUN_ID),
+    )
+).resolve()
+
+
+def configured_port(key: str) -> int:
+    configured = explicit_env_or_default(key, "")
+    return int(configured) if configured else allocate_loopback_port()
+
+
+API_PORT = configured_port("THECHAT_E2E_API_PORT")
+POSTGRES_PORT = configured_port("THECHAT_E2E_POSTGRES_PORT")
+REDIS_PORT = configured_port("THECHAT_E2E_REDIS_PORT")
 KEEP = os.environ.get("HERMES_E2E_KEEP") == "1"
-PG_CONTAINER = os.environ.get("THECHAT_E2E_PG_CONTAINER", "thechat-hermes-e2e-postgres")
-REDIS_CONTAINER = os.environ.get("THECHAT_E2E_REDIS_CONTAINER", "thechat-hermes-e2e-redis")
+PG_CONTAINER = os.environ.get(
+    "THECHAT_E2E_PG_CONTAINER", f"thechat-hermes-e2e-postgres-{RUN_ID}"
+)
+REDIS_CONTAINER = os.environ.get(
+    "THECHAT_E2E_REDIS_CONTAINER", f"thechat-hermes-e2e-redis-{RUN_ID}"
+)
 HERMES_SOURCE_DIR = Path(os.environ.get("HERMES_E2E_SOURCE_DIR", "/home/bruno/projects/hermes2"))
-HERMES_HOME_ROOT = Path(os.environ.get("HERMES_E2E_HOME", str(ROOT / ".tmp" / "hermes-e2e-home")))
-HERMES_LOG_ROOT = Path(os.environ.get("HERMES_E2E_LOG_DIR", str(ROOT / ".tmp")))
+HERMES_HOME_ROOT = Path(
+    os.environ.get("HERMES_E2E_HOME", str(EVIDENCE_ROOT / "hermes-home"))
+)
+HERMES_LOG_ROOT = Path(
+    os.environ.get("HERMES_E2E_LOG_DIR", str(EVIDENCE_ROOT / "logs"))
+)
 HERMES_GATEWAY_RUNTIME = ROOT / "scripts" / "e2e" / "run-hermes-gateway-runtime.py"
 UV = os.environ.get("UV") or shutil.which("uv") or "uv"
 DATABASE_URL = explicit_env_or_default(
@@ -252,17 +294,80 @@ def db_json(sql: str, *, env: dict[str, str] | None = None):
     return json.loads(text or "null")
 
 
+def inspect_container_labels(
+    name: str,
+    *,
+    env: dict[str, str] | None = None,
+) -> dict[str, str] | None:
+    result = subprocess.run(
+        ["docker", "inspect", "-f", "{{json .Config.Labels}}", name],
+        cwd=ROOT,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        return None
+    labels = json.loads(result.stdout.strip() or "{}")
+    return labels if isinstance(labels, dict) else {}
+
+
+def refuse_container_collision(
+    name: str,
+    *,
+    env: dict[str, str] | None = None,
+) -> None:
+    labels = (
+        inspect_container_labels(name)
+        if env is None
+        else inspect_container_labels(name, env=env)
+    )
+    if labels is not None:
+        raise RuntimeError(f"Refusing E2E container collision: {name}")
+
+
+def remove_owned_container(
+    name: str,
+    kind: str,
+    *,
+    env: dict[str, str] | None = None,
+) -> None:
+    labels = (
+        inspect_container_labels(name)
+        if env is None
+        else inspect_container_labels(name, env=env)
+    )
+    if labels is None:
+        return
+    if not ownership_labels_match(labels, RUN_ID, kind):
+        raise RuntimeError(
+            f"Refusing cleanup for container not owned by run {RUN_ID}: {name}"
+        )
+    run(["docker", "rm", "-f", name], env=env)
+
+
+def container_label_args(labels: dict[str, str]) -> list[str]:
+    args: list[str] = []
+    configured_label = os.environ.get("THECHAT_E2E_CONTAINER_LABEL", "").strip()
+    if configured_label:
+        args.extend(("--label", configured_label))
+    for key, value in labels.items():
+        args.extend(("--label", f"{key}={value}"))
+    return args
+
+
 def start_postgres(*, env: dict[str, str] | None = None):
-    label = os.environ.get("THECHAT_E2E_CONTAINER_LABEL", "").strip()
-    label_args = ["--label", label] if label else []
-    run(["docker", "rm", "-f", PG_CONTAINER], check=False, env=env)
+    refuse_port_collision(POSTGRES_PORT, "PostgreSQL port")
+    refuse_container_collision(PG_CONTAINER, env=env)
+    labels = docker_ownership_labels(RUN_ID, "postgres")
     run([
         "docker",
         "run",
         "-d",
         "--name",
         PG_CONTAINER,
-        *label_args,
+        *container_label_args(labels),
         "-e",
         "POSTGRES_USER=thechat",
         "-e",
@@ -285,16 +390,16 @@ def start_postgres(*, env: dict[str, str] | None = None):
 
 
 def start_redis(*, env: dict[str, str] | None = None):
-    label = os.environ.get("THECHAT_E2E_CONTAINER_LABEL", "").strip()
-    label_args = ["--label", label] if label else []
-    run(["docker", "rm", "-f", REDIS_CONTAINER], check=False, env=env)
+    refuse_port_collision(REDIS_PORT, "Redis port")
+    refuse_container_collision(REDIS_CONTAINER, env=env)
+    labels = docker_ownership_labels(RUN_ID, "redis")
     run([
         "docker",
         "run",
         "-d",
         "--name",
         REDIS_CONTAINER,
-        *label_args,
+        *container_label_args(labels),
         "-p",
         f"127.0.0.1:{REDIS_PORT}:6379",
         "redis:7-alpine",
@@ -374,9 +479,12 @@ def start_hermes_gateway(
     bot_slug = slug(bot_name)
     hermes_home = HERMES_HOME_ROOT / bot_slug
     hermes_log = HERMES_LOG_ROOT / f"hermes-e2e-gateway-{bot_slug}.log"
-    if not KEEP and hermes_home.exists():
-        shutil.rmtree(hermes_home)
-    hermes_home.mkdir(parents=True, exist_ok=True)
+    try:
+        hermes_home.mkdir(parents=True)
+    except FileExistsError as exc:
+        raise RuntimeError(
+            f"Refusing Hermes E2E home collision: {hermes_home}"
+        ) from exc
     hermes_log.parent.mkdir(parents=True, exist_ok=True)
     provider_evidence = hermes_home / "e2e-provider-evidence.json"
     disabled_managed_dir = hermes_home / ".managed-scope-disabled"
@@ -516,12 +624,16 @@ def start_hermes_gateway(
     return proc
 
 
-def start_api(env: dict[str, str]) -> subprocess.Popen:
+def start_api(
+    env: dict[str, str], *, refuse_collision: bool = True
+) -> subprocess.Popen:
+    if refuse_collision:
+        refuse_port_collision(API_PORT, "API port")
     api_env = env | {
         "DATABASE_URL": DATABASE_URL,
         "REDIS_URL": REDIS_URL,
         "REALTIME_DRIVER": "redis",
-        "REDIS_KEY_PREFIX": "thechat-hermes-e2e",
+        "REDIS_KEY_PREFIX": f"thechat-hermes-e2e:{CONTROL_NAMESPACE}",
         "BETTER_AUTH_SECRET": "thechat-hermes-e2e-better-auth-secret",
         "BETTER_AUTH_URL": f"http://localhost:{API_PORT}",
         "THECHAT_SECRET_KEY": "thechat-hermes-e2e-secret-key",
@@ -554,7 +666,7 @@ def start_worker(env: dict[str, str]) -> subprocess.Popen:
         "DATABASE_URL": DATABASE_URL,
         "REDIS_URL": REDIS_URL,
         "REALTIME_DRIVER": "redis",
-        "REDIS_KEY_PREFIX": "thechat-hermes-e2e",
+        "REDIS_KEY_PREFIX": f"thechat-hermes-e2e:{CONTROL_NAMESPACE}",
         "BETTER_AUTH_SECRET": "thechat-hermes-e2e-better-auth-secret",
         "BETTER_AUTH_URL": f"http://localhost:{API_PORT}",
         "THECHAT_SECRET_KEY": "thechat-hermes-e2e-secret-key",
@@ -709,6 +821,7 @@ def wait_for_completed_invocations(conversation_id: str, bot_name: str, count: i
 
 
 def main():
+    acquire_owned_directory(EVIDENCE_ROOT, RUN_ID, "hermes-bot-evidence")
     env = os.environ.copy()
     env["PATH"] = f"{Path(BUN).parent}:{env.get('PATH', '')}"
     env["DATABASE_URL"] = DATABASE_URL
@@ -840,6 +953,16 @@ def main():
 
         print(json.dumps({
             "ok": True,
+            "runId": RUN_ID,
+            "evidenceRoot": str(EVIDENCE_ROOT),
+            "resources": {
+                "controlNamespace": CONTROL_NAMESPACE,
+                "apiPort": API_PORT,
+                "postgresPort": POSTGRES_PORT,
+                "redisPort": REDIS_PORT,
+                "postgresContainer": PG_CONTAINER,
+                "redisContainer": REDIS_CONTAINER,
+            },
             "workspaceId": workspace_id,
             "channelId": channel_id,
             "dmId": dm_id,
@@ -861,8 +984,8 @@ def main():
         terminate_process(worker_proc, timeout=10)
         terminate_process(api_proc, timeout=10)
         if not KEEP:
-            run(["docker", "rm", "-f", REDIS_CONTAINER], check=False)
-            run(["docker", "rm", "-f", PG_CONTAINER], check=False)
+            remove_owned_container(REDIS_CONTAINER, "redis")
+            remove_owned_container(PG_CONTAINER, "postgres")
         else:
             print(f"Keeping e2e resources because HERMES_E2E_KEEP=1; Hermes home root: {HERMES_HOME_ROOT}")
 

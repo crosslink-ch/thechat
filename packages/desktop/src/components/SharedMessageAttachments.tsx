@@ -250,9 +250,11 @@ function FileCard({
 }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [downloaded, setDownloaded] = useState(false);
   const download = useCallback(async () => {
     setLoading(true);
     setError(null);
+    setDownloaded(false);
     try {
       await openSharedAttachmentDownload(
         attachment.id,
@@ -260,6 +262,7 @@ function FileCard({
         "attachment",
         attachment.fileName,
       );
+      setDownloaded(true);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Download failed");
     } finally {
@@ -273,7 +276,12 @@ function FileCard({
       onClick={() => void download()}
       disabled={loading}
       className="flex max-w-sm items-center gap-2 rounded-lg border border-border bg-raised px-3 py-2 text-left hover:bg-hover disabled:opacity-60"
-      title={error ?? `Download ${attachment.fileName}`}
+      title={
+        error ??
+        (downloaded
+          ? `Downloaded ${attachment.fileName}`
+          : `Download ${attachment.fileName}`)
+      }
     >
       <span aria-hidden="true">📎</span>
       <span className="min-w-0">
@@ -282,7 +290,9 @@ function FileCard({
         </span>
         <span className="block text-xs text-text-dimmed">
           {error ??
-            `${formatBytes(attachment.sizeBytes)} · ${attachment.mediaType}`}
+            (downloaded
+              ? "Saved to Downloads"
+              : `${formatBytes(attachment.sizeBytes)} · ${attachment.mediaType}`)}
         </span>
       </span>
     </button>

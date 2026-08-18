@@ -12,6 +12,7 @@ import { useAuthStore } from "../stores/auth";
 import { useWorkspacesStore } from "../stores/workspaces";
 import { useConversationsStore } from "../stores/conversations";
 import { useHermesIndicatorsStore } from "../stores/hermes-indicators";
+import { usePresenceStore } from "../stores/presence";
 import { registerGlobalWsHandlers } from "../lib/ws-global-handlers";
 import { wsEvents } from "../lib/ws-events";
 import type { Conversation } from "../core/types";
@@ -160,6 +161,7 @@ beforeEach(() => {
   useAuthStore.setState({ user: null, token: null, loading: false });
   useWorkspacesStore.setState({ workspaces: [], activeWorkspace: null, loading: false });
   useHermesIndicatorsStore.getState().resetForTests();
+  usePresenceStore.getState().clear();
   useConversationsStore.setState({
     conversations: [],
     unreadAgentChats: new Set(),
@@ -224,6 +226,18 @@ describe("Sidebar", () => {
 
     // Notifications button remains available at the top.
     expect(screen.getByLabelText("Notifications")).toBeInTheDocument();
+  });
+
+  it("shows a green online indicator for connected people only", async () => {
+    useAuthStore.setState({ user, token: "test-token" });
+    useWorkspacesStore.setState({ workspaces: workspaceList, activeWorkspace });
+    usePresenceStore.getState().replaceOnlineUsers(["u2", "u-bot"]);
+
+    await renderWithRouter(<Sidebar />);
+
+    expect(screen.getByRole("button", { name: "Alice, online" })).toBeInTheDocument();
+    expect(screen.getByTestId("online-indicator-u2")).toHaveClass("bg-success");
+    expect(screen.queryByTestId("online-indicator-u-bot")).not.toBeInTheDocument();
   });
 
   it("opens create, rename, and delete channel controls for workspace owners", async () => {

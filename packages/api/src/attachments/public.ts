@@ -2,6 +2,7 @@ import { asc, eq, inArray } from "drizzle-orm";
 import type { AttachmentView } from "@thechat/shared";
 import { db } from "../db";
 import { attachments, messageAttachments } from "../db/schema";
+import { OPAQUE_ATTACHMENT_MEDIA_TYPE } from "./file-validation";
 
 export type AttachmentRow = typeof attachments.$inferSelect;
 
@@ -18,7 +19,7 @@ export function toAttachmentView(
     mediaType,
     mimeType: mediaType,
     sizeBytes,
-    kind: isInlineRaster(mediaType) ? "image" : "file",
+    kind: isInlinePreview(mediaType, row.width, row.height) ? "image" : "file",
     width: row.width,
     height: row.height,
     ...(options.includeStatus ? { status: row.status } : {}),
@@ -62,4 +63,30 @@ export function isInlineRaster(mediaType: string) {
     mediaType === "image/gif" ||
     mediaType === "image/webp"
   );
+}
+
+export function isInlinePreview(
+  mediaType: string,
+  width: number | null,
+  height: number | null,
+) {
+  return (
+    isInlineRaster(mediaType) &&
+    Number.isSafeInteger(width) &&
+    Number.isSafeInteger(height) &&
+    width !== null &&
+    height !== null &&
+    width > 0 &&
+    height > 0
+  );
+}
+
+export function safeDownloadMediaType(
+  mediaType: string,
+  width: number | null,
+  height: number | null,
+) {
+  return isInlinePreview(mediaType, width, height)
+    ? mediaType
+    : OPAQUE_ATTACHMENT_MEDIA_TYPE;
 }

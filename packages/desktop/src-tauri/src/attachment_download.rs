@@ -7,7 +7,7 @@ const MAX_ATTACHMENT_DOWNLOAD_BYTES: usize = 25 * 1024 * 1024;
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct AttachmentDownloadHandoff {
+pub struct AttachmentDownloadResult {
     saved_path: String,
     transferred_bytes: usize,
     http_status: u16,
@@ -18,8 +18,9 @@ pub struct AttachmentDownloadHandoff {
 pub async fn download_attachment_to_file(
     url: String,
     suggested_file_name: Option<String>,
-) -> Result<AttachmentDownloadHandoff, String> {
-    let parsed = url::Url::parse(&url).map_err(|_| "Invalid attachment download URL".to_string())?;
+) -> Result<AttachmentDownloadResult, String> {
+    let parsed =
+        url::Url::parse(&url).map_err(|_| "Invalid attachment download URL".to_string())?;
     if !matches!(parsed.scheme(), "http" | "https") {
         return Err("Unsupported attachment download URL".to_string());
     }
@@ -59,12 +60,9 @@ pub async fn download_attachment_to_file(
     })
     .await
     .map_err(|_| "Attachment download writer failed".to_string())??;
-    let handoff_path = saved_path.clone();
-    tokio::task::spawn_blocking(move || handoff_to_shell(&handoff_path))
-        .await
-        .map_err(|_| "Attachment shell handoff failed".to_string())??;
-
-    Ok(AttachmentDownloadHandoff {
+    // Attachments are untrusted. Persist the bytes only; never hand the saved
+    // path to an OS opener, which could execute active formats after one click.
+    Ok(AttachmentDownloadResult {
         saved_path: saved_path.to_string_lossy().into_owned(),
         transferred_bytes,
         http_status: status.as_u16(),
@@ -106,8 +104,13 @@ fn safe_download_file_name(value: Option<&str>) -> String {
     }
 }
 
-fn persist_new_download(directory: &Path, file_name: &str, bytes: &[u8]) -> Result<PathBuf, String> {
-    fs::create_dir_all(directory).map_err(|_| "Failed to create the Downloads directory".to_string())?;
+fn persist_new_download(
+    directory: &Path,
+    file_name: &str,
+    bytes: &[u8],
+) -> Result<PathBuf, String> {
+    fs::create_dir_all(directory)
+        .map_err(|_| "Failed to create the Downloads directory".to_string())?;
     for sequence in 0..1_000 {
         let candidate = directory.join(unique_file_name(file_name, sequence));
         let mut options = OpenOptions::new();
@@ -137,31 +140,14 @@ fn unique_file_name(file_name: &str, sequence: usize) -> String {
         return file_name.to_string();
     }
     let path = Path::new(file_name);
-    let stem = path.file_stem().and_then(|value| value.to_str()).unwrap_or("attachment");
+    let stem = path
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or("attachment");
     match path.extension().and_then(|value| value.to_str()) {
         Some(extension) if !extension.is_empty() => format!("{stem} ({sequence}).{extension}"),
         _ => format!("{stem} ({sequence})"),
     }
-}
-
-fn handoff_to_shell(path: &Path) -> Result<(), String> {
-    #[cfg(target_os = "linux")]
-    let status = std::process::Command::new("xdg-open").arg(path).status();
-    #[cfg(target_os = "macos")]
-    let status = std::process::Command::new("open").arg(path).status();
-    #[cfg(target_os = "windows")]
-    let status = std::process::Command::new("cmd")
-        .args(["/C", "start", ""])
-        .arg(path)
-        .status();
-    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
-    return Err("Attachment shell handoff is unsupported on this platform".to_string());
-
-    status
-        .map_err(|_| "Failed to start the attachment opener".to_string())?
-        .success()
-        .then_some(())
-        .ok_or_else(|| "Attachment opener returned a failure".to_string())
 }
 
 #[cfg(test)]
@@ -170,8 +156,14 @@ mod tests {
 
     #[test]
     fn sanitizes_untrusted_file_names_to_one_leaf() {
-        assert_eq!(safe_download_file_name(Some("../private/report?.txt")), "report_.txt");
-        assert_eq!(safe_download_file_name(Some("..\\private\\report.txt")), "report.txt");
+        assert_eq!(
+            safe_download_file_name(Some("../private/report?.txt")),
+            "report_.txt"
+        );
+        assert_eq!(
+            safe_download_file_name(Some("..\\private\\report.txt")),
+            "report.txt"
+        );
         assert_eq!(safe_download_file_name(Some("...")), "attachment");
     }
 

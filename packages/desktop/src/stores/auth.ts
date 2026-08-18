@@ -2,12 +2,39 @@ import { invoke } from "@tauri-apps/api/core";
 import type { AuthUser } from "@thechat/shared";
 import { create } from "zustand";
 import { api } from "../lib/api";
-import { edenErrorMessage, isAuthoritativeAuthRejection } from "../lib/eden";
+import {
+  edenErrorMessage,
+  edenErrorStatus,
+  isAuthoritativeAuthRejection,
+} from "../lib/eden";
 import { queryClient } from "../lib/query-client";
 
 const KV_ACCESS_TOKEN = "auth_access_token";
 const KV_USER = "auth_user";
 const LEGACY_KV_REFRESH_TOKEN = "auth_refresh_token";
+
+export class EmailVerificationRequiredError extends Error {
+  readonly email: string;
+
+  constructor(email: string) {
+    super("Please verify your email before logging in");
+    this.name = "EmailVerificationRequiredError";
+    this.email = email;
+  }
+}
+
+function requiresEmailVerification(error: unknown) {
+  if (edenErrorStatus(error) !== 403 || !error || typeof error !== "object") {
+    return false;
+  }
+  const value = "value" in error ? (error as { value?: unknown }).value : error;
+  return Boolean(
+    value &&
+      typeof value === "object" &&
+      "verificationRequired" in value &&
+      (value as { verificationRequired?: unknown }).verificationRequired === true,
+  );
+}
 
 async function kvGet(key: string): Promise<string | null> {
   return invoke<string | null>("kv_get", { key });
@@ -59,6 +86,12 @@ interface AuthStore {
     password: string,
   ) => Promise<string | null>;
   verifyEmailOtp: (email: string, code: string) => Promise<void>;
+  requestPasswordReset: (email: string) => Promise<string>;
+  resetPassword: (
+    email: string,
+    code: string,
+    password: string,
+  ) => Promise<string>;
   updateName: (name: string) => Promise<void>;
   logout: () => Promise<void>;
 }
@@ -125,7 +158,12 @@ export const useAuthStore = create<AuthStore>()((set, get) => ({
   login: (email: string, password: string) => runAuthMutation(async () => {
     const { data, error } = await api.auth.login.post({ email, password });
 
-    if (error) throw new Error(edenErrorMessage(error, "Login failed"));
+    if (error) {
+      if (requiresEmailVerification(error)) {
+        throw new EmailVerificationRequiredError(email.trim().toLowerCase());
+      }
+      throw new Error(edenErrorMessage(error, "Login failed"));
+    }
     if (!data || !("accessToken" in data) || !("user" in data) || !data.user) {
       throw new Error("Login failed");
     }
@@ -171,6 +209,45 @@ export const useAuthStore = create<AuthStore>()((set, get) => ({
     await persistCredentials(data.accessToken, data.user);
     set({ token: data.accessToken, user: data.user });
   }),
+
+  requestPasswordReset: (email: string) => runAuthMutation(async () => {
+    const { data, error } = await api.auth["request-password-reset"].post({
+      email,
+    });
+    if (error) {
+      throw new Error(
+        edenErrorMessage(error, "Could not request a password reset"),
+      );
+    }
+    if (
+      !data ||
+      !("message" in data) ||
+      typeof data.message !== "string"
+    ) {
+      throw new Error("Could not request a password reset");
+    }
+    return data.message;
+  }),
+
+  resetPassword: (email: string, code: string, password: string) =>
+    runAuthMutation(async () => {
+      const { data, error } = await api.auth["reset-password"].post({
+        email,
+        code,
+        password,
+      });
+      if (error) {
+        throw new Error(edenErrorMessage(error, "Could not reset password"));
+      }
+      if (
+        !data ||
+        !("message" in data) ||
+        typeof data.message !== "string"
+      ) {
+        throw new Error("Could not reset password");
+      }
+      return data.message;
+    }),
 
   updateName: (name: string) => runAuthMutation(async () => {
     const accessToken = get().token;

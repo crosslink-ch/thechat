@@ -17,6 +17,12 @@ from urllib.request import Request, urlopen
 from urllib.parse import urlencode
 
 ROOT = Path(__file__).resolve().parent.parent
+E2E_HELPER_DIR = ROOT / "scripts" / "e2e"
+if str(E2E_HELPER_DIR) not in sys.path:
+    sys.path.insert(0, str(E2E_HELPER_DIR))
+
+from e2e_run import allocate_loopback_port
+
 CREDENTIALS_FILE = ROOT / ".test-credentials.json"
 ENV_BEFORE_DOTENV = set(os.environ)
 _ACTIVE_SUITE_GROUPS: set[int] = set()
@@ -53,6 +59,33 @@ def explicit_env_or_default(key: str, default: str) -> str:
     if key in ENV_BEFORE_DOTENV and value:
         return value
     return default
+
+
+def unique_e2e_port(key: str) -> str:
+    configured = explicit_env_or_default(key, "")
+    return configured or str(allocate_loopback_port())
+
+
+def approval_e2e_port(key: str, legacy_key: str) -> str:
+    configured = explicit_env_or_default(key, "")
+    legacy = explicit_env_or_default(legacy_key, "")
+    return configured or legacy or str(allocate_loopback_port())
+
+
+HERMES_API_PORT = unique_e2e_port("THECHAT_E2E_API_PORT")
+HERMES_POSTGRES_PORT = unique_e2e_port("THECHAT_E2E_POSTGRES_PORT")
+HERMES_REDIS_PORT = unique_e2e_port("THECHAT_E2E_REDIS_PORT")
+APPROVAL_API_PORT = approval_e2e_port(
+    "THECHAT_APPROVAL_E2E_API_PORT", "THECHAT_E2E_API_PORT"
+)
+APPROVAL_POSTGRES_PORT = approval_e2e_port(
+    "THECHAT_APPROVAL_E2E_POSTGRES_PORT", "THECHAT_E2E_POSTGRES_PORT"
+)
+APPROVAL_REDIS_PORT = approval_e2e_port(
+    "THECHAT_APPROVAL_E2E_REDIS_PORT", "THECHAT_E2E_REDIS_PORT"
+)
+APPROVAL_MODEL_PORT = unique_e2e_port("HERMES_APPROVAL_E2E_MODEL_PORT")
+APPROVAL_WEBHOOK_PORT = unique_e2e_port("HERMES_APPROVAL_E2E_WEBHOOK_PORT")
 
 BACKEND_PORT = int(os.environ.get("THECHAT_BACKEND_PORT", 3000))
 
@@ -142,6 +175,10 @@ SUITES = [
         ],
     },
     {
+        "name": "tauri-config",
+        "cmd": ["python3", "scripts/test_tauri_flavors.py"],
+    },
+    {
         "name": "mcp",
         "cmd": [
             "cargo", "test",
@@ -163,16 +200,16 @@ SUITES = [
         "name": "hermes",
         "cmd": ["python3", "scripts/e2e/hermes-bot-flow.py"],
         "env": {
-            "THECHAT_E2E_API_PORT": explicit_env_or_default("THECHAT_E2E_API_PORT", "3338"),
-            "THECHAT_E2E_POSTGRES_PORT": explicit_env_or_default("THECHAT_E2E_POSTGRES_PORT", "15544"),
-            "THECHAT_E2E_REDIS_PORT": explicit_env_or_default("THECHAT_E2E_REDIS_PORT", "16381"),
+            "THECHAT_E2E_API_PORT": HERMES_API_PORT,
+            "THECHAT_E2E_POSTGRES_PORT": HERMES_POSTGRES_PORT,
+            "THECHAT_E2E_REDIS_PORT": HERMES_REDIS_PORT,
             "THECHAT_E2E_DATABASE_URL": explicit_env_or_default(
                 "THECHAT_E2E_DATABASE_URL",
-                f"postgres://thechat:thechat@localhost:{explicit_env_or_default('THECHAT_E2E_POSTGRES_PORT', '15544')}/thechat",
+                f"postgres://thechat:thechat@localhost:{HERMES_POSTGRES_PORT}/thechat",
             ),
             "THECHAT_E2E_REDIS_URL": explicit_env_or_default(
                 "THECHAT_E2E_REDIS_URL",
-                f"redis://localhost:{explicit_env_or_default('THECHAT_E2E_REDIS_PORT', '16381')}",
+                f"redis://localhost:{HERMES_REDIS_PORT}",
             ),
             "HERMES_E2E_SOURCE_DIR": explicit_env_or_default(
                 "HERMES_E2E_SOURCE_DIR",
@@ -185,24 +222,24 @@ SUITES = [
         "name": "hermes-approval-ui",
         "cmd": ["python3", "scripts/e2e/hermes-approval-ui-flow.py"],
         "env": {
-            "THECHAT_E2E_API_PORT": explicit_env_or_default("THECHAT_E2E_API_PORT", "3339"),
-            "THECHAT_E2E_POSTGRES_PORT": explicit_env_or_default("THECHAT_E2E_POSTGRES_PORT", "15545"),
-            "THECHAT_E2E_REDIS_PORT": explicit_env_or_default("THECHAT_E2E_REDIS_PORT", "16382"),
+            "THECHAT_E2E_API_PORT": APPROVAL_API_PORT,
+            "THECHAT_E2E_POSTGRES_PORT": APPROVAL_POSTGRES_PORT,
+            "THECHAT_E2E_REDIS_PORT": APPROVAL_REDIS_PORT,
             "THECHAT_E2E_DATABASE_URL": explicit_env_or_default(
                 "THECHAT_E2E_DATABASE_URL",
-                f"postgres://thechat:thechat@localhost:{explicit_env_or_default('THECHAT_E2E_POSTGRES_PORT', '15545')}/thechat",
+                f"postgres://thechat:thechat@localhost:{APPROVAL_POSTGRES_PORT}/thechat",
             ),
             "THECHAT_E2E_REDIS_URL": explicit_env_or_default(
                 "THECHAT_E2E_REDIS_URL",
-                f"redis://localhost:{explicit_env_or_default('THECHAT_E2E_REDIS_PORT', '16382')}",
+                f"redis://localhost:{APPROVAL_REDIS_PORT}",
             ),
             "HERMES_APPROVAL_E2E_MODEL_PORT": explicit_env_or_default(
                 "HERMES_APPROVAL_E2E_MODEL_PORT",
-                "18081",
+                APPROVAL_MODEL_PORT,
             ),
             "HERMES_APPROVAL_E2E_WEBHOOK_PORT": explicit_env_or_default(
                 "HERMES_APPROVAL_E2E_WEBHOOK_PORT",
-                "18082",
+                APPROVAL_WEBHOOK_PORT,
             ),
             "HERMES_E2E_SOURCE_DIR": explicit_env_or_default(
                 "HERMES_E2E_SOURCE_DIR",

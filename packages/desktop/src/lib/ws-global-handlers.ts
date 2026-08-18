@@ -7,6 +7,7 @@ import {
 } from "../stores/workspaces";
 import { useNotificationsStore } from "../stores/notifications";
 import { useConversationsStore } from "../stores/conversations";
+import { usePresenceStore } from "../stores/presence";
 import {
   hermesScopeKey,
   useHermesIndicatorsStore,
@@ -79,12 +80,29 @@ export function registerGlobalWsHandlers(
     void useNotificationsStore.getState().fetchNotifications();
   };
 
+  const onPresenceSnapshot = ({
+    userIds,
+  }: WsEvents["ws:presence_snapshot"]) => {
+    usePresenceStore.getState().replaceOnlineUsers(userIds);
+  };
+
+  const onPresenceChanged = ({
+    userId,
+    online,
+  }: WsEvents["ws:presence_changed"]) => {
+    usePresenceStore.getState().setUserOnline(userId, online);
+  };
+
   const onNewMessage = ({
     message: msg,
     conversationType,
   }: WsEvents["ws:new_message"]) => {
     const currentUserId = useAuthStore.getState().user?.id;
-    if (conversationType === "group") {
+    if (
+      conversationType === "group" &&
+      msg.senderId !== currentUserId &&
+      currentPath() !== `/channel/${msg.conversationId}`
+    ) {
       useConversationsStore.getState().markChannelUnread(msg.conversationId);
     }
     if (conversationType === "direct" && msg.senderId !== currentUserId) {
@@ -322,6 +340,8 @@ export function registerGlobalWsHandlers(
   };
 
   wsEvents.on("ws:authenticated", onAuthenticated);
+  wsEvents.on("ws:presence_snapshot", onPresenceSnapshot);
+  wsEvents.on("ws:presence_changed", onPresenceChanged);
   wsEvents.on("ws:new_message", onNewMessage);
   wsEvents.on("ws:member_joined", onMemberJoined);
   wsEvents.on("ws:member_role_changed", onMemberRoleChanged);
@@ -339,6 +359,8 @@ export function registerGlobalWsHandlers(
   return () => {
     workspaceRefreshGeneration += 1;
     wsEvents.off("ws:authenticated", onAuthenticated);
+    wsEvents.off("ws:presence_snapshot", onPresenceSnapshot);
+    wsEvents.off("ws:presence_changed", onPresenceChanged);
     wsEvents.off("ws:new_message", onNewMessage);
     wsEvents.off("ws:member_joined", onMemberJoined);
     wsEvents.off("ws:member_role_changed", onMemberRoleChanged);

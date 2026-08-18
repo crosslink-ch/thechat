@@ -11,11 +11,32 @@ import {
   isEmailVerificationRequired,
 } from "./better-auth";
 import { resolveTokenToUser } from "./middleware";
+import { resetHumanPasswordWithOtp } from "./password-reset";
 
 const authRouteLog = log.child({ component: "auth-routes" });
 const authServiceUnavailable = {
   error: "Authentication service temporarily unavailable",
 };
+const passwordResetRequestMessage =
+  "If an account exists for that email, a password reset code will be sent.";
+const passwordResetRequestMinimumResponseMs = 300;
+const passwordResetConfirmationMinimumResponseMs = 450;
+const passwordResetResponseJitterMs = 60;
+const invalidPasswordResetCode = {
+  error: "Invalid or expired password reset code",
+};
+
+async function waitForPasswordResetResponse(
+  startedAt: number,
+  minimumResponseMs = passwordResetRequestMinimumResponseMs,
+) {
+  const targetResponseMs =
+    minimumResponseMs + crypto.randomInt(0, passwordResetResponseJitterMs + 1);
+  const remaining = targetResponseMs - (performance.now() - startedAt);
+  if (remaining > 0) {
+    await new Promise((resolve) => setTimeout(resolve, remaining));
+  }
+}
 
 const registerSchema = z.object({
   name: z.string().trim().min(1, "Name is required"),
@@ -48,6 +69,22 @@ const verifyEmailSchema = z.object({
     .string()
     .trim()
     .regex(/^\d{6}$/, "Verification code must be 6 digits"),
+});
+
+const requestPasswordResetSchema = z.object({
+  email: z.email("Please enter a valid email address"),
+});
+
+const resetPasswordSchema = z.object({
+  email: z.email("Please enter a valid email address"),
+  code: z
+    .string()
+    .trim()
+    .regex(/^\d{6}$/, "Password reset code must be 6 digits"),
+  password: z
+    .string()
+    .min(8, "Password must be at least 8 characters")
+    .max(128, "Password must be 128 characters or fewer"),
 });
 
 function formatZodError(error: z.ZodError): string {
@@ -135,7 +172,11 @@ const wrapperRateLimitWindowMs = 60_000;
 const wrapperRateLimitMax = 3;
 
 async function consumeWrapperRateLimit(
-  scope: "resend-verification" | "verify-email",
+  scope:
+    | "resend-verification"
+    | "verify-email"
+    | "request-password-reset"
+    | "reset-password",
   clientIp: string | null,
 ) {
   if (
@@ -424,7 +465,10 @@ export const authRoutes = new Elysia({ prefix: "/auth" })
       }
       if (result.status === 403) {
         set.status = 403;
-        return { error: "Please verify your email before logging in" };
+        return {
+          error: "Please verify your email before logging in",
+          verificationRequired: true as const,
+        };
       }
       set.status = 401;
       return { error: "Invalid email or password" };
@@ -564,6 +608,124 @@ export const authRoutes = new Elysia({ prefix: "/auth" })
       }
 
       return { message };
+    },
+  )
+
+  .post(
+    "/request-password-reset",
+    async ({ body, set, headers, request, server }) => {
+      const parsed = requestPasswordResetSchema.safeParse(body);
+      if (!parsed.success) {
+        set.status = 400;
+        return { error: formatZodError(parsed.error) };
+      }
+
+      const email = parsed.data.email.toLowerCase();
+      const responseStartedAt = performance.now();
+      const metadata = clientMetadata({ headers, request, server });
+      // Consume the shared bucket before account lookup so registered and
+      // unknown addresses receive identical rate-limit behavior.
+      const rateLimitResult = await consumeWrapperRateLimit(
+        "request-password-reset",
+        metadata.clientIp,
+      );
+      if (!rateLimitResult.allowed) {
+        const retryAfter = String(rateLimitResult.retryAfter);
+        forwardRateLimitMetadata(set, retryAfter);
+        set.status = 429;
+        return { error: "Too many requests" };
+      }
+
+      const user = await findPublicUserByEmail(email);
+      if (user?.type === "human") {
+        const result = await callBetterAuth(
+          "POST",
+          "/email-otp/request-password-reset",
+          { email },
+          internalAuthHeaders(metadata),
+        );
+        if (
+          !result.ok ||
+          !result.verificationDeliveryAttempted ||
+          result.verificationDeliveryFailed
+        ) {
+          authRouteLog.error(
+            {
+              upstreamStatus: result.status,
+              attempted: result.verificationDeliveryAttempted,
+              failed: result.verificationDeliveryFailed,
+            },
+            "Better Auth password reset code delivery failed",
+          );
+          // Preserve the account-state-independent response. Provider failures
+          // remain visible in structured operational logs without revealing
+          // whether the submitted address belongs to a user.
+        }
+      }
+
+      // In addition to detached email I/O, pad the inexpensive unknown-account
+      // path so account existence is not exposed by normal database timing.
+      await waitForPasswordResetResponse(responseStartedAt);
+      return { message: passwordResetRequestMessage };
+    },
+  )
+
+  .post(
+    "/reset-password",
+    async ({ body, set, headers, request, server }) => {
+      const parsed = resetPasswordSchema.safeParse(body);
+      if (!parsed.success) {
+        set.status = 400;
+        return { error: formatZodError(parsed.error) };
+      }
+
+      const responseStartedAt = performance.now();
+      const metadata = clientMetadata({ headers, request, server });
+      const rateLimitResult = await consumeWrapperRateLimit(
+        "reset-password",
+        metadata.clientIp,
+      );
+      if (!rateLimitResult.allowed) {
+        const retryAfter = String(rateLimitResult.retryAfter);
+        forwardRateLimitMetadata(set, retryAfter);
+        set.status = 429;
+        return { error: "Too many password reset attempts" };
+      }
+
+      const email = parsed.data.email.toLowerCase();
+      try {
+        const result = await resetHumanPasswordWithOtp({
+          email,
+          code: parsed.data.code,
+          password: parsed.data.password,
+        });
+        if (result.status !== "success") {
+          await waitForPasswordResetResponse(
+            responseStartedAt,
+            passwordResetConfirmationMinimumResponseMs,
+          );
+          set.status = 400;
+          return invalidPasswordResetCode;
+        }
+      } catch (error) {
+        authRouteLog.error(
+          {
+            errorClass:
+              error instanceof Error ? error.constructor.name : "UnknownError",
+          },
+          "Atomic password reset failed",
+        );
+        await waitForPasswordResetResponse(
+          responseStartedAt,
+          passwordResetConfirmationMinimumResponseMs,
+        );
+        set.status = 503;
+        return authServiceUnavailable;
+      }
+
+      return {
+        message: "Password reset. You can now log in with your new password.",
+      };
     },
   )
 

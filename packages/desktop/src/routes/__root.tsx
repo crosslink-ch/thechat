@@ -5,7 +5,6 @@ import { useToolsStore } from "../stores/tools";
 import { useWebSocketStore } from "../stores/websocket";
 import { useWorkspacesStore } from "../stores/workspaces";
 import { useNotificationsStore } from "../stores/notifications";
-import { useConversationsStore } from "../stores/conversations";
 import { useKeybindings } from "../hooks/useKeybindings";
 import { Sidebar } from "../components/Sidebar";
 import { ChatHeader } from "../components/ChatHeader";
@@ -18,15 +17,15 @@ import { WorkspaceModal } from "../components/WorkspaceModal";
 import { ChannelModal } from "../components/ChannelModal";
 import { HermesBotModal } from "../components/HermesBotModal";
 import { McpConfigDialog } from "../McpConfigDialog";
-import { useCodexAuthStore } from "../stores/codex-auth";
 import { registerGlobalWsHandlers } from "../lib/ws-global-handlers";
 import { createCommands, useCommandsStore } from "../commands";
 import { ErrorBoundary } from "../components/ErrorBoundary";
 import { UpdateToast } from "../components/UpdateToast";
-import { useUpdaterStore } from "../stores/updater";
-import { useFontSizeStore } from "../stores/font-size";
 import { useCtrlWheelZoom } from "../hooks/useCtrlWheelZoom";
-import { info as logInfo } from "../log";
+import {
+  initializeDesktopStartup,
+  syncAgentChatMcpAuth,
+} from "../desktop-lifecycle";
 
 export function RootLayout() {
   const navigate = useNavigate();
@@ -38,33 +37,26 @@ export function RootLayout() {
 
   // Initialize auth on mount
   useEffect(() => {
-    logInfo("[root] Initializing app");
-    useAuthStore.getState().initialize();
-    useToolsStore.getState().initializeMcp();
-    useToolsStore.getState().discoverSkills();
-    useCodexAuthStore.getState().initialize();
-    useConversationsStore.getState().fetchConversations();
-    useFontSizeStore.getState().initialize();
-    void useUpdaterStore.getState().checkForUpdates();
-
-    return () => {
-      void useUpdaterStore.getState().reset();
-    };
+    return initializeDesktopStartup();
   }, []);
 
-  // React to token changes: connect/disconnect WebSocket, initialize workspaces, auth MCP
+  // React to token changes: connect/disconnect WebSocket and initialize workspaces
   useEffect(() => {
     if (token && token !== prevTokenRef.current) {
       useWebSocketStore.getState().connect(token);
       useWorkspacesStore.getState().initialize();
       useNotificationsStore.getState().fetchNotifications();
-      useToolsStore.getState().initializeAuthMcp(token);
     } else if (!token && prevTokenRef.current) {
       useWebSocketStore.getState().disconnect();
       useWorkspacesStore.getState().reset();
       useNotificationsStore.getState().reset();
     }
     prevTokenRef.current = token;
+  }, [token]);
+
+  // Keep credentials current only after Agent Chat has explicitly activated MCP.
+  useEffect(() => {
+    syncAgentChatMcpAuth(token);
   }, [token]);
 
   // React to tools changes: initialize task runner
@@ -91,46 +83,45 @@ export function RootLayout() {
   });
   useCtrlWheelZoom();
 
-  if (authLoading) {
-    return (
-      <div className="relative flex h-screen flex-col overflow-hidden bg-base">
-        <WindowTitlebar />
-        <div className="flex min-h-0 flex-1 items-center justify-center text-[0.929rem] text-text-placeholder">
-          Loading...
-        </div>
-      </div>
-    );
-  }
+  return <RootView authLoading={authLoading} authenticated={Boolean(user)} />;
+}
 
-  if (!user) {
-    return (
-      <div className="relative flex h-screen flex-col overflow-hidden bg-base">
-        <WindowTitlebar />
-        <AuthOnboarding />
-      </div>
-    );
-  }
+interface RootViewProps {
+  authLoading: boolean;
+  authenticated: boolean;
+}
 
+export function RootView({ authLoading, authenticated }: RootViewProps) {
   return (
     <div className="relative flex h-screen flex-col overflow-hidden bg-base">
       <WindowTitlebar />
-      <div className="flex min-h-0 flex-1 overflow-hidden">
-        <Sidebar />
-        <div className="flex min-w-0 flex-1 flex-col">
-          <ChatHeader />
-          <ErrorBoundary name="Route">
-            <Outlet />
-          </ErrorBoundary>
+      {authLoading ? (
+        <div className="flex min-h-0 flex-1 items-center justify-center text-[0.929rem] text-text-placeholder">
+          Loading...
         </div>
-      </div>
-      <CommandPalette />
-      <PermissionModePicker />
-      <AuthModal />
-      <CodexAuthModal />
-      <WorkspaceModal />
-      <ChannelModal />
-      <HermesBotModal />
-      <McpConfigDialog />
+      ) : !authenticated ? (
+        <AuthOnboarding />
+      ) : (
+        <>
+          <div className="flex min-h-0 flex-1 overflow-hidden">
+            <Sidebar />
+            <div className="flex min-w-0 flex-1 flex-col">
+              <ChatHeader />
+              <ErrorBoundary name="Route">
+                <Outlet />
+              </ErrorBoundary>
+            </div>
+          </div>
+          <CommandPalette />
+          <PermissionModePicker />
+          <AuthModal />
+          <CodexAuthModal />
+          <WorkspaceModal />
+          <ChannelModal />
+          <HermesBotModal />
+          <McpConfigDialog />
+        </>
+      )}
       <UpdateToast />
     </div>
   );

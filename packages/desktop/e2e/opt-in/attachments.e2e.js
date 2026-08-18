@@ -8,17 +8,17 @@ const PASSWORD = required("ATTACHMENT_E2E_PASSWORD");
 const TOKEN = required("ATTACHMENT_E2E_TOKEN");
 const CONVERSATION_ID = required("ATTACHMENT_E2E_CONVERSATION_ID");
 const VALID_FIXTURE = required("ATTACHMENT_E2E_VALID_FIXTURE");
-const REJECTED_FIXTURE = required("ATTACHMENT_E2E_REJECTED_FIXTURE");
+const OPAQUE_FIXTURE = required("ATTACHMENT_E2E_OPAQUE_FIXTURE");
 const CANCEL_FIXTURE = required("ATTACHMENT_E2E_CANCEL_FIXTURE");
 const SCREENSHOT = required("ATTACHMENT_E2E_SCREENSHOT");
 const SUCCESS_SCREENSHOT = required("ATTACHMENT_E2E_SUCCESS_SCREENSHOT");
-const REJECTION_SCREENSHOT = required("ATTACHMENT_E2E_REJECTION_SCREENSHOT");
+const OPAQUE_SCREENSHOT = required("ATTACHMENT_E2E_OPAQUE_SCREENSHOT");
 const FAILURE_SCREENSHOT = required("ATTACHMENT_E2E_FAILURE_SCREENSHOT");
 const DOWNLOAD_DIR = required("ATTACHMENT_E2E_DOWNLOAD_DIR");
 const OPENER_MARKER = required("ATTACHMENT_E2E_OPENER_MARKER");
 
 const validName = fileName(VALID_FIXTURE);
-const rejectedName = fileName(REJECTED_FIXTURE);
+const opaqueName = fileName(OPAQUE_FIXTURE);
 const cancelName = fileName(CANCEL_FIXTURE);
 
 describe("Secure message attachments", function () {
@@ -184,18 +184,19 @@ describe("Secure message attachments", function () {
     );
 
     await fileCard.click();
+    const downloadedPath = path.join(DOWNLOAD_DIR, validName);
     await browser.waitUntil(
-      async () => fs.existsSync(OPENER_MARKER),
+      async () => fs.existsSync(downloadedPath),
       {
         timeout: 30_000,
-        timeoutMsg: "Compiled Tauri download never reached the native opener",
+        timeoutMsg: "Compiled Tauri download never saved the attachment",
       },
     );
-    const openedPath = fs.readFileSync(OPENER_MARKER, "utf8").trim();
-    expect(path.dirname(path.resolve(openedPath))).toBe(path.resolve(DOWNLOAD_DIR));
-    expect(path.basename(openedPath)).toBe(validName);
-    expect(fs.existsSync(openedPath)).toBe(true);
-    const downloadedBytes = fs.readFileSync(openedPath);
+    await $(`button[title="Downloaded ${validName}"]`).waitForExist({
+      timeout: 30_000,
+    });
+    expect(fs.existsSync(OPENER_MARKER)).toBe(false);
+    const downloadedBytes = fs.readFileSync(downloadedPath);
     expect(downloadedBytes.byteLength).toBeGreaterThan(0);
     expect(sha256(downloadedBytes)).toBe(
       sha256(fs.readFileSync(VALID_FIXTURE)),
@@ -203,32 +204,34 @@ describe("Secure message attachments", function () {
     await browser.saveScreenshot(SUCCESS_SCREENSHOT);
   });
 
-  it("shows an active-content rejection and keeps the message unsendable", async () => {
-    await attachFile(REJECTED_FIXTURE);
-    await waitForDraftPhase(rejectedName, "error", 180_000);
-    await expectDraftText(
-      rejectedName,
-      "The attachment was rejected during validation",
-    );
-    await assertTransitions(rejectedName, [
+  it("accepts active content as an opaque downloadable attachment", async () => {
+    await attachFile(OPAQUE_FIXTURE);
+    await waitForDraftPhase(opaqueName, "ready", 180_000);
+    await expectDraftText(opaqueName, "Ready");
+    await assertTransitions(opaqueName, [
       "hashing",
       "uploading",
       "processing",
-      "error",
+      "ready",
     ]);
 
-    const rejected = await draftSnapshot(rejectedName);
-    expect(rejected.attachmentId).toBeTruthy();
-    const status = await apiJson(`/attachments/${rejected.attachmentId}`);
-    expect(status.status).toBe("rejected");
-    expect(await $('button[title="Send message"]').isEnabled()).toBe(false);
-    await browser.saveScreenshot(REJECTION_SCREENSHOT);
+    const opaque = await draftSnapshot(opaqueName);
+    expect(opaque.attachmentId).toBeTruthy();
+    expect(opaque.hasPreview).toBe(false);
+    const status = await apiJson(`/attachments/${opaque.attachmentId}`);
+    expect(status.status).toBe("ready");
+    expect(status.kind).toBe("file");
+    expect(status.width).toBeNull();
+    expect(status.height).toBeNull();
 
-    const remove = await $(`button[aria-label="Remove ${rejectedName}"]`);
-    await remove.waitForClickable({ timeout: 10_000 });
-    await remove.click();
-    await waitForDraftRemoval(rejectedName, 30_000);
-    await waitForAttachmentStatus(rejected.attachmentId, "deleted", 120_000);
+    const sendButton = await $('button[title="Send message"]');
+    await sendButton.waitForEnabled({ timeout: 10_000 });
+    await sendButton.click();
+    await waitForDraftRemoval(opaqueName, 30_000);
+    await $(`button[title="Download ${opaqueName}"]`).waitForExist({
+      timeout: 30_000,
+    });
+    await browser.saveScreenshot(OPAQUE_SCREENSHOT);
   });
 
   it("aborts a real in-flight object upload and cleans its server reservation", async () => {
@@ -253,7 +256,7 @@ describe("Secure message attachments", function () {
     console.log(
       JSON.stringify({
         validName,
-        rejectedName,
+        opaqueName,
         cancelName,
         cancelledDuringProgress: active.progress,
         screenshot: SCREENSHOT,
@@ -379,6 +382,7 @@ async function draftSnapshot(name) {
       phase: draft.getAttribute("data-attachment-phase"),
       progress: Number(draft.getAttribute("data-attachment-progress") ?? "0"),
       attachmentId: draft.getAttribute("data-attachment-id"),
+      hasPreview: draft.querySelector("img") !== null,
       text: draft.textContent ?? "",
     };
   }, name);

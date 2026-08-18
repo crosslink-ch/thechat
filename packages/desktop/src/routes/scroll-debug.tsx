@@ -150,6 +150,7 @@ export function ScrollDebugRoute() {
         ...previous,
         [activeScopeId]: previous[activeScopeId] + 1,
       }));
+      return true;
     },
     [activeScope, activeScopeId, density, manualMessagesByScope, mode],
   );

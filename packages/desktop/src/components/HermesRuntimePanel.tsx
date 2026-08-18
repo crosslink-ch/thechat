@@ -15,6 +15,7 @@ export function HermesRuntimePanel({
   threadsLoadingMore = false,
   threadsHasMore = false,
   activeThreadId = null,
+  draftTaskActive = false,
   queuedCountsByThread,
   generalQueuedCount = 0,
   approvalThreadIds,
@@ -34,6 +35,7 @@ export function HermesRuntimePanel({
   threadsLoadingMore?: boolean;
   threadsHasMore?: boolean;
   activeThreadId?: string | null;
+  draftTaskActive?: boolean;
   queuedCountsByThread?: Map<string, number>;
   generalQueuedCount?: number;
   approvalThreadIds?: Set<string>;
@@ -79,10 +81,10 @@ export function HermesRuntimePanel({
             General
           </div>
           <GeneralThreadRow
-            active={activeThreadId === null}
+            active={activeThreadId === null && !draftTaskActive}
             activeCount={generalActiveCount + generalQueuedCount}
             needsApproval={generalNeedsApproval}
-            unread={generalUnread && activeThreadId !== null}
+            unread={generalUnread && (activeThreadId !== null || draftTaskActive)}
             onSelect={onSelectThread}
           />
         </section>
@@ -105,15 +107,16 @@ export function HermesRuntimePanel({
               </button>
             )}
           </div>
-          {threadsLoading && threads.length === 0 ? (
+          {threadsLoading && threads.length === 0 && !draftTaskActive ? (
             <PanelSkeleton />
-          ) : threads.length === 0 ? (
+          ) : threads.length === 0 && !draftTaskActive ? (
             <div className="rounded-md border border-dashed border-border-subtle bg-base/20 px-3 py-3 text-[0.857rem] text-text-placeholder">
               No tasks yet
             </div>
           ) : (
             <div className="overflow-hidden rounded-md border border-border-subtle bg-base/20">
               <div className="divide-y divide-border-subtle">
+                {draftTaskActive && <DraftThreadRow onSelect={onCreateThread} />}
                 {threads.map((thread) => (
                   <ThreadRow
                     key={thread.id}
@@ -282,6 +285,30 @@ function ThreadRow({
         needsApproval={needsApproval}
         unread={unread}
       />
+    </button>
+  );
+}
+
+function DraftThreadRow({ onSelect }: { onSelect?: () => void }) {
+  return (
+    <button
+      type="button"
+      className="group relative flex w-full cursor-pointer items-center gap-2.5 bg-accent/10 px-2.5 py-2.5 text-left text-text transition-colors duration-150"
+      onClick={onSelect}
+      data-testid="hermes-local-task-draft"
+      aria-current="true"
+    >
+      <span
+        className="absolute top-2 bottom-2 left-0 w-0.5 rounded-r-sm bg-accent"
+        aria-hidden="true"
+      />
+      <span className="flex size-7 shrink-0 items-center justify-center rounded border border-accent/35 bg-accent/10 text-accent">
+        <TaskIcon />
+      </span>
+      <span className="flex min-w-0 flex-1 flex-col">
+        <span className="truncate text-[0.857rem] font-medium">New task</span>
+        <span className="mt-0.5 text-[0.714rem] text-text-dimmed">Draft, not saved</span>
+      </span>
     </button>
   );
 }

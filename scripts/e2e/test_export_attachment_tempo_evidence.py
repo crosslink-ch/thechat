@@ -216,9 +216,10 @@ class TempoEvidenceVerifierTests(unittest.TestCase):
         graph = {
             "message_trace_id": "1" * 32,
             "message_retry_trace_id": "2" * 32,
-            "download_trace_id": "3" * 32,
-            "rejection_trace_id": "4" * 32,
+            "opaque_message_trace_id": "3" * 32,
+            "download_trace_id": "4" * 32,
             "cancelled_upload_trace_id": "5" * 32,
+            "ready_trace_ids": ["6" * 32, "7" * 32],
         }
         readme = self.verifier.render_readme(
             args,
@@ -252,6 +253,13 @@ class TempoEvidenceVerifierTests(unittest.TestCase):
 
     def test_identifier_scan_allows_only_verified_source_provenance(self) -> None:
         trace = self.telemetry_trace()
+        result = self.verifier.assert_secret_safe([trace], "run-1")
+        self.assertEqual(result["forbidden_finding_count"], 0)
+
+    def test_identifier_scan_allows_bounded_better_auth_operation_names(self) -> None:
+        trace = self.telemetry_trace(
+            attributes={"better_auth.operation_id": "get-session"}
+        )
         result = self.verifier.assert_secret_safe([trace], "run-1")
         self.assertEqual(result["forbidden_finding_count"], 0)
 

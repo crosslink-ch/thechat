@@ -14,7 +14,7 @@ import {
 const reserveSchema = z.object({
   conversationId: z.string().uuid(),
   fileName: z.string().min(1).max(1024),
-  mediaType: z.string().min(1).max(255),
+  mediaType: z.string().max(255),
   sizeBytes: z.number().int().positive(),
   checksumSha256: z.string().min(1).max(128),
 });

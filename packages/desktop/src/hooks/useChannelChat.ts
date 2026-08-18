@@ -28,6 +28,7 @@ interface UseChannelChatOptions {
   conversationId: string | null;
   threadId?: string | null;
   unthreadedOnly?: boolean;
+  enabled?: boolean;
   token: string | null;
   wsSendMessage: (
     conversationId: string,
@@ -121,6 +122,7 @@ export function useChannelChat({
   conversationId,
   threadId = null,
   unthreadedOnly = false,
+  enabled = true,
   token,
   wsSendMessage,
   selfUser = null,
@@ -153,7 +155,7 @@ export function useChannelChat({
     initialPageParam: null as string | null,
     getNextPageParam: (lastPage) =>
       lastPage.hasOlder ? oldestMessageCursor(lastPage.messages) : undefined,
-    enabled: !!conversationId && !!token,
+    enabled: enabled && !!conversationId && !!token,
     staleTime: MESSAGE_CACHE_TTL_MS,
   });
 
@@ -392,12 +394,13 @@ export function useChannelChat({
   );
 
   const refetchMessages = useCallback(() => {
-    if (!conversationId || !token) return;
+    if (!enabled || !conversationId || !token) return;
     void query.refetch();
-  }, [conversationId, query.refetch, token]);
+  }, [conversationId, enabled, query.refetch, token]);
 
   const loadOlderMessages = useCallback(async () => {
     if (
+      !enabled ||
       !conversationId ||
       !token ||
       !query.hasNextPage ||
@@ -411,6 +414,7 @@ export function useChannelChat({
     return (loadedPage?.messages.length ?? 0) > 0;
   }, [
     conversationId,
+    enabled,
     query.fetchNextPage,
     query.hasNextPage,
     query.isFetchingNextPage,
@@ -502,9 +506,9 @@ export function useChannelChat({
 
   return {
     messages,
-    loading: query.isLoading,
-    loadingOlder: query.isFetchingNextPage,
-    hasOlderMessages: query.hasNextPage,
+    loading: enabled ? query.isLoading : false,
+    loadingOlder: enabled ? query.isFetchingNextPage : false,
+    hasOlderMessages: enabled ? query.hasNextPage : false,
     addMessage,
     addOptimisticSentMessage,
     sendMessage,

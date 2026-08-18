@@ -58,7 +58,7 @@ xcode-select --install
 git clone https://github.com/crosslink-ch/thechat.git
 cd thechat
 pnpm install
-pnpm tauri build --no-bundle
+pnpm tauri:build:dev --no-bundle
 ```
 
 Executable is written to `packages/desktop/src-tauri/target/release/`
@@ -88,7 +88,19 @@ For the desktop app:
 pnpm tauri:dev
 ```
 
-Starts the Vite dev server and the Tauri app with hot reload.
+Starts the Vite dev server and the Tauri app with hot reload. This command applies
+the development Tauri flavor, named `TheChat Dev` with identifier
+`com.bruno.thechat.dev`. Framework-managed app data, the Windows WebView2 profile,
+logs, caches, and generated files therefore stay separate from the installed
+production app, which retains `com.bruno.thechat`.
+
+`pnpm tauri:dev` is the canonical command. The package-level Tauri wrapper also
+injects the development flavor for direct `pnpm tauri dev` commands, preventing an
+accidental development launch with the production identity. For a release-mode
+local build that keeps the development identity, use `pnpm tauri:build:dev`.
+`pnpm tauri:build` retains the production identity for release validation. The
+fixed OAuth callback ports remain shared, so do not start OAuth login in both apps
+at the same time.
 
 ### Rust profiling
 
@@ -109,7 +121,7 @@ If unset, defaults to `thechat=debug,info` in dev builds, `info` in release.
 #### tokio-console (async task introspection)
 
 ```bash
-pnpm tauri dev --features tokio-console
+pnpm tauri:dev --features tokio-console
 # In another terminal:
 tokio-console                                # connects to localhost:6669
 ```
@@ -151,7 +163,7 @@ Dev builds of the desktop app (`pnpm tauri:dev`) also mirror their logs — incl
 For Rust/Tauri traces, point the OTLP exporter at the local LGTM HTTP endpoint and run the app with the `otel` feature:
 
 ```bash
-OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:14318 pnpm tauri dev --features otel
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:14318 pnpm tauri:dev --features otel
 ```
 
 In Grafana Explore, select `Tempo`, choose TraceQL, and run `{ resource.service.namespace = "thechat" }`.

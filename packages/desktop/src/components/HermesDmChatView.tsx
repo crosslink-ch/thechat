@@ -47,6 +47,7 @@ interface HermesDmChatViewProps {
   slashCommands?: HermesSlashCommand[];
   conversationId?: string;
   token?: string | null;
+  composerKey?: string | number;
 }
 
 function formatTime(iso: string) {
@@ -75,6 +76,7 @@ export function HermesDmChatView({
   slashCommands,
   conversationId,
   token,
+  composerKey,
 }: HermesDmChatViewProps) {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const { isAtBottom, scrollToBottom } = useAutoScroll(scrollContainerRef);
@@ -258,14 +260,13 @@ export function HermesDmChatView({
   }, [typingScrollSignature, scrollToBottom]);
 
   const handleSend = useCallback(
-    (content: string, attachmentIds: string[] = []) => {
+    async (content: string, attachmentIds: string[] = []) => {
       forceNextContentScrollRef.current = true;
-      const result =
-        attachmentIds.length > 0
-          ? onSend(content, attachmentIds)
-          : onSend(content);
+      const accepted = await (attachmentIds.length > 0
+        ? onSend(content, attachmentIds)
+        : onSend(content));
       requestAnimationFrame(() => scrollToBottom({ force: true }));
-      return result;
+      return accepted !== false;
     },
     [onSend, scrollToBottom],
   );
@@ -364,8 +365,14 @@ export function HermesDmChatView({
       </div>
       <MessageSendError error={sendError} />
       <InputBar
+        key={composerKey}
         convId={undefined}
-        draftKey={draftKey ?? `dm:${conversationId ?? scrollScopeKey}`}
+        draftKey={
+          draftKey ??
+          `dm:${conversationId ?? scrollScopeKey}:composer:${String(
+            composerKey ?? "stable",
+          )}`
+        }
         onSend={(content, _images, attachmentIds) =>
           handleSend(content, attachmentIds)
         }

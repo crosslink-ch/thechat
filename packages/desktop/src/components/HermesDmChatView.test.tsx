@@ -446,6 +446,49 @@ describe("HermesDmChatView", () => {
       expect(onLoadOlderMessages).toHaveBeenCalledTimes(1);
     });
   });
+
+  it("mounts a genuinely blank composer when the New task composer identity changes", async () => {
+    const props = {
+      messages: [],
+      loading: false,
+      typingUsers: new Map<string, string>(),
+      progressInvocations: [],
+      typingSuppressedUserIds: [],
+      onSend: () => true,
+      slashCommands: [
+        {
+          command: "/queue",
+          description: "Queue a prompt",
+          argsHint: "<prompt>",
+        },
+      ],
+    };
+    const { container, rerender } = render(
+      <HermesDmChatView {...props} composerKey="conversation-1:0" />,
+    );
+    const oldEditor = container.querySelector<HTMLElement>(".ProseMirror");
+    const fileInput = container.querySelector<HTMLInputElement>("input[type='file']");
+    if (!oldEditor || !fileInput) throw new Error("Composer controls not found");
+
+    fireEvent.keyDown(oldEditor, { key: "/" });
+    fireEvent.keyDown(oldEditor, { key: "Tab" });
+    expect(oldEditor.textContent).toBe("/queue ");
+    fireEvent.change(fileInput, {
+      target: {
+        files: [new File(["image"], "old.png", { type: "image/png" })],
+      },
+    });
+    await waitFor(() =>
+      expect(container.querySelector("img[src^='data:image/png;base64,']")).not.toBeNull(),
+    );
+
+    rerender(<HermesDmChatView {...props} composerKey="conversation-1:1" />);
+
+    const newEditor = container.querySelector<HTMLElement>(".ProseMirror");
+    expect(newEditor).not.toBe(oldEditor);
+    expect(newEditor?.textContent).toBe("");
+    expect(container.querySelector("img[src^='data:image/png;base64,']")).toBeNull();
+  });
 });
 
 function makeScrollable(element: HTMLElement) {

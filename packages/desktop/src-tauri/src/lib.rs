@@ -18,6 +18,16 @@ use stream::{CodexTransport, StreamCancellers};
 use tauri::{Manager, State};
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
+#[cfg(desktop)]
+const DEVELOPMENT_IDENTIFIER: &str = "com.bruno.thechat.dev";
+#[cfg(desktop)]
+const DEVELOPMENT_WINDOW_TITLE: &str = "TheChat Dev";
+
+#[cfg(desktop)]
+fn flavor_window_title(identifier: &str) -> Option<&'static str> {
+    (identifier == DEVELOPMENT_IDENTIFIER).then_some(DEVELOPMENT_WINDOW_TITLE)
+}
+
 #[cfg(feature = "otel")]
 static OTEL_PROVIDER: std::sync::OnceLock<opentelemetry_sdk::trace::SdkTracerProvider> =
     std::sync::OnceLock::new();
@@ -210,23 +220,28 @@ pub struct InitialProjectDir(pub Option<String>);
 
 /// Resolve the DB path using the same logic as the Tauri setup.
 /// Used by CLI flags that need to read the DB without starting the app.
-pub fn resolve_db_path() -> std::path::PathBuf {
+fn release_db_path(
+    data_dir: &std::path::Path,
+    app_identifier: &str,
+) -> std::path::PathBuf {
+    data_dir.join(app_identifier).join("thechat.db")
+}
+
+pub fn resolve_db_path(app_identifier: &str) -> std::path::PathBuf {
     if let Ok(dir) = std::env::var("THECHAT_DATA_DIR") {
         let dir = std::path::PathBuf::from(dir);
         dir.join("thechat.db")
     } else if cfg!(debug_assertions) {
         std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("dev.db")
     } else {
-        let dir = dirs::data_dir()
-            .expect("Failed to resolve data directory")
-            .join("com.bruno.thechat");
-        dir.join("thechat.db")
+        let data_dir = dirs::data_dir().expect("Failed to resolve data directory");
+        release_db_path(&data_dir, app_identifier)
     }
 }
 
 /// Read the API token from the database without starting the Tauri app.
-pub fn get_api_token() -> Result<Option<String>, String> {
-    let db_path = resolve_db_path();
+pub fn get_api_token(app_identifier: &str) -> Result<Option<String>, String> {
+    let db_path = resolve_db_path(app_identifier);
     let db = Database::new(db_path.to_str().unwrap())?;
     db.kv_get("auth_access_token")
 }
@@ -437,6 +452,13 @@ pub fn run() {
             app.handle()
                 .plugin(tauri_plugin_updater::Builder::new().build())?;
 
+            #[cfg(desktop)]
+            if let Some(title) = flavor_window_title(&app.config().identifier) {
+                if let Some(window) = app.get_webview_window("main") {
+                    window.set_title(title)?;
+                }
+            }
+
             let db_path = if let Ok(dir) = std::env::var("THECHAT_DATA_DIR") {
                 // Explicit override (used by E2E tests for isolation)
                 let dir = std::path::PathBuf::from(dir);
@@ -634,5 +656,27 @@ mod tests {
         db.save_message(&conv.id, "user", "Hello", None).unwrap();
         let msgs = db.get_messages(&conv.id, None, None).unwrap();
         assert_eq!(msgs.len(), 1);
+    }
+
+    #[test]
+    fn development_flavor_gets_a_distinct_window_title() {
+        assert_eq!(
+            flavor_window_title(DEVELOPMENT_IDENTIFIER),
+            Some(DEVELOPMENT_WINDOW_TITLE)
+        );
+        assert_eq!(flavor_window_title("com.bruno.thechat"), None);
+    }
+
+    #[test]
+    fn release_database_path_uses_the_resolved_identifier() {
+        let data_dir = std::path::PathBuf::from("app-data");
+        assert_eq!(
+            release_db_path(&data_dir, DEVELOPMENT_IDENTIFIER),
+            data_dir.join(DEVELOPMENT_IDENTIFIER).join("thechat.db")
+        );
+        assert_eq!(
+            release_db_path(&data_dir, "com.bruno.thechat"),
+            data_dir.join("com.bruno.thechat").join("thechat.db")
+        );
     }
 }

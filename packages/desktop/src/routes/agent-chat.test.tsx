@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, act } from "@testing-library/react";
+import { StrictMode } from "react";
 import {
   RouterProvider,
   createMemoryHistory,
@@ -16,6 +17,20 @@ import {
 } from "../stores/composer-drafts";
 
 // -- Mocks --
+
+const lifecycleMocks = vi.hoisted(() => ({
+  activateAgentChatMcp: vi.fn(),
+  deactivateAgentChatMcp: vi.fn(),
+  syncAgentChatMcpAuth: vi.fn(),
+}));
+
+vi.mock("../desktop-lifecycle", () => ({
+  activateAgentChatMcp: (...args: unknown[]) => {
+    lifecycleMocks.activateAgentChatMcp(...args);
+    return lifecycleMocks.deactivateAgentChatMcp;
+  },
+  syncAgentChatMcpAuth: lifecycleMocks.syncAgentChatMcpAuth,
+}));
 
 // Mock Tauri invoke — used by the route for list_conversations, get_initial_project_dir, etc.
 vi.mock("@tauri-apps/api/core", () => ({
@@ -75,7 +90,7 @@ import { AgentChatRoute } from "./agent-chat";
 const mockUseChat = vi.mocked(useChat);
 
 // Helper to render the route inside a TanStack Router
-async function renderRoute(path = "/chat") {
+async function renderRoute(path = "/chat", strict = false) {
   const rootRoute = createRootRoute();
   const chatRoute = createRoute({
     getParentRoute: () => rootRoute,
@@ -96,7 +111,8 @@ async function renderRoute(path = "/chat") {
 
   let result!: ReturnType<typeof render>;
   await act(async () => {
-    result = render(<RouterProvider router={router as any} />);
+    const route = <RouterProvider router={router as any} />;
+    result = render(strict ? <StrictMode>{route}</StrictMode> : route);
   });
   return result;
 }
@@ -131,6 +147,28 @@ describe("AgentChatRoute", () => {
   it("renders without crashing (no conversation)", async () => {
     await renderRoute();
     expect(screen.getByText("Send a message to start chatting")).toBeInTheDocument();
+    expect(lifecycleMocks.activateAgentChatMcp).toHaveBeenCalledOnce();
+    expect(lifecycleMocks.activateAgentChatMcp).toHaveBeenCalledWith(null);
+  });
+
+  it("releases and reacquires the lifecycle lease under StrictMode", async () => {
+    const result = await renderRoute("/chat", true);
+
+    expect(lifecycleMocks.activateAgentChatMcp).toHaveBeenCalledTimes(2);
+    expect(lifecycleMocks.deactivateAgentChatMcp).toHaveBeenCalledOnce();
+
+    result.unmount();
+    expect(lifecycleMocks.deactivateAgentChatMcp).toHaveBeenCalledTimes(2);
+  });
+
+  it("releases the lifecycle lease on route unmount and reacquires it on remount", async () => {
+    const first = await renderRoute();
+    first.unmount();
+
+    expect(lifecycleMocks.deactivateAgentChatMcp).toHaveBeenCalledOnce();
+
+    await renderRoute();
+    expect(lifecycleMocks.activateAgentChatMcp).toHaveBeenCalledTimes(2);
   });
 
   it("does not show TodoPanel when there are no todos", async () => {

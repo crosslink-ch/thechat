@@ -7,11 +7,12 @@ pnpm install              # Install all workspace dependencies
 pnpm dev                  # Vite dev server for desktop (port 1420)
 pnpm dev:desktop          # Same as above
 pnpm dev:api              # ElysiaJS API server on Bun (port 3000)
-pnpm tauri:dev            # Full Tauri app with Rust backend + Vite frontend
+pnpm tauri:dev            # Full Tauri app using the isolated TheChat Dev identity
 pnpm build                # Build all packages
 pnpm build:desktop        # TypeScript check + Vite production build (desktop)
 pnpm build:api            # Bun build (API)
-pnpm tauri:build          # Full production build (frontend + Rust)
+pnpm tauri:build:dev      # Release-mode local build using the isolated dev identity
+pnpm tauri:build          # Full production-identity build (frontend + Rust)
 pnpm test                 # Run all test suites in parallel (typecheck, desktop, api, rust, integration)
 python3 scripts/test.py desktop rust  # Run specific suites only
 python3 scripts/test.py typecheck     # Run only TypeScript type checking

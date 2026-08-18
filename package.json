@@ -16,7 +16,8 @@
     "test:desktop": "pnpm --filter @thechat/desktop test",
     "test:api": "pnpm --filter @thechat/api test",
     "tauri": "dotenv -- pnpm --filter @thechat/desktop tauri",
-    "tauri:dev": "dotenv -- pnpm --filter @thechat/desktop tauri dev",
+    "tauri:dev": "dotenv -- pnpm --filter @thechat/desktop tauri dev --config src-tauri/tauri.dev.conf.json",
+    "tauri:build:dev": "dotenv -- pnpm --filter @thechat/desktop tauri build --config src-tauri/tauri.dev.conf.json",
     "tauri:build": "dotenv -- pnpm --filter @thechat/desktop tauri build",
     "db:generate": "pnpm --filter @thechat/api db:generate",
     "db:migrate": "pnpm --filter @thechat/api db:migrate",
@@ -26,7 +27,10 @@
     "test:e2e:headless": "pnpm --filter @thechat/desktop test:e2e:headless",
     "test:e2e:hermes": "python3 scripts/e2e/hermes-bot-flow.py",
     "test:e2e:hermes:approval-ui": "python3 scripts/e2e/hermes-approval-ui-flow.py",
-    "test:e2e:attachments-ui": "ATTACHMENT_E2E_REQUIRE_EVIDENCE=1 python3 scripts/e2e/attachments-ui-flow.py"
+    "test:e2e:attachments-ui": "ATTACHMENT_E2E_REQUIRE_EVIDENCE=1 python3 scripts/e2e/attachments-ui-flow.py",
+    "test:api:password-reset": "python3 scripts/e2e/password-reset-ui-flow.py --api-only",
+    "test:e2e:password-reset-ui": "python3 scripts/e2e/password-reset-ui-flow.py",
+    "test:e2e:new-task-client-side": "python3 scripts/e2e/new-task-client-side-ui-flow.py"
   },
   "packageManager": "pnpm@10.28.2",
   "devDependencies": {

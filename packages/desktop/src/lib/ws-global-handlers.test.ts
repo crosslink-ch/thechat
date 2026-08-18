@@ -12,6 +12,7 @@ import { useAuthStore } from "../stores/auth";
 import { useWorkspacesStore } from "../stores/workspaces";
 import { useNotificationsStore } from "../stores/notifications";
 import { useConversationsStore } from "../stores/conversations";
+import { usePresenceStore } from "../stores/presence";
 import {
   hermesScopeKey,
   useHermesIndicatorsStore,
@@ -63,6 +64,7 @@ describe("registerGlobalWsHandlers", () => {
     window.location.hash = "";
     useAuthStore.setState({ token: "token-1", user: null, loading: false });
     useHermesIndicatorsStore.getState().resetForTests();
+    usePresenceStore.getState().clear();
     useNotificationsStore.setState({
       notifications: [],
       loading: false,
@@ -74,6 +76,23 @@ describe("registerGlobalWsHandlers", () => {
       activeWorkspace: structuredClone(baseWorkspace),
       loading: false,
     });
+  });
+
+  it("applies presence snapshots and incremental changes", () => {
+    const cleanup = registerGlobalWsHandlers(() => {});
+
+    wsEvents.emit("ws:presence_snapshot", { userIds: ["u-1", "u-2"] });
+    wsEvents.emit("ws:presence_changed", { userId: "u-2", online: false });
+    wsEvents.emit("ws:presence_changed", { userId: "u-3", online: true });
+
+    expect([...usePresenceStore.getState().onlineUserIds].sort()).toEqual([
+      "u-1",
+      "u-3",
+    ]);
+
+    wsEvents.emit("ws:presence_snapshot", { userIds: [] });
+    expect([...usePresenceStore.getState().onlineUserIds]).toEqual([]);
+    cleanup();
   });
 
   it("does not fire a desktop notification for a background Hermes task in the visible DM", () => {
@@ -454,6 +473,86 @@ describe("registerGlobalWsHandlers", () => {
 
     expect(fireNotification).not.toHaveBeenCalled();
     expect(useHermesIndicatorsStore.getState().unreadScopes).toEqual({});
+
+    cleanup();
+  });
+
+  it("does not mark the current user's group message unread", () => {
+    useAuthStore.setState({
+      token: "token-1",
+      user: {
+        id: "u-current",
+        name: "Current User",
+        email: "current@example.com",
+        avatar: null,
+        type: "human",
+      },
+      loading: false,
+    });
+    const cleanup = registerGlobalWsHandlers(() => {}, () => "/channel/ch-other");
+
+    wsEvents.emit("ws:new_message", {
+      conversationType: "group",
+      message: {
+        id: "msg-self",
+        conversationId: "ch-active",
+        threadId: null,
+        senderId: "u-current",
+        senderName: "Current User",
+        content: "hello",
+        createdAt: "2026-01-01T00:00:00.000Z",
+      },
+    });
+
+    expect(useConversationsStore.getState().unreadChannels).toEqual(new Set());
+
+    cleanup();
+  });
+
+  it("marks another user's group message unread only for a background channel", () => {
+    useAuthStore.setState({
+      token: "token-1",
+      user: {
+        id: "u-current",
+        name: "Current User",
+        email: "current@example.com",
+        avatar: null,
+        type: "human",
+      },
+      loading: false,
+    });
+    const path = "/channel/ch-active";
+    const cleanup = registerGlobalWsHandlers(() => {}, () => path);
+
+    wsEvents.emit("ws:new_message", {
+      conversationType: "group",
+      message: {
+        id: "msg-visible",
+        conversationId: "ch-active",
+        threadId: null,
+        senderId: "u-other",
+        senderName: "Other User",
+        content: "visible",
+        createdAt: "2026-01-01T00:00:00.000Z",
+      },
+    });
+    expect(useConversationsStore.getState().unreadChannels).toEqual(new Set());
+
+    wsEvents.emit("ws:new_message", {
+      conversationType: "group",
+      message: {
+        id: "msg-background",
+        conversationId: "ch-background",
+        threadId: null,
+        senderId: "u-other",
+        senderName: "Other User",
+        content: "background",
+        createdAt: "2026-01-01T00:01:00.000Z",
+      },
+    });
+    expect(useConversationsStore.getState().unreadChannels).toEqual(
+      new Set(["ch-background"]),
+    );
 
     cleanup();
   });

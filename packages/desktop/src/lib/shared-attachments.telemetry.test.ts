@@ -318,7 +318,7 @@ describe("desktop attachment telemetry", () => {
     );
   });
 
-  it("uses the compiled Tauri download command and native opener handoff", async () => {
+  it("uses the compiled Tauri command to save without a shell opener", async () => {
     mockDownloadAuthorization();
     Object.defineProperty(window, "__TAURI_INTERNALS__", {
       configurable: true,
@@ -346,11 +346,11 @@ describe("desktop attachment telemetry", () => {
     expectClientSpan("attachment.s3.download", "downloaded");
     const download = span("attachment.download");
     expect(download.attributes["thechat.attachment.handoff"]).toBe(
-      "native_opener",
+      "native_file",
     );
     expect(download.events.map((event) => event.name)).toEqual([
       "attachment.download.transfer_completed",
-      "attachment.download.shell_handoff_completed",
+      "attachment.download.file_saved",
     ]);
     expect(download.attributes["thechat.attachment.outcome"]).toBe("completed");
     expect(telemetryText()).not.toMatch(
@@ -358,7 +358,7 @@ describe("desktop attachment telemetry", () => {
     );
   });
 
-  it("records an active-content rejection as a bounded policy outcome", async () => {
+  it("records a validation rejection as a bounded policy outcome", async () => {
     apiMocks.reserveAttachment.mockResolvedValue({
       data: {
         attachment: attachment("pending_upload"),

@@ -678,6 +678,63 @@ describe("useChannelChat", () => {
     );
   });
 
+  it("keeps a disabled stale General query API-free while preserving draft helpers", async () => {
+    const generalHistory = Array.from({ length: MESSAGE_PAGE_SIZE }, (_, index) =>
+      message("dm-hermes", `general ${index}`),
+    );
+    const get = vi.fn(() => Promise.resolve({ data: generalHistory }));
+    vi.mocked(api.messages).mockReturnValue({ get } as any);
+    const client = createTestQueryClient();
+
+    const { result, rerender } = renderHook(
+      ({ enabled }: { enabled: boolean }) =>
+        useChannelChat({
+          conversationId: "dm-hermes",
+          threadId: null,
+          unthreadedOnly: enabled,
+          enabled,
+          token: "test-token",
+          wsSendMessage: vi.fn(),
+          selfUser: selfUser(),
+        }),
+      {
+        initialProps: { enabled: true },
+        wrapper: createQueryWrapper(client),
+      },
+    );
+
+    await waitFor(() => expect(result.current.messages).toHaveLength(MESSAGE_PAGE_SIZE));
+    rerender({ enabled: false });
+    await client.invalidateQueries({
+      queryKey: messagesQueryKey("dm-hermes", null, true),
+      exact: true,
+      refetchType: "none",
+    });
+    vi.mocked(api.messages).mockClear();
+    get.mockClear();
+
+    act(() => result.current.refetchMessages());
+    await expect(result.current.loadOlderMessages()).resolves.toBe(false);
+    expect(api.messages).not.toHaveBeenCalled();
+    expect(get).not.toHaveBeenCalled();
+    expect(result.current.loading).toBe(false);
+    expect(result.current.loadingOlder).toBe(false);
+    expect(result.current.hasOlderMessages).toBe(false);
+
+    let clientMessageId: string | null = null;
+    act(() => {
+      clientMessageId = result.current.addOptimisticSentMessage(
+        "first draft prompt",
+        "thread-1",
+      );
+    });
+    expect(clientMessageId).toEqual(expect.any(String));
+    expect(result.current.messages.at(-1)).toMatchObject({
+      content: "first draft prompt",
+      threadId: "thread-1",
+    });
+  });
+
   it("reuses fresh cached history when remounting the same conversation", async () => {
     vi.mocked(api.messages).mockReturnValue({
       get: vi.fn(() =>
