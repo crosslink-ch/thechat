@@ -10,6 +10,18 @@ function required(name) {
   return value;
 }
 
+function requiredStringArray(name) {
+  const parsed = JSON.parse(required(name));
+  if (
+    !Array.isArray(parsed) ||
+    parsed.length === 0 ||
+    !parsed.every((item) => typeof item === "string" && item.length > 0)
+  ) {
+    throw new Error(`${name} must be a non-empty JSON string array`);
+  }
+  return parsed;
+}
+
 async function bodyText() {
   return await $("body").getText();
 }
@@ -31,6 +43,13 @@ describeApproval("real Hermes approval UI", () => {
     const trigger = required("HERMES_APPROVAL_E2E_TRIGGER_MESSAGE");
     const command = required("HERMES_APPROVAL_E2E_COMMAND");
     const reason = required("HERMES_APPROVAL_E2E_REASON");
+    const clarifyQuestion = required("HERMES_APPROVAL_E2E_CLARIFY_QUESTION");
+    const clarifyChoices = requiredStringArray(
+      "HERMES_APPROVAL_E2E_CLARIFY_CHOICES",
+    );
+    const clarifyResponse = requiredStringArray(
+      "HERMES_APPROVAL_E2E_CLARIFY_RESPONSE",
+    );
     const finalMessage = required("HERMES_APPROVAL_E2E_FINAL_MESSAGE");
     const screenshotPath = required("HERMES_APPROVAL_E2E_SCREENSHOT");
 
@@ -108,9 +127,48 @@ describeApproval("real Hermes approval UI", () => {
       await confirmedResolution.waitForDisplayed({ timeout: 30_000 });
       expect(await confirmedResolution.getText()).toContain("Approved");
 
+      const clarifyCard = await $("[data-testid='hermes-clarify-request']");
+      await clarifyCard.waitForDisplayed({ timeout: 120_000 });
+      const clarifyText = await clarifyCard.getText();
+      expect(clarifyText).toContain(`${botName} needs your input`);
+      expect(clarifyText).toContain(clarifyQuestion);
+      for (const choice of clarifyChoices) {
+        expect(clarifyText).toContain(choice);
+      }
+      const clarifyScreenshotPath = path.resolve(
+        path.dirname(screenshotPath),
+        "hermes-clarify-ui-e2e.png",
+      );
+      // WebView screenshots can otherwise capture the previous compositor
+      // frame even though WebDriver already sees the mounted card.
+      await browser.pause(150);
+      await browser.saveScreenshot(clarifyScreenshotPath);
+
+      for (const choice of clarifyResponse) {
+        const checkbox = await clarifyCard.$(
+          `.//label[.//span[normalize-space(.)="${choice}"]]//input[@type="checkbox"]`,
+        );
+        await checkbox.waitForClickable({ timeout: 10_000 });
+        await checkbox.click();
+        expect(await checkbox.isSelected()).toBe(true);
+      }
+      const submitClarify = await clarifyCard.$(
+        ".//button[normalize-space(.)='Submit selected']",
+      );
+      await submitClarify.waitForClickable({ timeout: 10_000 });
+      await submitClarify.click();
+
+      // A confirmed row can only arrive after the API's signed interaction
+      // envelope was accepted by the real Hermes webhook adapter.
+      const confirmedClarify = await $(
+        '[data-testid="hermes-clarify-resolved"][data-confirmed="true"]',
+      );
+      await confirmedClarify.waitForDisplayed({ timeout: 30_000 });
+
       const finalReply = await $(`//*[normalize-space(text())='${finalMessage}']`);
       await finalReply.waitForDisplayed({ timeout: 120_000 });
       await approvalCard.waitForExist({ reverse: true, timeout: 30_000 });
+      await clarifyCard.waitForExist({ reverse: true, timeout: 30_000 });
       expect(containsTypedApprovalFallback(await bodyText())).toBe(false);
     } catch (error) {
       const failurePath = path.resolve(

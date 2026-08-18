@@ -30,6 +30,8 @@ class TestRunnerConfigTests(unittest.TestCase):
                 "THECHAT_APPROVAL_E2E_POSTGRES_PORT",
                 "THECHAT_APPROVAL_E2E_REDIS_PORT",
                 "HERMES_APPROVAL_E2E_MODEL_PORT",
+                "HERMES_APPROVAL_E2E_WEBHOOK_PORT",
+                "HERMES_E2E_SOURCE_DIR",
             ):
                 os.environ.pop(key, None)
             os.environ.update(overrides)
@@ -61,6 +63,23 @@ class TestRunnerConfigTests(unittest.TestCase):
             "redis://localhost:26379",
         )
 
+    def test_approval_defaults_to_sibling_hermes_and_honors_webhook_override(self):
+        approval = next(
+            suite
+            for suite in self._load_suites(
+                {"HERMES_APPROVAL_E2E_WEBHOOK_PORT": "28082"}
+            )
+            if suite["name"] == "hermes-approval-ui"
+        )
+        self.assertEqual(
+            approval["env"]["HERMES_E2E_SOURCE_DIR"],
+            str(ROOT.parent / "hermes-agent"),
+        )
+        self.assertEqual(
+            approval["env"]["HERMES_APPROVAL_E2E_WEBHOOK_PORT"],
+            "28082",
+        )
+
     def test_explicit_service_urls_still_win_over_derived_defaults(self):
         suites = self._load_suites(
             {
@@ -87,19 +106,44 @@ class TestRunnerConfigTests(unittest.TestCase):
         second = self._load_suites({})
         first_hermes = next(suite for suite in first if suite["name"] == "hermes")
         second_hermes = next(suite for suite in second if suite["name"] == "hermes")
-        first_ports = {
+        first_approval = next(
+            suite for suite in first if suite["name"] == "hermes-approval-ui"
+        )
+        second_approval = next(
+            suite for suite in second if suite["name"] == "hermes-approval-ui"
+        )
+        first_hermes_ports = {
             first_hermes["env"]["THECHAT_E2E_API_PORT"],
             first_hermes["env"]["THECHAT_E2E_POSTGRES_PORT"],
             first_hermes["env"]["THECHAT_E2E_REDIS_PORT"],
         }
-        second_ports = {
+        second_hermes_ports = {
             second_hermes["env"]["THECHAT_E2E_API_PORT"],
             second_hermes["env"]["THECHAT_E2E_POSTGRES_PORT"],
             second_hermes["env"]["THECHAT_E2E_REDIS_PORT"],
         }
-        self.assertEqual(len(first_ports), 3)
-        self.assertEqual(len(second_ports), 3)
-        self.assertTrue(first_ports.isdisjoint(second_ports))
+        first_approval_ports = {
+            first_approval["env"]["THECHAT_E2E_API_PORT"],
+            first_approval["env"]["THECHAT_E2E_POSTGRES_PORT"],
+            first_approval["env"]["THECHAT_E2E_REDIS_PORT"],
+            first_approval["env"]["HERMES_APPROVAL_E2E_MODEL_PORT"],
+            first_approval["env"]["HERMES_APPROVAL_E2E_WEBHOOK_PORT"],
+        }
+        second_approval_ports = {
+            second_approval["env"]["THECHAT_E2E_API_PORT"],
+            second_approval["env"]["THECHAT_E2E_POSTGRES_PORT"],
+            second_approval["env"]["THECHAT_E2E_REDIS_PORT"],
+            second_approval["env"]["HERMES_APPROVAL_E2E_MODEL_PORT"],
+            second_approval["env"]["HERMES_APPROVAL_E2E_WEBHOOK_PORT"],
+        }
+        self.assertEqual(len(first_hermes_ports), 3)
+        self.assertEqual(len(second_hermes_ports), 3)
+        self.assertEqual(len(first_approval_ports), 5)
+        self.assertEqual(len(second_approval_ports), 5)
+        self.assertTrue(first_hermes_ports.isdisjoint(second_hermes_ports))
+        self.assertTrue(first_approval_ports.isdisjoint(second_approval_ports))
+        self.assertTrue(first_hermes_ports.isdisjoint(first_approval_ports))
+        self.assertTrue(second_hermes_ports.isdisjoint(second_approval_ports))
 
     def test_bounded_suite_returns_timeout_failure(self):
         namespace = self._load_runner({})

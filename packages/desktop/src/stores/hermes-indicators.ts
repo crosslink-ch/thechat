@@ -10,6 +10,11 @@ import {
   isApprovalResolutionEvent,
   type ApprovalDecision,
 } from "../lib/hermes-approvals";
+import {
+  deriveClarifyStates,
+  isClarifyRequestEvent,
+  isClarifyResolutionEvent,
+} from "../lib/hermes-clarifications";
 import { isTerminalHermesProgressEvent } from "../lib/bot-runtime-state";
 
 /**
@@ -19,6 +24,8 @@ import { isTerminalHermesProgressEvent } from "../lib/bot-runtime-state";
  * - `pendingApprovals`: approval.request events that have not been resolved
  *   yet (by an approval.resolved event, a local decision, or the invocation
  *   finishing), oldest first.
+ * - `pendingClarifications`: clarify.request events awaiting an exact
+ *   clarify.resolved transition, tracked even when another DM/thread is open.
  * - `unreadScopes`: task scopes (conversation + thread) whose invocation
  *   finished while the user was not viewing that scope. Cleared when the
  *   scope becomes visible.
@@ -31,7 +38,11 @@ export interface HermesPendingApproval {
   threadId: string | null;
   botUserId: string | null;
   createdAt: string;
+  requestId: string | null;
+  sessionKey: string | null;
 }
+
+export type HermesPendingClarification = HermesPendingApproval;
 
 export interface HermesUnreadScope {
   conversationId: string;
@@ -47,6 +58,7 @@ interface InvocationMeta {
 
 interface HermesIndicatorsStore {
   pendingApprovals: HermesPendingApproval[];
+  pendingClarifications: HermesPendingClarification[];
   unreadScopes: Record<string, HermesUnreadScope>;
   invocationMeta: Record<string, InvocationMeta>;
   terminalSequences: Record<string, number>;
@@ -93,6 +105,7 @@ function rememberTerminalSequence(
 
 const initialState = {
   pendingApprovals: [] as HermesPendingApproval[],
+  pendingClarifications: [] as HermesPendingClarification[],
   unreadScopes: {} as Record<string, HermesUnreadScope>,
   invocationMeta: {} as Record<string, InvocationMeta>,
   terminalSequences: {} as Record<string, number>,
@@ -156,6 +169,15 @@ export const useHermesIndicatorsStore = create<HermesIndicatorsStore>()((set, ge
           (p) => p.invocationId !== invocation.id,
         );
       }
+      if (
+        state.pendingClarifications.some(
+          (clarify) => clarify.invocationId === invocation.id,
+        )
+      ) {
+        next.pendingClarifications = state.pendingClarifications.filter(
+          (clarify) => clarify.invocationId !== invocation.id,
+        );
+      }
       if (wasActive) {
         const meta = { ...state.invocationMeta };
         delete meta[invocation.id];
@@ -203,9 +225,13 @@ export const useHermesIndicatorsStore = create<HermesIndicatorsStore>()((set, ge
         const pendingApprovals = state.pendingApprovals.filter(
           (approval) => approval.invocationId !== event.invocationId,
         );
+        const pendingClarifications = state.pendingClarifications.filter(
+          (clarify) => clarify.invocationId !== event.invocationId,
+        );
         const next: Partial<HermesIndicatorsStore> = {
           invocationMeta,
           pendingApprovals,
+          pendingClarifications,
           terminalSequences: rememberTerminalSequence(
             state.terminalSequences,
             event.invocationId,
@@ -264,27 +290,86 @@ export const useHermesIndicatorsStore = create<HermesIndicatorsStore>()((set, ge
               threadId: event.threadId ?? meta?.threadId ?? null,
               botUserId: meta?.botUserId ?? null,
               createdAt: event.createdAt,
+              requestId: payloadString(event, "requestId"),
+              sessionKey: payloadString(event, "sessionKey"),
             },
           ],
         };
       });
       return;
     }
-    if (!isApprovalResolutionEvent(event)) return;
+    if (isApprovalResolutionEvent(event)) {
+      set((state) => {
+        // Mirror the gateway: resolutions apply to the invocation's pending
+        // approvals oldest-first; resolveAll clears them all.
+        const invocationPending = state.pendingApprovals.filter(
+          (p) => p.invocationId === event.invocationId,
+        );
+        if (invocationPending.length === 0) return state;
+        const requestId = payloadString(event, "requestId");
+        const sessionKey = payloadString(event, "sessionKey");
+        const pending = requestId
+          ? invocationPending.filter(
+              (approval) => approval.requestId === requestId,
+            )
+          : invocationPending.filter(
+              (approval) => !sessionKey || approval.sessionKey === sessionKey,
+            );
+        if (pending.length === 0) return state;
+        const resolveAll = event.payload?.resolveAll === true;
+        const resolved = new Set(
+          (resolveAll ? pending : pending.slice(0, 1)).map((p) => p.eventId),
+        );
+        return {
+          pendingApprovals: state.pendingApprovals.filter(
+            (p) => !resolved.has(p.eventId),
+          ),
+        };
+      });
+      return;
+    }
+
+    if (isClarifyRequestEvent(event)) {
+      set((state) => {
+        if (state.pendingClarifications.some((item) => item.eventId === event.id)) {
+          return state;
+        }
+        const meta = state.invocationMeta[event.invocationId];
+        return {
+          pendingClarifications: [
+            ...state.pendingClarifications,
+            {
+              eventId: event.id,
+              invocationId: event.invocationId,
+              conversationId: event.conversationId,
+              threadId: event.threadId ?? meta?.threadId ?? null,
+              botUserId: meta?.botUserId ?? null,
+              createdAt: event.createdAt,
+              requestId: payloadString(event, "requestId"),
+              sessionKey: payloadString(event, "sessionKey"),
+            },
+          ],
+        };
+      });
+      return;
+    }
+    if (!isClarifyResolutionEvent(event)) return;
     set((state) => {
-      // Mirror the gateway: resolutions apply to the invocation's pending
-      // approvals oldest-first; resolveAll clears them all.
-      const pending = state.pendingApprovals.filter(
-        (p) => p.invocationId === event.invocationId,
+      const invocationPending = state.pendingClarifications.filter(
+        (clarify) => clarify.invocationId === event.invocationId,
       );
-      if (pending.length === 0) return state;
-      const resolveAll = event.payload?.resolveAll === true;
-      const resolved = new Set(
-        (resolveAll ? pending : pending.slice(0, 1)).map((p) => p.eventId),
-      );
+      if (invocationPending.length === 0) return state;
+      const requestId = payloadString(event, "requestId");
+      const sessionKey = payloadString(event, "sessionKey");
+      const target = requestId
+        ? invocationPending.find((clarify) => clarify.requestId === requestId)
+        : invocationPending.find(
+            (clarify) => !sessionKey || clarify.sessionKey === sessionKey,
+          );
+      if (!target) return state;
       return {
-        pendingApprovals: state.pendingApprovals.filter(
-          (p) => !resolved.has(p.eventId),
+        pendingClarifications: state.pendingClarifications.filter(
+          (clarify) => clarify.eventId !== target.eventId,
         ),
       };
     });
@@ -344,6 +429,7 @@ export const useHermesIndicatorsStore = create<HermesIndicatorsStore>()((set, ge
       }
 
       const pending: HermesPendingApproval[] = [];
+      const pendingClarifications: HermesPendingClarification[] = [];
       for (const invocation of activeInvocations) {
         const events = snapshot.events.filter(
           (event) => event.invocationId === invocation.id,
@@ -357,10 +443,28 @@ export const useHermesIndicatorsStore = create<HermesIndicatorsStore>()((set, ge
             threadId: approval.event.threadId ?? invocation.threadId,
             botUserId: invocation.botUserId,
             createdAt: approval.event.createdAt,
+            requestId: payloadString(approval.event, "requestId"),
+            sessionKey: payloadString(approval.event, "sessionKey"),
+          });
+        }
+        for (const clarify of deriveClarifyStates(events, {})) {
+          if (clarify.status !== "pending") continue;
+          pendingClarifications.push({
+            eventId: clarify.event.id,
+            invocationId: invocation.id,
+            conversationId,
+            threadId: clarify.event.threadId ?? invocation.threadId,
+            botUserId: invocation.botUserId,
+            createdAt: clarify.event.createdAt,
+            requestId: payloadString(clarify.event, "requestId"),
+            sessionKey: payloadString(clarify.event, "sessionKey"),
           });
         }
       }
       pending.sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
+      pendingClarifications.sort(
+        (a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt),
+      );
 
       return {
         invocationMeta,
@@ -369,6 +473,12 @@ export const useHermesIndicatorsStore = create<HermesIndicatorsStore>()((set, ge
             (p) => p.conversationId !== conversationId,
           ),
           ...pending,
+        ],
+        pendingClarifications: [
+          ...state.pendingClarifications.filter(
+            (clarify) => clarify.conversationId !== conversationId,
+          ),
+          ...pendingClarifications,
         ],
       };
     });
@@ -398,4 +508,12 @@ export const useHermesIndicatorsStore = create<HermesIndicatorsStore>()((set, ge
 /** Resolve a pending approval without subscribing — for event handlers. */
 export function resolveHermesApprovalIndicator(eventId: string) {
   useHermesIndicatorsStore.getState().resolveApproval(eventId);
+}
+
+function payloadString(
+  event: BotInvocationProgressEventPublic,
+  key: string,
+) {
+  const value = event.payload?.[key];
+  return typeof value === "string" && value.trim() ? value.trim() : null;
 }

@@ -85,6 +85,7 @@ APPROVAL_REDIS_PORT = approval_e2e_port(
     "THECHAT_APPROVAL_E2E_REDIS_PORT", "THECHAT_E2E_REDIS_PORT"
 )
 APPROVAL_MODEL_PORT = unique_e2e_port("HERMES_APPROVAL_E2E_MODEL_PORT")
+APPROVAL_WEBHOOK_PORT = unique_e2e_port("HERMES_APPROVAL_E2E_WEBHOOK_PORT")
 
 BACKEND_PORT = int(os.environ.get("THECHAT_BACKEND_PORT", 3000))
 
@@ -236,9 +237,13 @@ SUITES = [
                 "HERMES_APPROVAL_E2E_MODEL_PORT",
                 APPROVAL_MODEL_PORT,
             ),
+            "HERMES_APPROVAL_E2E_WEBHOOK_PORT": explicit_env_or_default(
+                "HERMES_APPROVAL_E2E_WEBHOOK_PORT",
+                APPROVAL_WEBHOOK_PORT,
+            ),
             "HERMES_E2E_SOURCE_DIR": explicit_env_or_default(
                 "HERMES_E2E_SOURCE_DIR",
-                "/home/bruno/projects/hermes2",
+                str(ROOT.parent / "hermes-agent"),
             ),
         },
         # Real Hermes + real Tauri UI, with a deterministic local model fixture.

@@ -36,7 +36,11 @@ class FakeOpenAIApprovalServerTests(unittest.TestCase):
                 {
                     "type": "function",
                     "function": {"name": "terminal", "parameters": {}},
-                }
+                },
+                {
+                    "type": "function",
+                    "function": {"name": "clarify", "parameters": {}},
+                },
             ],
         }
 
@@ -54,7 +58,7 @@ class FakeOpenAIApprovalServerTests(unittest.TestCase):
         self.assertIn("python3 -c", self.server.APPROVAL_COMMAND)
         self.assertIn(self.server.OUTPUT_MARKER, self.server.APPROVAL_COMMAND)
 
-    def test_tool_result_advances_to_final_message(self):
+    def test_tool_result_advances_to_multiselect_clarify(self):
         payload = {
             **self.trigger_payload,
             "messages": [
@@ -75,6 +79,50 @@ class FakeOpenAIApprovalServerTests(unittest.TestCase):
         }
         completion = self.server.completion_for(payload)
         choice = completion["choices"][0]
+        self.assertEqual(choice["finish_reason"], "tool_calls")
+        tool_call = choice["message"]["tool_calls"][0]
+        self.assertEqual(tool_call["id"], self.server.CLARIFY_TOOL_CALL_ID)
+        self.assertEqual(tool_call["function"]["name"], "clarify")
+        self.assertEqual(
+            json.loads(tool_call["function"]["arguments"]),
+            {
+                "question": self.server.CLARIFY_QUESTION,
+                "choices": self.server.CLARIFY_CHOICES,
+                "multi_select": True,
+            },
+        )
+
+    def test_clarify_result_advances_to_final_message(self):
+        payload = {
+            **self.trigger_payload,
+            "messages": [
+                *self.trigger_payload["messages"],
+                {
+                    "role": "tool",
+                    "tool_call_id": self.server.TOOL_CALL_ID,
+                    "content": json.dumps(
+                        {
+                            "exit_code": 0,
+                            "output": self.server.OUTPUT_MARKER,
+                            "error": None,
+                            "approval": self.server.APPROVAL_EVIDENCE,
+                        }
+                    ),
+                },
+                {
+                    "role": "tool",
+                    "tool_call_id": self.server.CLARIFY_TOOL_CALL_ID,
+                    "content": json.dumps(
+                        {
+                            "question": self.server.CLARIFY_QUESTION,
+                            "choices_offered": self.server.CLARIFY_CHOICES,
+                            "user_response": self.server.CLARIFY_RESPONSE,
+                        }
+                    ),
+                },
+            ],
+        }
+        choice = self.server.completion_for(payload)["choices"][0]
         self.assertEqual(choice["finish_reason"], "stop")
         self.assertEqual(choice["message"]["content"], self.server.FINAL_MESSAGE)
 
@@ -163,6 +211,26 @@ class FakeOpenAIApprovalServerTests(unittest.TestCase):
     def test_completion_state_tracks_tool_and_final_responses(self):
         tool_completion = self.server.completion_for(self.trigger_payload)
         self.server._record_completion(tool_completion)
+        clarify_completion = {
+            **tool_completion,
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {
+                        "role": "assistant",
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": self.server.CLARIFY_TOOL_CALL_ID,
+                                "type": "function",
+                                "function": {"name": "clarify", "arguments": "{}"},
+                            }
+                        ],
+                    },
+                    "finish_reason": "tool_calls",
+                }
+            ],
+        }
         final_completion = {
             **tool_completion,
             "choices": [
@@ -176,12 +244,15 @@ class FakeOpenAIApprovalServerTests(unittest.TestCase):
                 }
             ],
         }
+        self.server._record_completion(clarify_completion)
         self.server._record_completion(final_completion)
         self.assertEqual(
             self.server.state_snapshot(),
             {
-                "requests": 2,
-                "toolCallResponses": 1,
+                "requests": 3,
+                "toolCallResponses": 2,
+                "terminalToolCallResponses": 1,
+                "clarifyToolCallResponses": 1,
                 "successfulFinalResponses": 1,
                 "auxiliaryResponses": 0,
             },

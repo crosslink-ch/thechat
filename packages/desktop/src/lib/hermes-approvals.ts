@@ -48,15 +48,22 @@ export function deriveApprovalStates(
     if (!isApprovalResolutionEvent(event)) continue;
 
     const decision = decisionField(event.payload);
+    const requestId = stringField(event.payload, "requestId");
     const sessionKey = stringField(event.payload, "sessionKey");
     const resolveAll = event.payload?.resolveAll === true;
-    const candidates = states.filter(
-      (state) =>
-        state.status === "pending" &&
-        (!sessionKey ||
-          !stringField(state.event.payload, "sessionKey") ||
-          stringField(state.event.payload, "sessionKey") === sessionKey),
-    );
+    const candidates = requestId
+      ? states.filter(
+          (state) =>
+            state.status === "pending" &&
+            stringField(state.event.payload, "requestId") === requestId,
+        )
+      : states.filter(
+          (state) =>
+            state.status === "pending" &&
+            (!sessionKey ||
+              !stringField(state.event.payload, "sessionKey") ||
+              stringField(state.event.payload, "sessionKey") === sessionKey),
+        );
     for (const target of resolveAll ? candidates : candidates.slice(0, 1)) {
       target.status = "resolved";
       target.decision = decision;
@@ -93,14 +100,6 @@ export function pendingApprovalEvents(
     .sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
 }
 
-/** Slash command text the gateway expects for a decision. */
-export function approvalCommandForDecision(decision: ApprovalDecision) {
-  if (decision === "deny") return "/deny";
-  if (decision === "session") return "/approve session";
-  if (decision === "always") return "/approve always";
-  return "/approve";
-}
-
 /**
  * Parse a typed `/approve` / `/deny` message into the decision it carries.
  * Mirrors the Hermes gateway's argument handling (`all`, `session`/`ses`,
@@ -133,7 +132,10 @@ export function approvalDecisionLabel(decision: ApprovalDecision) {
 function decisionField(
   payload: Record<string, unknown> | null,
 ): ApprovalDecision | null {
-  const value = stringField(payload, "choice") || stringField(payload, "decision");
+  const value =
+    stringField(payload, "choice") ||
+    stringField(payload, "decision") ||
+    stringField(payload, "response");
   return value === "once" ||
     value === "session" ||
     value === "always" ||

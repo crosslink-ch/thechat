@@ -329,9 +329,10 @@ real Tauri desktop app and launches a command-capable Hermes process; broad
 `scripts/test.py --all` deliberately excludes it. Its WebDriver spec lives
 outside the default desktop-spec glob and also skips unless the orchestrator's
 `HERMES_APPROVAL_E2E=1` gate is set. The suite starts an actual Hermes Gateway
-from source and connects it to TheChat through the native polling adapter. A
-deterministic local OpenAI-compatible fixture replaces only the model API. No
-provider credential is required or inherited.
+from the pinned sibling `../hermes-agent` checkout and connects it to TheChat
+through the native webhook adapter on loopback. A deterministic local
+OpenAI-compatible fixture replaces only the model API. No provider credential
+is required or inherited.
 
 The exact command is a harmless `python3 -c` print. Before the stack starts, the
 suite runs the selected Hermes checkout's built-in detectors and requires the
@@ -347,47 +348,57 @@ validates that evidence.
 
 Linux prerequisites are the same as the Tauri WebDriver suite: Rust,
 `tauri-driver`, `WebKitWebDriver`, and `xvfb-run`. Docker, Bun/pnpm, Python 3,
-`uv`, and an installed Hermes source checkout are also required. Run:
+`uv`, and the sibling Hermes source checkout are also required. Run:
 
 ```bash
-HERMES_E2E_SOURCE_DIR=/path/to/hermes-agent \
-  python3 scripts/test.py hermes-approval-ui
+python3 scripts/test.py hermes-approval-ui
 ```
 
 Or use the package script directly:
 
 ```bash
-HERMES_E2E_SOURCE_DIR=/path/to/hermes-agent \
-  pnpm test:e2e:hermes:approval-ui
+pnpm test:e2e:hermes:approval-ui
 ```
 
-The test uses API `3339`, Postgres `15545`, Redis `16382`, and the local model
-fixture on `18081` by default. Port environment overrides automatically update
-the derived database and Redis URLs unless those URLs are themselves explicitly
-set. It performs all of these assertions across the live stack:
+The test allocates distinct loopback ports for the API, Postgres, Redis, local
+model fixture, and real Hermes webhook listener on each run. Use
+`THECHAT_APPROVAL_E2E_API_PORT`, `THECHAT_APPROVAL_E2E_POSTGRES_PORT`,
+`THECHAT_APPROVAL_E2E_REDIS_PORT`, `HERMES_APPROVAL_E2E_MODEL_PORT`, and
+`HERMES_APPROVAL_E2E_WEBHOOK_PORT` to override them. Legacy `THECHAT_E2E_*`
+port overrides remain supported. Port overrides automatically update the
+derived database and Redis URLs unless those URLs are themselves explicitly
+set. The webhook listener always binds to a loopback address. It performs all
+of these assertions across the live stack:
 
 1. Login through the desktop UI and send a DM to the real Hermes bot.
-2. Hermes requests the exact built-in-classified command and posts
-   `approval.request` through TheChat's invocation-progress endpoint.
+2. The Hermes adapter registers its loopback webhook, receives the invocation
+   there instead of polling, requests the exact built-in-classified command,
+   and posts `approval.request` through TheChat's invocation-progress endpoint.
 3. The desktop renders `[data-testid="hermes-approval-request"]` with the
    policy-offered approval and denial actions, while no fallback message tells
    the user to type `/approve`.
-4. Clicking **Approve** from the card must produce a server-confirmed
-   `approval.resolved` row in the rendered event timeline; an optimistic local
-   decision alone does not satisfy the test.
-5. The harmless print command executes, and the model fixture accepts only the
-   matching tool-call ID, explicit user-approval evidence, exit code `0`, an
-   empty error, and exact output marker. The original Hermes turn must then post
-   its final DM message. The fixture requires exactly one approval-driving tool
-   response and one successful final response.
+4. Clicking **Approve** sends no human `/approve`, `/approve session`,
+   `/approve always`, or `/deny` message. The API signs a direct interaction
+   envelope to the real Hermes webhook; only its resulting server-confirmed
+   `approval.resolved` row satisfies the test.
+5. The harmless print command executes, then the fixture requests one
+   multi-select `clarify` interaction. The desktop submits two selections
+   through the structured Clarify UI and must observe server-confirmed
+   `clarify.resolved` before the final answer.
+6. The model fixture accepts only the matching tool-call IDs, explicit
+   user-approval evidence, exit code `0`, an empty error, exact output marker,
+   and exact Clarify response. The original Hermes turn must then post its final
+   DM message. The fixture requires exactly one approval-driving tool call, one
+   Clarify tool call, and one successful final response.
 
-A screenshot of the pending approval card is saved at
-`.tmp/hermes-approval-ui-e2e.png`. Container names and Hermes state/log paths
-are unique per run. A nonblocking suite lock prevents the fixed loopback ports
-from being used by concurrent runs. Both the desktop command and the explicit
-suite runner have wall-clock bounds; failed driver readiness kills the detached
-driver group and cancels its poll. Child processes run in dedicated process
-groups, and SIGINT/SIGTERM enter the same teardown path. Gateway, API, worker,
-model, and desktop processes are always stopped; containers are removed by
-default. `HERMES_E2E_KEEP=1` retains that run's uniquely named containers and
-diagnostics, never live processes.
+A screenshot of the pending approval card is saved under
+`~/.cache/thechat-e2e/hermes-approval/<run-id>/` by default, with the run ID in
+the filename. `HERMES_APPROVAL_E2E_ROOT` can override that run-owned evidence
+directory. Container names, ports, and Hermes state/log paths are unique per
+run, and explicit collision checks fail closed before each service starts.
+Both the desktop command and the explicit suite runner have wall-clock bounds;
+failed driver readiness kills the detached driver group and cancels its poll.
+Child processes run in dedicated process groups, and SIGINT/SIGTERM enter the
+same teardown path. Gateway, API, worker, model, and desktop processes are
+always stopped; containers are removed by default. `HERMES_E2E_KEEP=1` retains
+that run's uniquely named containers and diagnostics, never live processes.

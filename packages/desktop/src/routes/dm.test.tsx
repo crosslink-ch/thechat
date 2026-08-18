@@ -19,6 +19,8 @@ const mocks = vi.hoisted(() => ({
   closePaletteAndRefocus: vi.fn(),
   channelChatOptions: vi.fn(),
   fetchMessages: vi.fn(),
+  invalidateBotRuntime: vi.fn(),
+  submitHermesInteraction: vi.fn(),
   threads: [] as any[],
   messageQueryStale: false,
 }));
@@ -93,7 +95,9 @@ vi.mock("../hooks/useBotRuntime", () => ({
   useBotRuntimeCache: () => ({
     mergeInvocationUpdate: vi.fn(),
     mergeProgressEvent: vi.fn(),
+    invalidate: mocks.invalidateBotRuntime,
   }),
+  submitHermesInteraction: mocks.submitHermesInteraction,
 }));
 
 vi.mock("../hooks/useChannelChat", () => ({
@@ -129,6 +133,7 @@ vi.mock("../hooks/useScopedCommands", () => ({
 vi.mock("../stores/hermes-indicators", () => {
   const state = {
     pendingApprovals: [],
+    pendingClarifications: [],
     unreadScopes: {},
     setVisibleScope: vi.fn(),
     seedFromSnapshot: vi.fn(),

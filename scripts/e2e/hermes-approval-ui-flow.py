@@ -3,8 +3,9 @@
 
 The only fake is the deterministic OpenAI-compatible model endpoint. The test
 starts an actual Hermes Gateway from source, connects it through the native
-TheChat polling adapter, sends a DM through the real desktop UI, observes the
-structured approval card, clicks Approve, and verifies Hermes continues.
+TheChat webhook adapter, sends a DM through the real desktop UI, observes the
+structured approval and clarify cards, resolves both, and verifies Hermes
+continues without a visible slash-command fallback.
 """
 
 from __future__ import annotations
@@ -80,6 +81,12 @@ if _sibling_hermes.exists():
 MODEL_PORT = int(
     os.environ.get("HERMES_APPROVAL_E2E_MODEL_PORT", str(allocate_loopback_port()))
 )
+WEBHOOK_PORT = int(
+    os.environ.get("HERMES_APPROVAL_E2E_WEBHOOK_PORT", str(allocate_loopback_port()))
+)
+if not 1 <= WEBHOOK_PORT <= 65535:
+    raise ValueError(f"Invalid Hermes approval E2E webhook port: {WEBHOOK_PORT}")
+WEBHOOK_URL = f"http://127.0.0.1:{WEBHOOK_PORT}/thechat/webhook"
 KEEP = os.environ.get("HERMES_E2E_KEEP") == "1"
 NATIVE_DESKTOP_E2E_LOCK = "native-desktop-e2e.lock"
 
@@ -281,8 +288,24 @@ def _start_fake_model(env: dict[str, str]) -> subprocess.Popen[Any]:
     return proc
 
 
-def _wait_for_gateway_registration(base: str, token: str, conversation_id: str) -> None:
+def _wait_for_gateway_registration(
+    base: str,
+    token: str,
+    conversation_id: str,
+    bot_id: str,
+    webhook_url: str,
+) -> None:
     def registered() -> bool:
+        health_status, health = harness.http_json(
+            "GET", f"http://127.0.0.1:{WEBHOOK_PORT}/health"
+        )
+        if health_status != 200 or health.get("platform") != "thechat":
+            return False
+        bot_status, bot_detail = harness.http_json(
+            "GET", f"{base}/bots/{bot_id}", token=token
+        )
+        if bot_status != 200 or bot_detail.get("webhookUrl") != webhook_url:
+            return False
         status, detail = harness.http_json(
             "GET",
             f"{base}/conversations/detail/{conversation_id}",
@@ -297,7 +320,9 @@ def _wait_for_gateway_registration(base: str, token: str, conversation_id: str) 
         return False
 
     harness.wait_for(
-        registered, timeout=60, label="Hermes gateway command registration"
+        registered,
+        timeout=60,
+        label="Hermes gateway webhook and command registration",
     )
 
 
@@ -351,6 +376,13 @@ def _run_desktop_e2e(
         "HERMES_APPROVAL_E2E_TRIGGER_MESSAGE": TRIGGER_MESSAGE,
         "HERMES_APPROVAL_E2E_COMMAND": fake_model.APPROVAL_COMMAND,
         "HERMES_APPROVAL_E2E_REASON": fake_model.APPROVAL_REASON_MARKER,
+        "HERMES_APPROVAL_E2E_CLARIFY_QUESTION": fake_model.CLARIFY_QUESTION,
+        "HERMES_APPROVAL_E2E_CLARIFY_CHOICES": json.dumps(
+            fake_model.CLARIFY_CHOICES
+        ),
+        "HERMES_APPROVAL_E2E_CLARIFY_RESPONSE": json.dumps(
+            fake_model.CLARIFY_RESPONSE
+        ),
         "HERMES_APPROVAL_E2E_FINAL_MESSAGE": fake_model.FINAL_MESSAGE,
         "HERMES_APPROVAL_E2E_SCREENSHOT": str(screenshot),
     }
@@ -382,6 +414,8 @@ def _verify_backend_contract(
     token: str,
     conversation_id: str,
     bot_name: str,
+    human_user_id: str,
+    bot_id: str,
 ) -> dict[str, Any]:
     # Terminal progress is intentionally cleared from the public runtime store
     # after completion. The WebDriver assertion observes approval.request while
@@ -396,6 +430,25 @@ def _verify_backend_contract(
     assert any(message.get("content") == TRIGGER_MESSAGE for message in messages), (
         messages
     )
+    human_messages = [
+        message
+        for message in messages
+        if message.get("senderType") == "human"
+        and message.get("senderId") == human_user_id
+    ]
+    assert [message.get("content") for message in human_messages] == [
+        TRIGGER_MESSAGE
+    ], human_messages
+    forbidden_commands = {
+        "/approve",
+        "/approve session",
+        "/approve always",
+        "/deny",
+    }
+    assert not any(
+        str(message.get("content") or "").strip().lower() in forbidden_commands
+        for message in human_messages
+    ), human_messages
     bot_messages = [
         message for message in messages if message.get("senderName") == bot_name
     ]
@@ -407,17 +460,26 @@ def _verify_backend_contract(
         and "/approve" in (message.get("content") or "")
         for message in messages
     ), messages
+    bot_status, bot_detail = harness.http_json(
+        "GET", f"{base}/bots/{bot_id}", token=token
+    )
+    assert bot_status == 200, (bot_status, bot_detail)
+    assert bot_detail.get("webhookUrl") == WEBHOOK_URL, bot_detail
 
     return {
         "finalMessage": fake_model.FINAL_MESSAGE,
-        "screenshot": str(TMP / "hermes-approval-ui-e2e.png"),
+        "interactionDelivery": "signed-webhook",
+        "humanMessages": len(human_messages),
+        "screenshot": str(TMP / f"hermes-approval-ui-e2e-{RUN_ID}.png"),
     }
 
 
 def _verify_model_contract() -> dict[str, int]:
     status, state = harness.http_json("GET", f"http://127.0.0.1:{MODEL_PORT}/state")
     assert status == 200, (status, state)
-    assert state.get("toolCallResponses") == 1, state
+    assert state.get("toolCallResponses") == 2, state
+    assert state.get("terminalToolCallResponses") == 1, state
+    assert state.get("clarifyToolCallResponses") == 1, state
     assert state.get("successfulFinalResponses") == 1, state
     return state
 
@@ -480,6 +542,7 @@ def _run() -> None:
             workspace["id"],
             bot_name,
         )
+        refuse_port_collision(WEBHOOK_PORT, "approval webhook port")
         hermes_proc = harness.start_hermes_gateway(
             gateway_env,
             base,
@@ -491,10 +554,12 @@ def _run() -> None:
             model_base_url=f"http://127.0.0.1:{MODEL_PORT}/v1",
             require_loopback_model=True,
             isolate_runtime_environment=True,
+            webhook_url=WEBHOOK_URL,
             additional_config="""
 platform_toolsets:
   thechat:
     - terminal
+    - clarify
     - no_mcp
 terminal:
   backend: local
@@ -516,7 +581,13 @@ agent:
         )
         assert status == 200, (status, dm)
         conversation_id = dm["id"]
-        _wait_for_gateway_registration(base, token, conversation_id)
+        _wait_for_gateway_registration(
+            base,
+            token,
+            conversation_id,
+            bot["id"],
+            WEBHOOK_URL,
+        )
 
         _run_desktop_e2e(
             env,
@@ -526,7 +597,14 @@ agent:
             bot_name=bot_name,
             conversation_id=conversation_id,
         )
-        evidence = _verify_backend_contract(base, token, conversation_id, bot_name)
+        evidence = _verify_backend_contract(
+            base,
+            token,
+            conversation_id,
+            bot_name,
+            registered["user"]["id"],
+            bot["id"],
+        )
         model_state = _verify_model_contract()
         print(
             json.dumps(

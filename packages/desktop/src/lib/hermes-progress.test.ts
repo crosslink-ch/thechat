@@ -100,6 +100,39 @@ describe("Hermes progress selectors", () => {
     ]);
   });
 
+  it("preserves a pending clarification from an older lane invocation", () => {
+    const selected = selectHermesConversationProgress(runtime({
+      invocations: [
+        invocation({
+          id: "clarify-invocation",
+          startedAt: "2026-01-01T00:00:00.000Z",
+        }),
+        invocation({
+          id: "new-invocation",
+          startedAt: "2026-01-01T00:00:01.000Z",
+        }),
+      ],
+      events: [
+        progressEvent({
+          id: "clarify-event",
+          invocationId: "clarify-invocation",
+          type: "clarify.request",
+          status: "waiting",
+          payload: { requestId: "clarify-1" },
+        }),
+        progressEvent({
+          id: "new-event",
+          invocationId: "new-invocation",
+        }),
+      ],
+    }));
+
+    expect(selected.invocations.map(({ invocation }) => invocation.id)).toEqual([
+      "new-invocation",
+      "clarify-invocation",
+    ]);
+  });
+
   it("suppresses typing for all active Hermes bots", () => {
     const snapshot = runtime({
       invocations: [
