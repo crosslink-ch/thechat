@@ -615,7 +615,8 @@ export const verification = pgTable(
 );
 
 // Better Auth API-key plugin storage. The raw credential is returned once and
-// only its hash is stored here. One bot credential is active per bot user.
+// only its hash is stored here. Bot users have one credential; human users may
+// own multiple named personal access tokens under the personal configuration.
 export const apikey = pgTable(
   "apikey",
   {
@@ -651,7 +652,9 @@ export const apikey = pgTable(
   },
   (t) => [
     uniqueIndex("apikey_key_idx").on(t.key),
-    uniqueIndex("apikey_config_reference_idx").on(t.configId, t.referenceId),
+    uniqueIndex("apikey_bot_reference_idx")
+      .on(t.configId, t.referenceId)
+      .where(sql`${t.configId} = 'bot'`),
     index("apikey_reference_id_idx").on(t.referenceId),
   ]
 );

@@ -102,10 +102,17 @@ export function betterAuthBaseURL() {
 export const BETTER_AUTH_SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 30;
 export const BOT_API_KEY_CONFIG_ID = "bot";
 export const BOT_API_KEY_PREFIX = "bot_";
+export const PERSONAL_ACCESS_TOKEN_CONFIG_ID = "personal";
+export const PERSONAL_ACCESS_TOKEN_PREFIX = "tchat_pat_";
+export const PERSONAL_ACCESS_TOKEN_NAME_MAX_LENGTH = 100;
 export const BOT_API_KEY_HASHER = defaultKeyHasher;
 
 export function generateBotApiKey(): string {
   return `${BOT_API_KEY_PREFIX}${crypto.randomBytes(32).toString("hex")}`;
+}
+
+export function generatePersonalAccessToken(): string {
+  return `${PERSONAL_ACCESS_TOKEN_PREFIX}${crypto.randomBytes(32).toString("hex")}`;
 }
 
 export function betterAuthRequestURL(path: string) {
@@ -238,21 +245,45 @@ export const auth = betterAuth({
   },
   plugins: [
     bearer(),
-    apiKey({
-      configId: BOT_API_KEY_CONFIG_ID,
-      defaultPrefix: BOT_API_KEY_PREFIX,
-      defaultKeyLength: 64,
-      customKeyGenerator: generateBotApiKey,
-      requireName: false,
-      references: "user",
-      rateLimit: { enabled: false },
-      keyExpiration: {
-        defaultExpiresIn: null,
-        disableCustomExpiresTime: true,
+    apiKey([
+      {
+        configId: BOT_API_KEY_CONFIG_ID,
+        defaultPrefix: BOT_API_KEY_PREFIX,
+        defaultKeyLength: 64,
+        customKeyGenerator: generateBotApiKey,
+        requireName: false,
+        references: "user",
+        rateLimit: { enabled: false },
+        keyExpiration: {
+          defaultExpiresIn: null,
+          disableCustomExpiresTime: true,
+        },
+        enableMetadata: false,
+        enableSessionForAPIKeys: false,
       },
-      enableMetadata: false,
-      enableSessionForAPIKeys: false,
-    }),
+      {
+        configId: PERSONAL_ACCESS_TOKEN_CONFIG_ID,
+        defaultPrefix: PERSONAL_ACCESS_TOKEN_PREFIX,
+        defaultKeyLength: 64,
+        // Keep the credential-class prefix invariant even if Better Auth's
+        // lower-level API-key route receives a client-supplied prefix.
+        customKeyGenerator: generatePersonalAccessToken,
+        requireName: true,
+        maximumNameLength: PERSONAL_ACCESS_TOKEN_NAME_MAX_LENGTH,
+        references: "user",
+        rateLimit: { enabled: false },
+        keyExpiration: {
+          defaultExpiresIn: null,
+          disableCustomExpiresTime: true,
+        },
+        startingCharactersConfig: {
+          shouldStore: true,
+          charactersLength: PERSONAL_ACCESS_TOKEN_PREFIX.length + 6,
+        },
+        enableMetadata: false,
+        enableSessionForAPIKeys: false,
+      },
+    ]),
     emailOTP({
       otpLength: 6,
       expiresIn: 15 * 60,
