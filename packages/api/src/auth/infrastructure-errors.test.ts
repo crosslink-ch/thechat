@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { Elysia } from "elysia";
-import { auth } from "./better-auth";
+import { auth, PERSONAL_ACCESS_TOKEN_PREFIX } from "./better-auth";
 import { authRoutes } from "./index";
 import { db } from "../db";
 import {
@@ -114,6 +114,40 @@ describe("authentication infrastructure failures", () => {
           new Request("http://localhost/auth/me", {
             headers: {
               authorization: `Bearer bot_${"a".repeat(64)}`,
+            },
+          }),
+        ),
+      );
+
+      expect(response.status).toBe(503);
+      expect(response.body).toEqual({
+        error: "Authentication service temporarily unavailable",
+      });
+      expect(executeSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      executeSpy.mockRestore();
+      verifyApiKeySpy.mockRestore();
+    }
+  });
+
+  test("personal access-token store outages do not become invalid credentials", async () => {
+    const verifyApiKeySpy = spyOn(auth.api, "verifyApiKey").mockResolvedValue({
+      valid: false,
+      error: {
+        code: "INVALID_API_KEY",
+        message: "Invalid API key",
+      },
+    } as any);
+    const executeSpy = spyOn(db, "execute").mockRejectedValue(
+      new Error("simulated personal-token store outage"),
+    );
+
+    try {
+      const response = await json(
+        await app.handle(
+          new Request("http://localhost/auth/me", {
+            headers: {
+              authorization: `Bearer ${PERSONAL_ACCESS_TOKEN_PREFIX}${"a".repeat(64)}`,
             },
           }),
         ),

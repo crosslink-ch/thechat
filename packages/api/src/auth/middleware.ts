@@ -2,8 +2,13 @@ import { Elysia } from "elysia";
 import { and, eq } from "drizzle-orm";
 import { db } from "../db";
 import { bots, session, users } from "../db/schema";
-import { auth, isEmailVerificationRequired } from "./better-auth";
+import {
+  auth,
+  isEmailVerificationRequired,
+  PERSONAL_ACCESS_TOKEN_PREFIX,
+} from "./better-auth";
 import { verifyBotApiKey } from "./bot-api-keys";
+import { verifyPersonalAccessToken } from "./personal-access-tokens";
 import { log } from "../logging";
 
 const authMiddlewareLog = log.child({ component: "auth-middleware" });
@@ -67,10 +72,27 @@ async function loadHumanUser(userId: string): Promise<ResolvedUser | null> {
   };
 }
 
+async function resolveSessionToken(token: string) {
+  const betterAuthSession = await auth.api.getSession({
+    headers: new Headers({ authorization: `Bearer ${token}` }),
+  });
+  if (!betterAuthSession?.user?.id) return null;
+  return loadHumanUser(betterAuthSession.user.id);
+}
+
+export async function resolveSessionTokenToHumanUser(token: string) {
+  try {
+    return await resolveSessionToken(token);
+  } catch (error) {
+    if (error instanceof AuthInfrastructureError) throw error;
+    authMiddlewareLog.error({ err: error }, "Session authentication lookup failed");
+    throw new AuthInfrastructureError(error);
+  }
+}
+
 /**
- * Resolve a Bearer token to a user record.
- * - bot_ prefix → bot API-key lookup
- * - all other bearer tokens → Better Auth opaque human session lookup
+ * Resolve a Bearer credential in strict order: human session, bot key, then
+ * personal access token. Personal tokens are accepted only for human users.
  */
 export async function resolveTokenToUser(
   token: string,
@@ -79,6 +101,9 @@ export async function resolveTokenToUser(
   const includeBotTokens = options.includeBotTokens ?? true;
 
   try {
+    const sessionUser = await resolveSessionToken(token);
+    if (sessionUser) return sessionUser;
+
     if (token.startsWith("bot_")) {
       if (!includeBotTokens) return null;
 
@@ -109,12 +134,10 @@ export async function resolveTokenToUser(
       return user ?? null;
     }
 
-    const betterAuthSession = await auth.api.getSession({
-      headers: new Headers({ authorization: `Bearer ${token}` }),
-    });
-
-    if (betterAuthSession?.user?.id) {
-      return loadHumanUser(betterAuthSession.user.id);
+    if (token.startsWith(PERSONAL_ACCESS_TOKEN_PREFIX)) {
+      const userId = await verifyPersonalAccessToken(token);
+      if (!userId) return null;
+      return loadHumanUser(userId);
     }
 
     return null;

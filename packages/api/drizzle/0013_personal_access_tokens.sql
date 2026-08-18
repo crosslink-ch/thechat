@@ -1,0 +1,2 @@
+DROP INDEX "apikey_config_reference_idx";--> statement-breakpoint
+CREATE UNIQUE INDEX "apikey_bot_reference_idx" ON "apikey" USING btree ("config_id","reference_id") WHERE "apikey"."config_id" = 'bot';

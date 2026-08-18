@@ -16,6 +16,7 @@ import {
 import { getMessages, sendMessage } from "../services/messages";
 import {
   createBot,
+  createHermesBotInWorkspace,
   listBots,
   getBot,
   updateBot,
@@ -23,6 +24,12 @@ import {
   regenerateBotKey,
   regenerateBotSecret,
 } from "../services/bots";
+import {
+  getHermesBotCapabilities,
+  getHermesBotConfig,
+  testHermesBot,
+  updateHermesBotConfig,
+} from "../services/hermes";
 import {
   addOwnedBotToWorkspace,
   removeBotWorkspaceMembership,
@@ -353,6 +360,47 @@ export function registerTools(server: McpServer) {
     }
   );
 
+  // --- create_hermes_bot ---
+  server.registerTool(
+    "create_hermes_bot",
+    {
+      description:
+        "Create a Hermes bot and add it to a workspace. The caller must be a human workspace owner or admin. Returns the bot token once.",
+      inputSchema: {
+        name: z.string().trim().min(1).describe("Hermes bot name"),
+        workspaceId: z.string().trim().min(1).describe("Workspace ID"),
+        webhookUrl: z
+          .string()
+          .url()
+          .optional()
+          .describe("Optional webhook URL"),
+        attachmentAccess: z
+          .boolean()
+          .optional()
+          .describe(
+            "Allow the bot to receive and upload attachments (default true)",
+          ),
+      },
+    },
+    async ({ name, workspaceId, webhookUrl, attachmentAccess }, extra) => {
+      const user = getUser(extra);
+      if (user.type === "bot") {
+        return error("Bots cannot create other bots");
+      }
+      return withService(async () => {
+        const bot = await createHermesBotInWorkspace(
+          name as string,
+          (webhookUrl as string | undefined) ?? null,
+          user.id,
+          workspaceId as string,
+          (attachmentAccess as boolean | undefined) ?? true,
+        );
+        const { webhookSecret: _webhookSecret, ...publicBot } = bot;
+        return publicBot;
+      });
+    },
+  );
+
   // --- list_bots ---
   server.registerTool(
     "list_bots",
@@ -508,5 +556,75 @@ export function registerTools(server: McpServer) {
         regenerateBotSecret(botId as string, user.id)
       );
     }
+  );
+
+  // --- Hermes bot management ---
+  server.registerTool(
+    "get_hermes_bot_config",
+    {
+      description:
+        "Get the supported public configuration for a Hermes bot. Only the bot owner can view it.",
+      inputSchema: {
+        botId: z.string().uuid().describe("The Hermes bot ID"),
+      },
+    },
+    async ({ botId }, extra) => {
+      const user = getUser(extra);
+      return withService(() => getHermesBotConfig(botId as string, user.id));
+    },
+  );
+
+  server.registerTool(
+    "update_hermes_bot_config",
+    {
+      description:
+        "Update a Hermes bot's supported configuration. Only the bot owner can update it.",
+      inputSchema: {
+        botId: z.string().uuid().describe("The Hermes bot ID"),
+        defaultMode: z
+          .enum(["run", "response"])
+          .describe("Default Hermes invocation mode"),
+      },
+    },
+    async ({ botId, defaultMode }, extra) => {
+      const user = getUser(extra);
+      return withService(() =>
+        updateHermesBotConfig(botId as string, user.id, {
+          defaultMode: defaultMode as "run" | "response",
+        }),
+      );
+    },
+  );
+
+  server.registerTool(
+    "test_hermes_bot",
+    {
+      description:
+        "Check the TheChat-side setup for a Hermes bot. Only the bot owner can test it.",
+      inputSchema: {
+        botId: z.string().uuid().describe("The Hermes bot ID"),
+      },
+    },
+    async ({ botId }, extra) => {
+      const user = getUser(extra);
+      return withService(() => testHermesBot(botId as string, user.id));
+    },
+  );
+
+  server.registerTool(
+    "get_hermes_bot_capabilities",
+    {
+      description:
+        "Get TheChat capabilities supported by a Hermes bot. Only the bot owner can view them.",
+      inputSchema: {
+        botId: z.string().uuid().describe("The Hermes bot ID"),
+      },
+    },
+    async ({ botId }, extra) => {
+      const user = getUser(extra);
+      return withService(() =>
+        getHermesBotCapabilities(botId as string, user.id),
+      );
+    },
   );
 }

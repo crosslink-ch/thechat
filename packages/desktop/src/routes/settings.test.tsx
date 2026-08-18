@@ -1,11 +1,21 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useAuthStore } from "../stores/auth";
 import { SettingsRoute } from "./settings";
 
-const { invokeMock } = vi.hoisted(() => ({
+const {
+  invokeMock,
+  listTokensMock,
+  createTokenMock,
+  tokenEndpointMock,
+  revokeTokenMock,
+} = vi.hoisted(() => ({
   invokeMock: vi.fn(),
+  listTokensMock: vi.fn(),
+  createTokenMock: vi.fn(),
+  tokenEndpointMock: vi.fn(),
+  revokeTokenMock: vi.fn(),
 }));
 const updateNameMock = vi.fn();
 const profileEmail =
@@ -15,9 +25,37 @@ vi.mock("@tauri-apps/api/core", () => ({
   invoke: invokeMock,
 }));
 
+vi.mock("../lib/api", () => {
+  const personalAccessTokens = Object.assign(
+    (...args: unknown[]) => tokenEndpointMock(...args),
+    {
+      get: listTokensMock,
+      post: createTokenMock,
+    },
+  );
+  return {
+    API_URL: "https://api.example.test",
+    api: {
+      auth: {
+        "personal-access-tokens": personalAccessTokens,
+      },
+    },
+  };
+});
+
 beforeEach(() => {
   invokeMock.mockClear();
   updateNameMock.mockReset();
+  listTokensMock.mockReset();
+  createTokenMock.mockReset();
+  tokenEndpointMock.mockReset();
+  revokeTokenMock.mockReset();
+  listTokensMock.mockResolvedValue({
+    data: { personalAccessTokens: [] },
+    error: null,
+  });
+  tokenEndpointMock.mockReturnValue({ delete: revokeTokenMock });
+  revokeTokenMock.mockResolvedValue({ data: { success: true }, error: null });
   updateNameMock.mockImplementation(async (name: string) => {
     useAuthStore.setState((state) => ({
       user: state.user ? { ...state.user, name } : null,
@@ -38,7 +76,7 @@ beforeEach(() => {
 });
 
 describe("SettingsRoute", () => {
-  it("keeps the name editable and presents immutable account information", () => {
+  it("keeps the name editable and presents immutable account information", async () => {
     render(<SettingsRoute />);
 
     expect(screen.getByRole("heading", { name: "Profile" })).toBeInTheDocument();
@@ -58,6 +96,9 @@ describe("SettingsRoute", () => {
       screen.queryByText(/Your display name appears across TheChat/i),
     ).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Save name" })).toBeDisabled();
+    expect(
+      await screen.findByText("No personal access tokens yet."),
+    ).toBeInTheDocument();
   });
 
   it("saves a changed name and reflects the returned profile", async () => {
@@ -93,8 +134,16 @@ describe("SettingsRoute", () => {
     expect(screen.getByRole("button", { name: "Save name" })).toBeEnabled();
   });
 
-  it("does not expose Agent Chat, model, provider, credential, or MCP settings", () => {
+  it("shows API access without restoring unrelated Agent Chat settings", async () => {
     render(<SettingsRoute />);
+
+    expect(
+      screen.getByRole("heading", { name: "API access" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("REST")).toBeInTheDocument();
+    expect(screen.getByText("MCP")).toBeInTheDocument();
+    expect(screen.getByText(/https:\/\/api\.example\.test\/auth\/me/)).toBeInTheDocument();
+    expect(screen.getByText(/https:\/\/api\.example\.test\/mcp/)).toBeInTheDocument();
 
     for (const removedLabel of [
       "Agent Chat",
@@ -106,10 +155,172 @@ describe("SettingsRoute", () => {
       "Inherit config from workspace",
       "Configure MCP Server",
       "ChatGPT",
+      "OAuth",
+      "Scopes",
     ]) {
       expect(screen.queryByText(removedLabel, { exact: false })).not.toBeInTheDocument();
     }
+    expect(
+      await screen.findByText("No personal access tokens yet."),
+    ).toBeInTheDocument();
     expect(invokeMock).not.toHaveBeenCalled();
+  });
+
+  it("creates, reveals, copies, lists, and revokes named personal access tokens", async () => {
+    const existing = {
+      id: "00000000-0000-4000-8000-000000000001",
+      name: "Existing CLI",
+      start: "tchat_pat_abcd12",
+      createdAt: "2026-08-17T10:00:00.000Z",
+      lastUsedAt: null,
+    };
+    const created = {
+      id: "00000000-0000-4000-8000-000000000002",
+      name: "MCP laptop",
+      start: "tchat_pat_efgh34",
+      createdAt: "2026-08-18T10:00:00.000Z",
+      lastUsedAt: null,
+    };
+    const rawToken = "tchat_pat_one_time_secret_value";
+    listTokensMock.mockResolvedValueOnce({
+      data: { personalAccessTokens: [existing] },
+      error: null,
+    });
+    createTokenMock.mockResolvedValueOnce({
+      data: { token: rawToken, personalAccessToken: created },
+      error: null,
+    });
+    const user = userEvent.setup();
+    const writeText = vi
+      .spyOn(navigator.clipboard, "writeText")
+      .mockResolvedValue(undefined);
+
+    render(<SettingsRoute />);
+
+    expect(await screen.findByText("Existing CLI")).toBeInTheDocument();
+    const existingToken = screen.getByRole("listitem", {
+      name: "Existing CLI personal access token",
+    });
+    expect(within(existingToken).getByText("Active")).toBeInTheDocument();
+    expect(within(existingToken).getByText("Created")).toBeInTheDocument();
+    expect(within(existingToken).getByText("Last used")).toBeInTheDocument();
+    expect(within(existingToken).getByText("Never")).toBeInTheDocument();
+    expect(within(existingToken).getByText("tchat_pat_abcd12…")).toBeInTheDocument();
+    expect(screen.queryByText(rawToken)).not.toBeInTheDocument();
+
+    await user.type(screen.getByLabelText("Token name"), "  MCP laptop  ");
+    await user.click(screen.getByRole("button", { name: "Create token" }));
+
+    expect(createTokenMock).toHaveBeenCalledWith(
+      { name: "MCP laptop" },
+      { headers: { authorization: "Bearer better-auth-session" } },
+    );
+    expect(await screen.findByDisplayValue(rawToken)).toBeInTheDocument();
+    expect(
+      screen.getByText(/only time TheChat will return the complete token/i),
+    ).toBeInTheDocument();
+    expect(screen.getByText("MCP laptop")).toBeInTheDocument();
+    expect(screen.getAllByText(new RegExp(rawToken)).length).toBeGreaterThan(0);
+
+    await user.click(
+      screen.getByRole("button", { name: "Copy personal access token" }),
+    );
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith(rawToken));
+
+    await user.click(screen.getByRole("button", { name: "Copy REST curl snippet" }));
+    await waitFor(() =>
+      expect(writeText).toHaveBeenCalledWith(
+        expect.stringContaining("https://api.example.test/auth/me"),
+      ),
+    );
+    await user.click(screen.getByRole("button", { name: "Copy MCP JSON snippet" }));
+    await waitFor(() =>
+      expect(writeText).toHaveBeenCalledWith(
+        expect.stringContaining("https://api.example.test/mcp"),
+      ),
+    );
+
+    await user.click(screen.getByRole("button", { name: "Revoke Existing CLI" }));
+    await user.click(screen.getByRole("button", { name: "Revoke Existing CLI" }));
+    await waitFor(() =>
+      expect(tokenEndpointMock).toHaveBeenCalledWith({ tokenId: existing.id }),
+    );
+    expect(revokeTokenMock).toHaveBeenCalledWith(undefined, {
+      headers: { authorization: "Bearer better-auth-session" },
+    });
+    await waitFor(() =>
+      expect(screen.queryByText("Existing CLI")).not.toBeInTheDocument(),
+    );
+
+    await user.click(screen.getByRole("button", { name: "Hide token" }));
+    expect(screen.queryByDisplayValue(rawToken)).not.toBeInTheDocument();
+    expect(screen.getAllByText(/<YOUR_PERSONAL_ACCESS_TOKEN>/).length).toBe(2);
+  });
+
+  it("never reveals a delayed token response after the signed-in account changes", async () => {
+    let resolveCreate!: (value: {
+      data: {
+        token: string;
+        personalAccessToken: {
+          id: string;
+          name: string;
+          start: string;
+          createdAt: string;
+          lastUsedAt: null;
+        };
+      };
+      error: null;
+    }) => void;
+    createTokenMock.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveCreate = resolve;
+      }),
+    );
+    const user = userEvent.setup();
+    render(<SettingsRoute />);
+    expect(
+      await screen.findByText("No personal access tokens yet."),
+    ).toBeInTheDocument();
+
+    await user.type(screen.getByLabelText("Token name"), "Account A token");
+    await user.click(screen.getByRole("button", { name: "Create token" }));
+
+    act(() => {
+      useAuthStore.setState({
+        token: "session-token-b",
+        loading: false,
+        user: {
+          id: "user-b",
+          email: "other@example.com",
+          name: "Other User",
+          type: "human",
+          avatar: null,
+        },
+      });
+    });
+    expect(await screen.findByDisplayValue("Other User")).toBeInTheDocument();
+
+    await act(async () => {
+      resolveCreate({
+        data: {
+          token: "tchat_pat_must-not-render",
+          personalAccessToken: {
+            id: "22222222-2222-4222-8222-222222222222",
+            name: "Account A token",
+            start: "tchat_pat_mustno",
+            createdAt: "2026-08-18T08:00:00.000Z",
+            lastUsedAt: null,
+          },
+        },
+        error: null,
+      });
+      await Promise.resolve();
+    });
+
+    expect(
+      screen.queryByText("tchat_pat_must-not-render", { exact: false }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText("Copy Account A token now")).not.toBeInTheDocument();
   });
 
   it("handles a missing cached user without falling back to local Agent Chat settings", () => {

@@ -1,6 +1,6 @@
 import crypto from "crypto";
 import { Elysia } from "elysia";
-import { eq, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "../db";
 import { log } from "../logging";
@@ -10,8 +10,18 @@ import {
   handleBetterAuthRequest,
   isEmailVerificationRequired,
 } from "./better-auth";
-import { resolveTokenToUser } from "./middleware";
+import {
+  resolveSessionTokenToHumanUser,
+  resolveTokenToUser,
+} from "./middleware";
 import { resetHumanPasswordWithOtp } from "./password-reset";
+import {
+  createPersonalAccessToken,
+  listPersonalAccessTokens,
+  PERSONAL_ACCESS_TOKEN_NAME_MAX_LENGTH,
+  PersonalAccessTokenRequestError,
+  revokePersonalAccessToken,
+} from "./personal-access-tokens";
 
 const authRouteLog = log.child({ component: "auth-routes" });
 const authServiceUnavailable = {
@@ -58,6 +68,21 @@ const updateProfileSchema = z
       .max(255, "Name must be 255 characters or fewer"),
   })
   .strict();
+
+const createPersonalAccessTokenSchema = z
+  .object({
+    name: z
+      .string()
+      .trim()
+      .min(1, "Token name is required")
+      .max(
+        PERSONAL_ACCESS_TOKEN_NAME_MAX_LENGTH,
+        `Token name must be ${PERSONAL_ACCESS_TOKEN_NAME_MAX_LENGTH} characters or fewer`,
+      ),
+  })
+  .strict();
+
+const personalAccessTokenIdSchema = z.uuid();
 
 const resendVerificationSchema = z.object({
   email: z.email("Please enter a valid email address"),
@@ -325,7 +350,7 @@ async function authResponseForEmail(email: string, token: string) {
 }
 
 async function revokeSessionToken(token: string) {
-  const current = await resolveTokenToUser(token, { includeBotTokens: false });
+  const current = await resolveSessionTokenToHumanUser(token);
   if (!current) return;
 
   const result = await callBetterAuth("POST", "/sign-out", undefined, {
@@ -339,7 +364,7 @@ async function revokeSessionToken(token: string) {
   // session table stores the raw token. Never compare the public bearer value
   // directly to session.token. Re-resolve through Better Auth instead and only
   // report success once revocation is authoritative.
-  const remaining = await resolveTokenToUser(token, { includeBotTokens: false });
+  const remaining = await resolveSessionTokenToHumanUser(token);
   if (remaining) {
     throw new Error("Better Auth did not revoke the session");
   }
@@ -729,6 +754,75 @@ export const authRoutes = new Elysia({ prefix: "/auth" })
     },
   )
 
+  .post("/personal-access-tokens", async ({ body, headers, set }) => {
+    const token = extractBearerToken(headers);
+    if (!token || !(await resolveSessionTokenToHumanUser(token))) {
+      set.status = 401;
+      return { error: "Authentication required" };
+    }
+
+    const parsed = createPersonalAccessTokenSchema.safeParse(body);
+    if (!parsed.success) {
+      set.status = 400;
+      return { error: formatZodError(parsed.error) };
+    }
+
+    try {
+      return await createPersonalAccessToken(token, parsed.data.name);
+    } catch (error) {
+      if (error instanceof PersonalAccessTokenRequestError) {
+        set.status = error.status;
+        return { error: error.message };
+      }
+      throw error;
+    }
+  })
+
+  .get("/personal-access-tokens", async ({ headers, set }) => {
+    const token = extractBearerToken(headers);
+    if (!token || !(await resolveSessionTokenToHumanUser(token))) {
+      set.status = 401;
+      return { error: "Authentication required" };
+    }
+
+    try {
+      return await listPersonalAccessTokens(token);
+    } catch (error) {
+      if (error instanceof PersonalAccessTokenRequestError) {
+        set.status = error.status;
+        return { error: error.message };
+      }
+      throw error;
+    }
+  })
+
+  .delete(
+    "/personal-access-tokens/:tokenId",
+    async ({ params, headers, set }) => {
+      const token = extractBearerToken(headers);
+      if (!token || !(await resolveSessionTokenToHumanUser(token))) {
+        set.status = 401;
+        return { error: "Authentication required" };
+      }
+
+      const parsedId = personalAccessTokenIdSchema.safeParse(params.tokenId);
+      if (!parsedId.success) {
+        set.status = 400;
+        return { error: "Invalid personal access token ID" };
+      }
+
+      try {
+        return await revokePersonalAccessToken(token, parsedId.data);
+      } catch (error) {
+        if (error instanceof PersonalAccessTokenRequestError) {
+          set.status = error.status;
+          return { error: error.message };
+        }
+        throw error;
+      }
+    },
+  )
+
   .get("/me", async ({ headers, set }) => {
     const token = extractBearerToken(headers);
     if (!token) {
@@ -758,12 +852,46 @@ export const authRoutes = new Elysia({ prefix: "/auth" })
       return { error: "Authentication required" };
     }
 
-    const currentUser = await resolveTokenToUser(token, {
-      includeBotTokens: false,
-    });
+    const sessionUser = await resolveSessionTokenToHumanUser(token);
+    const currentUser =
+      sessionUser ??
+      (await resolveTokenToUser(token, { includeBotTokens: false }));
     if (!currentUser) {
       set.status = 401;
       return { error: "Authentication required" };
+    }
+
+    // PATs authenticate as human principals without becoming Better Auth
+    // sessions. Preserve the normal profile permission while keeping account
+    // credential operations (including PAT management) session-only.
+    if (!sessionUser) {
+      try {
+        const [updated] = await db
+          .update(users)
+          .set({ name: parsed.data.name, updatedAt: new Date() })
+          .where(
+            and(eq(users.id, currentUser.id), eq(users.type, "human")),
+          )
+          .returning({ id: users.id });
+        if (!updated) {
+          set.status = 401;
+          return { error: "Authentication required" };
+        }
+        return {
+          user: { ...currentUser, name: parsed.data.name },
+        };
+      } catch (error) {
+        authRouteLog.error(
+          {
+            userId: currentUser.id,
+            errorClass:
+              error instanceof Error ? error.constructor.name : "UnknownError",
+          },
+          "PAT-authenticated profile update failed",
+        );
+        set.status = 503;
+        return authServiceUnavailable;
+      }
     }
 
     const result = await callBetterAuth(
@@ -796,9 +924,7 @@ export const authRoutes = new Elysia({ prefix: "/auth" })
       };
     }
 
-    const user = await resolveTokenToUser(token, {
-      includeBotTokens: false,
-    });
+    const user = await resolveSessionTokenToHumanUser(token);
     if (!user) {
       authRouteLog.error(
         { userId: currentUser.id },
@@ -813,8 +939,6 @@ export const authRoutes = new Elysia({ prefix: "/auth" })
 
   .post("/logout", async ({ headers }) => {
     const token = extractBearerToken(headers);
-    if (token && !token.startsWith("bot_")) {
-      await revokeSessionToken(token);
-    }
+    if (token) await revokeSessionToken(token);
     return { success: true };
   });

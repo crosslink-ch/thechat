@@ -1,5 +1,6 @@
 import { type FormEvent, useEffect, useState } from "react";
 import { useAuthStore } from "../stores/auth";
+import { ApiAccessSettings } from "./settings-api-access";
 
 function LockIcon() {
   return (
@@ -112,6 +113,7 @@ export function SettingsRoute() {
             </p>
           </section>
         ) : (
+          <>
           <form
             className="overflow-hidden rounded-xl border border-border-subtle bg-surface shadow-sm"
             aria-label="Profile settings"
@@ -207,6 +209,8 @@ export function SettingsRoute() {
               </button>
             </div>
           </form>
+          <ApiAccessSettings key={user.id} />
+          </>
         )}
       </div>
     </main>

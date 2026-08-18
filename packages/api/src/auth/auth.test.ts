@@ -362,8 +362,32 @@ describe("bot API-key isolation", () => {
     expect(
       (await req("PATCH", "/auth/me", { name: "Renamed Bot" }, apiKey)).status,
     ).toBe(401);
+    expect(
+      (
+        await req(
+          "POST",
+          "/auth/personal-access-tokens",
+          { name: "Forbidden bot-created PAT" },
+          apiKey,
+        )
+      ).status,
+    ).toBe(401);
+    expect(
+      (await req("GET", "/auth/personal-access-tokens", undefined, apiKey))
+        .status,
+    ).toBe(401);
+    expect(
+      (
+        await req(
+          "DELETE",
+          `/auth/personal-access-tokens/${crypto.randomUUID()}`,
+          undefined,
+          apiKey,
+        )
+      ).status,
+    ).toBe(401);
     expect(await resolveTokenToUser("bot_not-a-real-key")).toBeNull();
-    expect(getSessionSpy).not.toHaveBeenCalled();
+    expect(getSessionSpy).toHaveBeenCalled();
     getSessionSpy.mockRestore();
   });
 });
