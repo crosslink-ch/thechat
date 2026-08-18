@@ -62,9 +62,6 @@ importers:
       elysia:
         specifier: ^1.2.0
         version: 1.4.25(@sinclair/typebox@0.34.48)(@types/bun@1.3.9)(exact-mirror@0.2.7(@sinclair/typebox@0.34.48))(file-type@21.3.4)(openapi-types@12.1.3)(typescript@5.8.3)
-      elysia-mcp:
-        specifier: ^0.1.1
-        version: 0.1.1(elysia@1.4.25(@sinclair/typebox@0.34.48)(@types/bun@1.3.9)(exact-mirror@0.2.7(@sinclair/typebox@0.34.48))(file-type@21.3.4)(openapi-types@12.1.3)(typescript@5.8.3))(zod@4.3.6)
       file-type:
         specifier: ^21.3.4
         version: 21.3.4
@@ -3451,12 +3448,6 @@ packages:
     resolution: {integrity: sha512-BaXtHEb+KYKLouUXlUVDa/lj9pj4F5kiE0kwFdJV84Y2EU7euIDgPthfKtchhr5MVHmjtavRMIV/zAwEiSQ9rQ==}
     engines: {node: '>= 12.20.55'}
     hasBin: true
-
-  elysia-mcp@0.1.1:
-    resolution: {integrity: sha512-J2fYwHXLtCY/qV59X/QyfNY+4aEviEwmKx+E1YQB0TNqN+K0a988wtZYi1wbwQPvE5zJjNJuucy8W9bqP2f51Q==}
-    engines: {bun: '>=1.0.0'}
-    peerDependencies:
-      elysia: '>=1.4.21'
 
   elysia@1.4.25:
     resolution: {integrity: sha512-liKjavH99Gpzrv9cDil6uYWmPuqESfPFV1FIaFSd3iNqo3y7e29sN43VxFIK8tWWnyi6eDAmi2SZk8hNAMQMyg==}
@@ -9149,15 +9140,6 @@ snapshots:
       extract-zip: 2.0.1
     transitivePeerDependencies:
       - supports-color
-
-  elysia-mcp@0.1.1(elysia@1.4.25(@sinclair/typebox@0.34.48)(@types/bun@1.3.9)(exact-mirror@0.2.7(@sinclair/typebox@0.34.48))(file-type@21.3.4)(openapi-types@12.1.3)(typescript@5.8.3))(zod@4.3.6):
-    dependencies:
-      '@modelcontextprotocol/sdk': 1.26.0(zod@4.3.6)
-      elysia: 1.4.25(@sinclair/typebox@0.34.48)(@types/bun@1.3.9)(exact-mirror@0.2.7(@sinclair/typebox@0.34.48))(file-type@21.3.4)(openapi-types@12.1.3)(typescript@5.8.3)
-    transitivePeerDependencies:
-      - '@cfworker/json-schema'
-      - supports-color
-      - zod
 
   elysia@1.4.25(@sinclair/typebox@0.34.48)(@types/bun@1.3.9)(exact-mirror@0.2.7(@sinclair/typebox@0.34.48))(file-type@21.3.4)(openapi-types@12.1.3)(typescript@5.8.3):
     dependencies:

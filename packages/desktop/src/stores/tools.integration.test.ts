@@ -59,28 +59,19 @@ async function registerUser(name: string) {
 }
 
 /**
- * Parse a response that may be JSON or SSE (text/event-stream).
- * MCP Streamable HTTP transport allows the server to respond with either format.
+ * Parse the stateless MCP endpoint's JSON response. Rejecting any other media
+ * type prevents a malformed or unexpectedly streaming response from being
+ * accepted by this integration test.
  */
 async function parseMcpResponse(res: Response): Promise<Record<string, unknown>> {
   const contentType = res.headers.get("content-type") ?? "";
-  const text = await res.text();
-
-  if (contentType.includes("text/event-stream")) {
-    // Parse SSE: extract JSON from "data: {..." lines
-    // Format is: "data: event: message\ndata: {json}\n\n"
-    const lines = text.split("\n");
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (trimmed.startsWith("data:")) {
-        const data = trimmed.slice(5).trim();
-        if (data.startsWith("{")) return JSON.parse(data);
-      }
-    }
-    throw new Error(`No JSON data line found in SSE response: ${text}`);
+  if (!contentType.includes("application/json")) {
+    throw new Error(
+      `Expected an application/json MCP response, got ${contentType}`,
+    );
   }
 
-  return JSON.parse(text);
+  return (await res.json()) as Record<string, unknown>;
 }
 
 /**

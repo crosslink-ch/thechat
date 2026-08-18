@@ -80,7 +80,7 @@ thechat/
 - Exports `App` type (`typeof app`) from `src/index.ts` for Eden Treaty type inference
 - **`src/services/`** — Shared business logic used by REST routes, MCP tools, and WebSocket handlers:
   - `errors.ts` — `ServiceError` class (message + HTTP status code), thrown by services and caught by callers
-- **`src/mcp/`** — Built-in MCP server (Streamable HTTP transport) at `/mcp`, via `elysia-mcp` plugin:
+- **`src/mcp/`** — Built-in MCP server at `/mcp`, using the official SDK's stateless Streamable HTTP transport.
 
 ### Desktop ↔ API Communication
 

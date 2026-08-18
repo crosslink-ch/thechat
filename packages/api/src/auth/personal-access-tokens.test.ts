@@ -49,14 +49,13 @@ async function createToken(sessionToken: string, name: string) {
   };
 }
 
-function mcpPost(token: string, body: unknown, sessionId?: string) {
+function mcpPost(token: string, body: unknown) {
   const headers = new Headers({
     accept: "application/json, text/event-stream",
     authorization: `Bearer ${token}`,
     "content-type": "application/json",
     "mcp-protocol-version": "2025-03-26",
   });
-  if (sessionId) headers.set("mcp-session-id", sessionId);
   return mcpRoutes.handle(
     new Request("http://localhost/mcp", {
       method: "POST",
@@ -215,38 +214,33 @@ describe("personal access tokens", () => {
 
     const initialized = await mcpInitialize(created.token);
     expect(initialized.status).toBe(200);
-    const mcpSessionId = initialized.headers.get("mcp-session-id");
-    expect(mcpSessionId).toBeTruthy();
+    expect(initialized.headers.get("mcp-session-id")).toBeNull();
     expect(await initialized.text()).toContain('"result"');
 
-    const notified = await mcpPost(
-      created.token,
-      { jsonrpc: "2.0", method: "notifications/initialized" },
-      mcpSessionId!,
-    );
+    const notified = await mcpPost(created.token, {
+      jsonrpc: "2.0",
+      method: "notifications/initialized",
+    });
     expect([200, 202]).toContain(notified.status);
     await notified.text();
 
-    const toolsResponse = await mcpPost(
-      created.token,
-      { jsonrpc: "2.0", id: 2, method: "tools/list", params: {} },
-      mcpSessionId!,
-    );
+    const toolsResponse = await mcpPost(created.token, {
+      jsonrpc: "2.0",
+      id: 2,
+      method: "tools/list",
+      params: {},
+    });
     expect(toolsResponse.status).toBe(200);
     const toolsPayload = await toolsResponse.text();
     expect(toolsPayload).toContain("create_hermes_bot");
     expect(toolsPayload).toContain("get_hermes_bot_capabilities");
 
-    const callResponse = await mcpPost(
-      created.token,
-      {
-        jsonrpc: "2.0",
-        id: 3,
-        method: "tools/call",
-        params: { name: "list_workspaces", arguments: {} },
-      },
-      mcpSessionId!,
-    );
+    const callResponse = await mcpPost(created.token, {
+      jsonrpc: "2.0",
+      id: 3,
+      method: "tools/call",
+      params: { name: "list_workspaces", arguments: {} },
+    });
     expect(callResponse.status).toBe(200);
     expect(await callResponse.text()).toContain('"result"');
 
@@ -282,11 +276,12 @@ describe("personal access tokens", () => {
     expect(revokedMcp.response?.status).toBe(401);
     expect(
       (
-        await mcpPost(
-          created.token,
-          { jsonrpc: "2.0", id: 4, method: "tools/list", params: {} },
-          mcpSessionId!,
-        )
+        await mcpPost(created.token, {
+          jsonrpc: "2.0",
+          id: 4,
+          method: "tools/list",
+          params: {},
+        })
       ).status,
     ).toBe(401);
     expect((await mcpInitialize(created.token)).status).toBe(401);
