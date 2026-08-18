@@ -1,11 +1,10 @@
-import { sql } from "drizzle-orm";
-import { db } from "../db";
 import {
   auth,
   betterAuthRequestURL,
   handleBetterAuthRequest,
   PERSONAL_ACCESS_TOKEN_CONFIG_ID,
 } from "./better-auth";
+import { surfaceStoredApiKeyVerificationFailure } from "./api-key-verification";
 
 export { PERSONAL_ACCESS_TOKEN_NAME_MAX_LENGTH } from "./better-auth";
 
@@ -194,9 +193,10 @@ export async function verifyPersonalAccessToken(
 
   if (!result.valid || !result.key) {
     if (result.error?.code === "INVALID_API_KEY") {
-      // Better Auth reports adapter failures and unknown credentials alike.
-      // Probe the same store so an outage is surfaced as 503 by auth middleware.
-      await db.execute(sql`select id from "apikey" limit 1`);
+      await surfaceStoredApiKeyVerificationFailure(
+        rawToken,
+        PERSONAL_ACCESS_TOKEN_CONFIG_ID,
+      );
     }
     return null;
   }

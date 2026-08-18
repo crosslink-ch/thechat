@@ -9,6 +9,7 @@ import {
   BOT_API_KEY_PREFIX,
   generateBotApiKey,
 } from "./better-auth";
+import { surfaceStoredApiKeyVerificationFailure } from "./api-key-verification";
 
 const STORED_START_LENGTH = 6;
 const BOT_API_KEY_ROTATION_COOLDOWN_MS = 5_000;
@@ -82,10 +83,10 @@ export async function verifyBotApiKey(rawKey: string): Promise<string | null> {
 
   if (!result.valid || !result.key) {
     if (result.error?.code === "INVALID_API_KEY") {
-      // Better Auth 1.6.20 maps both an unknown key and unexpected adapter
-      // failures to INVALID_API_KEY. Probe the same store before classifying
-      // that result as ordinary bad credentials so outages propagate as 503.
-      await db.execute(sql`select id from "apikey" limit 1`);
+      await surfaceStoredApiKeyVerificationFailure(
+        rawKey,
+        BOT_API_KEY_CONFIG_ID,
+      );
     }
     return null;
   }
