@@ -105,7 +105,8 @@ export const BOT_API_KEY_PREFIX = "bot_";
 export const PERSONAL_ACCESS_TOKEN_CONFIG_ID = "personal";
 export const PERSONAL_ACCESS_TOKEN_PREFIX = "tchat_pat_";
 export const PERSONAL_ACCESS_TOKEN_NAME_MAX_LENGTH = 100;
-export const BOT_API_KEY_HASHER = defaultKeyHasher;
+export const API_KEY_HASHER = defaultKeyHasher;
+export const BOT_API_KEY_HASHER = API_KEY_HASHER;
 
 export function generateBotApiKey(): string {
   return `${BOT_API_KEY_PREFIX}${crypto.randomBytes(32).toString("hex")}`;
