@@ -14,7 +14,7 @@ vi.mock("./RichInput", async () => {
 
   interface MockRichInputProps {
     initialText?: string;
-    onSubmit: (text: string) => void;
+    onSubmit: (text: string) => void | boolean | Promise<void | boolean>;
     onTextChange?: (text: string) => void;
     onCanSubmitChange?: (canSubmit: boolean) => void;
   }
@@ -45,10 +45,23 @@ vi.mock("./RichInput", async () => {
 
     React.useImperativeHandle(ref, () => ({
       submit: () => {
-        const value = textRef.current.trim();
+        const submittedText = textRef.current;
+        const value = submittedText.trim();
         if (!value) return;
-        onSubmit(value);
-        update("");
+        const finish = (accepted: void | boolean) => {
+          if (accepted !== false && textRef.current === submittedText) {
+            update("");
+          }
+        };
+        const result = onSubmit(value);
+        if (
+          result &&
+          typeof (result as PromiseLike<void | boolean>).then === "function"
+        ) {
+          void Promise.resolve(result).then(finish, () => undefined);
+        } else {
+          finish(result as void | boolean);
+        }
       },
       focus: () => undefined,
       setText: update,
@@ -174,7 +187,7 @@ describe("InputBar composer draft scoping", () => {
     expect(container.querySelector('img[src="data:image/png;base64,cG5n"]')).not.toBeNull();
   });
 
-  it("clears the active draft after it is sent", () => {
+  it("clears the active draft after it is sent", async () => {
     const onSend = vi.fn();
     render(
       <InputBar
@@ -190,8 +203,10 @@ describe("InputBar composer draft scoping", () => {
     });
     fireEvent.click(screen.getByTitle("Send message"));
 
-    expect(onSend).toHaveBeenCalledWith("ready to send", undefined);
-    expect(useComposerDraftsStore.getState().drafts).toEqual({});
+    expect(onSend).toHaveBeenCalledWith("ready to send");
+    await waitFor(() =>
+      expect(useComposerDraftsStore.getState().drafts).toEqual({}),
+    );
   });
 
   it("does not clear a newer draft when an earlier shared send succeeds", async () => {
@@ -252,7 +267,7 @@ describe("InputBar composer draft scoping", () => {
     );
   });
 
-  it("restores a failed submission into the active remounted editor", async () => {
+  it("keeps a failed submission in the active remounted editor", async () => {
     const send = deferred<boolean>();
     const onSend = vi.fn(() => send.promise);
     const onStop = vi.fn();
@@ -290,7 +305,9 @@ describe("InputBar composer draft scoping", () => {
         sharedUpload={{ conversationId: "conversation-1", token: "token-1" }}
       />,
     );
-    expect(screen.getByRole("textbox", { name: "Message" })).toHaveValue("");
+    expect(screen.getByRole("textbox", { name: "Message" })).toHaveValue(
+      "submitted text",
+    );
 
     await act(async () => {
       send.resolve(false);

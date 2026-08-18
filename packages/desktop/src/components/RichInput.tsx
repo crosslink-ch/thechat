@@ -8,9 +8,9 @@ import { createMentionSuggestion } from "./mention-suggestion";
 import type { MentionUser } from "./MentionList";
 
 interface RichInputProps {
-  onSubmit: (text: string) => void;
+  onSubmit: (text: string) => void | boolean | Promise<void | boolean>;
   /** Called when user presses Enter with empty text. Return true if handled (e.g., images-only send). */
-  onEmptySubmitAttempt?: () => boolean;
+  onEmptySubmitAttempt?: () => boolean | Promise<boolean>;
   placeholder?: string;
   disabled?: boolean;
   mentions?: MentionUser[];
@@ -73,24 +73,46 @@ export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function Ri
   const mentionsRef = useRef(mentions);
   mentionsRef.current = mentions;
 
-  const submitIfNotEmpty = (text: string, clearContent: () => void) => {
-    const clearAndNotify = () => {
-      clearContent();
-      onCanSubmitChangeRef.current?.(false);
-      onTextChangeRef.current?.("");
-    };
+  const submittingRef = useRef(false);
+
+  const submitIfNotEmpty = (
+    text: string,
+    clearContent: () => boolean,
+  ): boolean | Promise<boolean> => {
+    if (submittingRef.current) return false;
     const trimmed = text.trim();
-    if (!trimmed) {
-      // Allow empty-text submission when parent signals it's OK (e.g., images attached)
-      if (onEmptySubmitAttemptRef.current?.()) {
-        clearAndNotify();
-        return true;
+    const complete = (result: void | boolean) => {
+      const accepted = trimmed ? result !== false : result === true;
+      if (!accepted) return false;
+      if (clearContent()) {
+        onCanSubmitChangeRef.current?.(false);
+        onTextChangeRef.current?.("");
       }
+      return true;
+    };
+
+    submittingRef.current = true;
+    try {
+      const result = trimmed
+        ? onSubmitRef.current(trimmed)
+        : onEmptySubmitAttemptRef.current?.();
+      if (result && typeof (result as PromiseLike<void | boolean>).then === "function") {
+        return Promise.resolve(result)
+          .then(complete)
+          .catch(() => false)
+          .finally(() => {
+            submittingRef.current = false;
+          });
+      }
+      const accepted = complete(result as void | boolean);
+      submittingRef.current = false;
+      return accepted;
+    } catch {
+      // Submission ownership stays with the caller. A rejected transition must
+      // leave the editor recoverable for retry.
+      submittingRef.current = false;
       return false;
     }
-    onSubmitRef.current(trimmed);
-    clearAndNotify();
-    return true;
   };
 
   const submitExtension = useMemo(
@@ -100,7 +122,16 @@ export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function Ri
         addKeyboardShortcuts() {
           return {
             Enter: ({ editor }) => {
-              submitIfNotEmpty(editor.getText(TEXT_OPTIONS), () => editor.commands.clearContent());
+              const submittedText = editor.getText(TEXT_OPTIONS);
+              void submitIfNotEmpty(submittedText, () => {
+                // Do not erase edits made while an asynchronous submit was
+                // waiting for persistence acknowledgement.
+                if (editor.getText(TEXT_OPTIONS) === submittedText) {
+                  editor.commands.clearContent();
+                  return true;
+                }
+                return false;
+              });
               return true;
             },
             // Split a new paragraph rather than inserting a hard break:
@@ -182,7 +213,14 @@ export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function Ri
     () => ({
       submit: () => {
         if (!editor) return;
-        submitIfNotEmpty(editor.getText(TEXT_OPTIONS), () => editor.commands.clearContent());
+        const submittedText = editor.getText(TEXT_OPTIONS);
+        void submitIfNotEmpty(submittedText, () => {
+          if (editor.getText(TEXT_OPTIONS) === submittedText) {
+            editor.commands.clearContent();
+            return true;
+          }
+          return false;
+        });
       },
       focus: () => {
         editor?.commands.focus("end");
