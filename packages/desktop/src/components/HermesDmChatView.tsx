@@ -2,6 +2,7 @@ import { useRef, useEffect, useCallback, useMemo, useLayoutEffect, useState } fr
 import { InputBar, type InputSendResult } from "./InputBar";
 import { Markdown } from "./Markdown";
 import { useAutoScroll } from "../hooks/useAutoScroll";
+import { useMessageTopCommand } from "../hooks/useMessageTopCommand";
 import { useOlderHistoryScroll } from "../hooks/useOlderHistoryScroll";
 import { useScrollStability } from "../hooks/useScrollStability";
 import type {
@@ -79,7 +80,13 @@ export function HermesDmChatView({
   composerKey,
 }: HermesDmChatViewProps) {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
-  const { isAtBottom, scrollToBottom } = useAutoScroll(scrollContainerRef);
+  const { isAtBottom, pauseAutoScroll, scrollToBottom } =
+    useAutoScroll(scrollContainerRef);
+  useMessageTopCommand(
+    scrollContainerRef,
+    messages.length > 0,
+    pauseAutoScroll,
+  );
   const isAtBottomRef = useRef(isAtBottom);
   const forceNextContentScrollRef = useRef(false);
   const initializedScrollKeyRef = useRef<string | null>(null);

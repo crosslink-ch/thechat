@@ -3,6 +3,7 @@ import {
   act,
   fireEvent,
   render,
+  renderHook,
   screen,
   waitFor,
 } from "@testing-library/react";
@@ -19,6 +20,8 @@ import {
   cancelSharedAttachment,
   uploadSharedAttachment,
 } from "../lib/shared-attachments";
+import { useCommandsStore } from "../commands";
+import { useKeybindings } from "../hooks/useKeybindings";
 
 const tauriMocks = vi.hoisted(() => ({
   invoke: vi.fn(),
@@ -53,6 +56,11 @@ beforeAll(() => {
 let scrollToMock: ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
+  useCommandsStore.setState({
+    globalCommands: [],
+    scopedCommands: {},
+    commands: [],
+  });
   useHermesApprovalsStore.getState().resetForTests();
   useHermesClarificationsStore.getState().resetForTests();
   vi.mocked(uploadSharedAttachment).mockReset();
@@ -420,6 +428,92 @@ describe("HermesDmChatView", () => {
 
     expect(scrollToMock).not.toHaveBeenCalled();
     expect(screen.getByRole("button", { name: /jump to bottom/i })).toBeInTheDocument();
+  });
+
+  it("scrolls to one earlier message top per command invocation", () => {
+    const messages = [
+      message({ id: "message-1", content: "First" }),
+      message({ id: "message-2", content: "Second" }),
+      message({ id: "message-3", content: "Third" }),
+    ];
+    const view = render(
+      <HermesDmChatView
+        messages={messages}
+        loading={false}
+        typingUsers={new Map()}
+        progressInvocations={[]}
+        typingSuppressedUserIds={[]}
+        onSend={() => {}}
+      />,
+    );
+    const scroller = screen.getByTestId("hermes-dm-chat-scroll");
+    makeScrollable(scroller);
+    scroller.scrollTop = 700;
+    vi.spyOn(scroller, "getBoundingClientRect").mockReturnValue({ top: 100 } as DOMRect);
+    scrollToMock.mockImplementation(function scrollTo(
+      this: Element,
+      options?: ScrollToOptions | number,
+      y?: number,
+    ) {
+      const top = typeof options === "object" ? options.top : y;
+      if (typeof top === "number") this.scrollTop = top;
+      this.dispatchEvent(new Event("scroll"));
+    });
+
+    const messageTops = [120, 400, 560];
+    const messageElements = Array.from(
+      scroller.querySelectorAll<HTMLElement>("[data-message-id]"),
+    );
+    expect(messageElements).toHaveLength(3);
+    messageElements.forEach((element, index) => {
+      vi.spyOn(element, "getBoundingClientRect").mockImplementation(
+        () => ({ top: 100 + messageTops[index] - scroller.scrollTop }) as DOMRect,
+      );
+    });
+
+    const command = useCommandsStore
+      .getState()
+      .commands.find((candidate) => candidate.id === "chat.scroll-to-message-top");
+    expect(command).toMatchObject({
+      label: "Scroll to Message Top",
+      shortcut: "C-x t",
+      keybinding: { prefix: "C-x", key: "t" },
+    });
+
+    renderHook(() =>
+      useKeybindings({
+        onPermissionAllow: null,
+        onPermissionDeny: null,
+        onPermissionDenyWithFeedback: null,
+      }),
+    );
+    const invokeShortcut = () => {
+      fireEvent.keyDown(window, { key: "x", ctrlKey: true });
+      fireEvent.keyDown(window, { key: "t" });
+    };
+
+    invokeShortcut();
+    expect(scroller.scrollTop).toBe(560);
+
+    scrollToMock.mockClear();
+    view.rerender(
+      <HermesDmChatView
+        messages={messages}
+        loading={false}
+        typingUsers={new Map([["bot-user-1", "Koda"]])}
+        progressInvocations={[]}
+        typingSuppressedUserIds={[]}
+        onSend={() => {}}
+      />,
+    );
+    expect(scrollToMock).not.toHaveBeenCalled();
+
+    invokeShortcut();
+    expect(scroller.scrollTop).toBe(400);
+    invokeShortcut();
+    expect(scroller.scrollTop).toBe(120);
+    invokeShortcut();
+    expect(scroller.scrollTop).toBe(120);
   });
 
   it("loads older messages when the user scrolls near the top", async () => {
