@@ -368,6 +368,64 @@ describe("HermesDmChatView", () => {
     expect(scrollToMock).not.toHaveBeenCalled();
   });
 
+  it("restores each Hermes task's scroll position when switching tasks", () => {
+    const commonProps = {
+      loading: false,
+      typingUsers: new Map<string, string>(),
+      progressInvocations: [],
+      typingSuppressedUserIds: [],
+      onSend: () => {},
+    };
+    const taskAMessages = [
+      message({ id: "task-a-message", threadId: "task-a", content: "Task A" }),
+    ];
+    const taskBMessages = [
+      message({ id: "task-b-message", threadId: "task-b", content: "Task B" }),
+    ];
+    const { rerender } = render(
+      <HermesDmChatView
+        {...commonProps}
+        messages={taskAMessages}
+        scrollKey="conversation-1:task-a"
+      />,
+    );
+    const scroller = screen.getByTestId("hermes-dm-chat-scroll");
+    makeScrollable(scroller);
+
+    scroller.scrollTop = 420;
+    fireEvent.wheel(scroller, { deltaY: -80 });
+    fireEvent.scroll(scroller);
+
+    rerender(
+      <HermesDmChatView
+        {...commonProps}
+        messages={taskBMessages}
+        scrollKey="conversation-1:task-b"
+      />,
+    );
+    scroller.scrollTop = 175;
+    fireEvent.wheel(scroller, { deltaY: -80 });
+    fireEvent.scroll(scroller);
+
+    rerender(
+      <HermesDmChatView
+        {...commonProps}
+        messages={taskAMessages}
+        scrollKey="conversation-1:task-a"
+      />,
+    );
+    expect(scroller.scrollTop).toBe(420);
+
+    rerender(
+      <HermesDmChatView
+        {...commonProps}
+        messages={taskBMessages}
+        scrollKey="conversation-1:task-b"
+      />,
+    );
+    expect(scroller.scrollTop).toBe(175);
+  });
+
   it("leaves scroll position alone when visible Hermes progress updates after the user scrolls up", () => {
     const activeInvocation = invocation({ updatedAt: "2026-01-01T00:00:00.000Z" });
     const firstMessage = message();
