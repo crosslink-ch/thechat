@@ -2,6 +2,7 @@ import { useRef, useEffect, useCallback, useMemo, useLayoutEffect } from "react"
 import { InputBar, type InputSendResult } from "./InputBar";
 import { Markdown } from "./Markdown";
 import { useAutoScroll } from "../hooks/useAutoScroll";
+import { useMessageTopCommand } from "../hooks/useMessageTopCommand";
 import { useOlderHistoryScroll } from "../hooks/useOlderHistoryScroll";
 import { useScrollStability } from "../hooks/useScrollStability";
 import { MessageSendError } from "./MessageSendError";
@@ -51,7 +52,13 @@ export function ChannelChatView({
   token,
 }: ChannelChatViewProps) {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
-  const { isAtBottom, scrollToBottom } = useAutoScroll(scrollContainerRef);
+  const { isAtBottom, pauseAutoScroll, scrollToBottom } =
+    useAutoScroll(scrollContainerRef);
+  useMessageTopCommand(
+    scrollContainerRef,
+    messages.length > 0,
+    pauseAutoScroll,
+  );
   const forceNextContentScrollRef = useRef(false);
   const initializedScrollKeyRef = useRef<string | null>(null);
 

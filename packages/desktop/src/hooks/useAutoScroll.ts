@@ -10,12 +10,17 @@ const BOTTOM_THRESHOLD = 150;
 
 export function useAutoScroll(containerRef: RefObject<HTMLElement | null>) {
   const [isAtBottom, setIsAtBottom] = useState(true);
-  // Tracks whether the user has intentionally scrolled away from the bottom.
-  // Set on wheel/touch events, cleared when user scrolls back to bottom.
+  // Tracks whether auto-scroll was explicitly paused, either by user input or
+  // by a command that intentionally moves away from the bottom.
   const userScrolledAwayRef = useRef(false);
-  // Timestamp of the last wheel-up event, used to debounce the scroll handler
-  // so it doesn't immediately re-enable auto-scroll after the user wheels up.
-  const lastWheelUpRef = useRef(0);
+  // Timestamp of the most recent explicit pause. The ensuing programmatic or
+  // wheel-driven scroll event must not immediately re-enable auto-scroll.
+  const lastPauseRef = useRef(0);
+
+  const pauseAutoScroll = useCallback(() => {
+    userScrolledAwayRef.current = true;
+    lastPauseRef.current = Date.now();
+  }, []);
 
   useEffect(() => {
     const el = containerRef.current;
@@ -32,10 +37,9 @@ export function useAutoScroll(containerRef: RefObject<HTMLElement | null>) {
         return;
       }
       // Re-enable auto-scroll when user reaches the bottom, but not
-      // immediately after a wheel-up event. Without this debounce the
-      // scroll event that fires right after wheel-up (while still within
-      // the threshold) would clear userScrolledAwayRef and snap back.
-      if (Date.now() - lastWheelUpRef.current > 200) {
+      // immediately after an explicit pause. Without this debounce the
+      // ensuing scroll event could clear userScrolledAwayRef and snap back.
+      if (Date.now() - lastPauseRef.current > 200) {
         userScrolledAwayRef.current = false;
       }
     };
@@ -43,15 +47,14 @@ export function useAutoScroll(containerRef: RefObject<HTMLElement | null>) {
     const handleWheel = (e: WheelEvent) => {
       if (e.deltaY < 0) {
         // User scrolling up → disable auto-scroll
-        userScrolledAwayRef.current = true;
-        lastWheelUpRef.current = Date.now();
+        pauseAutoScroll();
       }
     };
 
     const handleTouchStart = () => {
       // Any touch interaction means the user is taking control of scroll
       if (!checkAtBottom()) {
-        userScrolledAwayRef.current = true;
+        pauseAutoScroll();
       }
     };
 
@@ -63,7 +66,7 @@ export function useAutoScroll(containerRef: RefObject<HTMLElement | null>) {
       el.removeEventListener("wheel", handleWheel);
       el.removeEventListener("touchstart", handleTouchStart);
     };
-  }, [containerRef]);
+  }, [containerRef, pauseAutoScroll]);
 
   const scrollToBottom = useCallback(
     (opts?: { force?: boolean }) => {
@@ -79,5 +82,5 @@ export function useAutoScroll(containerRef: RefObject<HTMLElement | null>) {
     [containerRef],
   );
 
-  return { isAtBottom, scrollToBottom };
+  return { isAtBottom, pauseAutoScroll, scrollToBottom };
 }

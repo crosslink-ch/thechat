@@ -5,6 +5,7 @@ import { useAutoScroll } from "./useAutoScroll";
 
 interface HarnessApi {
   el: HTMLDivElement;
+  pauseAutoScroll: ReturnType<typeof useAutoScroll>["pauseAutoScroll"];
   scrollToBottom: ReturnType<typeof useAutoScroll>["scrollToBottom"];
   isAtBottom: boolean;
 }
@@ -75,6 +76,38 @@ describe("useAutoScroll", () => {
 
     act(() => {
       api?.scrollToBottom({ force: true });
+    });
+
+    expect(scrollToSpy).toHaveBeenCalledWith({
+      top: 1000,
+      behavior: "instant",
+    });
+  });
+
+  it("keeps auto-scroll paused after command navigation near the bottom", () => {
+    let api: HarnessApi | undefined;
+
+    render(<Harness onReady={(nextApi) => { api = nextApi; }} />);
+    const el = screen.getByTestId("scroll-container");
+    setScrollMetrics(el, {
+      scrollTop: 760,
+      clientHeight: 200,
+      scrollHeight: 1000,
+    });
+
+    act(() => {
+      api?.pauseAutoScroll();
+      el.dispatchEvent(new Event("scroll"));
+      vi.advanceTimersByTime(1000);
+      api?.scrollToBottom();
+    });
+
+    expect(scrollToSpy).not.toHaveBeenCalled();
+
+    act(() => {
+      el.scrollTop = 800;
+      el.dispatchEvent(new Event("scroll"));
+      api?.scrollToBottom();
     });
 
     expect(scrollToSpy).toHaveBeenCalledWith({
