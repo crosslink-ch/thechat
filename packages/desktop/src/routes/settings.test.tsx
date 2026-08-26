@@ -44,6 +44,7 @@ vi.mock("../lib/api", () => {
 });
 
 beforeEach(() => {
+  localStorage.clear();
   invokeMock.mockClear();
   updateNameMock.mockReset();
   listTokensMock.mockReset();
@@ -99,6 +100,44 @@ describe("SettingsRoute", () => {
     expect(
       await screen.findByText("No personal access tokens yet."),
     ).toBeInTheDocument();
+  });
+
+  it("stores a per-account desktop notification toggle on this device", async () => {
+    const user = userEvent.setup();
+    const { unmount } = render(<SettingsRoute />);
+
+    const notificationsSwitch = screen.getByRole("switch", {
+      name: "Desktop notifications",
+    });
+    expect(notificationsSwitch).toBeChecked();
+    expect(screen.getByText(/applies only to this device/i)).toBeInTheDocument();
+
+    await user.click(notificationsSwitch);
+    expect(notificationsSwitch).not.toBeChecked();
+
+    unmount();
+    render(<SettingsRoute />);
+    expect(
+      screen.getByRole("switch", { name: "Desktop notifications" }),
+    ).not.toBeChecked();
+
+    act(() => {
+      useAuthStore.setState({
+        token: "session-token-b",
+        loading: false,
+        user: {
+          id: "user-b",
+          email: "other@example.com",
+          name: "Other User",
+          type: "human",
+          avatar: null,
+        },
+      });
+    });
+
+    expect(
+      await screen.findByRole("switch", { name: "Desktop notifications" }),
+    ).toBeChecked();
   });
 
   it("saves a changed name and reflects the returned profile", async () => {

@@ -1,4 +1,8 @@
 import { type FormEvent, useEffect, useState } from "react";
+import {
+  desktopNotificationsEnabled,
+  setDesktopNotificationsEnabled,
+} from "../lib/notification-preferences";
 import { useAuthStore } from "../stores/auth";
 import { ApiAccessSettings } from "./settings-api-access";
 
@@ -31,6 +35,59 @@ function getInitials(name: string) {
     .toUpperCase();
 
   return initials || "?";
+}
+
+function NotificationSettings({ userId }: { userId: string }) {
+  const [enabled, setEnabled] = useState(() =>
+    desktopNotificationsEnabled(userId),
+  );
+
+  const handleChange = (nextEnabled: boolean) => {
+    setDesktopNotificationsEnabled(userId, nextEnabled);
+    setEnabled(nextEnabled);
+  };
+
+  return (
+    <section
+      aria-labelledby="notification-settings-heading"
+      className="overflow-hidden rounded-xl border border-border-subtle bg-surface shadow-sm"
+    >
+      <div className="border-b border-border-subtle p-5 sm:p-6">
+        <div className="text-[0.714rem] font-semibold uppercase tracking-[0.16em] text-accent">
+          Preferences
+        </div>
+        <h2
+          id="notification-settings-heading"
+          className="mt-1 text-[1.214rem] font-semibold tracking-[-0.02em] text-text"
+        >
+          Notifications
+        </h2>
+      </div>
+      <label className="flex cursor-pointer items-center justify-between gap-5 p-5 sm:p-6">
+        <span className="min-w-0">
+          <span className="block text-[0.929rem] font-semibold text-text">
+            Desktop notifications
+          </span>
+          <span className="mt-1 block max-w-[560px] text-[0.786rem] leading-5 text-text-muted">
+            Show alerts for new direct messages, agent responses, invitations, and
+            approval requests. This preference applies only to this device.
+          </span>
+        </span>
+        <input
+          aria-label="Desktop notifications"
+          role="switch"
+          type="checkbox"
+          checked={enabled}
+          onChange={(event) => handleChange(event.currentTarget.checked)}
+          className="peer sr-only"
+        />
+        <span
+          aria-hidden="true"
+          className="relative h-6 w-11 shrink-0 rounded-full bg-button transition-colors after:absolute after:left-1 after:top-1 after:size-4 after:rounded-full after:bg-white after:shadow-sm after:transition-transform after:content-[''] peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-accent peer-checked:bg-accent peer-checked:after:translate-x-5"
+        />
+      </label>
+    </section>
+  );
 }
 
 export function SettingsRoute() {
@@ -209,6 +266,10 @@ export function SettingsRoute() {
               </button>
             </div>
           </form>
+          <NotificationSettings
+            key={`notifications-${user.id}`}
+            userId={user.id}
+          />
           <ApiAccessSettings key={user.id} />
           </>
         )}
