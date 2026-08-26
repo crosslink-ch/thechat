@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { QueryClient } from "@tanstack/react-query";
 import type {
   BotInvocationProgressEventPublic,
   BotInvocationPublic,
@@ -70,7 +71,12 @@ describe("registerGlobalWsHandlers", () => {
       loading: false,
       fetchNotifications: vi.fn().mockResolvedValue(undefined),
     });
-    useConversationsStore.setState({ unreadChannels: new Set() });
+    useConversationsStore.setState({
+      unreadChannels: new Set(),
+      directConversationIdsByUserId: {},
+      unreadDirectConversations: {},
+      activeDirectConversationId: null,
+    });
     useWorkspacesStore.setState({
       workspaces: [],
       activeWorkspace: structuredClone(baseWorkspace),
@@ -442,6 +448,56 @@ describe("registerGlobalWsHandlers", () => {
     });
 
     cleanup();
+  });
+
+  it("hydrates a cached empty background DM from the global message event", () => {
+    useAuthStore.setState({
+      token: "token-1",
+      user: {
+        id: "u-current",
+        name: "Current User",
+        email: "current@example.com",
+        avatar: null,
+        type: "human",
+      },
+      loading: false,
+    });
+    const client = new QueryClient();
+    const key = ["messages", "conv-1", "all"] as const;
+    client.setQueryData(key, {
+      pages: [{ messages: [], hasOlder: false }],
+      pageParams: [null],
+    });
+    const cleanup = registerGlobalWsHandlers(() => {}, () => "/", client);
+    const message = {
+      id: "msg-background",
+      conversationId: "conv-1",
+      threadId: null,
+      senderId: "u-other",
+      senderName: "Other User",
+      senderType: "human" as const,
+      content: "arrived while the DM was closed",
+      parts: null,
+      attachments: [],
+      createdAt: "2026-01-01T00:00:00.000Z",
+    };
+
+    try {
+      wsEvents.emit("ws:new_message", {
+        conversationType: "direct",
+        message,
+      });
+
+      expect(
+        client.getQueryData<{
+          pages: Array<{ messages: Array<typeof message>; hasOlder: boolean }>;
+          pageParams: Array<string | null>;
+        }>(key)?.pages[0].messages,
+      ).toEqual([message]);
+    } finally {
+      cleanup();
+      client.clear();
+    }
   });
 
   it("does not fire direct-message notifications for the current user's messages", () => {

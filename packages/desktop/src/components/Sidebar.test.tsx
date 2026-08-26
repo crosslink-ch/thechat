@@ -167,7 +167,7 @@ beforeEach(() => {
     unreadAgentChats: new Set(),
     unreadChannels: new Set(),
     directConversationIdsByUserId: {},
-    unreadBotConversations: {},
+    unreadDirectConversations: {},
     activeDirectConversationId: null,
   });
   vi.clearAllMocks();
@@ -238,6 +238,46 @@ describe("Sidebar", () => {
     expect(screen.getByRole("button", { name: "Alice, online" })).toBeInTheDocument();
     expect(screen.getByTestId("online-indicator-u2")).toHaveClass("bg-success");
     expect(screen.queryByTestId("online-indicator-u-bot")).not.toBeInTheDocument();
+  });
+
+  it("shows and clears an unread indicator for a person's background DM", async () => {
+    useAuthStore.setState({ user, token: "test-token" });
+    useWorkspacesStore.setState({ workspaces: workspaceList, activeWorkspace });
+    await renderWithRouter(<Sidebar />);
+    const cleanup = registerGlobalWsHandlers(() => {}, () => "/");
+
+    try {
+      act(() => {
+        wsEvents.emit("ws:new_message", {
+          conversationType: "direct",
+          message: {
+            id: "msg-human-dm",
+            conversationId: "conv-human",
+            threadId: null,
+            senderId: "u2",
+            senderName: "Alice",
+            senderType: "human",
+            content: "hello from the background",
+            parts: null,
+            attachments: [],
+            createdAt: "2026-01-01T00:00:00.000Z",
+          },
+        });
+      });
+
+      expect(
+        screen.getByRole("button", { name: "Alice, unread" }),
+      ).toBeInTheDocument();
+
+      act(() => {
+        useConversationsStore
+          .getState()
+          .setActiveDirectConversation("conv-human");
+      });
+      expect(screen.getByRole("button", { name: "Alice" })).toBeInTheDocument();
+    } finally {
+      cleanup();
+    }
   });
 
   it("opens create, rename, and delete channel controls for workspace owners", async () => {

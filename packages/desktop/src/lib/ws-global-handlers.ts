@@ -13,7 +13,10 @@ import {
   useHermesIndicatorsStore,
 } from "../stores/hermes-indicators";
 import { fireNotification } from "./notifications";
+import { queryClient } from "./query-client";
+import { cacheIncomingMessage } from "../hooks/useChannelChat";
 import { api } from "./api";
+import type { QueryClient } from "@tanstack/react-query";
 import type { WorkspaceWithDetails } from "@thechat/shared";
 import type { WsEvents } from "./ws-events";
 
@@ -61,6 +64,7 @@ function currentWindowRoutePath() {
 export function registerGlobalWsHandlers(
   navigate: Navigate,
   currentPath: () => string = currentWindowRoutePath,
+  messageQueryClient: QueryClient = queryClient,
 ): () => void {
   const deletedChannelIds = new Set<string>();
   let workspaceRefreshGeneration = 0;
@@ -97,6 +101,7 @@ export function registerGlobalWsHandlers(
     message: msg,
     conversationType,
   }: WsEvents["ws:new_message"]) => {
+    cacheIncomingMessage(messageQueryClient, msg);
     const currentUserId = useAuthStore.getState().user?.id;
     if (
       conversationType === "group" &&
@@ -106,17 +111,16 @@ export function registerGlobalWsHandlers(
       useConversationsStore.getState().markChannelUnread(msg.conversationId);
     }
     if (conversationType === "direct" && msg.senderId !== currentUserId) {
-      const conversations = useConversationsStore.getState();
+      useConversationsStore
+        .getState()
+        .markDirectConversationUnread(msg.conversationId, msg.senderId);
       if (msg.senderType === "bot") {
-        conversations.markBotConversationUnread(msg.conversationId, msg.senderId);
-      } else {
-        conversations.rememberDirectConversation(msg.senderId, msg.conversationId);
+        useHermesIndicatorsStore.getState().markScopeUnread({
+          conversationId: msg.conversationId,
+          threadId: msg.threadId ?? null,
+          botUserId: msg.senderId,
+        });
       }
-      useHermesIndicatorsStore.getState().markScopeUnread({
-        conversationId: msg.conversationId,
-        threadId: msg.threadId ?? null,
-        botUserId: msg.senderType === "bot" ? msg.senderId : null,
-      });
     }
     if (
       conversationType === "direct" &&
