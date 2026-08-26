@@ -58,6 +58,33 @@ interface MessagePage {
 
 type MessageWindow = InfiniteData<MessagePage, string | null>;
 
+export function cacheIncomingMessage(
+  queryClient: QueryClient,
+  message: ChatMessage,
+) {
+  const cachedWindows = queryClient.getQueriesData<MessageWindow>({
+    queryKey: ["messages", message.conversationId],
+  });
+
+  // Do not seed an unfetched conversation with one live event: that would make
+  // a partial history look complete until the cache becomes stale. Reconcile
+  // only windows that were fetched before the conversation went into the
+  // background.
+  for (const [key, window] of cachedWindows) {
+    if (!window || !messageBelongsToQueryKey(message, key)) continue;
+    queryClient.setQueryData<MessageWindow>(key, (previous) =>
+      appendMessageToWindow(previous, message),
+    );
+  }
+}
+
+function messageBelongsToQueryKey(message: ChatMessage, key: QueryKey) {
+  const scope = key[2];
+  if (scope === "all") return true;
+  if (scope === "general") return message.threadId === null;
+  return scope === message.threadId;
+}
+
 interface LocalSentMessage {
   clientMessageId: string;
   message: ChatMessage;

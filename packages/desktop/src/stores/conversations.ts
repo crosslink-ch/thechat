@@ -7,7 +7,7 @@ interface ConversationsStore {
   unreadAgentChats: Set<string>;
   unreadChannels: Set<string>;
   directConversationIdsByUserId: Record<string, string>;
-  unreadBotConversations: Record<string, string>;
+  unreadDirectConversations: Record<string, string>;
   activeDirectConversationId: string | null;
   fetchConversations: () => Promise<void>;
   markAgentChatRead: (id: string) => void;
@@ -16,7 +16,7 @@ interface ConversationsStore {
   markChannelUnread: (id: string) => void;
   rememberDirectConversation: (userId: string, conversationId: string) => void;
   setActiveDirectConversation: (conversationId: string | null) => void;
-  markBotConversationUnread: (conversationId: string, botUserId: string) => void;
+  markDirectConversationUnread: (conversationId: string, userId: string) => void;
 }
 
 export const useConversationsStore = create<ConversationsStore>()((set) => ({
@@ -24,7 +24,7 @@ export const useConversationsStore = create<ConversationsStore>()((set) => ({
   unreadAgentChats: new Set(),
   unreadChannels: new Set(),
   directConversationIdsByUserId: {},
-  unreadBotConversations: {},
+  unreadDirectConversations: {},
   activeDirectConversationId: null,
 
   fetchConversations: async () => {
@@ -82,21 +82,21 @@ export const useConversationsStore = create<ConversationsStore>()((set) => ({
 
   setActiveDirectConversation: (conversationId) => {
     set((state) => {
-      const wasUnread = conversationId !== null && !!state.unreadBotConversations[conversationId];
+      const wasUnread = conversationId !== null && !!state.unreadDirectConversations[conversationId];
       if (state.activeDirectConversationId === conversationId && !wasUnread) return state;
 
       if (!wasUnread) return { activeDirectConversationId: conversationId };
-      const unreadBotConversations = { ...state.unreadBotConversations };
-      delete unreadBotConversations[conversationId];
-      return { activeDirectConversationId: conversationId, unreadBotConversations };
+      const unreadDirectConversations = { ...state.unreadDirectConversations };
+      delete unreadDirectConversations[conversationId];
+      return { activeDirectConversationId: conversationId, unreadDirectConversations };
     });
   },
 
-  markBotConversationUnread: (conversationId, botUserId) => {
+  markDirectConversationUnread: (conversationId, userId) => {
     set((state) => {
       const knownConversation =
-        state.directConversationIdsByUserId[botUserId] === conversationId;
-      const alreadyUnread = state.unreadBotConversations[conversationId] === botUserId;
+        state.directConversationIdsByUserId[userId] === conversationId;
+      const alreadyUnread = state.unreadDirectConversations[conversationId] === userId;
       if (
         knownConversation &&
         (state.activeDirectConversationId === conversationId || alreadyUnread)
@@ -109,14 +109,14 @@ export const useConversationsStore = create<ConversationsStore>()((set) => ({
           ? state.directConversationIdsByUserId
           : {
               ...state.directConversationIdsByUserId,
-              [botUserId]: conversationId,
+              [userId]: conversationId,
             },
-        unreadBotConversations:
+        unreadDirectConversations:
           state.activeDirectConversationId === conversationId || alreadyUnread
-            ? state.unreadBotConversations
+            ? state.unreadDirectConversations
             : {
-                ...state.unreadBotConversations,
-                [conversationId]: botUserId,
+                ...state.unreadDirectConversations,
+                [conversationId]: userId,
               },
       };
     });

@@ -109,8 +109,8 @@ export function Sidebar() {
   const directConversationIdsByUserId = useConversationsStore(
     (s) => s.directConversationIdsByUserId,
   );
-  const unreadBotConversations = useConversationsStore(
-    (s) => s.unreadBotConversations,
+  const unreadDirectConversations = useConversationsStore(
+    (s) => s.unreadDirectConversations,
   );
   const setActiveDirectConversation = useConversationsStore(
     (s) => s.setActiveDirectConversation,
@@ -394,9 +394,9 @@ export function Sidebar() {
                 const renderMember = (m: WorkspaceMember) => {
                   const isActive =
                     activeDmConversationId === directConversationIdsByUserId[m.userId];
-                  const isUnread =
-                    m.user.type === "bot" &&
-                    Object.values(unreadBotConversations).includes(m.userId);
+                  const isUnread = Object.values(unreadDirectConversations).includes(
+                    m.userId,
+                  );
                   const isOnline =
                     m.user.type === "human" && onlineUserIds.has(m.userId);
                   const ariaLabel = [
