@@ -19,6 +19,10 @@ export type WsEvents = {
     conversationType: "direct" | "group";
     clientMessageId?: string;
   };
+  "ws:message_reactions_updated": {
+    conversationId: string;
+    messageId: string;
+  };
   "ws:message_error": {
     conversationId: string;
     clientMessageId: string;

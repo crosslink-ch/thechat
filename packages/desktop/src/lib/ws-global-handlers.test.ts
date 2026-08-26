@@ -101,6 +101,47 @@ describe("registerGlobalWsHandlers", () => {
     cleanup();
   });
 
+  it("refreshes cached messages when a reaction changes", () => {
+    const messageQueryClient = new QueryClient();
+    const invalidateQueries = vi
+      .spyOn(messageQueryClient, "invalidateQueries")
+      .mockResolvedValue(undefined);
+    const cleanup = registerGlobalWsHandlers(
+      () => {},
+      () => "/channel/conv-1",
+      messageQueryClient,
+    );
+
+    wsEvents.emit("ws:message_reactions_updated", {
+      conversationId: "conv-1",
+      messageId: "msg-1",
+    });
+
+    expect(invalidateQueries).toHaveBeenCalledWith({
+      queryKey: ["messages", "conv-1"],
+    });
+    cleanup();
+  });
+
+  it("reconciles message caches after websocket authentication", () => {
+    const messageQueryClient = new QueryClient();
+    const invalidateQueries = vi
+      .spyOn(messageQueryClient, "invalidateQueries")
+      .mockResolvedValue(undefined);
+    const cleanup = registerGlobalWsHandlers(
+      () => {},
+      () => "/channel/conv-1",
+      messageQueryClient,
+    );
+
+    wsEvents.emit("ws:authenticated", {});
+
+    expect(invalidateQueries).toHaveBeenCalledWith({
+      queryKey: ["messages"],
+    });
+    cleanup();
+  });
+
   it("does not fire a desktop notification for a background Hermes task in the visible DM", () => {
     useAuthStore.setState({
       token: "token-1",

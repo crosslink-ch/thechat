@@ -232,6 +232,27 @@ export const messages = pgTable(
   ]
 );
 
+export const messageReactions = pgTable(
+  "message_reactions",
+  {
+    messageId: uuid("message_id")
+      .notNull()
+      .references(() => messages.id, { onDelete: "cascade" }),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    emoji: varchar("emoji", { length: 32 }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.messageId, t.userId, t.emoji] }),
+    index("message_reactions_message_emoji_idx").on(t.messageId, t.emoji),
+    index("message_reactions_user_id_idx").on(t.userId),
+  ]
+);
+
 export const eventOutbox = pgTable(
   "event_outbox",
   {

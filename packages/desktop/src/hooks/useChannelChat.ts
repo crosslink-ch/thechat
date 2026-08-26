@@ -7,7 +7,11 @@ import {
   type QueryKey,
   type InfiniteData,
 } from "@tanstack/react-query";
-import type { AuthUser, ChatMessage } from "@thechat/shared";
+import type {
+  AuthUser,
+  ChatMessage,
+  MessageReactionSummary,
+} from "@thechat/shared";
 import { api } from "../lib/api";
 import { authHeaders, edenErrorMessage, edenErrorStatus } from "../lib/eden";
 import { wsEvents, type WsEvents } from "../lib/ws-events";
@@ -76,6 +80,41 @@ export function cacheIncomingMessage(
       appendMessageToWindow(previous, message),
     );
   }
+}
+
+export function cacheMessageReactions(
+  queryClient: QueryClient,
+  conversationId: string,
+  messageId: string,
+  reactions: MessageReactionSummary[],
+) {
+  queryClient.setQueriesData<MessageWindow>(
+    { queryKey: ["messages", conversationId] },
+    (previous) => {
+      if (!previous) return previous;
+      return {
+        ...previous,
+        pages: previous.pages.map((page) => ({
+          ...page,
+          messages: page.messages.map((message) =>
+            message.id === messageId ? { ...message, reactions } : message,
+          ),
+        })),
+      };
+    },
+  );
+}
+
+export async function reconcileMessageReactions(
+  queryClient: QueryClient,
+  conversationId: string,
+  messageId: string,
+  reactions: MessageReactionSummary[],
+) {
+  cacheMessageReactions(queryClient, conversationId, messageId, reactions);
+  await queryClient.invalidateQueries({
+    queryKey: ["messages", conversationId],
+  });
 }
 
 function messageBelongsToQueryKey(message: ChatMessage, key: QueryKey) {
@@ -420,6 +459,27 @@ export function useChannelChat({
     [sendMessageToThread, threadId],
   );
 
+  const setReaction = useCallback(
+    async (messageId: string, emoji: string, active: boolean) => {
+      if (!conversationId || !token) {
+        throw new Error("Authentication required");
+      }
+      const { data, error } = await api
+        .messages({ conversationId })({ messageId })
+        .reactions.post({ emoji, active }, authHeaders(token));
+      if (error || !data || !("reactions" in data)) {
+        throw new Error(edenErrorMessage(error, "Failed to update reaction"));
+      }
+      await reconcileMessageReactions(
+        queryClient,
+        data.conversationId,
+        data.messageId,
+        data.reactions,
+      );
+    },
+    [conversationId, queryClient, token],
+  );
+
   const refetchMessages = useCallback(() => {
     if (!enabled || !conversationId || !token) return;
     void query.refetch();
@@ -540,6 +600,7 @@ export function useChannelChat({
     addOptimisticSentMessage,
     sendMessage,
     sendMessageToThread,
+    setReaction,
     sendError,
     refetchMessages,
     loadOlderMessages,
