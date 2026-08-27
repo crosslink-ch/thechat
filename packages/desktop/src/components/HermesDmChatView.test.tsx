@@ -87,6 +87,151 @@ beforeEach(() => {
 });
 
 describe("HermesDmChatView", () => {
+  it("visually merges adjacent Hermes DM messages from the same sender", () => {
+    render(
+      <HermesDmChatView
+        messages={[
+          message({
+            id: "message-1",
+            content: "First answer",
+            createdAt: "2026-01-01T10:00:00.000Z",
+          }),
+          message({
+            id: "message-2",
+            content: "Second answer",
+            createdAt: "2026-01-01T10:05:00.000Z",
+          }),
+        ]}
+        loading={false}
+        typingUsers={new Map()}
+        progressInvocations={[]}
+        typingSuppressedUserIds={[]}
+        onSend={() => {}}
+      />,
+    );
+
+    expect(screen.getAllByText("Koda")).toHaveLength(1);
+    expect(
+      screen.getByText("Second answer").closest("[data-message-id]"),
+    ).toHaveAttribute("data-message-grouped", "true");
+  });
+
+  it("starts a new message group after an intervening Hermes event", () => {
+    render(
+      <HermesDmChatView
+        messages={[
+          message({
+            id: "message-1",
+            content: "Before the event",
+            createdAt: "2026-01-01T10:00:00.000Z",
+          }),
+          message({
+            id: "message-2",
+            content: "After the event",
+            createdAt: "2026-01-01T10:04:00.000Z",
+          }),
+        ]}
+        loading={false}
+        typingUsers={new Map()}
+        progressInvocations={[
+          {
+            invocation: invocation({
+              createdAt: "2026-01-01T10:01:00.000Z",
+              startedAt: "2026-01-01T10:01:00.000Z",
+              updatedAt: "2026-01-01T10:02:00.000Z",
+            }),
+            events: [
+              progressEvent({
+                occurredAt: "2026-01-01T10:02:00.000Z",
+                createdAt: "2026-01-01T10:02:00.000Z",
+              }),
+            ],
+          },
+        ]}
+        typingSuppressedUserIds={[]}
+        onSend={() => {}}
+      />,
+    );
+
+    expect(
+      screen.getByText("After the event").closest("[data-message-id]"),
+    ).toHaveAttribute("data-message-grouped", "false");
+  });
+
+  it("starts a new message group after an intervening Hermes invocation", () => {
+    render(
+      <HermesDmChatView
+        messages={[
+          message({
+            id: "message-1",
+            content: "Before invocation",
+            createdAt: "2026-01-01T10:00:00.000Z",
+          }),
+          message({
+            id: "message-2",
+            content: "After invocation",
+            createdAt: "2026-01-01T10:04:00.000Z",
+          }),
+        ]}
+        loading={false}
+        typingUsers={new Map()}
+        progressInvocations={[
+          {
+            invocation: invocation({
+              createdAt: "2026-01-01T10:02:00.000Z",
+              startedAt: "2026-01-01T10:02:00.000Z",
+              updatedAt: "2026-01-01T10:02:00.000Z",
+            }),
+            events: [],
+          },
+        ]}
+        typingSuppressedUserIds={[]}
+        onSend={() => {}}
+      />,
+    );
+
+    expect(
+      screen.getByText("After invocation").closest("[data-message-id]"),
+    ).toHaveAttribute("data-message-grouped", "false");
+  });
+
+  it("does not treat an invocation starting with the current message as intervening", () => {
+    render(
+      <HermesDmChatView
+        messages={[
+          message({
+            id: "message-1",
+            content: "First prompt",
+            createdAt: "2026-01-01T10:00:00.000Z",
+          }),
+          message({
+            id: "message-2",
+            content: "Second prompt",
+            createdAt: "2026-01-01T10:04:00.000Z",
+          }),
+        ]}
+        loading={false}
+        typingUsers={new Map()}
+        progressInvocations={[
+          {
+            invocation: invocation({
+              createdAt: "2026-01-01T10:04:00.000Z",
+              startedAt: "2026-01-01T10:04:00.000Z",
+              updatedAt: "2026-01-01T10:04:00.000Z",
+            }),
+            events: [],
+          },
+        ]}
+        typingSuppressedUserIds={[]}
+        onSend={() => {}}
+      />,
+    );
+
+    expect(
+      screen.getByText("Second prompt").closest("[data-message-id]"),
+    ).toHaveAttribute("data-message-grouped", "true");
+  });
+
   it("hides the generic typing indicator while Hermes progress is active", () => {
     render(
       <HermesDmChatView

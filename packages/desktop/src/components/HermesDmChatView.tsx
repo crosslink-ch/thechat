@@ -14,8 +14,10 @@ import type { MentionUser } from "./MentionList";
 import { HermesProgressInline } from "./HermesProgressInline";
 import type { HermesSlashCommand } from "../lib/hermes-slash-commands";
 import { MessageSendError } from "./MessageSendError";
-import { SharedMessageAttachments } from "./SharedMessageAttachments";
-import { MessageReactions } from "./MessageReactions";
+import {
+  SharedChatMessage,
+  shouldMergeChatMessage,
+} from "./SharedChatMessage";
 
 const DEFER_FORMATTING_MESSAGE_THRESHOLD = 40;
 const DEFER_FORMATTING_BATCH_SIZE = 4;
@@ -55,11 +57,6 @@ interface HermesDmChatViewProps {
   conversationId?: string;
   token?: string | null;
   composerKey?: string | number;
-}
-
-function formatTime(iso: string) {
-  const d = new Date(iso);
-  return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
 export function HermesDmChatView({
@@ -312,46 +309,36 @@ export function HermesDmChatView({
             <div className="flex flex-1 flex-col items-center justify-center text-[1rem] text-text-placeholder">No messages yet. Start the conversation!</div>
           )}
           {messages.map((msg, index) => (
-            <div
+            <SharedChatMessage
               key={msg.id}
-              data-message-id={msg.id}
-              className="group/message relative flex gap-2.5 px-5 py-2.5 transition-colors duration-100 hover:bg-raised/50"
+              message={msg}
+              merged={
+                shouldMergeChatMessage(messages[index - 1], msg) &&
+                !hasInterveningHermesEvent(
+                  messages[index - 1],
+                  msg,
+                  progressInvocations,
+                )
+              }
+              onSetReaction={onSetReaction}
             >
-              <div className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-full bg-elevated text-[0.857rem] font-semibold text-text-muted">
-                {msg.senderName.charAt(0).toUpperCase()}
-              </div>
-              <div className="min-w-0 flex-1">
-                <div className="mb-0.5 flex items-baseline gap-2">
-                  <span className="text-[0.929rem] font-semibold text-text">{msg.senderName}</span>
-                  <span className="text-[0.714rem] text-text-dimmed">{formatTime(msg.createdAt)}</span>
-                </div>
-                {msg.content && (
-                  <Markdown
-                    content={msg.content}
-                    defer={deferMessageFormatting}
-                    deferDelayMs={
-                      deferMessageFormatting
-                        ? deferredMarkdownDelayMs(messages.length, index)
-                        : 0
-                    }
-                    onDeferredRender={
-                      deferMessageFormatting
-                        ? () => handleDeferredMarkdownRender(msg.id)
-                        : undefined
-                    }
-                  />
-                )}
-                <SharedMessageAttachments attachments={msg.attachments ?? []} />
-                {onSetReaction && (
-                  <MessageReactions
-                    reactions={msg.reactions ?? []}
-                    onSetReaction={(emoji, active) =>
-                      onSetReaction(msg.id, emoji, active)
-                    }
-                  />
-                )}
-              </div>
-            </div>
+              {msg.content && (
+                <Markdown
+                  content={msg.content}
+                  defer={deferMessageFormatting}
+                  deferDelayMs={
+                    deferMessageFormatting
+                      ? deferredMarkdownDelayMs(messages.length, index)
+                      : 0
+                  }
+                  onDeferredRender={
+                    deferMessageFormatting
+                      ? () => handleDeferredMarkdownRender(msg.id)
+                      : undefined
+                  }
+                />
+              )}
+            </SharedChatMessage>
           ))}
           <HermesProgressInline
             invocations={progressInvocations}
@@ -409,6 +396,52 @@ export function HermesDmChatView({
       />
     </>
   );
+}
+
+function hasInterveningHermesEvent(
+  previous: ChatMessage | undefined,
+  current: ChatMessage,
+  progressInvocations: ActiveHermesInvocationProgress[],
+) {
+  if (!previous) return false;
+
+  const previousTime = new Date(previous.createdAt).getTime();
+  const currentTime = new Date(current.createdAt).getTime();
+  if (!Number.isFinite(previousTime) || !Number.isFinite(currentTime)) {
+    return false;
+  }
+
+  const isBetweenMessages = (iso: string) => {
+    const timestamp = new Date(iso).getTime();
+    return (
+      Number.isFinite(timestamp) &&
+      timestamp > previousTime &&
+      timestamp < currentTime
+    );
+  };
+
+  return progressInvocations.some(({ invocation, events }) => {
+    if (
+      invocation.conversationId !== current.conversationId ||
+      invocation.threadId !== current.threadId
+    ) {
+      return false;
+    }
+
+    if (isBetweenMessages(invocation.startedAt ?? invocation.createdAt)) {
+      return true;
+    }
+
+    return events.some((event) => {
+      if (
+        event.conversationId !== current.conversationId ||
+        event.threadId !== current.threadId
+      ) {
+        return false;
+      }
+      return isBetweenMessages(event.occurredAt);
+    });
+  });
 }
 
 function chatMessageWindowSignature(messages: ChatMessage[]) {
