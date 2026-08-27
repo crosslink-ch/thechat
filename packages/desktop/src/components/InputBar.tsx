@@ -60,6 +60,8 @@ interface InputBarProps {
   isStreamingOverride?: boolean;
   queuedCount?: number;
   slashCommands?: HermesSlashCommand[];
+  /** Clear text immediately, then reconcile the scoped draft if transport rejects. */
+  optimisticSend?: boolean;
   sharedUpload?: {
     conversationId: string;
     token: string;
@@ -80,6 +82,7 @@ function ScopedInputBar({
   isStreamingOverride,
   queuedCount = 0,
   slashCommands,
+  optimisticSend = false,
   sharedUpload,
 }: InputBarProps) {
   const storeStreaming = useIsStreaming(convId);
@@ -624,37 +627,75 @@ function ScopedInputBar({
 
   const clearSubmittedText = useCallback(
     (submittedRevision: number) => {
-      // This compare-and-set also clears a successfully sent draft after the
-      // composer unmounts, without erasing edits made while the send was pending.
-      restoreDraft(draftKey, submittedRevision, "");
+      if (!restoreDraft(draftKey, submittedRevision, "")) return null;
+      return useComposerDraftsStore.getState().revisions[draftKey] ?? 0;
     },
     [draftKey, restoreDraft],
   );
 
   const handleRichInputSubmit = useCallback(
-    async (text: string) => {
-      const submittedRevision =
-        useComposerDraftsStore.getState().revisions[draftKey] ?? 0;
+    (text: string) => {
+      const draftState = useComposerDraftsStore.getState();
+      const submittedRevision = draftState.revisions[draftKey] ?? 0;
+      const submittedDraft = draftState.drafts[draftKey] ?? text;
       const submittedImages = images.length > 0 ? [...images] : undefined;
-      try {
-        const accepted = sharedUpload
-          ? await sendSharedContent(text)
-          : await requestSend(text, submittedImages);
-        if (!accepted) return false;
-        clearSubmittedText(submittedRevision);
-        if (submittedImages) removeAcceptedImages(submittedImages);
-        return true;
-      } catch {
+      const send = () =>
+        sharedUpload
+          ? sendSharedContent(text)
+          : requestSend(text, submittedImages);
+
+      if (!optimisticSend) {
+        return (async () => {
+          try {
+            const accepted = await send();
+            if (!accepted) return false;
+            clearSubmittedText(submittedRevision);
+            if (submittedImages) removeAcceptedImages(submittedImages);
+            return true;
+          } catch {
+            return false;
+          }
+        })();
+      }
+
+      if (
+        sendPendingRef.current ||
+        (sharedUpload && (!sharedReady || sendingShared))
+      ) {
         return false;
       }
+
+      const clearedRevision = clearSubmittedText(submittedRevision);
+      if (clearedRevision === null) return false;
+
+      // Clearing the scoped draft makes the send feel immediate. The transport
+      // still owns acceptance; a rejected send restores only if the user has
+      // not typed a newer draft or navigated through another mutation.
+      void (async () => {
+        try {
+          const accepted = await send();
+          if (!accepted) {
+            restoreDraft(draftKey, clearedRevision, submittedDraft);
+            return;
+          }
+          if (submittedImages) removeAcceptedImages(submittedImages);
+        } catch {
+          restoreDraft(draftKey, clearedRevision, submittedDraft);
+        }
+      })();
+      return true;
     },
     [
       clearSubmittedText,
       draftKey,
       images,
+      optimisticSend,
       removeAcceptedImages,
       requestSend,
+      restoreDraft,
       sendSharedContent,
+      sendingShared,
+      sharedReady,
       sharedUpload,
     ],
   );
