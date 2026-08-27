@@ -688,6 +688,7 @@ export function DmRoute() {
           draftTaskActive={draftTaskActive}
           draftTaskPresent={draftTaskPresent}
           onSelectThread={handleSelectThread}
+          onRenameThread={renameThread}
           onCreateThread={handleCreateThread}
           approvalThreadIds={approvalThreadIds}
           generalNeedsApproval={generalNeedsApproval}
