@@ -80,6 +80,7 @@ export type WsEvents = {
     workspaceId: string;
     userId: string;
     name: string;
+    avatar?: string | null;
     botAvatar?: BotAppearance;
   };
   "ws:member_removed": {

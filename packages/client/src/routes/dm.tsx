@@ -72,6 +72,7 @@ export function DmRoute() {
           id: m.userId,
           label: m.user.name,
           type: m.user.type,
+          picture: m.user.avatar,
           botAvatar:
             m.user.type === "bot"
               ? botAppearanceFor(m.userId, m.bot?.avatar)

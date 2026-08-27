@@ -1,5 +1,5 @@
 import { PlatformNotificationSettings as BrowserNotificationSettings } from "#platform-shell";
-import { type FormEvent, useEffect, useState } from "react";
+import { type ChangeEvent, type FormEvent, useEffect, useRef, useState } from "react";
 import {
   SettingsFact,
   SettingsField,
@@ -7,34 +7,42 @@ import {
   settingsCard,
   settingsInput,
   settingsPrimaryButton,
+  settingsSecondaryButton,
+  settingsQuietButton,
 } from "../components/SettingsSection";
-import { avatarColor } from "../components/ui";
+import { Avatar } from "../components/Avatar";
+import { prepareProfilePicture } from "../lib/profile-picture";
 import { useAuthStore } from "../stores/auth";
 import { ApiAccessSettings } from "./settings-api-access";
-
-function getInitials(name: string) {
-  const initials = name
-    .trim()
-    .split(/\s+/)
-    .slice(0, 2)
-    .map((part) => part.charAt(0))
-    .join("")
-    .toUpperCase();
-
-  return initials || "?";
-}
 
 export function SettingsRoute() {
   const user = useAuthStore((state) => state.user);
   const updateName = useAuthStore((state) => state.updateName);
+  const updateAvatar = useAuthStore((state) => state.updateAvatar);
   const [name, setName] = useState(user?.name ?? "");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  const [pictureSaving, setPictureSaving] = useState(false);
+  const [pictureError, setPictureError] = useState<string | null>(null);
+  const [pictureStatus, setPictureStatus] = useState<string | null>(null);
+  const pictureOperationRef = useRef(0);
+
 
   useEffect(() => {
     setName(user?.name ?? "");
   }, [user?.name]);
+
+  useEffect(() => {
+    pictureOperationRef.current += 1;
+    setPictureSaving(false);
+    setPictureError(null);
+    setPictureStatus(null);
+  }, [user?.id]);
+
+  const isCurrentPictureOperation = (operation: number, userId: string) =>
+    pictureOperationRef.current === operation &&
+    useAuthStore.getState().user?.id === userId;
 
   const trimmedName = name.trim();
   const canSave = Boolean(
@@ -70,6 +78,66 @@ export function SettingsRoute() {
       );
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handlePictureChange = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.currentTarget.files?.[0];
+    event.currentTarget.value = "";
+    const userId = user?.id;
+    if (!file || !userId || pictureSaving) return;
+
+    const operation = ++pictureOperationRef.current;
+    setPictureSaving(true);
+    setPictureError(null);
+    setPictureStatus(null);
+    try {
+      const avatar = await prepareProfilePicture(file);
+      if (!isCurrentPictureOperation(operation, userId)) return;
+      await updateAvatar(avatar);
+      if (isCurrentPictureOperation(operation, userId)) {
+        setPictureStatus("Profile picture saved.");
+      }
+    } catch (pictureUpdateError) {
+      if (isCurrentPictureOperation(operation, userId)) {
+        setPictureError(
+          pictureUpdateError instanceof Error
+            ? pictureUpdateError.message
+            : "Could not update profile picture",
+        );
+      }
+    } finally {
+      if (isCurrentPictureOperation(operation, userId)) {
+        setPictureSaving(false);
+      }
+    }
+  };
+
+  const handlePictureRemove = async () => {
+    const userId = user?.id;
+    if (!userId || !user.avatar || pictureSaving) return;
+
+    const operation = ++pictureOperationRef.current;
+    setPictureSaving(true);
+    setPictureError(null);
+    setPictureStatus(null);
+    try {
+      await updateAvatar(null);
+      if (isCurrentPictureOperation(operation, userId)) {
+        setPictureStatus("Profile picture removed.");
+      }
+    } catch (pictureUpdateError) {
+      if (isCurrentPictureOperation(operation, userId)) {
+        setPictureError(
+          pictureUpdateError instanceof Error
+            ? pictureUpdateError.message
+            : "Could not remove profile picture",
+        );
+      }
+    } finally {
+      if (isCurrentPictureOperation(operation, userId)) {
+        setPictureSaving(false);
+      }
     }
   };
 
@@ -114,17 +182,58 @@ export function SettingsRoute() {
                 onSubmit={handleSubmit}
               >
                 <div className="flex min-w-0 items-center gap-3 px-4 py-4 sm:px-5">
-                  <div
+                  <Avatar
                     aria-hidden="true"
-                    className="flex size-10 shrink-0 items-center justify-center rounded-full text-[0.929rem] font-semibold text-white"
-                    style={{ backgroundColor: avatarColor(user.id) }}
-                  >
-                    {getInitials(user.name)}
-                  </div>
+                    name={user.name}
+                    colorKey={user.id}
+                    picture={user.avatar}
+                    className="size-10 text-[0.929rem]"
+                  />
                   <div className="min-w-0 truncate text-[1rem] font-medium text-text">
                     {user.name}
                   </div>
                 </div>
+
+                <SettingsField
+                  label="Profile picture"
+                  htmlFor="profile-picture"
+                  hint="PNG, JPEG, or WebP, up to 10 MB. Resized before saving."
+                >
+                  <div className="flex flex-wrap items-center gap-3">
+                    <Avatar
+                      aria-hidden="true"
+                      name={user.name}
+                      colorKey={user.id}
+                      picture={user.avatar}
+                      className="size-16 text-xl"
+                    />
+                    <label className={`${settingsSecondaryButton} relative focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-accent ${pictureSaving ? "cursor-wait opacity-55" : ""}`}>
+                      <input
+                        id="profile-picture"
+                        type="file"
+                        accept="image/png,image/jpeg,image/webp"
+                        aria-label="Choose profile picture"
+                        className="sr-only"
+                        disabled={pictureSaving}
+                        onChange={handlePictureChange}
+                      />
+                      {pictureSaving ? "Saving picture..." : user.avatar ? "Change picture" : "Choose picture"}
+                    </label>
+                    {user.avatar && (
+                      <button
+                        type="button"
+                        aria-label="Remove picture"
+                        disabled={pictureSaving}
+                        onClick={handlePictureRemove}
+                        className={settingsQuietButton}
+                      >
+                        Remove
+                      </button>
+                    )}
+                  </div>
+                  {pictureError && <p className="mt-2 text-[0.929rem] text-error-bright" role="alert">{pictureError}</p>}
+                  {pictureStatus && !pictureError && <p className="mt-2 text-[0.929rem] text-success-light" role="status">{pictureStatus}</p>}
+                </SettingsField>
 
                 <SettingsField label="Name" htmlFor="profile-name">
                   <input

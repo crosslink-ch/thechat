@@ -514,6 +514,7 @@ export function Sidebar() {
                       <Avatar
                         name={m.user.name}
                         colorKey={m.userId}
+                        picture={m.user.avatar}
                         bot={m.user.type === "bot"}
                         botAvatar={
                           m.user.type === "bot"
@@ -600,7 +601,7 @@ export function Sidebar() {
                 onClick={() => setProfileMenuOpen((v) => !v)}
               >
                 <span className="flex min-w-0 items-center gap-2.5">
-                  <Avatar name={initials} colorKey={user.id} className="size-6 text-[0.786rem]" />
+                  <Avatar name={initials} colorKey={user.id} picture={user.avatar} className="size-6 text-[0.786rem]" />
                   <span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap text-[1rem] font-medium text-text-secondary">
                     {user.name}
                   </span>

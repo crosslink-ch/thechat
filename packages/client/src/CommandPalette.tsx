@@ -567,6 +567,7 @@ function PaletteRow({
             <Avatar
               name={destination.name}
               colorKey={destination.userId}
+              picture={destination.avatar}
               bot={destination.userType === "bot"}
               botAvatar={destination.botAvatar}
               size={18}

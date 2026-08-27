@@ -12,6 +12,8 @@ export interface MentionUser {
   id: string;
   label: string;
   type: "human" | "bot";
+  /** A person's profile picture. */
+  picture?: string | null;
   botAvatar?: BotAppearance;
 }
 
@@ -65,6 +67,7 @@ export const MentionList = forwardRef<
           <Avatar
             name={item.label}
             colorKey={item.id}
+            picture={item.picture}
             bot={item.type === "bot"}
             botAvatar={item.botAvatar}
             size={24}

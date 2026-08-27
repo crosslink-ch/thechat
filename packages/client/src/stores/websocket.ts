@@ -262,6 +262,7 @@ function doConnect() {
         workspaceId: event.workspaceId,
         userId: event.userId,
         name: event.name,
+        avatar: event.avatar,
         botAvatar: event.botAvatar,
       });
     } else if (event.type === "member_removed") {

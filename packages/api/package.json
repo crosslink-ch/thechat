@@ -14,7 +14,7 @@
   "scripts": {
     "dev": "bun run --env-file ../../.env --watch src/index.ts",
     "dev:worker": "bun run --env-file ../../.env --watch src/scripts/worker.ts",
-    "build": "bun build src/index.ts src/scripts/worker.ts src/scripts/outbox-dlq.ts src/scripts/queue-setup.ts src/scripts/queue-cutover.ts --outdir dist --target bun",
+    "build": "bun build src/index.ts src/scripts/worker.ts src/scripts/outbox-dlq.ts src/scripts/queue-setup.ts src/scripts/queue-cutover.ts --outdir dist --target bun --external sharp",
     "start": "bun run --env-file ../../.env dist/index.js",
     "start:worker": "bun run --env-file ../../.env dist/scripts/worker.js",
     "worker": "bun run --env-file ../../.env src/scripts/worker.ts",
@@ -54,6 +54,7 @@
     "pg": "8.23.1",
     "pg-boss": "12.38.0",
     "postgres": "^3.4.8",
+    "sharp": "0.35.4",
     "web-push": "^3.6.7",
     "zod": "^4.3.6"
   },
