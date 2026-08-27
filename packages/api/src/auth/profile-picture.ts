@@ -62,13 +62,18 @@ export async function normalizeProfilePicture(
   }
 
   try {
-    const { info } = await sharp(bytes, {
+    const image = sharp(bytes, {
       failOn: "warning",
       limitInputPixels:
         MAX_PROFILE_PICTURE_DIMENSION * MAX_PROFILE_PICTURE_DIMENSION,
-    })
-      .raw()
-      .toBuffer({ resolveWithObject: true });
+    });
+    const metadata = await image.metadata();
+    if ((metadata.pages ?? 1) !== 1) {
+      throw new ProfilePictureValidationError(
+        "Profile picture must contain a single frame",
+      );
+    }
+    const { info } = await image.raw().toBuffer({ resolveWithObject: true });
     if (
       info.width < 1 ||
       info.height < 1 ||
