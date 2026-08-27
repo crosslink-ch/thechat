@@ -604,9 +604,7 @@ export function DmRoute() {
             draftKey={composerDraftKey.dm(
               user?.id,
               conversationId,
-              draftTaskActive
-                ? `${LOCAL_TASK_DRAFT_SCOPE}:${draftComposerRevision}`
-                : activeThreadId,
+              draftTaskActive ? LOCAL_TASK_DRAFT_SCOPE : activeThreadId,
             )}
             taskActive={taskActive}
             slashCommands={slashCommands}
