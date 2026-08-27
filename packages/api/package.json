@@ -14,7 +14,7 @@
   "scripts": {
     "dev": "bun run --env-file ../../.env --watch src/index.ts",
     "dev:worker": "bun run --env-file ../../.env --watch src/scripts/worker.ts",
-    "build": "bun build src/index.ts src/scripts/worker.ts --outdir dist --target bun",
+    "build": "bun build src/index.ts src/scripts/worker.ts --outdir dist --target bun --external sharp",
     "start": "bun run --env-file ../../.env dist/index.js",
     "start:worker": "bun run --env-file ../../.env dist/scripts/worker.js",
     "worker": "bun run --env-file ../../.env src/scripts/worker.ts",
@@ -26,11 +26,11 @@
     "db:studio": "bun run --env-file ../../.env drizzle-kit studio"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1038.0",
+    "@aws-sdk/s3-request-presigner": "^3.1038.0",
     "@better-auth/api-key": "1.6.20",
     "@bogeychan/elysia-logger": "^0.1.10",
     "@elysiajs/cors": "^1.2.0",
-    "@aws-sdk/client-s3": "^3.1038.0",
-    "@aws-sdk/s3-request-presigner": "^3.1038.0",
     "@modelcontextprotocol/sdk": "^1.26.0",
     "@opentelemetry/api": "^1.9.1",
     "@opentelemetry/exporter-trace-otlp-http": "^0.218.0",
@@ -46,6 +46,7 @@
     "ioredis": "^5.10.1",
     "nodemailer": "^6.9.0",
     "postgres": "^3.4.8",
+    "sharp": "0.35.4",
     "zod": "^4.3.6"
   },
   "devDependencies": {

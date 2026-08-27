@@ -23,6 +23,16 @@ export function ChannelRoute() {
         .map((m) => ({ id: m.userId, label: m.user.name, type: m.user.type })),
     [members, user?.id]
   );
+  const senderAvatars = useMemo(
+    () =>
+      new Map(
+        (members ?? []).map((member) => [
+          member.userId,
+          member.user.avatar,
+        ] as const),
+      ),
+    [members],
+  );
 
   const channelChat = useChannelChat({
     conversationId: channelId,
@@ -106,6 +116,7 @@ export function ChannelRoute() {
           hasOlderMessages={channelChat.hasOlderMessages}
           sendError={channelChat.sendError}
           typingUsers={typingUsers}
+          senderAvatars={senderAvatars}
           onSend={channelChat.sendMessage}
           onLoadOlderMessages={channelChat.loadOlderMessages}
           mentions={mentions}

@@ -59,6 +59,18 @@ export function DmRoute() {
         .map((m) => ({ id: m.userId, label: m.user.name, type: m.user.type })),
     [members, user?.id]
   );
+  const senderAvatars = useMemo(() => {
+    const avatars = new Map<string, string | null>();
+    for (const member of members ?? []) {
+      avatars.set(member.userId, member.user.avatar);
+    }
+    for (const participant of conversation?.participants ?? []) {
+      if (!avatars.has(participant.userId)) {
+        avatars.set(participant.userId, participant.user.avatar);
+      }
+    }
+    return avatars;
+  }, [conversation?.participants, members]);
 
   const [typingUsers, setTypingUsers] = useState<Map<string, string>>(new Map());
   const typingTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
@@ -613,6 +625,7 @@ export function DmRoute() {
             conversationId={conversationId}
             token={token}
             composerKey={draftComposerRevision}
+            senderAvatars={senderAvatars}
           />
         ) : (
           <ChannelChatView
@@ -633,6 +646,7 @@ export function DmRoute() {
             draftKey={composerDraftKey.dm(user?.id, conversationId)}
             conversationId={conversationId}
             token={token}
+            senderAvatars={senderAvatars}
           />
         )}
       </div>

@@ -11,6 +11,7 @@ import { api } from "../lib/api";
 import { wsEvents } from "../lib/ws-events";
 import { useAuthStore } from "../stores/auth";
 import { useWorkspacesStore } from "../stores/workspaces";
+import { UserAvatar } from "../components/UserAvatar";
 
 function authHeaders(token: string) {
   return { authorization: `Bearer ${token}` };
@@ -432,9 +433,11 @@ export function WorkspaceManageRoute() {
                     className="flex flex-wrap items-center gap-3 px-3 py-3"
                   >
                     <div className="flex min-w-0 flex-1 items-center gap-2.5">
-                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-accent-muted text-[0.786rem] font-semibold text-accent">
-                        {member.user.name.slice(0, 1).toUpperCase()}
-                      </div>
+                      <UserAvatar
+                        name={member.user.name}
+                        avatar={member.user.avatar}
+                        size="md"
+                      />
                       <div className="min-w-0">
                         <div className="overflow-hidden text-ellipsis whitespace-nowrap text-[0.857rem] font-medium text-text">
                           {member.user.name}

@@ -1,4 +1,12 @@
-import { type FormEvent, useEffect, useState } from "react";
+import {
+  type ChangeEvent,
+  type FormEvent,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
+import { UserAvatar } from "../components/UserAvatar";
+import { prepareProfilePicture } from "../lib/profile-picture";
 import { useAuthStore } from "../stores/auth";
 import { ApiAccessSettings } from "./settings-api-access";
 
@@ -21,29 +29,33 @@ function LockIcon() {
   );
 }
 
-function getInitials(name: string) {
-  const initials = name
-    .trim()
-    .split(/\s+/)
-    .slice(0, 2)
-    .map((part) => part.charAt(0))
-    .join("")
-    .toUpperCase();
-
-  return initials || "?";
-}
-
 export function SettingsRoute() {
   const user = useAuthStore((state) => state.user);
   const updateName = useAuthStore((state) => state.updateName);
+  const updateAvatar = useAuthStore((state) => state.updateAvatar);
   const [name, setName] = useState(user?.name ?? "");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  const [pictureSaving, setPictureSaving] = useState(false);
+  const [pictureError, setPictureError] = useState<string | null>(null);
+  const [pictureStatus, setPictureStatus] = useState<string | null>(null);
+  const pictureOperationRef = useRef(0);
 
   useEffect(() => {
     setName(user?.name ?? "");
   }, [user?.name]);
+
+  useEffect(() => {
+    pictureOperationRef.current += 1;
+    setPictureSaving(false);
+    setPictureError(null);
+    setPictureStatus(null);
+  }, [user?.id]);
+
+  const isCurrentPictureOperation = (operation: number, userId: string) =>
+    pictureOperationRef.current === operation &&
+    useAuthStore.getState().user?.id === userId;
 
   const trimmedName = name.trim();
   const canSave = Boolean(
@@ -79,6 +91,66 @@ export function SettingsRoute() {
       );
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handlePictureChange = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.currentTarget.files?.[0];
+    event.currentTarget.value = "";
+    const userId = user?.id;
+    if (!file || !userId || pictureSaving) return;
+
+    const operation = ++pictureOperationRef.current;
+    setPictureSaving(true);
+    setPictureError(null);
+    setPictureStatus(null);
+    try {
+      const avatar = await prepareProfilePicture(file);
+      if (!isCurrentPictureOperation(operation, userId)) return;
+      await updateAvatar(avatar);
+      if (isCurrentPictureOperation(operation, userId)) {
+        setPictureStatus("Profile picture saved.");
+      }
+    } catch (pictureUpdateError) {
+      if (isCurrentPictureOperation(operation, userId)) {
+        setPictureError(
+          pictureUpdateError instanceof Error
+            ? pictureUpdateError.message
+            : "Could not update profile picture",
+        );
+      }
+    } finally {
+      if (isCurrentPictureOperation(operation, userId)) {
+        setPictureSaving(false);
+      }
+    }
+  };
+
+  const handlePictureRemove = async () => {
+    const userId = user?.id;
+    if (!userId || !user.avatar || pictureSaving) return;
+
+    const operation = ++pictureOperationRef.current;
+    setPictureSaving(true);
+    setPictureError(null);
+    setPictureStatus(null);
+    try {
+      await updateAvatar(null);
+      if (isCurrentPictureOperation(operation, userId)) {
+        setPictureStatus("Profile picture removed.");
+      }
+    } catch (pictureUpdateError) {
+      if (isCurrentPictureOperation(operation, userId)) {
+        setPictureError(
+          pictureUpdateError instanceof Error
+            ? pictureUpdateError.message
+            : "Could not remove profile picture",
+        );
+      }
+    } finally {
+      if (isCurrentPictureOperation(operation, userId)) {
+        setPictureSaving(false);
+      }
     }
   };
 
@@ -121,9 +193,12 @@ export function SettingsRoute() {
           >
             <div className="border-b border-border-subtle bg-gradient-to-br from-accent/[0.12] via-surface to-surface p-5 sm:p-6">
               <div className="flex min-w-0 items-center gap-3.5">
-                <div className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-accent text-[0.929rem] font-semibold text-white shadow-sm">
-                  {getInitials(user.name)}
-                </div>
+                <UserAvatar
+                  name={user.name}
+                  avatar={user.avatar}
+                  size="lg"
+                  className="shadow-sm"
+                />
                 <div className="truncate text-[1rem] font-semibold text-text">
                   {user.name}
                 </div>
@@ -131,7 +206,71 @@ export function SettingsRoute() {
             </div>
 
             <div className="p-5 sm:p-6">
-              <div className="flex min-w-0 flex-col gap-2">
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
+                <UserAvatar
+                  name={user.name}
+                  avatar={user.avatar}
+                  size="xl"
+                  className="ring-1 ring-border-subtle shadow-sm"
+                />
+                <div className="min-w-0 flex-1">
+                  <div className="text-[0.857rem] font-semibold text-text">
+                    Profile picture
+                  </div>
+                  <p className="mt-1 text-[0.786rem] leading-5 text-text-muted">
+                    PNG, JPEG, or WebP. Images are resized before they are saved.
+                  </p>
+                  <div className="mt-3 flex flex-wrap items-center gap-2">
+                    <label
+                      className={`inline-flex h-9 items-center justify-center rounded-lg border border-border bg-raised px-3.5 text-[0.786rem] font-semibold text-text transition-colors ${
+                        pictureSaving
+                          ? "cursor-wait opacity-55"
+                          : "cursor-pointer hover:bg-hover"
+                      }`}
+                    >
+                      <input
+                        type="file"
+                        accept="image/png,image/jpeg,image/webp"
+                        aria-label="Choose profile picture"
+                        className="sr-only"
+                        disabled={pictureSaving}
+                        onChange={handlePictureChange}
+                      />
+                      {pictureSaving
+                        ? "Saving picture..."
+                        : user.avatar
+                          ? "Change picture"
+                          : "Choose picture"}
+                    </label>
+                    {user.avatar && (
+                      <button
+                        type="button"
+                        aria-label="Remove picture"
+                        disabled={pictureSaving}
+                        onClick={handlePictureRemove}
+                        className="inline-flex h-9 cursor-pointer items-center justify-center rounded-lg px-3 text-[0.786rem] font-medium text-text-muted transition-colors hover:bg-hover hover:text-text disabled:cursor-wait disabled:opacity-55"
+                      >
+                        Remove
+                      </button>
+                    )}
+                  </div>
+                  {pictureError && (
+                    <p className="mt-2 text-[0.786rem] text-red-400" role="alert">
+                      {pictureError}
+                    </p>
+                  )}
+                  {pictureStatus && !pictureError && (
+                    <p
+                      className="mt-2 text-[0.786rem] text-emerald-400"
+                      role="status"
+                    >
+                      {pictureStatus}
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              <div className="mt-6 flex min-w-0 flex-col gap-2 border-t border-border-subtle pt-5">
                 <label
                   htmlFor="profile-name"
                   className="text-[0.786rem] font-medium text-text-muted"

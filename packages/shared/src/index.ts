@@ -575,7 +575,13 @@ export type WsServerEvent =
       userId: string;
       newRole: WorkspaceMemberRole;
     }
-  | { type: "member_updated"; workspaceId: string; userId: string; name: string }
+  | {
+      type: "member_updated";
+      workspaceId: string;
+      userId: string;
+      name: string;
+      avatar?: string | null;
+    }
   | { type: "member_removed"; workspaceId: string; userId: string }
   | {
       type: "channel_created";

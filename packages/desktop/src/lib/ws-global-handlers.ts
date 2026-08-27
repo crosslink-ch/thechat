@@ -184,7 +184,18 @@ export function registerGlobalWsHandlers(
     workspaceId,
     userId,
     name,
+    avatar,
   }: WsEvents["ws:member_updated"]) => {
+    const updateUser = <T extends { name: string; avatar: string | null }>(user: T) => ({
+      ...user,
+      name,
+      ...(avatar !== undefined ? { avatar } : {}),
+    });
+    const authUser = useAuthStore.getState().user;
+    if (authUser?.id === userId) {
+      useAuthStore.setState({ user: updateUser(authUser) });
+    }
+
     const { activeWorkspace } = useWorkspacesStore.getState();
     if (!activeWorkspace || activeWorkspace.id !== workspaceId) return;
     useWorkspacesStore.setState({
@@ -192,7 +203,7 @@ export function registerGlobalWsHandlers(
         ...activeWorkspace,
         members: activeWorkspace.members.map((member) =>
           member.userId === userId
-            ? { ...member, user: { ...member.user, name } }
+            ? { ...member, user: updateUser(member.user) }
             : member,
         ),
       },

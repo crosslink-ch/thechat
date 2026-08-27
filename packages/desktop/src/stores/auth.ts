@@ -92,7 +92,12 @@ interface AuthStore {
     code: string,
     password: string,
   ) => Promise<string>;
+  updateProfile: (updates: {
+    name?: string;
+    avatar?: string | null;
+  }) => Promise<void>;
   updateName: (name: string) => Promise<void>;
+  updateAvatar: (avatar: string | null) => Promise<void>;
   logout: () => Promise<void>;
 }
 
@@ -249,12 +254,16 @@ export const useAuthStore = create<AuthStore>()((set, get) => ({
       return data.message;
     }),
 
-  updateName: (name: string) => runAuthMutation(async () => {
+  updateName: (name: string) => get().updateProfile({ name }),
+
+  updateAvatar: (avatar: string | null) => get().updateProfile({ avatar }),
+
+  updateProfile: (updates) => runAuthMutation(async () => {
     const accessToken = get().token;
     if (!accessToken) throw new Error("Authentication required");
 
     const { data, error } = await api.auth.me.patch(
-      { name },
+      updates,
       { headers: { authorization: `Bearer ${accessToken}` } },
     );
 

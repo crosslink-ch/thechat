@@ -22,6 +22,12 @@ import {
   PersonalAccessTokenRequestError,
   revokePersonalAccessToken,
 } from "./personal-access-tokens";
+import {
+  MAX_PROFILE_PICTURE_BYTES,
+  normalizeProfilePicture,
+  ProfilePictureValidationError,
+} from "./profile-picture";
+import { publishUserProfileUpdated } from "./profile-events";
 
 const authRouteLog = log.child({ component: "auth-routes" });
 const authServiceUnavailable = {
@@ -35,6 +41,25 @@ const passwordResetResponseJitterMs = 60;
 const invalidPasswordResetCode = {
   error: "Invalid or expired password reset code",
 };
+
+async function publishProfileUpdateSafely(profile: {
+  id: string;
+  name: string;
+  avatar: string | null;
+}) {
+  try {
+    await publishUserProfileUpdated(profile);
+  } catch (error) {
+    authRouteLog.warn(
+      {
+        userId: profile.id,
+        errorClass:
+          error instanceof Error ? error.constructor.name : "UnknownError",
+      },
+      "Profile update committed but realtime fanout failed",
+    );
+  }
+}
 
 async function waitForPasswordResetResponse(
   startedAt: number,
@@ -65,9 +90,20 @@ const updateProfileSchema = z
       .string()
       .trim()
       .min(1, "Name is required")
-      .max(255, "Name must be 255 characters or fewer"),
+      .max(255, "Name must be 255 characters or fewer")
+      .optional(),
+    avatar: z
+      .union([
+        z.string().max(MAX_PROFILE_PICTURE_BYTES * 2, "Profile picture is too large"),
+        z.null(),
+      ])
+      .optional(),
   })
-  .strict();
+  .strict()
+  .refine(
+    (profile) => profile.name !== undefined || profile.avatar !== undefined,
+    "At least one profile field is required",
+  );
 
 const createPersonalAccessTokenSchema = z
   .object({
@@ -861,6 +897,24 @@ export const authRoutes = new Elysia({ prefix: "/auth" })
       return { error: "Authentication required" };
     }
 
+    let avatar: string | null | undefined;
+    if (parsed.data.avatar !== undefined) {
+      try {
+        avatar = await normalizeProfilePicture(parsed.data.avatar);
+      } catch (error) {
+        if (error instanceof ProfilePictureValidationError) {
+          set.status = 400;
+          return { error: error.message };
+        }
+        throw error;
+      }
+    }
+
+    const updates = {
+      ...(parsed.data.name !== undefined ? { name: parsed.data.name } : {}),
+      ...(avatar !== undefined ? { avatar } : {}),
+    };
+
     // PATs authenticate as human principals without becoming Better Auth
     // sessions. Preserve the normal profile permission while keeping account
     // credential operations (including PAT management) session-only.
@@ -868,7 +922,7 @@ export const authRoutes = new Elysia({ prefix: "/auth" })
       try {
         const [updated] = await db
           .update(users)
-          .set({ name: parsed.data.name, updatedAt: new Date() })
+          .set({ ...updates, updatedAt: new Date() })
           .where(
             and(eq(users.id, currentUser.id), eq(users.type, "human")),
           )
@@ -877,9 +931,9 @@ export const authRoutes = new Elysia({ prefix: "/auth" })
           set.status = 401;
           return { error: "Authentication required" };
         }
-        return {
-          user: { ...currentUser, name: parsed.data.name },
-        };
+        const user = { ...currentUser, ...updates };
+        await publishProfileUpdateSafely(user);
+        return { user };
       } catch (error) {
         authRouteLog.error(
           {
@@ -897,7 +951,10 @@ export const authRoutes = new Elysia({ prefix: "/auth" })
     const result = await callBetterAuth(
       "POST",
       "/update-user",
-      { name: parsed.data.name },
+      {
+        ...(parsed.data.name !== undefined ? { name: parsed.data.name } : {}),
+        ...(avatar !== undefined ? { image: avatar } : {}),
+      },
       internalAuthHeaders(clientMetadata({ headers, request, server }), {
         authorization: `Bearer ${token}`,
       }),
@@ -934,6 +991,7 @@ export const authRoutes = new Elysia({ prefix: "/auth" })
       return authServiceUnavailable;
     }
 
+    await publishProfileUpdateSafely(user);
     return { user };
   })
 

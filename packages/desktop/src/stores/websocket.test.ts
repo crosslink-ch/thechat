@@ -3,6 +3,7 @@ import {
   WEBSOCKET_BOUNDARY_EVENT,
   useWebSocketStore,
 } from "./websocket";
+import { wsEvents } from "../lib/ws-events";
 
 type BoundaryDetail = {
   operation: string;
@@ -110,5 +111,34 @@ describe("WebSocket application send boundary", () => {
       "auth",
       "send_message",
     ]);
+  });
+
+  it("forwards profile pictures from member update events", () => {
+    const handler = vi.fn();
+    wsEvents.on("ws:member_updated", handler);
+    useWebSocketStore.getState().connect("token");
+    const socket = FakeWebSocket.instances.at(-1);
+    if (!socket) throw new Error("Expected a WebSocket instance");
+    socket.authenticate();
+
+    socket.onmessage?.(
+      new MessageEvent("message", {
+        data: JSON.stringify({
+          type: "member_updated",
+          workspaceId: "ws-1",
+          userId: "user-1",
+          name: "Updated User",
+          avatar: "data:image/jpeg;base64,dXBkYXRlZA==",
+        }),
+      }),
+    );
+
+    expect(handler).toHaveBeenCalledWith({
+      workspaceId: "ws-1",
+      userId: "user-1",
+      name: "Updated User",
+      avatar: "data:image/jpeg;base64,dXBkYXRlZA==",
+    });
+    wsEvents.off("ws:member_updated", handler);
   });
 });

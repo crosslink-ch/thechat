@@ -187,6 +187,29 @@ describe("WorkspaceManageRoute", () => {
     expect(screen.queryByText(/API key/i)).not.toBeInTheDocument();
   });
 
+  it("shows saved profile pictures in the people list", async () => {
+    const avatar = "data:image/jpeg;base64,bWluYQ==";
+    const picturedWorkspace: WorkspaceWithDetails = {
+      ...workspace,
+      members: workspace.members.map((member) =>
+        member.userId === memberUser.id
+          ? { ...member, user: { ...member.user, avatar } }
+          : member,
+      ),
+    };
+    setWorkspace(picturedWorkspace);
+    apiMocks.workspaceGet.mockResolvedValue({
+      data: picturedWorkspace,
+      error: null,
+    });
+
+    render(<WorkspaceManageRoute />);
+
+    expect(
+      await screen.findByRole("img", { name: "Mina Member profile picture" }),
+    ).toHaveAttribute("src", avatar);
+  });
+
   it("invites an existing user by email", async () => {
     const user = userEvent.setup();
     render(<WorkspaceManageRoute />);
