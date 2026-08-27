@@ -9,6 +9,10 @@ import {
   closeAttachmentCleanup,
   startAttachmentCleanup,
 } from "../attachments/cleanup";
+import {
+  closeBotInvocationCleanup,
+  startBotInvocationCleanup,
+} from "../bot-invocations/runtime";
 
 const workerLog = log.child({ component: "worker" });
 
@@ -19,12 +23,14 @@ async function main() {
     await startBotWorker();
     await startDomainEventRuntime();
     void startAttachmentCleanup();
+    startBotInvocationCleanup();
     workerLog.info({ queue: BOT_QUEUE_NAME }, "TheChat bot worker is listening");
     workerLog.info("TheChat PostgreSQL domain-event outbox relay is running");
 
     await waitForShutdownSignal();
   } finally {
     await Promise.all([
+      closeBotInvocationCleanup(),
       closeAttachmentCleanup(),
       closeDomainEventRuntime(),
       closeBotRuntime(),
@@ -44,6 +50,7 @@ function waitForShutdownSignal(): Promise<void> {
 main().catch(async (error) => {
   workerLog.error({ err: error }, "TheChat worker failed");
   await Promise.all([
+    closeBotInvocationCleanup(),
     closeAttachmentCleanup(),
     closeDomainEventRuntime(),
     closeBotRuntime(),

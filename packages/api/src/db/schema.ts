@@ -400,6 +400,21 @@ export const botInvocations = pgTable(
     index("bot_invocations_thread_id_idx").on(t.threadId),
     index("bot_invocations_trigger_message_id_idx").on(t.triggerMessageId),
     index("bot_invocations_status_idx").on(t.status),
+    index("bot_invocations_terminal_retention_idx")
+      .on(t.updatedAt, t.id)
+      .where(sql`
+        ${t.completedAt} IS NOT NULL
+        AND (
+          ${t.status} IN ('completed', 'failed', 'cancelled')
+          OR (
+            ${t.status} = 'claimed'
+            AND (
+              NULLIF(${t.responseJson}->'completion'->>'type', '') IS NOT NULL
+              OR COALESCE(${t.responseJson}->>'silent', 'false') = 'true'
+            )
+          )
+        )
+      `),
     uniqueIndex("bot_invocations_bot_trigger_idx").on(
       t.botId,
       t.triggerMessageId
