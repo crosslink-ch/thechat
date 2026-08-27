@@ -48,6 +48,34 @@ describe("profile picture validation", () => {
     await expect(normalizeProfilePicture(null)).resolves.toBeNull();
   });
 
+  test("rejects animated profile pictures", async () => {
+    const frames = await Promise.all(
+      [
+        { r: 0, g: 0, b: 0 },
+        { r: 255, g: 255, b: 255 },
+      ].map((background) =>
+        sharp({
+          create: {
+            width: 2,
+            height: 2,
+            channels: 3,
+            background,
+          },
+        })
+          .png()
+          .toBuffer(),
+      ),
+    );
+    const animatedWebp = await sharp(frames, { join: { animated: true } })
+      .webp({ loop: 0, delay: [100, 100] })
+      .toBuffer();
+    expect((await sharp(animatedWebp).metadata()).pages).toBe(2);
+
+    await expect(
+      normalizeProfilePicture(dataUrl("image/webp", animatedWebp)),
+    ).rejects.toThrow("single frame");
+  });
+
   test("rejects active, malformed, spoofed, and unsupported image payloads", async () => {
     for (const value of [
       "https://tracker.example/avatar.png",
