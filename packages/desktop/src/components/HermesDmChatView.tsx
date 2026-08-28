@@ -221,6 +221,7 @@ export function HermesDmChatView({
 
   const { requestOlderMessages, consumeSkipContentScroll } = useOlderHistoryScroll({
     containerRef: scrollContainerRef,
+    scopeKey: scrollScopeKey,
     loading,
     loadingOlder,
     hasOlderMessages,
@@ -232,6 +233,10 @@ export function HermesDmChatView({
     containerRef: scrollContainerRef,
     scrollKey: scrollScopeKey,
     loading,
+    loadingOlder,
+    hasOlderMessages,
+    messageScrollSignature,
+    requestOlderMessages,
     pauseAutoScroll,
     scrollToBottom,
   });
