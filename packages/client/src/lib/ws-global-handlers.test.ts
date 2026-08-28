@@ -868,6 +868,7 @@ describe("registerGlobalWsHandlers", () => {
       workspaceId: "ws-1",
       name: "recovered",
       title: "Recovered",
+      isPrivate: false,
       createdAt: "2026-01-02T00:00:00.000Z",
       updatedAt: "2026-01-02T00:00:00.000Z",
     };
@@ -897,6 +898,7 @@ describe("registerGlobalWsHandlers", () => {
       workspaceId: "ws-1",
       name: "general",
       title: "General",
+      isPrivate: false,
       createdAt: "2026-01-01T00:00:00.000Z",
       updatedAt: "2026-01-01T00:00:00.000Z",
     };

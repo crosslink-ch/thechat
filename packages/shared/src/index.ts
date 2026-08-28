@@ -147,6 +147,7 @@ export interface WorkspaceChannel {
   workspaceId: string;
   name: string;
   title: string | null;
+  isPrivate: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -447,6 +448,7 @@ export interface ConversationDetail {
   workspaceId: string | null;
   name: string | null;
   title: string | null;
+  isPrivate: boolean;
   participants: ConversationParticipantPublic[];
 }
 

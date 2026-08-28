@@ -1,4 +1,4 @@
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, or } from "drizzle-orm";
 import { resolveBotAppearance } from "@thechat/shared";
 import { db } from "../db";
 import {
@@ -100,12 +100,31 @@ export async function getWorkspaceDetail(workspaceId: string, userId: string) {
     .where(eq(workspaceMembers.workspaceId, workspaceId));
 
   const channels = await db
-    .select()
+    .select({
+      id: conversations.id,
+      workspaceId: conversations.workspaceId,
+      name: conversations.name,
+      title: conversations.title,
+      isPrivate: conversations.isPrivate,
+      createdAt: conversations.createdAt,
+      updatedAt: conversations.updatedAt,
+    })
     .from(conversations)
+    .leftJoin(
+      conversationParticipants,
+      and(
+        eq(conversationParticipants.conversationId, conversations.id),
+        eq(conversationParticipants.userId, userId),
+      ),
+    )
     .where(
       and(
         eq(conversations.workspaceId, workspaceId),
         eq(conversations.type, "group"),
+        or(
+          eq(conversations.isPrivate, false),
+          eq(conversationParticipants.userId, userId),
+        ),
       ),
     );
 
@@ -141,6 +160,7 @@ export async function getWorkspaceDetail(workspaceId: string, userId: string) {
       workspaceId: c.workspaceId,
       name: c.name,
       title: c.title,
+      isPrivate: c.isPrivate,
       createdAt: c.createdAt.toISOString(),
       updatedAt: c.updatedAt.toISOString(),
     })),
@@ -239,6 +259,7 @@ export async function joinWorkspace(workspaceId: string, userId: string) {
         and(
           eq(conversations.workspaceId, workspaceId),
           eq(conversations.type, "group"),
+          eq(conversations.isPrivate, false),
         ),
       );
 

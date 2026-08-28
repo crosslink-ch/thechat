@@ -25,6 +25,7 @@ const activeWorkspace: WorkspaceWithDetails = {
       workspaceId: "ws-1",
       name: "general",
       title: "General",
+      isPrivate: false,
       createdAt: "2026-01-01",
       updatedAt: "2026-01-01",
     },

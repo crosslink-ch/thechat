@@ -23,7 +23,7 @@ import {
 } from "./ChannelModal";
 import { api } from "../lib/api";
 import type { WorkspaceChannel, WorkspaceMember } from "@thechat/shared";
-import { Bell, Bot, ChevronDown, Ellipsis, Inbox, LogIn, LogOut, MessagesSquare, Pencil, Plus, Search, Settings, Trash2 } from "lucide-react";
+import { Bell, Bot, ChevronDown, Ellipsis, Inbox, Lock, LogIn, LogOut, MessagesSquare, Pencil, Plus, Search, Settings, Trash2 } from "lucide-react";
 import { openPalette } from "../lib/palette-state";
 import { Avatar } from "./Avatar";
 import {
@@ -447,7 +447,13 @@ export function Sidebar() {
                           onClick={() => handleSelectChannel(ch)}
                           aria-current={isActive ? "page" : undefined}
                         >
-                          <span className="w-4 shrink-0 text-center text-text-dimmed">#</span>
+                          <span
+                            className="flex w-4 shrink-0 items-center justify-center text-text-dimmed"
+                            title={ch.isPrivate ? "Private channel" : undefined}
+                            aria-hidden={ch.isPrivate ? undefined : true}
+                          >
+                            {ch.isPrivate ? <Lock size={13} role="img" aria-label="Private channel" /> : "#"}
+                          </span>
                           <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap">{ch.name}</span>
                           {isUnread && (
                             <span

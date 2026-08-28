@@ -178,6 +178,7 @@ export async function createHermesBotInWorkspace(
         and(
           eq(conversations.workspaceId, workspaceId),
           eq(conversations.type, "group"),
+          eq(conversations.isPrivate, false),
         ),
       );
     if (channels.length > 0) {
@@ -413,6 +414,7 @@ export async function addBotToWorkspace(
         and(
           eq(conversations.workspaceId, workspaceId),
           eq(conversations.type, "group"),
+          eq(conversations.isPrivate, false),
         ),
       );
 

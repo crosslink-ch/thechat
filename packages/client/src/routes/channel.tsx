@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from "react";
-import { useParams, useSearch } from "@tanstack/react-router";
+import { useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import { useAuthStore } from "../stores/auth";
 import { useWebSocketStore } from "../stores/websocket";
 import { useConversationsStore } from "../stores/conversations";
@@ -27,6 +27,7 @@ export function ChannelRoute() {
   const { id: channelId } = useParams({ from: "/channel/$id" });
   const { replyThread: requestedReplyRoot, replyMessage: requestedReplyMessage } =
     useSearch({ from: "/channel/$id" });
+  const navigate = useNavigate();
   const token = useAuthStore((s) => s.token);
   const channelName = useWorkspacesStore(
     (s) => s.activeWorkspace?.channels.find((channel) => channel.id === channelId)?.name ?? "channel",
@@ -42,7 +43,8 @@ export function ChannelRoute() {
     return () => useRecentLocationsStore.getState().leave(channelId);
   }, [channelId]);
   const user = useAuthStore((s) => s.user);
-  const members = useWorkspacesStore((s) => s.activeWorkspace?.members);
+  const activeWorkspace = useWorkspacesStore((s) => s.activeWorkspace);
+  const members = activeWorkspace?.members;
   const wsSendMessage = useWebSocketStore((s) => s.sendMessage);
   const runtimeQuery = useBotRuntime(channelId, token, user?.type === "human");
   const { invalidate, mergeInvocationUpdate, mergeProgressEvent } = useBotRuntimeCache();
@@ -60,6 +62,27 @@ export function ChannelRoute() {
     });
     return selectHermesConversationProgress({ ...runtime, invocations, events });
   }, [channelId, runtimeQuery.data]);
+
+  const channelIsVisible = activeWorkspace?.channels.some(
+    (channel) => channel.id === channelId,
+  );
+
+  useEffect(() => {
+    if (!activeWorkspace || channelIsVisible) return;
+
+    const fallbackChannel =
+      activeWorkspace.channels.find((channel) => channel.name === "general") ??
+      activeWorkspace.channels[0];
+    if (fallbackChannel) {
+      navigate({
+        to: "/channel/$id",
+        params: { id: fallbackChannel.id },
+        replace: true,
+      });
+      return;
+    }
+    navigate({ to: "/", replace: true });
+  }, [activeWorkspace, channelId, channelIsVisible, navigate]);
 
   const mentions = useMemo(
     () =>

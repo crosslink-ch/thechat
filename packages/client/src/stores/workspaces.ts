@@ -11,6 +11,11 @@ import type {
 import { api } from "../lib/api";
 import { useAuthStore } from "./auth";
 
+export interface CreateChannelOptions {
+  isPrivate?: boolean;
+  memberIds?: string[];
+}
+
 const KV_ACTIVE_WORKSPACE = "active_workspace_id";
 let workspaceSelectionGeneration = 0;
 let workspaceInitializationGeneration = 0;
@@ -37,7 +42,7 @@ interface WorkspacesStore {
   initialize: () => Promise<void>;
   selectWorkspace: (id: string) => Promise<boolean>;
   createWorkspace: (name: string) => Promise<void>;
-  createChannel: (name: string) => Promise<WorkspaceChannel>;
+  createChannel: (name: string, options?: CreateChannelOptions) => Promise<WorkspaceChannel>;
   renameChannel: (channelId: string, name: string) => Promise<WorkspaceChannel>;
   deleteChannel: (channelId: string) => Promise<void>;
   reset: () => void;
@@ -198,14 +203,20 @@ export const useWorkspacesStore = create<WorkspacesStore>()((set) => ({
     if (session.current()) await useWorkspacesStore.getState().initialize();
   },
 
-  createChannel: async (name: string) => {
+  createChannel: async (name: string, options: CreateChannelOptions = {}) => {
     const session = workspaceSession(set);
     const token = useAuthStore.getState().token;
     const workspace = useWorkspacesStore.getState().activeWorkspace;
     if (!authenticated(token) || !workspace) throw new Error("Select a workspace first");
 
     const { data, error } = await api.conversations.channel.post(
-      { workspaceId: workspace.id, name },
+      {
+        workspaceId: workspace.id,
+        name,
+        ...(options.isPrivate
+          ? { isPrivate: true, memberIds: options.memberIds ?? [] }
+          : {}),
+      },
       auth(token),
     );
     if (error) throw new Error(apiErrorMessage(error));

@@ -126,6 +126,7 @@ const activeWorkspace: WorkspaceWithDetails = {
       workspaceId: "ws-1",
       name: "general",
       title: "General",
+      isPrivate: false,
       createdAt: "2026-01-01",
       updatedAt: "2026-01-01",
     },
@@ -198,6 +199,31 @@ beforeEach(() => {
 });
 
 describe("Sidebar", () => {
+  it("marks private channels with a lock affordance", async () => {
+    const privateChannel = {
+      ...activeWorkspace.channels[0],
+      id: "ch-private",
+      name: "leadership",
+      title: "Leadership",
+      isPrivate: true,
+    };
+    useAuthStore.setState({ user, token: "test-token" });
+    useWorkspacesStore.setState({
+      workspaces: workspaceList,
+      activeWorkspace: {
+        ...activeWorkspace,
+        channels: [...activeWorkspace.channels, privateChannel],
+      },
+    });
+
+    await renderWithRouter(<Sidebar />);
+
+    expect(
+      screen.getByRole("img", { name: "Private channel" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("leadership")).toBeInTheDocument();
+  });
+
   it("surfaces persisted unread activity across workspace boundaries", async () => {
     const activity: ActivitySnapshot = {
       totalUnreadMessages: 4,

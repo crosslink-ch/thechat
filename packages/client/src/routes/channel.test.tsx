@@ -8,6 +8,7 @@ import { ChannelRoute } from "./channel";
 import { api } from "../lib/api";
 import { useAuthStore } from "../stores/auth";
 import { useConversationsStore } from "../stores/conversations";
+import { useWorkspacesStore } from "../stores/workspaces";
 import { createTestQueryClient } from "../test-utils/query";
 import { secureInputContext } from "../lib/hermes-secure-input";
 import { wsEvents } from "../lib/ws-events";
@@ -60,6 +61,7 @@ beforeAll(async () => {
 beforeEach(() => {
   vi.clearAllMocks();
   vi.stubGlobal("crypto", webcrypto);
+  useWorkspacesStore.getState().reset();
   snapshots = new Map();
   useAuthStore.setState({ token: "test-token", user: { id: "requester", type: "human", name: "Requester", email: null, avatar: null } });
   useConversationsStore.setState({ markChannelRead: vi.fn() });
@@ -71,6 +73,26 @@ beforeEach(() => {
   vi.mocked(api["bot-runtime"].invocations).mockReturnValue({ interactions } as any);
 });
 afterEach(() => { cleanup(); clients.splice(0).forEach(client => client.clear()); vi.unstubAllGlobals(); });
+
+it("redirects a hidden channel URL to a visible channel without replacing newer runtime behavior", async () => {
+  const { router } = await mount();
+  act(() => useWorkspacesStore.setState({ activeWorkspace: {
+    id: "workspace-1", name: "Team", createdAt: "2026-01-01", updatedAt: "2026-01-01", members: [],
+    channels: [{ id: "general", workspaceId: "workspace-1", name: "general", title: "General", isPrivate: false, createdAt: "2026-01-01", updatedAt: "2026-01-01" }],
+  } }));
+  await waitFor(() => expect(router.state.location.pathname).toBe("/channel/general"));
+  expect(screen.getByTestId("channel-chat-scroll")).toBeInTheDocument();
+});
+
+it("retains a selected private channel when its workspace details arrive", async () => {
+  const { router } = await mount();
+  act(() => useWorkspacesStore.setState({ activeWorkspace: {
+    id: "workspace-1", name: "Team", createdAt: "2026-01-01", updatedAt: "2026-01-01", members: [],
+    channels: [{ id: "channel-1", workspaceId: "workspace-1", name: "private", title: "Private", isPrivate: true, createdAt: "2026-01-01", updatedAt: "2026-01-01" }],
+  } }));
+  await waitFor(() => expect(router.state.status).toBe("idle"));
+  expect(router.state.location.pathname).toBe("/channel/channel-1");
+});
 
 it.each(Object.keys(SECURE_INPUT_KINDS) as SecureInputKind[])("renders channel snapshot and encrypts exact %s fields through Eden", async (kind) => {
   const e = seed(event(kind));
