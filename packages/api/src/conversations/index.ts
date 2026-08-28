@@ -22,6 +22,8 @@ const dmSchema = z.object({
 const channelSchema = z.object({
   workspaceId: z.string().trim().min(1),
   name: z.string().trim().min(1).max(100),
+  isPrivate: z.boolean().optional().default(false),
+  memberIds: z.array(z.string().uuid()).max(500).optional(),
 });
 
 const threadSchema = z.object({
@@ -112,7 +114,11 @@ export const conversationRoutes = new Elysia({ prefix: "/conversations" })
       return await createChannel(
         parsed.data.workspaceId,
         parsed.data.name,
-        user.id
+        user.id,
+        {
+          isPrivate: parsed.data.isPrivate,
+          memberIds: parsed.data.memberIds,
+        },
       );
     } catch (e) {
       if (e instanceof ServiceError) {

@@ -10,6 +10,7 @@ import {
   botInvocations,
   bots,
   conversationParticipants,
+  conversations,
   eventOutbox,
   messages,
   users,
@@ -174,6 +175,429 @@ afterAll(async () => {
 });
 
 describe("Channel management", () => {
+  test("creates private channels for only the creator and selected workspace members", async () => {
+    const owner = await registerUser("Private Channel Owner");
+    const selected = await registerUser("Private Channel Selected");
+    const excluded = await registerUser("Private Channel Excluded");
+    const workspaceId = await createWorkspace(
+      owner.token,
+      `Private Channel ${crypto.randomUUID()}`,
+    );
+    await addMember(workspaceId, owner.token, selected);
+    await addMember(workspaceId, owner.token, excluded);
+
+    const created = await req(
+      "POST",
+      "/conversations/channel",
+      {
+        workspaceId,
+        name: "Leadership",
+        isPrivate: true,
+        memberIds: [selected.user.id],
+      },
+      owner.token,
+    );
+
+    expect(created.status).toBe(200);
+    expect(created.body).toMatchObject({
+      workspaceId,
+      name: "leadership",
+      title: "Leadership",
+      isPrivate: true,
+    });
+
+    const participantRows = await db
+      .select({ userId: conversationParticipants.userId })
+      .from(conversationParticipants)
+      .where(eq(conversationParticipants.conversationId, created.body.id));
+    expect(participantRows.map((row) => row.userId).sort()).toEqual(
+      [owner.user.id, selected.user.id].sort(),
+    );
+
+    const createdEvent = realtimeEvents.find(
+      (event) =>
+        event.type === "ws.event" &&
+        event.event.type === "channel_created" &&
+        event.event.channel.id === created.body.id,
+    );
+    expect(createdEvent?.targetUserIds.slice().sort()).toEqual(
+      [owner.user.id, selected.user.id].sort(),
+    );
+  });
+
+  test("rejects private-channel selections outside the workspace", async () => {
+    const owner = await registerUser("Private Selection Owner");
+    const outsider = await registerUser("Private Selection Outsider");
+    const workspaceId = await createWorkspace(
+      owner.token,
+      "Private Selection Workspace",
+    );
+
+    const response = await req(
+      "POST",
+      "/conversations/channel",
+      {
+        workspaceId,
+        name: "invalid-selection",
+        isPrivate: true,
+        memberIds: [outsider.user.id],
+      },
+      owner.token,
+    );
+
+    expect(response.status).toBe(400);
+    expect(response.body.error).toContain("must belong to this workspace");
+    const channels = await db
+      .select({ id: conversations.id })
+      .from(conversations)
+      .where(
+        and(
+          eq(conversations.workspaceId, workspaceId),
+          eq(conversations.name, "invalid-selection"),
+        ),
+      );
+    expect(channels).toHaveLength(0);
+  });
+
+  test("rejects member selection for public channels", async () => {
+    const owner = await registerUser("Public Selection Owner");
+    const member = await registerUser("Public Selection Member");
+    const workspaceId = await createWorkspace(
+      owner.token,
+      "Public Selection Workspace",
+    );
+    await addMember(workspaceId, owner.token, member);
+
+    const response = await req(
+      "POST",
+      "/conversations/channel",
+      {
+        workspaceId,
+        name: "public-selection",
+        memberIds: [member.user.id],
+      },
+      owner.token,
+    );
+
+    expect(response.status).toBe(400);
+    expect(response.body.error).toContain("only available for private channels");
+  });
+
+  test("hides private channels from unselected workspace members", async () => {
+    const owner = await registerUser("Private Listing Owner");
+    const selected = await registerUser("Private Listing Selected");
+    const excluded = await registerUser("Private Listing Excluded");
+    const workspaceId = await createWorkspace(
+      owner.token,
+      `Private Listing ${crypto.randomUUID()}`,
+    );
+    await addMember(workspaceId, owner.token, selected);
+    await addMember(workspaceId, owner.token, excluded);
+
+    const created = await req(
+      "POST",
+      "/conversations/channel",
+      {
+        workspaceId,
+        name: "Selected Only",
+        isPrivate: true,
+        memberIds: [selected.user.id],
+      },
+      owner.token,
+    );
+    expect(created.status).toBe(200);
+
+    const selectedWorkspace = await req(
+      "GET",
+      `/workspaces/${workspaceId}`,
+      undefined,
+      selected.token,
+    );
+    const excludedWorkspace = await req(
+      "GET",
+      `/workspaces/${workspaceId}`,
+      undefined,
+      excluded.token,
+    );
+
+    expect(selectedWorkspace.status).toBe(200);
+    expect(selectedWorkspace.body.channels).toContainEqual(
+      expect.objectContaining({ id: created.body.id, isPrivate: true }),
+    );
+    expect(excludedWorkspace.status).toBe(200);
+    expect(excludedWorkspace.body.channels).not.toContainEqual(
+      expect.objectContaining({ id: created.body.id }),
+    );
+  });
+
+  test("enforces private-channel access on direct conversation APIs", async () => {
+    const owner = await registerUser("Private Access Owner");
+    const selected = await registerUser("Private Access Selected");
+    const excluded = await registerUser("Private Access Excluded");
+    const workspaceId = await createWorkspace(
+      owner.token,
+      `Private Access ${crypto.randomUUID()}`,
+    );
+    await addMember(workspaceId, owner.token, selected);
+    await addMember(workspaceId, owner.token, excluded);
+
+    const created = await req(
+      "POST",
+      "/conversations/channel",
+      {
+        workspaceId,
+        name: "Board Room",
+        isPrivate: true,
+        memberIds: [selected.user.id],
+      },
+      owner.token,
+    );
+    expect(created.status).toBe(200);
+
+    const selectedDetail = await req(
+      "GET",
+      `/conversations/detail/${created.body.id}`,
+      undefined,
+      selected.token,
+    );
+    expect(selectedDetail.status).toBe(200);
+    expect(selectedDetail.body).toMatchObject({
+      id: created.body.id,
+      isPrivate: true,
+    });
+    expect(
+      selectedDetail.body.participants.map(
+        (participant: { userId: string }) => participant.userId,
+      ),
+    ).toEqual(expect.arrayContaining([owner.user.id, selected.user.id]));
+    expect(
+      selectedDetail.body.participants.map(
+        (participant: { userId: string }) => participant.userId,
+      ),
+    ).not.toContain(excluded.user.id);
+
+    const excludedDetail = await req(
+      "GET",
+      `/conversations/detail/${created.body.id}`,
+      undefined,
+      excluded.token,
+    );
+    expect(excludedDetail.status).toBe(403);
+
+    const excludedMessage = await req(
+      "POST",
+      `/messages/${created.body.id}`,
+      { content: "This must not be accepted" },
+      excluded.token,
+    );
+    expect(excludedMessage.status).toBe(403);
+  });
+
+  test("does not grant existing private channels to later workspace members", async () => {
+    const owner = await registerUser("Private Join Owner");
+    const newcomer = await registerUser("Private Join Newcomer");
+    const workspaceId = await createWorkspace(
+      owner.token,
+      `Private Join ${crypto.randomUUID()}`,
+    );
+
+    const created = await req(
+      "POST",
+      "/conversations/channel",
+      {
+        workspaceId,
+        name: "Before You Joined",
+        isPrivate: true,
+        memberIds: [],
+      },
+      owner.token,
+    );
+    expect(created.status).toBe(200);
+
+    await addMember(workspaceId, owner.token, newcomer);
+
+    const [participation] = await db
+      .select({ userId: conversationParticipants.userId })
+      .from(conversationParticipants)
+      .where(
+        and(
+          eq(conversationParticipants.conversationId, created.body.id),
+          eq(conversationParticipants.userId, newcomer.user.id),
+        ),
+      )
+      .limit(1);
+    expect(participation).toBeUndefined();
+
+    const workspace = await req(
+      "GET",
+      `/workspaces/${workspaceId}`,
+      undefined,
+      newcomer.token,
+    );
+    expect(workspace.status).toBe(200);
+    expect(workspace.body.channels).not.toContainEqual(
+      expect.objectContaining({ id: created.body.id }),
+    );
+  });
+
+  test("does not grant private channels when a bot joins a workspace", async () => {
+    const owner = await registerUser("Private Bot Join Owner");
+    const workspaceId = await createWorkspace(
+      owner.token,
+      `Private Bot Join ${crypto.randomUUID()}`,
+    );
+    const privateChannel = await createChannel(
+      workspaceId,
+      "Humans Only",
+      owner.user.id,
+      { isPrivate: true },
+    );
+    const bot = await createHermesBot(owner.user.id);
+
+    await addBotToWorkspace(bot.id, workspaceId, owner.user.id);
+
+    const privateParticipation = await db
+      .select({ userId: conversationParticipants.userId })
+      .from(conversationParticipants)
+      .where(
+        and(
+          eq(conversationParticipants.conversationId, privateChannel.id),
+          eq(conversationParticipants.userId, bot.userId),
+        ),
+      );
+    expect(privateParticipation).toHaveLength(0);
+
+    const [generalChannel] = await db
+      .select({ id: conversations.id })
+      .from(conversations)
+      .where(
+        and(
+          eq(conversations.workspaceId, workspaceId),
+          eq(conversations.name, "general"),
+        ),
+      )
+      .limit(1);
+    const publicParticipation = await db
+      .select({ userId: conversationParticipants.userId })
+      .from(conversationParticipants)
+      .where(
+        and(
+          eq(conversationParticipants.conversationId, generalChannel.id),
+          eq(conversationParticipants.userId, bot.userId),
+        ),
+      );
+    expect(publicParticipation).toHaveLength(1);
+  });
+
+  test("prevents unselected workspace admins from managing private channels", async () => {
+    const owner = await registerUser("Private Manager Owner");
+    const selected = await registerUser("Private Manager Selected");
+    const hiddenAdmin = await registerUser("Private Manager Hidden Admin");
+    const workspaceId = await createWorkspace(
+      owner.token,
+      `Private Manager ${crypto.randomUUID()}`,
+    );
+    await addMember(workspaceId, owner.token, selected);
+    await addMember(workspaceId, owner.token, hiddenAdmin);
+    await updateMemberRole(
+      workspaceId,
+      owner.user.id,
+      hiddenAdmin.user.id,
+      "admin",
+    );
+
+    const created = await req(
+      "POST",
+      "/conversations/channel",
+      {
+        workspaceId,
+        name: "Hidden From Admin",
+        isPrivate: true,
+        memberIds: [selected.user.id],
+      },
+      owner.token,
+    );
+    expect(created.status).toBe(200);
+
+    const renamed = await req(
+      "PATCH",
+      `/conversations/channel/${created.body.id}`,
+      { name: "Admin Must Not Rename" },
+      hiddenAdmin.token,
+    );
+    expect(renamed.status).toBe(403);
+
+    const detail = await req(
+      "GET",
+      `/conversations/detail/${created.body.id}`,
+      undefined,
+      owner.token,
+    );
+    expect(detail.status).toBe(200);
+    expect(detail.body.title).toBe("Hidden From Admin");
+  });
+
+  test("limits private-channel lifecycle events to channel participants", async () => {
+    const owner = await registerUser("Private Lifecycle Owner");
+    const selected = await registerUser("Private Lifecycle Selected");
+    const excluded = await registerUser("Private Lifecycle Excluded");
+    const workspaceId = await createWorkspace(
+      owner.token,
+      `Private Lifecycle ${crypto.randomUUID()}`,
+    );
+    await addMember(workspaceId, owner.token, selected);
+    await addMember(workspaceId, owner.token, excluded);
+    const created = await req(
+      "POST",
+      "/conversations/channel",
+      {
+        workspaceId,
+        name: "Private Lifecycle",
+        isPrivate: true,
+        memberIds: [selected.user.id],
+      },
+      owner.token,
+    );
+    expect(created.status).toBe(200);
+    const expectedRecipients = [owner.user.id, selected.user.id].sort();
+
+    realtimeEvents.length = 0;
+    const renamed = await req(
+      "PATCH",
+      `/conversations/channel/${created.body.id}`,
+      { name: "Private Lifecycle Renamed" },
+      owner.token,
+    );
+    expect(renamed.status).toBe(200);
+    const renamedEvent = realtimeEvents.find(
+      (event) =>
+        event.type === "ws.event" &&
+        event.event.type === "channel_renamed" &&
+        event.event.channel.id === created.body.id,
+    );
+    expect(renamedEvent?.targetUserIds.slice().sort()).toEqual(
+      expectedRecipients,
+    );
+
+    realtimeEvents.length = 0;
+    const deleted = await req(
+      "DELETE",
+      `/conversations/channel/${created.body.id}`,
+      undefined,
+      owner.token,
+    );
+    expect(deleted.status).toBe(200);
+    const deletedEvent = realtimeEvents.find(
+      (event) =>
+        event.type === "ws.event" &&
+        event.event.type === "channel_deleted" &&
+        event.event.channelId === created.body.id,
+    );
+    expect(deletedEvent?.targetUserIds.slice().sort()).toEqual(
+      expectedRecipients,
+    );
+  });
+
   test("members create channels while owners and admins rename or delete them", async () => {
     const owner = await registerUser("Channel Owner");
     const member = await registerUser("Channel Member");

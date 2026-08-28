@@ -25,6 +25,7 @@ const general: WorkspaceChannel = {
   workspaceId: "ws-1",
   name: "general",
   title: "General",
+  isPrivate: false,
   createdAt: "2026-01-01",
   updatedAt: "2026-01-01",
 };
@@ -34,6 +35,7 @@ const product: WorkspaceChannel = {
   workspaceId: "ws-1",
   name: "product",
   title: "Product",
+  isPrivate: false,
   createdAt: "2026-01-02",
   updatedAt: "2026-01-02",
 };
@@ -42,6 +44,14 @@ const user: AuthUser = {
   id: "u1",
   name: "Test User",
   email: "test@example.com",
+  avatar: null,
+  type: "human",
+};
+
+const collaborator: AuthUser = {
+  id: "u2",
+  name: "Avery Stone",
+  email: "avery@example.com",
   avatar: null,
   type: "human",
 };
@@ -57,6 +67,12 @@ const workspace: WorkspaceWithDetails = {
       role: "owner",
       joinedAt: "2026-01-01",
       user,
+    },
+    {
+      userId: collaborator.id,
+      role: "member",
+      joinedAt: "2026-01-02",
+      user: collaborator,
     },
   ],
   channels: [general, product],
@@ -106,6 +122,44 @@ beforeEach(() => {
 });
 
 describe("ChannelModal", () => {
+  it("creates a private channel with explicitly selected workspace members", async () => {
+    const created: WorkspaceChannel = {
+      ...product,
+      id: "ch-leadership",
+      name: "leadership",
+      title: "Leadership",
+      isPrivate: true,
+    };
+    const createChannel = vi.fn().mockResolvedValue(created);
+    useWorkspacesStore.setState({ createChannel });
+    await renderModal();
+
+    act(() => openCreateChannelModal());
+    expect(screen.getByRole("radio", { name: /Public/ })).toBeChecked();
+    fireEvent.click(screen.getByRole("radio", { name: /Private/ }));
+    expect(screen.getByRole("radio", { name: /Private/ })).toBeChecked();
+    expect(
+      screen.getByRole("checkbox", { name: "Test User (you)" }),
+    ).toBeChecked();
+    expect(
+      screen.getByRole("checkbox", { name: "Test User (you)" }),
+    ).toBeDisabled();
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: "Include Avery Stone" }),
+    );
+    fireEvent.change(screen.getByLabelText("Channel name"), {
+      target: { value: "Leadership" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Create channel" }));
+
+    await waitFor(() =>
+      expect(createChannel).toHaveBeenCalledWith("Leadership", {
+        isPrivate: true,
+        memberIds: [collaborator.id],
+      }),
+    );
+  });
+
   it("traps focus, closes on Escape, and restores the launcher", async () => {
     const ui = userEvent.setup();
     await renderModal();

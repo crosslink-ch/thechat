@@ -10,6 +10,11 @@ import { useAuthStore } from "./auth";
 
 const KV_ACTIVE_WORKSPACE = "active_workspace_id";
 
+export interface CreateChannelOptions {
+  isPrivate?: boolean;
+  memberIds?: string[];
+}
+
 async function kvGet(key: string): Promise<string | null> {
   return invoke<string | null>("kv_get", { key });
 }
@@ -33,7 +38,10 @@ interface WorkspacesStore {
   initialize: () => Promise<void>;
   selectWorkspace: (id: string) => Promise<void>;
   createWorkspace: (name: string) => Promise<void>;
-  createChannel: (name: string) => Promise<WorkspaceChannel>;
+  createChannel: (
+    name: string,
+    options?: CreateChannelOptions,
+  ) => Promise<WorkspaceChannel>;
   renameChannel: (channelId: string, name: string) => Promise<WorkspaceChannel>;
   deleteChannel: (channelId: string) => Promise<void>;
   reset: () => void;
@@ -153,13 +161,22 @@ export const useWorkspacesStore = create<WorkspacesStore>()((set) => ({
     }
   },
 
-  createChannel: async (name: string) => {
+  createChannel: async (name: string, options: CreateChannelOptions = {}) => {
     const token = useAuthStore.getState().token;
     const workspace = useWorkspacesStore.getState().activeWorkspace;
     if (!token || !workspace) throw new Error("Select a workspace first");
 
     const { data, error } = await api.conversations.channel.post(
-      { workspaceId: workspace.id, name },
+      {
+        workspaceId: workspace.id,
+        name,
+        ...(options.isPrivate
+          ? {
+              isPrivate: true,
+              memberIds: options.memberIds ?? [],
+            }
+          : {}),
+      },
       auth(token),
     );
     if (error) throw new Error(apiErrorMessage(error));

@@ -122,6 +122,10 @@ export function ChannelModal() {
   const deleteChannel = useWorkspacesStore((store) => store.deleteChannel);
   const markChannelRead = useConversationsStore((store) => store.markChannelRead);
   const [name, setName] = useState("");
+  const [isPrivate, setIsPrivate] = useState(false);
+  const [selectedMemberIds, setSelectedMemberIds] = useState<Set<string>>(
+    () => new Set(),
+  );
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -138,6 +142,8 @@ export function ChannelModal() {
 
   useEffect(() => {
     setName(state?.mode === "rename" ? (state.channel.title ?? state.channel.name) : "");
+    setIsPrivate(false);
+    setSelectedMemberIds(new Set());
     setError("");
     setSubmitting(false);
   }, [state]);
@@ -193,7 +199,12 @@ export function ChannelModal() {
     setError("");
     try {
       if (currentState.mode === "create") {
-        const channel = await createChannel(name);
+        const channel = isPrivate
+          ? await createChannel(name, {
+              isPrivate: true,
+              memberIds: [...selectedMemberIds],
+            })
+          : await createChannel(name);
         closeChannelModal();
         await navigate({
           to: "/channel/$id",
@@ -265,7 +276,7 @@ export function ChannelModal() {
         >
           <form
             onSubmit={handleSubmit}
-            className="fixed left-1/2 top-1/2 z-50 w-[calc(100%-2rem)] max-w-[440px] -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-xl border border-border bg-surface shadow-2xl"
+            className="fixed left-1/2 top-1/2 z-50 flex max-h-[calc(100vh-2rem)] w-[calc(100%-2rem)] max-w-[520px] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-xl border border-border bg-surface shadow-2xl"
           >
             <div className="flex items-start gap-3 px-5 pb-4 pt-5">
               <div
@@ -299,43 +310,173 @@ export function ChannelModal() {
               </Dialog.Close>
             </div>
 
-            <div className="border-y border-border bg-base/35 px-5 py-4">
+            <div className="overflow-y-auto border-y border-border bg-base/35 px-4 py-4 sm:px-5">
               {isDelete ? (
                 <div className="rounded-lg border border-red-500/25 bg-red-500/[0.06] px-3.5 py-3 text-[0.821rem] leading-5 text-text-muted">
                   <p>
-                    <span className="font-medium text-text-secondary">#{currentState.channel.name}</span> will disappear for every workspace member. This cannot be undone.
+                    <span className="font-medium text-text-secondary">#{currentState.channel.name}</span> will disappear for every channel member. This cannot be undone.
                   </p>
                   <p className="mt-1.5 text-text-placeholder">
                     Channels with attachments or active bot runs are protected from deletion.
                   </p>
                 </div>
               ) : (
-                <label className="block">
-                  <span className="mb-1.5 block text-[0.786rem] font-medium text-text-secondary">
-                    Channel name
-                  </span>
-                  <div className="flex items-center rounded-lg border border-border bg-base px-3 focus-within:border-accent/70 focus-within:ring-2 focus-within:ring-accent/15">
-                    <HashIcon className="size-[15px] shrink-0 text-text-placeholder" />
-                    <input
-                      ref={inputRef}
-                      value={name}
-                      onChange={(event) => setName(event.target.value)}
-                      maxLength={100}
-                      aria-label="Channel name"
-                      placeholder="e.g. product-updates"
-                      className="min-w-0 flex-1 bg-transparent px-2 py-2.5 text-[0.929rem] text-text-primary outline-none placeholder:text-text-placeholder"
-                    />
-                  </div>
-                  <p className="mt-2 text-[0.75rem] text-text-placeholder">
-                    {slug ? (
-                      <>
-                        This channel will appear as <span className="font-medium text-text-muted">#{slug}</span>.
-                      </>
-                    ) : (
-                      "Use letters, numbers, spaces, or hyphens."
-                    )}
-                  </p>
-                </label>
+                <>
+                  <label className="block">
+                    <span className="mb-1.5 block text-[0.786rem] font-medium text-text-secondary">
+                      Channel name
+                    </span>
+                    <div className="flex items-center rounded-lg border border-border bg-base px-3 focus-within:border-accent/70 focus-within:ring-2 focus-within:ring-accent/15">
+                      <HashIcon className="size-[15px] shrink-0 text-text-placeholder" />
+                      <input
+                        ref={inputRef}
+                        value={name}
+                        onChange={(event) => setName(event.target.value)}
+                        maxLength={100}
+                        aria-label="Channel name"
+                        placeholder="e.g. product-updates"
+                        className="min-w-0 flex-1 bg-transparent px-2 py-2.5 text-[0.929rem] text-text-primary outline-none placeholder:text-text-placeholder"
+                      />
+                    </div>
+                    <p className="mt-2 text-[0.75rem] text-text-placeholder">
+                      {slug ? (
+                        <>
+                          This channel will appear as <span className="font-medium text-text-muted">#{slug}</span>.
+                        </>
+                      ) : (
+                        "Use letters, numbers, spaces, or hyphens."
+                      )}
+                    </p>
+                  </label>
+
+                  {currentState.mode === "create" && (
+                    <>
+                      <fieldset className="mt-4">
+                        <legend className="mb-1.5 text-[0.786rem] font-medium text-text-secondary">
+                          Visibility
+                        </legend>
+                        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                          <label
+                            className={`flex cursor-pointer gap-2.5 rounded-lg border px-3 py-2.5 transition-colors ${
+                              !isPrivate
+                                ? "border-accent/70 bg-accent/[0.08]"
+                                : "border-border bg-base hover:border-text-placeholder"
+                            }`}
+                          >
+                            <input
+                              type="radio"
+                              name="channel-visibility"
+                              checked={!isPrivate}
+                              onChange={() => setIsPrivate(false)}
+                              disabled={submitting}
+                              className="mt-0.5 size-3.5 accent-accent"
+                            />
+                            <span className="min-w-0">
+                              <span className="block text-[0.821rem] font-medium text-text-primary">
+                                Public
+                              </span>
+                              <span className="mt-0.5 block text-[0.714rem] leading-4 text-text-placeholder">
+                                All workspace members can see and open it.
+                              </span>
+                            </span>
+                          </label>
+                          <label
+                            className={`flex cursor-pointer gap-2.5 rounded-lg border px-3 py-2.5 transition-colors ${
+                              isPrivate
+                                ? "border-accent/70 bg-accent/[0.08]"
+                                : "border-border bg-base hover:border-text-placeholder"
+                            }`}
+                          >
+                            <input
+                              type="radio"
+                              name="channel-visibility"
+                              checked={isPrivate}
+                              onChange={() => setIsPrivate(true)}
+                              disabled={submitting}
+                              className="mt-0.5 size-3.5 accent-accent"
+                            />
+                            <span className="min-w-0">
+                              <span className="block text-[0.821rem] font-medium text-text-primary">
+                                Private
+                              </span>
+                              <span className="mt-0.5 block text-[0.714rem] leading-4 text-text-placeholder">
+                                Only selected members can see and open it.
+                              </span>
+                            </span>
+                          </label>
+                        </div>
+                      </fieldset>
+
+                      {isPrivate && (
+                        <div className="mt-4">
+                          <div className="mb-1.5 flex items-center justify-between gap-3">
+                            <span className="text-[0.786rem] font-medium text-text-secondary">
+                              Members
+                            </span>
+                            <span className="text-[0.714rem] text-text-placeholder">
+                              {selectedMemberIds.size + 1} selected
+                            </span>
+                          </div>
+                          <div className="max-h-44 overflow-y-auto rounded-lg border border-border bg-base">
+                            {activeWorkspace?.members.map((member) => {
+                              const isCurrentUser = member.userId === currentUserId;
+                              const checked =
+                                isCurrentUser || selectedMemberIds.has(member.userId);
+                              return (
+                                <label
+                                  key={member.userId}
+                                  className={`flex items-center gap-3 border-b border-border/70 px-3 py-2.5 last:border-b-0 ${
+                                    isCurrentUser
+                                      ? "cursor-default bg-surface/45"
+                                      : "cursor-pointer hover:bg-hover/70"
+                                  }`}
+                                >
+                                  <input
+                                    type="checkbox"
+                                    checked={checked}
+                                    disabled={isCurrentUser || submitting}
+                                    aria-label={
+                                      isCurrentUser
+                                        ? `${member.user.name} (you)`
+                                        : `Include ${member.user.name}`
+                                    }
+                                    onChange={(event) => {
+                                      const shouldInclude = event.target.checked;
+                                      setSelectedMemberIds((current) => {
+                                        const next = new Set(current);
+                                        if (shouldInclude) next.add(member.userId);
+                                        else next.delete(member.userId);
+                                        return next;
+                                      });
+                                    }}
+                                    className="size-3.5 shrink-0 rounded accent-accent"
+                                  />
+                                  <span className="flex size-7 shrink-0 items-center justify-center rounded-md bg-accent/10 text-[0.714rem] font-semibold text-accent">
+                                    {member.user.name.trim().charAt(0).toUpperCase() || "?"}
+                                  </span>
+                                  <span className="min-w-0 flex-1">
+                                    <span className="block truncate text-[0.821rem] font-medium text-text-primary">
+                                      {member.user.name}
+                                      {isCurrentUser ? " (you)" : ""}
+                                    </span>
+                                    <span className="block truncate text-[0.714rem] text-text-placeholder">
+                                      {member.bot
+                                        ? "Bot"
+                                        : member.user.email ?? member.role}
+                                    </span>
+                                  </span>
+                                </label>
+                              );
+                            })}
+                          </div>
+                          <p className="mt-2 text-[0.75rem] leading-4 text-text-placeholder">
+                            You are always included. Unselected workspace members will not see this channel.
+                          </p>
+                        </div>
+                      )}
+                    </>
+                  )}
+                </>
               )}
               {error && (
                 <p role="alert" className="mt-3 text-[0.786rem] text-red-400">

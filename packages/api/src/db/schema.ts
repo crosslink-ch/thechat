@@ -161,6 +161,7 @@ export const conversations = pgTable(
       { onDelete: "cascade" }
     ),
     name: varchar("name", { length: 100 }),
+    isPrivate: boolean("is_private").notNull().default(false),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
       .notNull(),

@@ -33,6 +33,7 @@ const general: WorkspaceChannel = {
   workspaceId: "ws-1",
   name: "general",
   title: "General",
+  isPrivate: false,
   createdAt: "2026-01-01",
   updatedAt: "2026-01-01",
 };
@@ -68,6 +69,34 @@ beforeEach(() => {
 });
 
 describe("workspace channel actions", () => {
+  it("sends private visibility and selected members when creating a channel", async () => {
+    const created: WorkspaceChannel = {
+      ...general,
+      id: "ch-leadership",
+      name: "leadership",
+      title: "Leadership",
+      isPrivate: true,
+    };
+    channelPostMock.mockResolvedValue({ data: created, error: null });
+
+    await expect(
+      useWorkspacesStore.getState().createChannel("Leadership", {
+        isPrivate: true,
+        memberIds: ["u2", "u3"],
+      }),
+    ).resolves.toEqual(created);
+
+    expect(channelPostMock).toHaveBeenCalledWith(
+      {
+        workspaceId: workspace.id,
+        name: "Leadership",
+        isPrivate: true,
+        memberIds: ["u2", "u3"],
+      },
+      { headers: { authorization: "Bearer token" } },
+    );
+  });
+
   it("creates, renames, and deletes channels in the active workspace", async () => {
     const created: WorkspaceChannel = {
       ...general,
