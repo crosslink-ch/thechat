@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   cacheMessageReactions,
   messagesQueryKey,
+  optimisticallySetMessageReaction,
   reconcileMessageReactions,
 } from "./useChannelChat";
 
@@ -41,26 +42,185 @@ describe("cacheMessageReactions", () => {
     expect(firstMessage(client, otherConversationKey).reactions).toBeUndefined();
   });
 
-  it("invalidates authoritative message state after installing a mutation snapshot", async () => {
+  it("installs authoritative state without waiting for the background refetch", () => {
     const client = new QueryClient();
     const key = messagesQueryKey("conversation-1");
     client.setQueryData(key, windowWith([chatMessage()]));
     const invalidateQueries = vi
       .spyOn(client, "invalidateQueries")
-      .mockImplementation(async () => {
-        expect(firstMessage(client, key).reactions).toEqual(reactions);
-      });
+      .mockImplementation(() => new Promise(() => {}));
 
-    await reconcileMessageReactions(
+    const result = reconcileMessageReactions(
       client,
       "conversation-1",
       "message-1",
       reactions,
     );
 
+    expect(result).toBeUndefined();
+    expect(firstMessage(client, key).reactions).toEqual(reactions);
     expect(invalidateQueries).toHaveBeenCalledWith({
       queryKey: ["messages", "conversation-1"],
     });
+  });
+});
+
+describe("optimisticallySetMessageReaction", () => {
+  it("removes my sole reaction synchronously and can restore it", () => {
+    const client = new QueryClient();
+    const key = messagesQueryKey("conversation-1");
+    const previous: MessageReactionSummary[] = [
+      {
+        emoji: "👍",
+        count: 1,
+        reactedByMe: true,
+        userNames: ["Bruno"],
+      },
+    ];
+    client.setQueryData(key, windowWith([chatMessage({ reactions: previous })]));
+
+    const rollback = optimisticallySetMessageReaction(
+      client,
+      "conversation-1",
+      "message-1",
+      "👍",
+      false,
+      "Bruno",
+    );
+
+    expect(firstMessage(client, key).reactions).toEqual([]);
+
+    rollback();
+    expect(firstMessage(client, key).reactions).toEqual(previous);
+  });
+
+  it("decrements my grouped reaction and preserves unrelated live changes on rollback", () => {
+    const client = new QueryClient();
+    const key = messagesQueryKey("conversation-1");
+    const previous: MessageReactionSummary[] = [
+      {
+        emoji: "👍",
+        count: 2,
+        reactedByMe: true,
+        userNames: ["Alice", "Bruno"],
+      },
+      ...reactions,
+    ];
+    client.setQueryData(key, windowWith([chatMessage({ reactions: previous })]));
+
+    const rollback = optimisticallySetMessageReaction(
+      client,
+      "conversation-1",
+      "message-1",
+      "👍",
+      false,
+      "Bruno",
+    );
+
+    expect(firstMessage(client, key).reactions).toEqual([
+      {
+        emoji: "👍",
+        count: 1,
+        reactedByMe: false,
+        userNames: ["Alice"],
+      },
+      ...reactions,
+    ]);
+
+    const liveReaction: MessageReactionSummary = {
+      emoji: "🔥",
+      count: 1,
+      reactedByMe: false,
+      userNames: ["Carol"],
+    };
+    cacheMessageReactions(client, "conversation-1", "message-1", [
+      ...(firstMessage(client, key).reactions ?? []),
+      liveReaction,
+    ]);
+
+    rollback();
+    expect(firstMessage(client, key).reactions).toEqual([
+      ...previous,
+      liveReaction,
+    ]);
+  });
+
+  it("adds my reaction synchronously", () => {
+    const client = new QueryClient();
+    const key = messagesQueryKey("conversation-1");
+    client.setQueryData(key, windowWith([chatMessage({ reactions: [] })]));
+
+    optimisticallySetMessageReaction(
+      client,
+      "conversation-1",
+      "message-1",
+      "🔥",
+      true,
+      "Bruno",
+    );
+
+    expect(firstMessage(client, key).reactions).toEqual([
+      {
+        emoji: "🔥",
+        count: 1,
+        reactedByMe: true,
+        userNames: ["Bruno"],
+      },
+    ]);
+  });
+
+  it("keeps duplicate display names aligned with the reaction count", () => {
+    const client = new QueryClient();
+    const key = messagesQueryKey("conversation-1");
+    client.setQueryData(
+      key,
+      windowWith([
+        chatMessage({
+          reactions: [
+            {
+              emoji: "👍",
+              count: 1,
+              reactedByMe: false,
+              userNames: ["Bruno"],
+            },
+          ],
+        }),
+      ]),
+    );
+
+    optimisticallySetMessageReaction(
+      client,
+      "conversation-1",
+      "message-1",
+      "👍",
+      true,
+      "Bruno",
+    );
+    expect(firstMessage(client, key).reactions).toEqual([
+      {
+        emoji: "👍",
+        count: 2,
+        reactedByMe: true,
+        userNames: ["Bruno", "Bruno"],
+      },
+    ]);
+
+    optimisticallySetMessageReaction(
+      client,
+      "conversation-1",
+      "message-1",
+      "👍",
+      false,
+      "Bruno",
+    );
+    expect(firstMessage(client, key).reactions).toEqual([
+      {
+        emoji: "👍",
+        count: 1,
+        reactedByMe: false,
+        userNames: ["Bruno"],
+      },
+    ]);
   });
 });
 

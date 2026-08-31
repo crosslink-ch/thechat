@@ -67,6 +67,41 @@ describe("MessageReactions", () => {
     });
   });
 
+  it("uses image-backed emoji in reaction chips and picker choices", async () => {
+    const onSetReaction = vi.fn().mockResolvedValue(undefined);
+    render(
+      <MessageReactions
+        reactions={[
+          {
+            emoji: "👍",
+            count: 1,
+            reactedByMe: false,
+            userNames: ["Alice"],
+          },
+        ]}
+        onSetReaction={onSetReaction}
+      />,
+    );
+
+    const reaction = screen.getByRole("button", { name: "👍 1 reaction" });
+    const loader = reaction.querySelector<HTMLImageElement>(
+      "img[data-emoji-sprite-loader]",
+    );
+    if (loader) fireEvent.load(loader);
+    await waitFor(() => {
+      expect(reaction.querySelector("[data-emoji-image]")).not.toBeNull();
+    });
+    expect(reaction).not.toHaveTextContent("👍");
+
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Add reaction" }), {
+      button: 0,
+      ctrlKey: false,
+    });
+    const pickerChoice = screen.getByRole("menuitem", { name: "React with 👍" });
+    expect(pickerChoice.querySelector("[data-emoji-image]")).not.toBeNull();
+    expect(pickerChoice).not.toHaveTextContent("👍");
+  });
+
   it("shows mutation failures without collapsing the error message", async () => {
     const onSetReaction = vi.fn().mockRejectedValue(new Error("Network unavailable"));
     render(<MessageReactions reactions={[]} onSetReaction={onSetReaction} />);

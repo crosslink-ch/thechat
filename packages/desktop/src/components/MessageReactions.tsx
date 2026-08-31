@@ -1,6 +1,7 @@
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import type { MessageReactionSummary } from "@thechat/shared";
 import { useId, useState } from "react";
+import { EmojiImage } from "./EmojiImage";
 
 export const DEFAULT_REACTION_EMOJIS = [
   "👍",
@@ -66,9 +67,7 @@ export function MessageReactions({
             void updateReaction(reaction.emoji, !reaction.reactedByMe);
           }}
         >
-          <span className="text-[1rem] leading-none" aria-hidden="true">
-            {reaction.emoji}
-          </span>
+          <EmojiImage emoji={reaction.emoji} size={16} />
           <span>{reaction.count}</span>
         </button>
       ))}
@@ -116,11 +115,11 @@ export function MessageReactions({
                 >
                   <button
                     type="button"
-                    className="flex size-9 items-center justify-center rounded-lg text-xl outline-none transition-transform hover:scale-110 hover:bg-hover focus:bg-hover data-[highlighted]:bg-hover"
+                    className="flex size-9 items-center justify-center rounded-lg outline-none transition-transform hover:scale-110 hover:bg-hover focus:bg-hover data-[highlighted]:bg-hover"
                     aria-label={`${active ? "Remove" : "React with"} ${emoji}`}
                     title={`${active ? "Remove" : "React with"} ${emoji}`}
                   >
-                    {emoji}
+                    <EmojiImage emoji={emoji} size={22} />
                   </button>
                 </DropdownMenu.Item>
               );

@@ -18,6 +18,7 @@ const WORKSPACE_NAME = enabled ? required("REACTIONS_E2E_WORKSPACE_NAME") : "";
 const MESSAGE_ID = enabled ? required("REACTIONS_E2E_MESSAGE_ID") : "";
 const PICKER_SCREENSHOT = enabled ? required("REACTIONS_E2E_PICKER_SCREENSHOT") : "";
 const APPLIED_SCREENSHOT = enabled ? required("REACTIONS_E2E_APPLIED_SCREENSHOT") : "";
+const REMOVED_SCREENSHOT = enabled ? required("REACTIONS_E2E_REMOVED_SCREENSHOT") : "";
 const FAILURE_SCREENSHOT = enabled ? required("REACTIONS_E2E_FAILURE_SCREENSHOT") : "";
 const EVIDENCE = enabled ? required("REACTIONS_E2E_EVIDENCE") : "";
 
@@ -31,7 +32,7 @@ describeReactions("Message reactions", function () {
     }
   });
 
-  it("chooses an emoji and persists the reaction in the compiled Tauri app", async () => {
+  it("renders bundled emoji and removes reactions optimistically in the compiled Tauri app", async () => {
     await browser.setWindowSize(1180, 760);
 
     const loginResponse = await fetch(`${API_URL}/auth/login`, {
@@ -70,13 +71,19 @@ describeReactions("Message reactions", function () {
     await submitButton.click();
     await emailInput.waitForExist({ reverse: true, timeout: 30_000 });
 
-    const workspaceSelector = await $("button=Select workspace");
-    await workspaceSelector.waitForClickable({ timeout: 15_000 });
-    await workspaceSelector.click();
-    const workspaceButton = await $(`button=${WORKSPACE_NAME}`);
-    await workspaceButton.waitForClickable({ timeout: 10_000 });
-    await workspaceButton.click();
     const channelButton = await $(`[data-channel-id="${CONVERSATION_ID}"]`);
+    const workspaceAutoSelected = await channelButton
+      .waitForExist({ timeout: 3_000 })
+      .then(() => true)
+      .catch(() => false);
+    if (!workspaceAutoSelected) {
+      const workspaceSelector = await $("button=Select workspace");
+      await workspaceSelector.waitForClickable({ timeout: 15_000 });
+      await workspaceSelector.click();
+      const workspaceButton = await $(`button=${WORKSPACE_NAME}`);
+      await workspaceButton.waitForClickable({ timeout: 10_000 });
+      await workspaceButton.click();
+    }
     await channelButton.waitForClickable({ timeout: 15_000 });
     await channelButton.click();
 
@@ -90,16 +97,31 @@ describeReactions("Message reactions", function () {
     const picker = await $('[role="menu"]');
     await picker.waitForDisplayed({ timeout: 10_000 });
     expect(await picker.getAttribute("aria-labelledby")).toBeTruthy();
+    const pickerChoice = await $('button[aria-label="React with 🎉"]');
+    const pickerImage = await pickerChoice.$("[data-emoji-image]");
+    await pickerImage.waitForDisplayed({ timeout: 10_000 });
+    const pickerSprite = await browser.execute(
+      (element) => getComputedStyle(element).backgroundImage,
+      pickerImage,
+    );
+    expect(pickerSprite).not.toBe("none");
     fs.mkdirSync(path.dirname(PICKER_SCREENSHOT), { recursive: true });
     await browser.saveScreenshot(PICKER_SCREENSHOT);
 
-    await $('button[aria-label="React with 🎉"]').click();
+    await pickerChoice.click();
     await picker.waitForDisplayed({ reverse: true, timeout: 10_000 });
     const reaction = await row.$('button[aria-label^="🎉 "]');
     await reaction.waitForDisplayed({ timeout: 15_000 });
     const reactionText = await reaction.getText();
-    expect(reactionText).toContain("🎉");
+    expect(reactionText).not.toContain("🎉");
     expect(await reaction.getAttribute("aria-pressed")).toBe("true");
+    const reactionImage = await reaction.$("[data-emoji-image]");
+    await reactionImage.waitForDisplayed({ timeout: 10_000 });
+    const reactionSprite = await browser.execute(
+      (element) => getComputedStyle(element).backgroundImage,
+      reactionImage,
+    );
+    expect(reactionSprite).not.toBe("none");
     await browser.saveScreenshot(APPLIED_SCREENSHOT);
 
     const response = await fetch(`${API_URL}/messages/${CONVERSATION_ID}`, {
@@ -118,6 +140,86 @@ describeReactions("Message reactions", function () {
     expect(persistedReaction.userNames).toContain(login.user.name);
     expect(reactionText).toContain(String(persistedReaction.count));
 
+    const reactionPath = `/messages/${CONVERSATION_ID}/${MESSAGE_ID}/reactions`;
+    await browser.execute((pathToDelay) => {
+      const originalFetch = window.fetch.bind(window);
+      window.__thechatReactionFetch = {
+        started: false,
+        finished: false,
+        release: null,
+        originalFetch,
+      };
+      window.fetch = async (...args) => {
+        const input = args[0];
+        const init = args[1];
+        const url = typeof input === "string" ? input : input.url;
+        const method = (init?.method ?? (typeof input === "string" ? "GET" : input.method)).toUpperCase();
+        if (method === "POST" && url.includes(pathToDelay)) {
+          window.__thechatReactionFetch.started = true;
+          await new Promise((resolve) => {
+            window.__thechatReactionFetch.release = resolve;
+          });
+        }
+        const result = await originalFetch(...args);
+        window.__thechatReactionFetch.finished = true;
+        return result;
+      };
+    }, reactionPath);
+
+    const countBeforeRemoval = Number.parseInt(reactionText.trim(), 10);
+    expect(countBeforeRemoval).toBeGreaterThan(0);
+    const removalStartedAt = Date.now();
+    await reaction.click();
+    await browser.waitUntil(
+      () => browser.execute(() => window.__thechatReactionFetch?.started === true),
+      {
+        timeout: 5_000,
+        timeoutMsg: "Delayed reaction removal request did not start",
+      },
+    );
+
+    if (countBeforeRemoval === 1) {
+      await reaction.waitForExist({ reverse: true, timeout: 1_000 });
+    } else {
+      const remaining = countBeforeRemoval - 1;
+      const suffix = remaining === 1 ? "reaction" : "reactions";
+      const optimisticReaction = await row.$(
+        `button[aria-label="🎉 ${remaining} ${suffix}"]`,
+      );
+      await optimisticReaction.waitForDisplayed({ timeout: 1_000 });
+      expect(await optimisticReaction.getAttribute("aria-pressed")).toBe("false");
+    }
+    const optimisticRemovalElapsedMs = Date.now() - removalStartedAt;
+    await browser.saveScreenshot(REMOVED_SCREENSHOT);
+
+    await browser.execute(() => {
+      window.__thechatReactionFetch.release();
+    });
+    await browser.waitUntil(
+      () => browser.execute(() => window.__thechatReactionFetch?.finished === true),
+      {
+        timeout: 15_000,
+        timeoutMsg: "Delayed reaction removal request did not finish",
+      },
+    );
+    await browser.execute(() => {
+      window.fetch = window.__thechatReactionFetch.originalFetch;
+      delete window.__thechatReactionFetch;
+    });
+
+    const removedResponse = await fetch(`${API_URL}/messages/${CONVERSATION_ID}`, {
+      headers: { authorization: `Bearer ${login.accessToken}` },
+    });
+    expect(removedResponse.status).toBe(200);
+    const removedPayload = await removedResponse.json();
+    const removedMessage = removedPayload.find(
+      (message) => message.id === MESSAGE_ID,
+    );
+    const persistedAfterRemoval = removedMessage.reactions.find(
+      (candidate) => candidate.emoji === "🎉",
+    );
+    expect(persistedAfterRemoval?.reactedByMe ?? false).toBe(false);
+
     fs.writeFileSync(
       EVIDENCE,
       JSON.stringify(
@@ -125,9 +227,19 @@ describeReactions("Message reactions", function () {
           messageId: MESSAGE_ID,
           conversationId: CONVERSATION_ID,
           pickerVisible: true,
+          imageBacked: true,
+          pickerSprite,
+          reactionSprite,
           reactionText,
           persistedReaction,
-          screenshots: [PICKER_SCREENSHOT, APPLIED_SCREENSHOT],
+          optimisticRemovalVerified: true,
+          optimisticRemovalElapsedMs,
+          persistedAfterRemoval: persistedAfterRemoval ?? null,
+          screenshots: [
+            PICKER_SCREENSHOT,
+            APPLIED_SCREENSHOT,
+            REMOVED_SCREENSHOT,
+          ],
         },
         null,
         2,
