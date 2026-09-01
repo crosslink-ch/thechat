@@ -430,8 +430,8 @@ export function useAcpChat(options: UseAcpChatOptions) {
               generation,
             },
             (lifecycleEvent) => {
-              // Deliberately do not reduce connect-channel updates. Some stable
-              // v1 agents replay loaded history here; SQLite is authoritative.
+              // Ignore connect-channel history replay. SQLite is authoritative;
+              // only lifecycle terminal events are projected into shared state.
               if (
                 lifecycleEvent.type !== "connected" &&
                 lifecycleEvent.type !== "error" &&
@@ -446,6 +446,19 @@ export function useAcpChat(options: UseAcpChatOptions) {
                 lifecycleEvent.type === "disconnected"
               ) {
                 currentSession.connected = false;
+                if (lifecycleEvent.type === "disconnected") {
+                  const currentState = turnStates.get(conversationId);
+                  if (currentState?.generation === generation) {
+                    const disconnectedState = reduceAcpEvent(
+                      currentState,
+                      lifecycleEvent,
+                    );
+                    turnStates.set(conversationId, disconnectedState);
+                    useAcpStore
+                      .getState()
+                      .updateEventState(conversationId, disconnectedState);
+                  }
+                }
                 if (activeConversationIdRef.current === conversationId) {
                   setError({
                     message:

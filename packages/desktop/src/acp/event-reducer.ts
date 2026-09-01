@@ -42,6 +42,13 @@ const TERMINAL_STATUSES = new Set<AcpEventStatus>([
   "disconnected",
 ]);
 
+const CANCELLATION_TERMINAL_EVENTS = new Set<AcpEvent["type"]>([
+  "turn_cancelled",
+  "turn_finished",
+  "error",
+  "disconnected",
+]);
+
 export function createAcpEventState(
   conversationId: string,
   generation: number,
@@ -67,8 +74,8 @@ export function createAcpEventState(
  * Pure generation-safe reducer for one conversation.
  *
  * Sequence numbers are strictly monotonic: once a later event is accepted, a
- * delayed earlier event is ignored. Terminal turns are sealed so replay or a
- * buggy adapter cannot append content after finish/cancellation/error.
+ * delayed earlier event is ignored. Terminal turns are sealed against content
+ * replay, while a later lifecycle disconnect may still supersede them.
  */
 export function reduceAcpEvent(
   state: AcpEventState,
@@ -77,8 +84,16 @@ export function reduceAcpEvent(
   if (
     event.conversationId !== state.conversationId ||
     event.generation !== state.generation ||
-    event.sequence <= state.lastSequence ||
-    TERMINAL_STATUSES.has(state.status)
+    event.sequence <= state.lastSequence
+  ) {
+    return { ...state, ignoredEvents: state.ignoredEvents + 1 };
+  }
+  if (TERMINAL_STATUSES.has(state.status) && event.type !== "disconnected") {
+    return { ...state, ignoredEvents: state.ignoredEvents + 1 };
+  }
+  if (
+    state.status === "cancelling" &&
+    !CANCELLATION_TERMINAL_EVENTS.has(event.type)
   ) {
     return { ...state, ignoredEvents: state.ignoredEvents + 1 };
   }

@@ -194,6 +194,48 @@ describe("ACP event reducer", () => {
     expect(state.ignoredEvents).toBe(1);
   });
 
+  it("keeps cancellation monotonic until a terminal event arrives", () => {
+    const running = reduce([
+      event({ type: "turn_started", sequence: 1, turnId: "turn-cancelling" }),
+    ]);
+    const cancelling = { ...running, status: "cancelling" as const };
+    const ignored = [
+      event({
+        type: "text_delta",
+        sequence: 2,
+        turnId: "turn-cancelling",
+        text: "late text",
+      }),
+      event({
+        type: "permission_request",
+        sequence: 3,
+        turnId: "turn-cancelling",
+        permission: {
+          id: "permission-late",
+          title: "Late permission",
+          options: [{ id: "reject", kind: "reject_once", label: "Reject" }],
+        },
+      }),
+    ].reduce(reduceAcpEvent, cancelling);
+
+    expect(ignored.status).toBe("cancelling");
+    expect(ignored.parts).toEqual([]);
+    expect(ignored.pendingPermissions).toEqual([]);
+    expect(ignored.ignoredEvents).toBe(2);
+
+    const cancelled = reduceAcpEvent(
+      ignored,
+      event({
+        type: "turn_cancelled",
+        sequence: 4,
+        turnId: "turn-cancelling",
+        result: { stopReason: "cancelled" },
+      }),
+    );
+    expect(cancelled.status).toBe("cancelled");
+    expect(cancelled.result).toEqual({ stopReason: "cancelled" });
+  });
+
   it("records successful finish and adapter errors as distinct terminal states", () => {
     const finished = reduce([
       event({ type: "turn_started", sequence: 1, turnId: "turn-finished" }),
@@ -222,6 +264,29 @@ describe("ACP event reducer", () => {
       message: "adapter exited",
       fatal: true,
     });
+  });
+
+  it("lets a lifecycle disconnect supersede a finished turn", () => {
+    const finished = reduce([
+      event({ type: "turn_started", sequence: 1, turnId: "turn-finished" }),
+      event({
+        type: "turn_finished",
+        sequence: 2,
+        turnId: "turn-finished",
+        result: { stopReason: "end_turn" },
+      }),
+    ]);
+    const disconnected = reduceAcpEvent(
+      finished,
+      event({
+        type: "disconnected",
+        sequence: 3,
+        reason: "adapter exited while idle",
+      }),
+    );
+
+    expect(disconnected.status).toBe("disconnected");
+    expect(disconnected.error?.message).toBe("adapter exited while idle");
   });
 
   it("keeps explicitly nonfatal errors observable without sealing trailing updates", () => {

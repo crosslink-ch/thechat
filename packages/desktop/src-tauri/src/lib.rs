@@ -318,6 +318,24 @@ fn validated_acp_resume_session_id(
     }
 }
 
+fn clear_failed_acp_resume_metadata(
+    database: &db::Database,
+    conversation: &db::Conversation,
+) -> Result<(), String> {
+    let cleared = database.clear_acp_session_metadata_if_matches(
+        &conversation.id,
+        conversation.acp_session_id.as_deref(),
+        conversation.acp_profile_fingerprint.as_deref(),
+        conversation.acp_runtime_epoch.as_deref(),
+        conversation.acp_generation,
+    )?;
+    if cleared {
+        Ok(())
+    } else {
+        Err("ACP resume metadata changed before failed-resume cleanup".into())
+    }
+}
+
 fn bundled_node_bin_dir(app: &tauri::AppHandle) -> Option<std::path::PathBuf> {
     let resource = app
         .path()
@@ -676,21 +694,17 @@ async fn acp_connect(
         Err(error) if attempted_resume && error.to_ascii_lowercase().contains("load") => {
             if manager.latest_generation(&conversation_id).await == Some(generation) {
                 let db = Arc::clone(&db);
-                let clear_id = conversation_id.clone();
-                let expected_session_id = conversation.acp_session_id.clone();
-                let expected_fingerprint = conversation.acp_profile_fingerprint.clone();
-                let expected_runtime_epoch = conversation.acp_runtime_epoch.clone();
-                let expected_generation = conversation.acp_generation;
-                let _ = tokio::task::spawn_blocking(move || {
-                    db.clear_acp_session_metadata_if_matches(
-                        &clear_id,
-                        expected_session_id.as_deref(),
-                        expected_fingerprint.as_deref(),
-                        expected_runtime_epoch.as_deref(),
-                        expected_generation,
-                    )
+                let stale_conversation = conversation.clone();
+                let cleanup_result = tokio::task::spawn_blocking(move || {
+                    clear_failed_acp_resume_metadata(&db, &stale_conversation)
                 })
-                .await;
+                .await
+                .map_err(|cleanup_error| format!("Task join error: {cleanup_error}"))?;
+                if let Err(cleanup_error) = cleanup_result {
+                    return Err(format!(
+                        "Saved ACP continuity could not be loaded, and its stale metadata could not be cleared: {cleanup_error}. {error}"
+                    ));
+                }
             }
             return Err(format!(
                 "Saved ACP continuity could not be loaded; the adapter was terminated. Retry to start fresh. {error}"
@@ -1172,6 +1186,49 @@ mod tests {
         db.save_message(&conv.id, "user", "Hello", None).unwrap();
         let msgs = db.get_messages(&conv.id, None, None).unwrap();
         assert_eq!(msgs.len(), 1);
+    }
+
+    #[test]
+    fn failed_resume_cleanup_reports_a_lost_compare_and_set() {
+        let database = Database::new(":memory:").unwrap();
+        let conversation = database.create_conversation("ACP", None).unwrap();
+        assert!(database
+            .set_acp_session_metadata(
+                &conversation.id,
+                "session-1",
+                "fingerprint-1",
+                "runtime-a",
+                1,
+            )
+            .unwrap());
+        let stale = database
+            .get_conversation(&conversation.id)
+            .unwrap()
+            .unwrap();
+        assert!(database
+            .set_acp_session_metadata(
+                &conversation.id,
+                "session-1",
+                "fingerprint-1",
+                "runtime-a",
+                2,
+            )
+            .unwrap());
+
+        let error = clear_failed_acp_resume_metadata(&database, &stale).unwrap_err();
+        assert!(error.contains("changed"), "{error}");
+        let current = database
+            .get_conversation(&conversation.id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(current.acp_generation, Some(2));
+        clear_failed_acp_resume_metadata(&database, &current).unwrap();
+        assert!(database
+            .get_conversation(&conversation.id)
+            .unwrap()
+            .unwrap()
+            .acp_session_id
+            .is_none());
     }
 
     #[test]

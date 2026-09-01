@@ -825,19 +825,30 @@ describe("useAcpChat", () => {
     const { result } = renderHook(() =>
       useAcpChat({ profileId, projectDir, permissionMode: "request" }),
     );
+    await act(async () => {
+      await result.current.loadConversation(conversation);
+    });
 
     await act(async () => {
       expect(await result.current.sendMessage("first")).toBe(true);
     });
+    const settledRuntime = useAcpStore.getState().runtimes[conversation.id];
+    expect(activeAcpSessionCountForTests()).toBe(1);
+    expect(settledRuntime?.eventState.status).toBe("finished");
     act(() => {
       sessionEvents?.({
         type: "disconnected",
         conversationId: conversation.id,
-        generation: 1,
-        sequence: 3,
+        generation: settledRuntime!.generation,
+        sequence: settledRuntime!.eventState.lastSequence + 1,
         reason: "adapter exited while idle",
       });
     });
+    expect(
+      useAcpStore.getState().runtimes[conversation.id]?.eventState.status,
+    ).toBe("disconnected");
+    expect(result.current.status).toBe("disconnected");
+    expect(result.current.isBusy).toBe(false);
     await act(async () => {
       expect(await result.current.sendMessage("retry")).toBe(true);
     });

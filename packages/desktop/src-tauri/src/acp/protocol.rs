@@ -712,15 +712,23 @@ struct PendingPermission {
     responder: Responder<RequestPermissionResponse>,
 }
 
+#[derive(Default)]
+struct BridgeTurnState {
+    // One lock linearizes cancellation/end-of-turn against adapter callbacks.
+    turn_id: Option<String>,
+    cancelling: bool,
+}
+
 struct ClientBridge {
     permission_mode: RwLock<PermissionMode>,
+    lifecycle_event_sink: AcpEventSink,
     event_sink: Arc<RwLock<AcpEventSink>>,
     session_id: RwLock<Option<String>>,
     forward_updates: AtomicBool,
     event_tx: mpsc::Sender<RawEvent>,
     internal_cancel_tx: mpsc::UnboundedSender<InternalCancel>,
     pending_permissions: Mutex<HashMap<String, PendingPermission>>,
-    turn_id: RwLock<Option<String>>,
+    turn_state: RwLock<BridgeTurnState>,
     turn_text_bytes: AtomicUsize,
     turn_event_count: AtomicUsize,
     turn_event_bytes: AtomicUsize,
@@ -732,15 +740,20 @@ impl ClientBridge {
         event_tx: mpsc::Sender<RawEvent>,
         internal_cancel_tx: mpsc::UnboundedSender<InternalCancel>,
     ) -> Self {
+        let lifecycle_event_sink = event_sink
+            .read()
+            .unwrap_or_else(|error| error.into_inner())
+            .clone();
         Self {
             permission_mode: RwLock::new(PermissionMode::Request),
+            lifecycle_event_sink,
             event_sink,
             session_id: RwLock::new(None),
             forward_updates: AtomicBool::new(false),
             event_tx,
             internal_cancel_tx,
             pending_permissions: Mutex::new(HashMap::new()),
-            turn_id: RwLock::new(None),
+            turn_state: RwLock::new(BridgeTurnState::default()),
             turn_text_bytes: AtomicUsize::new(0),
             turn_event_count: AtomicUsize::new(0),
             turn_event_bytes: AtomicUsize::new(0),
@@ -759,10 +772,13 @@ impl ClientBridge {
     }
 
     fn begin_turn(&self, turn_id: String) {
-        *self
-            .turn_id
+        let mut turn_state = self
+            .turn_state
             .write()
-            .unwrap_or_else(|error| error.into_inner()) = Some(turn_id);
+            .unwrap_or_else(|error| error.into_inner());
+        turn_state.turn_id = Some(turn_id);
+        turn_state.cancelling = false;
+        drop(turn_state);
         self.turn_text_bytes.store(0, Ordering::Release);
         self.turn_event_count.store(0, Ordering::Release);
         self.turn_event_bytes.store(0, Ordering::Release);
@@ -780,10 +796,26 @@ impl ClientBridge {
     }
 
     fn end_turn(&self) {
-        *self
-            .turn_id
+        let mut turn_state = self
+            .turn_state
             .write()
-            .unwrap_or_else(|error| error.into_inner()) = None;
+            .unwrap_or_else(|error| error.into_inner());
+        *self
+            .event_sink
+            .write()
+            .unwrap_or_else(|error| error.into_inner()) = self.lifecycle_event_sink.clone();
+        turn_state.turn_id = None;
+        turn_state.cancelling = true;
+        self.cancel_pending_permissions();
+    }
+
+    fn begin_cancellation(&self) {
+        let mut turn_state = self
+            .turn_state
+            .write()
+            .unwrap_or_else(|error| error.into_inner());
+        turn_state.cancelling = true;
+        self.cancel_pending_permissions();
     }
 
     fn handle_notification(&self, notification: SessionNotification) {
@@ -799,13 +831,20 @@ impl ClientBridge {
             return;
         }
 
-        let turn_id = self
-            .turn_id
+        let turn_state = self
+            .turn_state
             .read()
-            .unwrap_or_else(|error| error.into_inner())
-            .clone();
+            .unwrap_or_else(|error| error.into_inner());
+        let Some(turn_id) = turn_state
+            .turn_id
+            .as_ref()
+            .filter(|_| !turn_state.cancelling)
+            .cloned()
+        else {
+            return;
+        };
         if let Some(payload) = self.translate_update(notification.update) {
-            self.queue_event(RawEvent::new(turn_id, payload));
+            self.queue_event(RawEvent::new(Some(turn_id), payload));
         }
     }
 
@@ -981,6 +1020,20 @@ impl ClientBridge {
         request: RequestPermissionRequest,
         responder: Responder<RequestPermissionResponse>,
     ) -> Result<(), agent_client_protocol::Error> {
+        let turn_state = self
+            .turn_state
+            .read()
+            .unwrap_or_else(|error| error.into_inner());
+        let Some(turn_id) = turn_state
+            .turn_id
+            .as_ref()
+            .filter(|_| !turn_state.cancelling)
+            .cloned()
+        else {
+            return responder.respond(RequestPermissionResponse::new(
+                RequestPermissionOutcome::Cancelled,
+            ));
+        };
         let permission_mode = *self
             .permission_mode
             .read()
@@ -1041,16 +1094,24 @@ impl ClientBridge {
         };
         pending.insert(request_id, PendingPermission { options, responder });
         drop(pending);
-        let turn_id = self
-            .turn_id
-            .read()
-            .unwrap_or_else(|error| error.into_inner())
-            .clone();
-        self.queue_event(RawEvent::new(turn_id, payload));
+        self.queue_event(RawEvent::new(Some(turn_id), payload));
+        drop(turn_state);
         Ok(())
     }
 
     fn respond_permission(&self, request_id: &str, option_id: Option<&str>) -> Result<(), String> {
+        let turn_state = self
+            .turn_state
+            .read()
+            .unwrap_or_else(|error| error.into_inner());
+        let Some(turn_id) = turn_state
+            .turn_id
+            .as_ref()
+            .filter(|_| !turn_state.cancelling)
+            .cloned()
+        else {
+            return Err("ACP turn is no longer accepting permission responses".into());
+        };
         let mut pending = self
             .pending_permissions
             .lock()
@@ -1082,18 +1143,14 @@ impl ClientBridge {
             .responder
             .respond(response)
             .map_err(|_| "Failed to send ACP permission response".to_string())?;
-        let turn_id = self
-            .turn_id
-            .read()
-            .unwrap_or_else(|error| error.into_inner())
-            .clone();
         self.queue_event(RawEvent::new(
-            turn_id,
+            Some(turn_id),
             AcpEventPayload::PermissionResolved {
                 request_id: request_id.to_string(),
                 option_id: selected_id,
             },
         ));
+        drop(turn_state);
         Ok(())
     }
 
@@ -1680,7 +1737,7 @@ async fn run_prompt(
                     let _ = response.send(bridge.respond_permission(&request_id, option_id.as_deref()));
                 }
                 Some(SessionCommand::Cancel { response: cancel_response }) => {
-                    bridge.cancel_pending_permissions();
+                    bridge.begin_cancellation();
                     let sent = connection
                         .send_notification(CancelNotification::new(session_id.clone()))
                         .map_err(|_| "Failed to send ACP cancellation".to_string());
@@ -1690,7 +1747,7 @@ async fn run_prompt(
                     let _ = cancel_response.send(sent);
                 }
                 Some(SessionCommand::Stop { response: stop_response }) => {
-                    bridge.cancel_pending_permissions();
+                    bridge.begin_cancellation();
                     let _ = connection.send_notification(CancelNotification::new(session_id.clone()));
                     bridge.end_turn();
                     let _ = response.send(Err("ACP session stopped".into()));
@@ -1698,7 +1755,7 @@ async fn run_prompt(
                     return Ok(false);
                 }
                 None => {
-                    bridge.cancel_pending_permissions();
+                    bridge.begin_cancellation();
                     let _ = connection.send_notification(CancelNotification::new(session_id.clone()));
                     bridge.end_turn();
                     let _ = response.send(Err("ACP command channel closed".into()));
@@ -1707,7 +1764,7 @@ async fn run_prompt(
             },
             reason = internal_cancel_rx.recv() => {
                 if reason.is_some() {
-                    bridge.cancel_pending_permissions();
+                    bridge.begin_cancellation();
                     let _ = connection.send_notification(CancelNotification::new(session_id.clone()));
                     if cancel_deadline.is_none() {
                         cancel_deadline = Some(tokio::time::Instant::now() + CANCEL_TIMEOUT);
@@ -1715,7 +1772,7 @@ async fn run_prompt(
                 }
             }
             _ = wait_for_deadline(cancel_deadline), if cancel_deadline.is_some() => {
-                bridge.cancel_pending_permissions();
+                bridge.begin_cancellation();
                 bridge.end_turn();
                 let _ = response.send(Err("ACP cancellation timed out; adapter terminated".into()));
                 return Ok(false);
@@ -1929,6 +1986,39 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
+    fn late_cancel_start_options(
+        conversation_id: &str,
+        generation: u64,
+        cwd: &Path,
+    ) -> StartSessionOptions {
+        let fixture =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/fake_acp_agent.py");
+        let profile = AcpProfile {
+            id: "late-cancel-fake-agent".into(),
+            name: "Late cancel fake agent".into(),
+            executable: "python3".into(),
+            args: vec![
+                fixture.to_string_lossy().into_owned(),
+                "--late-after-cancel".into(),
+            ],
+            inherit_env: Vec::new(),
+            disabled: false,
+        };
+        let parent_env = HashMap::from([
+            ("PATH".into(), std::env::var("PATH").unwrap()),
+            ("HOME".into(), std::env::var("HOME").unwrap()),
+        ]);
+        StartSessionOptions {
+            conversation_id: conversation_id.into(),
+            generation,
+            profile_id: profile.id.clone(),
+            prepared: prepared_for_test(&profile, cwd, &parent_env),
+            persisted_session_id: None,
+            event_sink: AcpEventSink::new(|_| Ok(())),
+        }
+    }
+
     #[tokio::test]
     async fn stop_all_sessions_is_idempotent_when_empty() {
         let manager = AcpManager::new();
@@ -2065,6 +2155,20 @@ mod tests {
             .unwrap()
             .unwrap_err();
         assert!(start_error.contains("stopped during startup"));
+        assert_eq!(manager.active_session_count().await, 0);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn resume_failure_preserves_the_load_specific_startup_error() {
+        let project = tempfile::tempdir().unwrap();
+        let manager = AcpManager::new();
+        let mut options = fake_start_options("resume-failure", 1, project.path());
+        options.persisted_session_id = Some("missing-session".into());
+
+        let error = manager.start_session(options).await.unwrap_err();
+
+        assert!(error.contains("session/load failed"), "{error}");
         assert_eq!(manager.active_session_count().await, 0);
     }
 
@@ -2313,6 +2417,78 @@ mod tests {
             .all(|pair| pair[0].sequence < pair[1].sequence));
 
         manager.stop_session("conversation-1").await.unwrap();
+        let disconnected = tokio::time::timeout(Duration::from_secs(1), connect_event_rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(matches!(
+            disconnected.payload,
+            AcpEventPayload::Disconnected { .. }
+        ));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn cancellation_suppresses_late_updates_and_permissions() {
+        let project = tempfile::tempdir().unwrap();
+        let manager = AcpManager::new();
+        manager
+            .start_session(late_cancel_start_options("late-cancel", 1, project.path()))
+            .await
+            .unwrap();
+        let (event_tx, mut event_rx) = tokio::sync::mpsc::unbounded_channel();
+        let prompt_manager = manager.clone();
+        let prompt = tokio::spawn(async move {
+            prompt_manager
+                .prompt(
+                    "late-cancel",
+                    1,
+                    vec![AcpPromptContent::Text {
+                        text: "cancel me".into(),
+                    }],
+                    PermissionMode::Request,
+                    AcpEventSink::new(move |event| {
+                        event_tx
+                            .send(event)
+                            .map_err(|_| "event receiver closed".into())
+                    }),
+                )
+                .await
+        });
+        let mut events = Vec::new();
+        loop {
+            let event = tokio::time::timeout(Duration::from_secs(1), event_rx.recv())
+                .await
+                .unwrap()
+                .unwrap();
+            let prompt_reached_agent = matches!(
+                &event.payload,
+                AcpEventPayload::TextDelta { text } if text == "hello from fake"
+            );
+            events.push(event);
+            if prompt_reached_agent {
+                break;
+            }
+        }
+
+        manager.cancel_session("late-cancel", 1).await.unwrap();
+        let turn = tokio::time::timeout(Duration::from_secs(2), prompt)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert_eq!(turn.stop_reason, "cancelled");
+        while let Ok(event) = event_rx.try_recv() {
+            events.push(event);
+        }
+        assert!(!events.iter().any(|event| matches!(
+            &event.payload,
+            AcpEventPayload::TextDelta { text } if text == "late after cancel"
+        )));
+        assert!(!events
+            .iter()
+            .any(|event| matches!(event.payload, AcpEventPayload::PermissionRequest { .. })));
+        manager.stop_session("late-cancel").await.unwrap();
     }
 
     #[tokio::test]

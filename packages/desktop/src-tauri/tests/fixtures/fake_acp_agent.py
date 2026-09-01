@@ -70,48 +70,99 @@ for line in sys.stdin:
             }
         )
         PENDING = {"prompt_id": request_id, "session_id": session_id}
-        send(
-            {
-                "jsonrpc": "2.0",
-                "id": "permission-1",
-                "method": "session/request_permission",
-                "params": {
-                    "sessionId": session_id,
-                    "toolCall": {
-                        "toolCallId": "tool-1",
-                        "kind": "edit",
-                        "title": "Edit a file",
-                    },
-                    "options": [
-                        {
-                            "optionId": "reject-once",
-                            "name": "Reject",
-                            "kind": "reject_once",
-                        },
-                        {
-                            "optionId": "allow-once",
-                            "name": "Allow",
-                            "kind": "allow_once",
-                        },
-                        {
-                            "optionId": "allow-always",
-                            "name": "Always allow",
-                            "kind": "allow_always",
-                        },
-                    ],
-                },
-            }
-        )
-    elif method == "session/cancel":
-        if PENDING is not None:
+        if "--late-after-cancel" not in sys.argv[1:]:
             send(
                 {
                     "jsonrpc": "2.0",
-                    "id": PENDING["prompt_id"],
-                    "result": {"stopReason": "cancelled"},
+                    "id": "permission-1",
+                    "method": "session/request_permission",
+                    "params": {
+                        "sessionId": session_id,
+                        "toolCall": {
+                            "toolCallId": "tool-1",
+                            "kind": "edit",
+                            "title": "Edit a file",
+                        },
+                        "options": [
+                            {
+                                "optionId": "reject-once",
+                                "name": "Reject",
+                                "kind": "reject_once",
+                            },
+                            {
+                                "optionId": "allow-once",
+                                "name": "Allow",
+                                "kind": "allow_once",
+                            },
+                            {
+                                "optionId": "allow-always",
+                                "name": "Always allow",
+                                "kind": "allow_always",
+                            },
+                        ],
+                    },
                 }
             )
-            PENDING = None
+    elif method == "session/cancel":
+        if PENDING is not None:
+            if "--late-after-cancel" in sys.argv[1:]:
+                send(
+                    {
+                        "jsonrpc": "2.0",
+                        "method": "session/update",
+                        "params": {
+                            "sessionId": PENDING["session_id"],
+                            "update": {
+                                "sessionUpdate": "agent_message_chunk",
+                                "content": {"type": "text", "text": "late after cancel"},
+                            },
+                        },
+                    }
+                )
+                send(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": "late-permission",
+                        "method": "session/request_permission",
+                        "params": {
+                            "sessionId": PENDING["session_id"],
+                            "toolCall": {
+                                "toolCallId": "late-tool",
+                                "kind": "execute",
+                                "title": "Late request",
+                            },
+                            "options": [
+                                {
+                                    "optionId": "reject-once",
+                                    "name": "Reject",
+                                    "kind": "reject_once",
+                                }
+                            ],
+                        },
+                    }
+                )
+            else:
+                send(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": PENDING["prompt_id"],
+                        "result": {"stopReason": "cancelled"},
+                    }
+                )
+                PENDING = None
+    elif request_id == "late-permission" and PENDING is not None:
+        outcome = message.get("result", {}).get("outcome", {})
+        if outcome.get("outcome") != "cancelled":
+            print("client did not cancel the late permission", file=sys.stderr)
+            sys.exit(24)
+        send(
+            {
+                "jsonrpc": "2.0",
+                "id": PENDING["prompt_id"],
+                "result": {"stopReason": "cancelled"},
+            }
+        )
+        PENDING = None
     elif request_id == "permission-1" and PENDING is not None:
         outcome = message.get("result", {}).get("outcome", {})
         if outcome.get("outcome") != "selected" or outcome.get("optionId") != "allow-once":
