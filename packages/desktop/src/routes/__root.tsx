@@ -5,6 +5,7 @@ import { useToolsStore } from "../stores/tools";
 import { useWebSocketStore } from "../stores/websocket";
 import { useWorkspacesStore } from "../stores/workspaces";
 import { useNotificationsStore } from "../stores/notifications";
+import { useActivityStore } from "../stores/activity";
 import { useKeybindings } from "../hooks/useKeybindings";
 import { Sidebar } from "../components/Sidebar";
 import { ChatHeader } from "../components/ChatHeader";
@@ -52,6 +53,16 @@ export function RootLayout() {
       useNotificationsStore.getState().reset();
     }
     prevTokenRef.current = token;
+  }, [token]);
+
+  // Activity is server-owned state, so reconcile it even when auth restored a
+  // token before this layout mounted (for example after reopening the app).
+  useEffect(() => {
+    if (token) {
+      void useActivityStore.getState().fetchActivity();
+    } else {
+      useActivityStore.getState().reset();
+    }
   }, [token]);
 
   // Keep credentials current only after Agent Chat has explicitly activated MCP.

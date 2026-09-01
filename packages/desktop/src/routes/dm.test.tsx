@@ -234,16 +234,19 @@ const persistedThread = {
   lastActivityAt: "2026-07-27T00:00:00.000Z",
 };
 
-async function renderRoute() {
+async function renderRoute(initialEntry = "/dm/dm-1") {
   const rootRoute = createRootRoute();
   const dmRoute = createRoute({
     getParentRoute: () => rootRoute,
     path: "/dm/$id",
+    validateSearch: (search: Record<string, unknown>) => ({
+      threadId: typeof search.threadId === "string" ? search.threadId : undefined,
+    }),
     component: DmRoute,
   });
   const router = createRouter({
     routeTree: rootRoute.addChildren([dmRoute]),
-    history: createMemoryHistory({ initialEntries: ["/dm/dm-1"] }),
+    history: createMemoryHistory({ initialEntries: [initialEntry] }),
   });
 
   await act(async () => {
@@ -283,6 +286,21 @@ describe("DmRoute deferred Hermes task drafts", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "New task" }));
     expect(composer).toHaveValue("Keep this unfinished task");
+  });
+
+  it("opens an Activity deep link on the requested task", async () => {
+    mocks.threads = [persistedThread];
+    await renderRoute("/dm/dm-1?threadId=thread-1");
+
+    await waitFor(() =>
+      expect(mocks.channelChatOptions).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          conversationId: "dm-1",
+          threadId: "thread-1",
+          unthreadedOnly: false,
+        }),
+      ),
+    );
   });
 
   it("changes composer identity only at the local New task boundary", async () => {
@@ -416,7 +434,11 @@ describe("DmRoute deferred Hermes task drafts", () => {
     fireEvent.click(screen.getByRole("button", { name: "New task" }));
     fireEvent.click(screen.getByRole("button", { name: "Send first prompt" }));
     await act(async () => {
-      await router.navigate({ to: "/dm/$id", params: { id: "dm-2" } });
+      await router.navigate({
+        to: "/dm/$id",
+        params: { id: "dm-2" },
+        search: { threadId: undefined },
+      });
     });
     fireEvent.click(screen.getByRole("button", { name: "New task" }));
     expect(screen.getByTestId("local-task-draft")).toBeInTheDocument();
