@@ -57,6 +57,7 @@ import {
   findIdempotentMessage,
 } from "./messages";
 import { requireConversationMutationAccess } from "./conversation-mutation-access";
+import { recordMessageUnreads } from "./activity";
 
 export const BOT_QUEUE_NAME = "thechat:bots";
 export const BOT_INVOKE_JOB_NAME = "bot.invoke";
@@ -1851,6 +1852,8 @@ export async function publishHermesPlatformMessage(input: {
           return { message: existing, duplicate: true };
         }
 
+        await recordMessageUnreads(tx, inserted);
+
         await attachReadyAttachments(tx, {
           messageId: inserted.id,
           attachmentIds,
@@ -2185,6 +2188,8 @@ async function recordHermesExecutionFailure(
         parts: [{ type: "text", text: content }],
       })
       .returning();
+
+    await recordMessageUnreads(tx, inserted);
 
     await tx
       .update(botInvocations)
@@ -2555,6 +2560,7 @@ async function failInvocation(
         parts: [{ type: "text", text: content }],
       })
       .returning();
+    await recordMessageUnreads(tx, responseMessage);
     await tx
       .update(botInvocations)
       .set({ responseMessageId: responseMessage.id })

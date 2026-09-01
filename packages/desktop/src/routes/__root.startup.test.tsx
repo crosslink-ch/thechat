@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => {
     checkForUpdates: vi.fn(),
     createCommands: vi.fn(() => []),
     disconnect: vi.fn(),
+    fetchActivity: vi.fn(),
     fetchConversations: vi.fn(),
     fetchNotifications: vi.fn(),
     initializeCodexAuth: vi.fn(),
@@ -25,6 +26,7 @@ const mocks = vi.hoisted(() => {
     logInfo: vi.fn(),
     navigate: vi.fn(),
     registerGlobalWsHandlers: vi.fn(() => vi.fn()),
+    resetActivity: vi.fn(),
     resetNotifications: vi.fn(),
     resetUpdater: vi.fn(),
     resetWorkspaces: vi.fn(),
@@ -99,6 +101,14 @@ vi.mock("../stores/notifications", () => ({
     }),
   },
 }));
+vi.mock("../stores/activity", () => ({
+  useActivityStore: {
+    getState: () => ({
+      fetchActivity: mocks.fetchActivity,
+      reset: mocks.resetActivity,
+    }),
+  },
+}));
 vi.mock("../hooks/useKeybindings", () => ({ useKeybindings: vi.fn() }));
 vi.mock("../hooks/useCtrlWheelZoom", () => ({ useCtrlWheelZoom: vi.fn() }));
 vi.mock("../lib/ws-global-handlers", () => ({
@@ -154,6 +164,7 @@ describe("RootLayout desktop startup", () => {
 
     expect(mocks.authState.initialize).toHaveBeenCalled();
     expect(mocks.checkForUpdates).toHaveBeenCalled();
+    expect(mocks.fetchActivity).toHaveBeenCalled();
     expect(ipcCommands.filter((command) => command.startsWith("mcp_"))).toEqual([]);
 
     result.unmount();

@@ -102,6 +102,20 @@ describe("createCommands", () => {
     expect(closePaletteAndRefocusMock).toHaveBeenCalledOnce();
   });
 
+  it("opens the cross-workspace Activity view", () => {
+    const navigate = vi.fn();
+    const command = createCommands(navigate).find((c) => c.id === "view-activity");
+
+    expect(command).toMatchObject({
+      id: "view-activity",
+      label: "View Activity",
+    });
+
+    command!.execute();
+    expect(navigate).toHaveBeenCalledWith({ to: "/activity" });
+    expect(closePaletteAndRefocusMock).toHaveBeenCalledOnce();
+  });
+
   it("opens the Add Hermes Bot flow from a dedicated command", () => {
     const navigate = vi.fn();
     const command = createCommands(navigate).find((c) => c.id === "add-hermes-bot");

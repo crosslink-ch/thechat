@@ -12,6 +12,7 @@ import { fireNotification } from "./notifications";
 import { useAuthStore } from "../stores/auth";
 import { useWorkspacesStore } from "../stores/workspaces";
 import { useNotificationsStore } from "../stores/notifications";
+import { useActivityStore } from "../stores/activity";
 import { useConversationsStore } from "../stores/conversations";
 import { usePresenceStore } from "../stores/presence";
 import {
@@ -70,6 +71,11 @@ describe("registerGlobalWsHandlers", () => {
       notifications: [],
       loading: false,
       fetchNotifications: vi.fn().mockResolvedValue(undefined),
+    });
+    useActivityStore.getState().reset();
+    useActivityStore.setState({
+      fetchActivity: vi.fn().mockResolvedValue(undefined),
+      handleIncomingMessage: vi.fn().mockResolvedValue(undefined),
     });
     useConversationsStore.setState({
       unreadChannels: new Set(),
@@ -139,6 +145,83 @@ describe("registerGlobalWsHandlers", () => {
     expect(invalidateQueries).toHaveBeenCalledWith({
       queryKey: ["messages"],
     });
+    expect(useActivityStore.getState().fetchActivity).toHaveBeenCalled();
+    cleanup();
+  });
+
+  it("reconciles background messages into the server-backed activity inbox", () => {
+    useAuthStore.setState({
+      token: "token-1",
+      loading: false,
+      user: {
+        id: "u-me",
+        name: "Me",
+        email: "me@example.com",
+        avatar: null,
+        type: "human",
+      },
+    });
+    const cleanup = registerGlobalWsHandlers(
+      () => {},
+      () => "/channel/another-conversation",
+    );
+    const message = {
+      id: "message-background-activity",
+      conversationId: "conversation-1",
+      threadId: null,
+      senderId: "u-other",
+      senderName: "Other",
+      senderType: "human" as const,
+      content: "Background activity",
+      createdAt: "2026-09-01T10:00:00.000Z",
+    };
+
+    wsEvents.emit("ws:new_message", {
+      conversationType: "group",
+      message,
+    });
+
+    expect(
+      useActivityStore.getState().handleIncomingMessage,
+    ).toHaveBeenCalledWith(message, false);
+    cleanup();
+  });
+
+  it("defers a visible live message to the rendered route cursor", () => {
+    useAuthStore.setState({
+      token: "token-1",
+      loading: false,
+      user: {
+        id: "u-me",
+        name: "Me",
+        email: "me@example.com",
+        avatar: null,
+        type: "human",
+      },
+    });
+    const cleanup = registerGlobalWsHandlers(
+      () => {},
+      () => "/dm/conversation-1",
+    );
+    const message = {
+      id: "message-visible-activity",
+      conversationId: "conversation-1",
+      threadId: null,
+      senderId: "u-other",
+      senderName: "Other",
+      senderType: "human" as const,
+      content: "Visible activity",
+      createdAt: "2026-09-01T10:01:00.000Z",
+    };
+
+    wsEvents.emit("ws:new_message", {
+      conversationType: "direct",
+      message,
+    });
+
+    expect(
+      useActivityStore.getState().handleIncomingMessage,
+    ).toHaveBeenCalledWith(message, true);
     cleanup();
   });
 

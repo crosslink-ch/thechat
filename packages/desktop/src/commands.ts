@@ -172,12 +172,12 @@ export function createCommands(
       },
     },
     {
-      id: "notifications",
-      label: "View Notifications",
+      id: "view-activity",
+      label: "View Activity",
       shortcut: null,
       keybinding: null,
       execute: () => {
-        navigate({ to: "/notifications" });
+        navigate({ to: "/activity" });
         closePaletteAndRefocus();
       },
     },
