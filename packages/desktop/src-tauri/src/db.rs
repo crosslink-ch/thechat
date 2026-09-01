@@ -282,12 +282,19 @@ impl Database {
         Ok(changed == 1)
     }
 
-    #[instrument(skip(self, expected_session_id, expected_profile_fingerprint))]
+    #[instrument(skip(
+        self,
+        expected_session_id,
+        expected_profile_fingerprint,
+        expected_runtime_epoch
+    ))]
     pub fn clear_acp_session_metadata_if_matches(
         &self,
         id: &str,
         expected_session_id: Option<&str>,
         expected_profile_fingerprint: Option<&str>,
+        expected_runtime_epoch: Option<&str>,
+        expected_generation: Option<i64>,
     ) -> Result<bool, String> {
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
         let changed = conn
@@ -300,12 +307,16 @@ impl Database {
                      updated_at = ?1
                  WHERE id = ?2
                    AND acp_session_id IS ?3
-                   AND acp_profile_fingerprint IS ?4",
+                   AND acp_profile_fingerprint IS ?4
+                   AND acp_runtime_epoch IS ?5
+                   AND acp_generation IS ?6",
                 params![
                     Utc::now().to_rfc3339(),
                     id,
                     expected_session_id,
-                    expected_profile_fingerprint
+                    expected_profile_fingerprint,
+                    expected_runtime_epoch,
+                    expected_generation
                 ],
             )
             .map_err(|e| format!("Failed to clear ACP session metadata: {e}"))?;
@@ -949,6 +960,8 @@ mod tests {
                 &conversation.id,
                 Some("session-2"),
                 Some("sha256-profile"),
+                Some("runtime-a"),
+                Some(2),
             )
             .unwrap());
         assert!(db
@@ -956,8 +969,55 @@ mod tests {
                 &conversation.id,
                 Some("session-new-runtime"),
                 Some("sha256-new"),
+                Some("runtime-b"),
+                Some(1),
             )
             .unwrap());
+    }
+
+    #[test]
+    fn acp_metadata_clear_rejects_same_session_from_newer_generation() {
+        let db = test_db();
+        let conversation = db
+            .create_conversation_with_agent("Agent", Some("/project"), Some("profile-a"))
+            .unwrap();
+        assert!(db
+            .set_acp_session_metadata(
+                &conversation.id,
+                "same-session",
+                "same-fingerprint",
+                "runtime-a",
+                1,
+            )
+            .unwrap());
+        let stale = db.get_conversation(&conversation.id).unwrap().unwrap();
+        assert!(db
+            .set_acp_session_metadata(
+                &conversation.id,
+                "same-session",
+                "same-fingerprint",
+                "runtime-a",
+                2,
+            )
+            .unwrap());
+
+        assert!(!db
+            .clear_acp_session_metadata_if_matches(
+                &conversation.id,
+                stale.acp_session_id.as_deref(),
+                stale.acp_profile_fingerprint.as_deref(),
+                stale.acp_runtime_epoch.as_deref(),
+                stale.acp_generation,
+            )
+            .unwrap());
+        let loaded = db.get_conversation(&conversation.id).unwrap().unwrap();
+        assert_eq!(loaded.acp_session_id.as_deref(), Some("same-session"));
+        assert_eq!(
+            loaded.acp_profile_fingerprint.as_deref(),
+            Some("same-fingerprint")
+        );
+        assert_eq!(loaded.acp_runtime_epoch.as_deref(), Some("runtime-a"));
+        assert_eq!(loaded.acp_generation, Some(2));
     }
 
     #[test]

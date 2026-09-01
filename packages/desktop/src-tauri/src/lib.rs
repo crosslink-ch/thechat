@@ -655,11 +655,15 @@ async fn acp_connect(
                 let clear_id = conversation_id.clone();
                 let expected_session_id = conversation.acp_session_id.clone();
                 let expected_fingerprint = conversation.acp_profile_fingerprint.clone();
+                let expected_runtime_epoch = conversation.acp_runtime_epoch.clone();
+                let expected_generation = conversation.acp_generation;
                 let _ = tokio::task::spawn_blocking(move || {
                     db.clear_acp_session_metadata_if_matches(
                         &clear_id,
                         expected_session_id.as_deref(),
                         expected_fingerprint.as_deref(),
+                        expected_runtime_epoch.as_deref(),
+                        expected_generation,
                     )
                 })
                 .await;
