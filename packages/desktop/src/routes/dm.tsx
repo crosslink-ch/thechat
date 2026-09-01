@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from "react";
-import { useParams } from "@tanstack/react-router";
+import { useParams, useSearch } from "@tanstack/react-router";
 import { useAuthStore } from "../stores/auth";
 import {
   useBotRuntime,
@@ -14,6 +14,7 @@ import { useWebSocketStore } from "../stores/websocket";
 import { useWorkspacesStore } from "../stores/workspaces";
 import { composerDraftKey } from "../stores/composer-drafts";
 import { useChannelChat } from "../hooks/useChannelChat";
+import { usePersistConversationRead } from "../hooks/usePersistConversationRead";
 import { ChannelChatView } from "../components/ChannelChatView";
 import { HermesDmChatView } from "../components/HermesDmChatView";
 import { HermesRuntimePanel } from "../components/HermesRuntimePanel";
@@ -43,6 +44,7 @@ const LOCAL_TASK_DRAFT_SCOPE = "__local_task_draft__";
 
 export function DmRoute() {
   const { id: conversationId } = useParams({ from: "/dm/$id" });
+  const { threadId: requestedThreadId } = useSearch({ from: "/dm/$id" });
   const token = useAuthStore((s) => s.token);
   const user = useAuthStore((s) => s.user);
   const members = useWorkspacesStore((s) => s.activeWorkspace?.members);
@@ -73,7 +75,9 @@ export function DmRoute() {
     () => buildHermesSlashCommands(registeredBotCommands),
     [registeredBotCommands],
   );
-  const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
+  const [activeThreadId, setActiveThreadId] = useState<string | null>(
+    requestedThreadId ?? null,
+  );
   const [draftTaskActive, setDraftTaskActive] = useState(false);
   const [draftSendError, setDraftSendError] = useState<string | null>(null);
   const [draftComposerRevision, setDraftComposerRevision] = useState(0);
@@ -190,6 +194,11 @@ export function DmRoute() {
     wsSendMessage,
     selfUser: user,
   });
+  usePersistConversationRead(
+    chatConversationId,
+    channelChat.messages,
+    !draftTaskActive && !channelChat.loading,
+  );
 
   const channelChatRef = useRef(channelChat);
   channelChatRef.current = channelChat;
@@ -300,20 +309,20 @@ export function DmRoute() {
     typingTimers.current.clear();
   }, [conversationId, activeThreadId, draftTaskActive]);
 
-  // Reset task selection when the visible DM changes.
+  // Keep Activity deep links and browser navigation aligned with task state.
   useEffect(() => {
-    setActiveThreadId(null);
+    setActiveThreadId(requestedThreadId ?? null);
     setDraftTaskActive(false);
     setDraftSendError(null);
     draftPersistingRef.current = null;
-  }, [conversationId]);
+  }, [conversationId, requestedThreadId]);
 
   useEffect(() => {
-    if (!isHermesDm) return;
+    if (!isHermesDm || threadsLoading) return;
     if (activeThreadId && !threads.some((thread) => thread.id === activeThreadId)) {
       setActiveThreadId(null);
     }
-  }, [activeThreadId, isHermesDm, threads]);
+  }, [activeThreadId, isHermesDm, threads, threadsLoading]);
 
   const handleCreateThread = useCallback(() => {
     if (!isHermesDm || draftPersistingRef.current) return;

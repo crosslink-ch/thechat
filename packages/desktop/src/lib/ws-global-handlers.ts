@@ -6,6 +6,7 @@ import {
   useWorkspacesStore,
 } from "../stores/workspaces";
 import { useNotificationsStore } from "../stores/notifications";
+import { useActivityStore } from "../stores/activity";
 import { useConversationsStore } from "../stores/conversations";
 import { usePresenceStore } from "../stores/presence";
 import {
@@ -83,6 +84,7 @@ export function registerGlobalWsHandlers(
     if (workspaceId) reconcileWorkspace(workspaceId);
     void messageQueryClient.invalidateQueries({ queryKey: ["messages"] });
     void useNotificationsStore.getState().fetchNotifications();
+    void useActivityStore.getState().fetchActivity();
   };
 
   const onMessageReactionsUpdated = ({
@@ -112,6 +114,15 @@ export function registerGlobalWsHandlers(
   }: WsEvents["ws:new_message"]) => {
     cacheIncomingMessage(messageQueryClient, msg);
     const currentUserId = useAuthStore.getState().user?.id;
+    if (msg.senderId !== currentUserId) {
+      const route = currentPath();
+      const conversationVisible =
+        route === `/channel/${msg.conversationId}` ||
+        route === `/dm/${msg.conversationId}`;
+      void useActivityStore
+        .getState()
+        .handleIncomingMessage(msg, conversationVisible);
+    }
     if (
       conversationType === "group" &&
       msg.senderId !== currentUserId &&

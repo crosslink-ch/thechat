@@ -6,6 +6,7 @@ import { useAuthStore } from "../stores/auth";
 import { useWorkspacesStore } from "../stores/workspaces";
 import { useConversationsStore } from "../stores/conversations";
 import { useNotificationsStore } from "../stores/notifications";
+import { useActivityStore } from "../stores/activity";
 import { usePresenceStore } from "../stores/presence";
 import { openAuthModal } from "./AuthModal";
 import { openWorkspaceModal } from "./WorkspaceModal";
@@ -109,13 +110,13 @@ export function Sidebar() {
   const directConversationIdsByUserId = useConversationsStore(
     (s) => s.directConversationIdsByUserId,
   );
-  const unreadDirectConversations = useConversationsStore(
-    (s) => s.unreadDirectConversations,
-  );
+
   const setActiveDirectConversation = useConversationsStore(
     (s) => s.setActiveDirectConversation,
   );
   const notificationCount = useNotificationsStore((s) => s.notifications.length);
+  const activityItems = useActivityStore((s) => s.items);
+  const unreadMessageCount = useActivityStore((s) => s.totalUnreadMessages);
   const onlineUserIds = usePresenceStore((s) => s.onlineUserIds);
 
   // Determine current active IDs from route
@@ -158,6 +159,25 @@ export function Sidebar() {
   );
   const canManageChannels =
     currentMembership?.role === "owner" || currentMembership?.role === "admin";
+  const activityCount = unreadMessageCount + notificationCount;
+  const unreadActivityConversationIds = new Set(
+    activityItems.map((item) => item.conversationId),
+  );
+  const unreadActivitySenderIds = new Set(
+    activityItems
+      .filter(
+        (item) =>
+          item.conversationType === "direct" &&
+          item.workspaceId === activeWorkspace?.id,
+      )
+      .map((item) => item.latestMessage.senderId),
+  );
+  const unreadWorkspaceIds = new Set(
+    activityItems.map((item) => item.workspaceId),
+  );
+  const otherUnreadWorkspaceCount = [...unreadWorkspaceIds].filter(
+    (workspaceId) => workspaceId !== activeWorkspace?.id,
+  ).length;
 
   const handleSelectChannel = (channel: WorkspaceChannel) => {
     navigate({ to: "/channel/$id", params: { id: channel.id } });
@@ -177,7 +197,11 @@ export function Sidebar() {
           .getState()
           .rememberDirectConversation(member.userId, data.id!);
         useConversationsStore.getState().setActiveDirectConversation(data.id!);
-        navigate({ to: "/dm/$id", params: { id: data.id! } });
+        navigate({
+          to: "/dm/$id",
+          params: { id: data.id! },
+          search: { threadId: undefined },
+        });
       }
     } catch {
       // Failed to create/get DM
@@ -197,23 +221,36 @@ export function Sidebar() {
       </button>
       {dropdownOpen && (
         <div className="absolute top-full right-0 left-0 z-[15] mt-3 overflow-hidden rounded-md border border-border-strong bg-surface shadow-card animate-fade-in">
-          {workspaces.map((ws) => (
-            <button
-              key={ws.id}
-              className={`block w-full cursor-pointer border-none px-3 py-2 text-left font-[inherit] text-[0.9rem] transition-colors duration-100 ${
-                activeWorkspace?.id === ws.id
-                  ? "bg-elevated text-text"
-                  : "bg-transparent text-text-muted hover:bg-hover hover:text-text"
-              }`}
-              onClick={() => {
-                selectWorkspace(ws.id);
-                setDropdownOpen(false);
-                setProfileMenuOpen(false);
-              }}
-            >
-              {ws.name}
-            </button>
-          ))}
+          {workspaces.map((ws) => {
+            const hasUnread = unreadWorkspaceIds.has(ws.id);
+            return (
+              <button
+                key={ws.id}
+                className={`flex w-full cursor-pointer items-center gap-2 border-none px-3 py-2 text-left font-[inherit] text-[0.9rem] transition-colors duration-100 ${
+                  activeWorkspace?.id === ws.id
+                    ? "bg-elevated text-text"
+                    : "bg-transparent text-text-muted hover:bg-hover hover:text-text"
+                }`}
+                aria-label={`${ws.name}${hasUnread ? ", unread messages" : ""}`}
+                onClick={() => {
+                  selectWorkspace(ws.id);
+                  setDropdownOpen(false);
+                  setProfileMenuOpen(false);
+                }}
+              >
+                <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap">
+                  {ws.name}
+                </span>
+                {hasUnread && (
+                  <span
+                    data-testid={`workspace-unread-indicator-${ws.id}`}
+                    className="size-2 shrink-0 rounded-full bg-accent"
+                    aria-hidden="true"
+                  />
+                )}
+              </button>
+            );
+          })}
           <button
             className="block w-full cursor-pointer border-t border-border bg-transparent px-3 py-2 text-left font-[inherit] text-[0.9rem] text-accent transition-colors duration-100 hover:bg-hover hover:text-text"
             onClick={() => {
@@ -266,11 +303,25 @@ export function Sidebar() {
           onClick={() => {
             if (user) setDropdownOpen((open) => !open);
           }}
-          aria-label="Current workspace"
+          aria-label={
+            otherUnreadWorkspaceCount > 0
+              ? `Current workspace, ${otherUnreadWorkspaceCount} other ${
+                  otherUnreadWorkspaceCount === 1 ? "workspace" : "workspaces"
+                } with unread messages`
+              : "Current workspace"
+          }
           title={activeWorkspace?.name ?? "TheChat"}
         >
           <span className="absolute -left-[11px] h-[30px] w-0.5 rounded-r-sm bg-[#2f88bf]" />
           {workspaceInitial}
+          {otherUnreadWorkspaceCount > 0 && (
+            <span
+              data-testid="other-workspace-unread-count"
+              className="absolute -right-2 -top-2 min-w-[17px] rounded-full bg-accent px-1 text-center text-[0.643rem] font-semibold leading-[17px] text-white"
+            >
+              {otherUnreadWorkspaceCount > 9 ? "9+" : otherUnreadWorkspaceCount}
+            </span>
+          )}
         </button>
 
         <button
@@ -292,14 +343,23 @@ export function Sidebar() {
           </div>
           {user && (
             <button
-              className="ml-2 flex size-8 cursor-pointer items-center justify-center rounded-md border-none bg-transparent text-text-muted transition-colors duration-150 hover:bg-hover hover:text-text"
-              onClick={() => navigate({ to: "/notifications" })}
-              aria-label="Notifications"
-              title="Notifications"
+              className="relative ml-2 flex size-8 cursor-pointer items-center justify-center rounded-md border-none bg-transparent text-text-muted transition-colors duration-150 hover:bg-hover hover:text-text"
+              onClick={() => navigate({ to: "/activity" })}
+              aria-label={
+                activityCount > 0
+                  ? `Activity, ${activityCount} unread items`
+                  : "Activity"
+              }
+              title="Activity"
             >
               <BellIcon />
-              {notificationCount > 0 && (
-                <span className="absolute mt-[-18px] ml-[18px] size-2 rounded-full bg-accent" />
+              {activityCount > 0 && (
+                <span
+                  data-testid="activity-unread-count"
+                  className="absolute -right-1.5 -top-1.5 min-w-[16px] rounded-full bg-accent px-1 text-center text-[0.571rem] font-semibold leading-4 text-white"
+                >
+                  {activityCount > 99 ? "99+" : activityCount}
+                </span>
               )}
             </button>
           )}
@@ -313,7 +373,9 @@ export function Sidebar() {
                 <div className="space-y-0.5 pb-1">
                   {activeWorkspace.channels.map((ch) => {
                     const isActive = activeChannelId === ch.id;
-                    const isUnread = unreadChannels.has(ch.id);
+                    const isUnread =
+                      unreadChannels.has(ch.id) ||
+                      unreadActivityConversationIds.has(ch.id);
                     const menuOpen = channelMenuId === ch.id;
                     return (
                       <div key={ch.id} className="group relative">
@@ -325,7 +387,12 @@ export function Sidebar() {
                         >
                           <span className="w-4 shrink-0 text-center text-text-dimmed">#</span>
                           <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap">{ch.name}</span>
-                          {isUnread && <span className="size-1.5 shrink-0 rounded-full bg-accent" />}
+                          {isUnread && (
+                            <span
+                              data-testid={`channel-unread-indicator-${ch.id}`}
+                              className="size-1.5 shrink-0 rounded-full bg-accent"
+                            />
+                          )}
                         </button>
                         {canManageChannels && (
                           <DropdownMenu.Root
@@ -394,9 +461,7 @@ export function Sidebar() {
                 const renderMember = (m: WorkspaceMember) => {
                   const isActive =
                     activeDmConversationId === directConversationIdsByUserId[m.userId];
-                  const isUnread = Object.values(unreadDirectConversations).includes(
-                    m.userId,
-                  );
+                  const isUnread = unreadActivitySenderIds.has(m.userId);
                   const isOnline =
                     m.user.type === "human" && onlineUserIds.has(m.userId);
                   const ariaLabel = [
@@ -505,14 +570,14 @@ export function Sidebar() {
                   <button
                     className="flex w-full cursor-pointer items-center justify-between gap-2 border-none bg-transparent px-3 py-2.5 text-left font-[inherit] text-[0.857rem] text-text-secondary transition-colors duration-100 hover:bg-hover hover:text-text"
                     onClick={() => {
-                      navigate({ to: "/notifications" });
+                      navigate({ to: "/activity" });
                       setProfileMenuOpen(false);
                     }}
                   >
-                    <span>Notifications</span>
-                    {notificationCount > 0 && (
+                    <span>Activity</span>
+                    {activityCount > 0 && (
                       <span className="min-w-[18px] rounded-full bg-accent px-1.5 py-px text-center text-[0.714rem] font-semibold text-white">
-                        {notificationCount}
+                        {activityCount > 99 ? "99+" : activityCount}
                       </span>
                     )}
                   </button>

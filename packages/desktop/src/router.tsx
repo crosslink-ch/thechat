@@ -10,6 +10,7 @@ import { WorkspaceHomeRoute } from "./routes/workspace-home";
 import { ChannelRoute } from "./routes/channel";
 import { DmRoute } from "./routes/dm";
 import { NotificationsRoute } from "./routes/notifications";
+import { ActivityRoute } from "./routes/activity";
 import { HermesDebugRoute } from "./routes/hermes-debug";
 import { ScrollDebugRoute } from "./routes/scroll-debug";
 import { SettingsRoute } from "./routes/settings";
@@ -51,6 +52,9 @@ const channelRoute = createRoute({
 const dmRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/dm/$id",
+  validateSearch: (search: Record<string, unknown>) => ({
+    threadId: typeof search.threadId === "string" ? search.threadId : undefined,
+  }),
   component: DmRoute,
 });
 
@@ -58,6 +62,12 @@ const notificationsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/notifications",
   component: NotificationsRoute,
+});
+
+const activityRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/activity",
+  component: ActivityRoute,
 });
 
 const settingsRoute = createRoute({
@@ -107,6 +117,7 @@ const routeTree = rootRoute.addChildren([
   channelRoute,
   dmRoute,
   notificationsRoute,
+  activityRoute,
   settingsRoute,
   workspaceManageRoute,
   botsManageRoute,
