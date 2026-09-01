@@ -15,6 +15,7 @@ import {
   type AcpEventState,
 } from "../acp/event-reducer";
 import {
+  abortAcpTurn,
   beginAcpTurn,
   cancelAcp,
   completeAcpTurn,
@@ -417,6 +418,7 @@ export function useAcpChat(options: UseAcpChatOptions) {
       let turnAdmissionAttempted = false;
       let turnToken: string | null = null;
       let activityCompleted = false;
+      let cancellationAcceptedAfterAdmission = false;
 
       try {
         if (!session.connected) {
@@ -495,6 +497,15 @@ export function useAcpChat(options: UseAcpChatOptions) {
               })),
             )
           : [];
+        if (activePrompt.cancelled) {
+          session.connected = false;
+          try {
+            await disconnectAcp({ conversationId, generation });
+          } catch {
+            // Startup cancellation may already have removed the backend session.
+          }
+          throw new Error("ACP startup was cancelled");
+        }
         const userParts: MessagePart[] = [];
         if (text) userParts.push({ type: "text", text });
         for (const image of imageRefs) {
@@ -514,6 +525,23 @@ export function useAcpChat(options: UseAcpChatOptions) {
         turnToken = turnStart.turnToken;
         if (activeConversationIdRef.current === conversationId) {
           appendVisibleMessage(dbMessageToMessage(turnStart.message));
+        }
+        if (activePrompt.cancelled) {
+          try {
+            await abortAcpTurn({ conversationId, generation, turnToken });
+            turnAdmissionAttempted = false;
+            turnToken = null;
+            cancellationAcceptedAfterAdmission = true;
+          } catch {
+            // Once dispatch may have started, keep the ledger dirty and fail closed.
+          }
+          session.connected = false;
+          try {
+            await disconnectAcp({ conversationId, generation });
+          } catch {
+            // Cancellation already made this generation unusable to the renderer.
+          }
+          throw new Error("ACP startup was cancelled");
         }
 
         const contentBlocks: AcpPromptContent[] = [];
@@ -597,6 +625,23 @@ export function useAcpChat(options: UseAcpChatOptions) {
         }
         return true;
       } catch (sendError) {
+        if (activePrompt.cancelled) {
+          const currentState = turnStates.get(conversationId);
+          if (
+            currentState?.generation === generation &&
+            currentState.status === "cancelling"
+          ) {
+            const cancelledState: AcpEventState = {
+              ...currentState,
+              status: "cancelled",
+              pendingPermissions: [],
+            };
+            turnStates.set(conversationId, cancelledState);
+            useAcpStore
+              .getState()
+              .updateEventState(conversationId, cancelledState);
+          }
+        }
         if (turnAdmissionAttempted) {
           session.connected = false;
           try {
@@ -613,7 +658,7 @@ export function useAcpChat(options: UseAcpChatOptions) {
           currentConversation.title,
           isConversationVisible(conversationId),
         );
-        return false;
+        return cancellationAcceptedAfterAdmission;
       } finally {
         if (!activityCompleted) {
           useAcpStore.getState().completeTurn(conversationId, null);

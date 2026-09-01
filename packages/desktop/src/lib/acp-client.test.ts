@@ -30,6 +30,7 @@ vi.mock("@tauri-apps/api/core", () => ({
 import { invoke } from "@tauri-apps/api/core";
 import {
   ACP_COMMANDS,
+  abortAcpTurn,
   beginAcpTurn,
   cancelAcp,
   completeAcpTurn,
@@ -99,6 +100,7 @@ describe("ACP Tauri bridge", () => {
     await disconnectAcp({ conversationId: "conversation-1", generation: 3 });
 
     expect(ACP_COMMANDS).toEqual({
+      abortTurn: "acp_abort_turn",
       beginTurn: "acp_begin_turn",
       completeTurn: "acp_complete_turn",
       connect: "acp_connect",
@@ -158,6 +160,7 @@ describe("ACP Tauri bridge", () => {
     };
     invokeMock
       .mockResolvedValueOnce({ message: userMessage, turnToken: "turn-token-1" })
+      .mockResolvedValueOnce(undefined)
       .mockResolvedValueOnce(assistantMessage);
 
     await beginAcpTurn({
@@ -165,6 +168,11 @@ describe("ACP Tauri bridge", () => {
       generation: 3,
       content: "hello",
       reasoningContent: null,
+    });
+    await abortAcpTurn({
+      conversationId: "conversation-1",
+      generation: 3,
+      turnToken: "pending-turn-token",
     });
     await completeAcpTurn({
       conversationId: "conversation-1",
@@ -180,7 +188,12 @@ describe("ACP Tauri bridge", () => {
       content: "hello",
       reasoningContent: null,
     });
-    expect(invokeMock).toHaveBeenNthCalledWith(2, "acp_complete_turn", {
+    expect(invokeMock).toHaveBeenNthCalledWith(2, "acp_abort_turn", {
+      conversationId: "conversation-1",
+      generation: 3,
+      turnToken: "pending-turn-token",
+    });
+    expect(invokeMock).toHaveBeenNthCalledWith(3, "acp_complete_turn", {
       conversationId: "conversation-1",
       generation: 3,
       turnToken: "turn-token-1",

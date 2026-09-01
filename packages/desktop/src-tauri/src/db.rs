@@ -454,6 +454,27 @@ impl Database {
         Ok(changed == 1)
     }
 
+    #[instrument(skip(self, turn_token))]
+    pub fn abort_pending_acp_turn(
+        &self,
+        conversation_id: &str,
+        generation: u64,
+        turn_token: &str,
+    ) -> Result<bool, String> {
+        if !turn_token.starts_with(&format!("{generation}:")) {
+            return Ok(false);
+        }
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        let dirty_key = format!("acp_dirty_turn:{conversation_id}");
+        let changed = conn
+            .execute(
+                "DELETE FROM kv_store WHERE key = ?1 AND value = ?2",
+                params![dirty_key, turn_token],
+            )
+            .map_err(|e| format!("Failed to abort pending ACP turn: {e}"))?;
+        Ok(changed == 1)
+    }
+
     #[instrument(skip(self, turn_token, content, reasoning_content))]
     pub fn complete_acp_turn(
         &self,
@@ -888,6 +909,52 @@ mod tests {
         assert_eq!(messages.len(), 2);
         assert_eq!(messages[0].id, user.id);
         assert_eq!(messages[1].id, assistant.id);
+    }
+
+    #[test]
+    fn acp_pending_turn_abort_requires_exact_unclaimed_token_and_generation() {
+        let db = test_db();
+        let conversation = db
+            .create_conversation_with_agent("Agent", Some("/project"), Some("profile-a"))
+            .unwrap();
+        let (_, token) = db
+            .begin_acp_turn(&conversation.id, 7, "cancel before dispatch", None)
+            .unwrap();
+
+        assert!(!db
+            .abort_pending_acp_turn(&conversation.id, 8, &token)
+            .unwrap());
+        assert!(!db
+            .abort_pending_acp_turn(&conversation.id, 7, "7:wrong-token")
+            .unwrap());
+        assert!(db
+            .abort_pending_acp_turn(&conversation.id, 7, &token)
+            .unwrap());
+        assert_eq!(
+            db.kv_get(&format!("acp_dirty_turn:{}", conversation.id))
+                .unwrap(),
+            None
+        );
+        assert_eq!(
+            db.get_messages(&conversation.id, None, None).unwrap().len(),
+            1
+        );
+
+        let (_, dispatched_token) = db
+            .begin_acp_turn(&conversation.id, 8, "already dispatching", None)
+            .unwrap();
+        assert!(db
+            .claim_acp_turn(&conversation.id, &dispatched_token)
+            .unwrap());
+        assert!(!db
+            .abort_pending_acp_turn(&conversation.id, 8, &dispatched_token)
+            .unwrap());
+        assert_eq!(
+            db.kv_get(&format!("acp_dirty_turn:{}", conversation.id))
+                .unwrap()
+                .as_deref(),
+            Some(format!("dispatched:{dispatched_token}").as_str())
+        );
     }
 
     #[test]

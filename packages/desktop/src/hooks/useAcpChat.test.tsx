@@ -10,6 +10,7 @@ import type {
 import { useStreamingStore } from "../stores/streaming";
 
 const bridge = vi.hoisted(() => ({
+  abortAcpTurn: vi.fn(),
   beginAcpTurn: vi.fn(),
   completeAcpTurn: vi.fn(),
   connectAcp: vi.fn(),
@@ -123,6 +124,7 @@ beforeEach(() => {
   resetAcpChatForTests();
   useAcpStore.getState().resetForTests();
   useStreamingStore.setState({ streamingConvIds: new Set() });
+  bridge.abortAcpTurn.mockReset();
   bridge.beginAcpTurn.mockReset();
   bridge.completeAcpTurn.mockReset();
   bridge.connectAcp.mockReset();
@@ -136,6 +138,7 @@ beforeEach(() => {
   messageCounter = 0;
   savedMessages = [];
   installDatabaseMock();
+  bridge.abortAcpTurn.mockResolvedValue(undefined);
   bridge.beginAcpTurn.mockImplementation(async (payload: Record<string, unknown>) => {
     savedMessages.push({ command: "acp_begin_turn", args: payload });
     messageCounter += 1;
@@ -515,6 +518,183 @@ describe("useAcpChat", () => {
       conversationId: conversation.id,
       generation: 1,
     });
+  });
+
+  it("clears cancelling state when adapter startup rejects after cancellation", async () => {
+    let rejectConnect!: (error: Error) => void;
+    bridge.connectAcp.mockImplementation(
+      () =>
+        new Promise<AcpConnectResult>((_resolve, reject) => {
+          rejectConnect = reject;
+        }),
+    );
+    bridge.cancelAcp.mockImplementation(async () => {
+      rejectConnect(new Error("ACP startup was cancelled"));
+    });
+    const { result } = renderHook(() =>
+      useAcpChat({ profileId, projectDir, permissionMode: "request" }),
+    );
+    let pending!: Promise<boolean>;
+    act(() => {
+      pending = result.current.sendMessage("cancel rejected startup");
+    });
+    await waitFor(() => expect(bridge.connectAcp).toHaveBeenCalledOnce());
+
+    await act(async () => {
+      await result.current.stopStreaming();
+    });
+    let accepted = true;
+    await act(async () => {
+      accepted = await pending;
+    });
+
+    expect(accepted).toBe(false);
+    expect(result.current.isBusy).toBe(false);
+    expect(result.current.status).toBe("cancelled");
+    expect(bridge.beginAcpTurn).not.toHaveBeenCalled();
+    expect(bridge.promptAcp).not.toHaveBeenCalled();
+  });
+
+  it("does not dispatch a turn cancelled while atomic admission is in flight", async () => {
+    let finishAdmission!: () => void;
+    bridge.beginAcpTurn.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finishAdmission = () =>
+            resolve({
+              turnToken: "turn-token-1",
+              message: {
+                id: "message-1",
+                conversation_id: conversation.id,
+                role: "user",
+                content: "cancel admission",
+                reasoning_content: null,
+                created_at: "2026-08-31T10:00:01.000Z",
+              } satisfies DbMessage,
+            });
+        }),
+    );
+    const { result } = renderHook(() =>
+      useAcpChat({ profileId, projectDir, permissionMode: "request" }),
+    );
+    let pending!: Promise<boolean>;
+    act(() => {
+      pending = result.current.sendMessage("cancel admission");
+    });
+    await waitFor(() => expect(bridge.beginAcpTurn).toHaveBeenCalledOnce());
+
+    await act(async () => {
+      await result.current.stopStreaming();
+    });
+    let accepted = false;
+    await act(async () => {
+      finishAdmission();
+      accepted = await pending;
+    });
+
+    expect(accepted).toBe(true);
+    expect(bridge.abortAcpTurn).toHaveBeenCalledWith({
+      conversationId: conversation.id,
+      generation: 1,
+      turnToken: "turn-token-1",
+    });
+    expect(bridge.promptAcp).not.toHaveBeenCalled();
+    expect(bridge.disconnectAcp).toHaveBeenCalledWith({
+      conversationId: conversation.id,
+      generation: 1,
+    });
+    expect(result.current.isBusy).toBe(false);
+    expect(result.current.status).toBe("cancelled");
+  });
+
+  it("fails closed when a cancelled pending admission cannot be aborted", async () => {
+    let finishAdmission!: () => void;
+    bridge.beginAcpTurn.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finishAdmission = () =>
+            resolve({
+              turnToken: "turn-token-1",
+              message: {
+                id: "message-1",
+                conversation_id: conversation.id,
+                role: "user",
+                content: "cancel admission",
+                reasoning_content: null,
+                created_at: "2026-08-31T10:00:01.000Z",
+              } satisfies DbMessage,
+            });
+        }),
+    );
+    bridge.abortAcpTurn.mockRejectedValue(new Error("turn already dispatched"));
+    const { result } = renderHook(() =>
+      useAcpChat({ profileId, projectDir, permissionMode: "request" }),
+    );
+    let pending!: Promise<boolean>;
+    act(() => {
+      pending = result.current.sendMessage("cancel admission");
+    });
+    await waitFor(() => expect(bridge.beginAcpTurn).toHaveBeenCalledOnce());
+
+    await act(async () => {
+      await result.current.stopStreaming();
+    });
+    let accepted = true;
+    await act(async () => {
+      finishAdmission();
+      accepted = await pending;
+    });
+
+    expect(accepted).toBe(false);
+    expect(bridge.promptAcp).not.toHaveBeenCalled();
+    expect(bridge.disconnectAcp).toHaveBeenCalledWith({
+      conversationId: conversation.id,
+      generation: 1,
+    });
+    expect(result.current.isBusy).toBe(false);
+    expect(result.current.status).toBe("cancelled");
+  });
+
+  it("does not admit a turn cancelled while image persistence is in flight", async () => {
+    bridge.connectAcp.mockResolvedValue({
+      ...connectResult,
+      capabilities: {
+        ...connectResult.capabilities,
+        prompt: { image: true, audio: false, embeddedContext: false },
+      },
+    });
+    let finishImageSave!: () => void;
+    imageMocks.saveImage.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finishImageSave = () => resolve("/saved/image.png");
+        }),
+    );
+    const { result } = renderHook(() =>
+      useAcpChat({ profileId, projectDir, permissionMode: "request" }),
+    );
+    let pending!: Promise<boolean>;
+    act(() => {
+      pending = result.current.sendMessage("cancel image", [
+        { id: "image-1", mimeType: "image/png", base64: "aW1hZ2U=" },
+      ]);
+    });
+    await waitFor(() => expect(imageMocks.saveImage).toHaveBeenCalledOnce());
+
+    await act(async () => {
+      await result.current.stopStreaming();
+    });
+    let accepted = true;
+    await act(async () => {
+      finishImageSave();
+      accepted = await pending;
+    });
+
+    expect(accepted).toBe(false);
+    expect(bridge.beginAcpTurn).not.toHaveBeenCalled();
+    expect(bridge.promptAcp).not.toHaveBeenCalled();
+    expect(result.current.isBusy).toBe(false);
+    expect(result.current.status).toBe("cancelled");
   });
 
   it("cancels the active Rust prompt with its current generation and clears busy state", async () => {

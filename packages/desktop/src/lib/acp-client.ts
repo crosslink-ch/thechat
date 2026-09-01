@@ -15,6 +15,7 @@ import type {
 } from "@thechat/shared";
 
 export const ACP_COMMANDS = {
+  abortTurn: "acp_abort_turn",
   beginTurn: "acp_begin_turn",
   completeTurn: "acp_complete_turn",
   connect: "acp_connect",
@@ -51,6 +52,10 @@ export interface AcpBeginTurnResult {
   turnToken: string;
 }
 
+export interface AcpAbortTurnInput extends AcpConversationGenerationInput {
+  turnToken: string;
+}
+
 export interface AcpCompleteTurnInput extends AcpConversationGenerationInput {
   turnToken: string;
   content: string;
@@ -84,6 +89,14 @@ export function beginAcpTurn(input: AcpBeginTurnInput): Promise<AcpBeginTurnResu
     generation: input.generation,
     content: input.content,
     reasoningContent: input.reasoningContent ?? null,
+  });
+}
+
+export async function abortAcpTurn(input: AcpAbortTurnInput): Promise<void> {
+  await invoke<void>(ACP_COMMANDS.abortTurn, {
+    conversationId: input.conversationId,
+    generation: input.generation,
+    turnToken: input.turnToken,
   });
 }
 

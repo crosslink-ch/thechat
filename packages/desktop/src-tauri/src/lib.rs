@@ -541,6 +541,30 @@ async fn acp_begin_turn(
 }
 
 #[tauri::command]
+#[tracing::instrument(skip(turn_token, db, manager))]
+async fn acp_abort_turn(
+    conversation_id: String,
+    generation: u64,
+    turn_token: String,
+    db: State<'_, DbState>,
+    manager: State<'_, AcpState>,
+) -> Result<(), String> {
+    if manager.latest_generation(&conversation_id).await != Some(generation) {
+        return Err("Stale ACP generation".into());
+    }
+    let db = Arc::clone(&db);
+    let aborted = tokio::task::spawn_blocking(move || {
+        db.abort_pending_acp_turn(&conversation_id, generation, &turn_token)
+    })
+    .await
+    .map_err(|error| format!("Task join error: {error}"))??;
+    if !aborted {
+        return Err("ACP turn was already dispatched or its token is stale".into());
+    }
+    Ok(())
+}
+
+#[tauri::command]
 #[tracing::instrument(skip(turn_token, content, reasoning_content, db, manager))]
 async fn acp_complete_turn(
     conversation_id: String,
@@ -974,6 +998,7 @@ pub fn run() {
             kv_set,
             kv_delete,
             acp_begin_turn,
+            acp_abort_turn,
             acp_complete_turn,
             acp_connect,
             acp_disconnect,
