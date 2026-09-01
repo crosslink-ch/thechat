@@ -87,6 +87,27 @@ beforeEach(() => {
 });
 
 describe("HermesDmChatView", () => {
+  it("shows the sender's saved profile picture", () => {
+    const avatar = "data:image/jpeg;base64,c2VuZGVy";
+    render(
+      <HermesDmChatView
+        messages={[
+          message({ senderId: "user-1", senderName: "Ada Lovelace", senderType: "human" }),
+        ]}
+        loading={false}
+        typingUsers={new Map()}
+        progressInvocations={[]}
+        typingSuppressedUserIds={[]}
+        senderAvatars={new Map([["user-1", avatar]])}
+        onSend={() => {}}
+      />,
+    );
+
+    expect(
+      screen.getByRole("img", { name: "Ada Lovelace profile picture" }),
+    ).toHaveAttribute("src", avatar);
+  });
+
   it("hides the generic typing indicator while Hermes progress is active", () => {
     render(
       <HermesDmChatView

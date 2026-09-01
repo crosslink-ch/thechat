@@ -10,14 +10,17 @@ const {
   createTokenMock,
   tokenEndpointMock,
   revokeTokenMock,
+  preparePictureMock,
 } = vi.hoisted(() => ({
   invokeMock: vi.fn(),
   listTokensMock: vi.fn(),
   createTokenMock: vi.fn(),
   tokenEndpointMock: vi.fn(),
   revokeTokenMock: vi.fn(),
+  preparePictureMock: vi.fn(),
 }));
 const updateNameMock = vi.fn();
+const updateAvatarMock = vi.fn();
 const profileEmail =
   "bruno.with.a.long.profile.address@example-organization.ch";
 
@@ -43,9 +46,15 @@ vi.mock("../lib/api", () => {
   };
 });
 
+vi.mock("../lib/profile-picture", () => ({
+  prepareProfilePicture: preparePictureMock,
+}));
+
 beforeEach(() => {
   invokeMock.mockClear();
   updateNameMock.mockReset();
+  updateAvatarMock.mockReset();
+  preparePictureMock.mockReset();
   listTokensMock.mockReset();
   createTokenMock.mockReset();
   tokenEndpointMock.mockReset();
@@ -61,6 +70,11 @@ beforeEach(() => {
       user: state.user ? { ...state.user, name } : null,
     }));
   });
+  updateAvatarMock.mockImplementation(async (avatar: string | null) => {
+    useAuthStore.setState((state) => ({
+      user: state.user ? { ...state.user, avatar } : null,
+    }));
+  });
   useAuthStore.setState({
     user: {
       id: "user-1",
@@ -72,6 +86,7 @@ beforeEach(() => {
     token: "better-auth-session",
     loading: false,
     updateName: updateNameMock,
+    updateAvatar: updateAvatarMock,
   });
 });
 
@@ -114,6 +129,106 @@ describe("SettingsRoute", () => {
     expect(await screen.findByRole("status")).toHaveTextContent("Name saved.");
     expect(screen.getByText("Bruno Updated")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Save name" })).toBeDisabled();
+  });
+
+  it("uploads, previews, and removes a profile picture", async () => {
+    const user = userEvent.setup();
+    const avatar = "data:image/jpeg;base64,cHJvZmlsZQ==";
+    preparePictureMock.mockResolvedValueOnce(avatar);
+    render(<SettingsRoute />);
+
+    expect(
+      screen.getAllByRole("img", { name: "Bruno Example profile picture" }),
+    ).toHaveLength(2);
+    for (const fallback of screen.getAllByRole("img", {
+      name: "Bruno Example profile picture",
+    })) {
+      expect(fallback).toHaveTextContent("BE");
+    }
+    expect(screen.getByText("Choose picture")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Remove picture" }),
+    ).not.toBeInTheDocument();
+
+    const file = new File(["source"], "portrait.png", { type: "image/png" });
+    await user.upload(screen.getByLabelText("Choose profile picture"), file);
+
+    expect(preparePictureMock).toHaveBeenCalledWith(file);
+    expect(updateAvatarMock).toHaveBeenCalledWith(avatar);
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "Profile picture saved.",
+    );
+    for (const image of screen.getAllByRole("img", {
+      name: "Bruno Example profile picture",
+    })) {
+      expect(image).toHaveAttribute("src", avatar);
+    }
+    expect(screen.getByText("Change picture")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Remove picture" }));
+    expect(updateAvatarMock).toHaveBeenLastCalledWith(null);
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "Profile picture removed.",
+    );
+    for (const fallback of screen.getAllByRole("img", {
+      name: "Bruno Example profile picture",
+    })) {
+      expect(fallback).toHaveTextContent("BE");
+    }
+  });
+
+  it("does not apply a picture prepared for a previous signed-in account", async () => {
+    const user = userEvent.setup();
+    let resolvePicture!: (avatar: string) => void;
+    preparePictureMock.mockReturnValueOnce(
+      new Promise<string>((resolve) => {
+        resolvePicture = resolve;
+      }),
+    );
+    const updateAvatar = vi.fn().mockResolvedValue(undefined);
+    useAuthStore.setState({ updateAvatar });
+    render(<SettingsRoute />);
+
+    await user.upload(
+      screen.getByLabelText("Choose profile picture"),
+      new File(["portrait"], "portrait.png", { type: "image/png" }),
+    );
+    await waitFor(() => expect(preparePictureMock).toHaveBeenCalledOnce());
+
+    act(() => {
+      useAuthStore.setState({
+        user: {
+          id: "account-2",
+          name: "Second Account",
+          email: "second@example.com",
+          type: "human",
+          avatar: null,
+        },
+      });
+      resolvePicture("data:image/jpeg;base64,c3RhbGU=");
+    });
+
+    await screen.findByText("Second Account");
+    await waitFor(() => expect(updateAvatar).not.toHaveBeenCalled());
+    expect(screen.queryByText("Profile picture saved.")).not.toBeInTheDocument();
+  });
+
+  it("shows profile-picture processing errors without changing the profile", async () => {
+    preparePictureMock.mockRejectedValueOnce(
+      new Error("Choose a PNG, JPEG, or WebP image"),
+    );
+    const user = userEvent.setup({ applyAccept: false });
+    render(<SettingsRoute />);
+
+    await user.upload(
+      screen.getByLabelText("Choose profile picture"),
+      new File(["<svg/>"], "portrait.svg", { type: "image/svg+xml" }),
+    );
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Choose a PNG, JPEG, or WebP image",
+    );
+    expect(updateAvatarMock).not.toHaveBeenCalled();
   });
 
   it("shows a retryable error without replacing the current profile", async () => {

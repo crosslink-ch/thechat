@@ -16,6 +16,7 @@ import {
 } from "./ChannelModal";
 import { api } from "../lib/api";
 import type { WorkspaceChannel, WorkspaceMember } from "@thechat/shared";
+import { UserAvatar } from "./UserAvatar";
 
 const SIDEBAR_WIDTH = 347;
 
@@ -151,7 +152,6 @@ export function Sidebar() {
 
   useEffect(() => setChannelMenuId(null), [activeWorkspace?.id]);
 
-  const initials = user?.name?.trim().charAt(0).toUpperCase() ?? "?";
   const workspaceInitial = (activeWorkspace?.name ?? "TheChat").trim().charAt(0).toUpperCase();
   const currentMembership = activeWorkspace?.members.find(
     (member) => member.userId === user?.id,
@@ -414,8 +414,13 @@ export function Sidebar() {
                       aria-label={ariaLabel}
                       aria-current={isActive ? "page" : undefined}
                     >
-                      <span className="relative flex size-5 shrink-0 items-center justify-center rounded-full bg-elevated text-[0.714rem] font-semibold text-text-muted">
-                        {m.user.name.charAt(0).toUpperCase()}
+                      <span className="relative flex shrink-0">
+                        <UserAvatar
+                          name={m.user.name}
+                          avatar={m.user.avatar}
+                          size="xs"
+                          className="bg-elevated text-text-muted"
+                        />
                         {isOnline && (
                           <span
                             data-testid={`online-indicator-${m.userId}`}
@@ -490,9 +495,12 @@ export function Sidebar() {
                 onClick={() => setProfileMenuOpen((v) => !v)}
               >
                 <span className="flex min-w-0 items-center gap-2">
-                  <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-elevated text-[0.857rem] font-semibold text-text">
-                    {initials}
-                  </span>
+                  <UserAvatar
+                    name={user.name}
+                    avatar={user.avatar}
+                    size="md"
+                    className="bg-elevated text-text"
+                  />
                   <span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap text-[0.857rem] font-medium text-text-secondary">
                     {user.name}
                   </span>

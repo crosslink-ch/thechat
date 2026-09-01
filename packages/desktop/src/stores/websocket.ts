@@ -214,6 +214,7 @@ function doConnect() {
         workspaceId: event.workspaceId,
         userId: event.userId,
         name: event.name,
+        avatar: event.avatar,
       });
     } else if (event.type === "member_removed") {
       wsEvents.emit("ws:member_removed", {

@@ -228,6 +228,36 @@ describe("Sidebar", () => {
     expect(screen.getByLabelText("Notifications")).toBeInTheDocument();
   });
 
+  it("shows saved profile pictures for the signed-in user and other people", async () => {
+    const ownAvatar = "data:image/jpeg;base64,b3du";
+    const aliceAvatar = "data:image/jpeg;base64,YWxpY2U=";
+    const picturedUser = { ...user, avatar: ownAvatar };
+    const picturedWorkspace: WorkspaceWithDetails = {
+      ...activeWorkspace,
+      members: activeWorkspace.members.map((member) =>
+        member.userId === "u1"
+          ? { ...member, user: picturedUser }
+          : member.userId === "u2"
+            ? { ...member, user: { ...member.user, avatar: aliceAvatar } }
+            : member,
+      ),
+    };
+    useAuthStore.setState({ user: picturedUser, token: "test-token" });
+    useWorkspacesStore.setState({
+      workspaces: workspaceList,
+      activeWorkspace: picturedWorkspace,
+    });
+
+    await renderWithRouter(<Sidebar />);
+
+    expect(
+      screen.getByRole("img", { name: "Test User profile picture" }),
+    ).toHaveAttribute("src", ownAvatar);
+    expect(
+      screen.getByRole("img", { name: "Alice profile picture" }),
+    ).toHaveAttribute("src", aliceAvatar);
+  });
+
   it("shows a green online indicator for connected people only", async () => {
     useAuthStore.setState({ user, token: "test-token" });
     useWorkspacesStore.setState({ workspaces: workspaceList, activeWorkspace });

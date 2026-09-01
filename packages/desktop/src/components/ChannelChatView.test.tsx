@@ -26,6 +26,25 @@ beforeEach(() => {
 });
 
 describe("ChannelChatView", () => {
+  it("shows the sender's saved profile picture", () => {
+    const avatar = "data:image/jpeg;base64,c2VuZGVy";
+    render(
+      <ChannelChatView
+        messages={[
+          message({ senderId: "user-1", senderName: "Ada Lovelace", senderType: "human" }),
+        ]}
+        loading={false}
+        typingUsers={new Map()}
+        senderAvatars={new Map([["user-1", avatar]])}
+        onSend={() => {}}
+      />,
+    );
+
+    expect(
+      screen.getByRole("img", { name: "Ada Lovelace profile picture" }),
+    ).toHaveAttribute("src", avatar);
+  });
+
   it("shows the generic typing indicator", () => {
     render(
       <ChannelChatView

@@ -20,16 +20,20 @@ COPY packages/shared/ packages/shared/
 COPY packages/api/ packages/api/
 
 # Build
-RUN cd packages/api && bun build src/index.ts src/scripts/worker.ts --outdir dist --target bun
+RUN cd packages/api && bun build src/index.ts src/scripts/worker.ts --outdir dist --target bun --external sharp
 
 # --- Production stage ---
 FROM oven/bun:1-slim
 
-WORKDIR /app
+WORKDIR /app/packages/api
 
-# Copy built output and node_modules
+# Keep the package-level dependency links next to the bundle and the pnpm
+# virtual store at its original workspace-relative path. Native dependencies
+# such as sharp can then resolve their platform package at runtime.
 COPY --from=builder /app/packages/api/dist ./dist
-COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/packages/api/package.json ./package.json
+COPY --from=builder /app/packages/api/node_modules ./node_modules
+COPY --from=builder /app/node_modules /app/node_modules
 
 EXPOSE 3000
 

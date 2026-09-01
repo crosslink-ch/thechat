@@ -379,7 +379,7 @@ describe("registerGlobalWsHandlers", () => {
     cleanup();
   });
 
-  it("updates an active workspace member name after a bot rename", () => {
+  it("updates an active workspace member name and profile picture", () => {
     useWorkspacesStore.setState({
       activeWorkspace: {
         ...structuredClone(baseWorkspace),
@@ -406,13 +406,43 @@ describe("registerGlobalWsHandlers", () => {
       workspaceId: "ws-1",
       userId: "u-bot",
       name: "Renamed Bot",
+      avatar: "data:image/jpeg;base64,dXBkYXRlZA==",
     });
 
     expect(
       useWorkspacesStore
         .getState()
-        .activeWorkspace?.members.find((member) => member.userId === "u-bot")?.user.name,
-    ).toBe("Renamed Bot");
+        .activeWorkspace?.members.find((member) => member.userId === "u-bot")?.user,
+    ).toMatchObject({
+      name: "Renamed Bot",
+      avatar: "data:image/jpeg;base64,dXBkYXRlZA==",
+    });
+
+    wsEvents.emit("ws:member_updated", {
+      workspaceId: "ws-1",
+      userId: "u-bot",
+      name: "Renamed Bot",
+      avatar: null,
+    });
+    expect(
+      useWorkspacesStore
+        .getState()
+        .activeWorkspace?.members.find((member) => member.userId === "u-bot")?.user.avatar,
+    ).toBeNull();
+
+    useAuthStore.setState({
+      user: structuredClone(baseWorkspace.members[0]!.user),
+    });
+    wsEvents.emit("ws:member_updated", {
+      workspaceId: "ws-1",
+      userId: "u-owner",
+      name: "Updated Owner",
+      avatar: "data:image/jpeg;base64,b3duZXI=",
+    });
+    expect(useAuthStore.getState().user).toMatchObject({
+      name: "Updated Owner",
+      avatar: "data:image/jpeg;base64,b3duZXI=",
+    });
     cleanup();
   });
 

@@ -259,6 +259,47 @@ describe("auth store profile updates", () => {
     });
   });
 
+  it("sets and removes the signed-in user's profile picture", async () => {
+    const values = useKv({
+      auth_access_token: "profile-session",
+      auth_user: JSON.stringify(user),
+    });
+    const avatar = "data:image/png;base64,cHJvZmlsZQ==";
+    const picturedUser = { ...user, avatar };
+    useAuthStore.setState({
+      token: "profile-session",
+      user,
+      loading: false,
+    });
+    vi.mocked(api.auth.me.patch)
+      .mockResolvedValueOnce({
+        data: { user: picturedUser },
+        error: null,
+      } as any)
+      .mockResolvedValueOnce({
+        data: { user },
+        error: null,
+      } as any);
+
+    await useAuthStore.getState().updateAvatar(avatar);
+    expect(api.auth.me.patch).toHaveBeenNthCalledWith(
+      1,
+      { avatar },
+      { headers: { authorization: "Bearer profile-session" } },
+    );
+    expect(values.auth_user).toBe(JSON.stringify(picturedUser));
+    expect(useAuthStore.getState().user).toEqual(picturedUser);
+
+    await useAuthStore.getState().updateAvatar(null);
+    expect(api.auth.me.patch).toHaveBeenNthCalledWith(
+      2,
+      { avatar: null },
+      { headers: { authorization: "Bearer profile-session" } },
+    );
+    expect(values.auth_user).toBe(JSON.stringify(user));
+    expect(useAuthStore.getState().user).toEqual(user);
+  });
+
   it.each([
     [400, "Name is required"],
     [503, "Authentication service temporarily unavailable"],

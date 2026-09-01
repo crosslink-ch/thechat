@@ -9,6 +9,7 @@ import { MessageSendError } from "./MessageSendError";
 import type { ChatMessage } from "@thechat/shared";
 import type { MentionUser } from "./MentionList";
 import { SharedMessageAttachments } from "./SharedMessageAttachments";
+import { UserAvatar } from "./UserAvatar";
 
 const noop = () => {};
 
@@ -29,6 +30,7 @@ interface ChannelChatViewProps {
   draftKey?: string;
   conversationId?: string;
   token?: string | null;
+  senderAvatars?: ReadonlyMap<string, string | null>;
 }
 
 function formatTime(iso: string) {
@@ -50,6 +52,7 @@ export function ChannelChatView({
   draftKey,
   conversationId,
   token,
+  senderAvatars,
 }: ChannelChatViewProps) {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const { isAtBottom, pauseAutoScroll, scrollToBottom } =
@@ -153,9 +156,12 @@ export function ChannelChatView({
               data-message-id={msg.id}
               className="flex gap-2.5 px-5 py-2.5 transition-colors duration-100 hover:bg-raised/50"
             >
-              <div className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-full bg-elevated text-[0.857rem] font-semibold text-text-muted">
-                {msg.senderName.charAt(0).toUpperCase()}
-              </div>
+              <UserAvatar
+                name={msg.senderName}
+                avatar={senderAvatars?.get(msg.senderId)}
+                size="md"
+                className="mt-0.5 bg-elevated text-text-muted"
+              />
               <div className="min-w-0 flex-1">
                 <div className="mb-0.5 flex items-baseline gap-2">
                   <span className="text-[0.929rem] font-semibold text-text">{msg.senderName}</span>
