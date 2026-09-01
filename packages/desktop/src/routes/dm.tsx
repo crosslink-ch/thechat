@@ -641,6 +641,8 @@ export function DmRoute() {
           botName={otherParticipant.user.name}
           runtime={runtime}
           loading={runtimeLoading}
+          userId={user?.id ?? null}
+          conversationId={conversationId}
           threads={threads}
           threadsLoading={threadsLoading}
           threadsLoadingMore={threadsLoadingMore}

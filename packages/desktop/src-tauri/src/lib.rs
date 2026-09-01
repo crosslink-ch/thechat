@@ -9,7 +9,7 @@ mod oauth;
 mod shell;
 mod stream;
 
-use db::{Conversation, Database, Message};
+use db::{Conversation, Database, HermesTaskProject, HermesTaskProjectAssignment, Message};
 use mcp::McpManager;
 use oauth::OAuthCallbackServer;
 use shell::ShellProcesses;
@@ -220,10 +220,7 @@ pub struct InitialProjectDir(pub Option<String>);
 
 /// Resolve the DB path using the same logic as the Tauri setup.
 /// Used by CLI flags that need to read the DB without starting the app.
-fn release_db_path(
-    data_dir: &std::path::Path,
-    app_identifier: &str,
-) -> std::path::PathBuf {
+fn release_db_path(data_dir: &std::path::Path, app_identifier: &str) -> std::path::PathBuf {
     data_dir.join(app_identifier).join("thechat.db")
 }
 
@@ -374,9 +371,7 @@ async fn get_messages(
     db: State<'_, DbState>,
 ) -> Result<Vec<Message>, String> {
     let db = Arc::clone(&db);
-    tokio::task::spawn_blocking(move || {
-        db.get_messages(&conversation_id, limit, before.as_deref())
-    })
+    tokio::task::spawn_blocking(move || db.get_messages(&conversation_id, limit, before.as_deref()))
         .await
         .map_err(|e| format!("Task join error: {}", e))?
 }
@@ -406,6 +401,107 @@ async fn kv_delete(key: String, db: State<'_, DbState>) -> Result<(), String> {
     tokio::task::spawn_blocking(move || db.kv_delete(&key))
         .await
         .map_err(|e| format!("Task join error: {}", e))?
+}
+
+#[tauri::command]
+#[tracing::instrument(skip(db))]
+async fn list_hermes_task_projects(
+    user_id: String,
+    conversation_id: String,
+    db: State<'_, DbState>,
+) -> Result<Vec<HermesTaskProject>, String> {
+    let db = Arc::clone(&db);
+    tokio::task::spawn_blocking(move || db.list_hermes_task_projects(&user_id, &conversation_id))
+        .await
+        .map_err(|e| format!("Task join error: {e}"))?
+}
+
+#[tauri::command]
+#[tracing::instrument(skip(db))]
+async fn create_hermes_task_project(
+    user_id: String,
+    conversation_id: String,
+    name: String,
+    color: String,
+    db: State<'_, DbState>,
+) -> Result<HermesTaskProject, String> {
+    let db = Arc::clone(&db);
+    tokio::task::spawn_blocking(move || {
+        db.create_hermes_task_project(&user_id, &conversation_id, &name, &color)
+    })
+    .await
+    .map_err(|e| format!("Task join error: {e}"))?
+}
+
+#[tauri::command]
+#[tracing::instrument(skip(db))]
+async fn update_hermes_task_project(
+    user_id: String,
+    conversation_id: String,
+    project_id: String,
+    name: String,
+    color: String,
+    db: State<'_, DbState>,
+) -> Result<HermesTaskProject, String> {
+    let db = Arc::clone(&db);
+    tokio::task::spawn_blocking(move || {
+        db.update_hermes_task_project(&user_id, &conversation_id, &project_id, &name, &color)
+    })
+    .await
+    .map_err(|e| format!("Task join error: {e}"))?
+}
+
+#[tauri::command]
+#[tracing::instrument(skip(db))]
+async fn delete_hermes_task_project(
+    user_id: String,
+    conversation_id: String,
+    project_id: String,
+    db: State<'_, DbState>,
+) -> Result<(), String> {
+    let db = Arc::clone(&db);
+    tokio::task::spawn_blocking(move || {
+        db.delete_hermes_task_project(&user_id, &conversation_id, &project_id)
+    })
+    .await
+    .map_err(|e| format!("Task join error: {e}"))?
+}
+
+#[tauri::command]
+#[tracing::instrument(skip(db))]
+async fn list_hermes_task_project_assignments(
+    user_id: String,
+    conversation_id: String,
+    db: State<'_, DbState>,
+) -> Result<Vec<HermesTaskProjectAssignment>, String> {
+    let db = Arc::clone(&db);
+    tokio::task::spawn_blocking(move || {
+        db.list_hermes_task_project_assignments(&user_id, &conversation_id)
+    })
+    .await
+    .map_err(|e| format!("Task join error: {e}"))?
+}
+
+#[tauri::command]
+#[tracing::instrument(skip(db))]
+async fn assign_hermes_task_to_project(
+    user_id: String,
+    conversation_id: String,
+    thread_id: String,
+    project_id: Option<String>,
+    db: State<'_, DbState>,
+) -> Result<(), String> {
+    let db = Arc::clone(&db);
+    tokio::task::spawn_blocking(move || {
+        db.assign_hermes_task_to_project(
+            &user_id,
+            &conversation_id,
+            &thread_id,
+            project_id.as_deref(),
+        )
+    })
+    .await
+    .map_err(|e| format!("Task join error: {e}"))?
 }
 
 #[tauri::command]
@@ -507,6 +603,12 @@ pub fn run() {
             kv_get,
             kv_set,
             kv_delete,
+            list_hermes_task_projects,
+            create_hermes_task_project,
+            update_hermes_task_project,
+            delete_hermes_task_project,
+            list_hermes_task_project_assignments,
+            assign_hermes_task_to_project,
             mcp::mcp_initialize,
             mcp::mcp_initialize_authed,
             mcp::mcp_initialize_servers,
@@ -610,6 +712,12 @@ mod tests {
                 kv_get,
                 kv_set,
                 kv_delete,
+                list_hermes_task_projects,
+                create_hermes_task_project,
+                update_hermes_task_project,
+                delete_hermes_task_project,
+                list_hermes_task_project_assignments,
+                assign_hermes_task_to_project,
                 mcp::mcp_initialize,
                 mcp::mcp_initialize_servers,
                 mcp::mcp_call_tool,

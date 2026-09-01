@@ -24,6 +24,54 @@ pub struct Message {
     pub created_at: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct HermesTaskProject {
+    pub id: String,
+    pub name: String,
+    pub color: String,
+    pub position: i64,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct HermesTaskProjectAssignment {
+    pub thread_id: String,
+    pub project_id: String,
+}
+
+const HERMES_TASK_PROJECT_COLORS: &[&str] = &["blue", "violet", "emerald", "amber", "rose", "cyan"];
+const HERMES_TASK_PROJECT_NAME_MAX_CHARS: usize = 80;
+
+fn validate_local_scope(value: &str, label: &str) -> Result<(), String> {
+    if value.trim().is_empty() {
+        return Err(format!("{label} cannot be empty"));
+    }
+    Ok(())
+}
+
+fn normalize_hermes_task_project_name(name: &str) -> Result<String, String> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err("Project name cannot be empty".to_string());
+    }
+    if name.chars().count() > HERMES_TASK_PROJECT_NAME_MAX_CHARS {
+        return Err(format!(
+            "Project name cannot exceed {HERMES_TASK_PROJECT_NAME_MAX_CHARS} characters"
+        ));
+    }
+    Ok(name.to_string())
+}
+
+fn validate_hermes_task_project_color(color: &str) -> Result<(), String> {
+    if !HERMES_TASK_PROJECT_COLORS.contains(&color) {
+        return Err("Project color is not supported".to_string());
+    }
+    Ok(())
+}
+
 pub struct Database {
     conn: Mutex<Connection>,
 }
@@ -34,7 +82,8 @@ impl Database {
         let conn = Connection::open(db_path).map_err(|e| format!("Failed to open DB: {}", e))?;
 
         conn.execute_batch(
-            "CREATE TABLE IF NOT EXISTS conversations (
+            "PRAGMA foreign_keys = ON;
+             CREATE TABLE IF NOT EXISTS conversations (
                 id TEXT PRIMARY KEY,
                 title TEXT NOT NULL,
                 created_at TEXT NOT NULL,
@@ -53,8 +102,36 @@ impl Database {
                 key TEXT PRIMARY KEY,
                 value TEXT NOT NULL
             );
+            -- Hermes task projects intentionally live only in this device's
+            -- SQLite database. Their scope columns prevent local metadata from
+            -- leaking between signed-in users or Hermes conversations.
+            CREATE TABLE IF NOT EXISTS hermes_task_projects (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                conversation_id TEXT NOT NULL,
+                name TEXT NOT NULL COLLATE NOCASE,
+                color TEXT NOT NULL,
+                position INTEGER NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE (user_id, conversation_id, name),
+                UNIQUE (id, user_id, conversation_id)
+            );
+            CREATE TABLE IF NOT EXISTS hermes_task_project_assignments (
+                user_id TEXT NOT NULL,
+                conversation_id TEXT NOT NULL,
+                thread_id TEXT NOT NULL,
+                project_id TEXT NOT NULL,
+                assigned_at TEXT NOT NULL,
+                PRIMARY KEY (user_id, conversation_id, thread_id),
+                FOREIGN KEY (project_id, user_id, conversation_id)
+                    REFERENCES hermes_task_projects(id, user_id, conversation_id)
+                    ON DELETE CASCADE
+            );
             CREATE INDEX IF NOT EXISTS idx_messages_conversation_created_at
-                ON messages(conversation_id, created_at);",
+                ON messages(conversation_id, created_at);
+            CREATE INDEX IF NOT EXISTS idx_hermes_task_projects_scope_position
+                ON hermes_task_projects(user_id, conversation_id, position);",
         )
         .map_err(|e| format!("Failed to create tables: {}", e))?;
 
@@ -220,6 +297,274 @@ impl Database {
     }
 
     #[instrument(skip(self))]
+    pub fn list_hermes_task_projects(
+        &self,
+        user_id: &str,
+        conversation_id: &str,
+    ) -> Result<Vec<HermesTaskProject>, String> {
+        validate_local_scope(user_id, "User ID")?;
+        validate_local_scope(conversation_id, "Conversation ID")?;
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, name, color, position, created_at, updated_at
+                 FROM hermes_task_projects
+                 WHERE user_id = ?1 AND conversation_id = ?2
+                 ORDER BY position ASC, created_at ASC, id ASC",
+            )
+            .map_err(|e| format!("Failed to prepare project list: {e}"))?;
+        let rows = stmt
+            .query_map(params![user_id, conversation_id], |row| {
+                Ok(HermesTaskProject {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    color: row.get(2)?,
+                    position: row.get(3)?,
+                    created_at: row.get(4)?,
+                    updated_at: row.get(5)?,
+                })
+            })
+            .map_err(|e| format!("Failed to list projects: {e}"))?;
+
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| format!("Failed to read projects: {e}"))
+    }
+
+    #[instrument(skip(self))]
+    pub fn create_hermes_task_project(
+        &self,
+        user_id: &str,
+        conversation_id: &str,
+        name: &str,
+        color: &str,
+    ) -> Result<HermesTaskProject, String> {
+        validate_local_scope(user_id, "User ID")?;
+        validate_local_scope(conversation_id, "Conversation ID")?;
+        let name = normalize_hermes_task_project_name(name)?;
+        validate_hermes_task_project_color(color)?;
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        let exists: bool = conn
+            .query_row(
+                "SELECT EXISTS(
+                    SELECT 1 FROM hermes_task_projects
+                    WHERE user_id = ?1 AND conversation_id = ?2
+                      AND name = ?3 COLLATE NOCASE
+                )",
+                params![user_id, conversation_id, name],
+                |row| row.get(0),
+            )
+            .map_err(|e| format!("Failed to validate project name: {e}"))?;
+        if exists {
+            return Err("A project with this name already exists".to_string());
+        }
+
+        let position: i64 = conn
+            .query_row(
+                "SELECT COALESCE(MAX(position) + 1, 0)
+                 FROM hermes_task_projects
+                 WHERE user_id = ?1 AND conversation_id = ?2",
+                params![user_id, conversation_id],
+                |row| row.get(0),
+            )
+            .map_err(|e| format!("Failed to choose project position: {e}"))?;
+        let id = Uuid::new_v4().to_string();
+        let now = Utc::now().to_rfc3339();
+        conn.execute(
+            "INSERT INTO hermes_task_projects
+                (id, user_id, conversation_id, name, color, position, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)",
+            params![id, user_id, conversation_id, name, color, position, now],
+        )
+        .map_err(|e| format!("Failed to create project: {e}"))?;
+
+        Ok(HermesTaskProject {
+            id,
+            name,
+            color: color.to_string(),
+            position,
+            created_at: now.clone(),
+            updated_at: now,
+        })
+    }
+
+    #[instrument(skip(self))]
+    pub fn update_hermes_task_project(
+        &self,
+        user_id: &str,
+        conversation_id: &str,
+        project_id: &str,
+        name: &str,
+        color: &str,
+    ) -> Result<HermesTaskProject, String> {
+        validate_local_scope(user_id, "User ID")?;
+        validate_local_scope(conversation_id, "Conversation ID")?;
+        validate_local_scope(project_id, "Project ID")?;
+        let name = normalize_hermes_task_project_name(name)?;
+        validate_hermes_task_project_color(color)?;
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        let duplicate: bool = conn
+            .query_row(
+                "SELECT EXISTS(
+                    SELECT 1 FROM hermes_task_projects
+                    WHERE user_id = ?1 AND conversation_id = ?2
+                      AND name = ?3 COLLATE NOCASE AND id != ?4
+                )",
+                params![user_id, conversation_id, name, project_id],
+                |row| row.get(0),
+            )
+            .map_err(|e| format!("Failed to validate project name: {e}"))?;
+        if duplicate {
+            return Err("A project with this name already exists".to_string());
+        }
+
+        let now = Utc::now().to_rfc3339();
+        let changed = conn
+            .execute(
+                "UPDATE hermes_task_projects
+                 SET name = ?1, color = ?2, updated_at = ?3
+                 WHERE id = ?4 AND user_id = ?5 AND conversation_id = ?6",
+                params![name, color, now, project_id, user_id, conversation_id],
+            )
+            .map_err(|e| format!("Failed to update project: {e}"))?;
+        if changed == 0 {
+            return Err("Project not found in this local conversation".to_string());
+        }
+
+        conn.query_row(
+            "SELECT id, name, color, position, created_at, updated_at
+             FROM hermes_task_projects
+             WHERE id = ?1 AND user_id = ?2 AND conversation_id = ?3",
+            params![project_id, user_id, conversation_id],
+            |row| {
+                Ok(HermesTaskProject {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    color: row.get(2)?,
+                    position: row.get(3)?,
+                    created_at: row.get(4)?,
+                    updated_at: row.get(5)?,
+                })
+            },
+        )
+        .map_err(|e| format!("Failed to read updated project: {e}"))
+    }
+
+    #[instrument(skip(self))]
+    pub fn delete_hermes_task_project(
+        &self,
+        user_id: &str,
+        conversation_id: &str,
+        project_id: &str,
+    ) -> Result<(), String> {
+        validate_local_scope(user_id, "User ID")?;
+        validate_local_scope(conversation_id, "Conversation ID")?;
+        validate_local_scope(project_id, "Project ID")?;
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        let changed = conn
+            .execute(
+                "DELETE FROM hermes_task_projects
+                 WHERE id = ?1 AND user_id = ?2 AND conversation_id = ?3",
+                params![project_id, user_id, conversation_id],
+            )
+            .map_err(|e| format!("Failed to delete project: {e}"))?;
+        if changed == 0 {
+            return Err("Project not found in this local conversation".to_string());
+        }
+        Ok(())
+    }
+
+    #[instrument(skip(self))]
+    pub fn list_hermes_task_project_assignments(
+        &self,
+        user_id: &str,
+        conversation_id: &str,
+    ) -> Result<Vec<HermesTaskProjectAssignment>, String> {
+        validate_local_scope(user_id, "User ID")?;
+        validate_local_scope(conversation_id, "Conversation ID")?;
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT assignment.thread_id, assignment.project_id
+                 FROM hermes_task_project_assignments AS assignment
+                 INNER JOIN hermes_task_projects AS project
+                   ON project.id = assignment.project_id
+                  AND project.user_id = assignment.user_id
+                  AND project.conversation_id = assignment.conversation_id
+                 WHERE assignment.user_id = ?1 AND assignment.conversation_id = ?2
+                 ORDER BY assignment.assigned_at ASC, assignment.thread_id ASC",
+            )
+            .map_err(|e| format!("Failed to prepare project assignments: {e}"))?;
+        let rows = stmt
+            .query_map(params![user_id, conversation_id], |row| {
+                Ok(HermesTaskProjectAssignment {
+                    thread_id: row.get(0)?,
+                    project_id: row.get(1)?,
+                })
+            })
+            .map_err(|e| format!("Failed to list project assignments: {e}"))?;
+
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| format!("Failed to read project assignments: {e}"))
+    }
+
+    #[instrument(skip(self))]
+    pub fn assign_hermes_task_to_project(
+        &self,
+        user_id: &str,
+        conversation_id: &str,
+        thread_id: &str,
+        project_id: Option<&str>,
+    ) -> Result<(), String> {
+        validate_local_scope(user_id, "User ID")?;
+        validate_local_scope(conversation_id, "Conversation ID")?;
+        validate_local_scope(thread_id, "Thread ID")?;
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+
+        let Some(project_id) = project_id else {
+            conn.execute(
+                "DELETE FROM hermes_task_project_assignments
+                 WHERE user_id = ?1 AND conversation_id = ?2 AND thread_id = ?3",
+                params![user_id, conversation_id, thread_id],
+            )
+            .map_err(|e| format!("Failed to unfile task: {e}"))?;
+            return Ok(());
+        };
+        validate_local_scope(project_id, "Project ID")?;
+
+        let project_exists: bool = conn
+            .query_row(
+                "SELECT EXISTS(
+                    SELECT 1 FROM hermes_task_projects
+                    WHERE id = ?1 AND user_id = ?2 AND conversation_id = ?3
+                )",
+                params![project_id, user_id, conversation_id],
+                |row| row.get(0),
+            )
+            .map_err(|e| format!("Failed to validate project assignment: {e}"))?;
+        if !project_exists {
+            return Err("Project not found in this local conversation".to_string());
+        }
+
+        conn.execute(
+            "INSERT INTO hermes_task_project_assignments
+                (user_id, conversation_id, thread_id, project_id, assigned_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT(user_id, conversation_id, thread_id)
+             DO UPDATE SET project_id = excluded.project_id,
+                           assigned_at = excluded.assigned_at",
+            params![
+                user_id,
+                conversation_id,
+                thread_id,
+                project_id,
+                Utc::now().to_rfc3339()
+            ],
+        )
+        .map_err(|e| format!("Failed to file task in project: {e}"))?;
+        Ok(())
+    }
+
+    #[instrument(skip(self))]
     pub fn get_messages(
         &self,
         conversation_id: &str,
@@ -300,7 +645,9 @@ mod tests {
         role: &str,
         content: &str,
     ) -> Message {
-        let message = db.save_message(conversation_id, role, content, None).unwrap();
+        let message = db
+            .save_message(conversation_id, role, content, None)
+            .unwrap();
         std::thread::sleep(std::time::Duration::from_millis(2));
         message
     }
@@ -487,5 +834,136 @@ mod tests {
         assert_eq!(msgs2.len(), 1);
         assert_eq!(msgs1[0].content, "In chat 1");
         assert_eq!(msgs2[0].content, "In chat 2");
+    }
+
+    #[test]
+    fn hermes_task_projects_persist_across_database_reopens() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("thechat.db");
+        let path = path.to_str().unwrap();
+        let project_id;
+
+        {
+            let db = Database::new(path).unwrap();
+            let project = db
+                .create_hermes_task_project("user-a", "conversation-a", "Website refresh", "violet")
+                .unwrap();
+            project_id = project.id.clone();
+            db.assign_hermes_task_to_project(
+                "user-a",
+                "conversation-a",
+                "thread-a",
+                Some(&project.id),
+            )
+            .unwrap();
+        }
+
+        let reopened = Database::new(path).unwrap();
+        let projects = reopened
+            .list_hermes_task_projects("user-a", "conversation-a")
+            .unwrap();
+        let assignments = reopened
+            .list_hermes_task_project_assignments("user-a", "conversation-a")
+            .unwrap();
+
+        assert_eq!(projects.len(), 1);
+        assert_eq!(projects[0].id, project_id);
+        assert_eq!(projects[0].name, "Website refresh");
+        assert_eq!(projects[0].color, "violet");
+        assert_eq!(assignments.len(), 1);
+        assert_eq!(assignments[0].thread_id, "thread-a");
+        assert_eq!(assignments[0].project_id, project_id);
+    }
+
+    #[test]
+    fn hermes_task_projects_are_scoped_by_user_and_conversation() {
+        let db = test_db();
+        db.create_hermes_task_project("user-a", "conversation-a", "Launch", "blue")
+            .unwrap();
+        db.create_hermes_task_project("user-a", "conversation-b", "Launch", "emerald")
+            .unwrap();
+        db.create_hermes_task_project("user-b", "conversation-a", "Launch", "amber")
+            .unwrap();
+
+        assert_eq!(
+            db.list_hermes_task_projects("user-a", "conversation-a")
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            db.list_hermes_task_projects("user-a", "conversation-b")
+                .unwrap()[0]
+                .color,
+            "emerald"
+        );
+        assert!(db
+            .create_hermes_task_project("user-a", "conversation-a", "launch", "rose")
+            .unwrap_err()
+            .contains("already exists"));
+    }
+
+    #[test]
+    fn hermes_task_assignments_move_unfile_and_follow_project_deletion() {
+        let db = test_db();
+        let first = db
+            .create_hermes_task_project("user-a", "conversation-a", "First", "blue")
+            .unwrap();
+        let second = db
+            .create_hermes_task_project("user-a", "conversation-a", "Second", "rose")
+            .unwrap();
+
+        db.assign_hermes_task_to_project("user-a", "conversation-a", "thread-a", Some(&first.id))
+            .unwrap();
+        db.assign_hermes_task_to_project("user-a", "conversation-a", "thread-a", Some(&second.id))
+            .unwrap();
+        let moved = db
+            .list_hermes_task_project_assignments("user-a", "conversation-a")
+            .unwrap();
+        assert_eq!(moved.len(), 1);
+        assert_eq!(moved[0].project_id, second.id);
+
+        db.assign_hermes_task_to_project("user-a", "conversation-a", "thread-a", None)
+            .unwrap();
+        assert!(db
+            .list_hermes_task_project_assignments("user-a", "conversation-a")
+            .unwrap()
+            .is_empty());
+
+        db.assign_hermes_task_to_project("user-a", "conversation-a", "thread-a", Some(&second.id))
+            .unwrap();
+        db.delete_hermes_task_project("user-a", "conversation-a", &second.id)
+            .unwrap();
+        assert!(db
+            .list_hermes_task_project_assignments("user-a", "conversation-a")
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn hermes_task_projects_validate_local_scope_and_fields() {
+        let db = test_db();
+        let project = db
+            .create_hermes_task_project("user-a", "conversation-a", "Launch", "cyan")
+            .unwrap();
+
+        assert!(db
+            .assign_hermes_task_to_project(
+                "user-a",
+                "conversation-b",
+                "thread-a",
+                Some(&project.id),
+            )
+            .unwrap_err()
+            .contains("not found"));
+        assert!(db
+            .create_hermes_task_project("user-a", "conversation-a", "   ", "blue")
+            .is_err());
+        assert!(db
+            .create_hermes_task_project("user-a", "conversation-a", &"a".repeat(81), "blue",)
+            .is_err());
+        assert!(db
+            .create_hermes_task_project("user-a", "conversation-a", "Other", "chartreuse")
+            .is_err());
     }
 }
