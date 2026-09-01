@@ -443,6 +443,73 @@ describe("Bots: Create", () => {
     expect(res.status).toBe(401);
   });
 
+  test("Hermes creation in a workspace skips existing private channels", async () => {
+    const owner = await registerUser("PrivateHermesOwner");
+    const wsRes = await req(
+      "POST",
+      "/workspaces/create",
+      { name: `Private Hermes ${crypto.randomUUID()}` },
+      owner.token,
+    );
+    expect(wsRes.status).toBe(200);
+    createdWorkspaceIds.push(wsRes.body.id);
+    const privateChannel = await req(
+      "POST",
+      "/conversations/channel",
+      {
+        workspaceId: wsRes.body.id,
+        name: "Private Hermes Room",
+        isPrivate: true,
+        memberIds: [],
+      },
+      owner.token,
+    );
+    expect(privateChannel.status).toBe(200);
+
+    const botRes = await createBot(
+      owner.token,
+      `PrivateHermes-${crypto.randomUUID()}`,
+      undefined,
+      { kind: "hermes", workspaceId: wsRes.body.id },
+    );
+    expect(botRes.status).toBe(200);
+
+    const privateParticipation = await db
+      .select({ userId: conversationParticipants.userId })
+      .from(conversationParticipants)
+      .where(
+        and(
+          eq(
+            conversationParticipants.conversationId,
+            privateChannel.body.id,
+          ),
+          eq(conversationParticipants.userId, botRes.body.userId),
+        ),
+      );
+    expect(privateParticipation).toHaveLength(0);
+
+    const [generalChannel] = await db
+      .select({ id: conversations.id })
+      .from(conversations)
+      .where(
+        and(
+          eq(conversations.workspaceId, wsRes.body.id),
+          eq(conversations.name, "general"),
+        ),
+      )
+      .limit(1);
+    const publicParticipation = await db
+      .select({ userId: conversationParticipants.userId })
+      .from(conversationParticipants)
+      .where(
+        and(
+          eq(conversationParticipants.conversationId, generalChannel.id),
+          eq(conversationParticipants.userId, botRes.body.userId),
+        ),
+      );
+    expect(publicParticipation).toHaveLength(1);
+  });
+
   test("Hermes creation leaves no orphan identity when workspace authorization changes", async () => {
     const workspaceOwner = await registerUser("AtomicWorkspaceOwner");
     const botOwner = await registerUser("AtomicBotOwner");

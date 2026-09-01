@@ -213,7 +213,7 @@ export function registerTools(server: McpServer) {
     "create_channel",
     {
       description:
-        "Create a new channel (group conversation) in a workspace. All workspace members are added automatically.",
+        "Create a public or private channel (group conversation) in a workspace. Public channels include all workspace members; private channels include only the creator and selected member IDs.",
       inputSchema: {
         workspaceId: z.string().min(1).describe("The workspace ID"),
         name: z
@@ -221,12 +221,24 @@ export function registerTools(server: McpServer) {
           .min(1)
           .max(100)
           .describe("Channel name (will be slugified)"),
+        isPrivate: z
+          .boolean()
+          .optional()
+          .describe("When true, only selected workspace members can access the channel"),
+        memberIds: z
+          .array(z.string().uuid())
+          .max(500)
+          .optional()
+          .describe("Workspace user IDs to include in a private channel; the creator is always included"),
       },
     },
-    async ({ workspaceId, name }, extra) => {
+    async ({ workspaceId, name, isPrivate, memberIds }, extra) => {
       const user = getUser(extra);
       return withService(() =>
-        createChannel(workspaceId as string, name as string, user.id)
+        createChannel(workspaceId as string, name as string, user.id, {
+          isPrivate: isPrivate === true,
+          memberIds: memberIds as string[] | undefined,
+        })
       );
     }
   );

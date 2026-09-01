@@ -407,6 +407,7 @@ export async function getConversationDetail(conversationId: string, userId: stri
     workspaceId: conv.workspaceId,
     name: conv.name,
     title: conv.title,
+    isPrivate: conv.isPrivate,
     participants: participants.map((p) => ({
       userId: p.userId,
       role: p.role,
@@ -733,9 +734,18 @@ export async function createChannel(
   workspaceId: string,
   name: string,
   userId: string,
-  options: { afterWorkspaceLocked?: () => Promise<void> } = {},
+  options: {
+    isPrivate?: boolean;
+    memberIds?: string[];
+    afterWorkspaceLocked?: () => Promise<void>;
+  } = {},
 ) {
   const normalized = normalizeChannelName(name);
+  const isPrivate = options.isPrivate ?? false;
+  const requestedMemberIds = [...new Set(options.memberIds ?? [])];
+  if (!isPrivate && requestedMemberIds.length > 0) {
+    throw new ServiceError("Member selection is only available for private channels", 400);
+  }
 
   try {
     const result = await db.transaction(async (tx) => {
@@ -787,6 +797,7 @@ export async function createChannel(
           type: "group",
           workspaceId,
           name: normalized.slug,
+          isPrivate,
         })
         .returning();
 
@@ -798,9 +809,28 @@ export async function createChannel(
         .from(workspaceMembers)
         .where(eq(workspaceMembers.workspaceId, workspaceId));
 
-      if (allMembers.length > 0) {
+      const workspaceMemberIds = new Set(
+        allMembers.map((member) => member.userId),
+      );
+      const selectedMemberIds = new Set([userId, ...requestedMemberIds]);
+      if (
+        isPrivate &&
+        requestedMemberIds.some(
+          (selectedUserId) => !workspaceMemberIds.has(selectedUserId),
+        )
+      ) {
+        throw new ServiceError(
+          "Every private channel member must belong to this workspace",
+          400,
+        );
+      }
+      const channelMembers = isPrivate
+        ? allMembers.filter((member) => selectedMemberIds.has(member.userId))
+        : allMembers;
+
+      if (channelMembers.length > 0) {
         await tx.insert(conversationParticipants).values(
-          allMembers.map((member) => ({
+          channelMembers.map((member) => ({
             conversationId: channel.id,
             userId: member.userId,
             role: member.role,
@@ -810,7 +840,7 @@ export async function createChannel(
 
       return {
         channel: toWorkspaceChannel(channel),
-        targetUserIds: allMembers.map((member) => member.userId),
+        targetUserIds: channelMembers.map((member) => member.userId),
       };
     });
 
@@ -880,7 +910,13 @@ export async function renameChannel(
         throw new ServiceError("Channel not found", 404);
       }
 
-      await requireChannelManager(tx, workspace.id, userId);
+      await requireChannelManager(
+        tx,
+        workspace.id,
+        userId,
+        channel.id,
+        channel.isPrivate,
+      );
 
       const [existing] = await tx
         .select({ id: conversations.id })
@@ -901,14 +937,11 @@ export async function renameChannel(
         .set({ name: normalized.slug, title: normalized.title })
         .where(eq(conversations.id, channel.id))
         .returning();
-      const targetUsers = await tx
-        .select({ userId: workspaceMembers.userId })
-        .from(workspaceMembers)
-        .where(eq(workspaceMembers.workspaceId, workspace.id));
+      const targetUserIds = await channelLifecycleTargetUserIds(tx, updated);
 
       return {
         channel: toWorkspaceChannel(updated),
-        targetUserIds: targetUsers.map((member) => member.userId),
+        targetUserIds,
         workspaceId: workspace.id,
       };
     });
@@ -980,7 +1013,13 @@ export async function deleteChannel(
       throw new ServiceError("Channel not found", 404);
     }
 
-    await requireChannelManager(tx, workspace.id, userId);
+    await requireChannelManager(
+      tx,
+      workspace.id,
+      userId,
+      channel.id,
+      channel.isPrivate,
+    );
 
     const [activeInvocation] = await tx
       .select({ id: botInvocations.id })
@@ -1043,16 +1082,13 @@ export async function deleteChannel(
       );
     }
 
-    const targetUsers = await tx
-      .select({ userId: workspaceMembers.userId })
-      .from(workspaceMembers)
-      .where(eq(workspaceMembers.workspaceId, workspace.id));
+    const targetUserIds = await channelLifecycleTargetUserIds(tx, channel);
     await tx.delete(conversations).where(eq(conversations.id, channel.id));
     return {
       ok: true as const,
       deletedChannelId: channel.id,
       workspaceId: workspace.id,
-      targetUserIds: targetUsers.map((member) => member.userId),
+      targetUserIds,
     };
   });
 
@@ -1117,15 +1153,36 @@ function toWorkspaceChannel(channel: typeof conversations.$inferSelect) {
     workspaceId: channel.workspaceId,
     name: channel.name,
     title: channel.title,
+    isPrivate: channel.isPrivate,
     createdAt: channel.createdAt.toISOString(),
     updatedAt: channel.updatedAt.toISOString(),
   };
+}
+
+async function channelLifecycleTargetUserIds(
+  executor: Pick<typeof db, "select">,
+  channel: typeof conversations.$inferSelect,
+) {
+  if (channel.isPrivate) {
+    const participants = await executor
+      .select({ userId: conversationParticipants.userId })
+      .from(conversationParticipants)
+      .where(eq(conversationParticipants.conversationId, channel.id));
+    return participants.map((participant) => participant.userId);
+  }
+  const members = await executor
+    .select({ userId: workspaceMembers.userId })
+    .from(workspaceMembers)
+    .where(eq(workspaceMembers.workspaceId, channel.workspaceId!));
+  return members.map((member) => member.userId);
 }
 
 async function requireChannelManager(
   executor: Pick<typeof db, "select">,
   workspaceId: string,
   userId: string,
+  conversationId: string,
+  isPrivate: boolean,
 ) {
   const [membership] = await executor
     .select({ role: workspaceMembers.role })
@@ -1140,6 +1197,24 @@ async function requireChannelManager(
 
   if (!membership) {
     throw new ServiceError("You are not a member of this workspace", 403);
+  }
+  if (isPrivate) {
+    const [participant] = await executor
+      .select({ userId: conversationParticipants.userId })
+      .from(conversationParticipants)
+      .where(
+        and(
+          eq(conversationParticipants.conversationId, conversationId),
+          eq(conversationParticipants.userId, userId),
+        ),
+      )
+      .limit(1);
+    if (!participant) {
+      throw new ServiceError(
+        "You are not a participant of this conversation",
+        403,
+      );
+    }
   }
   if (membership.role !== "owner" && membership.role !== "admin") {
     throw new ServiceError(

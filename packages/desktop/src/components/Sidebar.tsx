@@ -28,6 +28,26 @@ function PlusIcon({ className = "" }: { className?: string }) {
   );
 }
 
+function LockIcon() {
+  return (
+    <svg
+      role="img"
+      aria-label="Private channel"
+      width="13"
+      height="13"
+      viewBox="0 0 14 14"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.4"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <rect x="2.5" y="6" width="9" height="6.5" rx="1.5" />
+      <path d="M4.5 6V4.5a2.5 2.5 0 0 1 5 0V6" />
+    </svg>
+  );
+}
+
 function MoreIcon() {
   return (
     <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
@@ -323,7 +343,13 @@ export function Sidebar() {
                           onClick={() => handleSelectChannel(ch)}
                           aria-current={isActive ? "page" : undefined}
                         >
-                          <span className="w-4 shrink-0 text-center text-text-dimmed">#</span>
+                          <span
+                            className="flex w-4 shrink-0 items-center justify-center text-text-dimmed"
+                            title={ch.isPrivate ? "Private channel" : undefined}
+                            aria-hidden={ch.isPrivate ? undefined : true}
+                          >
+                            {ch.isPrivate ? <LockIcon /> : "#"}
+                          </span>
                           <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap">{ch.name}</span>
                           {isUnread && <span className="size-1.5 shrink-0 rounded-full bg-accent" />}
                         </button>
