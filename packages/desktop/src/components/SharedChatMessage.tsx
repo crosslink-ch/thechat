@@ -2,6 +2,11 @@ import type { ChatMessage } from "@thechat/shared";
 import type { ReactNode } from "react";
 import { MessageReactions } from "./MessageReactions";
 import { SharedMessageAttachments } from "./SharedMessageAttachments";
+import {
+  formatFullMessageTimestamp,
+  formatMessageTimestamp,
+  getValidMessageDateTime,
+} from "../lib/message-timestamp";
 
 export const MESSAGE_MERGE_WINDOW_MS = 5 * 60 * 1000;
 
@@ -56,8 +61,13 @@ export function SharedChatMessage({
   children,
   onSetReaction,
 }: SharedChatMessageProps) {
-  const shortTime = formatTime(message.createdAt);
-  const fullTime = formatFullTime(message.createdAt);
+  // Grouped rows only have the avatar-width gutter for their hover time.
+  // Their full date remains available through the tooltip and accessible label.
+  const displayTime = merged
+    ? formatTime(message.createdAt)
+    : formatMessageTimestamp(message.createdAt);
+  const fullTime = formatFullMessageTimestamp(message.createdAt);
+  const dateTime = getValidMessageDateTime(message.createdAt);
 
   return (
     <div
@@ -69,13 +79,13 @@ export function SharedChatMessage({
     >
       {merged ? (
         <time
-          dateTime={message.createdAt}
+          dateTime={dateTime}
           aria-label={`Sent ${fullTime}`}
           title={fullTime}
           tabIndex={0}
           className="mt-0.5 flex h-8 w-8 shrink-0 cursor-default items-center justify-center whitespace-nowrap text-[0.625rem] text-text-dimmed opacity-0 outline-none transition-opacity group-hover:opacity-100 focus:opacity-100 active:opacity-100 focus-visible:ring-1 focus-visible:ring-border-focus"
         >
-          {shortTime}
+          {displayTime}
         </time>
       ) : (
         <div
@@ -97,11 +107,11 @@ export function SharedChatMessage({
               {message.senderName}
             </span>
             <time
-              dateTime={message.createdAt}
+              dateTime={dateTime}
               title={fullTime}
               className="text-[0.714rem] text-text-dimmed"
             >
-              {shortTime}
+              {displayTime}
             </time>
           </div>
         )}
@@ -121,15 +131,10 @@ export function SharedChatMessage({
 }
 
 function formatTime(iso: string) {
-  return new Date(iso).toLocaleTimeString([], {
+  const date = new Date(iso);
+  if (!Number.isFinite(date.getTime())) return "Unknown time";
+  return date.toLocaleTimeString([], {
     hour: "2-digit",
     minute: "2-digit",
-  });
-}
-
-function formatFullTime(iso: string) {
-  return new Date(iso).toLocaleString([], {
-    dateStyle: "medium",
-    timeStyle: "medium",
   });
 }
