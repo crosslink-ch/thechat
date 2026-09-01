@@ -20,6 +20,8 @@ import { botRuntimeRoutes } from "./bot-runtime";
 import { attachmentRoutes } from "./attachments";
 import { initObservability, shutdownObservability, withSpan } from "./observability";
 import { log } from "./logging";
+import { apiDocumentation } from "./openapi";
+import { API_TAGS, PUBLIC_SECURITY } from "./openapi-metadata";
 
 const apiLog = log.child({ component: "api" });
 
@@ -50,13 +52,10 @@ function installLoopbackOnlyE2EGuard() {
   }) as typeof fetch;
 }
 
-installLoopbackOnlyE2EGuard();
-
-await initObservability("thechat-api");
-
-const app = new Elysia()
+export const app = new Elysia()
   .use(cors())
   .use(log.into())
+  .use(apiDocumentation())
   .decorate("db", db)
   .use(authInfrastructureErrors)
   .use(authRoutes)
@@ -73,7 +72,9 @@ const app = new Elysia()
   .use(inviteRoutes)
   .use(botWorkspaceInviteRoutes)
   .use(mcpRoutes)
-  .get("/", () => "TheChat API")
+  .get("/", () => "TheChat API", {
+    detail: { tags: [API_TAGS.system], security: PUBLIC_SECURITY },
+  })
   .get("/health", async ({ db }) => {
     return withSpan(
       "http.health",
@@ -101,25 +102,36 @@ const app = new Elysia()
         }
       },
     );
+  }, {
+    detail: { tags: [API_TAGS.system], security: PUBLIC_SECURITY },
   });
 
 export type App = typeof app;
 
-const port = Number(process.env.THECHAT_BACKEND_PORT) || 3000;
-const hostname = process.env.THECHAT_BACKEND_HOST?.trim();
-app.listen(hostname ? { port, hostname } : port);
+async function startServer() {
+  installLoopbackOnlyE2EGuard();
+  await initObservability("thechat-api");
 
-process.once("SIGTERM", () => {
-  void shutdownAndExit(143);
-});
-process.once("SIGINT", () => {
-  void shutdownAndExit(130);
-});
+  const port = Number(process.env.THECHAT_BACKEND_PORT) || 3000;
+  const hostname = process.env.THECHAT_BACKEND_HOST?.trim();
+  app.listen(hostname ? { port, hostname } : port);
 
-apiLog.info(
-  { hostname: app.server!.hostname, port: app.server!.port },
-  "TheChat API is running",
-);
+  process.once("SIGTERM", () => {
+    void shutdownAndExit(143);
+  });
+  process.once("SIGINT", () => {
+    void shutdownAndExit(130);
+  });
+
+  apiLog.info(
+    { hostname: app.server!.hostname, port: app.server!.port },
+    "TheChat API is running",
+  );
+}
+
+if (import.meta.main) {
+  await startServer();
+}
 
 async function shutdownAndExit(code: number) {
   app.stop();

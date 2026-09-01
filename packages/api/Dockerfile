@@ -20,7 +20,7 @@ COPY packages/shared/ packages/shared/
 COPY packages/api/ packages/api/
 
 # Build
-RUN cd packages/api && bun build src/index.ts src/scripts/worker.ts --outdir dist --target bun
+RUN pnpm --filter @thechat/api build
 
 # --- Production stage ---
 FROM oven/bun:1-slim

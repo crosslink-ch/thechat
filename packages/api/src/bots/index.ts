@@ -1,4 +1,6 @@
 import { Elysia } from "elysia";
+import { API_TAGS } from "../openapi-metadata";
+import { jsonBodyDocumentation } from "../openapi-route";
 import { z } from "zod";
 import { resolveTokenToUser } from "../auth/middleware";
 import { ServiceError } from "../services/errors";
@@ -74,7 +76,10 @@ const addToWorkspaceSchema = z.object({
   workspaceId: z.string().trim().min(1, "Workspace ID is required"),
 });
 
-export const botRoutes = new Elysia({ prefix: "/bots" })
+export const botRoutes = new Elysia({
+  prefix: "/bots",
+  tags: [API_TAGS.bots],
+})
   .derive(async ({ headers }) => {
     const authHeader = headers.authorization;
     if (!authHeader?.startsWith("Bearer ")) {
@@ -140,7 +145,11 @@ export const botRoutes = new Elysia({ prefix: "/bots" })
       set.status = e instanceof ServiceError ? e.status : 500;
       return { error: e.message ?? "Unknown error" };
     }
-  })
+    },
+    {
+      detail: jsonBodyDocumentation("Create a bot", createSchema),
+    },
+  )
 
   // Register authenticated bot's webhook URL (bot-token only)
   .post("/me/webhook", async ({ body, user, set }) => {
@@ -161,7 +170,14 @@ export const botRoutes = new Elysia({ prefix: "/bots" })
       set.status = e instanceof ServiceError ? e.status : 500;
       return { error: e.message ?? "Unknown error" };
     }
-  })
+    },
+    {
+      detail: jsonBodyDocumentation(
+        "Set the authenticated bot webhook",
+        registerWebhookSchema,
+      ),
+    },
+  )
 
   // Clear authenticated bot's webhook URL (bot-token only)
   .delete("/me/webhook", async ({ user, set }) => {
@@ -197,7 +213,14 @@ export const botRoutes = new Elysia({ prefix: "/bots" })
       set.status = e instanceof ServiceError ? e.status : 500;
       return { error: e.message ?? "Unknown error" };
     }
-  })
+    },
+    {
+      detail: jsonBodyDocumentation(
+        "Replace the authenticated bot command list",
+        registerCommandsSchema,
+      ),
+    },
+  )
 
   // Clear authenticated bot's slash command list (bot-token only)
   .delete("/me/commands", async ({ user, set }) => {
@@ -264,7 +287,11 @@ export const botRoutes = new Elysia({ prefix: "/bots" })
       set.status = e instanceof ServiceError ? e.status : 500;
       return { error: e.message ?? "Unknown error" };
     }
-  })
+    },
+    {
+      detail: jsonBodyDocumentation("Update a bot", updateSchema),
+    },
+  )
 
   // Delete bot (owner only)
   .delete("/:botId", async ({ params, user, set }) => {
@@ -297,7 +324,14 @@ export const botRoutes = new Elysia({ prefix: "/bots" })
           : 500;
       return { error: e.message ?? "Unknown error" };
     }
-  })
+    },
+    {
+      detail: jsonBodyDocumentation(
+        "Add a bot to a workspace",
+        addToWorkspaceSchema,
+      ),
+    },
+  )
 
   // Remove bot from workspace
   .delete("/:botId/workspaces/:workspaceId", async ({ params, user, set }) => {

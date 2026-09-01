@@ -1,4 +1,5 @@
 import { Elysia } from "elysia";
+import { API_TAGS } from "../openapi-metadata";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import type { McpAuthenticationResult } from "./auth";
@@ -29,7 +30,7 @@ export function createMcpRoutes({
   authenticate,
   setupTools,
 }: McpRouteDependencies) {
-  return new Elysia().all(
+  return new Elysia({ tags: [API_TAGS.mcp] }).all(
     "/mcp",
     async ({ request }) => {
       const authentication = await authenticate({ request });

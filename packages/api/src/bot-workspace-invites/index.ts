@@ -1,4 +1,6 @@
 import { Elysia } from "elysia";
+import { API_TAGS } from "../openapi-metadata";
+import { jsonBodyDocumentation } from "../openapi-route";
 import { z } from "zod";
 import { resolveTokenToUser } from "../auth/middleware";
 import { ServiceError } from "../services/errors";
@@ -12,6 +14,7 @@ const resolutionSchema = z.object({ inviteId: z.string().uuid() });
 
 export const botWorkspaceInviteRoutes = new Elysia({
   prefix: "/bot-workspace-invites",
+  tags: [API_TAGS.invitations],
 })
   .derive(async ({ headers }) => {
     const authHeader = headers.authorization;
@@ -55,7 +58,14 @@ export const botWorkspaceInviteRoutes = new Elysia({
       }
       throw error;
     }
-  })
+    },
+    {
+      detail: jsonBodyDocumentation(
+        "Accept a bot workspace invitation",
+        resolutionSchema,
+      ),
+    },
+  )
   .post("/decline", async ({ body, user, set }) => {
     const parsed = resolutionSchema.safeParse(body);
     if (!parsed.success) {
@@ -72,4 +82,11 @@ export const botWorkspaceInviteRoutes = new Elysia({
       }
       throw error;
     }
-  });
+    },
+    {
+      detail: jsonBodyDocumentation(
+        "Decline a bot workspace invitation",
+        resolutionSchema,
+      ),
+    },
+  );

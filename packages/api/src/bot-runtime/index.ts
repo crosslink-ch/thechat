@@ -1,4 +1,6 @@
 import { Elysia } from "elysia";
+import { API_TAGS } from "../openapi-metadata";
+import { jsonBodyDocumentation } from "../openapi-route";
 import { z } from "zod";
 import { resolveTokenToUser } from "../auth/middleware";
 import { ServiceError } from "../services/errors";
@@ -14,7 +16,10 @@ const interactionResponseSchema = z.object({
   ]),
 });
 
-export const botRuntimeRoutes = new Elysia({ prefix: "/bot-runtime" })
+export const botRuntimeRoutes = new Elysia({
+  prefix: "/bot-runtime",
+  tags: [API_TAGS.botRuntime],
+})
   .derive(async ({ headers }) => {
     const authHeader = headers.authorization;
     if (!authHeader?.startsWith("Bearer ")) return { user: null } as any;
@@ -60,5 +65,11 @@ export const botRuntimeRoutes = new Elysia({ prefix: "/bot-runtime" })
               : "Failed to deliver the Hermes interaction",
         };
       }
+    },
+    {
+      detail: jsonBodyDocumentation(
+        "Submit a Hermes interaction response",
+        interactionResponseSchema,
+      ),
     },
   );

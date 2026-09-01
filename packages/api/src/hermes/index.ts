@@ -1,4 +1,6 @@
 import { Elysia } from "elysia";
+import { API_TAGS } from "../openapi-metadata";
+import { jsonBodyDocumentation } from "../openapi-route";
 import { z } from "zod";
 import { resolveTokenToUser } from "../auth/middleware";
 import { ServiceError } from "../services/errors";
@@ -15,7 +17,10 @@ export const hermesBotUpdateSchema = z.object({
   defaultMode: modeSchema.optional(),
 }).strict();
 
-export const hermesRoutes = new Elysia({ prefix: "/bots" })
+export const hermesRoutes = new Elysia({
+  prefix: "/bots",
+  tags: [API_TAGS.hermes],
+})
   .derive(async ({ headers }) => {
     const authHeader = headers.authorization;
     if (!authHeader?.startsWith("Bearer ")) return { user: null } as any;
@@ -50,7 +55,14 @@ export const hermesRoutes = new Elysia({ prefix: "/bots" })
       set.status = e instanceof ServiceError ? e.status : 500;
       return { error: e.message ?? "Unknown error" };
     }
-  })
+    },
+    {
+      detail: jsonBodyDocumentation(
+        "Update Hermes bot settings",
+        hermesBotUpdateSchema,
+      ),
+    },
+  )
   .post("/:botId/hermes/test", async ({ params, user, set }) => {
     try {
       return await testHermesBot(params.botId, user.id);

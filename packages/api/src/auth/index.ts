@@ -1,5 +1,10 @@
 import crypto from "crypto";
 import { Elysia } from "elysia";
+import { API_TAGS, PUBLIC_SECURITY } from "../openapi-metadata";
+import {
+  jsonBodyDocumentation,
+  SENSITIVE_STRING_METADATA,
+} from "../openapi-route";
 import { and, eq, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "../db";
@@ -51,12 +56,18 @@ async function waitForPasswordResetResponse(
 const registerSchema = z.object({
   name: z.string().trim().min(1, "Name is required"),
   email: z.email("Please enter a valid email address"),
-  password: z.string().min(8, "Password must be at least 8 characters"),
+  password: z
+    .string()
+    .min(8, "Password must be at least 8 characters")
+    .meta(SENSITIVE_STRING_METADATA),
 });
 
 const loginSchema = z.object({
   email: z.email("Please enter a valid email address"),
-  password: z.string().min(1, "Password is required"),
+  password: z
+    .string()
+    .min(1, "Password is required")
+    .meta(SENSITIVE_STRING_METADATA),
 });
 
 const updateProfileSchema = z
@@ -109,7 +120,8 @@ const resetPasswordSchema = z.object({
   password: z
     .string()
     .min(8, "Password must be at least 8 characters")
-    .max(128, "Password must be 128 characters or fewer"),
+    .max(128, "Password must be 128 characters or fewer")
+    .meta(SENSITIVE_STRING_METADATA),
 });
 
 function formatZodError(error: z.ZodError): string {
@@ -370,7 +382,10 @@ async function revokeSessionToken(token: string) {
   }
 }
 
-export const authRoutes = new Elysia({ prefix: "/auth" })
+export const authRoutes = new Elysia({
+  prefix: "/auth",
+  tags: [API_TAGS.authentication],
+})
   .onError(({ error, set }) => {
     authRouteLog.error({ err: error }, "Authentication route failed");
     set.status = 503;
@@ -453,7 +468,14 @@ export const authRoutes = new Elysia({ prefix: "/auth" })
     }
 
     return authResponseForEmail(email, result.token);
-  })
+    },
+    {
+      detail: {
+        ...jsonBodyDocumentation("Register a human account", registerSchema),
+        security: PUBLIC_SECURITY,
+      },
+    },
+  )
 
   .post("/login", async ({ body, set, headers, request, server }) => {
     const parsed = loginSchema.safeParse(body);
@@ -500,7 +522,14 @@ export const authRoutes = new Elysia({ prefix: "/auth" })
     }
 
     return authResponseForEmail(email, result.token);
-  })
+    },
+    {
+      detail: {
+        ...jsonBodyDocumentation("Log in", loginSchema),
+        security: PUBLIC_SECURITY,
+      },
+    },
+  )
 
   .post("/verify-email", async ({ body, set, headers, request, server }) => {
     const parsed = verifyEmailSchema.safeParse(body);
@@ -579,7 +608,14 @@ export const authRoutes = new Elysia({ prefix: "/auth" })
     }
 
     return authResponseForEmail(email, result.token);
-  })
+    },
+    {
+      detail: {
+        ...jsonBodyDocumentation("Verify an email address", verifyEmailSchema),
+        security: PUBLIC_SECURITY,
+      },
+    },
+  )
 
   .post(
     "/resend-verification",
@@ -633,6 +669,15 @@ export const authRoutes = new Elysia({ prefix: "/auth" })
       }
 
       return { message };
+    },
+    {
+      detail: {
+        ...jsonBodyDocumentation(
+          "Send a new verification code",
+          resendVerificationSchema,
+        ),
+        security: PUBLIC_SECURITY,
+      },
     },
   )
 
@@ -693,6 +738,15 @@ export const authRoutes = new Elysia({ prefix: "/auth" })
       await waitForPasswordResetResponse(responseStartedAt);
       return { message: passwordResetRequestMessage };
     },
+    {
+      detail: {
+        ...jsonBodyDocumentation(
+          "Request a password reset code",
+          requestPasswordResetSchema,
+        ),
+        security: PUBLIC_SECURITY,
+      },
+    },
   )
 
   .post(
@@ -752,6 +806,12 @@ export const authRoutes = new Elysia({ prefix: "/auth" })
         message: "Password reset. You can now log in with your new password.",
       };
     },
+    {
+      detail: {
+        ...jsonBodyDocumentation("Reset a password", resetPasswordSchema),
+        security: PUBLIC_SECURITY,
+      },
+    },
   )
 
   .post("/personal-access-tokens", async ({ body, headers, set }) => {
@@ -776,7 +836,14 @@ export const authRoutes = new Elysia({ prefix: "/auth" })
       }
       throw error;
     }
-  })
+    },
+    {
+      detail: jsonBodyDocumentation(
+        "Create a personal access token",
+        createPersonalAccessTokenSchema,
+      ),
+    },
+  )
 
   .get("/personal-access-tokens", async ({ headers, set }) => {
     const token = extractBearerToken(headers);
@@ -935,7 +1002,14 @@ export const authRoutes = new Elysia({ prefix: "/auth" })
     }
 
     return { user };
-  })
+    },
+    {
+      detail: jsonBodyDocumentation(
+        "Update the current profile",
+        updateProfileSchema,
+      ),
+    },
+  )
 
   .post("/logout", async ({ headers }) => {
     const token = extractBearerToken(headers);

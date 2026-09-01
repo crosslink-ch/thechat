@@ -1,4 +1,6 @@
 import { Elysia } from "elysia";
+import { API_TAGS } from "../openapi-metadata";
+import { jsonBodyDocumentation } from "../openapi-route";
 import { z } from "zod";
 import { eq } from "drizzle-orm";
 import { db } from "../db";
@@ -211,7 +213,10 @@ function requireHermesBot(platformBot: HermesPlatformBot | null, set: { status?:
   return null;
 }
 
-export const hermesPlatformRoutes = new Elysia({ prefix: "/hermes-platform" })
+export const hermesPlatformRoutes = new Elysia({
+  prefix: "/hermes-platform",
+  tags: [API_TAGS.hermesPlatform],
+})
   .derive(async ({ headers }) => ({
     platformBot: await resolveHermesPlatformBot(headers),
   }))
@@ -257,6 +262,8 @@ export const hermesPlatformRoutes = new Elysia({ prefix: "/hermes-platform" })
       set.status = e instanceof ServiceError ? e.status : 500;
       return { error: e.message ?? "Unknown error" };
     }
+  }, {
+    detail: jsonBodyDocumentation("Publish a bot message", messageSchema),
   })
   .post("/typing", async ({ body, platformBot, set }) => {
     const parsed = typingSchema.safeParse(body);
@@ -274,6 +281,8 @@ export const hermesPlatformRoutes = new Elysia({ prefix: "/hermes-platform" })
       set.status = e instanceof ServiceError ? e.status : 500;
       return { error: e.message ?? "Unknown error" };
     }
+  }, {
+    detail: jsonBodyDocumentation("Publish bot typing state", typingSchema),
   })
   .post("/invocations/:invocationId/progress", async ({ params, body, platformBot, set }) => {
     const parsed = progressSchema.safeParse(body);
@@ -298,6 +307,8 @@ export const hermesPlatformRoutes = new Elysia({ prefix: "/hermes-platform" })
       set.status = e instanceof ServiceError ? e.status : 500;
       return { error: e.message ?? "Unknown error" };
     }
+  }, {
+    detail: jsonBodyDocumentation("Publish invocation progress", progressSchema),
   })
   .post("/invocations/:invocationId/failed", async ({ params, body, platformBot, set }) => {
     const parsed = failedSchema.safeParse(body);
@@ -315,6 +326,8 @@ export const hermesPlatformRoutes = new Elysia({ prefix: "/hermes-platform" })
       set.status = e instanceof ServiceError ? e.status : 500;
       return { error: e.message ?? "Unknown error" };
     }
+  }, {
+    detail: jsonBodyDocumentation("Fail an invocation", failedSchema),
   })
   .post("/invocations/:invocationId/completed", async ({ params, body, platformBot, set }) => {
     const parsed = silentCompleteSchema.safeParse(body ?? {});
@@ -332,6 +345,11 @@ export const hermesPlatformRoutes = new Elysia({ prefix: "/hermes-platform" })
       set.status = e instanceof ServiceError ? e.status : 500;
       return { error: e.message ?? "Unknown error" };
     }
+  }, {
+    detail: jsonBodyDocumentation(
+      "Complete an invocation without a message",
+      silentCompleteSchema,
+    ),
   })
   .post("/invocations/:invocationId/cancelled", async ({ params, body, platformBot, set }) => {
     const parsed = cancelledSchema.safeParse(body ?? {});
@@ -349,4 +367,6 @@ export const hermesPlatformRoutes = new Elysia({ prefix: "/hermes-platform" })
       set.status = e instanceof ServiceError ? e.status : 500;
       return { error: e.message ?? "Unknown error" };
     }
+  }, {
+    detail: jsonBodyDocumentation("Cancel an invocation", cancelledSchema),
   });
