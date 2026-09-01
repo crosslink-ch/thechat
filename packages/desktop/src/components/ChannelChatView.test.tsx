@@ -26,6 +26,104 @@ beforeEach(() => {
 });
 
 describe("ChannelChatView", () => {
+  it("distinguishes messages sent at the same time on different dates", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 6, 15, 12));
+
+    try {
+      const todayAtEight = new Date();
+      todayAtEight.setHours(8, 0, 0, 0);
+      const yesterdayAtEight = new Date(todayAtEight);
+      yesterdayAtEight.setDate(yesterdayAtEight.getDate() - 1);
+      const otherDateThisYearAtEight = new Date(
+        todayAtEight.getFullYear(),
+        0,
+        2,
+        8,
+      );
+      const earlierYearAtEight = new Date(
+        todayAtEight.getFullYear() - 1,
+        todayAtEight.getMonth(),
+        1,
+        8,
+      );
+
+      render(
+        <ChannelChatView
+          messages={[
+            message({
+              id: "today",
+              content: "Today at eight",
+              createdAt: todayAtEight.toISOString(),
+            }),
+            message({
+              id: "yesterday",
+              content: "Yesterday at eight",
+              createdAt: yesterdayAtEight.toISOString(),
+            }),
+            message({
+              id: "other-date-this-year",
+              content: "Another date this year at eight",
+              createdAt: otherDateThisYearAtEight.toISOString(),
+            }),
+            message({
+              id: "earlier-year",
+              content: "Earlier year at eight",
+              createdAt: earlierYearAtEight.toISOString(),
+            }),
+          ]}
+          loading={false}
+          typingUsers={new Map()}
+          onSend={() => {}}
+        />,
+      );
+
+      const shortTime = todayAtEight.toLocaleTimeString([], {
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+      const otherDateThisYear = otherDateThisYearAtEight.toLocaleDateString([], {
+        month: "short",
+        day: "numeric",
+      });
+      const earlierYearDate = earlierYearAtEight.toLocaleDateString([], {
+        year: "numeric",
+        month: "short",
+        day: "numeric",
+      });
+
+      expect(messageTimestamp("Today at eight").textContent).toBe(shortTime);
+      expect(messageTimestamp("Yesterday at eight").textContent).toBe(
+        `Yesterday at ${shortTime}`,
+      );
+      expect(messageTimestamp("Another date this year at eight").textContent).toBe(
+        `${otherDateThisYear} at ${shortTime}`,
+      );
+      expect(messageTimestamp("Earlier year at eight").textContent).toBe(
+        `${earlierYearDate} at ${shortTime}`,
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not expose malformed timestamps as machine-readable dates", () => {
+    render(
+      <ChannelChatView
+        messages={[
+          message({ content: "Malformed timestamp", createdAt: "not-a-date" }),
+        ]}
+        loading={false}
+        typingUsers={new Map()}
+        onSend={() => {}}
+      />,
+    );
+
+    const timestamp = messageTimestamp("Malformed timestamp");
+    expect(timestamp.textContent).toBe("Unknown time");
+    expect(timestamp).not.toHaveAttribute("datetime");
+  });
+
   it("shows the generic typing indicator", () => {
     render(
       <ChannelChatView
@@ -156,6 +254,22 @@ describe("ChannelChatView", () => {
   });
 
 });
+
+function messageRow(content: string) {
+  const row = screen.getByText(content).closest("[data-message-id]");
+  if (!(row instanceof HTMLElement)) {
+    throw new Error(`Message row not found for: ${content}`);
+  }
+  return row;
+}
+
+function messageTimestamp(content: string) {
+  const timestamp = messageRow(content).querySelector("time");
+  if (!(timestamp instanceof HTMLElement)) {
+    throw new Error(`Message timestamp not found for: ${content}`);
+  }
+  return timestamp;
+}
 
 function makeScrollable(element: HTMLElement) {
   Object.defineProperty(element, "scrollHeight", {

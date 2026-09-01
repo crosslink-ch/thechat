@@ -15,6 +15,11 @@ import { HermesProgressInline } from "./HermesProgressInline";
 import type { HermesSlashCommand } from "../lib/hermes-slash-commands";
 import { MessageSendError } from "./MessageSendError";
 import { SharedMessageAttachments } from "./SharedMessageAttachments";
+import {
+  formatFullMessageTimestamp,
+  formatMessageTimestamp,
+  getValidMessageDateTime,
+} from "../lib/message-timestamp";
 
 const DEFER_FORMATTING_MESSAGE_THRESHOLD = 40;
 const DEFER_FORMATTING_BATCH_SIZE = 4;
@@ -49,11 +54,6 @@ interface HermesDmChatViewProps {
   conversationId?: string;
   token?: string | null;
   composerKey?: string | number;
-}
-
-function formatTime(iso: string) {
-  const d = new Date(iso);
-  return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
 export function HermesDmChatView({
@@ -316,7 +316,13 @@ export function HermesDmChatView({
               <div className="min-w-0 flex-1">
                 <div className="mb-0.5 flex items-baseline gap-2">
                   <span className="text-[0.929rem] font-semibold text-text">{msg.senderName}</span>
-                  <span className="text-[0.714rem] text-text-dimmed">{formatTime(msg.createdAt)}</span>
+                  <time
+                    dateTime={getValidMessageDateTime(msg.createdAt)}
+                    title={formatFullMessageTimestamp(msg.createdAt)}
+                    className="text-[0.714rem] text-text-dimmed"
+                  >
+                    {formatMessageTimestamp(msg.createdAt)}
+                  </time>
                 </div>
                 {msg.content && (
                   <Markdown
