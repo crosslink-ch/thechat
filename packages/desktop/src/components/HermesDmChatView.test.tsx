@@ -87,6 +87,70 @@ beforeEach(() => {
 });
 
 describe("HermesDmChatView", () => {
+  it("distinguishes yesterday's timestamp from today's at the same time", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 6, 15, 12));
+
+    try {
+      const todayAtEight = new Date();
+      todayAtEight.setHours(8, 0, 0, 0);
+      const yesterdayAtEight = new Date(todayAtEight);
+      yesterdayAtEight.setDate(yesterdayAtEight.getDate() - 1);
+
+      render(
+        <HermesDmChatView
+          messages={[
+            message({
+              id: "today",
+              content: "Today at eight",
+              createdAt: todayAtEight.toISOString(),
+            }),
+            message({
+              id: "yesterday",
+              content: "Yesterday at eight",
+              createdAt: yesterdayAtEight.toISOString(),
+            }),
+          ]}
+          loading={false}
+          typingUsers={new Map()}
+          progressInvocations={[]}
+          typingSuppressedUserIds={[]}
+          onSend={() => {}}
+        />,
+      );
+
+      const shortTime = todayAtEight.toLocaleTimeString([], {
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+      expect(messageTimestamp("Today at eight").textContent).toBe(shortTime);
+      expect(messageTimestamp("Yesterday at eight").textContent).toBe(
+        `Yesterday at ${shortTime}`,
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not expose malformed timestamps as machine-readable dates", () => {
+    render(
+      <HermesDmChatView
+        messages={[
+          message({ content: "Malformed timestamp", createdAt: "not-a-date" }),
+        ]}
+        loading={false}
+        typingUsers={new Map()}
+        progressInvocations={[]}
+        typingSuppressedUserIds={[]}
+        onSend={() => {}}
+      />,
+    );
+
+    const timestamp = messageTimestamp("Malformed timestamp");
+    expect(timestamp.textContent).toBe("Unknown time");
+    expect(timestamp).not.toHaveAttribute("datetime");
+  });
+
   it("hides the generic typing indicator while Hermes progress is active", () => {
     render(
       <HermesDmChatView
@@ -584,6 +648,22 @@ describe("HermesDmChatView", () => {
     expect(container.querySelector("img[src^='data:image/png;base64,']")).toBeNull();
   });
 });
+
+function messageRow(content: string) {
+  const row = screen.getByText(content).closest("[data-message-id]");
+  if (!(row instanceof HTMLElement)) {
+    throw new Error(`Message row not found for: ${content}`);
+  }
+  return row;
+}
+
+function messageTimestamp(content: string) {
+  const timestamp = messageRow(content).querySelector("time");
+  if (!(timestamp instanceof HTMLElement)) {
+    throw new Error(`Message timestamp not found for: ${content}`);
+  }
+  return timestamp;
+}
 
 function makeScrollable(element: HTMLElement) {
   Object.defineProperty(element, "scrollHeight", {

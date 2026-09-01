@@ -9,6 +9,11 @@ import { MessageSendError } from "./MessageSendError";
 import type { ChatMessage } from "@thechat/shared";
 import type { MentionUser } from "./MentionList";
 import { SharedMessageAttachments } from "./SharedMessageAttachments";
+import {
+  formatFullMessageTimestamp,
+  formatMessageTimestamp,
+  getValidMessageDateTime,
+} from "../lib/message-timestamp";
 
 const noop = () => {};
 
@@ -29,11 +34,6 @@ interface ChannelChatViewProps {
   draftKey?: string;
   conversationId?: string;
   token?: string | null;
-}
-
-function formatTime(iso: string) {
-  const d = new Date(iso);
-  return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
 export function ChannelChatView({
@@ -159,7 +159,13 @@ export function ChannelChatView({
               <div className="min-w-0 flex-1">
                 <div className="mb-0.5 flex items-baseline gap-2">
                   <span className="text-[0.929rem] font-semibold text-text">{msg.senderName}</span>
-                  <span className="text-[0.714rem] text-text-dimmed">{formatTime(msg.createdAt)}</span>
+                  <time
+                    dateTime={getValidMessageDateTime(msg.createdAt)}
+                    title={formatFullMessageTimestamp(msg.createdAt)}
+                    className="text-[0.714rem] text-text-dimmed"
+                  >
+                    {formatMessageTimestamp(msg.createdAt)}
+                  </time>
                 </div>
                 {msg.content && <Markdown content={msg.content} />}
                 <SharedMessageAttachments attachments={msg.attachments ?? []} />
