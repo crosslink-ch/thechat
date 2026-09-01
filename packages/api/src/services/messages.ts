@@ -206,6 +206,7 @@ export async function sendMessage(
             message: existing,
             senderType: participant.senderType,
             conversationType: participant.conversationType,
+            workspaceId: participant.workspaceId,
             duplicate: true,
           };
         }
@@ -240,6 +241,7 @@ export async function sendMessage(
             message: raced,
             senderType: participant.senderType,
             conversationType: participant.conversationType,
+            workspaceId: participant.workspaceId,
             duplicate: true,
           };
         }
@@ -289,6 +291,7 @@ export async function sendMessage(
           message: inserted,
           senderType: participant.senderType,
           conversationType: participant.conversationType,
+          workspaceId: participant.workspaceId,
           duplicate: false,
         };
       }).catch((error) => {
@@ -359,6 +362,7 @@ export async function sendMessage(
           type: "new_message",
           message: publicMessage,
           conversationType: result.conversationType,
+          workspaceId: result.workspaceId,
           clientMessageId,
         };
         try {

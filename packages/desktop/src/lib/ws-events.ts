@@ -17,6 +17,7 @@ export type WsEvents = {
   "ws:new_message": {
     message: ChatMessage;
     conversationType: "direct" | "group";
+    workspaceId: string | null;
     clientMessageId?: string;
   };
   "ws:message_reactions_updated": {

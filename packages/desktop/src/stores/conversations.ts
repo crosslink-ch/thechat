@@ -8,15 +8,20 @@ interface ConversationsStore {
   unreadChannels: Set<string>;
   directConversationIdsByUserId: Record<string, string>;
   unreadDirectConversations: Record<string, string>;
+  unreadConversationWorkspaceIds: Record<string, string>;
   activeDirectConversationId: string | null;
   fetchConversations: () => Promise<void>;
   markAgentChatRead: (id: string) => void;
   markAgentChatUnread: (id: string) => void;
   markChannelRead: (id: string) => void;
-  markChannelUnread: (id: string) => void;
+  markChannelUnread: (id: string, workspaceId: string | null) => void;
   rememberDirectConversation: (userId: string, conversationId: string) => void;
   setActiveDirectConversation: (conversationId: string | null) => void;
-  markDirectConversationUnread: (conversationId: string, userId: string) => void;
+  markDirectConversationUnread: (
+    conversationId: string,
+    userId: string,
+    workspaceId: string | null,
+  ) => void;
 }
 
 export const useConversationsStore = create<ConversationsStore>()((set) => ({
@@ -25,6 +30,7 @@ export const useConversationsStore = create<ConversationsStore>()((set) => ({
   unreadChannels: new Set(),
   directConversationIdsByUserId: {},
   unreadDirectConversations: {},
+  unreadConversationWorkspaceIds: {},
   activeDirectConversationId: null,
 
   fetchConversations: async () => {
@@ -52,19 +58,39 @@ export const useConversationsStore = create<ConversationsStore>()((set) => ({
 
   markChannelRead: (id: string) => {
     set((state) => {
-      if (!state.unreadChannels.has(id)) return state;
-      const next = new Set(state.unreadChannels);
-      next.delete(id);
-      return { unreadChannels: next };
+      const wasUnread = state.unreadChannels.has(id);
+      const hadWorkspace = id in state.unreadConversationWorkspaceIds;
+      if (!wasUnread && !hadWorkspace) return state;
+
+      const unreadChannels = new Set(state.unreadChannels);
+      unreadChannels.delete(id);
+      const unreadConversationWorkspaceIds = {
+        ...state.unreadConversationWorkspaceIds,
+      };
+      delete unreadConversationWorkspaceIds[id];
+      return { unreadChannels, unreadConversationWorkspaceIds };
     });
   },
 
-  markChannelUnread: (id: string) => {
+  markChannelUnread: (id: string, workspaceId: string | null) => {
     set((state) => {
-      if (state.unreadChannels.has(id)) return state;
-      const next = new Set(state.unreadChannels);
-      next.add(id);
-      return { unreadChannels: next };
+      const alreadyUnread = state.unreadChannels.has(id);
+      const workspaceAlreadyTracked =
+        workspaceId === null ||
+        state.unreadConversationWorkspaceIds[id] === workspaceId;
+      if (alreadyUnread && workspaceAlreadyTracked) return state;
+
+      const unreadChannels = alreadyUnread
+        ? state.unreadChannels
+        : new Set(state.unreadChannels).add(id);
+      const unreadConversationWorkspaceIds =
+        workspaceId === null || workspaceAlreadyTracked
+          ? state.unreadConversationWorkspaceIds
+          : {
+              ...state.unreadConversationWorkspaceIds,
+              [id]: workspaceId,
+            };
+      return { unreadChannels, unreadConversationWorkspaceIds };
     });
   },
 
@@ -82,24 +108,50 @@ export const useConversationsStore = create<ConversationsStore>()((set) => ({
 
   setActiveDirectConversation: (conversationId) => {
     set((state) => {
-      const wasUnread = conversationId !== null && !!state.unreadDirectConversations[conversationId];
-      if (state.activeDirectConversationId === conversationId && !wasUnread) return state;
+      const wasUnread =
+        conversationId !== null &&
+        !!state.unreadDirectConversations[conversationId];
+      const hadWorkspace =
+        conversationId !== null &&
+        conversationId in state.unreadConversationWorkspaceIds;
+      if (
+        state.activeDirectConversationId === conversationId &&
+        !wasUnread &&
+        !hadWorkspace
+      ) {
+        return state;
+      }
 
-      if (!wasUnread) return { activeDirectConversationId: conversationId };
+      if (!wasUnread && !hadWorkspace) {
+        return { activeDirectConversationId: conversationId };
+      }
       const unreadDirectConversations = { ...state.unreadDirectConversations };
+      const unreadConversationWorkspaceIds = {
+        ...state.unreadConversationWorkspaceIds,
+      };
       delete unreadDirectConversations[conversationId];
-      return { activeDirectConversationId: conversationId, unreadDirectConversations };
+      delete unreadConversationWorkspaceIds[conversationId];
+      return {
+        activeDirectConversationId: conversationId,
+        unreadDirectConversations,
+        unreadConversationWorkspaceIds,
+      };
     });
   },
 
-  markDirectConversationUnread: (conversationId, userId) => {
+  markDirectConversationUnread: (conversationId, userId, workspaceId) => {
     set((state) => {
       const knownConversation =
         state.directConversationIdsByUserId[userId] === conversationId;
-      const alreadyUnread = state.unreadDirectConversations[conversationId] === userId;
+      const alreadyUnread =
+        state.unreadDirectConversations[conversationId] === userId;
+      const isActive = state.activeDirectConversationId === conversationId;
+      const workspaceAlreadyTracked =
+        workspaceId === null ||
+        state.unreadConversationWorkspaceIds[conversationId] === workspaceId;
       if (
         knownConversation &&
-        (state.activeDirectConversationId === conversationId || alreadyUnread)
+        (isActive || (alreadyUnread && workspaceAlreadyTracked))
       ) {
         return state;
       }
@@ -112,11 +164,18 @@ export const useConversationsStore = create<ConversationsStore>()((set) => ({
               [userId]: conversationId,
             },
         unreadDirectConversations:
-          state.activeDirectConversationId === conversationId || alreadyUnread
+          isActive || alreadyUnread
             ? state.unreadDirectConversations
             : {
                 ...state.unreadDirectConversations,
                 [conversationId]: userId,
+              },
+        unreadConversationWorkspaceIds:
+          isActive || workspaceId === null || workspaceAlreadyTracked
+            ? state.unreadConversationWorkspaceIds
+            : {
+                ...state.unreadConversationWorkspaceIds,
+                [conversationId]: workspaceId,
               },
       };
     });

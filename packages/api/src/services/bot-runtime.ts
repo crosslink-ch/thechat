@@ -1943,7 +1943,12 @@ export async function publishHermesPlatformMessage(input: {
           shouldComplete ? "claimed" : target.invocation.status,
         );
       }
-      await publishBotMessage(responseMessage, target.botName, target.conversation.type);
+      await publishBotMessage(
+        responseMessage,
+        target.botName,
+        target.conversation.type,
+        target.conversation.workspaceId,
+      );
       if (target.invocation) await publishInvocationUpdate(target.invocation.id);
       if (target.invocation && shouldFinalize) {
         await finishHermesProgress(target.invocation.id, "invocation.completed", {
@@ -2225,7 +2230,12 @@ async function recordHermesExecutionFailure(
     return inserted;
   });
 
-  await publishBotMessage(responseMessage, loaded.botName, loaded.conversation.type);
+  await publishBotMessage(
+    responseMessage,
+    loaded.botName,
+    loaded.conversation.type,
+    loaded.conversation.workspaceId,
+  );
   await publishInvocationUpdate(loaded.invocation.id);
   await finishHermesProgress(loaded.invocation.id, "invocation.failed", { error });
   return { ok: true, duplicate: false };
@@ -2589,6 +2599,7 @@ async function failInvocation(
       result.responseMessage,
       loaded.botName,
       loaded.conversation.type,
+      loaded.conversation.workspaceId,
     );
   }
 
@@ -2711,6 +2722,7 @@ async function publishBotMessage(
   message: typeof messages.$inferSelect,
   senderName: string,
   conversationType: ConversationType,
+  workspaceId: string | null,
 ) {
   const attachmentMetadata = await messageAttachmentsForBotDelivery(message.id);
   const participants = await db
@@ -2738,6 +2750,7 @@ async function publishBotMessage(
       createdAt: message.createdAt.toISOString(),
     } as ChatMessage,
     conversationType,
+    workspaceId,
   };
   const scopedRecipients = participants
     .filter(

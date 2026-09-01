@@ -152,6 +152,7 @@ function doConnect() {
           wsEvents.emit("ws:new_message", {
             message: event.message,
             conversationType: event.conversationType,
+            workspaceId: event.workspaceId,
             clientMessageId: event.clientMessageId,
           });
           span.setAttribute("thechat.realtime.outcome", "handled");

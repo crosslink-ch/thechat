@@ -331,6 +331,21 @@ describe("Channel management", () => {
       owner.token,
     );
     expect(message.status).toBe(200);
+    expect(
+      realtimeEvents.find(
+        (event) =>
+          event.event.type === "new_message" &&
+          event.event.message.id === message.body.id,
+      ),
+    ).toMatchObject({
+      targetUserIds: expect.arrayContaining([owner.user.id, member.user.id]),
+      event: {
+        type: "new_message",
+        workspaceId,
+        conversationType: "group",
+        message: { id: message.body.id },
+      },
+    });
 
     const deleted = await req(
       "DELETE",

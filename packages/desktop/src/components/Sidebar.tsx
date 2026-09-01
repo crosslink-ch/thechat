@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { create } from "zustand";
 import { useNavigate, useMatches } from "@tanstack/react-router";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
@@ -112,6 +112,9 @@ export function Sidebar() {
   const unreadDirectConversations = useConversationsStore(
     (s) => s.unreadDirectConversations,
   );
+  const unreadConversationWorkspaceIds = useConversationsStore(
+    (s) => s.unreadConversationWorkspaceIds,
+  );
   const setActiveDirectConversation = useConversationsStore(
     (s) => s.setActiveDirectConversation,
   );
@@ -158,6 +161,24 @@ export function Sidebar() {
   );
   const canManageChannels =
     currentMembership?.role === "owner" || currentMembership?.role === "admin";
+  const unreadWorkspaceIds = useMemo(
+    () => new Set(Object.values(unreadConversationWorkspaceIds)),
+    [unreadConversationWorkspaceIds],
+  );
+  const otherUnreadWorkspaceCount = useMemo(
+    () =>
+      workspaces.filter(
+        (workspace) =>
+          workspace.id !== activeWorkspace?.id && unreadWorkspaceIds.has(workspace.id),
+      ).length,
+    [activeWorkspace?.id, unreadWorkspaceIds, workspaces],
+  );
+  const currentWorkspaceAriaLabel =
+    otherUnreadWorkspaceCount === 0
+      ? "Current workspace"
+      : `Current workspace, ${otherUnreadWorkspaceCount} other ${
+          otherUnreadWorkspaceCount === 1 ? "workspace" : "workspaces"
+        } with unread messages`;
 
   const handleSelectChannel = (channel: WorkspaceChannel) => {
     navigate({ to: "/channel/$id", params: { id: channel.id } });
@@ -197,23 +218,38 @@ export function Sidebar() {
       </button>
       {dropdownOpen && (
         <div className="absolute top-full right-0 left-0 z-[15] mt-3 overflow-hidden rounded-md border border-border-strong bg-surface shadow-card animate-fade-in">
-          {workspaces.map((ws) => (
-            <button
-              key={ws.id}
-              className={`block w-full cursor-pointer border-none px-3 py-2 text-left font-[inherit] text-[0.9rem] transition-colors duration-100 ${
-                activeWorkspace?.id === ws.id
-                  ? "bg-elevated text-text"
-                  : "bg-transparent text-text-muted hover:bg-hover hover:text-text"
-              }`}
-              onClick={() => {
-                selectWorkspace(ws.id);
-                setDropdownOpen(false);
-                setProfileMenuOpen(false);
-              }}
-            >
-              {ws.name}
-            </button>
-          ))}
+          {workspaces.map((ws) => {
+            const hasUnreadMessages = unreadWorkspaceIds.has(ws.id);
+            return (
+              <button
+                key={ws.id}
+                className={`flex w-full cursor-pointer items-center justify-between gap-3 border-none px-3 py-2 text-left font-[inherit] text-[0.9rem] transition-colors duration-100 ${
+                  activeWorkspace?.id === ws.id
+                    ? "bg-elevated text-text"
+                    : "bg-transparent text-text-muted hover:bg-hover hover:text-text"
+                } ${hasUnreadMessages ? "font-semibold text-text" : ""}`}
+                aria-label={
+                  hasUnreadMessages ? `${ws.name}, unread messages` : ws.name
+                }
+                onClick={() => {
+                  selectWorkspace(ws.id);
+                  setDropdownOpen(false);
+                  setProfileMenuOpen(false);
+                }}
+              >
+                <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap">
+                  {ws.name}
+                </span>
+                {hasUnreadMessages && (
+                  <span
+                    data-testid={`workspace-unread-indicator-${ws.id}`}
+                    className="size-2 shrink-0 rounded-full bg-accent"
+                    aria-hidden="true"
+                  />
+                )}
+              </button>
+            );
+          })}
           <button
             className="block w-full cursor-pointer border-t border-border bg-transparent px-3 py-2 text-left font-[inherit] text-[0.9rem] text-accent transition-colors duration-100 hover:bg-hover hover:text-text"
             onClick={() => {
@@ -266,11 +302,20 @@ export function Sidebar() {
           onClick={() => {
             if (user) setDropdownOpen((open) => !open);
           }}
-          aria-label="Current workspace"
+          aria-label={currentWorkspaceAriaLabel}
           title={activeWorkspace?.name ?? "TheChat"}
         >
           <span className="absolute -left-[11px] h-[30px] w-0.5 rounded-r-sm bg-[#2f88bf]" />
           {workspaceInitial}
+          {otherUnreadWorkspaceCount > 0 && (
+            <span
+              data-testid="other-workspace-unread-count"
+              className="absolute -right-1.5 -top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full border-2 border-base bg-accent px-0.5 text-[0.625rem] font-bold leading-none text-white"
+              aria-hidden="true"
+            >
+              {otherUnreadWorkspaceCount > 9 ? "9+" : otherUnreadWorkspaceCount}
+            </span>
+          )}
         </button>
 
         <button
@@ -284,7 +329,7 @@ export function Sidebar() {
       </div>
 
       <div className="flex min-w-0 flex-1 flex-col bg-surface">
-        <div className="flex h-[58px] items-center justify-between border-b border-border-subtle px-3">
+        <div className="relative z-20 flex h-[58px] items-center justify-between border-b border-border-subtle px-3">
           <div className="min-w-0 flex-1">
             {user ? renderWorkspaceDropdown() : (
               <div className="truncate text-[1rem] font-semibold text-text">TheChat</div>
@@ -394,8 +439,13 @@ export function Sidebar() {
                 const renderMember = (m: WorkspaceMember) => {
                   const isActive =
                     activeDmConversationId === directConversationIdsByUserId[m.userId];
-                  const isUnread = Object.values(unreadDirectConversations).includes(
-                    m.userId,
+                  const isUnread = Object.entries(
+                    unreadDirectConversations,
+                  ).some(
+                    ([conversationId, senderUserId]) =>
+                      senderUserId === m.userId &&
+                      unreadConversationWorkspaceIds[conversationId] ===
+                        activeWorkspace.id,
                   );
                   const isOnline =
                     m.user.type === "human" && onlineUserIds.has(m.userId);

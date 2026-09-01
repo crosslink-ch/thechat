@@ -137,4 +137,46 @@ describe("WebSocket application send boundary", () => {
     });
     wsEvents.off("ws:message_reactions_updated", listener);
   });
+
+  it("forwards workspace identity with new-message events", async () => {
+    const received = vi.fn();
+    wsEvents.on("ws:new_message", received);
+    try {
+      useWebSocketStore.getState().connect("token");
+      const socket = FakeWebSocket.instances.at(-1);
+      if (!socket) throw new Error("Expected a WebSocket instance");
+
+      socket.authenticate();
+      socket.onmessage?.(
+        new MessageEvent("message", {
+          data: JSON.stringify({
+            type: "new_message",
+            conversationType: "group",
+            workspaceId: "ws-2",
+            message: {
+              id: "msg-1",
+              conversationId: "channel-2",
+              threadId: null,
+              threadTitle: null,
+              senderId: "user-2",
+              senderName: "User Two",
+              senderType: "human",
+              content: "hello",
+              attachments: [],
+              reactions: {},
+              createdAt: "2026-09-01T12:00:00.000Z",
+            },
+          }),
+        }),
+      );
+
+      await vi.waitFor(() => {
+        expect(received).toHaveBeenCalledWith(
+          expect.objectContaining({ workspaceId: "ws-2" }),
+        );
+      });
+    } finally {
+      wsEvents.off("ws:new_message", received);
+    }
+  });
 });

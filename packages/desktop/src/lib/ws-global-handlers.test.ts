@@ -75,6 +75,7 @@ describe("registerGlobalWsHandlers", () => {
       unreadChannels: new Set(),
       directConversationIdsByUserId: {},
       unreadDirectConversations: {},
+      unreadConversationWorkspaceIds: {},
       activeDirectConversationId: null,
     });
     useWorkspacesStore.setState({
@@ -162,6 +163,7 @@ describe("registerGlobalWsHandlers", () => {
 
     wsEvents.emit("ws:new_message", {
       conversationType: "direct",
+      workspaceId: "ws-1",
       message: {
         id: "msg-1",
         conversationId: "conv-1",
@@ -209,6 +211,7 @@ describe("registerGlobalWsHandlers", () => {
 
     wsEvents.emit("ws:new_message", {
       conversationType: "direct",
+      workspaceId: "ws-1",
       message: {
         id: "msg-general",
         conversationId: "conv-1",
@@ -258,6 +261,7 @@ describe("registerGlobalWsHandlers", () => {
 
     wsEvents.emit("ws:new_message", {
       conversationType: "direct",
+      workspaceId: "ws-1",
       message: {
         id: "msg-2",
         conversationId: "conv-2",
@@ -473,6 +477,7 @@ describe("registerGlobalWsHandlers", () => {
 
     wsEvents.emit("ws:new_message", {
       conversationType: "direct",
+      workspaceId: "ws-1",
       message: {
         id: "msg-1",
         conversationId: "conv-1",
@@ -526,6 +531,7 @@ describe("registerGlobalWsHandlers", () => {
     try {
       wsEvents.emit("ws:new_message", {
         conversationType: "direct",
+        workspaceId: "ws-1",
         message,
       });
 
@@ -557,6 +563,7 @@ describe("registerGlobalWsHandlers", () => {
 
     wsEvents.emit("ws:new_message", {
       conversationType: "direct",
+      workspaceId: "ws-1",
       message: {
         id: "msg-1",
         conversationId: "conv-1",
@@ -590,6 +597,7 @@ describe("registerGlobalWsHandlers", () => {
 
     wsEvents.emit("ws:new_message", {
       conversationType: "group",
+      workspaceId: "ws-1",
       message: {
         id: "msg-self",
         conversationId: "ch-active",
@@ -623,6 +631,7 @@ describe("registerGlobalWsHandlers", () => {
 
     wsEvents.emit("ws:new_message", {
       conversationType: "group",
+      workspaceId: "ws-1",
       message: {
         id: "msg-visible",
         conversationId: "ch-active",
@@ -637,6 +646,7 @@ describe("registerGlobalWsHandlers", () => {
 
     wsEvents.emit("ws:new_message", {
       conversationType: "group",
+      workspaceId: "ws-2",
       message: {
         id: "msg-background",
         conversationId: "ch-background",
@@ -650,6 +660,9 @@ describe("registerGlobalWsHandlers", () => {
     expect(useConversationsStore.getState().unreadChannels).toEqual(
       new Set(["ch-background"]),
     );
+    expect(
+      useConversationsStore.getState().unreadConversationWorkspaceIds,
+    ).toEqual({ "ch-background": "ws-2" });
 
     cleanup();
   });

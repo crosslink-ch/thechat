@@ -543,6 +543,7 @@ export type WsServerEvent =
       type: "new_message";
       message: ChatMessage;
       conversationType: "direct" | "group";
+      workspaceId: string | null;
       clientMessageId?: string;
       traceContext?: TraceContextCarrier;
     }

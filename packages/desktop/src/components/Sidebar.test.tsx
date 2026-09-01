@@ -1,5 +1,12 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { render, screen, act, fireEvent, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import {
   RouterProvider,
@@ -168,6 +175,7 @@ beforeEach(() => {
     unreadChannels: new Set(),
     directConversationIdsByUserId: {},
     unreadDirectConversations: {},
+    unreadConversationWorkspaceIds: {},
     activeDirectConversationId: null,
   });
   vi.clearAllMocks();
@@ -250,6 +258,7 @@ describe("Sidebar", () => {
       act(() => {
         wsEvents.emit("ws:new_message", {
           conversationType: "direct",
+          workspaceId: "ws-1",
           message: {
             id: "msg-human-dm",
             conversationId: "conv-human",
@@ -268,6 +277,9 @@ describe("Sidebar", () => {
       expect(
         screen.getByRole("button", { name: "Alice, unread" }),
       ).toBeInTheDocument();
+      expect(
+        useConversationsStore.getState().unreadConversationWorkspaceIds,
+      ).toEqual({ "conv-human": "ws-1" });
 
       act(() => {
         useConversationsStore
@@ -275,6 +287,105 @@ describe("Sidebar", () => {
           .setActiveDirectConversation("conv-human");
       });
       expect(screen.getByRole("button", { name: "Alice" })).toBeInTheDocument();
+      expect(
+        useConversationsStore.getState().unreadConversationWorkspaceIds,
+      ).toEqual({});
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("shows unread activity in another workspace before switching", async () => {
+    const ui = userEvent.setup();
+    useAuthStore.setState({ user, token: "test-token" });
+    useWorkspacesStore.setState({ workspaces: workspaceList, activeWorkspace });
+    const cleanup = registerGlobalWsHandlers(() => "/channel/ch1");
+
+    try {
+      await renderWithRouter(<Sidebar />);
+
+      act(() => {
+        wsEvents.emit("ws:new_message", {
+          conversationType: "group",
+          workspaceId: "ws-2",
+          message: {
+            id: "msg-team-beta",
+            conversationId: "ch-team-beta",
+            threadId: null,
+            senderId: "u2",
+            senderName: "Alice",
+            senderType: "human",
+            content: "Unread in Team Beta",
+            attachments: [],
+            createdAt: "2026-09-01T12:00:00.000Z",
+          },
+        });
+      });
+
+      const currentWorkspaceButton = screen.getByRole("button", {
+        name: "Current workspace, 1 other workspace with unread messages",
+      });
+      expect(
+        within(currentWorkspaceButton).getByTestId(
+          "other-workspace-unread-count",
+        ),
+      ).toHaveTextContent("1");
+
+      await ui.click(currentWorkspaceButton);
+
+      expect(
+        screen.getByRole("button", {
+          name: "Team Beta, unread messages",
+        }),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByTestId("workspace-unread-indicator-ws-2"),
+      ).toBeInTheDocument();
+      expect(
+        screen.queryByTestId("workspace-unread-indicator-ws-1"),
+      ).not.toBeInTheDocument();
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("keeps another workspace's DM unread state out of the current member list", async () => {
+    useAuthStore.setState({ user, token: "test-token" });
+    useWorkspacesStore.setState({ workspaces: workspaceList, activeWorkspace });
+    const cleanup = registerGlobalWsHandlers(() => "/channel/ch1");
+
+    try {
+      await renderWithRouter(<Sidebar />);
+
+      act(() => {
+        wsEvents.emit("ws:new_message", {
+          conversationType: "direct",
+          workspaceId: "ws-2",
+          message: {
+            id: "msg-beta-dm",
+            conversationId: "conv-beta-alice",
+            threadId: null,
+            senderId: "u2",
+            senderName: "Alice",
+            senderType: "human",
+            content: "DM from Team Beta",
+            attachments: [],
+            createdAt: "2026-09-01T12:00:00.000Z",
+          },
+        });
+      });
+
+      expect(
+        screen.getByRole("button", {
+          name: "Current workspace, 1 other workspace with unread messages",
+        }),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: "Alice" }),
+      ).toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", { name: "Alice, unread" }),
+      ).not.toBeInTheDocument();
     } finally {
       cleanup();
     }
@@ -397,6 +508,7 @@ describe("Sidebar", () => {
     const emitBotMessage = (id: string) => {
       wsEvents.emit("ws:new_message", {
         conversationType: "direct",
+        workspaceId: "ws-1",
         message: {
           id,
           conversationId: "dm-bot",

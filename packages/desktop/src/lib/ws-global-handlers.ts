@@ -109,6 +109,7 @@ export function registerGlobalWsHandlers(
   const onNewMessage = ({
     message: msg,
     conversationType,
+    workspaceId,
   }: WsEvents["ws:new_message"]) => {
     cacheIncomingMessage(messageQueryClient, msg);
     const currentUserId = useAuthStore.getState().user?.id;
@@ -117,12 +118,18 @@ export function registerGlobalWsHandlers(
       msg.senderId !== currentUserId &&
       currentPath() !== `/channel/${msg.conversationId}`
     ) {
-      useConversationsStore.getState().markChannelUnread(msg.conversationId);
+      useConversationsStore
+        .getState()
+        .markChannelUnread(msg.conversationId, workspaceId);
     }
     if (conversationType === "direct" && msg.senderId !== currentUserId) {
       useConversationsStore
         .getState()
-        .markDirectConversationUnread(msg.conversationId, msg.senderId);
+        .markDirectConversationUnread(
+          msg.conversationId,
+          msg.senderId,
+          workspaceId,
+        );
       if (msg.senderType === "bot") {
         useHermesIndicatorsStore.getState().markScopeUnread({
           conversationId: msg.conversationId,
