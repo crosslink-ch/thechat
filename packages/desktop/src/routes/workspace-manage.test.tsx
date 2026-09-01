@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import type {
   Bot,
   BotWorkspaceInvite,
+  PendingWorkspaceInvite,
   WorkspaceWithDetails,
 } from "@thechat/shared";
 import { WorkspaceManageRoute } from "./workspace-manage";
@@ -18,6 +19,8 @@ const apiMocks = vi.hoisted(() => {
   const removeBot = vi.fn();
   const listBotInvites = vi.fn();
   const cancelBotInvite = vi.fn();
+  const listWorkspaceInvites = vi.fn();
+  const revokeWorkspaceInvite = vi.fn();
   const inviteUser = vi.fn();
   const listBots = vi.fn();
 
@@ -33,10 +36,15 @@ const apiMocks = vi.hoisted(() => {
     vi.fn(() => ({ delete: cancelBotInvite })),
     { get: listBotInvites },
   );
+  const workspaceInvites = Object.assign(
+    vi.fn(() => ({ delete: revokeWorkspaceInvite })),
+    { get: listWorkspaceInvites },
+  );
   const workspaces = vi.fn(() => ({
     get: workspaceGet,
     members,
     bots,
+    invites: workspaceInvites,
     "bot-invites": botInvites,
   }));
 
@@ -48,6 +56,8 @@ const apiMocks = vi.hoisted(() => {
     removeBot,
     listBotInvites,
     cancelBotInvite,
+    listWorkspaceInvites,
+    revokeWorkspaceInvite,
     inviteUser,
     listBots,
     workspaces,
@@ -127,6 +137,18 @@ const ownedBot: Bot = {
   createdAt: "2026-08-04T00:00:00.000Z",
 };
 
+const pendingWorkspaceInvite: PendingWorkspaceInvite = {
+  id: "77777777-7777-4777-8777-777777777777",
+  workspaceId: workspace.id,
+  inviteeId: "88888888-8888-4888-8888-888888888888",
+  inviteeName: "Priya Pending",
+  inviteeEmail: "priya@example.com",
+  inviteeAvatar: null,
+  inviterId: ownerUser.id,
+  inviterName: ownerUser.name,
+  createdAt: "2026-08-24T14:30:00.000Z",
+};
+
 function setWorkspace(activeWorkspace = workspace) {
   useAuthStore.setState({ user: ownerUser, token: "test-token", loading: false });
   useWorkspacesStore.setState({
@@ -158,6 +180,7 @@ beforeEach(() => {
   apiMocks.workspaceGet.mockResolvedValue({ data: workspace, error: null });
   apiMocks.listBots.mockResolvedValue({ data: [ownedBot], error: null });
   apiMocks.listBotInvites.mockResolvedValue({ data: [], error: null });
+  apiMocks.listWorkspaceInvites.mockResolvedValue({ data: [], error: null });
   apiMocks.inviteUser.mockResolvedValue({ data: { id: "invite-1" }, error: null });
   apiMocks.updateRole.mockResolvedValue({ data: { success: true }, error: null });
   apiMocks.removeMember.mockResolvedValue({ data: { success: true }, error: null });
@@ -167,6 +190,10 @@ beforeEach(() => {
   });
   apiMocks.removeBot.mockResolvedValue({ data: { success: true }, error: null });
   apiMocks.cancelBotInvite.mockResolvedValue({
+    data: { success: true },
+    error: null,
+  });
+  apiMocks.revokeWorkspaceInvite.mockResolvedValue({
     data: { success: true },
     error: null,
   });
@@ -202,6 +229,43 @@ describe("WorkspaceManageRoute", () => {
       );
     });
     expect(await screen.findByText("Invitation sent to new@example.com.")).toBeVisible();
+    expect(apiMocks.listWorkspaceInvites).toHaveBeenCalledTimes(2);
+  });
+
+  it("lists outstanding people invitations and revokes only after confirmation", async () => {
+    const user = userEvent.setup();
+    apiMocks.listWorkspaceInvites.mockResolvedValue({
+      data: [pendingWorkspaceInvite],
+      error: null,
+    });
+
+    render(<WorkspaceManageRoute />);
+
+    const row = await screen.findByTestId(
+      `pending-workspace-invite-${pendingWorkspaceInvite.id}`,
+    );
+    expect(within(row).getByText("Priya Pending")).toBeVisible();
+    expect(within(row).getByText("priya@example.com")).toBeVisible();
+    expect(within(row).getByText(/Invited by Olivia Owner/)).toBeVisible();
+    expect(within(row).getByText("Awaiting response")).toBeVisible();
+
+    await user.click(within(row).getByRole("button", { name: "Revoke" }));
+    expect(apiMocks.revokeWorkspaceInvite).not.toHaveBeenCalled();
+    await user.click(
+      within(row).getByRole("button", { name: "Confirm revoke" }),
+    );
+
+    await waitFor(() => {
+      expect(apiMocks.revokeWorkspaceInvite).toHaveBeenCalledWith(undefined, {
+        headers: { authorization: "Bearer test-token" },
+      });
+    });
+    expect(
+      await screen.findByText("Invitation for Priya Pending was revoked."),
+    ).toBeVisible();
+    expect(
+      screen.queryByTestId(`pending-workspace-invite-${pendingWorkspaceInvite.id}`),
+    ).not.toBeInTheDocument();
   });
 
   it("aligns the invite action with the email input", async () => {
@@ -403,5 +467,6 @@ describe("WorkspaceManageRoute", () => {
     expect(screen.queryByTestId("invite-user-email")).not.toBeInTheDocument();
     expect(screen.queryByTestId("bot-id-input")).not.toBeInTheDocument();
     expect(apiMocks.listBots).not.toHaveBeenCalled();
+    expect(apiMocks.listWorkspaceInvites).not.toHaveBeenCalled();
   });
 });

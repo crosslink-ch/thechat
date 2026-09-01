@@ -477,6 +477,18 @@ export interface WorkspaceInvite {
   createdAt: string;
 }
 
+export interface PendingWorkspaceInvite {
+  id: string;
+  workspaceId: string;
+  inviteeId: string;
+  inviteeName: string;
+  inviteeEmail: string | null;
+  inviteeAvatar: string | null;
+  inviterId: string;
+  inviterName: string;
+  createdAt: string;
+}
+
 export type BotWorkspaceInviteStatus =
   | "pending"
   | "accepted"

@@ -652,3 +652,190 @@ describe("Workspaces: Member Management", () => {
     expect(res.status).toBe(403);
   });
 });
+
+describe("Workspaces: Pending Invitations", () => {
+  test("owner lists only outstanding invitations with people details", async () => {
+    const owner = await registerAndGetToken("Owner");
+    const pending = await registerAndGetToken("Priya Pending");
+    const declined = await registerAndGetToken("Daria Declined");
+    const createRes = await req(
+      "POST",
+      "/workspaces/create",
+      { name: "Pending Invite List" },
+      owner.token
+    );
+    createdWorkspaceIds.push(createRes.body.id);
+    const workspaceId = createRes.body.id;
+
+    const pendingRes = await req(
+      "POST",
+      "/invites/create",
+      { workspaceId, email: pending.user.email },
+      owner.token
+    );
+    const declinedRes = await req(
+      "POST",
+      "/invites/create",
+      { workspaceId, email: declined.user.email },
+      owner.token
+    );
+    await req(
+      "POST",
+      "/invites/decline",
+      { inviteId: declinedRes.body.id },
+      declined.token
+    );
+
+    const listRes = await req(
+      "GET",
+      `/workspaces/${workspaceId}/invites`,
+      undefined,
+      owner.token
+    );
+
+    expect(listRes.status).toBe(200);
+    expect(listRes.body).toHaveLength(1);
+    expect(listRes.body[0]).toMatchObject({
+      id: pendingRes.body.id,
+      workspaceId,
+      inviteeId: pending.user.id,
+      inviteeName: pending.user.name,
+      inviteeEmail: pending.user.email,
+      inviterId: owner.user.id,
+      inviterName: owner.user.name,
+    });
+    expect(listRes.body[0].createdAt).toBeDefined();
+  });
+
+  test("admin revokes an invitation while members cannot list or revoke it", async () => {
+    const owner = await registerAndGetToken("Owner");
+    const admin = await registerAndGetToken("Admin");
+    const member = await registerAndGetToken("Member");
+    const invitee = await registerAndGetToken("Invited Person");
+    const createRes = await req(
+      "POST",
+      "/workspaces/create",
+      { name: "Invite Revocation" },
+      owner.token
+    );
+    createdWorkspaceIds.push(createRes.body.id);
+    const workspaceId = createRes.body.id;
+    await joinWorkspace(workspaceId, admin.user.id);
+    await joinWorkspace(workspaceId, member.user.id);
+    await req(
+      "POST",
+      `/workspaces/${workspaceId}/members/${admin.user.id}/role`,
+      { role: "admin" },
+      owner.token
+    );
+    const inviteRes = await req(
+      "POST",
+      "/invites/create",
+      { workspaceId, email: invitee.user.email },
+      owner.token
+    );
+
+    expect(
+      (
+        await req(
+          "GET",
+          `/workspaces/${workspaceId}/invites`,
+          undefined,
+          member.token
+        )
+      ).status
+    ).toBe(403);
+    expect(
+      (
+        await req(
+          "DELETE",
+          `/workspaces/${workspaceId}/invites/${inviteRes.body.id}`,
+          undefined,
+          member.token
+        )
+      ).status
+    ).toBe(403);
+
+    const adminList = await req(
+      "GET",
+      `/workspaces/${workspaceId}/invites`,
+      undefined,
+      admin.token
+    );
+    expect(adminList.status).toBe(200);
+    expect(adminList.body.map((invite: any) => invite.id)).toContain(
+      inviteRes.body.id
+    );
+
+    const revokeRes = await req(
+      "DELETE",
+      `/workspaces/${workspaceId}/invites/${inviteRes.body.id}`,
+      undefined,
+      admin.token
+    );
+    expect(revokeRes.status).toBe(200);
+    expect(revokeRes.body).toEqual({ success: true });
+
+    const [stored] = await db
+      .select({ status: workspaceInvites.status })
+      .from(workspaceInvites)
+      .where(eq(workspaceInvites.id, inviteRes.body.id));
+    expect(stored?.status).toBe("cancelled");
+
+    const acceptRes = await req(
+      "POST",
+      "/invites/accept",
+      { inviteId: inviteRes.body.id },
+      invitee.token
+    );
+    expect(acceptRes.status).toBe(409);
+    expect(acceptRes.body.error).toMatch(/no longer pending/i);
+
+    const reinviteRes = await req(
+      "POST",
+      "/invites/create",
+      { workspaceId, email: invitee.user.email },
+      owner.token
+    );
+    expect(reinviteRes.status).toBe(200);
+    expect(reinviteRes.body.id).not.toBe(inviteRes.body.id);
+  });
+
+  test("cannot revoke an invitation through a different workspace", async () => {
+    const owner = await registerAndGetToken("Owner");
+    const invitee = await registerAndGetToken("Invited Person");
+    const workspaceA = await req(
+      "POST",
+      "/workspaces/create",
+      { name: "Invite Scope A" },
+      owner.token
+    );
+    const workspaceB = await req(
+      "POST",
+      "/workspaces/create",
+      { name: "Invite Scope B" },
+      owner.token
+    );
+    createdWorkspaceIds.push(workspaceA.body.id, workspaceB.body.id);
+    const inviteRes = await req(
+      "POST",
+      "/invites/create",
+      { workspaceId: workspaceA.body.id, email: invitee.user.email },
+      owner.token
+    );
+
+    const revokeRes = await req(
+      "DELETE",
+      `/workspaces/${workspaceB.body.id}/invites/${inviteRes.body.id}`,
+      undefined,
+      owner.token
+    );
+    expect(revokeRes.status).toBe(404);
+
+    const [stored] = await db
+      .select({ status: workspaceInvites.status })
+      .from(workspaceInvites)
+      .where(eq(workspaceInvites.id, inviteRes.body.id));
+    expect(stored?.status).toBe("pending");
+  });
+});

@@ -1,0 +1,1 @@
+ALTER TYPE "public"."invite_status" ADD VALUE 'cancelled';

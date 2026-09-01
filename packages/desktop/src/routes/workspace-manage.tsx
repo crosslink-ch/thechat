@@ -3,6 +3,7 @@ import type {
   Bot,
   BotWorkspaceInvite,
   BotWorkspaceInviteResult,
+  PendingWorkspaceInvite,
   WorkspaceMember,
   WorkspaceMemberRole,
   WorkspaceWithDetails,
@@ -35,13 +36,23 @@ function canManageMember(
   return actorRole === "admin" && target.role === "member";
 }
 
+function formatInviteDate(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "recently";
+  return new Intl.DateTimeFormat(undefined, { dateStyle: "medium" }).format(date);
+}
+
 export function WorkspaceManageRoute() {
   const token = useAuthStore((state) => state.token);
   const currentUser = useAuthStore((state) => state.user);
   const activeWorkspace = useWorkspacesStore((state) => state.activeWorkspace);
+  const activeWorkspaceId = activeWorkspace?.id;
   const [ownedBots, setOwnedBots] = useState<Bot[]>([]);
   const [pendingBotInvites, setPendingBotInvites] = useState<
     BotWorkspaceInvite[]
+  >([]);
+  const [pendingWorkspaceInvites, setPendingWorkspaceInvites] = useState<
+    PendingWorkspaceInvite[]
   >([]);
   const [loadingManagementData, setLoadingManagementData] = useState(false);
   const [pageError, setPageError] = useState<string | null>(null);
@@ -77,8 +88,8 @@ export function WorkspaceManageRoute() {
   const availableOwnedBots = ownedBots.filter((bot) => !workspaceBotIds.has(bot.id));
 
   const refreshWorkspace = useCallback(async () => {
-    if (!token || !activeWorkspace) return;
-    const requestedWorkspaceId = activeWorkspace.id;
+    if (!token || !activeWorkspaceId) return;
+    const requestedWorkspaceId = activeWorkspaceId;
     const requestGeneration = ++workspaceRefreshGeneration.current;
     const result = await api
       .workspaces({ id: requestedWorkspaceId })
@@ -95,23 +106,27 @@ export function WorkspaceManageRoute() {
     useWorkspacesStore.setState({
       activeWorkspace: result.data as WorkspaceWithDetails,
     });
-  }, [activeWorkspace?.id, token]);
+  }, [activeWorkspaceId, token]);
 
   const loadAdminData = useCallback(async () => {
     const requestGeneration = ++adminLoadGeneration.current;
-    const requestedWorkspaceId = activeWorkspace?.id;
+    const requestedWorkspaceId = activeWorkspaceId;
     if (!token || !requestedWorkspaceId || !canManage) {
       setOwnedBots([]);
       setPendingBotInvites([]);
+      setPendingWorkspaceInvites([]);
       return;
     }
 
-    const [botsResult, pendingResult] = await Promise.all([
+    const [botsResult, pendingBotResult, pendingPeopleResult] = await Promise.all([
       api.bots.list.get({ headers: authHeaders(token) }),
       api
         .workspaces({ id: requestedWorkspaceId })["bot-invites"].get({
           headers: authHeaders(token),
         }),
+      api.workspaces({ id: requestedWorkspaceId }).invites.get({
+        headers: authHeaders(token),
+      }),
     ]);
     if (
       requestGeneration !== adminLoadGeneration.current ||
@@ -122,14 +137,22 @@ export function WorkspaceManageRoute() {
     if (botsResult.error) {
       throw new Error(apiError(botsResult.error, "Failed to load your bots"));
     }
-    if (pendingResult.error) {
+    if (pendingBotResult.error) {
       throw new Error(
-        apiError(pendingResult.error, "Failed to load bot approval requests"),
+        apiError(pendingBotResult.error, "Failed to load bot approval requests"),
+      );
+    }
+    if (pendingPeopleResult.error) {
+      throw new Error(
+        apiError(pendingPeopleResult.error, "Failed to load pending invitations"),
       );
     }
     setOwnedBots((botsResult.data ?? []) as Bot[]);
-    setPendingBotInvites((pendingResult.data ?? []) as BotWorkspaceInvite[]);
-  }, [activeWorkspace?.id, canManage, token]);
+    setPendingBotInvites((pendingBotResult.data ?? []) as BotWorkspaceInvite[]);
+    setPendingWorkspaceInvites(
+      (pendingPeopleResult.data ?? []) as PendingWorkspaceInvite[],
+    );
+  }, [activeWorkspaceId, canManage, token]);
 
   useEffect(() => {
     let cancelled = false;
@@ -156,16 +179,16 @@ export function WorkspaceManageRoute() {
   }, [loadAdminData, refreshWorkspace]);
 
   useEffect(() => {
-    if (!activeWorkspace) return;
+    if (!activeWorkspaceId) return;
     const handleResolved = ({ workspaceId }: { workspaceId: string }) => {
-      if (workspaceId !== activeWorkspace.id) return;
+      if (workspaceId !== activeWorkspaceId) return;
       void Promise.all([refreshWorkspace(), loadAdminData()]).catch(() => undefined);
     };
     wsEvents.on("ws:bot_workspace_invite_resolved", handleResolved);
     return () => {
       wsEvents.off("ws:bot_workspace_invite_resolved", handleResolved);
     };
-  }, [activeWorkspace?.id, loadAdminData, refreshWorkspace]);
+  }, [activeWorkspaceId, loadAdminData, refreshWorkspace]);
 
   const runAction = async (key: string, action: () => Promise<void>) => {
     setBusyAction(key);
@@ -203,7 +226,23 @@ export function WorkspaceManageRoute() {
       throw new Error(apiError(result.error, "Failed to invite user"));
     }
     setInviteEmail("");
+    await loadAdminData();
     setStatusMessage(`Invitation sent to ${email}.`);
+  };
+
+  const revokePeopleInvite = async (invite: PendingWorkspaceInvite) => {
+    if (!token) return;
+    const result = await api
+      .workspaces({ id: activeWorkspace.id })
+      .invites({ inviteId: invite.id })
+      .delete(undefined, { headers: authHeaders(token) });
+    if (result.error) {
+      throw new Error(apiError(result.error, "Failed to revoke invitation"));
+    }
+    setPendingWorkspaceInvites((current) =>
+      current.filter((candidate) => candidate.id !== invite.id),
+    );
+    setStatusMessage(`Invitation for ${invite.inviteeName} was revoked.`);
   };
 
   const updateRole = async (
@@ -421,7 +460,101 @@ export function WorkspaceManageRoute() {
               </form>
             )}
 
-            <div className="mt-3 divide-y divide-border overflow-hidden rounded-lg border border-border bg-raised">
+            {canManage && (
+              <div className="mt-4">
+                <div className="flex items-center justify-between gap-3 px-0.5">
+                  <div>
+                    <h3 className="text-[0.786rem] font-semibold text-text-secondary">
+                      Pending invitations
+                    </h3>
+                    <p className="mt-0.5 text-[0.714rem] text-text-muted">
+                      People who have not accepted yet.
+                    </p>
+                  </div>
+                  <span className="rounded-full border border-border bg-raised px-2 py-0.5 text-[0.643rem] font-medium text-text-muted">
+                    {pendingWorkspaceInvites.length}
+                  </span>
+                </div>
+
+                <div className="mt-2 divide-y divide-border overflow-hidden rounded-lg border border-border bg-raised">
+                  {pendingWorkspaceInvites.length === 0 ? (
+                    <div className="px-3 py-4 text-center text-[0.714rem] text-text-dimmed">
+                      No pending invitations.
+                    </div>
+                  ) : (
+                    pendingWorkspaceInvites.map((invite) => {
+                      const revokeKey = `revoke-invite:${invite.id}`;
+                      return (
+                        <div
+                          key={invite.id}
+                          data-testid={`pending-workspace-invite-${invite.id}`}
+                          className="flex flex-wrap items-center gap-3 px-3 py-3"
+                        >
+                          <div className="flex min-w-0 flex-1 items-center gap-2.5">
+                            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-warning-bg text-[0.786rem] font-semibold text-warning-text">
+                              {invite.inviteeName.slice(0, 1).toUpperCase()}
+                            </div>
+                            <div className="min-w-0">
+                              <div className="overflow-hidden text-ellipsis whitespace-nowrap text-[0.857rem] font-medium text-text">
+                                {invite.inviteeName}
+                              </div>
+                              <div className="overflow-hidden text-ellipsis whitespace-nowrap text-[0.714rem] text-text-muted">
+                                {invite.inviteeEmail ?? "No email"}
+                              </div>
+                              <div className="mt-0.5 text-[0.643rem] text-text-dimmed">
+                                Invited by {invite.inviterName} on{" "}
+                                {formatInviteDate(invite.createdAt)}
+                              </div>
+                            </div>
+                          </div>
+
+                          <span className="rounded-full border border-warning-text/30 bg-warning-bg px-2 py-1 text-[0.643rem] font-medium text-warning-text">
+                            Awaiting response
+                          </span>
+
+                          {confirmingAction === revokeKey ? (
+                            <div className="flex items-center gap-1.5">
+                              <button
+                                type="button"
+                                disabled={busyAction === revokeKey}
+                                className="cursor-pointer rounded-md bg-error-msg-bg px-2 py-1.5 text-[0.714rem] font-medium text-error-bright disabled:cursor-not-allowed disabled:opacity-50"
+                                onClick={() =>
+                                  void runAction(revokeKey, () =>
+                                    revokePeopleInvite(invite),
+                                  )
+                                }
+                              >
+                                {busyAction === revokeKey
+                                  ? "Revoking..."
+                                  : "Confirm revoke"}
+                              </button>
+                              <button
+                                type="button"
+                                disabled={busyAction === revokeKey}
+                                className="cursor-pointer rounded-md px-2 py-1.5 text-[0.714rem] text-text-muted hover:bg-hover disabled:cursor-not-allowed disabled:opacity-50"
+                                onClick={() => setConfirmingAction(null)}
+                              >
+                                Keep
+                              </button>
+                            </div>
+                          ) : (
+                            <button
+                              type="button"
+                              className="cursor-pointer rounded-md px-2 py-1.5 text-[0.714rem] text-error-bright hover:bg-error-msg-bg"
+                              onClick={() => setConfirmingAction(revokeKey)}
+                            >
+                              Revoke
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+            )}
+
+            <div className="mt-4 divide-y divide-border overflow-hidden rounded-lg border border-border bg-raised">
               {people.map((member) => {
                 const manageable = canManageMember(actorRole, member);
                 const removeKey = `remove-user:${member.userId}`;

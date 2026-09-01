@@ -39,6 +39,7 @@ export const inviteStatusEnum = pgEnum("invite_status", [
   "pending",
   "accepted",
   "declined",
+  "cancelled",
 ]);
 export const botWorkspaceInviteStatusEnum = pgEnum(
   "bot_workspace_invite_status",

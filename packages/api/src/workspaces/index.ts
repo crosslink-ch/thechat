@@ -16,6 +16,10 @@ import {
   removeBotWorkspaceMembership,
   requestBotForWorkspace,
 } from "../services/bot-workspace-memberships";
+import {
+  listPendingWorkspaceInvites,
+  revokeWorkspaceInvite,
+} from "../services/invites";
 import { broadcastToUser } from "../ws";
 import { db } from "../db";
 import { workspaceMembers } from "../db/schema";
@@ -91,6 +95,32 @@ export const workspaceRoutes = new Elysia({ prefix: "/workspaces" })
 
     try {
       return await requestBotForWorkspace(params.id, parsed.data.botId, user.id);
+    } catch (e) {
+      if (e instanceof ServiceError) {
+        set.status = e.status;
+        return { error: e.message };
+      }
+      throw e;
+    }
+  })
+
+  // List outstanding people invitations for workspace admins.
+  .get("/:id/invites", async ({ params, user, set }) => {
+    try {
+      return await listPendingWorkspaceInvites(params.id, user.id);
+    } catch (e) {
+      if (e instanceof ServiceError) {
+        set.status = e.status;
+        return { error: e.message };
+      }
+      throw e;
+    }
+  })
+
+  // Revoke an outstanding people invitation.
+  .delete("/:id/invites/:inviteId", async ({ params, user, set }) => {
+    try {
+      return await revokeWorkspaceInvite(params.id, params.inviteId, user.id);
     } catch (e) {
       if (e instanceof ServiceError) {
         set.status = e.status;
