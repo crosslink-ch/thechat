@@ -1,4 +1,6 @@
 import { Elysia } from "elysia";
+import { API_TAGS } from "../openapi-metadata";
+import { jsonBodyDocumentation } from "../openapi-route";
 import { z } from "zod";
 import { resolveTokenToUser } from "../auth/middleware";
 import { ServiceError } from "../services/errors";
@@ -19,7 +21,10 @@ const reserveSchema = z.object({
   checksumSha256: z.string().min(1).max(128),
 });
 
-export const attachmentRoutes = new Elysia({ prefix: "/attachments" })
+export const attachmentRoutes = new Elysia({
+  prefix: "/attachments",
+  tags: [API_TAGS.attachments],
+})
   .post("/", ({ body, headers, set }) =>
     tracedAuthenticatedRoute(
       "POST",
@@ -37,6 +42,12 @@ export const attachmentRoutes = new Elysia({ prefix: "/attachments" })
         );
       },
     ),
+    {
+      detail: jsonBodyDocumentation(
+        "Reserve an attachment upload",
+        reserveSchema,
+      ),
+    },
   )
   .post("/:id/complete", ({ headers, params, set }) =>
     tracedAuthenticatedRoute(

@@ -1,4 +1,9 @@
 import { Elysia } from "elysia";
+import { API_TAGS } from "../openapi-metadata";
+import {
+  jsonBodyDocumentation,
+  SENSITIVE_STRING_METADATA,
+} from "../openapi-route";
 import { z } from "zod";
 import { resolveTokenToUser } from "../auth/middleware";
 import { ServiceError } from "../services/errors";
@@ -13,15 +18,24 @@ import {
 } from "../services/workspace-config";
 
 const openrouterSchema = z.object({
-  apiKey: z.string().min(1, "API key is required"),
+  apiKey: z
+    .string()
+    .min(1, "API key is required")
+    .meta(SENSITIVE_STRING_METADATA),
 });
 
 const glmSchema = z.object({
-  apiKey: z.string().min(1, "API key is required"),
+  apiKey: z
+    .string()
+    .min(1, "API key is required")
+    .meta(SENSITIVE_STRING_METADATA),
 });
 
 const featherlessSchema = z.object({
-  apiKey: z.string().min(1, "API key is required"),
+  apiKey: z
+    .string()
+    .min(1, "API key is required")
+    .meta(SENSITIVE_STRING_METADATA),
 });
 
 const providerSchema = z.object({
@@ -38,6 +52,7 @@ const settingsSchema = z.object({
 
 export const workspaceConfigRoutes = new Elysia({
   prefix: "/workspaces",
+  tags: [API_TAGS.workspaces],
 })
   .derive(async ({ headers }) => {
     const authHeader = headers.authorization;
@@ -88,6 +103,11 @@ export const workspaceConfigRoutes = new Elysia({
       }
       throw e;
     }
+  }, {
+    detail: jsonBodyDocumentation(
+      "Set an OpenRouter API key",
+      openrouterSchema,
+    ),
   })
 
   // Set GLM API key
@@ -107,6 +127,8 @@ export const workspaceConfigRoutes = new Elysia({
       }
       throw e;
     }
+  }, {
+    detail: jsonBodyDocumentation("Set a GLM API key", glmSchema),
   })
 
   // Set Featherless API key
@@ -126,6 +148,11 @@ export const workspaceConfigRoutes = new Elysia({
       }
       throw e;
     }
+  }, {
+    detail: jsonBodyDocumentation(
+      "Set a Featherless API key",
+      featherlessSchema,
+    ),
   })
 
   // Set active provider
@@ -145,6 +172,11 @@ export const workspaceConfigRoutes = new Elysia({
       }
       throw e;
     }
+  }, {
+    detail: jsonBodyDocumentation(
+      "Select the active model provider",
+      providerSchema,
+    ),
   })
 
   // Update model/reasoning settings
@@ -164,6 +196,8 @@ export const workspaceConfigRoutes = new Elysia({
       }
       throw e;
     }
+  }, {
+    detail: jsonBodyDocumentation("Update model settings", settingsSchema),
   })
 
   // Delete workspace config

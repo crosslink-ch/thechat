@@ -1,4 +1,6 @@
 import { Elysia } from "elysia";
+import { API_TAGS } from "../openapi-metadata";
+import { jsonBodyDocumentation } from "../openapi-route";
 import { z } from "zod";
 import { eq, and, ne } from "drizzle-orm";
 import { resolveTokenToUser } from "../auth/middleware";
@@ -23,7 +25,10 @@ const inviteActionSchema = z.object({
   inviteId: z.string().uuid("Valid invite ID is required"),
 });
 
-export const inviteRoutes = new Elysia({ prefix: "/invites" })
+export const inviteRoutes = new Elysia({
+  prefix: "/invites",
+  tags: [API_TAGS.invitations],
+})
   .derive(async ({ headers }) => {
     const authHeader = headers.authorization;
     if (!authHeader?.startsWith("Bearer ")) {
@@ -73,7 +78,14 @@ export const inviteRoutes = new Elysia({ prefix: "/invites" })
       }
       throw e;
     }
-  })
+    },
+    {
+      detail: jsonBodyDocumentation(
+        "Invite a person to a workspace",
+        createInviteSchema,
+      ),
+    },
+  )
 
   // List pending invites
   .get("/pending", async ({ user }) => {
@@ -131,7 +143,14 @@ export const inviteRoutes = new Elysia({ prefix: "/invites" })
       }
       throw e;
     }
-  })
+    },
+    {
+      detail: jsonBodyDocumentation(
+        "Accept a workspace invitation",
+        inviteActionSchema,
+      ),
+    },
+  )
 
   // Decline invite
   .post("/decline", async ({ body, user, set }) => {
@@ -151,4 +170,11 @@ export const inviteRoutes = new Elysia({ prefix: "/invites" })
       }
       throw e;
     }
-  });
+    },
+    {
+      detail: jsonBodyDocumentation(
+        "Decline a workspace invitation",
+        inviteActionSchema,
+      ),
+    },
+  );

@@ -1,4 +1,6 @@
 import { Elysia } from "elysia";
+import { API_TAGS } from "../openapi-metadata";
+import { jsonBodyDocumentation } from "../openapi-route";
 import { z } from "zod";
 import { resolveTokenToUser } from "../auth/middleware";
 import { ServiceError } from "../services/errors";
@@ -45,7 +47,10 @@ const threadListQuerySchema = z.object({
   status: z.string().trim().min(1).max(20).optional(),
 });
 
-export const conversationRoutes = new Elysia({ prefix: "/conversations" })
+export const conversationRoutes = new Elysia({
+  prefix: "/conversations",
+  tags: [API_TAGS.conversations],
+})
   .derive(async ({ headers }) => {
     const authHeader = headers.authorization;
     if (!authHeader?.startsWith("Bearer ")) {
@@ -98,7 +103,14 @@ export const conversationRoutes = new Elysia({ prefix: "/conversations" })
       }
       throw e;
     }
-  })
+    },
+    {
+      detail: jsonBodyDocumentation(
+        "Create or find a direct message",
+        dmSchema,
+      ),
+    },
+  )
 
   // Create a new channel
   .post("/channel", async ({ body, user, set }) => {
@@ -121,7 +133,11 @@ export const conversationRoutes = new Elysia({ prefix: "/conversations" })
       }
       throw e;
     }
-  })
+    },
+    {
+      detail: jsonBodyDocumentation("Create a channel", channelSchema),
+    },
+  )
 
   // Rename a channel. Channel-wide mutations are limited to workspace managers.
   .patch("/channel/:conversationId", async ({ params, body, user, set }) => {
@@ -144,7 +160,14 @@ export const conversationRoutes = new Elysia({ prefix: "/conversations" })
       }
       throw e;
     }
-  })
+    },
+    {
+      detail: jsonBodyDocumentation(
+        "Rename a channel",
+        channelSchema.pick({ name: true }),
+      ),
+    },
+  )
 
   // Permanently delete a channel and its message history.
   .delete("/channel/:conversationId", async ({ params, user, set }) => {
@@ -208,7 +231,11 @@ export const conversationRoutes = new Elysia({ prefix: "/conversations" })
       }
       throw e;
     }
-  })
+    },
+    {
+      detail: jsonBodyDocumentation("Create a task thread", threadSchema),
+    },
+  )
 
   .patch("/threads/:conversationId", async ({ params, body, user, set }) => {
     const parsed = updateThreadSchema.safeParse(body);
@@ -231,7 +258,11 @@ export const conversationRoutes = new Elysia({ prefix: "/conversations" })
       }
       throw e;
     }
-  })
+    },
+    {
+      detail: jsonBodyDocumentation("Rename a task thread", updateThreadSchema),
+    },
+  )
 
   // List DM conversations for current user in a workspace
   .get("/:workspaceId/dms", async ({ params, user, set }) => {

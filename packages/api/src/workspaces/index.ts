@@ -1,4 +1,6 @@
 import { Elysia } from "elysia";
+import { API_TAGS } from "../openapi-metadata";
+import { jsonBodyDocumentation } from "../openapi-route";
 import { z } from "zod";
 import { eq } from "drizzle-orm";
 import { resolveTokenToUser } from "../auth/middleware";
@@ -25,7 +27,15 @@ const createSchema = z.object({
   name: z.string().trim().min(1, "Workspace name is required"),
 });
 
-export const workspaceRoutes = new Elysia({ prefix: "/workspaces" })
+const addBotSchema = z.object({ botId: z.string().uuid() });
+const updateMemberRoleSchema = z.object({
+  role: z.enum(["member", "admin"]),
+});
+
+export const workspaceRoutes = new Elysia({
+  prefix: "/workspaces",
+  tags: [API_TAGS.workspaces],
+})
   .derive(async ({ headers }) => {
     const authHeader = headers.authorization;
     if (!authHeader?.startsWith("Bearer ")) {
@@ -61,7 +71,11 @@ export const workspaceRoutes = new Elysia({ prefix: "/workspaces" })
       }
       throw e;
     }
-  })
+    },
+    {
+      detail: jsonBodyDocumentation("Create a workspace", createSchema),
+    },
+  )
 
   // List my workspaces
   .get("/list", async ({ user }) => {
@@ -83,7 +97,7 @@ export const workspaceRoutes = new Elysia({ prefix: "/workspaces" })
 
   // Add a bot directly when it belongs to the caller, otherwise request approval.
   .post("/:id/bots", async ({ params, body, user, set }) => {
-    const parsed = z.object({ botId: z.string().uuid() }).safeParse(body);
+    const parsed = addBotSchema.safeParse(body);
     if (!parsed.success) {
       set.status = 400;
       return { error: parsed.error.issues[0]?.message ?? "Invalid bot ID" };
@@ -98,7 +112,11 @@ export const workspaceRoutes = new Elysia({ prefix: "/workspaces" })
       }
       throw e;
     }
-  })
+    },
+    {
+      detail: jsonBodyDocumentation("Add a bot to a workspace", addBotSchema),
+    },
+  )
 
   // List approval requests initiated by workspace admins.
   .get("/:id/bot-invites", async ({ params, user, set }) => {
@@ -149,9 +167,7 @@ export const workspaceRoutes = new Elysia({ prefix: "/workspaces" })
 
   // Change member role
   .post("/:id/members/:userId/role", async ({ params, body, user, set }) => {
-    const parsed = z
-      .object({ role: z.enum(["member", "admin"]) })
-      .safeParse(body);
+    const parsed = updateMemberRoleSchema.safeParse(body);
     if (!parsed.success) {
       set.status = 400;
       return { error: parsed.error.issues[0]?.message ?? "Invalid input" };
@@ -190,7 +206,14 @@ export const workspaceRoutes = new Elysia({ prefix: "/workspaces" })
       }
       throw e;
     }
-  })
+    },
+    {
+      detail: jsonBodyDocumentation(
+        "Change a workspace member role",
+        updateMemberRoleSchema,
+      ),
+    },
+  )
 
   // Remove member
   .delete("/:id/members/:userId", async ({ params, user, set }) => {

@@ -86,6 +86,10 @@ pnpm dev -- --no-worker
 
 Human users can create named personal access tokens under **Settings → API access** for REST automation and the Streamable HTTP MCP endpoint. Tokens are non-expiring, carry the creator's permissions, and are shown only once. See [Personal access tokens](docs/personal-access-tokens.md) for secure storage, revocation, and ready-to-use REST/MCP examples.
 
+With the API running, open [`http://localhost:3000/docs`](http://localhost:3000/docs) for the interactive reference or [`http://localhost:3000/openapi.json`](http://localhost:3000/openapi.json) for the raw OpenAPI document. The specification is generated from the live Elysia route tree, the existing Zod request validators, and TypeScript response contracts during every API build.
+
+Most endpoints accept a personal access token or bot API key through `Authorization: Bearer <token>`; public authentication endpoints are marked separately in the reference. OpenAPI covers the HTTP and MCP surfaces. The realtime WebSocket endpoint at `/ws` is described by the shared protocol types but intentionally excluded because OpenAPI cannot model its message protocol.
+
 For the desktop app:
 
 ```bash

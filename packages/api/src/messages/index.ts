@@ -1,4 +1,6 @@
 import { Elysia } from "elysia";
+import { API_TAGS } from "../openapi-metadata";
+import { jsonBodyDocumentation } from "../openapi-route";
 import { z } from "zod";
 import { resolveTokenToUser } from "../auth/middleware";
 import { ServiceError } from "../services/errors";
@@ -22,7 +24,10 @@ function isTruthyQueryValue(value: unknown) {
   return value === "true" || value === "1" || value === true;
 }
 
-export const messageRoutes = new Elysia({ prefix: "/messages" })
+export const messageRoutes = new Elysia({
+  prefix: "/messages",
+  tags: [API_TAGS.messages],
+})
   .derive(async ({ headers }) => {
     const authHeader = headers.authorization;
     if (!authHeader?.startsWith("Bearer ")) {
@@ -101,4 +106,7 @@ export const messageRoutes = new Elysia({ prefix: "/messages" })
         }
       },
     ),
+    {
+      detail: jsonBodyDocumentation("Send a message", sendSchema),
+    },
   );
