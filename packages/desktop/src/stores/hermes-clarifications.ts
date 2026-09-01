@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import type { ClarifyResponse } from "../lib/hermes-clarifications";
+import { resolveHermesClarificationIndicator } from "./hermes-indicators";
 
 const MAX_TRACKED_RESPONSES = 200;
 
@@ -37,4 +38,5 @@ export function recordClarifyResponse(
   response: ClarifyResponse,
 ) {
   useHermesClarificationsStore.getState().recordResponse(eventId, response);
+  resolveHermesClarificationIndicator(eventId);
 }
