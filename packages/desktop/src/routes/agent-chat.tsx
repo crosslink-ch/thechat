@@ -1,477 +1,456 @@
-import { useState, useEffect, useRef, useMemo, useCallback, useLayoutEffect } from "react";
-import { useNavigate, useMatches, useRouterState } from "@tanstack/react-router";
-import { invoke } from "@tauri-apps/api/core";
-import { useChat } from "../hooks/useChat";
-import { openCodexAuthModal } from "../components/CodexAuthModal";
-import { useIsStreaming, subscribeToStream } from "../stores/streaming";
-import { useAutoScroll } from "../hooks/useAutoScroll";
-import { useToolsStore } from "../stores/tools";
-import { useAuthStore } from "../stores/auth";
-import { useConversationsStore } from "../stores/conversations";
 import {
-  composerDraftKey,
-  useComposerDraftsStore,
-} from "../stores/composer-drafts";
-import { useKeybindings } from "../hooks/useKeybindings";
-import { setAgentChatTitle, setAgentChatProjectDir } from "../components/ChatHeader";
-import { ProjectPicker } from "../components/ProjectPicker";
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import { invoke } from "@tauri-apps/api/core";
+import { useNavigate, useParams, useSearch } from "@tanstack/react-router";
+import type {
+  AcpPermissionMode,
+  AcpProfile,
+  AppConfig,
+  Conversation,
+} from "@thechat/shared";
 import { ChatMessage, StreamingMessage } from "../ChatMessage";
-import { TodoPanel } from "../TodoPanel";
 import { InputBar } from "../components/InputBar";
-import { ActivityStatusBar } from "../components/ActivityStatusBar";
-import { usePermissionStore } from "../core/permission";
-import { useQuestionStore } from "../core/question";
-import { useTodoStore, EMPTY_TODOS } from "../core/todo";
-import { buildSystemPrompt, type ProjectInfo } from "../core/system-prompt";
-import { fireNotification } from "../lib/notifications";
-import type { Conversation, Message } from "../core/types";
-import { activateAgentChatMcp, syncAgentChatMcpAuth } from "../desktop-lifecycle";
-
-const TOP_LOAD_THRESHOLD_PX = 80;
+import { ProjectPicker } from "../components/ProjectPicker";
+import { AgentProfilePicker } from "../components/AgentProfilePicker";
+import { AcpPermissionPrompt } from "../components/AcpPermissionPrompt";
+import {
+  setAgentChatHeaderContext,
+  setAgentChatProjectDir,
+  setAgentChatTitle,
+} from "../components/ChatHeader";
+import { useAcpChat } from "../hooks/useAcpChat";
+import type { ImageAttachment } from "../lib/images";
+import { composerDraftKey, useComposerDraftsStore } from "../stores/composer-drafts";
+import { usePermissionModeStore } from "../stores/permission-mode";
+import { useConversationsStore } from "../stores/conversations";
 
 export function AgentChatRoute() {
+  const params = useParams({ strict: false }) as { id?: string };
+  const search = useSearch({ strict: false }) as { projectDir?: string };
   const navigate = useNavigate();
-  const token = useAuthStore((s) => s.token);
-  const matches = useMatches();
-  const lastMatch = matches[matches.length - 1];
-  const routeId = (lastMatch?.params as Record<string, string>)?.id as string | undefined;
-  const searchProjectDir = useRouterState({
-    select: (s) => (s.location.search as Record<string, unknown>).projectDir as string | undefined,
-  });
+  const routeConversationId = params.id;
+  const permissionSetting = usePermissionModeStore((state) => state.mode);
+  const permissionMode = toAcpPermissionMode(permissionSetting);
 
-  const getTools = useCallback(() => useToolsStore.getState().tools, []);
+  const [profiles, setProfiles] = useState<AcpProfile[]>([]);
 
-  // Agent Chat MCP integrations stay dormant until this route is explicitly used.
-  useEffect(() => {
-    return activateAgentChatMcp(token);
-  }, []);
+  const [selectedProfileId, setSelectedProfileId] = useState<string | null>(null);
+  const [projectDir, setProjectDir] = useState<string | null>(
+    search.projectDir ?? null,
+  );
+  const [routeConversation, setRouteConversation] =
+    useState<Conversation | null>(null);
+  const [configLoading, setConfigLoading] = useState(true);
+  const [conversationLoading, setConversationLoading] = useState(
+    Boolean(routeConversationId),
+  );
+  const [routeError, setRouteError] = useState<string | null>(null);
+  const [configError, setConfigError] = useState<string | null>(null);
+  const [permissionBusy, setPermissionBusy] = useState(false);
+  const [composerEpoch, setComposerEpoch] = useState(0);
+  const promotionActionRef = useRef<{
+    phase: "pending" | "clear" | "move";
+    expectedRevision: number;
+    submittedImageIds: string[];
+  } | null>(null);
+  const [promotionEpoch, setPromotionEpoch] = useState(0);
+  const selectedProfile = profiles.find(
+    (profile) => profile.id === selectedProfileId,
+  );
+  const profileAvailable = Boolean(selectedProfile && !selectedProfile.disabled);
 
-  useEffect(() => {
-    syncAgentChatMcpAuth(token);
-  }, [token]);
-
-  // Project mode state (for new chats before conversation is created)
-  const [projectDir, setProjectDir] = useState<string | null>(null);
-  const [projectInfo, setProjectInfo] = useState<ProjectInfo | null>(null);
-
-  const activeAgentConvIdRef = useRef<string | null>(null);
-  const appliedInitialProjectDir = useRef(false);
-
-  // systemPrompt is initially computed with just projectDir (for new chats)
-  // It gets updated reactively below when conversation.project_dir is available
-  const systemPrompt = useMemo(
-    () => buildSystemPrompt(projectDir ?? undefined, projectInfo ?? undefined),
-    [projectDir, projectInfo],
+  const handleStreamComplete = useCallback(
+    (conversationId: string, _title: string, visible: boolean) => {
+      if (visible) {
+        useConversationsStore.getState().markAgentChatRead(conversationId);
+      } else {
+        useConversationsStore.getState().markAgentChatUnread(conversationId);
+      }
+    },
+    [],
   );
 
+  const chat = useAcpChat({
+    profileId: selectedProfileId,
+    projectDir,
+    permissionMode,
+    profileAvailable,
+    onStreamComplete: handleStreamComplete,
+  });
   const {
-    messages,
     conversation,
+    messages,
+    loadingMessages: loading,
+    loadingOlderMessages: loadingOlder,
+    hasOlderMessages: hasMore,
     error,
-    loadingMessages,
-    loadingOlderMessages,
-    hasOlderMessages,
-    queuedMessages,
+    isBusy,
+    capabilities,
+    status,
+    pendingPermission,
     sendMessage,
     stopStreaming,
+    respondToPermission,
     loadConversation,
     loadOlderMessages,
     startNewConversation,
-  } = useChat({
-    getTools,
-    systemPrompt,
-    projectDir,
-    onStreamComplete: (convId: string, convTitle: string) => {
-      useConversationsStore.getState().fetchConversations();
-      const isViewingThisChat = activeAgentConvIdRef.current === convId;
-      if (!isViewingThisChat) {
-        useConversationsStore.getState().markAgentChatUnread(convId);
-        fireNotification("Agent Chat", `Response ready: ${convTitle}`, {
-          dedupeKey: `agent-response:${convId}`,
-        });
-      }
-    },
-  });
+  } = chat;
+  const activeConversation = conversation ?? routeConversation;
+  const profileLocked = Boolean(routeConversationId || activeConversation);
+  const projectLocked = profileLocked;
 
-  const isStreaming = useIsStreaming(conversation?.id);
+  const loadConfig = useCallback(async () => {
+    setConfigLoading(true);
+    setConfigError(null);
+    try {
+      const next = await invoke<AppConfig>("get_config");
+      const nextProfiles = next.acpProfiles ?? [];
+      setProfiles(nextProfiles);
 
-  // Keep ref in sync
-  activeAgentConvIdRef.current = conversation?.id ?? null;
+      setSelectedProfileId((current) => {
+        if (routeConversationId || current) return current;
+        const configuredDefault = nextProfiles.find(
+          (profile) =>
+            profile.id === next.defaultAcpProfileId && !profile.disabled,
+        );
+        return (
+          configuredDefault?.id ??
+          nextProfiles.find((profile) => !profile.disabled)?.id ??
+          null
+        );
+      });
+    } catch (loadError) {
+      setConfigError(errorMessage(loadError));
+    } finally {
+      setConfigLoading(false);
+    }
+  }, [routeConversationId]);
 
-  // Pending permission/question state lives in global stores (survives route transitions)
-  const convId = conversation?.id;
-  const pendingPermission = usePermissionStore((s) => convId ? s.pending[convId]?.[0] ?? null : null);
-  const pendingQuestion = useQuestionStore((s) => convId ? s.pending[convId]?.[0] ?? null : null);
-  const todosState = useTodoStore((s) => convId ? s.todos[convId] ?? EMPTY_TODOS : EMPTY_TODOS);
+  useEffect(() => {
+    void loadConfig();
+    const reload = () => void loadConfig();
+    window.addEventListener("acp-profiles-changed", reload);
+    return () => window.removeEventListener("acp-profiles-changed", reload);
+  }, [loadConfig]);
 
-  const [showFeedbackInput, setShowFeedbackInput] = useState(false);
-  const scrollContainerRef = useRef<HTMLDivElement>(null);
-  const { isAtBottom, scrollToBottom } = useAutoScroll(scrollContainerRef);
-  const loadingOlderRef = useRef(false);
-  const skipNextMessageScrollRef = useRef(false);
-  const prependScrollSnapshotRef = useRef<{
-    scrollHeight: number;
-    scrollTop: number;
-  } | null>(null);
-  const messageScrollSignature = useMemo(
-    () => agentMessageWindowSignature(messages),
-    [messages],
-  );
+  useEffect(() => {
+    if (routeConversationId || search.projectDir) return;
+    let active = true;
+    void invoke<string | null>("get_initial_project_dir")
+      .then((initialProjectDir) => {
+        if (active && initialProjectDir) {
+          setProjectDir((current) => current ?? initialProjectDir);
+        }
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, [routeConversationId, search.projectDir]);
 
-  const requestOlderMessages = useCallback(() => {
-    const el = scrollContainerRef.current;
-    if (
-      !el ||
-      loadingMessages ||
-      loadingOlderMessages ||
-      loadingOlderRef.current ||
-      !hasOlderMessages
-    ) {
-      return;
+  useEffect(() => {
+    let active = true;
+    if (!routeConversationId) {
+      setConversationLoading(false);
+      setRouteConversation(null);
+      setRouteError(null);
+      startNewConversation();
+      return () => {
+        active = false;
+      };
     }
 
-    loadingOlderRef.current = true;
-    prependScrollSnapshotRef.current = {
-      scrollHeight: el.scrollHeight,
-      scrollTop: el.scrollTop,
-    };
-    skipNextMessageScrollRef.current = true;
-
-    void loadOlderMessages()
-      .then((loaded) => {
-        if (loaded === false) {
-          prependScrollSnapshotRef.current = null;
-          skipNextMessageScrollRef.current = false;
+    setConversationLoading(true);
+    setRouteError(null);
+    void invoke<Conversation>("get_conversation", { id: routeConversationId })
+      .then(async (loadedConversation) => {
+        if (!active) return;
+        setRouteConversation(loadedConversation);
+        setProjectDir(loadedConversation.project_dir);
+        setSelectedProfileId(loadedConversation.agent_profile_id ?? null);
+        if (!loadedConversation.agent_profile_id) {
+          setRouteError(
+            "This hidden legacy conversation is not an ACP session. Start a new Agent Chat instead.",
+          );
+          return;
         }
+        await loadConversation(loadedConversation);
+        if (active) {
+          useConversationsStore
+            .getState()
+            .markAgentChatRead(loadedConversation.id);
+        }
+      })
+      .catch((loadError) => {
+        if (active) setRouteError(errorMessage(loadError));
       })
       .finally(() => {
-        loadingOlderRef.current = false;
+        if (active) setConversationLoading(false);
       });
+
+    return () => {
+      active = false;
+    };
+  }, [loadConversation, routeConversationId, startNewConversation]);
+
+  useEffect(() => {
+    if (routeConversationId || !conversation?.id || isBusy) return;
+    const action = promotionActionRef.current;
+    if (action?.phase === "pending") return;
+    const sourceKey = composerDraftKey.agent(undefined);
+    const destinationKey = composerDraftKey.agent(conversation.id);
+    const drafts = useComposerDraftsStore.getState();
+    if (action?.phase === "clear") {
+      drafts.acknowledgeSubmission(
+        sourceKey,
+        action.expectedRevision,
+        action.submittedImageIds,
+      );
+    }
+    drafts.moveDraft(sourceKey, destinationKey);
+    promotionActionRef.current = null;
+    void useConversationsStore.getState().fetchConversations();
+    useConversationsStore.getState().markAgentChatRead(conversation.id);
+    void navigate({
+      to: "/chat/$id",
+      params: { id: conversation.id },
+      replace: true,
+    });
+  }, [conversation?.id, isBusy, navigate, promotionEpoch, routeConversationId]);
+
+  useEffect(() => {
+    const title = activeConversation?.title ?? "New Agent Chat";
+    setAgentChatTitle(title);
+    setAgentChatProjectDir(projectDir);
+    setAgentChatHeaderContext({
+      profiles,
+      selectedProfileId,
+      profileLocked,
+      projectDir,
+      projectLocked,
+      status,
+      capabilities,
+      onSelectProfile: (profileId) => {
+        if (!profileLocked) setSelectedProfileId(profileId);
+      },
+      onSelectProject: (directory) => {
+        if (!projectLocked) setProjectDir(directory);
+      },
+    });
+    return () => setAgentChatHeaderContext(null);
   }, [
-    hasOlderMessages,
-    loadOlderMessages,
-    loadingMessages,
-    loadingOlderMessages,
+    activeConversation?.title,
+    capabilities,
+    profileLocked,
+    profiles,
+    projectDir,
+    projectLocked,
+    selectedProfileId,
+    status,
   ]);
 
-  useEffect(() => {
-    const el = scrollContainerRef.current;
-    if (!el) return;
 
-    const handleScroll = () => {
-      if (el.scrollTop <= TOP_LOAD_THRESHOLD_PX) {
-        requestOlderMessages();
+  const disabledReason = useMemo(() => {
+    if (routeError) return routeError;
+    if (configLoading || conversationLoading) return "Loading ACP configuration...";
+    if (configError) return `Could not load agent profiles: ${configError}`;
+    if (!selectedProfileId) return "Select an enabled agent profile first.";
+    if (!selectedProfile) {
+      return `Profile ${selectedProfileId} is unavailable. Restore it in Settings or start a new conversation.`;
+    }
+    if (selectedProfile.disabled) {
+      return `Profile ${selectedProfile.name} is disabled. Re-enable it in Settings or start a new conversation.`;
+    }
+    if (!projectDir) return "Select a project directory first.";
+    return null;
+  }, [
+    configError,
+    configLoading,
+    conversationLoading,
+    projectDir,
+    routeError,
+    selectedProfile,
+    selectedProfileId,
+  ]);
+
+  const submit = useCallback(
+    async (content: string, images?: ImageAttachment[]) => {
+      if (disabledReason) return false;
+      const isPromotingConversation = !routeConversationId;
+      const promotionSnapshot = isPromotingConversation
+        ? {
+            expectedRevision:
+              useComposerDraftsStore.getState().revisions[
+                composerDraftKey.agent(undefined)
+              ] ?? 0,
+            submittedImageIds: (images ?? []).map((image) => image.id),
+          }
+        : null;
+      if (promotionSnapshot) {
+        promotionActionRef.current = { phase: "pending", ...promotionSnapshot };
       }
-    };
-
-    el.addEventListener("scroll", handleScroll, { passive: true });
-    return () => el.removeEventListener("scroll", handleScroll);
-  }, [requestOlderMessages]);
-
-  useLayoutEffect(() => {
-    const el = scrollContainerRef.current;
-    const snapshot = prependScrollSnapshotRef.current;
-    if (!el || !snapshot || loadingOlderMessages) return;
-
-    const heightDelta = el.scrollHeight - snapshot.scrollHeight;
-    el.scrollTop = snapshot.scrollTop + heightDelta;
-    prependScrollSnapshotRef.current = null;
-  }, [loadingOlderMessages, messageScrollSignature]);
-
-  // Load conversation from route param
-  const loadedIdRef = useRef<string | null>(null);
-  useEffect(() => {
-    if (routeId && routeId !== loadedIdRef.current) {
-      loadedIdRef.current = routeId;
-      invoke<Conversation | null>("get_conversation", { id: routeId }).then((conv) => {
-        if (conv) {
-          loadConversation(conv);
-          setProjectDir(conv.project_dir ?? null);
-          useConversationsStore.getState().markAgentChatRead(conv.id);
-          useToolsStore.getState().setActiveConversation(conv.id, conv.project_dir);
-        }
-      });
-    } else if (!routeId && loadedIdRef.current !== null) {
-      loadedIdRef.current = null;
-      startNewConversation();
-      setProjectDir(null);
-      setProjectInfo(null);
-      useToolsStore.getState().setActiveConversation(null);
-    }
-  }, [routeId, loadConversation, startNewConversation]);
-
-  // Handle projectDir from search params (e.g., select-project / new-chat-in-project commands)
-  useEffect(() => {
-    if (searchProjectDir) {
-      startNewConversation();
-      setProjectDir(searchProjectDir);
-      setProjectInfo(null);
-      loadedIdRef.current = null;
-      useToolsStore.getState().setActiveConversation(null);
-      navigate({ to: "/chat", search: { projectDir: undefined }, replace: true });
-    }
-  }, [searchProjectDir, startNewConversation, navigate]);
-
-  // Apply CLI project dir for new chats (once per app session)
-  useEffect(() => {
-    if (routeId || appliedInitialProjectDir.current) return;
-    appliedInitialProjectDir.current = true;
-    invoke<string | null>("get_initial_project_dir").then((dir) => {
-      if (dir) setProjectDir(dir);
-    });
-  }, [routeId]);
-
-  // Update URL when new conversation is created
-  const prevConvId = useRef<string | undefined>(undefined);
-  useLayoutEffect(() => {
-    if (conversation?.id && !routeId && conversation.id !== prevConvId.current) {
-      useComposerDraftsStore
-        .getState()
-        .moveDraft(
-          composerDraftKey.agent(undefined),
-          composerDraftKey.agent(conversation.id),
-        );
-      prevConvId.current = conversation.id;
-      loadedIdRef.current = conversation.id;
-      navigate({ to: "/chat/$id", params: { id: conversation.id }, replace: true });
-      // New conversation just created — no tools to load, but set active conv for future skill calls
-      useToolsStore.getState().setActiveConversation(conversation.id, conversation.project_dir);
-    } else {
-      prevConvId.current = conversation?.id;
-    }
-  }, [conversation?.id, routeId, navigate]);
-
-  // Fetch git info when projectDir changes
-  useEffect(() => {
-    if (projectDir) {
-      invoke<{ is_git: boolean; git_branch: string | null }>("get_project_info", {
-        path: projectDir,
-      })
-        .then((info) =>
-          setProjectInfo({ isGit: info.is_git, gitBranch: info.git_branch ?? undefined }),
-        )
-        .catch(() => setProjectInfo(null));
-    } else {
-      setProjectInfo(null);
-    }
-  }, [projectDir]);
-
-  // Sync title and project dir to ChatHeader
-  useEffect(() => {
-    setAgentChatTitle(conversation?.title || "New Chat");
-    setAgentChatProjectDir(projectDir);
-  }, [conversation?.title, projectDir]);
-
-  // Scroll to the start of the last assistant message on conversation load
-  // (instant, no smooth animation). Falls back to bottom if there are no
-  // assistant messages yet.
-  const scrolledForConvRef = useRef<string | null>(null);
-  useEffect(() => {
-    if (conversation?.id && conversation.id !== scrolledForConvRef.current && messages.length > 0) {
-      scrolledForConvRef.current = conversation.id;
-      const el = scrollContainerRef.current;
-      if (!el) return;
-      const assistantEls = el.querySelectorAll<HTMLElement>(
-        '[data-testid="chat-message-assistant"]',
-      );
-      const lastAssistant = assistantEls[assistantEls.length - 1];
-      if (lastAssistant) {
-        const top =
-          el.scrollTop +
-          lastAssistant.getBoundingClientRect().top -
-          el.getBoundingClientRect().top;
-        el.scrollTo({ top, behavior: "instant" as ScrollBehavior });
-      } else {
-        el.scrollTo({ top: el.scrollHeight, behavior: "instant" as ScrollBehavior });
+      const accepted = await sendMessage(content, images);
+      if (promotionSnapshot) {
+        promotionActionRef.current = {
+          phase: accepted ? "clear" : "move",
+          ...promotionSnapshot,
+        };
+        setPromotionEpoch((current) => current + 1);
       }
-    }
-  }, [conversation?.id, messages.length]);
-
-  // Scroll to bottom when user sends a message (always force)
-  useEffect(() => {
-    if (skipNextMessageScrollRef.current) {
-      skipNextMessageScrollRef.current = false;
-      return;
-    }
-    const lastMsg = messages[messages.length - 1];
-    if (lastMsg?.role === "user") {
-      scrollToBottom({ force: true });
-    }
-  }, [messages.length, scrollToBottom]);
-
-  // Auto-scroll during streaming — subscribe directly to stream updates
-  // to avoid re-rendering the entire route on every chunk.
-  // Stop auto-scrolling once the agent starts outputting its text response
-  // so the user can read at their own pace.
-  useEffect(() => {
-    if (!isStreaming || !convId) return;
-    scrollToBottom();
-    return subscribeToStream(convId, (parts) => {
-      // Skip scroll when stream ends (null) or when showing final text response
-      if (!parts || (parts.length > 0 && parts[parts.length - 1].type === "text")) return;
-      scrollToBottom();
-    });
-  }, [isStreaming, convId, scrollToBottom]);
-
-  // Auto-scroll when queued messages change
-  useEffect(() => {
-    if (queuedMessages.length > 0) {
-      scrollToBottom({ force: true });
-    }
-  }, [queuedMessages.length, scrollToBottom]);
-
-  // Fetch conversations list when conversation changes
-  useEffect(() => {
-    useConversationsStore.getState().fetchConversations();
-  }, [conversation?.id]);
-
-  const handlePermissionAllow = useCallback(() => {
-    if (pendingPermission) {
-      pendingPermission.resolve();
-      setShowFeedbackInput(false);
-    }
-  }, [pendingPermission]);
-
-  const handlePermissionDeny = useCallback(() => {
-    if (pendingPermission) {
-      pendingPermission.reject("User denied permission");
-      setShowFeedbackInput(false);
-    }
-  }, [pendingPermission]);
-
-  const handlePermissionDenyWithFeedback = useCallback(
-    (feedback: string) => {
-      if (pendingPermission) {
-        pendingPermission.reject(`User denied permission. User feedback: ${feedback}`);
-        setShowFeedbackInput(false);
-      }
+      if (accepted) setComposerEpoch((current) => current + 1);
+      return accepted;
     },
-    [pendingPermission],
+    [disabledReason, routeConversationId, sendMessage],
   );
 
-  const handleQuestionSubmit = useCallback(
-    (answers: string[][]) => {
-      pendingQuestion?.resolve(answers);
-    },
-    [pendingQuestion],
+  const answerPermission = useCallback(
+    async (optionId: string) => {
+      if (!pendingPermission || permissionBusy) return;
+      setPermissionBusy(true);
+      try {
+        await respondToPermission(optionId);
+      } finally {
+        setPermissionBusy(false);
+      }
+    }, [pendingPermission, permissionBusy, respondToPermission],
   );
 
-  const handleQuestionCancel = useCallback(() => {
-    pendingQuestion?.reject("User cancelled");
-  }, [pendingQuestion]);
-
-  // Override keybindings for permission allow/deny
-  useKeybindings({
-    onPermissionAllow: pendingPermission ? handlePermissionAllow : null,
-    onPermissionDeny: pendingPermission ? handlePermissionDeny : null,
-    onPermissionDenyWithFeedback: pendingPermission ? () => setShowFeedbackInput(true) : null,
-  });
+  const showWelcome =
+    !activeConversation && messages.length === 0 && !loading && !conversationLoading;
 
   return (
-    <>
-      <TodoPanel todos={todosState} />
+    <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden bg-base">
+      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
+        {hasMore && activeConversation && (
+          <div className="mb-4 flex justify-center">
+            <button
+              type="button"
+              disabled={loadingOlder}
+              onClick={() => void loadOlderMessages()}
+              className="rounded-md border border-border bg-raised px-3 py-1.5 text-[0.786rem] text-text-muted hover:bg-hover disabled:opacity-50"
+            >
+              {loadingOlder ? "Loading earlier messages..." : "Load earlier messages"}
+            </button>
+          </div>
+        )}
 
-      <div className="relative flex flex-1 flex-col overflow-hidden">
-        <div ref={scrollContainerRef} className="flex flex-1 flex-col overflow-y-auto">
-          {loadingMessages && (
-            <div className="flex flex-1 flex-col items-center justify-center text-[1rem] text-text-placeholder">Loading messages...</div>
-          )}
-          {!loadingMessages && hasOlderMessages && (
-            <div className="flex justify-center px-5 py-2">
+        {showWelcome && (
+          <section className="mx-auto flex min-h-full max-w-xl flex-col items-center justify-center gap-4 text-center">
+            <div>
+              <h1 className="text-[1.25rem] font-semibold text-text">
+                Start an ACP Agent Chat
+              </h1>
+              <p className="mt-1 text-[0.857rem] leading-5 text-text-muted">
+                Choose a trusted local adapter profile and a project directory. Both become
+                immutable when the first prompt creates the conversation.
+              </p>
+            </div>
+            <div className="flex flex-wrap items-start justify-center gap-3">
+              <AgentProfilePicker
+                profiles={profiles}
+                value={selectedProfileId}
+                onChange={setSelectedProfileId}
+              />
+              <div className="flex flex-col items-start gap-1">
+                <ProjectPicker projectDir={projectDir} onSelect={setProjectDir} />
+                <span className="text-[0.714rem] text-text-dimmed">Working directory</span>
+              </div>
+            </div>
+            {profiles.length === 0 && !configLoading && !configError && (
               <button
                 type="button"
-                onClick={requestOlderMessages}
-                disabled={loadingOlderMessages}
-                className="rounded border border-border bg-elevated px-3 py-1 text-[0.786rem] text-text-muted hover:bg-raised disabled:cursor-default disabled:opacity-60"
+                onClick={() => navigate({ to: "/settings" })}
+                className="rounded-md border border-border bg-raised px-3 py-1.5 text-[0.786rem] text-accent hover:bg-hover"
               >
-                {loadingOlderMessages ? "Loading earlier messages..." : "Load earlier messages"}
+                Create an agent profile in Settings
               </button>
-            </div>
-          )}
-          {!loadingMessages && messages.length === 0 && !isStreaming && (
-            <div className="flex flex-1 flex-col items-center justify-center gap-3">
-              <ProjectPicker
-                projectDir={projectDir}
-                onSelect={setProjectDir}
-                readOnly={!!conversation?.project_dir}
+            )}
+            <p className="max-w-lg text-[0.714rem] leading-5 text-text-dimmed">
+              The adapter runs with your desktop OS identity. Approval prompts are cooperative
+              controls, not sandbox boundaries.
+            </p>
+          </section>
+        )}
+
+        {!showWelcome && (
+          <div className="mx-auto flex w-full max-w-3xl flex-col gap-1">
+            {messages.map((message) => (
+              <ChatMessage key={message.id} message={message} />
+            ))}
+            {activeConversation && <StreamingMessage convId={activeConversation.id} />}
+            {pendingPermission && (
+              <AcpPermissionPrompt
+                request={pendingPermission}
+                onChoice={(optionId) => void answerPermission(optionId)}
+                busy={permissionBusy}
               />
-              <div className="text-[0.929rem] text-text-placeholder">Send a message to start chatting</div>
-            </div>
-          )}
-          {messages.map((msg) => (
-            <ChatMessage key={msg.id} message={msg} />
-          ))}
-          <StreamingMessage
-            convId={conversation?.id}
-            pendingPermission={pendingPermission}
-            onPermissionAllow={handlePermissionAllow}
-            onPermissionDeny={handlePermissionDeny}
-            onPermissionDenyWithFeedback={handlePermissionDenyWithFeedback}
-            showFeedbackInput={showFeedbackInput}
-            pendingQuestion={pendingQuestion}
-            onQuestionSubmit={handleQuestionSubmit}
-            onQuestionCancel={handleQuestionCancel}
-          />
-          {queuedMessages.map((qm) => (
-            <div key={qm.id} className="w-full px-5 py-4 opacity-60">
-              <div className="mb-1.5 flex items-center gap-2 text-[0.786rem] font-semibold uppercase tracking-wider text-text-dimmed">
-                You
-                <span className="rounded-full bg-warning/15 px-1.5 py-0.5 text-[0.714rem] font-medium normal-case tracking-normal text-warning">
-                  Queued
-                </span>
-              </div>
-              <div className="max-w-3xl text-[1rem] text-text">{qm.content}</div>
-            </div>
-          ))}
-          {error && (
-            <div className="mx-5 rounded-lg border border-error-msg-border bg-error-msg-bg px-3.5 py-2.5 text-[0.857rem] text-error-bright">
-              <div>{error.message}</div>
-              {error.isAuth && error.provider && error.provider !== "openrouter" && (
-                <button
-                  type="button"
-                  className="mt-2 rounded bg-accent px-3 py-1 text-[0.857rem] font-medium text-white hover:bg-accent/80"
-                  onClick={() => openCodexAuthModal()}
-                >
-                  Reconnect ChatGPT Account
-                </button>
-              )}
-            </div>
-          )}
-        </div>
-        {!isAtBottom && isStreaming && (
-          <button
-            type="button"
-            onClick={() => scrollToBottom({ force: true })}
-            className="absolute bottom-4 left-1/2 z-10 flex -translate-x-1/2 items-center gap-1.5 rounded-full bg-elevated/90 px-3 py-1.5 text-xs shadow-md"
-          >
-            ↓ Jump to bottom
-          </button>
+            )}
+          </div>
         )}
       </div>
 
-      <ActivityStatusBar convId={conversation?.id} hasPendingPermission={!!pendingPermission} />
+      {(routeError || configError || error) && (
+        <div className="mx-4 mb-2 flex items-start justify-between gap-3 rounded-lg border border-error/30 bg-error/10 px-3 py-2">
+          <p role="alert" className="text-[0.786rem] text-error-bright">
+            {routeError ?? configError ?? error?.message}
+          </p>
+          {configError && (
+            <button
+              type="button"
+              onClick={() => void loadConfig()}
+              className="shrink-0 text-[0.714rem] font-medium text-error-bright underline"
+            >
+              Retry
+            </button>
+          )}
+        </div>
+      )}
 
       <InputBar
-        convId={conversation?.id}
-        draftKey={composerDraftKey.agent(routeId)}
-        onSend={sendMessage}
-        onStop={stopStreaming}
-        autoFocusKey={routeId ?? "new-chat"}
+        key={`${routeConversationId ?? "new"}:${composerEpoch}`}
+        convId={activeConversation?.id}
+        draftKey={composerDraftKey.agent(routeConversationId)}
+        onSend={submit}
+        onStop={() => void stopStreaming()}
+        isStreamingOverride={isBusy}
+        allowQueueWhileStreaming={false}
+        allowImages={capabilities?.prompt?.image === true}
+        disabled={Boolean(disabledReason)}
+        disabledReason={disabledReason ?? undefined}
       />
-    </>
+    </div>
   );
 }
 
-function agentMessageWindowSignature(messages: Message[]) {
-  const firstMessage = messages[0];
-  const lastMessage = messages[messages.length - 1];
-  return [
-    messages.length,
-    firstMessage?.id ?? "",
-    firstMessage?.created_at ?? "",
-    firstMessage?.parts.length ?? 0,
-    lastMessage?.id ?? "",
-    lastMessage?.created_at ?? "",
-    lastMessage?.parts.length ?? 0,
-  ].join(":");
+function toAcpPermissionMode(
+  permissionMode:
+    | "strict"
+    | "request"
+    | "allow-edits"
+    | "bypass"
+    | "default"
+    | "accept_edits"
+    | "bypass_permissions",
+): AcpPermissionMode {
+  switch (permissionMode) {
+    case "allow-edits":
+    case "accept_edits":
+      return "allow-edits";
+    case "bypass":
+    case "bypass_permissions":
+      return "bypass";
+    default:
+      return "request";
+  }
+}
+
+function errorMessage(error: unknown) {
+  if (error instanceof Error) return error.message;
+  if (typeof error === "string") return error;
+  return "The ACP conversation could not be loaded.";
 }

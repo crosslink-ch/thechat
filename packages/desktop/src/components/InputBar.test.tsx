@@ -699,4 +699,40 @@ describe("InputBar shared attachments", () => {
       "ready",
     );
   });
+
+  it("uses stop-only ACP busy behavior without queueing or image controls", async () => {
+    act(() => {
+      useComposerDraftsStore
+        .getState()
+        .setDraft("conversation:conv-1", "preserved follow-up");
+    });
+    const onStop = vi.fn();
+    const { editor } = renderInputBar({
+      isStreamingOverride: true,
+      allowQueueWhileStreaming: false,
+      allowImages: false,
+      onStop,
+    });
+
+    await waitFor(() => expect(editor).toHaveAttribute("contenteditable", "false"));
+    expect(editor).toHaveTextContent("preserved follow-up");
+    expect(screen.queryByTitle("Queue message")).not.toBeInTheDocument();
+    expect(screen.queryByTitle("Attach image")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByTitle("Stop generating"));
+    expect(onStop).toHaveBeenCalledOnce();
+  });
+
+  it("explains why an ACP prompt cannot be started before selections are ready", async () => {
+    const { editor } = renderInputBar({
+      disabled: true,
+      disabledReason: "Select an enabled agent profile and project first.",
+      allowImages: false,
+    });
+
+    await waitFor(() => expect(editor).toHaveAttribute("contenteditable", "false"));
+    expect(
+      screen.getByText("Select an enabled agent profile and project first."),
+    ).toBeInTheDocument();
+    expect(screen.getByTitle("Send message")).toBeDisabled();
+  });
 });

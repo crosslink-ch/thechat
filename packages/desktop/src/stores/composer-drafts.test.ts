@@ -109,6 +109,22 @@ describe("composer draft state", () => {
     );
   });
 
+  it("acknowledges only the submitted draft revision and image IDs", () => {
+    const store = useComposerDraftsStore.getState();
+    const key = composerDraftKey.agent(undefined);
+    const submittedImage = { id: "submitted", mimeType: "image/png", base64: "b2xk" };
+    const newerImage = { id: "newer", mimeType: "image/png", base64: "bmV3" };
+    store.setDraft(key, "submitted text");
+    const submittedRevision = useComposerDraftsStore.getState().revisions[key];
+    store.setImageDrafts(key, [submittedImage, newerImage]);
+    store.setDraft(key, "newer text");
+
+    store.acknowledgeSubmission(key, submittedRevision, [submittedImage.id]);
+
+    expect(useComposerDraftsStore.getState().drafts[key]).toBe("newer text");
+    expect(useComposerDraftsStore.getState().imageDrafts[key]).toEqual([newerImage]);
+  });
+
   it("moves a provisional agent draft to its durable conversation scope", () => {
     const store = useComposerDraftsStore.getState();
     const provisionalKey = composerDraftKey.agent(undefined);

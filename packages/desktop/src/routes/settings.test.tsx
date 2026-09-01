@@ -44,7 +44,18 @@ vi.mock("../lib/api", () => {
 });
 
 beforeEach(() => {
-  invokeMock.mockClear();
+  invokeMock.mockReset();
+  invokeMock.mockResolvedValue({
+    api_key: "",
+    providers: {
+      openrouter: { model: "model" },
+      codex: { model: "model" },
+      glm: { model: "model" },
+      featherless: { model: "model" },
+    },
+    acpProfiles: [],
+    defaultAcpProfileId: null,
+  });
   updateNameMock.mockReset();
   listTokensMock.mockReset();
   createTokenMock.mockReset();
@@ -134,7 +145,7 @@ describe("SettingsRoute", () => {
     expect(screen.getByRole("button", { name: "Save name" })).toBeEnabled();
   });
 
-  it("shows API access without restoring unrelated Agent Chat settings", async () => {
+  it("shows API access and ACP profiles without restoring legacy agent settings", async () => {
     render(<SettingsRoute />);
 
     expect(
@@ -146,7 +157,6 @@ describe("SettingsRoute", () => {
     expect(screen.getByText(/https:\/\/api\.example\.test\/mcp/)).toBeInTheDocument();
 
     for (const removedLabel of [
-      "Agent Chat",
       "Provider",
       "API Key",
       "Model",
@@ -163,7 +173,10 @@ describe("SettingsRoute", () => {
     expect(
       await screen.findByText("No personal access tokens yet."),
     ).toBeInTheDocument();
-    expect(invokeMock).not.toHaveBeenCalled();
+    expect(
+      screen.getByRole("heading", { name: "Agent profiles" }),
+    ).toBeInTheDocument();
+    expect(invokeMock).toHaveBeenCalledWith("get_config");
   });
 
   it("creates, reveals, copies, lists, and revokes named personal access tokens", async () => {

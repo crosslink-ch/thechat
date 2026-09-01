@@ -12,11 +12,26 @@ export function ProjectPicker({ projectDir, onSelect, readOnly }: ProjectPickerP
   const [displayName, setDisplayName] = useState<string | null>(null);
 
   useEffect(() => {
+    let active = true;
     if (projectDir) {
-      basename(projectDir).then(setDisplayName);
+      void Promise.resolve()
+        .then(() => basename(projectDir))
+        .then((name) => {
+          if (active) setDisplayName(name);
+        })
+        .catch(() => {
+          if (active) {
+            setDisplayName(
+              projectDir.replace(/[\\/]+$/, "").split(/[\\/]/).pop() ?? projectDir,
+            );
+          }
+        });
     } else {
       setDisplayName(null);
     }
+    return () => {
+      active = false;
+    };
   }, [projectDir]);
 
   const handleClick = async () => {

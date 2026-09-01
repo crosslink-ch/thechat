@@ -55,8 +55,8 @@ vi.mock("./ChannelModal", () => ({
 }));
 
 const conversations: Conversation[] = [
-  { id: "c1", title: "Chat 1", project_dir: null, created_at: "2026-01-01", updated_at: "2026-01-01" },
-  { id: "c2", title: "Chat 2", project_dir: null, created_at: "2026-01-02", updated_at: "2026-01-02" },
+  { id: "c1", title: "ACP Chat", project_dir: "/project", agent_profile_id: "profile-1", created_at: "2026-01-01", updated_at: "2026-01-01" },
+  { id: "c2", title: "Legacy Chat", project_dir: null, agent_profile_id: null, created_at: "2026-01-02", updated_at: "2026-01-02" },
 ];
 
 const user: AuthUser = {
@@ -119,7 +119,17 @@ async function renderWithRouter(component: React.ReactNode) {
     path: "/",
     component: () => null,
   });
-  const routeTree = rootRoute.addChildren([indexRoute]);
+  const chatRoute = createRoute({
+    getParentRoute: () => rootRoute,
+    path: "/chat",
+    component: () => null,
+  });
+  const chatIdRoute = createRoute({
+    getParentRoute: () => rootRoute,
+    path: "/chat/$id",
+    component: () => null,
+  });
+  const routeTree = rootRoute.addChildren([indexRoute, chatRoute, chatIdRoute]);
   const memoryHistory = createMemoryHistory({ initialEntries: ["/"] });
   const router = createRouter({ routeTree, history: memoryHistory });
 
@@ -127,7 +137,7 @@ async function renderWithRouter(component: React.ReactNode) {
   await act(async () => {
     result = render(<RouterProvider router={router as any} />);
   });
-  return result;
+  return { ...result, router };
 }
 
 async function renderSidebarAt(initialEntry: string) {
@@ -157,7 +167,7 @@ async function renderSidebarAt(initialEntry: string) {
 
 beforeEach(() => {
   // Reset stores to default state
-  useSidebarState.setState({ open: true, tab: "agent" });
+  useSidebarState.setState({ open: true, tab: "workspace" });
   useAuthStore.setState({ user: null, token: null, loading: false });
   useWorkspacesStore.setState({ workspaces: [], activeWorkspace: null, loading: false });
   useHermesIndicatorsStore.getState().resetForTests();
@@ -181,8 +191,8 @@ describe("Sidebar", () => {
 
     expect(screen.getByText("Log in")).toBeInTheDocument();
     expect(screen.queryByText("New Chat")).not.toBeInTheDocument();
-    expect(screen.queryByText("Chat 1")).not.toBeInTheDocument();
-    expect(screen.queryByText("Chat 2")).not.toBeInTheDocument();
+    expect(screen.queryByText("ACP Chat")).not.toBeInTheDocument();
+    expect(screen.queryByText("Legacy Chat")).not.toBeInTheDocument();
     // No workspace switcher
     expect(screen.queryByText("Select workspace")).not.toBeInTheDocument();
   });
@@ -363,28 +373,18 @@ describe("Sidebar", () => {
     expect(screen.queryByRole("button", { name: "Manage #general" })).not.toBeInTheDocument();
   });
 
-  it("does not show agent chats in the sidebar UI", async () => {
-    useConversationsStore.setState({ conversations });
-
-    // Not logged in
-    const { unmount } = await renderWithRouter(<Sidebar />);
-    expect(screen.queryByText("New Chat")).not.toBeInTheDocument();
-    expect(screen.queryByText("Chat 1")).not.toBeInTheDocument();
-    unmount();
-
-    // Logged in, no workspace
+  it("uses the Agent Chat rail to show only ACP conversations and create chats", async () => {
     useAuthStore.setState({ user, token: "test-token" });
-    useWorkspacesStore.setState({ workspaces: workspaceList });
-    const { unmount: unmount2 } = await renderWithRouter(<Sidebar />);
-    expect(screen.queryByText("New Chat")).not.toBeInTheDocument();
-    expect(screen.queryByText("Chat 1")).not.toBeInTheDocument();
-    unmount2();
+    useConversationsStore.setState({ conversations });
+    const { router } = await renderWithRouter(<Sidebar />);
 
-    // Logged in, with workspace
-    useWorkspacesStore.setState({ activeWorkspace });
-    await renderWithRouter(<Sidebar />);
-    expect(screen.queryByText("Agent Chats")).not.toBeInTheDocument();
-    expect(screen.queryByText("Chat 1")).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Agent Chat" }));
+    expect(screen.getByText("Agent Chats")).toBeInTheDocument();
+    expect(screen.getByText("ACP Chat")).toBeInTheDocument();
+    expect(screen.queryByText("Legacy Chat")).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "New Chat" }));
+    await waitFor(() => expect(router.state.location.pathname).toBe("/chat"));
   });
 
   it("shows and clears a bot unread indicator across real message and route state", async () => {

@@ -23,6 +23,7 @@ otel = ["dep:opentelemetry", "dep:opentelemetry_sdk", "dep:opentelemetry-otlp", 
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+agent-client-protocol = "=2.0.0"
 tauri = { version = "2", features = [] }
 tauri-plugin-opener = "2"
 tauri-plugin-log = "2"
@@ -32,6 +33,9 @@ tauri-plugin-http = "2"
 log = "0.4"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+sha2 = "0.10"
+hmac = "=0.12.1"
+atomic-write-file = "=0.3.1"
 rusqlite = { version = "0.31", features = ["bundled"] }
 url = "2"
 uuid = { version = "1", features = ["v4"] }
@@ -45,8 +49,8 @@ grep-regex = "0.1"
 grep-searcher = "0.1"
 globset = "0.4"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls", "stream"] }
-tokio = { version = "1", features = ["process", "time", "rt", "macros", "net", "sync"] }
-tokio-util = "0.7"
+tokio = { version = "1", features = ["process", "time", "rt", "macros", "net", "sync", "io-util"] }
+tokio-util = { version = "0.7", features = ["compat"] }
 tokio-tungstenite = { version = "0.24", default-features = false, features = ["connect", "rustls-tls-webpki-roots"] }
 futures-util = "0.3"
 base64 = "0.22"
@@ -62,6 +66,10 @@ tracing-opentelemetry = { version = "0.32", optional = true }
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
+
+[target.'cfg(windows)'.dependencies]
+process-wrap = { version = "=10.0.0", default-features = false, features = ["tokio1", "creation-flags", "job-object", "kill-on-drop"] }
+windows = { version = "=0.62.2", features = ["Win32_System_Threading"] }
 
 [dev-dependencies]
 tempfile = "3"

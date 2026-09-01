@@ -54,25 +54,23 @@ describe("createCommands", () => {
     expect(togglePaletteMock).toHaveBeenCalledOnce();
   });
 
-  it("does not expose removed Agent Chat or project-selection commands", () => {
-    const commands = createCommands(vi.fn());
-    const ids = commands.map((command) => command.id);
-    const shortcuts = commands.map((command) => command.shortcut).filter(Boolean);
-    const removedPrimaryId = ["new", "chat"].join("-");
-    const removedProjectId = ["new", "chat", "in", "project"].join("-");
-    const removedSelectProjectId = ["select", "project"].join("-");
-    const removedPrimaryShortcut = ["C-x", "n"].join(" ");
-    const removedProjectShortcut = ["C-x", "c", "n"].join(" ");
+  it("exposes restored ACP Agent Chat access without legacy model commands", () => {
+    const navigate = vi.fn();
+    const commands = createCommands(navigate);
+    const agentChat = commands.find((command) => command.id === "new-agent-chat");
 
-    expect(ids).not.toContain("login");
-    expect(commands.map((command) => command.label)).not.toContain("Log In");
+    expect(agentChat).toMatchObject({
+      label: "New Agent Chat",
+      shortcut: "C-x n",
+    });
+    agentChat!.execute();
+    expect(navigate).toHaveBeenCalledWith({ to: "/chat" });
+    expect(closePaletteAndRefocusMock).toHaveBeenCalledOnce();
+
+    const ids = commands.map((command) => command.id);
     expect(ids).not.toContain("configure-mcp");
     expect(ids).not.toContain("switch-permission-mode");
-    expect(ids).not.toContain(removedPrimaryId);
-    expect(ids).not.toContain(removedProjectId);
-    expect(ids).not.toContain(removedSelectProjectId);
-    expect(shortcuts).not.toContain(removedPrimaryShortcut);
-    expect(shortcuts).not.toContain(removedProjectShortcut);
+    expect(ids).not.toContain("select-model");
   });
 
   it("opens user-scoped bot management without an active workspace", () => {

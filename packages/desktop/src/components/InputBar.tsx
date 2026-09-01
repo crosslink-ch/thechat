@@ -58,6 +58,10 @@ interface InputBarProps {
   mentions?: MentionUser[];
   autoFocusKey?: string;
   isStreamingOverride?: boolean;
+  allowQueueWhileStreaming?: boolean;
+  allowImages?: boolean;
+  disabled?: boolean;
+  disabledReason?: string;
   queuedCount?: number;
   slashCommands?: HermesSlashCommand[];
   sharedUpload?: {
@@ -78,12 +82,18 @@ function ScopedInputBar({
   mentions,
   autoFocusKey,
   isStreamingOverride,
+  allowQueueWhileStreaming = true,
+  allowImages = true,
+  disabled = false,
+  disabledReason,
   queuedCount = 0,
   slashCommands,
   sharedUpload,
 }: InputBarProps) {
   const storeStreaming = useIsStreaming(convId);
   const isStreaming = isStreamingOverride ?? storeStreaming;
+  const composerDisabled =
+    disabled || (isStreaming && !allowQueueWhileStreaming);
   const inputRef = useRef<RichInputHandle>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [canSubmit, setCanSubmit] = useState(false);
@@ -170,7 +180,10 @@ function ScopedInputBar({
   const hasContent =
     canSubmit || images.length > 0 || sharedDrafts.length > 0;
   const canSend =
-    hasContent && (!sharedUpload || (sharedReady && !sendingShared));
+    !disabled &&
+    hasContent &&
+    (!isStreaming || allowQueueWhileStreaming) &&
+    (!sharedUpload || (sharedReady && !sendingShared));
   const slashSuggestions = slashCommands
     ? filterHermesSlashCommands(inputText, slashCommands)
     : [];
@@ -303,6 +316,7 @@ function ScopedInputBar({
   );
 
   const addFiles = useCallback(async (files: FileList | File[]) => {
+    if (!allowImages && !sharedUpload) return;
     if (sharedUpload) {
       if (sendingShared) return;
       const remaining = Math.max(
@@ -351,6 +365,7 @@ function ScopedInputBar({
     const attachments = await Promise.all(validFiles.map(fileToAttachment));
     updateImages((previous) => [...previous, ...attachments]);
   }, [
+    allowImages,
     sendingShared,
     sharedDrafts.length,
     sharedUpload,
@@ -633,6 +648,7 @@ function ScopedInputBar({
 
   const handleRichInputSubmit = useCallback(
     async (text: string) => {
+      if (composerDisabled) return false;
       const submittedRevision =
         useComposerDraftsStore.getState().revisions[draftKey] ?? 0;
       const submittedImages = images.length > 0 ? [...images] : undefined;
@@ -641,7 +657,15 @@ function ScopedInputBar({
           ? await sendSharedContent(text)
           : await requestSend(text, submittedImages);
         if (!accepted) return false;
+        const textIsStillSubmittedRevision =
+          (useComposerDraftsStore.getState().revisions[draftKey] ?? 0) ===
+          submittedRevision;
         clearSubmittedText(submittedRevision);
+        if (textIsStillSubmittedRevision) {
+          inputRef.current?.setText("");
+          localTextRef.current = "";
+          setInputText("");
+        }
         if (submittedImages) removeAcceptedImages(submittedImages);
         return true;
       } catch {
@@ -650,6 +674,7 @@ function ScopedInputBar({
     },
     [
       clearSubmittedText,
+      composerDisabled,
       draftKey,
       images,
       removeAcceptedImages,
@@ -661,6 +686,7 @@ function ScopedInputBar({
 
   // Called when RichInput has empty text but user presses Enter — allow if images exist
   const handleEmptySubmitAttempt = useCallback(async () => {
+    if (composerDisabled) return false;
     if (sharedUpload && sharedDrafts.length > 0 && sharedReady) {
       return sendSharedContent("");
     }
@@ -676,6 +702,7 @@ function ScopedInputBar({
     }
     return false;
   }, [
+    composerDisabled,
     images,
     removeAcceptedImages,
     requestSend,
@@ -799,8 +826,8 @@ function ScopedInputBar({
   const handleDragOver = useCallback((e: DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    setDragOver(true);
-  }, []);
+    if (allowImages || sharedUpload) setDragOver(true);
+  }, [allowImages, sharedUpload]);
 
   const handleDragLeave = useCallback((e: DragEvent) => {
     e.preventDefault();
@@ -813,11 +840,12 @@ function ScopedInputBar({
       e.preventDefault();
       e.stopPropagation();
       setDragOver(false);
+      if (!allowImages && !sharedUpload) return;
       if (e.dataTransfer.files.length > 0) {
         addFiles(e.dataTransfer.files);
       }
     },
-    [addFiles],
+    [addFiles, allowImages, sharedUpload],
   );
 
   const handlePaste = useCallback(
@@ -828,7 +856,7 @@ function ScopedInputBar({
       for (const item of items) {
         if (
           item.kind === "file" &&
-          (sharedUpload || ACCEPTED_MIME.has(item.type))
+          (sharedUpload || (allowImages && ACCEPTED_MIME.has(item.type)))
         ) {
           const file = item.getAsFile();
           if (file) imageFiles.push(file);
@@ -839,7 +867,7 @@ function ScopedInputBar({
         addFiles(imageFiles);
       }
     },
-    [addFiles, sharedUpload],
+    [addFiles, allowImages, sharedUpload],
   );
 
   // Attach paste listener to the container
@@ -978,50 +1006,67 @@ function ScopedInputBar({
           initialText={initialText}
           onSubmit={handleRichInputSubmit}
           onEmptySubmitAttempt={handleEmptySubmitAttempt}
-          placeholder={isStreaming ? "Queue a message..." : "Send a message..."}
+          placeholder={
+            disabledReason ??
+            (isStreaming
+              ? allowQueueWhileStreaming
+                ? "Queue a message..."
+                : "Agent is working..."
+              : "Send a message...")
+          }
+          disabled={composerDisabled}
           mentions={mentions}
           onCanSubmitChange={setCanSubmit}
           onTextChange={handleInputTextChange}
           onKeyIntercept={handleSlashMenuKey}
         />
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept={
-            sharedUpload
-              ? undefined
-              : "image/png,image/jpeg,image/gif,image/webp,image/svg+xml,image/bmp"
-          }
-          multiple
-          className="hidden"
-          onChange={(e) => {
-            if (e.target.files) addFiles(e.target.files);
-            e.target.value = "";
-          }}
-        />
+        {allowImages && (
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept={
+              sharedUpload
+                ? undefined
+                : "image/png,image/jpeg,image/gif,image/webp,image/svg+xml,image/bmp"
+            }
+            multiple
+            className="hidden"
+            onChange={(e) => {
+              if (e.target.files) addFiles(e.target.files);
+              e.target.value = "";
+            }}
+          />
+        )}
+        {disabledReason && (
+          <p className="px-4 pb-1 text-[0.714rem] text-text-dimmed">
+            {disabledReason}
+          </p>
+        )}
         <div
           data-testid="input-actions"
           className="flex min-h-10 items-center justify-end gap-1.5 px-2 pb-2"
         >
-          {queuedCount > 0 && (
+          {allowQueueWhileStreaming && queuedCount > 0 && (
             <span className="mr-1 rounded border border-border bg-background px-1.5 py-0.5 text-[0.643rem] font-medium uppercase text-text-dimmed">
               {queuedCount} queued
             </span>
           )}
-          <button
-            type="button"
-            className="flex size-8 cursor-pointer items-center justify-center rounded-lg border-none bg-transparent text-text-dimmed shadow-none transition-colors duration-150 hover:bg-hover hover:text-text-muted disabled:cursor-default disabled:opacity-25"
-            onClick={() => fileInputRef.current?.click()}
-            disabled={Boolean(sharedUpload && sendingShared)}
-            title={sharedUpload ? "Attach files" : "Attach image"}
-          >
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-              <rect x="2" y="2" width="12" height="12" rx="2" />
-              <circle cx="5.5" cy="5.5" r="1" />
-              <path d="M14 10.5l-3.5-3.5L4 14" />
-            </svg>
-          </button>
-          {isStreaming && canSend && (
+          {allowImages && (
+            <button
+              type="button"
+              className="flex size-8 cursor-pointer items-center justify-center rounded-lg border-none bg-transparent text-text-dimmed shadow-none transition-colors duration-150 hover:bg-hover hover:text-text-muted disabled:cursor-default disabled:opacity-25"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={disabled || Boolean(sharedUpload && sendingShared)}
+              title={sharedUpload ? "Attach files" : "Attach image"}
+            >
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="2" y="2" width="12" height="12" rx="2" />
+                <circle cx="5.5" cy="5.5" r="1" />
+                <path d="M14 10.5l-3.5-3.5L4 14" />
+              </svg>
+            </button>
+          )}
+          {isStreaming && allowQueueWhileStreaming && canSend && (
             <button
               className="flex size-8 cursor-pointer items-center justify-center rounded-lg border-none shadow-none transition-all duration-150 bg-accent/15 text-accent hover:bg-accent/25"
               onClick={handleSendClick}

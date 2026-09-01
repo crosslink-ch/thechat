@@ -1,3 +1,4 @@
+pub mod acp;
 mod attachment_download;
 mod config;
 mod db;
@@ -12,9 +13,11 @@ mod stream;
 use db::{Conversation, Database, Message};
 use mcp::McpManager;
 use oauth::OAuthCallbackServer;
+use serde::Serialize;
 use shell::ShellProcesses;
 use std::sync::Arc;
 use stream::{CodexTransport, StreamCancellers};
+use tauri::ipc::Channel;
 use tauri::{Manager, State};
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
@@ -215,15 +218,49 @@ pub fn log_plugin_builder() -> tauri_plugin_log::Builder {
 }
 
 type DbState = Arc<Database>;
+type AcpState = Arc<acp::AcpManager>;
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AcpPromptCommandResult {
+    conversation_id: String,
+    generation: u64,
+    turn_id: String,
+    stop_reason: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AcpProbeResult {
+    profile_id: String,
+    resolved_executable: String,
+    protocol_version: String,
+    agent_name: Option<String>,
+    agent_version: Option<String>,
+    capabilities: acp::AcpCapabilities,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AcpConversationMetadata {
+    conversation_id: String,
+    agent_profile_id: Option<String>,
+    project_dir: Option<String>,
+    acp_session_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AcpTurnStartResult {
+    message: Message,
+    turn_token: String,
+}
 
 pub struct InitialProjectDir(pub Option<String>);
 
 /// Resolve the DB path using the same logic as the Tauri setup.
 /// Used by CLI flags that need to read the DB without starting the app.
-fn release_db_path(
-    data_dir: &std::path::Path,
-    app_identifier: &str,
-) -> std::path::PathBuf {
+fn release_db_path(data_dir: &std::path::Path, app_identifier: &str) -> std::path::PathBuf {
     data_dir.join(app_identifier).join("thechat.db")
 }
 
@@ -260,6 +297,59 @@ fn resolve_config_dir(app: &tauri::AppHandle) -> Result<std::path::PathBuf, Stri
         return Ok(dir);
     }
     app.path().app_config_dir().map_err(|e| e.to_string())
+}
+
+fn acp_event_sink(channel: Channel<acp::AcpEvent>) -> acp::AcpEventSink {
+    acp::AcpEventSink::new(move |event| channel.send(event).map_err(|error| error.to_string()))
+}
+
+fn validated_acp_resume_session_id(
+    saved_session_id: Option<String>,
+    saved_fingerprint: Option<&str>,
+    current_fingerprint: &str,
+) -> Result<Option<String>, String> {
+    match (saved_session_id, saved_fingerprint) {
+        (Some(session_id), Some(saved)) if saved == current_fingerprint => Ok(Some(session_id)),
+        (Some(_), _) => Err(
+            "The ACP profile changed since this conversation was created. Start a new Agent Chat to use the changed profile."
+                .into(),
+        ),
+        (None, _) => Ok(None),
+    }
+}
+
+fn bundled_node_bin_dir(app: &tauri::AppHandle) -> Option<std::path::PathBuf> {
+    let resource = app
+        .path()
+        .resource_dir()
+        .ok()
+        .map(|directory| directory.join("resources/node"));
+    let development = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources/node");
+    resource
+        .filter(|directory| directory.is_dir())
+        .or_else(|| development.is_dir().then_some(development))
+}
+
+async fn configured_acp_profile(
+    app: &tauri::AppHandle,
+    profile_id: &str,
+) -> Result<config::AcpProfile, String> {
+    let config_dir = resolve_config_dir(app)?;
+    let profile_id = profile_id.to_string();
+    tokio::task::spawn_blocking(move || {
+        let config = config::load_config(&config_dir)?;
+        let profile = config
+            .acp_profiles
+            .into_iter()
+            .find(|profile| profile.id == profile_id)
+            .ok_or_else(|| "ACP profile not found".to_string())?;
+        if profile.disabled {
+            return Err("ACP profile is disabled".into());
+        }
+        Ok(profile)
+    })
+    .await
+    .map_err(|error| format!("Task join error: {error}"))?
 }
 
 #[tauri::command]
@@ -301,12 +391,19 @@ fn get_app_config_dir(app: tauri::AppHandle) -> Result<String, String> {
 async fn create_conversation(
     title: String,
     project_dir: Option<String>,
+    agent_profile_id: Option<String>,
     db: State<'_, DbState>,
 ) -> Result<Conversation, String> {
     let db = Arc::clone(&db);
-    tokio::task::spawn_blocking(move || db.create_conversation(&title, project_dir.as_deref()))
-        .await
-        .map_err(|e| format!("Task join error: {}", e))?
+    tokio::task::spawn_blocking(move || {
+        db.create_conversation_with_agent(
+            &title,
+            project_dir.as_deref(),
+            agent_profile_id.as_deref(),
+        )
+    })
+    .await
+    .map_err(|e| format!("Task join error: {}", e))?
 }
 
 #[tauri::command]
@@ -374,9 +471,7 @@ async fn get_messages(
     db: State<'_, DbState>,
 ) -> Result<Vec<Message>, String> {
     let db = Arc::clone(&db);
-    tokio::task::spawn_blocking(move || {
-        db.get_messages(&conversation_id, limit, before.as_deref())
-    })
+    tokio::task::spawn_blocking(move || db.get_messages(&conversation_id, limit, before.as_deref()))
         .await
         .map_err(|e| format!("Task join error: {}", e))?
 }
@@ -409,6 +504,370 @@ async fn kv_delete(key: String, db: State<'_, DbState>) -> Result<(), String> {
 }
 
 #[tauri::command]
+#[tracing::instrument(skip(content, reasoning_content, db, manager))]
+async fn acp_begin_turn(
+    conversation_id: String,
+    generation: u64,
+    content: String,
+    reasoning_content: Option<String>,
+    db: State<'_, DbState>,
+    manager: State<'_, AcpState>,
+) -> Result<AcpTurnStartResult, String> {
+    manager
+        .assert_current_generation(&conversation_id, generation)
+        .await?;
+    if content.len() > 20 * 1024 * 1024
+        || reasoning_content
+            .as_ref()
+            .is_some_and(|reasoning| reasoning.len() > 2 * 1024 * 1024)
+    {
+        return Err("ACP transcript message exceeds the resource limit".into());
+    }
+    let db = Arc::clone(&db);
+    let result = tokio::task::spawn_blocking(move || {
+        db.begin_acp_turn(
+            &conversation_id,
+            generation,
+            &content,
+            reasoning_content.as_deref(),
+        )
+    })
+    .await
+    .map_err(|error| format!("Task join error: {error}"))??;
+    Ok(AcpTurnStartResult {
+        message: result.0,
+        turn_token: result.1,
+    })
+}
+
+#[tauri::command]
+#[tracing::instrument(skip(turn_token, content, reasoning_content, db, manager))]
+async fn acp_complete_turn(
+    conversation_id: String,
+    generation: u64,
+    turn_token: String,
+    content: String,
+    reasoning_content: Option<String>,
+    db: State<'_, DbState>,
+    manager: State<'_, AcpState>,
+) -> Result<Message, String> {
+    if manager.latest_generation(&conversation_id).await != Some(generation) {
+        return Err("Stale ACP generation".into());
+    }
+    if content.len() > 20 * 1024 * 1024
+        || reasoning_content
+            .as_ref()
+            .is_some_and(|reasoning| reasoning.len() > 2 * 1024 * 1024)
+    {
+        return Err("ACP transcript message exceeds the resource limit".into());
+    }
+    let db = Arc::clone(&db);
+    tokio::task::spawn_blocking(move || {
+        db.complete_acp_turn(
+            &conversation_id,
+            &turn_token,
+            &content,
+            reasoning_content.as_deref(),
+        )
+    })
+    .await
+    .map_err(|error| format!("Task join error: {error}"))?
+}
+
+#[tauri::command]
+#[tracing::instrument(skip(app, db, manager, shell_env, on_event))]
+async fn acp_connect(
+    conversation_id: String,
+    generation: u64,
+    on_event: Channel<acp::AcpEvent>,
+    app: tauri::AppHandle,
+    db: State<'_, DbState>,
+    manager: State<'_, AcpState>,
+    shell_env: State<'_, Arc<env::ShellEnv>>,
+) -> Result<acp::AcpSessionInfo, String> {
+    let db_for_read = Arc::clone(&db);
+    let lookup_id = conversation_id.clone();
+    let conversation =
+        tokio::task::spawn_blocking(move || db_for_read.get_conversation(&lookup_id))
+            .await
+            .map_err(|error| format!("Task join error: {error}"))??
+            .ok_or_else(|| "Conversation not found".to_string())?;
+    let dirty_key = format!("acp_dirty_turn:{conversation_id}");
+    let db_for_dirty = Arc::clone(&db);
+    let has_dirty_turn = tokio::task::spawn_blocking(move || db_for_dirty.kv_get(&dirty_key))
+        .await
+        .map_err(|error| format!("Task join error: {error}"))??
+        .is_some();
+    if has_dirty_turn {
+        manager
+            .stop_session_up_to_generation(&conversation_id, generation)
+            .await?;
+        return Err(
+            "The previous ACP turn may not have been fully persisted. Start a new Agent Chat before resuming this agent session."
+                .into(),
+        );
+    }
+    let profile_id = conversation
+        .agent_profile_id
+        .clone()
+        .ok_or_else(|| "Conversation has no ACP profile".to_string())?;
+    let cwd = conversation
+        .project_dir
+        .clone()
+        .ok_or_else(|| "ACP conversation has no project directory".to_string())?;
+    let profile = configured_acp_profile(&app, &profile_id).await?;
+    let fingerprint_key_dir = resolve_config_dir(&app)?;
+    let fingerprint_key: Arc<[u8]> = tokio::task::spawn_blocking(move || {
+        config::load_or_create_acp_fingerprint_key(&fingerprint_key_dir)
+    })
+    .await
+    .map_err(|error| format!("Task join error: {error}"))??
+    .into();
+    let bundled_node_bin = bundled_node_bin_dir(&app);
+    let prepared = acp::process::prepare_process(
+        &profile,
+        std::path::Path::new(&cwd),
+        &shell_env.vars,
+        bundled_node_bin.as_deref(),
+        &fingerprint_key,
+    )?;
+    let persisted_session_id = validated_acp_resume_session_id(
+        conversation.acp_session_id.clone(),
+        conversation.acp_profile_fingerprint.as_deref(),
+        &prepared.profile_fingerprint,
+    )?;
+    let attempted_resume = persisted_session_id.is_some();
+    let start = manager
+        .start_session(acp::StartSessionOptions {
+            conversation_id: conversation_id.clone(),
+            generation,
+            profile_id,
+            prepared,
+            persisted_session_id,
+            event_sink: acp_event_sink(on_event),
+        })
+        .await;
+    let info = match start {
+        Ok(info) => info,
+        Err(error) if attempted_resume && error.to_ascii_lowercase().contains("load") => {
+            if manager.latest_generation(&conversation_id).await == Some(generation) {
+                let db = Arc::clone(&db);
+                let clear_id = conversation_id.clone();
+                let expected_session_id = conversation.acp_session_id.clone();
+                let expected_fingerprint = conversation.acp_profile_fingerprint.clone();
+                let _ = tokio::task::spawn_blocking(move || {
+                    db.clear_acp_session_metadata_if_matches(
+                        &clear_id,
+                        expected_session_id.as_deref(),
+                        expected_fingerprint.as_deref(),
+                    )
+                })
+                .await;
+            }
+            return Err(format!(
+                "Saved ACP continuity could not be loaded; the adapter was terminated. Retry to start fresh. {error}"
+            ));
+        }
+        Err(error) => return Err(error),
+    };
+    let db_for_write = Arc::clone(&db);
+    let metadata_id = conversation_id.clone();
+    let session_id = info.session_id.clone();
+    let profile_fingerprint = info.profile_fingerprint.clone();
+    let runtime_epoch = manager.runtime_epoch();
+    let metadata_generation = i64::try_from(generation)
+        .map_err(|_| "ACP generation exceeds the database range".to_string())?;
+    let persist_result = tokio::task::spawn_blocking(move || {
+        db_for_write.set_acp_session_metadata(
+            &metadata_id,
+            &session_id,
+            &profile_fingerprint,
+            &runtime_epoch,
+            metadata_generation,
+        )
+    })
+    .await
+    .map_err(|error| format!("Task join error: {error}"))?;
+    match persist_result {
+        Ok(true) => {}
+        Ok(false) => {
+            let _ = manager
+                .stop_session_generation(&conversation_id, generation)
+                .await;
+            return Err("Stale ACP generation lost the metadata update race".into());
+        }
+        Err(error) => {
+            let _ = manager
+                .stop_session_generation(&conversation_id, generation)
+                .await;
+            return Err(error);
+        }
+    }
+    Ok(info)
+}
+
+#[tauri::command]
+#[tracing::instrument(skip(manager))]
+async fn acp_disconnect(
+    conversation_id: String,
+    generation: u64,
+    manager: State<'_, AcpState>,
+) -> Result<(), String> {
+    manager
+        .stop_session_generation(&conversation_id, generation)
+        .await
+}
+
+#[tauri::command]
+#[tracing::instrument(skip(turn_token, content_blocks, on_event, db, manager))]
+async fn acp_prompt(
+    conversation_id: String,
+    generation: u64,
+    turn_token: String,
+    content_blocks: Vec<acp::AcpPromptContent>,
+    permission_mode: acp::PermissionMode,
+    on_event: Channel<acp::AcpEvent>,
+    db: State<'_, DbState>,
+    manager: State<'_, AcpState>,
+) -> Result<AcpPromptCommandResult, String> {
+    manager
+        .assert_current_generation(&conversation_id, generation)
+        .await?;
+    let db_for_token = Arc::clone(&db);
+    let claim_conversation_id = conversation_id.clone();
+    let claim_token = turn_token.clone();
+    let claimed = tokio::task::spawn_blocking(move || {
+        db_for_token.claim_acp_turn(&claim_conversation_id, &claim_token)
+    })
+    .await
+    .map_err(|error| format!("Task join error: {error}"))??;
+    if !claimed {
+        return Err("ACP turn token was already dispatched or is stale".into());
+    }
+    let result = manager
+        .prompt(
+            &conversation_id,
+            generation,
+            content_blocks,
+            permission_mode,
+            acp_event_sink(on_event),
+        )
+        .await?;
+    Ok(AcpPromptCommandResult {
+        conversation_id,
+        generation,
+        turn_id: result.turn_id,
+        stop_reason: result.stop_reason,
+    })
+}
+
+#[tauri::command]
+#[tracing::instrument(skip(manager))]
+async fn acp_respond_permission(
+    conversation_id: String,
+    generation: u64,
+    request_id: String,
+    option_id: Option<String>,
+    manager: State<'_, AcpState>,
+) -> Result<(), String> {
+    manager
+        .respond_permission(&conversation_id, generation, request_id, option_id)
+        .await
+}
+
+#[tauri::command]
+#[tracing::instrument(skip(manager))]
+async fn acp_cancel(
+    conversation_id: String,
+    generation: u64,
+    manager: State<'_, AcpState>,
+) -> Result<(), String> {
+    manager.cancel_session(&conversation_id, generation).await
+}
+
+#[tauri::command]
+#[tracing::instrument(skip(app, shell_env, manager))]
+async fn acp_probe_profile(
+    profile_id: String,
+    cwd: Option<String>,
+    app: tauri::AppHandle,
+    shell_env: State<'_, Arc<env::ShellEnv>>,
+    manager: State<'_, AcpState>,
+) -> Result<AcpProbeResult, String> {
+    let profile = configured_acp_profile(&app, &profile_id).await?;
+    let fingerprint_key_dir = resolve_config_dir(&app)?;
+    let fingerprint_key: Arc<[u8]> = tokio::task::spawn_blocking(move || {
+        config::load_or_create_acp_fingerprint_key(&fingerprint_key_dir)
+    })
+    .await
+    .map_err(|error| format!("Task join error: {error}"))??
+    .into();
+    let cwd = cwd
+        .map(std::path::PathBuf::from)
+        .unwrap_or(std::env::current_dir().map_err(|_| "Failed to resolve current directory")?);
+    let prepared = acp::process::prepare_process(
+        &profile,
+        &cwd,
+        &shell_env.vars,
+        bundled_node_bin_dir(&app).as_deref(),
+        &fingerprint_key,
+    )?;
+    let resolved_executable = prepared.executable.to_string_lossy().into_owned();
+    let probe_conversation_id = format!("probe-{}", uuid::Uuid::new_v4());
+    let info = manager
+        .start_session(acp::StartSessionOptions {
+            conversation_id: probe_conversation_id.clone(),
+            generation: 1,
+            profile_id: profile.id.clone(),
+            prepared,
+            persisted_session_id: None,
+            event_sink: acp::AcpEventSink::new(|_| Ok(())),
+        })
+        .await?;
+    manager.stop_session(&probe_conversation_id).await?;
+    Ok(AcpProbeResult {
+        profile_id,
+        resolved_executable,
+        protocol_version: "1".into(),
+        agent_name: info.agent_name,
+        agent_version: info.agent_version,
+        capabilities: info.capabilities,
+    })
+}
+
+#[tauri::command]
+#[tracing::instrument(skip(app))]
+async fn acp_list_profiles(app: tauri::AppHandle) -> Result<Vec<config::AcpProfile>, String> {
+    let config_dir = resolve_config_dir(&app)?;
+    tokio::task::spawn_blocking(move || {
+        let config = config::load_config(&config_dir)?;
+        Ok(config.acp_profiles)
+    })
+    .await
+    .map_err(|error| format!("Task join error: {error}"))?
+}
+
+#[tauri::command]
+#[tracing::instrument(skip(db))]
+async fn acp_get_conversation_metadata(
+    conversation_id: String,
+    db: State<'_, DbState>,
+) -> Result<AcpConversationMetadata, String> {
+    let lookup_id = conversation_id.clone();
+    let db = Arc::clone(&db);
+    let conversation = tokio::task::spawn_blocking(move || db.get_conversation(&lookup_id))
+        .await
+        .map_err(|error| format!("Task join error: {error}"))??
+        .ok_or_else(|| "Conversation not found".to_string())?;
+    Ok(AcpConversationMetadata {
+        conversation_id,
+        agent_profile_id: conversation.agent_profile_id,
+        project_dir: conversation.project_dir,
+        acp_session_id: conversation.acp_session_id,
+    })
+}
+
+#[tauri::command]
 fn get_initial_project_dir(state: State<InitialProjectDir>) -> Option<String> {
     state.0.clone()
 }
@@ -437,6 +896,8 @@ pub fn run() {
     let stream_state: Arc<StreamCancellers> = Arc::new(StreamCancellers::new());
     let codex_transport_state: Arc<CodexTransport> = Arc::new(CodexTransport::new());
     let oauth_state: Arc<OAuthCallbackServer> = Arc::new(OAuthCallbackServer::new());
+    let acp_state: AcpState = Arc::new(acp::AcpManager::new());
+    let acp_shutdown = Arc::clone(&acp_state);
 
     tracing::info!("app started");
 
@@ -489,6 +950,7 @@ pub fn run() {
         .manage(stream_state)
         .manage(codex_transport_state)
         .manage(oauth_state)
+        .manage(acp_state)
         .manage(InitialProjectDir(initial_project_dir))
         .invoke_handler(tauri::generate_handler![
             attachment_download::download_attachment_to_file,
@@ -507,6 +969,16 @@ pub fn run() {
             kv_get,
             kv_set,
             kv_delete,
+            acp_begin_turn,
+            acp_complete_turn,
+            acp_connect,
+            acp_disconnect,
+            acp_prompt,
+            acp_respond_permission,
+            acp_cancel,
+            acp_probe_profile,
+            acp_list_profiles,
+            acp_get_conversation_metadata,
             mcp::mcp_initialize,
             mcp::mcp_initialize_authed,
             mcp::mcp_initialize_servers,
@@ -537,8 +1009,16 @@ pub fn run() {
             oauth::codex_oauth_await,
             oauth::codex_oauth_cancel,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(move |_app_handle, event| {
+            if matches!(event, tauri::RunEvent::Exit) {
+                if let Err(error) = tauri::async_runtime::block_on(acp_shutdown.stop_all_sessions())
+                {
+                    eprintln!("ACP shutdown error: {error}");
+                }
+            }
+        });
 
     #[cfg(feature = "otel")]
     if let Some(provider) = OTEL_PROVIDER.get() {
@@ -582,6 +1062,7 @@ mod tests {
         let mcp_state: Arc<McpManager> = Arc::new(McpManager::new());
         let shell_state: Arc<ShellProcesses> = Arc::new(ShellProcesses::new());
         let stream_state: Arc<StreamCancellers> = Arc::new(StreamCancellers::new());
+        let acp_state: Arc<acp::AcpManager> = Arc::new(acp::AcpManager::new());
 
         let oauth_state: Arc<OAuthCallbackServer> = Arc::new(OAuthCallbackServer::new());
 
@@ -594,6 +1075,7 @@ mod tests {
             .manage(mcp_state)
             .manage(shell_state)
             .manage(stream_state)
+            .manage(acp_state)
             .manage(oauth_state)
             .manage(InitialProjectDir(None))
             .invoke_handler(tauri::generate_handler![
@@ -629,6 +1111,11 @@ mod tests {
                 fs::fs_delete_file,
                 stream::stream_completion,
                 stream::cancel_stream,
+                acp_disconnect,
+                acp_prompt,
+                acp_respond_permission,
+                acp_cancel,
+                acp_get_conversation_metadata,
             ])
             .build(tauri::generate_context!())
             .expect("failed to build app with mock runtime");
@@ -678,5 +1165,18 @@ mod tests {
             release_db_path(&data_dir, "com.bruno.thechat"),
             data_dir.join("com.bruno.thechat").join("thechat.db")
         );
+    }
+
+    #[test]
+    fn acp_profile_drift_requires_an_explicit_fresh_conversation() {
+        let error = validated_acp_resume_session_id(
+            Some("saved-session".into()),
+            Some("old-fingerprint"),
+            "new-fingerprint",
+        )
+        .unwrap_err();
+
+        assert!(error.contains("profile changed"));
+        assert!(error.contains("new Agent Chat"));
     }
 }
