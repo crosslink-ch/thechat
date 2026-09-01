@@ -3,6 +3,7 @@ import { z } from "zod";
 import { resolveTokenToUser } from "../auth/middleware";
 import { ServiceError } from "../services/errors";
 import { getMessages, sendMessage } from "../services/messages";
+import { setMessageReaction } from "../services/message-reactions";
 import {
   setHttpResponseStatus,
   withHttpServerSpan,
@@ -22,6 +23,11 @@ function isTruthyQueryValue(value: unknown) {
   return value === "true" || value === "1" || value === true;
 }
 
+const reactionSchema = z.object({
+  emoji: z.string().min(1).max(32),
+  active: z.boolean(),
+});
+
 export const messageRoutes = new Elysia({ prefix: "/messages" })
   .derive(async ({ headers }) => {
     const authHeader = headers.authorization;
@@ -40,6 +46,32 @@ export const messageRoutes = new Elysia({ prefix: "/messages" })
       return { error: "Authentication required" };
     }
   })
+
+  .post(
+    "/:conversationId/:messageId/reactions",
+    async ({ params, body, user, set }) => {
+      const parsed = reactionSchema.safeParse(body);
+      if (!parsed.success) {
+        set.status = 400;
+        return { error: parsed.error.issues[0]?.message ?? "Invalid input" };
+      }
+      try {
+        return await setMessageReaction(
+          params.conversationId,
+          params.messageId,
+          user.id,
+          parsed.data.emoji,
+          parsed.data.active,
+        );
+      } catch (error) {
+        if (error instanceof ServiceError) {
+          set.status = error.status;
+          return { error: error.message };
+        }
+        throw error;
+      }
+    },
+  )
 
   // Fetch messages (paginated)
   .get("/:conversationId", async ({ params, query, user, set }) => {

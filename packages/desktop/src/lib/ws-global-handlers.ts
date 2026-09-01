@@ -81,7 +81,16 @@ export function registerGlobalWsHandlers(
   const onAuthenticated = () => {
     const workspaceId = useWorkspacesStore.getState().activeWorkspace?.id;
     if (workspaceId) reconcileWorkspace(workspaceId);
+    void messageQueryClient.invalidateQueries({ queryKey: ["messages"] });
     void useNotificationsStore.getState().fetchNotifications();
+  };
+
+  const onMessageReactionsUpdated = ({
+    conversationId,
+  }: WsEvents["ws:message_reactions_updated"]) => {
+    void messageQueryClient.invalidateQueries({
+      queryKey: ["messages", conversationId],
+    });
   };
 
   const onPresenceSnapshot = ({
@@ -347,6 +356,7 @@ export function registerGlobalWsHandlers(
   wsEvents.on("ws:presence_snapshot", onPresenceSnapshot);
   wsEvents.on("ws:presence_changed", onPresenceChanged);
   wsEvents.on("ws:new_message", onNewMessage);
+  wsEvents.on("ws:message_reactions_updated", onMessageReactionsUpdated);
   wsEvents.on("ws:member_joined", onMemberJoined);
   wsEvents.on("ws:member_role_changed", onMemberRoleChanged);
   wsEvents.on("ws:member_updated", onMemberUpdated);
@@ -366,6 +376,7 @@ export function registerGlobalWsHandlers(
     wsEvents.off("ws:presence_snapshot", onPresenceSnapshot);
     wsEvents.off("ws:presence_changed", onPresenceChanged);
     wsEvents.off("ws:new_message", onNewMessage);
+    wsEvents.off("ws:message_reactions_updated", onMessageReactionsUpdated);
     wsEvents.off("ws:member_joined", onMemberJoined);
     wsEvents.off("ws:member_role_changed", onMemberRoleChanged);
     wsEvents.off("ws:member_updated", onMemberUpdated);

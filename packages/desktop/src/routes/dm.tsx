@@ -597,6 +597,7 @@ export function DmRoute() {
             onInteraction={handleHermesInteraction}
             onStop={handleStopHermesTask}
             onLoadOlderMessages={channelChat.loadOlderMessages}
+            onSetReaction={channelChat.setReaction}
             mentions={mentions}
             scrollKey={`${conversationId}:${
               draftTaskActive ? "draft" : activeThreadId ?? "general"
@@ -628,6 +629,7 @@ export function DmRoute() {
             typingUsers={typingUsers}
             onSend={handleSend}
             onLoadOlderMessages={channelChat.loadOlderMessages}
+            onSetReaction={channelChat.setReaction}
             mentions={mentions}
             scrollKey={conversationId}
             draftKey={composerDraftKey.dm(user?.id, conversationId)}

@@ -161,6 +161,11 @@ function doConnect() {
           parentContext: contextFromRemoteTrace(event.traceContext),
         },
       );
+    } else if (event.type === "message_reactions_updated") {
+      wsEvents.emit("ws:message_reactions_updated", {
+        conversationId: event.conversationId,
+        messageId: event.messageId,
+      });
     } else if (event.type === "message_error") {
       wsEvents.emit("ws:message_error", {
         conversationId: event.conversationId,

@@ -9,6 +9,7 @@ import { MessageSendError } from "./MessageSendError";
 import type { ChatMessage } from "@thechat/shared";
 import type { MentionUser } from "./MentionList";
 import { SharedMessageAttachments } from "./SharedMessageAttachments";
+import { MessageReactions } from "./MessageReactions";
 
 const noop = () => {};
 
@@ -24,6 +25,11 @@ interface ChannelChatViewProps {
     attachmentIds?: string[],
   ) => InputSendResult | Promise<InputSendResult>;
   onLoadOlderMessages?: () => boolean | void | Promise<boolean | void>;
+  onSetReaction?: (
+    messageId: string,
+    emoji: string,
+    active: boolean,
+  ) => void | Promise<void>;
   mentions?: MentionUser[];
   scrollKey?: string | null;
   draftKey?: string;
@@ -45,6 +51,7 @@ export function ChannelChatView({
   typingUsers,
   onSend,
   onLoadOlderMessages,
+  onSetReaction,
   mentions,
   scrollKey,
   draftKey,
@@ -151,7 +158,7 @@ export function ChannelChatView({
             <div
               key={msg.id}
               data-message-id={msg.id}
-              className="flex gap-2.5 px-5 py-2.5 transition-colors duration-100 hover:bg-raised/50"
+              className="group/message relative flex gap-2.5 px-5 py-2.5 transition-colors duration-100 hover:bg-raised/50"
             >
               <div className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-full bg-elevated text-[0.857rem] font-semibold text-text-muted">
                 {msg.senderName.charAt(0).toUpperCase()}
@@ -163,6 +170,14 @@ export function ChannelChatView({
                 </div>
                 {msg.content && <Markdown content={msg.content} />}
                 <SharedMessageAttachments attachments={msg.attachments ?? []} />
+                {onSetReaction && (
+                  <MessageReactions
+                    reactions={msg.reactions ?? []}
+                    onSetReaction={(emoji, active) =>
+                      onSetReaction(msg.id, emoji, active)
+                    }
+                  />
+                )}
               </div>
             </div>
           ))}
