@@ -16,6 +16,7 @@ export function HermesRuntimePanel({
   threadsHasMore = false,
   activeThreadId = null,
   draftTaskActive = false,
+  draftTaskPresent = draftTaskActive,
   queuedCountsByThread,
   generalQueuedCount = 0,
   approvalThreadIds,
@@ -36,6 +37,7 @@ export function HermesRuntimePanel({
   threadsHasMore?: boolean;
   activeThreadId?: string | null;
   draftTaskActive?: boolean;
+  draftTaskPresent?: boolean;
   queuedCountsByThread?: Map<string, number>;
   generalQueuedCount?: number;
   approvalThreadIds?: Set<string>;
@@ -107,16 +109,21 @@ export function HermesRuntimePanel({
               </button>
             )}
           </div>
-          {threadsLoading && threads.length === 0 && !draftTaskActive ? (
+          {threadsLoading && threads.length === 0 && !draftTaskPresent ? (
             <PanelSkeleton />
-          ) : threads.length === 0 && !draftTaskActive ? (
+          ) : threads.length === 0 && !draftTaskPresent ? (
             <div className="rounded-md border border-dashed border-border-subtle bg-base/20 px-3 py-3 text-[0.857rem] text-text-placeholder">
               No tasks yet
             </div>
           ) : (
             <div className="overflow-hidden rounded-md border border-border-subtle bg-base/20">
               <div className="divide-y divide-border-subtle">
-                {draftTaskActive && <DraftThreadRow onSelect={onCreateThread} />}
+                {draftTaskPresent && (
+                  <DraftThreadRow
+                    active={draftTaskActive}
+                    onSelect={onCreateThread}
+                  />
+                )}
                 {threads.map((thread) => (
                   <ThreadRow
                     key={thread.id}
@@ -289,20 +296,38 @@ function ThreadRow({
   );
 }
 
-function DraftThreadRow({ onSelect }: { onSelect?: () => void }) {
+function DraftThreadRow({
+  active,
+  onSelect,
+}: {
+  active: boolean;
+  onSelect?: () => void;
+}) {
   return (
     <button
       type="button"
-      className="group relative flex w-full cursor-pointer items-center gap-2.5 bg-accent/10 px-2.5 py-2.5 text-left text-text transition-colors duration-150"
+      className={`group relative flex w-full cursor-pointer items-center gap-2.5 px-2.5 py-2.5 text-left transition-colors duration-150 ${
+        active
+          ? "bg-accent/10 text-text"
+          : "bg-transparent text-text-secondary hover:bg-hover/70 hover:text-text"
+      }`}
       onClick={onSelect}
       data-testid="hermes-local-task-draft"
-      aria-current="true"
+      aria-current={active ? "true" : undefined}
     >
       <span
-        className="absolute top-2 bottom-2 left-0 w-0.5 rounded-r-sm bg-accent"
+        className={`absolute top-2 bottom-2 left-0 w-0.5 rounded-r-sm ${
+          active ? "bg-accent" : "bg-transparent"
+        }`}
         aria-hidden="true"
       />
-      <span className="flex size-7 shrink-0 items-center justify-center rounded border border-accent/35 bg-accent/10 text-accent">
+      <span
+        className={`flex size-7 shrink-0 items-center justify-center rounded border ${
+          active
+            ? "border-accent/35 bg-accent/10 text-accent"
+            : "border-border-subtle bg-raised/60 text-text-dimmed group-hover:text-text-muted"
+        }`}
+      >
         <TaskIcon />
       </span>
       <span className="flex min-w-0 flex-1 flex-col">

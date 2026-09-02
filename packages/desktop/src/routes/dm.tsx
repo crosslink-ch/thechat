@@ -12,7 +12,10 @@ import { useConversationDetail } from "../hooks/useConversationDetail";
 import { useScopedCommands } from "../hooks/useScopedCommands";
 import { useWebSocketStore } from "../stores/websocket";
 import { useWorkspacesStore } from "../stores/workspaces";
-import { composerDraftKey } from "../stores/composer-drafts";
+import {
+  composerDraftKey,
+  useComposerDraftsStore,
+} from "../stores/composer-drafts";
 import { useChannelChat } from "../hooks/useChannelChat";
 import { ChannelChatView } from "../components/ChannelChatView";
 import { HermesDmChatView } from "../components/HermesDmChatView";
@@ -77,6 +80,18 @@ export function DmRoute() {
   const [draftTaskActive, setDraftTaskActive] = useState(false);
   const [draftSendError, setDraftSendError] = useState<string | null>(null);
   const [draftComposerRevision, setDraftComposerRevision] = useState(0);
+  const localTaskDraftKey = composerDraftKey.dm(
+    user?.id,
+    conversationId,
+    LOCAL_TASK_DRAFT_SCOPE,
+  );
+  const storedDraftTaskPresent = useComposerDraftsStore(
+    (state) =>
+      Boolean(state.drafts[localTaskDraftKey]) ||
+      Boolean(state.imageDrafts[localTaskDraftKey]?.length) ||
+      Boolean(state.attachmentDrafts[localTaskDraftKey]?.length),
+  );
+  const draftTaskPresent = draftTaskActive || storedDraftTaskPresent;
   const activeConversationIdRef = useRef(conversationId);
   activeConversationIdRef.current = conversationId;
   const draftPersistingRef = useRef<symbol | null>(null);
@@ -602,13 +617,11 @@ export function DmRoute() {
             scrollKey={`${conversationId}:${
               draftTaskActive ? "draft" : activeThreadId ?? "general"
             }`}
-            draftKey={composerDraftKey.dm(
-              user?.id,
-              conversationId,
+            draftKey={
               draftTaskActive
-                ? `${LOCAL_TASK_DRAFT_SCOPE}:${draftComposerRevision}`
-                : activeThreadId,
-            )}
+                ? localTaskDraftKey
+                : composerDraftKey.dm(user?.id, conversationId, activeThreadId)
+            }
             taskActive={taskActive}
             slashCommands={slashCommands}
             conversationId={conversationId}
@@ -649,6 +662,7 @@ export function DmRoute() {
           threadsHasMore={threadsHasMore}
           activeThreadId={activeThreadId}
           draftTaskActive={draftTaskActive}
+          draftTaskPresent={draftTaskPresent}
           onSelectThread={handleSelectThread}
           onCreateThread={handleCreateThread}
           approvalThreadIds={approvalThreadIds}
