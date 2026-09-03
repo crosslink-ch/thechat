@@ -28,6 +28,11 @@ export const MESSAGE_PAGE_SIZE = 20;
 export const MESSAGE_WINDOW_SIZE = 120;
 export const MESSAGE_WINDOW_TRIM_THRESHOLD = 160;
 
+// Realtime can populate the query cache before the hook's local optimistic
+// state has reconciled. Keep the correlation on the server message object so
+// that transient overlap renders only the acknowledged server copy.
+const clientMessageIdsByServerMessage = new WeakMap<ChatMessage, string>();
+
 interface UseChannelChatOptions {
   conversationId: string | null;
   threadId?: string | null;
@@ -65,7 +70,9 @@ type MessageWindow = InfiniteData<MessagePage, string | null>;
 export function cacheIncomingMessage(
   queryClient: QueryClient,
   message: ChatMessage,
+  clientMessageId?: string,
 ) {
+  associateClientMessageId(message, clientMessageId);
   const cachedWindows = queryClient.getQueriesData<MessageWindow>({
     queryKey: ["messages", message.conversationId],
   });
@@ -423,6 +430,7 @@ export function useChannelChat({
   const addMessage = useCallback(
     (msg: ChatMessage, clientMessageId?: string) => {
       if (msg.conversationId !== conversationId) return;
+      associateClientMessageId(msg, clientMessageId);
       if (clientMessageId) {
         pendingSendsRef.current.delete(clientMessageId);
       }
@@ -894,14 +902,35 @@ function appendVisibleLocalMessages(
   threadId: string | null,
   unthreadedOnly: boolean,
 ) {
+  const acknowledgedClientMessageIds = new Set(
+    messages.flatMap((message) => {
+      const clientMessageId = clientMessageIdsByServerMessage.get(message);
+      return clientMessageId ? [clientMessageId] : [];
+    }),
+  );
   let next = messages;
   for (const local of localMessages) {
     if (local.message.conversationId !== conversationId) continue;
     if (!messageBelongsToScope(local.message, threadId, unthreadedOnly))
       continue;
+    if (
+      !local.confirmed &&
+      acknowledgedClientMessageIds.has(local.clientMessageId)
+    ) {
+      continue;
+    }
     next = appendMessage(next, local.message);
   }
   return next;
+}
+
+function associateClientMessageId(
+  message: ChatMessage,
+  clientMessageId?: string,
+) {
+  if (clientMessageId) {
+    clientMessageIdsByServerMessage.set(message, clientMessageId);
+  }
 }
 
 function messageBelongsToScope(
