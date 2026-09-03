@@ -1,4 +1,5 @@
 import { useRef, useEffect, useCallback, useMemo, useLayoutEffect, useState } from "react";
+import { flushSync } from "react-dom";
 import { InputBar, type InputSendResult } from "./InputBar";
 import { Markdown } from "./Markdown";
 import { useAutoScroll } from "../hooks/useAutoScroll";
@@ -84,7 +85,7 @@ export function HermesDmChatView({
   composerKey,
 }: HermesDmChatViewProps) {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
-  const { isAtBottom, pauseAutoScroll, scrollToBottom } =
+  const { isAtBottom, pauseAutoScroll, scrollToBottom, shouldFollowBottom } =
     useAutoScroll(scrollContainerRef);
   useMessageTopCommand(
     scrollContainerRef,
@@ -104,6 +105,10 @@ export function HermesDmChatView({
     ready: 0,
     total: 0,
   });
+  const [eagerFormatting, setEagerFormatting] = useState<{
+    scopeKey: string | null;
+    messageIds: Set<string>;
+  }>({ scopeKey: null, messageIds: new Set() });
 
   const visibleTypingNames = useMemo(() => {
     const progressBotUserIds = new Set([
@@ -147,6 +152,10 @@ export function HermesDmChatView({
     [visibleTypingNames],
   );
   const scrollScopeKey = scrollKey ?? "__hermes_dm_chat_default__";
+  const eagerlyFormattedMessageIds =
+    eagerFormatting.scopeKey === scrollScopeKey
+      ? eagerFormatting.messageIds
+      : undefined;
   const deferMessageFormatting =
     messages.length > DEFER_FORMATTING_MESSAGE_THRESHOLD;
   const formattingHistory =
@@ -231,7 +240,7 @@ export function HermesDmChatView({
     onLoadOlderMessages,
     messageScrollSignature,
   });
-  useScrollStability(scrollContainerRef);
+  useScrollStability(scrollContainerRef, shouldFollowBottom);
 
   useLayoutEffect(() => {
     if (loading || initializedScrollKeyRef.current === scrollScopeKey) return;
@@ -248,6 +257,67 @@ export function HermesDmChatView({
     if (consumeSkipContentScroll()) return;
     scrollToBottom();
   }, [consumeSkipContentScroll, messageScrollSignature, scrollToBottom]);
+
+  const promoteVisibleMessages = useCallback(() => {
+    if (loading || !deferMessageFormatting) return;
+    const container = scrollContainerRef.current;
+    if (!container) return;
+    if (deferredFormattingScopeRef.current !== scrollScopeKey) {
+      deferredFormattingScopeRef.current = scrollScopeKey;
+      deferredFormattedIdsRef.current = new Set();
+    }
+    const containerBounds = container.getBoundingClientRect();
+    const visibleMessageIds = new Set<string>();
+    for (const row of container.querySelectorAll<HTMLElement>("[data-message-id]")) {
+      const messageId = row.dataset.messageId;
+      if (!messageId || deferredFormattedIdsRef.current.has(messageId)) continue;
+      const bounds = row.getBoundingClientRect();
+      if (
+        bounds.bottom > containerBounds.top &&
+        bounds.top < containerBounds.bottom
+      ) {
+        visibleMessageIds.add(messageId);
+      }
+    }
+    if (visibleMessageIds.size === 0) return;
+
+    for (const messageId of visibleMessageIds) {
+      deferredFormattedIdsRef.current.add(messageId);
+      deferredFormattingPendingIdsRef.current.delete(messageId);
+    }
+    setEagerFormatting((current) => {
+      const messageIds =
+        current.scopeKey === scrollScopeKey
+          ? new Set(current.messageIds)
+          : new Set<string>();
+      const previousSize = messageIds.size;
+      for (const messageId of visibleMessageIds) messageIds.add(messageId);
+      if (
+        current.scopeKey === scrollScopeKey &&
+        messageIds.size === previousSize
+      ) {
+        return current;
+      }
+      return { scopeKey: scrollScopeKey, messageIds };
+    });
+  }, [deferMessageFormatting, loading, scrollScopeKey]);
+
+  // Large histories still format offscreen rows in idle batches, but rows in
+  // the opened viewport render final Markdown before the browser paints.
+  useLayoutEffect(() => {
+    promoteVisibleMessages();
+  }, [messageScrollSignature, promoteVisibleMessages]);
+
+  // Register after useAutoScroll's listener so a manual upward scroll records
+  // its intent before synchronous formatting changes the scroll metrics.
+  useEffect(() => {
+    if (loading || !deferMessageFormatting) return;
+    const container = scrollContainerRef.current;
+    if (!container) return;
+    const handleScroll = () => flushSync(promoteVisibleMessages);
+    container.addEventListener("scroll", handleScroll, { passive: true });
+    return () => container.removeEventListener("scroll", handleScroll);
+  }, [deferMessageFormatting, loading, promoteVisibleMessages]);
 
   useEffect(() => {
     if (progressScrollFrameRef.current !== null) {
@@ -281,6 +351,8 @@ export function HermesDmChatView({
     },
     [onSend, scrollToBottom],
   );
+  const shouldDeferFormatting = (messageId: string) =>
+    deferMessageFormatting && !eagerlyFormattedMessageIds?.has(messageId);
 
   return (
     <>
@@ -325,14 +397,14 @@ export function HermesDmChatView({
               {msg.content && (
                 <Markdown
                   content={msg.content}
-                  defer={deferMessageFormatting}
+                  defer={shouldDeferFormatting(msg.id)}
                   deferDelayMs={
-                    deferMessageFormatting
+                    shouldDeferFormatting(msg.id)
                       ? deferredMarkdownDelayMs(messages.length, index)
                       : 0
                   }
                   onDeferredRender={
-                    deferMessageFormatting
+                    shouldDeferFormatting(msg.id)
                       ? () => handleDeferredMarkdownRender(msg.id)
                       : undefined
                   }

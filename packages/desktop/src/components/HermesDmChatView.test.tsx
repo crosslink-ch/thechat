@@ -414,6 +414,75 @@ describe("HermesDmChatView", () => {
     }
   });
 
+  it("formats visible messages before paint while deferring offscreen history", () => {
+    vi.useFakeTimers();
+    let visibleMessageId = "message-40";
+    const listenerSpy = vi.spyOn(HTMLElement.prototype, "addEventListener");
+    const originalBounds = HTMLElement.prototype.getBoundingClientRect;
+    const boundsSpy = vi
+      .spyOn(HTMLElement.prototype, "getBoundingClientRect")
+      .mockImplementation(function (this: HTMLElement) {
+        if (this.getAttribute("data-testid") === "hermes-dm-chat-scroll") {
+          return { top: 0, bottom: 300, height: 300 } as DOMRect;
+        }
+        const messageId = this.getAttribute("data-message-id");
+        if (messageId === visibleMessageId) {
+          return { top: 100, bottom: 200, height: 100 } as DOMRect;
+        }
+        if (messageId) {
+          return { top: -200, bottom: -100, height: 100 } as DOMRect;
+        }
+        return originalBounds.call(this);
+      });
+    const messages = Array.from({ length: 41 }, (_, index) =>
+      message({
+        id: `message-${index}`,
+        content: `$$x_${index}^2 + y_${index}^2 = z_${index}^2$$`,
+      }),
+    );
+
+    const { container, unmount } = render(
+      <HermesDmChatView
+        messages={messages}
+        loading={false}
+        typingUsers={new Map()}
+        progressInvocations={[]}
+        typingSuppressedUserIds={[]}
+        onSend={() => {}}
+        scrollKey="conversation-1:general"
+      />,
+    );
+
+    try {
+      expect(container.querySelectorAll(".katex")).toHaveLength(1);
+      expect(screen.getByText("$$x_0^2 + y_0^2 = z_0^2$$")).toBeInTheDocument();
+      expect(screen.getByRole("status")).toHaveTextContent("Formatting message history...");
+
+      visibleMessageId = "message-39";
+      const scroller = screen.getByTestId("hermes-dm-chat-scroll");
+      const scrollListeners = listenerSpy.mock.calls.flatMap((args, index) =>
+        listenerSpy.mock.instances[index] === scroller && args[0] === "scroll"
+          ? [args[1]]
+          : [],
+      );
+      const lastScrollListener = scrollListeners.at(-1);
+      expect(lastScrollListener).toBeDefined();
+      act(() => {
+        if (typeof lastScrollListener === "function") {
+          lastScrollListener.call(scroller, new Event("scroll"));
+        } else {
+          lastScrollListener?.handleEvent(new Event("scroll"));
+        }
+      });
+      expect(container.querySelectorAll(".katex")).toHaveLength(2);
+    } finally {
+      unmount();
+      listenerSpy.mockRestore();
+      boundsSpy.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
   it("can suppress generic typing even when visible progress is scoped out", () => {
     render(
       <HermesDmChatView

@@ -29,6 +29,8 @@ const imageAttachment = {
   mimeType: "image/png",
   sizeBytes: 42,
   kind: "image",
+  width: 1200,
+  height: 800,
   contentPath: "/attachments/attachment-image/content",
 } satisfies ChatAttachment;
 
@@ -90,6 +92,46 @@ describe("SharedMessageAttachments", () => {
         "inline",
       ),
     );
+  });
+
+  it("reserves the thumbnail geometry before and after the image loads", async () => {
+    renderImageAttachment();
+
+    const frame = screen.getByTestId("attachment-image-frame");
+    expect(frame).toHaveStyle({
+      width: "384px",
+      aspectRatio: "1200 / 800",
+    });
+    expect(
+      screen.getByRole("status", { name: "Loading diagram.png" }),
+    ).toBeInTheDocument();
+
+    const image = await screen.findByRole("img", { name: "diagram.png" });
+    expect(screen.getByTestId("attachment-image-frame")).toBe(frame);
+    expect(frame).toHaveStyle({
+      width: "384px",
+      aspectRatio: "1200 / 800",
+    });
+    expect(image).toHaveAttribute("width", "1200");
+    expect(image).toHaveAttribute("height", "800");
+  });
+
+  it("reserves a stable fallback frame for legacy image metadata", () => {
+    vi.mocked(getAttachmentDownloadUrl).mockImplementationOnce(
+      () => new Promise(() => {}),
+    );
+    render(
+      <SharedMessageAttachments
+        attachments={[
+          { ...imageAttachment, width: undefined, height: undefined },
+        ]}
+      />,
+    );
+
+    expect(screen.getByTestId("attachment-image-frame")).toHaveStyle({
+      width: "192px",
+      aspectRatio: "3 / 2",
+    });
   });
 
   it("shows that an opaque attachment was saved without opening it", async () => {

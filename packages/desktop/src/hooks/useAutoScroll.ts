@@ -21,19 +21,39 @@ export function useAutoScroll(containerRef: RefObject<HTMLElement | null>) {
     userScrolledAwayRef.current = true;
     lastPauseRef.current = Date.now();
   }, []);
+  const shouldFollowBottom = useCallback(
+    () => !userScrolledAwayRef.current,
+    [],
+  );
 
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
+    let previousScrollTop = el.scrollTop;
+    let previousScrollHeight = el.scrollHeight;
+    let previousClientHeight = el.clientHeight;
 
     const checkAtBottom = () =>
       el.scrollTop + el.clientHeight >= el.scrollHeight - BOTTOM_THRESHOLD;
 
     const handleScroll = () => {
       const atBottom = checkAtBottom();
+      const movedUp = el.scrollTop < previousScrollTop;
+      const layoutChanged =
+        el.scrollHeight !== previousScrollHeight ||
+        el.clientHeight !== previousClientHeight;
+      previousScrollTop = el.scrollTop;
+      previousScrollHeight = el.scrollHeight;
+      previousClientHeight = el.clientHeight;
       setIsAtBottom(atBottom);
       if (!atBottom) {
         userScrolledAwayRef.current = true;
+        return;
+      }
+      if (movedUp && !layoutChanged) {
+        // Covers scrollbar drags and keyboard scrolling that stay inside the
+        // geometric bottom threshold and therefore emit no upward wheel.
+        pauseAutoScroll();
         return;
       }
       // Re-enable auto-scroll when user reaches the bottom, but not
@@ -82,5 +102,5 @@ export function useAutoScroll(containerRef: RefObject<HTMLElement | null>) {
     [containerRef],
   );
 
-  return { isAtBottom, pauseAutoScroll, scrollToBottom };
+  return { isAtBottom, pauseAutoScroll, scrollToBottom, shouldFollowBottom };
 }

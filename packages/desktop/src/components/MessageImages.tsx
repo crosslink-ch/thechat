@@ -27,29 +27,28 @@ function MessageImage({ image }: { image: ImagePart }) {
     return () => { cancelled = true; };
   }, [image.path, image.mimeType]);
 
-  if (error) {
-    return (
-      <div className="flex size-20 items-center justify-center rounded-lg border border-border bg-raised text-[0.786rem] text-text-dimmed">
-        Failed to load
-      </div>
-    );
-  }
-
-  if (!src) {
-    return (
-      <div className="size-20 animate-pulse rounded-lg border border-border bg-raised" />
-    );
-  }
-
   return (
     <>
-      <img
-        src={src}
-        alt=""
-        className="max-h-48 max-w-xs cursor-pointer rounded-lg border border-border object-cover transition-opacity hover:opacity-90"
-        onClick={() => setExpanded(true)}
-      />
-      {expanded && (
+      <div
+        data-testid="message-image-frame"
+        className="aspect-[5/3] w-80 max-w-full shrink-0"
+      >
+        {error ? (
+          <div className="flex h-full w-full items-center justify-center rounded-lg border border-border bg-raised text-[0.786rem] text-text-dimmed">
+            Failed to load
+          </div>
+        ) : src ? (
+          <img
+            src={src}
+            alt=""
+            className="h-full w-full cursor-pointer rounded-lg border border-border object-contain transition-opacity hover:opacity-90"
+            onClick={() => setExpanded(true)}
+          />
+        ) : (
+          <div className="h-full w-full animate-pulse rounded-lg border border-border bg-raised" />
+        )}
+      </div>
+      {expanded && src && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/70"
           onClick={() => setExpanded(false)}

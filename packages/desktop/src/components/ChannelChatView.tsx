@@ -56,7 +56,7 @@ export function ChannelChatView({
   token,
 }: ChannelChatViewProps) {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
-  const { isAtBottom, pauseAutoScroll, scrollToBottom } =
+  const { isAtBottom, pauseAutoScroll, scrollToBottom, shouldFollowBottom } =
     useAutoScroll(scrollContainerRef);
   useMessageTopCommand(
     scrollContainerRef,
@@ -90,7 +90,7 @@ export function ChannelChatView({
     onLoadOlderMessages,
     messageScrollSignature,
   });
-  useScrollStability(scrollContainerRef);
+  useScrollStability(scrollContainerRef, shouldFollowBottom);
 
   useLayoutEffect(() => {
     if (loading || initializedScrollKeyRef.current === scrollScopeKey) return;

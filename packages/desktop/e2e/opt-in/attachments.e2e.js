@@ -70,14 +70,34 @@ describe("Secure message attachments", function () {
         transitions: {},
         uploadAbortCalls: 0,
         sendProbe: null,
+        imageFrameSizes: [],
       };
       window.__attachmentE2E = state;
+      const observedImageFrames = new WeakSet();
+      const recordImageFrameSize = (element) => {
+        const bounds = element.getBoundingClientRect();
+        state.imageFrameSizes.push({
+          width: bounds.width,
+          height: bounds.height,
+        });
+      };
+      const imageFrameObserver = new ResizeObserver((entries) => {
+        for (const entry of entries) recordImageFrameSize(entry.target);
+      });
       const originalAbort = XMLHttpRequest.prototype.abort;
       XMLHttpRequest.prototype.abort = function attachmentE2EAbort() {
         state.uploadAbortCalls += 1;
         return originalAbort.call(this);
       };
       const record = () => {
+        for (const element of document.querySelectorAll(
+          '[data-testid="attachment-image-frame"]',
+        )) {
+          if (observedImageFrames.has(element)) continue;
+          observedImageFrames.add(element);
+          recordImageFrameSize(element);
+          imageFrameObserver.observe(element);
+        }
         for (const element of document.querySelectorAll(
           '[data-testid="attachment-draft"]',
         )) {
@@ -219,6 +239,32 @@ describe("Secure message attachments", function () {
   it("keeps 44px controls outside image pixels in a narrow compiled WebView", async () => {
     const thumbnail = await $(`button[aria-label="Open ${imageName}"]`);
     await thumbnail.waitForClickable({ timeout: 30_000 });
+    const stableThumbnail = await browser.execute(() => {
+      const frame = document.querySelector(
+        '[data-testid="attachment-image-frame"]',
+      );
+      const image = frame?.querySelector("img");
+      if (!(frame instanceof HTMLElement) || !(image instanceof HTMLImageElement)) {
+        throw new Error("Rendered image thumbnail frame is missing");
+      }
+      const bounds = frame.getBoundingClientRect();
+      return {
+        frame: { width: bounds.width, height: bounds.height },
+        imageWidth: image.getAttribute("width"),
+        imageHeight: image.getAttribute("height"),
+        samples: window.__attachmentE2E.imageFrameSizes,
+      };
+    });
+    expect(stableThumbnail.frame.width).toBeGreaterThan(0);
+    expect(stableThumbnail.frame.height).toBeGreaterThan(0);
+    expect(Number(stableThumbnail.imageWidth)).toBeGreaterThan(0);
+    expect(Number(stableThumbnail.imageHeight)).toBeGreaterThan(0);
+    expect(stableThumbnail.samples.length).toBeGreaterThanOrEqual(2);
+    for (const sample of stableThumbnail.samples) {
+      expect(Math.abs(sample.width - stableThumbnail.samples[0].width)).toBeLessThan(0.5);
+      expect(Math.abs(sample.height - stableThumbnail.samples[0].height)).toBeLessThan(0.5);
+    }
+
     await browser.setWindowSize(390, 700);
     await thumbnail.click();
     await $('[role="dialog"]').waitForExist({ timeout: 10_000 });
