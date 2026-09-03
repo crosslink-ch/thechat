@@ -180,7 +180,7 @@ describe("InputBar slash command menu", () => {
     expect(editor.className).not.toContain("pb-11");
   });
 
-  it("retains real composer text and attachments until an async submit is accepted", async () => {
+  it("clears real composer text immediately and restores the exact rejected draft", async () => {
     let rejectFirst!: (accepted: boolean) => void;
     const onSend = vi
       .fn(
@@ -195,7 +195,10 @@ describe("InputBar slash command menu", () => {
         }),
       )
       .mockResolvedValueOnce(true);
-    const { container, editor } = renderInputBar({ onSend });
+    const { container, editor } = renderInputBar({
+      onSend,
+      optimisticSend: true,
+    });
     const fileInput = container.querySelector<HTMLInputElement>("input[type='file']");
     if (!fileInput) throw new Error("File input not found");
 
@@ -217,6 +220,8 @@ describe("InputBar slash command menu", () => {
     await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
     expect(onSend.mock.calls[0][0]).toBe("/queue");
     expect(onSend.mock.calls[0][1]).toHaveLength(1);
+    expect(editor.textContent).toBe("");
+    expect(container.querySelector("img[src^='data:image/png;base64,']")).not.toBeNull();
 
     await act(async () => rejectFirst(false));
     await waitFor(() => expect(editor.textContent).toBe("/queue "));

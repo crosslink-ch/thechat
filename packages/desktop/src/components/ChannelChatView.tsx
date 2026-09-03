@@ -181,6 +181,7 @@ export function ChannelChatView({
       <InputBar
         convId={undefined}
         draftKey={draftKey ?? `channel:${conversationId ?? scrollScopeKey}`}
+        optimisticSend
         onSend={(content, _images, attachmentIds) =>
           handleSend(content, attachmentIds)
         }

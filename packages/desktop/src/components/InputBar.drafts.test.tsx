@@ -209,6 +209,63 @@ describe("InputBar composer draft scoping", () => {
     );
   });
 
+  it("clears the editor immediately while send acknowledgement is pending", async () => {
+    const send = deferred<boolean>();
+    const onSend = vi.fn(() => send.promise);
+    const draftKey = "dm:conversation-1:general";
+    render(
+      <InputBar
+        convId="conversation-1"
+        draftKey={draftKey}
+        onSend={onSend}
+        onStop={() => undefined}
+        optimisticSend
+        sharedUpload={{ conversationId: "conversation-1", token: "token-1" }}
+      />,
+    );
+
+    const editor = screen.getByRole("textbox", { name: "Message" });
+    fireEvent.change(editor, { target: { value: "sent optimistically" } });
+    fireEvent.click(screen.getByTitle("Send message"));
+
+    expect(onSend).toHaveBeenCalled();
+    expect(editor).toHaveValue("");
+    expect(useComposerDraftsStore.getState().drafts[draftKey]).toBeUndefined();
+
+    await act(async () => {
+      send.resolve(true);
+      await send.promise;
+    });
+  });
+
+  it("keeps acknowledgement-gated drafts for agent chat", async () => {
+    const send = deferred<boolean>();
+    const draftKey = "agent:new";
+    render(
+      <InputBar
+        convId={undefined}
+        draftKey={draftKey}
+        onSend={() => send.promise}
+        onStop={() => undefined}
+      />,
+    );
+
+    const editor = screen.getByRole("textbox", { name: "Message" });
+    fireEvent.change(editor, { target: { value: "agent prompt" } });
+    fireEvent.click(screen.getByTitle("Send message"));
+
+    expect(editor).toHaveValue("agent prompt");
+    expect(useComposerDraftsStore.getState().drafts[draftKey]).toBe(
+      "agent prompt",
+    );
+
+    await act(async () => {
+      send.resolve(true);
+      await send.promise;
+    });
+    await waitFor(() => expect(editor).toHaveValue(""));
+  });
+
   it("does not clear a newer draft when an earlier shared send succeeds", async () => {
     const send = deferred<boolean>();
     const draftKey = "dm:conversation-1:general";
@@ -218,6 +275,7 @@ describe("InputBar composer draft scoping", () => {
         draftKey={draftKey}
         onSend={() => send.promise}
         onStop={() => undefined}
+        optimisticSend
         sharedUpload={{ conversationId: "conversation-1", token: "token-1" }}
       />,
     );
@@ -247,6 +305,7 @@ describe("InputBar composer draft scoping", () => {
         draftKey={draftKey}
         onSend={() => send.promise}
         onStop={() => undefined}
+        optimisticSend
         sharedUpload={{ conversationId: "conversation-1", token: "token-1" }}
       />,
     );
@@ -267,7 +326,7 @@ describe("InputBar composer draft scoping", () => {
     );
   });
 
-  it("keeps a failed submission in the active remounted editor", async () => {
+  it("restores a failed submission after the composer remounts", async () => {
     const send = deferred<boolean>();
     const onSend = vi.fn(() => send.promise);
     const onStop = vi.fn();
@@ -279,6 +338,7 @@ describe("InputBar composer draft scoping", () => {
         draftKey={firstKey}
         onSend={onSend}
         onStop={onStop}
+        optimisticSend
         sharedUpload={{ conversationId: "conversation-1", token: "token-1" }}
       />,
     );
@@ -293,6 +353,7 @@ describe("InputBar composer draft scoping", () => {
         draftKey={secondKey}
         onSend={onSend}
         onStop={onStop}
+        optimisticSend
         sharedUpload={{ conversationId: "conversation-1", token: "token-1" }}
       />,
     );
@@ -302,12 +363,11 @@ describe("InputBar composer draft scoping", () => {
         draftKey={firstKey}
         onSend={onSend}
         onStop={onStop}
+        optimisticSend
         sharedUpload={{ conversationId: "conversation-1", token: "token-1" }}
       />,
     );
-    expect(screen.getByRole("textbox", { name: "Message" })).toHaveValue(
-      "submitted text",
-    );
+    expect(screen.getByRole("textbox", { name: "Message" })).toHaveValue("");
 
     await act(async () => {
       send.resolve(false);
@@ -336,6 +396,7 @@ describe("InputBar composer draft scoping", () => {
         draftKey={firstKey}
         onSend={onSend}
         onStop={onStop}
+        optimisticSend
         sharedUpload={{ conversationId: "conversation-1", token: "token-1" }}
       />,
     );
@@ -350,6 +411,7 @@ describe("InputBar composer draft scoping", () => {
         draftKey={secondKey}
         onSend={onSend}
         onStop={onStop}
+        optimisticSend
         sharedUpload={{ conversationId: "conversation-1", token: "token-1" }}
       />,
     );
@@ -359,6 +421,7 @@ describe("InputBar composer draft scoping", () => {
         draftKey={firstKey}
         onSend={onSend}
         onStop={onStop}
+        optimisticSend
         sharedUpload={{ conversationId: "conversation-1", token: "token-1" }}
       />,
     );
