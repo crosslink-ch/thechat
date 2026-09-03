@@ -151,6 +151,27 @@ describe("AgentChatRoute", () => {
     expect(lifecycleMocks.activateAgentChatMcp).toHaveBeenCalledWith(null);
   });
 
+  it("uses deterministic layout anchoring for the agent message scroller", async () => {
+    const observe = vi.fn();
+    vi.stubGlobal(
+      "ResizeObserver",
+      class ResizeObserver {
+        observe = observe;
+        unobserve() {}
+        disconnect() {}
+      },
+    );
+
+    try {
+      await renderRoute();
+      const scroller = screen.getByTestId("agent-chat-scroll");
+      expect(scroller).toHaveClass("[overflow-anchor:none]");
+      expect(observe).toHaveBeenCalledWith(scroller);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("releases and reacquires the lifecycle lease under StrictMode", async () => {
     const result = await renderRoute("/chat", true);
 
