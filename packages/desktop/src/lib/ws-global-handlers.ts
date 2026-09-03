@@ -109,8 +109,9 @@ export function registerGlobalWsHandlers(
   const onNewMessage = ({
     message: msg,
     conversationType,
+    clientMessageId,
   }: WsEvents["ws:new_message"]) => {
-    cacheIncomingMessage(messageQueryClient, msg);
+    cacheIncomingMessage(messageQueryClient, msg, clientMessageId);
     const currentUserId = useAuthStore.getState().user?.id;
     if (
       conversationType === "group" &&
