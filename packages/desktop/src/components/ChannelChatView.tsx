@@ -87,6 +87,7 @@ export function ChannelChatView({
 
   const { requestOlderMessages, consumeSkipContentScroll } = useOlderHistoryScroll({
     containerRef: scrollContainerRef,
+    scopeKey: scrollScopeKey,
     loading,
     loadingOlder,
     hasOlderMessages,

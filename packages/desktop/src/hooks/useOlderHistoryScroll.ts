@@ -12,6 +12,7 @@ const TOP_LOAD_THRESHOLD_PX = 600;
 
 interface OlderHistoryScrollOptions {
   containerRef: RefObject<HTMLElement | null>;
+  scopeKey: string;
   loading: boolean;
   loadingOlder: boolean;
   hasOlderMessages: boolean;
@@ -33,40 +34,68 @@ interface OlderHistoryScrollOptions {
  */
 export function useOlderHistoryScroll({
   containerRef,
+  scopeKey,
   loading,
   loadingOlder,
   hasOlderMessages,
   onLoadOlderMessages,
   messageScrollSignature,
 }: OlderHistoryScrollOptions) {
-  const pendingRequestRef = useRef(false);
-  const skipContentScrollRef = useRef(false);
+  const pendingRequestRef = useRef<{
+    scopeKey: string;
+    promise: Promise<boolean>;
+  } | null>(null);
+  const skipContentScrollScopeRef = useRef<string | null>(null);
   const anchorRef = useRef<{ id: string; contentTop: number } | null>(null);
 
-  const requestOlderMessages = useCallback(() => {
+  const requestOlderMessages = useCallback((): Promise<boolean> => {
+    const pendingRequest = pendingRequestRef.current;
+    if (pendingRequest?.scopeKey === scopeKey) return pendingRequest.promise;
+
     const el = containerRef.current;
     if (
       !el ||
       loading ||
       loadingOlder ||
-      pendingRequestRef.current ||
       !hasOlderMessages ||
       !onLoadOlderMessages
     ) {
-      return;
+      return Promise.resolve(false);
     }
 
-    pendingRequestRef.current = true;
-    skipContentScrollRef.current = true;
-
-    void Promise.resolve()
+    skipContentScrollScopeRef.current = scopeKey;
+    const request = Promise.resolve()
       .then(onLoadOlderMessages)
-      .catch(() => undefined)
       .then((loaded) => {
-        if (loaded === false) skipContentScrollRef.current = false;
-        pendingRequestRef.current = false;
+        if (
+          loaded === false &&
+          skipContentScrollScopeRef.current === scopeKey
+        ) {
+          skipContentScrollScopeRef.current = null;
+        }
+        return loaded !== false;
+      })
+      .catch(() => {
+        if (skipContentScrollScopeRef.current === scopeKey) {
+          skipContentScrollScopeRef.current = null;
+        }
+        return false;
+      })
+      .finally(() => {
+        if (pendingRequestRef.current?.promise === request) {
+          pendingRequestRef.current = null;
+        }
       });
-  }, [containerRef, hasOlderMessages, loading, loadingOlder, onLoadOlderMessages]);
+    pendingRequestRef.current = { scopeKey, promise: request };
+    return request;
+  }, [
+    containerRef,
+    hasOlderMessages,
+    loading,
+    loadingOlder,
+    onLoadOlderMessages,
+    scopeKey,
+  ]);
 
   useEffect(() => {
     const el = containerRef.current;
@@ -113,10 +142,10 @@ export function useOlderHistoryScroll({
   // Lets the views skip their scroll-to-bottom reaction for the commit
   // that prepends older messages.
   const consumeSkipContentScroll = useCallback(() => {
-    const skip = skipContentScrollRef.current;
-    skipContentScrollRef.current = false;
+    const skip = skipContentScrollScopeRef.current === scopeKey;
+    if (skip) skipContentScrollScopeRef.current = null;
     return skip;
-  }, []);
+  }, [scopeKey]);
 
   return { requestOlderMessages, consumeSkipContentScroll };
 }

@@ -368,6 +368,199 @@ describe("HermesDmChatView", () => {
     expect(scrollToMock).not.toHaveBeenCalled();
   });
 
+  it("restores each Hermes task's scroll position when switching tasks", () => {
+    const commonProps = {
+      loading: false,
+      typingUsers: new Map<string, string>(),
+      progressInvocations: [],
+      typingSuppressedUserIds: [],
+      onSend: () => {},
+    };
+    const taskAMessages = [
+      message({ id: "task-a-message", threadId: "task-a", content: "Task A" }),
+    ];
+    const taskBMessages = [
+      message({ id: "task-b-message", threadId: "task-b", content: "Task B" }),
+    ];
+    const { rerender } = render(
+      <HermesDmChatView
+        {...commonProps}
+        messages={taskAMessages}
+        scrollKey="conversation-1:task-a"
+      />,
+    );
+    const scroller = screen.getByTestId("hermes-dm-chat-scroll");
+    makeScrollable(scroller);
+
+    scroller.scrollTop = 420;
+    fireEvent.wheel(scroller, { deltaY: -80 });
+    fireEvent.scroll(scroller);
+
+    rerender(
+      <HermesDmChatView
+        {...commonProps}
+        messages={taskBMessages}
+        scrollKey="conversation-1:task-b"
+      />,
+    );
+    scroller.scrollTop = 175;
+    fireEvent.wheel(scroller, { deltaY: -80 });
+    fireEvent.scroll(scroller);
+
+    rerender(
+      <HermesDmChatView
+        {...commonProps}
+        messages={taskAMessages}
+        scrollKey="conversation-1:task-a"
+      />,
+    );
+    expect(scroller.scrollTop).toBe(420);
+
+    rerender(
+      <HermesDmChatView
+        {...commonProps}
+        messages={taskBMessages}
+        scrollKey="conversation-1:task-b"
+      />,
+    );
+    expect(scroller.scrollTop).toBe(175);
+  });
+
+  it("reloads trimmed task history before restoring the visible message anchor", async () => {
+    const commonProps = {
+      loading: false,
+      typingUsers: new Map<string, string>(),
+      progressInvocations: [],
+      typingSuppressedUserIds: [],
+      onSend: () => {},
+    };
+    const taskAMessages = Array.from({ length: 30 }, (_, index) =>
+      message({
+        id: `task-a-message-${index + 1}`,
+        threadId: "task-a",
+        content: `Task A ${index + 1}`,
+        createdAt: `2026-01-01T00:${String(index).padStart(2, "0")}:00.000Z`,
+      }),
+    );
+    const taskBMessages = [
+      message({ id: "task-b-message", threadId: "task-b", content: "Task B" }),
+    ];
+    const trimmedTaskAMessages = taskAMessages.slice(20);
+    const firstReloadedTaskAMessages = taskAMessages.slice(15);
+    const fullyReloadedTaskAMessages = taskAMessages.slice(5);
+    const currentMessageIds = {
+      value: taskAMessages.map((item) => item.id),
+    };
+    const onLoadOlderMessages = vi.fn(async () => true);
+    const { rerender } = render(
+      <HermesDmChatView
+        {...commonProps}
+        messages={taskAMessages}
+        scrollKey="conversation-1:task-a"
+        hasOlderMessages={false}
+        onLoadOlderMessages={onLoadOlderMessages}
+      />,
+    );
+    const scroller = screen.getByTestId("hermes-dm-chat-scroll");
+    Object.defineProperty(scroller, "clientHeight", {
+      configurable: true,
+      value: 300,
+    });
+    Object.defineProperty(scroller, "scrollHeight", {
+      configurable: true,
+      get: () => currentMessageIds.value.length * 100,
+    });
+    Object.defineProperty(scroller, "scrollTop", {
+      configurable: true,
+      writable: true,
+      value: 0,
+    });
+    const rectSpy = vi
+      .spyOn(Element.prototype, "getBoundingClientRect")
+      .mockImplementation(function getBoundingClientRect(this: Element) {
+        if (this === scroller) return new DOMRect(0, 0, 600, 300);
+        const messageId = this.getAttribute?.("data-message-id");
+        const index = messageId ? currentMessageIds.value.indexOf(messageId) : -1;
+        if (index >= 0) {
+          return new DOMRect(0, index * 100 - scroller.scrollTop, 600, 100);
+        }
+        return new DOMRect();
+      });
+
+    try {
+      // The first visible row is message 7, 50 px above the viewport edge.
+      scroller.scrollTop = 650;
+      fireEvent.wheel(scroller, { deltaY: -80 });
+      fireEvent.scroll(scroller);
+
+      currentMessageIds.value = taskBMessages.map((item) => item.id);
+      rerender(
+        <HermesDmChatView
+          {...commonProps}
+          messages={taskBMessages}
+          scrollKey="conversation-1:task-b"
+        />,
+      );
+
+      // useChannelChat intentionally unloads extra history pages on scope switch.
+      currentMessageIds.value = trimmedTaskAMessages.map((item) => item.id);
+      await act(async () => {
+        rerender(
+          <HermesDmChatView
+            {...commonProps}
+            messages={trimmedTaskAMessages}
+            scrollKey="conversation-1:task-a"
+            hasOlderMessages
+            onLoadOlderMessages={onLoadOlderMessages}
+          />,
+        );
+        await Promise.resolve();
+      });
+
+      expect(onLoadOlderMessages).toHaveBeenCalledTimes(1);
+
+      // The first fetched page still does not contain the saved anchor, so the
+      // restoration workflow must keep paging instead of settling for pixels.
+      currentMessageIds.value = firstReloadedTaskAMessages.map((item) => item.id);
+      await act(async () => {
+        rerender(
+          <HermesDmChatView
+            {...commonProps}
+            messages={firstReloadedTaskAMessages}
+            scrollKey="conversation-1:task-a"
+            hasOlderMessages
+            onLoadOlderMessages={onLoadOlderMessages}
+          />,
+        );
+        await Promise.resolve();
+      });
+
+      expect(onLoadOlderMessages).toHaveBeenCalledTimes(2);
+
+      currentMessageIds.value = fullyReloadedTaskAMessages.map((item) => item.id);
+      await act(async () => {
+        rerender(
+          <HermesDmChatView
+            {...commonProps}
+            messages={fullyReloadedTaskAMessages}
+            scrollKey="conversation-1:task-a"
+            hasOlderMessages={false}
+            onLoadOlderMessages={onLoadOlderMessages}
+          />,
+        );
+        await Promise.resolve();
+      });
+
+      const restoredAnchor = scroller.querySelector(
+        '[data-message-id="task-a-message-7"]',
+      );
+      expect(restoredAnchor?.getBoundingClientRect().top).toBe(-50);
+      expect(scroller.scrollTop).toBe(150);
+    } finally {
+      rectSpy.mockRestore();
+    }
+  });
+
   it("leaves scroll position alone when visible Hermes progress updates after the user scrolls up", () => {
     const activeInvocation = invocation({ updatedAt: "2026-01-01T00:00:00.000Z" });
     const firstMessage = message();
@@ -539,6 +732,57 @@ describe("HermesDmChatView", () => {
     await waitFor(() => {
       expect(onLoadOlderMessages).toHaveBeenCalledTimes(1);
     });
+  });
+
+  it("starts history loading for a new task while the previous task load is pending", async () => {
+    let resolveTaskALoad!: (loaded: boolean) => void;
+    const taskALoad = new Promise<boolean>((resolve) => {
+      resolveTaskALoad = resolve;
+    });
+    const onLoadTaskA = vi.fn(() => taskALoad);
+    const onLoadTaskB = vi.fn(async () => true);
+    const commonProps = {
+      loading: false,
+      hasOlderMessages: true,
+      typingUsers: new Map<string, string>(),
+      progressInvocations: [],
+      typingSuppressedUserIds: [],
+      onSend: () => {},
+    };
+    const { rerender } = render(
+      <HermesDmChatView
+        {...commonProps}
+        messages={[message({ id: "task-a-message", threadId: "task-a" })]}
+        scrollKey="conversation-1:task-a"
+        onLoadOlderMessages={onLoadTaskA}
+      />,
+    );
+    const scroller = screen.getByTestId("hermes-dm-chat-scroll");
+    makeScrollable(scroller);
+
+    try {
+      scroller.scrollTop = 500;
+      fireEvent.scroll(scroller);
+      await waitFor(() => expect(onLoadTaskA).toHaveBeenCalledTimes(1));
+
+      rerender(
+        <HermesDmChatView
+          {...commonProps}
+          messages={[message({ id: "task-b-message", threadId: "task-b" })]}
+          scrollKey="conversation-1:task-b"
+          onLoadOlderMessages={onLoadTaskB}
+        />,
+      );
+      scroller.scrollTop = 500;
+      fireEvent.scroll(scroller);
+
+      await waitFor(() => expect(onLoadTaskB).toHaveBeenCalledTimes(1));
+    } finally {
+      resolveTaskALoad(true);
+      await act(async () => {
+        await taskALoad;
+      });
+    }
   });
 
   it("mounts a genuinely blank composer when the New task composer identity changes", async () => {

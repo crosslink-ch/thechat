@@ -5,6 +5,7 @@ import { useAutoScroll } from "../hooks/useAutoScroll";
 import { useMessageTopCommand } from "../hooks/useMessageTopCommand";
 import { useOlderHistoryScroll } from "../hooks/useOlderHistoryScroll";
 import { useScrollStability } from "../hooks/useScrollStability";
+import { useScrollPositionRestoration } from "../hooks/useScrollPositionRestoration";
 import type {
   BotInvocationProgressEventPublic,
   ChatMessage,
@@ -96,7 +97,6 @@ export function HermesDmChatView({
   );
   const isAtBottomRef = useRef(isAtBottom);
   const forceNextContentScrollRef = useRef(false);
-  const initializedScrollKeyRef = useRef<string | null>(null);
   const progressScrollFrameRef = useRef<number | null>(null);
   const deferredFormattedIdsRef = useRef<Set<string>>(new Set());
   const deferredFormattingScopeRef = useRef<string | null>(null);
@@ -228,6 +228,7 @@ export function HermesDmChatView({
 
   const { requestOlderMessages, consumeSkipContentScroll } = useOlderHistoryScroll({
     containerRef: scrollContainerRef,
+    scopeKey: scrollScopeKey,
     loading,
     loadingOlder,
     hasOlderMessages,
@@ -235,12 +236,17 @@ export function HermesDmChatView({
     messageScrollSignature,
   });
   useScrollStability(scrollContainerRef);
-
-  useLayoutEffect(() => {
-    if (loading || initializedScrollKeyRef.current === scrollScopeKey) return;
-    initializedScrollKeyRef.current = scrollScopeKey;
-    scrollToBottom({ force: true });
-  }, [loading, scrollScopeKey, scrollToBottom]);
+  useScrollPositionRestoration({
+    containerRef: scrollContainerRef,
+    scrollKey: scrollScopeKey,
+    loading,
+    loadingOlder,
+    hasOlderMessages,
+    messageScrollSignature,
+    requestOlderMessages,
+    pauseAutoScroll,
+    scrollToBottom,
+  });
 
   useLayoutEffect(() => {
     if (forceNextContentScrollRef.current) {
