@@ -205,15 +205,24 @@ vi.mock("../components/HermesRuntimePanel", () => ({
     onCreateThread,
     draftTaskActive,
     onSelectThread,
+    onRenameThread,
     threads,
   }: any) => (
     <aside>
       <button type="button" onClick={onCreateThread}>New task</button>
       <button type="button" onClick={() => onSelectThread(null)}>General</button>
       {threads.map((thread: { id: string; title: string }) => (
-        <button key={thread.id} type="button" onClick={() => onSelectThread(thread.id)}>
-          {thread.title}
-        </button>
+        <div key={thread.id}>
+          <button type="button" onClick={() => onSelectThread(thread.id)}>
+            {thread.title}
+          </button>
+          <button
+            type="button"
+            onClick={() => onRenameThread(thread.id, "Renamed task")}
+          >
+            Rename {thread.title}
+          </button>
+        </div>
       ))}
       {draftTaskActive ? <div data-testid="local-task-draft">New task draft</div> : null}
     </aside>
@@ -268,6 +277,23 @@ beforeEach(() => {
 });
 
 describe("DmRoute deferred Hermes task drafts", () => {
+  it("persists task names through the conversation thread hook", async () => {
+    mocks.threads = [persistedThread];
+    mocks.renameThread.mockResolvedValue({
+      ...persistedThread,
+      title: "Renamed task",
+    });
+    await renderRoute();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: `Rename ${persistedThread.title}` }),
+    );
+
+    await waitFor(() =>
+      expect(mocks.renameThread).toHaveBeenCalledWith("thread-1", "Renamed task"),
+    );
+  });
+
   it("restores a typed New task draft after selecting another task", async () => {
     mocks.threads = [persistedThread];
     await renderRoute();

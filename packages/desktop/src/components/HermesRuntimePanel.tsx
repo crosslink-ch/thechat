@@ -1,4 +1,11 @@
-import { useMemo } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type FormEvent,
+  type KeyboardEvent,
+} from "react";
 import type {
   BotInvocationPublic,
   BotRuntimeSnapshot,
@@ -24,6 +31,7 @@ export function HermesRuntimePanel({
   unreadThreadIds,
   generalUnread = false,
   onSelectThread,
+  onRenameThread,
   onCreateThread,
   onLoadMoreThreads,
 }: {
@@ -45,6 +53,7 @@ export function HermesRuntimePanel({
   unreadThreadIds?: Set<string>;
   generalUnread?: boolean;
   onSelectThread?: (threadId: string | null) => void;
+  onRenameThread?: (threadId: string, title: string) => Promise<unknown>;
   onCreateThread?: () => void;
   onLoadMoreThreads?: () => void;
 }) {
@@ -139,6 +148,7 @@ export function HermesRuntimePanel({
                       (unreadThreadIds?.has(thread.id) ?? false)
                     }
                     onSelect={onSelectThread}
+                    onRename={onRenameThread}
                   />
                 ))}
               </div>
@@ -196,6 +206,24 @@ function PlusIcon({ className = "" }: { className?: string }) {
   );
 }
 
+function PencilIcon({ className = "" }: { className?: string }) {
+  return (
+    <svg
+      className={className}
+      viewBox="0 0 14 14"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.4"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="m3 10.75.5-2.25 6-6 2 2-6 6z" />
+      <path d="m8.5 3.5 2 2" />
+    </svg>
+  );
+}
+
 function InboxIcon() {
   return (
     <svg
@@ -245,6 +273,7 @@ function ThreadRow({
   needsApproval,
   unread,
   onSelect,
+  onRename,
 }: {
   thread: ConversationThreadPublic;
   active: boolean;
@@ -252,7 +281,15 @@ function ThreadRow({
   needsApproval?: boolean;
   unread?: boolean;
   onSelect?: (threadId: string | null) => void;
+  onRename?: (threadId: string, title: string) => Promise<unknown>;
 }) {
+  const [editing, setEditing] = useState(false);
+  const [draftTitle, setDraftTitle] = useState(thread.title);
+  const [saving, setSaving] = useState(false);
+  const [renameError, setRenameError] = useState<string | null>(null);
+  const renameInputRef = useRef<HTMLInputElement>(null);
+  const renameButtonRef = useRef<HTMLButtonElement>(null);
+  const restoreRenameFocusRef = useRef(false);
   const rowTone = active
     ? "bg-accent/10 text-text"
     : needsApproval
@@ -264,35 +301,163 @@ function ThreadRow({
       ? "border-warning-text/35 bg-warning-bg text-warning-text"
       : "border-border-subtle bg-raised/60 text-text-dimmed group-hover:text-text-muted";
 
+  useEffect(() => {
+    if (!editing) return;
+    renameInputRef.current?.focus();
+    renameInputRef.current?.select();
+  }, [editing]);
+
+  useEffect(() => {
+    if (editing || !restoreRenameFocusRef.current) return;
+    restoreRenameFocusRef.current = false;
+    renameButtonRef.current?.focus();
+  }, [editing]);
+
+  const closeRenameEditor = () => {
+    restoreRenameFocusRef.current = true;
+    setEditing(false);
+  };
+
+  const cancelRename = () => {
+    closeRenameEditor();
+    setDraftTitle(thread.title);
+    setRenameError(null);
+  };
+
+  const handleRenameSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const title = draftTitle.trim();
+    if (!title) {
+      setRenameError("Enter a task name.");
+      return;
+    }
+    if (title === thread.title) {
+      cancelRename();
+      return;
+    }
+    if (!onRename || saving) return;
+
+    setSaving(true);
+    setRenameError(null);
+    try {
+      await onRename(thread.id, title);
+      closeRenameEditor();
+    } catch {
+      setRenameError("Could not rename task. Try again.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleRenameKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (event.key !== "Escape") return;
+    event.preventDefault();
+    cancelRename();
+  };
+
+  if (editing) {
+    return (
+      <form
+        className={`group relative flex w-full items-center gap-2 px-2.5 py-2 text-left ${rowTone}`}
+        onSubmit={handleRenameSubmit}
+      >
+        <span
+          className={`absolute top-2 bottom-2 left-0 w-0.5 rounded-r-sm ${
+            active ? "bg-accent" : needsApproval ? "bg-warning-text" : "bg-transparent"
+          }`}
+          aria-hidden="true"
+        />
+        <span className={`flex size-7 shrink-0 items-center justify-center rounded border ${iconTone}`}>
+          <TaskIcon />
+        </span>
+        <span className="flex min-w-0 flex-1 flex-col gap-1">
+          <input
+            ref={renameInputRef}
+            aria-label="Task name"
+            maxLength={255}
+            value={draftTitle}
+            onChange={(event) => {
+              setDraftTitle(event.target.value);
+              setRenameError(null);
+            }}
+            onKeyDown={handleRenameKeyDown}
+            disabled={saving}
+            className="h-7 min-w-0 rounded border border-accent/45 bg-background px-2 text-[0.786rem] text-text outline-none focus:border-accent focus:ring-1 focus:ring-accent/25 disabled:opacity-60"
+          />
+          {renameError && (
+            <span role="alert" className="text-[0.643rem] text-error-bright">
+              {renameError}
+            </span>
+          )}
+        </span>
+        <button
+          type="submit"
+          disabled={saving}
+          className="h-7 cursor-pointer rounded bg-accent px-2 text-[0.714rem] font-semibold text-on-accent disabled:cursor-default disabled:opacity-45"
+        >
+          {saving ? "Saving..." : "Save"}
+        </button>
+        <button
+          type="button"
+          onClick={cancelRename}
+          disabled={saving}
+          className="h-7 cursor-pointer rounded px-1.5 text-[0.714rem] font-medium text-text-muted hover:bg-hover hover:text-text disabled:cursor-default disabled:opacity-45"
+        >
+          Cancel
+        </button>
+      </form>
+    );
+  }
+
   return (
-    <button
-      type="button"
-      className={`group relative flex w-full cursor-pointer items-center gap-2.5 px-2.5 py-2.5 text-left transition-colors duration-150 ${rowTone}`}
-      onClick={() => onSelect?.(thread.id)}
+    <div
+      className={`group relative flex w-full items-center transition-colors duration-150 ${rowTone}`}
     >
-      <span
-        className={`absolute top-2 bottom-2 left-0 w-0.5 rounded-r-sm ${
-          active ? "bg-accent" : needsApproval ? "bg-warning-text" : "bg-transparent"
-        }`}
-        aria-hidden="true"
-      />
-      <span className={`flex size-7 shrink-0 items-center justify-center rounded border ${iconTone}`}>
-        <TaskIcon />
-      </span>
-      <span className="flex min-w-0 flex-1 flex-col">
-        <span className="truncate text-[0.857rem] font-medium">
-          {thread.title}
+      <button
+        type="button"
+        className={`flex min-w-0 flex-1 cursor-pointer items-center gap-2.5 px-2.5 py-2.5 text-left ${active ? "bg-accent/10" : ""}`}
+        onClick={() => onSelect?.(thread.id)}
+      >
+        <span
+          className={`absolute top-2 bottom-2 left-0 w-0.5 rounded-r-sm ${
+            active ? "bg-accent" : needsApproval ? "bg-warning-text" : "bg-transparent"
+          }`}
+          aria-hidden="true"
+        />
+        <span className={`flex size-7 shrink-0 items-center justify-center rounded border ${iconTone}`}>
+          <TaskIcon />
         </span>
-        <span className="mt-0.5 text-[0.714rem] text-text-dimmed">
-          {formatSessionTime(thread.lastActivityAt)}
+        <span className="flex min-w-0 flex-1 flex-col">
+          <span className="truncate text-[0.857rem] font-medium">
+            {thread.title}
+          </span>
+          <span className="mt-0.5 text-[0.714rem] text-text-dimmed">
+            {formatSessionTime(thread.lastActivityAt)}
+          </span>
         </span>
-      </span>
-      <ThreadRowBadges
-        activeCount={activeCount}
-        needsApproval={needsApproval}
-        unread={unread}
-      />
-    </button>
+        <ThreadRowBadges
+          activeCount={activeCount}
+          needsApproval={needsApproval}
+          unread={unread}
+        />
+      </button>
+      {onRename && (
+        <button
+          ref={renameButtonRef}
+          type="button"
+          aria-label={`Rename ${thread.title}`}
+          title="Rename task"
+          onClick={() => {
+            setDraftTitle(thread.title);
+            setRenameError(null);
+            setEditing(true);
+          }}
+          className="mr-1 flex size-7 shrink-0 cursor-pointer items-center justify-center rounded text-text-dimmed opacity-0 transition hover:bg-raised hover:text-text group-hover:opacity-100 focus:opacity-100"
+        >
+          <PencilIcon className="size-3.5" />
+        </button>
+      )}
+    </div>
   );
 }
 
