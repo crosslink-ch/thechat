@@ -404,6 +404,9 @@ function hasInterveningHermesEvent(
   progressInvocations: ActiveHermesInvocationProgress[],
 ) {
   if (!previous) return false;
+  // Active Hermes lanes are replaced when a human follow-up starts its
+  // invocation. They must not make that optimistic row's grouping transient.
+  if (current.senderType === "human") return false;
 
   const previousTime = new Date(previous.createdAt).getTime();
   const currentTime = new Date(current.createdAt).getTime();

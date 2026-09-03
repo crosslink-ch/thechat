@@ -21,14 +21,21 @@ export function shouldMergeChatMessage(
   const previousDate = new Date(previous.createdAt);
   const currentDate = new Date(current.createdAt);
   const elapsed = currentDate.getTime() - previousDate.getTime();
+  // Optimistic messages use the client's clock while persisted messages use
+  // the server's. Preserve their logical append order when those clocks make
+  // a newly sent follow-up appear a little earlier than its predecessor.
+  const optimisticClockSkew =
+    current.id.startsWith("optimistic:") && elapsed < 0;
+  const mergeElapsed = optimisticClockSkew ? 0 : elapsed;
+  const mergeCurrentDate = optimisticClockSkew ? previousDate : currentDate;
 
   return (
-    Number.isFinite(elapsed) &&
-    elapsed >= 0 &&
-    elapsed <= MESSAGE_MERGE_WINDOW_MS &&
-    previousDate.getFullYear() === currentDate.getFullYear() &&
-    previousDate.getMonth() === currentDate.getMonth() &&
-    previousDate.getDate() === currentDate.getDate()
+    Number.isFinite(mergeElapsed) &&
+    mergeElapsed >= 0 &&
+    mergeElapsed <= MESSAGE_MERGE_WINDOW_MS &&
+    previousDate.getFullYear() === mergeCurrentDate.getFullYear() &&
+    previousDate.getMonth() === mergeCurrentDate.getMonth() &&
+    previousDate.getDate() === mergeCurrentDate.getDate()
   );
 }
 
