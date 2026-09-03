@@ -132,6 +132,16 @@ export function createCommands(
       },
     },
     {
+      id: "new-agent-chat",
+      label: "New Agent Chat",
+      shortcut: "C-x n",
+      keybinding: { prefix: "C-x", key: "n" },
+      execute: () => {
+        navigate({ to: "/chat" });
+        closePaletteAndRefocus();
+      },
+    },
+    {
       id: "create-workspace",
       label: "Create Workspace",
       shortcut: null,

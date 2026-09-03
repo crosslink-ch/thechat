@@ -1,6 +1,7 @@
 use chrono::{DateTime, Utc};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::sync::Mutex;
 use tracing::instrument;
 use uuid::Uuid;
@@ -10,6 +11,18 @@ pub struct Conversation {
     pub id: String,
     pub title: String,
     pub project_dir: Option<String>,
+    pub agent_profile_id: Option<String>,
+    pub acp_session_id: Option<String>,
+    #[serde(skip)]
+    pub acp_profile_fingerprint: Option<String>,
+    #[serde(skip)]
+    #[allow(dead_code)]
+    // Internal metadata CAS state; intentionally never sent to the renderer.
+    pub acp_runtime_epoch: Option<String>,
+    #[serde(skip)]
+    #[allow(dead_code)]
+    // Internal metadata CAS state; intentionally never sent to the renderer.
+    pub acp_generation: Option<i64>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -28,15 +41,59 @@ pub struct Database {
     conn: Mutex<Connection>,
 }
 
+fn migrate_conversation_columns(conn: &mut Connection) -> Result<(), String> {
+    let existing = {
+        let mut statement = conn
+            .prepare("PRAGMA table_info(conversations)")
+            .map_err(|e| format!("Failed to inspect conversations schema: {e}"))?;
+        let rows = statement
+            .query_map([], |row| row.get::<_, String>(1))
+            .map_err(|e| format!("Failed to read conversations schema: {e}"))?;
+        rows.collect::<rusqlite::Result<HashSet<_>>>()
+            .map_err(|e| format!("Failed to decode conversations schema: {e}"))?
+    };
+
+    let transaction = conn
+        .transaction()
+        .map_err(|e| format!("Failed to start conversation migration: {e}"))?;
+    for (name, sql_type) in [
+        ("project_dir", "TEXT"),
+        ("agent_profile_id", "TEXT"),
+        ("acp_session_id", "TEXT"),
+        ("acp_profile_fingerprint", "TEXT"),
+        ("acp_runtime_epoch", "TEXT"),
+        ("acp_generation", "INTEGER"),
+    ] {
+        if !existing.contains(name) {
+            transaction
+                .execute(
+                    &format!("ALTER TABLE conversations ADD COLUMN {name} {sql_type}"),
+                    [],
+                )
+                .map_err(|e| format!("Failed to add conversations.{name}: {e}"))?;
+        }
+    }
+    transaction
+        .commit()
+        .map_err(|e| format!("Failed to commit conversation migration: {e}"))
+}
+
 impl Database {
     #[instrument]
     pub fn new(db_path: &str) -> Result<Self, String> {
-        let conn = Connection::open(db_path).map_err(|e| format!("Failed to open DB: {}", e))?;
+        let mut conn =
+            Connection::open(db_path).map_err(|e| format!("Failed to open DB: {}", e))?;
 
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS conversations (
                 id TEXT PRIMARY KEY,
                 title TEXT NOT NULL,
+                project_dir TEXT,
+                agent_profile_id TEXT,
+                acp_session_id TEXT,
+                acp_profile_fingerprint TEXT,
+                acp_runtime_epoch TEXT,
+                acp_generation INTEGER,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
@@ -58,20 +115,29 @@ impl Database {
         )
         .map_err(|e| format!("Failed to create tables: {}", e))?;
 
-        // Migrations
-        conn.execute_batch("ALTER TABLE conversations ADD COLUMN project_dir TEXT;")
-            .ok(); // Ignore error if column already exists
+        migrate_conversation_columns(&mut conn)?;
 
         Ok(Database {
             conn: Mutex::new(conn),
         })
     }
 
+    #[cfg(test)]
     #[instrument(skip(self))]
     pub fn create_conversation(
         &self,
         title: &str,
         project_dir: Option<&str>,
+    ) -> Result<Conversation, String> {
+        self.create_conversation_with_agent(title, project_dir, None)
+    }
+
+    #[instrument(skip(self))]
+    pub fn create_conversation_with_agent(
+        &self,
+        title: &str,
+        project_dir: Option<&str>,
+        agent_profile_id: Option<&str>,
     ) -> Result<Conversation, String> {
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
         let id = Uuid::new_v4().to_string();
@@ -79,15 +145,20 @@ impl Database {
         let now_str = now.to_rfc3339();
 
         conn.execute(
-            "INSERT INTO conversations (id, title, project_dir, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![id, title, project_dir, now_str, now_str],
+            "INSERT INTO conversations (id, title, project_dir, agent_profile_id, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![id, title, project_dir, agent_profile_id, now_str, now_str],
         )
         .map_err(|e| format!("Failed to create conversation: {}", e))?;
 
         Ok(Conversation {
             id,
             title: title.to_string(),
-            project_dir: project_dir.map(|s| s.to_string()),
+            project_dir: project_dir.map(str::to_string),
+            agent_profile_id: agent_profile_id.map(str::to_string),
+            acp_session_id: None,
+            acp_profile_fingerprint: None,
+            acp_runtime_epoch: None,
+            acp_generation: None,
             created_at: now_str.clone(),
             updated_at: now_str,
         })
@@ -97,7 +168,7 @@ impl Database {
     pub fn get_conversation(&self, id: &str) -> Result<Option<Conversation>, String> {
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
         let mut stmt = conn
-            .prepare("SELECT id, title, project_dir, created_at, updated_at FROM conversations WHERE id = ?1")
+            .prepare("SELECT id, title, project_dir, agent_profile_id, acp_session_id, acp_profile_fingerprint, acp_runtime_epoch, acp_generation, created_at, updated_at FROM conversations WHERE id = ?1")
             .map_err(|e| e.to_string())?;
 
         stmt.query_row(params![id], |row| {
@@ -105,8 +176,13 @@ impl Database {
                 id: row.get(0)?,
                 title: row.get(1)?,
                 project_dir: row.get(2)?,
-                created_at: row.get(3)?,
-                updated_at: row.get(4)?,
+                agent_profile_id: row.get(3)?,
+                acp_session_id: row.get(4)?,
+                acp_profile_fingerprint: row.get(5)?,
+                acp_runtime_epoch: row.get(6)?,
+                acp_generation: row.get(7)?,
+                created_at: row.get(8)?,
+                updated_at: row.get(9)?,
             })
         })
         .optional()
@@ -117,7 +193,7 @@ impl Database {
     pub fn list_conversations(&self) -> Result<Vec<Conversation>, String> {
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
         let mut stmt = conn
-            .prepare("SELECT id, title, project_dir, created_at, updated_at FROM conversations ORDER BY updated_at DESC")
+            .prepare("SELECT id, title, project_dir, agent_profile_id, acp_session_id, acp_profile_fingerprint, acp_runtime_epoch, acp_generation, created_at, updated_at FROM conversations ORDER BY updated_at DESC")
             .map_err(|e| e.to_string())?;
 
         let rows = stmt
@@ -126,8 +202,13 @@ impl Database {
                     id: row.get(0)?,
                     title: row.get(1)?,
                     project_dir: row.get(2)?,
-                    created_at: row.get(3)?,
-                    updated_at: row.get(4)?,
+                    agent_profile_id: row.get(3)?,
+                    acp_session_id: row.get(4)?,
+                    acp_profile_fingerprint: row.get(5)?,
+                    acp_runtime_epoch: row.get(6)?,
+                    acp_generation: row.get(7)?,
+                    created_at: row.get(8)?,
+                    updated_at: row.get(9)?,
                 })
             })
             .map_err(|e| e.to_string())?;
@@ -149,6 +230,109 @@ impl Database {
         )
         .map_err(|e| format!("Failed to update conversation: {}", e))?;
         Ok(())
+    }
+
+    #[instrument(skip(self, session_id, profile_fingerprint, runtime_epoch))]
+    pub fn set_acp_session_metadata(
+        &self,
+        id: &str,
+        session_id: &str,
+        profile_fingerprint: &str,
+        runtime_epoch: &str,
+        generation: i64,
+    ) -> Result<bool, String> {
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        let changed = conn
+            .execute(
+                "UPDATE conversations
+                 SET acp_session_id = ?1,
+                     acp_profile_fingerprint = ?2,
+                     acp_runtime_epoch = ?3,
+                     acp_generation = ?4,
+                     updated_at = ?5
+                 WHERE id = ?6
+                   AND (
+                     acp_runtime_epoch IS NULL
+                     OR acp_runtime_epoch != ?3
+                     OR acp_generation IS NULL
+                     OR acp_generation < ?4
+                   )",
+                params![
+                    session_id,
+                    profile_fingerprint,
+                    runtime_epoch,
+                    generation,
+                    Utc::now().to_rfc3339(),
+                    id
+                ],
+            )
+            .map_err(|e| format!("Failed to update ACP session metadata: {e}"))?;
+        if changed == 0 {
+            let exists: bool = conn
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM conversations WHERE id = ?1)",
+                    params![id],
+                    |row| row.get(0),
+                )
+                .map_err(|e| format!("Failed to verify conversation metadata target: {e}"))?;
+            if !exists {
+                return Err(format!("Conversation not found: {id}"));
+            }
+        }
+        Ok(changed == 1)
+    }
+
+    #[instrument(skip(
+        self,
+        expected_session_id,
+        expected_profile_fingerprint,
+        expected_runtime_epoch
+    ))]
+    pub fn clear_acp_session_metadata_if_matches(
+        &self,
+        id: &str,
+        expected_session_id: Option<&str>,
+        expected_profile_fingerprint: Option<&str>,
+        expected_runtime_epoch: Option<&str>,
+        expected_generation: Option<i64>,
+    ) -> Result<bool, String> {
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        let changed = conn
+            .execute(
+                "UPDATE conversations
+                 SET acp_session_id = NULL,
+                     acp_profile_fingerprint = NULL,
+                     acp_runtime_epoch = NULL,
+                     acp_generation = NULL,
+                     updated_at = ?1
+                 WHERE id = ?2
+                   AND acp_session_id IS ?3
+                   AND acp_profile_fingerprint IS ?4
+                   AND acp_runtime_epoch IS ?5
+                   AND acp_generation IS ?6",
+                params![
+                    Utc::now().to_rfc3339(),
+                    id,
+                    expected_session_id,
+                    expected_profile_fingerprint,
+                    expected_runtime_epoch,
+                    expected_generation
+                ],
+            )
+            .map_err(|e| format!("Failed to clear ACP session metadata: {e}"))?;
+        if changed == 0 {
+            let exists: bool = conn
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM conversations WHERE id = ?1)",
+                    params![id],
+                    |row| row.get(0),
+                )
+                .map_err(|e| format!("Failed to verify conversation metadata target: {e}"))?;
+            if !exists {
+                return Err(format!("Conversation not found: {id}"));
+            }
+        }
+        Ok(changed == 1)
     }
 
     #[instrument(skip(self, content, reasoning_content))]
@@ -184,6 +368,177 @@ impl Database {
             content: content.to_string(),
             reasoning_content: reasoning_content.map(|s| s.to_string()),
             created_at: now_str,
+        })
+    }
+
+    #[instrument(skip(self, content, reasoning_content))]
+    pub fn begin_acp_turn(
+        &self,
+        conversation_id: &str,
+        generation: u64,
+        content: &str,
+        reasoning_content: Option<&str>,
+    ) -> Result<(Message, String), String> {
+        let mut conn = self.conn.lock().map_err(|e| e.to_string())?;
+        let transaction = conn
+            .transaction()
+            .map_err(|e| format!("Failed to start ACP turn transaction: {e}"))?;
+        let dirty_key = format!("acp_dirty_turn:{conversation_id}");
+        let existing: Option<String> = transaction
+            .query_row(
+                "SELECT value FROM kv_store WHERE key = ?1",
+                params![dirty_key],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|e| format!("Failed to inspect ACP turn ledger: {e}"))?;
+        if existing.is_some() {
+            return Err(
+                "This conversation has an unfinished ACP turn. Start a new Agent Chat.".into(),
+            );
+        }
+
+        let message_id = Uuid::new_v4().to_string();
+        let turn_token = format!("{generation}:{}", Uuid::new_v4());
+        let now = Utc::now().to_rfc3339();
+        transaction
+            .execute(
+                "INSERT INTO messages (id, conversation_id, role, content, reasoning_content, created_at)
+                 VALUES (?1, ?2, 'user', ?3, ?4, ?5)",
+                params![message_id, conversation_id, content, reasoning_content, now],
+            )
+            .map_err(|e| format!("Failed to save ACP user message: {e}"))?;
+        let changed = transaction
+            .execute(
+                "UPDATE conversations SET updated_at = ?1 WHERE id = ?2",
+                params![now, conversation_id],
+            )
+            .map_err(|e| format!("Failed to update ACP conversation timestamp: {e}"))?;
+        if changed != 1 {
+            return Err(format!("Conversation not found: {conversation_id}"));
+        }
+        transaction
+            .execute(
+                "INSERT INTO kv_store (key, value) VALUES (?1, ?2)",
+                params![dirty_key, turn_token],
+            )
+            .map_err(|e| format!("Failed to mark ACP turn dirty: {e}"))?;
+        transaction
+            .commit()
+            .map_err(|e| format!("Failed to commit ACP turn start: {e}"))?;
+
+        Ok((
+            Message {
+                id: message_id,
+                conversation_id: conversation_id.to_string(),
+                role: "user".into(),
+                content: content.to_string(),
+                reasoning_content: reasoning_content.map(str::to_string),
+                created_at: now,
+            },
+            turn_token,
+        ))
+    }
+
+    #[instrument(skip(self, turn_token))]
+    pub fn claim_acp_turn(&self, conversation_id: &str, turn_token: &str) -> Result<bool, String> {
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        let dirty_key = format!("acp_dirty_turn:{conversation_id}");
+        let dispatched = format!("dispatched:{turn_token}");
+        let changed = conn
+            .execute(
+                "UPDATE kv_store SET value = ?1 WHERE key = ?2 AND value = ?3",
+                params![dispatched, dirty_key, turn_token],
+            )
+            .map_err(|e| format!("Failed to claim ACP turn dispatch: {e}"))?;
+        Ok(changed == 1)
+    }
+
+    #[instrument(skip(self, turn_token))]
+    pub fn abort_pending_acp_turn(
+        &self,
+        conversation_id: &str,
+        generation: u64,
+        turn_token: &str,
+    ) -> Result<bool, String> {
+        if !turn_token.starts_with(&format!("{generation}:")) {
+            return Ok(false);
+        }
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        let dirty_key = format!("acp_dirty_turn:{conversation_id}");
+        let changed = conn
+            .execute(
+                "DELETE FROM kv_store WHERE key = ?1 AND value = ?2",
+                params![dirty_key, turn_token],
+            )
+            .map_err(|e| format!("Failed to abort pending ACP turn: {e}"))?;
+        Ok(changed == 1)
+    }
+
+    #[instrument(skip(self, turn_token, content, reasoning_content))]
+    pub fn complete_acp_turn(
+        &self,
+        conversation_id: &str,
+        turn_token: &str,
+        content: &str,
+        reasoning_content: Option<&str>,
+    ) -> Result<Message, String> {
+        let mut conn = self.conn.lock().map_err(|e| e.to_string())?;
+        let transaction = conn
+            .transaction()
+            .map_err(|e| format!("Failed to start ACP completion transaction: {e}"))?;
+        let dirty_key = format!("acp_dirty_turn:{conversation_id}");
+        let persisted_token: Option<String> = transaction
+            .query_row(
+                "SELECT value FROM kv_store WHERE key = ?1",
+                params![dirty_key],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|e| format!("Failed to inspect ACP turn token: {e}"))?;
+        let dispatched_token = format!("dispatched:{turn_token}");
+        if persisted_token.as_deref() != Some(dispatched_token.as_str()) {
+            return Err("ACP turn token is stale or missing".into());
+        }
+
+        let message_id = Uuid::new_v4().to_string();
+        let now = Utc::now().to_rfc3339();
+        transaction
+            .execute(
+                "INSERT INTO messages (id, conversation_id, role, content, reasoning_content, created_at)
+                 VALUES (?1, ?2, 'assistant', ?3, ?4, ?5)",
+                params![message_id, conversation_id, content, reasoning_content, now],
+            )
+            .map_err(|e| format!("Failed to save ACP assistant message: {e}"))?;
+        let changed = transaction
+            .execute(
+                "UPDATE conversations SET updated_at = ?1 WHERE id = ?2",
+                params![now, conversation_id],
+            )
+            .map_err(|e| format!("Failed to update ACP conversation timestamp: {e}"))?;
+        if changed != 1 {
+            return Err(format!("Conversation not found: {conversation_id}"));
+        }
+        let cleared = transaction
+            .execute(
+                "DELETE FROM kv_store WHERE key = ?1 AND value = ?2",
+                params![dirty_key, dispatched_token],
+            )
+            .map_err(|e| format!("Failed to clear ACP turn token: {e}"))?;
+        if cleared != 1 {
+            return Err("ACP turn token changed before completion".into());
+        }
+        transaction
+            .commit()
+            .map_err(|e| format!("Failed to commit ACP turn completion: {e}"))?;
+
+        Ok(Message {
+            id: message_id,
+            conversation_id: conversation_id.to_string(),
+            role: "assistant".into(),
+            content: content.to_string(),
+            reasoning_content: reasoning_content.map(str::to_string),
+            created_at: now,
         })
     }
 
@@ -300,7 +655,9 @@ mod tests {
         role: &str,
         content: &str,
     ) -> Message {
-        let message = db.save_message(conversation_id, role, content, None).unwrap();
+        let message = db
+            .save_message(conversation_id, role, content, None)
+            .unwrap();
         std::thread::sleep(std::time::Duration::from_millis(2));
         message
     }
@@ -487,5 +844,274 @@ mod tests {
         assert_eq!(msgs2.len(), 1);
         assert_eq!(msgs1[0].content, "In chat 1");
         assert_eq!(msgs2[0].content, "In chat 2");
+    }
+
+    #[test]
+    fn old_conversation_schema_migrates_with_nullable_acp_metadata() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("old.db");
+        let old = Connection::open(&path).unwrap();
+        old.execute_batch(
+            "CREATE TABLE conversations (
+                id TEXT PRIMARY KEY,
+                title TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            INSERT INTO conversations VALUES ('legacy', 'Legacy', 'now', 'now');",
+        )
+        .unwrap();
+        drop(old);
+
+        let db = Database::new(path.to_str().unwrap()).unwrap();
+        let legacy = db.get_conversation("legacy").unwrap().unwrap();
+        assert_eq!(legacy.project_dir, None);
+        assert_eq!(legacy.agent_profile_id, None);
+        assert_eq!(legacy.acp_session_id, None);
+        assert_eq!(legacy.acp_profile_fingerprint, None);
+        assert_eq!(legacy.acp_runtime_epoch, None);
+        assert_eq!(legacy.acp_generation, None);
+    }
+
+    #[test]
+    fn acp_turn_ledger_atomically_blocks_overlap_and_completes() {
+        let db = test_db();
+        let conversation = db
+            .create_conversation_with_agent("Agent", Some("/project"), Some("profile-a"))
+            .unwrap();
+        let (user, token) = db
+            .begin_acp_turn(&conversation.id, 7, "hello", None)
+            .unwrap();
+        assert_eq!(user.role, "user");
+        assert_eq!(
+            db.kv_get(&format!("acp_dirty_turn:{}", conversation.id))
+                .unwrap()
+                .as_deref(),
+            Some(token.as_str())
+        );
+        assert!(db
+            .begin_acp_turn(&conversation.id, 7, "overlap", None)
+            .unwrap_err()
+            .contains("unfinished ACP turn"));
+
+        assert!(db.claim_acp_turn(&conversation.id, &token).unwrap());
+        assert!(!db.claim_acp_turn(&conversation.id, &token).unwrap());
+        let assistant = db
+            .complete_acp_turn(&conversation.id, &token, "answer", Some("thought"))
+            .unwrap();
+        assert_eq!(assistant.role, "assistant");
+        assert_eq!(
+            db.kv_get(&format!("acp_dirty_turn:{}", conversation.id))
+                .unwrap(),
+            None
+        );
+        let messages = db.get_messages(&conversation.id, None, None).unwrap();
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0].id, user.id);
+        assert_eq!(messages[1].id, assistant.id);
+    }
+
+    #[test]
+    fn acp_pending_turn_abort_requires_exact_unclaimed_token_and_generation() {
+        let db = test_db();
+        let conversation = db
+            .create_conversation_with_agent("Agent", Some("/project"), Some("profile-a"))
+            .unwrap();
+        let (_, token) = db
+            .begin_acp_turn(&conversation.id, 7, "cancel before dispatch", None)
+            .unwrap();
+
+        assert!(!db
+            .abort_pending_acp_turn(&conversation.id, 8, &token)
+            .unwrap());
+        assert!(!db
+            .abort_pending_acp_turn(&conversation.id, 7, "7:wrong-token")
+            .unwrap());
+        assert!(db
+            .abort_pending_acp_turn(&conversation.id, 7, &token)
+            .unwrap());
+        assert_eq!(
+            db.kv_get(&format!("acp_dirty_turn:{}", conversation.id))
+                .unwrap(),
+            None
+        );
+        assert_eq!(
+            db.get_messages(&conversation.id, None, None).unwrap().len(),
+            1
+        );
+
+        let (_, dispatched_token) = db
+            .begin_acp_turn(&conversation.id, 8, "already dispatching", None)
+            .unwrap();
+        assert!(db
+            .claim_acp_turn(&conversation.id, &dispatched_token)
+            .unwrap());
+        assert!(!db
+            .abort_pending_acp_turn(&conversation.id, 8, &dispatched_token)
+            .unwrap());
+        assert_eq!(
+            db.kv_get(&format!("acp_dirty_turn:{}", conversation.id))
+                .unwrap()
+                .as_deref(),
+            Some(format!("dispatched:{dispatched_token}").as_str())
+        );
+    }
+
+    #[test]
+    fn acp_turn_completion_requires_the_exact_dirty_token() {
+        let db = test_db();
+        let conversation = db
+            .create_conversation_with_agent("Agent", Some("/project"), Some("profile-a"))
+            .unwrap();
+        let (_, token) = db
+            .begin_acp_turn(&conversation.id, 3, "hello", None)
+            .unwrap();
+        assert!(db
+            .complete_acp_turn(&conversation.id, "wrong-token", "answer", None)
+            .unwrap_err()
+            .contains("turn token"));
+        assert_eq!(
+            db.get_messages(&conversation.id, None, None).unwrap().len(),
+            1
+        );
+        assert_eq!(
+            db.kv_get(&format!("acp_dirty_turn:{}", conversation.id))
+                .unwrap()
+                .as_deref(),
+            Some(token.as_str())
+        );
+    }
+
+    #[test]
+    fn acp_metadata_compare_and_set_rejects_stale_generations() {
+        let db = test_db();
+        let conversation = db
+            .create_conversation_with_agent("Agent", Some("/project"), Some("profile-a"))
+            .unwrap();
+        assert!(db
+            .set_acp_session_metadata(
+                &conversation.id,
+                "session-2",
+                "sha256-profile",
+                "runtime-a",
+                2,
+            )
+            .unwrap());
+        assert!(!db
+            .set_acp_session_metadata(
+                &conversation.id,
+                "session-1",
+                "sha256-stale",
+                "runtime-a",
+                1,
+            )
+            .unwrap());
+        assert!(db
+            .set_acp_session_metadata(
+                &conversation.id,
+                "session-new-runtime",
+                "sha256-new",
+                "runtime-b",
+                1,
+            )
+            .unwrap());
+        let loaded = db.get_conversation(&conversation.id).unwrap().unwrap();
+        assert_eq!(
+            loaded.acp_session_id.as_deref(),
+            Some("session-new-runtime")
+        );
+        assert_eq!(loaded.acp_generation, Some(1));
+        assert_eq!(loaded.acp_runtime_epoch.as_deref(), Some("runtime-b"));
+        assert!(!db
+            .clear_acp_session_metadata_if_matches(
+                &conversation.id,
+                Some("session-2"),
+                Some("sha256-profile"),
+                Some("runtime-a"),
+                Some(2),
+            )
+            .unwrap());
+        assert!(db
+            .clear_acp_session_metadata_if_matches(
+                &conversation.id,
+                Some("session-new-runtime"),
+                Some("sha256-new"),
+                Some("runtime-b"),
+                Some(1),
+            )
+            .unwrap());
+    }
+
+    #[test]
+    fn acp_metadata_clear_rejects_same_session_from_newer_generation() {
+        let db = test_db();
+        let conversation = db
+            .create_conversation_with_agent("Agent", Some("/project"), Some("profile-a"))
+            .unwrap();
+        assert!(db
+            .set_acp_session_metadata(
+                &conversation.id,
+                "same-session",
+                "same-fingerprint",
+                "runtime-a",
+                1,
+            )
+            .unwrap());
+        let stale = db.get_conversation(&conversation.id).unwrap().unwrap();
+        assert!(db
+            .set_acp_session_metadata(
+                &conversation.id,
+                "same-session",
+                "same-fingerprint",
+                "runtime-a",
+                2,
+            )
+            .unwrap());
+
+        assert!(!db
+            .clear_acp_session_metadata_if_matches(
+                &conversation.id,
+                stale.acp_session_id.as_deref(),
+                stale.acp_profile_fingerprint.as_deref(),
+                stale.acp_runtime_epoch.as_deref(),
+                stale.acp_generation,
+            )
+            .unwrap());
+        let loaded = db.get_conversation(&conversation.id).unwrap().unwrap();
+        assert_eq!(loaded.acp_session_id.as_deref(), Some("same-session"));
+        assert_eq!(
+            loaded.acp_profile_fingerprint.as_deref(),
+            Some("same-fingerprint")
+        );
+        assert_eq!(loaded.acp_runtime_epoch.as_deref(), Some("runtime-a"));
+        assert_eq!(loaded.acp_generation, Some(2));
+    }
+
+    #[test]
+    fn acp_conversation_metadata_round_trips() {
+        let db = test_db();
+        let conversation = db
+            .create_conversation_with_agent("Agent", Some("/project"), Some("profile-a"))
+            .unwrap();
+        assert!(db
+            .set_acp_session_metadata(
+                &conversation.id,
+                "session-7",
+                "sha256-profile",
+                "runtime-a",
+                7,
+            )
+            .unwrap());
+
+        let loaded = db.get_conversation(&conversation.id).unwrap().unwrap();
+        assert_eq!(loaded.project_dir.as_deref(), Some("/project"));
+        assert_eq!(loaded.agent_profile_id.as_deref(), Some("profile-a"));
+        assert_eq!(loaded.acp_session_id.as_deref(), Some("session-7"));
+        assert_eq!(
+            loaded.acp_profile_fingerprint.as_deref(),
+            Some("sha256-profile")
+        );
+        assert_eq!(loaded.acp_runtime_epoch.as_deref(), Some("runtime-a"));
+        assert_eq!(loaded.acp_generation, Some(7));
     }
 }

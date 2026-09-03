@@ -91,7 +91,7 @@ export const toggleSidebar = () =>
 export const closeSidebar = () => useSidebarState.setState({ open: false });
 
 export function Sidebar() {
-  const { open } = useSidebarState();
+  const { open, tab } = useSidebarState();
   const navigate = useNavigate();
   const matches = useMatches();
   const lastMatch = matches[matches.length - 1];
@@ -105,6 +105,8 @@ export function Sidebar() {
   const workspaces = useWorkspacesStore((s) => s.workspaces);
   const activeWorkspace = useWorkspacesStore((s) => s.activeWorkspace);
   const selectWorkspace = useWorkspacesStore((s) => s.selectWorkspace);
+  const conversations = useConversationsStore((s) => s.conversations);
+  const unreadAgentChats = useConversationsStore((s) => s.unreadAgentChats);
   const unreadChannels = useConversationsStore((s) => s.unreadChannels);
   const directConversationIdsByUserId = useConversationsStore(
     (s) => s.directConversationIdsByUserId,
@@ -121,9 +123,25 @@ export function Sidebar() {
   // Determine current active IDs from route
   const isChannel = routePath.startsWith("/channel");
   const isDm = routePath.startsWith("/dm");
+  const isAgentChat = routePath.startsWith("/chat");
   const isSettings = routePath === "/settings";
   const activeChannelId = isChannel ? routeParams.id : null;
   const activeDmConversationId = isDm ? routeParams.id : null;
+  const activeAgentConversationId = isAgentChat ? routeParams.id ?? null : null;
+  const acpConversations = conversations.filter(
+    (conversation) => conversation.agent_profile_id != null,
+  );
+
+  useEffect(() => {
+    if (isAgentChat && tab !== "agent") {
+      useSidebarState.setState({ tab: "agent" });
+    } else if (
+      (isChannel || isDm || routePath === "/") &&
+      tab !== "workspace"
+    ) {
+      useSidebarState.setState({ tab: "workspace" });
+    }
+  }, [isAgentChat, isChannel, isDm, routePath, tab]);
 
   useEffect(() => {
     setActiveDirectConversation(activeDmConversationId);
@@ -264,14 +282,37 @@ export function Sidebar() {
         <button
           className="relative flex size-9 cursor-pointer items-center justify-center rounded-lg border border-[rgba(245,245,245,0.5)] bg-surface text-[0.9rem] font-bold text-white transition-colors duration-150 hover:bg-hover"
           onClick={() => {
-            if (user) setDropdownOpen((open) => !open);
+            useSidebarState.setState({ tab: "workspace" });
+            if (user && tab === "workspace") setDropdownOpen((value) => !value);
           }}
           aria-label="Current workspace"
           title={activeWorkspace?.name ?? "TheChat"}
         >
-          <span className="absolute -left-[11px] h-[30px] w-0.5 rounded-r-sm bg-[#2f88bf]" />
+          {tab === "workspace" && (
+            <span className="absolute -left-[11px] h-[30px] w-0.5 rounded-r-sm bg-[#2f88bf]" />
+          )}
           {workspaceInitial}
         </button>
+
+        {user && (
+          <button
+            className="relative mt-3 flex size-9 cursor-pointer items-center justify-center rounded-lg border border-[rgba(245,245,245,0.5)] bg-surface text-[0.857rem] font-semibold text-text-muted transition-colors duration-150 hover:bg-hover hover:text-text"
+            onClick={() => {
+              useSidebarState.setState({ tab: "agent" });
+              navigate({ to: "/chat", search: { projectDir: undefined } });
+            }}
+            aria-label="Agent Chat"
+            title="Agent Chat"
+          >
+            {tab === "agent" && (
+              <span className="absolute -left-[11px] h-[30px] w-0.5 rounded-r-sm bg-[#2f88bf]" />
+            )}
+            A
+            {unreadAgentChats.size > 0 && (
+              <span className="absolute right-0.5 top-0.5 size-1.5 rounded-full bg-accent" />
+            )}
+          </button>
+        )}
 
         <button
           className="mt-3 flex size-9 cursor-pointer items-center justify-center rounded-lg border border-dashed border-[rgba(245,245,245,0.5)] bg-surface text-text-dimmed transition-colors duration-150 hover:border-accent hover:text-text"
@@ -286,7 +327,9 @@ export function Sidebar() {
       <div className="flex min-w-0 flex-1 flex-col bg-surface">
         <div className="flex h-[58px] items-center justify-between border-b border-border-subtle px-3">
           <div className="min-w-0 flex-1">
-            {user ? renderWorkspaceDropdown() : (
+            {user && tab === "agent" ? (
+              <div className="truncate text-[1rem] font-semibold text-text">Agent Chat</div>
+            ) : user ? renderWorkspaceDropdown() : (
               <div className="truncate text-[1rem] font-semibold text-text">TheChat</div>
             )}
           </div>
@@ -306,7 +349,57 @@ export function Sidebar() {
         </div>
 
         <div className="flex min-h-0 flex-1 flex-col">
-          {user && activeWorkspace ? (
+          {user && tab === "agent" ? (
+            <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
+              <button
+                type="button"
+                onClick={() =>
+                  navigate({ to: "/chat", search: { projectDir: undefined } })
+                }
+                className="flex w-full items-center justify-center gap-1.5 rounded-md border border-border bg-raised px-3 py-2 text-[0.857rem] font-medium text-text-secondary transition-colors hover:bg-hover hover:text-text"
+              >
+                <PlusIcon />
+                New Chat
+              </button>
+              {renderSectionLabel("Agent Chats")}
+              <div className="space-y-0.5">
+                {acpConversations.map((agentConversation) => {
+                  const isActive =
+                    activeAgentConversationId === agentConversation.id;
+                  const isUnread = unreadAgentChats.has(agentConversation.id);
+                  return (
+                    <button
+                      key={agentConversation.id}
+                      className={itemClassName(isActive, isUnread)}
+                      aria-current={isActive ? "page" : undefined}
+                      onClick={() => {
+                        useConversationsStore
+                          .getState()
+                          .markAgentChatRead(agentConversation.id);
+                        navigate({
+                          to: "/chat/$id",
+                          params: { id: agentConversation.id },
+                        });
+                      }}
+                    >
+                      <span className="flex size-5 shrink-0 items-center justify-center rounded bg-elevated text-[0.714rem] text-text-dimmed">A</span>
+                      <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap">
+                        {agentConversation.title}
+                      </span>
+                      {isUnread && (
+                        <span className="size-1.5 shrink-0 rounded-full bg-accent" />
+                      )}
+                    </button>
+                  );
+                })}
+                {acpConversations.length === 0 && (
+                  <div className="px-2 py-3 text-[0.786rem] text-text-dimmed">
+                    No ACP conversations yet.
+                  </div>
+                )}
+              </div>
+            </div>
+          ) : user && activeWorkspace ? (
             <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
               <div>
                 {renderSectionLabel("Channels", openCreateChannelModal)}

@@ -9,7 +9,12 @@ interface ComposerDraftsStore {
   attachmentDrafts: Record<string, SharedAttachmentDraft[]>;
   sendingAttachments: Record<string, boolean>;
   setDraft: (key: string, text: string) => void;
-  restoreDraft: (key: string, expectedRevision: number, text: string) => boolean;
+  restoreDraft: (key: string, expectedRevision: number, value: string) => boolean;
+  acknowledgeSubmission: (
+    key: string,
+    expectedRevision: number,
+    submittedImageIds: string[],
+  ) => void;
   setImageDrafts: (key: string, drafts: ImageAttachment[]) => void;
   setAttachmentDrafts: (key: string, drafts: SharedAttachmentDraft[]) => void;
   setSendingAttachments: (key: string, sending: boolean) => void;
@@ -87,6 +92,21 @@ export const useComposerDraftsStore = create<ComposerDraftsStore>()((set) => ({
     });
     return restored;
   },
+  acknowledgeSubmission: (key, expectedRevision, submittedImageIds) =>
+    set((state) => {
+      const textIsCurrent = (state.revisions[key] ?? 0) === expectedRevision;
+      const textUpdate = textIsCurrent
+        ? updatedDraftState(state, key, "")
+        : { drafts: state.drafts, revisions: state.revisions };
+      const submittedIds = new Set(submittedImageIds);
+      const remainingImages = (state.imageDrafts[key] ?? []).filter(
+        (image) => !submittedIds.has(image.id),
+      );
+      return {
+        ...textUpdate,
+        imageDrafts: updatedScopedList(state.imageDrafts, key, remainingImages),
+      };
+    }),
 
   setImageDrafts: (key, drafts) => {
     set((state) => {

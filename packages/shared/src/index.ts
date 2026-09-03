@@ -1,11 +1,175 @@
+// -- Agent Client Protocol (ACP) --
+
+/** Cooperative ACP approval policy. This is not an operating-system sandbox. */
+export type AcpPermissionMode = "request" | "allow-edits" | "bypass";
+
+/** A trusted local ACP adapter launch profile. Values of environment variables are never stored. */
+export interface AcpProfile {
+  id: string;
+  name: string;
+  executable: string;
+  args: string[];
+  /** Environment variable names to inherit from the desktop process, never secret values. */
+  inheritEnv: string[];
+  disabled?: boolean;
+}
+
+export interface AcpPromptCapabilities {
+  image?: boolean;
+  audio?: boolean;
+  embeddedContext?: boolean;
+}
+
+/** Runtime capabilities advertised by the connected ACP adapter. */
+export interface AcpCapabilities {
+  loadSession?: boolean;
+  prompt?: AcpPromptCapabilities;
+  modes?: boolean;
+  configOptions?: boolean;
+  plans?: boolean;
+}
+
+export type AcpPromptContent =
+  | { type: "text"; text: string }
+  | { type: "image"; data: string; mimeType: string };
+
+export type AcpContentBlock =
+  | { type: "text"; text: string }
+  | { type: "image"; mimeType: string; data?: string; uri?: string }
+  | { type: "resource"; uri: string; name?: string; mimeType?: string }
+  | { type: "unknown"; kind: string; value?: unknown };
+
+export interface AcpToolLocation {
+  path: string;
+  line?: number;
+  column?: number;
+}
+
+export type AcpToolKind =
+  | "read"
+  | "edit"
+  | "delete"
+  | "move"
+  | "search"
+  | "execute"
+  | "fetch"
+  | "other"
+  | "unknown";
+
+export type AcpToolStatus =
+  | "pending"
+  | "in_progress"
+  | "completed"
+  | "failed"
+  | "cancelled";
+
+export interface AcpToolCall {
+  id: string;
+  name?: string;
+  title?: string;
+  kind?: AcpToolKind;
+  status?: AcpToolStatus;
+  content?: AcpContentBlock[];
+  locations?: AcpToolLocation[];
+  rawInput?: unknown;
+  rawOutput?: unknown;
+}
+
+export type AcpToolCallUpdate = Partial<Omit<AcpToolCall, "id">>;
+
+export type AcpPermissionOptionKind =
+  | "allow_once"
+  | "allow_always"
+  | "reject_once"
+  | "reject_always";
+
+export interface AcpPermissionOption {
+  /** Opaque adapter-provided ID. Return this exact value when responding. */
+  id: string;
+  kind: AcpPermissionOptionKind;
+  label: string;
+}
+
+export interface AcpPermissionRequest {
+  id: string;
+  toolCallId?: string;
+  title: string;
+  description?: string;
+  options: AcpPermissionOption[];
+}
+
+export interface AcpError {
+  code: string;
+  message: string;
+  fatal?: boolean;
+  retryable?: boolean;
+  details?: unknown;
+}
+
+/**
+ * Raw ACP adapter stop reason. Known v1 values include end_turn, max_tokens,
+ * max_turn_requests, refusal, and cancelled; future values are preserved.
+ */
+export type AcpStopReason = string;
+
+export interface AcpTurnResult {
+  stopReason: AcpStopReason;
+  sessionId?: string;
+  usage?: Record<string, number>;
+}
+
+export type AcpUpdate =
+  | { type: "connected"; sessionId: string; profileFingerprint?: string; capabilities: AcpCapabilities; resumed?: boolean }
+  | { type: "turn_started" }
+  | { type: "text_delta"; text: string }
+  | { type: "reasoning_delta"; text: string }
+  | { type: "tool_call"; toolCall: AcpToolCall }
+  | { type: "tool_call_update"; toolCallId: string; update: AcpToolCallUpdate }
+  | { type: "permission_request"; permission: AcpPermissionRequest }
+  | { type: "permission_resolved"; requestId: string; optionId?: string | null }
+  | { type: "plan_update"; entries: unknown[] }
+  | { type: "command_update"; commands: unknown[] }
+  | { type: "mode_update"; modeId: string; label?: string }
+  | { type: "config_option_update"; options: unknown[] }
+  | { type: "unknown"; updateType: string; value?: unknown }
+  | { type: "turn_cancelled"; result: AcpTurnResult }
+  | { type: "turn_finished"; result: AcpTurnResult }
+  | { type: "error"; error: AcpError }
+  | { type: "disconnected"; reason?: string };
+
+/** Ordered, generation-tagged event delivered through a per-command Tauri Channel. */
+export type AcpEvent = AcpUpdate & {
+  conversationId: string;
+  generation: number;
+  sequence: number;
+  turnId?: string | null;
+};
+
+export interface AcpConnectResult {
+  conversationId: string;
+  profileId: string;
+  generation: number;
+  sessionId: string;
+  profileFingerprint?: string;
+  capabilities: AcpCapabilities;
+  resumed?: boolean;
+  warning?: string;
+}
+
+export interface AcpPromptResult extends AcpTurnResult {
+  conversationId: string;
+  generation: number;
+  turnId: string;
+}
+
 // -- Message Parts (rich message model) --
 
 export type MessagePart =
   | { type: "text"; text: string }
   | { type: "reasoning"; text: string }
   | { type: "image"; path: string; mimeType: string }
-  | { type: "tool-call"; toolCallId: string; toolName: string; args: Record<string, unknown> }
-  | { type: "tool-result"; toolCallId: string; toolName: string; result: unknown; isError?: boolean };
+  | { type: "tool-call"; toolCallId: string; toolName: string; args: Record<string, unknown>; acp?: AcpToolCall }
+  | { type: "tool-result"; toolCallId: string; toolName: string; result: unknown; isError?: boolean; acp?: AcpToolCall };
 
 export interface Message {
   id: string;
@@ -32,6 +196,10 @@ export interface Conversation {
   id: string;
   title: string;
   project_dir: string | null;
+  /** Null/absent identifies a hidden legacy direct-model conversation. */
+  agent_profile_id?: string | null;
+  acp_session_id?: string | null;
+  acp_profile_fingerprint?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -85,6 +253,8 @@ export interface AppConfig {
   mcpServers?: Record<string, McpServerConfig>;
   inheritWorkspaceId?: string;
   localOverrides?: LocalOverrides;
+  acpProfiles?: AcpProfile[];
+  defaultAcpProfileId?: string | null;
 }
 
 // -- Todo Items --

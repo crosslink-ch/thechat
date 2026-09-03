@@ -15,6 +15,7 @@ import { ScrollDebugRoute } from "./routes/scroll-debug";
 import { SettingsRoute } from "./routes/settings";
 import { WorkspaceManageRoute } from "./routes/workspace-manage";
 import { BotsManageRoute } from "./routes/bots-manage";
+import { AgentChatRoute } from "./routes/agent-chat";
 
 const rootRoute = createRootRoute({
   component: RootLayout,
@@ -26,20 +27,20 @@ const indexRoute = createRoute({
   component: WorkspaceHomeRoute,
 });
 
-const legacyAgentChatRoute = createRoute({
+const agentChatRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/chat",
-  beforeLoad: () => {
-    throw redirect({ to: "/" });
-  },
+  component: AgentChatRoute,
+  validateSearch: (search: Record<string, unknown>) => ({
+    projectDir:
+      typeof search.projectDir === "string" ? search.projectDir : undefined,
+  }),
 });
 
-const legacyAgentChatIdRoute = createRoute({
+const agentChatIdRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/chat/$id",
-  beforeLoad: () => {
-    throw redirect({ to: "/" });
-  },
+  component: AgentChatRoute,
 });
 
 const channelRoute = createRoute({
@@ -102,8 +103,8 @@ const hermesDebugRoute = createRoute({
 
 const routeTree = rootRoute.addChildren([
   indexRoute,
-  legacyAgentChatRoute,
-  legacyAgentChatIdRoute,
+  agentChatRoute,
+  agentChatIdRoute,
   channelRoute,
   dmRoute,
   notificationsRoute,

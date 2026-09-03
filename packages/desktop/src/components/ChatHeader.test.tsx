@@ -6,9 +6,9 @@ import {
   createRoute,
   createRouter,
 } from "@tanstack/react-router";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { usePermissionModeStore } from "../stores/permission-mode";
-import { ChatHeader } from "./ChatHeader";
+import { ChatHeader, setAgentChatHeaderContext } from "./ChatHeader";
 
 async function renderHeader(path: "/settings" | "/chat") {
   const rootRoute = createRootRoute();
@@ -29,6 +29,7 @@ async function renderHeader(path: "/settings" | "/chat") {
 
 beforeEach(() => {
   usePermissionModeStore.setState({ mode: "bypass" });
+  setAgentChatHeaderContext(null);
 });
 
 describe("ChatHeader settings visibility", () => {
@@ -44,5 +45,46 @@ describe("ChatHeader settings visibility", () => {
     await renderHeader("/chat");
 
     expect(screen.getByText("Bypass")).toBeInTheDocument();
+  });
+
+  it("shows locked ACP profile, project, connection state, and negotiated capabilities", async () => {
+    setAgentChatHeaderContext({
+      profiles: [
+        {
+          id: "profile-1",
+          name: "Codex ACP",
+          executable: "npx",
+          args: ["-y", "@agentclientprotocol/codex-acp@1.7.0"],
+          inheritEnv: [],
+        },
+      ],
+      selectedProfileId: "profile-1",
+      profileLocked: true,
+      projectDir: "/workspace/thechat",
+      projectLocked: true,
+      status: "running",
+      capabilities: {
+        loadSession: true,
+        prompt: { image: true, audio: false, embeddedContext: false },
+        modes: true,
+        configOptions: false,
+        plans: false,
+      },
+      onSelectProfile: vi.fn(),
+      onSelectProject: vi.fn(),
+    });
+
+    await renderHeader("/chat");
+
+    expect(screen.getByRole("combobox", { name: "Agent profile" })).toHaveValue(
+      "profile-1",
+    );
+    expect(screen.getByRole("combobox", { name: "Agent profile" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Project: /workspace/thechat" })).toBeDisabled();
+    expect(screen.getByText("Running")).toBeInTheDocument();
+    expect(screen.getByText("Session resume")).toBeInTheDocument();
+    expect(screen.getByText("Images")).toBeInTheDocument();
+    expect(screen.getByText("Modes")).toBeInTheDocument();
+    expect(screen.queryByText("Audio")).not.toBeInTheDocument();
   });
 });

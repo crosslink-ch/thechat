@@ -1,6 +1,7 @@
 import { type FormEvent, useEffect, useState } from "react";
 import { useAuthStore } from "../stores/auth";
 import { ApiAccessSettings } from "./settings-api-access";
+import { AgentProfilesSettings } from "../components/AgentProfilesDialog";
 
 function LockIcon() {
   return (
@@ -210,6 +211,7 @@ export function SettingsRoute() {
             </div>
           </form>
           <ApiAccessSettings key={user.id} />
+          <AgentProfilesSettings />
           </>
         )}
       </div>
