@@ -134,6 +134,18 @@ export function Sidebar() {
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
   const [channelMenuId, setChannelMenuId] = useState<string | null>(null);
   const profileMenuRef = useRef<HTMLDivElement | null>(null);
+  const activeWorkspaceButtonRef = useRef<HTMLButtonElement | null>(null);
+  const activeWorkspaceOptionRef = useRef<HTMLButtonElement | null>(null);
+
+  useEffect(() => {
+    activeWorkspaceButtonRef.current?.scrollIntoView?.({ block: "nearest" });
+  }, [activeWorkspace?.id, workspaces.length]);
+
+  useEffect(() => {
+    if (dropdownOpen) {
+      activeWorkspaceOptionRef.current?.scrollIntoView?.({ block: "nearest" });
+    }
+  }, [activeWorkspace?.id, dropdownOpen]);
 
   useEffect(() => {
     if (!profileMenuOpen) return;
@@ -152,7 +164,6 @@ export function Sidebar() {
   useEffect(() => setChannelMenuId(null), [activeWorkspace?.id]);
 
   const initials = user?.name?.trim().charAt(0).toUpperCase() ?? "?";
-  const workspaceInitial = (activeWorkspace?.name ?? "TheChat").trim().charAt(0).toUpperCase();
   const currentMembership = activeWorkspace?.members.find(
     (member) => member.userId === user?.id,
   );
@@ -184,11 +195,19 @@ export function Sidebar() {
     }
   };
 
+  const handleSelectWorkspace = (workspaceId: string) => {
+    void selectWorkspace(workspaceId);
+    setDropdownOpen(false);
+    setProfileMenuOpen(false);
+  };
+
   const renderWorkspaceDropdown = () => (
     <div className="relative">
       <button
+        type="button"
         className="flex w-full cursor-pointer items-center justify-between rounded-md border-none bg-transparent px-0 py-0 font-[inherit] text-[1rem] font-semibold text-text transition-colors duration-150 hover:text-text-secondary"
         onClick={() => setDropdownOpen(!dropdownOpen)}
+        aria-expanded={dropdownOpen}
       >
         <span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">
           {activeWorkspace ? activeWorkspace.name : "Select workspace"}
@@ -197,24 +216,29 @@ export function Sidebar() {
       </button>
       {dropdownOpen && (
         <div className="absolute top-full right-0 left-0 z-[15] mt-3 overflow-hidden rounded-md border border-border-strong bg-surface shadow-card animate-fade-in">
-          {workspaces.map((ws) => (
-            <button
-              key={ws.id}
-              className={`block w-full cursor-pointer border-none px-3 py-2 text-left font-[inherit] text-[0.9rem] transition-colors duration-100 ${
-                activeWorkspace?.id === ws.id
-                  ? "bg-elevated text-text"
-                  : "bg-transparent text-text-muted hover:bg-hover hover:text-text"
-              }`}
-              onClick={() => {
-                selectWorkspace(ws.id);
-                setDropdownOpen(false);
-                setProfileMenuOpen(false);
-              }}
-            >
-              {ws.name}
-            </button>
-          ))}
+          <div
+            role="group"
+            aria-label="Workspace choices"
+            className="max-h-[min(60vh,24rem)] overflow-y-auto"
+          >
+            {workspaces.map((ws) => (
+              <button
+                key={ws.id}
+                ref={activeWorkspace?.id === ws.id ? activeWorkspaceOptionRef : undefined}
+                type="button"
+                className={`block w-full cursor-pointer border-none px-3 py-2 text-left font-[inherit] text-[0.9rem] transition-colors duration-100 ${
+                  activeWorkspace?.id === ws.id
+                    ? "bg-elevated text-text"
+                    : "bg-transparent text-text-muted hover:bg-hover hover:text-text"
+                }`}
+                onClick={() => handleSelectWorkspace(ws.id)}
+              >
+                {ws.name}
+              </button>
+            ))}
+          </div>
           <button
+            type="button"
             className="block w-full cursor-pointer border-t border-border bg-transparent px-3 py-2 text-left font-[inherit] text-[0.9rem] text-accent transition-colors duration-100 hover:bg-hover hover:text-text"
             onClick={() => {
               openWorkspaceModal();
@@ -260,27 +284,62 @@ export function Sidebar() {
       className="flex h-full shrink-0 border-r border-border-subtle bg-surface transition-[margin-left] duration-200 ease-out"
       style={{ width: SIDEBAR_WIDTH, marginLeft: open ? 0 : -SIDEBAR_WIDTH }}
     >
-      <div className="flex w-[57px] shrink-0 flex-col items-center border-r border-[rgba(245,245,245,0.16)] bg-base py-2">
-        <button
-          className="relative flex size-9 cursor-pointer items-center justify-center rounded-lg border border-[rgba(245,245,245,0.5)] bg-surface text-[0.9rem] font-bold text-white transition-colors duration-150 hover:bg-hover"
-          onClick={() => {
-            if (user) setDropdownOpen((open) => !open);
-          }}
-          aria-label="Current workspace"
-          title={activeWorkspace?.name ?? "TheChat"}
+      <div className="flex min-h-0 w-[57px] shrink-0 flex-col items-center border-r border-[rgba(245,245,245,0.16)] bg-base">
+        <nav
+          aria-label="Workspaces"
+          className="flex min-h-0 w-full flex-1 flex-col items-center gap-3 overflow-y-auto py-2"
         >
-          <span className="absolute -left-[11px] h-[30px] w-0.5 rounded-r-sm bg-[#2f88bf]" />
-          {workspaceInitial}
-        </button>
+          {user ? (
+            workspaces.map((workspace) => {
+              const isActive = activeWorkspace?.id === workspace.id;
+              const workspaceInitial = workspace.name.trim().charAt(0).toUpperCase() || "?";
+              return (
+                <button
+                  key={workspace.id}
+                  ref={isActive ? activeWorkspaceButtonRef : undefined}
+                  type="button"
+                  className="group relative flex h-9 w-full shrink-0 cursor-pointer items-center justify-center border-0 bg-transparent p-0 focus-visible:outline-none"
+                  onClick={() => handleSelectWorkspace(workspace.id)}
+                  aria-current={isActive ? "true" : undefined}
+                  aria-label={`${workspace.name}${isActive ? ", current workspace" : ""}`}
+                  title={workspace.name}
+                >
+                  {isActive && (
+                    <span className="absolute left-0 h-[30px] w-0.5 rounded-r-sm bg-[#2f88bf]" />
+                  )}
+                  <span
+                    className={`flex size-9 shrink-0 items-center justify-center rounded-lg border bg-surface text-[0.9rem] font-bold transition-colors duration-150 group-hover:bg-hover group-focus-visible:ring-2 group-focus-visible:ring-accent ${
+                      isActive
+                        ? "border-[rgba(245,245,245,0.5)] text-white"
+                        : "border-transparent text-text-muted group-hover:border-[rgba(245,245,245,0.35)] group-hover:text-text"
+                    }`}
+                  >
+                    {workspaceInitial}
+                  </span>
+                </button>
+              );
+            })
+          ) : (
+            <button
+              type="button"
+              className="relative flex size-9 shrink-0 items-center justify-center rounded-lg border border-[rgba(245,245,245,0.5)] bg-surface text-[0.9rem] font-bold text-white"
+              aria-label="Current workspace"
+              title="TheChat"
+            >
+              T
+            </button>
+          )}
 
-        <button
-          className="mt-3 flex size-9 cursor-pointer items-center justify-center rounded-lg border border-dashed border-[rgba(245,245,245,0.5)] bg-surface text-text-dimmed transition-colors duration-150 hover:border-accent hover:text-text"
-          onClick={openWorkspaceModal}
-          aria-label="Create workspace"
-          title="Create workspace"
-        >
-          <PlusIcon />
-        </button>
+          <button
+            type="button"
+            className="flex size-9 shrink-0 cursor-pointer items-center justify-center rounded-lg border border-dashed border-[rgba(245,245,245,0.5)] bg-surface text-text-dimmed transition-colors duration-150 hover:border-accent hover:text-text"
+            onClick={openWorkspaceModal}
+            aria-label="Create workspace"
+            title="Create workspace"
+          >
+            <PlusIcon />
+          </button>
+        </nav>
       </div>
 
       <div className="flex min-w-0 flex-1 flex-col bg-surface">

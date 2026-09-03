@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { render, screen, act, fireEvent, waitFor } from "@testing-library/react";
+import { render, screen, act, fireEvent, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import {
   RouterProvider,
@@ -71,6 +71,16 @@ const workspaceList: WorkspaceListItem[] = [
   { id: "ws-1", name: "Team Alpha", role: "owner", createdAt: "2026-01-01", updatedAt: "2026-01-01" },
   { id: "ws-2", name: "Team Beta", role: "member", createdAt: "2026-01-02", updatedAt: "2026-01-02" },
 ];
+
+function createWorkspaceList(count: number): WorkspaceListItem[] {
+  return Array.from({ length: count }, (_, index) => ({
+    id: `ws-${index + 1}`,
+    name: `Workspace ${index + 1}`,
+    role: "member",
+    createdAt: "2026-01-01",
+    updatedAt: "2026-01-01",
+  }));
+}
 
 const activeWorkspace: WorkspaceWithDetails = {
   id: "ws-1",
@@ -203,6 +213,142 @@ describe("Sidebar", () => {
     expect(screen.getByText("Settings")).toBeInTheDocument();
     expect(screen.getByText("Log out")).toBeInTheDocument();
     expect(screen.queryByText("ChatGPT")).not.toBeInTheDocument();
+  });
+
+  it("shows every workspace in the workspace rail and switches directly", async () => {
+    const ui = userEvent.setup();
+    const selectWorkspace = vi.fn().mockResolvedValue(undefined);
+    useAuthStore.setState({ user, token: "test-token" });
+    useWorkspacesStore.setState({
+      workspaces: workspaceList,
+      activeWorkspace,
+      selectWorkspace,
+    });
+
+    await renderWithRouter(<Sidebar />);
+
+    const rail = screen.getByRole("navigation", { name: "Workspaces" });
+    const activeButton = within(rail).getByRole("button", {
+      name: "Team Alpha, current workspace",
+    });
+    const otherButton = within(rail).getByRole("button", {
+      name: "Team Beta",
+    });
+
+    expect(activeButton).toHaveAttribute("aria-current", "true");
+    expect(activeButton).toHaveAttribute("title", "Team Alpha");
+    expect(otherButton).toHaveAttribute("title", "Team Beta");
+
+    await ui.click(otherButton);
+    expect(selectWorkspace).toHaveBeenCalledOnce();
+    expect(selectWorkspace).toHaveBeenCalledWith("ws-2");
+  });
+
+  it("keeps one hundred workspaces in a bounded, scrollable rail", async () => {
+    const manyWorkspaces = createWorkspaceList(100);
+    const lastWorkspace: WorkspaceWithDetails = {
+      ...activeWorkspace,
+      id: "ws-100",
+      name: "Workspace 100",
+    };
+    useAuthStore.setState({ user, token: "test-token" });
+    useWorkspacesStore.setState({
+      workspaces: manyWorkspaces,
+      activeWorkspace: lastWorkspace,
+    });
+
+    await renderWithRouter(<Sidebar />);
+
+    const rail = screen.getByRole("navigation", { name: "Workspaces" });
+    expect(within(rail).getAllByRole("button")).toHaveLength(101);
+    expect(
+      within(rail).getByRole("button", {
+        name: "Workspace 100, current workspace",
+      }),
+    ).toBeInTheDocument();
+    expect(within(rail).getByRole("button", { name: "Create workspace" })).toBeInTheDocument();
+    expect(rail).toHaveClass("min-h-0", "flex-1", "overflow-y-auto");
+    expect(rail.parentElement).toHaveClass("min-h-0");
+  });
+
+  it("brings the active workspace into view in a long rail", async () => {
+    const scrollIntoView = vi.fn();
+    const originalScrollIntoView = HTMLElement.prototype.scrollIntoView;
+    HTMLElement.prototype.scrollIntoView = scrollIntoView;
+    const manyWorkspaces = createWorkspaceList(100);
+
+    try {
+      useAuthStore.setState({ user, token: "test-token" });
+      useWorkspacesStore.setState({
+        workspaces: manyWorkspaces,
+        activeWorkspace: {
+          ...activeWorkspace,
+          id: "ws-100",
+          name: "Workspace 100",
+        },
+      });
+
+      await renderWithRouter(<Sidebar />);
+
+      expect(scrollIntoView).toHaveBeenCalledWith({ block: "nearest" });
+    } finally {
+      HTMLElement.prototype.scrollIntoView = originalScrollIntoView;
+    }
+  });
+
+  it("bounds the workspace dropdown while keeping creation available", async () => {
+    const ui = userEvent.setup();
+    const manyWorkspaces = createWorkspaceList(100);
+    useAuthStore.setState({ user, token: "test-token" });
+    useWorkspacesStore.setState({
+      workspaces: manyWorkspaces,
+      activeWorkspace: {
+        ...activeWorkspace,
+        id: "ws-100",
+        name: "Workspace 100",
+      },
+    });
+
+    await renderWithRouter(<Sidebar />);
+    await ui.click(screen.getByRole("button", { name: "Workspace 100" }));
+
+    const dropdownList = screen.getByRole("group", { name: "Workspace choices" });
+    expect(dropdownList).toHaveClass("overflow-y-auto");
+    expect(within(dropdownList).getAllByRole("button")).toHaveLength(100);
+    const dropdown = dropdownList.parentElement;
+    expect(dropdown).not.toBeNull();
+    const createButton = within(dropdown!).getByRole("button", {
+      name: "Create workspace",
+    });
+    expect(dropdownList).not.toContainElement(createButton);
+  });
+
+  it("brings the active workspace into view when opening a long dropdown", async () => {
+    const ui = userEvent.setup();
+    const scrollIntoView = vi.fn();
+    const originalScrollIntoView = HTMLElement.prototype.scrollIntoView;
+    HTMLElement.prototype.scrollIntoView = scrollIntoView;
+    const manyWorkspaces = createWorkspaceList(100);
+
+    try {
+      useAuthStore.setState({ user, token: "test-token" });
+      useWorkspacesStore.setState({
+        workspaces: manyWorkspaces,
+        activeWorkspace: {
+          ...activeWorkspace,
+          id: "ws-100",
+          name: "Workspace 100",
+        },
+      });
+
+      await renderWithRouter(<Sidebar />);
+      scrollIntoView.mockClear();
+      await ui.click(screen.getByRole("button", { name: "Workspace 100" }));
+
+      expect(scrollIntoView).toHaveBeenCalledWith({ block: "nearest" });
+    } finally {
+      HTMLElement.prototype.scrollIntoView = originalScrollIntoView;
+    }
   });
 
   it("renders channels and members when workspace is active", async () => {
