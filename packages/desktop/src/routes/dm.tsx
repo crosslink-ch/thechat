@@ -32,6 +32,7 @@ import {
   recordApprovalDecision,
   useHermesApprovalsStore,
 } from "../stores/hermes-approvals";
+import { useHermesClarificationsStore } from "../stores/hermes-clarifications";
 import {
   hermesScopeKey,
   useHermesIndicatorsStore,
@@ -193,6 +194,7 @@ export function DmRoute() {
         conversationId,
         runtime,
         useHermesApprovalsStore.getState().decisions,
+        useHermesClarificationsStore.getState().responses,
       );
   }, [conversationId, isHermesDm, runtime]);
 

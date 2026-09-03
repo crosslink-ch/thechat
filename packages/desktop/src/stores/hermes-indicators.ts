@@ -14,6 +14,7 @@ import {
   deriveClarifyStates,
   isClarifyRequestEvent,
   isClarifyResolutionEvent,
+  type ClarifyResponse,
 } from "../lib/hermes-clarifications";
 import { isTerminalHermesProgressEvent } from "../lib/bot-runtime-state";
 
@@ -24,8 +25,9 @@ import { isTerminalHermesProgressEvent } from "../lib/bot-runtime-state";
  * - `pendingApprovals`: approval.request events that have not been resolved
  *   yet (by an approval.resolved event, a local decision, or the invocation
  *   finishing), oldest first.
- * - `pendingClarifications`: clarify.request events awaiting an exact
- *   clarify.resolved transition, tracked even when another DM/thread is open.
+ * - `pendingClarifications`: clarify.request events that have not been resolved
+ *   yet (by a clarify.resolved event, a locally accepted response, or the
+ *   invocation finishing), tracked even when another DM/thread is open.
  * - `unreadScopes`: task scopes (conversation + thread) whose invocation
  *   finished while the user was not viewing that scope. Cleared when the
  *   scope becomes visible.
@@ -70,10 +72,12 @@ interface HermesIndicatorsStore {
   ) => void;
   markScopeUnread: (scope: HermesUnreadScope) => void;
   resolveApproval: (eventId: string) => void;
+  resolveClarification: (eventId: string) => void;
   seedFromSnapshot: (
     conversationId: string,
     snapshot: BotRuntimeSnapshot,
     localDecisions: Record<string, ApprovalDecision>,
+    localClarificationResponses: Record<string, ClarifyResponse>,
   ) => void;
   setVisibleScope: (scopeKey: string | null) => void;
   resetForTests: () => void;
@@ -401,7 +405,25 @@ export const useHermesIndicatorsStore = create<HermesIndicatorsStore>()((set, ge
     });
   },
 
-  seedFromSnapshot: (conversationId, snapshot, localDecisions) => {
+  resolveClarification: (eventId) => {
+    set((state) => {
+      if (!state.pendingClarifications.some((item) => item.eventId === eventId)) {
+        return state;
+      }
+      return {
+        pendingClarifications: state.pendingClarifications.filter(
+          (item) => item.eventId !== eventId,
+        ),
+      };
+    });
+  },
+
+  seedFromSnapshot: (
+    conversationId,
+    snapshot,
+    localDecisions,
+    localClarificationResponses,
+  ) => {
     set((state) => {
       const activeInvocations = snapshot.invocations.filter(
         (invocation) => {
@@ -447,7 +469,10 @@ export const useHermesIndicatorsStore = create<HermesIndicatorsStore>()((set, ge
             sessionKey: payloadString(approval.event, "sessionKey"),
           });
         }
-        for (const clarify of deriveClarifyStates(events, {})) {
+        for (const clarify of deriveClarifyStates(
+          events,
+          localClarificationResponses,
+        )) {
           if (clarify.status !== "pending") continue;
           pendingClarifications.push({
             eventId: clarify.event.id,
@@ -508,6 +533,11 @@ export const useHermesIndicatorsStore = create<HermesIndicatorsStore>()((set, ge
 /** Resolve a pending approval without subscribing — for event handlers. */
 export function resolveHermesApprovalIndicator(eventId: string) {
   useHermesIndicatorsStore.getState().resolveApproval(eventId);
+}
+
+/** Resolve a pending clarification without subscribing — for event handlers. */
+export function resolveHermesClarificationIndicator(eventId: string) {
+  useHermesIndicatorsStore.getState().resolveClarification(eventId);
 }
 
 function payloadString(
