@@ -74,7 +74,7 @@ const MAX_INTERACTION_RESPONSE_LENGTH = 4_000;
 const MAX_CLARIFY_CHOICE_LENGTH = 500;
 const MAX_CLARIFY_CHOICES = 20;
 
-type BotKind = "webhook" | "hermes";
+type BotKind = "webhook" | "hermes" | "hermes-rpc";
 type ConversationType = "direct" | "group";
 type BotInvocationStatus = "queued" | "running" | "claimed" | "completed" | "failed" | "cancelled";
 

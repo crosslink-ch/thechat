@@ -15,6 +15,7 @@ import { inviteRoutes } from "./invites";
 import { botWorkspaceInviteRoutes } from "./bot-workspace-invites";
 import { mcpRoutes } from "./mcp";
 import { hermesRoutes } from "./hermes";
+import { hermesRpcRoutes } from "./hermes-rpc";
 import { hermesPlatformRoutes } from "./hermes-platform";
 import { botRuntimeRoutes } from "./bot-runtime";
 import { attachmentRoutes } from "./attachments";
@@ -68,6 +69,7 @@ const app = new Elysia()
   .use(wsRoutes)
   .use(botRoutes)
   .use(hermesRoutes)
+  .use(hermesRpcRoutes)
   .use(hermesPlatformRoutes)
   .use(botRuntimeRoutes)
   .use(inviteRoutes)

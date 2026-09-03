@@ -57,6 +57,9 @@ export async function resolveMessageBotTargetIds(
   return participantBots
     .filter((bot) => {
       if (bot.botUserId === input.senderId) return false;
+      // Direct Hermes is a read-only RPC proof of concept. It has no message
+      // adapter and must never enter the webhook/Hermes invocation runtime.
+      if (bot.kind === "hermes-rpc") return false;
       if (bot.kind === "webhook" && !bot.webhookUrl) return false;
 
       const escaped = bot.botName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");

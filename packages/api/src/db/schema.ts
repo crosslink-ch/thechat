@@ -44,7 +44,11 @@ export const botWorkspaceInviteStatusEnum = pgEnum(
   "bot_workspace_invite_status",
   ["pending", "accepted", "declined", "cancelled"],
 );
-export const botKindEnum = pgEnum("bot_kind", ["webhook", "hermes"]);
+export const botKindEnum = pgEnum("bot_kind", [
+  "webhook",
+  "hermes",
+  "hermes-rpc",
+]);
 export const attachmentStatusEnum = pgEnum("attachment_status", [
   "pending_upload",
   "processing",
@@ -370,6 +374,21 @@ export const hermesBotConfigs = pgTable("hermes_bot_configs", {
   baseUrl: text("base_url"),
   apiKeyEncrypted: text("api_key_encrypted"),
   defaultMode: varchar("default_mode", { length: 20 }).notNull().default("run"),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .defaultNow()
+    .notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .defaultNow()
+    .notNull()
+    .$onUpdate(() => new Date()),
+});
+
+export const hermesRpcBotConfigs = pgTable("hermes_rpc_bot_configs", {
+  botId: uuid("bot_id")
+    .primaryKey()
+    .references(() => bots.id, { onDelete: "cascade" }),
+  endpoint: text("endpoint").notNull(),
+  gatewayTokenEncrypted: text("gateway_token_encrypted").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true })
     .defaultNow()
     .notNull(),

@@ -143,6 +143,42 @@ describe("HermesBotModal", () => {
     expect(await screen.findByText("Koda was added.", { exact: false })).toBeInTheDocument();
   });
 
+  it("creates a Direct Hermes bot with gateway credentials", async () => {
+    render(<HermesBotModal />);
+
+    fireEvent.change(screen.getByLabelText("Bot type"), {
+      target: { value: "hermes-rpc" },
+    });
+    fireEvent.change(screen.getByLabelText("Bot name"), {
+      target: { value: "Direct Hermes" },
+    });
+    fireEvent.change(screen.getByLabelText("Hermes gateway URL"), {
+      target: { value: "https://hermes.example.com" },
+    });
+    fireEvent.change(screen.getByLabelText("Hermes gateway token"), {
+      target: { value: "gateway-secret" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Add Bot" }));
+
+    await waitFor(() => expect(createPostMock).toHaveBeenCalledTimes(1));
+    expect(createPostMock).toHaveBeenCalledWith(
+      {
+        kind: "hermes-rpc",
+        workspaceId: activeWorkspace.id,
+        name: "Direct Hermes",
+        hermesRpc: {
+          endpoint: "https://hermes.example.com",
+          gatewayToken: "gateway-secret",
+        },
+      },
+      { headers: { authorization: "Bearer human-token" } },
+    );
+    expect(
+      await screen.findByText("Direct Hermes was added as a Direct Hermes bot."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Copy .env")).not.toBeInTheDocument();
+  });
+
   it("creates in a selected workspace without requiring an active workspace", async () => {
     useWorkspacesStore.setState({ activeWorkspace: null });
     const botCreated = vi.fn();

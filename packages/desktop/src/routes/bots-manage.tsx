@@ -23,10 +23,15 @@ type WorkspaceRow = {
   connected: boolean;
 };
 
+function botKindLabel(kind: OwnedBot["kind"]) {
+  if (kind === "hermes-rpc") return "Direct Hermes";
+  return kind === "hermes" ? "Hermes" : "Webhook";
+}
+
 function BotKindBadge({ kind }: { kind: OwnedBot["kind"] }) {
   return (
     <span className="rounded-full border border-border bg-base px-2 py-0.5 text-[0.714rem] font-semibold uppercase tracking-wide text-text-dimmed">
-      {kind === "hermes" ? "Hermes" : "Webhook"}
+      {botKindLabel(kind)}
     </span>
   );
 }
@@ -350,7 +355,7 @@ export function BotsManageRoute() {
             onClick={openHermesBotModal}
             className="cursor-pointer rounded-lg border border-border-strong bg-elevated px-4 py-2 text-[0.857rem] font-semibold text-text transition-colors hover:bg-button"
           >
-            Add Hermes bot
+            Add bot
           </button>
         </div>
 
@@ -383,7 +388,7 @@ export function BotsManageRoute() {
               onClick={openHermesBotModal}
               className="mt-5 cursor-pointer rounded-lg border border-border-strong bg-elevated px-4 py-2 text-[0.857rem] font-semibold text-text transition-colors hover:bg-button"
             >
-              Add Hermes bot
+              Add bot
             </button>
           </div>
         ) : (
@@ -415,7 +420,7 @@ export function BotsManageRoute() {
                         />
                       </div>
                       <div className="mt-1.5 flex items-center gap-2 text-[0.714rem] text-text-dimmed">
-                        <span>{bot.kind === "hermes" ? "Hermes" : "Webhook"}</span>
+                        <span>{botKindLabel(bot.kind)}</span>
                         <span>·</span>
                         <span>{bot.workspaces.length} workspace{bot.workspaces.length === 1 ? "" : "s"}</span>
                       </div>

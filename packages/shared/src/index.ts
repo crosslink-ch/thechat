@@ -325,7 +325,7 @@ export type WsClientEvent =
 
 // -- Bot Types --
 
-export type BotKind = "webhook" | "hermes";
+export type BotKind = "webhook" | "hermes" | "hermes-rpc";
 
 export interface BotWorkspaceMembership {
   id: string;
@@ -365,6 +365,21 @@ export interface OwnedBot extends Bot {
   webhookSecret: string;
   apiKeyEnabled: boolean;
   workspaces: BotWorkspaceMembership[];
+}
+
+/** Read-only session metadata returned by a Direct Hermes bot. */
+export interface HermesRpcSessionPublic {
+  id: string;
+  resolvedId: string | null;
+  title: string;
+  preview: string;
+  startedAt: number;
+  messageCount: number;
+  source: string;
+}
+
+export interface HermesRpcSessionsResponse {
+  sessions: HermesRpcSessionPublic[];
 }
 
 export interface BotWithApiKey extends Bot {

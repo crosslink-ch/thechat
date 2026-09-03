@@ -9,6 +9,7 @@ import {
   conversationParticipants,
   conversations,
   eventOutbox,
+  hermesRpcBotConfigs,
   messages,
   users,
   workspaces,
@@ -24,6 +25,7 @@ import { conversationRoutes } from "../conversations";
 import { messageRoutes } from "../messages";
 import { botRuntimeRoutes } from "../bot-runtime";
 import { hermesPlatformRoutes } from "../hermes-platform";
+import { hermesRpcRoutes } from "../hermes-rpc";
 import { botRoutes } from "./index";
 import {
   __botRuntimeInternalsForTests,
@@ -63,7 +65,8 @@ const app = new Elysia()
   .use(messageRoutes)
   .use(botRuntimeRoutes)
   .use(hermesPlatformRoutes)
-  .use(botRoutes);
+  .use(botRoutes)
+  .use(hermesRpcRoutes);
 
 function uniqueEmail() {
   return `test-${crypto.randomUUID()}@test.com`;
@@ -423,6 +426,115 @@ describe("Bots: Create", () => {
     });
     expect(storedKey.key).not.toBe(res.body.apiKey);
     expect(storedKey.key).not.toContain(res.body.apiKey);
+  });
+
+  test("creates a Direct Hermes bot and proxies owner-only session.list", async () => {
+    const previousSecret = process.env.THECHAT_SECRET_KEY;
+    process.env.THECHAT_SECRET_KEY = "direct-hermes-test-encryption-key";
+    const gatewayToken = "direct-hermes-gateway-secret";
+    let rpcCalls = 0;
+    let rpcFrame: Record<string, any> | null = null;
+    const gateway = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch(request, server) {
+        expect(new URL(request.url).searchParams.get("token")).toBe(gatewayToken);
+        if (server.upgrade(request)) return;
+        return new Response("WebSocket required", { status: 426 });
+      },
+      websocket: {
+        message(socket, raw) {
+          rpcCalls += 1;
+          rpcFrame = JSON.parse(String(raw));
+          socket.send(JSON.stringify({
+            jsonrpc: "2.0",
+            id: rpcFrame!.id,
+            result: {
+              sessions: [{
+                id: "stored-session-1",
+                resolved_id: "stored-session-2",
+                title: "Direct RPC proof",
+                preview: "Listed through TheChat",
+                started_at: 1_788_000_000,
+                message_count: 4,
+                source: "thechat",
+              }],
+            },
+          }));
+        },
+      },
+    });
+
+    try {
+      const owner = await registerUser("DirectHermesOwner");
+      const outsider = await registerUser("DirectHermesOutsider");
+      const { workspaceId } = await createWorkspaceWithGeneralChannel(
+        owner.token,
+        "Direct Hermes Workspace",
+      );
+      const created = await createBot(
+        owner.token,
+        "Direct Hermes",
+        undefined,
+        {
+          kind: "hermes-rpc",
+          workspaceId,
+          hermesRpc: {
+            endpoint: `http://127.0.0.1:${gateway.port}`,
+            gatewayToken,
+          },
+        },
+      );
+
+      expect(created.status).toBe(200);
+      expect(created.body.kind).toBe("hermes-rpc");
+      expect(created.body.attachmentAccess).toBe(false);
+      expect(created.body).not.toHaveProperty("webhookSecret");
+
+      const [storedConfig] = await db
+        .select()
+        .from(hermesRpcBotConfigs)
+        .where(eq(hermesRpcBotConfigs.botId, created.body.id));
+      expect(storedConfig.endpoint).toBe(
+        `ws://127.0.0.1:${gateway.port}/api/ws`,
+      );
+      expect(storedConfig.gatewayTokenEncrypted).not.toContain(gatewayToken);
+
+      const listed = await req(
+        "GET",
+        `/bots/${created.body.id}/hermes-rpc/sessions`,
+        undefined,
+        owner.token,
+      );
+      expect(listed.status).toBe(200);
+      expect(rpcFrame).toMatchObject({
+        jsonrpc: "2.0",
+        method: "session.list",
+        params: { limit: 200 },
+      });
+      expect(listed.body.sessions).toEqual([{
+        id: "stored-session-1",
+        resolvedId: "stored-session-2",
+        title: "Direct RPC proof",
+        preview: "Listed through TheChat",
+        startedAt: 1_788_000_000,
+        messageCount: 4,
+        source: "thechat",
+      }]);
+
+      const forbidden = await req(
+        "GET",
+        `/bots/${created.body.id}/hermes-rpc/sessions`,
+        undefined,
+        outsider.token,
+      );
+      expect(forbidden.status).toBe(403);
+      expect(rpcCalls).toBe(1);
+    } finally {
+      gateway.stop(true);
+      if (previousSecret === undefined) delete process.env.THECHAT_SECRET_KEY;
+      else process.env.THECHAT_SECRET_KEY = previousSecret;
+    }
   });
 
   test("only humans can create bots — bot tries to create bot → 403", async () => {

@@ -67,9 +67,13 @@ function HermesBotModalInner({ returnFocus }: { returnFocus: HTMLElement | null 
       "",
   );
   const [name, setName] = useState("");
+  const [kind, setKind] = useState<"hermes" | "hermes-rpc">("hermes");
+  const [gatewayUrl, setGatewayUrl] = useState("");
+  const [gatewayToken, setGatewayToken] = useState("");
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [createdBotName, setCreatedBotName] = useState("");
+  const [createdKind, setCreatedKind] = useState<"hermes" | "hermes-rpc">("hermes");
   const [botToken, setBotToken] = useState("");
   const [copied, setCopied] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -101,14 +105,33 @@ function HermesBotModalInner({ returnFocus }: { returnFocus: HTMLElement | null 
       setError("Bot name is required.");
       return;
     }
+    if (kind === "hermes-rpc" && !gatewayUrl.trim()) {
+      setError("Hermes gateway URL is required.");
+      return;
+    }
+    if (kind === "hermes-rpc" && !gatewayToken.trim()) {
+      setError("Hermes gateway token is required.");
+      return;
+    }
     setSubmitting(true);
     try {
+      const payload = kind === "hermes-rpc"
+        ? {
+            kind,
+            workspaceId,
+            name: name.trim(),
+            hermesRpc: {
+              endpoint: gatewayUrl.trim(),
+              gatewayToken: gatewayToken.trim(),
+            },
+          }
+        : {
+            kind,
+            workspaceId,
+            name: name.trim(),
+          };
       const { data: bot, error: createError } = await api.bots.create.post(
-        {
-          kind: "hermes",
-          workspaceId,
-          name: name.trim(),
-        },
+        payload,
         auth(token),
       );
       if (createError) {
@@ -116,13 +139,16 @@ function HermesBotModalInner({ returnFocus }: { returnFocus: HTMLElement | null 
       }
 
       const apiKey = (bot as any)?.apiKey;
-      if (!apiKey) throw new Error("Hermes bot was created without a bot token");
+      if (kind === "hermes" && !apiKey) {
+        throw new Error("Hermes bot was created without a bot token");
+      }
 
       if (activeWorkspace?.id === workspaceId) {
         await selectWorkspace(workspaceId);
       }
       setCreatedBotName(name.trim());
-      setBotToken(apiKey);
+      setCreatedKind(kind);
+      setBotToken(apiKey ?? "");
       announceBotCreated();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong");
@@ -188,7 +214,25 @@ function HermesBotModalInner({ returnFocus }: { returnFocus: HTMLElement | null 
             Choose an eligible workspace and create a Hermes bot. Its setup credential is shown once.
           </Dialog.Description>
 
-        {botToken ? (
+        {createdBotName ? (
+          createdKind === "hermes-rpc" ? (
+            <div>
+              <p className="mb-3 text-[0.929rem] leading-relaxed text-text-muted">
+                {createdBotName} was added as a Direct Hermes bot.
+              </p>
+              <p className="mb-4 text-[0.857rem] leading-relaxed text-text-muted">
+                Click the bot under Bots in the workspace sidebar to proxy a
+                session.list request and show the returned sessions.
+              </p>
+              <button
+                className="block w-full cursor-pointer rounded-lg border border-border-strong bg-elevated px-3 py-2.5 font-[inherit] text-[0.929rem] font-medium text-text transition-colors duration-150 hover:bg-button"
+                type="button"
+                onClick={closeHermesBotModal}
+              >
+                Done
+              </button>
+            </div>
+          ) : (
           <div>
             <p className="mb-3 text-[0.929rem] leading-relaxed text-text-muted">
               {createdBotName} was added. Add these variables to the Hermes Gateway .env file for this bot:
@@ -219,6 +263,7 @@ function HermesBotModalInner({ returnFocus }: { returnFocus: HTMLElement | null 
               </button>
             </div>
           </div>
+          )
         ) : (
         <form onSubmit={handleSubmit} noValidate>
           <label className="mb-3.5 block">
@@ -243,6 +288,21 @@ function HermesBotModalInner({ returnFocus }: { returnFocus: HTMLElement | null 
           </label>
 
           <label className="mb-3.5 block">
+            <span className="mb-1.5 block text-[0.857rem] font-medium text-text-muted">Bot type</span>
+            <select
+              aria-label="Bot type"
+              className="block w-full rounded-lg border border-border bg-base px-3.5 py-2.5 font-[inherit] text-[0.929rem] text-text outline-none transition-colors duration-150 focus:border-border-focus"
+              value={kind}
+              onChange={(event) =>
+                setKind(event.target.value as "hermes" | "hermes-rpc")
+              }
+            >
+              <option value="hermes">Hermes platform bot</option>
+              <option value="hermes-rpc">Direct Hermes (JSON-RPC)</option>
+            </select>
+          </label>
+
+          <label className="mb-3.5 block">
             <span className="mb-1.5 block text-[0.857rem] font-medium text-text-muted">Bot name</span>
             <input
               ref={inputRef}
@@ -253,6 +313,43 @@ function HermesBotModalInner({ returnFocus }: { returnFocus: HTMLElement | null 
               onChange={(e) => setName(e.target.value)}
             />
           </label>
+
+          {kind === "hermes-rpc" && (
+            <div className="mb-3.5 space-y-3 rounded-lg border border-border bg-raised/40 p-3">
+              <label className="block">
+                <span className="mb-1.5 block text-[0.857rem] font-medium text-text-muted">
+                  Hermes gateway URL
+                </span>
+                <input
+                  aria-label="Hermes gateway URL"
+                  className="block w-full rounded-lg border border-border bg-base px-3.5 py-2.5 font-mono text-[0.857rem] text-text outline-none transition-colors duration-150 placeholder:text-text-placeholder focus:border-border-focus"
+                  type="url"
+                  placeholder="https://hermes.example.com"
+                  value={gatewayUrl}
+                  onChange={(event) => setGatewayUrl(event.target.value)}
+                  spellCheck={false}
+                />
+              </label>
+              <label className="block">
+                <span className="mb-1.5 block text-[0.857rem] font-medium text-text-muted">
+                  Gateway session token
+                </span>
+                <input
+                  aria-label="Hermes gateway token"
+                  className="block w-full rounded-lg border border-border bg-base px-3.5 py-2.5 font-mono text-[0.857rem] text-text outline-none transition-colors duration-150 placeholder:text-text-placeholder focus:border-border-focus"
+                  type="password"
+                  placeholder="Hermes dashboard session token"
+                  value={gatewayToken}
+                  onChange={(event) => setGatewayToken(event.target.value)}
+                  autoComplete="off"
+                />
+              </label>
+              <p className="text-[0.714rem] leading-relaxed text-text-dimmed">
+                TheChat stores the token encrypted and sends it only from the
+                API proxy to Hermes /api/ws.
+              </p>
+            </div>
+          )}
 
           {error && (
             <div

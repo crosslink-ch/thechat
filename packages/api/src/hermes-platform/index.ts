@@ -162,7 +162,7 @@ type HermesPlatformBot = {
   id: string;
   userId: string;
   name: string;
-  kind: "webhook" | "hermes";
+  kind: "webhook" | "hermes" | "hermes-rpc";
 };
 
 function authHeaderFrom(headers: Record<string, string | undefined> | Headers) {

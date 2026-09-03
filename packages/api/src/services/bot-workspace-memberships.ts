@@ -27,7 +27,7 @@ type BotRecord = {
   userId: string;
   ownerId: string;
   name: string;
-  kind: "webhook" | "hermes";
+  kind: "webhook" | "hermes" | "hermes-rpc";
 };
 
 type InviteRecord = {

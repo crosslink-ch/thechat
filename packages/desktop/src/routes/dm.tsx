@@ -20,6 +20,7 @@ import { useChannelChat } from "../hooks/useChannelChat";
 import { ChannelChatView } from "../components/ChannelChatView";
 import { HermesDmChatView } from "../components/HermesDmChatView";
 import { HermesRuntimePanel } from "../components/HermesRuntimePanel";
+import { DirectHermesSessionsView } from "../components/DirectHermesSessionsView";
 import { closePaletteAndRefocus } from "../CommandPalette";
 import type { Command } from "../commands";
 import { wsEvents, type WsEvents } from "../lib/ws-events";
@@ -71,6 +72,9 @@ export function DmRoute() {
     [conversation, user?.id],
   );
   const isHermesDm = conversation?.type === "direct" && otherParticipant?.bot?.kind === "hermes";
+  const isDirectHermesDm =
+    conversation?.type === "direct" &&
+    otherParticipant?.bot?.kind === "hermes-rpc";
   const registeredBotCommands = otherParticipant?.bot?.commands;
   const slashCommands = useMemo(
     () => buildHermesSlashCommands(registeredBotCommands),
@@ -125,7 +129,9 @@ export function DmRoute() {
   activeHermesProgressRef.current = activeHermesProgress;
   const threadsRef = useRef(threads);
   threadsRef.current = threads;
-  const chatConversationId = conversation ? conversationId : null;
+  const chatConversationId = conversation && !isDirectHermesDm
+    ? conversationId
+    : null;
   const taskActive = activeHermesProgress.taskActive;
 
   // Attention indicators: which tasks in this DM need approval or finished unread.
@@ -200,7 +206,7 @@ export function DmRoute() {
     conversationId: chatConversationId,
     threadId: isHermesDm ? activeThreadId : null,
     unthreadedOnly: generalThreadActive,
-    enabled: !draftTaskActive,
+    enabled: !draftTaskActive && !isDirectHermesDm,
     token,
     wsSendMessage,
     selfUser: user,
@@ -592,7 +598,13 @@ export function DmRoute() {
   return (
     <div className="flex min-h-0 flex-1">
       <div className="flex min-w-0 flex-1 flex-col">
-        {isHermesDm ? (
+        {isDirectHermesDm && otherParticipant?.bot ? (
+          <DirectHermesSessionsView
+            botId={otherParticipant.bot.id}
+            botName={otherParticipant.user.name}
+            token={token}
+          />
+        ) : isHermesDm ? (
           <HermesDmChatView
             messages={draftTaskActive ? [] : channelChat.messages}
             loading={

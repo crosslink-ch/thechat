@@ -29,12 +29,29 @@ const httpWebhookUrlSchema = z.string().url().refine((value) => {
   }
 }, "Webhook URL must use http or https");
 
+const hermesRpcConnectionSchema = z.object({
+  endpoint: z
+    .string()
+    .trim()
+    .min(1, "Hermes gateway URL is required")
+    .max(2048),
+  gatewayToken: z
+    .string()
+    .trim()
+    .min(1, "Hermes gateway token is required")
+    .max(4096),
+});
+
 const createSchema = z.object({
   name: z.string().trim().min(1, "Bot name is required"),
   webhookUrl: httpWebhookUrlSchema.nullish(),
-  kind: z.enum(["webhook", "hermes"]).optional().default("webhook"),
+  kind: z
+    .enum(["webhook", "hermes", "hermes-rpc"])
+    .optional()
+    .default("webhook"),
   attachmentAccess: z.boolean().optional().default(true),
   workspaceId: z.string().trim().min(1, "Workspace ID is required").optional(),
+  hermesRpc: hermesRpcConnectionSchema.optional(),
 });
 
 const updateSchema = z.object({
@@ -111,20 +128,34 @@ export const botRoutes = new Elysia({ prefix: "/bots" })
       return { error: parsed.error.issues[0]?.message ?? "Invalid input" };
     }
 
-    const { name, webhookUrl, kind, attachmentAccess, workspaceId } = parsed.data;
+    const {
+      name,
+      webhookUrl,
+      kind,
+      attachmentAccess,
+      workspaceId,
+      hermesRpc,
+    } = parsed.data;
 
     try {
-      if (kind === "hermes") {
+      if (kind === "hermes" || kind === "hermes-rpc") {
         if (!workspaceId) {
           set.status = 400;
           return { error: "Workspace ID is required for Hermes bots" };
         }
+        if (kind === "hermes-rpc" && !hermesRpc) {
+          set.status = 400;
+          return { error: "Hermes gateway URL and token are required" };
+        }
         const bot = await createHermesBotInWorkspace(
           name,
-          webhookUrl ?? null,
+          kind === "hermes" ? webhookUrl ?? null : null,
           user.id,
           workspaceId,
-          attachmentAccess,
+          kind === "hermes" ? attachmentAccess : false,
+          kind === "hermes-rpc"
+            ? { kind, hermesRpc: hermesRpc! }
+            : undefined,
         );
         const { webhookSecret: _webhookSecret, ...publicBot } = bot;
         return publicBot;

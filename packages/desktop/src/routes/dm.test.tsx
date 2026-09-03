@@ -23,6 +23,7 @@ const mocks = vi.hoisted(() => ({
   submitHermesInteraction: vi.fn(),
   threads: [] as any[],
   messageQueryStale: false,
+  botKind: "hermes" as "hermes" | "hermes-rpc",
 }));
 
 vi.mock("../stores/auth", () => ({
@@ -65,7 +66,7 @@ vi.mock("../hooks/useConversationDetail", () => ({
         {
           userId: "bot-user-1",
           user: { id: "bot-user-1", name: "Hermes", type: "bot" },
-          bot: { id: "bot-1", kind: "hermes", commands: [] },
+          bot: { id: "bot-1", kind: mocks.botKind },
         },
       ],
     },
@@ -200,6 +201,14 @@ vi.mock("../components/HermesDmChatView", async () => {
   };
 });
 
+vi.mock("../components/DirectHermesSessionsView", () => ({
+  DirectHermesSessionsView: ({ botId, botName }: any) => (
+    <div data-testid="direct-hermes-sessions" data-bot-id={botId}>
+      {botName}
+    </div>
+  ),
+}));
+
 vi.mock("../components/HermesRuntimePanel", () => ({
   HermesRuntimePanel: ({
     onCreateThread,
@@ -263,8 +272,28 @@ beforeEach(() => {
   });
   mocks.threads = [];
   mocks.messageQueryStale = false;
+  mocks.botKind = "hermes";
   mocks.createThread.mockResolvedValue(persistedThread);
   mocks.addOptimisticSentMessage.mockReturnValue("client-message-1");
+});
+
+describe("DmRoute Direct Hermes proxy", () => {
+  it("shows the session-list screen when a Direct Hermes bot is selected", async () => {
+    mocks.botKind = "hermes-rpc";
+    await renderRoute();
+
+    expect(screen.getByTestId("direct-hermes-sessions")).toHaveAttribute(
+      "data-bot-id",
+      "bot-1",
+    );
+    expect(screen.queryByTestId("hermes-chat")).not.toBeInTheDocument();
+    expect(mocks.channelChatOptions).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        conversationId: null,
+        enabled: false,
+      }),
+    );
+  });
 });
 
 describe("DmRoute deferred Hermes task drafts", () => {
