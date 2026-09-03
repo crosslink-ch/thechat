@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeAll, beforeEach, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { ChatMessage } from "@thechat/shared";
 import { ChannelChatView } from "./ChannelChatView";
 
@@ -26,6 +26,92 @@ beforeEach(() => {
 });
 
 describe("ChannelChatView", () => {
+  it("visually merges adjacent messages from the same sender within five minutes", () => {
+    render(
+      <ChannelChatView
+        messages={[
+          message({
+            id: "message-1",
+            content: "First message",
+            createdAt: "2026-01-01T10:00:00.000Z",
+          }),
+          message({
+            id: "message-2",
+            content: "Second message",
+            createdAt: "2026-01-01T10:04:00.000Z",
+          }),
+        ]}
+        loading={false}
+        typingUsers={new Map()}
+        onSend={() => {}}
+      />,
+    );
+
+    expect(screen.getAllByText("Koda")).toHaveLength(1);
+    const firstRow = screen.getByText("First message").closest("[data-message-id]");
+    const secondRow = screen.getByText("Second message").closest("[data-message-id]");
+    expect(firstRow).toHaveAttribute("data-message-grouped", "false");
+    expect(firstRow?.querySelector("[data-message-header]")).not.toBeNull();
+    expect(secondRow).toHaveAttribute("data-message-grouped", "true");
+    expect(secondRow?.querySelector("[data-message-header]")).toBeNull();
+    expect(secondRow).toHaveClass("py-0.5");
+    if (!(secondRow instanceof HTMLElement)) {
+      throw new Error("Grouped message row not found");
+    }
+    const hoverTime = within(secondRow).getByLabelText(/sent/i);
+    expect(hoverTime).toHaveClass("opacity-0", "active:opacity-100");
+    expect(hoverTime).toHaveAttribute("tabindex", "0");
+    expect(hoverTime).toHaveAttribute(
+      "datetime",
+      "2026-01-01T10:04:00.000Z",
+    );
+  });
+
+  it("keeps reactions interactive on a grouped message", async () => {
+    const onSetReaction = vi.fn().mockResolvedValue(undefined);
+    render(
+      <ChannelChatView
+        messages={[
+          message({
+            id: "message-1",
+            content: "First message",
+            createdAt: "2026-01-01T10:00:00.000Z",
+          }),
+          message({
+            id: "message-2",
+            content: "Second message",
+            createdAt: "2026-01-01T10:04:00.000Z",
+            reactions: [
+              {
+                emoji: "👍",
+                count: 1,
+                reactedByMe: true,
+                userNames: ["Bruno"],
+              },
+            ],
+          }),
+        ]}
+        loading={false}
+        typingUsers={new Map()}
+        onSend={() => {}}
+        onSetReaction={onSetReaction}
+      />,
+    );
+
+    const groupedRow = screen
+      .getByText("Second message")
+      .closest<HTMLElement>("[data-message-id]");
+    if (!groupedRow) throw new Error("Grouped message row not found");
+    expect(groupedRow).toHaveAttribute("data-message-grouped", "true");
+
+    fireEvent.click(
+      within(groupedRow).getByRole("button", { name: "👍 1 reaction" }),
+    );
+    await waitFor(() =>
+      expect(onSetReaction).toHaveBeenCalledWith("message-2", "👍", false),
+    );
+  });
+
   it("shows the generic typing indicator", () => {
     render(
       <ChannelChatView

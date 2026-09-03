@@ -376,10 +376,14 @@ function buildActivityRows(
       // missing text but keep the row at its start position.
       existing.event = {
         ...event,
-        label: existing.event.label?.trim() ? existing.event.label : event.label,
-        preview: existing.event.preview?.trim()
-          ? existing.event.preview
-          : event.preview,
+        label:
+          trimmedUiString(existing.event.label) ||
+          trimmedUiString(event.label) ||
+          null,
+        preview:
+          trimmedUiString(existing.event.preview) ||
+          trimmedUiString(event.preview) ||
+          null,
       };
       continue;
     }
@@ -1068,8 +1072,9 @@ function StatusDot({ status }: { status: string | null }) {
 }
 
 function eventLabel(event: BotInvocationProgressEventPublic) {
-  if (event.label?.trim()) {
-    return boundedUiText(event.label.trim(), MAX_UI_LABEL_CHARS);
+  const label = trimmedUiString(event.label);
+  if (label) {
+    return boundedUiText(label, MAX_UI_LABEL_CHARS);
   }
   if (event.toolName) {
     const args = recordField(event.payload, "args");
@@ -1081,8 +1086,9 @@ function eventLabel(event: BotInvocationProgressEventPublic) {
     };
     return boundedUiText(formatToolSummary(call), MAX_UI_LABEL_CHARS);
   }
-  if (event.preview?.trim()) {
-    return boundedUiText(event.preview.trim(), MAX_UI_LABEL_CHARS);
+  const preview = trimmedUiString(event.preview);
+  if (preview) {
+    return boundedUiText(preview, MAX_UI_LABEL_CHARS);
   }
   return event.type.replace(/\./g, " ");
 }
@@ -1090,8 +1096,8 @@ function eventLabel(event: BotInvocationProgressEventPublic) {
 /** Fullest available text for an expanded tool row. */
 function toolDetailText(event: BotInvocationProgressEventPublic) {
   const candidates = [
-    event.label?.trim() ?? "",
-    event.preview?.trim() ?? "",
+    trimmedUiString(event.label),
+    trimmedUiString(event.preview),
     stringField(recordField(event.payload, "args"), "command"),
     eventLabel(event),
   ];
@@ -1106,11 +1112,13 @@ function toolDetailText(event: BotInvocationProgressEventPublic) {
 }
 
 function eventText(event: BotInvocationProgressEventPublic) {
-  if (event.label?.trim()) {
-    return boundedUiText(event.label.trim(), MAX_UI_LABEL_CHARS);
+  const label = trimmedUiString(event.label);
+  if (label) {
+    return boundedUiText(label, MAX_UI_LABEL_CHARS);
   }
-  if (event.preview?.trim()) {
-    return boundedUiText(event.preview.trim(), MAX_UI_LABEL_CHARS);
+  const preview = trimmedUiString(event.preview);
+  if (preview) {
+    return boundedUiText(preview, MAX_UI_LABEL_CHARS);
   }
   const payloadText = stringField(event.payload, "text");
   if (payloadText) return boundedUiText(payloadText, MAX_UI_DETAIL_CHARS);
@@ -1118,14 +1126,17 @@ function eventText(event: BotInvocationProgressEventPublic) {
 }
 
 function stringField(source: Record<string, unknown> | null, key: string) {
-  const value = source?.[key];
+  return trimmedUiString(source?.[key]);
+}
+
+function trimmedUiString(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
 }
 
 function approvalCommandText(event: BotInvocationProgressEventPublic) {
   return boundedUiText(
     stringField(event.payload, "command") ||
-      event.preview?.trim() ||
+      trimmedUiString(event.preview) ||
       "",
     MAX_UI_COMMAND_CHARS,
   );

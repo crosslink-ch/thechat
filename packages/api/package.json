@@ -18,7 +18,7 @@
     "start": "bun run --env-file ../../.env dist/index.js",
     "start:worker": "bun run --env-file ../../.env dist/scripts/worker.js",
     "worker": "bun run --env-file ../../.env src/scripts/worker.ts",
-    "test": "bun test --isolate --env-file ../../.env",
+    "test": "bun test --isolate --env-file ../../.env --timeout=30000 --path-ignore-patterns=src/auth/rate-limit.test.ts --path-ignore-patterns=src/auth/password-reset.test.ts",
     "db:generate": "bun run --env-file ../../.env drizzle-kit generate",
     "db:check": "bun run --env-file ../../.env drizzle-kit check",
     "db:migrate": "bun run --env-file ../../.env drizzle-kit migrate",

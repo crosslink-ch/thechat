@@ -222,7 +222,15 @@ export interface ChatMessage {
   content: string;
   parts?: MessagePart[] | null;
   attachments?: ChatAttachment[];
+  reactions?: MessageReactionSummary[];
   createdAt: string;
+}
+
+export interface MessageReactionSummary {
+  emoji: string;
+  count: number;
+  reactedByMe: boolean;
+  userNames: string[];
 }
 
 export type AttachmentStatus =
@@ -537,6 +545,11 @@ export type WsServerEvent =
       conversationType: "direct" | "group";
       clientMessageId?: string;
       traceContext?: TraceContextCarrier;
+    }
+  | {
+      type: "message_reactions_updated";
+      conversationId: string;
+      messageId: string;
     }
   | {
       type: "message_error";

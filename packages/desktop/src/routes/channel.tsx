@@ -108,6 +108,7 @@ export function ChannelRoute() {
           typingUsers={typingUsers}
           onSend={channelChat.sendMessage}
           onLoadOlderMessages={channelChat.loadOlderMessages}
+          onSetReaction={channelChat.setReaction}
           mentions={mentions}
           scrollKey={channelId}
           draftKey={composerDraftKey.channel(user?.id, channelId)}

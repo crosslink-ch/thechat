@@ -51,6 +51,7 @@ export function WorkspaceManageRoute() {
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [confirmingAction, setConfirmingAction] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [copiedMemberId, setCopiedMemberId] = useState<string | null>(null);
   const workspaceRefreshGeneration = useRef(0);
   const adminLoadGeneration = useRef(0);
 
@@ -301,6 +302,22 @@ export function WorkspaceManageRoute() {
     }
   };
 
+  const copyMemberUserId = async (member: WorkspaceMember) => {
+    try {
+      await navigator.clipboard.writeText(member.userId);
+      setCopiedMemberId(member.userId);
+      window.setTimeout(
+        () =>
+          setCopiedMemberId((current) =>
+            current === member.userId ? null : current,
+          ),
+        1600,
+      );
+    } catch {
+      setPageError(`Could not copy the user ID for ${member.user.name}`);
+    }
+  };
+
   return (
     <div className="flex h-full flex-col bg-base">
       <header className="border-b border-border px-5 py-4">
@@ -446,6 +463,23 @@ export function WorkspaceManageRoute() {
                         </div>
                         <div className="overflow-hidden text-ellipsis whitespace-nowrap text-[0.714rem] text-text-muted">
                           {member.user.email ?? "No email"}
+                        </div>
+                        <div className="mt-0.5 flex flex-wrap items-baseline gap-x-1.5 text-[0.643rem] text-text-dimmed">
+                          <span>User ID</span>
+                          <code
+                            data-testid={`member-user-id-${member.userId}`}
+                            className="break-all font-mono text-text-muted"
+                          >
+                            {member.userId}
+                          </code>
+                          <button
+                            type="button"
+                            aria-label={`Copy user ID for ${member.user.name}`}
+                            className="shrink-0 cursor-pointer rounded px-1 text-accent hover:bg-hover"
+                            onClick={() => void copyMemberUserId(member)}
+                          >
+                            {copiedMemberId === member.userId ? "Copied" : "Copy"}
+                          </button>
                         </div>
                       </div>
                     </div>

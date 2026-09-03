@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run all test suites in parallel, only showing output from failures."""
+"""Run test suites with bounded parallelism, only showing output from failures."""
 
 import base64
 import json
@@ -33,6 +33,24 @@ CODEX_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
 CODEX_ISSUER = "https://auth.openai.com"
 CODEX_VERIFICATION_URL = "https://auth.openai.com/codex/device"
 
+
+def available_cpu_count() -> int:
+    """Return the CPUs available to this process, honoring affinity when possible."""
+    try:
+        affinity = os.sched_getaffinity(0)
+    except (AttributeError, OSError):
+        affinity = None
+    if affinity:
+        return len(affinity)
+    return max(1, os.cpu_count() or 1)
+
+
+def suite_worker_count(suite_count: int, cpu_count: int | None = None) -> int:
+    """Leave CPU headroom because each test suite also runs parallel workers."""
+    if suite_count <= 0:
+        return 0
+    cores = max(1, cpu_count if cpu_count is not None else available_cpu_count())
+    return min(suite_count, max(1, cores // 2))
 
 
 def load_dotenv() -> None:
@@ -309,29 +327,20 @@ def run_suite(suite: dict) -> Result:
     start = time.monotonic()
     timeout = suite.get("timeout")
     timed_out = False
-    if timeout is None:
-        proc = subprocess.run(
-            suite["cmd"],
-            capture_output=True,
-            text=True,
-            env=env,
-            cwd=ROOT,
-        )
-        stdout = proc.stdout
-        stderr = proc.stderr
-        returncode = proc.returncode
-    else:
-        proc = subprocess.Popen(
-            suite["cmd"],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            env=env,
-            cwd=ROOT,
-            start_new_session=True,
-        )
-        _register_suite_group(proc.pid)
-        try:
+    proc = subprocess.Popen(
+        suite["cmd"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        env=env,
+        cwd=ROOT,
+        start_new_session=True,
+    )
+    _register_suite_group(proc.pid)
+    try:
+        if timeout is None:
+            stdout, stderr = proc.communicate()
+        else:
             try:
                 stdout, stderr = proc.communicate(timeout=float(timeout))
             except subprocess.TimeoutExpired:
@@ -348,9 +357,9 @@ def run_suite(suite: dict) -> Result:
                     except ProcessLookupError:
                         pass
                     stdout, stderr = proc.communicate()
-        finally:
-            _unregister_suite_group(proc.pid)
-        returncode = 124 if timed_out else proc.returncode
+    finally:
+        _unregister_suite_group(proc.pid)
+    returncode = 124 if timed_out else proc.returncode
 
     duration = time.monotonic() - start
     output = stdout
@@ -603,7 +612,13 @@ def main():
                         "CODEX_ACCOUNT_ID": creds.get("account_id", ""),
                     }
 
+    cpu_count = available_cpu_count()
+    worker_count = suite_worker_count(len(suites), cpu_count=cpu_count)
     print(f"Running {len(suites)} test suite(s): {', '.join(s['name'] for s in suites)}")
+    print(
+        f"  (using {worker_count} concurrent suite worker(s) "
+        f"for {cpu_count} available CPU(s))"
+    )
     if not run_all:
         opt_in_names = ", ".join(
             s["name"]
@@ -634,19 +649,24 @@ def main():
 
     for signum in previous_handlers:
         signal.signal(signum, handle_shutdown)
+    pool = ThreadPoolExecutor(max_workers=worker_count)
+    interrupted = False
     try:
-        with ThreadPoolExecutor(max_workers=len(suites)) as pool:
-            futures = {pool.submit(run_suite, s): s["name"] for s in suites}
-            for future in as_completed(futures):
-                result = future.result()
-                results.append(result)
-                status = "\033[32mPASS\033[0m" if result.returncode == 0 else "\033[31mFAIL\033[0m"
-                print(f"  {status}  {result.name} ({result.duration:.1f}s)")
+        futures = {pool.submit(run_suite, s): s["name"] for s in suites}
+        for future in as_completed(futures):
+            result = future.result()
+            results.append(result)
+            status = "\033[32mPASS\033[0m" if result.returncode == 0 else "\033[31mFAIL\033[0m"
+            print(f"  {status}  {result.name} ({result.duration:.1f}s)")
     except KeyboardInterrupt:
+        interrupted = True
         _signal_active_suite_groups(signal.SIGTERM)
     finally:
-        for signum, handler in previous_handlers.items():
-            signal.signal(signum, handler)
+        try:
+            pool.shutdown(wait=True, cancel_futures=interrupted)
+        finally:
+            for signum, handler in previous_handlers.items():
+                signal.signal(signum, handler)
 
     if interrupted_signal is not None:
         print("\nInterrupted; bounded suites were asked to clean up.", file=sys.stderr)

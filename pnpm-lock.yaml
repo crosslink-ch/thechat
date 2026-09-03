@@ -174,6 +174,9 @@ importers:
       ajv:
         specifier: ^8.18.0
         version: 8.18.0
+      emoji-datasource:
+        specifier: 16.0.0
+        version: 16.0.0
       highlight.js:
         specifier: ^11.11.1
         version: 11.11.1
@@ -3463,6 +3466,9 @@ packages:
         optional: true
       typescript:
         optional: true
+
+  emoji-datasource@16.0.0:
+    resolution: {integrity: sha512-/qHKqK5Nr3+8zhgO6kHmF43Fm5C8HNn0AaFRIpgw8HF3+uF0Vfc8jgLI1ZQS5ba1vBzksS8NBCjHejwLb2D/Sg==}
 
   emoji-regex@8.0.0:
     resolution: {integrity: sha512-MSjYzcWNOA0ewAHpz0MxpYFvwg6yjy1NG3xteoqz644VCo/RPgnr1/GGt+ic3iJTzQ8Eu3TdM14SawnVUmGE6A==}
@@ -9153,6 +9159,8 @@ snapshots:
     optionalDependencies:
       '@types/bun': 1.3.9
       typescript: 5.8.3
+
+  emoji-datasource@16.0.0: {}
 
   emoji-regex@8.0.0: {}
 
