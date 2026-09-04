@@ -133,6 +133,7 @@ def main() -> int:
     env["THECHAT_DEV_LOGS_DIR"] = str(logs_dir)
     api_port = int(env["THECHAT_BACKEND_PORT"])
     proxy_port = int(env["THECHAT_HERMES_PROXY_PORT"])
+    proxy_health = proxy_health_url(env["THECHAT_HERMES_PROXY_HOST"], proxy_port)
 
     preflight(env, args, api_port, proxy_port)
     if args.check:
@@ -163,7 +164,7 @@ def main() -> int:
         wait_for_http(f"http://127.0.0.1:{api_port}/health", "api", processes, timeout=60)
         if not args.no_hermes_proxy:
             wait_for_http(
-                f"http://127.0.0.1:{proxy_port}/health",
+                proxy_health,
                 "Hermes proxy",
                 processes,
                 timeout=60,
@@ -172,7 +173,7 @@ def main() -> int:
         print("")
         print(f"API: http://127.0.0.1:{api_port}")
         if not args.no_hermes_proxy:
-            print(f"Hermes proxy: http://127.0.0.1:{proxy_port}/health")
+            print(f"Hermes proxy: {proxy_health}")
         if not args.no_worker:
             print("Worker: running")
         if not args.skip_compose:
@@ -327,6 +328,12 @@ def default_port(scheme: str) -> int | None:
     if scheme == "redis":
         return 6379
     return None
+
+
+def proxy_health_url(bind_host: str, port: int) -> str:
+    probe_host = {"0.0.0.0": "127.0.0.1", "::": "::1"}.get(bind_host, bind_host)
+    url_host = f"[{probe_host}]" if ":" in probe_host else probe_host
+    return f"http://{url_host}:{port}/health"
 
 
 def run(command: list[str], env: dict[str, str], *, quiet: bool = False) -> str:
