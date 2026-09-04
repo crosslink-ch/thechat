@@ -602,6 +602,7 @@ export function DmRoute() {
           <DirectHermesSessionsView
             botId={otherParticipant.bot.id}
             botName={otherParticipant.user.name}
+            conversationId={conversationId}
             token={token}
           />
         ) : isHermesDm ? (

@@ -367,21 +367,6 @@ export interface OwnedBot extends Bot {
   workspaces: BotWorkspaceMembership[];
 }
 
-/** Read-only session metadata returned by a Direct Hermes bot. */
-export interface HermesRpcSessionPublic {
-  id: string;
-  resolvedId: string | null;
-  title: string;
-  preview: string;
-  startedAt: number;
-  messageCount: number;
-  source: string;
-}
-
-export interface HermesRpcSessionsResponse {
-  sessions: HermesRpcSessionPublic[];
-}
-
 export interface BotWithApiKey extends Bot {
   apiKey: string;
   webhookSecret: string;

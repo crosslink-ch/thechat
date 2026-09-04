@@ -1,0 +1,26 @@
+{
+  "name": "@thechat/hermes-proxy",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./endpoint": "./src/endpoint.ts",
+    "./protocol": "./src/protocol.ts",
+    "./secrets": "./src/secrets.ts",
+    "./tickets": "./src/tickets.ts"
+  },
+  "scripts": {
+    "dev": "bun run --env-file ../../.env --watch src/server.ts",
+    "build": "bun build src/server.ts --outdir dist --target bun",
+    "start": "bun run --env-file ../../.env dist/server.js",
+    "test": "bun test --env-file ../../.env"
+  },
+  "dependencies": {
+    "ioredis": "^5.10.1"
+  },
+  "devDependencies": {
+    "@types/bun": "1.3.9",
+    "typescript": "~5.8.3"
+  }
+}

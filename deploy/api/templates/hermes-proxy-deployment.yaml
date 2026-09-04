@@ -1,0 +1,70 @@
+{{- if .Values.hermesProxy.enabled }}
+{{- if not .Values.hermesProxy.allowedOrigins }}
+{{- fail "hermesProxy.allowedOrigins must contain at least one exact upstream origin when the Hermes proxy is enabled" }}
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "thechat-api.hermesProxyFullname" . }}
+  labels:
+    {{- include "thechat-api.hermesProxyLabels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.hermesProxy.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "thechat-api.hermesProxySelectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "thechat-api.hermesProxySelectorLabels" . | nindent 8 }}
+    spec:
+      automountServiceAccountToken: false
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: hermes-proxy
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["bun", "run", "hermes-proxy-dist/server.js"]
+          env:
+            - name: NODE_ENV
+              value: "production"
+            - name: THECHAT_HERMES_PROXY_HOST
+              value: "0.0.0.0"
+            - name: THECHAT_HERMES_PROXY_PORT
+              value: {{ .Values.hermesProxy.port | quote }}
+            - name: REDIS_KEY_PREFIX
+              value: {{ default "thechat" .Values.env.REDIS_KEY_PREFIX | quote }}
+            - name: THECHAT_HERMES_PROXY_ALLOWED_ORIGINS
+              value: {{ join "," .Values.hermesProxy.allowedOrigins | quote }}
+            - name: BETTER_AUTH_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ default "thechat-better-auth" .Values.betterAuthSecret }}
+                  key: BETTER_AUTH_SECRET
+            - name: REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "redisSecret is required" .Values.redisSecret }}
+                  key: REDIS_URL
+          ports:
+            - name: http
+              containerPort: {{ .Values.hermesProxy.port }}
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+          resources:
+            {{- toYaml .Values.hermesProxy.resources | nindent 12 }}
+{{- end }}

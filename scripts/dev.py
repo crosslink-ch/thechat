@@ -40,6 +40,10 @@ DEV_DEFAULTS = {
     "POSTMARK_API_TOKEN": "",
     "THECHAT_BACKEND_PORT": "3000",
     "THECHAT_BACKEND_URL": "http://localhost:3000",
+    "THECHAT_HERMES_PROXY_HOST": "127.0.0.1",
+    "THECHAT_HERMES_PROXY_PORT": "3001",
+    "THECHAT_HERMES_PROXY_URL": "ws://localhost:3001/hermes-proxy",
+    "THECHAT_HERMES_PROXY_ALLOW_LOOPBACK": "true",
     "LOG_LEVEL": "info",
 }
 
@@ -110,6 +114,7 @@ def main() -> int:
     parser.add_argument("--skip-compose", action="store_true", help="Do not start local postgres/redis/observability with Docker Compose")
     parser.add_argument("--skip-migrate", action="store_true", help="Do not run Drizzle migrations before starting services")
     parser.add_argument("--no-worker", action="store_true", help="Do not start the bot worker")
+    parser.add_argument("--no-hermes-proxy", action="store_true", help="Do not start the Direct Hermes WebSocket proxy")
     parser.add_argument("--logs-dir", default=str(DEFAULT_LOG_DIR), help="Directory for per-service logs")
     parser.add_argument("--check", action="store_true", help="Run preflight checks and exit without starting services")
     raw_args = sys.argv[1:]
@@ -117,12 +122,19 @@ def main() -> int:
         raw_args = raw_args[1:]
     args = parser.parse_args(raw_args)
 
+    def request_shutdown(_signum: int, _frame: object) -> None:
+        raise KeyboardInterrupt
+
+    signal.signal(signal.SIGTERM, request_shutdown)
+    signal.signal(signal.SIGHUP, request_shutdown)
+
     env = load_env()
     logs_dir = Path(args.logs_dir).resolve()
     env["THECHAT_DEV_LOGS_DIR"] = str(logs_dir)
     api_port = int(env["THECHAT_BACKEND_PORT"])
+    proxy_port = int(env["THECHAT_HERMES_PROXY_PORT"])
 
-    preflight(env, args, api_port)
+    preflight(env, args, api_port, proxy_port)
     if args.check:
         print("dev preflight passed")
         return 0
@@ -137,22 +149,36 @@ def main() -> int:
     if not args.skip_migrate and env.get("DATABASE_URL"):
         run(["pnpm", "db:migrate"], env)
 
-    processes = build_processes(env, logs_dir, no_worker=args.no_worker)
+    processes = build_processes(
+        env,
+        logs_dir,
+        no_worker=args.no_worker,
+        no_hermes_proxy=args.no_hermes_proxy,
+    )
     for process in processes:
         process.start()
         print(f"started {process.name}; logs: {relative(process.log_path)}")
 
     try:
         wait_for_http(f"http://127.0.0.1:{api_port}/health", "api", processes, timeout=60)
+        if not args.no_hermes_proxy:
+            wait_for_http(
+                f"http://127.0.0.1:{proxy_port}/health",
+                "Hermes proxy",
+                processes,
+                timeout=60,
+            )
 
         print("")
         print(f"API: http://127.0.0.1:{api_port}")
+        if not args.no_hermes_proxy:
+            print(f"Hermes proxy: http://127.0.0.1:{proxy_port}/health")
         if not args.no_worker:
             print("Worker: running")
         if not args.skip_compose:
             print(f"Grafana: http://127.0.0.1:{env.get('GRAFANA_PORT', '13300')}")
         print(f"Logs: {relative(logs_dir)}")
-        print("Press Ctrl+C to stop API and worker. Docker Compose services stay running.")
+        print("Press Ctrl+C to stop TheChat development processes. Docker Compose services stay running.")
 
         return monitor(processes)
     except KeyboardInterrupt:
@@ -195,7 +221,12 @@ def parse_env_value(value: str) -> str:
     return value
 
 
-def preflight(env: dict[str, str], args: argparse.Namespace, api_port: int) -> None:
+def preflight(
+    env: dict[str, str],
+    args: argparse.Namespace,
+    api_port: int,
+    proxy_port: int,
+) -> None:
     for command in ("pnpm", "bun"):
         require_tool(command)
 
@@ -204,12 +235,33 @@ def preflight(env: dict[str, str], args: argparse.Namespace, api_port: int) -> N
 
     if port_open("127.0.0.1", api_port):
         raise SystemExit(f"Port {api_port} is already in use. Stop the existing API or set THECHAT_BACKEND_PORT.")
+    if not args.no_hermes_proxy and port_open("127.0.0.1", proxy_port):
+        raise SystemExit(
+            f"Port {proxy_port} is already in use. Stop the existing Hermes proxy "
+            "or set THECHAT_HERMES_PROXY_PORT."
+        )
 
 
-def build_processes(env: dict[str, str], logs_dir: Path, *, no_worker: bool) -> list[DevProcess]:
-    processes = [
-        DevProcess("api", ["pnpm", "dev:api"], logs_dir / "api.log", env),
-    ]
+def build_processes(
+    env: dict[str, str],
+    logs_dir: Path,
+    *,
+    no_worker: bool,
+    no_hermes_proxy: bool,
+) -> list[DevProcess]:
+    processes: list[DevProcess] = []
+    if not no_hermes_proxy:
+        processes.append(
+            DevProcess(
+                "hermes-proxy",
+                ["pnpm", "dev:hermes-proxy"],
+                logs_dir / "hermes-proxy.log",
+                env,
+            )
+        )
+    processes.append(
+        DevProcess("api", ["pnpm", "dev:api"], logs_dir / "api.log", env)
+    )
 
     if not no_worker:
         processes.append(

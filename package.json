@@ -1,20 +1,29 @@
 {
   "name": "thechat-monorepo",
   "private": true,
+  "pnpm": {
+    "overrides": {
+      "@types/bun": "1.3.9",
+      "bun-types": "1.3.9"
+    }
+  },
   "scripts": {
     "dev": "python3 scripts/dev.py",
     "dev:services": "python3 scripts/dev.py",
     "dev:desktop": "pnpm --filter @thechat/desktop dev",
     "dev:api": "pnpm --filter @thechat/api dev",
+    "dev:hermes-proxy": "pnpm --filter @thechat/hermes-proxy dev",
     "dev:worker": "pnpm --filter @thechat/api dev:worker",
     "dev:hermes": "scripts/run-hermes-manual.sh",
     "dev:hermes-progress-demo": "node scripts/hermes-progress-demo.mjs",
     "build": "pnpm -r build",
     "build:desktop": "pnpm --filter @thechat/desktop build",
     "build:api": "pnpm --filter @thechat/api build",
+    "build:hermes-proxy": "pnpm --filter @thechat/hermes-proxy build",
     "test": "python3 scripts/test.py",
     "test:desktop": "pnpm --filter @thechat/desktop test",
     "test:api": "pnpm --filter @thechat/api test",
+    "test:hermes-proxy": "pnpm --filter @thechat/hermes-proxy test",
     "tauri": "dotenv -- pnpm --filter @thechat/desktop tauri",
     "tauri:dev": "dotenv -- pnpm --filter @thechat/desktop tauri dev --config src-tauri/tauri.dev.conf.json",
     "tauri:build:dev": "dotenv -- pnpm --filter @thechat/desktop tauri build --config src-tauri/tauri.dev.conf.json",

@@ -56,6 +56,10 @@ import {
 import { closeDomainEventRuntime, startDomainEventRuntime } from "../events/runtime";
 import { createChatMessageSentV1 } from "../events/envelope";
 import { enqueueDomainEvent } from "../events/outbox";
+import {
+  InMemoryHermesProxyTicketStore,
+  setHermesProxyTicketStoreForTests,
+} from "@thechat/hermes-proxy/tickets";
 import crypto from "crypto";
 
 const app = new Elysia()
@@ -76,10 +80,15 @@ const createdUserEmails: string[] = [];
 const createdWorkspaceIds: string[] = [];
 const createdBotUserIds: string[] = [];
 const originalRedisKeyPrefix = process.env.REDIS_KEY_PREFIX;
+const originalHermesProxyAllowLoopback =
+  process.env.THECHAT_HERMES_PROXY_ALLOW_LOOPBACK;
 const botsTestRedisKeyPrefix = `thechat-bots-test-${crypto.randomUUID()}`;
+const hermesProxyTicketStore = new InMemoryHermesProxyTicketStore();
 
 beforeAll(async () => {
   process.env.REDIS_KEY_PREFIX = botsTestRedisKeyPrefix;
+  process.env.THECHAT_HERMES_PROXY_ALLOW_LOOPBACK = "true";
+  await setHermesProxyTicketStoreForTests(hermesProxyTicketStore);
   await setBotProgressStoreForTests(createLocalBotProgressStoreForTests());
   await startDomainEventRuntime();
 });
@@ -89,10 +98,17 @@ afterAll(async () => {
   await closeBotRuntimeForTests();
   await closeBotProgressStoreForTests();
   await closeRealtimeBusForTests();
+  await setHermesProxyTicketStoreForTests(null);
   if (originalRedisKeyPrefix === undefined) {
     delete process.env.REDIS_KEY_PREFIX;
   } else {
     process.env.REDIS_KEY_PREFIX = originalRedisKeyPrefix;
+  }
+  if (originalHermesProxyAllowLoopback === undefined) {
+    delete process.env.THECHAT_HERMES_PROXY_ALLOW_LOOPBACK;
+  } else {
+    process.env.THECHAT_HERMES_PROXY_ALLOW_LOOPBACK =
+      originalHermesProxyAllowLoopback;
   }
   if (createdWorkspaceIds.length > 0) {
     await db
@@ -159,7 +175,7 @@ async function req(
   } catch {
     json = text;
   }
-  return { status: response.status, body: json };
+  return { status: response.status, body: json, headers: response.headers };
 }
 
 async function registerUser(name: string) {
@@ -428,50 +444,35 @@ describe("Bots: Create", () => {
     expect(storedKey.key).not.toContain(res.body.apiKey);
   });
 
-  test("creates a Direct Hermes bot and proxies owner-only session.list", async () => {
+  test("mints a Direct Hermes proxy ticket without calling the gateway", async () => {
     const previousSecret = process.env.THECHAT_SECRET_KEY;
+    const previousProxyUrl = process.env.THECHAT_HERMES_PROXY_URL;
     process.env.THECHAT_SECRET_KEY = "direct-hermes-test-encryption-key";
+    process.env.THECHAT_HERMES_PROXY_URL = "ws://127.0.0.1:4010/hermes-proxy";
     const gatewayToken = "direct-hermes-gateway-secret";
-    let rpcCalls = 0;
-    let rpcFrame: Record<string, any> | null = null;
+    let gatewayConnections = 0;
     const gateway = Bun.serve({
       hostname: "127.0.0.1",
       port: 0,
-      fetch(request, server) {
-        expect(new URL(request.url).searchParams.get("token")).toBe(gatewayToken);
-        if (server.upgrade(request)) return;
-        return new Response("WebSocket required", { status: 426 });
-      },
-      websocket: {
-        message(socket, raw) {
-          rpcCalls += 1;
-          rpcFrame = JSON.parse(String(raw));
-          socket.send(JSON.stringify({
-            jsonrpc: "2.0",
-            id: rpcFrame!.id,
-            result: {
-              sessions: [{
-                id: "stored-session-1",
-                resolved_id: "stored-session-2",
-                title: "Direct RPC proof",
-                preview: "Listed through TheChat",
-                started_at: 1_788_000_000,
-                message_count: 4,
-                source: "thechat",
-              }],
-            },
-          }));
-        },
+      fetch() {
+        gatewayConnections += 1;
+        return new Response("The API must not connect to Hermes", { status: 500 });
       },
     });
 
     try {
       const owner = await registerUser("DirectHermesOwner");
+      const member = await registerUser("DirectHermesMember");
       const outsider = await registerUser("DirectHermesOutsider");
       const { workspaceId } = await createWorkspaceWithGeneralChannel(
         owner.token,
         "Direct Hermes Workspace",
       );
+      await db.insert(workspaceMembers).values({
+        workspaceId,
+        userId: member.user.id,
+        role: "member",
+      });
       const created = await createBot(
         owner.token,
         "Direct Hermes",
@@ -500,40 +501,132 @@ describe("Bots: Create", () => {
       );
       expect(storedConfig.gatewayTokenEncrypted).not.toContain(gatewayToken);
 
-      const listed = await req(
+      const dm = await req(
+        "POST",
+        "/conversations/dm",
+        { workspaceId, otherUserId: created.body.userId },
+        owner.token,
+      );
+      expect(dm.status).toBe(200);
+
+      const ticket = await req(
+        "POST",
+        `/bots/${created.body.id}/hermes-rpc/proxy-ticket`,
+        { conversationId: dm.body.id },
+        owner.token,
+      );
+      expect(ticket.status).toBe(200);
+      expect(ticket.headers.get("cache-control")).toBe("no-store");
+      expect(ticket.body).toMatchObject({
+        proxyUrl: "ws://127.0.0.1:4010/hermes-proxy",
+      });
+      expect(ticket.body.ticket).toMatch(/^[A-Za-z0-9_-]{40,}$/);
+      expect(Date.parse(ticket.body.expiresAt)).toBeGreaterThan(Date.now());
+      expect(JSON.stringify(ticket.body)).not.toContain(gatewayToken);
+      const grant = await hermesProxyTicketStore.consume(ticket.body.ticket);
+      expect(grant).toMatchObject({
+        botId: created.body.id,
+        conversationId: dm.body.id,
+        endpoint: `ws://127.0.0.1:${gateway.port}/api/ws`,
+        userId: owner.user.id,
+      });
+      expect(grant?.gatewayTokenEncrypted).not.toContain(gatewayToken);
+
+      const removedRpcRoute = await req(
         "GET",
         `/bots/${created.body.id}/hermes-rpc/sessions`,
         undefined,
         owner.token,
       );
-      expect(listed.status).toBe(200);
-      expect(rpcFrame).toMatchObject({
-        jsonrpc: "2.0",
-        method: "session.list",
-        params: { limit: 200 },
-      });
-      expect(listed.body.sessions).toEqual([{
-        id: "stored-session-1",
-        resolvedId: "stored-session-2",
-        title: "Direct RPC proof",
-        preview: "Listed through TheChat",
-        startedAt: 1_788_000_000,
-        messageCount: 4,
-        source: "thechat",
-      }]);
+      expect(removedRpcRoute.status).toBe(404);
+
+      const memberDm = await req(
+        "POST",
+        "/conversations/dm",
+        { workspaceId, otherUserId: created.body.userId },
+        member.token,
+      );
+      expect(memberDm.status).toBe(200);
+      const memberTicket = await req(
+        "POST",
+        `/bots/${created.body.id}/hermes-rpc/proxy-ticket`,
+        { conversationId: memberDm.body.id },
+        member.token,
+      );
+      expect(memberTicket.status).toBe(403);
 
       const forbidden = await req(
-        "GET",
-        `/bots/${created.body.id}/hermes-rpc/sessions`,
-        undefined,
+        "POST",
+        `/bots/${created.body.id}/hermes-rpc/proxy-ticket`,
+        { conversationId: dm.body.id },
         outsider.token,
       );
       expect(forbidden.status).toBe(403);
-      expect(rpcCalls).toBe(1);
+
+      await db
+        .delete(workspaceMembers)
+        .where(
+          and(
+            eq(workspaceMembers.workspaceId, workspaceId),
+            eq(workspaceMembers.userId, created.body.userId),
+          ),
+        );
+      const removedBotTicket = await req(
+        "POST",
+        `/bots/${created.body.id}/hermes-rpc/proxy-ticket`,
+        { conversationId: dm.body.id },
+        owner.token,
+      );
+      expect(removedBotTicket.status).toBe(403);
+      expect(gatewayConnections).toBe(0);
     } finally {
       gateway.stop(true);
       if (previousSecret === undefined) delete process.env.THECHAT_SECRET_KEY;
       else process.env.THECHAT_SECRET_KEY = previousSecret;
+      if (previousProxyUrl === undefined) delete process.env.THECHAT_HERMES_PROXY_URL;
+      else process.env.THECHAT_HERMES_PROXY_URL = previousProxyUrl;
+    }
+  });
+
+  test("rejects Direct Hermes gateways outside the proxy origin policy", async () => {
+    const previousSecret = process.env.THECHAT_SECRET_KEY;
+    const previousAllowedOrigins =
+      process.env.THECHAT_HERMES_PROXY_ALLOWED_ORIGINS;
+    process.env.THECHAT_SECRET_KEY = "direct-hermes-test-encryption-key";
+    process.env.THECHAT_HERMES_PROXY_ALLOWED_ORIGINS =
+      "wss://approved-hermes.example";
+
+    try {
+      const owner = await registerUser("DirectHermesPolicyOwner");
+      const { workspaceId } = await createWorkspaceWithGeneralChannel(
+        owner.token,
+        "Direct Hermes Policy Workspace",
+      );
+      const created = await createBot(
+        owner.token,
+        "Disallowed Direct Hermes",
+        undefined,
+        {
+          kind: "hermes-rpc",
+          workspaceId,
+          hermesRpc: {
+            endpoint: "https://unapproved-hermes.example",
+            gatewayToken: "gateway-secret",
+          },
+        },
+      );
+
+      expect(created.status).toBe(400);
+      expect(created.body.error).toContain("origin is not allowed");
+    } finally {
+      if (previousSecret === undefined) delete process.env.THECHAT_SECRET_KEY;
+      else process.env.THECHAT_SECRET_KEY = previousSecret;
+      if (previousAllowedOrigins === undefined) {
+        delete process.env.THECHAT_HERMES_PROXY_ALLOWED_ORIGINS;
+      } else {
+        process.env.THECHAT_HERMES_PROXY_ALLOWED_ORIGINS =
+          previousAllowedOrigins;
+      }
     }
   });
 

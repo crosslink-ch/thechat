@@ -156,6 +156,25 @@ worker:
       memory: 512Mi
       cpu: 1000m
 
+# Dedicated raw WebSocket tunnel for Direct Hermes. This process has Redis and
+# encryption-key access but no database credential.
+hermesProxy:
+  enabled: false
+  replicaCount: 1
+  port: 3001
+  publicUrl: "wss://api.thechat.app/hermes-proxy"
+  ingressPath: /hermes-proxy
+  # Exact upstream websocket origins the proxy may reach. Required when enabled.
+  # Include the port when it is not the scheme default.
+  allowedOrigins: []
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
 service:
   type: ClusterIP
   port: 80

@@ -10,6 +10,7 @@ COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
 
 # Copy package manifests for dependency resolution
 COPY packages/api/package.json packages/api/
+COPY packages/hermes-proxy/package.json packages/hermes-proxy/
 COPY packages/shared/package.json packages/shared/
 
 # Install dependencies (need drizzle-kit which is a devDependency)

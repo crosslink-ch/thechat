@@ -81,7 +81,7 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- fail "API and worker service accounts must be distinct" -}}
 {{- end -}}
 {{- $env := .Values.env | default dict -}}
-{{- $reservedEnvNames := list "AWS_ACCESS_KEY_ID" "AWS_SECRET_ACCESS_KEY" "AWS_SESSION_TOKEN" "AWS_SECURITY_TOKEN" "AWS_PROFILE" "AWS_SHARED_CREDENTIALS_FILE" "AWS_CONFIG_FILE" "AWS_WEB_IDENTITY_TOKEN_FILE" "AWS_ROLE_ARN" "AWS_ROLE_SESSION_NAME" "AWS_CONTAINER_CREDENTIALS_FULL_URI" "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI" "AWS_CONTAINER_AUTHORIZATION_TOKEN" "AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE" "DATABASE_URL" "JWT_SECRET" "REDIS_URL" "SMTP_HOST" "SMTP_PORT" "SMTP_USER" "SMTP_PASS" "POSTMARK_API_TOKEN" -}}
+{{- $reservedEnvNames := list "AWS_ACCESS_KEY_ID" "AWS_SECRET_ACCESS_KEY" "AWS_SESSION_TOKEN" "AWS_SECURITY_TOKEN" "AWS_PROFILE" "AWS_SHARED_CREDENTIALS_FILE" "AWS_CONFIG_FILE" "AWS_WEB_IDENTITY_TOKEN_FILE" "AWS_ROLE_ARN" "AWS_ROLE_SESSION_NAME" "AWS_CONTAINER_CREDENTIALS_FULL_URI" "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI" "AWS_CONTAINER_AUTHORIZATION_TOKEN" "AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE" "DATABASE_URL" "JWT_SECRET" "BETTER_AUTH_SECRET" "REDIS_URL" "SMTP_HOST" "SMTP_PORT" "SMTP_USER" "SMTP_PASS" "POSTMARK_API_TOKEN" "THECHAT_SECRET_KEY" "THECHAT_HERMES_PROXY_URL" "THECHAT_HERMES_PROXY_ALLOWED_ORIGINS" "THECHAT_HERMES_PROXY_ALLOW_LOOPBACK" "THECHAT_HERMES_PROXY_HOST" "THECHAT_HERMES_PROXY_PORT" -}}
 {{- range $key, $_ := $env -}}
 {{- $keyUpper := upper $key -}}
 {{- if or (regexMatch "^AWS_" $keyUpper) (has $keyUpper $reservedEnvNames) -}}
@@ -309,4 +309,24 @@ redis://{{ include "thechat-api.redisFullname" . }}.{{ .Release.Namespace }}.svc
       name: {{ .Values.postmarkSecret }}
       key: POSTMARK_API_TOKEN
 {{- end }}
+{{- end }}
+
+{{/* Direct Hermes proxy resource name. */}}
+{{- define "thechat-api.hermesProxyFullname" -}}
+{{- printf "%s-hermes-proxy" (include "thechat-api.fullname" .) | trunc 63 | trimSuffix "-" }}
+{{- end }}
+
+{{/* Direct Hermes proxy selector labels, intentionally distinct from API labels. */}}
+{{- define "thechat-api.hermesProxySelectorLabels" -}}
+app.kubernetes.io/name: {{ printf "%s-hermes-proxy" (include "thechat-api.name" .) | trunc 63 | trimSuffix "-" }}
+app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end }}
+
+{{/* Direct Hermes proxy labels. */}}
+{{- define "thechat-api.hermesProxyLabels" -}}
+helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | trunc 63 | trimSuffix "-" }}
+{{ include "thechat-api.hermesProxySelectorLabels" . }}
+app.kubernetes.io/version: {{ .Values.image.tag | default .Chart.AppVersion | quote }}
+app.kubernetes.io/managed-by: {{ .Release.Service }}
+app.kubernetes.io/component: hermes-proxy
 {{- end }}

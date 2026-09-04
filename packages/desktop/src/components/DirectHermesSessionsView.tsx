@@ -1,36 +1,46 @@
 import { useQuery } from "@tanstack/react-query";
-import type { HermesRpcSessionsResponse } from "@thechat/shared";
 import { api } from "../lib/api";
+import type { DirectHermesProxyTicket } from "../lib/direct-hermes-gateway";
+import { listDirectHermesSessions } from "../lib/direct-hermes-sessions";
 import { authHeaders, edenErrorMessage } from "../lib/eden";
 
 export function DirectHermesSessionsView({
   botId,
   botName,
+  conversationId,
   token,
 }: {
   botId: string;
   botName: string;
+  conversationId: string;
   token: string | null;
 }) {
   const query = useQuery({
-    queryKey: ["direct-hermes-sessions", botId],
+    queryKey: ["direct-hermes-sessions", botId, conversationId],
     enabled: !!token,
-    queryFn: async () => {
-      const { data, error } = await api
-        .bots({ botId })["hermes-rpc"]
-        .sessions.get(authHeaders(token!));
-      if (error) {
-        throw new Error(
-          edenErrorMessage(error, "Hermes sessions are unavailable"),
-        );
-      }
-      return data as HermesRpcSessionsResponse;
-    },
+    queryFn: ({ signal }) =>
+      listDirectHermesSessions({
+        signal,
+        issueTicket: async (ticketSignal) => {
+          const { data, error } = await api
+            .bots({ botId })["hermes-rpc"]["proxy-ticket"]
+            .post(
+              { conversationId },
+              { ...authHeaders(token!), fetch: { signal: ticketSignal } },
+            );
+          if (error) {
+            throw new Error(
+              edenErrorMessage(error, "Hermes proxy is unavailable"),
+            );
+          }
+          return data as DirectHermesProxyTicket;
+        },
+      }),
     staleTime: 0,
     refetchOnWindowFocus: false,
   });
 
-  const sessions = query.data?.sessions ?? [];
+  const sessions = query.data ?? [];
 
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-base">
@@ -40,7 +50,7 @@ export function DirectHermesSessionsView({
             {botName} · Direct Hermes
           </h1>
           <p className="mt-1 text-[0.786rem] text-text-dimmed">
-            Raw session.list response proxied through TheChat
+            Hermes client connected through TheChat’s permission-gated proxy
           </p>
         </div>
         <button

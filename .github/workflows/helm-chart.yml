@@ -44,3 +44,4 @@ jobs:
         run: |
           python deploy/api/tests/test_migration_hook.py
           python deploy/api/tests/test_attachment_credentials.py
+          python deploy/api/tests/test_hermes_proxy.py

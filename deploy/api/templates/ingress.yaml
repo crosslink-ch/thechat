@@ -28,6 +28,15 @@ spec:
     - host: {{ .host | quote }}
       http:
         paths:
+          {{- if $.Values.hermesProxy.enabled }}
+          - path: {{ $.Values.hermesProxy.ingressPath }}
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "thechat-api.hermesProxyFullname" $ }}
+                port:
+                  name: http
+          {{- end }}
           {{- range .paths }}
           - path: {{ .path }}
             pathType: {{ .pathType }}

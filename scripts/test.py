@@ -167,6 +167,10 @@ SUITES = [
         "cmd": ["pnpm", "--filter", "@thechat/desktop", "test:unit"],
     },
     {
+        "name": "hermes-proxy",
+        "cmd": ["pnpm", "--filter", "@thechat/hermes-proxy", "test"],
+    },
+    {
         "name": "api",
         "cmd": ["pnpm", "--filter", "@thechat/api", "test"],
     },

@@ -25,8 +25,8 @@ import {
   rotateBotApiKey,
 } from "../auth/bot-api-keys";
 import { BOT_API_KEY_CONFIG_ID } from "../auth/better-auth";
-import { normalizeHermesRpcEndpoint } from "./hermes-rpc-client";
-import { encryptSecret } from "./secrets";
+import { assertHermesGatewayEndpointAllowed } from "@thechat/hermes-proxy/endpoint";
+import { encryptSecret } from "@thechat/hermes-proxy/secrets";
 
 export function generateWebhookSecret(): string {
   return `whsec_${crypto.randomBytes(32).toString("hex")}`;
@@ -103,7 +103,9 @@ export async function createHermesBotInWorkspace(
       throw new ServiceError("Hermes gateway token is required", 400);
     }
     try {
-      rpcEndpoint = normalizeHermesRpcEndpoint(options.hermesRpc.endpoint);
+      rpcEndpoint = assertHermesGatewayEndpointAllowed(
+        options.hermesRpc.endpoint,
+      );
     } catch (error) {
       throw new ServiceError(
         error instanceof Error ? error.message : "Invalid Hermes gateway URL",

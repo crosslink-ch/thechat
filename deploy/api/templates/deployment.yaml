@@ -47,6 +47,12 @@ spec:
               containerPort: {{ .Values.service.targetPort }}
               protocol: TCP
           env:
+            {{- if .Values.hermesProxy.enabled }}
+            - name: THECHAT_HERMES_PROXY_URL
+              value: {{ required "hermesProxy.publicUrl is required when enabled" .Values.hermesProxy.publicUrl | quote }}
+            - name: THECHAT_HERMES_PROXY_ALLOWED_ORIGINS
+              value: {{ join "," .Values.hermesProxy.allowedOrigins | quote }}
+            {{- end }}
             {{- include "thechat-api.env" . | trim | nindent 12 }}
             {{- include "thechat-api.apiAwsCredentialEnv" . | trim | nindent 12 }}
           livenessProbe:
