@@ -79,6 +79,25 @@ describe("Direct Hermes gateway connection", () => {
     client.close();
   });
 
+  test("accepts the Date value decoded by Eden Treaty", async () => {
+    const socket = new FakeSocket();
+    const decodedTicket = {
+      ...ticket,
+      expiresAt: new Date(Date.now() + 60_000),
+    } as unknown as DirectHermesProxyTicket;
+
+    const connection = connectDirectHermesGateway({
+      issueTicket: async () => decodedTicket,
+      socketFactory() {
+        queueMicrotask(() => socket.open());
+        return socket as unknown as WebSocket;
+      },
+    });
+
+    const client = await connection;
+    client.close();
+  });
+
   test("stops before ticket issuance when the caller is already aborted", async () => {
     const controller = new AbortController();
     controller.abort();

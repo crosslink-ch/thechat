@@ -5,7 +5,7 @@ import {
 import { JsonRpcGatewayClient } from "./hermes-json-rpc-gateway";
 
 export interface DirectHermesProxyTicket {
-  expiresAt: string;
+  expiresAt: string | Date;
   proxyUrl: string;
   ticket: string;
 }
@@ -31,11 +31,14 @@ function validateProxyTicket(value: unknown): DirectHermesProxyTicket {
     typeof grant.ticket !== "string" ||
     !TICKET_PATTERN.test(grant.ticket) ||
     typeof grant.proxyUrl !== "string" ||
-    typeof grant.expiresAt !== "string"
+    (typeof grant.expiresAt !== "string" && !(grant.expiresAt instanceof Date))
   ) {
     throw new Error("TheChat returned an invalid Hermes proxy ticket");
   }
-  const expiresAt = Date.parse(grant.expiresAt);
+  const expiresAt =
+    grant.expiresAt instanceof Date
+      ? grant.expiresAt.getTime()
+      : Date.parse(grant.expiresAt);
   if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) {
     throw new Error("TheChat returned an invalid Hermes proxy ticket");
   }
