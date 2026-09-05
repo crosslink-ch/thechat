@@ -75,6 +75,29 @@ Revocation disconnects the transport but cannot cancel already-started Hermes
 work. Reports keep timing and credential-redaction results separate from the
 production-built browser-component evidence; native Windows/Tauri is not claimed.
 
+## Attachment and slash-command acceptance
+
+```bash
+/workspace/hermes-source/.venv/bin/python scripts/e2e/direct-hermes-acceptance.py --browser --composer --settings
+/workspace/hermes-source/.venv/bin/python scripts/e2e/direct-hermes-composer-test.py
+```
+
+`--composer` exercises actual file-picker uploads, removal without upload,
+session-scoped pending files, attachment-only sends, size rejection without losing
+the WebSocket, native image input, and slash-command dispatch in the browser.
+The fixture proves text-file receipt through real agent file access and records
+the actual image input delivered by Hermes. Disk bytes/hashes are checked in the
+isolated gateway workspace. `/branch` and `/fork` must create real durable Hermes
+sessions with copied history and an unchanged parent; follow-up messages and a
+page reload verify the branch, not a synthetic client-only session. Control and
+unknown commands must not become ordinary model prompts.
+
+The report separates these checks and provider receipts from the existing
+chat/settings/zero-shift checks. Inference is still deterministic and labelled;
+this proves transport, bytes, agent/tool delivery and session persistence, not a
+paid model's image interpretation. Browser/native-bridge unit coverage does not
+claim an interactive Windows/Tauri file-dialog or native drag-and-drop E2E run.
+
 ## Assertions
 
 1. Real `/auth/register` creates disposable owner and outsider; owner creates workspace, Direct Hermes bot and exact DM.

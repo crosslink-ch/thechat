@@ -213,6 +213,12 @@ def verify(stack):
             audit = json.loads((stack.root / 'fixture-audit.json').read_text())
             assert any(r['stage'] == 'browser_followup' for r in audit), audit
             assert sum(r['stage'] == 'verified_real_tool_result' for r in audit) >= 2, audit
+            composer_evidence = {'status': 'not requested'}
+            if stack.args.composer:
+                composer_spec = importlib.util.spec_from_file_location('browser_composer', HERE / 'direct-hermes-browser-composer.py')
+                composer = importlib.util.module_from_spec(composer_spec)
+                composer_spec.loader.exec_module(composer)
+                composer_evidence = composer.verify(stack, page, frames, requests)
             refresh_geometry = extension.verify_refresh(stack, page)
             settings_evidence = extension.verify_manage(stack, page, browser, url, errors) if stack.args.settings else {'status': 'not requested'}
             assert not errors, errors
@@ -226,7 +232,7 @@ def verify(stack):
                 'savedSessionResumeFollowup': True, 'switchIsolation': True, 'pageReloadHistory': True,
                 'newSessionRealTerminalTurn': True, 'renderedToolArgsAndResultVerified': True,
                 'toolRunningStateCaptured': True, 'componentGeometry': geometry, 'mobileSessionNavigation': mobile_navigation,
-                'refreshZeroShift': refresh_geometry, 'manageBots': settings_evidence,
+                'refreshZeroShift': refresh_geometry, 'manageBots': settings_evidence, 'composer': composer_evidence,
                 'hermesApiNoStoreCredentialRedaction': True,
                 'rpcMethods': sorted(set(sent_methods)),
                 'eventTypes': sorted(set(received_events)), 'screenshots': sorted(path.name for path in stack.root.glob('browser*.png'))}

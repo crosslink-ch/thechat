@@ -3,6 +3,8 @@ import type { DirectHermesChatSession } from "../lib/direct-hermes-chat";
 import { useDirectHermesChat } from "../hooks/useDirectHermesChat";
 import { Markdown } from "./Markdown";
 import { DirectHermesInteractionCard } from "./DirectHermesInteractionCard";
+import { DirectHermesComposer } from "./DirectHermesComposer";
+import { DirectHermesAttachmentPreview } from "./DirectHermesAttachmentPreview";
 
 const button = "cursor-pointer rounded-md border border-border bg-raised px-3 py-2 text-[0.786rem] text-text-secondary hover:bg-hover disabled:cursor-not-allowed disabled:opacity-50";
 
@@ -17,6 +19,7 @@ export function DirectHermesSessionsView({ botId, botName, conversationId, token
   const { chat, state } = useDirectHermesChat(botId, conversationId, token);
   const active = state.active;
   const connected = state.connection === "open";
+  useEffect(() => { if (connected && !chat.getSnapshot().commands) void chat.refreshCommands(); }, [chat, connected]);
   const scroll = useRef<HTMLDivElement>(null);
   const pinned = useRef(true);
   useEffect(() => {
@@ -76,17 +79,12 @@ export function DirectHermesSessionsView({ botId, botName, conversationId, token
               </details> : <article key={entry.id} className={`min-w-0 rounded-lg px-3 py-2 ${entry.role === "user" ? "border border-border bg-raised" : ""}`}>
                 <p className="mb-1 text-xs font-medium text-text-dimmed">{entry.role === "user" ? "You" : entry.role === "assistant" ? "Hermes" : "System"}</p>
                 <div className="break-words text-sm text-text">{entry.role === "user" ? <p className="whitespace-pre-wrap">{entry.text}</p> : <Markdown content={entry.text} />}</div>
+                {!!entry.attachments?.length && <ul aria-label="Message attachments" className="mt-2 flex flex-wrap gap-2 text-xs text-text-secondary">{entry.attachments.map(attachment => <li key={attachment.id} className="min-w-0 rounded-md border border-border p-2"><DirectHermesAttachmentPreview attachment={attachment} /><span className="break-all">{attachment.name}</span><span className="ml-2 text-text-dimmed">{attachment.size} bytes</span></li>)}</ul>}
               </article>)}
             </div>
           </div>
           {active.interactions[0] && <DirectHermesInteractionCard key={`${active.key}:${active.interactions[0].requestId}`} interaction={active.interactions[0]} connected={connected} respond={(id, answer) => chat.respond(id, answer)} />}
-          <form onSubmit={event => { event.preventDefault(); void chat.send(); }} className="border-t border-border p-3">
-            <textarea aria-label="Message Hermes" placeholder="Message Hermes…" rows={3} value={active.draft} disabled={!connected || active.phase === "loading"} onChange={event => chat.setDraft(event.target.value)} onKeyDown={event => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); if (active.phase === "idle") void chat.send(); } }} className="w-full resize-none rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text outline-none focus:border-text-muted disabled:opacity-50" />
-            <div className="mt-2 flex items-center justify-between gap-2"><p className="text-xs text-text-dimmed">Enter to send · Shift+Enter for a new line</p><div className="flex gap-2">
-              {["sending", "running", "stopping", "uncertain"].includes(active.phase) && <button type="button" className={button} disabled={!connected || active.phase === "stopping"} onClick={() => void chat.stop()}>{active.phase === "stopping" ? "Stopping…" : "Stop"}</button>}
-              <button type="submit" className={button} disabled={!connected || active.submitting || active.phase !== "idle" || !active.draft.trim()}>Send</button>
-            </div></div>
-          </form>
+          <DirectHermesComposer chat={chat} active={active} connected={connected} commands={state.commands} />
         </> : <div className="flex flex-1 items-center justify-center p-6 text-center text-text-muted">Select a saved Hermes session or create a new session.</div>}
       </section>
     </div>

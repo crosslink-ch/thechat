@@ -157,7 +157,7 @@ class Stack:
             '--port', str(self.ports['model']), '--marker', str(self.marker), '--audit', str(self.root / 'fixture-audit.json')])
         # This is a freshly created test config, not a mutation of user settings.
         (self.hermes_home / 'config.yaml').write_text(
-            f'model:\n  provider: custom\n  default: {fixture.MODEL}\n  base_url: {self.model}\n  api_mode: chat_completions\n'
+            f'model:\n  provider: custom\n  default: {fixture.MODEL}\n  base_url: {self.model}\n  api_mode: chat_completions\n  supports_vision: true\n'
             'terminal:\n  backend: local\n  timeout: 15\n'
             'agent:\n  max_turns: 6\nstreaming:\n  enabled: true\n'
             'memory:\n  memory_enabled: false\n  user_profile_enabled: false\n'
@@ -385,11 +385,14 @@ def main():
     parser.add_argument('--postgres-image', default='postgres:17-alpine')
     parser.add_argument('--redis-image', default='redis:7-alpine')
     parser.add_argument('--browser', action='store_true')
+    parser.add_argument('--composer', action='store_true', help='With --browser, verify real file/image uploads, attachment-only sends and branch/control commands')
     parser.add_argument('--settings', action='store_true', help='Exercise real owner settings/access, revocation and browser Manage bots controls')
     parser.add_argument('--keep-running', action='store_true', help='After PASS hold this disposable preview open, then clean up')
     parser.add_argument('--keep-seconds', type=int, default=1800, help='Bounded preview lifetime (1..3600 seconds)')
     parser.add_argument('--timeout', type=int, default=540)
     args = parser.parse_args()
+    if args.composer and not args.browser:
+        parser.error('--composer requires --browser')
     if not 1 <= args.keep_seconds <= 3600:
         parser.error('--keep-seconds must be 1..3600')
     stack = Stack(args)

@@ -215,6 +215,42 @@ acceptance. Inference is a clearly labelled deterministic local fixture, while
 Hermes, its terminal tool, authentication, the WebSocket relay, and both databases
 are real. No external model credential or production user data is used.
 
+## Attachments and slash commands
+
+The Direct Hermes composer accepts files through **Attach files**, image paste,
+and browser drag-and-drop. The Tauri picker uses the existing native file reader;
+it uploads bytes, never a Windows/macOS path that the remote gateway cannot read.
+Files remain in the selected session's ephemeral draft until **Send**. Remove a
+chip to omit it; an attachment-only message is supported. The current transport-safe
+limit is **five files per message, 2 MiB per file**. It is intentionally below
+the opaque proxy's 4 MiB JSON-frame bound after base64 encoding.
+
+Uploads use the existing Hermes `file.attach` RPC. Ordinary files contribute the
+gateway-returned `@file:` reference to the prompt. Images are staged first, then
+attached through `image.attach` using the known gateway path, which permits
+`image.detach` cleanup before a cancelled/failed submission can affect another
+turn. All uploads and prompts use the existing authenticated WebSocket; there is
+no TheChat attachment endpoint or transcript mirror. Uploaded files belong to
+the shared Hermes workspace, and cancelling cannot erase a file already uploaded.
+Saved history may retain references without a client-local image preview.
+
+Type `/` to discover commands from Hermes' catalog. **Send** executes the command
+ instead of passing the slash text to the model. In particular:
+
+- `/branch [name]` and `/fork [name]` call `session.branch`, open the returned
+  Hermes session with its copied history, and leave the parent intact.
+- `/new`, `/reset`, and `/clear` create a fresh session without deleting old history.
+- `/stop` interrupts the current turn. `/title`, `/status`, `/help`, and `/model`
+  expose their supported gateway control paths and output.
+- Supported worker commands and catalog-advertised quick/skill commands use their
+  corresponding Hermes execution surfaces. Native-app-only or unknown commands
+  report an error rather than silently becoming an ordinary model prompt.
+
+Send attachments separately from slash commands. Uploads, commands, and prompts
+are not automatically replayed after an ambiguous failure. Reconnect/sync and
+inspect the gateway state before retrying; unresolved image-cleanup or submit
+outcomes remain blocked rather than silently resending a file or command.
+
 ## Current limits
 
 - This remains an experimental whole-gateway connection, not isolated per-user

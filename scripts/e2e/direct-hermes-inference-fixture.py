@@ -6,6 +6,7 @@ The fixture never writes the terminal marker; only Hermes' tool may create it.
 """
 from __future__ import annotations
 import argparse
+import importlib.util
 import json
 import re
 import shlex
@@ -13,6 +14,10 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+
+spec = importlib.util.spec_from_file_location('composer_fixture', Path(__file__).with_name('direct-hermes-composer-fixture.py'))
+composer = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(composer)
 
 MODEL = 'direct-hermes-inference-fixture'
 MARKER = 'DIRECT_HERMES_REAL_TERMINAL_OK'
@@ -37,7 +42,13 @@ class Fixture:
         message = {'role': 'assistant', 'content': 'Direct Hermes inference fixture title'}
         finish = 'stop'
         stage = 'auxiliary'
-        if tool_offered and 'DIRECT_HERMES_TOOL_A' in latest:
+        # New explicit case markers do not alter the legacy latest-user matching.
+        composer_result = composer.complete(messages, self.marker.parent) if tool_offered else None
+        composer_evidence = {}
+        if composer_result:
+            message, finish, composer_evidence = composer_result
+            stage = composer_evidence['stage']
+        elif tool_offered and 'DIRECT_HERMES_TOOL_A' in latest:
             if results:
                 assert self.marker.exists(), 'terminal marker is missing'
                 assert self.marker.read_text() == MARKER + '\n', 'terminal marker is incorrect'
@@ -70,6 +81,7 @@ class Fixture:
             stage = 'browser_followup' if 'DIRECT_HERMES_UI_FOLLOWUP' in latest else 'resumed_a'
         with self.lock:
             self.records.append({'stage': stage, 'stream': bool(payload.get('stream')), 'model': payload.get('model'),
+                'agentInference': tool_offered, 'composer': composer_evidence,
                 'toolResultPresent': bool(results), 'messageRoles': [m.get('role') for m in messages],
                 'userMarkers': [re.findall(r'DIRECT_HERMES_[A-Z_]+', str(u)) for u in users]})
         return {'id': 'chatcmpl-direct-hermes-fixture', 'object': 'chat.completion', 'created': int(time.time()),

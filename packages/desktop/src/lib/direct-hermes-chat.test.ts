@@ -3,7 +3,7 @@ import { DirectHermesChat } from "./direct-hermes-chat";
 import { DirectHermesTestSocket, testConnection, deferred } from "./direct-hermes-test-transport";
 
 const chats: DirectHermesChat[] = [];
-afterEach(() => { chats.splice(0).forEach(chat => chat.dispose()); });
+afterEach(() => { chats.splice(0).forEach(chat => chat.dispose()); vi.restoreAllMocks(); });
 async function setup() {
   const socket = new DirectHermesTestSocket();
   const chat = new DirectHermesChat(testConnection(socket));
@@ -13,6 +13,217 @@ async function setup() {
 }
 
 describe("Direct Hermes chat through the real JSON-RPC client", () => {
+  it("stages local files without reading/uploading until Send, and uses the gateway's escaped ref", async () => {
+    const { chat, socket } = await setup(); await chat.newSession();
+    const file = new File(["report"], 'report [final] "x".pdf', { type: "application/pdf" });
+    const before = socket.calls.length;
+    await expect(chat.addAttachments([file])).resolves.toBe(true);
+    expect(socket.calls).toHaveLength(before);
+    const attachment = chat.getSnapshot().active!.attachments![0];
+    expect(attachment).toMatchObject({ name: file.name, size: 6, type: "file", status: "queued" });
+    expect(chat.canSend()).toBe(true);
+    await chat.removeAttachment(attachment.id);
+    expect(socket.calls).toHaveLength(before);
+    expect(chat.canSend()).toBe(false);
+    await chat.addAttachments([file]);
+    socket.handle = (method, params) => {
+      if (method === "file.attach") {
+        expect(params).toEqual({ session_id: "runtime-1", name: file.name, data_url: "data:application/pdf;base64,cmVwb3J0" });
+        return { attached: true, name: file.name, path: '/gateway/report [final] "x".pdf', ref_text: '@file:`/gateway/report [final] "x".pdf`', uploaded: true };
+      }
+      expect(method).toBe("prompt.submit");
+      expect(params.text).toContain('@file:`/gateway/report [final] "x".pdf`');
+      expect(params.text).toContain("attached files");
+      return { status: "streaming" };
+    };
+    await expect(chat.send()).resolves.toBe(true);
+    expect(chat.getSnapshot().active!.attachments).toEqual([]);
+    expect(chat.getSnapshot().active!.entries[0].attachments).toEqual([expect.objectContaining({ name: file.name, size: 6 })]);
+  });
+  it("rejects an entire invalid attachment batch before reading bytes (2 MiB/file, five/session, zero-byte allowed)", async () => {
+    const { chat, socket } = await setup(); await chat.newSession();
+    const read = vi.spyOn(FileReader.prototype, "readAsDataURL");
+    const before = socket.calls.length;
+    const large = new File([new Uint8Array(2 * 1024 * 1024 + 1)], "too-large.bin");
+    await expect(chat.addAttachments([large])).resolves.toBe(false);
+    expect(chat.getSnapshot().active!.error).toContain("2 MiB");
+    expect(chat.getSnapshot().active!.attachments ?? []).toEqual([]);
+    const empty = new File([], "empty.txt");
+    await expect(chat.addAttachments(Array.from({ length: 6 }, () => empty))).resolves.toBe(false);
+    expect(chat.getSnapshot().active!.error).toContain("5");
+    await expect(chat.addAttachments([new File([new Uint8Array(2 * 1024 * 1024)], "limit.bin"), empty])).resolves.toBe(true);
+    expect(chat.getSnapshot().active!.attachments).toHaveLength(2);
+    expect(read).not.toHaveBeenCalled(); expect(socket.calls).toHaveLength(before);
+    read.mockRestore();
+  });
+  it("uploads images as files, queues only known gateway paths, and detaches after rejected prompts", async () => {
+    const { chat, socket } = await setup(); await chat.newSession();
+    const path = '/gateway/attachments/photo [1] "two".png';
+    await chat.addAttachments([new File(["png"], 'photo [1] "two".png', { type: "image/png" })]);
+    chat.setDraft("Describe");
+    socket.handle = (method, params) => {
+      if (method === "file.attach") return { attached: true, path, ref_text: "@file:ignored-image-reference" };
+      if (method === "image.attach") { expect(params).toEqual({ session_id: "runtime-1", path }); return { attached: true, path }; }
+      if (method === "image.detach") { expect(params).toEqual({ session_id: "runtime-1", path }); return { detached: false, count: 0 }; }
+      expect(method).toBe("prompt.submit"); expect(params.text).toBe("Describe");
+      throw new Error("Provider unavailable");
+    };
+    await expect(chat.send()).resolves.toBe(false);
+    expect(socket.calls.slice(-4).map(call => call.method)).toEqual(["file.attach", "image.attach", "prompt.submit", "image.detach"]);
+    expect(chat.getSnapshot().active).toMatchObject({ draft: "Describe", phase: "idle", entries: [], attachments: [expect.objectContaining({ type: "image", status: "ready" })] });
+    socket.handle = method => method === "image.attach" ? { attached: true, path } : { status: "streaming" };
+    await expect(chat.send()).resolves.toBe(true);
+    expect(socket.calls.filter(call => call.method === "file.attach")).toHaveLength(1);
+  });
+  it("fails closed when pending-image cleanup is unconfirmed, and explicit Sync retries only cleanup", async () => {
+    const { chat, socket } = await setup(); await chat.newSession();
+    await chat.addAttachments([new File(["png"], "photo.png", { type: "image/png" })]); chat.setDraft("Describe");
+    socket.handle = method => {
+      if (method === "file.attach") return { attached: true, path: "/gateway/photo.png", ref_text: "@file:/gateway/photo.png" };
+      if (method === "image.attach") return { attached: true, path: "/gateway/photo.png" };
+      throw new Error("Unavailable");
+    };
+    await chat.send();
+    expect(chat.getSnapshot().active).toMatchObject({ phase: "uncertain", attachments: [expect.objectContaining({ status: "uncertain" })] });
+    expect(chat.canSend()).toBe(false);
+    socket.handle = method => method === "session.activate"
+      ? { session_id: "runtime-1", stored_session_id: "stored-1", running: false, messages: [] }
+      : { detached: false, count: 0 };
+    await expect(chat.syncSession()).resolves.toBe(true);
+    expect(socket.calls.at(-1)?.method).toBe("image.detach");
+    expect(chat.getSnapshot().active).toMatchObject({ phase: "idle", draft: "Describe", attachments: [expect.objectContaining({ status: "ready" })] });
+    expect(socket.calls.filter(call => call.method === "prompt.submit")).toHaveLength(1);
+  });
+  it.each(["image.attach", "prompt.submit"])("never replays an ambiguous %s, even after an idle Sync or a late completion event", async blocked => {
+    const { chat, socket } = await setup(); await chat.newSession();
+    await chat.addAttachments([new File(["png"], "photo.png")]); chat.setDraft("Describe");
+    vi.useFakeTimers();
+    try {
+      socket.handle = method => {
+        if (method === blocked) return new Promise(() => {});
+        if (method === "file.attach") return { attached: true, path: "/gateway/photo.png", ref_text: "@file:/gateway/photo.png" };
+        return { attached: true, path: "/gateway/photo.png" };
+      };
+      const sent = chat.send();
+      await vi.waitFor(() => expect(socket.calls.some(call => call.method === blocked)).toBe(true));
+      await vi.advanceTimersByTimeAsync(120_001); await sent;
+      expect(chat.getSnapshot().active).toMatchObject({ phase: "uncertain", draft: "Describe", attachments: [expect.objectContaining({ status: "uncertain" })] });
+      socket.handle = () => ({ session_id: "runtime-1", stored_session_id: "stored-1", messages: [], running: false });
+      await chat.syncSession();
+      socket.event("message.complete", { text: "Late unrelated event" });
+      expect(chat.canSend()).toBe(false); await chat.send();
+      expect(socket.calls.filter(call => call.method === blocked)).toHaveLength(1);
+      expect(chat.getSnapshot().active!.error).toMatch(/unknown|unconfirmed/i);
+    } finally { vi.useRealTimers(); }
+  });
+  it("keeps failed file reads retryable without uploading and aborts a late reader after disposal", async () => {
+    const { chat, socket } = await setup(); await chat.newSession();
+    await chat.addAttachments([new File(["a"], "a.txt")]); chat.setDraft("Keep");
+    const before = socket.calls.length;
+    const read = vi.spyOn(FileReader.prototype, "readAsDataURL").mockImplementation(function(this: FileReader) { this.dispatchEvent(new Event("error")); });
+    await chat.send();
+    expect(chat.getSnapshot().active).toMatchObject({ phase: "idle", draft: "Keep", entries: [], attachments: [expect.objectContaining({ status: "error" })] });
+    expect(socket.calls).toHaveLength(before);
+    let reader!: FileReader;
+    read.mockImplementation(function(this: FileReader) { reader = this; });
+    const sent = chat.send(); chat.dispose();
+    Object.defineProperty(reader, "result", { value: "data:text/plain;base64,YQ==" }); reader.dispatchEvent(new Event("load"));
+    await sent; expect(socket.calls).toHaveLength(before);
+    read.mockRestore();
+  });
+  it("pins uploads and late ACKs to the sending session, clearing only captured attachment IDs", async () => {
+    const { chat, socket } = await setup(); await chat.newSession();
+    await chat.addAttachments([new File([], "empty.txt")]); chat.setDraft("Send A");
+    const ack = deferred<unknown>();
+    socket.handle = (method, params) => {
+      if (method === "file.attach") { expect(params.data_url).toMatch(/;base64,$/); return { attached: true, path: "/gateway/empty.txt", ref_text: "@file:/gateway/empty.txt" }; }
+      if (method === "prompt.submit") { expect(params.session_id).toBe("runtime-1"); return ack.promise; }
+      return { session_id: "runtime-b", stored_session_id: "saved-b", messages: [], running: false };
+    };
+    const sent = chat.send(); await chat.send();
+    await chat.addAttachments([new File(["b"], "next.txt")]); chat.setDraft("Next A");
+    await chat.selectSession("saved-b"); await chat.addAttachments([new File(["c"], "b.txt")]); chat.setDraft("B draft");
+    ack.resolve({ status: "streaming" }); await sent;
+    expect(chat.getSnapshot().active).toMatchObject({ storedId: "saved-b", draft: "B draft", attachments: [expect.objectContaining({ name: "b.txt", status: "queued" })] });
+    await chat.selectSession("stored-1");
+    expect(chat.getSnapshot().active).toMatchObject({ draft: "Next A", attachments: [expect.objectContaining({ name: "next.txt", status: "queued" })] });
+    expect(socket.calls.filter(call => call.method === "file.attach")).toHaveLength(1);
+  });
+  it.each(["file.attach", "image.attach"])("Stop during %s waits for its ACK, cleans known images, and never submits a late prompt", async blocked => {
+    const { chat, socket } = await setup(); await chat.newSession();
+    await chat.addAttachments([new File(["png"], "photo.png")]); chat.setDraft("Keep cancelled draft");
+    const ack = deferred<unknown>();
+    socket.handle = (method, params) => {
+      if (method === blocked) return ack.promise;
+      if (method === "file.attach") return { attached: true, path: "/gateway/photo.png", ref_text: "@file:/gateway/photo.png" };
+      if (method === "image.detach") { expect(params.path).toBe("/gateway/photo.png"); return { detached: true, count: 0 }; }
+      return { status: "interrupted" };
+    };
+    const sent = chat.send(); await vi.waitFor(() => expect(socket.calls.some(call => call.method === blocked)).toBe(true));
+    await expect(chat.stop()).resolves.toBe(true);
+    ack.resolve({ attached: true, path: "/gateway/photo.png", ref_text: "@file:/gateway/photo.png" });
+    await expect(sent).resolves.toBe(false);
+    expect(socket.calls.some(call => call.method === "prompt.submit")).toBe(false);
+    if (blocked === "image.attach") expect(socket.calls.some(call => call.method === "image.detach")).toBe(true);
+    expect(chat.getSnapshot().active).toMatchObject({ draft: "Keep cancelled draft", phase: "idle", entries: [], attachments: [expect.objectContaining({ status: "ready" })] });
+  });
+  it("does not reuse a staged file after reconnect even when the runtime ID is unchanged", async () => {
+    const { chat, socket } = await setup(); await chat.newSession();
+    await chat.addAttachments([new File(["a"], "a.txt")]); chat.setDraft("Read");
+    socket.handle = method => { if (method === "file.attach") return { attached: true, path: "/old/a.txt", ref_text: "@file:/old/a.txt" }; throw new Error("Rejected prompt"); };
+    await chat.send(); socket.close();
+    socket.handle = method => {
+      if (method === "session.list") return { sessions: [] };
+      if (method === "session.active_list") return { sessions: [{ id: "runtime-1", session_key: "stored-1" }] };
+      if (method === "session.activate") return { session_id: "runtime-1", session_key: "stored-1", messages: [], running: false };
+      if (method === "file.attach") return { attached: true, path: "/new/a.txt", ref_text: "@file:/new/a.txt" };
+      return { status: "streaming" };
+    };
+    await chat.connect(); await expect(chat.send()).resolves.toBe(true);
+    expect(socket.calls.filter(call => call.method === "file.attach")).toHaveLength(2);
+    expect(socket.calls.at(-1)?.params.text).toContain("@file:/new/a.txt");
+  });
+  it("never drops a pending-image cleanup obligation when removal or a new gateway cannot confirm cleanup", async () => {
+    const { chat, socket } = await setup(); await chat.newSession();
+    await chat.addAttachments([new File(["a"], "a.png")]); chat.setDraft("Read");
+    socket.handle = method => {
+      if (method === "file.attach") return { attached: true, path: "/gateway/a.png", ref_text: "@file:/gateway/a.png" };
+      if (method === "image.attach") return { attached: true, path: "/gateway/a.png" };
+      throw new Error("Unavailable");
+    };
+    await chat.send(); const attachment = chat.getSnapshot().active!.attachments![0];
+    await expect(chat.removeAttachment(attachment.id)).resolves.toBe(false);
+    expect(chat.getSnapshot().active!.attachments).toContain(attachment);
+    socket.close(); socket.handle = method => method === "session.list" ? { sessions: [] } : method === "session.active_list" ? { sessions: [] } : { session_id: "new-runtime", stored_session_id: "stored-1", messages: [], running: false };
+    await chat.connect();
+    expect(chat.canSend()).toBe(false);
+    expect(chat.getSnapshot().active!.attachments).toContain(attachment);
+    expect(chat.getSnapshot().active!.error).toMatch(/cleanup.*(binding|gateway|unconfirmed)/i);
+  });
+  it("Sync confirms only a newly observed submitted attachment prompt and clears only its captured draft/files", async () => {
+    const { chat, socket } = await setup(); await chat.newSession();
+    await chat.addAttachments([new File(["png"], "photo.png")]); chat.setDraft("Same text");
+    chat.getSnapshot().active!.entries.push({ id: "old", role: "user", text: "Same text" });
+    socket.handle = method => method === "file.attach" ? { attached: true, path: "/gateway/photo.png", ref_text: "@file:/gateway/photo.png" } : method === "image.attach" ? { attached: true, path: "/gateway/photo.png" } : { invalid: "unknown prompt ACK" };
+    await chat.send();
+    const sent = chat.getSnapshot().active!.attachments![0];
+    socket.handle = () => ({ session_id: "runtime-1", stored_session_id: "stored-1", messages: [{ role: "user", text: "Same text" }], running: false });
+    await chat.syncSession();
+    expect(chat.getSnapshot().active).toMatchObject({ draft: "Same text", phase: "uncertain" });
+    await chat.addAttachments([new File(["next"], "next.txt")]); chat.setDraft("New draft");
+    socket.handle = () => ({ session_id: "runtime-1", stored_session_id: "stored-1", messages: [{ role: "user", text: "Same text" }, { role: "user", text: "Same text" }, { role: "assistant", text: "Confirmed answer" }], running: false });
+    await chat.syncSession();
+    expect(chat.getSnapshot().active).toMatchObject({ draft: "New draft", phase: "idle", attachments: [expect.objectContaining({ name: "next.txt" })] });
+    expect(chat.getSnapshot().active!.attachments).not.toContain(sent);
+    expect(socket.calls.filter(call => call.method === "prompt.submit")).toHaveLength(1);
+  });
+  it("removes a queued file synchronously so an immediate Send cannot capture it", async () => {
+    const { chat, socket } = await setup(); await chat.newSession();
+    await chat.addAttachments([new File(["a"], "a.txt")]); chat.setDraft("Text only");
+    const removed = chat.removeAttachment(chat.getSnapshot().active!.attachments![0].id);
+    await Promise.all([removed, chat.send()]);
+    expect(socket.calls.some(call => call.method === "file.attach")).toBe(false);
+  });
   it.each(["missing", "reclaimed"])("recovers a %s runtime through explicit Sync without replaying a prompt", async binding => {
     const { chat, socket } = await setup();
     if (binding === "missing") {
