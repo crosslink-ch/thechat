@@ -36,7 +36,7 @@ export function DirectHermesSessionsView({ botId, botName, conversationId, token
 
   return <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-base">
     <header className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-5 py-3">
-      <div><h1 className="font-semibold text-text">{botName} · Direct Hermes</h1><p className="text-[0.786rem] text-text-dimmed">Private connection through TheChat’s permission-gated proxy</p></div>
+      <div><h1 className="font-semibold text-text">{botName} · Direct Hermes</h1><p className="text-[0.786rem] text-text-dimmed">Sessions are shared with anyone granted access to this Hermes gateway.</p></div>
       <div className="flex items-center gap-2"><span role="status" className="text-[0.786rem] text-text-muted">{connected ? "Connected" : state.connection === "connecting" ? "Connecting…" : "Disconnected"}</span>
         {!connected && <button className={button} disabled={!token || state.connection === "connecting"} onClick={() => void chat.connect()}>Reconnect</button>}
       </div>
@@ -45,10 +45,10 @@ export function DirectHermesSessionsView({ botId, botName, conversationId, token
     {state.error && <p role="alert" className="border-b border-error-msg-border bg-error-msg-bg p-3 text-error-bright">{state.error}</p>}
     <div className="flex min-h-0 min-w-0 flex-1 flex-col md:flex-row">
       <aside aria-label="Sessions" className="flex max-h-48 shrink-0 flex-col border-b border-border bg-surface md:max-h-none md:w-64 md:border-r md:border-b-0">
-        <div className="flex items-center justify-between gap-2 px-3 py-2"><h2 className="text-sm font-semibold text-text">Sessions</h2><button className={button} disabled={!connected || state.listing} onClick={() => void chat.refreshSessions()}>Refresh</button></div>
+        <div className="flex items-center justify-between gap-2 px-3 py-2"><h2 className="text-sm font-semibold text-text">Sessions</h2><button className={`${button} relative shrink-0`} aria-label={state.listing ? "Refreshing sessions" : "Refresh"} aria-busy={state.listing} disabled={!connected || state.listing} onClick={() => void chat.refreshSessions()}><span className={state.listing ? "invisible" : ""}>Refresh</span>{state.listing && <span aria-hidden="true" className="absolute inset-0 flex items-center justify-center">…</span>}<span role="status" className="sr-only">{state.listing ? "Refreshing sessions" : ""}</span></button></div>
         <button className={`${button} mx-3 mb-2`} disabled={!connected} onClick={() => { pinned.current = true; void chat.newSession(); }}>New session</button>
         <div className="min-h-0 overflow-y-auto px-2 pb-2">
-          {state.listing && <p className="p-2 text-xs text-text-muted">Loading sessions…</p>}
+          {state.listing && !rows.length && <p className="p-2 text-xs text-text-muted">Loading sessions…</p>}
           {!state.listing && !rows.length && <p className="p-2 text-xs text-text-muted">No saved sessions yet.</p>}
           {rows.map(row => <button key={row.key} type="button" aria-pressed={!!row.opened && row.opened.key === active?.key} disabled={!connected && !row.opened} onClick={() => { pinned.current = true; void chat.selectSession(row.opened?.key || row.key); }} className={`mb-1 block w-full cursor-pointer rounded-md px-3 py-2 text-left hover:bg-hover ${!!row.opened && row.opened.key === active?.key ? "bg-hover" : ""}`}>
             <span className="block truncate text-sm font-medium text-text">{row.title}</span>

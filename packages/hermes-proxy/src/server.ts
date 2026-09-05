@@ -23,6 +23,29 @@ const DEFAULT_MAX_BACKPRESSURE_BYTES = 4 * 1024 * 1024;
 const DEFAULT_MAX_QUEUED_BYTES = 4 * 1024 * 1024;
 const DEFAULT_MAX_PAYLOAD_BYTES = 4 * 1024 * 1024;
 const OPEN = 1;
+// One-second polling plus one-second store deadline. Including a read already
+// in flight when policy changes, forwarding stops within at most three seconds
+// (subject to event-loop scheduling). No Hermes frame is interpreted.
+const POLICY_POLL_MS = 1_000;
+const POLICY_TIMEOUT_MS = 1_000;
+async function policyCheck(
+  store: HermesProxyTicketStore,
+  grant: HermesProxyGrant,
+): Promise<boolean> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      store.isCurrent(grant),
+      new Promise<boolean>((resolve) => {
+        timeout = setTimeout(() => resolve(false), POLICY_TIMEOUT_MS);
+      }),
+    ]);
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
 
 type BufferedFrame = string | Uint8Array;
 
@@ -31,6 +54,7 @@ interface ProxySocketData {
   counted: boolean;
   grant: HermesProxyGrant;
   lifetimeTimer: ReturnType<typeof setTimeout> | null;
+  policyTimer: ReturnType<typeof setTimeout> | null;
   queuedBytes: number;
   queue: BufferedFrame[];
   upstream: WebSocket | null;
@@ -78,6 +102,8 @@ function clearLifetimeTimer(data: ProxySocketData): void {
 function closeUpstream(data: ProxySocketData): void {
   clearConnectTimer(data);
   clearLifetimeTimer(data);
+  if (data.policyTimer) clearTimeout(data.policyTimer);
+  data.policyTimer = null;
   const upstream = data.upstream;
   data.upstream = null;
   data.queue = [];
@@ -132,10 +158,10 @@ export function createHermesProxyServer(
   options: HermesProxyServerOptions = {},
 ) {
   const ticketStore = options.ticketStore ?? getHermesProxyTicketStore();
-  const connectTimeoutMs = options.connectTimeoutMs ??
-    DEFAULT_CONNECT_TIMEOUT_MS;
-  const maxConnectionDurationMs = options.maxConnectionDurationMs ??
-    DEFAULT_MAX_CONNECTION_DURATION_MS;
+  const connectTimeoutMs =
+    options.connectTimeoutMs ?? DEFAULT_CONNECT_TIMEOUT_MS;
+  const maxConnectionDurationMs =
+    options.maxConnectionDurationMs ?? DEFAULT_MAX_CONNECTION_DURATION_MS;
   const maxBackpressureBytes = positiveInteger(
     options.maxBackpressureBytes ?? DEFAULT_MAX_BACKPRESSURE_BYTES,
     "maxBackpressureBytes",
@@ -205,7 +231,9 @@ export function createHermesProxyServer(
       try {
         grant = await ticketStore.consume(ticket);
       } catch {
-        return new Response("Proxy ticket service unavailable", { status: 503 });
+        return new Response("Proxy ticket service unavailable", {
+          status: 503,
+        });
       }
       if (!grant) {
         return new Response("Unauthorized", { status: 401 });
@@ -222,6 +250,7 @@ export function createHermesProxyServer(
         counted: true,
         grant,
         lifetimeTimer: null,
+        policyTimer: null,
         queuedBytes: 0,
         queue: [],
         upstream: null,
@@ -249,13 +278,8 @@ export function createHermesProxyServer(
             data.grant.endpoint,
             options.endpointPolicy,
           );
-          const gatewayToken = decryptSecret(
-            data.grant.gatewayTokenEncrypted,
-          );
-          upstreamUrl = authenticatedHermesGatewayUrl(
-            endpoint,
-            gatewayToken,
-          );
+          const gatewayToken = decryptSecret(data.grant.gatewayTokenEncrypted);
+          upstreamUrl = authenticatedHermesGatewayUrl(endpoint, gatewayToken);
         } catch {
           closeDownstream(socket, 1011, "Hermes gateway unavailable");
           return;
@@ -271,6 +295,21 @@ export function createHermesProxyServer(
           return;
         }
 
+        const pollPolicy = async () => {
+          const current = await policyCheck(ticketStore, data.grant);
+          if (data.upstream !== upstream) return;
+          if (!current) {
+            closeUpstream(data);
+            closeDownstream(socket, 1008, "Hermes proxy authorization revoked");
+            return;
+          }
+          data.policyTimer = setTimeout(
+            () => void pollPolicy(),
+            POLICY_POLL_MS,
+          );
+        };
+        data.policyTimer = setTimeout(() => void pollPolicy(), POLICY_POLL_MS);
+
         data.connectTimer = setTimeout(() => {
           if (data.upstream === upstream && upstream.readyState !== OPEN) {
             closeUpstream(data);
@@ -280,11 +319,7 @@ export function createHermesProxyServer(
         if (maxConnectionDurationMs > 0) {
           data.lifetimeTimer = setTimeout(() => {
             closeUpstream(data);
-            closeDownstream(
-              socket,
-              1008,
-              "Hermes proxy authorization expired",
-            );
+            closeDownstream(socket, 1008, "Hermes proxy authorization expired");
           }, maxConnectionDurationMs);
         }
 
@@ -366,9 +401,7 @@ if (import.meta.main) {
     port: portFromEnv(),
     ticketStore,
   });
-  console.log(
-    `Hermes proxy listening on ${server.hostname}:${server.port}`,
-  );
+  console.log(`Hermes proxy listening on ${server.hostname}:${server.port}`);
 
   const shutdown = async () => {
     server.stop(true);

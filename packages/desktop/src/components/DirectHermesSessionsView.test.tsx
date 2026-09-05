@@ -25,6 +25,35 @@ beforeEach(() => {
 afterEach(() => { cleanup(); clearDirectHermesChats(); vi.unstubAllGlobals(); vi.clearAllMocks(); });
 
 describe("Direct Hermes desktop surface", () => {
+  it("explains the shared gateway boundary to every chat participant", async () => {
+    renderView();
+    await screen.findByText("Connected");
+    expect(screen.getByText("Sessions are shared with anyone granted access to this Hermes gateway.")).toBeInTheDocument();
+    expect(screen.queryByText(/Private connection/)).not.toBeInTheDocument();
+  });
+  it("refreshes in place without inserting a loading row or resetting the session list", async () => {
+    renderView();
+    const row = await screen.findByRole("button", { name: "Saved A" });
+    const list = row.parentElement!;
+    const children = Array.from(list.children);
+    list.scrollTop = 37;
+    let complete!: (value: unknown) => void;
+    const original = socket.handle;
+    socket.handle = (method, params) => method === "session.list"
+      ? new Promise(resolve => { complete = resolve; }) : original(method, params);
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    expect(screen.queryByText("Loading sessions…")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Refreshing sessions" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Refreshing sessions" })).toHaveAttribute("aria-busy", "true");
+    expect(Array.from(list.children)).toEqual(children);
+    expect(screen.getByRole("button", { name: "Saved A" })).toBe(row);
+    expect(list.scrollTop).toBe(37);
+    await waitFor(() => expect(complete).toBeTypeOf("function"));
+    await act(async () => complete({ sessions: [{ id: "saved-a", title: "Saved A" }, { id: "saved-b", title: "Saved B" }] }));
+    expect(screen.getByRole("button", { name: "Refresh" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Saved A" })).toBe(row);
+    expect(list.scrollTop).toBe(37);
+  });
   it("connects once under StrictMode effect replay using the real client and transport", async () => {
     render(<StrictMode><DirectHermesSessionsView botId={`strict-${++sequence}`} botName="Hermes" conversationId="conversation-1" token="thechat-user-token" /></StrictMode>);
     await screen.findByText("Connected");

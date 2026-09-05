@@ -29,17 +29,15 @@ const httpWebhookUrlSchema = z.string().url().refine((value) => {
   }
 }, "Webhook URL must use http or https");
 
+import { hermesGatewayTokenSchema } from "../services/hermes-rpc-config";
+
 const hermesRpcConnectionSchema = z.object({
   endpoint: z
     .string()
     .trim()
     .min(1, "Hermes gateway URL is required")
     .max(2048),
-  gatewayToken: z
-    .string()
-    .trim()
-    .min(1, "Hermes gateway token is required")
-    .max(4096),
+  gatewayToken: hermesGatewayTokenSchema.refine(value => value.length > 0, "Hermes gateway token is required"),
 });
 
 const createSchema = z.object({

@@ -10,7 +10,7 @@ API does not parse, construct, validate, or execute Hermes RPC methods.
 TheChat desktop
   1. POST /bots/:botId/hermes-rpc/proxy-ticket { conversationId }
        -> TheChat API authenticates the user
-       -> verifies the user owns the Direct Hermes bot
+       -> verifies the user owns the Direct Hermes bot or is explicitly granted access
        -> verifies the user and bot are current members of the DM workspace
        -> verifies both are participants in that exact direct conversation
        -> stores a 30-second, single-use capability in Redis
@@ -38,11 +38,17 @@ metadata.)
 - The API is the authorization authority.
 - A capability is 256 random bits, sent in `Sec-WebSocket-Protocol` rather than the
   URL query string.
-- Redis stores only a SHA-256 lookup key and the already-encrypted Hermes credential.
+- Redis stores a SHA-256 ticket lookup key, the already-encrypted Hermes credential,
+  and a monotonic bot-policy revision. It does not store Hermes transcripts.
 - `GETDEL` consumes a capability atomically, including across proxy replicas.
 - An unused capability expires after 30 seconds.
 - An active tunnel expires after one hour and must reconnect through the API, which
   rechecks current permissions.
+- Before opening an upstream connection and periodically while connected, the proxy
+  checks the grant's policy revision without interpreting any RPC frame. Policy
+  checks run one second apart with a one-second deadline; revoked/unverifiable
+  tunnels stop forwarding and close within a nominal three-second bound, subject
+  to event-loop scheduling. Store failures/timeouts fail closed.
 - The desktop receives neither the Hermes gateway token nor an authenticated Hermes
   URL.
 - The proxy has Redis and encryption-key access but requires no database access.
@@ -53,12 +59,26 @@ metadata.)
 Connection counters are per replica. Ticket consumption is global across replicas
 because Redis performs it atomically.
 
-Authorization is deliberately at the **bot connection** boundary, not per RPC
-method. Because one connection can invoke every method exposed by the Hermes gateway,
-the current experiment only issues capabilities to the bot owner. Workspace or DM
-membership alone is not sufficient. Broader sharing requires an explicit grant and
-resource-scoping model rather than silently treating chat access as runtime-wide
-authority.
+Authorization is deliberately at the **whole gateway connection** boundary, not
+per RPC method. Owner-only access remains the default. An owner may explicitly
+select trusted humans and acknowledge that sharing grants access to **all gateway
+sessions and runtime controls**, not an isolated private chat. Workspace or DM
+membership alone never grants access. Selected humans must still be current
+members and connect through their own direct conversation with the bot; only the
+owner can administer its connection or grants.
+
+Access/token/endpoint updates and supported workspace-member/bot removals publish
+a monotonic Redis fence under the database mutation lock before commit. This
+invalidates unconsumed tickets and active tunnels. A stale issuer cannot restore an
+older revision. Revision/store failures can temporarily deny access rather than
+silently retaining stale authorization. Closing a tunnel does **not** cancel work
+already accepted by Hermes, erase history, or undo external side effects.
+
+The internal capability format is version 2; old version-1 grants are rejected.
+The browser WebSocket subprotocol remains unchanged. Apply migration
+`0016_good_catseye.sql` and update/restart the API **and all proxy replicas** together.
+Do not leave old proxy processes serving traffic during this cutover. Existing
+gateway endpoints/tokens are preserved and existing bots remain owner-only.
 
 ## Hermes client source
 
@@ -127,6 +147,27 @@ given `DATABASE_URL`.
 
 ## Try it
 
+### Manage a Direct Hermes bot
+
+Open **Manage bots**, select the owned Direct Hermes bot, and use:
+
+- **Gateway endpoint** and **Replacement gateway token**. The configured token is
+  never returned to the client; blank/omitted input retains it when the endpoint
+  is unchanged. Changing the endpoint requires a replacement token. Tokens remain
+  encrypted at rest, and trusted-origin validation also applies to updates.
+- **Who can talk to this bot**. Select specific eligible humans from workspaces
+  shared by the owner and bot. Adding people requires explicit shared-gateway
+  acknowledgement; removals do not. Unavailable existing grants can be removed.
+- **Save Direct Hermes settings**. Saves use a revision precondition, so a stale
+  form cannot overwrite newer permissions or credentials. Reconnect after saving.
+
+These controls call owner-only, `Cache-Control: no-store`
+`GET/PATCH /bots/:botId/hermes-rpc/settings`. Grantees cannot read these settings,
+the stored gateway token, or its ciphertext through TheChat's management API.
+They do have the intentionally broad authority of the shared Hermes gateway.
+
+### Chat
+
 1. Run a Hermes dashboard/gateway reachable from the proxy process.
 2. In TheChat, open **Bots -> Add bot**.
 3. Select **Direct Hermes (JSON-RPC)**.
@@ -176,12 +217,11 @@ are real. No external model credential or production user data is used.
 
 ## Current limits
 
-- This remains an experimental, bot-owner-only direct connection, not shared
-  channel chat. The proxy's existing permission boundaries are unchanged.
+- This remains an experimental whole-gateway connection, not isolated per-user
+  chat or ordinary shared-channel bot invocation.
 - Direct Hermes bots do not receive ordinary TheChat channel messages or mentions.
-- Connection settings cannot yet be edited; delete and recreate the bot.
-- Active permission revocation is bounded by the one-hour tunnel lifetime rather
-  than pushed immediately to already-open sockets.
+- The stored token cannot be revealed; it can be replaced. A configured badge is
+  not proof that the credential is accepted by the upstream gateway.
 - Reusable dashboard session tokens are supported. A public Hermes deployment that
   requires fresh `/api/ws-ticket` credentials needs a proxy-side credential provider
   before it can be configured here.

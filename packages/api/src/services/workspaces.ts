@@ -22,6 +22,8 @@ function generateWorkspaceId(name: string): string {
   return `${slug}-${suffix}`;
 }
 
+import { revokeDirectHermesWorkspaceAccess } from "./hermes-proxy-revocation";
+
 export async function listUserWorkspaces(userId: string) {
   const memberships = await db
     .select({
@@ -401,6 +403,8 @@ export async function removeMember(
           ),
         );
     }
+
+    await revokeDirectHermesWorkspaceAccess(tx, workspaceId, targetUserId);
 
     await tx
       .delete(workspaceMembers)

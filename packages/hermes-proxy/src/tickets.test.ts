@@ -6,7 +6,8 @@ import {
 
 function grant(): Omit<HermesProxyGrant, "expiresAt" | "issuedAt"> {
   return {
-    version: 1,
+    policyRevision: "1",
+    version: 2,
     botId: "00000000-0000-4000-8000-000000000001",
     conversationId: "00000000-0000-4000-8000-000000000002",
     endpoint: "ws://127.0.0.1:9119/api/ws",

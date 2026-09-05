@@ -201,6 +201,7 @@ class Stack:
             'email': self.run_id + '-outsider@example.test', 'password': 'Disposable-direct-hermes-123!'})
         self.owner_token = owner['accessToken']
         self.owner = owner['user']
+        self.outsider = outsider
         self.workspace, _ = self.api_ok('POST', '/workspaces/create', {'name': 'Direct Hermes Inference Fixture'}, self.owner_token)
         self.bot, _ = self.api_ok('POST', '/bots/create', {'name': 'Real Hermes (inference fixture)',
             'kind': 'hermes-rpc', 'workspaceId': self.workspace['id'],
@@ -384,6 +385,7 @@ def main():
     parser.add_argument('--postgres-image', default='postgres:17-alpine')
     parser.add_argument('--redis-image', default='redis:7-alpine')
     parser.add_argument('--browser', action='store_true')
+    parser.add_argument('--settings', action='store_true', help='Exercise real owner settings/access, revocation and browser Manage bots controls')
     parser.add_argument('--keep-running', action='store_true', help='After PASS hold this disposable preview open, then clean up')
     parser.add_argument('--keep-seconds', type=int, default=1800, help='Bounded preview lifetime (1..3600 seconds)')
     parser.add_argument('--timeout', type=int, default=540)
@@ -400,6 +402,11 @@ def main():
     try:
         stack.start()
         asyncio.run(transport_acceptance(stack))
+        if args.settings:
+            settings_spec = importlib.util.spec_from_file_location('direct_settings', HERE / 'direct-hermes-settings.py')
+            settings = importlib.util.module_from_spec(settings_spec)
+            settings_spec.loader.exec_module(settings)
+            asyncio.run(settings.verify(stack, RPC, PROTOCOL, fixture))
         if args.browser:
             browser_spec = importlib.util.spec_from_file_location('direct_browser', HERE / 'direct-hermes-browser.py')
             browser = importlib.util.module_from_spec(browser_spec)

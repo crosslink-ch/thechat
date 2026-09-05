@@ -12,6 +12,8 @@ const mocks = vi.hoisted(() => ({
   rotateKeyPost: vi.fn(),
   revokeKeyDelete: vi.fn(),
   rotateSecretPost: vi.fn(),
+  settingsGet: vi.fn(),
+  settingsPatch: vi.fn(),
   openHermesBotModal: vi.fn(),
 }));
 
@@ -28,6 +30,7 @@ vi.mock("../lib/api", () => {
       "regenerate-key": { post: mocks.rotateKeyPost },
       "api-key": { delete: mocks.revokeKeyDelete },
       "regenerate-secret": { post: mocks.rotateSecretPost },
+      "hermes-rpc": { settings: { get: mocks.settingsGet, patch: mocks.settingsPatch } },
     }),
     { list: { get: mocks.listGet } },
   );
@@ -119,6 +122,51 @@ describe("BotsManageRoute", () => {
       data: { webhookSecret: "whsec_rotated" },
       error: null,
     });
+  });
+
+  it("loads Direct Hermes gateway settings without retrieving the stored token", async () => {
+    let finish!: (value: unknown) => void;
+    mocks.listGet.mockResolvedValue({ data: [{ ...ownedBot, kind: "hermes-rpc" }], error: null });
+    mocks.settingsGet.mockReturnValue(new Promise(resolve => { finish = resolve; }));
+    render(<BotsManageRoute />);
+    expect(await screen.findByText("Loading Direct Hermes settings…")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Gateway endpoint")).not.toBeInTheDocument();
+    await act(async () => finish({ data: {
+      botId: "bot-1", endpoint: "wss://hermes.example.com/api/ws", gatewayTokenConfigured: true,
+      allowedUserIds: [], eligibleUsers: [{ id: "human-2", name: "Alice" }], revision: "revision-1",
+    }, error: null }));
+    expect(screen.getByLabelText("Gateway endpoint")).toHaveValue("wss://hermes.example.com/api/ws");
+    expect(screen.getByText("Gateway token configured")).toBeInTheDocument();
+    expect(screen.getByLabelText("Replacement gateway token")).toHaveAttribute("type", "password");
+    expect(screen.getByLabelText("Replacement gateway token")).toHaveValue("");
+    expect(mocks.settingsGet).toHaveBeenCalledWith(expect.objectContaining({ headers: { authorization: "Bearer user-token" } }));
+    expect(mocks.settingsPatch).not.toHaveBeenCalled();
+  });
+
+  it("keeps webhook credentials and attachment controls out of Direct Hermes configuration", async () => {
+    const directBot = { ...ownedBot, kind: "hermes-rpc" as const };
+    mocks.listGet.mockResolvedValue({ data: [directBot, secondOwnedBot], error: null });
+    mocks.settingsGet.mockResolvedValue({ data: {
+      botId: "bot-1", endpoint: "wss://hermes.example.com/api/ws", gatewayTokenConfigured: true,
+      allowedUserIds: [], eligibleUsers: [], revision: "revision-1",
+    }, error: null });
+    mocks.botPatch.mockResolvedValue({ data: { ...directBot, name: "New direct name" }, error: null });
+    render(<BotsManageRoute />);
+    await screen.findByLabelText("Gateway endpoint");
+    expect(screen.queryByLabelText("Webhook URL")).not.toBeInTheDocument();
+    expect(screen.queryByText("Webhook secret")).not.toBeInTheDocument();
+    expect(screen.queryByText("Bot API key")).not.toBeInTheDocument();
+    expect(screen.getByTestId("bot-list-item-bot-1").querySelector("[title='API key active']")).toBeNull();
+    expect(screen.queryByLabelText("Allow message attachments")).not.toBeInTheDocument();
+    expect(screen.getByText(/Connecting a workspace does not grant/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save changes" })).toBeDisabled();
+    fireEvent.change(screen.getByLabelText("Bot name"), { target: { value: "New direct name" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(mocks.botPatch).toHaveBeenCalledWith({ name: "New direct name" }, { headers: { authorization: "Bearer user-token" } }));
+    fireEvent.click(screen.getByTestId("bot-list-item-bot-2"));
+    expect(await screen.findByLabelText("Webhook URL")).toBeInTheDocument();
+    expect(screen.getByText("Bot API key")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Gateway endpoint")).not.toBeInTheDocument();
   });
 
   it("loads owned bots without requiring an active workspace", async () => {

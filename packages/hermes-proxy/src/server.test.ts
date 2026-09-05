@@ -7,16 +7,12 @@ import {
   test,
 } from "bun:test";
 import { encryptSecret } from "./secrets";
-import {
-  HERMES_PROXY_PROTOCOL,
-  hermesProxyTicketProtocol,
-} from "./protocol";
+import { HERMES_PROXY_PROTOCOL, hermesProxyTicketProtocol } from "./protocol";
 import { createHermesProxyServer } from "./server";
 import { InMemoryHermesProxyTicketStore } from "./tickets";
 
 const previousSecret = process.env.THECHAT_SECRET_KEY;
-const previousAllowLoopback =
-  process.env.THECHAT_HERMES_PROXY_ALLOW_LOOPBACK;
+const previousAllowLoopback = process.env.THECHAT_HERMES_PROXY_ALLOW_LOOPBACK;
 
 const servers: Array<{ stop(closeActiveConnections?: boolean): void }> = [];
 const sockets: WebSocket[] = [];
@@ -68,6 +64,66 @@ function nextClose(socket: WebSocket): Promise<CloseEvent> {
 }
 
 describe("Hermes raw WebSocket proxy", () => {
+  for (const failure of ["revision", "unavailable", "unresponsive"] as const) {
+    test(`closes active opaque tunnels promptly on policy ${failure}`, async () => {
+      const upstream = Bun.serve({
+        hostname: "127.0.0.1",
+        port: 0,
+        fetch(request, server) {
+          if (server.upgrade(request)) return;
+          return new Response("upgrade", { status: 426 });
+        },
+        websocket: {
+          message(socket, data) {
+            socket.send(data);
+          },
+        },
+      });
+      servers.push(upstream);
+      const ticketStore = new InMemoryHermesProxyTicketStore();
+      const input = {
+        version: 2 as const,
+        policyRevision: "1",
+        botId: crypto.randomUUID(),
+        conversationId: crypto.randomUUID(),
+        userId: crypto.randomUUID(),
+        endpoint: `ws://127.0.0.1:${upstream.port}/api/ws`,
+        gatewayTokenEncrypted: encryptSecret("synthetic-token"),
+      };
+      const issued = await ticketStore.issue(input);
+      const proxy = createHermesProxyServer({
+        hostname: "127.0.0.1",
+        port: 0,
+        ticketStore,
+      });
+      servers.push(proxy);
+      const socket = await connect(
+        `ws://127.0.0.1:${proxy.port}/hermes-proxy`,
+        [HERMES_PROXY_PROTOCOL, hermesProxyTicketProtocol(issued.ticket)],
+      );
+      const echo = nextMessage(socket);
+      socket.send("not-json-before-revocation");
+      expect((await echo).data).toBe("not-json-before-revocation");
+      const closed = nextClose(socket);
+      if (failure === "revision")
+        await ticketStore.publishPolicyRevision(input.botId, "2");
+      else
+        ticketStore.isCurrent =
+          failure === "unavailable"
+            ? async () => {
+                throw new Error("unavailable");
+              }
+            : () => new Promise(() => {});
+      const result = await Promise.race([
+        closed,
+        Bun.sleep(2500).then(() => null),
+      ]);
+      expect(result).not.toBeNull();
+      expect(result?.code).toBe(1008);
+      expect(result?.reason).toBe("Hermes proxy authorization revoked");
+    });
+  }
+
   test("forwards opaque text and binary frames without interpreting RPC", async () => {
     const gatewayToken = "upstream-gateway-token";
     let upstreamRequestUrl = "";
@@ -89,7 +145,8 @@ describe("Hermes raw WebSocket proxy", () => {
 
     const ticketStore = new InMemoryHermesProxyTicketStore();
     const issued = await ticketStore.issue({
-      version: 1,
+      policyRevision: "1",
+      version: 2,
       botId: crypto.randomUUID(),
       conversationId: crypto.randomUUID(),
       endpoint: `ws://127.0.0.1:${upstream.port}/api/ws`,
@@ -103,26 +160,23 @@ describe("Hermes raw WebSocket proxy", () => {
     });
     servers.push(proxy);
 
-    const socket = await connect(
-      `ws://127.0.0.1:${proxy.port}/hermes-proxy`,
-      [HERMES_PROXY_PROTOCOL, hermesProxyTicketProtocol(issued.ticket)],
-    );
+    const socket = await connect(`ws://127.0.0.1:${proxy.port}/hermes-proxy`, [
+      HERMES_PROXY_PROTOCOL,
+      hermesProxyTicketProtocol(issued.ticket),
+    ]);
     expect(socket.protocol).toBe(HERMES_PROXY_PROTOCOL);
 
     const textResponse = nextMessage(socket);
     socket.send("opaque:not-json:{still-forward-me}");
-    expect((await textResponse).data).toBe("opaque:not-json:{still-forward-me}");
+    expect((await textResponse).data).toBe(
+      "opaque:not-json:{still-forward-me}",
+    );
 
     socket.binaryType = "arraybuffer";
     const binaryResponse = nextMessage(socket);
     socket.send(Uint8Array.from([0, 1, 2, 127, 128, 255]));
     expect(Array.from(new Uint8Array((await binaryResponse).data))).toEqual([
-      0,
-      1,
-      2,
-      127,
-      128,
-      255,
+      0, 1, 2, 127, 128, 255,
     ]);
 
     const upstreamUrl = new URL(upstreamRequestUrl);
@@ -151,7 +205,8 @@ describe("Hermes raw WebSocket proxy", () => {
 
     const ticketStore = new InMemoryHermesProxyTicketStore();
     const input = {
-      version: 1 as const,
+      policyRevision: "1",
+      version: 2 as const,
       botId: crypto.randomUUID(),
       conversationId: crypto.randomUUID(),
       endpoint: `ws://127.0.0.1:${upstream.port}/api/ws`,
@@ -207,7 +262,8 @@ describe("Hermes raw WebSocket proxy", () => {
 
     const ticketStore = new InMemoryHermesProxyTicketStore();
     const issued = await ticketStore.issue({
-      version: 1,
+      policyRevision: "1",
+      version: 2,
       botId: crypto.randomUUID(),
       conversationId: crypto.randomUUID(),
       endpoint: `ws://127.0.0.1:${upstream.port}/api/ws`,
@@ -222,10 +278,10 @@ describe("Hermes raw WebSocket proxy", () => {
     });
     servers.push(proxy);
 
-    const socket = await connect(
-      `ws://127.0.0.1:${proxy.port}/hermes-proxy`,
-      [HERMES_PROXY_PROTOCOL, hermesProxyTicketProtocol(issued.ticket)],
-    );
+    const socket = await connect(`ws://127.0.0.1:${proxy.port}/hermes-proxy`, [
+      HERMES_PROXY_PROTOCOL,
+      hermesProxyTicketProtocol(issued.ticket),
+    ]);
     const closed = await Promise.race([
       nextClose(socket),
       new Promise<null>((resolve) => setTimeout(() => resolve(null), 250)),
@@ -251,7 +307,8 @@ describe("Hermes raw WebSocket proxy", () => {
 
     const ticketStore = new InMemoryHermesProxyTicketStore();
     const issued = await ticketStore.issue({
-      version: 1,
+      policyRevision: "1",
+      version: 2,
       botId: crypto.randomUUID(),
       conversationId: crypto.randomUUID(),
       endpoint: `ws://127.0.0.1:${upstream.port}/api/ws`,
@@ -266,10 +323,10 @@ describe("Hermes raw WebSocket proxy", () => {
     });
     servers.push(proxy);
 
-    const socket = new WebSocket(
-      `ws://127.0.0.1:${proxy.port}/hermes-proxy`,
-      [HERMES_PROXY_PROTOCOL, hermesProxyTicketProtocol(issued.ticket)],
-    );
+    const socket = new WebSocket(`ws://127.0.0.1:${proxy.port}/hermes-proxy`, [
+      HERMES_PROXY_PROTOCOL,
+      hermesProxyTicketProtocol(issued.ticket),
+    ]);
     sockets.push(socket);
     const closed = await Promise.race([
       nextClose(socket),
@@ -289,23 +346,22 @@ describe("Hermes raw WebSocket proxy", () => {
     });
     servers.push(proxy);
 
-    const response = await fetch(
-      `http://127.0.0.1:${proxy.port}/hermes-proxy`,
-    );
+    const response = await fetch(`http://127.0.0.1:${proxy.port}/hermes-proxy`);
     expect(response.status).toBe(401);
 
     const issued = await ticketStore.issue({
-      version: 1,
+      policyRevision: "1",
+      version: 2,
       botId: crypto.randomUUID(),
       conversationId: crypto.randomUUID(),
       endpoint: "ws://127.0.0.1:1/api/ws",
       gatewayTokenEncrypted: "invalid-envelope",
       userId: crypto.randomUUID(),
     });
-    const socket = await connect(
-      `ws://127.0.0.1:${proxy.port}/hermes-proxy`,
-      [HERMES_PROXY_PROTOCOL, hermesProxyTicketProtocol(issued.ticket)],
-    );
+    const socket = await connect(`ws://127.0.0.1:${proxy.port}/hermes-proxy`, [
+      HERMES_PROXY_PROTOCOL,
+      hermesProxyTicketProtocol(issued.ticket),
+    ]);
     const closed = await nextClose(socket);
     expect(closed.code).toBe(1011);
     expect(closed.reason).not.toContain("invalid-envelope");

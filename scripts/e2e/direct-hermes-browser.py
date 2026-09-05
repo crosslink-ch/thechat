@@ -4,6 +4,7 @@
 This is not Tauri/full-app navigation acceptance. No mock RPC/transport or auth
 bypass: the entry signs in through real TheChat and the view obtains real tickets.
 """
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -21,6 +22,7 @@ def build(stack):
     (ui / 'node_modules').symlink_to(REPO / 'packages/desktop/node_modules', target_is_directory=True)
     source = (HERE / 'direct-hermes-browser-app.tsx').read_text()
     source = source.replace('__DIRECT_HERMES_COMPONENT__', str(REPO / 'packages/desktop/src/components/DirectHermesSessionsView.tsx'))
+    source = source.replace('__DIRECT_HERMES_DESKTOP__', str(REPO / 'packages/desktop/src'))
     source = source.replace('__DIRECT_HERMES_CSS__', './harness.css')
     # Tailwind v4 scans the build root by default. Our dedicated entry lives in
     # scratch, so explicitly include the actual external production source tree;
@@ -28,7 +30,7 @@ def build(stack):
     (ui / 'harness.css').write_text('@import ' + json.dumps(str(REPO / 'packages/desktop/src/App.css')) + ';\n@source ' + json.dumps(str(REPO / 'packages/desktop/src')) + ';\n')
     (ui / 'main.tsx').write_text(source)
     (ui / 'index.html').write_text('<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Direct Hermes inference fixture acceptance</title></head><body><div id="root"></div><script type="module" src="/main.tsx"></script></body></html>')
-    bot = {key: value for key, value in json.loads((stack.root / 'browser-input.json').read_text()).items() if key in ('botId', 'botName', 'conversationId')}
+    bot = {'botId': stack.bot['id'], 'botName': stack.bot['name'], 'botUserId': stack.bot['userId'], 'workspaceId': stack.workspace['id']}
     (ui / 'vite.config.mjs').write_text("import {defineConfig} from 'vite';\nimport react from '@vitejs/plugin-react';\nimport tailwind from '@tailwindcss/vite';\nexport default defineConfig(" +
         '{plugins:[react(),tailwind()],envDir:false,define:' + json.dumps({'__BACKEND_URL__': json.dumps(stack.api), '__ACCEPTANCE_BOT__': json.dumps(bot)}) +
         ',build:{outDir:"dist",emptyOutDir:true}});\n')
@@ -89,19 +91,40 @@ def verify(stack):
     os.environ['PLAYWRIGHT_BROWSERS_PATH'] = str(Path(stack.args.scratch).resolve() / 'browsers')
     from playwright.sync_api import sync_playwright, expect
     url = build(stack)
+    extension_spec = importlib.util.spec_from_file_location('browser_settings', HERE / 'direct-hermes-browser-settings.py')
+    extension = importlib.util.module_from_spec(extension_spec)
+    extension_spec.loader.exec_module(extension)
+    extension.settings.cipher(stack)
     errors = []
     requests = []
     frames = []
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(headless=True, args=['--no-sandbox', '--disable-dev-shm-usage'])
         context = browser.new_context(viewport={'width': 1440, 'height': 1000})
+        context.add_init_script(path=str(HERE / 'direct-hermes-refresh-latency.js'))
         # Fixture browser must never reach external services either.
         context.route('**/*', lambda route: route.continue_() if urlparse(route.request.url).hostname in ('127.0.0.1', 'localhost') else route.abort())
         page = context.new_page()
         page.on('pageerror', lambda error: errors.append(str(error)))
-        page.on('response', lambda response: requests.append({'path': urlparse(response.url).path, 'status': response.status}) if urlparse(response.url).netloc == urlparse(stack.api).netloc else None)
+        response_violations = []
+        def on_response(response):
+            if urlparse(response.url).netloc != urlparse(stack.api).netloc:
+                return
+            path = urlparse(response.url).path
+            record = {'path': path, 'status': response.status, 'method': response.request.method}
+            if '/hermes-rpc/' in path:
+                record['cacheControl'] = response.all_headers().get('cache-control')
+                if record['cacheControl'] != 'no-store':
+                    response_violations.append('Missing no-store: ' + path)
+                body = response.text()
+                if stack.gateway_token in body or any(value in body for value in [*getattr(stack, 'replacement_tokens', []), *stack.gateway_ciphertexts]):
+                    response_violations.append('Gateway credential disclosed: ' + path)
+            requests.append(record)
+        page.on('response', on_response)
         def on_socket(ws):
             if urlparse(ws.url).path == '/hermes-proxy':
+                if urlparse(ws.url).query or stack.gateway_token in ws.url:
+                    response_violations.append('Proxy WebSocket URL contains credentials/query parameters')
                 ws.on('framereceived', lambda data: frames.append({'direction': 'received', 'frame': json.loads(data)}) if isinstance(data, str) else None)
                 ws.on('framesent', lambda data: frames.append({'direction': 'sent', 'frame': json.loads(data)}) if isinstance(data, str) else None)
         page.on('websocket', on_socket)
@@ -114,7 +137,9 @@ def verify(stack):
             # Selectors are the visible production view labels, not mocked state.
             page.get_by_role('button', name=re.compile('Acceptance session A')).click(timeout=30000)
             expect(page.get_by_text('Inference fixture verified the real Hermes terminal result for session A.', exact=True)).to_be_visible(timeout=30000)
-            expect(page.get_by_text('Inference fixture resumed session A with its saved terminal history.', exact=True)).to_be_visible()
+            # The settings gate intentionally adds a grantee turn to this SAME
+            # history, so more than one genuine followup is valid with --settings.
+            expect(page.get_by_text('Inference fixture resumed session A with its saved terminal history.', exact=True).last).to_be_visible()
             page.locator('textarea').fill('DIRECT_HERMES_UI_FOLLOWUP')
             page.get_by_role('button', name='Send', exact=True).click()
             expect(page.get_by_text('Inference fixture browser followup completed with saved history.', exact=True)).to_be_visible(timeout=60000)
@@ -188,15 +213,23 @@ def verify(stack):
             audit = json.loads((stack.root / 'fixture-audit.json').read_text())
             assert any(r['stage'] == 'browser_followup' for r in audit), audit
             assert sum(r['stage'] == 'verified_real_tool_result' for r in audit) >= 2, audit
+            refresh_geometry = extension.verify_refresh(stack, page)
+            settings_evidence = extension.verify_manage(stack, page, browser, url, errors) if stack.args.settings else {'status': 'not requested'}
+            assert not errors, errors
+            assert not response_violations, response_violations
+            tickets = [r for r in requests if r['path'].endswith('/hermes-rpc/proxy-ticket')]
+            sent_methods = [f['frame'].get('method') for f in frames if f['direction'] == 'sent']
+            received_events = [f['frame']['params']['type'] for f in frames if f['direction'] == 'received' and f['frame'].get('method') == 'event']
             stack.report['browser'] = {'status': 'PASS', 'url': url,
-                'surface': 'production-built actual DirectHermesSessionsView in a dedicated real-login harness entry; not full Tauri shell',
+                'surface': 'production-built actual DirectHermesSessionsView + BotsManageRoute in a dedicated real Eden auth/workspace entry; not full Tauri shell',
                 'realLogin': True, 'proxyTicketRequests': len(tickets), 'pageErrors': errors,
                 'savedSessionResumeFollowup': True, 'switchIsolation': True, 'pageReloadHistory': True,
                 'newSessionRealTerminalTurn': True, 'renderedToolArgsAndResultVerified': True,
                 'toolRunningStateCaptured': True, 'componentGeometry': geometry, 'mobileSessionNavigation': mobile_navigation,
+                'refreshZeroShift': refresh_geometry, 'manageBots': settings_evidence,
+                'hermesApiNoStoreCredentialRedaction': True,
                 'rpcMethods': sorted(set(sent_methods)),
-                'eventTypes': sorted(set(received_events)), 'screenshots': ['browser-session-a.png', 'browser-new-tool-turn.png',
-                    'browser-tool-running.png', 'browser-component-1440.png', 'browser-component-390.png', 'browser-mobile-session-b.png']}
+                'eventTypes': sorted(set(received_events)), 'screenshots': sorted(path.name for path in stack.root.glob('browser*.png'))}
         except Exception:
             stack.report['browser'] = {'status': 'FAIL', 'url': url, 'pageErrors': errors}
             (stack.root / 'browser-failure-dom.txt').write_text(page.locator('body').inner_text())

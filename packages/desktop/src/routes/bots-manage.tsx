@@ -4,6 +4,7 @@ import { api } from "../lib/api";
 import { BOT_CREATED_EVENT } from "../lib/bot-events";
 import { edenErrorMessage } from "../lib/eden";
 import { openHermesBotModal } from "../components/HermesBotModal";
+import { DirectHermesBotSettings } from "../components/DirectHermesBotSettings";
 import { useAuthStore } from "../stores/auth";
 import { useWorkspacesStore } from "../stores/workspaces";
 
@@ -192,8 +193,7 @@ export function BotsManageRoute() {
       const { data, error } = await api.bots({ botId: selectedBot.id }).patch(
         {
           name: name.trim(),
-          webhookUrl: webhookUrl.trim() || null,
-          attachmentAccess,
+          ...(selectedBot.kind === "hermes-rpc" ? {} : { webhookUrl: webhookUrl.trim() || null, attachmentAccess }),
         },
         auth(token),
       );
@@ -414,10 +414,10 @@ export function BotsManageRoute() {
                     >
                       <div className="flex items-start justify-between gap-2">
                         <span className="min-w-0 truncate text-[0.929rem] font-medium text-text">{bot.name}</span>
-                        <span
+                        {bot.kind !== "hermes-rpc" && <span
                           className={`mt-1 size-2 shrink-0 rounded-full ${bot.apiKeyEnabled ? "bg-green-400" : "bg-text-dimmed"}`}
                           title={bot.apiKeyEnabled ? "API key active" : "API key revoked"}
-                        />
+                        />}
                       </div>
                       <div className="mt-1.5 flex items-center gap-2 text-[0.714rem] text-text-dimmed">
                         <span>{botKindLabel(bot.kind)}</span>
@@ -440,7 +440,9 @@ export function BotsManageRoute() {
                   <div className="mt-1 font-mono text-[0.714rem] text-text-dimmed">{selectedBot.id}</div>
                 </div>
 
-                <Section title="Details" description="Rename the bot and control the data it can receive.">
+                {selectedBot.kind === "hermes-rpc" && <DirectHermesBotSettings key={selectedBot.id} botId={selectedBot.id} token={token} />}
+
+                <Section title="Details" description={selectedBot.kind === "hermes-rpc" ? "Rename the bot." : "Rename the bot and control the data it can receive."}>
                   <div className="grid gap-4">
                     <label className="grid gap-1.5">
                       <span className="text-[0.786rem] font-medium text-text-muted">Name</span>
@@ -451,7 +453,7 @@ export function BotsManageRoute() {
                         className="rounded-lg border border-border bg-base px-3 py-2 text-[0.929rem] text-text outline-none transition-colors focus:border-border-focus"
                       />
                     </label>
-                    <label className="grid gap-1.5">
+                    {selectedBot.kind !== "hermes-rpc" && <><label className="grid gap-1.5">
                       <span className="text-[0.786rem] font-medium text-text-muted">Webhook URL</span>
                       <input
                         aria-label="Webhook URL"
@@ -477,12 +479,12 @@ export function BotsManageRoute() {
                           The bot may receive, download, and upload attachments in conversations it can access.
                         </span>
                       </span>
-                    </label>
+                    </label></>}
                     <div>
                       <button
                         type="button"
                         onClick={saveDetails}
-                        disabled={busy !== null || !name.trim()}
+                        disabled={busy !== null || !name.trim() || (selectedBot.kind === "hermes-rpc" && name.trim() === selectedBot.name)}
                         className="cursor-pointer rounded-lg border border-border-strong bg-elevated px-4 py-2 text-[0.857rem] font-semibold text-text transition-colors hover:not-disabled:bg-button disabled:cursor-not-allowed disabled:opacity-50"
                       >
                         {busy === "save" ? "Saving..." : "Save changes"}
@@ -493,7 +495,7 @@ export function BotsManageRoute() {
 
                 <Section
                   title="Workspaces"
-                  description="Connect this bot to workspaces where you are an owner or admin. Disconnecting removes its channel access."
+                  description={selectedBot.kind === "hermes-rpc" ? "Connecting a workspace does not grant gateway access. Only the owner and explicitly selected people can connect through their own DM in a connected workspace." : "Connect this bot to workspaces where you are an owner or admin. Disconnecting removes its channel access."}
                 >
                   {workspaceRows.length === 0 ? (
                     <div className="rounded-lg border border-dashed border-border px-4 py-5 text-center text-[0.857rem] text-text-dimmed">
@@ -543,7 +545,7 @@ export function BotsManageRoute() {
                   )}
                 </Section>
 
-                <Section
+                {selectedBot.kind !== "hermes-rpc" && <Section
                   title="Credentials"
                   description="Rotated credentials take effect immediately. API keys are shown only once when issued."
                 >
@@ -662,7 +664,7 @@ export function BotsManageRoute() {
                       </div>
                     </div>
                   </div>
-                </Section>
+                </Section>}
 
                 <section className="rounded-xl border border-error-msg-border bg-error-msg-bg/35 p-4">
                   <h3 className="text-[0.929rem] font-semibold text-error-bright">Danger zone</h3>

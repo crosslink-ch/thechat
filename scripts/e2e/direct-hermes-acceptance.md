@@ -47,6 +47,34 @@ Optional flags:
 
 Each run reserves fresh loopback ports and unique containers with an ownership label. Ports, source-byte SHA-256 values, run ID and acceptance results are in `report.json`. Runs clean their own process groups and containers in `finally`, including failures and deadlines; cleanup checks the label before deleting containers and reads back that no owned container remains. Artifacts intentionally remain in scratch for review. Docker images and downloaded browser binaries remain reusable prerequisites. The harness does not shut down unrelated services or delete prior evidence.
 
+## Settings, sharing, and stable-refresh acceptance
+
+```bash
+/workspace/hermes-source/.venv/bin/python scripts/e2e/direct-hermes-acceptance.py --settings --browser
+/workspace/hermes-source/.venv/bin/python scripts/e2e/direct-hermes-harness-test.py
+```
+
+`--settings` adds real HTTP checks for owner-only defaults/administration, eligible
+humans, explicit sharing acknowledgement, stale revision rejection, endpoint/token
+validation, encrypted storage and redaction, a grantee's own-DM connection, shared
+history/prompting, active and unused-ticket revocation, current membership, token
+rotation and restoration against the real upstream gateway.
+
+With `--browser`, the authenticated harness also mounts the real **Manage bots**
+route and exercises its typed API settings form. A test-only WebSocket delivery
+probe holds and then releases an actual `session.list` response without changing
+its bytes. It measures session rows, list child count, Refresh-button geometry,
+and scroll position before/during/after refresh at desktop and narrow widths.
+No loading row may be inserted and no existing row may shift. The helper unit
+suite contains negative controls proving that moved rows or reset scrolling fail
+these assertions; those synthetic controls are not substitute E2E evidence.
+
+All people, grants, credentials, and workspaces in these tests are disposable.
+Sharing the gateway is intentional and explicitly **not** per-person isolation.
+Revocation disconnects the transport but cannot cancel already-started Hermes
+work. Reports keep timing and credential-redaction results separate from the
+production-built browser-component evidence; native Windows/Tauri is not claimed.
+
 ## Assertions
 
 1. Real `/auth/register` creates disposable owner and outsider; owner creates workspace, Direct Hermes bot and exact DM.

@@ -27,6 +27,8 @@ import {
 import { BOT_API_KEY_CONFIG_ID } from "../auth/better-auth";
 import { assertHermesGatewayEndpointAllowed } from "@thechat/hermes-proxy/endpoint";
 import { encryptSecret } from "@thechat/hermes-proxy/secrets";
+import { hermesGatewayTokenSchema } from "./hermes-rpc-config";
+import { revokeDirectHermesWorkspaceAccess } from "./hermes-proxy-revocation";
 
 export function generateWebhookSecret(): string {
   return `whsec_${crypto.randomBytes(32).toString("hex")}`;
@@ -95,7 +97,9 @@ export async function createHermesBotInWorkspace(
   let rpcEndpoint: string | null = null;
   let rpcTokenEncrypted: string | null = null;
   if (kind === "hermes-rpc") {
-    const gatewayToken = options.hermesRpc?.gatewayToken.trim() ?? "";
+    const tokenResult = hermesGatewayTokenSchema.safeParse(options.hermesRpc?.gatewayToken);
+    if (!tokenResult.success) throw new ServiceError("Invalid Hermes gateway token", 400);
+    const gatewayToken = tokenResult.data;
     if (!options.hermesRpc?.endpoint.trim()) {
       throw new ServiceError("Hermes gateway URL is required", 400);
     }
@@ -658,6 +662,8 @@ export async function removeBotFromWorkspace(
           ),
         );
     }
+
+    await revokeDirectHermesWorkspaceAccess(tx, workspaceId, bot.userId);
 
     const removedMemberships = await tx
       .delete(workspaceMembers)

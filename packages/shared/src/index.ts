@@ -1,3 +1,13 @@
+// -- Direct Hermes owner-only configuration (never contains credentials) --
+export interface DirectHermesSettings {
+  botId: string;
+  endpoint: string;
+  gatewayTokenConfigured: boolean;
+  allowedUserIds: string[];
+  eligibleUsers: { id: string; name: string }[];
+  revision: string;
+}
+
 // -- Message Parts (rich message model) --
 
 export type MessagePart =

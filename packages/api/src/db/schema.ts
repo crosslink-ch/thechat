@@ -389,6 +389,7 @@ export const hermesRpcBotConfigs = pgTable("hermes_rpc_bot_configs", {
     .references(() => bots.id, { onDelete: "cascade" }),
   endpoint: text("endpoint").notNull(),
   gatewayTokenEncrypted: text("gateway_token_encrypted").notNull(),
+  revision: integer("revision").notNull().default(1),
   createdAt: timestamp("created_at", { withTimezone: true })
     .defaultNow()
     .notNull(),
@@ -397,6 +398,11 @@ export const hermesRpcBotConfigs = pgTable("hermes_rpc_bot_configs", {
     .notNull()
     .$onUpdate(() => new Date()),
 });
+
+export const hermesRpcAllowedUsers = pgTable("hermes_rpc_allowed_users", {
+  botId: uuid("bot_id").notNull().references(() => hermesRpcBotConfigs.botId, { onDelete: "cascade" }),
+  userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+}, (t) => [primaryKey({ columns: [t.botId, t.userId] })]);
 
 export const botInvocations = pgTable(
   "bot_invocations",
