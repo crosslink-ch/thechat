@@ -44,20 +44,22 @@ export async function listDirectHermesSessions(
           connection.signal,
         )
       : await client.request<unknown>("session.list", { limit: 200 });
-    const parsed = sessionListResultSchema.safeParse(raw);
-    if (!parsed.success) {
-      throw new Error("Hermes session.list returned an invalid result");
-    }
-    return parsed.data.sessions.map((session) => ({
-      id: session.id,
-      messageCount: session.message_count,
-      preview: session.preview,
-      resolvedId: session.resolved_id ?? null,
-      source: session.source,
-      startedAt: session.started_at,
-      title: session.title,
-    }));
+    return parseDirectHermesSessions(raw);
   } finally {
     client.close();
   }
+}
+
+export function parseDirectHermesSessions(raw: unknown): DirectHermesSession[] {
+  const parsed = sessionListResultSchema.safeParse(raw);
+  if (!parsed.success) throw new Error("Hermes session.list returned an invalid result");
+  return parsed.data.sessions.map((session) => ({
+    id: session.id,
+    messageCount: session.message_count,
+    preview: session.preview,
+    resolvedId: session.resolved_id ?? null,
+    source: session.source,
+    startedAt: session.started_at,
+    title: session.title,
+  }));
 }

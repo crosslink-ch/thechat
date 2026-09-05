@@ -133,14 +133,51 @@ given `DATABASE_URL`.
 4. Enter a name, Hermes base or `/api/ws` URL, and dashboard session token.
 5. Open a direct conversation with the new bot.
 
-The current minimal screen requests `session.list`, but that method is now desktop
-application code rather than an API route. The underlying permission proxy and
-Hermes client can carry other request, event, cancellation, and streaming methods
-without backend changes.
+6. Choose an existing item from **Sessions** to load its Hermes history, or click
+   **New session**.
+7. Type a message and click **Send** (Enter sends; Shift+Enter inserts a newline).
+8. Watch streamed assistant text and expandable tool activity. Tool cards show
+   live arguments and results when Hermes supplies them.
+9. Switch between sessions in the sidebar. Each opened session keeps its own
+   draft and transient activity; its durable transcript remains in Hermes.
+
+The screen uses the existing desktop Hermes JSON-RPC client throughout. The API
+and raw permission proxy still do not understand any RPC methods. No TheChat
+message rows, invocation records, or durable session links are created by this
+chat surface.
+
+### Connection and history behavior
+
+- `prompt.submit` acknowledges acceptance. The UI stays busy until a terminal
+  Hermes event or an authoritative live snapshot confirms the outcome.
+- **Stop** requests cancellation from Hermes. An interrupt acknowledgement alone
+  is not treated as proof that the turn has finished.
+- **Reconnect** obtains a new single-use permission ticket and reattaches to
+  Hermes sessions. An ambiguous/disconnected send is never automatically retried.
+- **Sync session** refreshes the selected runtime snapshot. A saved session uses
+  its durable ID for resume and the returned runtime ID for live controls.
+- Approval requests offer **Allow once** and **Deny**. Single-question
+  clarifications support choosing an answer or entering free text. Batch or
+  multi-select clarifications, sudo, and secret prompts are explicitly marked as
+  requiring the Hermes app; they are not silently ignored or accepted.
+- Tool outputs in the current connection are transient. On the tested Hermes
+  version, saved RPC history includes tool names/arguments but omits full results.
+  Such cards explicitly say **Output unavailable in saved history**.
+- The session list shows the 200 most recent saved sessions. Hermes' current RPC
+  list/history methods do not expose cursor pagination.
+
+### Executable acceptance
+
+See [`../scripts/e2e/direct-hermes-acceptance.md`](../scripts/e2e/direct-hermes-acceptance.md)
+for the isolated real-Hermes/raw-proxy test and production-component browser
+acceptance. Inference is a clearly labelled deterministic local fixture, while
+Hermes, its terminal tool, authentication, the WebSocket relay, and both databases
+are real. No external model credential or production user data is used.
 
 ## Current limits
 
-- The visible Direct Hermes screen still only lists sessions.
+- This remains an experimental, bot-owner-only direct connection, not shared
+  channel chat. The proxy's existing permission boundaries are unchanged.
 - Direct Hermes bots do not receive ordinary TheChat channel messages or mentions.
 - Connection settings cannot yet be edited; delete and recreate the bot.
 - Active permission revocation is bounded by the one-hour tunnel lifetime rather

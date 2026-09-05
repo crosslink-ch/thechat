@@ -14,6 +14,8 @@ export interface DirectHermesGatewayConnectionOptions {
   issueTicket: (signal?: AbortSignal) => Promise<DirectHermesProxyTicket>;
   signal?: AbortSignal;
   socketFactory?: (url: string, protocols: string[]) => WebSocket;
+  /** Subscribe before connect so an immediate gateway.ready cannot be lost. */
+  onClient?: (client: JsonRpcGatewayClient) => void;
 }
 
 const TICKET_PATTERN = /^[A-Za-z0-9_-]{43}$/;
@@ -82,6 +84,7 @@ export async function connectDirectHermesGateway(
   });
 
   try {
+    options.onClient?.(client);
     if (!options.signal) {
       await client.connect(grant.proxyUrl);
     } else {
