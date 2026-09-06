@@ -4,6 +4,7 @@ import { useIsStreaming } from "../stores/streaming";
 import { useInputFocusStore } from "../stores/input-focus";
 import { useComposerDraftsStore } from "../stores/composer-drafts";
 import { RichInput, type RichInputHandle } from "./RichInput";
+import { VoiceRecorder } from "./VoiceRecorder";
 import { SlashCommandMenu } from "./SlashCommandMenu";
 import type { MentionUser } from "./MentionList";
 import type { ImageAttachment } from "../lib/image-types";
@@ -91,6 +92,12 @@ function ScopedInputBar({
   const inputRef = useRef<RichInputHandle>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [canSubmit, setCanSubmit] = useState(false);
+  const [voiceBusy, setVoiceBusy] = useState(false);
+  const voiceBusyRef = useRef(false);
+  const handleVoiceBusyChange = useCallback((busy: boolean) => {
+    voiceBusyRef.current = busy;
+    setVoiceBusy(busy);
+  }, []);
   const storedImages = useComposerDraftsStore(
     (state) => state.imageDrafts[draftKey],
   );
@@ -174,7 +181,7 @@ function ScopedInputBar({
   const hasContent =
     canSubmit || images.length > 0 || sharedDrafts.length > 0;
   const canSend =
-    hasContent && (!sharedUpload || (sharedReady && !sendingShared));
+    hasContent && !voiceBusy && (!sharedUpload || (sharedReady && !sendingShared));
   const slashSuggestions = slashCommands
     ? filterHermesSlashCommands(inputText, slashCommands)
     : [];
@@ -506,8 +513,8 @@ function ScopedInputBar({
     sharedScopeRef.current = sharedUpload;
     if (
       !previous ||
-      !sharedUpload ||
-      previous.conversationId === sharedUpload.conversationId
+      (previous.conversationId === sharedUpload?.conversationId &&
+        previous.token === sharedUpload?.token)
     ) {
       return;
     }
@@ -568,7 +575,7 @@ function ScopedInputBar({
 
   const sendSharedContent = useCallback(
     async (text: string) => {
-      if (!sharedUpload) return false;
+      if (!sharedUpload || voiceBusyRef.current) return false;
       const state = useComposerDraftsStore.getState();
       if (state.sendingAttachments[draftKey]) return false;
       const draftsToSend =
@@ -1045,6 +1052,14 @@ function ScopedInputBar({
           data-testid="input-actions"
           className="flex min-h-10 items-center justify-end gap-1.5 px-2 pb-2"
         >
+          {sharedUpload && (
+            <VoiceRecorder
+              key={`${sharedUpload.conversationId}\u0000${sharedUpload.token}`}
+              disabled={sendingShared || sharedDrafts.length >= SHARED_ATTACHMENT_MAX_COUNT}
+              onBusyChange={handleVoiceBusyChange}
+              onAttach={(file) => { void addFiles([file]); }}
+            />
+          )}
           {queuedCount > 0 && (
             <span className="mr-1 rounded border border-border bg-background px-1.5 py-0.5 text-[0.643rem] font-medium uppercase text-text-dimmed">
               {queuedCount} queued
