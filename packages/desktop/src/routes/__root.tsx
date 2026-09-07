@@ -1,7 +1,7 @@
-import { useEffect, useRef } from "react";
+import { isWeb } from "../platform/environment";
+import { useEffect } from "react";
 import { Outlet, useNavigate } from "@tanstack/react-router";
 import { useAuthStore } from "../stores/auth";
-import { useToolsStore } from "../stores/tools";
 import { useWebSocketStore } from "../stores/websocket";
 import { useWorkspacesStore } from "../stores/workspaces";
 import { useNotificationsStore } from "../stores/notifications";
@@ -9,71 +9,46 @@ import { useActivityStore } from "../stores/activity";
 import { useKeybindings } from "../hooks/useKeybindings";
 import { Sidebar } from "../components/Sidebar";
 import { ChatHeader } from "../components/ChatHeader";
-import { WindowTitlebar } from "../components/WindowTitlebar";
 import { CommandPalette } from "../CommandPalette";
-import { PermissionModePicker } from "../PermissionModePicker";
 import { AuthModal, AuthOnboarding } from "../components/AuthModal";
-import { CodexAuthModal } from "../components/CodexAuthModal";
 import { WorkspaceModal } from "../components/WorkspaceModal";
 import { ChannelModal } from "../components/ChannelModal";
 import { HermesBotModal } from "../components/HermesBotModal";
-import { McpConfigDialog } from "../McpConfigDialog";
 import { registerGlobalWsHandlers } from "../lib/ws-global-handlers";
 import { createCommands, useCommandsStore } from "../commands";
 import { ErrorBoundary } from "../components/ErrorBoundary";
-import { UpdateToast } from "../components/UpdateToast";
 import { useCtrlWheelZoom } from "../hooks/useCtrlWheelZoom";
-import {
-  initializeDesktopStartup,
-  syncAgentChatMcpAuth,
-} from "../desktop-lifecycle";
+import { PlatformDialogs, PlatformTitlebar, PlatformUpdateToast, usePlatformLifecycle } from "#platform-shell";
 
 export function RootLayout() {
   const navigate = useNavigate();
   const token = useAuthStore((s) => s.token);
   const user = useAuthStore((s) => s.user);
   const authLoading = useAuthStore((s) => s.loading);
-  const tools = useToolsStore((s) => s.tools);
-  const prevTokenRef = useRef(token);
+  const identity = isWeb ? user?.id ?? null : token;
+  usePlatformLifecycle(token);
 
-  // Initialize auth on mount
+  // Identity, not bearer truthiness: cookie sessions deliberately have no token.
   useEffect(() => {
-    return initializeDesktopStartup();
-  }, []);
-
-  // React to token changes: connect/disconnect WebSocket and initialize workspaces
-  useEffect(() => {
-    if (token && token !== prevTokenRef.current) {
-      useWebSocketStore.getState().connect(token);
-      useWorkspacesStore.getState().initialize();
-      useNotificationsStore.getState().fetchNotifications();
-    } else if (!token && prevTokenRef.current) {
+    if (!identity) return;
+    useWebSocketStore.getState().connect(token);
+    void useWorkspacesStore.getState().initialize();
+    void useNotificationsStore.getState().fetchNotifications();
+    return () => {
       useWebSocketStore.getState().disconnect();
       useWorkspacesStore.getState().reset();
       useNotificationsStore.getState().reset();
-    }
-    prevTokenRef.current = token;
-  }, [token]);
+    };
+  }, [identity, token]);
 
-  // Activity is server-owned state, so reconcile it even when auth restored a
-  // token before this layout mounted (for example after reopening the app).
+  // Reconcile persisted Activity for both restored bearer and cookie sessions.
   useEffect(() => {
-    if (token) {
+    if (identity) {
       void useActivityStore.getState().fetchActivity();
     } else {
       useActivityStore.getState().reset();
     }
-  }, [token]);
-
-  // Keep credentials current only after Agent Chat has explicitly activated MCP.
-  useEffect(() => {
-    syncAgentChatMcpAuth(token);
-  }, [token]);
-
-  // React to tools changes: initialize task runner
-  useEffect(() => {
-    useToolsStore.getState().initializeTaskRunner();
-  }, [tools]);
+  }, [identity, token]);
 
   // Global WebSocket event handlers
   useEffect(() => {
@@ -94,7 +69,7 @@ export function RootLayout() {
   });
   useCtrlWheelZoom();
 
-  return <RootView authLoading={authLoading} authenticated={Boolean(user)} />;
+  return <RootView key={isWeb ? identity ?? "anonymous" : "desktop"} authLoading={authLoading} authenticated={Boolean(user)} />;
 }
 
 interface RootViewProps {
@@ -105,7 +80,7 @@ interface RootViewProps {
 export function RootView({ authLoading, authenticated }: RootViewProps) {
   return (
     <div className="relative flex h-screen flex-col overflow-hidden bg-base">
-      <WindowTitlebar />
+      <PlatformTitlebar />
       {authLoading ? (
         <div className="flex min-h-0 flex-1 items-center justify-center text-[0.929rem] text-text-placeholder">
           Loading...
@@ -124,16 +99,14 @@ export function RootView({ authLoading, authenticated }: RootViewProps) {
             </div>
           </div>
           <CommandPalette />
-          <PermissionModePicker />
+          <PlatformDialogs />
           <AuthModal />
-          <CodexAuthModal />
           <WorkspaceModal />
           <ChannelModal />
           <HermesBotModal />
-          <McpConfigDialog />
         </>
       )}
-      <UpdateToast />
+      <PlatformUpdateToast />
     </div>
   );
 }

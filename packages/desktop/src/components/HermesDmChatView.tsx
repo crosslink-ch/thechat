@@ -1,3 +1,4 @@
+import { isAuthenticated } from "../lib/auth-identity";
 import { useRef, useEffect, useCallback, useMemo, useLayoutEffect, useState } from "react";
 import { flushSync } from "react-dom";
 import { InputBar, type InputSendResult } from "./InputBar";
@@ -463,7 +464,7 @@ export function HermesDmChatView({
         queuedCount={queuedCount}
         slashCommands={slashCommands}
         sharedUpload={
-          conversationId && token ? { conversationId, token } : undefined
+          conversationId && isAuthenticated(token) ? { conversationId, token: token ?? null } : undefined
         }
       />
     </>

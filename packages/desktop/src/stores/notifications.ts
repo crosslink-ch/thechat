@@ -1,3 +1,4 @@
+import { onSessionReset } from "../lib/session-boundary";
 import { create } from "zustand";
 import type {
   AppNotification,
@@ -5,6 +6,8 @@ import type {
   WorkspaceInvite,
   WsServerEvent,
 } from "@thechat/shared";
+import { isWeb } from "../platform/environment";
+import { authHeaders as requestAuth } from "../lib/eden";
 import { api } from "../lib/api";
 import { useAuthStore } from "./auth";
 import { useWorkspacesStore } from "./workspaces";
@@ -34,8 +37,11 @@ function notificationKey(notification: AppNotification) {
   return `${notification.type}:${notification.invite.id}`;
 }
 
-function authHeaders(token: string) {
-  return { authorization: `Bearer ${token}` };
+function authHeaders(token: string | null) {
+  return requestAuth(token).headers;
+}
+function authenticated(token: string | null) {
+  return isWeb ? Boolean(useAuthStore.getState().user) : Boolean(token);
 }
 
 function errorMessage(error: unknown, fallback: string) {
@@ -63,7 +69,7 @@ export const useNotificationsStore = create<NotificationsState>((set, get) => ({
 
   fetchNotifications: async () => {
     const token = useAuthStore.getState().token;
-    if (!token) return;
+    if (!authenticated(token)) return;
 
     const requestGeneration = ++notificationFetchGeneration;
     const mutationGeneration = notificationMutationGeneration;
@@ -147,7 +153,7 @@ export const useNotificationsStore = create<NotificationsState>((set, get) => ({
 
   acceptInvite: async (inviteId) => {
     const token = useAuthStore.getState().token;
-    if (!token) return;
+    if (!authenticated(token)) return;
 
     markNotificationsChanged();
     const result = await api.invites.accept.post(
@@ -178,7 +184,7 @@ export const useNotificationsStore = create<NotificationsState>((set, get) => ({
 
   declineInvite: async (inviteId) => {
     const token = useAuthStore.getState().token;
-    if (!token) return;
+    if (!authenticated(token)) return;
 
     markNotificationsChanged();
     const result = await api.invites.decline.post(
@@ -208,7 +214,7 @@ export const useNotificationsStore = create<NotificationsState>((set, get) => ({
 
   acceptBotWorkspaceInvite: async (inviteId) => {
     const token = useAuthStore.getState().token;
-    if (!token) return;
+    if (!authenticated(token)) return;
 
     markNotificationsChanged();
     const result = await api["bot-workspace-invites"].accept.post(
@@ -238,7 +244,7 @@ export const useNotificationsStore = create<NotificationsState>((set, get) => ({
 
   declineBotWorkspaceInvite: async (inviteId) => {
     const token = useAuthStore.getState().token;
-    if (!token) return;
+    if (!authenticated(token)) return;
 
     markNotificationsChanged();
     const result = await api["bot-workspace-invites"].decline.post(
@@ -313,3 +319,5 @@ export const useNotificationsStore = create<NotificationsState>((set, get) => ({
     set({ notifications: [], loading: false, error: null });
   },
 }));
+
+onSessionReset(() => useNotificationsStore.getState().reset());

@@ -1,3 +1,4 @@
+import { isAuthenticated } from "../lib/auth-identity";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   hashKey,
@@ -316,7 +317,7 @@ interface SendCommand {
 
 async function fetchMessages(
   conversationId: string,
-  token: string,
+  token: string | null,
   threadId?: string | null,
   unthreadedOnly = false,
   before?: string | null,
@@ -345,7 +346,7 @@ async function fetchMessages(
 
 async function fetchMessagePage(
   conversationId: string,
-  token: string,
+  token: string | null,
   threadId: string | null,
   unthreadedOnly: boolean,
   before: string | null,
@@ -400,7 +401,7 @@ export function useChannelChat({
     initialPageParam: null as string | null,
     getNextPageParam: (lastPage) =>
       lastPage.hasOlder ? oldestMessageCursor(lastPage.messages) : undefined,
-    enabled: enabled && !!conversationId && !!token,
+    enabled: enabled && !!conversationId && isAuthenticated(token),
     staleTime: MESSAGE_CACHE_TTL_MS,
   });
 
@@ -555,7 +556,7 @@ export function useChannelChat({
 
       // Compatibility fallback for older API clients and the existing WS
       // protocol. Current Eden clients always expose the canonical REST post.
-      if (typeof endpoint.post !== "function" || !token) {
+      if (typeof endpoint.post !== "function" || !isAuthenticated(token)) {
         if (attachmentIds.length > 0) {
           wsSendMessage(
             conversationId,
@@ -641,7 +642,7 @@ export function useChannelChat({
 
   const setReaction = useCallback(
     async (messageId: string, emoji: string, active: boolean) => {
-      if (!conversationId || !token) {
+      if (!conversationId || !isAuthenticated(token)) {
         throw new Error("Authentication required");
       }
 
@@ -685,7 +686,7 @@ export function useChannelChat({
   );
 
   const refetchMessages = useCallback(() => {
-    if (!enabled || !conversationId || !token) return;
+    if (!enabled || !conversationId || !isAuthenticated(token)) return;
     void query.refetch();
   }, [conversationId, enabled, query.refetch, token]);
 
@@ -693,7 +694,7 @@ export function useChannelChat({
     if (
       !enabled ||
       !conversationId ||
-      !token ||
+      !isAuthenticated(token) ||
       !query.hasNextPage ||
       query.isFetchingNextPage
     ) {

@@ -1,3 +1,5 @@
+import { isWeb } from "../platform/environment";
+import { sessionGeneration } from "./session-boundary";
 import type { AttachmentView } from "@thechat/shared";
 import type { Context, Span } from "@opentelemetry/api";
 import { invoke } from "@tauri-apps/api/core";
@@ -42,7 +44,7 @@ export interface SharedAttachmentDraft {
 export async function uploadSharedAttachment(
   input: {
     conversationId: string;
-    token: string;
+    token: string | null;
     file: File;
     signal: AbortSignal;
   },
@@ -52,6 +54,11 @@ export async function uploadSharedAttachment(
     attachment?: AttachmentView;
   }) => void,
 ): Promise<AttachmentView> {
+  const generation = sessionGeneration();
+  const assertActive = () => {
+    if (isWeb && generation !== sessionGeneration()) throw new DOMException("Session changed", "AbortError");
+    throwIfAborted(input.signal);
+  };
   const mediaType = normalizeAttachmentMediaType(input.file.type);
   return withDesktopSpan(
     "attachment.prepare",
@@ -67,7 +74,7 @@ export async function uploadSharedAttachment(
         async () => sha256Hex(await input.file.arrayBuffer()),
         { parentContext: flowContext },
       );
-      throwIfAborted(input.signal);
+      assertActive();
 
       const root = api.attachments as unknown as {
         post(
@@ -124,7 +131,7 @@ export async function uploadSharedAttachment(
       const attachment = reserved.attachment;
       const upload = reserved.upload;
       try {
-        throwIfAborted(input.signal);
+        assertActive();
         update({ phase: "uploading", progress: 0, attachment });
 
         await withDesktopSpan(
@@ -161,7 +168,7 @@ export async function uploadSharedAttachment(
           },
           { kind: SpanKind.CLIENT, parentContext: flowContext },
         );
-        throwIfAborted(input.signal);
+        assertActive();
 
         const item = api.attachments({ id: attachment.id }) as unknown as {
           complete: {
@@ -204,7 +211,7 @@ export async function uploadSharedAttachment(
           {},
           async (span, waitContext) => {
             for (let attempt = 0; attempt < 180; attempt += 1) {
-              throwIfAborted(input.signal);
+              assertActive();
               const status = await withDesktopSpan(
                 "attachment.status.request",
                 {
@@ -279,7 +286,7 @@ export async function uploadSharedAttachment(
         flowSpan.setAttribute("thechat.attachment.outcome", "ready");
         return ready;
       } catch (error) {
-        if (input.signal.aborted) {
+        if (input.signal.aborted && (!isWeb || generation === sessionGeneration())) {
           flowSpan.setAttribute("thechat.attachment.outcome", "cancelled");
           await cancelSharedAttachment(attachment.id, input.token, {
             parentContext: flowContext,
@@ -294,7 +301,7 @@ export async function uploadSharedAttachment(
 
 export async function cancelSharedAttachment(
   attachmentId: string,
-  token: string,
+  token: string | null,
   options: { parentContext?: Context } = {},
 ) {
   return withDesktopSpan(
@@ -332,7 +339,7 @@ export async function cancelSharedAttachment(
 
 export async function getAttachmentDownloadUrl(
   attachmentId: string,
-  token: string,
+  token: string | null,
   disposition: "attachment" | "inline" = "attachment",
   options: { parentContext?: Context } = {},
 ) {
@@ -380,7 +387,7 @@ export async function getAttachmentDownloadUrl(
 
 export async function openSharedAttachmentDownload(
   attachmentId: string,
-  token: string,
+  token: string | null,
   disposition: "attachment" | "inline" = "attachment",
   suggestedFileName?: string,
 ) {

@@ -1,3 +1,4 @@
+import { onSessionReset } from "../lib/session-boundary";
 import { memo, useEffect, useRef, useState, useCallback, type DragEvent } from "react";
 import { useIsStreaming } from "../stores/streaming";
 import { useInputFocusStore } from "../stores/input-focus";
@@ -62,7 +63,7 @@ interface InputBarProps {
   slashCommands?: HermesSlashCommand[];
   sharedUpload?: {
     conversationId: string;
-    token: string;
+    token: string | null;
   };
 }
 
@@ -1088,3 +1089,8 @@ function attachmentPhaseLabel(
       return "Failed";
   }
 }
+
+onSessionReset(() => {
+  for (const controller of sharedUploadControllers.values()) controller.abort();
+  sharedUploadControllers.clear();
+});

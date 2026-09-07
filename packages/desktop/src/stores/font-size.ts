@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { invoke } from "@tauri-apps/api/core";
+import { preferences } from "../platform/preferences";
 
 const KV_KEY = "ui_font_size";
 const DEFAULT = 14;
@@ -20,14 +20,14 @@ function apply(size: number) {
 }
 
 function persist(size: number) {
-  void invoke("kv_set", { key: KV_KEY, value: String(size) });
+  void preferences.set(KV_KEY, String(size));
 }
 
 export const useFontSizeStore = create<FontSizeStore>()((set, get) => ({
   size: DEFAULT,
 
   initialize: async () => {
-    const saved = await invoke<string | null>("kv_get", { key: KV_KEY });
+    const saved = await preferences.get(KV_KEY);
     const size = saved ? Math.min(MAX, Math.max(MIN, Number(saved) || DEFAULT)) : DEFAULT;
     apply(size);
     set({ size });

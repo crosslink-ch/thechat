@@ -1,3 +1,4 @@
+import { isAuthenticated } from "../lib/auth-identity";
 import { useCallback, useEffect, useRef, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import type { ChatAttachment, TraceContextCarrier } from "@thechat/shared";
@@ -96,7 +97,7 @@ export function SharedMessageAttachments({
   attachments: ChatAttachment[];
 }) {
   const token = useAuthStore((state) => state.token);
-  if (attachments.length === 0 || !token) return null;
+  if (attachments.length === 0 || !isAuthenticated(token)) return null;
 
   return (
     <div className="mt-2 flex max-w-2xl flex-wrap gap-2">
@@ -120,7 +121,7 @@ function AuthorizedImage({
   token,
 }: {
   attachment: ChatAttachment;
-  token: string;
+  token: string | null;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const thumbnailRef = useRef<HTMLButtonElement>(null);
@@ -405,7 +406,7 @@ function FileCard({
   token,
 }: {
   attachment: ChatAttachment;
-  token: string;
+  token: string | null;
 }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);

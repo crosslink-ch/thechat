@@ -1,3 +1,5 @@
+import { authHeaders } from "../lib/eden";
+import { isAuthenticated } from "../lib/auth-identity";
 import { useState, useEffect, useRef } from "react";
 import { create } from "zustand";
 import { useNavigate, useMatches } from "@tanstack/react-router";
@@ -185,11 +187,11 @@ export function Sidebar() {
   };
 
   const handleSelectDm = async (member: WorkspaceMember) => {
-    if (!token || !activeWorkspace) return;
+    if (!isAuthenticated(token) || !activeWorkspace) return;
     try {
       const { data, error } = await api.conversations.dm.post(
         { workspaceId: activeWorkspace.id, otherUserId: member.userId },
-        { headers: { authorization: `Bearer ${token}` } },
+        authHeaders(token),
       );
       if (error) throw error;
       if (data && "id" in data) {

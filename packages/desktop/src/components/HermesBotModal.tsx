@@ -1,3 +1,5 @@
+import { authHeaders as auth } from "../lib/eden";
+import { isAuthenticated } from "../lib/auth-identity";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { create } from "zustand";
@@ -32,9 +34,7 @@ const closeHermesBotModal = () => {
   useHermesBotModalState.setState({ open: false });
 };
 
-function auth(token: string) {
-  return { headers: { authorization: `Bearer ${token}` } };
-}
+
 
 export function HermesBotModal() {
   const open = useHermesBotModalState((state) => state.open);
@@ -89,7 +89,7 @@ function HermesBotModalInner({ returnFocus }: { returnFocus: HTMLElement | null 
     e.preventDefault();
     setError("");
 
-    if (!token) {
+    if (!isAuthenticated(token)) {
       setError("Log in before adding a bot.");
       return;
     }

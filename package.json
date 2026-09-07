@@ -4,6 +4,9 @@
   "scripts": {
     "dev": "python3 scripts/dev.py",
     "dev:services": "python3 scripts/dev.py",
+    "dev:web": "pnpm --filter @thechat/desktop dev:web",
+    "build:web": "pnpm --filter @thechat/desktop build:web",
+    "test:web:build": "pnpm --filter @thechat/desktop test:web:build",
     "dev:desktop": "pnpm --filter @thechat/desktop dev",
     "dev:api": "pnpm --filter @thechat/api dev",
     "dev:worker": "pnpm --filter @thechat/api dev:worker",

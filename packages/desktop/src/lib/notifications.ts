@@ -1,3 +1,5 @@
+import { isWeb } from "../platform/environment";
+
 type FireNotificationOptions = {
   dedupeKey?: string;
   dedupeMs?: number;
@@ -39,6 +41,13 @@ export async function fireNotification(
   options: FireNotificationOptions = {},
 ) {
   try {
+    if (isWeb) {
+      // Browsers require permission to be requested from a user gesture in Settings.
+      if (typeof Notification === "undefined" || Notification.permission !== "granted") return;
+      if (shouldSuppressNotification(options.dedupeKey ?? `${title}\u0000${body}`, options.dedupeMs ?? DEFAULT_DEDUPE_MS)) return;
+      new Notification(title, { body });
+      return;
+    }
     const { isPermissionGranted, requestPermission, sendNotification } =
       await import("@tauri-apps/plugin-notification");
 

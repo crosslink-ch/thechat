@@ -1,3 +1,5 @@
+import { authHeaders as auth } from "../lib/eden";
+import { isAuthenticated } from "../lib/auth-identity";
 import { wsEvents } from "./ws-events";
 import { useAuthStore } from "../stores/auth";
 import {
@@ -25,16 +27,14 @@ type Navigate = (opts: { to: string }) => void;
 
 const DIRECT_NOTIFICATION_BODY_MAX_CHARS = 240;
 
-function auth(token: string) {
-  return { headers: { authorization: `Bearer ${token}` } };
-}
+
 
 async function refreshWorkspaceDetails(
   workspaceId: string,
   isLatestRequest: () => boolean = () => true,
 ) {
   const token = useAuthStore.getState().token;
-  if (!token) return;
+  if (!isAuthenticated(token)) return;
 
   const current = useWorkspacesStore.getState().activeWorkspace;
   if (!current || current.id !== workspaceId) return;

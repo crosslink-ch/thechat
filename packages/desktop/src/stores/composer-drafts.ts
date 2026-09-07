@@ -1,3 +1,4 @@
+import { onSessionReset } from "../lib/session-boundary";
 import { create } from "zustand";
 import type { ImageAttachment } from "../lib/images";
 import type { SharedAttachmentDraft } from "../lib/shared-attachments";
@@ -167,3 +168,13 @@ export const useComposerDraftsStore = create<ComposerDraftsStore>()((set) => ({
     });
   },
 }));
+
+onSessionReset(() => {
+  const state = useComposerDraftsStore.getState();
+  for (const drafts of Object.values(state.attachmentDrafts)) {
+    for (const draft of drafts) if (draft.previewUrl) URL.revokeObjectURL(draft.previewUrl);
+  }
+  // Advance old revisions so pending send rollback cannot resurrect a cleared draft.
+  const revisions = Object.fromEntries(Object.entries(state.revisions).map(([key, value]) => [key, value + 1]));
+  useComposerDraftsStore.setState({ ...useComposerDraftsStore.getInitialState(), revisions });
+});

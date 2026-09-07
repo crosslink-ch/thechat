@@ -1,8 +1,12 @@
 import { invoke } from "@tauri-apps/api/core";
+import { announceSessionChange } from "../platform/browser-session";
+import { onSessionExpired, resetPrivateSession, sessionGeneration } from "../lib/session-boundary";
+import { isWeb } from "../platform/environment";
 import type { AuthUser } from "@thechat/shared";
 import { create } from "zustand";
 import { api } from "../lib/api";
 import {
+  authHeaders,
   edenErrorMessage,
   edenErrorStatus,
   isAuthoritativeAuthRejection,
@@ -49,6 +53,7 @@ async function kvDelete(key: string): Promise<void> {
 }
 
 async function clearStoredAuth() {
+  if (isWeb) return;
   await Promise.all([
     kvDelete(KV_ACCESS_TOKEN),
     kvDelete(KV_USER),
@@ -56,7 +61,8 @@ async function clearStoredAuth() {
   ]);
 }
 
-async function persistCredentials(accessToken: string, user: AuthUser) {
+async function persistCredentials(accessToken: string | null, user: AuthUser) {
+  if (isWeb || !accessToken) return;
   await Promise.all([
     kvSet(KV_ACCESS_TOKEN, accessToken),
     kvSet(KV_USER, JSON.stringify(user)),
@@ -66,7 +72,10 @@ async function persistCredentials(accessToken: string, user: AuthUser) {
 let authMutationQueue: Promise<void> = Promise.resolve();
 
 function runAuthMutation<T>(mutation: () => Promise<T>): Promise<T> {
-  const result = authMutationQueue.then(mutation, mutation);
+  const run = () => isWeb && navigator.locks?.request
+    ? navigator.locks.request("thechat:auth-mutation", mutation)
+    : mutation();
+  const result = authMutationQueue.then(run, run);
   authMutationQueue = result.then(
     () => undefined,
     () => undefined,
@@ -102,6 +111,23 @@ export const useAuthStore = create<AuthStore>()((set, get) => ({
   loading: true,
 
   initialize: () => runAuthMutation(async () => {
+    if (isWeb) {
+      const generation = sessionGeneration();
+      try {
+        const me = await api.auth.me.get(authHeaders(null));
+        if (generation !== sessionGeneration()) return;
+        const user = !me.error && me.data && "user" in me.data ? me.data.user : null;
+        if (get().user?.id !== user?.id) resetPrivateSession();
+        set({ user, token: null });
+      } catch {
+        if (generation !== sessionGeneration()) return;
+        resetPrivateSession();
+        set({ user: null, token: null });
+      } finally {
+        set({ loading: false });
+      }
+      return;
+    }
     // The custom refresh JWT was removed with Better Auth. Purge it even when
     // the current session cannot be validated because of a network outage.
     try {
@@ -164,12 +190,15 @@ export const useAuthStore = create<AuthStore>()((set, get) => ({
       }
       throw new Error(edenErrorMessage(error, "Login failed"));
     }
-    if (!data || !("accessToken" in data) || !("user" in data) || !data.user) {
+    if (!data || (!isWeb && !("accessToken" in data)) || !("user" in data) || !data.user) {
       throw new Error("Login failed");
     }
 
-    await persistCredentials(data.accessToken, data.user);
-    set({ token: data.accessToken, user: data.user });
+    const token = !isWeb && "accessToken" in data ? data.accessToken : null;
+    await persistCredentials(token, data.user);
+    if (isWeb) resetPrivateSession();
+    set({ token, user: data.user });
+    announceSessionChange();
   }),
 
   register: (
@@ -188,9 +217,12 @@ export const useAuthStore = create<AuthStore>()((set, get) => ({
 
     if ("message" in data) return data.message;
 
-    if ("accessToken" in data && "user" in data && data.user) {
-      await persistCredentials(data.accessToken, data.user);
-      set({ token: data.accessToken, user: data.user });
+    if ((isWeb || "accessToken" in data) && "user" in data && data.user) {
+      const token = !isWeb && "accessToken" in data ? data.accessToken : null;
+      await persistCredentials(token, data.user);
+      if (isWeb) resetPrivateSession();
+      set({ token, user: data.user });
+      announceSessionChange();
     }
     return null;
   }),
@@ -202,12 +234,15 @@ export const useAuthStore = create<AuthStore>()((set, get) => ({
     });
 
     if (error) throw new Error(edenErrorMessage(error, "Verification failed"));
-    if (!data || !("accessToken" in data) || !("user" in data) || !data.user) {
+    if (!data || (!isWeb && !("accessToken" in data)) || !("user" in data) || !data.user) {
       throw new Error("Verification failed");
     }
 
-    await persistCredentials(data.accessToken, data.user);
-    set({ token: data.accessToken, user: data.user });
+    const token = !isWeb && "accessToken" in data ? data.accessToken : null;
+    await persistCredentials(token, data.user);
+    if (isWeb) resetPrivateSession();
+    set({ token, user: data.user });
+    announceSessionChange();
   }),
 
   requestPasswordReset: (email: string) => runAuthMutation(async () => {
@@ -250,21 +285,23 @@ export const useAuthStore = create<AuthStore>()((set, get) => ({
     }),
 
   updateName: (name: string) => runAuthMutation(async () => {
+    const generation = sessionGeneration();
     const accessToken = get().token;
-    if (!accessToken) throw new Error("Authentication required");
+    if (isWeb ? !get().user : !accessToken) throw new Error("Authentication required");
 
     const { data, error } = await api.auth.me.patch(
       { name },
-      { headers: { authorization: `Bearer ${accessToken}` } },
+      authHeaders(accessToken),
     );
 
     if (error) {
       if (
         isAuthoritativeAuthRejection(error) &&
-        get().token === accessToken
+        (isWeb ? generation === sessionGeneration() : get().token === accessToken)
       ) {
         await clearStoredAuth();
-        queryClient.clear();
+        if (isWeb) resetPrivateSession();
+        else queryClient.clear();
         set({ token: null, user: null, loading: false });
       }
       throw new Error(edenErrorMessage(error, "Could not update profile"));
@@ -272,7 +309,7 @@ export const useAuthStore = create<AuthStore>()((set, get) => ({
     if (!data || !("user" in data) || !data.user) {
       throw new Error("Could not update profile");
     }
-    if (get().token !== accessToken) {
+    if (isWeb ? generation !== sessionGeneration() : get().token !== accessToken) {
       throw new Error("Authentication state changed while updating profile");
     }
 
@@ -281,11 +318,11 @@ export const useAuthStore = create<AuthStore>()((set, get) => ({
   }),
 
   logout: () => runAuthMutation(async () => {
-    const accessToken = await kvGet(KV_ACCESS_TOKEN);
-    if (accessToken) {
+    const accessToken = isWeb ? null : await kvGet(KV_ACCESS_TOKEN);
+    if (isWeb || accessToken) {
       const { error } = await api.auth.logout.post(
         {},
-        { headers: { authorization: `Bearer ${accessToken}` } },
+        authHeaders(accessToken),
       );
       // A 401/403 means the credential is already unusable and local cleanup is
       // safe. For transport/5xx failures, retain the sole token so the user can
@@ -296,7 +333,13 @@ export const useAuthStore = create<AuthStore>()((set, get) => ({
     }
 
     await clearStoredAuth();
-    queryClient.clear();
+    if (isWeb) resetPrivateSession();
+    else queryClient.clear();
     set({ token: null, user: null });
+    announceSessionChange();
   }),
 }));
+
+onSessionExpired(() => {
+  if (isWeb) useAuthStore.setState({ user: null, token: null, loading: false });
+});

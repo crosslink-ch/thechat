@@ -1,3 +1,4 @@
+import { isAuthenticated } from "../lib/auth-identity";
 import { useRef, useEffect, useCallback, useMemo, useLayoutEffect } from "react";
 import { InputBar, type InputSendResult } from "./InputBar";
 import { Markdown } from "./Markdown";
@@ -187,7 +188,7 @@ export function ChannelChatView({
         onStop={noop}
         mentions={mentions}
         sharedUpload={
-          conversationId && token ? { conversationId, token } : undefined
+          conversationId && isAuthenticated(token) ? { conversationId, token: token ?? null } : undefined
         }
       />
     </>
