@@ -45,6 +45,15 @@ test('ordinary browser can log in and restore its session without Tauri', async 
   await expect(page.getByText('Create a workspace to start using channels and direct messages.')).toBeVisible();
   await expect(page.locator('#auth-email')).toHaveCount(0);
   await expect(page.getByText('Loading...', { exact: true })).toHaveCount(0);
+  const tracedStatus = await page.evaluate(async (url) => {
+    const response = await fetch(`${url}/auth/me`, { credentials: 'include', headers: {
+      'X-TheChat-Client': 'web',
+      traceparent: `00-${crypto.randomUUID().replaceAll('-', '')}-1234567890abcdef-01`,
+      tracestate: 'thechat=browser',
+    } });
+    return response.status;
+  }, apiURL);
+  expect(tracedStatus).toBe(200);
   const authCookies = (await page.context().cookies()).filter(cookie => cookie.httpOnly);
   expect(authCookies.length).toBeGreaterThan(0);
   const storage = await page.evaluate(() => ({ local: { ...localStorage }, session: { ...sessionStorage }, cookie: document.cookie }));

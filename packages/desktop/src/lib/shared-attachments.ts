@@ -1,5 +1,5 @@
 import { isWeb } from "../platform/environment";
-import { sessionGeneration } from "./session-boundary";
+import { onSessionReset, sessionGeneration } from "./session-boundary";
 import type { AttachmentView } from "@thechat/shared";
 import type { Context, Span } from "@opentelemetry/api";
 import { invoke } from "@tauri-apps/api/core";
@@ -391,6 +391,14 @@ export async function openSharedAttachmentDownload(
   disposition: "attachment" | "inline" = "attachment",
   suggestedFileName?: string,
 ) {
+  const generation = sessionGeneration();
+  const controller = isWeb ? new AbortController() : undefined;
+  const unsubscribe = isWeb ? onSessionReset(() => controller?.abort()) : () => {};
+  const assertActive = () => {
+    if (isWeb && generation !== sessionGeneration()) {
+      throw new DOMException("Session changed", "AbortError");
+    }
+  };
   return withDesktopSpan(
     "attachment.download",
     {
@@ -403,6 +411,7 @@ export async function openSharedAttachmentDownload(
         disposition,
         { parentContext: downloadContext },
       );
+      assertActive();
       const transfer = await withDesktopSpan(
         "attachment.s3.download",
         {
@@ -446,7 +455,11 @@ export async function openSharedAttachmentDownload(
               };
             }
 
-            const response = await fetch(result.url, { method: "GET" });
+            const response = await fetch(result.url, {
+              method: "GET",
+              ...(controller ? { signal: controller.signal } : {}),
+            });
+            assertActive();
             transferSpan.setAttribute(
               "http.response.status_code",
               response.status,
@@ -458,6 +471,7 @@ export async function openSharedAttachmentDownload(
               );
             }
             const blob = await response.blob();
+            assertActive();
             transferSpan.setAttribute(
               "thechat.attachment.transferred_bytes",
               blob.size,
@@ -498,6 +512,7 @@ export async function openSharedAttachmentDownload(
         span.addEvent("attachment.download.file_saved");
       } else {
         try {
+          assertActive();
           launchDownloadedBlob(
             transfer.blob,
             disposition,
@@ -517,7 +532,7 @@ export async function openSharedAttachmentDownload(
       };
     },
     { recordException: false },
-  );
+  ).finally(unsubscribe);
 }
 
 interface NativeAttachmentDownload {

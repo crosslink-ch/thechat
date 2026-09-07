@@ -69,6 +69,27 @@ it("restores exclusively from the server with no JS token or offline identity", 
   expect(useAuthStore.getState()).toMatchObject({ user, token: null, loading: false });
   expect(invoke).not.toHaveBeenCalled();
 });
+it.each([403, 503, "transport"])("preserves identity and unsent drafts on retryable revalidation %s", async (failure) => {
+  useAuthStore.setState({ user, token: null, loading: false });
+  queryClient.setQueryData(["private-outage"], "cached conversation");
+  useComposerDraftsStore.getState().setDraft("account:alice:dm:outage", "unsent draft");
+  if (failure === "transport") vi.mocked(api.auth.me.get).mockRejectedValueOnce(new TypeError("Network unavailable"));
+  else vi.mocked(api.auth.me.get).mockResolvedValueOnce({ data: null, error: { status: failure } } as never);
+  await useAuthStore.getState().initialize();
+  expect(useAuthStore.getState().user).toEqual(user);
+  expect(queryClient.getQueryData(["private-outage"])).toBe("cached conversation");
+  expect(useComposerDraftsStore.getState().drafts["account:alice:dm:outage"]).toBe("unsent draft");
+});
+
+it("clears identity and drafts after authoritative revalidation rejection", async () => {
+  useAuthStore.setState({ user, token: null, loading: false });
+  useComposerDraftsStore.getState().setDraft("account:alice:dm:expired", "private draft");
+  vi.mocked(api.auth.me.get).mockResolvedValueOnce({ data: null, error: { status: 401 } } as never);
+  await useAuthStore.getState().initialize();
+  expect(useAuthStore.getState().user).toBeNull();
+  expect(useComposerDraftsStore.getState().drafts).toEqual({});
+});
+
 it("revokes cookie session even though token is null", async () => {
   useAuthStore.setState({ user, token: null, loading: false });
   vi.mocked(api.auth.logout.post).mockResolvedValue({ data: {}, error: null } as never);

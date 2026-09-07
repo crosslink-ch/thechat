@@ -10,6 +10,39 @@ afterAll(() => {
 });
 const app = new Elysia().use(authRoutes);
 
+test("configured native dev origin is admitted only outside production", async () => {
+  const config = await Bun.file(new URL("../../../desktop/src-tauri/tauri.conf.json", import.meta.url)).json();
+  const origin = new URL(config.build.devUrl).origin;
+  const previous = process.env.NODE_ENV;
+  try {
+    for (const environment of ["development", "production"]) {
+      process.env.NODE_ENV = environment;
+      const preflight = await app.handle(new Request("https://api.example.test/auth/login", {
+        method: "OPTIONS", headers: { origin, "access-control-request-method": "POST", "access-control-request-headers": "content-type,authorization" },
+      }));
+      expect(preflight.headers.get("access-control-allow-origin")).toBe(environment === "development" ? origin : null);
+      const login = await app.handle(new Request("https://api.example.test/auth/login", {
+        method: "POST", headers: { origin, "content-type": "application/json" }, body: "{}",
+      }));
+      expect(login.status).toBe(environment === "development" ? 400 : 403);
+      const protectedResponse = await app.handle(new Request("https://api.example.test/auth/me", { headers: { origin } }));
+      expect(protectedResponse.status).toBe(environment === "development" ? 401 : 403);
+    }
+  } finally {
+    if (previous === undefined) delete process.env.NODE_ENV; else process.env.NODE_ENV = previous;
+  }
+});
+
+test.each(["tauri://localhost", "https://chat.example.test"])("admits trace propagation from %s", async (origin) => {
+  const response = await app.handle(new Request("https://api.example.test/auth/me", {
+    method: "OPTIONS", headers: { origin, "access-control-request-method": "GET", "access-control-request-headers": "traceparent,tracestate,x-thechat-client" },
+  }));
+  expect(response.headers.get("access-control-allow-origin")).toBe(origin);
+  const allowed = response.headers.get("access-control-allow-headers")?.toLowerCase().split(/,\s*/);
+  expect(allowed).toContain("traceparent");
+  expect(allowed).toContain("tracestate");
+});
+
 test("credentialed CORS is available only to configured browser origins", async () => {
   const backend = process.env.BETTER_AUTH_URL;
   process.env.BETTER_AUTH_URL = "https://api.example.test";

@@ -67,6 +67,10 @@ Native desktop requests keep the existing bearer-token API and native credential
 storage. Bot keys and personal access tokens do not become browser cookies.
 Cookie-authenticated WebSockets authenticate using the original upgrade request
 and an explicit cookie-mode auth frame. Existing bearer frames remain supported.
+The configured native Tauri development origin on loopback port 1420 is admitted
+only outside production mode. Its markerless requests remain bearer-only.
+Credentialed web and native CORS both allow the existing `traceparent` and
+`tracestate` propagation headers.
 
 Browser-origin/CSRF policy applies before state changes. Cross-tab session changes
 invalidate private caches and connections; authoritative expiry is separate from

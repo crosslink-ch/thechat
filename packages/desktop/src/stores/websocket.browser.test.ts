@@ -3,6 +3,19 @@ vi.mock("../platform/environment", () => ({ isWeb: true }));
 import { useWebSocketStore } from "./websocket";
 import { useAuthStore } from "./auth";
 import { queryClient } from "../lib/query-client";
+import { resetPrivateSession } from "../lib/session-boundary";
+it("does not accumulate session-reset listeners across heartbeats", () => {
+  useWebSocketStore.getState().connect(null);
+  const socket = Socket.instances[0]; socket.open(); socket.receive({ type: "auth_ok", userId: "alice" });
+  for (let i = 0; i < 4; i++) {
+    vi.advanceTimersByTime(30_000);
+    socket.receive({ type: "pong" });
+  }
+  const disconnect = vi.spyOn(useWebSocketStore.getState(), "disconnect");
+  resetPrivateSession();
+  expect(disconnect).toHaveBeenCalledTimes(1);
+  disconnect.mockRestore();
+});
 it("expires identity, private state and the authorized socket on terminal auth failure", () => {
   useAuthStore.setState({ user: { id: "alice" } as never, token: null });
   queryClient.setQueryData(["private"], "secret");

@@ -126,12 +126,16 @@ export const useAuthStore = create<AuthStore>()((set, get) => ({
         const me = await api.auth.me.get(authHeaders(null));
         if (generation !== sessionGeneration()) return;
         const user = !me.error && me.data && "user" in me.data ? me.data.user : null;
-        if (get().user?.id !== user?.id) resetPrivateSession();
-        set({ user, token: null });
+        if (user) {
+          if (get().user?.id !== user.id) resetPrivateSession();
+          set({ user, token: null });
+        } else if (edenErrorStatus(me.error) === 401) {
+          resetPrivateSession();
+          set({ user: null, token: null });
+        }
       } catch {
-        if (generation !== sessionGeneration()) return;
-        resetPrivateSession();
-        set({ user: null, token: null });
+        // A hidden-tab network failure is not proof of logout. Preserve only
+        // this tab's existing in-memory identity/drafts, never an offline cache.
       } finally {
         set({ loading: false });
       }

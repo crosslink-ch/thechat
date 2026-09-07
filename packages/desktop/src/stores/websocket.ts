@@ -79,7 +79,6 @@ function startHeartbeat() {
     if (authenticated && ws?.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({ type: "ping" }));
 
-onSessionReset(() => { if (isWeb) useWebSocketStore.getState().disconnect(); });
       pongTimer = setTimeout(() => {
         // No pong received — connection is stale, force reconnect
         ws?.close();

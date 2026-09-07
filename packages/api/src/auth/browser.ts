@@ -6,6 +6,16 @@ const nativeOrigins = new Set([
   "http://tauri.localhost",
   "https://tauri.localhost",
 ]);
+const nativeDevelopmentOrigins = new Set([
+  "http://localhost:1420",
+  "http://127.0.0.1:1420",
+  "http://[::1]:1420",
+]);
+function isNativeOrigin(origin: string) {
+  return nativeOrigins.has(origin) || (
+    process.env.NODE_ENV !== "production" && nativeDevelopmentOrigins.has(origin)
+  );
+}
 const loopbackHosts = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
 function browserCookieSettings(origin: string | null | undefined) {
@@ -123,9 +133,9 @@ export const browserCors = new Elysia({ name: "browser-cors" })
     cors({
       origin: (request) =>
         trustedWebOrigin(request.headers.get("origin")) ||
-        nativeOrigins.has(request.headers.get("origin") ?? ""),
+        isNativeOrigin(request.headers.get("origin") ?? ""),
       credentials: false,
-      allowedHeaders: ["Content-Type", "Authorization", "X-TheChat-Client"],
+      allowedHeaders: ["Content-Type", "Authorization", "X-TheChat-Client", "traceparent", "tracestate"],
       exposeHeaders: ["Retry-After", "X-Retry-After"],
       methods: ["GET", "HEAD", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"],
     }),
@@ -150,7 +160,7 @@ export const browserAuthPolicy = new Elysia({ name: "browser-auth-policy" })
       /(?:^|;\s*)(?:__Host-thechat_session|thechat_session)=/.test(
         request.headers.get("cookie") ?? "",
       );
-    if (!marker && !hasCookie && (!origin || nativeOrigins.has(origin))) return;
+    if (!marker && !hasCookie && (!origin || isNativeOrigin(origin))) return;
     if (
       marker === "web" &&
       trustedWebOrigin(origin) &&

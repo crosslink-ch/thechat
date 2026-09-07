@@ -1,13 +1,34 @@
 import { webcrypto } from "node:crypto";
 import { afterEach, expect, it, vi } from "vitest";
 vi.mock("../platform/environment", () => ({ isWeb: true }));
-vi.mock("./api", () => ({ api: { attachments: { post: vi.fn().mockResolvedValue({ data: null, error: null }) } } }));
+const download = vi.hoisted(() => ({ get: vi.fn() }));
+vi.mock("./api", () => ({ api: { attachments: Object.assign(vi.fn(() => ({ download })), { post: vi.fn().mockResolvedValue({ data: null, error: null }) }) } }));
 import { api } from "./api";
-import { uploadSharedAttachment } from "./shared-attachments";
+import { openSharedAttachmentDownload, uploadSharedAttachment } from "./shared-attachments";
 import { resetPrivateSession } from "./session-boundary";
 import { useHermesIndicatorsStore } from "../stores/hermes-indicators";
 import { useHermesApprovalsStore } from "../stores/hermes-approvals";
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+it("aborts and never hands off an earlier account's delayed download", async () => {
+  const createObjectURL = vi.fn(() => "blob:old-account");
+  vi.stubGlobal("URL", class extends URL {
+    static createObjectURL = createObjectURL;
+    static revokeObjectURL = vi.fn();
+  });
+  vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+  let finish!: (blob: Blob) => void;
+  const fetchImpl = vi.fn().mockResolvedValue({ ok: true, status: 200, blob: () => new Promise<Blob>(resolve => { finish = resolve; }) });
+  vi.stubGlobal("fetch", fetchImpl);
+  download.get.mockResolvedValue({ data: { url: "https://objects.example.invalid/private", expiresAt: "later" }, error: null });
+  const result = openSharedAttachmentDownload("old", null, "attachment", "private.txt").catch(error => error);
+  await vi.waitFor(() => expect(finish).toBeDefined());
+  resetPrivateSession();
+  finish(new Blob(["private"]));
+  const outcome = await result;
+  expect(createObjectURL).not.toHaveBeenCalled();
+  expect(outcome).toMatchObject({ name: "AbortError" });
+  expect(fetchImpl.mock.calls[0][1].signal.aborted).toBe(true);
+});
 it("does not reserve or cancel an old account's file using a new account's cookie", async () => {
   vi.stubGlobal("crypto", webcrypto);
   let finish!: (value: ArrayBuffer) => void;

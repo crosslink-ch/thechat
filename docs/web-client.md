@@ -27,8 +27,10 @@ The native `THECHAT_BACKEND_URL` setting still controls desktop builds. It inten
 - Browser login/register/verify accepts `{user}`; `token` stays `null`. `/auth/me` restores the user. No session token or cached user is written to web storage. Desktop bearer/KV behavior remains available only in native mode.
 - Auth mutations are serialized per tab, and across tabs where Web Locks is supported. Storage/BroadcastChannel messages contain only random change signals. Other tabs immediately drop private state and revalidate with the server; visibility restoration also revalidates.
 - An authoritative protected HTTP 401 or terminal WebSocket auth failure expires identity, query data, drafts, workspace state, private unread/DM mappings, Hermes transient state and the socket. A workspace-membership 403 does not globally log the user out. Retryable WebSocket auth errors reconnect without dropping identity.
+- Returning to a visible tab preserves its in-memory identity and unsent drafts on a network/503 revalidation failure. This does not introduce an offline identity cache. A real 401 still expires the session.
 - WebSocket sends `{type:"auth", mode:"cookie"}`. Messages and typing wait for `auth_ok`; the acknowledged user must match the identity captured at connection time before pending messages are flushed.
 - Uploads are generation-fenced; account changes abort outstanding composer uploads, clear previews/drafts and do not cancel an old account's reservation with a new account's cookie.
+- Browser downloads are generation-fenced through authorization, body transfer and final handoff. Session reset aborts the transfer; completed operations remove their reset subscription.
 
 ## Platform boundary
 
