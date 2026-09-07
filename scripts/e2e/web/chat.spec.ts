@@ -50,6 +50,13 @@ test('channels, DMs, real-time delivery, attachments and short phone viewport', 
     await page.getByTitle('Send message', { exact: true }).click();
     await expect.poll(async () => (await call(request, 'GET', `/messages/${f.dm.id}`, undefined, f.a.accessToken)).reduce((n: number, m: any) => n + (m.attachments?.length || 0), 0), { timeout: 30_000 }).toBe(2);
     await expect(page.getByText('browser-note.txt', { exact: true })).toBeVisible();
+    const downloadPending = page.waitForEvent('download');
+    await page.getByTitle('Download browser-note.txt', { exact: true }).click();
+    const download = await downloadPending;
+    expect(download.suggestedFilename()).toBe('browser-note.txt');
+    const downloadedPath = info.outputPath('browser-note.txt');
+    await download.saveAs(downloadedPath);
+    expect(await readFile(downloadedPath, 'utf8')).toBe('TheChat browser attachment acceptance\n');
     const image = page.getByAltText('browser-image.png').first();
     await image.scrollIntoViewIfNeeded();
     await expect.poll(() => image.evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth > 0)).toBe(true);
