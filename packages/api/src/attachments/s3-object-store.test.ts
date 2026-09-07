@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { S3Client } from "@aws-sdk/client-s3";
-import { S3ObjectStore } from "./s3-object-store";
+import { S3ObjectStore, createS3ObjectStoreFromEnv } from "./s3-object-store";
 
 const clients: S3Client[] = [];
 
@@ -21,6 +21,64 @@ function signingClient() {
 }
 
 describe("S3 attachment object store", () => {
+  test("loads and validates the optional browser endpoint from environment", () => {
+    expect(() => { createS3ObjectStoreFromEnv({
+      ATTACHMENT_S3_BUCKET: 'preview-bucket', ATTACHMENT_S3_REGION: 'eu-central-1',
+      ATTACHMENT_S3_PUBLIC_ENDPOINT: 'http://unsafe.example.invalid',
+    }); }).toThrow('ATTACHMENT_S3_PUBLIC_ENDPOINT');
+  });
+  test("signs browser uploads for a public endpoint without moving worker traffic", async () => {
+    const client = signingClient();
+    const store = new S3ObjectStore({
+      bucket: "preview-bucket",
+      region: "eu-central-1",
+      client,
+      endpoint: "http://127.0.0.1:19000",
+      publicEndpoint: "https://objects.example.invalid:8445",
+      forcePathStyle: true,
+    });
+    const upload = await store.createUploadRequest({
+      key: "quarantine/id",
+      mediaType: "text/plain",
+      sizeBytes: 5,
+      checksumSha256Base64: "LPJNul+wow4m6DsqxbninhsWHlwfp0JecwQzYpOLmCQ=",
+      expiresInSeconds: 300,
+    });
+    expect(new URL(upload.url).origin).toBe("https://objects.example.invalid:8445");
+    expect(new URL(upload.url).pathname).toBe("/preview-bucket/quarantine/id");
+    let called = false;
+    client.send = (async () => { called = true; return { ContentLength: 5, VersionId: "v1" }; }) as any;
+    await store.headObject({ key: "quarantine/id" });
+    expect(called).toBe(true);
+  });
+
+  test("signs downloads against the configured browser endpoint", async () => {
+    const store = new S3ObjectStore({
+      bucket: "preview-bucket",
+      region: "eu-central-1",
+      client: signingClient(),
+      publicEndpoint: "https://objects.example.invalid:8445",
+      forcePathStyle: true,
+    });
+    const download = await store.createDownloadRequest({
+      key: "clean/id", versionId: "v1", mediaType: "text/plain",
+      contentDisposition: 'attachment; filename="example.txt"', expiresInSeconds: 90,
+    });
+    expect(new URL(download.url).origin).toBe("https://objects.example.invalid:8445");
+    expect(new URL(download.url).searchParams.get("versionId")).toBe("v1");
+  });
+
+  test.each([
+    'http://objects.example.invalid', 'ftp://objects.example.invalid',
+    'https://user:password@objects.example.invalid',
+    'https://objects.example.invalid?secret=value', 'https://objects.example.invalid/#fragment',
+    'https://objects.example.invalid/prefix',
+  ])("rejects unsafe public endpoint configuration %s", (publicEndpoint) => {
+    expect(() => { new S3ObjectStore({
+      bucket: 'preview-bucket', region: 'eu-central-1', client: signingClient(), publicEndpoint,
+    }); }).toThrow('ATTACHMENT_S3_PUBLIC_ENDPOINT');
+  });
+
   test("binds upload size and checksum into a short-lived private PUT", async () => {
     const checksum = "LPJNul+wow4m6DsqxbninhsWHlwfp0JecwQzYpOLmCQ=";
     const store = new S3ObjectStore({

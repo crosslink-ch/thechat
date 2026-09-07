@@ -23,6 +23,7 @@
     "db:migrate": "pnpm --filter @thechat/api db:migrate",
     "db:push": "pnpm --filter @thechat/api db:push",
     "db:studio": "pnpm --filter @thechat/api db:studio",
+    "test:e2e:web": "playwright test -c scripts/e2e/web/playwright.config.ts",
     "test:e2e": "pnpm --filter @thechat/desktop test:e2e",
     "test:e2e:headless": "pnpm --filter @thechat/desktop test:e2e:headless",
     "test:e2e:hermes": "python3 scripts/e2e/hermes-bot-flow.py",
@@ -34,6 +35,7 @@
   },
   "packageManager": "pnpm@10.28.2",
   "devDependencies": {
+    "@playwright/test": "^1.63.0",
     "dotenv-cli": "^11.0.0"
   }
 }
