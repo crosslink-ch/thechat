@@ -288,6 +288,32 @@ export interface ConversationDetail {
   participants: ConversationParticipantPublic[];
 }
 
+export interface ActivityLatestMessage {
+  id: string;
+  threadId: string | null;
+  threadTitle: string | null;
+  senderId: string;
+  senderName: string;
+  senderType: "human" | "bot";
+  content: string;
+  createdAt: string;
+}
+
+export interface ActivityItem {
+  conversationId: string;
+  conversationType: "direct" | "group";
+  conversationName: string;
+  workspaceId: string;
+  workspaceName: string;
+  unreadCount: number;
+  latestMessage: ActivityLatestMessage;
+}
+
+export interface ActivitySnapshot {
+  items: ActivityItem[];
+  totalUnreadMessages: number;
+}
+
 export interface ConversationThreadPublic {
   id: string;
   conversationId: string;

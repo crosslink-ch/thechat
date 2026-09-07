@@ -24,6 +24,7 @@ import { ServiceError } from "./errors";
 import { requireConversationMutationAccess } from "./conversation-mutation-access";
 import { resolveMessageBotTargetIds } from "./message-bot-targets";
 import { messageReactionsByMessageIds } from "./message-reactions";
+import { recordMessageUnreads } from "./activity";
 
 const messageLog = log.child({ component: "messages" });
 
@@ -243,6 +244,8 @@ export async function sendMessage(
             duplicate: true,
           };
         }
+
+        await recordMessageUnreads(tx, inserted);
 
         await attachReadyAttachments(tx, {
           messageId: inserted.id,

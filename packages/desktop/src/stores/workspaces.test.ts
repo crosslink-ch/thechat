@@ -8,17 +8,28 @@ const {
   channelPostMock,
   channelPatchMock,
   channelDeleteMock,
+  workspaceListGetMock,
+  workspaceRouteMock,
+  invokeMock,
 } = vi.hoisted(() => ({
   channelRouteMock: vi.fn(),
   channelPostMock: vi.fn(),
   channelPatchMock: vi.fn(),
   channelDeleteMock: vi.fn(),
+  workspaceListGetMock: vi.fn(),
+  workspaceRouteMock: vi.fn(),
+  invokeMock: vi.fn(),
 }));
 
 vi.mock("../lib/api", () => {
   const channel = Object.assign(channelRouteMock, { post: channelPostMock });
-  return { api: { conversations: { channel } } };
+  const workspaces = Object.assign(workspaceRouteMock, {
+    list: { get: workspaceListGetMock },
+  });
+  return { api: { conversations: { channel }, workspaces } };
 });
+
+vi.mock("@tauri-apps/api/core", () => ({ invoke: invokeMock }));
 
 const user: AuthUser = {
   id: "u1",
@@ -53,17 +64,69 @@ const workspace: WorkspaceWithDetails = {
   ],
 };
 
+const betaWorkspace: WorkspaceWithDetails = {
+  ...workspace,
+  id: "ws-2",
+  name: "Team Beta",
+  channels: [],
+};
+
+const workspaceList = [workspace, betaWorkspace].map(({ id, name, createdAt, updatedAt }) => ({
+  id,
+  name,
+  createdAt,
+  updatedAt,
+  role: "owner" as const,
+}));
+
 beforeEach(() => {
   vi.clearAllMocks();
   channelRouteMock.mockReturnValue({
     patch: channelPatchMock,
     delete: channelDeleteMock,
   });
+  workspaceListGetMock.mockResolvedValue({ data: workspaceList, error: null });
+  workspaceRouteMock.mockImplementation(({ id }) => ({
+    get: vi.fn().mockResolvedValue({
+      data: id === workspace.id ? workspace : betaWorkspace,
+      error: null,
+    }),
+  }));
+  invokeMock.mockImplementation((command: string) =>
+    Promise.resolve(command === "kv_get" ? workspace.id : undefined),
+  );
   useAuthStore.setState({ user, token: "token", loading: false });
   useWorkspacesStore.setState({
     workspaces: [],
     activeWorkspace: workspace,
     loading: false,
+  });
+});
+
+describe("workspace selection races", () => {
+  it("does not let slow initialization undo an explicit Activity selection", async () => {
+    let resolveList!: (value: unknown) => void;
+    workspaceListGetMock.mockImplementationOnce(
+      () => new Promise((resolve) => {
+        resolveList = resolve;
+      }),
+    );
+
+    const initializing = useWorkspacesStore.getState().initialize();
+    await vi.waitFor(() => expect(workspaceListGetMock).toHaveBeenCalledTimes(1));
+
+    await expect(
+      useWorkspacesStore.getState().selectWorkspace(betaWorkspace.id),
+    ).resolves.toBe(true);
+    resolveList({ data: workspaceList, error: null });
+    await initializing;
+
+    expect(useWorkspacesStore.getState().activeWorkspace?.id).toBe(
+      betaWorkspace.id,
+    );
+    expect(workspaceRouteMock).not.toHaveBeenCalledWith({
+      id: workspace.id,
+    });
   });
 });
 

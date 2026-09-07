@@ -9,6 +9,8 @@ import { api } from "../lib/api";
 import { useAuthStore } from "./auth";
 
 const KV_ACTIVE_WORKSPACE = "active_workspace_id";
+let workspaceSelectionGeneration = 0;
+let workspaceInitializationGeneration = 0;
 
 async function kvGet(key: string): Promise<string | null> {
   return invoke<string | null>("kv_get", { key });
@@ -16,10 +18,6 @@ async function kvGet(key: string): Promise<string | null> {
 
 async function kvSet(key: string, value: string): Promise<void> {
   return invoke("kv_set", { key, value });
-}
-
-async function kvDelete(key: string): Promise<void> {
-  return invoke("kv_delete", { key });
 }
 
 function auth(token: string) {
@@ -31,7 +29,7 @@ interface WorkspacesStore {
   activeWorkspace: WorkspaceWithDetails | null;
   loading: boolean;
   initialize: () => Promise<void>;
-  selectWorkspace: (id: string) => Promise<void>;
+  selectWorkspace: (id: string) => Promise<boolean>;
   createWorkspace: (name: string) => Promise<void>;
   createChannel: (name: string) => Promise<WorkspaceChannel>;
   renameChannel: (channelId: string, name: string) => Promise<WorkspaceChannel>;
@@ -90,43 +88,63 @@ export const useWorkspacesStore = create<WorkspacesStore>()((set) => ({
   initialize: async () => {
     const token = useAuthStore.getState().token;
     if (!token) return;
+    const initializationRequest = ++workspaceInitializationGeneration;
+    const selectionGeneration = ++workspaceSelectionGeneration;
+
+    const isCurrent = () =>
+      initializationRequest === workspaceInitializationGeneration &&
+      selectionGeneration === workspaceSelectionGeneration &&
+      useAuthStore.getState().token === token;
 
     set({ loading: true });
     try {
       const list = await fetchWorkspacesList(token);
+      if (!isCurrent()) return;
       set({ workspaces: list });
 
       const savedId = await kvGet(KV_ACTIVE_WORKSPACE);
-      if (savedId && list.some((w) => w.id === savedId)) {
-        // Select the saved workspace
-        try {
-          const { data, error } = await api.workspaces({ id: savedId }).get(auth(token));
-          if (error) throw error;
-          set({ activeWorkspace: data as WorkspaceWithDetails });
-        } catch {
+      if (!isCurrent()) return;
+      if (savedId && list.some((workspace) => workspace.id === savedId)) {
+        const { data, error } = await api.workspaces({ id: savedId }).get(auth(token));
+        if (!isCurrent()) return;
+        if (error) {
           set({ activeWorkspace: null });
-          await kvDelete(KV_ACTIVE_WORKSPACE);
+          return;
         }
+        set({ activeWorkspace: data as WorkspaceWithDetails });
       }
     } catch {
-      // ignore
+      // A later initialize/select operation owns state once this request is stale.
     } finally {
-      set({ loading: false });
+      if (
+        initializationRequest === workspaceInitializationGeneration &&
+        useAuthStore.getState().token === token
+      ) {
+        set({ loading: false });
+      }
     }
   },
 
   selectWorkspace: async (id: string) => {
     const token = useAuthStore.getState().token;
-    if (!token) return;
+    if (!token) return false;
+    const requestGeneration = ++workspaceSelectionGeneration;
 
     try {
       const { data, error } = await api.workspaces({ id }).get(auth(token));
       if (error) throw new Error((error as any).error || "Request failed");
-      set({ activeWorkspace: data as WorkspaceWithDetails });
+      if (
+        requestGeneration !== workspaceSelectionGeneration ||
+        useAuthStore.getState().token !== token
+      ) {
+        return false;
+      }
       await kvSet(KV_ACTIVE_WORKSPACE, id);
+      if (requestGeneration !== workspaceSelectionGeneration) return false;
+      set({ activeWorkspace: data as WorkspaceWithDetails });
+      return true;
     } catch {
-      set({ activeWorkspace: null });
-      await kvDelete(KV_ACTIVE_WORKSPACE);
+      return false;
     }
   },
 
@@ -230,6 +248,8 @@ export const useWorkspacesStore = create<WorkspacesStore>()((set) => ({
   },
 
   reset: () => {
+    workspaceSelectionGeneration += 1;
+    workspaceInitializationGeneration += 1;
     set({ workspaces: [], activeWorkspace: null, loading: false });
   },
 }));
