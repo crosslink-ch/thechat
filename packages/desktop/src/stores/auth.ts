@@ -69,6 +69,15 @@ async function persistCredentials(accessToken: string | null, user: AuthUser) {
   ]);
 }
 
+function returnedSessionToken(data: unknown): string | null {
+  if (isWeb) return null;
+  if (!data || typeof data !== "object" || !("accessToken" in data) ||
+      typeof data.accessToken !== "string" || !data.accessToken) {
+    throw new Error("Invalid session response");
+  }
+  return data.accessToken;
+}
+
 let authMutationQueue: Promise<void> = Promise.resolve();
 
 function runAuthMutation<T>(mutation: () => Promise<T>): Promise<T> {
@@ -194,7 +203,7 @@ export const useAuthStore = create<AuthStore>()((set, get) => ({
       throw new Error("Login failed");
     }
 
-    const token = !isWeb && "accessToken" in data ? data.accessToken : null;
+    const token = returnedSessionToken(data);
     await persistCredentials(token, data.user);
     if (isWeb) resetPrivateSession();
     set({ token, user: data.user });
@@ -218,7 +227,7 @@ export const useAuthStore = create<AuthStore>()((set, get) => ({
     if ("message" in data) return data.message;
 
     if ((isWeb || "accessToken" in data) && "user" in data && data.user) {
-      const token = !isWeb && "accessToken" in data ? data.accessToken : null;
+      const token = returnedSessionToken(data);
       await persistCredentials(token, data.user);
       if (isWeb) resetPrivateSession();
       set({ token, user: data.user });
@@ -238,7 +247,7 @@ export const useAuthStore = create<AuthStore>()((set, get) => ({
       throw new Error("Verification failed");
     }
 
-    const token = !isWeb && "accessToken" in data ? data.accessToken : null;
+    const token = returnedSessionToken(data);
     await persistCredentials(token, data.user);
     if (isWeb) resetPrivateSession();
     set({ token, user: data.user });

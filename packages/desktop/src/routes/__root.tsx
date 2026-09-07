@@ -1,6 +1,8 @@
 import { isWeb } from "../platform/environment";
 import { useEffect } from "react";
-import { Outlet, useNavigate } from "@tanstack/react-router";
+import { Outlet, useNavigate, useRouterState } from "@tanstack/react-router";
+import { AppViewport } from "../components/AppViewport";
+import { ResponsiveShell } from "../components/ResponsiveShell";
 import { useAuthStore } from "../stores/auth";
 import { useWebSocketStore } from "../stores/websocket";
 import { useWorkspacesStore } from "../stores/workspaces";
@@ -22,6 +24,7 @@ import { PlatformDialogs, PlatformTitlebar, PlatformUpdateToast, usePlatformLife
 
 export function RootLayout() {
   const navigate = useNavigate();
+  const routeKey = useRouterState({ select: (state) => state.location.href });
   const token = useAuthStore((s) => s.token);
   const user = useAuthStore((s) => s.user);
   const authLoading = useAuthStore((s) => s.loading);
@@ -69,17 +72,18 @@ export function RootLayout() {
   });
   useCtrlWheelZoom();
 
-  return <RootView key={isWeb ? identity ?? "anonymous" : "desktop"} authLoading={authLoading} authenticated={Boolean(user)} />;
+  return <RootView key={isWeb ? identity ?? "anonymous" : "desktop"} authLoading={authLoading} authenticated={Boolean(user)} routeKey={routeKey} />;
 }
 
 interface RootViewProps {
   authLoading: boolean;
   authenticated: boolean;
+  routeKey?: string;
 }
 
-export function RootView({ authLoading, authenticated }: RootViewProps) {
+export function RootView({ authLoading, authenticated, routeKey = "" }: RootViewProps) {
   return (
-    <div className="relative flex h-screen flex-col overflow-hidden bg-base">
+    <AppViewport className="relative flex flex-col bg-base">
       <PlatformTitlebar />
       {authLoading ? (
         <div className="flex min-h-0 flex-1 items-center justify-center text-[0.929rem] text-text-placeholder">
@@ -89,15 +93,12 @@ export function RootView({ authLoading, authenticated }: RootViewProps) {
         <AuthOnboarding />
       ) : (
         <>
-          <div className="flex min-h-0 flex-1 overflow-hidden">
-            <Sidebar />
-            <div className="flex min-w-0 flex-1 flex-col">
+          <ResponsiveShell navigation={<Sidebar />} routeKey={routeKey}>
               <ChatHeader />
               <ErrorBoundary name="Route">
                 <Outlet />
               </ErrorBoundary>
-            </div>
-          </div>
+          </ResponsiveShell>
           <CommandPalette />
           <PlatformDialogs />
           <AuthModal />
@@ -107,6 +108,6 @@ export function RootView({ authLoading, authenticated }: RootViewProps) {
         </>
       )}
       <PlatformUpdateToast />
-    </div>
+    </AppViewport>
   );
 }

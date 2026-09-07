@@ -3,7 +3,7 @@ import path from "node:path";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
 const here = path.dirname(fileURLToPath(import.meta.url));
-const artifacts = process.env.MOBILE_ARTIFACTS_DIR || path.join(os.tmpdir(), "thechat-mobile-tests");
+const artifacts = process.env.MOBILE_ARTIFACTS_DIR || path.join(os.homedir(), ".cache", "thechat", "mobile-tests");
 export default defineConfig({
   testDir: here,
   testMatch: "mobile.pw.mjs",

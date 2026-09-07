@@ -36,4 +36,4 @@ Vite resolves `#platform-shell` to desktop or browser lifecycle/components at bu
 
 Browser attachments keep the existing presigned upload/download path. Clipboard uses the existing browser API. Browser notifications can be enabled by an explicit Settings action and run only while the page is open; no background push/service worker is registered. No offline authentication cache is provided.
 
-The frontend unit/build checks do not substitute for the parent integration lane's real cookie backend, browser engine, mobile geometry and two-account end-to-end acceptance.
+The frontend unit/build checks do not substitute for real cookie-backend, browser-engine, mobile-geometry and two-account end-to-end acceptance. See [web setup and verification](web.md) for the integrated runtime contract and `pnpm test:e2e:web`.

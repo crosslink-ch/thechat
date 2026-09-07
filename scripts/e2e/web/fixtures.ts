@@ -4,6 +4,14 @@ import { randomUUID } from 'node:crypto';
 export const apiURL = process.env.THECHAT_WEB_E2E_API_URL || 'http://127.0.0.1:13300';
 export const webURL = process.env.THECHAT_WEB_E2E_URL || 'http://127.0.0.1:1420';
 export const webHeaders = { origin: new URL(webURL).origin, 'x-thechat-client': 'web' };
+export async function clearCredentialFields(page: Page) {
+  await page.locator('input[type=password]').evaluateAll(inputs => {
+    for (const input of inputs as HTMLInputElement[]) {
+      input.value = '';
+      input.removeAttribute('value');
+    }
+  }).catch(() => {});
+}
 export function identity(name = 'Web acceptance') {
   return { name, email: `web-${randomUUID()}@example.invalid`, password: `Web-${randomUUID()}-9!` };
 }
@@ -29,9 +37,13 @@ export async function seedWorkspace(request: APIRequestContext) {
 }
 export async function login(page: Page, person: ReturnType<typeof identity>) {
   await page.goto('/');
+  await expect(page.locator('#auth-email')).toBeVisible();
+  if (await page.locator('#auth-name').isVisible()) {
+    await page.getByRole('button', { name: 'Log in', exact: true }).click();
+  }
   await page.locator('#auth-email').fill(person.email);
   await page.locator('#auth-password').fill(person.password);
-  await page.getByRole('button', { name: 'Log in', exact: true }).click();
+  await page.locator('form button[type=submit]').click();
   await expect(page.locator('#auth-email')).toHaveCount(0);
 }
 export async function openNavigation(page: Page) {
@@ -39,6 +51,8 @@ export async function openNavigation(page: Page) {
   if (await toggle.isVisible()) await toggle.click();
 }
 export async function assertContained(page: Page, selector: string) {
+  // VisualViewport resize events settle asynchronously in mobile WebKit.
+  await expect(async () => {
   const geometry = await page.locator(selector).evaluate(element => {
     const r = element.getBoundingClientRect();
     return { x: r.x, y: r.y, right: r.right, bottom: r.bottom, width: r.width, height: r.height, vw: innerWidth, vh: innerHeight };
@@ -50,4 +64,5 @@ export async function assertContained(page: Page, selector: string) {
   expect(geometry.right).toBeLessThanOrEqual(geometry.vw + 1);
   expect(geometry.bottom).toBeLessThanOrEqual(geometry.vh + 1);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  }).toPass({ timeout: 5_000, intervals: [16, 50, 100] });
 }

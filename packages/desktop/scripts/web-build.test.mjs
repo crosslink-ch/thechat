@@ -3,6 +3,16 @@ import assert from "node:assert/strict";
 import { build, resolveConfig } from "vite";
 import { readFile } from "node:fs/promises";
 
+test("browser document has product branding and a zoomable phone viewport", async () => {
+  const html = await readFile("index.html", "utf8");
+  assert.match(html, /href="\/thechat\.png"/);
+  assert.match(html, /viewport-fit=cover/);
+  assert.match(html, /interactive-widget=resizes-content/);
+  assert.doesNotMatch(html, /user-scalable=no|maximum-scale=1/);
+  const icon = await readFile("public/thechat.png");
+  assert.ok(icon.subarray(0, 8).equals(Buffer.from([137,80,78,71,13,10,26,10])));
+});
+
 test("browser development never probes local desktop DevTools", async () => {
   assert.match(await readFile("src/main.tsx", "utf8"), /if \(import\.meta\.env\.DEV && !__WEB_BUILD__\)/);
 });

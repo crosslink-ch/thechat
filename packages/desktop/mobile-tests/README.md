@@ -1,41 +1,44 @@
-# Mobile shell integration (client/root owner)
+# Shared mobile UI acceptance
 
-No startup, auth, API, package or lockfile changes in this lane. `routes/__root.tsx` is untouched.
+The production root composes `AppViewport` and `ResponsiveShell`. Authentication,
+router ownership and platform startup remain in `routes/__root.tsx`.
 
-1. Import `AppViewport` from `../components/AppViewport` and replace the outer RootView `<div ...h-screen...>` with `<AppViewport className="relative flex flex-col bg-base">`. Keep the titlebar/auth/overlays inside it. Mount **once**, including logged-out views. It uses `100dvh` with a mobile VisualViewport keyboard-height/offset fallback and leaves pinch zoom alone.
-2. Import `ResponsiveShell` from `../components/ResponsiveShell`. Replace only the authenticated flex-row/Sidebar/content wrapper:
+- `AppViewport` surrounds authenticated and logged-out views. It uses dynamic
+  viewport height, a VisualViewport keyboard-height/offset fallback, and does not
+  relayout the page during pinch zoom.
+- `ResponsiveShell` receives the actual route key and shared Sidebar. Below
+  1024px it provides a Radix drawer, focus trapping/restoration, and accessible
+  `Open navigation` / `Close navigation` controls. Selecting a sidebar route,
+  including the current route, closes it. Browser Back follows normal history;
+  no synthetic history entries are added.
+- `ChatHeader` reads navigation context. Dialogs and the command palette remain
+  outside the shell. `Workspace navigation` names both the drawer and nav.
+- Below 1280px Hermes tasks use the `Tasks and activity` drawer, with
+  `Open tasks and activity`, `Close tasks and activity`, `New task`, and the
+  existing General/task/activity rows. Selecting a row closes the panel.
+- Mobile CSS constrains dialog dimensions, raises touch targets, and keeps the
+  rich composer, attachments, reactions, approvals and questions reachable.
+  The composer textbox is named `Message`. The workspace dialog uses Radix and
+  exposes `Close workspace dialog`.
 
-```tsx
-const routeKey = useRouterState({ select: state => state.location.href });
-// In an unconditional hook position in RootView or a tiny authenticated shell component.
-<ResponsiveShell navigation={<Sidebar />} routeKey={routeKey}>
-  <ChatHeader />
-  <ErrorBoundary name="Route"><Outlet /></ErrorBoundary>
-</ResponsiveShell>
-```
-
-`ChatHeader` renders its toggle from shell context. Do not keep the old extra content flex-column wrapper; the shell provides it. Keep CommandPalette/dialogs outside the shell, as today.
-
-3. Web viewport meta: `width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content` (do **not** disable zoom).
-
-Accessible labels: `Open navigation`, `Close navigation`; dialog **and nav landmark** `Workspace navigation`. Mobile nav applies below 1024px. Close/outside/Escape restore trigger focus. Any Sidebar route selection closes immediately, including the same channel. Browser Back closes navigation and follows the router's normal history; **no synthetic entries are pushed**. Profile/Log out remains the existing Sidebar UI.
-
-Hermes tasks now expose `Open tasks and activity`, `Close tasks and activity`, dialog `Tasks and activity` below 1280px, with `New task` and all existing General/task/activity rows. Selecting General/task/New closes the panel. The `shared-dm-layout` JSX class in `routes/dm.tsx` stacks this toolbar before chat on narrow screens. No runtime/auth change there.
-
-The workspace dialog now uses the existing Radix Dialog dependency, with `Close workspace dialog`; channel/bot dialogs retain their existing implementation. Shared mobile CSS constrains dialog height/width, raises touch targets, and keeps the rich composer/attachments reachable. Textbox name: `Message`.
-
-Fixture evidence is synthetic store/components only (including synthetic approval/question callbacks, local image attachment selection); it is NOT auth/network/upload/bot E2E. Parent still owns real browser journeys, channel/DM backend selection, server upload and integrated authentication acceptance.
-
-## Repeatable component-browser acceptance
-
-`mobile.pw.mjs` intentionally uses a non-Vitest filename, so the native unit suite does not load Playwright. It drives the actual shared components with synthetic stores and explicit callbacks, in Chromium and WebKit, at 320/390/768/1440px plus short heights. The Vite fixture registers the real Tailwind v4 source tree; it is not a hand-built CSS facsimile.
-
-From the repository root (with the parent-installed `@playwright/test`):
+## Component-browser tests
 
 ```sh
-MOBILE_ARTIFACTS_DIR=/workspace/thechat-web-runtime/mobile/verified \
-PLAYWRIGHT_BROWSERS_PATH=/workspace/thechat-web-runtime/browsers \
+# From the repository root, after installing the pinned dependencies/browsers:
 pnpm exec playwright test --config packages/desktop/mobile-tests/playwright.config.mjs
 ```
 
-During isolated worktree development, set `MOBILE_PLAYWRIGHT_ROOT=/workspace/thechat` and invoke `/workspace/thechat/node_modules/@playwright/test/cli.js` with Node instead. No additional dependencies or lockfile edits are needed in this lane. The fixture uses loopback port 1433 only; caches, reports, traces and screenshots are written outside the repository. Desktop frontend typecheck/build and the complete native unit suite are separate checks.
+The suite drives actual shared components in Chromium and WebKit at
+320/390/768/1440px plus short heights. The Vite fixture explicitly registers the
+production Tailwind source tree; it is not a CSS facsimile. Synthetic stores and
+callbacks provide approval/question and local image-selection scenarios. This
+is **component-browser evidence, not authentication, upload, network or LLM E2E**.
+Use `pnpm test:e2e:web` for server-backed browser journeys; see
+[the web runbook](../../../docs/web.md).
+
+The fixture uses loopback port 1433 and refuses to reuse an existing server.
+Artifacts and Vite cache default to `~/.cache/thechat/mobile-tests`;
+`MOBILE_ARTIFACTS_DIR` overrides that directory. Use `PLAYWRIGHT_BROWSERS_PATH`
+when browser binaries live in a separate persistent cache. During isolated
+worktree development, `MOBILE_PLAYWRIGHT_ROOT` can point at another checkout's
+installed Playwright package. No production credentials or data are required.

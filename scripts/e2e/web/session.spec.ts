@@ -1,5 +1,7 @@
 import { test, expect } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
+import { clearCredentialFields } from './fixtures';
+test.afterEach(async ({ page }) => clearCredentialFields(page));
 
 const apiURL = process.env.THECHAT_WEB_E2E_API_URL || 'http://127.0.0.1:13300';
 const webURL = process.env.THECHAT_WEB_E2E_URL || 'http://127.0.0.1:1420';
@@ -30,6 +32,10 @@ test('ordinary browser can log in and restore its session without Tauri', async 
   const errors: string[] = [];
   page.on('pageerror', error => errors.push(error.message));
   await page.goto('/');
+  await expect(page.locator('#auth-email')).toBeVisible();
+  if (await page.locator('#auth-name').isVisible()) {
+    await page.getByRole('button', { name: 'Log in', exact: true }).click();
+  }
   await page.locator('#auth-email').fill(person.email);
   await page.locator('#auth-password').fill(person.password);
   await page.locator('form button[type=submit]').click();

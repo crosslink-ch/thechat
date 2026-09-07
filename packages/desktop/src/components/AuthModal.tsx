@@ -76,7 +76,7 @@ export function AuthOnboarding() {
       ? {
           heading: "Create your TheChat account",
           description:
-            "Register to set up your workspace and start using the desktop app.",
+            "Register to set up your workspace and start chatting.",
         }
       : view === "login"
         ? {

@@ -7,7 +7,7 @@ import os from "node:os";
 const root = path.dirname(fileURLToPath(import.meta.url));
 export default defineConfig({
   root,
-  cacheDir: path.join(process.env.MOBILE_ARTIFACTS_DIR || path.join(os.tmpdir(), "thechat-mobile-tests"), "vite-cache"),
+  cacheDir: path.join(process.env.MOBILE_ARTIFACTS_DIR || path.join(os.homedir(), ".cache", "thechat", "mobile-tests"), "vite-cache"),
   plugins: [react(), tailwindcss()],
   resolve: { dedupe: ["react", "react-dom"] },
   define: { __BACKEND_URL__: JSON.stringify("http://127.0.0.1:1") },

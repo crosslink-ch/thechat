@@ -1,7 +1,8 @@
 import { test, expect } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import { apiURL, webURL, webHeaders, seedWorkspace, login, call, openNavigation, assertContained, identity } from './fixtures';
+import { apiURL, webURL, webHeaders, seedWorkspace, login, call, openNavigation, assertContained, identity, clearCredentialFields } from './fixtures';
+test.afterEach(async ({ page }) => clearCredentialFields(page));
 
 test('desktop bearer compatibility and isolated membership fixtures', async ({ request }) => {
   const fixture = await seedWorkspace(request);
@@ -29,6 +30,14 @@ test('channels, DMs, real-time delivery, attachments and short phone viewport', 
     await editor.fill(content);
     await page.getByTitle('Send message', { exact: true }).click();
     await expect(peer.getByText(content, { exact: true })).toBeVisible();
+    if (info.project.name === 'chromium-desktop') await page.getByText(content, { exact: true }).hover();
+    await page.getByRole('button', { name: 'Add reaction', exact: true }).first().click();
+    await page.getByRole('menuitem', { name: /^React with/ }).first().click();
+    await expect.poll(async () => {
+      const messages = await call(request, 'GET', `/messages/${f.channel.id}`, undefined, f.a.accessToken);
+      return messages.find((m: any) => m.content === content)?.reactions?.[0]?.count;
+    }).toBe(1);
+    await expect(peer.getByRole('button', { name: /1 reaction$/ })).toBeVisible();
     await expect.poll(async () => (await call(request, 'GET', `/messages/${f.channel.id}`, undefined, f.a.accessToken)).filter((m: any) => m.content === content).length).toBe(1);
     await page.reload();
     await expect(page.getByText(content, { exact: true })).toBeVisible();
