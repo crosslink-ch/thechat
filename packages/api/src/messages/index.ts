@@ -1,6 +1,7 @@
 import { Elysia } from "elysia";
 import { z } from "zod";
-import { resolveTokenToUser } from "../auth/middleware";
+import { resolveRequestUser } from "../auth/middleware";
+import { browserAuthPolicy } from "../auth/browser";
 import { ServiceError } from "../services/errors";
 import { getMessages, sendMessage } from "../services/messages";
 import { setMessageReaction } from "../services/message-reactions";
@@ -29,17 +30,8 @@ const reactionSchema = z.object({
 });
 
 export const messageRoutes = new Elysia({ prefix: "/messages" })
-  .derive(async ({ headers }) => {
-    const authHeader = headers.authorization;
-    if (!authHeader?.startsWith("Bearer ")) {
-      return { user: null } as any;
-    }
-
-    const token = authHeader.slice(7);
-    const user = await resolveTokenToUser(token);
-    if (!user) return { user: null } as any;
-    return { user };
-  })
+  .use(browserAuthPolicy)
+  .derive(async ({ headers }) => ({ user: await resolveRequestUser(headers) } as any))
   .onBeforeHandle(({ user, set }) => {
     if (!user) {
       set.status = 401;

@@ -337,7 +337,8 @@ export interface ConversationThreadsPage {
 // -- WebSocket Event Types --
 
 export type WsClientEvent =
-  | { type: "auth"; token: string }
+  | { type: "auth"; token: string; mode?: never }
+  | { type: "auth"; mode: "cookie"; token?: never }
   | {
       type: "send_message";
       conversationId: string;
@@ -564,7 +565,7 @@ export interface TraceContextCarrier {
 
 export type WsServerEvent =
   | { type: "auth_ok"; userId: string }
-  | { type: "auth_error"; message: string }
+  | { type: "auth_error"; message: string; retryable?: boolean }
   | {
       type: "new_message";
       message: ChatMessage;

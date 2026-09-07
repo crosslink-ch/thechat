@@ -1,4 +1,5 @@
 import { Elysia } from "elysia";
+import { browserAuthPolicy, browserSessionToken, isWebClient } from "./browser";
 import { and, eq } from "drizzle-orm";
 import { db } from "../db";
 import { bots, session, users } from "../db/schema";
@@ -151,28 +152,28 @@ export async function resolveTokenToUser(
   }
 }
 
-export const optionalAuth = new Elysia({ name: "optional-auth" }).derive(
-  async ({ headers }) => {
-    const authHeader = headers.authorization;
-    if (!authHeader?.startsWith("Bearer ")) {
-      return { user: null as Awaited<ReturnType<typeof resolveTokenToUser>> };
-    }
+export function requestSessionToken(headers: Record<string, string | undefined>) {
+  if (isWebClient(headers)) return browserSessionToken(headers);
+  return headers.authorization?.startsWith("Bearer ") ? headers.authorization.slice(7) : null;
+}
 
-    const token = authHeader.slice(7);
-    const user = await resolveTokenToUser(token);
-    return { user };
-  },
-);
+/** Cookie credentials never fall through to bot keys or PATs, even for a human principal. */
+export async function resolveRequestUser(headers: Record<string, string | undefined>, options: { includeBotTokens?: boolean } = {}) {
+  const token = requestSessionToken(headers);
+  if (!token) return null;
+  return isWebClient(headers) ? resolveSessionTokenToHumanUser(token) : resolveTokenToUser(token, options);
+}
+
+export const optionalAuth = new Elysia({ name: "optional-auth" })
+  .use(browserAuthPolicy)
+  .derive(async ({ headers }) => ({ user: await resolveRequestUser(headers) }))
+  .as("scoped");
 
 export const requireAuth = new Elysia({ name: "require-auth" })
+  .use(browserAuthPolicy)
   .derive(async ({ headers }) => {
-    const authHeader = headers.authorization;
-    if (!authHeader?.startsWith("Bearer ")) {
-      return { user: null, sessionToken: null } as any;
-    }
-
-    const token = authHeader.slice(7);
-    const user = await resolveTokenToUser(token);
+    const token = requestSessionToken(headers);
+    const user = await resolveRequestUser(headers);
 
     if (!user) {
       return { user: null, sessionToken: null } as any;
@@ -185,4 +186,5 @@ export const requireAuth = new Elysia({ name: "require-auth" })
       set.status = 401;
       return { error: "Authentication required" };
     }
-  });
+  })
+  .as("scoped");

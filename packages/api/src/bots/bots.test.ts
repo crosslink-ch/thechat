@@ -3385,7 +3385,10 @@ describe("Bots: runtime state", () => {
       expect(delivery.payload.event.text).toBe("Handle this over the platform webhook");
       expect(delivery.payload.event).not.toHaveProperty("instructions");
       expect(delivery.payload.event.bot.id).toBe(botRes.body.id);
-      const [invocation] = await invocationsForMessage(sendRes.body.id);
+      const invocation = await waitForResult(async () => {
+        const rows = await invocationsForMessage(sendRes.body.id);
+        return rows.find((row) => row.status === "claimed");
+      }, "acknowledged Hermes webhook invocation");
       expect(invocation.status).toBe("claimed");
     } finally {
       webhook.stop();
@@ -3467,7 +3470,10 @@ describe("Bots: runtime state", () => {
             .digest("hex"),
         );
       }
-      const [invocation] = await invocationsForMessage(sendRes.body.id);
+      const invocation = await waitForResult(async () => {
+        const rows = await invocationsForMessage(sendRes.body.id);
+        return rows.find((row) => row.status === "claimed");
+      }, "acknowledged Hermes webhook invocation");
       expect(invocation.status).toBe("claimed");
     } finally {
       webhook.stop();
@@ -3478,7 +3484,12 @@ describe("Bots: runtime state", () => {
   test("Hermes platform webhook delivery is performed by the bot worker", async () => {
     await closeBotRuntimeForTests();
 
-    const webhook = startWebhookServer();
+    let acknowledge!: () => void;
+    const acknowledgement = new Promise<void>((resolve) => { acknowledge = resolve; });
+    const webhook = startWebhookServer(async () => {
+      await acknowledgement;
+      return new Response("ok");
+    });
     const human = await registerUser("RuntimeHermesWorkerWebhookOwner");
     const { workspaceId } = await createWorkspaceWithGeneralChannel(
       human.token,
@@ -3529,9 +3540,18 @@ describe("Bots: runtime state", () => {
 
       expect(delivery.payload.type).toBe("thechat.hermes_platform.event");
       expect(delivery.payload.event.text).toBe("Deliver this through the bot worker");
-      const [invocation] = await invocationsForMessage(sendRes.body.id);
+      // Receipt precedes the HTTP acknowledgement and the worker's DB commit.
+      // Gate the response to prove that ordering instead of racing a fast host.
+      const [delivering] = await invocationsForMessage(sendRes.body.id);
+      expect(delivering.status).toBe("running");
+      acknowledge();
+      const invocation = await waitForResult(async () => {
+        const rows = await invocationsForMessage(sendRes.body.id);
+        return rows.find((row) => row.status === "claimed");
+      }, "acknowledged Hermes webhook invocation");
       expect(invocation.status).toBe("claimed");
     } finally {
+      acknowledge();
       webhook.stop();
       await closeBotRuntimeForTests();
     }
