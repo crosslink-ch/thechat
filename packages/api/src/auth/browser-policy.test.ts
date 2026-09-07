@@ -34,13 +34,19 @@ test("configured native dev origin is admitted only outside production", async (
 });
 
 test.each(["tauri://localhost", "https://chat.example.test"])("admits trace propagation from %s", async (origin) => {
-  const response = await app.handle(new Request("https://api.example.test/auth/me", {
-    method: "OPTIONS", headers: { origin, "access-control-request-method": "GET", "access-control-request-headers": "traceparent,tracestate,x-thechat-client" },
-  }));
-  expect(response.headers.get("access-control-allow-origin")).toBe(origin);
-  const allowed = response.headers.get("access-control-allow-headers")?.toLowerCase().split(/,\s*/);
-  expect(allowed).toContain("traceparent");
-  expect(allowed).toContain("tracestate");
+  const backend = process.env.BETTER_AUTH_URL;
+  process.env.BETTER_AUTH_URL = "https://api.example.test";
+  try {
+    const response = await app.handle(new Request("https://api.example.test/auth/me", {
+      method: "OPTIONS", headers: { origin, "access-control-request-method": "GET", "access-control-request-headers": "traceparent,tracestate,x-thechat-client" },
+    }));
+    expect(response.headers.get("access-control-allow-origin")).toBe(origin);
+    const allowed = response.headers.get("access-control-allow-headers")?.toLowerCase().split(/,\s*/);
+    expect(allowed).toContain("traceparent");
+    expect(allowed).toContain("tracestate");
+  } finally {
+    if (backend === undefined) delete process.env.BETTER_AUTH_URL; else process.env.BETTER_AUTH_URL = backend;
+  }
 });
 
 test("credentialed CORS is available only to configured browser origins", async () => {
