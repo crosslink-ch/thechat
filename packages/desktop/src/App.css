@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "./mobile.css";
 
 @theme {
   /* Surface colors — cool-tinted dark palette */

@@ -853,7 +853,7 @@ function ScopedInputBar({
   }, [handlePaste]);
 
   return (
-    <div className="px-4 pb-4 pt-2">
+    <div className="chat-composer min-w-0 shrink-0 px-4 pb-4 pt-2">
       <div
         ref={containerRef}
         className={`relative rounded-xl border bg-raised shadow-input transition-colors duration-150 focus-within:border-border-strong ${dragOver ? "border-accent border-dashed bg-accent/5" : "border-border"}`}
@@ -870,7 +870,7 @@ function ScopedInputBar({
       >
         {/* Image preview strip */}
         {images.length > 0 && (
-          <div className="flex flex-wrap gap-2 px-3 pt-3">
+          <div className="composer-attachment-tray flex flex-wrap gap-2 px-3 pt-3">
             {images.map((img) => (
               <div key={img.id} className="group relative">
                 <img
@@ -894,7 +894,7 @@ function ScopedInputBar({
         )}
         {sharedDrafts.length > 0 && (
           <div
-            className="flex flex-wrap gap-2 px-3 pt-3"
+            className="composer-attachment-tray flex flex-wrap gap-2 px-3 pt-3"
             aria-label="Attachment drafts"
           >
             {sharedDrafts.map((draft) => (
@@ -905,7 +905,7 @@ function ScopedInputBar({
                 data-attachment-phase={draft.phase}
                 data-attachment-progress={draft.progress}
                 data-attachment-id={draft.attachment?.id ?? ""}
-                className="relative flex min-w-44 max-w-64 items-center gap-2 rounded-lg border border-border bg-background p-2 pr-8"
+                className="composer-attachment-draft relative flex min-w-44 max-w-64 items-center gap-2 rounded-lg border border-border bg-background p-2 pr-8"
               >
                 {draft.previewUrl ? (
                   <img

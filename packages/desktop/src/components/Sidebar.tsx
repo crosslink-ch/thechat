@@ -1,5 +1,6 @@
 import { authHeaders } from "../lib/eden";
 import { isAuthenticated } from "../lib/auth-identity";
+import { useNavigationDismiss } from "./ResponsiveShell";
 import { useState, useEffect, useRef } from "react";
 import { create } from "zustand";
 import { useNavigate, useMatches } from "@tanstack/react-router";
@@ -95,7 +96,12 @@ export const closeSidebar = () => useSidebarState.setState({ open: false });
 
 export function Sidebar() {
   const { open } = useSidebarState();
-  const navigate = useNavigate();
+  const routerNavigate = useNavigate();
+  const dismissNavigation = useNavigationDismiss();
+  const navigate: typeof routerNavigate = (options) => {
+    dismissNavigation?.();
+    return routerNavigate(options);
+  };
   const matches = useMatches();
   const lastMatch = matches[matches.length - 1];
   const routePath = lastMatch?.fullPath ?? "";
@@ -296,7 +302,7 @@ export function Sidebar() {
 
   return (
     <div
-      className="flex h-full shrink-0 border-r border-border-subtle bg-surface transition-[margin-left] duration-200 ease-out"
+      className="app-sidebar flex h-full shrink-0 border-r border-border-subtle bg-surface transition-[margin-left] duration-200 ease-out"
       style={{ width: SIDEBAR_WIDTH, marginLeft: open ? 0 : -SIDEBAR_WIDTH }}
     >
       <div className="flex w-[57px] shrink-0 flex-col items-center border-r border-[rgba(245,245,245,0.16)] bg-base py-2">

@@ -1,4 +1,6 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
+import * as Dialog from "@radix-ui/react-dialog";
+import { useMediaQuery } from "./ResponsiveShell";
 import type {
   BotInvocationPublic,
   BotRuntimeSnapshot,
@@ -23,8 +25,8 @@ export function HermesRuntimePanel({
   generalNeedsApproval = false,
   unreadThreadIds,
   generalUnread = false,
-  onSelectThread,
-  onCreateThread,
+  onSelectThread: selectThread,
+  onCreateThread: createThread,
   onLoadMoreThreads,
 }: {
   title?: string;
@@ -48,6 +50,16 @@ export function HermesRuntimePanel({
   onCreateThread?: () => void;
   onLoadMoreThreads?: () => void;
 }) {
+  const mobile = useMediaQuery("(max-width: 1279px)");
+  const [open, setOpen] = useState(false);
+  useEffect(() => setOpen(false), [mobile, botName]);
+  useEffect(() => {
+    const dismiss = () => setOpen(false);
+    window.addEventListener("popstate", dismiss);
+    return () => window.removeEventListener("popstate", dismiss);
+  }, []);
+  const onSelectThread = selectThread ? (id: string | null) => { setOpen(false); selectThread(id); } : undefined;
+  const onCreateThread = createThread ? () => { setOpen(false); createThread(); } : undefined;
   const invocations = useMemo(
     () => (runtime?.invocations ?? []).filter((invocation) => invocation.botKind === "hermes"),
     [runtime],
@@ -71,8 +83,8 @@ export function HermesRuntimePanel({
     (invocation) => invocation.threadId === null,
   ).length;
 
-  return (
-    <aside className="hidden w-80 shrink-0 flex-col border-l border-border bg-surface/80 lg:flex">
+  const panel = (
+    <aside className="hermes-runtime-panel flex w-80 min-h-0 shrink-0 flex-col border-l border-border bg-surface/80" aria-label="Hermes tasks and activity">
       <div className="border-b border-border px-4 py-3.5">
         <div className="text-[0.786rem] font-medium uppercase text-text-dimmed">{title}</div>
         <div className="truncate text-[1rem] font-semibold text-text">{botName}</div>
@@ -176,6 +188,26 @@ export function HermesRuntimePanel({
         </section>
       </div>
     </aside>
+  );
+  if (!mobile) return panel;
+  return (
+    <div className="hermes-task-access">
+      <Dialog.Root open={open} onOpenChange={setOpen}>
+        <Dialog.Trigger className="mobile-touch-button mobile-task-trigger" aria-label="Open tasks and activity">
+          Tasks{generalNeedsApproval || (approvalThreadIds?.size ?? 0) > 0 ? " · Needs approval" : ""}
+        </Dialog.Trigger>
+        <Dialog.Portal>
+          <Dialog.Overlay className="mobile-drawer-overlay" />
+          <Dialog.Content className="mobile-drawer mobile-task-drawer" aria-describedby={undefined}>
+            <div className="mobile-drawer-heading">
+              <Dialog.Title>Tasks and activity</Dialog.Title>
+              <Dialog.Close className="mobile-touch-button" aria-label="Close tasks and activity">✕</Dialog.Close>
+            </div>
+            {panel}
+          </Dialog.Content>
+        </Dialog.Portal>
+      </Dialog.Root>
+    </div>
   );
 }
 

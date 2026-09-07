@@ -21,6 +21,10 @@ function renderRichInput(initialText?: string) {
 }
 
 describe("RichInput", () => {
+  it("exposes a named multiline textbox to assistive technology", () => {
+    const { getByRole } = renderRichInput();
+    expect(getByRole("textbox", { name: "Message" })).toHaveAttribute("aria-multiline", "true");
+  });
   it("renders an initial multiline draft", () => {
     const { editor } = renderRichInput("first line\nsecond line");
 

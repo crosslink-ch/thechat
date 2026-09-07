@@ -46,6 +46,7 @@ export function MessageReactions({
 
   return (
     <div
+      data-message-reactions
       className={
         reservesSpace ? "mt-1 flex min-h-7 flex-wrap items-center gap-1" : "h-0"
       }
