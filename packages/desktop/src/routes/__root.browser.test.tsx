@@ -17,6 +17,8 @@ const mocks = vi.hoisted(() => {
     disconnect: vi.fn(),
     fetchConversations: vi.fn(),
     fetchNotifications: vi.fn(),
+    fetchActivity: vi.fn(),
+    resetActivity: vi.fn(),
     initializeCodexAuth: vi.fn(),
     initializeFontSize: vi.fn(),
     initializeWorkspaces: vi.fn(),
@@ -99,6 +101,11 @@ vi.mock("../stores/notifications", () => ({
   },
 }));
 vi.mock("../hooks/useKeybindings", () => ({ useKeybindings: vi.fn() }));
+vi.mock("../stores/activity", () => ({
+  useActivityStore: {
+    getState: () => ({ fetchActivity: mocks.fetchActivity, reset: mocks.resetActivity }),
+  },
+}));
 vi.mock("../hooks/useCtrlWheelZoom", () => ({ useCtrlWheelZoom: vi.fn() }));
 vi.mock("../lib/ws-global-handlers", () => ({
   registerGlobalWsHandlers: mocks.registerGlobalWsHandlers,
@@ -136,10 +143,12 @@ it("connects a restored cookie identity and replaces account-scoped route state 
   await act(async () => { mounted = render(<RootLayout />); });
   expect(mocks.connect).toHaveBeenCalledWith(null);
   expect(mocks.initializeWorkspaces).toHaveBeenCalledOnce();
+  expect(mocks.fetchActivity).toHaveBeenCalledOnce();
   mocks.authState.user = { ...mocks.authState.user, id: "other-user" };
   await act(async () => { mounted.rerender(<RootLayout />); });
   expect(mocks.disconnect).toHaveBeenCalled();
   expect(mocks.connect).toHaveBeenCalledTimes(2);
   expect(mocks.initializeWorkspaces).toHaveBeenCalledTimes(2);
+  expect(mocks.fetchActivity).toHaveBeenCalledTimes(2);
   mounted.unmount();
 });

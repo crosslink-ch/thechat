@@ -14,6 +14,7 @@ import { botRoutes } from "../bots";
 import { hermesRoutes } from "../hermes";
 import { botRuntimeRoutes } from "../bot-runtime";
 import { attachmentRoutes } from "../attachments";
+import { activityRoutes } from "../activity";
 import {
   authInfrastructureErrors,
   optionalAuth,
@@ -40,6 +41,7 @@ const app = new Elysia()
   .use(hermesRoutes)
   .use(botRuntimeRoutes)
   .use(attachmentRoutes)
+  .use(activityRoutes)
   .use(
     new Elysia()
       .use(requireAuth)
@@ -97,6 +99,9 @@ const routes = [
   [`/bots/${id}/hermes`, "PATCH", 400],
   [`/bot-runtime/invocations/${id}/interactions/${id}`, "POST", 400],
   ["/attachments/", "POST", 400],
+  ["/activity/", "GET", 200],
+  [`/activity/conversations/${id}/read`, "POST", 400],
+  ["/activity/read-all", "POST", 200],
   ["/required", "GET", 200],
   ["/optional", "GET", 200],
 ] as const;

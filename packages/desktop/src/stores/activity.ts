@@ -1,7 +1,9 @@
 import { create } from "zustand";
 import type { ActivityItem, ActivitySnapshot, ChatMessage } from "@thechat/shared";
 import { api } from "../lib/api";
-import { edenErrorMessage } from "../lib/eden";
+import { authHeaders, edenErrorMessage } from "../lib/eden";
+import { isAuthenticated } from "../lib/auth-identity";
+import { onSessionReset, sessionGeneration } from "../lib/session-boundary";
 import { useAuthStore } from "./auth";
 import { useConversationsStore } from "./conversations";
 
@@ -28,10 +30,6 @@ let latestActivityMutationRequest = 0;
 let activityOperationCounter = 0;
 let latestActivityOperation = 0;
 
-function authHeaders(token: string) {
-  return { headers: { authorization: `Bearer ${token}` } };
-}
-
 function normalizeSnapshot(value: unknown): ActivitySnapshot {
   if (!value || typeof value !== "object") {
     throw new Error("Failed to load activity");
@@ -51,6 +49,11 @@ function normalizeSnapshot(value: unknown): ActivitySnapshot {
 
 function currentToken() {
   return useAuthStore.getState().token;
+}
+
+function activitySession(token: string | null) {
+  const generation = sessionGeneration();
+  return () => currentToken() === token && sessionGeneration() === generation;
 }
 
 function syncConversationUnread(snapshot: ActivitySnapshot) {
@@ -76,7 +79,8 @@ export const useActivityStore = create<ActivityState>((set, get) => ({
 
   fetchActivity: async () => {
     const token = currentToken();
-    if (!token) return;
+    if (!isAuthenticated(token)) return;
+    const isCurrent = activitySession(token);
 
     const requestGeneration = ++activityFetchGeneration;
     const operation = ++activityOperationCounter;
@@ -88,7 +92,7 @@ export const useActivityStore = create<ActivityState>((set, get) => ({
       if (
         requestGeneration !== activityFetchGeneration ||
         operation !== latestActivityOperation ||
-        currentToken() !== token
+        !isCurrent()
       ) {
         return;
       }
@@ -106,7 +110,7 @@ export const useActivityStore = create<ActivityState>((set, get) => ({
       if (
         requestGeneration === activityFetchGeneration &&
         operation === latestActivityOperation &&
-        currentToken() === token
+        isCurrent()
       ) {
         set({
           error:
@@ -116,7 +120,7 @@ export const useActivityStore = create<ActivityState>((set, get) => ({
     } finally {
       if (
         requestGeneration === activityFetchGeneration &&
-        currentToken() === token
+        isCurrent()
       ) {
         set({ loading: false });
       }
@@ -125,7 +129,8 @@ export const useActivityStore = create<ActivityState>((set, get) => ({
 
   markConversationRead: async (conversationId, messageIds) => {
     const token = currentToken();
-    if (!token) return;
+    if (!isAuthenticated(token)) return;
+    const isCurrent = activitySession(token);
     const mutationRequest = ++activityMutationRequestCounter;
     latestActivityMutationRequest = mutationRequest;
     const operation = ++activityOperationCounter;
@@ -138,12 +143,12 @@ export const useActivityStore = create<ActivityState>((set, get) => ({
     const { data, error } = await endpoint
       .post(body, authHeaders(token))
       .finally(() => {
-        activityMutationVersion += 1;
+        if (isCurrent()) activityMutationVersion += 1;
       });
     if (error) {
       const message = edenErrorMessage(error, "Failed to mark activity as read");
       if (
-        currentToken() === token &&
+        isCurrent() &&
         mutationRequest === latestActivityMutationRequest &&
         operation === latestActivityOperation
       ) {
@@ -152,21 +157,22 @@ export const useActivityStore = create<ActivityState>((set, get) => ({
       throw new Error(message);
     }
     if (
-      currentToken() === token &&
+      isCurrent() &&
       mutationRequest === latestActivityMutationRequest &&
       operation === latestActivityOperation
     ) {
       const snapshot = normalizeSnapshot(data);
       set({ ...snapshot, error: null });
       syncConversationUnread(snapshot);
-    } else if (currentToken() === token) {
+    } else if (isCurrent()) {
       await get().fetchActivity();
     }
   },
 
   markAllRead: async () => {
     const token = currentToken();
-    if (!token) return;
+    if (!isAuthenticated(token)) return;
+    const isCurrent = activitySession(token);
     const mutationRequest = ++activityMutationRequestCounter;
     latestActivityMutationRequest = mutationRequest;
     const operation = ++activityOperationCounter;
@@ -178,12 +184,12 @@ export const useActivityStore = create<ActivityState>((set, get) => ({
       {},
       authHeaders(token),
     ).finally(() => {
-      activityMutationVersion += 1;
+      if (isCurrent()) activityMutationVersion += 1;
     });
     if (error) {
       const message = edenErrorMessage(error, "Failed to mark all activity as read");
       if (
-        currentToken() === token &&
+        isCurrent() &&
         mutationRequest === latestActivityMutationRequest &&
         operation === latestActivityOperation
       ) {
@@ -192,14 +198,14 @@ export const useActivityStore = create<ActivityState>((set, get) => ({
       throw new Error(message);
     }
     if (
-      currentToken() === token &&
+      isCurrent() &&
       mutationRequest === latestActivityMutationRequest &&
       operation === latestActivityOperation
     ) {
       const snapshot = normalizeSnapshot(data);
       set({ ...snapshot, error: null });
       syncConversationUnread(snapshot);
-    } else if (currentToken() === token) {
+    } else if (isCurrent()) {
       await get().fetchActivity();
     }
   },
@@ -227,3 +233,5 @@ export const useActivityStore = create<ActivityState>((set, get) => ({
     syncConversationUnread({ items: [], totalUnreadMessages: 0 });
   },
 }));
+
+onSessionReset(() => useActivityStore.getState().reset());
