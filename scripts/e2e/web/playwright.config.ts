@@ -2,14 +2,8 @@ import { defineConfig, devices } from '@playwright/test';
 import { homedir } from 'node:os';
 import { resolve } from 'node:path';
 
-const baseURL = process.env.THECHAT_WEB_E2E_URL || 'http://127.0.0.1:1422';
-const apiURL = process.env.THECHAT_WEB_E2E_API_URL || 'http://127.0.0.1:13300';
-for (const value of [baseURL, apiURL]) {
-  const url = new URL(value);
-  if (!['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname)) {
-    throw new Error('Web E2E creates synthetic accounts and must target loopback only');
-  }
-}
+import { webURL as baseURL } from './environment.mjs';
+
 const artifacts = resolve(process.env.THECHAT_WEB_E2E_ARTIFACTS || `${homedir()}/.cache/thechat/web-e2e`);
 export default defineConfig({
   testDir: '.',

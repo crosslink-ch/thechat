@@ -77,7 +77,8 @@ From the real repository cwd (Corepack selects pinned pnpm 10.28.2):
 corepack pnpm install --frozen-lockfile
 corepack pnpm --filter @thechat/desktop exec tsc --noEmit
 corepack pnpm test:web:build
-corepack pnpm --filter @thechat/desktop exec vitest run browser --maxWorkers=2
+corepack pnpm --filter @thechat/client exec vitest run browser --maxWorkers=2
+corepack pnpm --filter @thechat/web exec vitest run browser --maxWorkers=2
 bun test packages/api/src/auth/browser-production-policy.test.ts
 python3 deploy/web/tests/test_chart.py
 python3 deploy/web/tests/test_workflow.py

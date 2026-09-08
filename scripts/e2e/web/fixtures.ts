@@ -1,9 +1,8 @@
 import { expect, type APIRequestContext, type Page } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
 
-export const apiURL = process.env.THECHAT_WEB_E2E_API_URL || 'http://127.0.0.1:13300';
-export const webURL = process.env.THECHAT_WEB_E2E_URL || 'http://127.0.0.1:1420';
-export const webHeaders = { origin: new URL(webURL).origin, 'x-thechat-client': 'web' };
+import { apiURL } from './environment.mjs';
+export { apiURL, webURL, webHeaders } from './environment.mjs';
 export async function clearCredentialFields(page: Page) {
   await page.locator('input[type=password]').evaluateAll(inputs => {
     for (const input of inputs as HTMLInputElement[]) {
