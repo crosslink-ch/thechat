@@ -12,6 +12,7 @@
     "test:unit": "vitest run --exclude '**/*.integration.test.ts'",
     "test:integration": "INTEGRATION=true vitest run integration",
     "test:watch": "vitest",
+    "test:browser": "node --test browser-tests/*.browser.mjs",
     "test:e2e": "wdio run e2e/wdio.conf.js",
     "test:e2e:headless": "env -u WAYLAND_DISPLAY GDK_BACKEND=x11 xvfb-run -a wdio run e2e/wdio.conf.js",
     "vitest": "vitest"
@@ -77,6 +78,7 @@
     "@wdio/mocha-framework": "^9",
     "@wdio/spec-reporter": "^9",
     "jsdom": "^28.1.0",
+    "playwright": "1.63.0",
     "react-devtools": "^7.0.1",
     "typescript": "~5.8.3",
     "vite": "^7.0.4",
