@@ -1,6 +1,7 @@
 import { Elysia } from "elysia";
 import { z } from "zod";
-import { resolveTokenToUser } from "../auth/middleware";
+import { resolveRequestUser } from "../auth/middleware";
+import { browserAuthPolicy } from "../auth/browser";
 import { ServiceError } from "../services/errors";
 import {
   getWorkspaceConfig,
@@ -39,18 +40,8 @@ const settingsSchema = z.object({
 export const workspaceConfigRoutes = new Elysia({
   prefix: "/workspaces",
 })
-  .derive(async ({ headers }) => {
-    const authHeader = headers.authorization;
-    if (!authHeader?.startsWith("Bearer ")) {
-      return { user: null } as any;
-    }
-    const token = authHeader.slice(7);
-    // Provider credentials are control-plane secrets. Bot API keys remain
-    // valid for messaging/runtime routes but are never accepted here.
-    const user = await resolveTokenToUser(token, { includeBotTokens: false });
-    if (!user) return { user: null } as any;
-    return { user };
-  })
+  .use(browserAuthPolicy)
+  .derive(async ({ headers }) => ({ user: await resolveRequestUser(headers, { includeBotTokens: false }) } as any))
   .onBeforeHandle(({ user, set }) => {
     if (!user) {
       set.status = 401;

@@ -10,9 +10,10 @@ const host = process.env.TAURI_DEV_HOST;
 const monorepoRoot = path.resolve(__dirname, "../..");
 
 // https://vite.dev/config/
-export default defineConfig(async () => {
+export default defineConfig(async ({ mode }) => {
+  const web = mode === "web";
   // Load .env from monorepo root ('' prefix = all vars, not just VITE_)
-  const env = loadEnv("test", monorepoRoot, "");
+  const env = loadEnv(mode === "web" ? "web" : "test", monorepoRoot, "");
 
   const backendUrl =
     process.env.THECHAT_BACKEND_URL ||
@@ -21,15 +22,20 @@ export default defineConfig(async () => {
 
   return {
     define: {
+      __WEB_BUILD__: web,
+      __WEB_API_URL__: JSON.stringify(process.env.THECHAT_WEB_API_URL || env.THECHAT_WEB_API_URL || ""),
+      __WEB_WS_URL__: JSON.stringify(process.env.THECHAT_WEB_WS_URL || env.THECHAT_WEB_WS_URL || ""),
       __BACKEND_URL__: JSON.stringify(backendUrl),
     },
+    resolve: { alias: { "#platform-shell": path.resolve(__dirname, `src/platform/shell.${web ? "web" : "desktop"}.tsx`) } },
+    build: { outDir: web ? "dist-web" : "dist" },
     plugins: [tailwindcss(), react()],
 
     test: {
       globals: true,
       environment: "jsdom",
       setupFiles: "./src/test-setup.ts",
-      exclude: ["**/node_modules/**", "**/.claude/**"],
+      exclude: ["**/node_modules/**", "**/.claude/**", "**/scripts/web-build.test.mjs"],
       env,
     },
 

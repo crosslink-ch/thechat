@@ -1,3 +1,4 @@
+import { isAuthenticated } from "../lib/auth-identity";
 import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { useParams, useSearch } from "@tanstack/react-router";
 import { useAuthStore } from "../stores/auth";
@@ -55,7 +56,7 @@ export function DmRoute() {
   const conversationQuery = useConversationDetail(conversationId, token);
   const conversation = conversationQuery.data ?? null;
   const conversationLoading = conversationQuery.isLoading;
-  const conversationPending = !conversation && !!token && !conversationQuery.error;
+  const conversationPending = !conversation && isAuthenticated(token) && !conversationQuery.error;
 
   const mentions = useMemo(
     () =>
@@ -584,7 +585,7 @@ export function DmRoute() {
       event: BotInvocationProgressEventPublic,
       response: string | string[],
     ) => {
-      if (!isHermesDm || !token) {
+      if (!isHermesDm || !isAuthenticated(token)) {
         throw new Error("Sign in to respond to Hermes");
       }
       await submitHermesInteraction(
@@ -599,7 +600,7 @@ export function DmRoute() {
   );
 
   return (
-    <div className="flex min-h-0 flex-1">
+    <div className="shared-dm-layout flex min-h-0 min-w-0 flex-1">
       <div className="flex min-w-0 flex-1 flex-col">
         {isHermesDm ? (
           <HermesDmChatView

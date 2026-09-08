@@ -1,5 +1,5 @@
 import { Elysia } from "elysia";
-import { cors } from "@elysiajs/cors";
+import { browserCors } from "./auth/browser";
 import { sql } from "drizzle-orm";
 import { db } from "./db";
 import { authRoutes } from "./auth";
@@ -56,7 +56,7 @@ installLoopbackOnlyE2EGuard();
 await initObservability("thechat-api");
 
 const app = new Elysia()
-  .use(cors())
+  .use(browserCors)
   .use(log.into())
   .decorate("db", db)
   .use(authInfrastructureErrors)

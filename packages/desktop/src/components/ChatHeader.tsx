@@ -1,3 +1,4 @@
+import { NavigationToggle } from "./ResponsiveShell";
 import { create } from "zustand";
 import { useMatches } from "@tanstack/react-router";
 import { useWorkspacesStore } from "../stores/workspaces";
@@ -51,10 +52,13 @@ export function ChatHeader() {
   const showBackButton = !isWorkspaceHome;
 
   return (
-    <div className="flex h-12 shrink-0 items-center gap-1.5 border-b border-border-subtle bg-surface px-3">
+    <div className="chat-header flex h-12 shrink-0 items-center gap-1.5 border-b border-border-subtle bg-surface px-3">
+      <NavigationToggle />
       {showBackButton && (
         <button
           className="flex size-8 cursor-pointer items-center justify-center rounded-md border-none bg-none text-text-muted transition-colors duration-150 hover:bg-hover hover:text-text"
+          aria-label="Go back"
+          title="Go back"
           onClick={() => window.history.back()}
         >
           <svg width="15" height="15" viewBox="0 0 15 15" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">

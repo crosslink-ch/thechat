@@ -1,3 +1,4 @@
+import { isAuthenticated } from "../lib/auth-identity";
 import { useCallback, useEffect, useMemo } from "react";
 import {
   useInfiniteQuery,
@@ -39,7 +40,7 @@ export const conversationThreadsQueryKey = (
 
 async function fetchConversationThreads(
   conversationId: string,
-  token: string,
+  token: string | null,
   input: {
     cursor?: string | null;
     botId?: string | null;
@@ -68,7 +69,7 @@ async function fetchConversationThreads(
 
 async function createConversationThread(
   conversationId: string,
-  token: string,
+  token: string | null,
   input: { botId?: string; title?: string; branchFromThreadId?: string | null },
 ): Promise<ConversationThreadPublic> {
   const { data, error } = await api.conversations.threads({ conversationId }).post(
@@ -85,7 +86,7 @@ async function createConversationThread(
 
 async function updateConversationThread(
   conversationId: string,
-  token: string,
+  token: string | null,
   input: { threadId: string; title: string },
 ): Promise<ConversationThreadPublic> {
   const { data, error } = await api.conversations.threads({ conversationId }).patch(
@@ -128,7 +129,7 @@ export function useConversationThreads(
       }),
     initialPageParam: null as string | null,
     getNextPageParam: (lastPage) => lastPage.nextCursor,
-    enabled: enabled && !!conversationId && !!token,
+    enabled: enabled && !!conversationId && isAuthenticated(token),
     staleTime: CONVERSATION_THREADS_STALE_MS,
   });
 
@@ -139,7 +140,7 @@ export function useConversationThreads(
 
   const createThread = useCallback(
     async (input: { botId?: string; title?: string; branchFromThreadId?: string | null } = {}) => {
-      if (!conversationId || !token) return null;
+      if (!conversationId || !isAuthenticated(token)) return null;
       const thread = await createConversationThread(conversationId, token, input);
       queryClient.setQueryData<ThreadsInfiniteData>(
         conversationThreadsQueryKey(conversationId, { botId, status, pageSize }),
@@ -152,7 +153,7 @@ export function useConversationThreads(
 
   const renameThread = useCallback(
     async (threadId: string, title: string) => {
-      if (!conversationId || !token) return null;
+      if (!conversationId || !isAuthenticated(token)) return null;
       const thread = await updateConversationThread(conversationId, token, {
         threadId,
         title,
@@ -168,7 +169,7 @@ export function useConversationThreads(
 
   const touchThread = useCallback(
     (threadId: string, at = new Date().toISOString()) => {
-      if (!conversationId || !token || !enabled) return;
+      if (!conversationId || !isAuthenticated(token) || !enabled) return;
       const previous = queryClient.getQueryData<ThreadsInfiniteData>(queryKey);
       if (!hasLoadedThread(previous, threadId)) {
         void query.refetch();
@@ -185,7 +186,7 @@ export function useConversationThreads(
   );
 
   useEffect(() => {
-    if (!conversationId || !token || !enabled) return;
+    if (!conversationId || !isAuthenticated(token) || !enabled) return;
 
     const onConversationThreadUpdated = ({
       conversationId: eventConversationId,

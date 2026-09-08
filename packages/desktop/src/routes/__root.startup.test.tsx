@@ -38,6 +38,7 @@ const mocks = vi.hoisted(() => {
 vi.mock("@tanstack/react-router", () => ({
   Outlet: () => <div data-testid="outlet" />,
   useNavigate: () => mocks.navigate,
+  useRouterState: () => "/",
 }));
 vi.mock("@tauri-apps/api/event", () => ({
   listen: vi.fn(() => Promise.resolve(vi.fn())),

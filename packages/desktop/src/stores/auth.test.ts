@@ -72,6 +72,17 @@ beforeEach(() => {
 });
 
 describe("auth store account operations", () => {
+  it.each(["login", "register", "verify-email"] as const)("rejects a native %s response without a usable token", async (route) => {
+    vi.mocked(api.auth[route].post).mockResolvedValue({ data: { user, accessToken: undefined }, error: null } as any);
+    const store = useAuthStore.getState();
+    const operation = route === "login" ? store.login(user.email, "password123")
+      : route === "register" ? store.register(user.name, user.email, "password123")
+      : store.verifyEmailOtp(user.email, "123456");
+    await expect(operation).rejects.toThrow();
+    expect(useAuthStore.getState().user).toBeNull();
+    expect(useAuthStore.getState().token).toBeNull();
+  });
+
   it("surfaces account and transport errors", async () => {
     vi.mocked(api.auth.register.post).mockResolvedValue({
       data: null,

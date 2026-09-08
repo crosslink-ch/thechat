@@ -1,6 +1,7 @@
 import { Elysia } from "elysia";
 import { z } from "zod";
-import { resolveTokenToUser } from "../auth/middleware";
+import { resolveRequestUser } from "../auth/middleware";
+import { browserAuthPolicy } from "../auth/browser";
 import { ServiceError } from "../services/errors";
 import {
   acceptBotWorkspaceInvite,
@@ -13,15 +14,8 @@ const resolutionSchema = z.object({ inviteId: z.string().uuid() });
 export const botWorkspaceInviteRoutes = new Elysia({
   prefix: "/bot-workspace-invites",
 })
-  .derive(async ({ headers }) => {
-    const authHeader = headers.authorization;
-    if (!authHeader?.startsWith("Bearer ")) {
-      return { user: null } as any;
-    }
-
-    const user = await resolveTokenToUser(authHeader.slice(7));
-    return { user: user ?? null } as any;
-  })
+  .use(browserAuthPolicy)
+  .derive(async ({ headers }) => ({ user: await resolveRequestUser(headers) } as any))
   .onBeforeHandle(({ user, set }) => {
     if (!user) {
       set.status = 401;

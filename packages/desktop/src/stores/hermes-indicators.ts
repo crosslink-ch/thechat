@@ -1,3 +1,4 @@
+import { onSessionReset } from "../lib/session-boundary";
 import { create } from "zustand";
 import type {
   BotInvocationProgressEventPublic,
@@ -517,3 +518,5 @@ function payloadString(
   const value = event.payload?.[key];
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
+
+onSessionReset(() => useHermesIndicatorsStore.setState(useHermesIndicatorsStore.getInitialState()));

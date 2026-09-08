@@ -1,3 +1,5 @@
+import { authHeaders as requestAuth } from "../lib/eden";
+import { isAuthenticated } from "../lib/auth-identity";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   Bot,
@@ -12,8 +14,8 @@ import { wsEvents } from "../lib/ws-events";
 import { useAuthStore } from "../stores/auth";
 import { useWorkspacesStore } from "../stores/workspaces";
 
-function authHeaders(token: string) {
-  return { authorization: `Bearer ${token}` };
+function authHeaders(token: string | null) {
+  return requestAuth(token).headers;
 }
 
 function apiError(error: unknown, fallback: string) {
@@ -78,7 +80,7 @@ export function WorkspaceManageRoute() {
   const availableOwnedBots = ownedBots.filter((bot) => !workspaceBotIds.has(bot.id));
 
   const refreshWorkspace = useCallback(async () => {
-    if (!token || !activeWorkspace) return;
+    if (!isAuthenticated(token) || !activeWorkspace) return;
     const requestedWorkspaceId = activeWorkspace.id;
     const requestGeneration = ++workspaceRefreshGeneration.current;
     const result = await api
@@ -101,7 +103,7 @@ export function WorkspaceManageRoute() {
   const loadAdminData = useCallback(async () => {
     const requestGeneration = ++adminLoadGeneration.current;
     const requestedWorkspaceId = activeWorkspace?.id;
-    if (!token || !requestedWorkspaceId || !canManage) {
+    if (!isAuthenticated(token) || !requestedWorkspaceId || !canManage) {
       setOwnedBots([]);
       setPendingBotInvites([]);
       return;
@@ -193,7 +195,7 @@ export function WorkspaceManageRoute() {
   }
 
   const inviteUser = async () => {
-    if (!token) return;
+    if (!isAuthenticated(token)) return;
     const email = inviteEmail.trim();
     if (!email) return;
     const result = await api.invites.create.post(
@@ -211,7 +213,7 @@ export function WorkspaceManageRoute() {
     member: WorkspaceMember,
     role: "member" | "admin",
   ) => {
-    if (!token) return;
+    if (!isAuthenticated(token)) return;
     const result = await api
       .workspaces({ id: activeWorkspace.id })
       .members({ userId: member.userId })
@@ -224,7 +226,7 @@ export function WorkspaceManageRoute() {
   };
 
   const removeUser = async (member: WorkspaceMember) => {
-    if (!token) return;
+    if (!isAuthenticated(token)) return;
     const result = await api
       .workspaces({ id: activeWorkspace.id })
       .members({ userId: member.userId })
@@ -237,7 +239,7 @@ export function WorkspaceManageRoute() {
   };
 
   const addBot = async () => {
-    if (!token) return;
+    if (!isAuthenticated(token)) return;
     const requestedBotId = botId.trim();
     if (!requestedBotId) return;
     const result = await api
@@ -264,7 +266,7 @@ export function WorkspaceManageRoute() {
   };
 
   const cancelBotInvite = async (invite: BotWorkspaceInvite) => {
-    if (!token) return;
+    if (!isAuthenticated(token)) return;
     const result = await api
       .workspaces({ id: activeWorkspace.id })["bot-invites"]({
         inviteId: invite.id,
@@ -280,7 +282,7 @@ export function WorkspaceManageRoute() {
   };
 
   const removeBot = async (member: WorkspaceMember) => {
-    if (!token || !member.bot) return;
+    if (!isAuthenticated(token) || !member.bot) return;
     const result = await api
       .workspaces({ id: activeWorkspace.id })
       .bots({ botId: member.bot.id })

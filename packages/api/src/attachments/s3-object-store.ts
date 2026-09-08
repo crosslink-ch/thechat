@@ -25,6 +25,8 @@ export interface S3ObjectStoreOptions {
   bucket: string;
   region: string;
   endpoint?: string;
+  /** Optional browser-reachable S3 origin. Server/worker I/O stays on endpoint. */
+  publicEndpoint?: string;
   forcePathStyle?: boolean;
   client?: S3Client;
 }
@@ -33,8 +35,24 @@ export class S3ObjectStore implements ObjectStore {
   private readonly bucket: string;
   private readonly region: string;
   private readonly client: S3Client;
+  private readonly signingClient: S3Client;
 
   constructor(options: S3ObjectStoreOptions) {
+    if (options.publicEndpoint) {
+      let endpoint: URL;
+      try {
+        endpoint = new URL(options.publicEndpoint);
+      } catch {
+        throw new Error("ATTACHMENT_S3_PUBLIC_ENDPOINT must be a valid origin");
+      }
+      const loopback = ["localhost", "127.0.0.1", "[::1]"].includes(endpoint.hostname);
+      if (
+        (endpoint.protocol !== "https:" && !(endpoint.protocol === "http:" && loopback)) ||
+        endpoint.username || endpoint.password || endpoint.search || endpoint.hash || endpoint.pathname !== "/"
+      ) {
+        throw new Error("ATTACHMENT_S3_PUBLIC_ENDPOINT must be an HTTPS origin (HTTP only on loopback)");
+      }
+    }
     if (!options.bucket.trim()) {
       throw new Error("ATTACHMENT_S3_BUCKET is required");
     }
@@ -51,6 +69,14 @@ export class S3ObjectStore implements ObjectStore {
         forcePathStyle: options.forcePathStyle ?? false,
         // Credentials intentionally come from the AWS SDK default chain.
       });
+    this.signingClient = options.publicEndpoint
+      ? new S3Client({
+          region: options.region,
+          endpoint: options.publicEndpoint,
+          credentials: this.client.config.credentials,
+          forcePathStyle: options.forcePathStyle ?? false,
+        })
+      : this.client;
   }
 
   async createUploadRequest(input: {
@@ -73,7 +99,7 @@ export class S3ObjectStore implements ObjectStore {
           ChecksumAlgorithm: ChecksumAlgorithm.SHA256,
           ChecksumSHA256: input.checksumSha256Base64,
         });
-        const url = await getSignedUrl(this.client, command, {
+        const url = await getSignedUrl(this.signingClient, command, {
           expiresIn: input.expiresInSeconds,
           unhoistableHeaders: new Set([
             "x-amz-checksum-sha256",
@@ -249,7 +275,7 @@ export class S3ObjectStore implements ObjectStore {
       this.s3Attributes("GetObject", true),
       async (span) => {
         const url = await getSignedUrl(
-          this.client,
+          this.signingClient,
           new GetObjectCommand({
             Bucket: this.bucket,
             Key: input.key,
@@ -290,6 +316,7 @@ export function createS3ObjectStoreFromEnv(
     bucket: env.ATTACHMENT_S3_BUCKET?.trim() ?? "",
     region: env.ATTACHMENT_S3_REGION?.trim() ?? "",
     endpoint: env.ATTACHMENT_S3_ENDPOINT?.trim() || undefined,
+    publicEndpoint: env.ATTACHMENT_S3_PUBLIC_ENDPOINT?.trim() || undefined,
     forcePathStyle: env.ATTACHMENT_S3_FORCE_PATH_STYLE === "true",
   });
 }

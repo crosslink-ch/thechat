@@ -1,3 +1,4 @@
+import { BrowserNotificationSettings } from "../platform/BrowserNotificationSettings";
 import { type FormEvent, useEffect, useState } from "react";
 import { useAuthStore } from "../stores/auth";
 import { ApiAccessSettings } from "./settings-api-access";
@@ -209,6 +210,7 @@ export function SettingsRoute() {
               </button>
             </div>
           </form>
+          <BrowserNotificationSettings />
           <ApiAccessSettings key={user.id} />
           </>
         )}

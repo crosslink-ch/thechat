@@ -4,7 +4,8 @@ import { eq } from "drizzle-orm";
 import { db } from "../db";
 import { conversationParticipants } from "../db/schema";
 import type { WsClientEvent, WsServerEvent } from "@thechat/shared";
-import { resolveTokenToUser } from "../auth/middleware";
+import { resolveTokenToUser, resolveSessionTokenToHumanUser } from "../auth/middleware";
+import { browserSessionToken } from "../auth/browser";
 import { sendMessage } from "../services/messages";
 import { requireConversationParticipant } from "../services/conversations";
 import { ServiceError } from "../services/errors";
@@ -18,8 +19,9 @@ import { deliverWebSocketEvent } from "./delivery";
 
 const websocketLog = log.child({ component: "websocket" });
 
-const wsClientEventSchema = z.discriminatedUnion("type", [
-  z.object({ type: z.literal("auth"), token: z.string().min(1) }),
+const wsClientEventSchema = z.union([
+  z.object({ type: z.literal("auth"), token: z.string().min(1) }).strict(),
+  z.object({ type: z.literal("auth"), mode: z.literal("cookie") }).strict(),
   z.object({ type: z.literal("ping") }),
   z.object({
     type: z.literal("typing"),
@@ -48,11 +50,13 @@ type SocketUser = {
   id: string;
   name: string;
   token: string;
+  authMode: "cookie" | "bearer";
   type: "human" | "bot";
   presenceConnectionId?: string;
   presenceReady?: Promise<void>;
 };
 const socketUsers = new Map<WebSocket, SocketUser>();
+const handshakeCookies = new WeakMap<WebSocket, string | null>();
 const presenceSendQueues = new Map<WebSocket, Promise<void>>();
 
 async function addSocket(
@@ -61,11 +65,13 @@ async function addSocket(
   userType: "human" | "bot",
   token: string,
   ws: WebSocket,
+  authMode: SocketUser["authMode"] = "bearer",
 ) {
   const existing = socketUsers.get(ws);
   if (existing?.id === userId && existing.type === userType) {
     existing.name = userName;
     existing.token = token;
+    existing.authMode = authMode;
     return;
   }
 
@@ -76,6 +82,7 @@ async function addSocket(
     id: userId,
     name: userName,
     token,
+    authMode,
     type: userType,
   };
   socketUsers.set(ws, socketUser);
@@ -210,7 +217,7 @@ async function refreshPresence(ws: WebSocket, socketUser: SocketUser) {
 async function refreshAuthenticatedPresence(ws: WebSocket, socketUser: SocketUser) {
   let currentUser: Awaited<ReturnType<typeof validateToken>>;
   try {
-    currentUser = await validateToken(socketUser.token);
+    currentUser = await validateToken(socketUser.token, socketUser.authMode);
   } catch (error) {
     // An auth-store outage is not proof of revocation. Do not renew the lease;
     // expiry will degrade this connection to unknown/offline if validation stays unavailable.
@@ -282,7 +289,7 @@ async function deliverPresenceToLocalSocket(
     }
 
     try {
-      const currentUser = await validateToken(socketUser.token);
+      const currentUser = await validateToken(socketUser.token, socketUser.authMode);
       if (socketUsers.get(ws) !== socketUser) return;
       if (!currentUser || currentUser.id !== socketUser.id) {
         await removeSocket(ws);
@@ -339,10 +346,11 @@ async function deliverToLocalUser(userId: string, event: WsServerEvent) {
         return;
       }
 
-      let validation = validations.get(socketUser.token);
+      const credentialKey = `${socketUser.authMode}:${socketUser.token}`;
+      let validation = validations.get(credentialKey);
       if (!validation) {
-        validation = validateToken(socketUser.token);
-        validations.set(socketUser.token, validation);
+        validation = validateToken(socketUser.token, socketUser.authMode);
+        validations.set(credentialKey, validation);
       }
 
       try {
@@ -405,8 +413,8 @@ function startRealtimeSubscription() {
 
 startRealtimeSubscription();
 
-async function validateToken(token: string) {
-  const user = await resolveTokenToUser(token);
+async function validateToken(token: string, mode: SocketUser["authMode"] = "bearer") {
+  const user = mode === "cookie" ? await resolveSessionTokenToHumanUser(token) : await resolveTokenToUser(token);
   if (!user) {
     websocketLog.warn(
       {
@@ -493,16 +501,27 @@ async function handleTyping(
 }
 
 export const wsRoutes = new Elysia().ws("/ws", {
-  open(_ws) {
-    // Wait for auth message
+  open(ws) {
+    // Only the immutable original upgrade contributes cookie credentials;
+    // cookie mode never reads a credential from a client-supplied frame.
+    const headers = Object.fromEntries(ws.data.request.headers.entries());
+    handshakeCookies.set(ws.raw as unknown as WebSocket, browserSessionToken({ ...headers, "x-thechat-client": "web" }));
   },
   async message(ws, rawMessage) {
     let event: WsClientEvent;
+    let candidate: unknown;
     try {
-      const candidate =
+      candidate =
         typeof rawMessage === "string" ? JSON.parse(rawMessage) : rawMessage;
       event = wsClientEventSchema.parse(candidate) as WsClientEvent;
     } catch {
+      if (candidate && typeof candidate === "object" && "type" in candidate && candidate.type === "auth") {
+        const socket = ws.raw as unknown as WebSocket;
+        sendTo(socket, { type: "auth_error", message: "Invalid authentication frame", retryable: false });
+        await removeSocket(socket);
+        ws.close();
+        return;
+      }
       sendTo(ws.raw as unknown as WebSocket, {
         type: "error",
         message: "Invalid JSON",
@@ -522,9 +541,11 @@ export const wsRoutes = new Elysia().ws("/ws", {
     }
 
     if (event.type === "auth") {
+      const mode = event.mode === "cookie" ? "cookie" : "bearer";
+      const token = mode === "cookie" ? handshakeCookies.get(socket) : event.token;
       let user: Awaited<ReturnType<typeof validateToken>>;
       try {
-        user = await validateToken(event.token);
+        user = token ? await validateToken(token, mode) : null;
       } catch (error) {
         websocketLog.error(
           { err: error },
@@ -533,6 +554,7 @@ export const wsRoutes = new Elysia().ws("/ws", {
         sendTo(socket, {
           type: "auth_error",
           message: "Authentication service temporarily unavailable",
+          retryable: true,
         });
         return;
       }
@@ -540,11 +562,12 @@ export const wsRoutes = new Elysia().ws("/ws", {
         sendTo(socket, {
           type: "auth_error",
           message: "Invalid or expired token",
+          retryable: false,
         });
         ws.close();
         return;
       }
-      await addSocket(user.id, user.name, user.type, event.token, socket);
+      await addSocket(user.id, user.name, user.type, token!, socket, mode);
       sendTo(socket, { type: "auth_ok", userId: user.id });
       return;
     }
@@ -571,7 +594,7 @@ export const wsRoutes = new Elysia().ws("/ws", {
     // when the socket and logout request reached different API pods.
     let currentUser: Awaited<ReturnType<typeof validateToken>>;
     try {
-      currentUser = await validateToken(socketUser.token);
+      currentUser = await validateToken(socketUser.token, socketUser.authMode);
     } catch (error) {
       websocketLog.error(
         { err: error, userId: socketUser.id },
@@ -589,6 +612,7 @@ export const wsRoutes = new Elysia().ws("/ws", {
           : {
               type: "auth_error",
               message: "Authentication service temporarily unavailable",
+              retryable: true,
             },
       );
       return;
@@ -604,7 +628,7 @@ export const wsRoutes = new Elysia().ws("/ws", {
               clientMessageId: event.clientMessageId,
               message: "Session expired or revoked",
             }
-          : { type: "auth_error", message: "Session expired or revoked" },
+          : { type: "auth_error", message: "Session expired or revoked", retryable: false },
       );
       await removeSocket(socket);
       ws.close();

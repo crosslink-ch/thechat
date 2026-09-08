@@ -1,3 +1,4 @@
+import { onSessionReset } from "../lib/session-boundary";
 import { create } from "zustand";
 import type { ApprovalDecision } from "../lib/hermes-approvals";
 import { resolveHermesApprovalIndicator } from "./hermes-indicators";
@@ -49,3 +50,5 @@ export function recordApprovalDecision(
   useHermesApprovalsStore.getState().recordDecision(eventId, decision);
   resolveHermesApprovalIndicator(eventId);
 }
+
+onSessionReset(() => useHermesApprovalsStore.setState(useHermesApprovalsStore.getInitialState()));

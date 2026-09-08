@@ -1,5 +1,8 @@
+import { onSessionReset, sessionGeneration } from "../lib/session-boundary";
 import { create } from "zustand";
-import { invoke } from "@tauri-apps/api/core";
+import { preferences, type PreferenceKey } from "../platform/preferences";
+import { isWeb } from "../platform/environment";
+import { authHeaders as auth } from "../lib/eden";
 import type {
   WorkspaceChannel,
   WorkspaceListItem,
@@ -12,16 +15,16 @@ const KV_ACTIVE_WORKSPACE = "active_workspace_id";
 let workspaceSelectionGeneration = 0;
 let workspaceInitializationGeneration = 0;
 
-async function kvGet(key: string): Promise<string | null> {
-  return invoke<string | null>("kv_get", { key });
+async function kvGet(key: PreferenceKey): Promise<string | null> {
+  return preferences.get(key, useAuthStore.getState().user?.id);
 }
 
-async function kvSet(key: string, value: string): Promise<void> {
-  return invoke("kv_set", { key, value });
+async function kvSet(key: PreferenceKey, value: string): Promise<void> {
+  return preferences.set(key, value, useAuthStore.getState().user?.id);
 }
 
-function auth(token: string) {
-  return { headers: { authorization: `Bearer ${token}` } };
+function authenticated(token: string | null) {
+  return isWeb ? Boolean(useAuthStore.getState().user) : Boolean(token);
 }
 
 interface WorkspacesStore {
@@ -70,7 +73,7 @@ export function updateExistingWorkspaceChannel(
   );
 }
 
-async function fetchWorkspacesList(token: string): Promise<WorkspaceListItem[]> {
+async function fetchWorkspacesList(token: string | null): Promise<WorkspaceListItem[]> {
   try {
     const { data, error } = await api.workspaces.list.get(auth(token));
     if (error) throw new Error((error as any).error || "Request failed");
@@ -80,27 +83,36 @@ async function fetchWorkspacesList(token: string): Promise<WorkspaceListItem[]> 
   }
 }
 
+type WorkspaceUpdate = Partial<WorkspacesStore> | ((state: WorkspacesStore) => Partial<WorkspacesStore>);
+function workspaceSession(set: (update: WorkspaceUpdate) => void) {
+  const generation = sessionGeneration();
+  const current = () => !isWeb || generation === sessionGeneration();
+  return { current, commit: (update: WorkspaceUpdate) => { if (current()) set(update); } };
+}
+
 export const useWorkspacesStore = create<WorkspacesStore>()((set) => ({
   workspaces: [],
   activeWorkspace: null,
   loading: false,
 
   initialize: async () => {
+    const session = workspaceSession(set);
     const token = useAuthStore.getState().token;
-    if (!token) return;
+    if (!authenticated(token)) return;
     const initializationRequest = ++workspaceInitializationGeneration;
     const selectionGeneration = ++workspaceSelectionGeneration;
 
     const isCurrent = () =>
+      session.current() &&
       initializationRequest === workspaceInitializationGeneration &&
       selectionGeneration === workspaceSelectionGeneration &&
       useAuthStore.getState().token === token;
 
-    set({ loading: true });
+    session.commit({ loading: true });
     try {
       const list = await fetchWorkspacesList(token);
       if (!isCurrent()) return;
-      set({ workspaces: list });
+      session.commit({ workspaces: list });
 
       const savedId = await kvGet(KV_ACTIVE_WORKSPACE);
       if (!isCurrent()) return;
@@ -108,10 +120,10 @@ export const useWorkspacesStore = create<WorkspacesStore>()((set) => ({
         const { data, error } = await api.workspaces({ id: savedId }).get(auth(token));
         if (!isCurrent()) return;
         if (error) {
-          set({ activeWorkspace: null });
+          session.commit({ activeWorkspace: null });
           return;
         }
-        set({ activeWorkspace: data as WorkspaceWithDetails });
+        session.commit({ activeWorkspace: data as WorkspaceWithDetails });
       }
     } catch {
       // A later initialize/select operation owns state once this request is stale.
@@ -120,28 +132,28 @@ export const useWorkspacesStore = create<WorkspacesStore>()((set) => ({
         initializationRequest === workspaceInitializationGeneration &&
         useAuthStore.getState().token === token
       ) {
-        set({ loading: false });
+        session.commit({ loading: false });
       }
     }
   },
 
   selectWorkspace: async (id: string) => {
+    const session = workspaceSession(set);
     const token = useAuthStore.getState().token;
-    if (!token) return false;
+    if (!authenticated(token)) return false;
     const requestGeneration = ++workspaceSelectionGeneration;
+    const isCurrent = () =>
+      session.current() &&
+      requestGeneration === workspaceSelectionGeneration &&
+      useAuthStore.getState().token === token;
 
     try {
       const { data, error } = await api.workspaces({ id }).get(auth(token));
       if (error) throw new Error((error as any).error || "Request failed");
-      if (
-        requestGeneration !== workspaceSelectionGeneration ||
-        useAuthStore.getState().token !== token
-      ) {
-        return false;
-      }
+      if (!isCurrent()) return false;
       await kvSet(KV_ACTIVE_WORKSPACE, id);
-      if (requestGeneration !== workspaceSelectionGeneration) return false;
-      set({ activeWorkspace: data as WorkspaceWithDetails });
+      if (!isCurrent()) return false;
+      session.commit({ activeWorkspace: data as WorkspaceWithDetails });
       return true;
     } catch {
       return false;
@@ -149,22 +161,23 @@ export const useWorkspacesStore = create<WorkspacesStore>()((set) => ({
   },
 
   createWorkspace: async (name: string) => {
+    const session = workspaceSession(set);
     const token = useAuthStore.getState().token;
-    if (!token) return;
+    if (!authenticated(token)) return;
 
     const { data, error } = await api.workspaces.create.post({ name }, auth(token));
     if (error) throw new Error((error as any).error || "Request failed");
 
     const list = await fetchWorkspacesList(token);
-    set({ workspaces: list });
+    session.commit({ workspaces: list });
 
     // Select the new workspace
     const id = (data as any).id;
     try {
       const res = await api.workspaces({ id }).get(auth(token));
       if (!res.error) {
-        set({ activeWorkspace: res.data as WorkspaceWithDetails });
-        await kvSet(KV_ACTIVE_WORKSPACE, id);
+        session.commit({ activeWorkspace: res.data as WorkspaceWithDetails });
+        if (session.current()) await kvSet(KV_ACTIVE_WORKSPACE, id);
       }
     } catch {
       // ignore
@@ -172,9 +185,10 @@ export const useWorkspacesStore = create<WorkspacesStore>()((set) => ({
   },
 
   createChannel: async (name: string) => {
+    const session = workspaceSession(set);
     const token = useAuthStore.getState().token;
     const workspace = useWorkspacesStore.getState().activeWorkspace;
-    if (!token || !workspace) throw new Error("Select a workspace first");
+    if (!authenticated(token) || !workspace) throw new Error("Select a workspace first");
 
     const { data, error } = await api.conversations.channel.post(
       { workspaceId: workspace.id, name },
@@ -183,7 +197,7 @@ export const useWorkspacesStore = create<WorkspacesStore>()((set) => ({
     if (error) throw new Error(apiErrorMessage(error));
 
     const channel = data as WorkspaceChannel;
-    set((state) => ({
+    session.commit((state) => ({
       activeWorkspace:
         state.activeWorkspace?.id === workspace.id
           ? {
@@ -199,9 +213,10 @@ export const useWorkspacesStore = create<WorkspacesStore>()((set) => ({
   },
 
   renameChannel: async (channelId: string, name: string) => {
+    const session = workspaceSession(set);
     const token = useAuthStore.getState().token;
     const workspaceId = useWorkspacesStore.getState().activeWorkspace?.id;
-    if (!token || !workspaceId) throw new Error("Select a workspace first");
+    if (!authenticated(token) || !workspaceId) throw new Error("Select a workspace first");
 
     const { data, error } = await api.conversations
       .channel({ conversationId: channelId })
@@ -209,7 +224,7 @@ export const useWorkspacesStore = create<WorkspacesStore>()((set) => ({
     if (error) throw new Error(apiErrorMessage(error));
 
     const channel = data as WorkspaceChannel;
-    set((state) => ({
+    session.commit((state) => ({
       activeWorkspace:
         state.activeWorkspace?.id === workspaceId
           ? {
@@ -225,16 +240,17 @@ export const useWorkspacesStore = create<WorkspacesStore>()((set) => ({
   },
 
   deleteChannel: async (channelId: string) => {
+    const session = workspaceSession(set);
     const token = useAuthStore.getState().token;
     const workspaceId = useWorkspacesStore.getState().activeWorkspace?.id;
-    if (!token || !workspaceId) throw new Error("Select a workspace first");
+    if (!authenticated(token) || !workspaceId) throw new Error("Select a workspace first");
 
     const { error } = await api.conversations
       .channel({ conversationId: channelId })
       .delete(undefined, auth(token));
     if (error) throw new Error(apiErrorMessage(error));
 
-    set((state) => ({
+    session.commit((state) => ({
       activeWorkspace:
         state.activeWorkspace?.id === workspaceId
           ? {
@@ -253,3 +269,5 @@ export const useWorkspacesStore = create<WorkspacesStore>()((set) => ({
     set({ workspaces: [], activeWorkspace: null, loading: false });
   },
 }));
+
+onSessionReset(() => useWorkspacesStore.getState().reset());

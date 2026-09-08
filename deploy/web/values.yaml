@@ -1,0 +1,25 @@
+# The default render is local/non-production and creates no ingress.
+production: false
+replicaCount: 1
+image:
+  repository: ghcr.io/crosslink-ch/thechat-web
+  tag: dev
+  digest: ""
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+resources:
+  requests:
+    cpu: 25m
+    memory: 32Mi
+  limits:
+    cpu: 500m
+    memory: 128Mi
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  host: ""
+  tlsSecretName: ""
+nodeSelector: {}
+tolerations: []
+affinity: {}
