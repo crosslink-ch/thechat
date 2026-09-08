@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { VoiceRecording } from "../lib/voice-recording";
+import { onSessionReset } from "../lib/session-boundary";
 
 const actionClass = "rounded-lg px-3 py-2 text-xs font-medium text-text-muted hover:bg-hover disabled:opacity-40 disabled:cursor-default";
 
@@ -27,6 +28,9 @@ export function VoiceRecorder({ onAttach, onBusyChange, disabled }: {
       onBusyChange(false);
     };
   }, [recording]);
+
+  // Reset immediately, including a getUserMedia request still awaiting permission.
+  useEffect(() => onSessionReset(() => recording.cancel()), [recording]);
 
   useEffect(() => {
     if (disabled && recording.state.phase !== "idle") recording.cancel();

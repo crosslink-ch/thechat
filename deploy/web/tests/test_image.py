@@ -69,6 +69,8 @@ class StaticImageTests(unittest.TestCase):
                 self.assertEqual(response_headers["X-Content-Type-Options"], "nosniff", path)
                 self.assertEqual(response_headers["X-Frame-Options"], "DENY", path)
                 self.assertEqual(response_headers["Referrer-Policy"], "strict-origin-when-cross-origin", path)
+                self.assertEqual(response_headers["Permissions-Policy"],
+                                 "camera=(), microphone=(self), geolocation=()", path)
                 csp = response_headers["Content-Security-Policy"]
                 self.assertIn("frame-ancestors 'none'", csp)
                 self.assertIn("https://thechat-api.pranexa.com", csp)

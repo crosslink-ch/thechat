@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { onSessionReset, sessionGeneration } from "../lib/session-boundary";
 import type { ChatAttachment } from "@thechat/shared";
 import {
   getAttachmentDownloadUrl,
@@ -16,14 +17,16 @@ export function isPlayableAudio(mediaType: string) {
 
 interface VoiceMessagePlayerProps {
   attachment: ChatAttachment;
-  token: string;
+  token: string | null;
 }
 
 export function VoiceMessagePlayer(props: VoiceMessagePlayerProps) {
+  // Cookie sessions have no JS token, so token equality is not an account fence.
+  const generation = useSyncExternalStore(onSessionReset, sessionGeneration);
   // A signed capability never survives an account or attachment change.
   return (
     <ScopedVoiceMessagePlayer
-      key={`${props.token}:${props.attachment.id}`}
+      key={`${generation}:${props.token}:${props.attachment.id}`}
       {...props}
     />
   );
@@ -60,13 +63,14 @@ function ScopedVoiceMessagePlayer({ attachment, token }: VoiceMessagePlayerProps
     loadingRef.current = true;
     setLoading(true);
     setError(null);
+    const generation = sessionGeneration();
     try {
       // Audio stays an opaque, attachment-disposition download on the server.
       // Only this constrained media decoder consumes it, after a user action.
       const result = await getAttachmentDownloadUrl(
         attachment.id, token, "attachment",
       );
-      if (mountedRef.current) setUrl(result.url);
+      if (mountedRef.current && generation === sessionGeneration()) setUrl(result.url);
     } catch (caught) {
       if (mountedRef.current) {
         setError(caught instanceof Error

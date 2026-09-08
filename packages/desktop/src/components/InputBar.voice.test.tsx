@@ -1,6 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { InputBar } from "./InputBar";
+import { resetPrivateSession } from "../lib/session-boundary";
 import { useComposerDraftsStore } from "../stores/composer-drafts";
 import { cancelSharedAttachment, uploadSharedAttachment } from "../lib/shared-attachments";
 
@@ -154,4 +155,24 @@ it("previews a recording before uploading, then uses normal manual send with fai
   expect(container.querySelector(".ProseMirror")?.textContent).toBe("Keep this draft");
   await act(async () => fireEvent.click(screen.getByTitle("Send message")));
   await waitFor(() => expect(screen.queryByTestId("attachment-draft")).toBeNull());
+});
+
+
+it.each(["requesting", "recording", "preview"])("releases voice capture in %s phase when a cookie session resets", async (phase) => {
+  let resolve!: (value: MediaStream) => void;
+  if (phase === "requesting") getUserMedia.mockReturnValueOnce(new Promise<MediaStream>(done => { resolve = done; }));
+  render(<InputBar {...props} sharedUpload={{ conversationId: "chat", token: null }} />);
+  await act(async () => fireEvent.click(screen.getByRole("button", { name: "Record voice message" })));
+  if (phase === "preview") {
+    fireEvent.click(screen.getByRole("button", { name: "Stop recording" }));
+    act(() => Recorder.current.finish());
+    expect(screen.getByLabelText("Voice message preview")).toBeInTheDocument();
+  }
+  act(() => resetPrivateSession());
+  if (phase === "requesting") await act(async () => resolve(stream));
+  for (const track of tracks) expect(track.stop).toHaveBeenCalled();
+  expect(screen.queryByRole("button", { name: "Stop recording" })).toBeNull();
+  expect(screen.queryByLabelText("Voice message preview")).toBeNull();
+  if (phase === "preview") expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:voice-preview");
+  expect(uploadSharedAttachment).not.toHaveBeenCalled();
 });
