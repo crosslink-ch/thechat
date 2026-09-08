@@ -4,6 +4,8 @@ on:
   pull_request:
     paths:
       - "deploy/api/**"
+      - "deploy/web/**"
+      - ".github/workflows/web-image.yml"
       - "deployment/aws/attachments/**"
       - "packages/desktop/src-tauri/tauri*.conf.json"
       - "packages/api/src/attachments/s3-object-store.ts"
@@ -12,6 +14,8 @@ on:
     branches: [main]
     paths:
       - "deploy/api/**"
+      - "deploy/web/**"
+      - ".github/workflows/web-image.yml"
       - "deployment/aws/attachments/**"
       - "packages/desktop/src-tauri/tauri*.conf.json"
       - "packages/api/src/attachments/s3-object-store.ts"
@@ -44,3 +48,21 @@ jobs:
         run: |
           python deploy/api/tests/test_migration_hook.py
           python deploy/api/tests/test_attachment_credentials.py
+          helm lint deploy/web
+          python deploy/web/tests/test_chart.py
+          python deploy/web/tests/test_workflow.py
+
+  web-image-smoke:
+    # Unprivileged PR validation: no registry login or cloud/cluster credentials.
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Build and exercise the static image
+        run: |
+          docker build --file deploy/web/Dockerfile --tag thechat-web:validation .
+          THECHAT_WEB_TEST_IMAGE=thechat-web:validation python3 deploy/web/tests/test_image.py

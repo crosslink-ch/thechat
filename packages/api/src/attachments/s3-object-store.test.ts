@@ -21,6 +21,36 @@ function signingClient() {
 }
 
 describe("S3 attachment object store", () => {
+  test("production overlay signs dualstack virtual-host PUT and GET without moving server I/O", async () => {
+    const overlay = await Bun.file(new URL("../../../../deploy/api/values-web-production.yaml", import.meta.url)).text();
+    const publicEndpoint = overlay.match(/ATTACHMENT_S3_PUBLIC_ENDPOINT:\s*"([^"]+)"/)?.[1];
+    expect(publicEndpoint).toBe("https://s3.dualstack.eu-central-1.amazonaws.com");
+    const client = signingClient();
+    const store = new S3ObjectStore({
+      bucket: "synthetic-production-bucket", region: "eu-central-1", client,
+      publicEndpoint, forcePathStyle: false,
+    });
+    const upload = await store.createUploadRequest({
+      key: "quarantine/id", mediaType: "text/plain", sizeBytes: 5,
+      checksumSha256Base64: "LPJNul+wow4m6DsqxbninhsWHlwfp0JecwQzYpOLmCQ=", expiresInSeconds: 300,
+    });
+    const download = await store.createDownloadRequest({
+      key: "clean/id", versionId: "v1", mediaType: "text/plain",
+      contentDisposition: 'attachment; filename="example.txt"', expiresInSeconds: 90,
+    });
+    for (const request of [upload, download]) {
+      const url = new URL(request.url);
+      expect(url.origin).toBe("https://synthetic-production-bucket.s3.dualstack.eu-central-1.amazonaws.com");
+      expect(url.searchParams.has("X-Amz-Signature")).toBe(true);
+    }
+    expect(new URL(download.url).searchParams.get("versionId")).toBe("v1");
+    expect(upload.headers["if-none-match"]).toBe("*");
+    let internalCalls = 0;
+    client.send = (async () => { internalCalls++; return { ContentLength: 5, VersionId: "v1" }; }) as any;
+    await store.headObject({ key: "quarantine/id" });
+    expect(internalCalls).toBe(1);
+  });
+
   test("loads and validates the optional browser endpoint from environment", () => {
     expect(() => { createS3ObjectStoreFromEnv({
       ATTACHMENT_S3_BUCKET: 'preview-bucket', ATTACHMENT_S3_REGION: 'eu-central-1',
