@@ -29,10 +29,21 @@ vi.mock("./components/HermesBotModal", () => ({
 }));
 
 import { createCommands, useCommandsStore } from "./commands";
+import { useReleaseNotesStore } from "./stores/release-notes";
 import { useKeybindings } from "./hooks/useKeybindings";
 import { useWorkspacesStore } from "./stores/workspaces";
 
 describe("createCommands", () => {
+  it("opens What's new in place and closes the command palette", () => {
+    useReleaseNotesStore.setState({ request: null });
+    const navigate = vi.fn();
+    const command = createCommands(navigate).find((item) => item.id === "whats-new");
+    expect(command).toMatchObject({ label: "What's new" });
+    command!.execute();
+    expect(useReleaseNotesStore.getState().request).toEqual({ kind: "history" });
+    expect(navigate).not.toHaveBeenCalled();
+    expect(closePaletteMock).toHaveBeenCalledOnce();
+  });
   beforeEach(() => {
     vi.clearAllMocks();
   });

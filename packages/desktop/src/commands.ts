@@ -4,6 +4,7 @@ import { toggleSidebar } from "./components/Sidebar";
 import { openWorkspaceModal } from "./components/WorkspaceModal";
 import { openHermesBotModal } from "./components/HermesBotModal";
 import { useFontSizeStore } from "./stores/font-size";
+import { openReleaseNotes } from "./stores/release-notes";
 
 export interface Keybinding {
   key: string;
@@ -179,6 +180,16 @@ export function createCommands(
       execute: () => {
         navigate({ to: "/activity" });
         closePaletteAndRefocus();
+      },
+    },
+    {
+      id: "whats-new",
+      label: "What's new",
+      shortcut: null,
+      keybinding: null,
+      execute: () => {
+        closePalette();
+        openReleaseNotes();
       },
     },
     {

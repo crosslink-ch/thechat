@@ -1,0 +1,8 @@
+[
+  {
+    "version": "0.9.0",
+    "title": "Activity inbox and persistent unread state",
+    "date": "2026-09-07",
+    "body": "## What's new\n\n- **Activity inbox:** see unread conversations across all your workspaces in one place.\n- **Persistent unread state:** conversation read state is saved on the server and stays consistent across workspace switches and app restarts.\n- Updated workspace and conversation indicators, plus direct navigation from Activity to the relevant channel or direct message.\n"
+  }
+]

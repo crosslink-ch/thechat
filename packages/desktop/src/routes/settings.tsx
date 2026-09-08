@@ -2,6 +2,7 @@ import { BrowserNotificationSettings } from "../platform/BrowserNotificationSett
 import { type FormEvent, useEffect, useState } from "react";
 import { useAuthStore } from "../stores/auth";
 import { ApiAccessSettings } from "./settings-api-access";
+import { openReleaseNotes } from "../stores/release-notes";
 
 function LockIcon() {
   return (
@@ -211,6 +212,13 @@ export function SettingsRoute() {
             </div>
           </form>
           <BrowserNotificationSettings />
+          <section className="rounded-xl border border-border-subtle bg-surface p-5 shadow-sm sm:p-6" aria-label="About TheChat">
+            <h2 className="text-[1rem] font-semibold text-text">About TheChat</h2>
+            <p className="mt-2 text-[0.857rem] text-text-muted">See what's changed and browse release history.</p>
+            <button type="button" onClick={openReleaseNotes} className="mt-4 rounded-lg border border-border bg-base px-4 py-2 text-[0.857rem] font-medium text-text hover:bg-elevated">
+              What's new
+            </button>
+          </section>
           <ApiAccessSettings key={user.id} />
           </>
         )}

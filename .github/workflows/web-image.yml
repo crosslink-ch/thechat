@@ -8,6 +8,7 @@ on:
       - "packages/api/**"
       - "packages/shared/**"
       - "package.json"
+      - "release-notes.json"
       - "pnpm-lock.yaml"
       - "pnpm-workspace.yaml"
       - "deploy/web/**"
