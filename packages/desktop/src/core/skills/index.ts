@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { homeDir, join } from "@tauri-apps/api/path";
-import { builtinSkills } from "./builtin";
+import { builtinSkills } from "./builtin/index";
 import { parseFrontmatter } from "./parse";
 import type { SkillMeta, SkillInfo } from "./types";
 
@@ -45,7 +45,7 @@ async function getCwd(): Promise<string> {
   try {
     return await invoke<string>("get_cwd");
   } catch {
-    return ".";
+    return "./index";
   }
 }
 
@@ -99,7 +99,7 @@ export async function discoverSkills(): Promise<SkillMeta[]> {
     );
   }
 
-  if (cwd && cwd !== ".") {
+  if (cwd && cwd !== "./index") {
     searchPaths.push(
       await join(cwd, ".thechat", "skills"),
       await join(cwd, ".agents", "skills"),

@@ -2,7 +2,7 @@ import { defineConfig, devices } from '@playwright/test';
 import { homedir } from 'node:os';
 import { resolve } from 'node:path';
 
-const baseURL = process.env.THECHAT_WEB_E2E_URL || 'http://127.0.0.1:1420';
+const baseURL = process.env.THECHAT_WEB_E2E_URL || 'http://127.0.0.1:1422';
 const apiURL = process.env.THECHAT_WEB_E2E_API_URL || 'http://127.0.0.1:13300';
 for (const value of [baseURL, apiURL]) {
   const url = new URL(value);

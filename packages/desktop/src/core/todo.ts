@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { TodoItem } from "./types";
+import type { TodoItem } from "@thechat/client/core/types";
 
 interface TodoStoreState {
   todos: Record<string, TodoItem[]>;

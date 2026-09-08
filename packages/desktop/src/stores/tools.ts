@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { error as logError, warn as logWarn, info as logInfo, formatError } from "../log";
+import { error as logError, warn as logWarn, info as logInfo, formatError } from "@thechat/client/log";
 import {
   getCurrentTimeTool,
   shellTool,
@@ -22,10 +22,10 @@ import {
   invalidTool,
   createSkillTool,
 } from "../core/tools/index";
-import { discoverSkills } from "../core/skills";
+import { discoverSkills } from "../core/skills/index";
 import { setBatchToolRegistry } from "../core/tools/batch";
 import { setTaskRunnerConfig } from "../core/task-runner";
-import type { ToolDefinition, McpToolInfo } from "../core/types";
+import type { ToolDefinition, McpToolInfo } from "@thechat/client/core/types";
 import type { SkillMeta } from "../core/skills/types";
 
 const builtinTools: ToolDefinition[] = [

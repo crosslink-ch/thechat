@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { batchTool, setBatchToolRegistry } from "./batch";
 import { requestPermission, usePermissionStore } from "../permission";
-import { usePermissionModeStore } from "../../stores/permission-mode";
-import type { ToolDefinition } from "../types";
+import { usePermissionModeStore } from "@thechat/client/stores/permission-mode";
+import type { ToolDefinition } from "@thechat/client/core/types";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -140,7 +140,7 @@ describe("batchTool", () => {
     setBatchToolRegistry([constrained]);
 
     const result = (await batchTool.execute({
-      tool_calls: [{ tool: "constrained", args: { path: ".", extra: true } }],
+      tool_calls: [{ tool: "constrained", args: { path: "./index", extra: true } }],
     })) as { failed: number; results: Array<{ success: boolean; error: string }> };
 
     expect(result.failed).toBe(1);

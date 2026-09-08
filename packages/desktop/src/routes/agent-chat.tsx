@@ -3,29 +3,29 @@ import { useNavigate, useMatches, useRouterState } from "@tanstack/react-router"
 import { invoke } from "@tauri-apps/api/core";
 import { useChat } from "../hooks/useChat";
 import { openCodexAuthModal } from "../components/CodexAuthModal";
-import { useIsStreaming, subscribeToStream } from "../stores/streaming";
-import { useAutoScroll } from "../hooks/useAutoScroll";
-import { useScrollStability } from "../hooks/useScrollStability";
+import { useIsStreaming, subscribeToStream } from "@thechat/client/stores/streaming";
+import { useAutoScroll } from "@thechat/client/hooks/useAutoScroll";
+import { useScrollStability } from "@thechat/client/hooks/useScrollStability";
 import { useToolsStore } from "../stores/tools";
-import { useAuthStore } from "../stores/auth";
-import { useConversationsStore } from "../stores/conversations";
+import { useAuthStore } from "@thechat/client/stores/auth";
+import { useConversationsStore } from "@thechat/client/stores/conversations";
 import {
   composerDraftKey,
   useComposerDraftsStore,
-} from "../stores/composer-drafts";
-import { useKeybindings } from "../hooks/useKeybindings";
-import { setAgentChatTitle, setAgentChatProjectDir } from "../components/ChatHeader";
+} from "@thechat/client/stores/composer-drafts";
+import { useKeybindings } from "@thechat/client/hooks/useKeybindings";
+import { setAgentChatTitle, setAgentChatProjectDir } from "@thechat/client/components/ChatHeader";
 import { ProjectPicker } from "../components/ProjectPicker";
 import { ChatMessage, StreamingMessage } from "../ChatMessage";
 import { TodoPanel } from "../TodoPanel";
-import { InputBar } from "../components/InputBar";
-import { ActivityStatusBar } from "../components/ActivityStatusBar";
+import { InputBar } from "@thechat/client/components/InputBar";
+import { ActivityStatusBar } from "@thechat/client/components/ActivityStatusBar";
 import { usePermissionStore } from "../core/permission";
 import { useQuestionStore } from "../core/question";
 import { useTodoStore, EMPTY_TODOS } from "../core/todo";
 import { buildSystemPrompt, type ProjectInfo } from "../core/system-prompt";
-import { fireNotification } from "../lib/notifications";
-import type { Conversation, Message } from "../core/types";
+import { fireNotification } from "@thechat/client/lib/notifications";
+import type { Conversation, Message } from "@thechat/client/core/types";
 import { activateAgentChatMcp, syncAgentChatMcpAuth } from "../desktop-lifecycle";
 
 const TOP_LOAD_THRESHOLD_PX = 80;

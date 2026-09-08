@@ -2,11 +2,11 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 let requestPermission: typeof import("./permission").requestPermission;
 let usePermissionStore: typeof import("./permission").usePermissionStore;
-let usePermissionModeStore: typeof import("../stores/permission-mode").usePermissionModeStore;
+let usePermissionModeStore: typeof import("@thechat/client/stores/permission-mode").usePermissionModeStore;
 
 beforeEach(async () => {
   vi.resetModules();
-  const store = await import("../stores/permission-mode");
+  const store = await import("@thechat/client/stores/permission-mode");
   usePermissionModeStore = store.usePermissionModeStore;
   usePermissionModeStore.setState({ mode: "request" });
   const mod = await import("./permission");

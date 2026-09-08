@@ -8,11 +8,11 @@ vi.mock("@tauri-apps/api/path", () => ({
   homeDir: vi.fn(),
 }));
 
-vi.mock("../skills", () => ({
+vi.mock("../skills/index", () => ({
   loadSkill: vi.fn(),
 }));
 
-import { loadSkill } from "../skills";
+import { loadSkill } from "../skills/index";
 import { createSkillTool } from "./skill";
 import type { SkillMeta } from "../skills/types";
 

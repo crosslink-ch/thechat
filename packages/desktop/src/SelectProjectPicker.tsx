@@ -1,6 +1,6 @@
 import { useMemo, useState, useRef, useEffect } from "react";
 import { create } from "zustand";
-import { requestInputBarFocus } from "./stores/input-focus";
+import { requestInputBarFocus } from "@thechat/client/stores/input-focus";
 
 interface PickerState {
   open: boolean;

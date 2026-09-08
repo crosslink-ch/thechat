@@ -1,5 +1,5 @@
 import { setTodos } from "../todo";
-import type { TodoItem } from "../types";
+import type { TodoItem } from "@thechat/client/core/types";
 import { defineTool } from "./define";
 
 export const todoWriteTool = defineTool({

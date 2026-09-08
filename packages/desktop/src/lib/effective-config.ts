@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { AppConfig, WorkspaceConfig } from "@thechat/shared";
-import { api } from "./api";
-import { useAuthStore } from "../stores/auth";
+import { api } from "@thechat/client/lib/api";
+import { useAuthStore } from "@thechat/client/stores/auth";
 
 function auth(token: string) {
   return { headers: { authorization: `Bearer ${token}` } };

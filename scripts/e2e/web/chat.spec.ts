@@ -53,7 +53,7 @@ test('channels, DMs, real-time delivery, attachments and short phone viewport', 
 
     await page.locator('input[type=file]').setInputFiles([
       { name: 'browser-note.txt', mimeType: 'text/plain', buffer: Buffer.from('TheChat browser attachment acceptance\n') },
-      { name: 'browser-image.png', mimeType: 'image/png', buffer: await readFile(resolve('packages/desktop/src-tauri/icons/32x32.png')) },
+      { name: 'browser-image.png', mimeType: 'image/png', buffer: await readFile(resolve('packages/client/public/thechat.png')) },
     ]);
     await expect(page.getByTitle('Send message', { exact: true })).toBeEnabled({ timeout: 30_000 });
     await page.getByTitle('Send message', { exact: true }).click();

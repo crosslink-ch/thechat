@@ -13,7 +13,7 @@ browser bundle.
 ```sh
 pnpm install --frozen-lockfile
 pnpm build:web
-# Static output: packages/desktop/dist-web
+# Static output: packages/web/dist
 
 # Development frontend, with API and worker running separately:
 pnpm dev:web
@@ -39,11 +39,11 @@ THECHAT_BACKEND_URL=http://127.0.0.1:3000
 BETTER_AUTH_URL=http://127.0.0.1:3000
 THECHAT_WEB_API_URL=http://127.0.0.1:3000
 THECHAT_WEB_WS_URL=ws://127.0.0.1:3000/ws
-THECHAT_WEB_ORIGINS=http://127.0.0.1:1420
+THECHAT_WEB_ORIGINS=http://127.0.0.1:1422
 THECHAT_WEB_ALLOW_INSECURE_LOOPBACK=true
 ```
 
-Open **http://127.0.0.1:1420**, not a different hostname. Configure the ordinary
+Open **http://127.0.0.1:1422**, not a different hostname. Configure the ordinary
 Postgres, Redis, Better Auth secret and optional mail/object-store settings as
 for the existing API. Run migrations before starting the API and async worker.
 Keep development services on a disposable development machine, not production.
@@ -102,7 +102,9 @@ pnpm test:web:build
 pnpm build:web
 pnpm build:desktop
 pnpm test:api
-pnpm --filter @thechat/desktop exec vitest run --exclude '**/*.integration.test.ts' --maxWorkers=2
+pnpm --filter @thechat/client test:unit
+pnpm --filter @thechat/web test:unit
+pnpm --filter @thechat/desktop test:unit
 pnpm exec playwright install chromium webkit
 pnpm test:e2e:web
 ```
@@ -112,7 +114,7 @@ Postgres/Redis and versioned S3-compatible test bucket. It creates synthetic
 `example.invalid` accounts through supported APIs. It rejects non-loopback test
 URLs so it cannot accidentally be aimed at production. Configure
 `THECHAT_WEB_E2E_URL` and `THECHAT_WEB_E2E_API_URL` for your loopback listeners;
-defaults are `http://127.0.0.1:1420` and `http://127.0.0.1:13300`.
+defaults are `http://127.0.0.1:1422` and `http://127.0.0.1:13300`.
 For Secure-cookie acceptance, use HTTPS loopback proxies and matching public API
 configuration. Playwright accepts the disposable test certificate only in its
 isolated browser context. It does not alter the browser's normal trust store.

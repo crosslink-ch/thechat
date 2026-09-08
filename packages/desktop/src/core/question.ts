@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { QuestionInfo, QuestionRequest } from "./types";
+import type { QuestionInfo, QuestionRequest } from "@thechat/client/core/types";
 
 interface QuestionStoreState {
   /** Queue of pending question requests per conversation */

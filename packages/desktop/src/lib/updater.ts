@@ -1,5 +1,5 @@
 import type { DownloadEvent, Update } from "@tauri-apps/plugin-updater";
-import { error as logError, formatError, info as logInfo } from "../log";
+import { error as logError, formatError, info as logInfo } from "@thechat/client/log";
 
 export async function checkForUpdates(): Promise<Update | null> {
   const { getVersion } = await import("@tauri-apps/api/app");

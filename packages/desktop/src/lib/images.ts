@@ -1,15 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 
-export interface ImageAttachment {
-  id: string;
-  mimeType: string;
-  base64: string;
-}
-
-export interface ImageRef {
-  path: string;
-  mimeType: string;
-}
+import type { ImageAttachment, ImageRef } from "@thechat/client/lib/image-types";
+export type { ImageAttachment, ImageRef } from "@thechat/client/lib/image-types";
 
 /** Save an image to disk and return the file path. */
 export async function saveImage(

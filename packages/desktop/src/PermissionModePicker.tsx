@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import { create } from "zustand";
-import { usePermissionModeStore, type PermissionMode } from "./stores/permission-mode";
-import { requestInputBarFocus } from "./stores/input-focus";
+import { usePermissionModeStore, type PermissionMode } from "@thechat/client/stores/permission-mode";
+import { requestInputBarFocus } from "@thechat/client/stores/input-focus";
 
 const usePickerState = create(() => ({ open: false }));
 export const openPermissionModePicker = () => usePickerState.setState({ open: true });

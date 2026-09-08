@@ -8,13 +8,13 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: mocks.invoke }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: mocks.listen }));
-vi.mock("../log", () => ({
+vi.mock("@thechat/client/log", () => ({
   error: mocks.logError,
   formatError: (error: unknown) => String(error),
   info: vi.fn(),
   warn: vi.fn(),
 }));
-vi.mock("../core/skills", () => ({
+vi.mock("../core/skills/index", () => ({
   discoverSkills: vi.fn(() => Promise.resolve([])),
 }));
 

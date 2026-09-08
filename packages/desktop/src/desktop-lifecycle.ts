@@ -1,10 +1,10 @@
-import { useAuthStore } from "./stores/auth";
+import { useAuthStore } from "@thechat/client/stores/auth";
 import { useCodexAuthStore } from "./stores/codex-auth";
-import { useConversationsStore } from "./stores/conversations";
-import { useFontSizeStore } from "./stores/font-size";
+import { useConversationsStore } from "@thechat/client/stores/conversations";
+import { useFontSizeStore } from "@thechat/client/stores/font-size";
 import { useToolsStore } from "./stores/tools";
 import { useUpdaterStore } from "./stores/updater";
-import { info as logInfo } from "./log";
+import { info as logInfo } from "@thechat/client/log";
 
 let agentChatMcpInitialized = false;
 let agentChatRouteLeases = 0;

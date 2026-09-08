@@ -46,3 +46,7 @@ __pycache__
 
 # Codex implementation/verification loop artifacts
 .codex-loop/runs/
+
+# Independent frontend build outputs
+packages/web/dist/
+packages/client/dist/

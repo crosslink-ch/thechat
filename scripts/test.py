@@ -163,6 +163,22 @@ SUITES = [
         "cmd": ["pnpm", "-r", "exec", "tsc", "--noEmit"],
     },
     {
+        "name": "client",
+        "cmd": ["pnpm", "--filter", "@thechat/client", "test:unit"],
+    },
+    {
+        "name": "web",
+        "cmd": ["pnpm", "--filter", "@thechat/web", "test:unit"],
+    },
+    {
+        "name": "client-boundaries",
+        "cmd": ["pnpm", "test:boundaries"],
+    },
+    {
+        "name": "web-build",
+        "cmd": ["pnpm", "test:web:build"],
+    },
+    {
         "name": "desktop",
         "cmd": ["pnpm", "--filter", "@thechat/desktop", "test:unit"],
     },

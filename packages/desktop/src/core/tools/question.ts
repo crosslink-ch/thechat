@@ -1,5 +1,5 @@
 import { askQuestion } from "../question";
-import type { QuestionInfo, ToolExecutionContext } from "../types";
+import type { QuestionInfo, ToolExecutionContext } from "@thechat/client/core/types";
 import { defineTool } from "./define";
 
 export const questionTool = defineTool({

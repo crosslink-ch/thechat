@@ -14,7 +14,7 @@ import { useQuestionStore } from "../core/question";
 import {
   composerDraftKey,
   useComposerDraftsStore,
-} from "../stores/composer-drafts";
+} from "@thechat/client/stores/composer-drafts";
 
 // -- Mocks --
 
@@ -56,7 +56,7 @@ vi.mock("../components/ProjectPicker", () => ({
   ProjectPicker: () => <div data-testid="project-picker" />,
 }));
 
-vi.mock("../components/InputBar", () => ({
+vi.mock("@thechat/client/components/InputBar", () => ({
   InputBar: ({ draftKey }: { draftKey: string }) => (
     <div data-testid="input-bar" data-draft-key={draftKey} />
   ),
@@ -67,16 +67,16 @@ vi.mock("../ChatMessage", () => ({
   StreamingMessage: () => <div data-testid="streaming-message" />,
 }));
 
-vi.mock("../components/ChatHeader", () => ({
+vi.mock("@thechat/client/components/ChatHeader", () => ({
   setAgentChatTitle: vi.fn(),
   setAgentChatProjectDir: vi.fn(),
 }));
 
-vi.mock("../hooks/useKeybindings", () => ({
+vi.mock("@thechat/client/hooks/useKeybindings", () => ({
   useKeybindings: vi.fn(),
 }));
 
-vi.mock("../lib/notifications", () => ({
+vi.mock("@thechat/client/lib/notifications", () => ({
   fireNotification: vi.fn(),
 }));
 

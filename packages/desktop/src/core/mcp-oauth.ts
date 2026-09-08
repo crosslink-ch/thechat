@@ -12,7 +12,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { fetch } from "@tauri-apps/plugin-http";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { info as logInfo, error as logError } from "../log";
+import { info as logInfo, error as logError } from "@thechat/client/log";
 
 // -- Types --
 

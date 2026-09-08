@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { ChatMessage, StreamingMessage } from "./ChatMessage";
-import { useStreamingStore, updateStreamParts } from "./stores/streaming";
-import type { Message, MessagePart } from "./core/types";
+import { useStreamingStore, updateStreamParts } from "@thechat/client/stores/streaming";
+import type { Message, MessagePart } from "@thechat/client/core/types";
 import type { PermissionRequest } from "./core/permission";
 
 const CONV_ID = "test-conv";

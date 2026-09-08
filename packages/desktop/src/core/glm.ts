@@ -1,5 +1,5 @@
 import { streamChatCompletion } from "./chat-completions";
-import type { ChatParams, StreamEvent, StreamResult, ToolDefinition } from "./types";
+import type { ChatParams, StreamEvent, StreamResult, ToolDefinition } from "@thechat/client/core/types";
 import type { GlmPlanType } from "@thechat/shared";
 
 const GLM_ENDPOINTS: Record<GlmPlanType, string> = {

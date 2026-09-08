@@ -1,16 +1,16 @@
 import { useState, useEffect, useRef, type FormEvent } from "react";
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
-import { requestInputBarFocus } from "./stores/input-focus";
+import { requestInputBarFocus } from "@thechat/client/stores/input-focus";
 import {
   runMcpOAuthFlow,
   cancelMcpOAuthFlow,
   type OAuthStatus,
 } from "./core/mcp-oauth";
 import type { AppConfig, McpServerConfig } from "@thechat/shared";
-import type { McpToolInfo } from "./core/types";
+import type { McpToolInfo } from "@thechat/client/core/types";
 import { useToolsStore } from "./stores/tools";
-import { error as logError, info as logInfo } from "./log";
+import { error as logError, info as logInfo } from "@thechat/client/log";
 
 const useDialogState = create(() => ({
   open: false,

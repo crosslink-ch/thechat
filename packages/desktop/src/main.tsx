@@ -1,17 +1,8 @@
-import React from "react";
-import ReactDOM from "react-dom/client";
-import { QueryClientProvider } from "@tanstack/react-query";
-import { RouterProvider } from "@tanstack/react-router";
-import { router } from "./router";
-import { ErrorBoundary } from "./components/ErrorBoundary";
-import { queryClient } from "./lib/query-client";
-import { error as logError, formatError } from "./log";
-import { initDesktopObservability } from "./lib/telemetry";
-import "highlight.js/styles/github-dark.css";
-import "katex/dist/katex.min.css";
-import "./App.css";
-
-initDesktopObservability();
+import "./desktop.css";
+import { mountClient } from "@thechat/client";
+import type { PlatformShell } from "@thechat/client/platform/contracts";
+import * as shell from "./platform/shell.desktop";
+shell satisfies PlatformShell;
 
 // Connect to standalone React DevTools in development (non-blocking).
 // Vite tree-shakes this entire block out of production builds.
@@ -27,26 +18,4 @@ if (import.meta.env.DEV && !__WEB_BUILD__) {
     .catch(() => {});
 }
 
-// Global handlers for uncaught errors — these log to the Tauri log file
-// so production crashes are diagnosable.
-window.addEventListener("error", (event) => {
-  logError(
-    `[global] Uncaught error: ${event.message}\n` +
-      `Source: ${event.filename}:${event.lineno}:${event.colno}\n` +
-      `Stack: ${event.error?.stack ?? "(no stack)"}`,
-  );
-});
-
-window.addEventListener("unhandledrejection", (event) => {
-  logError(`[global] Unhandled promise rejection: ${formatError(event.reason)}`);
-});
-
-ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
-  <React.StrictMode>
-    <ErrorBoundary name="App">
-      <QueryClientProvider client={queryClient}>
-        <RouterProvider router={router} />
-      </QueryClientProvider>
-    </ErrorBoundary>
-  </React.StrictMode>,
-);
+mountClient(document.getElementById("root") as HTMLElement);

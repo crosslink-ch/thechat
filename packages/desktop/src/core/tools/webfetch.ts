@@ -1,7 +1,7 @@
 import { fetch } from "@tauri-apps/plugin-http";
 import TurndownService from "turndown";
 import { requestPermission } from "../permission";
-import type { ToolExecutionContext } from "../types";
+import type { ToolExecutionContext } from "@thechat/client/core/types";
 import { defineTool } from "./define";
 
 const MAX_RESPONSE_SIZE = 5 * 1024 * 1024; // 5MB

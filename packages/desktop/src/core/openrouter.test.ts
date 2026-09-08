@@ -12,7 +12,7 @@ vi.mock("@tauri-apps/api/core", () => {
 
 import { invoke } from "@tauri-apps/api/core";
 import { streamCompletion } from "./openrouter";
-import type { StreamResult } from "./types";
+import type { StreamResult } from "@thechat/client/core/types";
 
 const mockInvoke = vi.mocked(invoke);
 
