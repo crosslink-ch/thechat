@@ -3,6 +3,8 @@ import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useAuthStore } from "../stores/auth";
 import { SettingsRoute } from "./settings";
+import { ReleaseNotesHost } from "../components/ReleaseNotes";
+import { useReleaseNotesStore } from "../stores/release-notes";
 
 const {
   invokeMock,
@@ -76,6 +78,21 @@ beforeEach(() => {
 });
 
 describe("SettingsRoute", () => {
+  it("opens and reopens bundled release history without leaving Settings", async () => {
+    useReleaseNotesStore.setState({ request: null });
+    render(<><SettingsRoute /><ReleaseNotesHost userId={null} version="0.9.0" catalog={[{ version: "0.9.0", title: "Activity", date: "2026-09-07", body: "Read these changes." }]} /></>);
+    await screen.findByText("No personal access tokens yet.");
+    const trigger = screen.getByRole("button", { name: "What's new" });
+    await userEvent.click(trigger);
+    expect(screen.getByRole("dialog", { name: "What's new" })).toBeInTheDocument();
+    expect(screen.getByText("Read these changes.")).toBeInTheDocument();
+    await userEvent.keyboard("{Escape}");
+    expect(trigger).toHaveFocus();
+    await userEvent.click(trigger);
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Close" }));
+    expect(screen.getByLabelText("Name")).toHaveValue("Bruno Example");
+  });
   it("keeps the name editable and presents immutable account information", async () => {
     render(<SettingsRoute />);
 

@@ -21,6 +21,7 @@ import { createCommands, useCommandsStore } from "../commands";
 import { ErrorBoundary } from "../components/ErrorBoundary";
 import { useCtrlWheelZoom } from "../hooks/useCtrlWheelZoom";
 import { PlatformDialogs, PlatformTitlebar, PlatformUpdateToast, usePlatformLifecycle } from "#platform-shell";
+import { ReleaseNotesHost } from "../components/ReleaseNotes";
 
 export function RootLayout() {
   const navigate = useNavigate();
@@ -72,16 +73,17 @@ export function RootLayout() {
   });
   useCtrlWheelZoom();
 
-  return <RootView key={isWeb ? identity ?? "anonymous" : "desktop"} authLoading={authLoading} authenticated={Boolean(user)} routeKey={routeKey} />;
+  return <RootView key={isWeb ? identity ?? "anonymous" : "desktop"} authLoading={authLoading} authenticated={Boolean(user)} userId={user?.id ?? null} routeKey={routeKey} />;
 }
 
 interface RootViewProps {
   authLoading: boolean;
   authenticated: boolean;
+  userId?: string | null;
   routeKey?: string;
 }
 
-export function RootView({ authLoading, authenticated, routeKey = "" }: RootViewProps) {
+export function RootView({ authLoading, authenticated, userId = null, routeKey = "" }: RootViewProps) {
   return (
     <AppViewport className="relative flex flex-col bg-base">
       <PlatformTitlebar />
@@ -108,6 +110,7 @@ export function RootView({ authLoading, authenticated, routeKey = "" }: RootView
         </>
       )}
       <PlatformUpdateToast />
+      <ReleaseNotesHost userId={!authLoading && authenticated ? userId : null} autoShow={!import.meta.env.DEV} />
     </AppViewport>
   );
 }

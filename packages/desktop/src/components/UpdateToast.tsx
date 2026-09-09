@@ -1,4 +1,5 @@
 import { useUpdaterStore } from "../stores/updater";
+import { previewReleaseNotes } from "../stores/release-notes";
 
 export function UpdateToast() {
   const update = useUpdaterStore((s) => s.update);
@@ -28,8 +29,15 @@ export function UpdateToast() {
         </div>
       )}
 
-      {downloaded && (
-        <div className="flex items-center justify-end">
+      <div className="flex flex-wrap items-center justify-end gap-2">
+        <button
+          type="button"
+          className="pointer-events-auto rounded-lg border border-border px-3.5 py-1.5 text-[0.857rem] font-medium text-text-muted hover:bg-elevated"
+          onClick={() => previewReleaseNotes({ version: update.version, body: update.body })}
+        >
+          Release notes
+        </button>
+        {downloaded && (
           <button
             type="button"
             className="pointer-events-auto cursor-pointer rounded-lg border-none bg-accent px-3.5 py-1.5 text-[0.857rem] font-medium text-white transition-colors duration-150 hover:opacity-90"
@@ -39,8 +47,8 @@ export function UpdateToast() {
           >
             Restart to update
           </button>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 }

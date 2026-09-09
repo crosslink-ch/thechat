@@ -1,0 +1,76 @@
+name: Release notes
+
+on:
+  pull_request:
+    paths:
+      - release-notes.json
+      - packages/desktop/**
+      - packages/shared/**
+      - package.json
+      - pnpm-lock.yaml
+      - pnpm-workspace.yaml
+      - scripts/release-notes.mjs
+      - scripts/release-notes.test.mjs
+      - .github/workflows/release.yml
+      - .github/workflows/release-notes.yml
+      - .github/workflows/web-image.yml
+      - deploy/web/Dockerfile
+      - deploy/web/Dockerfile.dockerignore
+  push:
+    branches: [main]
+    paths:
+      - release-notes.json
+      - packages/desktop/**
+      - packages/shared/**
+      - package.json
+      - pnpm-lock.yaml
+      - pnpm-workspace.yaml
+      - scripts/release-notes.mjs
+      - scripts/release-notes.test.mjs
+      - .github/workflows/release.yml
+      - .github/workflows/release-notes.yml
+      - .github/workflows/web-image.yml
+      - deploy/web/Dockerfile
+      - deploy/web/Dockerfile.dockerignore
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node --test scripts/release-notes.test.mjs
+      - run: node scripts/release-notes.mjs --check
+
+  client:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: pnpm/action-setup@v4
+      - run: pnpm install --frozen-lockfile
+      - name: Test in-app release notes
+        run: >-
+          pnpm --filter @thechat/desktop exec vitest run
+          src/components/ReleaseNotes.test.tsx
+          src/components/ReleaseNotes.preferences.test.tsx
+          src/lib/release-notes-state.test.ts
+          src/lib/release-notes.test.ts
+          src/routes/__root.release-notes.test.tsx
+          src/components/UpdateToast.test.tsx
+          src/routes/settings.test.tsx
+          src/commands.test.ts
+          src/routes/__root.test.tsx

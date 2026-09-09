@@ -7,6 +7,7 @@ COPY packages/desktop/package.json packages/desktop/package.json
 COPY packages/api/package.json packages/api/package.json
 COPY packages/shared/package.json packages/shared/package.json
 RUN corepack pnpm install --frozen-lockfile
+COPY release-notes.json ./
 COPY packages ./packages
 # These are public build-time endpoints, not runtime env/Secrets. Keep CSP in sync.
 ENV THECHAT_WEB_API_URL=https://thechat-api.pranexa.com

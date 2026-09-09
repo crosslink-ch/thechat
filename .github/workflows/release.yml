@@ -38,6 +38,18 @@ jobs:
         with:
           node-version: 22
 
+      - name: Read release notes
+        id: release-notes
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          if [ "$GITHUB_REF_TYPE" != "tag" ]; then
+            printf '%s\n' 'Select a stable vX.Y.Z release tag, not a branch.' >&2
+            exit 1
+          fi
+          node scripts/release-notes.mjs "$RELEASE_TAG" --github-output "$GITHUB_OUTPUT"
+
       - uses: pnpm/action-setup@v4
 
       - name: Install Rust stable
@@ -116,7 +128,7 @@ jobs:
           tauriScript: pnpm tauri
           tagName: ${{ github.ref_name }}
           releaseName: "TheChat ${{ github.ref_name }}"
-          releaseBody: "See the assets to download and install this version."
+          releaseBody: ${{ steps.release-notes.outputs.body }}
           releaseDraft: true
           prerelease: false
           args: --config src-tauri/tauri.release.conf.json ${{ matrix.args }}

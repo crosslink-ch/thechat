@@ -4,6 +4,8 @@ import userEvent from "@testing-library/user-event";
 import type { Update } from "@tauri-apps/plugin-updater";
 import { UpdateToast } from "./UpdateToast";
 import { useUpdaterStore } from "../stores/updater";
+import { ReleaseNotesHost } from "./ReleaseNotes";
+import { useReleaseNotesStore } from "../stores/release-notes";
 
 // Mock the updater lib so the store doesn't try to actually call Tauri
 vi.mock("../lib/updater", () => ({
@@ -50,6 +52,21 @@ beforeEach(() => {
 });
 
 describe("UpdateToast", () => {
+  it("previews the available update body without installing or changing restart behavior", async () => {
+    const restartToUpdate = vi.fn();
+    useReleaseNotesStore.setState({ request: null });
+    useUpdaterStore.setState({ update: createMockUpdate("0.9.0", "0.8.0"), downloaded: true, restartToUpdate });
+    render(<><UpdateToast /><ReleaseNotesHost userId={null} version="0.8.0" catalog={[]} /></>);
+    const trigger = screen.getByRole("button", { name: "Release notes" });
+    await userEvent.click(trigger);
+    expect(screen.getByRole("dialog", { name: "Update release notes" })).toBeInTheDocument();
+    expect(screen.getByText("Bug fixes")).toBeInTheDocument();
+    expect(restartToUpdate).not.toHaveBeenCalled();
+    await userEvent.keyboard("{Escape}");
+    expect(trigger).toHaveFocus();
+    await userEvent.click(screen.getByRole("button", { name: "Restart to update" }));
+    expect(restartToUpdate).toHaveBeenCalledOnce();
+  });
   it("renders nothing when no update is available", () => {
     const { container } = render(<UpdateToast />);
     expect(container.innerHTML).toBe("");
