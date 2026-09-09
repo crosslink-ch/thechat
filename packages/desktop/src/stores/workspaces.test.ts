@@ -219,3 +219,15 @@ describe("workspace channel actions", () => {
     ]);
   });
 });
+
+it("does not switch or persist a workspace after its search navigation is cancelled", async () => {
+  let resolve!: (value: { data: WorkspaceWithDetails; error: null }) => void;
+  workspaceRouteMock.mockReturnValueOnce({ get: () => new Promise((done) => { resolve = done; }) });
+  let current = true;
+  const pending = useWorkspacesStore.getState().selectWorkspace(betaWorkspace.id, () => current);
+  current = false;
+  resolve({ data: betaWorkspace, error: null });
+  await expect(pending).resolves.toBe(false);
+  expect(useWorkspacesStore.getState().activeWorkspace?.id).toBe(workspace.id);
+  expect(invokeMock).not.toHaveBeenCalledWith("kv_set", expect.anything());
+});

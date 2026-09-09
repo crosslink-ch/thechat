@@ -1,3 +1,4 @@
+import { MessageContextView } from "../components/MessageContextView";
 import { isAuthenticated } from "../lib/auth-identity";
 import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { useParams, useSearch } from "@tanstack/react-router";
@@ -47,6 +48,13 @@ import {
 const LOCAL_TASK_DRAFT_SCOPE = "__local_task_draft__";
 
 export function DmRoute() {
+  const { id } = useParams({ from: "/dm/$id" });
+  const { messageId, threadId, jump } = useSearch({ from: "/dm/$id" });
+  if (messageId) return <MessageContextView conversationId={id} threadId={threadId} messageId={messageId} route="/dm/$id" />;
+  return <DmLiveRoute key={`${id}:${jump ?? ""}`} />;
+}
+
+function DmLiveRoute() {
   const { id: conversationId } = useParams({ from: "/dm/$id" });
   const { threadId: requestedThreadId } = useSearch({ from: "/dm/$id" });
   const token = useAuthStore((s) => s.token);
@@ -100,6 +108,10 @@ export function DmRoute() {
   const activeConversationIdRef = useRef(conversationId);
   activeConversationIdRef.current = conversationId;
   const draftPersistingRef = useRef<symbol | null>(null);
+  useEffect(() => () => {
+    activeConversationIdRef.current = "";
+    draftPersistingRef.current = null;
+  }, []);
   const runtimeQuery = useBotRuntime(conversationId, token, isHermesDm);
   const runtime = runtimeQuery.data ?? null;
   const runtimeLoading = runtimeQuery.isLoading;
@@ -335,10 +347,10 @@ export function DmRoute() {
 
   useEffect(() => {
     if (!isHermesDm || threadsLoading) return;
-    if (activeThreadId && !threads.some((thread) => thread.id === activeThreadId)) {
+    if (activeThreadId && activeThreadId !== requestedThreadId && !threads.some((thread) => thread.id === activeThreadId)) {
       setActiveThreadId(null);
     }
-  }, [activeThreadId, isHermesDm, threads, threadsLoading]);
+  }, [activeThreadId, requestedThreadId, isHermesDm, threads, threadsLoading]);
 
   const handleCreateThread = useCallback(() => {
     if (!isHermesDm || draftPersistingRef.current) return;

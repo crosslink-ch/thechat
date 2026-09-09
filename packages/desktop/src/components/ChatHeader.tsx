@@ -1,3 +1,4 @@
+import { togglePalette } from "../CommandPalette";
 import { NavigationToggle } from "./ResponsiveShell";
 import { create } from "zustand";
 import { useMatches } from "@tanstack/react-router";
@@ -31,7 +32,9 @@ export function ChatHeader() {
   const isActivity = routePath === "/activity";
 
   let chatTitle = "Workspace";
-  if (isSettings) {
+  if (routePath === "/search") {
+    chatTitle = "Search messages";
+  } else if (isSettings) {
     chatTitle = "Settings";
   } else if (isWorkspaceManage) {
     chatTitle = activeWorkspace?.name ?? "Workspace";
@@ -67,6 +70,10 @@ export function ChatHeader() {
         </button>
       )}
       <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-[0.929rem] text-text-muted">{chatTitle}</span>
+      <button type="button" aria-label="Search" title="Search (Ctrl+K)" onClick={togglePalette} className="flex h-10 shrink-0 items-center gap-2 rounded-md px-3 text-sm text-text-muted hover:bg-hover hover:text-text">
+        <svg aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><circle cx="6.5" cy="6.5" r="4.5"/><path d="m10 10 4 4"/></svg>
+        <span>Search</span>
+      </button>
       {isAgentChat && permissionMode === "allow-edits" && (
         <span className="rounded-md bg-warning-bg px-2 py-0.5 text-[0.786rem] font-medium text-warning-text">
           Allow Edits

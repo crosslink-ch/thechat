@@ -1,4 +1,4 @@
-import { asc, eq, inArray } from "drizzle-orm";
+import { and, asc, eq, inArray } from "drizzle-orm";
 import type { AttachmentView } from "@thechat/shared";
 import { db } from "../db";
 import { attachments, messageAttachments } from "../db/schema";
@@ -29,6 +29,7 @@ export function toAttachmentView(
 
 export async function attachmentsByMessageIds(
   messageIds: string[],
+  options: { conversationId?: string } = {},
 ): Promise<Map<string, AttachmentView[]>> {
   const result = new Map<string, AttachmentView[]>();
   for (const id of messageIds) result.set(id, []);
@@ -44,7 +45,13 @@ export async function attachmentsByMessageIds(
       attachments,
       eq(messageAttachments.attachmentId, attachments.id),
     )
-    .where(inArray(messageAttachments.messageId, messageIds))
+    .where(and(
+      inArray(messageAttachments.messageId, messageIds),
+      options.conversationId ? and(
+        eq(attachments.conversationId, options.conversationId),
+        eq(attachments.status, "attached"),
+      ) : undefined,
+    ))
     .orderBy(
       asc(messageAttachments.messageId),
       asc(messageAttachments.position),

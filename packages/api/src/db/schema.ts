@@ -225,6 +225,8 @@ export const messages = pgTable(
     index("messages_thread_id_idx").on(t.threadId),
     index("messages_sender_id_idx").on(t.senderId),
     index("messages_created_at_idx").on(t.createdAt),
+    index("messages_content_search_idx").using("gin", sql`lower(${t.content}) gin_trgm_ops`),
+    index("messages_context_order_idx").on(t.conversationId, t.threadId, t.createdAt, t.id),
     uniqueIndex("messages_sender_client_message_idx").on(
       t.senderId,
       t.clientMessageId,
