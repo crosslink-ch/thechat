@@ -2,7 +2,7 @@ import { createRoot } from "react-dom/client";
 import type { ChatMessage } from "@thechat/shared";
 import { ChannelChatView } from "@thechat/client/components/ChannelChatView";
 import { HermesDmChatView } from "@thechat/client/components/HermesDmChatView";
-import "@thechat/client/styles";
+import "./chat.css";
 
 // Real chat/composer components and CSS, with local synthetic history only.
 // Fewer than 40 rows avoids the unrelated deferred-markdown loading path.
