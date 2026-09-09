@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { usePermissionModeStore } from "../stores/permission-mode";
+import { usePermissionModeStore } from "@thechat/client/stores/permission-mode";
 
 export class PermissionDeniedError extends Error {
   constructor(message: string) {

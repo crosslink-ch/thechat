@@ -1,5 +1,5 @@
 import { useState, useMemo } from "react";
-import type { TodoItem } from "./core/types";
+import type { TodoItem } from "@thechat/client/core/types";
 
 interface TodoPanelProps {
   todos: TodoItem[];

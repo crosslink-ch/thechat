@@ -11,9 +11,15 @@ importers:
       '@playwright/test':
         specifier: ^1.63.0
         version: 1.63.0
+      '@types/react':
+        specifier: ^19.1.8
+        version: 19.2.14
       dotenv-cli:
         specifier: ^11.0.0
         version: 11.0.0
+      react:
+        specifier: ^19.1.0
+        version: 19.2.4
 
   packages/api:
     dependencies:
@@ -94,7 +100,7 @@ importers:
         specifier: ~5.8.3
         version: 5.8.3
 
-  packages/desktop:
+  packages/client:
     dependencies:
       '@elysiajs/eden':
         specifier: ^1.2.0
@@ -107,10 +113,10 @@ importers:
         version: 0.218.0(@opentelemetry/api@1.9.1)
       '@opentelemetry/resources':
         specifier: ^2.7.1
-        version: 2.7.1(@opentelemetry/api@1.9.1)
+        version: 2.10.0(@opentelemetry/api@1.9.1)
       '@opentelemetry/sdk-trace-base':
         specifier: ^2.7.1
-        version: 2.7.1(@opentelemetry/api@1.9.1)
+        version: 2.10.0(@opentelemetry/api@1.9.1)
       '@opentelemetry/sdk-trace-web':
         specifier: ^2.10.0
         version: 2.10.0(@opentelemetry/api@1.9.1)
@@ -129,30 +135,6 @@ importers:
       '@tanstack/react-router':
         specifier: ^1.162.1
         version: 1.162.1(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
-      '@tauri-apps/api':
-        specifier: ^2
-        version: 2.10.1
-      '@tauri-apps/plugin-dialog':
-        specifier: ^2
-        version: 2.6.0
-      '@tauri-apps/plugin-http':
-        specifier: ^2
-        version: 2.5.7
-      '@tauri-apps/plugin-log':
-        specifier: ^2.8.0
-        version: 2.8.0
-      '@tauri-apps/plugin-notification':
-        specifier: ^2.3.3
-        version: 2.3.3
-      '@tauri-apps/plugin-opener':
-        specifier: ^2
-        version: 2.5.3
-      '@tauri-apps/plugin-process':
-        specifier: ^2.3.1
-        version: 2.3.1
-      '@tauri-apps/plugin-updater':
-        specifier: ^2.10.0
-        version: 2.10.0
       '@thechat/shared':
         specifier: workspace:*
         version: link:../shared
@@ -174,9 +156,6 @@ importers:
       '@tiptap/suggestion':
         specifier: ^3.20.0
         version: 3.20.0(@tiptap/core@3.20.0(@tiptap/pm@3.20.0))(@tiptap/pm@3.20.0)
-      ajv:
-        specifier: ^8.18.0
-        version: 8.18.0
       emoji-datasource:
         specifier: 16.0.0
         version: 16.0.0
@@ -216,9 +195,6 @@ importers:
       tailwindcss:
         specifier: ^4.2.1
         version: 4.2.1
-      turndown:
-        specifier: ^7.2.2
-        version: 7.2.2
       zod:
         specifier: ^4.3.6
         version: 4.3.6
@@ -226,6 +202,139 @@ importers:
         specifier: ^5.0.11
         version: 5.0.11(@types/react@19.2.14)(react@19.2.4)(use-sync-external-store@1.6.0(react@19.2.4))
     devDependencies:
+      '@tauri-apps/api':
+        specifier: ^2
+        version: 2.10.1
+      '@tauri-apps/plugin-dialog':
+        specifier: ^2
+        version: 2.6.0
+      '@tauri-apps/plugin-http':
+        specifier: ^2
+        version: 2.5.7
+      '@tauri-apps/plugin-log':
+        specifier: ^2.8.0
+        version: 2.8.0
+      '@tauri-apps/plugin-notification':
+        specifier: ^2.3.3
+        version: 2.3.3
+      '@tauri-apps/plugin-opener':
+        specifier: ^2
+        version: 2.5.3
+      '@tauri-apps/plugin-process':
+        specifier: ^2.3.1
+        version: 2.3.1
+      '@tauri-apps/plugin-updater':
+        specifier: ^2.10.0
+        version: 2.10.0
+      '@testing-library/jest-dom':
+        specifier: ^6.9.1
+        version: 6.9.1
+      '@testing-library/react':
+        specifier: ^16.3.2
+        version: 16.3.2(@testing-library/dom@10.4.1)(@types/react-dom@19.2.3(@types/react@19.2.14))(@types/react@19.2.14)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
+      '@testing-library/user-event':
+        specifier: ^14.6.1
+        version: 14.6.1(@testing-library/dom@10.4.1)
+      '@thechat/api':
+        specifier: workspace:*
+        version: link:../api
+      '@types/react':
+        specifier: ^19.1.8
+        version: 19.2.14
+      '@types/react-dom':
+        specifier: ^19.1.6
+        version: 19.2.3(@types/react@19.2.14)
+      '@types/turndown':
+        specifier: ^5.0.6
+        version: 5.0.6
+      '@types/ws':
+        specifier: ^8.18.1
+        version: 8.18.1
+      '@vitejs/plugin-react':
+        specifier: ^4.6.0
+        version: 4.7.0(vite@7.3.1(@types/node@25.3.0)(jiti@2.6.1)(lightningcss@1.31.1)(tsx@4.21.0))
+      jsdom:
+        specifier: ^28.1.0
+        version: 28.1.0(@noble/hashes@2.2.0)
+      playwright:
+        specifier: 1.63.0
+        version: 1.63.0
+      react-devtools:
+        specifier: ^7.0.1
+        version: 7.0.1
+      typescript:
+        specifier: ~5.8.3
+        version: 5.8.3
+      vite:
+        specifier: ^7.0.4
+        version: 7.3.1(@types/node@25.3.0)(jiti@2.6.1)(lightningcss@1.31.1)(tsx@4.21.0)
+      vitest:
+        specifier: ^4.0.18
+        version: 4.0.18(@opentelemetry/api@1.9.1)(@types/node@25.3.0)(jiti@2.6.1)(jsdom@28.1.0(@noble/hashes@2.2.0))(lightningcss@1.31.1)(tsx@4.21.0)
+      ws:
+        specifier: ^8.19.0
+        version: 8.19.0
+
+  packages/desktop:
+    dependencies:
+      '@tailwindcss/vite':
+        specifier: ^4.2.1
+        version: 4.2.1(vite@7.3.1(@types/node@25.3.0)(jiti@2.6.1)(lightningcss@1.31.1)(tsx@4.21.0))
+      '@tanstack/react-query':
+        specifier: ^5.100.14
+        version: 5.100.14(react@19.2.4)
+      '@tanstack/react-router':
+        specifier: ^1.162.1
+        version: 1.162.1(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
+      '@tauri-apps/api':
+        specifier: ^2
+        version: 2.10.1
+      '@tauri-apps/plugin-dialog':
+        specifier: ^2
+        version: 2.6.0
+      '@tauri-apps/plugin-http':
+        specifier: ^2
+        version: 2.5.7
+      '@tauri-apps/plugin-log':
+        specifier: ^2.8.0
+        version: 2.8.0
+      '@tauri-apps/plugin-notification':
+        specifier: ^2.3.3
+        version: 2.3.3
+      '@tauri-apps/plugin-opener':
+        specifier: ^2
+        version: 2.5.3
+      '@tauri-apps/plugin-process':
+        specifier: ^2.3.1
+        version: 2.3.1
+      '@tauri-apps/plugin-updater':
+        specifier: ^2.10.0
+        version: 2.10.0
+      '@thechat/client':
+        specifier: workspace:*
+        version: link:../client
+      '@thechat/shared':
+        specifier: workspace:*
+        version: link:../shared
+      ajv:
+        specifier: ^8.18.0
+        version: 8.18.0
+      react:
+        specifier: ^19.1.0
+        version: 19.2.4
+      react-dom:
+        specifier: ^19.1.0
+        version: 19.2.4(react@19.2.4)
+      turndown:
+        specifier: ^7.2.2
+        version: 7.2.2
+      zustand:
+        specifier: ^5.0.11
+        version: 5.0.11(@types/react@19.2.14)(react@19.2.4)(use-sync-external-store@1.6.0(react@19.2.4))
+    devDependencies:
+      '@elysiajs/eden':
+        specifier: ^1.2.0
+        version: 1.4.8(elysia@1.4.25(@sinclair/typebox@0.34.48)(@types/bun@1.3.9)(exact-mirror@0.2.7(@sinclair/typebox@0.34.48))(file-type@21.3.4)(openapi-types@12.1.3)(typescript@5.8.3))
       '@tauri-apps/cli':
         specifier: ^2
         version: 2.10.0
@@ -295,6 +404,79 @@ importers:
       typescript:
         specifier: ~5.8.3
         version: 5.8.3
+
+  packages/web:
+    dependencies:
+      '@tailwindcss/vite':
+        specifier: ^4.2.1
+        version: 4.2.1(vite@7.3.1(@types/node@25.3.0)(jiti@2.6.1)(lightningcss@1.31.1)(tsx@4.21.0))
+      '@thechat/client':
+        specifier: workspace:*
+        version: link:../client
+      react:
+        specifier: ^19.1.0
+        version: 19.2.4
+      react-dom:
+        specifier: ^19.1.0
+        version: 19.2.4(react@19.2.4)
+    devDependencies:
+      '@tanstack/react-query':
+        specifier: ^5.100.14
+        version: 5.100.14(react@19.2.4)
+      '@tanstack/react-router':
+        specifier: ^1.162.1
+        version: 1.162.1(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
+      '@testing-library/jest-dom':
+        specifier: ^6.9.1
+        version: 6.9.1
+      '@testing-library/react':
+        specifier: ^16.3.2
+        version: 16.3.2(@testing-library/dom@10.4.1)(@types/react-dom@19.2.3(@types/react@19.2.14))(@types/react@19.2.14)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
+      '@testing-library/user-event':
+        specifier: ^14.6.1
+        version: 14.6.1(@testing-library/dom@10.4.1)
+      '@thechat/api':
+        specifier: workspace:*
+        version: link:../api
+      '@thechat/shared':
+        specifier: workspace:*
+        version: link:../shared
+      '@types/react':
+        specifier: ^19.1.8
+        version: 19.2.14
+      '@types/react-dom':
+        specifier: ^19.1.6
+        version: 19.2.3(@types/react@19.2.14)
+      '@types/turndown':
+        specifier: ^5.0.6
+        version: 5.0.6
+      '@types/ws':
+        specifier: ^8.18.1
+        version: 8.18.1
+      '@vitejs/plugin-react':
+        specifier: ^4.6.0
+        version: 4.7.0(vite@7.3.1(@types/node@25.3.0)(jiti@2.6.1)(lightningcss@1.31.1)(tsx@4.21.0))
+      jsdom:
+        specifier: ^28.1.0
+        version: 28.1.0(@noble/hashes@2.2.0)
+      playwright:
+        specifier: 1.63.0
+        version: 1.63.0
+      react-devtools:
+        specifier: ^7.0.1
+        version: 7.0.1
+      typescript:
+        specifier: ~5.8.3
+        version: 5.8.3
+      vite:
+        specifier: ^7.0.4
+        version: 7.3.1(@types/node@25.3.0)(jiti@2.6.1)(lightningcss@1.31.1)(tsx@4.21.0)
+      vitest:
+        specifier: ^4.0.18
+        version: 4.0.18(@opentelemetry/api@1.9.1)(@types/node@25.3.0)(jiti@2.6.1)(jsdom@28.1.0(@noble/hashes@2.2.0))(lightningcss@1.31.1)(tsx@4.21.0)
+      ws:
+        specifier: ^8.19.0
+        version: 8.19.0
 
 packages:
 
@@ -1085,14 +1267,8 @@ packages:
       '@noble/hashes':
         optional: true
 
-  '@floating-ui/core@1.7.4':
-    resolution: {integrity: sha512-C3HlIdsBxszvm5McXlB8PeOEWfBhcGBTZGkGlWc2U0KFY5IwG5OQEuQ8rq52DZmcHDlPLd+YFBK+cZcytwIFWg==}
-
   '@floating-ui/core@1.8.0':
     resolution: {integrity: sha512-0CIZ5itps/8x7BG8dEIhs53BvCUH2PCoogtakwRTut+Arm58sJooJ0AuZhLw2HJYIR5cMLNPBSS728sPho2khQ==}
-
-  '@floating-ui/dom@1.7.5':
-    resolution: {integrity: sha512-N0bD2kIPInNHUHehXhMke1rBGs1dwqvC9O9KYMyyjK7iXt7GAhnro7UlcuYcGdS/yYOlq0MAVgrow8IbWJwyqg==}
 
   '@floating-ui/dom@1.8.0':
     resolution: {integrity: sha512-yXSrzeHZBTZadLOlfyhCkJHNeLJnHRnRInwdZ40L7ZiaAtrBwoYlsDrX3v5zB1Utk7CLfzcOVnVVWoXEky7Ceg==}
@@ -1102,9 +1278,6 @@ packages:
     peerDependencies:
       react: '>=16.8.0'
       react-dom: '>=16.8.0'
-
-  '@floating-ui/utils@0.2.10':
-    resolution: {integrity: sha512-aGTxbpbg8/b5JfU1HXSrbH3wXZuLPJcNEcZQFMxLs3oSzgtVu6nFPkbbGGUvBcUjKV2YyB9Wxxabo+HEH9tcRQ==}
 
   '@floating-ui/utils@0.2.12':
     resolution: {integrity: sha512-HpCo8tmWzLVad5s2d19EhAz5zqrrQ6s69qd6moPMQvkOuSwDT1YgRfWSVuc4ennqrgv3OHppiOGMQ7oC13yIww==}
@@ -2505,6 +2678,7 @@ packages:
 
   '@ungap/structured-clone@1.3.0':
     resolution: {integrity: sha512-WmoN8qaIAo7WTYWbAZuG8PYEhn5fkz7dZrqTBZ7dtt//lL2Gwms1IcnQ5yHqjDfX8Ft5j4YzDM23f87zBfDe9g==}
+    deprecated: Potential CWE-502 - Update to 1.3.1 or higher
 
   '@vitejs/plugin-react@4.7.0':
     resolution: {integrity: sha512-gUu9hwfWvvEDBBmgtAowQCojwZmJ5mcLn3aufeCsitijs3+f2NsrPtlAWIR6OPiqljl96GVCUbLe0HyqIpVaoA==}
@@ -6830,20 +7004,9 @@ snapshots:
     optionalDependencies:
       '@noble/hashes': 2.2.0
 
-  '@floating-ui/core@1.7.4':
-    dependencies:
-      '@floating-ui/utils': 0.2.10
-    optional: true
-
   '@floating-ui/core@1.8.0':
     dependencies:
       '@floating-ui/utils': 0.2.12
-
-  '@floating-ui/dom@1.7.5':
-    dependencies:
-      '@floating-ui/core': 1.7.4
-      '@floating-ui/utils': 0.2.10
-    optional: true
 
   '@floating-ui/dom@1.8.0':
     dependencies:
@@ -6855,9 +7018,6 @@ snapshots:
       '@floating-ui/dom': 1.8.0
       react: 19.2.4
       react-dom: 19.2.4(react@19.2.4)
-
-  '@floating-ui/utils@0.2.10':
-    optional: true
 
   '@floating-ui/utils@0.2.12': {}
 
@@ -7851,7 +8011,7 @@ snapshots:
 
   '@tiptap/extension-bubble-menu@3.20.0(@tiptap/core@3.20.0(@tiptap/pm@3.20.0))(@tiptap/pm@3.20.0)':
     dependencies:
-      '@floating-ui/dom': 1.7.5
+      '@floating-ui/dom': 1.8.0
       '@tiptap/core': 3.20.0(@tiptap/pm@3.20.0)
       '@tiptap/pm': 3.20.0
     optional: true

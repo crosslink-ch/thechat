@@ -1,9 +1,9 @@
 import { useState, useCallback, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { runChatLoop } from "../core/loop";
-import { useStreamingStore, updateStreamParts, recordToolCallStart } from "../stores/streaming";
+import { useStreamingStore, updateStreamParts, recordToolCallStart } from "@thechat/client/stores/streaming";
 import { useCodexAuthStore } from "../stores/codex-auth";
-import { error as logError, formatError } from "../log";
+import { error as logError, formatError } from "@thechat/client/log";
 import { ProviderError } from "../core/errors";
 import type { Provider } from "../core/errors";
 import { saveImage, buildUserContent } from "../lib/images";
@@ -17,7 +17,7 @@ import type {
   ChatParams,
   ToolDefinition,
   StreamEvent,
-} from "../core/types";
+} from "@thechat/client/core/types";
 
 export const AGENT_MESSAGE_PAGE_SIZE = 20;
 export const AGENT_MESSAGE_WINDOW_SIZE = 120;

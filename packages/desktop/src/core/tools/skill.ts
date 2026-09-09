@@ -1,9 +1,9 @@
 import { invoke } from "@tauri-apps/api/core";
-import { loadSkill } from "../skills";
+import { loadSkill } from "../skills/index";
 import { defineTool } from "./define";
-import { warn as logWarn, debug as logDebug, formatError } from "../../log";
+import { warn as logWarn, debug as logDebug, formatError } from "@thechat/client/log";
 import type { SkillMeta } from "../skills/types";
-import type { McpToolInfo, ToolDefinition } from "../types";
+import type { McpToolInfo, ToolDefinition } from "@thechat/client/core/types";
 
 /**
  * Create a skill tool whose description dynamically lists available skills.
@@ -66,7 +66,7 @@ ${skillsXml}`,
       if (skill.mcpServers && skill.mcpServers.length > 0) {
         try {
           // Get auth token if available (lazy import to avoid circular deps)
-          const { useAuthStore } = await import("../../stores/auth");
+          const { useAuthStore } = await import("@thechat/client/stores/auth");
           const token = useAuthStore.getState().token;
 
           const toolInfos = await invoke<McpToolInfo[]>("mcp_initialize_servers", {

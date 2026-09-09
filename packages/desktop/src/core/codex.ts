@@ -1,6 +1,6 @@
 import { invoke, Channel } from "@tauri-apps/api/core";
-import { debug as logDebug } from "../log";
-import type { ChatParams, StreamEvent, StreamResult, ToolDefinition } from "./types";
+import { debug as logDebug } from "@thechat/client/log";
+import type { ChatParams, StreamEvent, StreamResult, ToolDefinition } from "@thechat/client/core/types";
 import { CODEX_MODELS, DEFAULT_REASONING_EFFORT } from "./models";
 import { ProviderError } from "./errors";
 import { CODEX_ORIGINATOR } from "./codex-auth";

@@ -1,0 +1,42 @@
+{
+  "name": "@thechat/web",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:unit": "vitest run",
+    "test:build": "node --test scripts/web-build.test.mjs",
+    "test:browser": "node --test browser-tests/*.browser.mjs"
+  },
+  "dependencies": {
+    "@thechat/client": "workspace:*",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "@tailwindcss/vite": "^4.2.1"
+  },
+  "devDependencies": {
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.2",
+    "@testing-library/user-event": "^14.6.1",
+    "@thechat/api": "workspace:*",
+    "@types/react": "^19.1.8",
+    "@types/react-dom": "^19.1.6",
+    "@types/turndown": "^5.0.6",
+    "@types/ws": "^8.18.1",
+    "@vitejs/plugin-react": "^4.6.0",
+    "jsdom": "^28.1.0",
+    "playwright": "1.63.0",
+    "react-devtools": "^7.0.1",
+    "typescript": "~5.8.3",
+    "vite": "^7.0.4",
+    "vitest": "^4.0.18",
+    "ws": "^8.19.0",
+    "@tanstack/react-router": "^1.162.1",
+    "@tanstack/react-query": "^5.100.14",
+    "@thechat/shared": "workspace:*"
+  }
+}

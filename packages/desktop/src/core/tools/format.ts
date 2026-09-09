@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { debug as logDebug, formatError } from "../../log";
+import { debug as logDebug, formatError } from "@thechat/client/log";
 
 /**
  * Attempt to format a file in place after a write/edit. Silent no-op if the

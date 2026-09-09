@@ -10,6 +10,21 @@ Documentation rot is a real thing.
 
 Source code + CLAUDE.md is documentation.
 
+### Frontend packages
+
+One React application lives in `packages/client` (`@thechat/client`). Independent
+`packages/web` and `packages/desktop` entrypoints consume it; the latter retains
+Tauri, native integrations and local-agent code. Browser builds never import the
+Tauri SDK. See [client architecture](docs/web-client.md) and [browser setup](docs/web.md).
+
+```sh
+pnpm dev:web        # Browser frontend, port 1422
+pnpm dev:desktop    # Desktop Vite frontend, port 1420
+pnpm build:web      # packages/web/dist
+pnpm build:desktop  # packages/desktop/dist; no Rust compile
+pnpm test          # Shared client, web, desktop, backend/native and boundary gates
+```
+
 ### PostgreSQL
 
 Create `.env`:

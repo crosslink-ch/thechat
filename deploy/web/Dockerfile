@@ -4,6 +4,8 @@ WORKDIR /app
 RUN corepack enable
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY packages/desktop/package.json packages/desktop/package.json
+COPY packages/client/package.json packages/client/package.json
+COPY packages/web/package.json packages/web/package.json
 COPY packages/api/package.json packages/api/package.json
 COPY packages/shared/package.json packages/shared/package.json
 RUN corepack pnpm install --frozen-lockfile
@@ -15,7 +17,7 @@ RUN corepack pnpm build:web
 
 FROM nginxinc/nginx-unprivileged:1.28-alpine@sha256:7377697a821c131a924a7105fafbe7414db4e9fcc77a6f08f776f33f141ec3f8
 COPY deploy/web/nginx.conf /etc/nginx/nginx.conf
-COPY --from=build /app/packages/desktop/dist-web /usr/share/nginx/html
+COPY --from=build /app/packages/web/dist /usr/share/nginx/html
 USER 101:101
 EXPOSE 8080
 # Skip image entrypoint scripts that edit /etc; this image supports a read-only root.

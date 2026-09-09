@@ -1,20 +1,22 @@
 # Shared browser client
 
-The browser edition builds the existing React application, routes and Eden Treaty client. It is not a second UI. The default build remains the native desktop build.
+The browser edition builds the existing React application, routes and Eden Treaty client. It is not a second UI. The executable packages are independent: `packages/web` owns browser startup/config and `packages/desktop` owns Tauri startup/config. `packages/client` owns the one shared React application.
 
 ```sh
-pnpm dev:web                  # shared Vite frontend, explicit web mode
+pnpm dev:web                  # independent browser Vite frontend (port 1422)
 pnpm build:web                # TypeScript + production browser assets
-pnpm build:desktop            # existing native frontend, unchanged default mode
+pnpm build:desktop            # native frontend (port 1420)
 pnpm test:web:build           # build-selection and emitted-module-graph assertions
-pnpm --filter @thechat/desktop test:unit --maxWorkers=2
+pnpm --filter @thechat/client test:unit
+pnpm --filter @thechat/web test:unit
+pnpm --filter @thechat/desktop test:unit
 ```
 
-Browser output is `packages/desktop/dist-web`; desktop output remains `packages/desktop/dist`. Serve browser assets through HTTPS (or a loopback development origin). Hashing uploads, clipboard and browser notifications require browser-supported secure contexts. Hash routing preserves direct navigation without a second router or server-side route implementation.
+Browser output is `packages/web/dist`; desktop output remains `packages/desktop/dist`. Serve browser assets through HTTPS (or a loopback development origin). Hashing uploads, clipboard and browser notifications require browser-supported secure contexts. Hash routing preserves direct navigation without a second router or server-side route implementation.
 
 ## Deployment configuration
 
-Vite web mode reads `.env.web`/the shell environment. Web API routing uses these explicit public values:
+The web package reads `.env.web`/the shell environment. Web API routing uses these explicit public values:
 
 - `THECHAT_WEB_API_URL`: absolute API origin, or empty for the browser page's origin (same-origin reverse proxy).
 - `THECHAT_WEB_WS_URL`: optional absolute WebSocket URL **including `/ws`**; otherwise derived from the API origin.
@@ -34,8 +36,33 @@ The native `THECHAT_BACKEND_URL` setting still controls desktop builds. It inten
 
 ## Platform boundary
 
-Vite resolves `#platform-shell` to desktop or browser lifecycle/components at build time. The emitted browser module graph excludes the legacy local tool runner, provider OAuth, MCP initialization and updater. Preferences use the explicit, allowlisted UI preference adapter (`ui_font_size` and account-scoped `active_workspace_id`), never a generic fake Tauri invoke.
+Each executable Vite config resolves `#platform-shell` and `#platform-services` to its own implementations. The shared package typechecks against its own `platform/contracts.ts` and ambient module declarations, never TS paths to an app. Desktop and web implementations independently satisfy the same contracts. The parsed and emitted browser module graph excludes all Tauri SDK imports as well as the legacy local tool runner, provider OAuth, MCP initialization and updater. Preferences use the explicit, allowlisted UI preference adapter (`ui_font_size` and account-scoped `active_workspace_id`), never a generic fake Tauri invoke.
 
 Browser attachments keep the existing presigned upload/download path. Clipboard uses the existing browser API. Browser notifications can be enabled by an explicit Settings action and run only while the page is open; no background push/service worker is registered. No offline authentication cache is provided.
 
 The frontend unit/build checks do not substitute for real cookie-backend, browser-engine, mobile-geometry and two-account end-to-end acceptance. See [web setup and verification](web.md) for the integrated runtime contract and `pnpm test:e2e:web`.
+
+## Package ownership and tests
+
+- `@thechat/client`: `src/index.tsx` mount, router/routes, common components,
+  state/network/auth algorithms, CSS and public assets. Package exports resolve
+  the same source files in both consumers; stores and query client are singletons.
+- `@thechat/web`: HTML/main, fixed browser services and session synchronization,
+  notification permission UI, browser/mobile component harnesses and Vite config.
+- `@thechat/desktop`: HTML/main, native services/shell, local tools, provider OAuth,
+  MCP, updater, legacy local-agent UI and the unchanged `src-tauri` flavor config.
+- `web -> client` and `desktop -> client` are the only application dependencies.
+  UI preferences and native credentials are distinct typed storage contracts;
+  unsupported browser-native file/local-history capabilities are explicitly null.
+- Shared CSS discovers client sources relative to itself. The desktop CSS entry
+  adds desktop-only sources so native chrome/legacy dialogs keep their utilities.
+  Both builds serve the same `client/public` assets.
+- `pnpm test` discovers `client`, `web`, `desktop`, both integration locations and
+  entrypoint/compiled graph gates alongside the existing backend/native suites.
+  Existing shared tests retain IPC mock coverage using test-only composition in
+  `scripts/testing`, outside production client source. No test adapters enter builds.
+
+The graph gate builds both executables and checks shared singleton modules,
+no parsed native modules in web, shared CSS and desktop-only Tailwind utilities.
+Browser and mobile fixtures live under `packages/web`; compiled native WebDriver
+fixtures and Tauri build commands remain under `packages/desktop/e2e`.

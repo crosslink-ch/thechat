@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { warn as logWarn, formatError } from "../log";
+import { warn as logWarn, formatError } from "@thechat/client/log";
 
 const MAX_LINES = 2000;
 const MAX_BYTES = 50_000; // 50KB

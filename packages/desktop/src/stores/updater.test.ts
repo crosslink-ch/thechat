@@ -11,7 +11,7 @@ vi.mock("../lib/updater", () => ({
 }));
 
 // Suppress log output in tests
-vi.mock("../log", () => ({
+vi.mock("@thechat/client/log", () => ({
   info: vi.fn(),
   error: vi.fn(),
   formatError: (e: unknown) => String(e),

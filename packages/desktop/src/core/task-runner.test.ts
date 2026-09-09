@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { Provider } from "@thechat/shared";
-import type { ChatLoopOptions } from "./types";
+import type { ChatLoopOptions } from "@thechat/client/core/types";
 
 // Mock dependencies before imports
 vi.mock("./loop", () => ({

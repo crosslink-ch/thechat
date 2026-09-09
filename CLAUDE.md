@@ -4,8 +4,10 @@
 
 ```bash
 pnpm install              # Install all workspace dependencies
-pnpm dev                  # Vite dev server for desktop (port 1420)
-pnpm dev:desktop          # Same as above
+pnpm dev                  # Local API/worker/service stack
+pnpm dev:desktop          # Desktop Vite server (port 1420)
+pnpm dev:web              # Independent browser Vite server (port 1422)
+pnpm build:web            # Browser assets in packages/web/dist
 pnpm dev:api              # ElysiaJS API server on Bun (port 3000)
 pnpm tauri:dev            # Full Tauri app using the isolated TheChat Dev identity
 pnpm build                # Build all packages
@@ -13,8 +15,8 @@ pnpm build:desktop        # TypeScript check + Vite production build (desktop)
 pnpm build:api            # Bun build (API)
 pnpm tauri:build:dev      # Release-mode local build using the isolated dev identity
 pnpm tauri:build          # Full production-identity build (frontend + Rust)
-pnpm test                 # Run all test suites in parallel (typecheck, desktop, api, rust, integration)
-python3 scripts/test.py desktop rust  # Run specific suites only
+pnpm test                 # Run bounded suites (typecheck, client, web, desktop, api, rust, integration, boundaries)
+python3 scripts/test.py client web desktop rust  # Run specific suites only
 python3 scripts/test.py typecheck     # Run only TypeScript type checking
 ```
 
@@ -28,15 +30,17 @@ Rust backend tests: `cd packages/desktop/src-tauri && cargo test`
 
 ## Monorepo Structure
 
-This is a **pnpm workspaces monorepo** with three packages:
+This is a **pnpm workspaces monorepo** with five packages:
 
 ```
 thechat/
 ├── package.json              # Root workspace (scripts delegate via --filter)
 ├── pnpm-workspace.yaml       # packages: ["packages/*"]
 ├── packages/
-│   ├── desktop/              # Tauri 2 desktop app (@thechat/desktop)
-│   │   ├── src/              # React/TypeScript frontend
+│   ├── client/               # Shared React UI/router/state/assets (@thechat/client)
+│   ├── web/                  # Browser entry/config/adapters (@thechat/web)
+│   ├── desktop/              # Tauri 2 entry/native integrations (@thechat/desktop)
+│   │   ├── src/              # Native shell, bridges and legacy local-agent code
 │   │   └── src-tauri/        # Rust backend
 │   ├── api/                  # ElysiaJS REST + MCP server (@thechat/api, runs on Bun)
 │   │   └── src/
@@ -48,7 +52,9 @@ thechat/
 
 ### Desktop App (`packages/desktop/`)
 
-- **React 19 + TypeScript + Vite** — entry point at `src/main.tsx` → `src/App.tsx`
+- **React 19 + TypeScript + Vite** — `src/main.tsx` calls `@thechat/client`'s `mountClient`; web owns a separate `src/main.tsx` with the same shared mount.
+- **Shared client** (`packages/client/src/`) owns the router, chat UI, common stores, auth/network code and CSS. Import its package exports; never copy these modules into an app.
+- **Platform boundary** — client-owned typed `#platform-shell` / `#platform-services` declarations. Each app selects its implementation in Vite; no client imports/TS aliases to concrete apps. See `docs/web-client.md`.
 - **`src/core/`** — Chat engine, independent of React:
   - `types.ts` — Re-exports shared types from `@thechat/shared`, plus desktop-only types (`ToolDefinition`, `ChatLoopOptions`, `McpToolInfo`, `QuestionRequest`)
   - `openrouter.ts` — Streaming SSE client for OpenRouter API (`https://openrouter.ai/api/v1/chat/completions`)
@@ -86,7 +92,7 @@ thechat/
 
 All API calls from the desktop app to the backend **must** use [Eden Treaty](https://elysiajs.com/eden/treaty/overview.html), the type-safe REST client for ElysiaJS. Do not use raw `fetch` or other HTTP clients.
 
-- **Client setup:** `packages/desktop/src/lib/api.ts` creates a shared `api` client via `treaty<App>(API_URL)`
+- **Client setup:** `packages/client/src/lib/api.ts` creates a shared `api` client via `treaty<App>(API_URL)`
 - **Usage pattern:** `const { data, error } = await api.route.method(body, options)`
 - **Examples:**
   ```ts
@@ -109,7 +115,7 @@ All API calls from the desktop app to the backend **must** use [Eden Treaty](htt
 
 ## Testing
 
-- Frontend: Vitest with jsdom, globals enabled, setup in `packages/desktop/src/test-setup.ts` (clears Tauri mocks after each test)
+- Frontend: separate client/web/desktop Vitest suites with jsdom, globals enabled, setup in `packages/client/src/test-setup.ts` (clears Tauri mocks after each test)
 - Backend: Rust inline `#[cfg(test)]` modules in `db.rs` and `config.rs`
 - API: Bun test runner
 - Tests mock the Tauri IPC layer and OpenRouter API responses

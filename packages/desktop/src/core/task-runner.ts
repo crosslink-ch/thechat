@@ -1,7 +1,7 @@
 import { runChatLoop } from "./loop";
 import { useCodexAuthStore } from "../stores/codex-auth";
 import { getEffectiveConfig } from "../lib/effective-config";
-import type { StreamEvent, ToolDefinition } from "./types";
+import type { StreamEvent, ToolDefinition } from "@thechat/client/core/types";
 
 interface TaskRunnerConfig {
   availableTools: ToolDefinition[];

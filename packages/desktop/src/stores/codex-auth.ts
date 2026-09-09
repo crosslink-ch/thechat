@@ -9,7 +9,7 @@ import {
   extractAccountId,
   createBrowserAuthRequest,
 } from "../core/codex-auth";
-import { error as logError, info as logInfo, formatError } from "../log";
+import { error as logError, info as logInfo, formatError } from "@thechat/client/log";
 import { ProviderError } from "../core/errors";
 
 type CodexAuthStatus = "idle" | "opening_browser" | "waiting_browser" | "awaiting_code" | "polling" | "authenticated" | "error";

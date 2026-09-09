@@ -4,10 +4,10 @@ import { streamGlmCompletion } from "./glm";
 import { streamFeatherlessCompletion } from "./featherless";
 import { truncateToolResult } from "./truncate";
 import { isOverflow, compactMessages } from "./compaction";
-import { validateUiBlocks, formatUiErrorsForLlm } from "./ui-validation";
-import { error as logError, warn as logWarn, debug as logDebug, formatError } from "../log";
+import { validateUiBlocks, formatUiErrorsForLlm } from "@thechat/client/core/ui-validation";
+import { error as logError, warn as logWarn, debug as logDebug, formatError } from "@thechat/client/log";
 import { ProviderError } from "./errors";
-import type { ChatLoopOptions, StreamResult, ToolDefinition, StreamEvent } from "./types";
+import type { ChatLoopOptions, StreamResult, ToolDefinition, StreamEvent } from "@thechat/client/core/types";
 
 const DEFAULT_SYSTEM_PROMPT = `\
 You are a helpful assistant. \

@@ -6,7 +6,7 @@
  */
 
 import { invoke, Channel } from "@tauri-apps/api/core";
-import type { ChatParams, StreamEvent, StreamResult, ToolDefinition } from "./types";
+import type { ChatParams, StreamEvent, StreamResult, ToolDefinition } from "@thechat/client/core/types";
 import { getMaxOutputTokens } from "./models";
 import { ProviderError, type Provider } from "./errors";
 

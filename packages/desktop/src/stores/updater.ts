@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import type { Update } from "@tauri-apps/plugin-updater";
 import { checkForUpdates, disposeUpdate, downloadUpdate, installAndRelaunch } from "../lib/updater";
-import { error as logError, formatError } from "../log";
+import { error as logError, formatError } from "@thechat/client/log";
 
 interface UpdaterStore {
   update: Update | null;

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { QuestionPromptBlock } from "../ChatMessage";
-import type { QuestionRequest } from "../core/types";
+import type { QuestionRequest } from "@thechat/client/core/types";
 
 function makeRequest(
   overrides?: Partial<QuestionRequest>,

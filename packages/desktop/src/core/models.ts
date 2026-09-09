@@ -8,7 +8,7 @@
  * respecting both model capabilities and a global ceiling.
  */
 
-import { debug as logDebug, warn as logWarn } from "../log";
+import { debug as logDebug, warn as logWarn } from "@thechat/client/log";
 
 /** Global ceiling for output tokens across all models. */
 export const OUTPUT_TOKEN_MAX = 32_768;

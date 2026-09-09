@@ -13,7 +13,7 @@ vi.mock("../lib/updater", () => ({
   disposeUpdate: vi.fn(),
 }));
 
-vi.mock("../log", () => ({
+vi.mock("@thechat/client/log", () => ({
   info: vi.fn(),
   error: vi.fn(),
   formatError: (e: unknown) => String(e),

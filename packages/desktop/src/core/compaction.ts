@@ -9,8 +9,8 @@
  */
 
 import { getModelInfo, getMaxOutputTokens } from "./models";
-import { debug as logDebug, warn as logWarn, error as logError, formatError } from "../log";
-import type { StreamResult, StreamEvent } from "./types";
+import { debug as logDebug, warn as logWarn, error as logError, formatError } from "@thechat/client/log";
+import type { StreamResult, StreamEvent } from "@thechat/client/core/types";
 
 /** Token buffer reserved beyond maxOutputTokens to avoid overflow. */
 const COMPACTION_BUFFER = 20_000;

@@ -43,16 +43,16 @@ vi.mock("@tanstack/react-router", () => ({
 vi.mock("@tauri-apps/api/event", () => ({
   listen: vi.fn(() => Promise.resolve(vi.fn())),
 }));
-vi.mock("../log", () => ({
+vi.mock("@thechat/client/log", () => ({
   error: vi.fn(),
   formatError: (error: unknown) => String(error),
   info: mocks.logInfo,
   warn: vi.fn(),
 }));
-vi.mock("../core/skills", () => ({
+vi.mock("../core/skills/index", () => ({
   discoverSkills: vi.fn(() => Promise.resolve([])),
 }));
-vi.mock("../stores/auth", () => ({
+vi.mock("@thechat/client/stores/auth", () => ({
   useAuthStore: Object.assign(
     (selector: (state: typeof mocks.authState) => unknown) => selector(mocks.authState),
     { getState: () => mocks.authState },
@@ -63,12 +63,12 @@ vi.mock("../stores/codex-auth", () => ({
     getState: () => ({ initialize: mocks.initializeCodexAuth }),
   },
 }));
-vi.mock("../stores/conversations", () => ({
+vi.mock("@thechat/client/stores/conversations", () => ({
   useConversationsStore: {
     getState: () => ({ fetchConversations: mocks.fetchConversations }),
   },
 }));
-vi.mock("../stores/font-size", () => ({
+vi.mock("@thechat/client/stores/font-size", () => ({
   useFontSizeStore: {
     getState: () => ({ initialize: mocks.initializeFontSize }),
   },
@@ -81,12 +81,12 @@ vi.mock("../stores/updater", () => ({
     }),
   },
 }));
-vi.mock("../stores/websocket", () => ({
+vi.mock("@thechat/client/stores/websocket", () => ({
   useWebSocketStore: {
     getState: () => ({ connect: mocks.connect, disconnect: mocks.disconnect }),
   },
 }));
-vi.mock("../stores/workspaces", () => ({
+vi.mock("@thechat/client/stores/workspaces", () => ({
   useWorkspacesStore: {
     getState: () => ({
       initialize: mocks.initializeWorkspaces,
@@ -94,7 +94,7 @@ vi.mock("../stores/workspaces", () => ({
     }),
   },
 }));
-vi.mock("../stores/notifications", () => ({
+vi.mock("@thechat/client/stores/notifications", () => ({
   useNotificationsStore: {
     getState: () => ({
       fetchNotifications: mocks.fetchNotifications,
@@ -102,7 +102,7 @@ vi.mock("../stores/notifications", () => ({
     }),
   },
 }));
-vi.mock("../stores/activity", () => ({
+vi.mock("@thechat/client/stores/activity", () => ({
   useActivityStore: {
     getState: () => ({
       fetchActivity: mocks.fetchActivity,
@@ -110,36 +110,36 @@ vi.mock("../stores/activity", () => ({
     }),
   },
 }));
-vi.mock("../hooks/useKeybindings", () => ({ useKeybindings: vi.fn() }));
-vi.mock("../hooks/useCtrlWheelZoom", () => ({ useCtrlWheelZoom: vi.fn() }));
-vi.mock("../lib/ws-global-handlers", () => ({
+vi.mock("@thechat/client/hooks/useKeybindings", () => ({ useKeybindings: vi.fn() }));
+vi.mock("@thechat/client/hooks/useCtrlWheelZoom", () => ({ useCtrlWheelZoom: vi.fn() }));
+vi.mock("@thechat/client/lib/ws-global-handlers", () => ({
   registerGlobalWsHandlers: mocks.registerGlobalWsHandlers,
 }));
-vi.mock("../commands", () => ({
+vi.mock("@thechat/client/commands", () => ({
   createCommands: mocks.createCommands,
   useCommandsStore: { getState: () => ({ setCommands: mocks.setCommands }) },
 }));
 
-vi.mock("../components/Sidebar", () => ({ Sidebar: () => null }));
-vi.mock("../components/ChatHeader", () => ({ ChatHeader: () => null }));
+vi.mock("@thechat/client/components/Sidebar", () => ({ Sidebar: () => null }));
+vi.mock("@thechat/client/components/ChatHeader", () => ({ ChatHeader: () => null }));
 vi.mock("../components/WindowTitlebar", () => ({ WindowTitlebar: () => null }));
-vi.mock("../CommandPalette", () => ({ CommandPalette: () => null }));
+vi.mock("@thechat/client/CommandPalette", () => ({ CommandPalette: () => null }));
 vi.mock("../PermissionModePicker", () => ({ PermissionModePicker: () => null }));
 vi.mock("../components/CodexAuthModal", () => ({ CodexAuthModal: () => null }));
-vi.mock("../components/WorkspaceModal", () => ({ WorkspaceModal: () => null }));
-vi.mock("../components/ChannelModal", () => ({ ChannelModal: () => null }));
-vi.mock("../components/HermesBotModal", () => ({ HermesBotModal: () => null }));
+vi.mock("@thechat/client/components/WorkspaceModal", () => ({ WorkspaceModal: () => null }));
+vi.mock("@thechat/client/components/ChannelModal", () => ({ ChannelModal: () => null }));
+vi.mock("@thechat/client/components/HermesBotModal", () => ({ HermesBotModal: () => null }));
 vi.mock("../McpConfigDialog", () => ({ McpConfigDialog: () => null }));
 vi.mock("../components/UpdateToast", () => ({ UpdateToast: () => null }));
-vi.mock("../components/AuthModal", () => ({
+vi.mock("@thechat/client/components/AuthModal", () => ({
   AuthModal: () => null,
   AuthOnboarding: () => null,
 }));
-vi.mock("../components/ErrorBoundary", () => ({
+vi.mock("@thechat/client/components/ErrorBoundary", () => ({
   ErrorBoundary: ({ children }: { children: ReactNode }) => children,
 }));
 
-import { RootLayout } from "./__root";
+import { RootLayout } from "@thechat/client/routes/__root";
 
 describe("RootLayout desktop startup", () => {
   beforeEach(() => {

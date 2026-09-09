@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
-import { SHARED_ATTACHMENT_MAX_COUNT } from "./shared-attachments";
+import { SHARED_ATTACHMENT_MAX_COUNT } from "@thechat/client/lib/shared-attachments";
 
 const MEDIA_TYPE_BY_EXTENSION: Record<string, string> = {
   png: "image/png",

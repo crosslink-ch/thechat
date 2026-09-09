@@ -1,5 +1,5 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { toggleSidebar, useSidebarState } from "./Sidebar";
+import { toggleSidebar, useSidebarState } from "@thechat/client/components/Sidebar";
 
 function isTauriRuntime() {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;

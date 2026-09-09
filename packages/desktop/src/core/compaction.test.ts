@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { isOverflow, pruneToolResults, compactMessages } from "./compaction";
-import type { StreamResult, StreamEvent } from "./types";
+import type { StreamResult, StreamEvent } from "@thechat/client/core/types";
 
 describe("isOverflow", () => {
   it("returns true when tokens exceed the usable context limit", async () => {

@@ -1,5 +1,5 @@
 import { runTask } from "../task-runner";
-import type { ToolExecutionContext } from "../types";
+import type { ToolExecutionContext } from "@thechat/client/core/types";
 import { defineTool } from "./define";
 
 export const taskTool = defineTool({

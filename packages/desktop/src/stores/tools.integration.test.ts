@@ -19,7 +19,7 @@ import { mockIPC } from "@tauri-apps/api/mocks";
 import { treaty } from "@elysiajs/eden";
 import type { App } from "@thechat/api";
 import { useToolsStore } from "./tools";
-import type { McpToolInfo } from "../core/types";
+import type { McpToolInfo } from "@thechat/client/core/types";
 
 const INTEGRATION = process.env.INTEGRATION === "true";
 

@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { TodoPanel } from "./TodoPanel";
-import type { TodoItem } from "./core/types";
+import type { TodoItem } from "@thechat/client/core/types";
 
 const makeTodo = (overrides: Partial<TodoItem> & { id: string }): TodoItem => ({
   content: "Task",

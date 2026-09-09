@@ -1,4 +1,4 @@
-import type { ToolDefinition, ToolExecutionContext } from "../types";
+import type { ToolDefinition, ToolExecutionContext } from "@thechat/client/core/types";
 import { PermissionDeniedError } from "../permission";
 import { defineTool } from "./define";
 import { validateToolArgs } from "./validate";

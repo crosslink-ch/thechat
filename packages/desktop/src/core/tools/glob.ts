@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { ToolExecutionContext } from "../types";
+import type { ToolExecutionContext } from "@thechat/client/core/types";
 import { resolvePath } from "./resolve-path";
 import { defineTool } from "./define";
 

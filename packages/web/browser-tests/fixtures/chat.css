@@ -1,0 +1,4 @@
+@import "@thechat/client/styles";
+
+/* Shared production CSS scans client/src; include fixture-only utilities here. */
+@source "./chat.tsx";

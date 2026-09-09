@@ -15,3 +15,5 @@ export function usePlatformLifecycle(token: string | null) {
 export function PlatformDialogs() {
   return <><PermissionModePicker /><CodexAuthModal /><McpConfigDialog /></>;
 }
+
+export function PlatformNotificationSettings() { return null; }

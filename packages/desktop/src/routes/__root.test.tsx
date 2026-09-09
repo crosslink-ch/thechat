@@ -2,14 +2,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { Update } from "@tauri-apps/plugin-updater";
-import { RootView } from "./__root";
+import { RootView } from "@thechat/client/routes/__root";
 import { useUpdaterStore } from "../stores/updater";
 
 vi.mock("../components/WindowTitlebar", () => ({
   WindowTitlebar: () => <div data-testid="window-titlebar" />,
 }));
 
-vi.mock("../components/AuthModal", () => ({
+vi.mock("@thechat/client/components/AuthModal", () => ({
   AuthModal: () => null,
   AuthOnboarding: () => <div>Logged out</div>,
 }));
@@ -21,7 +21,7 @@ vi.mock("../lib/updater", () => ({
   disposeUpdate: vi.fn(),
 }));
 
-vi.mock("../log", () => ({
+vi.mock("@thechat/client/log", () => ({
   info: vi.fn(),
   error: vi.fn(),
   formatError: (error: unknown) => String(error),

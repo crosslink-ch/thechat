@@ -13,19 +13,19 @@ const mocks = vi.hoisted(() => ({
   resetUpdater: vi.fn(),
 }));
 
-vi.mock("./log", () => ({ info: mocks.logInfo }));
-vi.mock("./stores/auth", () => ({
+vi.mock("@thechat/client/log", () => ({ info: mocks.logInfo }));
+vi.mock("@thechat/client/stores/auth", () => ({
   useAuthStore: { getState: () => ({ initialize: mocks.initializeAuth }) },
 }));
 vi.mock("./stores/codex-auth", () => ({
   useCodexAuthStore: { getState: () => ({ initialize: mocks.initializeCodexAuth }) },
 }));
-vi.mock("./stores/conversations", () => ({
+vi.mock("@thechat/client/stores/conversations", () => ({
   useConversationsStore: {
     getState: () => ({ fetchConversations: mocks.fetchConversations }),
   },
 }));
-vi.mock("./stores/font-size", () => ({
+vi.mock("@thechat/client/stores/font-size", () => ({
   useFontSizeStore: { getState: () => ({ initialize: mocks.initializeFontSize }) },
 }));
 vi.mock("./stores/tools", () => ({

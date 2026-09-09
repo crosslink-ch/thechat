@@ -3,9 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { clearCredentialFields } from './fixtures';
 test.afterEach(async ({ page }) => clearCredentialFields(page));
 
-const apiURL = process.env.THECHAT_WEB_E2E_API_URL || 'http://127.0.0.1:13300';
-const webURL = process.env.THECHAT_WEB_E2E_URL || 'http://127.0.0.1:1420';
-const webHeaders = { origin: new URL(webURL).origin, 'x-thechat-client': 'web' };
+import { apiURL, webURL, webHeaders } from './environment.mjs';
 
 function identity() {
   return { name: 'Web acceptance', email: `web-${randomUUID()}@example.invalid`, password: `Web-${randomUUID()}-9!` };

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { runChatLoop } from "./loop";
-import type { StreamEvent, ToolDefinition } from "./types";
+import type { StreamEvent, ToolDefinition } from "@thechat/client/core/types";
 
 // Mock streamCompletion
 vi.mock("./openrouter", () => ({
