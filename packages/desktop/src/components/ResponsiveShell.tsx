@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useState, useSyncExternalStore, type ReactNode } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
+import { HeaderActionsProvider } from "./HeaderActions";
 
 export const MOBILE_NAV_QUERY = "(max-width: 1023px)";
 
@@ -31,25 +32,27 @@ export function ResponsiveShell({ navigation, children, routeKey }: {
     return () => window.removeEventListener("popstate", dismiss);
   }, []);
   return (
-    <NavigationContext.Provider value={{ mobile, open, close: () => setOpen(false) }}>
-      <Dialog.Root open={mobile && open} onOpenChange={setOpen}>
-        <div className="responsive-shell">
-          {mobile ? (
-            <Dialog.Portal>
-              <Dialog.Overlay className="mobile-drawer-overlay" />
-              <Dialog.Content className="mobile-drawer mobile-navigation" aria-describedby={undefined}>
-                <div className="mobile-drawer-heading">
-                  <Dialog.Title>Workspace navigation</Dialog.Title>
-                  <Dialog.Close className="mobile-touch-button" aria-label="Close navigation">✕</Dialog.Close>
-                </div>
-                <nav aria-label="Workspace navigation" className="mobile-navigation-content">{navigation}</nav>
-              </Dialog.Content>
-            </Dialog.Portal>
-          ) : navigation}
-          <div className="responsive-shell-main">{children}</div>
-        </div>
-      </Dialog.Root>
-    </NavigationContext.Provider>
+    <HeaderActionsProvider>
+      <NavigationContext.Provider value={{ mobile, open, close: () => setOpen(false) }}>
+        <Dialog.Root open={mobile && open} onOpenChange={setOpen}>
+          <div className="responsive-shell">
+            {mobile ? (
+              <Dialog.Portal>
+                <Dialog.Overlay className="mobile-drawer-overlay" />
+                <Dialog.Content className="mobile-drawer mobile-navigation" aria-describedby={undefined}>
+                  <div className="mobile-drawer-heading">
+                    <Dialog.Title>Workspace navigation</Dialog.Title>
+                    <Dialog.Close className="mobile-touch-button" aria-label="Close navigation">✕</Dialog.Close>
+                  </div>
+                  <nav aria-label="Workspace navigation" className="mobile-navigation-content">{navigation}</nav>
+                </Dialog.Content>
+              </Dialog.Portal>
+            ) : navigation}
+            <div className="responsive-shell-main">{children}</div>
+          </div>
+        </Dialog.Root>
+      </NavigationContext.Provider>
+    </HeaderActionsProvider>
   );
 }
 

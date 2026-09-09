@@ -66,18 +66,6 @@
   padding: 4px 12px;
   border-bottom: 1px solid var(--color-border);
 }
-.hermes-task-access {
-  flex-shrink: 0;
-  order: -1;
-  display: flex;
-  justify-content: flex-end;
-  padding: 2px 12px;
-  border-bottom: 1px solid var(--color-border-subtle);
-}
-.mobile-task-trigger {
-  padding: 0 12px;
-  color: var(--color-accent);
-}
 .mobile-task-drawer {
   left: auto;
   right: 0;
@@ -103,6 +91,7 @@
 @media (max-width: 1023px), (pointer: coarse) {
   .chat-header {
     min-height: 52px;
+    padding-inline: 8px;
   }
   .app-sidebar button, [data-message-reactions] button, [role="menu"] [role="menuitem"], [role="dialog"] button {
     min-width: 44px;

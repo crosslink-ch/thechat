@@ -14,7 +14,7 @@ it("provides the navigation entry point inside the mobile shell", () => {
   expect(screen.getByRole("button", {name:"Open navigation"})).toBeInTheDocument();
 });
 
-it("names the back action for screen readers and touch users", () => {
+it("does not offer arbitrary history navigation", () => {
   render(<ChatHeader />);
-  expect(screen.getByRole("button", { name: "Go back" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Go back" })).not.toBeInTheDocument();
 });

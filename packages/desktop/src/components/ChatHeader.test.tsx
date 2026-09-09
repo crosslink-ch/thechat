@@ -1,4 +1,4 @@
-import { act, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import {
   RouterProvider,
   createMemoryHistory,
@@ -6,20 +6,25 @@ import {
   createRoute,
   createRouter,
 } from "@tanstack/react-router";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { usePermissionModeStore } from "../stores/permission-mode";
-import { ChatHeader } from "./ChatHeader";
+import { useWorkspacesStore } from "../stores/workspaces";
+import { ChatHeader, setAgentChatTitle } from "./ChatHeader";
+import { ResponsiveShell } from "./ResponsiveShell";
+import { useSidebarState } from "./Sidebar";
 
-async function renderHeader(path: "/settings" | "/chat" | "/activity") {
+vi.mock("../platform/environment", () => ({ isWeb: true }));
+
+async function renderHeader(path: string, initialEntry = path) {
   const rootRoute = createRootRoute();
   const childRoute = createRoute({
     getParentRoute: () => rootRoute,
     path,
-    component: ChatHeader,
+    component: () => <ResponsiveShell navigation={<p>Channels</p>} routeKey={initialEntry}><ChatHeader /></ResponsiveShell>,
   });
   const router = createRouter({
     routeTree: rootRoute.addChildren([childRoute]),
-    history: createMemoryHistory({ initialEntries: [path] }),
+    history: createMemoryHistory({ initialEntries: [initialEntry] }),
   });
 
   await act(async () => {
@@ -27,29 +32,65 @@ async function renderHeader(path: "/settings" | "/chat" | "/activity") {
   });
 }
 
+const pages = [
+  ["/", "Acme"],
+  ["/settings", "Settings"],
+  ["/activity", "Activity"],
+  ["/notifications", "Notifications"],
+  ["/workspace/manage", "Workspace settings"],
+  ["/bots/manage", "Bots"],
+];
+
 beforeEach(() => {
   usePermissionModeStore.setState({ mode: "bypass" });
+  useSidebarState.setState({ open: true });
+  useWorkspacesStore.setState({ activeWorkspace: {
+    name: "Acme", channels: [{ id: "general", name: "general" }], members: [],
+  } as any });
+  setAgentChatTitle("");
 });
+afterEach(() => vi.unstubAllGlobals());
 
-describe("ChatHeader settings visibility", () => {
-  it("does not show Agent Chat permission state on Settings", async () => {
+describe("ChatHeader contextual identity", () => {
+  it.each(pages)("omits the duplicate desktop heading on %s", async (path) => {
+    await renderHeader(path);
+    expect(document.querySelector(".chat-header")).not.toBeInTheDocument();
+    expect(screen.queryByText("Bypass")).not.toBeInTheDocument();
+  });
+
+  it.each(pages)("keeps a labelled navigation entry on mobile %s", async (path, label) => {
+    vi.stubGlobal("matchMedia", () => ({ matches: true, addEventListener: vi.fn(), removeEventListener: vi.fn() }));
+    await renderHeader(path);
+    expect(screen.getByText(label)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Open navigation" })).toBeInTheDocument();
+    expect(screen.queryByText("Bypass")).not.toBeInTheDocument();
+  });
+
+  it("lets desktop web users recover a collapsed sidebar even on page routes", async () => {
+    useSidebarState.setState({ open: false });
     await renderHeader("/settings");
-
-    expect(screen.getByText("Settings")).toBeInTheDocument();
-    expect(screen.queryByText("Bypass")).not.toBeInTheDocument();
-    expect(screen.queryByText("Allow Edits")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Open sidebar" }));
+    expect(useSidebarState.getState().open).toBe(true);
+    expect(document.querySelector(".chat-header")).not.toBeInTheDocument();
   });
 
-  it("keeps permission state available to the retained internal Agent Chat route", async () => {
+  it("shows a channel name as the primary identity and follows renames", async () => {
+    await renderHeader("/channel/$id", "/channel/general");
+    expect(screen.getByText("general")).toHaveClass("font-semibold", "text-text", "truncate");
+    act(() => useWorkspacesStore.setState({ activeWorkspace: {
+      ...useWorkspacesStore.getState().activeWorkspace!, channels: [{ id: "general", name: "renamed" }],
+    } as any }));
+    expect(screen.getByText("renamed")).toBeInTheDocument();
+    expect(screen.queryByText("general")).not.toBeInTheDocument();
+  });
+
+  it.each([['bypass', 'Bypass'], ['allow-edits', 'Allow Edits']] as const)("keeps %s warnings with the retained agent title", async (mode, label) => {
+    usePermissionModeStore.setState({ mode });
+    setAgentChatTitle("Fix the failing build");
     await renderHeader("/chat");
-
-    expect(screen.getByText("Bypass")).toBeInTheDocument();
-  });
-
-  it("labels the cross-workspace inbox as Activity", async () => {
-    await renderHeader("/activity");
-
-    expect(screen.getByText("Activity")).toBeInTheDocument();
-    expect(screen.queryByText("Bypass")).not.toBeInTheDocument();
+    expect(screen.getByText("Fix the failing build")).toBeInTheDocument();
+    expect(screen.getByText(label)).toBeInTheDocument();
+    act(() => setAgentChatTitle("Updated chat title"));
+    expect(screen.getByText("Updated chat title")).toBeInTheDocument();
   });
 });

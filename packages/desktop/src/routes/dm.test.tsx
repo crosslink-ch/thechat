@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import {
   RouterProvider,
   createMemoryHistory,
@@ -23,6 +23,8 @@ const mocks = vi.hoisted(() => ({
   submitHermesInteraction: vi.fn(),
   threads: [] as any[],
   messageQueryStale: false,
+  participantName: "Hermes",
+  participantKind: "hermes" as string | undefined,
 }));
 
 vi.mock("../stores/auth", () => ({
@@ -64,8 +66,8 @@ vi.mock("../hooks/useConversationDetail", () => ({
         },
         {
           userId: "bot-user-1",
-          user: { id: "bot-user-1", name: "Hermes", type: "bot" },
-          bot: { id: "bot-1", kind: "hermes", commands: [] },
+          user: { id: "bot-user-1", name: mocks.participantName, type: mocks.participantKind ? "bot" : "human" },
+          bot: mocks.participantKind ? { id: "bot-1", kind: mocks.participantKind, commands: [] } : undefined,
         },
       ],
     },
@@ -221,6 +223,7 @@ vi.mock("../components/HermesRuntimePanel", () => ({
 }));
 
 import { DmRoute } from "./dm";
+import { ChatHeader } from "../components/ChatHeader";
 import { useComposerDraftsStore } from "../stores/composer-drafts";
 
 const persistedThread = {
@@ -234,7 +237,7 @@ const persistedThread = {
   lastActivityAt: "2026-07-27T00:00:00.000Z",
 };
 
-async function renderRoute(initialEntry = "/dm/dm-1") {
+async function renderRoute(initialEntry = "/dm/dm-1", withHeader = false) {
   const rootRoute = createRootRoute();
   const dmRoute = createRoute({
     getParentRoute: () => rootRoute,
@@ -242,7 +245,7 @@ async function renderRoute(initialEntry = "/dm/dm-1") {
     validateSearch: (search: Record<string, unknown>) => ({
       threadId: typeof search.threadId === "string" ? search.threadId : undefined,
     }),
-    component: DmRoute,
+    component: () => <>{withHeader && <ChatHeader />}<DmRoute /></>,
   });
   const router = createRouter({
     routeTree: rootRoute.addChildren([dmRoute]),
@@ -266,11 +269,45 @@ beforeEach(() => {
   });
   mocks.threads = [];
   mocks.messageQueryStale = false;
+  mocks.participantName = "Hermes";
+  mocks.participantKind = "hermes";
   mocks.createThread.mockResolvedValue(persistedThread);
   mocks.addOptimisticSentMessage.mockReturnValue("client-message-1");
 });
 
 describe("DmRoute deferred Hermes task drafts", () => {
+  it("shows the actual participant and follows the selected task in the header", async () => {
+    mocks.threads = [persistedThread];
+    await renderRoute("/dm/dm-1", true);
+    const header = within(document.querySelector(".chat-header")! as HTMLElement);
+    expect(header.getByText("Hermes")).toBeInTheDocument();
+    expect(header.getByText("General")).toBeInTheDocument();
+    expect(header.queryByText("Direct Message")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: persistedThread.title }));
+    expect(header.getByText(persistedThread.title)).toBeInTheDocument();
+    mocks.threads = [{ ...persistedThread, title: "Renamed task" }];
+    mocks.participantName = "Hermes Research";
+    fireEvent.click(screen.getByRole("button", { name: "General" }));
+    fireEvent.click(screen.getByRole("button", { name: "Renamed task" }));
+    expect(header.getByText("Renamed task")).toBeInTheDocument();
+    expect(header.getByText("Hermes Research")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "New task" }));
+    expect(header.getByText("New task")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "General" }));
+    expect(header.getByText("General")).toBeInTheDocument();
+  });
+
+  it.each([["Ada", undefined], ["Deploy bot", "webhook"]])("names a %s DM without Hermes task context", async (name, kind) => {
+    mocks.participantName = name!;
+    mocks.participantKind = kind;
+    await renderRoute("/dm/dm-1", true);
+    const header = within(screen.getByRole("banner", { name: "Conversation header" }));
+    expect(header.getByText(name!)).toBeInTheDocument();
+    expect(header.queryByText("General")).not.toBeInTheDocument();
+    expect(header.queryByText("Direct Message")).not.toBeInTheDocument();
+  });
+
   it("restores a typed New task draft after selecting another task", async () => {
     mocks.threads = [persistedThread];
     await renderRoute();
