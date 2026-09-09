@@ -110,7 +110,7 @@ export function RootView({ authLoading, authenticated, userId = null, routeKey =
         </>
       )}
       <PlatformUpdateToast />
-      <ReleaseNotesHost userId={!import.meta.env.DEV && !authLoading && authenticated ? userId : null} />
+      <ReleaseNotesHost userId={!authLoading && authenticated ? userId : null} autoShow={!import.meta.env.DEV} />
     </AppViewport>
   );
 }

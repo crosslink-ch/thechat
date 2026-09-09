@@ -9,26 +9,28 @@ import { releaseNotesCatalog, shippedReleaseVersion, type ReleaseNote } from "..
 
 interface ReleaseNotesHostProps {
   userId: string | null;
+  autoShow?: boolean;
   version?: string;
   catalog?: readonly ReleaseNote[];
   seen?: typeof releaseNotesSeen;
 }
 
 /** Kept at the app root, not the route, so navigating cannot reopen a release. */
-export function ReleaseNotesHost({ userId, version = shippedReleaseVersion, catalog = releaseNotesCatalog, seen = releaseNotesSeen }: ReleaseNotesHostProps) {
+export function ReleaseNotesHost({ userId, autoShow = true, version = shippedReleaseVersion, catalog = releaseNotesCatalog, seen = releaseNotesSeen }: ReleaseNotesHostProps) {
   const request = useReleaseNotesStore((state) => state.request);
   const [automatic, setAutomatic] = useState<{ userId: string; version: string } | null>(null);
-  const eligible = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(version)
+  const eligible = autoShow && /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(version)
     && catalog.some((entry) => entry.version === version && entry.body.trim());
   useEffect(() => {
-    setAutomatic(userId && eligible && !seen.hasSeen(userId, version) ? { userId, version } : null);
+    setAutomatic(userId && eligible && !seen.isAutomaticDisabled(userId) && !seen.hasSeen(userId, version) ? { userId, version } : null);
   }, [userId, version, eligible, seen]);
   // Reject stale identity/version state before the effect runs on logout/switch.
-  const active = automatic?.userId === userId && automatic?.version === version ? automatic : null;
+  const active = autoShow && automatic?.userId === userId && automatic?.version === version ? automatic : null;
   if (!request && !active) return null;
   const preview = request?.kind === "preview" ? request.preview : undefined;
   const close = () => {
     if (request) {
+      if (userId && seen.isAutomaticDisabled(userId)) setAutomatic(null);
       closeReleaseNotes();
       return;
     }
@@ -36,21 +38,26 @@ export function ReleaseNotesHost({ userId, version = shippedReleaseVersion, cata
     setAutomatic(null);
   };
   return <ReleaseNotesDialog
-    key={request ? `${request.kind}:${preview?.version ?? version}` : `automatic:${userId}:${version}`}
+    key={request ? `${request.kind}:${userId}:${preview?.version ?? version}` : `automatic:${userId}:${version}`}
     version={preview?.version ?? version}
     catalog={catalog}
+    userId={userId}
+    seen={seen}
     preview={preview}
     onClose={close}
   />;
 }
 
-function ReleaseNotesDialog({ version, catalog, preview, onClose }: {
+function ReleaseNotesDialog({ version, catalog, userId, seen, preview, onClose }: {
   version: string;
   catalog: readonly ReleaseNote[];
+  userId: string | null;
+  seen: typeof releaseNotesSeen;
   preview?: ReleaseNotesPreview;
   onClose: () => void;
 }) {
   const [selectedVersion, setSelectedVersion] = useState(version);
+  const [automaticDisabled, setAutomaticDisabled] = useState(() => userId ? seen.isAutomaticDisabled(userId) : false);
   const [returnFocus] = useState(() => document.activeElement instanceof HTMLElement ? document.activeElement : null);
   const note = preview ? undefined : catalog.find((entry) => entry.version === selectedVersion);
   const body = preview ? preview.body : note?.body;
@@ -95,6 +102,24 @@ function ReleaseNotesDialog({ version, catalog, preview, onClose }: {
               <Markdown content={body} />
             </article> : <p className="text-sm text-text-muted">Release notes are not available for this version.</p>}
           </div>
+          {userId && <footer className="shrink-0 border-t border-border p-5">
+            <label className="flex cursor-pointer items-start gap-2.5 text-sm text-text">
+              <input
+                type="checkbox"
+                className="mt-0.5 size-4 shrink-0 accent-accent"
+                checked={automaticDisabled}
+                onChange={(event) => {
+                  const disabled = event.target.checked;
+                  seen.setAutomaticDisabled(userId, disabled);
+                  setAutomaticDisabled(disabled);
+                }}
+              />
+              <span>Don't show release notes automatically</span>
+            </label>
+            <p className="mt-2 text-xs leading-relaxed text-text-muted">
+              Applies to your account on this browser or device. You can always open What's new from Settings and change this preference here.
+            </p>
+          </footer>}
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>

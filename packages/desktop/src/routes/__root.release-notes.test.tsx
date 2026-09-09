@@ -30,6 +30,7 @@ it("does not automatically show release notes in a development build but keeps m
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   act(() => openReleaseNotes());
   expect(screen.getByText("Root release notes.")).toBeInTheDocument();
+  expect(screen.getByRole("checkbox", { name: "Don't show release notes automatically" })).toBeInTheDocument();
 });
 
 it("gates the installed prompt on resolved authentication, not just cached identity", async () => {

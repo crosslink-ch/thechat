@@ -66,6 +66,7 @@ jobs:
         run: >-
           pnpm --filter @thechat/desktop exec vitest run
           src/components/ReleaseNotes.test.tsx
+          src/components/ReleaseNotes.preferences.test.tsx
           src/lib/release-notes-state.test.ts
           src/lib/release-notes.test.ts
           src/routes/__root.release-notes.test.tsx

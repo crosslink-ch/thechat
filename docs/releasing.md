@@ -43,7 +43,14 @@ it does not invent historical or future versions.
 - After sign-in, a shipped stable version can show its notes once per account on
   that browser/device. Dismissing the dialog acknowledges only that installed
   version. Clearing local app storage can cause the notice to appear again.
-- Notes remain accessible from Settings and the command palette after dismissal.
+- The dialog includes **Don't show release notes automatically**. This opt-out
+  persists per account on the current browser/device and suppresses future
+  automatic notices, not just the currently displayed release. If storage is
+  blocked/full, it is retained for the current session.
+- Notes remain accessible from Settings and the command palette after dismissal
+  or opting out. Uncheck the preference in the manually opened dialog to allow
+  future automatic notices again. Development builds also allow managing this
+  preference without automatically displaying release notes.
 - The desktop update notification can preview the **available update's** notes
   without installing it or acknowledging that version as already seen. The
   existing explicit restart action is unchanged.
@@ -59,3 +66,18 @@ For web deployments, `deploy/web/Dockerfile` explicitly copies
 `release-notes.json` from its allowlisted root workspace context. Catalog changes
 also trigger the Web Docker Image workflow. Rebuild/deploy the web image
 from the release commit to ship its updated catalog.
+
+
+## Manual review fixture
+
+Run `pnpm --filter @thechat/desktop dev:web` and open
+`http://localhost:1420/browser-tests/fixtures/release-notes-review.html`.
+This isolated fixture uses the real dialog and local preference store, but no
+account or backend. It deliberately simulates production notices in development.
+Use **Show release notes**, **Simulate another release**, **Reload preview**, and
+**Reset demo** to check the opt-out and re-enable flow. Simulated entries are
+explicitly labelled and do not modify the release catalog or a real account.
+
+Keep Vite bound to loopback. For a remote human review, build this HTML entry
+with Vite in web mode and serve only its compiled output through a temporary,
+access-controlled preview URL; do not publish the development source server.

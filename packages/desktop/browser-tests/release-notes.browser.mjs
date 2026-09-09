@@ -93,3 +93,52 @@ for (const [engineName, engine] of Object.entries({ chromium, webkit })) {
     }
   });
 }
+
+
+for (const [engineName, engine] of Object.entries({ chromium, webkit })) {
+  test(`${engineName}: permanent opt-out in the manual review preview`, async (t) => {
+    const browser = await engine.launch();
+    t.after(() => browser.close());
+    for (const width of [1280, 390]) {
+      await t.test(`${width}px`, async () => {
+        const page = await browser.newPage({ viewport: { width, height: 800 } });
+        try {
+          const errors = [];
+          page.on("pageerror", (error) => errors.push(error.message));
+          await page.goto(`${baseUrl}/browser-tests/fixtures/release-notes-review.html`);
+          const dialog = page.getByRole("dialog", { name: "What's new", exact: true });
+          await dialog.waitFor();
+          const checkbox = page.getByRole("checkbox", { name: "Don't show release notes automatically" });
+          assert.equal(await checkbox.isChecked(), false);
+          const bounds = await checkbox.boundingBox();
+          assert.ok(bounds.x >= 0 && bounds.y >= 0 && bounds.x + bounds.width <= width && bounds.y + bounds.height <= 800);
+          await checkbox.check();
+          assert.ok(await dialog.isVisible());
+          if (artifacts) await page.screenshot({ path: `${artifacts}/${engineName}-${width}-optout.png` });
+          await page.keyboard.press("Escape");
+          await page.getByRole("button", { name: "Simulate another release" }).click();
+          await settle(page);
+          assert.equal(await page.getByRole("dialog").count(), 0);
+          await page.reload();
+          await page.getByRole("heading", { name: "Release notes review", exact: true }).waitFor();
+          await settle(page);
+          assert.equal(await page.getByRole("dialog").count(), 0);
+          await page.getByRole("button", { name: "Show release notes", exact: true }).click();
+          await dialog.waitFor();
+          assert.equal(await checkbox.isChecked(), true);
+          await checkbox.uncheck();
+          await page.keyboard.press("Escape");
+          await page.getByRole("button", { name: "Simulate another release" }).click();
+          await dialog.waitFor();
+          assert.equal(await checkbox.isChecked(), false);
+          await page.keyboard.press("Escape");
+          await page.getByRole("button", { name: "Reset demo" }).click();
+          await dialog.waitFor();
+          assert.equal(await checkbox.isChecked(), false);
+          assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+          assert.deepEqual(errors, []);
+        } finally { await page.close(); }
+      });
+    }
+  });
+}
