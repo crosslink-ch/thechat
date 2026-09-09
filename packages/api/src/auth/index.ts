@@ -1,4 +1,5 @@
 import crypto from "crypto";
+import { browserAuthPolicy, browserSessionCookie, isWebClient } from "./browser";
 import { Elysia } from "elysia";
 import { and, eq, sql } from "drizzle-orm";
 import { z } from "zod";
@@ -11,6 +12,7 @@ import {
   isEmailVerificationRequired,
 } from "./better-auth";
 import {
+  requestSessionToken,
   resolveSessionTokenToHumanUser,
   resolveTokenToUser,
 } from "./middleware";
@@ -116,11 +118,6 @@ function formatZodError(error: z.ZodError): string {
   return error.issues[0]?.message ?? "Invalid input";
 }
 
-function extractBearerToken(headers: Record<string, string | undefined>) {
-  const authHeader = headers.authorization;
-  if (!authHeader?.startsWith("Bearer ")) return null;
-  return authHeader.slice(7);
-}
 
 function authErrorMessage(data: unknown, fallback: string) {
   if (!data || typeof data !== "object") return fallback;
@@ -337,16 +334,18 @@ async function findPublicUserByEmail(email: string) {
   return user ?? null;
 }
 
-async function authResponseForEmail(email: string, token: string) {
+async function authResponseForEmail(email: string, token: string, headers: Record<string, string | undefined>, set: { headers: Record<string, unknown> }) {
   const user = await findPublicUserByEmail(email);
   if (!user || user.type !== "human") {
     throw new Error("Better Auth returned a session for a missing human user");
   }
 
-  return {
-    accessToken: token,
-    user: publicUser(user),
-  };
+  if (isWebClient(headers)) {
+    set.headers["set-cookie"] = browserSessionCookie(token, headers.origin);
+    set.headers["cache-control"] = "no-store";
+    return { user: publicUser(user) };
+  }
+  return { accessToken: token, user: publicUser(user) };
 }
 
 async function revokeSessionToken(token: string) {
@@ -371,6 +370,7 @@ async function revokeSessionToken(token: string) {
 }
 
 export const authRoutes = new Elysia({ prefix: "/auth" })
+  .use(browserAuthPolicy)
   .onError(({ error, set }) => {
     authRouteLog.error({ err: error }, "Authentication route failed");
     set.status = 503;
@@ -452,7 +452,7 @@ export const authRoutes = new Elysia({ prefix: "/auth" })
       return authServiceUnavailable;
     }
 
-    return authResponseForEmail(email, result.token);
+    return authResponseForEmail(email, result.token, headers, set);
   })
 
   .post("/login", async ({ body, set, headers, request, server }) => {
@@ -499,7 +499,7 @@ export const authRoutes = new Elysia({ prefix: "/auth" })
       return { error: "Invalid email or password" };
     }
 
-    return authResponseForEmail(email, result.token);
+    return authResponseForEmail(email, result.token, headers, set);
   })
 
   .post("/verify-email", async ({ body, set, headers, request, server }) => {
@@ -578,7 +578,7 @@ export const authRoutes = new Elysia({ prefix: "/auth" })
       return authServiceUnavailable;
     }
 
-    return authResponseForEmail(email, result.token);
+    return authResponseForEmail(email, result.token, headers, set);
   })
 
   .post(
@@ -755,7 +755,7 @@ export const authRoutes = new Elysia({ prefix: "/auth" })
   )
 
   .post("/personal-access-tokens", async ({ body, headers, set }) => {
-    const token = extractBearerToken(headers);
+    const token = requestSessionToken(headers);
     if (!token || !(await resolveSessionTokenToHumanUser(token))) {
       set.status = 401;
       return { error: "Authentication required" };
@@ -779,7 +779,7 @@ export const authRoutes = new Elysia({ prefix: "/auth" })
   })
 
   .get("/personal-access-tokens", async ({ headers, set }) => {
-    const token = extractBearerToken(headers);
+    const token = requestSessionToken(headers);
     if (!token || !(await resolveSessionTokenToHumanUser(token))) {
       set.status = 401;
       return { error: "Authentication required" };
@@ -799,7 +799,7 @@ export const authRoutes = new Elysia({ prefix: "/auth" })
   .delete(
     "/personal-access-tokens/:tokenId",
     async ({ params, headers, set }) => {
-      const token = extractBearerToken(headers);
+      const token = requestSessionToken(headers);
       if (!token || !(await resolveSessionTokenToHumanUser(token))) {
         set.status = 401;
         return { error: "Authentication required" };
@@ -824,13 +824,15 @@ export const authRoutes = new Elysia({ prefix: "/auth" })
   )
 
   .get("/me", async ({ headers, set }) => {
-    const token = extractBearerToken(headers);
+    const token = requestSessionToken(headers);
     if (!token) {
       set.status = 401;
       return { error: "Authentication required" };
     }
 
-    const user = await resolveTokenToUser(token);
+    const user = isWebClient(headers)
+      ? await resolveSessionTokenToHumanUser(token)
+      : await resolveTokenToUser(token);
     if (!user) {
       set.status = 401;
       return { error: "Authentication required" };
@@ -846,7 +848,7 @@ export const authRoutes = new Elysia({ prefix: "/auth" })
       return { error: formatZodError(parsed.error) };
     }
 
-    const token = extractBearerToken(headers);
+    const token = requestSessionToken(headers);
     if (!token) {
       set.status = 401;
       return { error: "Authentication required" };
@@ -855,7 +857,7 @@ export const authRoutes = new Elysia({ prefix: "/auth" })
     const sessionUser = await resolveSessionTokenToHumanUser(token);
     const currentUser =
       sessionUser ??
-      (await resolveTokenToUser(token, { includeBotTokens: false }));
+      (!isWebClient(headers) ? await resolveTokenToUser(token, { includeBotTokens: false }) : null);
     if (!currentUser) {
       set.status = 401;
       return { error: "Authentication required" };
@@ -937,8 +939,9 @@ export const authRoutes = new Elysia({ prefix: "/auth" })
     return { user };
   })
 
-  .post("/logout", async ({ headers }) => {
-    const token = extractBearerToken(headers);
+  .post("/logout", async ({ headers, set }) => {
+    const token = requestSessionToken(headers);
     if (token) await revokeSessionToken(token);
+    if (isWebClient(headers)) set.headers["set-cookie"] = browserSessionCookie("", headers.origin);
     return { success: true };
   });

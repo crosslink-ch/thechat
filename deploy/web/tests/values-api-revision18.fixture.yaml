@@ -1,0 +1,29 @@
+# NON-SECRET TEST FIXTURE of operator-supplied revision-18 facts.
+# Not the full live values export and NEVER a production installation recipe.
+image:
+  repository: ghcr.io/crosslink-ch/thechat-api
+  tag: sha-1776991
+  pullPolicy: Always
+migrateImage:
+  repository: ghcr.io/crosslink-ch/thechat-api-migrate
+  tag: sha-1776991
+  pullPolicy: Always
+databaseSecret: thechat-db-v3
+betterAuthSecret: thechat-better-auth
+smtpSecret: thechat-smtp
+env:
+  REQUIRE_EMAIL_VERIFICATION: "true"
+  EMAIL_PROVIDER: smtp
+  BETTER_AUTH_URL: https://thechat.testkopie.dev
+  THECHAT_BACKEND_URL: https://thechat.testkopie.dev
+  TEST_EXISTING_ENV: preserve-me
+ingress:
+  enabled: true
+  className: traefik
+  annotations: {}
+  hosts:
+    - host: thechat.testkopie.dev
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []

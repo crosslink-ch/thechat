@@ -241,7 +241,8 @@ class ProductionAttachmentTemplateTests(unittest.TestCase):
 
     def test_production_cors_is_minimal_and_packaged_desktop_only(self) -> None:
         bucket = self.resources["AttachmentsBucket"]["Properties"]
-        rules = bucket["CorsConfiguration"]["CorsRules"]
+        # Evaluate the optional rule as disabled: default behavior is unchanged.
+        rules = [rule for rule in bucket["CorsConfiguration"]["CorsRules"] if "If" not in rule]
 
         self.assertEqual(len(rules), 1)
         self.assertEqual(
@@ -267,6 +268,27 @@ class ProductionAttachmentTemplateTests(unittest.TestCase):
             ),
             "A Tauri HTTPS-scheme change requires a reviewed CORS update",
         )
+
+    def test_optional_browser_origin_is_exact_and_does_not_change_desktop_cors(self) -> None:
+        parameter = self.template["Parameters"].get("BrowserOrigin")
+        self.assertIsNotNone(parameter, "Missing optional production browser origin")
+        self.assertEqual(parameter["Type"], "String")
+        self.assertEqual(parameter["Default"], "")
+        self.assertEqual(parameter["AllowedValues"], ["", "https://thechat.pranexa.com"])
+        self.assertEqual(self.template["Conditions"]["HasBrowserOrigin"],
+                         {"Not": [{"Equals": [{"Ref": "BrowserOrigin"}, ""]}]})
+        rules = self.resources["AttachmentsBucket"]["Properties"]["CorsConfiguration"]["CorsRules"]
+        self.assertEqual(len(rules), 2)
+        condition, enabled, disabled = rules[1]["If"]
+        self.assertEqual(condition, "HasBrowserOrigin")
+        self.assertEqual(disabled, {"Ref": "AWS::NoValue"})
+        self.assertEqual(enabled, {
+            "Id": "TheChatBrowserClient",
+            "AllowedOrigins": [{"Ref": "BrowserOrigin"}],
+            "AllowedMethods": ["GET", "PUT"],
+            "AllowedHeaders": ["Content-Type", "If-None-Match", "x-amz-checksum-sha256"],
+            "MaxAge": 300,
+        })
 
     def test_storage_is_private_versioned_retained_and_bounded(self) -> None:
         bucket_resource = self.resources["AttachmentsBucket"]

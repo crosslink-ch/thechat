@@ -411,6 +411,7 @@ describe("useHermesIndicatorsStore", () => {
           ],
         },
         {},
+        {},
       );
 
       expect(store().pendingClarifications).toEqual([
@@ -434,7 +435,7 @@ describe("useHermesIndicatorsStore", () => {
         ],
       };
 
-      store().seedFromSnapshot("conv-1", snapshot, {});
+      store().seedFromSnapshot("conv-1", snapshot, {}, {});
 
       expect(store().pendingApprovals.map((p) => p.eventId)).toEqual(["evt-1"]);
       expect(store().pendingApprovals[0]).toMatchObject({
@@ -450,9 +451,38 @@ describe("useHermesIndicatorsStore", () => {
         events: [makeEvent({ id: "evt-1" })],
       };
 
-      store().seedFromSnapshot("conv-1", snapshot, { "evt-1": "once" });
+      store().seedFromSnapshot("conv-1", snapshot, { "evt-1": "once" }, {});
 
       expect(store().pendingApprovals).toEqual([]);
+    });
+
+    it("does not restore a locally answered clarification from a stale snapshot", () => {
+      const request = makeEvent({
+        id: "clarify-other",
+        type: "clarify.request",
+        status: "waiting",
+        payload: {
+          requestId: "request-other",
+          sessionKey: "session-other",
+          question: "Choose a deployment region",
+          choices: ["US", "EU"],
+          multiSelect: false,
+          allowOther: true,
+        },
+      });
+      const snapshot = {
+        invocations: [makeInvocation({ status: "claimed" })],
+        events: [request],
+      };
+
+      store().seedFromSnapshot(
+        "conv-1",
+        snapshot,
+        {},
+        { [request.id]: "Asia Pacific" },
+      );
+
+      expect(store().pendingClarifications).toEqual([]);
     });
 
     it("replaces previously seeded approvals for the same conversation but keeps other conversations", () => {
@@ -466,6 +496,7 @@ describe("useHermesIndicatorsStore", () => {
           events: [makeEvent({ id: "evt-1" })],
         },
         {},
+        {},
       );
 
       store().seedFromSnapshot(
@@ -474,6 +505,7 @@ describe("useHermesIndicatorsStore", () => {
           invocations: [makeInvocation({ status: "claimed" })],
           events: [makeEvent({ id: "evt-2" })],
         },
+        {},
         {},
       );
 
@@ -490,6 +522,7 @@ describe("useHermesIndicatorsStore", () => {
           invocations: [makeInvocation({ status: "claimed" })],
           events: [makeEvent({ type: "tool.started" })],
         },
+        {},
         {},
       );
 

@@ -1,0 +1,25 @@
+# Public configuration only. Deploy as a NEW thechat-web release, never over API.
+# Required at rollout: --set-string image.digest=sha256:<verified published digest>.
+production: true
+image:
+  repository: ghcr.io/crosslink-ch/thechat-web
+  tag: ""
+  digest: ""
+  pullPolicy: IfNotPresent
+ingress:
+  enabled: true
+  className: traefik
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+  host: thechat.pranexa.com
+  tlsSecretName: thechat-web-pranexa-tls
+# This storage-only host is not an application scheduling target.
+affinity:
+  nodeAffinity:
+    requiredDuringSchedulingIgnoredDuringExecution:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - key: kubernetes.io/hostname
+              operator: NotIn
+              values:
+                - cl-agent-storage-vbe

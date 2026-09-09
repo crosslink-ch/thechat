@@ -15,7 +15,7 @@ initDesktopObservability();
 
 // Connect to standalone React DevTools in development (non-blocking).
 // Vite tree-shakes this entire block out of production builds.
-if (import.meta.env.DEV) {
+if (import.meta.env.DEV && !__WEB_BUILD__) {
   const controller = new AbortController();
   setTimeout(() => controller.abort(), 300);
   fetch("http://localhost:8097", { signal: controller.signal, mode: "no-cors" })

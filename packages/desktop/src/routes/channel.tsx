@@ -6,6 +6,7 @@ import { useConversationsStore } from "../stores/conversations";
 import { useWorkspacesStore } from "../stores/workspaces";
 import { composerDraftKey } from "../stores/composer-drafts";
 import { useChannelChat } from "../hooks/useChannelChat";
+import { usePersistConversationRead } from "../hooks/usePersistConversationRead";
 import { ChannelChatView } from "../components/ChannelChatView";
 import { wsEvents, type WsEvents } from "../lib/ws-events";
 
@@ -30,6 +31,11 @@ export function ChannelRoute() {
     wsSendMessage,
     selfUser: user,
   });
+  usePersistConversationRead(
+    channelId,
+    channelChat.messages,
+    !channelChat.loading,
+  );
 
   const channelChatRef = useRef(channelChat);
   channelChatRef.current = channelChat;
@@ -108,6 +114,7 @@ export function ChannelRoute() {
           typingUsers={typingUsers}
           onSend={channelChat.sendMessage}
           onLoadOlderMessages={channelChat.loadOlderMessages}
+          onSetReaction={channelChat.setReaction}
           mentions={mentions}
           scrollKey={channelId}
           draftKey={composerDraftKey.channel(user?.id, channelId)}

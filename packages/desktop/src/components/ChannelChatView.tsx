@@ -1,3 +1,4 @@
+import { isAuthenticated } from "../lib/auth-identity";
 import { useRef, useEffect, useCallback, useMemo, useLayoutEffect } from "react";
 import { InputBar, type InputSendResult } from "./InputBar";
 import { Markdown } from "./Markdown";
@@ -8,7 +9,10 @@ import { useScrollStability } from "../hooks/useScrollStability";
 import { MessageSendError } from "./MessageSendError";
 import type { ChatMessage } from "@thechat/shared";
 import type { MentionUser } from "./MentionList";
-import { SharedMessageAttachments } from "./SharedMessageAttachments";
+import {
+  SharedChatMessage,
+  shouldMergeChatMessage,
+} from "./SharedChatMessage";
 
 const noop = () => {};
 
@@ -24,16 +28,16 @@ interface ChannelChatViewProps {
     attachmentIds?: string[],
   ) => InputSendResult | Promise<InputSendResult>;
   onLoadOlderMessages?: () => boolean | void | Promise<boolean | void>;
+  onSetReaction?: (
+    messageId: string,
+    emoji: string,
+    active: boolean,
+  ) => void | Promise<void>;
   mentions?: MentionUser[];
   scrollKey?: string | null;
   draftKey?: string;
   conversationId?: string;
   token?: string | null;
-}
-
-function formatTime(iso: string) {
-  const d = new Date(iso);
-  return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
 export function ChannelChatView({
@@ -45,6 +49,7 @@ export function ChannelChatView({
   typingUsers,
   onSend,
   onLoadOlderMessages,
+  onSetReaction,
   mentions,
   scrollKey,
   draftKey,
@@ -52,7 +57,7 @@ export function ChannelChatView({
   token,
 }: ChannelChatViewProps) {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
-  const { isAtBottom, pauseAutoScroll, scrollToBottom } =
+  const { isAtBottom, pauseAutoScroll, scrollToBottom, shouldFollowBottom } =
     useAutoScroll(scrollContainerRef);
   useMessageTopCommand(
     scrollContainerRef,
@@ -86,7 +91,7 @@ export function ChannelChatView({
     onLoadOlderMessages,
     messageScrollSignature,
   });
-  useScrollStability(scrollContainerRef);
+  useScrollStability(scrollContainerRef, shouldFollowBottom);
 
   useLayoutEffect(() => {
     if (loading || initializedScrollKeyRef.current === scrollScopeKey) return;
@@ -147,24 +152,15 @@ export function ChannelChatView({
           {!loading && messages.length === 0 && (
             <div className="flex flex-1 flex-col items-center justify-center text-[1rem] text-text-placeholder">No messages yet. Start the conversation!</div>
           )}
-          {messages.map((msg) => (
-            <div
+          {messages.map((msg, index) => (
+            <SharedChatMessage
               key={msg.id}
-              data-message-id={msg.id}
-              className="flex gap-2.5 px-5 py-2.5 transition-colors duration-100 hover:bg-raised/50"
+              message={msg}
+              merged={shouldMergeChatMessage(messages[index - 1], msg)}
+              onSetReaction={onSetReaction}
             >
-              <div className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-full bg-elevated text-[0.857rem] font-semibold text-text-muted">
-                {msg.senderName.charAt(0).toUpperCase()}
-              </div>
-              <div className="min-w-0 flex-1">
-                <div className="mb-0.5 flex items-baseline gap-2">
-                  <span className="text-[0.929rem] font-semibold text-text">{msg.senderName}</span>
-                  <span className="text-[0.714rem] text-text-dimmed">{formatTime(msg.createdAt)}</span>
-                </div>
-                {msg.content && <Markdown content={msg.content} />}
-                <SharedMessageAttachments attachments={msg.attachments ?? []} />
-              </div>
-            </div>
+              {msg.content && <Markdown content={msg.content} />}
+            </SharedChatMessage>
           ))}
           {visibleTypingNames.length > 0 && (
             <div className="animate-pulse px-5 py-1 pb-2 text-[0.786rem] text-text-dimmed">
@@ -193,7 +189,7 @@ export function ChannelChatView({
         onStop={noop}
         mentions={mentions}
         sharedUpload={
-          conversationId && token ? { conversationId, token } : undefined
+          conversationId && isAuthenticated(token) ? { conversationId, token: token ?? null } : undefined
         }
       />
     </>

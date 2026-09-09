@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "./mobile.css";
 
 @theme {
   /* Surface colors — cool-tinted dark palette */
@@ -296,6 +297,9 @@ body,
 
 .ProseMirror p {
   margin: 0;
+  /* Native deletion briefly empties the paragraph before its <br> is restored.
+     Keep a line box so the composer cannot shrink and clamp the chat scroll. */
+  min-height: 1lh;
 }
 
 .ProseMirror p.is-editor-empty:first-child::before {

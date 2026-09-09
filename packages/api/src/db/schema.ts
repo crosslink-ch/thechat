@@ -232,6 +232,61 @@ export const messages = pgTable(
   ]
 );
 
+export const messageReactions = pgTable(
+  "message_reactions",
+  {
+    messageId: uuid("message_id")
+      .notNull()
+      .references(() => messages.id, { onDelete: "cascade" }),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    emoji: varchar("emoji", { length: 32 }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.messageId, t.userId, t.emoji] }),
+    index("message_reactions_message_emoji_idx").on(t.messageId, t.emoji),
+    index("message_reactions_user_id_idx").on(t.userId),
+  ]
+);
+
+// Durable, bounded unread state. A row exists only while a human participant
+// has not read the corresponding message; marking messages read deletes rows.
+export const messageUnreads = pgTable(
+  "message_unreads",
+  {
+    messageId: uuid("message_id")
+      .notNull()
+      .references(() => messages.id, { onDelete: "cascade" }),
+    conversationId: uuid("conversation_id").notNull(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.messageId, t.userId] }),
+    foreignKey({
+      name: "message_unreads_participant_fk",
+      columns: [t.conversationId, t.userId],
+      foreignColumns: [
+        conversationParticipants.conversationId,
+        conversationParticipants.userId,
+      ],
+    }).onDelete("cascade"),
+    index("message_unreads_user_conversation_idx").on(
+      t.userId,
+      t.conversationId,
+    ),
+    index("message_unreads_user_created_at_idx").on(t.userId, t.createdAt),
+  ],
+);
+
 export const eventOutbox = pgTable(
   "event_outbox",
   {
@@ -813,6 +868,22 @@ export const messagesRelations = relations(messages, ({ one, many }) => ({
     references: [users.id],
   }),
   attachments: many(messageAttachments),
+  unreads: many(messageUnreads),
+}));
+
+export const messageUnreadsRelations = relations(messageUnreads, ({ one }) => ({
+  message: one(messages, {
+    fields: [messageUnreads.messageId],
+    references: [messages.id],
+  }),
+  conversation: one(conversations, {
+    fields: [messageUnreads.conversationId],
+    references: [conversations.id],
+  }),
+  user: one(users, {
+    fields: [messageUnreads.userId],
+    references: [users.id],
+  }),
 }));
 
 export const attachmentsRelations = relations(

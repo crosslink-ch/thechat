@@ -102,6 +102,16 @@ export function createCommands(
       },
     },
     {
+      id: "toggle-palette-alternate",
+      label: "Command Palette",
+      shortcut: "Ctrl+K",
+      keybinding: { key: "k", ctrl: true },
+      hidden: true,
+      execute: () => {
+        togglePalette();
+      },
+    },
+    {
       id: "command-mode",
       label: "Command Mode",
       shortcut: "Ctrl+Shift+P",
@@ -162,12 +172,12 @@ export function createCommands(
       },
     },
     {
-      id: "notifications",
-      label: "View Notifications",
+      id: "view-activity",
+      label: "View Activity",
       shortcut: null,
       keybinding: null,
       execute: () => {
-        navigate({ to: "/notifications" });
+        navigate({ to: "/activity" });
         closePaletteAndRefocus();
       },
     },

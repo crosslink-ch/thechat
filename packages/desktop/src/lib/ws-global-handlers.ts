@@ -1,3 +1,5 @@
+import { authHeaders as auth } from "../lib/eden";
+import { isAuthenticated } from "../lib/auth-identity";
 import { wsEvents } from "./ws-events";
 import { useAuthStore } from "../stores/auth";
 import {
@@ -6,6 +8,7 @@ import {
   useWorkspacesStore,
 } from "../stores/workspaces";
 import { useNotificationsStore } from "../stores/notifications";
+import { useActivityStore } from "../stores/activity";
 import { useConversationsStore } from "../stores/conversations";
 import { usePresenceStore } from "../stores/presence";
 import {
@@ -24,16 +27,14 @@ type Navigate = (opts: { to: string }) => void;
 
 const DIRECT_NOTIFICATION_BODY_MAX_CHARS = 240;
 
-function auth(token: string) {
-  return { headers: { authorization: `Bearer ${token}` } };
-}
+
 
 async function refreshWorkspaceDetails(
   workspaceId: string,
   isLatestRequest: () => boolean = () => true,
 ) {
   const token = useAuthStore.getState().token;
-  if (!token) return;
+  if (!isAuthenticated(token)) return;
 
   const current = useWorkspacesStore.getState().activeWorkspace;
   if (!current || current.id !== workspaceId) return;
@@ -81,7 +82,17 @@ export function registerGlobalWsHandlers(
   const onAuthenticated = () => {
     const workspaceId = useWorkspacesStore.getState().activeWorkspace?.id;
     if (workspaceId) reconcileWorkspace(workspaceId);
+    void messageQueryClient.invalidateQueries({ queryKey: ["messages"] });
     void useNotificationsStore.getState().fetchNotifications();
+    void useActivityStore.getState().fetchActivity();
+  };
+
+  const onMessageReactionsUpdated = ({
+    conversationId,
+  }: WsEvents["ws:message_reactions_updated"]) => {
+    void messageQueryClient.invalidateQueries({
+      queryKey: ["messages", conversationId],
+    });
   };
 
   const onPresenceSnapshot = ({
@@ -100,9 +111,19 @@ export function registerGlobalWsHandlers(
   const onNewMessage = ({
     message: msg,
     conversationType,
+    clientMessageId,
   }: WsEvents["ws:new_message"]) => {
-    cacheIncomingMessage(messageQueryClient, msg);
+    cacheIncomingMessage(messageQueryClient, msg, clientMessageId);
     const currentUserId = useAuthStore.getState().user?.id;
+    if (msg.senderId !== currentUserId) {
+      const route = currentPath();
+      const conversationVisible =
+        route === `/channel/${msg.conversationId}` ||
+        route === `/dm/${msg.conversationId}`;
+      void useActivityStore
+        .getState()
+        .handleIncomingMessage(msg, conversationVisible);
+    }
     if (
       conversationType === "group" &&
       msg.senderId !== currentUserId &&
@@ -347,6 +368,7 @@ export function registerGlobalWsHandlers(
   wsEvents.on("ws:presence_snapshot", onPresenceSnapshot);
   wsEvents.on("ws:presence_changed", onPresenceChanged);
   wsEvents.on("ws:new_message", onNewMessage);
+  wsEvents.on("ws:message_reactions_updated", onMessageReactionsUpdated);
   wsEvents.on("ws:member_joined", onMemberJoined);
   wsEvents.on("ws:member_role_changed", onMemberRoleChanged);
   wsEvents.on("ws:member_updated", onMemberUpdated);
@@ -366,6 +388,7 @@ export function registerGlobalWsHandlers(
     wsEvents.off("ws:presence_snapshot", onPresenceSnapshot);
     wsEvents.off("ws:presence_changed", onPresenceChanged);
     wsEvents.off("ws:new_message", onNewMessage);
+    wsEvents.off("ws:message_reactions_updated", onMessageReactionsUpdated);
     wsEvents.off("ws:member_joined", onMemberJoined);
     wsEvents.off("ws:member_role_changed", onMemberRoleChanged);
     wsEvents.off("ws:member_updated", onMemberUpdated);

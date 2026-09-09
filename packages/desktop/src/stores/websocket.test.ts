@@ -3,6 +3,7 @@ import {
   WEBSOCKET_BOUNDARY_EVENT,
   useWebSocketStore,
 } from "./websocket";
+import { wsEvents } from "../lib/ws-events";
 
 type BoundaryDetail = {
   operation: string;
@@ -41,9 +42,13 @@ class FakeWebSocket {
   authenticate() {
     this.readyState = FakeWebSocket.OPEN;
     this.onopen?.();
+    this.receive({ type: "auth_ok" });
+  }
+
+  receive(event: unknown) {
     this.onmessage?.(
       new MessageEvent("message", {
-        data: JSON.stringify({ type: "auth_ok" }),
+        data: JSON.stringify(event),
       }),
     );
   }
@@ -110,5 +115,26 @@ describe("WebSocket application send boundary", () => {
       "auth",
       "send_message",
     ]);
+  });
+
+  it("dispatches reaction update events from the server", () => {
+    useWebSocketStore.getState().connect("token");
+    const socket = FakeWebSocket.instances.at(-1);
+    if (!socket) throw new Error("Expected a WebSocket instance");
+    socket.authenticate();
+    const listener = vi.fn();
+    wsEvents.on("ws:message_reactions_updated", listener);
+
+    socket.receive({
+      type: "message_reactions_updated",
+      conversationId: "conversation-1",
+      messageId: "message-1",
+    });
+
+    expect(listener).toHaveBeenCalledWith({
+      conversationId: "conversation-1",
+      messageId: "message-1",
+    });
+    wsEvents.off("ws:message_reactions_updated", listener);
   });
 });

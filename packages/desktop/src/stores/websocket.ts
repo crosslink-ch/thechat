@@ -1,3 +1,7 @@
+import { useAuthStore } from "./auth";
+import { expireBrowserSession, onSessionReset } from "../lib/session-boundary";
+import { isWeb } from "../platform/environment";
+import { API_URL } from "../lib/api";
 import { create } from "zustand";
 import type { WsClientEvent, WsServerEvent } from "@thechat/shared";
 import {
@@ -8,7 +12,7 @@ import {
 import { wsEvents } from "../lib/ws-events";
 import { usePresenceStore } from "./presence";
 
-const WS_URL = __BACKEND_URL__.replace(/^http/, "ws");
+const WS_URL = isWeb && __WEB_WS_URL__ ? __WEB_WS_URL__ : `${API_URL.replace(/^http/, "ws")}/ws`;
 
 const PING_INTERVAL = 30_000;
 const PONG_TIMEOUT = 5_000;
@@ -16,7 +20,7 @@ const PONG_TIMEOUT = 5_000;
 interface WebSocketStore {
   connected: boolean;
   reconnecting: boolean;
-  connect: (token: string) => void;
+  connect: (token: string | null) => void;
   disconnect: () => void;
   sendMessage: (
     conversationId: string,
@@ -34,6 +38,9 @@ let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
 let pingTimer: ReturnType<typeof setInterval> | undefined;
 let pongTimer: ReturnType<typeof setTimeout> | undefined;
 let currentToken: string | null = null;
+let sessionRequested = false;
+let authenticated = false;
+let connectedUserId: string | null = null;
 let pendingMessages: WsClientEvent[] = [];
 
 export const WEBSOCKET_BOUNDARY_EVENT = "thechat:websocket-boundary";
@@ -69,8 +76,9 @@ function startHeartbeat() {
   clearTimeout(pongTimer);
 
   pingTimer = setInterval(() => {
-    if (ws?.readyState === WebSocket.OPEN) {
+    if (authenticated && ws?.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({ type: "ping" }));
+
       pongTimer = setTimeout(() => {
         // No pong received — connection is stale, force reconnect
         ws?.close();
@@ -80,7 +88,7 @@ function startHeartbeat() {
 }
 
 function flushPendingMessages() {
-  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  if (!authenticated || !ws || ws.readyState !== WebSocket.OPEN) return;
   const messages = pendingMessages;
   recordWebSocketBoundary({
     operation: "pending_flush_started",
@@ -102,9 +110,10 @@ function flushPendingMessages() {
 }
 
 function doConnect() {
-  if (!currentToken) return;
+  if (!sessionRequested) return;
+  authenticated = false;
 
-  const socket = new WebSocket(`${WS_URL}/ws`);
+  const socket = new WebSocket(WS_URL);
   ws = socket;
 
   socket.onopen = () => {
@@ -112,7 +121,7 @@ function doConnect() {
       socket.close();
       return;
     }
-    const event: WsClientEvent = { type: "auth", token: currentToken! };
+    const event = isWeb ? { type: "auth", mode: "cookie" } as const : { type: "auth", token: currentToken! } as const;
     socket.send(JSON.stringify(event));
   };
 
@@ -125,19 +134,33 @@ function doConnect() {
       return;
     }
 
+    if (!authenticated && event.type !== "auth_ok" && event.type !== "auth_error") return;
+
     if (event.type === "pong") {
       clearTimeout(pongTimer);
       return;
     }
 
     if (event.type === "auth_ok") {
+      if (isWeb && (!connectedUserId || event.userId !== connectedUserId)) {
+        expireBrowserSession();
+        void useAuthStore.getState().initialize();
+        return;
+      }
+      authenticated = true;
       useWebSocketStore.setState({ connected: true, reconnecting: false });
       reconnectAttempt = 0;
       startHeartbeat();
       flushPendingMessages();
       wsEvents.emit("ws:authenticated", {});
     } else if (event.type === "auth_error") {
-      currentToken = null;
+      authenticated = false;
+      if (!("retryable" in event && event.retryable === true)) {
+        sessionRequested = false;
+        currentToken = null;
+        pendingMessages = [];
+        if (isWeb) expireBrowserSession();
+      }
       socket.close();
     } else if (event.type === "new_message") {
       void withDesktopSpan(
@@ -161,6 +184,11 @@ function doConnect() {
           parentContext: contextFromRemoteTrace(event.traceContext),
         },
       );
+    } else if (event.type === "message_reactions_updated") {
+      wsEvents.emit("ws:message_reactions_updated", {
+        conversationId: event.conversationId,
+        messageId: event.messageId,
+      });
     } else if (event.type === "message_error") {
       wsEvents.emit("ws:message_error", {
         conversationId: event.conversationId,
@@ -259,9 +287,10 @@ function doConnect() {
     clearInterval(pingTimer);
     clearTimeout(pongTimer);
     ws = null;
+    authenticated = false;
     usePresenceStore.getState().clear();
 
-    const shouldReconnect = !!currentToken;
+    const shouldReconnect = sessionRequested;
     useWebSocketStore.setState({
       connected: false,
       reconnecting: shouldReconnect,
@@ -283,7 +312,7 @@ function doConnect() {
 function handleVisibilityChange() {
   if (
     document.visibilityState === "visible" &&
-    currentToken &&
+    sessionRequested &&
     (!ws || ws.readyState === WebSocket.CLOSED)
   ) {
     clearTimers();
@@ -296,6 +325,8 @@ document.addEventListener("visibilitychange", handleVisibilityChange);
 
 function disposeWebSocketModule() {
   currentToken = null;
+  sessionRequested = false;
+  authenticated = false;
   pendingMessages = [];
   clearTimers();
   usePresenceStore.getState().clear();
@@ -318,8 +349,12 @@ export const useWebSocketStore = create<WebSocketStore>()(() => ({
   connected: false,
   reconnecting: false,
 
-  connect: (token: string) => {
-    currentToken = token;
+  connect: (token: string | null) => {
+    currentToken = isWeb ? null : token;
+    connectedUserId = useAuthStore.getState().user?.id ?? null;
+    sessionRequested = isWeb ? Boolean(connectedUserId) : Boolean(token);
+    authenticated = false;
+    useWebSocketStore.setState({ connected: false, reconnecting: false });
     pendingMessages = [];
     usePresenceStore.getState().clear();
     if (ws) {
@@ -333,6 +368,8 @@ export const useWebSocketStore = create<WebSocketStore>()(() => ({
 
   disconnect: () => {
     currentToken = null;
+    sessionRequested = false;
+    authenticated = false;
     pendingMessages = [];
     clearTimers();
     usePresenceStore.getState().clear();
@@ -364,7 +401,7 @@ export const useWebSocketStore = create<WebSocketStore>()(() => ({
       clientMessageId,
       attachmentIds,
     };
-    if (ws?.readyState === WebSocket.OPEN) {
+    if (authenticated && ws?.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify(event));
       recordWebSocketBoundary({
         operation: "message_transported",
@@ -384,7 +421,7 @@ export const useWebSocketStore = create<WebSocketStore>()(() => ({
   },
 
   sendTyping: (conversationId: string, threadId?: string | null) => {
-    if (ws?.readyState === WebSocket.OPEN) {
+    if (authenticated && ws?.readyState === WebSocket.OPEN) {
       const event: WsClientEvent = {
         type: "typing",
         conversationId,
@@ -394,3 +431,5 @@ export const useWebSocketStore = create<WebSocketStore>()(() => ({
     }
   },
 }));
+
+onSessionReset(() => { if (isWeb) useWebSocketStore.getState().disconnect(); });

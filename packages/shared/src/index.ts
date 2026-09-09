@@ -222,7 +222,15 @@ export interface ChatMessage {
   content: string;
   parts?: MessagePart[] | null;
   attachments?: ChatAttachment[];
+  reactions?: MessageReactionSummary[];
   createdAt: string;
+}
+
+export interface MessageReactionSummary {
+  emoji: string;
+  count: number;
+  reactedByMe: boolean;
+  userNames: string[];
 }
 
 export type AttachmentStatus =
@@ -280,6 +288,32 @@ export interface ConversationDetail {
   participants: ConversationParticipantPublic[];
 }
 
+export interface ActivityLatestMessage {
+  id: string;
+  threadId: string | null;
+  threadTitle: string | null;
+  senderId: string;
+  senderName: string;
+  senderType: "human" | "bot";
+  content: string;
+  createdAt: string;
+}
+
+export interface ActivityItem {
+  conversationId: string;
+  conversationType: "direct" | "group";
+  conversationName: string;
+  workspaceId: string;
+  workspaceName: string;
+  unreadCount: number;
+  latestMessage: ActivityLatestMessage;
+}
+
+export interface ActivitySnapshot {
+  items: ActivityItem[];
+  totalUnreadMessages: number;
+}
+
 export interface ConversationThreadPublic {
   id: string;
   conversationId: string;
@@ -303,7 +337,8 @@ export interface ConversationThreadsPage {
 // -- WebSocket Event Types --
 
 export type WsClientEvent =
-  | { type: "auth"; token: string }
+  | { type: "auth"; token: string; mode?: never }
+  | { type: "auth"; mode: "cookie"; token?: never }
   | {
       type: "send_message";
       conversationId: string;
@@ -530,13 +565,18 @@ export interface TraceContextCarrier {
 
 export type WsServerEvent =
   | { type: "auth_ok"; userId: string }
-  | { type: "auth_error"; message: string }
+  | { type: "auth_error"; message: string; retryable?: boolean }
   | {
       type: "new_message";
       message: ChatMessage;
       conversationType: "direct" | "group";
       clientMessageId?: string;
       traceContext?: TraceContextCarrier;
+    }
+  | {
+      type: "message_reactions_updated";
+      conversationId: string;
+      messageId: string;
     }
   | {
       type: "message_error";

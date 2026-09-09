@@ -23,6 +23,8 @@ import { publishWsEventToUsers } from "../realtime";
 import { ServiceError } from "./errors";
 import { requireConversationMutationAccess } from "./conversation-mutation-access";
 import { resolveMessageBotTargetIds } from "./message-bot-targets";
+import { messageReactionsByMessageIds } from "./message-reactions";
+import { recordMessageUnreads } from "./activity";
 
 const messageLog = log.child({ component: "messages" });
 
@@ -77,9 +79,17 @@ export async function getMessages(
   const attachmentMap = includeAttachments
     ? await attachmentsByMessageIds(rows.map((row) => row.id))
     : new Map<string, NonNullable<ChatMessage["attachments"]>>();
+  const reactionMap = await messageReactionsByMessageIds(
+    rows.map((row) => row.id),
+    userId,
+  );
 
   return chronological.map((row) =>
-    toChatMessage(row, attachmentMap.get(row.id) ?? []),
+    toChatMessage(
+      row,
+      attachmentMap.get(row.id) ?? [],
+      reactionMap.get(row.id) ?? [],
+    ),
   );
 }
 
@@ -106,7 +116,12 @@ export async function getMessageByIdForParticipant(
   if (!row) throw new ServiceError("Message not found", 404);
   await requireParticipant(db, row.conversationId, userId);
   const attachmentMap = await attachmentsByMessageIds([row.id]);
-  return toChatMessage(row, attachmentMap.get(row.id) ?? []);
+  const reactionMap = await messageReactionsByMessageIds([row.id], userId);
+  return toChatMessage(
+    row,
+    attachmentMap.get(row.id) ?? [],
+    reactionMap.get(row.id) ?? [],
+  );
 }
 
 export async function sendMessage(
@@ -230,6 +245,8 @@ export async function sendMessage(
           };
         }
 
+        await recordMessageUnreads(tx, inserted);
+
         await attachReadyAttachments(tx, {
           messageId: inserted.id,
           attachmentIds,
@@ -291,6 +308,11 @@ export async function sendMessage(
       }
 
       const attachmentMap = await attachmentsByMessageIds([result.message.id]);
+      const reactions = result.duplicate
+        ? (await messageReactionsByMessageIds([result.message.id], userId)).get(
+            result.message.id,
+          ) ?? []
+        : [];
       const publicMessage = toChatMessage(
         {
           ...result.message,
@@ -298,6 +320,7 @@ export async function sendMessage(
           senderType: result.senderType,
         },
         attachmentMap.get(result.message.id) ?? [],
+        reactions,
       );
       span.setAttribute("thechat.message.idempotent_replay", result.duplicate);
       span.setAttribute(
@@ -630,6 +653,7 @@ function toChatMessage(
     createdAt: Date;
   },
   messageAttachments: ChatMessage["attachments"],
+  reactions: NonNullable<ChatMessage["reactions"]>,
 ): ChatMessage {
   return {
     id: row.id,
@@ -641,6 +665,7 @@ function toChatMessage(
     content: row.content,
     parts: row.parts ?? null,
     attachments: messageAttachments,
+    reactions,
     createdAt: row.createdAt.toISOString(),
   };
 }

@@ -5,6 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:web": "vite --mode web",
+    "build:web": "tsc && vite build --mode web",
+    "test:web:build": "node --test scripts/web-build.test.mjs",
     "build": "tsc && vite build",
     "preview": "vite preview",
     "tauri": "node scripts/tauri-cli.mjs",
@@ -12,6 +15,7 @@
     "test:unit": "vitest run --exclude '**/*.integration.test.ts'",
     "test:integration": "INTEGRATION=true vitest run integration",
     "test:watch": "vitest",
+    "test:browser": "node --test browser-tests/*.browser.mjs",
     "test:e2e": "wdio run e2e/wdio.conf.js",
     "test:e2e:headless": "env -u WAYLAND_DISPLAY GDK_BACKEND=x11 xvfb-run -a wdio run e2e/wdio.conf.js",
     "vitest": "vitest"
@@ -44,6 +48,7 @@
     "@tiptap/starter-kit": "^3.20.0",
     "@tiptap/suggestion": "^3.20.0",
     "ajv": "^8.18.0",
+    "emoji-datasource": "16.0.0",
     "highlight.js": "^11.11.1",
     "katex": "^0.16.38",
     "mitt": "^3.0.1",
@@ -76,6 +81,7 @@
     "@wdio/mocha-framework": "^9",
     "@wdio/spec-reporter": "^9",
     "jsdom": "^28.1.0",
+    "playwright": "1.63.0",
     "react-devtools": "^7.0.1",
     "typescript": "~5.8.3",
     "vite": "^7.0.4",

@@ -1,6 +1,7 @@
 import { Elysia } from "elysia";
 import { z } from "zod";
-import { resolveTokenToUser } from "../auth/middleware";
+import { resolveRequestUser } from "../auth/middleware";
+import { browserAuthPolicy } from "../auth/browser";
 import { ServiceError } from "../services/errors";
 import { setHttpResponseStatus, withHttpServerSpan } from "../observability";
 import {
@@ -20,6 +21,7 @@ const reserveSchema = z.object({
 });
 
 export const attachmentRoutes = new Elysia({ prefix: "/attachments" })
+  .use(browserAuthPolicy)
   .post("/", ({ body, headers, set }) =>
     tracedAuthenticatedRoute(
       "POST",
@@ -103,13 +105,9 @@ async function tracedAuthenticatedRoute<T>(
   operation: (user: { id: string }) => Promise<T>,
 ): Promise<T | { error: string }> {
   return withHttpServerSpan(method, route, headers, async (span) => {
-    const rawAuthorization = headers.authorization;
-    const authHeader = Array.isArray(rawAuthorization)
-      ? rawAuthorization[0]
-      : rawAuthorization;
-    const user = authHeader?.startsWith("Bearer ")
-      ? await resolveTokenToUser(authHeader.slice(7))
-      : null;
+    const user = await resolveRequestUser(Object.fromEntries(
+      Object.entries(headers).map(([key, value]) => [key, Array.isArray(value) ? value[0] : value]),
+    ));
     if (!user) {
       set.status = 401;
       setHttpResponseStatus(span, set.status);

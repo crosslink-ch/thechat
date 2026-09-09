@@ -1,5 +1,6 @@
+import { isAuthenticated } from "../lib/auth-identity";
 import { useState, useEffect, useRef, useMemo, useCallback } from "react";
-import { useParams } from "@tanstack/react-router";
+import { useParams, useSearch } from "@tanstack/react-router";
 import { useAuthStore } from "../stores/auth";
 import {
   useBotRuntime,
@@ -12,8 +13,12 @@ import { useConversationDetail } from "../hooks/useConversationDetail";
 import { useScopedCommands } from "../hooks/useScopedCommands";
 import { useWebSocketStore } from "../stores/websocket";
 import { useWorkspacesStore } from "../stores/workspaces";
-import { composerDraftKey } from "../stores/composer-drafts";
+import {
+  composerDraftKey,
+  useComposerDraftsStore,
+} from "../stores/composer-drafts";
 import { useChannelChat } from "../hooks/useChannelChat";
+import { usePersistConversationRead } from "../hooks/usePersistConversationRead";
 import { ChannelChatView } from "../components/ChannelChatView";
 import { HermesDmChatView } from "../components/HermesDmChatView";
 import { HermesRuntimePanel } from "../components/HermesRuntimePanel";
@@ -29,6 +34,7 @@ import {
   recordApprovalDecision,
   useHermesApprovalsStore,
 } from "../stores/hermes-approvals";
+import { useHermesClarificationsStore } from "../stores/hermes-clarifications";
 import {
   hermesScopeKey,
   useHermesIndicatorsStore,
@@ -43,6 +49,7 @@ const LOCAL_TASK_DRAFT_SCOPE = "__local_task_draft__";
 
 export function DmRoute() {
   const { id: conversationId } = useParams({ from: "/dm/$id" });
+  const { threadId: requestedThreadId } = useSearch({ from: "/dm/$id" });
   const token = useAuthStore((s) => s.token);
   const user = useAuthStore((s) => s.user);
   const members = useWorkspacesStore((s) => s.activeWorkspace?.members);
@@ -50,7 +57,7 @@ export function DmRoute() {
   const conversationQuery = useConversationDetail(conversationId, token);
   const conversation = conversationQuery.data ?? null;
   const conversationLoading = conversationQuery.isLoading;
-  const conversationPending = !conversation && !!token && !conversationQuery.error;
+  const conversationPending = !conversation && isAuthenticated(token) && !conversationQuery.error;
 
   const mentions = useMemo(
     () =>
@@ -73,10 +80,24 @@ export function DmRoute() {
     () => buildHermesSlashCommands(registeredBotCommands),
     [registeredBotCommands],
   );
-  const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
+  const [activeThreadId, setActiveThreadId] = useState<string | null>(
+    requestedThreadId ?? null,
+  );
   const [draftTaskActive, setDraftTaskActive] = useState(false);
   const [draftSendError, setDraftSendError] = useState<string | null>(null);
   const [draftComposerRevision, setDraftComposerRevision] = useState(0);
+  const localTaskDraftKey = composerDraftKey.dm(
+    user?.id,
+    conversationId,
+    LOCAL_TASK_DRAFT_SCOPE,
+  );
+  const storedDraftTaskPresent = useComposerDraftsStore(
+    (state) =>
+      Boolean(state.drafts[localTaskDraftKey]) ||
+      Boolean(state.imageDrafts[localTaskDraftKey]?.length) ||
+      Boolean(state.attachmentDrafts[localTaskDraftKey]?.length),
+  );
+  const draftTaskPresent = draftTaskActive || storedDraftTaskPresent;
   const activeConversationIdRef = useRef(conversationId);
   activeConversationIdRef.current = conversationId;
   const draftPersistingRef = useRef<symbol | null>(null);
@@ -178,6 +199,7 @@ export function DmRoute() {
         conversationId,
         runtime,
         useHermesApprovalsStore.getState().decisions,
+        useHermesClarificationsStore.getState().responses,
       );
   }, [conversationId, isHermesDm, runtime]);
 
@@ -190,6 +212,11 @@ export function DmRoute() {
     wsSendMessage,
     selfUser: user,
   });
+  usePersistConversationRead(
+    chatConversationId,
+    channelChat.messages,
+    !draftTaskActive && !channelChat.loading,
+  );
 
   const channelChatRef = useRef(channelChat);
   channelChatRef.current = channelChat;
@@ -300,20 +327,20 @@ export function DmRoute() {
     typingTimers.current.clear();
   }, [conversationId, activeThreadId, draftTaskActive]);
 
-  // Reset task selection when the visible DM changes.
+  // Keep Activity deep links and browser navigation aligned with task state.
   useEffect(() => {
-    setActiveThreadId(null);
+    setActiveThreadId(requestedThreadId ?? null);
     setDraftTaskActive(false);
     setDraftSendError(null);
     draftPersistingRef.current = null;
-  }, [conversationId]);
+  }, [conversationId, requestedThreadId]);
 
   useEffect(() => {
-    if (!isHermesDm) return;
+    if (!isHermesDm || threadsLoading) return;
     if (activeThreadId && !threads.some((thread) => thread.id === activeThreadId)) {
       setActiveThreadId(null);
     }
-  }, [activeThreadId, isHermesDm, threads]);
+  }, [activeThreadId, isHermesDm, threads, threadsLoading]);
 
   const handleCreateThread = useCallback(() => {
     if (!isHermesDm || draftPersistingRef.current) return;
@@ -560,7 +587,7 @@ export function DmRoute() {
       event: BotInvocationProgressEventPublic,
       response: string | string[],
     ) => {
-      if (!isHermesDm || !token) {
+      if (!isHermesDm || !isAuthenticated(token)) {
         throw new Error("Sign in to respond to Hermes");
       }
       await submitHermesInteraction(
@@ -575,7 +602,7 @@ export function DmRoute() {
   );
 
   return (
-    <div className="flex min-h-0 flex-1">
+    <div className="shared-dm-layout flex min-h-0 min-w-0 flex-1">
       <div className="flex min-w-0 flex-1 flex-col">
         {isHermesDm ? (
           <HermesDmChatView
@@ -597,17 +624,16 @@ export function DmRoute() {
             onInteraction={handleHermesInteraction}
             onStop={handleStopHermesTask}
             onLoadOlderMessages={channelChat.loadOlderMessages}
+            onSetReaction={channelChat.setReaction}
             mentions={mentions}
             scrollKey={`${conversationId}:${
               draftTaskActive ? "draft" : activeThreadId ?? "general"
             }`}
-            draftKey={composerDraftKey.dm(
-              user?.id,
-              conversationId,
+            draftKey={
               draftTaskActive
-                ? `${LOCAL_TASK_DRAFT_SCOPE}:${draftComposerRevision}`
-                : activeThreadId,
-            )}
+                ? localTaskDraftKey
+                : composerDraftKey.dm(user?.id, conversationId, activeThreadId)
+            }
             taskActive={taskActive}
             slashCommands={slashCommands}
             conversationId={conversationId}
@@ -628,6 +654,7 @@ export function DmRoute() {
             typingUsers={typingUsers}
             onSend={handleSend}
             onLoadOlderMessages={channelChat.loadOlderMessages}
+            onSetReaction={channelChat.setReaction}
             mentions={mentions}
             scrollKey={conversationId}
             draftKey={composerDraftKey.dm(user?.id, conversationId)}
@@ -647,6 +674,7 @@ export function DmRoute() {
           threadsHasMore={threadsHasMore}
           activeThreadId={activeThreadId}
           draftTaskActive={draftTaskActive}
+          draftTaskPresent={draftTaskPresent}
           onSelectThread={handleSelectThread}
           onCreateThread={handleCreateThread}
           approvalThreadIds={approvalThreadIds}

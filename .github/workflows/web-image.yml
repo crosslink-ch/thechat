@@ -1,0 +1,59 @@
+name: Web Docker Image
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "packages/desktop/**"
+      - "packages/api/**"
+      - "packages/shared/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "deploy/web/**"
+      - ".github/workflows/web-image.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+concurrency:
+  group: thechat-web-image-main
+  cancel-in-progress: false
+
+jobs:
+  build-and-push:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Build and smoke the exact image before registry access
+        shell: bash
+        run: |
+          set -euo pipefail
+          IMAGE="ghcr.io/crosslink-ch/thechat-web:sha-${GITHUB_SHA}"
+          docker build --pull --file deploy/web/Dockerfile --tag "$IMAGE" \
+            --label "org.opencontainers.image.revision=${GITHUB_SHA}" \
+            --label "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}" .
+          THECHAT_WEB_TEST_IMAGE="$IMAGE" python3 deploy/web/tests/test_image.py
+      - name: Publish only the current main SHA and record registry identity
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = refs/heads/main
+          test "$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq .object.sha)" = "$GITHUB_SHA"
+          IMAGE="ghcr.io/crosslink-ch/thechat-web:sha-${GITHUB_SHA}"
+          trap 'docker logout ghcr.io >/dev/null 2>&1' EXIT
+          printf '%s' "$GH_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          # No rebuild after smoke. Full-SHA tag is traceable; deploy the digest.
+          docker push "$IMAGE"
+          REF=$(docker image inspect --format '{{index .RepoDigests 0}}' "$IMAGE")
+          [[ "$REF" =~ ^ghcr.io/crosslink-ch/thechat-web@sha256:[a-f0-9]{64}$ ]]
+          printf 'Source: `%s`\n\nImage: `%s`\n\nDeploy: `%s`\n' "$GITHUB_SHA" "$IMAGE" "$REF" >> "$GITHUB_STEP_SUMMARY"

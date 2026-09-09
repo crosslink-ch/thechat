@@ -87,6 +87,215 @@ beforeEach(() => {
 });
 
 describe("HermesDmChatView", () => {
+  it("distinguishes yesterday's timestamp from today's at the same time", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 6, 15, 12));
+
+    try {
+      const todayAtEight = new Date();
+      todayAtEight.setHours(8, 0, 0, 0);
+      const yesterdayAtEight = new Date(todayAtEight);
+      yesterdayAtEight.setDate(yesterdayAtEight.getDate() - 1);
+
+      render(
+        <HermesDmChatView
+          messages={[
+            message({
+              id: "today",
+              content: "Today at eight",
+              createdAt: todayAtEight.toISOString(),
+            }),
+            message({
+              id: "yesterday",
+              content: "Yesterday at eight",
+              createdAt: yesterdayAtEight.toISOString(),
+            }),
+          ]}
+          loading={false}
+          typingUsers={new Map()}
+          progressInvocations={[]}
+          typingSuppressedUserIds={[]}
+          onSend={() => {}}
+        />,
+      );
+
+      const shortTime = todayAtEight.toLocaleTimeString([], {
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+      expect(messageTimestamp("Today at eight").textContent).toBe(shortTime);
+      expect(messageTimestamp("Yesterday at eight").textContent).toBe(
+        `Yesterday at ${shortTime}`,
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not expose malformed timestamps as machine-readable dates", () => {
+    render(
+      <HermesDmChatView
+        messages={[
+          message({ content: "Malformed timestamp", createdAt: "not-a-date" }),
+        ]}
+        loading={false}
+        typingUsers={new Map()}
+        progressInvocations={[]}
+        typingSuppressedUserIds={[]}
+        onSend={() => {}}
+      />,
+    );
+
+    const timestamp = messageTimestamp("Malformed timestamp");
+    expect(timestamp.textContent).toBe("Unknown time");
+    expect(timestamp).not.toHaveAttribute("datetime");
+  });
+
+  it("visually merges adjacent Hermes DM messages from the same sender", () => {
+    render(
+      <HermesDmChatView
+        messages={[
+          message({
+            id: "message-1",
+            content: "First answer",
+            createdAt: "2026-01-01T10:00:00.000Z",
+          }),
+          message({
+            id: "message-2",
+            content: "Second answer",
+            createdAt: "2026-01-01T10:05:00.000Z",
+          }),
+        ]}
+        loading={false}
+        typingUsers={new Map()}
+        progressInvocations={[]}
+        typingSuppressedUserIds={[]}
+        onSend={() => {}}
+      />,
+    );
+
+    expect(screen.getAllByText("Koda")).toHaveLength(1);
+    expect(
+      screen.getByText("Second answer").closest("[data-message-id]"),
+    ).toHaveAttribute("data-message-grouped", "true");
+  });
+
+  it("starts a new message group after an intervening Hermes event", () => {
+    render(
+      <HermesDmChatView
+        messages={[
+          message({
+            id: "message-1",
+            content: "Before the event",
+            createdAt: "2026-01-01T10:00:00.000Z",
+          }),
+          message({
+            id: "message-2",
+            content: "After the event",
+            createdAt: "2026-01-01T10:04:00.000Z",
+          }),
+        ]}
+        loading={false}
+        typingUsers={new Map()}
+        progressInvocations={[
+          {
+            invocation: invocation({
+              createdAt: "2026-01-01T10:01:00.000Z",
+              startedAt: "2026-01-01T10:01:00.000Z",
+              updatedAt: "2026-01-01T10:02:00.000Z",
+            }),
+            events: [
+              progressEvent({
+                occurredAt: "2026-01-01T10:02:00.000Z",
+                createdAt: "2026-01-01T10:02:00.000Z",
+              }),
+            ],
+          },
+        ]}
+        typingSuppressedUserIds={[]}
+        onSend={() => {}}
+      />,
+    );
+
+    expect(
+      screen.getByText("After the event").closest("[data-message-id]"),
+    ).toHaveAttribute("data-message-grouped", "false");
+  });
+
+  it("starts a new message group after an intervening Hermes invocation", () => {
+    render(
+      <HermesDmChatView
+        messages={[
+          message({
+            id: "message-1",
+            content: "Before invocation",
+            createdAt: "2026-01-01T10:00:00.000Z",
+          }),
+          message({
+            id: "message-2",
+            content: "After invocation",
+            createdAt: "2026-01-01T10:04:00.000Z",
+          }),
+        ]}
+        loading={false}
+        typingUsers={new Map()}
+        progressInvocations={[
+          {
+            invocation: invocation({
+              createdAt: "2026-01-01T10:02:00.000Z",
+              startedAt: "2026-01-01T10:02:00.000Z",
+              updatedAt: "2026-01-01T10:02:00.000Z",
+            }),
+            events: [],
+          },
+        ]}
+        typingSuppressedUserIds={[]}
+        onSend={() => {}}
+      />,
+    );
+
+    expect(
+      screen.getByText("After invocation").closest("[data-message-id]"),
+    ).toHaveAttribute("data-message-grouped", "false");
+  });
+
+  it("does not treat an invocation starting with the current message as intervening", () => {
+    render(
+      <HermesDmChatView
+        messages={[
+          message({
+            id: "message-1",
+            content: "First prompt",
+            createdAt: "2026-01-01T10:00:00.000Z",
+          }),
+          message({
+            id: "message-2",
+            content: "Second prompt",
+            createdAt: "2026-01-01T10:04:00.000Z",
+          }),
+        ]}
+        loading={false}
+        typingUsers={new Map()}
+        progressInvocations={[
+          {
+            invocation: invocation({
+              createdAt: "2026-01-01T10:04:00.000Z",
+              startedAt: "2026-01-01T10:04:00.000Z",
+              updatedAt: "2026-01-01T10:04:00.000Z",
+            }),
+            events: [],
+          },
+        ]}
+        typingSuppressedUserIds={[]}
+        onSend={() => {}}
+      />,
+    );
+
+    expect(
+      screen.getByText("Second prompt").closest("[data-message-id]"),
+    ).toHaveAttribute("data-message-grouped", "true");
+  });
+
   it("hides the generic typing indicator while Hermes progress is active", () => {
     render(
       <HermesDmChatView
@@ -265,6 +474,75 @@ describe("HermesDmChatView", () => {
       expect(screen.getByText("$$x_40^2 + y_40^2 = z_40^2$$")).toBeInTheDocument();
     } finally {
       unmount();
+      vi.useRealTimers();
+    }
+  });
+
+  it("formats visible messages before paint while deferring offscreen history", () => {
+    vi.useFakeTimers();
+    let visibleMessageId = "message-40";
+    const listenerSpy = vi.spyOn(HTMLElement.prototype, "addEventListener");
+    const originalBounds = HTMLElement.prototype.getBoundingClientRect;
+    const boundsSpy = vi
+      .spyOn(HTMLElement.prototype, "getBoundingClientRect")
+      .mockImplementation(function (this: HTMLElement) {
+        if (this.getAttribute("data-testid") === "hermes-dm-chat-scroll") {
+          return { top: 0, bottom: 300, height: 300 } as DOMRect;
+        }
+        const messageId = this.getAttribute("data-message-id");
+        if (messageId === visibleMessageId) {
+          return { top: 100, bottom: 200, height: 100 } as DOMRect;
+        }
+        if (messageId) {
+          return { top: -200, bottom: -100, height: 100 } as DOMRect;
+        }
+        return originalBounds.call(this);
+      });
+    const messages = Array.from({ length: 41 }, (_, index) =>
+      message({
+        id: `message-${index}`,
+        content: `$$x_${index}^2 + y_${index}^2 = z_${index}^2$$`,
+      }),
+    );
+
+    const { container, unmount } = render(
+      <HermesDmChatView
+        messages={messages}
+        loading={false}
+        typingUsers={new Map()}
+        progressInvocations={[]}
+        typingSuppressedUserIds={[]}
+        onSend={() => {}}
+        scrollKey="conversation-1:general"
+      />,
+    );
+
+    try {
+      expect(container.querySelectorAll(".katex")).toHaveLength(1);
+      expect(screen.getByText("$$x_0^2 + y_0^2 = z_0^2$$")).toBeInTheDocument();
+      expect(screen.getByRole("status")).toHaveTextContent("Formatting message history...");
+
+      visibleMessageId = "message-39";
+      const scroller = screen.getByTestId("hermes-dm-chat-scroll");
+      const scrollListeners = listenerSpy.mock.calls.flatMap((args, index) =>
+        listenerSpy.mock.instances[index] === scroller && args[0] === "scroll"
+          ? [args[1]]
+          : [],
+      );
+      const lastScrollListener = scrollListeners.at(-1);
+      expect(lastScrollListener).toBeDefined();
+      act(() => {
+        if (typeof lastScrollListener === "function") {
+          lastScrollListener.call(scroller, new Event("scroll"));
+        } else {
+          lastScrollListener?.handleEvent(new Event("scroll"));
+        }
+      });
+      expect(container.querySelectorAll(".katex")).toHaveLength(2);
+    } finally {
+      unmount();
+      listenerSpy.mockRestore();
+      boundsSpy.mockRestore();
       vi.useRealTimers();
     }
   });
@@ -584,6 +862,22 @@ describe("HermesDmChatView", () => {
     expect(container.querySelector("img[src^='data:image/png;base64,']")).toBeNull();
   });
 });
+
+function messageRow(content: string) {
+  const row = screen.getByText(content).closest("[data-message-id]");
+  if (!(row instanceof HTMLElement)) {
+    throw new Error(`Message row not found for: ${content}`);
+  }
+  return row;
+}
+
+function messageTimestamp(content: string) {
+  const timestamp = messageRow(content).querySelector("time");
+  if (!(timestamp instanceof HTMLElement)) {
+    throw new Error(`Message timestamp not found for: ${content}`);
+  }
+  return timestamp;
+}
 
 function makeScrollable(element: HTMLElement) {
   Object.defineProperty(element, "scrollHeight", {

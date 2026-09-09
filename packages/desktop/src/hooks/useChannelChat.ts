@@ -1,3 +1,4 @@
+import { isAuthenticated } from "../lib/auth-identity";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   hashKey,
@@ -7,7 +8,11 @@ import {
   type QueryKey,
   type InfiniteData,
 } from "@tanstack/react-query";
-import type { AuthUser, ChatMessage } from "@thechat/shared";
+import type {
+  AuthUser,
+  ChatMessage,
+  MessageReactionSummary,
+} from "@thechat/shared";
 import { api } from "../lib/api";
 import { authHeaders, edenErrorMessage, edenErrorStatus } from "../lib/eden";
 import { wsEvents, type WsEvents } from "../lib/ws-events";
@@ -23,6 +28,11 @@ const MESSAGE_CACHE_TTL_MS = 60_000;
 export const MESSAGE_PAGE_SIZE = 20;
 export const MESSAGE_WINDOW_SIZE = 120;
 export const MESSAGE_WINDOW_TRIM_THRESHOLD = 160;
+
+// Realtime can populate the query cache before the hook's local optimistic
+// state has reconciled. Keep the correlation on the server message object so
+// that transient overlap renders only the acknowledged server copy.
+const clientMessageIdsByServerMessage = new WeakMap<ChatMessage, string>();
 
 interface UseChannelChatOptions {
   conversationId: string | null;
@@ -61,7 +71,9 @@ type MessageWindow = InfiniteData<MessagePage, string | null>;
 export function cacheIncomingMessage(
   queryClient: QueryClient,
   message: ChatMessage,
+  clientMessageId?: string,
 ) {
+  associateClientMessageId(message, clientMessageId);
   const cachedWindows = queryClient.getQueriesData<MessageWindow>({
     queryKey: ["messages", message.conversationId],
   });
@@ -76,6 +88,213 @@ export function cacheIncomingMessage(
       appendMessageToWindow(previous, message),
     );
   }
+}
+
+export function cacheMessageReactions(
+  queryClient: QueryClient,
+  conversationId: string,
+  messageId: string,
+  reactions: MessageReactionSummary[],
+) {
+  queryClient.setQueriesData<MessageWindow>(
+    { queryKey: ["messages", conversationId] },
+    (previous) => {
+      if (!previous) return previous;
+      return mapMessageReactions(previous, messageId, () => reactions);
+    },
+  );
+}
+
+interface ReactionRollbackSnapshot {
+  key: QueryKey;
+  previousReaction: MessageReactionSummary | undefined;
+  previousIndex: number;
+  optimisticReaction: MessageReactionSummary | undefined;
+}
+
+export function optimisticallySetMessageReaction(
+  queryClient: QueryClient,
+  conversationId: string,
+  messageId: string,
+  emoji: string,
+  active: boolean,
+  currentUserName?: string,
+) {
+  const snapshots: ReactionRollbackSnapshot[] = [];
+  const cachedWindows = queryClient.getQueriesData<MessageWindow>({
+    queryKey: ["messages", conversationId],
+  });
+
+  for (const [key, window] of cachedWindows) {
+    if (!window) continue;
+    let snapshot: ReactionRollbackSnapshot | null = null;
+    const optimisticWindow = mapMessageReactions(
+      window,
+      messageId,
+      (previous) => {
+        const optimistic = applyOptimisticReaction(
+          previous,
+          emoji,
+          active,
+          currentUserName,
+        );
+        if (optimistic === previous) return previous;
+        snapshot = {
+          key,
+          previousReaction: previous.find(
+            (reaction) => reaction.emoji === emoji,
+          ),
+          previousIndex: previous.findIndex(
+            (reaction) => reaction.emoji === emoji,
+          ),
+          optimisticReaction: optimistic.find(
+            (reaction) => reaction.emoji === emoji,
+          ),
+        };
+        return optimistic;
+      },
+    );
+    if (!snapshot) continue;
+    snapshots.push(snapshot);
+    queryClient.setQueryData<MessageWindow>(key, optimisticWindow);
+  }
+
+  return () => {
+    for (const snapshot of snapshots) {
+      queryClient.setQueryData<MessageWindow>(snapshot.key, (current) => {
+        if (!current) return current;
+        return mapMessageReactions(current, messageId, (reactions) => {
+          const currentReaction = reactions.find(
+            (reaction) => reaction.emoji === emoji,
+          );
+          if (
+            !sameReactionSummary(
+              currentReaction,
+              snapshot.optimisticReaction,
+            )
+          ) {
+            return reactions;
+          }
+
+          const restored = reactions.filter(
+            (reaction) => reaction.emoji !== emoji,
+          );
+          if (!snapshot.previousReaction) return restored;
+          const index = Math.min(
+            Math.max(snapshot.previousIndex, 0),
+            restored.length,
+          );
+          restored.splice(index, 0, snapshot.previousReaction);
+          return restored;
+        });
+      });
+    }
+  };
+}
+
+export function reconcileMessageReactions(
+  queryClient: QueryClient,
+  conversationId: string,
+  messageId: string,
+  reactions: MessageReactionSummary[],
+) {
+  cacheMessageReactions(queryClient, conversationId, messageId, reactions);
+  void queryClient.invalidateQueries({
+    queryKey: ["messages", conversationId],
+  });
+}
+
+function mapMessageReactions(
+  window: MessageWindow,
+  messageId: string,
+  update: (
+    reactions: MessageReactionSummary[],
+  ) => MessageReactionSummary[],
+): MessageWindow {
+  let changed = false;
+  const pages = window.pages.map((page) => ({
+    ...page,
+    messages: page.messages.map((message) => {
+      if (message.id !== messageId) return message;
+      const previous = message.reactions ?? [];
+      const reactions = update(previous);
+      if (reactions === previous) return message;
+      changed = true;
+      return { ...message, reactions };
+    }),
+  }));
+  return changed ? { ...window, pages } : window;
+}
+
+function applyOptimisticReaction(
+  reactions: MessageReactionSummary[],
+  emoji: string,
+  active: boolean,
+  currentUserName?: string,
+) {
+  const index = reactions.findIndex((reaction) => reaction.emoji === emoji);
+  const current = reactions[index];
+
+  if (active) {
+    if (current?.reactedByMe) return reactions;
+    const optimistic: MessageReactionSummary = current
+      ? {
+          ...current,
+          count: current.count + 1,
+          reactedByMe: true,
+          userNames: currentUserName
+            ? [...current.userNames, currentUserName]
+            : current.userNames,
+        }
+      : {
+          emoji,
+          count: 1,
+          reactedByMe: true,
+          userNames: currentUserName ? [currentUserName] : [],
+        };
+    if (!current) return [...reactions, optimistic];
+    return reactions.map((reaction, reactionIndex) =>
+      reactionIndex === index ? optimistic : reaction,
+    );
+  }
+
+  if (!current?.reactedByMe) return reactions;
+  if (current.count <= 1) {
+    return reactions.filter((_, reactionIndex) => reactionIndex !== index);
+  }
+  const optimistic: MessageReactionSummary = {
+    ...current,
+    count: current.count - 1,
+    reactedByMe: false,
+    userNames: currentUserName
+      ? removeFirstName(current.userNames, currentUserName)
+      : current.userNames,
+  };
+  return reactions.map((reaction, reactionIndex) =>
+    reactionIndex === index ? optimistic : reaction,
+  );
+}
+
+function removeFirstName(names: string[], name: string) {
+  const index = names.indexOf(name);
+  if (index === -1) return names;
+  return names.filter((_, nameIndex) => nameIndex !== index);
+}
+
+function sameReactionSummary(
+  left: MessageReactionSummary | undefined,
+  right: MessageReactionSummary | undefined,
+) {
+  return (
+    left === right ||
+    (left !== undefined &&
+      right !== undefined &&
+      left.emoji === right.emoji &&
+      left.count === right.count &&
+      left.reactedByMe === right.reactedByMe &&
+      left.userNames.length === right.userNames.length &&
+      left.userNames.every((name, index) => name === right.userNames[index]))
+  );
 }
 
 function messageBelongsToQueryKey(message: ChatMessage, key: QueryKey) {
@@ -98,7 +317,7 @@ interface SendCommand {
 
 async function fetchMessages(
   conversationId: string,
-  token: string,
+  token: string | null,
   threadId?: string | null,
   unthreadedOnly = false,
   before?: string | null,
@@ -127,7 +346,7 @@ async function fetchMessages(
 
 async function fetchMessagePage(
   conversationId: string,
-  token: string,
+  token: string | null,
   threadId: string | null,
   unthreadedOnly: boolean,
   before: string | null,
@@ -182,7 +401,7 @@ export function useChannelChat({
     initialPageParam: null as string | null,
     getNextPageParam: (lastPage) =>
       lastPage.hasOlder ? oldestMessageCursor(lastPage.messages) : undefined,
-    enabled: enabled && !!conversationId && !!token,
+    enabled: enabled && !!conversationId && isAuthenticated(token),
     staleTime: MESSAGE_CACHE_TTL_MS,
   });
 
@@ -212,6 +431,7 @@ export function useChannelChat({
   const addMessage = useCallback(
     (msg: ChatMessage, clientMessageId?: string) => {
       if (msg.conversationId !== conversationId) return;
+      associateClientMessageId(msg, clientMessageId);
       if (clientMessageId) {
         pendingSendsRef.current.delete(clientMessageId);
       }
@@ -336,7 +556,7 @@ export function useChannelChat({
 
       // Compatibility fallback for older API clients and the existing WS
       // protocol. Current Eden clients always expose the canonical REST post.
-      if (typeof endpoint.post !== "function" || !token) {
+      if (typeof endpoint.post !== "function" || !isAuthenticated(token)) {
         if (attachmentIds.length > 0) {
           wsSendMessage(
             conversationId,
@@ -420,8 +640,53 @@ export function useChannelChat({
     [sendMessageToThread, threadId],
   );
 
+  const setReaction = useCallback(
+    async (messageId: string, emoji: string, active: boolean) => {
+      if (!conversationId || !isAuthenticated(token)) {
+        throw new Error("Authentication required");
+      }
+
+      const cancelPendingQueries = queryClient.cancelQueries({
+        queryKey: ["messages", conversationId],
+      });
+      const rollback = optimisticallySetMessageReaction(
+        queryClient,
+        conversationId,
+        messageId,
+        emoji,
+        active,
+        selfUser?.name,
+      );
+
+      try {
+        await cancelPendingQueries;
+        const { data, error } = await api
+          .messages({ conversationId })({ messageId })
+          .reactions.post({ emoji, active }, authHeaders(token));
+        if (error || !data || !("reactions" in data)) {
+          throw new Error(
+            edenErrorMessage(error, "Failed to update reaction"),
+          );
+        }
+        reconcileMessageReactions(
+          queryClient,
+          data.conversationId,
+          data.messageId,
+          data.reactions,
+        );
+      } catch (caught) {
+        rollback();
+        void queryClient.invalidateQueries({
+          queryKey: ["messages", conversationId],
+        });
+        throw caught;
+      }
+    },
+    [conversationId, queryClient, selfUser?.name, token],
+  );
+
   const refetchMessages = useCallback(() => {
-    if (!enabled || !conversationId || !token) return;
+    if (!enabled || !conversationId || !isAuthenticated(token)) return;
     void query.refetch();
   }, [conversationId, enabled, query.refetch, token]);
 
@@ -429,7 +694,7 @@ export function useChannelChat({
     if (
       !enabled ||
       !conversationId ||
-      !token ||
+      !isAuthenticated(token) ||
       !query.hasNextPage ||
       query.isFetchingNextPage
     ) {
@@ -540,6 +805,7 @@ export function useChannelChat({
     addOptimisticSentMessage,
     sendMessage,
     sendMessageToThread,
+    setReaction,
     sendError,
     refetchMessages,
     loadOlderMessages,
@@ -637,14 +903,35 @@ function appendVisibleLocalMessages(
   threadId: string | null,
   unthreadedOnly: boolean,
 ) {
+  const acknowledgedClientMessageIds = new Set(
+    messages.flatMap((message) => {
+      const clientMessageId = clientMessageIdsByServerMessage.get(message);
+      return clientMessageId ? [clientMessageId] : [];
+    }),
+  );
   let next = messages;
   for (const local of localMessages) {
     if (local.message.conversationId !== conversationId) continue;
     if (!messageBelongsToScope(local.message, threadId, unthreadedOnly))
       continue;
+    if (
+      !local.confirmed &&
+      acknowledgedClientMessageIds.has(local.clientMessageId)
+    ) {
+      continue;
+    }
     next = appendMessage(next, local.message);
   }
   return next;
+}
+
+function associateClientMessageId(
+  message: ChatMessage,
+  clientMessageId?: string,
+) {
+  if (clientMessageId) {
+    clientMessageIdsByServerMessage.set(message, clientMessageId);
+  }
 }
 
 function messageBelongsToScope(

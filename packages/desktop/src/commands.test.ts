@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { fireEvent, renderHook } from "@testing-library/react";
 
 const closePaletteMock = vi.fn();
 const closePaletteAndRefocusMock = vi.fn();
@@ -27,12 +28,30 @@ vi.mock("./components/HermesBotModal", () => ({
   openHermesBotModal: () => openHermesBotModalMock(),
 }));
 
-import { createCommands } from "./commands";
+import { createCommands, useCommandsStore } from "./commands";
+import { useKeybindings } from "./hooks/useKeybindings";
 import { useWorkspacesStore } from "./stores/workspaces";
 
 describe("createCommands", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  it("opens the command palette from macOS Command+K", () => {
+    useCommandsStore.getState().setCommands(createCommands(vi.fn()));
+    const { unmount } = renderHook(() =>
+      useKeybindings({
+        onPermissionAllow: null,
+        onPermissionDeny: null,
+        onPermissionDenyWithFeedback: null,
+        handleRegistryCommands: true,
+      }),
+    );
+
+    fireEvent.keyDown(window, { key: "k", metaKey: true });
+    unmount();
+
+    expect(togglePaletteMock).toHaveBeenCalledOnce();
   });
 
   it("does not expose removed Agent Chat or project-selection commands", () => {
@@ -80,6 +99,20 @@ describe("createCommands", () => {
 
     command!.execute();
     expect(navigate).toHaveBeenCalledWith({ to: "/workspace/manage" });
+    expect(closePaletteAndRefocusMock).toHaveBeenCalledOnce();
+  });
+
+  it("opens the cross-workspace Activity view", () => {
+    const navigate = vi.fn();
+    const command = createCommands(navigate).find((c) => c.id === "view-activity");
+
+    expect(command).toMatchObject({
+      id: "view-activity",
+      label: "View Activity",
+    });
+
+    command!.execute();
+    expect(navigate).toHaveBeenCalledWith({ to: "/activity" });
     expect(closePaletteAndRefocusMock).toHaveBeenCalledOnce();
   });
 

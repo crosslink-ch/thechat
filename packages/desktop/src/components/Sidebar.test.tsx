@@ -11,12 +11,14 @@ import {
 import { useAuthStore } from "../stores/auth";
 import { useWorkspacesStore } from "../stores/workspaces";
 import { useConversationsStore } from "../stores/conversations";
+import { useActivityStore } from "../stores/activity";
 import { useHermesIndicatorsStore } from "../stores/hermes-indicators";
 import { usePresenceStore } from "../stores/presence";
 import { registerGlobalWsHandlers } from "../lib/ws-global-handlers";
 import { wsEvents } from "../lib/ws-events";
 import type { Conversation } from "../core/types";
 import type {
+  ActivitySnapshot,
   AuthUser,
   WorkspaceListItem,
   WorkspaceWithDetails,
@@ -170,10 +172,154 @@ beforeEach(() => {
     unreadDirectConversations: {},
     activeDirectConversationId: null,
   });
+  useActivityStore.getState().reset();
   vi.clearAllMocks();
 });
 
 describe("Sidebar", () => {
+  it("surfaces persisted unread activity across workspace boundaries", async () => {
+    const activity: ActivitySnapshot = {
+      totalUnreadMessages: 4,
+      items: [
+        {
+          conversationId: "ch1",
+          conversationType: "group",
+          conversationName: "General",
+          workspaceId: "ws-1",
+          workspaceName: "Team Alpha",
+          unreadCount: 1,
+          latestMessage: {
+            id: "message-alpha",
+            threadId: null,
+            threadTitle: null,
+            senderId: "u2",
+            senderName: "Alice",
+            senderType: "human",
+            content: "Alpha update",
+            createdAt: "2026-09-01T10:00:00.000Z",
+          },
+        },
+        {
+          conversationId: "ch-beta",
+          conversationType: "group",
+          conversationName: "General",
+          workspaceId: "ws-2",
+          workspaceName: "Team Beta",
+          unreadCount: 3,
+          latestMessage: {
+            id: "message-beta",
+            threadId: null,
+            threadTitle: null,
+            senderId: "u-beta",
+            senderName: "Beta User",
+            senderType: "human",
+            content: "Beta update",
+            createdAt: "2026-09-01T10:01:00.000Z",
+          },
+        },
+      ],
+    };
+    useAuthStore.setState({ user, token: "test-token" });
+    useWorkspacesStore.setState({
+      workspaces: workspaceList,
+      activeWorkspace,
+    });
+    useActivityStore.setState(activity);
+
+    await renderSidebarAt("/channel/ch1");
+
+    expect(screen.getByLabelText("Activity, 4 unread items")).toBeInTheDocument();
+    expect(screen.getByTestId("activity-unread-count")).toHaveTextContent("4");
+    expect(screen.getByTestId("channel-unread-indicator-ch1")).toBeInTheDocument();
+    expect(
+      screen.getByLabelText(
+        "Current workspace, 1 other workspace with unread messages",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByTestId("other-workspace-unread-count")).toHaveTextContent(
+      "1",
+    );
+
+    await userEvent.click(screen.getByLabelText(/Current workspace/));
+    expect(
+      screen.getByRole("button", { name: "Team Beta, unread messages" }),
+    ).toBeInTheDocument();
+    expect(screen.getByTestId("workspace-unread-indicator-ws-2")).toBeInTheDocument();
+  });
+
+  it("shows persisted direct-message unread activity on the sender", async () => {
+    useAuthStore.setState({ user, token: "test-token" });
+    useWorkspacesStore.setState({
+      workspaces: workspaceList,
+      activeWorkspace,
+    });
+    useActivityStore.setState({
+      totalUnreadMessages: 1,
+      items: [
+        {
+          conversationId: "conv-human",
+          conversationType: "direct",
+          conversationName: "Alice",
+          workspaceId: "ws-1",
+          workspaceName: "Team Alpha",
+          unreadCount: 1,
+          latestMessage: {
+            id: "message-dm",
+            threadId: null,
+            threadTitle: null,
+            senderId: "u2",
+            senderName: "Alice",
+            senderType: "human",
+            content: "Hi",
+            createdAt: "2026-09-01T10:00:00.000Z",
+          },
+        },
+      ],
+    });
+
+    await renderSidebarAt("/channel/ch1");
+
+    expect(screen.getByRole("button", { name: "Alice, unread" })).toBeInTheDocument();
+  });
+
+  it("does not leak a sender's DM unread state across workspaces", async () => {
+    useAuthStore.setState({ user, token: "test-token" });
+    useWorkspacesStore.setState({
+      workspaces: workspaceList,
+      activeWorkspace,
+    });
+    useActivityStore.setState({
+      totalUnreadMessages: 1,
+      items: [
+        {
+          conversationId: "conv-human-beta",
+          conversationType: "direct",
+          conversationName: "Alice",
+          workspaceId: "ws-2",
+          workspaceName: "Team Beta",
+          unreadCount: 1,
+          latestMessage: {
+            id: "message-dm-beta",
+            threadId: null,
+            threadTitle: null,
+            senderId: "u2",
+            senderName: "Alice",
+            senderType: "human",
+            content: "Only unread in Beta",
+            createdAt: "2026-09-01T10:00:00.000Z",
+          },
+        },
+      ],
+    });
+
+    await renderSidebarAt("/channel/ch1");
+
+    expect(screen.getByRole("button", { name: "Alice" })).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Alice, unread" }),
+    ).not.toBeInTheDocument();
+  });
+
   it("renders correctly when not logged in", async () => {
     useConversationsStore.setState({ conversations });
 
@@ -196,7 +342,7 @@ describe("Sidebar", () => {
 
     expect(screen.getByText("Select workspace")).toBeInTheDocument();
     expect(screen.getByText("Test User")).toBeInTheDocument();
-    expect(screen.getByLabelText("Notifications")).toBeInTheDocument();
+    expect(screen.getByLabelText("Activity")).toBeInTheDocument();
 
     fireEvent.click(screen.getByText("Test User"));
     expect(screen.getByText("Manage bots")).toBeInTheDocument();
@@ -225,7 +371,7 @@ describe("Sidebar", () => {
     expect(screen.getByText("Alice")).toBeInTheDocument();
 
     // Notifications button remains available at the top.
-    expect(screen.getByLabelText("Notifications")).toBeInTheDocument();
+    expect(screen.getByLabelText("Activity")).toBeInTheDocument();
   });
 
   it("shows a green online indicator for connected people only", async () => {
@@ -263,6 +409,29 @@ describe("Sidebar", () => {
             createdAt: "2026-01-01T00:00:00.000Z",
           },
         });
+        useActivityStore.setState({
+          totalUnreadMessages: 1,
+          items: [
+            {
+              conversationId: "conv-human",
+              conversationType: "direct",
+              conversationName: "Alice",
+              workspaceId: "ws-1",
+              workspaceName: "Team Alpha",
+              unreadCount: 1,
+              latestMessage: {
+                id: "msg-human-dm",
+                threadId: null,
+                threadTitle: null,
+                senderId: "u2",
+                senderName: "Alice",
+                senderType: "human",
+                content: "hello from the background",
+                createdAt: "2026-01-01T00:00:00.000Z",
+              },
+            },
+          ],
+        });
       });
 
       expect(
@@ -273,6 +442,7 @@ describe("Sidebar", () => {
         useConversationsStore
           .getState()
           .setActiveDirectConversation("conv-human");
+        useActivityStore.setState({ items: [], totalUnreadMessages: 0 });
       });
       expect(screen.getByRole("button", { name: "Alice" })).toBeInTheDocument();
     } finally {
@@ -411,14 +581,51 @@ describe("Sidebar", () => {
       });
     };
 
-    act(() => emitBotMessage("msg-1"));
+    const setBotActivity = (id: string | null, unreadCount = 1) => {
+      useActivityStore.setState(
+        id
+          ? {
+              totalUnreadMessages: unreadCount,
+              items: [
+                {
+                  conversationId: "dm-bot",
+                  conversationType: "direct",
+                  conversationName: "Koda",
+                  workspaceId: "ws-1",
+                  workspaceName: "Team Alpha",
+                  unreadCount,
+                  latestMessage: {
+                    id,
+                    threadId: null,
+                    threadTitle: null,
+                    senderId: "u-bot",
+                    senderName: "Koda",
+                    senderType: "bot",
+                    content: "Background response",
+                    createdAt: "2026-07-27T08:00:00.000Z",
+                  },
+                },
+              ],
+            }
+          : { items: [], totalUnreadMessages: 0 },
+      );
+    };
+
+    act(() => {
+      emitBotMessage("msg-1");
+      setBotActivity("msg-1");
+    });
     expect(screen.getByRole("button", { name: "Koda, unread" })).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Koda, unread" }));
     await waitFor(() => expect(router.state.location.pathname).toBe("/dm/dm-bot"));
+    act(() => setBotActivity(null));
     expect(screen.getByRole("button", { name: "Koda" })).toBeInTheDocument();
 
-    act(() => emitBotMessage("msg-2"));
+    act(() => {
+      emitBotMessage("msg-2");
+      setBotActivity(null);
+    });
     expect(screen.queryByRole("button", { name: "Koda, unread" })).not.toBeInTheDocument();
 
     await act(async () => {
@@ -427,6 +634,7 @@ describe("Sidebar", () => {
     act(() => {
       emitBotMessage("msg-3");
       emitBotMessage("msg-4");
+      setBotActivity("msg-4", 2);
     });
     expect(screen.getAllByRole("button", { name: "Koda, unread" })).toHaveLength(1);
 

@@ -39,6 +39,7 @@ describe("AuthOnboarding", () => {
     render(<AuthOnboarding />);
 
     expect(screen.getByText("Create your TheChat account")).toBeInTheDocument();
+    expect(screen.queryByText(/desktop app/i)).not.toBeInTheDocument();
     expect(
       screen.getByRole("heading", { name: "Create account" }),
     ).toBeInTheDocument();

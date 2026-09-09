@@ -1,3 +1,5 @@
+import { authHeaders as auth } from "../lib/eden";
+import { isAuthenticated } from "../lib/auth-identity";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { OwnedBot, WorkspaceListItem } from "@thechat/shared";
 import { api } from "../lib/api";
@@ -7,9 +9,7 @@ import { openHermesBotModal } from "../components/HermesBotModal";
 import { useAuthStore } from "../stores/auth";
 import { useWorkspacesStore } from "../stores/workspaces";
 
-function auth(token: string) {
-  return { headers: { authorization: `Bearer ${token}` } };
-}
+
 
 type Notice = { kind: "success" | "error"; text: string };
 type ConfirmActionKind = "rotate-key" | "revoke-key" | "rotate-secret" | "delete";
@@ -80,7 +80,7 @@ export function BotsManageRoute() {
   );
 
   const loadBots = useCallback(async () => {
-    if (!token) {
+    if (!isAuthenticated(token)) {
       setBots([]);
       setSelectedId(null);
       setLoading(false);
@@ -160,7 +160,7 @@ export function BotsManageRoute() {
   };
 
   const refreshBot = async (botId: string) => {
-    if (!token) return;
+    if (!isAuthenticated(token)) return;
     const { data, error } = await api.bots({ botId }).get(auth(token));
     if (error) throw new Error(edenErrorMessage(error, "Failed to refresh bot"));
     replaceBot(data as OwnedBot);
@@ -182,7 +182,7 @@ export function BotsManageRoute() {
   };
 
   const saveDetails = () => {
-    if (!token || !selectedBot || !name.trim()) return;
+    if (!isAuthenticated(token) || !selectedBot || !name.trim()) return;
     void runAction("save", async () => {
       const { data, error } = await api.bots({ botId: selectedBot.id }).patch(
         {
@@ -199,7 +199,7 @@ export function BotsManageRoute() {
   };
 
   const changeWorkspace = (workspace: WorkspaceRow) => {
-    if (!token || !selectedBot) return;
+    if (!isAuthenticated(token) || !selectedBot) return;
     const actionKey = `workspace:${workspace.id}`;
     void runAction(actionKey, async () => {
       if (workspace.connected) {
@@ -229,7 +229,7 @@ export function BotsManageRoute() {
   };
 
   const rotateApiKey = () => {
-    if (!token || !selectedBot) return;
+    if (!isAuthenticated(token) || !selectedBot) return;
     const botId = selectedBot.id;
     if (!isConfirming("rotate-key")) {
       setConfirmAction({ botId, action: "rotate-key" });
@@ -252,7 +252,7 @@ export function BotsManageRoute() {
   };
 
   const revokeApiKey = () => {
-    if (!token || !selectedBot) return;
+    if (!isAuthenticated(token) || !selectedBot) return;
     const botId = selectedBot.id;
     if (!isConfirming("revoke-key")) {
       setConfirmAction({ botId, action: "revoke-key" });
@@ -273,7 +273,7 @@ export function BotsManageRoute() {
   };
 
   const rotateWebhookSecret = () => {
-    if (!token || !selectedBot) return;
+    if (!isAuthenticated(token) || !selectedBot) return;
     const botId = selectedBot.id;
     if (!isConfirming("rotate-secret")) {
       setConfirmAction({ botId, action: "rotate-secret" });
@@ -300,7 +300,7 @@ export function BotsManageRoute() {
   };
 
   const deleteBot = () => {
-    if (!token || !selectedBot) return;
+    if (!isAuthenticated(token) || !selectedBot) return;
     const botId = selectedBot.id;
     const botName = selectedBot.name;
     if (!isConfirming("delete")) {

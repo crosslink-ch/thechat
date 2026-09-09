@@ -1,3 +1,4 @@
+import { isAuthenticated } from "../lib/auth-identity";
 import { useQuery } from "@tanstack/react-query";
 import type { ConversationDetail } from "@thechat/shared";
 import { api } from "../lib/api";
@@ -10,7 +11,7 @@ export const conversationDetailQueryKey = (conversationId: string) =>
 
 export async function fetchConversationDetail(
   conversationId: string,
-  token: string,
+  token: string | null,
 ): Promise<ConversationDetail> {
   const { data, error } = await api.conversations
     .detail({ conversationId })
@@ -32,7 +33,7 @@ export function useConversationDetail(
       ? conversationDetailQueryKey(conversationId)
       : ["conversation-detail", "disabled"],
     queryFn: () => fetchConversationDetail(conversationId!, token!),
-    enabled: !!conversationId && !!token,
+    enabled: !!conversationId && isAuthenticated(token),
     staleTime: CONVERSATION_DETAIL_STALE_MS,
   });
 }

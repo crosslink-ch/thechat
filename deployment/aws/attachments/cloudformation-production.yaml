@@ -2,6 +2,13 @@ AWSTemplateFormatVersion: "2010-09-09"
 Description: Production S3 attachment storage and dedicated static-key IAM users for TheChat
 
 Parameters:
+  BrowserOrigin:
+    Type: String
+    Default: ""
+    AllowedValues:
+      - ""
+      - https://thechat.pranexa.com
+    Description: Optional exact browser origin; empty preserves desktop-only CORS
   BucketName:
     Type: String
     MinLength: 3
@@ -31,6 +38,9 @@ Rules:
     Assertions:
       - Assert: !Not [!Equals [!Ref ApiUserName, !Ref WorkerUserName]]
         AssertDescription: ApiUserName and WorkerUserName must be different
+
+Conditions:
+  HasBrowserOrigin: !Not [!Equals [!Ref BrowserOrigin, ""]]
 
 Resources:
   AttachmentsBucket:
@@ -68,6 +78,20 @@ Resources:
               - If-None-Match
               - x-amz-checksum-sha256
             MaxAge: 300
+          - !If
+            - HasBrowserOrigin
+            - Id: TheChatBrowserClient
+              AllowedOrigins:
+                - !Ref BrowserOrigin
+              AllowedMethods:
+                - GET
+                - PUT
+              AllowedHeaders:
+                - Content-Type
+                - If-None-Match
+                - x-amz-checksum-sha256
+              MaxAge: 300
+            - !Ref AWS::NoValue
       LifecycleConfiguration:
         Rules:
           - Id: ExpireQuarantineObjectVersions

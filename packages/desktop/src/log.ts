@@ -1,3 +1,4 @@
+import { isWeb } from "./platform/environment";
 import {
   info as tauriInfo,
   error as tauriError,
@@ -13,6 +14,7 @@ import {
 
 function safeLog(tauriFn: (msg: string) => Promise<void>, consoleFn: (...args: unknown[]) => void, msg: string) {
   consoleFn(`[thechat] ${msg}`);
+  if (isWeb) return;
   try {
     tauriFn(msg).catch(() => {});
   } catch {

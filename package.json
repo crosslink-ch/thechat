@@ -4,6 +4,9 @@
   "scripts": {
     "dev": "python3 scripts/dev.py",
     "dev:services": "python3 scripts/dev.py",
+    "dev:web": "pnpm --filter @thechat/desktop dev:web",
+    "build:web": "pnpm --filter @thechat/desktop build:web",
+    "test:web:build": "pnpm --filter @thechat/desktop test:web:build",
     "dev:desktop": "pnpm --filter @thechat/desktop dev",
     "dev:api": "pnpm --filter @thechat/api dev",
     "dev:worker": "pnpm --filter @thechat/api dev:worker",
@@ -23,6 +26,7 @@
     "db:migrate": "pnpm --filter @thechat/api db:migrate",
     "db:push": "pnpm --filter @thechat/api db:push",
     "db:studio": "pnpm --filter @thechat/api db:studio",
+    "test:e2e:web": "playwright test -c scripts/e2e/web/playwright.config.ts",
     "test:e2e": "pnpm --filter @thechat/desktop test:e2e",
     "test:e2e:headless": "pnpm --filter @thechat/desktop test:e2e:headless",
     "test:e2e:hermes": "python3 scripts/e2e/hermes-bot-flow.py",
@@ -34,6 +38,7 @@
   },
   "packageManager": "pnpm@10.28.2",
   "devDependencies": {
+    "@playwright/test": "^1.63.0",
     "dotenv-cli": "^11.0.0"
   }
 }

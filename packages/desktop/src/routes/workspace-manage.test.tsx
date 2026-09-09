@@ -385,6 +385,42 @@ describe("WorkspaceManageRoute", () => {
     expect(screen.getByText("Current Helper")).toBeVisible();
   });
 
+  it("shows another member user ID to regular workspace members", async () => {
+    const memberWorkspace: WorkspaceWithDetails = {
+      ...workspace,
+      members: workspace.members.map((member) =>
+        member.userId === ownerUser.id ? { ...member, role: "member" } : member,
+      ),
+    };
+    setWorkspace(memberWorkspace);
+    apiMocks.workspaceGet.mockResolvedValue({ data: memberWorkspace, error: null });
+
+    render(<WorkspaceManageRoute />);
+
+    const memberRow = await screen.findByTestId(`member-row-${memberUser.id}`);
+    expect(
+      within(memberRow).getByTestId(`member-user-id-${memberUser.id}`),
+    ).toHaveTextContent(memberUser.id);
+  });
+
+  it("copies another member user ID", async () => {
+    const user = userEvent.setup();
+    const writeText = vi
+      .spyOn(navigator.clipboard, "writeText")
+      .mockResolvedValue(undefined);
+
+    render(<WorkspaceManageRoute />);
+
+    const memberRow = await screen.findByTestId(`member-row-${memberUser.id}`);
+    const copyButton = within(memberRow).getByRole("button", {
+      name: `Copy user ID for ${memberUser.name}`,
+    });
+    await user.click(copyButton);
+
+    expect(writeText).toHaveBeenCalledWith(memberUser.id);
+    expect(copyButton).toHaveTextContent("Copied");
+  });
+
   it("is read-only for regular members", async () => {
     const memberWorkspace: WorkspaceWithDetails = {
       ...workspace,

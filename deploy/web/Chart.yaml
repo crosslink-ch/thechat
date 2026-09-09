@@ -1,0 +1,6 @@
+apiVersion: v2
+name: thechat-web
+description: Stateless browser frontend; uses the existing independent TheChat API
+version: 0.1.0
+appVersion: "1"
+type: application
