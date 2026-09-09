@@ -7,11 +7,13 @@ import type {
 import { HermesProgressInline } from "./HermesProgressInline";
 import { useHermesApprovalsStore } from "../stores/hermes-approvals";
 import { useHermesClarificationsStore } from "../stores/hermes-clarifications";
+import { useHermesIndicatorsStore } from "../stores/hermes-indicators";
 
 describe("HermesProgressInline", () => {
   beforeEach(() => {
     useHermesApprovalsStore.getState().resetForTests();
     useHermesClarificationsStore.getState().resetForTests();
+    useHermesIndicatorsStore.getState().resetForTests();
   });
 
   it("collapses tool start and completion events into one row", () => {
@@ -705,6 +707,7 @@ describe("HermesProgressInline", () => {
         allowOther: true,
       },
     });
+    useHermesIndicatorsStore.getState().trackProgressEvent(clarify);
     render(
       <HermesProgressInline
         invocations={[{ invocation: invocation(), events: [clarify] }]}
@@ -728,12 +731,18 @@ describe("HermesProgressInline", () => {
     );
     expect(input).not.toBeDisabled();
     expect(screen.getByTestId("hermes-clarify-request")).toBeInTheDocument();
+    expect(
+      useHermesIndicatorsStore.getState().pendingClarifications,
+    ).toEqual([expect.objectContaining({ eventId: clarify.id })]);
 
     fireEvent.click(screen.getByRole("button", { name: "Submit" }));
     await waitFor(() =>
       expect(screen.getByTestId("hermes-clarify-resolved")).toBeInTheDocument(),
     );
     expect(onInteraction).toHaveBeenLastCalledWith(clarify, "Asia Pacific");
+    expect(
+      useHermesIndicatorsStore.getState().pendingClarifications,
+    ).toEqual([]);
   });
 
   it("matches clarify resolutions by requestId and stays resolved after remount", () => {
