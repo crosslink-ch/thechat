@@ -5,6 +5,7 @@ import { useChat } from "../hooks/useChat";
 import { openCodexAuthModal } from "../components/CodexAuthModal";
 import { useIsStreaming, subscribeToStream } from "../stores/streaming";
 import { useAutoScroll } from "../hooks/useAutoScroll";
+import { useScrollStability } from "../hooks/useScrollStability";
 import { useToolsStore } from "../stores/tools";
 import { useAuthStore } from "../stores/auth";
 import { useConversationsStore } from "../stores/conversations";
@@ -106,7 +107,13 @@ export function AgentChatRoute() {
 
   const [showFeedbackInput, setShowFeedbackInput] = useState(false);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
-  const { isAtBottom, scrollToBottom } = useAutoScroll(scrollContainerRef);
+  const {
+    isAtBottom,
+    pauseAutoScroll,
+    scrollToBottom,
+    shouldFollowBottom,
+  } = useAutoScroll(scrollContainerRef);
+  useScrollStability(scrollContainerRef, shouldFollowBottom);
   const loadingOlderRef = useRef(false);
   const skipNextMessageScrollRef = useRef(false);
   const prependScrollSnapshotRef = useRef<{
@@ -276,16 +283,22 @@ export function AgentChatRoute() {
       );
       const lastAssistant = assistantEls[assistantEls.length - 1];
       if (lastAssistant) {
+        pauseAutoScroll();
         const top =
           el.scrollTop +
           lastAssistant.getBoundingClientRect().top -
           el.getBoundingClientRect().top;
         el.scrollTo({ top, behavior: "instant" as ScrollBehavior });
       } else {
-        el.scrollTo({ top: el.scrollHeight, behavior: "instant" as ScrollBehavior });
+        scrollToBottom({ force: true });
       }
     }
-  }, [conversation?.id, messages.length]);
+  }, [
+    conversation?.id,
+    messages.length,
+    pauseAutoScroll,
+    scrollToBottom,
+  ]);
 
   // Scroll to bottom when user sends a message (always force)
   useEffect(() => {
@@ -372,7 +385,11 @@ export function AgentChatRoute() {
       <TodoPanel todos={todosState} />
 
       <div className="relative flex flex-1 flex-col overflow-hidden">
-        <div ref={scrollContainerRef} className="flex flex-1 flex-col overflow-y-auto">
+        <div
+          ref={scrollContainerRef}
+          data-testid="agent-chat-scroll"
+          className="flex flex-1 flex-col overflow-y-auto [overflow-anchor:none]"
+        >
           {loadingMessages && (
             <div className="flex flex-1 flex-col items-center justify-center text-[1rem] text-text-placeholder">Loading messages...</div>
           )}

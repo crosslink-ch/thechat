@@ -1,5 +1,5 @@
 import { Elysia } from "elysia";
-import { cors } from "@elysiajs/cors";
+import { browserCors } from "./auth/browser";
 import { sql } from "drizzle-orm";
 import { db } from "./db";
 import { authRoutes } from "./auth";
@@ -18,6 +18,7 @@ import { hermesRoutes } from "./hermes";
 import { hermesPlatformRoutes } from "./hermes-platform";
 import { botRuntimeRoutes } from "./bot-runtime";
 import { attachmentRoutes } from "./attachments";
+import { activityRoutes } from "./activity";
 import { initObservability, shutdownObservability, withSpan } from "./observability";
 import { log } from "./logging";
 
@@ -55,7 +56,7 @@ installLoopbackOnlyE2EGuard();
 await initObservability("thechat-api");
 
 const app = new Elysia()
-  .use(cors())
+  .use(browserCors)
   .use(log.into())
   .decorate("db", db)
   .use(authInfrastructureErrors)
@@ -65,6 +66,7 @@ const app = new Elysia()
   .use(conversationRoutes)
   .use(messageRoutes)
   .use(attachmentRoutes)
+  .use(activityRoutes)
   .use(wsRoutes)
   .use(botRoutes)
   .use(hermesRoutes)

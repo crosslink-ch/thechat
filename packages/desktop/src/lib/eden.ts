@@ -1,11 +1,13 @@
+import { isWeb } from "../platform/environment";
+
 export function authHeaders(
-  token: string,
+  token: string | null,
   additionalHeaders: Record<string, string> = {},
-) {
+): { headers: Record<string, string> } {
   return {
     headers: {
-      authorization: `Bearer ${token}`,
       ...additionalHeaders,
+      ...(isWeb ? { "X-TheChat-Client": "web" } : token ? { authorization: `Bearer ${token}` } : {}),
     },
   };
 }

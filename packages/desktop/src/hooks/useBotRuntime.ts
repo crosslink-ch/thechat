@@ -1,3 +1,4 @@
+import { isAuthenticated } from "../lib/auth-identity";
 import { useCallback, useMemo } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type {
@@ -20,7 +21,7 @@ export const botRuntimeQueryKey = (conversationId: string) =>
 
 export async function fetchBotRuntime(
   conversationId: string,
-  token: string,
+  token: string | null,
 ): Promise<BotRuntimeSnapshot> {
   const { data, error } = await api["bot-runtime"]
     .conversations({ conversationId })
@@ -37,7 +38,7 @@ export async function submitHermesInteraction(
   invocationId: string,
   eventId: string,
   response: string | string[],
-  token: string,
+  token: string | null,
 ): Promise<void> {
   const { error } = await api["bot-runtime"]
     .invocations({ invocationId })
@@ -60,7 +61,7 @@ export function useBotRuntime(
       ? botRuntimeQueryKey(conversationId)
       : ["bot-runtime", "disabled"],
     queryFn: () => fetchBotRuntime(conversationId!, token!),
-    enabled: enabled && !!conversationId && !!token,
+    enabled: enabled && !!conversationId && isAuthenticated(token),
     staleTime: BOT_RUNTIME_STALE_MS,
     refetchInterval: (query) =>
       hasActiveBotRuntimeActivity(query.state.data as BotRuntimeSnapshot | undefined)

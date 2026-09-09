@@ -10,7 +10,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { usePermissionModeStore } from "../stores/permission-mode";
 import { ChatHeader } from "./ChatHeader";
 
-async function renderHeader(path: "/settings" | "/chat") {
+async function renderHeader(path: "/settings" | "/chat" | "/activity") {
   const rootRoute = createRootRoute();
   const childRoute = createRoute({
     getParentRoute: () => rootRoute,
@@ -44,5 +44,12 @@ describe("ChatHeader settings visibility", () => {
     await renderHeader("/chat");
 
     expect(screen.getByText("Bypass")).toBeInTheDocument();
+  });
+
+  it("labels the cross-workspace inbox as Activity", async () => {
+    await renderHeader("/activity");
+
+    expect(screen.getByText("Activity")).toBeInTheDocument();
+    expect(screen.queryByText("Bypass")).not.toBeInTheDocument();
   });
 });

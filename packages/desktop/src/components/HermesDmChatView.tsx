@@ -1,4 +1,6 @@
+import { isAuthenticated } from "../lib/auth-identity";
 import { useRef, useEffect, useCallback, useMemo, useLayoutEffect, useState } from "react";
+import { flushSync } from "react-dom";
 import { InputBar, type InputSendResult } from "./InputBar";
 import { Markdown } from "./Markdown";
 import { useAutoScroll } from "../hooks/useAutoScroll";
@@ -14,8 +16,10 @@ import type { MentionUser } from "./MentionList";
 import { HermesProgressInline } from "./HermesProgressInline";
 import type { HermesSlashCommand } from "../lib/hermes-slash-commands";
 import { MessageSendError } from "./MessageSendError";
-import { SharedMessageAttachments } from "./SharedMessageAttachments";
-import { MessageReactions } from "./MessageReactions";
+import {
+  SharedChatMessage,
+  shouldMergeChatMessage,
+} from "./SharedChatMessage";
 
 const DEFER_FORMATTING_MESSAGE_THRESHOLD = 40;
 const DEFER_FORMATTING_BATCH_SIZE = 4;
@@ -57,11 +61,6 @@ interface HermesDmChatViewProps {
   composerKey?: string | number;
 }
 
-function formatTime(iso: string) {
-  const d = new Date(iso);
-  return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-}
-
 export function HermesDmChatView({
   messages,
   loading,
@@ -87,7 +86,7 @@ export function HermesDmChatView({
   composerKey,
 }: HermesDmChatViewProps) {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
-  const { isAtBottom, pauseAutoScroll, scrollToBottom } =
+  const { isAtBottom, pauseAutoScroll, scrollToBottom, shouldFollowBottom } =
     useAutoScroll(scrollContainerRef);
   useMessageTopCommand(
     scrollContainerRef,
@@ -107,6 +106,10 @@ export function HermesDmChatView({
     ready: 0,
     total: 0,
   });
+  const [eagerFormatting, setEagerFormatting] = useState<{
+    scopeKey: string | null;
+    messageIds: Set<string>;
+  }>({ scopeKey: null, messageIds: new Set() });
 
   const visibleTypingNames = useMemo(() => {
     const progressBotUserIds = new Set([
@@ -150,6 +153,10 @@ export function HermesDmChatView({
     [visibleTypingNames],
   );
   const scrollScopeKey = scrollKey ?? "__hermes_dm_chat_default__";
+  const eagerlyFormattedMessageIds =
+    eagerFormatting.scopeKey === scrollScopeKey
+      ? eagerFormatting.messageIds
+      : undefined;
   const deferMessageFormatting =
     messages.length > DEFER_FORMATTING_MESSAGE_THRESHOLD;
   const formattingHistory =
@@ -234,7 +241,7 @@ export function HermesDmChatView({
     onLoadOlderMessages,
     messageScrollSignature,
   });
-  useScrollStability(scrollContainerRef);
+  useScrollStability(scrollContainerRef, shouldFollowBottom);
 
   useLayoutEffect(() => {
     if (loading || initializedScrollKeyRef.current === scrollScopeKey) return;
@@ -251,6 +258,67 @@ export function HermesDmChatView({
     if (consumeSkipContentScroll()) return;
     scrollToBottom();
   }, [consumeSkipContentScroll, messageScrollSignature, scrollToBottom]);
+
+  const promoteVisibleMessages = useCallback(() => {
+    if (loading || !deferMessageFormatting) return;
+    const container = scrollContainerRef.current;
+    if (!container) return;
+    if (deferredFormattingScopeRef.current !== scrollScopeKey) {
+      deferredFormattingScopeRef.current = scrollScopeKey;
+      deferredFormattedIdsRef.current = new Set();
+    }
+    const containerBounds = container.getBoundingClientRect();
+    const visibleMessageIds = new Set<string>();
+    for (const row of container.querySelectorAll<HTMLElement>("[data-message-id]")) {
+      const messageId = row.dataset.messageId;
+      if (!messageId || deferredFormattedIdsRef.current.has(messageId)) continue;
+      const bounds = row.getBoundingClientRect();
+      if (
+        bounds.bottom > containerBounds.top &&
+        bounds.top < containerBounds.bottom
+      ) {
+        visibleMessageIds.add(messageId);
+      }
+    }
+    if (visibleMessageIds.size === 0) return;
+
+    for (const messageId of visibleMessageIds) {
+      deferredFormattedIdsRef.current.add(messageId);
+      deferredFormattingPendingIdsRef.current.delete(messageId);
+    }
+    setEagerFormatting((current) => {
+      const messageIds =
+        current.scopeKey === scrollScopeKey
+          ? new Set(current.messageIds)
+          : new Set<string>();
+      const previousSize = messageIds.size;
+      for (const messageId of visibleMessageIds) messageIds.add(messageId);
+      if (
+        current.scopeKey === scrollScopeKey &&
+        messageIds.size === previousSize
+      ) {
+        return current;
+      }
+      return { scopeKey: scrollScopeKey, messageIds };
+    });
+  }, [deferMessageFormatting, loading, scrollScopeKey]);
+
+  // Large histories still format offscreen rows in idle batches, but rows in
+  // the opened viewport render final Markdown before the browser paints.
+  useLayoutEffect(() => {
+    promoteVisibleMessages();
+  }, [messageScrollSignature, promoteVisibleMessages]);
+
+  // Register after useAutoScroll's listener so a manual upward scroll records
+  // its intent before synchronous formatting changes the scroll metrics.
+  useEffect(() => {
+    if (loading || !deferMessageFormatting) return;
+    const container = scrollContainerRef.current;
+    if (!container) return;
+    const handleScroll = () => flushSync(promoteVisibleMessages);
+    container.addEventListener("scroll", handleScroll, { passive: true });
+    return () => container.removeEventListener("scroll", handleScroll);
+  }, [deferMessageFormatting, loading, promoteVisibleMessages]);
 
   useEffect(() => {
     if (progressScrollFrameRef.current !== null) {
@@ -284,6 +352,8 @@ export function HermesDmChatView({
     },
     [onSend, scrollToBottom],
   );
+  const shouldDeferFormatting = (messageId: string) =>
+    deferMessageFormatting && !eagerlyFormattedMessageIds?.has(messageId);
 
   return (
     <>
@@ -312,46 +382,36 @@ export function HermesDmChatView({
             <div className="flex flex-1 flex-col items-center justify-center text-[1rem] text-text-placeholder">No messages yet. Start the conversation!</div>
           )}
           {messages.map((msg, index) => (
-            <div
+            <SharedChatMessage
               key={msg.id}
-              data-message-id={msg.id}
-              className="group/message relative flex gap-2.5 px-5 py-2.5 transition-colors duration-100 hover:bg-raised/50"
+              message={msg}
+              merged={
+                shouldMergeChatMessage(messages[index - 1], msg) &&
+                !hasInterveningHermesEvent(
+                  messages[index - 1],
+                  msg,
+                  progressInvocations,
+                )
+              }
+              onSetReaction={onSetReaction}
             >
-              <div className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-full bg-elevated text-[0.857rem] font-semibold text-text-muted">
-                {msg.senderName.charAt(0).toUpperCase()}
-              </div>
-              <div className="min-w-0 flex-1">
-                <div className="mb-0.5 flex items-baseline gap-2">
-                  <span className="text-[0.929rem] font-semibold text-text">{msg.senderName}</span>
-                  <span className="text-[0.714rem] text-text-dimmed">{formatTime(msg.createdAt)}</span>
-                </div>
-                {msg.content && (
-                  <Markdown
-                    content={msg.content}
-                    defer={deferMessageFormatting}
-                    deferDelayMs={
-                      deferMessageFormatting
-                        ? deferredMarkdownDelayMs(messages.length, index)
-                        : 0
-                    }
-                    onDeferredRender={
-                      deferMessageFormatting
-                        ? () => handleDeferredMarkdownRender(msg.id)
-                        : undefined
-                    }
-                  />
-                )}
-                <SharedMessageAttachments attachments={msg.attachments ?? []} />
-                {onSetReaction && (
-                  <MessageReactions
-                    reactions={msg.reactions ?? []}
-                    onSetReaction={(emoji, active) =>
-                      onSetReaction(msg.id, emoji, active)
-                    }
-                  />
-                )}
-              </div>
-            </div>
+              {msg.content && (
+                <Markdown
+                  content={msg.content}
+                  defer={shouldDeferFormatting(msg.id)}
+                  deferDelayMs={
+                    shouldDeferFormatting(msg.id)
+                      ? deferredMarkdownDelayMs(messages.length, index)
+                      : 0
+                  }
+                  onDeferredRender={
+                    shouldDeferFormatting(msg.id)
+                      ? () => handleDeferredMarkdownRender(msg.id)
+                      : undefined
+                  }
+                />
+              )}
+            </SharedChatMessage>
           ))}
           <HermesProgressInline
             invocations={progressInvocations}
@@ -404,11 +464,60 @@ export function HermesDmChatView({
         queuedCount={queuedCount}
         slashCommands={slashCommands}
         sharedUpload={
-          conversationId && token ? { conversationId, token } : undefined
+          conversationId && isAuthenticated(token) ? { conversationId, token: token ?? null } : undefined
         }
       />
     </>
   );
+}
+
+function hasInterveningHermesEvent(
+  previous: ChatMessage | undefined,
+  current: ChatMessage,
+  progressInvocations: ActiveHermesInvocationProgress[],
+) {
+  if (!previous) return false;
+  // Active Hermes lanes are replaced when a human follow-up starts its
+  // invocation. They must not make that optimistic row's grouping transient.
+  if (current.senderType === "human") return false;
+
+  const previousTime = new Date(previous.createdAt).getTime();
+  const currentTime = new Date(current.createdAt).getTime();
+  if (!Number.isFinite(previousTime) || !Number.isFinite(currentTime)) {
+    return false;
+  }
+
+  const isBetweenMessages = (iso: string) => {
+    const timestamp = new Date(iso).getTime();
+    return (
+      Number.isFinite(timestamp) &&
+      timestamp > previousTime &&
+      timestamp < currentTime
+    );
+  };
+
+  return progressInvocations.some(({ invocation, events }) => {
+    if (
+      invocation.conversationId !== current.conversationId ||
+      invocation.threadId !== current.threadId
+    ) {
+      return false;
+    }
+
+    if (isBetweenMessages(invocation.startedAt ?? invocation.createdAt)) {
+      return true;
+    }
+
+    return events.some((event) => {
+      if (
+        event.conversationId !== current.conversationId ||
+        event.threadId !== current.threadId
+      ) {
+        return false;
+      }
+      return isBetweenMessages(event.occurredAt);
+    });
+  });
 }
 
 function chatMessageWindowSignature(messages: ChatMessage[]) {

@@ -1,3 +1,5 @@
+import { authHeaders as auth } from "../lib/eden";
+import { isAuthenticated } from "../lib/auth-identity";
 import { type FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { API_URL, api } from "../lib/api";
 import { edenErrorMessage } from "../lib/eden";
@@ -19,9 +21,7 @@ type RevealedToken = {
 
 type Notice = { kind: "success" | "error"; message: string } | null;
 
-function auth(token: string) {
-  return { headers: { authorization: `Bearer ${token}` } };
-}
+
 
 function formatDate(value: string | null) {
   if (!value) return "Never";
@@ -88,7 +88,7 @@ export function ApiAccessSettings() {
   const [copied, setCopied] = useState<string | null>(null);
 
   const loadTokens = useCallback(async () => {
-    if (!sessionToken) {
+    if (!isAuthenticated(sessionToken)) {
       setTokens([]);
       setLoading(false);
       return;
@@ -131,7 +131,7 @@ export function ApiAccessSettings() {
   const createToken = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const trimmedName = name.trim();
-    if (!sessionToken || !trimmedName || creating || loading) return;
+    if (!isAuthenticated(sessionToken) || !trimmedName || creating || loading) return;
 
     setCreating(true);
     setNotice(null);
@@ -185,7 +185,7 @@ export function ApiAccessSettings() {
   };
 
   const revokeToken = async (tokenId: string) => {
-    if (!sessionToken || revokingId) return;
+    if (!isAuthenticated(sessionToken) || revokingId) return;
     if (confirmingId !== tokenId) {
       setConfirmingId(tokenId);
       return;
@@ -321,7 +321,7 @@ export function ApiAccessSettings() {
             />
             <button
               type="submit"
-              disabled={!name.trim() || creating || loading || !sessionToken}
+              disabled={!name.trim() || creating || loading || !isAuthenticated(sessionToken)}
               className="inline-flex h-10 shrink-0 cursor-pointer items-center justify-center rounded-lg bg-accent px-4 text-[0.857rem] font-semibold text-white transition-colors hover:bg-accent/90 disabled:cursor-not-allowed disabled:opacity-45"
             >
               {creating ? "Creating..." : "Create token"}

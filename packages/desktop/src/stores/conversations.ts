@@ -1,3 +1,4 @@
+import { onSessionReset } from "../lib/session-boundary";
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
 import type { Conversation } from "../core/types";
@@ -122,3 +123,5 @@ export const useConversationsStore = create<ConversationsStore>()((set) => ({
     });
   },
 }));
+
+onSessionReset(() => useConversationsStore.setState(useConversationsStore.getInitialState()));

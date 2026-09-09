@@ -1,0 +1,29 @@
+# ADDITIVE overlay: layer AFTER the last successful live API values export.
+# Never apply this over repository defaults on an existing production release.
+# Deliberately does NOT set images, Secrets, DB, Redis, attachments, worker or mail.
+env:
+  THECHAT_WEB_ORIGINS: "https://thechat.pranexa.com"
+  BETTER_AUTH_URL: "https://thechat-api.pranexa.com"
+  THECHAT_BACKEND_URL: "https://thechat-api.pranexa.com"
+  # Public presigning only; existing internal S3 client, bucket and credentials stay.
+  ATTACHMENT_S3_PUBLIC_ENDPOINT: "https://s3.dualstack.eu-central-1.amazonaws.com"
+ingress:
+  enabled: true
+  className: traefik
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+  # Helm lists replace, so retain the legacy desktop host explicitly.
+  hosts:
+    - host: thechat.testkopie.dev
+      paths:
+        - path: /
+          pathType: Prefix
+    - host: thechat-api.pranexa.com
+      paths:
+        - path: /
+          pathType: Prefix
+  # Only the new host gets a new certificate. Legacy retains the shared default.
+  tls:
+    - hosts:
+        - thechat-api.pranexa.com
+      secretName: thechat-api-pranexa-tls

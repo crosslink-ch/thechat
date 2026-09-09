@@ -165,19 +165,40 @@ vi.mock("../components/ChannelChatView", () => ({
   ChannelChatView: () => <div data-testid="channel-chat" />,
 }));
 
-vi.mock("../components/HermesDmChatView", () => ({
-  HermesDmChatView: ({ onSend, messages, sendError, composerKey }: any) => (
-    <div
-      data-testid="hermes-chat"
-      data-message-count={messages.length}
-      data-composer-key={composerKey}
-    >
-      <button type="button" onClick={() => onSend("First task prompt")}>Send first prompt</button>
-      <button type="button" onClick={() => onSend("   ")}>Send empty prompt</button>
-      {sendError ? <div role="alert">{sendError}</div> : null}
-    </div>
-  ),
-}));
+vi.mock("../components/HermesDmChatView", async () => {
+  const { useComposerDraftsStore } = await import("../stores/composer-drafts");
+  return {
+    HermesDmChatView: ({
+      onSend,
+      messages,
+      sendError,
+      composerKey,
+      draftKey,
+    }: any) => {
+      const draft = useComposerDraftsStore(
+        (state) => state.drafts[draftKey] ?? "",
+      );
+      const setDraft = useComposerDraftsStore((state) => state.setDraft);
+      return (
+        <div
+          data-testid="hermes-chat"
+          data-message-count={messages.length}
+          data-composer-key={composerKey}
+          data-draft-key={draftKey}
+        >
+          <textarea
+            aria-label="Task prompt draft"
+            value={draft}
+            onChange={(event) => setDraft(draftKey, event.currentTarget.value)}
+          />
+          <button type="button" onClick={() => onSend("First task prompt")}>Send first prompt</button>
+          <button type="button" onClick={() => onSend("   ")}>Send empty prompt</button>
+          {sendError ? <div role="alert">{sendError}</div> : null}
+        </div>
+      );
+    },
+  };
+});
 
 vi.mock("../components/HermesRuntimePanel", () => ({
   HermesRuntimePanel: ({
@@ -200,6 +221,7 @@ vi.mock("../components/HermesRuntimePanel", () => ({
 }));
 
 import { DmRoute } from "./dm";
+import { useComposerDraftsStore } from "../stores/composer-drafts";
 
 const persistedThread = {
   id: "thread-1",
@@ -212,16 +234,19 @@ const persistedThread = {
   lastActivityAt: "2026-07-27T00:00:00.000Z",
 };
 
-async function renderRoute() {
+async function renderRoute(initialEntry = "/dm/dm-1") {
   const rootRoute = createRootRoute();
   const dmRoute = createRoute({
     getParentRoute: () => rootRoute,
     path: "/dm/$id",
+    validateSearch: (search: Record<string, unknown>) => ({
+      threadId: typeof search.threadId === "string" ? search.threadId : undefined,
+    }),
     component: DmRoute,
   });
   const router = createRouter({
     routeTree: rootRoute.addChildren([dmRoute]),
-    history: createMemoryHistory({ initialEntries: ["/dm/dm-1"] }),
+    history: createMemoryHistory({ initialEntries: [initialEntry] }),
   });
 
   await act(async () => {
@@ -232,6 +257,13 @@ async function renderRoute() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  useComposerDraftsStore.setState({
+    drafts: {},
+    revisions: {},
+    imageDrafts: {},
+    attachmentDrafts: {},
+    sendingAttachments: {},
+  });
   mocks.threads = [];
   mocks.messageQueryStale = false;
   mocks.createThread.mockResolvedValue(persistedThread);
@@ -239,6 +271,38 @@ beforeEach(() => {
 });
 
 describe("DmRoute deferred Hermes task drafts", () => {
+  it("restores a typed New task draft after selecting another task", async () => {
+    mocks.threads = [persistedThread];
+    await renderRoute();
+
+    fireEvent.click(screen.getByRole("button", { name: "New task" }));
+    const composer = screen.getByRole("textbox", { name: "Task prompt draft" });
+    fireEvent.change(composer, {
+      target: { value: "Keep this unfinished task" },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: persistedThread.title }));
+    expect(composer).toHaveValue("");
+
+    fireEvent.click(screen.getByRole("button", { name: "New task" }));
+    expect(composer).toHaveValue("Keep this unfinished task");
+  });
+
+  it("opens an Activity deep link on the requested task", async () => {
+    mocks.threads = [persistedThread];
+    await renderRoute("/dm/dm-1?threadId=thread-1");
+
+    await waitFor(() =>
+      expect(mocks.channelChatOptions).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          conversationId: "dm-1",
+          threadId: "thread-1",
+          unthreadedOnly: false,
+        }),
+      ),
+    );
+  });
+
   it("changes composer identity only at the local New task boundary", async () => {
     mocks.threads = [persistedThread];
     await renderRoute();
@@ -370,7 +434,11 @@ describe("DmRoute deferred Hermes task drafts", () => {
     fireEvent.click(screen.getByRole("button", { name: "New task" }));
     fireEvent.click(screen.getByRole("button", { name: "Send first prompt" }));
     await act(async () => {
-      await router.navigate({ to: "/dm/$id", params: { id: "dm-2" } });
+      await router.navigate({
+        to: "/dm/$id",
+        params: { id: "dm-2" },
+        search: { threadId: undefined },
+      });
     });
     fireEvent.click(screen.getByRole("button", { name: "New task" }));
     expect(screen.getByTestId("local-task-draft")).toBeInTheDocument();

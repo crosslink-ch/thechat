@@ -1,3 +1,4 @@
+import { isAuthenticated } from "../lib/auth-identity";
 import { useCallback, useEffect, useRef, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import type { ChatAttachment, TraceContextCarrier } from "@thechat/shared";
@@ -14,6 +15,45 @@ import { useAuthStore } from "../stores/auth";
 
 const imageViewerControlClassName =
   "inline-flex size-[44px] shrink-0 cursor-pointer items-center justify-center rounded-full border border-white/20 bg-black/60 text-white shadow-lg backdrop-blur-md transition duration-150 hover:border-white/40 hover:bg-black/80 active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-black disabled:cursor-wait disabled:opacity-60";
+const MAX_THUMBNAIL_WIDTH_PX = 384;
+const MAX_THUMBNAIL_HEIGHT_PX = 256;
+const FALLBACK_THUMBNAIL_WIDTH_PX = 192;
+
+function imageFrame(attachment: ChatAttachment) {
+  const width = attachment.width;
+  const height = attachment.height;
+  if (
+    typeof width === "number" &&
+    typeof height === "number" &&
+    Number.isSafeInteger(width) &&
+    Number.isSafeInteger(height) &&
+    width > 0 &&
+    height > 0
+  ) {
+    const scale = Math.min(
+      1,
+      MAX_THUMBNAIL_WIDTH_PX / width,
+      MAX_THUMBNAIL_HEIGHT_PX / height,
+    );
+    return {
+      sourceWidth: width,
+      sourceHeight: height,
+      style: {
+        width: width * scale,
+        aspectRatio: `${width} / ${height}`,
+      },
+    };
+  }
+
+  return {
+    sourceWidth: undefined,
+    sourceHeight: undefined,
+    style: {
+      width: FALLBACK_THUMBNAIL_WIDTH_PX,
+      aspectRatio: "3 / 2",
+    },
+  };
+}
 
 function DownloadIcon({ className = "" }: { className?: string }) {
   return (
@@ -57,7 +97,7 @@ export function SharedMessageAttachments({
   attachments: ChatAttachment[];
 }) {
   const token = useAuthStore((state) => state.token);
-  if (attachments.length === 0 || !token) return null;
+  if (attachments.length === 0 || !isAuthenticated(token)) return null;
 
   return (
     <div className="mt-2 flex max-w-2xl flex-wrap gap-2">
@@ -81,7 +121,7 @@ function AuthorizedImage({
   token,
 }: {
   attachment: ChatAttachment;
-  token: string;
+  token: string | null;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const thumbnailRef = useRef<HTMLButtonElement>(null);
@@ -93,6 +133,7 @@ function AuthorizedImage({
   const [expanded, setExpanded] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const [downloadError, setDownloadError] = useState<string | null>(null);
+  const frame = imageFrame(attachment);
 
   const authorize = useCallback(async () => {
     if (url) return url;
@@ -193,7 +234,12 @@ function AuthorizedImage({
   }, [attachment.fileName, attachment.id, token]);
 
   return (
-    <div ref={containerRef} className="min-h-24 min-w-32">
+    <div
+      ref={containerRef}
+      data-testid="attachment-image-frame"
+      className="max-w-full shrink-0"
+      style={frame.style}
+    >
       {error ? (
         <button
           type="button"
@@ -201,7 +247,7 @@ function AuthorizedImage({
             setError(null);
             void authorize();
           }}
-          className="rounded-lg border border-border bg-raised px-3 py-2 text-xs text-error-bright"
+          className="h-full w-full rounded-lg border border-border bg-raised px-3 py-2 text-xs text-error-bright"
         >
           Image unavailable — retry
         </button>
@@ -218,13 +264,15 @@ function AuthorizedImage({
                   "thumbnail",
                 );
               }}
-              className="block overflow-hidden rounded-lg border border-border bg-raised"
+              className="block h-full w-full overflow-hidden rounded-lg border border-border bg-raised"
               aria-label={`Open ${attachment.fileName}`}
             >
               <img
                 src={url}
                 alt={attachment.fileName}
-                className="max-h-64 max-w-sm object-contain"
+                width={frame.sourceWidth}
+                height={frame.sourceHeight}
+                className="h-full w-full object-contain"
                 onLoad={() =>
                   recordImageOutcome(
                     "attachment.image.render",
@@ -346,7 +394,7 @@ function AuthorizedImage({
         <div
           role="status"
           aria-label={`Loading ${attachment.fileName}`}
-          className="h-32 w-48 animate-pulse rounded-lg border border-border bg-raised"
+          className="h-full w-full animate-pulse rounded-lg border border-border bg-raised"
         />
       )}
     </div>
@@ -358,7 +406,7 @@ function FileCard({
   token,
 }: {
   attachment: ChatAttachment;
-  token: string;
+  token: string | null;
 }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);

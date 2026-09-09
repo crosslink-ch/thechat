@@ -603,7 +603,7 @@ function ApprovalRequestCard({
       <TimelineDot tone="warning" pulse />
       <div
         data-testid="hermes-approval-request"
-        className="min-w-0 flex-1 border-l-2 border-warning-text bg-warning-bg/35 py-2 pl-3 pr-2.5 text-[0.929rem] text-text-secondary"
+        className="hermes-interaction-card min-w-0 flex-1 border-l-2 border-warning-text bg-warning-bg/35 py-2 pl-3 pr-2.5 text-[0.929rem] text-text-secondary"
       >
         <div className="mb-2 flex min-w-0 items-center gap-2">
           <div className="min-w-0 flex-1 font-medium text-text">
@@ -784,7 +784,7 @@ function ClarifyRequestCard({
       <TimelineDot tone="warning" pulse />
       <div
         data-testid="hermes-clarify-request"
-        className="min-w-0 flex-1 border-l-2 border-warning-text bg-warning-bg/25 py-2 pl-3 pr-2.5 text-[0.929rem] text-text-secondary"
+        className="hermes-interaction-card min-w-0 flex-1 border-l-2 border-warning-text bg-warning-bg/25 py-2 pl-3 pr-2.5 text-[0.929rem] text-text-secondary"
       >
         <div className="text-[0.786rem] font-medium text-warning-text">
           {botName} needs your input

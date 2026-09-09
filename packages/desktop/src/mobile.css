@@ -1,0 +1,202 @@
+/* Shared shell: constraint fixes, not document-level clipping. */
+.app-viewport {
+  height: 100vh;
+  height: var(--app-viewport-height, 100dvh);
+  min-width: 0;
+  min-height: 0;
+}
+.responsive-shell {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+.responsive-shell-main {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+.mobile-touch-button {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  min-width: 44px;
+  min-height: 44px;
+  border-radius: 6px;
+  color: var(--color-text-muted);
+}
+.mobile-touch-button:hover {
+  background: var(--color-hover);
+  color: var(--color-text);
+}
+.mobile-touch-button:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: -2px;
+}
+.mobile-drawer-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  background: var(--color-overlay);
+}
+.mobile-drawer {
+  position: fixed;
+  top: var(--app-viewport-top, 0px);
+  left: 0;
+  z-index: 41;
+  display: flex;
+  flex-direction: column;
+  width: min(347px, calc(100vw - 24px));
+  height: var(--app-viewport-height, 100dvh);
+  min-height: 0;
+  background: var(--color-surface);
+  border-right: 1px solid var(--color-border);
+  padding-top: env(safe-area-inset-top);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+.mobile-drawer-heading {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 12px;
+  border-bottom: 1px solid var(--color-border);
+}
+.hermes-task-access {
+  flex-shrink: 0;
+  order: -1;
+  display: flex;
+  justify-content: flex-end;
+  padding: 2px 12px;
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+.mobile-task-trigger {
+  padding: 0 12px;
+  color: var(--color-accent);
+}
+.mobile-task-drawer {
+  left: auto;
+  right: 0;
+}
+.mobile-task-drawer .hermes-runtime-panel {
+  width: 100%;
+  flex: 1;
+  min-width: 0;
+  border: 0;
+}
+@media (max-width: 1023px) {
+  .app-viewport {
+    position: fixed;
+    inset-inline: 0;
+    top: var(--app-viewport-top, 0px);
+  }
+}
+@media (max-width: 1279px) {
+  .shared-dm-layout {
+    flex-direction: column;
+  }
+}
+@media (max-width: 1023px), (pointer: coarse) {
+  .chat-header {
+    min-height: 52px;
+  }
+  .app-sidebar button, [data-message-reactions] button, [role="menu"] [role="menuitem"], [role="dialog"] button {
+    min-width: 44px;
+    min-height: 44px;
+  }
+  .app-sidebar [aria-label^="Manage #"] {
+    opacity: 1;
+  }
+  .app-sidebar [data-channel-id] {
+    padding-right: 52px;
+  }
+  [data-message-reactions] {
+    display: flex;
+    height: auto;
+    min-height: 44px;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px;
+    margin-top: 4px;
+  }
+  [data-message-reactions] [aria-label="Add reaction"] {
+    position: static;
+    opacity: 1;
+  }
+  [role="dialog"] input:not([type="checkbox"]):not([type="radio"]), [role="dialog"] textarea, [role="dialog"] select {
+    min-width: 0;
+    min-height: 44px;
+    font-size: 16px;
+  }
+  [role="dialog"]:not(.mobile-drawer) {
+    max-width: calc(100vw - 24px);
+    max-height: calc(var(--app-viewport-height, 100dvh) - 24px);
+    overflow-y: auto;
+    overflow-wrap: anywhere;
+  }
+  .app-dialog {
+    top: calc(var(--app-viewport-top, 0px) + var(--app-viewport-height, 100dvh) / 2);
+  }
+  .chat-header button, .chat-composer button, .hermes-runtime-panel button {
+    min-width: 44px;
+    min-height: 44px;
+    flex-shrink: 0;
+  }
+  .chat-composer {
+    padding: 6px max(8px, env(safe-area-inset-right)) max(8px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left));
+  }
+  .chat-composer [data-testid="input-actions"] {
+    flex-wrap: wrap;
+  }
+  .composer-attachment-tray {
+    max-height: min(160px, calc(var(--app-viewport-height, 100dvh) / 5));
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+  .composer-attachment-draft {
+    min-width: 0;
+    max-width: 100%;
+    padding-right: 52px;
+  }
+  .chat-composer [title="Remove image"] {
+    opacity: 1;
+    top: 0;
+    right: 0;
+  }
+  .hermes-interaction-card {
+    overflow-wrap: anywhere;
+  }
+  .hermes-interaction-card button, .hermes-interaction-card textarea, .hermes-interaction-card label:has(input[type="checkbox"]) {
+    min-height: 44px;
+  }
+  .hermes-interaction-card button {
+    min-width: 44px;
+    max-width: 100%;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+  .hermes-interaction-card textarea {
+    font-size: 16px;
+  }
+  .chat-composer .ProseMirror {
+    font-size: 16px;
+    max-height: min(200px, calc(var(--app-viewport-height, 100dvh) / 4));
+    overflow-wrap: anywhere;
+  }
+}
+.mobile-navigation-content {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+}
+/* Mobile navigation must not inherit the desktop hide/show margin or fixed width. */
+.mobile-navigation .app-sidebar {
+  width: 100% !important;
+  margin-left: 0 !important;
+  min-width: 0;
+}

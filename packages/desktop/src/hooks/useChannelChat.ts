@@ -1,3 +1,4 @@
+import { isAuthenticated } from "../lib/auth-identity";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   hashKey,
@@ -27,6 +28,11 @@ const MESSAGE_CACHE_TTL_MS = 60_000;
 export const MESSAGE_PAGE_SIZE = 20;
 export const MESSAGE_WINDOW_SIZE = 120;
 export const MESSAGE_WINDOW_TRIM_THRESHOLD = 160;
+
+// Realtime can populate the query cache before the hook's local optimistic
+// state has reconciled. Keep the correlation on the server message object so
+// that transient overlap renders only the acknowledged server copy.
+const clientMessageIdsByServerMessage = new WeakMap<ChatMessage, string>();
 
 interface UseChannelChatOptions {
   conversationId: string | null;
@@ -65,7 +71,9 @@ type MessageWindow = InfiniteData<MessagePage, string | null>;
 export function cacheIncomingMessage(
   queryClient: QueryClient,
   message: ChatMessage,
+  clientMessageId?: string,
 ) {
+  associateClientMessageId(message, clientMessageId);
   const cachedWindows = queryClient.getQueriesData<MessageWindow>({
     queryKey: ["messages", message.conversationId],
   });
@@ -309,7 +317,7 @@ interface SendCommand {
 
 async function fetchMessages(
   conversationId: string,
-  token: string,
+  token: string | null,
   threadId?: string | null,
   unthreadedOnly = false,
   before?: string | null,
@@ -338,7 +346,7 @@ async function fetchMessages(
 
 async function fetchMessagePage(
   conversationId: string,
-  token: string,
+  token: string | null,
   threadId: string | null,
   unthreadedOnly: boolean,
   before: string | null,
@@ -393,7 +401,7 @@ export function useChannelChat({
     initialPageParam: null as string | null,
     getNextPageParam: (lastPage) =>
       lastPage.hasOlder ? oldestMessageCursor(lastPage.messages) : undefined,
-    enabled: enabled && !!conversationId && !!token,
+    enabled: enabled && !!conversationId && isAuthenticated(token),
     staleTime: MESSAGE_CACHE_TTL_MS,
   });
 
@@ -423,6 +431,7 @@ export function useChannelChat({
   const addMessage = useCallback(
     (msg: ChatMessage, clientMessageId?: string) => {
       if (msg.conversationId !== conversationId) return;
+      associateClientMessageId(msg, clientMessageId);
       if (clientMessageId) {
         pendingSendsRef.current.delete(clientMessageId);
       }
@@ -547,7 +556,7 @@ export function useChannelChat({
 
       // Compatibility fallback for older API clients and the existing WS
       // protocol. Current Eden clients always expose the canonical REST post.
-      if (typeof endpoint.post !== "function" || !token) {
+      if (typeof endpoint.post !== "function" || !isAuthenticated(token)) {
         if (attachmentIds.length > 0) {
           wsSendMessage(
             conversationId,
@@ -633,7 +642,7 @@ export function useChannelChat({
 
   const setReaction = useCallback(
     async (messageId: string, emoji: string, active: boolean) => {
-      if (!conversationId || !token) {
+      if (!conversationId || !isAuthenticated(token)) {
         throw new Error("Authentication required");
       }
 
@@ -677,7 +686,7 @@ export function useChannelChat({
   );
 
   const refetchMessages = useCallback(() => {
-    if (!enabled || !conversationId || !token) return;
+    if (!enabled || !conversationId || !isAuthenticated(token)) return;
     void query.refetch();
   }, [conversationId, enabled, query.refetch, token]);
 
@@ -685,7 +694,7 @@ export function useChannelChat({
     if (
       !enabled ||
       !conversationId ||
-      !token ||
+      !isAuthenticated(token) ||
       !query.hasNextPage ||
       query.isFetchingNextPage
     ) {
@@ -894,14 +903,35 @@ function appendVisibleLocalMessages(
   threadId: string | null,
   unthreadedOnly: boolean,
 ) {
+  const acknowledgedClientMessageIds = new Set(
+    messages.flatMap((message) => {
+      const clientMessageId = clientMessageIdsByServerMessage.get(message);
+      return clientMessageId ? [clientMessageId] : [];
+    }),
+  );
   let next = messages;
   for (const local of localMessages) {
     if (local.message.conversationId !== conversationId) continue;
     if (!messageBelongsToScope(local.message, threadId, unthreadedOnly))
       continue;
+    if (
+      !local.confirmed &&
+      acknowledgedClientMessageIds.has(local.clientMessageId)
+    ) {
+      continue;
+    }
     next = appendMessage(next, local.message);
   }
   return next;
+}
+
+function associateClientMessageId(
+  message: ChatMessage,
+  clientMessageId?: string,
+) {
+  if (clientMessageId) {
+    clientMessageIdsByServerMessage.set(message, clientMessageId);
+  }
 }
 
 function messageBelongsToScope(

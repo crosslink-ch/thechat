@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeAll, beforeEach, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { ChatMessage } from "@thechat/shared";
 import { ChannelChatView } from "./ChannelChatView";
 
@@ -26,6 +26,190 @@ beforeEach(() => {
 });
 
 describe("ChannelChatView", () => {
+  it("distinguishes messages sent at the same time on different dates", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 6, 15, 12));
+
+    try {
+      const todayAtEight = new Date();
+      todayAtEight.setHours(8, 0, 0, 0);
+      const yesterdayAtEight = new Date(todayAtEight);
+      yesterdayAtEight.setDate(yesterdayAtEight.getDate() - 1);
+      const otherDateThisYearAtEight = new Date(
+        todayAtEight.getFullYear(),
+        0,
+        2,
+        8,
+      );
+      const earlierYearAtEight = new Date(
+        todayAtEight.getFullYear() - 1,
+        todayAtEight.getMonth(),
+        1,
+        8,
+      );
+
+      render(
+        <ChannelChatView
+          messages={[
+            message({
+              id: "today",
+              content: "Today at eight",
+              createdAt: todayAtEight.toISOString(),
+            }),
+            message({
+              id: "yesterday",
+              content: "Yesterday at eight",
+              createdAt: yesterdayAtEight.toISOString(),
+            }),
+            message({
+              id: "other-date-this-year",
+              content: "Another date this year at eight",
+              createdAt: otherDateThisYearAtEight.toISOString(),
+            }),
+            message({
+              id: "earlier-year",
+              content: "Earlier year at eight",
+              createdAt: earlierYearAtEight.toISOString(),
+            }),
+          ]}
+          loading={false}
+          typingUsers={new Map()}
+          onSend={() => {}}
+        />,
+      );
+
+      const shortTime = todayAtEight.toLocaleTimeString([], {
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+      const otherDateThisYear = otherDateThisYearAtEight.toLocaleDateString([], {
+        month: "short",
+        day: "numeric",
+      });
+      const earlierYearDate = earlierYearAtEight.toLocaleDateString([], {
+        year: "numeric",
+        month: "short",
+        day: "numeric",
+      });
+
+      expect(messageTimestamp("Today at eight").textContent).toBe(shortTime);
+      expect(messageTimestamp("Yesterday at eight").textContent).toBe(
+        `Yesterday at ${shortTime}`,
+      );
+      expect(messageTimestamp("Another date this year at eight").textContent).toBe(
+        `${otherDateThisYear} at ${shortTime}`,
+      );
+      expect(messageTimestamp("Earlier year at eight").textContent).toBe(
+        `${earlierYearDate} at ${shortTime}`,
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not expose malformed timestamps as machine-readable dates", () => {
+    render(
+      <ChannelChatView
+        messages={[
+          message({ content: "Malformed timestamp", createdAt: "not-a-date" }),
+        ]}
+        loading={false}
+        typingUsers={new Map()}
+        onSend={() => {}}
+      />,
+    );
+
+    const timestamp = messageTimestamp("Malformed timestamp");
+    expect(timestamp.textContent).toBe("Unknown time");
+    expect(timestamp).not.toHaveAttribute("datetime");
+  });
+
+  it("visually merges adjacent messages from the same sender within five minutes", () => {
+    render(
+      <ChannelChatView
+        messages={[
+          message({
+            id: "message-1",
+            content: "First message",
+            createdAt: "2026-01-01T10:00:00.000Z",
+          }),
+          message({
+            id: "message-2",
+            content: "Second message",
+            createdAt: "2026-01-01T10:04:00.000Z",
+          }),
+        ]}
+        loading={false}
+        typingUsers={new Map()}
+        onSend={() => {}}
+      />,
+    );
+
+    expect(screen.getAllByText("Koda")).toHaveLength(1);
+    const firstRow = screen.getByText("First message").closest("[data-message-id]");
+    const secondRow = screen.getByText("Second message").closest("[data-message-id]");
+    expect(firstRow).toHaveAttribute("data-message-grouped", "false");
+    expect(firstRow?.querySelector("[data-message-header]")).not.toBeNull();
+    expect(secondRow).toHaveAttribute("data-message-grouped", "true");
+    expect(secondRow?.querySelector("[data-message-header]")).toBeNull();
+    expect(secondRow).toHaveClass("py-0.5");
+    if (!(secondRow instanceof HTMLElement)) {
+      throw new Error("Grouped message row not found");
+    }
+    const hoverTime = within(secondRow).getByLabelText(/sent/i);
+    expect(hoverTime).toHaveClass("opacity-0", "active:opacity-100");
+    expect(hoverTime).toHaveAttribute("tabindex", "0");
+    expect(hoverTime).toHaveAttribute(
+      "datetime",
+      "2026-01-01T10:04:00.000Z",
+    );
+  });
+
+  it("keeps reactions interactive on a grouped message", async () => {
+    const onSetReaction = vi.fn().mockResolvedValue(undefined);
+    render(
+      <ChannelChatView
+        messages={[
+          message({
+            id: "message-1",
+            content: "First message",
+            createdAt: "2026-01-01T10:00:00.000Z",
+          }),
+          message({
+            id: "message-2",
+            content: "Second message",
+            createdAt: "2026-01-01T10:04:00.000Z",
+            reactions: [
+              {
+                emoji: "👍",
+                count: 1,
+                reactedByMe: true,
+                userNames: ["Bruno"],
+              },
+            ],
+          }),
+        ]}
+        loading={false}
+        typingUsers={new Map()}
+        onSend={() => {}}
+        onSetReaction={onSetReaction}
+      />,
+    );
+
+    const groupedRow = screen
+      .getByText("Second message")
+      .closest<HTMLElement>("[data-message-id]");
+    if (!groupedRow) throw new Error("Grouped message row not found");
+    expect(groupedRow).toHaveAttribute("data-message-grouped", "true");
+
+    fireEvent.click(
+      within(groupedRow).getByRole("button", { name: "👍 1 reaction" }),
+    );
+    await waitFor(() =>
+      expect(onSetReaction).toHaveBeenCalledWith("message-2", "👍", false),
+    );
+  });
+
   it("shows the generic typing indicator", () => {
     render(
       <ChannelChatView
@@ -156,6 +340,22 @@ describe("ChannelChatView", () => {
   });
 
 });
+
+function messageRow(content: string) {
+  const row = screen.getByText(content).closest("[data-message-id]");
+  if (!(row instanceof HTMLElement)) {
+    throw new Error(`Message row not found for: ${content}`);
+  }
+  return row;
+}
+
+function messageTimestamp(content: string) {
+  const timestamp = messageRow(content).querySelector("time");
+  if (!(timestamp instanceof HTMLElement)) {
+    throw new Error(`Message timestamp not found for: ${content}`);
+  }
+  return timestamp;
+}
 
 function makeScrollable(element: HTMLElement) {
   Object.defineProperty(element, "scrollHeight", {

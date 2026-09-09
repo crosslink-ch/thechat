@@ -1,3 +1,5 @@
+import { authHeaders as requestAuth } from "../lib/eden";
+import { isAuthenticated } from "../lib/auth-identity";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   Bot,
@@ -12,8 +14,8 @@ import { wsEvents } from "../lib/ws-events";
 import { useAuthStore } from "../stores/auth";
 import { useWorkspacesStore } from "../stores/workspaces";
 
-function authHeaders(token: string) {
-  return { authorization: `Bearer ${token}` };
+function authHeaders(token: string | null) {
+  return requestAuth(token).headers;
 }
 
 function apiError(error: unknown, fallback: string) {
@@ -51,6 +53,7 @@ export function WorkspaceManageRoute() {
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [confirmingAction, setConfirmingAction] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [copiedMemberId, setCopiedMemberId] = useState<string | null>(null);
   const workspaceRefreshGeneration = useRef(0);
   const adminLoadGeneration = useRef(0);
 
@@ -77,7 +80,7 @@ export function WorkspaceManageRoute() {
   const availableOwnedBots = ownedBots.filter((bot) => !workspaceBotIds.has(bot.id));
 
   const refreshWorkspace = useCallback(async () => {
-    if (!token || !activeWorkspace) return;
+    if (!isAuthenticated(token) || !activeWorkspace) return;
     const requestedWorkspaceId = activeWorkspace.id;
     const requestGeneration = ++workspaceRefreshGeneration.current;
     const result = await api
@@ -100,7 +103,7 @@ export function WorkspaceManageRoute() {
   const loadAdminData = useCallback(async () => {
     const requestGeneration = ++adminLoadGeneration.current;
     const requestedWorkspaceId = activeWorkspace?.id;
-    if (!token || !requestedWorkspaceId || !canManage) {
+    if (!isAuthenticated(token) || !requestedWorkspaceId || !canManage) {
       setOwnedBots([]);
       setPendingBotInvites([]);
       return;
@@ -192,7 +195,7 @@ export function WorkspaceManageRoute() {
   }
 
   const inviteUser = async () => {
-    if (!token) return;
+    if (!isAuthenticated(token)) return;
     const email = inviteEmail.trim();
     if (!email) return;
     const result = await api.invites.create.post(
@@ -210,7 +213,7 @@ export function WorkspaceManageRoute() {
     member: WorkspaceMember,
     role: "member" | "admin",
   ) => {
-    if (!token) return;
+    if (!isAuthenticated(token)) return;
     const result = await api
       .workspaces({ id: activeWorkspace.id })
       .members({ userId: member.userId })
@@ -223,7 +226,7 @@ export function WorkspaceManageRoute() {
   };
 
   const removeUser = async (member: WorkspaceMember) => {
-    if (!token) return;
+    if (!isAuthenticated(token)) return;
     const result = await api
       .workspaces({ id: activeWorkspace.id })
       .members({ userId: member.userId })
@@ -236,7 +239,7 @@ export function WorkspaceManageRoute() {
   };
 
   const addBot = async () => {
-    if (!token) return;
+    if (!isAuthenticated(token)) return;
     const requestedBotId = botId.trim();
     if (!requestedBotId) return;
     const result = await api
@@ -263,7 +266,7 @@ export function WorkspaceManageRoute() {
   };
 
   const cancelBotInvite = async (invite: BotWorkspaceInvite) => {
-    if (!token) return;
+    if (!isAuthenticated(token)) return;
     const result = await api
       .workspaces({ id: activeWorkspace.id })["bot-invites"]({
         inviteId: invite.id,
@@ -279,7 +282,7 @@ export function WorkspaceManageRoute() {
   };
 
   const removeBot = async (member: WorkspaceMember) => {
-    if (!token || !member.bot) return;
+    if (!isAuthenticated(token) || !member.bot) return;
     const result = await api
       .workspaces({ id: activeWorkspace.id })
       .bots({ botId: member.bot.id })
@@ -298,6 +301,22 @@ export function WorkspaceManageRoute() {
       window.setTimeout(() => setCopied(false), 1600);
     } catch {
       setPageError("Could not copy the workspace ID");
+    }
+  };
+
+  const copyMemberUserId = async (member: WorkspaceMember) => {
+    try {
+      await navigator.clipboard.writeText(member.userId);
+      setCopiedMemberId(member.userId);
+      window.setTimeout(
+        () =>
+          setCopiedMemberId((current) =>
+            current === member.userId ? null : current,
+          ),
+        1600,
+      );
+    } catch {
+      setPageError(`Could not copy the user ID for ${member.user.name}`);
     }
   };
 
@@ -446,6 +465,23 @@ export function WorkspaceManageRoute() {
                         </div>
                         <div className="overflow-hidden text-ellipsis whitespace-nowrap text-[0.714rem] text-text-muted">
                           {member.user.email ?? "No email"}
+                        </div>
+                        <div className="mt-0.5 flex flex-wrap items-baseline gap-x-1.5 text-[0.643rem] text-text-dimmed">
+                          <span>User ID</span>
+                          <code
+                            data-testid={`member-user-id-${member.userId}`}
+                            className="break-all font-mono text-text-muted"
+                          >
+                            {member.userId}
+                          </code>
+                          <button
+                            type="button"
+                            aria-label={`Copy user ID for ${member.user.name}`}
+                            className="shrink-0 cursor-pointer rounded px-1 text-accent hover:bg-hover"
+                            onClick={() => void copyMemberUserId(member)}
+                          >
+                            {copiedMemberId === member.userId ? "Copied" : "Copy"}
+                          </button>
                         </div>
                       </div>
                     </div>

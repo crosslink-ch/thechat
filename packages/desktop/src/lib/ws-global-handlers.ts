@@ -1,3 +1,5 @@
+import { authHeaders as auth } from "../lib/eden";
+import { isAuthenticated } from "../lib/auth-identity";
 import { wsEvents } from "./ws-events";
 import { useAuthStore } from "../stores/auth";
 import {
@@ -6,6 +8,7 @@ import {
   useWorkspacesStore,
 } from "../stores/workspaces";
 import { useNotificationsStore } from "../stores/notifications";
+import { useActivityStore } from "../stores/activity";
 import { useConversationsStore } from "../stores/conversations";
 import { usePresenceStore } from "../stores/presence";
 import {
@@ -24,16 +27,14 @@ type Navigate = (opts: { to: string }) => void;
 
 const DIRECT_NOTIFICATION_BODY_MAX_CHARS = 240;
 
-function auth(token: string) {
-  return { headers: { authorization: `Bearer ${token}` } };
-}
+
 
 async function refreshWorkspaceDetails(
   workspaceId: string,
   isLatestRequest: () => boolean = () => true,
 ) {
   const token = useAuthStore.getState().token;
-  if (!token) return;
+  if (!isAuthenticated(token)) return;
 
   const current = useWorkspacesStore.getState().activeWorkspace;
   if (!current || current.id !== workspaceId) return;
@@ -83,6 +84,7 @@ export function registerGlobalWsHandlers(
     if (workspaceId) reconcileWorkspace(workspaceId);
     void messageQueryClient.invalidateQueries({ queryKey: ["messages"] });
     void useNotificationsStore.getState().fetchNotifications();
+    void useActivityStore.getState().fetchActivity();
   };
 
   const onMessageReactionsUpdated = ({
@@ -109,9 +111,19 @@ export function registerGlobalWsHandlers(
   const onNewMessage = ({
     message: msg,
     conversationType,
+    clientMessageId,
   }: WsEvents["ws:new_message"]) => {
-    cacheIncomingMessage(messageQueryClient, msg);
+    cacheIncomingMessage(messageQueryClient, msg, clientMessageId);
     const currentUserId = useAuthStore.getState().user?.id;
+    if (msg.senderId !== currentUserId) {
+      const route = currentPath();
+      const conversationVisible =
+        route === `/channel/${msg.conversationId}` ||
+        route === `/dm/${msg.conversationId}`;
+      void useActivityStore
+        .getState()
+        .handleIncomingMessage(msg, conversationVisible);
+    }
     if (
       conversationType === "group" &&
       msg.senderId !== currentUserId &&
