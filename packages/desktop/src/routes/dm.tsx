@@ -2,6 +2,7 @@ import { isAuthenticated } from "../lib/auth-identity";
 import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { useParams, useSearch } from "@tanstack/react-router";
 import { useAuthStore } from "../stores/auth";
+import { useDmHeaderIdentity } from "../stores/chat-header";
 import {
   useBotRuntime,
   useBotRuntimeCache,
@@ -118,6 +119,17 @@ export function DmRoute() {
   const { mergeInvocationUpdate, mergeProgressEvent, invalidate } =
     useBotRuntimeCache();
   const generalThreadActive = isHermesDm && !draftTaskActive && activeThreadId === null;
+  useDmHeaderIdentity({
+    conversationId,
+    userId: user?.id ?? null,
+    token,
+    title: otherParticipant?.user.name ?? "",
+    context: isHermesDm
+      ? draftTaskActive ? "New task"
+        : activeThreadId ? threads.find((thread) => thread.id === activeThreadId)?.title
+          : "General"
+      : undefined,
+  });
   const generalProgressActive = generalThreadActive;
   const progressThreadId = draftTaskActive ? LOCAL_TASK_DRAFT_SCOPE : activeThreadId;
   const activeHermesProgress = useMemo(

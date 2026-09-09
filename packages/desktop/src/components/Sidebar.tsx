@@ -343,7 +343,7 @@ export function Sidebar() {
       </div>
 
       <div className="flex min-w-0 flex-1 flex-col bg-surface">
-        <div className="flex h-[58px] items-center justify-between border-b border-border-subtle px-3">
+        <div className="flex h-[48px] shrink-0 items-center justify-between border-b border-border-subtle px-3">
           <div className="min-w-0 flex-1">
             {user ? renderWorkspaceDropdown() : (
               <div className="truncate text-[1rem] font-semibold text-text">TheChat</div>

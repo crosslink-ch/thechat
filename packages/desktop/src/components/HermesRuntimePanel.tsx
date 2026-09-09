@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { useMediaQuery } from "./ResponsiveShell";
+import { HeaderAction } from "./HeaderActions";
 import type {
   BotInvocationPublic,
   BotRuntimeSnapshot,
@@ -190,24 +191,25 @@ export function HermesRuntimePanel({
     </aside>
   );
   if (!mobile) return panel;
+  const approvalSuffix = generalNeedsApproval || (approvalThreadIds?.size ?? 0) > 0 ? " · Needs approval" : "";
   return (
-    <div className="hermes-task-access">
-      <Dialog.Root open={open} onOpenChange={setOpen}>
-        <Dialog.Trigger className="mobile-touch-button mobile-task-trigger" aria-label="Open tasks and activity">
-          Tasks{generalNeedsApproval || (approvalThreadIds?.size ?? 0) > 0 ? " · Needs approval" : ""}
+    <Dialog.Root open={open} onOpenChange={setOpen}>
+      <HeaderAction>
+        <Dialog.Trigger className="mobile-touch-button px-2 text-[0.857rem] whitespace-nowrap" aria-label={`Open tasks and activity${approvalSuffix}`}>
+          Tasks{approvalSuffix}
         </Dialog.Trigger>
-        <Dialog.Portal>
-          <Dialog.Overlay className="mobile-drawer-overlay" />
-          <Dialog.Content className="mobile-drawer mobile-task-drawer" aria-describedby={undefined}>
-            <div className="mobile-drawer-heading">
-              <Dialog.Title>Tasks and activity</Dialog.Title>
-              <Dialog.Close className="mobile-touch-button" aria-label="Close tasks and activity">✕</Dialog.Close>
-            </div>
-            {panel}
-          </Dialog.Content>
-        </Dialog.Portal>
-      </Dialog.Root>
-    </div>
+      </HeaderAction>
+      <Dialog.Portal>
+        <Dialog.Overlay className="mobile-drawer-overlay" />
+        <Dialog.Content className="mobile-drawer mobile-task-drawer" aria-describedby={undefined}>
+          <div className="mobile-drawer-heading">
+            <Dialog.Title>Tasks and activity</Dialog.Title>
+            <Dialog.Close className="mobile-touch-button" aria-label="Close tasks and activity">✕</Dialog.Close>
+          </div>
+          {panel}
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
   );
 }
 
