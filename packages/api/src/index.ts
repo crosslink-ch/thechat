@@ -19,6 +19,7 @@ import { hermesPlatformRoutes } from "./hermes-platform";
 import { botRuntimeRoutes } from "./bot-runtime";
 import { attachmentRoutes } from "./attachments";
 import { activityRoutes } from "./activity";
+import { searchRoutes } from "./search";
 import { initObservability, shutdownObservability, withSpan } from "./observability";
 import { log } from "./logging";
 
@@ -67,6 +68,7 @@ const app = new Elysia()
   .use(messageRoutes)
   .use(attachmentRoutes)
   .use(activityRoutes)
+  .use(searchRoutes)
   .use(wsRoutes)
   .use(botRoutes)
   .use(hermesRoutes)

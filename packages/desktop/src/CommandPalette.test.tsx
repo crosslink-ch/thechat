@@ -1,9 +1,21 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, act } from "@testing-library/react";
 import { createCommands, useCommandsStore, type Command } from "./commands";
-import { CommandPalette, togglePalette, closePalette } from "./CommandPalette";
+import {
+  CommandPalette,
+  openPaletteInCommandMode,
+  closePalette,
+} from "./CommandPalette";
 
-function makeCommand(overrides: Partial<Command> & { id: string; label: string }): Command {
+vi.mock("@tanstack/react-router", () => ({ useNavigate: () => vi.fn() }));
+vi.mock("./lib/search-api", () => ({
+  searchJump: vi.fn().mockResolvedValue({ items: [], hasMore: false }),
+  searchMessages: vi.fn().mockResolvedValue({ items: [], hasMore: false }),
+}));
+
+function makeCommand(
+  overrides: Partial<Command> & { id: string; label: string },
+): Command {
   return {
     shortcut: null,
     keybinding: null,
@@ -25,7 +37,7 @@ async function renderPalette() {
   await act(async () => {
     result = render(<CommandPalette />);
   });
-  act(() => togglePalette());
+  act(() => openPaletteInCommandMode());
   return result;
 }
 
@@ -34,7 +46,9 @@ function getInput() {
 }
 
 function type(text: string) {
-  fireEvent.change(getInput(), { target: { value: text } });
+  fireEvent.change(getInput(), {
+    target: { value: text.startsWith(">") ? text : `> ${text}` },
+  });
 }
 
 beforeEach(() => {
@@ -48,20 +62,28 @@ beforeEach(() => {
 });
 
 describe("CommandPalette", () => {
-  it("opens directly in command mode", async () => {
+  it("the command-mode action prefills > and opens only commands", async () => {
     useCommandsStore.getState().setCommands(makeTestCommands());
     await renderPalette();
 
     expect(getInput()).toBeInTheDocument();
     expect(screen.getByText("Toggle Sidebar")).toBeInTheDocument();
+    expect(getInput()).toHaveValue(">");
     expect(screen.getByText("Workspace")).toBeInTheDocument();
   });
 
   it("does not show hidden commands", async () => {
-    useCommandsStore.getState().setCommands([
-      ...makeTestCommands(),
-      makeCommand({ id: "hidden-command", label: "Hidden Command", shortcut: "Ctrl+H", hidden: true }),
-    ]);
+    useCommandsStore
+      .getState()
+      .setCommands([
+        ...makeTestCommands(),
+        makeCommand({
+          id: "hidden-command",
+          label: "Hidden Command",
+          shortcut: "Ctrl+H",
+          hidden: true,
+        }),
+      ]);
     await renderPalette();
 
     expect(screen.queryByText("Hidden Command")).not.toBeInTheDocument();
@@ -109,11 +131,16 @@ describe("CommandPalette", () => {
   });
 
   it("does not render a <kbd> for commands without a shortcut", async () => {
-    const noShortcutCmd = makeCommand({ id: "toggle-sidebar", label: "Toggle Sidebar" });
+    const noShortcutCmd = makeCommand({
+      id: "toggle-sidebar",
+      label: "Toggle Sidebar",
+    });
     useCommandsStore.getState().setCommands([noShortcutCmd]);
     await renderPalette();
 
-    const item = screen.getByText("Toggle Sidebar").closest("[data-testid='palette-item']");
+    const item = screen
+      .getByText("Toggle Sidebar")
+      .closest("[data-testid='palette-item']");
     expect(item?.querySelector("kbd")).toBeNull();
   });
 
@@ -165,7 +192,9 @@ describe("CommandPalette", () => {
     expect(getInput()).toBeInTheDocument();
     fireEvent.keyDown(getInput(), { key: "Escape" });
 
-    expect(screen.queryByPlaceholderText("Type a command...")).not.toBeInTheDocument();
+    expect(
+      screen.queryByPlaceholderText("Type a command..."),
+    ).not.toBeInTheDocument();
   });
 
   it("clicking overlay closes the palette", async () => {
@@ -174,6 +203,8 @@ describe("CommandPalette", () => {
     const overlay = screen.getByTestId("palette-panel").parentElement!;
     fireEvent.click(overlay);
 
-    expect(screen.queryByPlaceholderText("Type a command...")).not.toBeInTheDocument();
+    expect(
+      screen.queryByPlaceholderText("Type a command..."),
+    ).not.toBeInTheDocument();
   });
 });

@@ -32,7 +32,7 @@ interface WorkspacesStore {
   activeWorkspace: WorkspaceWithDetails | null;
   loading: boolean;
   initialize: () => Promise<void>;
-  selectWorkspace: (id: string) => Promise<boolean>;
+  selectWorkspace: (id: string, isSelectionCurrent?: () => boolean) => Promise<boolean>;
   createWorkspace: (name: string) => Promise<void>;
   createChannel: (name: string) => Promise<WorkspaceChannel>;
   renameChannel: (channelId: string, name: string) => Promise<WorkspaceChannel>;
@@ -137,7 +137,7 @@ export const useWorkspacesStore = create<WorkspacesStore>()((set) => ({
     }
   },
 
-  selectWorkspace: async (id: string) => {
+  selectWorkspace: async (id: string, isSelectionCurrent = () => true) => {
     const session = workspaceSession(set);
     const token = useAuthStore.getState().token;
     if (!authenticated(token)) return false;
@@ -145,6 +145,7 @@ export const useWorkspacesStore = create<WorkspacesStore>()((set) => ({
     const isCurrent = () =>
       session.current() &&
       requestGeneration === workspaceSelectionGeneration &&
+      isSelectionCurrent() &&
       useAuthStore.getState().token === token;
 
     try {

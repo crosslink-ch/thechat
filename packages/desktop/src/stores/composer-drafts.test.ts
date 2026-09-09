@@ -15,6 +15,21 @@ afterEach(() => {
 });
 
 describe("composer draft state", () => {
+  it("isolates channel task drafts while preserving the plain channel key", () => {
+    const parent = composerDraftKey.channel("user-1", "conversation-1");
+    const first = composerDraftKey.channel("user-1", "conversation-1", "task-1");
+    const second = composerDraftKey.channel("user-1", "conversation-1", "task-2");
+    expect(parent).toBe("account:user-1:channel:conversation-1");
+    expect(composerDraftKey.channel("user-1", "conversation-1", null)).toBe(parent);
+    expect(new Set([parent, first, second, composerDraftKey.channel("user-2", "conversation-1", "task-1")]).size).toBe(4);
+    const store = useComposerDraftsStore.getState();
+    store.setDraft(first, "Task draft");
+    expect(useComposerDraftsStore.getState().drafts[parent]).toBeUndefined();
+    store.setDraft(parent, "Channel draft");
+    store.setDraft(second, "Other task draft");
+    expect(useComposerDraftsStore.getState().drafts[first]).toBe("Task draft");
+  });
+
   it("builds distinct account, surface, and Hermes thread scopes", () => {
     const keys = [
       composerDraftKey.agent("conversation-1"),

@@ -10,6 +10,7 @@ import { WorkspaceHomeRoute } from "./routes/workspace-home";
 import { ChannelRoute } from "./routes/channel";
 import { DmRoute } from "./routes/dm";
 import { NotificationsRoute } from "./routes/notifications";
+import { SearchRoute } from "./routes/search";
 import { ActivityRoute } from "./routes/activity";
 import { HermesDebugRoute } from "./routes/hermes-debug";
 import { ScrollDebugRoute } from "./routes/scroll-debug";
@@ -43,18 +44,25 @@ const legacyAgentChatIdRoute = createRoute({
   },
 });
 
+function messageSearch(search: Record<string, unknown>): { threadId?: string; messageId?: string; jump?: string } {
+  return {
+    threadId: typeof search.threadId === "string" ? search.threadId : undefined,
+    messageId: typeof search.messageId === "string" ? search.messageId : undefined,
+    jump: typeof search.jump === "string" ? search.jump : undefined,
+  };
+}
+
 const channelRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/channel/$id",
+  validateSearch: messageSearch,
   component: ChannelRoute,
 });
 
 const dmRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/dm/$id",
-  validateSearch: (search: Record<string, unknown>) => ({
-    threadId: typeof search.threadId === "string" ? search.threadId : undefined,
-  }),
+  validateSearch: messageSearch,
   component: DmRoute,
 });
 
@@ -62,6 +70,13 @@ const notificationsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/notifications",
   component: NotificationsRoute,
+});
+
+const searchRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/search",
+  validateSearch: (search: Record<string, unknown>) => ({ q: typeof search.q === "string" ? search.q : "" }),
+  component: SearchRoute,
 });
 
 const activityRoute = createRoute({
@@ -118,6 +133,7 @@ const routeTree = rootRoute.addChildren([
   dmRoute,
   notificationsRoute,
   activityRoute,
+  searchRoute,
   settingsRoute,
   workspaceManageRoute,
   botsManageRoute,

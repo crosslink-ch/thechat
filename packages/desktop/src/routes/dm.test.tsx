@@ -239,7 +239,9 @@ async function renderRoute(initialEntry = "/dm/dm-1") {
   const dmRoute = createRoute({
     getParentRoute: () => rootRoute,
     path: "/dm/$id",
-    validateSearch: (search: Record<string, unknown>) => ({
+    validateSearch: (search: Record<string, unknown>): { threadId?: string; messageId?: string; jump?: string } => ({
+      messageId: typeof search.messageId === "string" ? search.messageId : undefined,
+      jump: typeof search.jump === "string" ? search.jump : undefined,
       threadId: typeof search.threadId === "string" ? search.threadId : undefined,
     }),
     component: DmRoute,
@@ -489,4 +491,23 @@ describe("DmRoute deferred Hermes task drafts", () => {
     expect(mocks.createThread).toHaveBeenCalledTimes(2);
     expect(mocks.addOptimisticSentMessage).toHaveBeenCalledTimes(1);
   });
+});
+
+vi.mock("../components/MessageContextView", () => ({ MessageContextView: ({ messageId }: { messageId: string }) => <div>Context {messageId}</div> }));
+it("opens exact-message context without mounting or marking latest chat read", async () => {
+  await renderRoute("/dm/dm-1?threadId=ancient&messageId=old-message");
+  expect(await screen.findByText("Context old-message")).toBeInTheDocument();
+  expect(mocks.channelChatOptions).not.toHaveBeenCalled();
+});
+it("keeps requested task outside the first page of task cache", async () => {
+  await renderRoute("/dm/dm-1?threadId=ancient");
+  expect(mocks.channelChatOptions).toHaveBeenLastCalledWith(expect.objectContaining({ threadId: "ancient", unthreadedOnly: false }));
+});
+it("a plain DM jump resets a locally selected task to General", async () => {
+  mocks.threads = [persistedThread];
+  const router = await renderRoute();
+  fireEvent.click(screen.getByRole("button", { name: persistedThread.title }));
+  expect(mocks.channelChatOptions).toHaveBeenLastCalledWith(expect.objectContaining({ threadId: persistedThread.id }));
+  await act(async () => { await router.navigate({ to: "/dm/$id", params: { id: "dm-1" }, search: { jump: "new-jump" } }); });
+  expect(mocks.channelChatOptions).toHaveBeenLastCalledWith(expect.objectContaining({ threadId: null, unthreadedOnly: true }));
 });
