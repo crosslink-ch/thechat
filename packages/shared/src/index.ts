@@ -314,6 +314,65 @@ export interface ActivitySnapshot {
   totalUnreadMessages: number;
 }
 
+// -- Global Search --
+
+/** Intentional total-result bound for offset pagination. */
+export const SEARCH_RESULT_CAP = 10_000;
+
+export interface SearchPage<T> {
+  items: T[];
+  hasMore: boolean;
+  /** Terminal page has additional matches beyond the total-result cap. */
+  truncated?: boolean;
+}
+
+export interface SearchJumpOptions {
+  q?: string;
+  kind?: "all" | "dm" | "channel" | "task";
+  workspaceId?: string;
+  limit?: number;
+  offset?: number;
+  /** Ordered destination IDs: ranking hint only, never authorization. */
+  recentIds?: string;
+}
+
+export interface SearchDestination {
+  id: string;
+  kind: "dm" | "channel" | "task";
+  conversationId: string;
+  conversationType: "direct" | "group";
+  threadId: string | null;
+  workspaceId: string;
+  workspaceName: string;
+  title: string;
+  conversationName: string;
+  participantType: "human" | "bot" | null;
+  updatedAt: string;
+}
+
+export interface SearchMessageResult {
+  id: string;
+  conversationId: string;
+  threadId: string | null;
+  workspaceId: string;
+  workspaceName: string;
+  conversationName: string;
+  conversationType: "direct" | "group";
+  threadTitle: string | null;
+  senderName: string;
+  senderType: "human" | "bot";
+  content: string;
+  createdAt: string;
+}
+
+export interface SearchMessageContext {
+  conversationId: string;
+  threadId: string | null;
+  messages: ChatMessage[];
+  hasOlder: boolean;
+  hasNewer: boolean;
+}
+
 export interface ConversationThreadPublic {
   id: string;
   conversationId: string;

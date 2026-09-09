@@ -1,16 +1,26 @@
 import { useState, useEffect, useRef, useMemo } from "react";
-import { useParams } from "@tanstack/react-router";
+import { MessageContextView } from "../components/MessageContextView";
+import { useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import { useAuthStore } from "../stores/auth";
 import { useWebSocketStore } from "../stores/websocket";
 import { useConversationsStore } from "../stores/conversations";
 import { useWorkspacesStore } from "../stores/workspaces";
 import { composerDraftKey } from "../stores/composer-drafts";
+import { requestInputBarFocus } from "../stores/input-focus";
 import { useChannelChat } from "../hooks/useChannelChat";
 import { usePersistConversationRead } from "../hooks/usePersistConversationRead";
 import { ChannelChatView } from "../components/ChannelChatView";
 import { wsEvents, type WsEvents } from "../lib/ws-events";
 
 export function ChannelRoute() {
+  const { id } = useParams({ from: "/channel/$id" });
+  const { messageId, threadId, jump } = useSearch({ from: "/channel/$id" });
+  if (messageId) return <MessageContextView conversationId={id} threadId={threadId} messageId={messageId} route="/channel/$id" />;
+  return <ChannelLiveRoute key={`${id}:${threadId ?? ""}:${jump ?? ""}`} threadId={threadId} />;
+}
+
+function ChannelLiveRoute({ threadId }: { threadId?: string }) {
+  const navigate = useNavigate();
   const { id: channelId } = useParams({ from: "/channel/$id" });
   const token = useAuthStore((s) => s.token);
   const user = useAuthStore((s) => s.user);
@@ -27,6 +37,7 @@ export function ChannelRoute() {
 
   const channelChat = useChannelChat({
     conversationId: channelId,
+    threadId,
     token,
     wsSendMessage,
     selfUser: user,
@@ -102,9 +113,33 @@ export function ChannelRoute() {
     setTypingUsers(new Map());
   }, [channelId]);
 
+  async function backToChannel() {
+    await navigate({
+      to: "/channel/$id",
+      params: { id: channelId },
+      search: {
+        threadId: undefined,
+        messageId: undefined,
+        jump: crypto.randomUUID(),
+      },
+    });
+    requestInputBarFocus();
+  }
+
   return (
     <div className="flex min-h-0 flex-1">
       <div className="flex min-w-0 flex-1 flex-col">
+        {threadId && (
+          <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-border bg-elevated px-4 py-3 text-text">
+            <h1 className="text-sm font-semibold">Task</h1>
+            <button
+              onClick={() => void backToChannel()}
+              className="rounded border border-border bg-surface px-3 py-2 text-sm hover:bg-hover"
+            >
+              Back to channel
+            </button>
+          </div>
+        )}
         <ChannelChatView
           messages={channelChat.messages}
           loading={channelChat.loading}
@@ -116,8 +151,8 @@ export function ChannelRoute() {
           onLoadOlderMessages={channelChat.loadOlderMessages}
           onSetReaction={channelChat.setReaction}
           mentions={mentions}
-          scrollKey={channelId}
-          draftKey={composerDraftKey.channel(user?.id, channelId)}
+          scrollKey={threadId ? `${channelId}:thread:${threadId}` : channelId}
+          draftKey={composerDraftKey.channel(user?.id, channelId, threadId)}
           conversationId={channelId}
           token={token}
         />

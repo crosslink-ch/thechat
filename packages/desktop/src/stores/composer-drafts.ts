@@ -23,8 +23,12 @@ const accountScope = (userId: string | undefined) =>
 export const composerDraftKey = {
   agent: (routeConversationId: string | undefined) =>
     `agent:${routeConversationId ?? "new"}`,
-  channel: (userId: string | undefined, conversationId: string) =>
-    `${accountScope(userId)}:channel:${conversationId}`,
+  channel: (
+    userId: string | undefined,
+    conversationId: string,
+    threadId: string | null = null,
+  ) =>
+    `${accountScope(userId)}:channel:${conversationId}${threadId ? `:thread:${threadId}` : ""}`,
   dm: (
     userId: string | undefined,
     conversationId: string,
