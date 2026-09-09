@@ -50,3 +50,8 @@ __pycache__
 # Independent frontend build outputs
 packages/web/dist/
 packages/client/dist/
+
+# PR screenshots belong in external attachments, not source control
+/docs/evidence/**/*.png
+/docs/pr-screenshots/
+/docs/screenshots/
