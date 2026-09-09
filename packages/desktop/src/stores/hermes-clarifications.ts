@@ -1,3 +1,4 @@
+import { onSessionReset } from "../lib/session-boundary";
 import { create } from "zustand";
 import type { ClarifyResponse } from "../lib/hermes-clarifications";
 import { resolveHermesClarificationIndicator } from "./hermes-indicators";
@@ -40,3 +41,7 @@ export function recordClarifyResponse(
   useHermesClarificationsStore.getState().recordResponse(eventId, response);
   resolveHermesClarificationIndicator(eventId);
 }
+
+onSessionReset(() => {
+  useHermesClarificationsStore.setState({ responses: {}, responseOrder: [] });
+});
