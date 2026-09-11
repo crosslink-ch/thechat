@@ -13,7 +13,7 @@ router ownership and platform startup remain in `routes/__root.tsx`.
   no synthetic history entries are added.
 - `ChatHeader` reads navigation context. Dialogs and the command palette remain
   outside the shell. `Workspace navigation` names both the drawer and nav.
-- Below 1280px Hermes tasks use the `Tasks and activity` drawer, with
+- Below 900px Hermes tasks use the `Tasks and activity` drawer, with
   `Open tasks and activity`, `Close tasks and activity`, `New task`, and the
   existing General/task/activity rows. Selecting a row closes the panel.
 - Mobile CSS constrains dialog dimensions, raises touch targets, and keeps the
