@@ -28,7 +28,7 @@ Received audio offers **Load audio** followed by native playback controls, plus 
 Install workspace dependencies first. The API tests require the development `DATABASE_URL` from the normal ignored root `.env` or the command environment; never point test runs at production.
 
 ```sh
-pnpm --filter @thechat/desktop vitest run \
+pnpm --filter @thechat/client vitest run \
   src/lib/voice-recording.test.ts \
   src/components/InputBar.voice.test.tsx \
   src/components/VoiceMessagePlayer.test.tsx \
