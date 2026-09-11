@@ -23,7 +23,7 @@ otel = ["dep:opentelemetry", "dep:opentelemetry_sdk", "dep:opentelemetry-otlp", 
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
+tauri = { version = "~2.10.2", features = [] }
 tauri-plugin-opener = "2"
 tauri-plugin-log = "2"
 tauri-plugin-notification = "2"
@@ -62,6 +62,11 @@ tracing-opentelemetry = { version = "0.32", optional = true }
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
+
+[target.'cfg(windows)'.dependencies]
+# Match the COM types exposed by locked Wry/Tauri's with_webview API.
+webview2-com = "=0.38.2"
+windows = { version = "=0.61.3", features = ["Win32_Foundation"] }
 
 [dev-dependencies]
 tempfile = "3"

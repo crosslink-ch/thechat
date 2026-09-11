@@ -6,6 +6,14 @@ import {
 
 const encoder = new TextEncoder();
 
+test("pairs declared audio MP4 only with the same detected container", async () => {
+  // Minimal ISO BMFF ftyp signature; the WebM fixture covers real capture bytes.
+  const mp4 = new Uint8Array([0, 0, 0, 24, ...encoder.encode("ftypisom"), 0, 0, 0, 0, ...encoder.encode("isommp42")]);
+  expect(await verifyFileType(mp4, "audio/mp4;codecs=mp4a.40.2")).toMatchObject({ mediaType: "audio/mp4", kind: "file", storageMediaType: "application/octet-stream" });
+  expect(await verifyFileType(mp4, "audio/webm")).toMatchObject({ mediaType: "video/mp4" });
+  expect(await verifyFileType(png(10, 10), "audio/mp4")).toMatchObject({ mediaType: "image/png" });
+});
+
 function png(width: number, height: number) {
   const bytes = new Uint8Array(24);
   bytes.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);

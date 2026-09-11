@@ -1,5 +1,6 @@
 @import "tailwindcss" source(".");
 @import "./mobile.css";
+@import "./voice.css";
 
 @theme {
   /* Surface colors — cool-tinted dark palette */
