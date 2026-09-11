@@ -1,5 +1,5 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { Update } from "@tauri-apps/plugin-updater";
 import { UpdateToast } from "./UpdateToast";
@@ -46,7 +46,12 @@ function resetStore() {
 }
 
 beforeEach(() => {
+  useUpdaterStore.setState(useUpdaterStore.getInitialState(), true);
   resetStore();
+});
+afterEach(() => {
+  cleanup();
+  useUpdaterStore.setState(useUpdaterStore.getInitialState(), true);
 });
 
 describe("UpdateToast", () => {

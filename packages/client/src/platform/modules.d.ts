@@ -5,6 +5,7 @@ declare module "#platform-shell" {
   export const usePlatformLifecycle: import("./contracts").PlatformShell["usePlatformLifecycle"];
   export const PlatformDialogs: import("./contracts").PlatformShell["PlatformDialogs"];
   export const PlatformTitlebar: import("./contracts").PlatformShell["PlatformTitlebar"];
+  export const PlatformSidebarUpdate: import("./contracts").PlatformShell["PlatformSidebarUpdate"];
   export const PlatformUpdateToast: import("./contracts").PlatformShell["PlatformUpdateToast"];
   export const PlatformNotificationSettings: import("./contracts").PlatformShell["PlatformNotificationSettings"];
 }

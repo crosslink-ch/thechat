@@ -1,3 +1,4 @@
+import { PlatformSidebarUpdate } from "#platform-shell";
 import { authHeaders } from "../lib/eden";
 import { isAuthenticated } from "../lib/auth-identity";
 import { useNavigationDismiss } from "./ResponsiveShell";
@@ -555,7 +556,8 @@ export function Sidebar() {
         </div>
 
         {/* Footer */}
-        <div className="border-t border-border-subtle px-3 py-2">
+        <div className="shrink-0 border-t border-border-subtle px-3 py-2">
+          <PlatformSidebarUpdate />
           {user ? (
             <div className="relative" ref={profileMenuRef}>
               <button
