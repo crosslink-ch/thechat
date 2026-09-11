@@ -76,14 +76,16 @@
   min-width: 0;
   border: 0;
 }
-@media (max-width: 1023px) {
+/* Match MOBILE_NAV_QUERY so viewport tracking and positioning stay in sync. */
+@media (max-width: 1279px) {
   .app-viewport {
     position: fixed;
     inset-inline: 0;
     top: var(--app-viewport-top, 0px);
   }
 }
-@media (max-width: 1279px) {
+/* Match the Tasks drawer breakpoint; keep the DM and inline panel side by side. */
+@media (max-width: 1023px) {
   .shared-dm-layout {
     flex-direction: column;
   }
