@@ -1,5 +1,6 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { toggleSidebar, useSidebarState } from "@thechat/client/components/Sidebar";
+import { MOBILE_NAV_QUERY, useMediaQuery } from "@thechat/client/components/ResponsiveShell";
 
 function isTauriRuntime() {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -33,6 +34,7 @@ function runWindowAction(action: "minimize" | "maximize" | "close") {
 
 export function WindowTitlebar() {
   const sidebarOpen = useSidebarState((s) => s.open);
+  const mobileNavigation = useMediaQuery(MOBILE_NAV_QUERY);
   const isMacOS = isMacOSRuntime();
   const railClassName = isMacOS ? "w-[144px]" : "w-[112px]";
 
@@ -53,20 +55,23 @@ export function WindowTitlebar() {
           isMacOS ? "justify-start pl-[76px]" : "justify-start",
         ].join(" ")}
       >
-        <button
-          aria-label={sidebarOpen ? "Collapse sidebar" : "Open sidebar"}
-          title={sidebarOpen ? "Collapse sidebar" : "Open sidebar"}
-          className="flex size-7 cursor-pointer items-center justify-center rounded-md border-none bg-transparent text-text-dimmed transition-colors duration-150 hover:bg-hover hover:text-text"
-          onClick={(event) => {
-            event.stopPropagation();
-            toggleSidebar();
-          }}
-        >
-          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-            <rect x="1.5" y="2" width="11" height="10" rx="1.5" />
-            <path d="M5 2V12" />
-          </svg>
-        </button>
+        {/* Drawer navigation is controlled by the chat header, not sidebar state. */}
+        {!mobileNavigation && (
+          <button
+            aria-label={sidebarOpen ? "Collapse sidebar" : "Open sidebar"}
+            title={sidebarOpen ? "Collapse sidebar" : "Open sidebar"}
+            className="flex size-7 cursor-pointer items-center justify-center rounded-md border-none bg-transparent text-text-dimmed transition-colors duration-150 hover:bg-hover hover:text-text"
+            onClick={(event) => {
+              event.stopPropagation();
+              toggleSidebar();
+            }}
+          >
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="1.5" y="2" width="11" height="10" rx="1.5" />
+              <path d="M5 2V12" />
+            </svg>
+          </button>
+        )}
       </div>
 
       <div data-tauri-drag-region className="flex min-w-0 flex-1 items-center justify-center px-3">
