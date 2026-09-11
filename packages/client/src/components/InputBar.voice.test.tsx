@@ -23,7 +23,7 @@ class Recorder {
   stop() { this.state = "inactive"; }
   finish() {
     this.ondataavailable?.({ data: new Blob(["voice"], { type: this.mimeType }) });
-    this.onstop?.();
+    return this.onstop?.();
   }
 }
 const tracks = [{ stop: vi.fn() }, { stop: vi.fn() }];
@@ -50,6 +50,132 @@ beforeEach(() => {
 });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
+async function recordPreview() {
+  await act(async () => fireEvent.click(screen.getByRole("button", { name: "Record voice message" })));
+  fireEvent.click(screen.getByRole("button", { name: "Stop recording" }));
+  await act(async () => { await Recorder.current.finish(); });
+}
+
+it.each(["discard", "draft", "token", "session", "unmount"])("aborts upload on %s and never sends a stale completion", async (change) => {
+  let finish!: (value: Awaited<ReturnType<typeof uploadSharedAttachment>>) => void;
+  const originalUpload = vi.mocked(uploadSharedAttachment).getMockImplementation()!;
+  vi.mocked(uploadSharedAttachment).mockImplementationOnce((input, update) => new Promise(resolve => {
+    finish = resolve;
+    void originalUpload(input, update);
+  }));
+  const view = render(<InputBar {...props} />);
+  await recordPreview();
+  fireEvent.click(screen.getByRole("button", { name: "Send voice message" }));
+  const signal = vi.mocked(uploadSharedAttachment).mock.calls[0][0].signal;
+  if (change === "discard") fireEvent.click(screen.getByRole("button", { name: "Discard recording" }));
+  if (change === "draft") view.rerender(<InputBar {...props} draftKey="other" />);
+  if (change === "token") view.rerender(<InputBar {...props} sharedUpload={{ conversationId: "chat", token: "other" }} />);
+  if (change === "session") act(() => resetPrivateSession());
+  if (change === "unmount") view.unmount();
+  expect(signal.aborted).toBe(true);
+  await act(async () => finish({ id: "late-voice" } as Awaited<ReturnType<typeof uploadSharedAttachment>>));
+  expect(props.onSend).not.toHaveBeenCalled();
+  expect(screen.queryByLabelText("Voice message preview")).toBeNull();
+  expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:voice-preview");
+});
+
+it.each([true, false])("does not cancel an in-flight message reservation on navigation (accepted=%s)", async (accepted) => {
+  let finish!: (value: boolean) => void;
+  const onSend = vi.fn(() => new Promise<boolean>(resolve => { finish = resolve; }));
+  const view = render(<InputBar {...props} onSend={onSend} />);
+  await recordPreview();
+  await act(async () => fireEvent.click(screen.getByRole("button", { name: "Send voice message" })));
+  expect(onSend).toHaveBeenCalledOnce();
+  expect(screen.getByRole("button", { name: "Discard recording" })).toBeDisabled();
+  view.rerender(<InputBar {...props} draftKey="other" />);
+  expect(cancelSharedAttachment).not.toHaveBeenCalled();
+  await act(async () => finish(accepted));
+  if (accepted) expect(cancelSharedAttachment).not.toHaveBeenCalled();
+  else expect(cancelSharedAttachment).toHaveBeenCalledExactlyOnceWith("voice-id", "token-a");
+});
+
+it("cleans a failed upload reservation before retrying the retained local recording", async () => {
+  vi.mocked(uploadSharedAttachment).mockImplementationOnce(async (_input, update) => {
+    update({ phase: "uploading", progress: 21, attachment: { id: "failed-upload" } as Awaited<ReturnType<typeof uploadSharedAttachment>> });
+    throw new Error("Connection lost");
+  });
+  render(<InputBar {...props} />);
+  await recordPreview();
+  await act(async () => fireEvent.click(screen.getByRole("button", { name: "Send voice message" })));
+  expect(screen.getByRole("alert")).toHaveTextContent("Connection lost");
+  expect(props.onSend).not.toHaveBeenCalled();
+  expect(screen.getByLabelText("Voice message preview")).toBeInTheDocument();
+  await act(async () => fireEvent.click(screen.getByRole("button", { name: /(?:Send|Retry) voice message/ })));
+  expect(cancelSharedAttachment).toHaveBeenCalledExactlyOnceWith("failed-upload", "token-a");
+  expect(vi.mocked(cancelSharedAttachment).mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(uploadSharedAttachment).mock.invocationCallOrder[1]);
+  expect(uploadSharedAttachment).toHaveBeenCalledTimes(2);
+  expect(props.onSend).toHaveBeenCalledExactlyOnceWith("", undefined, ["voice-id"]);
+});
+
+it("coalesces simultaneous Send gestures before React renders busy state", async () => {
+  vi.mocked(uploadSharedAttachment).mockReturnValue(new Promise(() => {}));
+  render(<InputBar {...props} />);
+  await recordPreview();
+  const send = screen.getByRole("button", { name: "Send voice message" });
+  act(() => { send.click(); send.click(); });
+  expect(uploadSharedAttachment).toHaveBeenCalledOnce();
+});
+
+it("can record and send in a new cookie session without reusing the old capability", async () => {
+  const onSend = vi.fn().mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+  render(<InputBar {...props} onSend={onSend} sharedUpload={{ conversationId: "chat", token: null }} />);
+  await recordPreview();
+  await act(async () => fireEvent.click(screen.getByRole("button", { name: "Send voice message" })));
+  act(() => resetPrivateSession());
+  expect(cancelSharedAttachment).not.toHaveBeenCalled();
+  await recordPreview();
+  await act(async () => fireEvent.click(screen.getByRole("button", { name: "Send voice message" })));
+  expect(uploadSharedAttachment).toHaveBeenCalledTimes(2);
+  expect(onSend).toHaveBeenCalledTimes(2);
+  expect(screen.queryByLabelText("Voice message preview")).toBeNull();
+});
+
+it("replaces the composer with an integrated review player while keeping its editor mounted", async () => {
+  const { container } = render(<InputBar {...props} />);
+  const editor = screen.getByRole("textbox", { name: "Message" });
+  await recordPreview();
+  expect(screen.queryByRole("textbox", { name: "Message" })).toBeNull();
+  expect(container.querySelector(".ProseMirror")).toBe(editor);
+  expect(screen.getByRole("button", { name: "Play voice message preview" })).toBeInTheDocument();
+  expect(screen.getByLabelText("Voice message preview")).not.toHaveAttribute("controls");
+  expect(screen.queryByRole("button", { name: "Attach files" })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Discard recording" }));
+  expect(screen.getByRole("textbox", { name: "Message" })).toBe(editor);
+  expect(editor.textContent).toBe("Keep this draft");
+});
+
+it("blocks optimistic editor submission before it can clear the rich draft during capture", async () => {
+  const { container } = render(<InputBar {...props} optimisticSend />);
+  const editor = container.querySelector(".ProseMirror")!;
+  await recordPreview();
+  act(() => { fireEvent.keyDown(editor, { key: "Enter" }); });
+  expect(editor.textContent).toBe("Keep this draft");
+  expect(useComposerDraftsStore.getState().drafts.chat).toBe("Keep this draft");
+  expect(props.onSend).not.toHaveBeenCalled();
+});
+
+it("pauses review and shows real transfer progress after explicit Send", async () => {
+  vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue();
+  vi.mocked(uploadSharedAttachment).mockImplementationOnce((_input, update) => {
+    update({ phase: "uploading", progress: 37 });
+    return new Promise(() => {});
+  });
+  render(<InputBar {...props} />);
+  await recordPreview();
+  await act(async () => fireEvent.click(screen.getByRole("button", { name: "Play voice message preview" })));
+  const before = vi.mocked(HTMLMediaElement.prototype.pause).mock.calls.length;
+  fireEvent.click(screen.getByRole("button", { name: "Send voice message" }));
+  expect(vi.mocked(HTMLMediaElement.prototype.pause).mock.calls.length).toBeGreaterThan(before);
+  expect(screen.getByRole("button", { name: "Play voice message preview" })).toBeDisabled();
+  expect(screen.getByRole("progressbar", { name: "Uploading voice message" })).toHaveAttribute("value", "37");
+  expect(screen.getByRole("button", { name: "Discard recording" })).toBeEnabled();
+});
+
 it("cancels recording when the composer becomes unavailable", async () => {
   render(<InputBar {...props} />);
   await act(async () => fireEvent.click(screen.getByRole("button", { name: "Record voice message" })));
@@ -60,14 +186,14 @@ it("cancels recording when the composer becomes unavailable", async () => {
 });
 
 it.each(["changed", "removed"])("does not retain a staged recording after auth is %s", async (change) => {
-  const view = render(<InputBar {...props} />);
+  const view = render(<InputBar {...props} onSend={async () => false} />);
   await act(async () => fireEvent.click(screen.getByRole("button", { name: "Record voice message" })));
   fireEvent.click(screen.getByRole("button", { name: "Stop recording" }));
-  act(() => Recorder.current.finish());
-  await act(async () => fireEvent.click(screen.getByRole("button", { name: "Attach recording" })));
-  expect(screen.getByTestId("attachment-draft")).toBeInTheDocument();
+  await act(async () => { await Recorder.current.finish(); });
+  await act(async () => fireEvent.click(screen.getByRole("button", { name: "Send voice message" })));
+  expect(screen.getByLabelText("Voice message preview")).toBeInTheDocument();
   view.rerender(<InputBar {...props} sharedUpload={change === "removed" ? undefined : { conversationId: "chat", token: "other" }} />);
-  expect(screen.queryByTestId("attachment-draft")).toBeNull();
+  expect(screen.queryByLabelText("Voice message preview")).toBeNull();
   expect(cancelSharedAttachment).toHaveBeenCalledWith("voice-id", "token-a");
 });
 
@@ -75,7 +201,7 @@ it("stops preview playback and revokes its URL on an auth scope change", async (
   const view = render(<InputBar {...props} />);
   await act(async () => fireEvent.click(screen.getByRole("button", { name: "Record voice message" })));
   fireEvent.click(screen.getByRole("button", { name: "Stop recording" }));
-  act(() => Recorder.current.finish());
+  await act(async () => { await Recorder.current.finish(); });
   expect(screen.getByLabelText("Voice message preview")).toBeInTheDocument();
   view.rerender(<InputBar {...props} sharedUpload={{ conversationId: "chat", token: "other" }} />);
   expect(HTMLMediaElement.prototype.pause).toHaveBeenCalled();
@@ -84,9 +210,26 @@ it("stops preview playback and revokes its URL on an auth scope change", async (
   expect(uploadSharedAttachment).not.toHaveBeenCalled();
 });
 
-it.each(["sending", "limit", "local"])("does not request a microphone when %s", async (reason) => {
+it.each(["idle", "recording", "preview"])("a full unrelated attachment draft does not disable voice in %s", async (phase) => {
+  const drafts = Array.from({ length: 10 }, (_, i) => ({ localId: String(i), file: new File(["x"], `file-${i}`), previewUrl: null, phase: "queued" as const, progress: 0, attachment: null, error: null }));
+  useComposerDraftsStore.setState({ attachmentDrafts: { chat: phase === "idle" ? drafts : drafts.slice(0, 9) } });
+  render(<InputBar {...props} />);
+  const button = screen.getByRole("button", { name: "Record voice message" });
+  expect(button).toBeEnabled();
+  await act(async () => fireEvent.click(button));
+  if (phase === "preview") {
+    fireEvent.click(screen.getByRole("button", { name: "Stop recording" }));
+    await act(async () => { await Recorder.current.finish(); });
+  }
+  const stopCalls = tracks.map(track => track.stop.mock.calls.length);
+  if (phase !== "idle") act(() => useComposerDraftsStore.setState({ attachmentDrafts: { chat: drafts } }));
+  expect(screen.getByRole("button", { name: phase === "preview" ? "Send voice message" : "Stop recording" })).toBeEnabled();
+  expect(tracks.map(track => track.stop.mock.calls.length)).toEqual(stopCalls);
+  expect(URL.revokeObjectURL).not.toHaveBeenCalled();
+});
+
+it.each(["sending", "local"])("does not request a microphone when %s", async (reason) => {
   if (reason === "sending") useComposerDraftsStore.setState({ sendingAttachments: { chat: true } });
-  if (reason === "limit") useComposerDraftsStore.setState({ attachmentDrafts: { chat: Array.from({ length: 10 }, (_, i) => ({ localId: String(i), file: new File(["x"], `file-${i}`), previewUrl: null, phase: "queued", progress: 0, attachment: null, error: null })) } });
   render(<InputBar {...props} sharedUpload={reason === "local" ? undefined : props.sharedUpload} />);
   const button = screen.queryByRole("button", { name: "Record voice message" });
   if (reason === "local") expect(button).toBeNull();
@@ -121,40 +264,52 @@ it("blocks button and keyboard sends until a recording is attached or discarded"
     expect(props.onSend).not.toHaveBeenCalled();
     if (phase === "requesting") await act(async () => resolve(stream));
     if (phase === "recording") fireEvent.click(screen.getByRole("button", { name: "Stop recording" }));
-    if (phase === "stopping") act(() => Recorder.current.finish());
+    if (phase === "stopping") await act(async () => { await Recorder.current.finish(); });
   }
   fireEvent.click(screen.getByRole("button", { name: "Discard recording" }));
   expect(screen.getByTitle("Send message")).not.toBeDisabled();
   expect(uploadSharedAttachment).not.toHaveBeenCalled();
 });
 
-it("previews a recording before uploading, then uses normal manual send with failed-send retry", async () => {
-  const onSend = vi.fn().mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+it("sends a local voice preview directly without Attach or consuming the typed draft", async () => {
+  const onSend = vi.fn().mockResolvedValue(true);
   const { container } = render(<InputBar {...props} onSend={onSend} />);
-  expect(getUserMedia).not.toHaveBeenCalled();
   await act(async () => fireEvent.click(screen.getByRole("button", { name: "Record voice message" })));
-  expect(screen.getByText(/Recording/)).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Stop recording" }));
-  expect(screen.getByText(/Finishing recording/)).toBeInTheDocument();
-  act(() => Recorder.current.finish());
-  const preview = screen.getByLabelText("Voice message preview") as HTMLAudioElement;
-  expect(preview.tagName).toBe("AUDIO");
-  expect(preview.autoplay).toBe(false);
-  expect(preview.preload).toBe("none");
+  await act(async () => { await Recorder.current.finish(); });
   expect(uploadSharedAttachment).not.toHaveBeenCalled();
   expect(onSend).not.toHaveBeenCalled();
-  expect(container.querySelector(".ProseMirror")?.textContent).toBe("Keep this draft");
-  await act(async () => fireEvent.click(screen.getByRole("button", { name: "Attach recording" })));
+  expect(screen.queryByRole("button", { name: "Attach recording" })).toBeNull();
+  await act(async () => fireEvent.click(screen.getByRole("button", { name: "Send voice message" })));
   expect(uploadSharedAttachment).toHaveBeenCalledOnce();
-  expect(vi.mocked(uploadSharedAttachment).mock.calls[0][0]).toMatchObject({ conversationId: "chat", token: "token-a", file: { type: "audio/webm", name: "voice-message.webm" } });
-  expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:voice-preview");
-  expect(onSend).not.toHaveBeenCalled();
-  await act(async () => fireEvent.click(screen.getByTitle("Send message")));
-  expect(onSend).toHaveBeenLastCalledWith("Keep this draft", undefined, ["voice-id"]);
-  expect(screen.getByTestId("attachment-draft")).toBeInTheDocument();
+  expect(onSend).toHaveBeenCalledExactlyOnceWith("", undefined, ["voice-id"]);
+  expect(screen.queryByTestId("attachment-draft")).toBeNull();
+  expect(screen.queryByLabelText("Voice message preview")).toBeNull();
   expect(container.querySelector(".ProseMirror")?.textContent).toBe("Keep this draft");
-  await act(async () => fireEvent.click(screen.getByTitle("Send message")));
-  await waitFor(() => expect(screen.queryByTestId("attachment-draft")).toBeNull());
+  expect(useComposerDraftsStore.getState().drafts.chat).toBe("Keep this draft");
+});
+
+it.each([false, null])("retries a rejected voice send (%s) without uploading twice or consuming the draft", async (rejected) => {
+  const onSend = vi.fn().mockResolvedValueOnce(rejected).mockResolvedValueOnce(true);
+  const { container } = render(<InputBar {...props} onSend={onSend} />);
+  await act(async () => fireEvent.click(screen.getByRole("button", { name: "Record voice message" })));
+  fireEvent.click(screen.getByRole("button", { name: "Stop recording" }));
+  await act(async () => { await Recorder.current.finish(); });
+  const preview = screen.getByLabelText("Voice message preview") as HTMLAudioElement;
+  expect(preview.autoplay).toBe(false);
+  expect(preview.preload).toBe("none");
+  await act(async () => fireEvent.click(screen.getByRole("button", { name: "Send voice message" })));
+  expect(screen.getByRole("alert")).toHaveTextContent(/not sent/i);
+  expect(screen.getByLabelText("Voice message preview")).toBeInTheDocument();
+  expect(screen.queryByTestId("attachment-draft")).toBeNull();
+  expect(URL.revokeObjectURL).not.toHaveBeenCalled();
+  await act(async () => fireEvent.click(screen.getByRole("button", { name: /(?:Send|Retry) voice message/ })));
+  expect(uploadSharedAttachment).toHaveBeenCalledOnce();
+  expect(onSend).toHaveBeenCalledTimes(2);
+  expect(onSend).toHaveBeenLastCalledWith("", undefined, ["voice-id"]);
+  expect(container.querySelector(".ProseMirror")?.textContent).toBe("Keep this draft");
+  expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:voice-preview");
+  await waitFor(() => expect(screen.queryByLabelText("Voice message preview")).toBeNull());
 });
 
 
@@ -165,7 +320,7 @@ it.each(["requesting", "recording", "preview"])("releases voice capture in %s ph
   await act(async () => fireEvent.click(screen.getByRole("button", { name: "Record voice message" })));
   if (phase === "preview") {
     fireEvent.click(screen.getByRole("button", { name: "Stop recording" }));
-    act(() => Recorder.current.finish());
+    await act(async () => { await Recorder.current.finish(); });
     expect(screen.getByLabelText("Voice message preview")).toBeInTheDocument();
   }
   act(() => resetPrivateSession());

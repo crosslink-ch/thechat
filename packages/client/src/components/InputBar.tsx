@@ -565,7 +565,7 @@ function ScopedInputBar({
             : submittedImages !== undefined
               ? await onSend(content, submittedImages)
               : await onSend(content);
-        return result !== false;
+        return result !== false && result !== null;
       } finally {
         sendPendingRef.current = false;
       }
@@ -643,6 +643,9 @@ function ScopedInputBar({
 
   const handleRichInputSubmit = useCallback(
     (text: string) => {
+      // Voice Send is standalone. Never clear a text/mention draft, including
+      // the optimistic editor path, while capture or review owns the composer.
+      if (voiceBusyRef.current) return false;
       const draftState = useComposerDraftsStore.getState();
       const submittedRevision = draftState.revisions[draftKey] ?? 0;
       const submittedDraft = draftState.drafts[draftKey] ?? text;
@@ -1014,7 +1017,7 @@ function ScopedInputBar({
             {sharedError}
           </div>
         )}
-        {slashMenuOpen && (
+        {!voiceBusy && slashMenuOpen && (
           <SlashCommandMenu
             commands={slashSuggestions}
             selectedIndex={highlightedSlashIndex}
@@ -1022,6 +1025,7 @@ function ScopedInputBar({
             onHighlight={setSlashSelectedIndex}
           />
         )}
+        <div hidden={voiceBusy}>
         <RichInput
           ref={inputRef}
           initialText={initialText}
@@ -1033,6 +1037,7 @@ function ScopedInputBar({
           onTextChange={handleInputTextChange}
           onKeyIntercept={handleSlashMenuKey}
         />
+        </div>
         <input
           ref={fileInputRef}
           type="file"
@@ -1055,11 +1060,13 @@ function ScopedInputBar({
           {sharedUpload && (
             <VoiceRecorder
               key={`${sharedUpload.conversationId}\u0000${sharedUpload.token}`}
-              disabled={sendingShared || sharedDrafts.length >= SHARED_ATTACHMENT_MAX_COUNT}
+              disabled={sendingShared}
               onBusyChange={handleVoiceBusyChange}
-              onAttach={(file) => { void addFiles([file]); }}
+              scope={sharedUpload}
+              onSend={(attachmentId) => requestSend("", undefined, [attachmentId])}
             />
           )}
+          <div hidden={voiceBusy} className={voiceBusy ? "hidden" : "contents"}>
           {queuedCount > 0 && (
             <span className="mr-1 rounded border border-border bg-background px-1.5 py-0.5 text-[0.643rem] font-medium uppercase text-text-dimmed">
               {queuedCount} queued
@@ -1113,6 +1120,7 @@ function ScopedInputBar({
               </svg>
             </button>
           )}
+          </div>
         </div>
       </div>
     </div>

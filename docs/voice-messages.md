@@ -1,36 +1,46 @@
 # Voice messages
 
-Voice recording is available in the web and desktop shared conversation composers, including channels and DMs/Hermes tasks with an established conversation. Local Agent Chat does not support audio attachments and does not show the microphone action.
+Voice recording is available in web and desktop shared conversations, including channels and DMs/Hermes tasks with an established conversation. Local Agent Chat remains image-only.
 
-## Send a recording
+## Record, review, send
 
-1. Select **Record voice message** and allow microphone access when prompted.
-2. Select **Stop recording**. Recording stops automatically at five minutes; the existing 25 MiB attachment limit also applies.
-3. Listen to the local preview. Choose **Discard recording** to delete it, or **Attach recording** to upload it through the existing attachment pipeline.
-4. Wait for the attachment to be ready, then use **Send message**. An audio-only message is valid; existing draft text is preserved.
+1. Select **Record voice message**. Microphone access is requested only after an explicit action, never at startup or login.
+2. Record your note using the in-composer controls. **Cancel recording** discards it; **Stop recording** opens a local review. Recording stops automatically at five minutes and the existing 25 MiB limit applies.
+3. Listen using the voice-note player. **Discard recording** deletes the local recording.
+4. Select **Send voice message**. This one action uploads and sends the note, with progress and retry feedback. There is no separate attachment-confirmation step.
 
-Recording and preview never send a message automatically. Preview audio stays local until **Attach recording**. Cancel, permission/device errors, leaving the composer, or changing accounts stop capture. Once attached, the normal attachment upload, retry, and draft lifecycle applies.
+A voice-note send is standalone: text and other attachment drafts remain available for a separate message. Recording, stopping, and previewing never send or upload automatically. Local audio is retained for retry if upload or message submission fails. Cancel, device failure, leaving the composer, and changing accounts release capture; late permission responses cannot start recording in another conversation.
 
-Received audio offers **Load audio** followed by native playback controls, plus the existing save-only **Download** action. Playback is not automatic. If authorization expires or the browser cannot decode the audio, reload it or download the file.
+Received notes have a compact custom player rather than a filename/native-control file card. **Play voice message** both authorizes and starts playback in one click. The player offers play/pause, an accessible seek timeline, elapsed/total time when available, playback speed, and a separate save-only download action. Audio never starts simply because a message becomes visible. Starting another note stops the previous one. Failed or expired sources can be retried without weakening attachment authorization.
+
+## Microphone permissions
+
+- **Windows desktop:** TheChat owns the first-use explanation and explicit microphone consent. The native adapter handles only trusted main-window microphone requests tied to a short-lived recording action. It does not grant camera/iframe access or change Windows privacy settings. Existing saved denials are respected. Recovery opens the fixed Windows microphone privacy page only when requested by the user.
+- **Browser:** normal browser permissions remain authoritative. Denied/unavailable microphones have an in-composer explanation and can be retried after access is restored.
+- **macOS:** native builds include `NSMicrophoneUsageDescription` and the audio-input entitlement. macOS consent remains required.
+- **Linux:** capture depends on the installed WebView/media stack. Chromium tests are not evidence of Linux WebKit microphone support.
+
+Native permission changes require rebuilding the desktop binary, not merely refreshing the frontend. A legacy saved WebView microphone denial is preserved and identified separately from OS/device failure: Windows privacy settings cannot reset that app-specific choice, and this version has no in-app saved-permission reset. The UI states that limitation rather than directing the user to the wrong settings page. Do not claim Windows first-use consent works from browser mocks or Linux tests alone.
 
 ## Compatibility and security
 
-- Recording requires a secure context and a runtime supporting `getUserMedia` and `MediaRecorder`. The recorder negotiates WebM/Opus, Ogg/Opus, or MP4; unsupported/denied capture produces a visible error.
-- The web edition uses its existing HttpOnly session cookie, not a JavaScript bearer token. Session reset cancels pending/active recording and previews, clears loaded audio URLs, and discards late playback authorization. Serve the web app over HTTPS (or loopback for development) and allow microphone access in the browser. The production web image permits same-origin capture with `Permissions-Policy: microphone=(self)` while keeping camera/geolocation disabled.
-- macOS builds include `NSMicrophoneUsageDescription` and the audio-input entitlement. Permission metadata requires rebuilding the native application, not only refreshing frontend assets.
-- Native WebView support depends on the operating system and installed media stack, especially on Linux. Browser tests do not establish packaged WebView or physical-microphone support.
-- Audio uses the existing authenticated reservation, size/quota/checksum checks, private object storage, worker validation, and message binding. No new storage service, transcription provider, or schema migration is required.
-- WebM/MP4 container detection does not identify audio-only tracks. For a matching detected container, the server preserves the declared audio subtype as descriptive metadata. This does not grant inline download permission: files remain `kind: file`, stored/downloaded as `application/octet-stream` with attachment disposition.
-- The audio player uses an explicit set of audio MIME types, never filenames or an iframe/OS opener. Signed download capabilities are requested only on user action and removed from the player when its account or attachment changes.
+- Capture requires a secure context and `getUserMedia`/`MediaRecorder`; recording negotiates WebM/Opus, Ogg/Opus, or MP4.
+- The browser uses its existing HttpOnly session cookie, not a JavaScript bearer token. Session reset releases capture/previews and clears loaded audio capabilities. Production serves same-origin microphone policy while camera/geolocation remain disabled.
+- Audio reuses the existing authenticated reservation, quota/size/checksum validation, private object store, worker validation, and message binding. There is no new transcription provider or schema migration.
+- Matching WebM/MP4 audio declarations remain descriptive metadata only. Files stay opaque `application/octet-stream` downloads with attachment disposition; they are not granted generic inline delivery or passed to an OS opener.
+- Signed sources are requested only on user action and cleared on account/attachment changes. Playback/download errors remain recoverable.
+- Newly captured WebM needs real duration metadata for useful seeking. Duration handling must be tested with real MediaRecorder output, not only finite-duration mocks.
 
 ## Regression tests
 
-Install workspace dependencies first. The API tests require the development `DATABASE_URL` from the normal ignored root `.env` or the command environment; never point test runs at production.
+Install workspace dependencies first. API tests require a disposable development `DATABASE_URL`; never aim test runs at production.
 
 ```sh
 pnpm --filter @thechat/client vitest run \
   src/lib/voice-recording.test.ts \
+  src/lib/voice-recording.webm.test.ts \
   src/components/InputBar.voice.test.tsx \
+  src/components/VoiceAudioPlayer.test.tsx \
   src/components/VoiceMessagePlayer.test.tsx \
   src/components/VoiceMessagePlayer.browser.test.tsx \
   src/components/SharedMessageAttachments.test.tsx
@@ -42,15 +52,27 @@ pnpm --filter @thechat/client vitest run \
 python3 scripts/test_tauri_flavors.py
 ```
 
-For the real browser-edition regression, start the isolated loopback stack described in `docs/web.md`, set `THECHAT_WEB_E2E_URL` / `THECHAT_WEB_E2E_API_URL` to it, then run:
+For browser acceptance, start the isolated loopback API, worker, compiled frontend, Postgres/Redis and versioned S3 stack described in `docs/web.md`, then configure `THECHAT_WEB_E2E_URL` / `THECHAT_WEB_E2E_API_URL`:
 
 ```sh
-pnpm exec playwright test -c scripts/e2e/web/playwright.config.ts voice.spec.ts \
+pnpm exec playwright test -c scripts/e2e/web/playwright.config.ts \
+  voice.spec.ts voice-permission.spec.ts \
   --project=chromium-desktop --project=chromium-phone
 ```
 
-The test records using Chromium’s synthetic microphone and exercises both channel and DM sends, reload, lazy playback, byte-exact download, cookie authentication, and 390px containment. It is intentionally skipped for WebKit, whose microphone-device acceptance must be performed separately. `python3 deploy/web/tests/test_image.py` verifies the actual packaged microphone policy.
+The permission spec intentionally uses headed Chromium. On display-less Linux, prefix the command with `xvfb-run -a`; do not add the fake-permission-UI flag to make it pass.
 
-The committed WebM fixture was captured with a real Chromium `getUserMedia`/`MediaRecorder` pipeline using Chromium's synthetic microphone. Its fixture README documents provenance and digest.
+The voice journey uses Chromium's synthetic microphone with real `getUserMedia`, `MediaRecorder`, decoding, cookie authentication, actual channel/DM routes and backend/storage lifecycle. It asserts cancellation, local preview, one-action send, preserved text drafts, reload, lazy one-click playback, finite duration/keyboard seeking, exact downloaded bytes, and narrow layout containment. The separate permission journey controls real Chromium permission state without the fake-permission-UI flag. Neither is physical microphone or Windows WebView2 permission evidence.
 
-Before shipping a native release, check a real microphone in each supported packaged OS build: permission prompt, audible recording, preview, cancel/discard, audio-only send, playback after reload, and microphone release when switching conversations or accounts. The browser-edition acceptance uses the compiled web build, real cookie authentication, actual React routes, and a local API/PostgreSQL/Redis/worker/S3 lifecycle, with a synthetic Chromium microphone and no Tauri IPC mocks. It does not replace the native-device check.
+## Packaged release checklist
+
+Use an isolated native profile and a real microphone on each supported OS:
+
+- First consent, subsequent recording, restart, and existing saved allow/deny states.
+- Windows OS microphone privacy disabled/enabled; missing device; useful recovery.
+- Audible recording, stop/cancel, local preview, one Send, failed upload/send retry.
+- Playback after reload, seeking/speed, download, and only one playing note.
+- Capture and signed-source cleanup after account/conversation changes and delayed permission responses.
+- Windows adapter origin/frame/gesture policy in both development and packaged builds. Older WebView2 runtimes missing required interfaces must fail safely.
+
+The committed WebM fixture is genuine synthetic-device Chromium capture; see its fixture README for provenance. Browser and cross-compilation results do not replace this native-device checklist.

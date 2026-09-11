@@ -21,6 +21,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => {});
   vi.spyOn(HTMLMediaElement.prototype, "load").mockImplementation(() => {});
+  vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue();
   useAuthStore.setState({ token: null, user: { id: "browser-user", name: "Browser", email: "browser@example.invalid", avatar: null, type: "human" } });
   vi.mocked(getAttachmentDownloadUrl).mockResolvedValue(capability);
   vi.mocked(openSharedAttachmentDownload).mockResolvedValue({ expiresAt: "later", transferredBytes: 8570 });
@@ -29,7 +30,7 @@ beforeEach(() => {
 it("plays and downloads through cookie auth without requiring a bearer token", async () => {
   render(<SharedMessageAttachments attachments={[voice]} />);
   expect(getAttachmentDownloadUrl).not.toHaveBeenCalled();
-  fireEvent.click(screen.getByRole("button", { name: "Load audio voice.webm" }));
+  fireEvent.click(screen.getByRole("button", { name: "Play voice message" }));
   expect(await screen.findByLabelText("Audio: voice.webm")).toHaveAttribute("src", capability.url);
   expect(getAttachmentDownloadUrl).toHaveBeenCalledExactlyOnceWith("voice-id", null, "attachment");
   fireEvent.click(screen.getByRole("button", { name: "Download voice.webm" }));
@@ -39,24 +40,24 @@ it("plays and downloads through cookie auth without requiring a bearer token", a
 
 it("removes a loaded capability and stops playback on a cookie session reset", async () => {
   render(<SharedMessageAttachments attachments={[voice]} />);
-  fireEvent.click(screen.getByRole("button", { name: "Load audio voice.webm" }));
+  fireEvent.click(screen.getByRole("button", { name: "Play voice message" }));
   const audio = await screen.findByLabelText("Audio: voice.webm");
   act(() => resetPrivateSession());
   expect(audio).not.toHaveAttribute("src");
   expect(HTMLMediaElement.prototype.pause).toHaveBeenCalled();
   expect(screen.queryByLabelText("Audio: voice.webm")).not.toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Load audio voice.webm" })).toBeEnabled();
+  expect(screen.getByRole("button", { name: "Play voice message" })).toBeEnabled();
 });
 
 it("ignores late audio authorization even when successive cookie sessions both have null tokens", async () => {
   let finish!: (value: typeof capability) => void;
   vi.mocked(getAttachmentDownloadUrl).mockReturnValueOnce(new Promise(resolve => { finish = resolve; }));
   render(<SharedMessageAttachments attachments={[voice]} />);
-  fireEvent.click(screen.getByRole("button", { name: "Load audio voice.webm" }));
+  fireEvent.click(screen.getByRole("button", { name: "Play voice message" }));
   await act(async () => {
     resetPrivateSession();
     finish(capability);
   });
   expect(screen.queryByLabelText("Audio: voice.webm")).not.toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Load audio voice.webm" })).toBeEnabled();
+  expect(screen.getByRole("button", { name: "Play voice message" })).toBeEnabled();
 });

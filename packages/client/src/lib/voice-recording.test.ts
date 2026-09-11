@@ -19,7 +19,7 @@ class FakeRecorder extends EventTarget {
   chunk(bytes = "audio", type = this.mimeType) {
     this.ondataavailable?.({ data: new Blob([bytes], { type }) });
   }
-  finish() { this.onstop?.(); }
+  finish() { return this.onstop?.(); }
 }
 const tracks = [{ stop: vi.fn() }, { stop: vi.fn() }];
 const stream = { getTracks: () => tracks } as unknown as MediaStream;
@@ -27,7 +27,7 @@ const getUserMedia = vi.fn();
 let voice: VoiceRecording;
 
 beforeEach(() => {
-  vi.useFakeTimers();
+  vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "Date"] });
   vi.clearAllMocks();
   FakeRecorder.instances = [];
   FakeRecorder.isTypeSupported.mockImplementation((mime) => mime === "audio/webm;codecs=opus");
@@ -38,6 +38,14 @@ beforeEach(() => {
 });
 afterEach(() => { voice.cancel(); vi.useRealTimers(); vi.unstubAllGlobals(); });
 
+it.each(["NotSupportedError", "NotReadableError", "NotFoundError"])("turns %s into actionable microphone recovery instead of raw engine text", async (name) => {
+  getUserMedia.mockRejectedValueOnce(new DOMException("Not supported", name));
+  await voice.start();
+  expect(voice.state.error).toMatch(/microphone/i);
+  expect(voice.state.error).toMatch(/check|allow|connect|try/i);
+  expect(voice.state.error).not.toBe("Not supported");
+});
+
 it("ignores duplicate start and stop gestures", async () => {
   const pending = voice.start();
   await voice.start(); await pending;
@@ -45,7 +53,7 @@ it("ignores duplicate start and stop gestures", async () => {
   const recorder = FakeRecorder.instances[0];
   recorder.chunk(); voice.stop(); voice.stop();
   expect(recorder.stop).toHaveBeenCalledOnce();
-  recorder.finish();
+  await recorder.finish();
   await voice.start();
   expect(getUserMedia).toHaveBeenCalledOnce();
 });
@@ -55,7 +63,7 @@ it("bounds accumulated recording bytes including the final chunk", async () => {
   const recorder = FakeRecorder.instances[0];
   recorder.chunk("a".repeat(25 * 1024 * 1024));
   expect(voice.state.phase).toBe("recording");
-  voice.stop(); recorder.chunk("overflow"); recorder.finish();
+  voice.stop(); recorder.chunk("overflow"); await recorder.finish();
   expect(voice.state.phase).toBe("idle");
   expect(voice.state.error).toMatch(/25 MiB/);
   expect(voice.state.file).toBeNull();
@@ -70,7 +78,7 @@ it("stops automatically at five minutes without sending or keeping the microphon
   expect(voice.state.phase).toBe("stopping");
   expect(recorder.stop).toHaveBeenCalledOnce();
   for (const track of tracks) expect(track.stop).toHaveBeenCalled();
-  recorder.finish();
+  await recorder.finish();
   expect(voice.state.phase).toBe("preview");
   expect(vi.getTimerCount()).toBe(0);
 });
@@ -87,7 +95,7 @@ it.each(["denied", "unsupported", "construction", "start", "stop", "recorder", "
   if (failure === "recorder") recorder.onerror?.();
   if (["empty", "unknown output", "stop"].includes(failure)) {
     if (failure === "unknown output") recorder.chunk("bytes", "video/unknown");
-    voice.stop(); recorder.finish();
+    voice.stop(); await recorder.finish();
   }
   expect(voice.state.phase).toBe("idle");
   expect(voice.state.error).toBeTruthy();
@@ -104,7 +112,7 @@ it.each([
   FakeRecorder.isTypeSupported.mockImplementation((mime) => mime === supported);
   await voice.start();
   const recorder = FakeRecorder.instances[0];
-  recorder.chunk(); voice.stop(); recorder.finish();
+  recorder.chunk(); voice.stop(); await recorder.finish();
   expect(voice.state.file).toMatchObject({ type, name: `voice-message.${extension}` });
 });
 
@@ -149,7 +157,7 @@ it("requests on start, records elapsed time, and stops to a MIME-matched preview
   expect(voice.state.elapsedSeconds).toBe(2);
   voice.stop();
   expect(voice.state.phase).toBe("stopping");
-  recorder.chunk(); recorder.finish();
+  recorder.chunk(); await recorder.finish();
   expect(voice.state.phase).toBe("preview");
   expect(voice.state.file).toMatchObject({ type: "audio/webm", name: "voice-message.webm", size: 5 });
   for (const track of tracks) expect(track.stop).toHaveBeenCalled();

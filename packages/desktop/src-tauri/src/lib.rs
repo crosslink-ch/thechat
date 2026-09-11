@@ -5,6 +5,7 @@ mod env;
 mod file_drop;
 mod fs;
 mod mcp;
+mod microphone;
 mod oauth;
 mod shell;
 mod stream;
@@ -440,7 +441,11 @@ pub fn run() {
 
     tracing::info!("app started");
 
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    #[cfg(windows)]
+    let builder = builder.plugin(microphone::init());
+
+    builder
         .plugin(log_plugin_builder().build())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())

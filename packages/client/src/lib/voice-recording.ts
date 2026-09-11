@@ -1,4 +1,6 @@
 import { SHARED_ATTACHMENT_MAX_BYTES } from "./shared-attachments";
+import fixWebmDuration from "fix-webm-duration";
+import { services } from "#platform-services";
 
 export interface VoiceRecordingState {
   phase: "idle" | "requesting" | "recording" | "stopping" | "preview";
@@ -15,6 +17,8 @@ export class VoiceRecording {
   private timer?: ReturnType<typeof setInterval>;
   private chunks: Blob[] = [];
   private generation = 0;
+  private startedAt = 0;
+  private stoppedAt: number | null = null;
 
   constructor(private readonly onChange: (state: VoiceRecordingState) => void) {}
 
@@ -31,6 +35,9 @@ export class VoiceRecording {
       if (typeof MediaRecorder === "undefined" || !navigator.mediaDevices?.getUserMedia) {
         throw new Error("Voice recording is unavailable in this browser. Try a supported browser or attach an audio file.");
       }
+      // Only reached through explicit Record / Allow-and-record, never mount.
+      if (services.microphone) await services.microphone.prepareRecording();
+      if (generation !== this.generation) return;
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       if (generation !== this.generation) {
         stream.getTracks().forEach((track) => track.stop());
@@ -56,7 +63,7 @@ export class VoiceRecording {
       recorder.onerror = () => {
         if (generation === this.generation) this.fail("Microphone recording failed. Please try again.");
       };
-      recorder.onstop = () => {
+      recorder.onstop = async () => {
         if (generation !== this.generation) return;
         this.detachRecorder();
         this.release();
@@ -66,11 +73,29 @@ export class VoiceRecording {
           this.fail(extension ? "The recording was empty. Please try again." : "The microphone produced an unsupported audio format.");
           return;
         }
-        this.update({ phase: "preview", file: new File(this.chunks, `voice-message.${extension}`, { type }) });
+        const blob = new Blob(this.chunks, { type });
         this.chunks = [];
+        try {
+          // Chromium timesliced WebM omits Duration. Add measured capture time
+          // losslessly so both local review and the sent file are seekable.
+          const durationMs = Math.max(0, (this.stoppedAt ?? Date.now()) - this.startedAt);
+          const finalized = type === "audio/webm"
+            ? await fixWebmDuration(blob, durationMs, { logger: false })
+            : blob;
+          if (generation !== this.generation) return;
+          if (finalized.size > SHARED_ATTACHMENT_MAX_BYTES) {
+            this.fail("Recording exceeds 25 MiB. Please record a shorter message.");
+            return;
+          }
+          this.update({ phase: "preview", elapsedSeconds: Math.floor(durationMs / 1000), file: new File([finalized], `voice-message.${extension}`, { type }) });
+        } catch {
+          if (generation === this.generation) this.fail("Could not finish the voice message. Please record it again.");
+        }
       };
       recorder.start(1000);
       const started = Date.now();
+      this.startedAt = started;
+      this.stoppedAt = null;
       this.timer = setInterval(() => {
         const elapsedSeconds = Math.floor((Date.now() - started) / 1000);
         this.update({ elapsedSeconds });
@@ -79,14 +104,20 @@ export class VoiceRecording {
       this.update({ phase: "recording" });
     } catch (error) {
       if (generation !== this.generation) return;
-      this.fail(error instanceof DOMException && error.name === "NotAllowedError"
-        ? "Microphone permission denied. Allow microphone access and try again."
-        : error instanceof Error ? error.message : "Unable to record from the microphone.");
+      const name = error && typeof error === "object" && "name" in error ? error.name : "";
+      this.fail(name === "NotAllowedError" || name === "SecurityError"
+        ? "Microphone access is off. Allow microphone access in your browser or system privacy settings, then try again."
+        : name === "NotFoundError"
+          ? "No microphone was found. Connect a microphone, then try again."
+          : name === "NotReadableError"
+            ? "Your microphone is busy or unavailable. Close other recording apps and check your microphone, then try again."
+            : "Could not start your microphone. Check microphone access and your audio device, then try again in a supported browser or app.");
     }
   }
 
   stop() {
     if (this.state.phase !== "recording") return;
+    this.stoppedAt = Date.now();
     this.update({ phase: "stopping" });
     try {
       this.recorder?.stop();
@@ -107,6 +138,7 @@ export class VoiceRecording {
     this.timer = undefined;
     this.stream?.getTracks().forEach((track) => track.stop());
     this.stream = undefined;
+    void services.microphone?.cancelRecording().catch(() => undefined);
   }
 
   private detachRecorder() {
@@ -128,6 +160,6 @@ export class VoiceRecording {
     this.detachRecorder();
     this.chunks = [];
     this.release();
-    this.update({ phase: "idle", file: null, elapsedSeconds: 0 });
+    this.update({ phase: "idle", file: null, elapsedSeconds: 0, error: null });
   }
 }

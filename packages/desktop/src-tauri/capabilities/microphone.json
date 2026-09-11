@@ -1,0 +1,14 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "microphone",
+  "description": "Windows main-app recording intent and explicitly clicked microphone settings only",
+  "local": true,
+  "webviews": ["main"],
+  "platforms": ["windows"],
+  "permissions": [
+    "microphone:allow-get-permission-state",
+    "microphone:allow-prepare-recording",
+    "microphone:allow-cancel-recording",
+    "microphone:allow-open-settings"
+  ]
+}
