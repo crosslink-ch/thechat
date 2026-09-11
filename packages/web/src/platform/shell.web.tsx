@@ -13,5 +13,6 @@ export function usePlatformLifecycle(_token: string | null) {
 export function PlatformDialogs() { return null; }
 export function PlatformTitlebar() { return null; }
 export function PlatformUpdateToast() { return null; }
+export function PlatformSidebarUpdate() { return null; }
 
 export { BrowserNotificationSettings as PlatformNotificationSettings } from "./BrowserNotificationSettings";

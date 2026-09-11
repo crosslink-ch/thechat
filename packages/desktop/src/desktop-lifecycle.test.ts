@@ -78,6 +78,29 @@ describe("desktop lifecycle", () => {
     expect(mocks.resetUpdater).toHaveBeenCalledOnce();
   });
 
+  it("starts recurring update discovery before auth resolves and stops it before resetting", async () => {
+    let resolveAuth!: () => void;
+    mocks.initializeAuth.mockImplementationOnce(() => new Promise<void>((resolve) => { resolveAuth = resolve; }));
+    const cleanup = lifecycle.initializeDesktopStartup();
+    try {
+      expect(mocks.checkForUpdates).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(60 * 60 * 1000);
+      expect(mocks.checkForUpdates).toHaveBeenCalledTimes(2);
+      await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
+      window.dispatchEvent(new Event("focus"));
+      expect(mocks.checkForUpdates).toHaveBeenCalledTimes(3);
+    } finally {
+      cleanup();
+      resolveAuth();
+    }
+    expect(mocks.resetUpdater).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(60 * 60 * 1000);
+    window.dispatchEvent(new Event("focus"));
+    window.dispatchEvent(new Event("online"));
+    expect(mocks.checkForUpdates).toHaveBeenCalledTimes(3);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
   it("ignores auth synchronization until Agent Chat is explicitly activated", () => {
     lifecycle.syncAgentChatMcpAuth("startup-token");
     lifecycle.syncAgentChatMcpAuth(null);

@@ -6,5 +6,6 @@ export function usePlatformLifecycle(token: string | null) {
 }
 export const PlatformDialogs = () => isWeb ? <web.PlatformDialogs /> : <desktop.PlatformDialogs />;
 export const PlatformTitlebar = () => isWeb ? <web.PlatformTitlebar /> : <desktop.PlatformTitlebar />;
+export const PlatformSidebarUpdate = () => isWeb ? <web.PlatformSidebarUpdate /> : <desktop.PlatformSidebarUpdate />;
 export const PlatformUpdateToast = () => isWeb ? <web.PlatformUpdateToast /> : <desktop.PlatformUpdateToast />;
 export const PlatformNotificationSettings = () => isWeb ? <web.PlatformNotificationSettings /> : <desktop.PlatformNotificationSettings />;
