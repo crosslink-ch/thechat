@@ -2,8 +2,8 @@ import { createContext, useContext, useEffect, useState, useSyncExternalStore, t
 import * as Dialog from "@radix-ui/react-dialog";
 import { HeaderActionsProvider } from "./HeaderActions";
 
-// Hide workspace navigation first, preserving inline Hermes Tasks until 1024px.
-export const MOBILE_NAV_QUERY = "(max-width: 1279px)";
+// Keep both sidebars at the default 1100px window width; hide navigation before Tasks.
+export const MOBILE_NAV_QUERY = "(max-width: 1023px)";
 
 export function useMediaQuery(query: string) {
   return useSyncExternalStore(

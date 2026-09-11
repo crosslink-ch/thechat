@@ -77,7 +77,7 @@
   border: 0;
 }
 /* Match MOBILE_NAV_QUERY so viewport tracking and positioning stay in sync. */
-@media (max-width: 1279px) {
+@media (max-width: 1023px) {
   .app-viewport {
     position: fixed;
     inset-inline: 0;
@@ -85,7 +85,7 @@
   }
 }
 /* Match the Tasks drawer breakpoint; keep the DM and inline panel side by side. */
-@media (max-width: 1023px) {
+@media (max-width: 899px) {
   .shared-dm-layout {
     flex-direction: column;
   }

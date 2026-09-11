@@ -51,7 +51,7 @@ export function HermesRuntimePanel({
   onCreateThread?: () => void;
   onLoadMoreThreads?: () => void;
 }) {
-  const mobile = useMediaQuery("(max-width: 1023px)");
+  const mobile = useMediaQuery("(max-width: 899px)");
   const [open, setOpen] = useState(false);
   useEffect(() => setOpen(false), [mobile, botName]);
   useEffect(() => {

@@ -35,22 +35,23 @@ test('Hermes DM collapses navigation before Tasks across resize and drawer inter
   const tasksToggle = page.getByRole('button', { name: 'Open tasks and activity', exact: true });
   await expect(scroller).toBeVisible();
 
-  for (const width of [1440, 1280, 1279, 1100, 1024, 1023, 390, 1024, 1280]) {
+  for (const width of [1440, 1280, 1100, 1024, 1023, 960, 900, 899, 390, 900, 1024, 1100]) {
     await page.setViewportSize({ width, height: 844 });
-    if (width >= 1280) {
+    if (width >= 1024) {
       await expect(page.locator('.app-sidebar')).toBeVisible();
       await expect(navToggle).toHaveCount(0);
     } else {
       await expect(page.locator('.app-sidebar')).toHaveCount(0);
       await expect(navToggle).toBeVisible();
     }
-    if (width >= 1024) {
+    if (width >= 900) {
       await expect(tasksPanel).toBeVisible();
       await expect(tasksToggle).toHaveCount(0);
       await assertContained(page, '.hermes-runtime-panel');
       const panel = (await tasksPanel.boundingBox())!;
       const chat = (await scroller.boundingBox())!;
-      expect(chat.width).toBeGreaterThan(450);
+      // Both sidebars now remain inline at narrower desktop widths.
+      expect(chat.width).toBeGreaterThan(width >= 1024 && width < 1280 ? 350 : 450);
       expect(chat.x + chat.width).toBeLessThanOrEqual(panel.x + 1);
       expect(Math.abs(chat.y - panel.y)).toBeLessThan(2);
     } else {
@@ -64,7 +65,7 @@ test('Hermes DM collapses navigation before Tasks across resize and drawer inter
     await page.screenshot({ path: info.outputPath(`layout-${width}.png`), fullPage: true });
   }
 
-  await page.setViewportSize({ width: 1100, height: 844 });
+  await page.setViewportSize({ width: 960, height: 844 });
   await navToggle.click();
   await expect(page.getByRole('dialog', { name: 'Workspace navigation' })).toBeVisible();
   await page.keyboard.press('Escape');
@@ -83,16 +84,16 @@ test('Hermes DM collapses navigation before Tasks across resize and drawer inter
   await expect(tasksToggle).toBeFocused();
 
   await tasksToggle.click();
-  await page.setViewportSize({ width: 1024, height: 844 });
+  await page.setViewportSize({ width: 900, height: 844 });
   await expect(page.getByRole('dialog')).toHaveCount(0);
   await expect(tasksPanel).toBeVisible();
-  await page.setViewportSize({ width: 1023, height: 844 });
+  await page.setViewportSize({ width: 899, height: 844 });
   await expect(page.getByRole('dialog')).toHaveCount(0);
   await navToggle.click();
-  await page.setViewportSize({ width: 1280, height: 844 });
+  await page.setViewportSize({ width: 1024, height: 844 });
   await expect(page.getByRole('dialog')).toHaveCount(0);
   await expect(page.locator('.app-sidebar')).toBeVisible();
-  await page.setViewportSize({ width: 1279, height: 844 });
+  await page.setViewportSize({ width: 1023, height: 844 });
   await expect(page.getByRole('dialog')).toHaveCount(0);
   expect(errors).toEqual([]);
 });

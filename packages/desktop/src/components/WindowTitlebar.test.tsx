@@ -18,7 +18,7 @@ function viewport(width: number) {
   }));
 }
 
-it.each([1279, 1100, 1024, 390])("uses the functional drawer toggle instead of the titlebar sidebar control at %ipx", async width => {
+it.each([1023, 960, 900, 390])("uses the functional drawer toggle instead of the titlebar sidebar control at %ipx", async width => {
   viewport(width);
   const user = userEvent.setup();
   render(<><WindowTitlebar /><ResponsiveShell navigation={<button>Channel</button>} routeKey="/dm/dm-1"><ChatHeader /></ResponsiveShell></>);
@@ -32,8 +32,8 @@ it.each([1279, 1100, 1024, 390])("uses the functional drawer toggle instead of t
   expect(trigger).toHaveFocus();
 });
 
-it("keeps the titlebar sidebar control functional at 1280px", async () => {
-  viewport(1280);
+it.each([1024, 1100, 1280])("keeps the titlebar sidebar control functional at %ipx", async width => {
+  viewport(width);
   const user = userEvent.setup();
   render(<WindowTitlebar />);
   await user.click(screen.getByRole("button", { name: "Collapse sidebar" }));
