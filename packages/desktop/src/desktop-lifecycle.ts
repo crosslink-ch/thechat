@@ -4,6 +4,7 @@ import { useConversationsStore } from "@thechat/client/stores/conversations";
 import { useFontSizeStore } from "@thechat/client/stores/font-size";
 import { useToolsStore } from "./stores/tools";
 import { useUpdaterStore } from "./stores/updater";
+import { startUpdateChecks } from "./lib/update-scheduler";
 import { info as logInfo } from "@thechat/client/log";
 
 let agentChatMcpInitialized = false;
@@ -20,9 +21,10 @@ export function initializeDesktopStartup(): () => void {
   void useCodexAuthStore.getState().initialize();
   void useConversationsStore.getState().fetchConversations();
   useFontSizeStore.getState().initialize();
-  void useUpdaterStore.getState().checkForUpdates();
+  const stopUpdateChecks = startUpdateChecks();
 
   return () => {
+    stopUpdateChecks();
     void useUpdaterStore.getState().reset();
   };
 }

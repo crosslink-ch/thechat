@@ -2,6 +2,7 @@ import { useUpdaterStore } from "../stores/updater";
 
 export function UpdateToast() {
   const update = useUpdaterStore((s) => s.update);
+  const installing = useUpdaterStore((s) => s.installing);
   const downloaded = useUpdaterStore((s) => s.downloaded);
   const error = useUpdaterStore((s) => s.error);
   const restartToUpdate = useUpdaterStore((s) => s.restartToUpdate);
@@ -32,12 +33,14 @@ export function UpdateToast() {
         <div className="flex items-center justify-end">
           <button
             type="button"
-            className="pointer-events-auto cursor-pointer rounded-lg border-none bg-accent px-3.5 py-1.5 text-[0.857rem] font-medium text-white transition-colors duration-150 hover:opacity-90"
+            disabled={installing}
+            aria-busy={installing}
+            className="pointer-events-auto cursor-pointer rounded-lg border-none bg-accent px-3.5 py-1.5 text-[0.857rem] font-medium text-white transition-colors duration-150 hover:opacity-90 disabled:cursor-default disabled:opacity-60"
             onClick={() => {
               void restartToUpdate();
             }}
           >
-            Restart to update
+            {installing ? "Installing update…" : "Restart to update"}
           </button>
         </div>
       )}

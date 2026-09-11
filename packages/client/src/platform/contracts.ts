@@ -40,5 +40,6 @@ export interface PlatformShell {
   PlatformDialogs: ComponentType;
   PlatformTitlebar: ComponentType;
   PlatformUpdateToast: ComponentType;
+  PlatformSidebarUpdate: ComponentType;
   PlatformNotificationSettings: ComponentType;
 }
