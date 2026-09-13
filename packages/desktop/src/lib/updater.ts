@@ -51,12 +51,19 @@ export async function downloadUpdate(
   }
 }
 
+// The native plugin consumes the downloaded bytes on successful installation.
+// If only relaunch fails, a retry must restart, not reinstall those bytes.
+const installedUpdates = new WeakSet<Update>();
+
 export async function installAndRelaunch(update: Update): Promise<void> {
   try {
     const { relaunch } = await import("@tauri-apps/plugin-process");
 
     logInfo(`[updater] Installing update ${update.version} and relaunching`);
-    await update.install();
+    if (!installedUpdates.has(update)) {
+      await update.install();
+      installedUpdates.add(update);
+    }
     await relaunch();
   } catch (error) {
     logError(`[updater] Update install failed: ${formatError(error)}`);

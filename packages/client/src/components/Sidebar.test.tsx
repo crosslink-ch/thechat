@@ -38,6 +38,24 @@ const {
   openDeleteChannelModalMock: vi.fn(),
 }));
 
+vi.mock("#platform-shell", () => ({
+  PlatformSidebarUpdate: () => <button>Install available update</button>,
+}));
+
+it("keeps the platform update action next to the account outside its menu", async () => {
+  useAuthStore.setState({ user, token: "test-token", loading: false });
+  await renderWithRouter(<Sidebar />);
+
+  const update = screen.getByRole("button", { name: "Install available update" });
+  const account = screen.getByRole("button", { name: /Test User/ });
+  expect(update.parentElement).toContainElement(account);
+  expect(account).not.toContainElement(update);
+  expect(screen.queryByRole("button", { name: "Log out" })).not.toBeInTheDocument();
+  await userEvent.click(account);
+  expect(update).toBeVisible();
+  expect(screen.getByRole("button", { name: "Log out" })).toBeVisible();
+});
+
 vi.mock("../lib/api", () => ({
   api: {
     conversations: {
