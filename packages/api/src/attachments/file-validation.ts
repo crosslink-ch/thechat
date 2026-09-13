@@ -52,7 +52,12 @@ export async function verifyFileType(
     // rejection. Only positively identified safe raster formats are previewed.
   }
 
-  const mediaType = detectedMediaType ?? declared;
+  // Container detection cannot distinguish audio-only WebM/MP4 recordings.
+  // This is metadata only: it never grants inline delivery or image preview.
+  const audioContainer =
+    (declared === "audio/webm" && detectedMediaType === "video/webm") ||
+    (declared === "audio/mp4" && detectedMediaType === "video/mp4");
+  const mediaType = audioContainer ? declared : detectedMediaType ?? declared;
   if (detectedMediaType && RASTER_MEDIA_TYPES.has(detectedMediaType)) {
     const dimensions = readRasterDimensions(bytes, detectedMediaType);
     if (

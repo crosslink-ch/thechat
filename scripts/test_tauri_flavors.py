@@ -6,6 +6,7 @@ from __future__ import annotations
 import copy
 import json
 import os
+import plistlib
 from pathlib import Path
 import subprocess
 import unittest
@@ -72,6 +73,17 @@ class TauriFlavorTests(unittest.TestCase):
             text=True,
         )
         return json.loads(result.stdout)
+
+    def test_macos_voice_permission_metadata_survives_flavors(self) -> None:
+        for overlay in [{}, self.dev_overlay, load_json(TAURI_DIR / "tauri.release.conf.json")]:
+            config = merge_config(self.macos, overlay)
+            macos = config["bundle"].get("macOS", {})
+            self.assertEqual(macos.get("infoPlist"), "Info.plist")
+            self.assertEqual(macos.get("entitlements"), "Entitlements.plist")
+            info = plistlib.loads((TAURI_DIR / macos["infoPlist"]).read_bytes())
+            self.assertEqual(info["NSMicrophoneUsageDescription"], "TheChat uses your microphone to record voice messages that you choose to send.")
+            entitlements = plistlib.loads((TAURI_DIR / macos["entitlements"]).read_bytes())
+            self.assertEqual(entitlements, {"com.apple.security.device.audio-input": True})
 
     def test_development_identity_is_isolated(self) -> None:
         self.assertEqual(self.base["identifier"], "com.bruno.thechat")

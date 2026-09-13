@@ -12,6 +12,7 @@ import {
   withDesktopSpan,
 } from "../lib/telemetry";
 import { useAuthStore } from "../stores/auth";
+import { isPlayableAudio, VoiceMessagePlayer } from "./VoiceMessagePlayer";
 
 const imageViewerControlClassName =
   "inline-flex size-[44px] shrink-0 cursor-pointer items-center justify-center rounded-full border border-white/20 bg-black/60 text-white shadow-lg backdrop-blur-md transition duration-150 hover:border-white/40 hover:bg-black/80 active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-black disabled:cursor-wait disabled:opacity-60";
@@ -108,6 +109,8 @@ export function SharedMessageAttachments({
             attachment={attachment}
             token={token}
           />
+        ) : isPlayableAudio(attachment.mediaType) ? (
+          <VoiceMessagePlayer key={attachment.id} attachment={attachment} token={token} />
         ) : (
           <FileCard key={attachment.id} attachment={attachment} token={token} />
         ),

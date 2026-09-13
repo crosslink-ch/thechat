@@ -20,6 +20,15 @@ export interface NativeAttachmentDownload {
 }
 /** Narrow capabilities, selected by each executable's bundler. No generic IPC. */
 export interface PlatformServices {
+  /** Windows app consent only, not a query of OS/device permission. */
+  microphone?: {
+    getPermissionState(): Promise<"prompt" | "granted" | "denied">;
+    /** Call only for an explicit Allow-and-record / Record action. */
+    prepareRecording(): Promise<void>;
+    cancelRecording(): Promise<void>;
+    /** Opens the fixed Windows microphone privacy page after a user click. */
+    openSettings(): Promise<void>;
+  };
   credentials: KeyValueStore<CredentialKey> | null;
   preferences: KeyValueStore<PreferenceKey>;
   announceSessionChange(): void;

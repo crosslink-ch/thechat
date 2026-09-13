@@ -5414,6 +5414,8 @@ dependencies = [
  "url",
  "uuid",
  "walkdir",
+ "webview2-com",
+ "windows",
 ]
 
 [[package]]
