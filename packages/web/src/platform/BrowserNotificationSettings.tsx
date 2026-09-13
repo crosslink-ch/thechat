@@ -1,5 +1,13 @@
 import { useState } from "react";
 import { isWeb } from "@thechat/client/platform/environment";
+import {
+  SettingsSection,
+  settingsCard,
+  settingsLabel,
+  settingsRow,
+  settingsSecondaryButton,
+  settingsValue,
+} from "@thechat/client/components/SettingsSection";
 
 /** Page-lifetime notifications only; this does not register a push worker. */
 export function BrowserNotificationSettings() {
@@ -7,13 +15,34 @@ export function BrowserNotificationSettings() {
     typeof Notification === "undefined" ? "unavailable" : Notification.permission,
   );
   if (!isWeb) return null;
-  return <section className="rounded-xl border border-border-subtle bg-surface p-5" aria-label="Browser notifications">
-    <h2 className="font-semibold">Browser notifications</h2>
-    {permission === "granted" ? <p>Notifications enabled while TheChat is open.</p>
-      : permission === "denied" ? <p>Notifications are blocked. Change this site's permission in your browser settings.</p>
-      : permission === "unavailable" ? <p>This browser does not support page notifications.</p>
-      : <button type="button" className="mt-2 rounded border border-border-subtle px-3 py-2" onClick={() => {
-          void Notification.requestPermission().then(setPermission).catch(() => setPermission("unavailable"));
-        }}>Enable browser notifications</button>}
-  </section>;
+  return (
+    <SettingsSection id="browser-notifications-heading" title="Browser notifications">
+      <div className={settingsCard}>
+        <div className={settingsRow}>
+          <div className={settingsLabel}>Permission</div>
+          <div className="min-w-0">
+            {permission === "granted" ? (
+              <p className={settingsValue}>Notifications enabled while TheChat is open.</p>
+            ) : permission === "denied" ? (
+              <p className={settingsValue}>
+                Notifications are blocked. Change this site's permission in your browser settings.
+              </p>
+            ) : permission === "unavailable" ? (
+              <p className={settingsValue}>This browser does not support page notifications.</p>
+            ) : (
+              <button
+                type="button"
+                className={settingsSecondaryButton}
+                onClick={() => {
+                  void Notification.requestPermission().then(setPermission).catch(() => setPermission("unavailable"));
+                }}
+              >
+                Enable browser notifications
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+    </SettingsSection>
+  );
 }

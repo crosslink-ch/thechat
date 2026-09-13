@@ -1,4 +1,4 @@
-import "@thechat/client/styles";
+import "./web.css";
 import { mountClient } from "@thechat/client";
 import type { PlatformShell } from "@thechat/client/platform/contracts";
 import * as shell from "./platform/shell.web";

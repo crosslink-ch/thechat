@@ -76,6 +76,33 @@ beforeEach(() => {
 });
 
 describe("SettingsRoute", () => {
+  it("names the page Settings and nests Profile and API access as sections", async () => {
+    render(<SettingsRoute />);
+
+    const page = screen.getByRole("main");
+    expect(page).toHaveAccessibleName("Settings");
+    expect(
+      screen.getByRole("heading", { level: 1, name: "Settings" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { level: 2, name: "Profile" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { level: 2, name: "API access" }),
+    ).toBeInTheDocument();
+    expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
+    // Decorative eyebrow labels no longer precede the section headings.
+    expect(screen.queryByText("Account")).not.toBeInTheDocument();
+    expect(screen.queryByText("Integrations")).not.toBeInTheDocument();
+    // The desktop shell contributes no browser notification section.
+    expect(
+      screen.queryByRole("heading", { name: "Browser notifications" }),
+    ).not.toBeInTheDocument();
+    expect(
+      await screen.findByText("No personal access tokens yet."),
+    ).toBeInTheDocument();
+  });
+
   it("keeps the name editable and presents immutable account information", async () => {
     render(<SettingsRoute />);
 
@@ -201,7 +228,6 @@ describe("SettingsRoute", () => {
     const existingToken = screen.getByRole("listitem", {
       name: "Existing CLI personal access token",
     });
-    expect(within(existingToken).getByText("Active")).toBeInTheDocument();
     expect(within(existingToken).getByText("Created")).toBeInTheDocument();
     expect(within(existingToken).getByText("Last used")).toBeInTheDocument();
     expect(within(existingToken).getByText("Never")).toBeInTheDocument();
@@ -255,6 +281,104 @@ describe("SettingsRoute", () => {
     await user.click(screen.getByRole("button", { name: "Hide token" }));
     expect(screen.queryByDisplayValue(rawToken)).not.toBeInTheDocument();
     expect(screen.getAllByText(/<YOUR_PERSONAL_ACCESS_TOKEN>/).length).toBe(2);
+  });
+
+  it("lists tokens as plain rows with a two-stage revoke and readable client examples", async () => {
+    listTokensMock.mockResolvedValueOnce({
+      data: {
+        personalAccessTokens: [
+          {
+            id: "00000000-0000-4000-8000-000000000001",
+            name: "Existing CLI",
+            start: "tchat_pat_abcd12",
+            createdAt: "2026-08-17T10:00:00.000Z",
+            lastUsedAt: null,
+          },
+        ],
+      },
+      error: null,
+    });
+    const user = userEvent.setup();
+    render(<SettingsRoute />);
+
+    const item = await screen.findByRole("listitem", {
+      name: "Existing CLI personal access token",
+    });
+    // Every listed token is live, so no decorative status badge or count.
+    expect(within(item).queryByText("Active")).not.toBeInTheDocument();
+    expect(screen.queryByText(/\d+ active/)).not.toBeInTheDocument();
+    expect(within(item).getByText("tchat_pat_abcd12…").tagName).toBe("CODE");
+    expect(within(item).getByText("Created")).toBeInTheDocument();
+    expect(within(item).getByText("Last used")).toBeInTheDocument();
+    expect(within(item).getByText("Never")).toBeInTheDocument();
+
+    // Revoke reads as a quiet action until the user asks to confirm it.
+    const revoke = within(item).getByRole("button", { name: "Revoke Existing CLI" });
+    expect(revoke).toHaveTextContent("Revoke");
+    expect(revoke).not.toHaveClass("bg-error-msg-bg");
+    await user.click(revoke);
+    expect(revoke).toHaveTextContent("Confirm revoke");
+    expect(revoke).toHaveClass("bg-error-msg-bg");
+    await user.click(within(item).getByRole("button", { name: "Cancel" }));
+    expect(revoke).toHaveTextContent("Revoke");
+    expect(revoke).not.toHaveClass("bg-error-msg-bg");
+    expect(tokenEndpointMock).not.toHaveBeenCalled();
+
+    // Examples are level-3 headings under API access; curl wraps, JSON scrolls.
+    expect(screen.getByRole("heading", { level: 3, name: "REST" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 3, name: "MCP" })).toBeInTheDocument();
+    const restPre = screen
+      .getByText(/https:\/\/api\.example\.test\/auth\/me/)
+      .closest("pre");
+    expect(restPre).toHaveClass("whitespace-pre-wrap");
+    const mcpPre = screen
+      .getByText(/https:\/\/api\.example\.test\/mcp/)
+      .closest("pre");
+    expect(mcpPre).toHaveClass("overflow-x-auto");
+    expect(mcpPre).not.toHaveClass("whitespace-pre-wrap");
+  });
+
+  it("gives every small-screen control an explicit 44px height independent of the root font size", async () => {
+    createTokenMock.mockResolvedValueOnce({
+      data: {
+        token: "tchat_pat_touch_target_secret",
+        personalAccessToken: {
+          id: "00000000-0000-4000-8000-000000000003",
+          name: "Touch",
+          start: "tchat_pat_touch1",
+          createdAt: "2026-09-13T10:00:00.000Z",
+          lastUsedAt: null,
+        },
+      },
+      error: null,
+    });
+    const user = userEvent.setup();
+    render(<SettingsRoute />);
+    expect(
+      await screen.findByText("No personal access tokens yet."),
+    ).toBeInTheDocument();
+    await user.type(screen.getByLabelText("Token name"), "Touch");
+    await user.click(screen.getByRole("button", { name: "Create token" }));
+    const revealedInput = await screen.findByLabelText("New personal access token");
+
+    const controls = [
+      screen.getByLabelText("Name"),
+      screen.getByRole("button", { name: "Save name" }),
+      screen.getByLabelText("Token name"),
+      screen.getByRole("button", { name: "Create token" }),
+      revealedInput,
+      screen.getByRole("button", { name: "Copy personal access token" }),
+      screen.getByRole("button", { name: "Hide token" }),
+      screen.getByRole("button", { name: "Revoke Touch" }),
+      screen.getByRole("button", { name: "Copy REST curl snippet" }),
+      screen.getByRole("button", { name: "Copy MCP JSON snippet" }),
+    ];
+    for (const control of controls) {
+      // The root font size is 14px, so rem-based h-11 renders 38.5px; touch
+      // targets must be declared in pixels.
+      expect(control).toHaveClass("max-sm:h-[44px]");
+      expect(control.className).not.toMatch(/max-sm:h-11(?:\s|$)/);
+    }
   });
 
   it("never reveals a delayed token response after the signed-in account changes", async () => {
