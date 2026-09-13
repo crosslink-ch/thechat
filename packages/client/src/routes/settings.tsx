@@ -1,26 +1,15 @@
 import { PlatformNotificationSettings as BrowserNotificationSettings } from "#platform-shell";
 import { type FormEvent, useEffect, useState } from "react";
+import {
+  SettingsFact,
+  SettingsField,
+  SettingsSection,
+  settingsCard,
+  settingsInput,
+  settingsPrimaryButton,
+} from "../components/SettingsSection";
 import { useAuthStore } from "../stores/auth";
 import { ApiAccessSettings } from "./settings-api-access";
-
-function LockIcon() {
-  return (
-    <svg
-      aria-hidden="true"
-      width="13"
-      height="13"
-      viewBox="0 0 13 13"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.25"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <rect x="2.25" y="5.5" width="8.5" height="6" rx="1.4" />
-      <path d="M4.2 5.5V4.1a2.3 2.3 0 0 1 4.6 0v1.4" />
-    </svg>
-  );
-}
 
 function getInitials(name: string) {
   const initials = name
@@ -85,135 +74,116 @@ export function SettingsRoute() {
 
   return (
     <main
-      className="h-full overflow-y-auto bg-base px-4 py-6 sm:px-7 sm:py-8"
-      aria-labelledby="profile-heading"
+      className="flex h-full min-h-0 flex-col bg-base"
+      aria-labelledby="settings-heading"
     >
-      <div className="mx-auto flex w-full max-w-[720px] flex-col gap-6">
-        <header className="flex flex-col gap-2">
-          <div className="text-[0.714rem] font-semibold uppercase tracking-[0.16em] text-accent">
-            Account
-          </div>
-          <h1
-            id="profile-heading"
-            className="text-[1.7rem] font-semibold tracking-[-0.03em] text-text"
-          >
-            Profile
-          </h1>
-          <p className="max-w-[560px] text-[0.929rem] leading-6 text-text-muted">
-            Manage the profile associated with your signed-in TheChat account.
-          </p>
-        </header>
+      <header className="shrink-0 border-b border-border px-5 py-4">
+        <h1
+          id="settings-heading"
+          className="text-[1.071rem] font-semibold text-text"
+        >
+          Settings
+        </h1>
+        <p className="mt-1 text-[0.786rem] text-text-muted">
+          Manage your signed-in TheChat account.
+        </p>
+      </header>
 
-        {!user ? (
-          <section className="rounded-xl border border-border-subtle bg-surface p-5 shadow-sm sm:p-6">
-            <h2 className="text-[1rem] font-semibold text-text">
-              Sign in to view your profile
-            </h2>
-            <p className="mt-2 text-[0.857rem] leading-5 text-text-muted">
-              Your account details will appear here after authentication finishes.
-            </p>
-          </section>
-        ) : (
-          <>
-          <form
-            className="overflow-hidden rounded-xl border border-border-subtle bg-surface shadow-sm"
-            aria-label="Profile settings"
-            onSubmit={handleSubmit}
-          >
-            <div className="border-b border-border-subtle bg-gradient-to-br from-accent/[0.12] via-surface to-surface p-5 sm:p-6">
-              <div className="flex min-w-0 items-center gap-3.5">
-                <div className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-accent text-[0.929rem] font-semibold text-white shadow-sm">
-                  {getInitials(user.name)}
-                </div>
-                <div className="truncate text-[1rem] font-semibold text-text">
-                  {user.name}
-                </div>
-              </div>
-            </div>
-
-            <div className="p-5 sm:p-6">
-              <div className="flex min-w-0 flex-col gap-2">
-                <label
-                  htmlFor="profile-name"
-                  className="text-[0.786rem] font-medium text-text-muted"
-                >
-                  Name
-                </label>
-                <input
-                  id="profile-name"
-                  value={name}
-                  onChange={(event) => {
-                    setName(event.target.value);
-                    setError(null);
-                    setSaved(false);
-                  }}
-                  autoComplete="name"
-                  maxLength={255}
-                  required
-                  disabled={saving}
-                  aria-invalid={error ? "true" : undefined}
-                  className="h-10 w-full min-w-0 rounded-lg border border-border-subtle bg-base px-3 text-[0.929rem] text-text outline-none transition-colors focus:border-accent disabled:cursor-wait disabled:opacity-70"
-                />
-              </div>
-
-              <dl
-                className="mt-5 overflow-hidden rounded-lg border border-border-subtle bg-base/60"
-                aria-label="Account information"
-              >
-                <div className="min-w-0 px-3.5 py-3">
-                  <dt className="flex items-center justify-between gap-4">
-                    <span className="text-[0.714rem] font-medium uppercase tracking-[0.08em] text-text-dimmed">
-                      Email address
-                    </span>
-                    <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-border bg-surface px-2.5 py-1 text-[0.714rem] font-medium text-text-dimmed">
-                      <LockIcon />
-                      Read only
-                    </span>
-                  </dt>
-                  <dd className="mt-1 break-all text-[0.857rem] text-text-muted">
-                    {user.email ?? "No email address"}
-                  </dd>
-                </div>
-                <div className="border-t border-border-subtle px-3.5 py-3">
-                  <dt className="text-[0.714rem] font-medium uppercase tracking-[0.08em] text-text-dimmed">
-                    User ID
-                  </dt>
-                  <dd className="mt-1 break-all font-mono text-[0.786rem] text-text-muted">
-                    {user.id}
-                  </dd>
-                </div>
-              </dl>
-            </div>
-
-            <div className="flex flex-col gap-3 border-t border-border-subtle px-5 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6">
-              <div className="min-w-0 sm:mr-auto">
-                {error && (
-                  <p className="text-[0.786rem] text-red-400" role="alert">
-                    {error}
+      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-6 sm:px-6 sm:py-8">
+        <div className="mx-auto flex w-full max-w-[720px] min-w-0 flex-col gap-8">
+          <SettingsSection id="profile-heading" title="Profile">
+            {!user ? (
+              <div className={settingsCard}>
+                <div className="px-4 py-5 sm:px-5">
+                  <p className="text-[0.929rem] font-medium text-text">
+                    Sign in to view your profile
                   </p>
-                )}
-                {saved && !error && (
-                  <p
-                    className="text-[0.786rem] text-emerald-400"
-                    role="status"
+                  <p className="mt-1 text-[0.857rem] leading-5 text-text-muted">
+                    Your account details will appear here after authentication
+                    finishes.
+                  </p>
+                </div>
+              </div>
+            ) : (
+              <form
+                className={settingsCard}
+                aria-label="Profile settings"
+                onSubmit={handleSubmit}
+              >
+                <div className="flex min-w-0 items-center gap-3 px-4 py-4 sm:px-5">
+                  <div
+                    aria-hidden="true"
+                    className="flex size-10 shrink-0 items-center justify-center rounded-full bg-elevated text-[0.857rem] font-semibold text-text-secondary"
                   >
-                    Name saved.
-                  </p>
-                )}
-              </div>
-              <button
-                type="submit"
-                disabled={!canSave}
-                className="inline-flex h-9 shrink-0 items-center justify-center rounded-lg bg-accent px-4 text-[0.857rem] font-semibold text-white transition-colors hover:bg-accent/90 disabled:cursor-not-allowed disabled:opacity-45"
-              >
-                {saving ? "Saving..." : "Save name"}
-              </button>
-            </div>
-          </form>
-          <BrowserNotificationSettings />
-          <ApiAccessSettings key={user.id} />
-          </>
-        )}
+                    {getInitials(user.name)}
+                  </div>
+                  <div className="min-w-0 truncate text-[0.929rem] font-medium text-text">
+                    {user.name}
+                  </div>
+                </div>
+
+                <SettingsField label="Name" htmlFor="profile-name">
+                  <input
+                    id="profile-name"
+                    value={name}
+                    onChange={(event) => {
+                      setName(event.target.value);
+                      setError(null);
+                      setSaved(false);
+                    }}
+                    autoComplete="name"
+                    maxLength={255}
+                    required
+                    disabled={saving}
+                    aria-invalid={error ? "true" : undefined}
+                    className={settingsInput}
+                  />
+                </SettingsField>
+
+                <dl
+                  className="divide-y divide-border-subtle"
+                  aria-label="Account information"
+                >
+                  <SettingsFact term="Email address" hint="Read only">
+                    {user.email ?? "No email address"}
+                  </SettingsFact>
+                  <SettingsFact term="User ID" mono>
+                    {user.id}
+                  </SettingsFact>
+                </dl>
+
+                <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 sm:px-5">
+                  <div className="min-w-0 flex-1 text-[0.857rem] leading-5">
+                    {error && (
+                      <p className="text-error-bright" role="alert">
+                        {error}
+                      </p>
+                    )}
+                    {saved && !error && (
+                      <p className="text-success-light" role="status">
+                        Name saved.
+                      </p>
+                    )}
+                  </div>
+                  <button
+                    type="submit"
+                    disabled={!canSave}
+                    className={settingsPrimaryButton}
+                  >
+                    {saving ? "Saving..." : "Save name"}
+                  </button>
+                </div>
+              </form>
+            )}
+          </SettingsSection>
+
+          {user && (
+            <>
+              <BrowserNotificationSettings />
+              <ApiAccessSettings key={user.id} />
+            </>
+          )}
+        </div>
       </div>
     </main>
   );

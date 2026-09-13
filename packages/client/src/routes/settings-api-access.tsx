@@ -4,6 +4,18 @@ import { type FormEvent, useCallback, useEffect, useMemo, useState } from "react
 import { API_URL, api } from "../lib/api";
 import { edenErrorMessage } from "../lib/eden";
 import { useAuthStore } from "../stores/auth";
+import {
+  SettingsSection,
+  settingsCard,
+  settingsDangerButton,
+  settingsInput,
+  settingsLabel,
+  settingsPrimaryButton,
+  settingsQuietButton,
+  settingsRow,
+  settingsSecondaryButton,
+  settingsValue,
+} from "../components/SettingsSection";
 
 type PersonalAccessToken = {
   id: string;
@@ -20,8 +32,6 @@ type RevealedToken = {
 };
 
 type Notice = { kind: "success" | "error"; message: string } | null;
-
-
 
 function formatDate(value: string | null) {
   if (!value) return "Never";
@@ -46,7 +56,7 @@ function CopyButton({
     <button
       type="button"
       onClick={onCopy}
-      className="shrink-0 cursor-pointer rounded-md border border-border bg-raised px-3 py-1.5 text-[0.786rem] font-medium text-text-muted transition-colors hover:bg-hover hover:text-text"
+      className={settingsSecondaryButton}
       aria-label={`Copy ${label}`}
     >
       {copied ? "Copied" : "Copy"}
@@ -54,24 +64,41 @@ function CopyButton({
   );
 }
 
-function KeyIcon() {
+function ClientExample({
+  title,
+  hint,
+  snippet,
+  copyLabel,
+  copied,
+  onCopy,
+  wrap = false,
+}: {
+  title: string;
+  hint: string;
+  snippet: string;
+  copyLabel: string;
+  copied: boolean;
+  onCopy: () => void;
+  /** Wrap single-line commands; structured snippets keep their layout and scroll. */
+  wrap?: boolean;
+}) {
   return (
-    <svg
-      aria-hidden="true"
-      width="18"
-      height="18"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.7"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <circle cx="7.5" cy="15.5" r="3.5" />
-      <path d="m10 13 9-9" />
-      <path d="m15 8 2 2" />
-      <path d="m12.5 10.5 2 2" />
-    </svg>
+    <div className={settingsRow}>
+      <h3 className={settingsLabel}>{title}</h3>
+      <div className="min-w-0">
+        <div className="flex items-center justify-between gap-3">
+          <p className="text-[0.786rem] leading-5 text-text-dimmed">{hint}</p>
+          <CopyButton label={copyLabel} copied={copied} onCopy={onCopy} />
+        </div>
+        <pre
+          className={`mt-2 max-w-full rounded-lg border border-border bg-base px-3 py-2.5 font-mono text-[0.857rem] leading-6 text-text-secondary ${
+            wrap ? "whitespace-pre-wrap [overflow-wrap:anywhere]" : "overflow-x-auto"
+          }`}
+        >
+          <code>{snippet}</code>
+        </pre>
+      </div>
+    </div>
   );
 }
 
@@ -262,35 +289,19 @@ export function ApiAccessSettings() {
   );
 
   return (
-    <section
-      className="overflow-hidden rounded-xl border border-border-subtle bg-surface shadow-sm"
-      aria-labelledby="api-access-heading"
+    <SettingsSection
+      id="api-access-heading"
+      title="API access"
+      description="Named, non-expiring tokens for TheChat REST and MCP clients. A token carries your full user access, so create one only for clients you trust."
     >
-      <div className="border-b border-border-subtle p-5 sm:p-6">
-        <div className="text-[0.714rem] font-semibold uppercase tracking-[0.16em] text-accent">
-          Integrations
-        </div>
-        <h2
-          id="api-access-heading"
-          className="mt-1 text-[1.214rem] font-semibold tracking-[-0.02em] text-text"
-        >
-          API access
-        </h2>
-        <p className="mt-2 max-w-[600px] text-[0.857rem] leading-5 text-text-muted">
-          Create named, non-expiring credentials for TheChat REST and MCP clients.
-          Tokens carry your full user access. Only create them for clients you
-          trust.
-        </p>
-      </div>
-
-      <div className="space-y-5 p-5 sm:p-6">
+      <div className={settingsCard}>
         {notice && (
           <div
             role={notice.kind === "error" ? "alert" : "status"}
-            className={`rounded-lg border px-3.5 py-2.5 text-[0.786rem] ${
+            className={`px-4 py-3 text-[0.857rem] leading-5 sm:px-5 ${
               notice.kind === "error"
-                ? "border-error-msg-border bg-error-msg-bg text-error-bright"
-                : "border-green-500/30 bg-green-500/10 text-green-400"
+                ? "bg-error-msg-bg text-error-bright"
+                : "bg-success-bg text-success-light"
             }`}
           >
             {notice.message}
@@ -300,15 +311,17 @@ export function ApiAccessSettings() {
         <form
           aria-label="Create personal access token"
           onSubmit={createToken}
-          className="rounded-lg border border-border-subtle bg-base/60 p-4"
+          className={settingsRow}
         >
-          <label
-            htmlFor="personal-access-token-name"
-            className="text-[0.786rem] font-medium text-text-muted"
-          >
-            Token name
-          </label>
-          <div className="mt-2 flex min-w-0 flex-col gap-2 sm:flex-row">
+          <div className="min-w-0">
+            <label
+              htmlFor="personal-access-token-name"
+              className={`block ${settingsLabel}`}
+            >
+              Token name
+            </label>
+          </div>
+          <div className="flex min-w-0 flex-col gap-2 sm:flex-row">
             <input
               id="personal-access-token-name"
               value={name}
@@ -317,12 +330,12 @@ export function ApiAccessSettings() {
               maxLength={100}
               required
               disabled={creating}
-              className="h-10 min-w-0 flex-1 rounded-lg border border-border-subtle bg-base px-3 text-[0.857rem] text-text outline-none transition-colors placeholder:text-text-placeholder focus:border-accent disabled:cursor-wait disabled:opacity-70"
+              className={`${settingsInput} sm:flex-1`}
             />
             <button
               type="submit"
               disabled={!name.trim() || creating || loading || !isAuthenticated(sessionToken)}
-              className="inline-flex h-10 shrink-0 cursor-pointer items-center justify-center rounded-lg bg-accent px-4 text-[0.857rem] font-semibold text-white transition-colors hover:bg-accent/90 disabled:cursor-not-allowed disabled:opacity-45"
+              className={settingsPrimaryButton}
             >
               {creating ? "Creating..." : "Create token"}
             </button>
@@ -330,20 +343,20 @@ export function ApiAccessSettings() {
         </form>
 
         {revealed && (
-          <div className="rounded-lg border border-amber-400/40 bg-amber-400/10 p-4">
-            <div className="flex flex-wrap items-start justify-between gap-3">
-              <div>
-                <h3 className="text-[0.857rem] font-semibold text-amber-200">
+          <div className="bg-warning-bg px-4 py-4 sm:px-5">
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <div className="min-w-0 flex-1">
+                <h3 className="break-words text-[0.857rem] font-semibold leading-5 text-warning-text">
                   Copy {revealed.name} now
                 </h3>
-                <p className="mt-1 text-[0.786rem] leading-5 text-text-muted">
+                <p className="mt-0.5 text-[0.786rem] leading-5 text-text-muted">
                   This is the only time TheChat will return the complete token.
                 </p>
               </div>
               <button
                 type="button"
                 onClick={() => setRevealed(null)}
-                className="cursor-pointer border-none bg-transparent text-[0.786rem] text-text-muted hover:text-text"
+                className={settingsQuietButton}
               >
                 Hide token
               </button>
@@ -353,7 +366,7 @@ export function ApiAccessSettings() {
                 aria-label="New personal access token"
                 readOnly
                 value={revealed.value}
-                className="min-w-0 flex-1 rounded-md border border-border bg-base px-2.5 py-2 font-mono text-[0.714rem] text-text outline-none"
+                className="h-10 min-w-0 flex-1 rounded-lg border border-border bg-base px-3 font-mono text-[0.857rem] text-text outline-none focus-visible:ring-2 focus-visible:ring-accent/30 max-sm:h-[44px]"
               />
               <CopyButton
                 label="personal access token"
@@ -364,96 +377,44 @@ export function ApiAccessSettings() {
           </div>
         )}
 
-        <div>
-          <div className="mb-2 flex items-center justify-between gap-3">
-            <h3 className="text-[0.929rem] font-semibold text-text">
-              Personal access tokens
-            </h3>
-            <span className="text-[0.714rem] text-text-dimmed">
-              {tokens.length} active
-            </span>
-          </div>
-          {loading ? (
-            <div className="rounded-lg border border-border-subtle bg-base/60 px-4 py-5 text-center text-[0.786rem] text-text-muted">
-              Loading tokens...
-            </div>
-          ) : tokens.length === 0 ? (
-            <div className="rounded-lg border border-dashed border-border bg-base/40 px-4 py-5 text-center text-[0.786rem] text-text-muted">
-              No personal access tokens yet.
-            </div>
-          ) : (
-            <ul className="space-y-3" aria-label="Personal access tokens">
-              {tokens.map((item) => (
-                <li
-                  key={item.id}
-                  aria-label={`${item.name} personal access token`}
-                  className="min-w-0 overflow-hidden rounded-lg border border-border-subtle bg-base/60"
-                >
-                  <div className="flex min-w-0 flex-col gap-3 p-4 sm:flex-row sm:items-start sm:justify-between">
-                    <div className="flex min-w-0 flex-1 items-start gap-3">
-                      <div className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-accent/20 bg-accent/10 text-accent">
-                        <KeyIcon />
-                      </div>
-                      <div className="min-w-0 flex-1 pt-0.5">
-                        <div className="flex min-w-0 items-center gap-2">
-                          <div className="min-w-0 flex-1 truncate text-[0.857rem] font-semibold text-text">
-                            {item.name}
-                          </div>
-                          <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2 py-0.5 text-[0.643rem] font-medium text-emerald-400">
-                            <span className="size-1.5 rounded-full bg-emerald-400" />
-                            Active
-                          </span>
-                        </div>
-                        <div className="mt-2 inline-flex max-w-full rounded-md border border-border bg-raised px-2 py-1">
-                          <span className="truncate font-mono text-[0.714rem] text-text-dimmed">
-                            {item.start
-                              ? `${item.start}…`
-                              : "Identifier unavailable"}
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-                    <div className="flex shrink-0 items-center justify-end gap-2 border-t border-border-subtle pt-3 sm:border-0 sm:pt-0">
-                      {confirmingId === item.id && (
-                        <button
-                          type="button"
-                          onClick={() => setConfirmingId(null)}
-                          className="cursor-pointer border-none bg-transparent px-2 py-1.5 text-[0.786rem] text-text-muted hover:text-text"
-                        >
-                          Cancel
-                        </button>
-                      )}
-                      <button
-                        type="button"
-                        onClick={() => void revokeToken(item.id)}
-                        disabled={revokingId !== null}
-                        className="cursor-pointer rounded-md border border-error-msg-border bg-error-msg-bg px-3 py-1.5 text-[0.786rem] font-medium text-error-bright transition-colors hover:not-disabled:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
-                        aria-label={`Revoke ${item.name}`}
-                      >
-                        {revokingId === item.id
-                          ? "Revoking..."
-                          : confirmingId === item.id
-                            ? "Confirm revoke"
-                            : "Revoke"}
-                      </button>
-                    </div>
+        {loading ? (
+          <p className={`px-4 py-4 sm:px-5 ${settingsValue}`}>Loading tokens...</p>
+        ) : tokens.length === 0 ? (
+          <p className={`px-4 py-4 sm:px-5 ${settingsValue}`}>
+            No personal access tokens yet.
+          </p>
+        ) : (
+          <ul
+            className="divide-y divide-border-subtle"
+            aria-label="Personal access tokens"
+          >
+            {tokens.map((item) => (
+              <li
+                key={item.id}
+                aria-label={`${item.name} personal access token`}
+                className="flex min-w-0 flex-col gap-3 px-4 py-4 sm:flex-row sm:items-start sm:justify-between sm:gap-6 sm:px-5"
+              >
+                <div className="min-w-0 flex-1">
+                  <div className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-1">
+                    <span className="min-w-0 max-w-full truncate text-[0.857rem] font-medium leading-5 text-text">
+                      {item.name}
+                    </span>
+                    <code className="font-mono text-[0.786rem] leading-5 text-text-dimmed">
+                      {item.start ? `${item.start}…` : "Identifier unavailable"}
+                    </code>
                   </div>
-                  <dl className="grid grid-cols-2 border-t border-border-subtle bg-raised/30">
-                    <div className="min-w-0 px-4 py-3">
-                      <dt className="text-[0.643rem] font-medium uppercase tracking-[0.08em] text-text-dimmed">
-                        Created
-                      </dt>
-                      <dd className="mt-1 text-[0.714rem] leading-4 text-text-muted">
+                  <dl className="mt-1 flex flex-wrap gap-x-4 gap-y-0.5 text-[0.786rem] leading-5 text-text-muted">
+                    <div className="flex gap-1.5">
+                      <dt className="text-text-dimmed">Created</dt>
+                      <dd>
                         <time dateTime={item.createdAt}>
                           {formatDate(item.createdAt)}
                         </time>
                       </dd>
                     </div>
-                    <div className="min-w-0 border-l border-border-subtle px-4 py-3">
-                      <dt className="text-[0.643rem] font-medium uppercase tracking-[0.08em] text-text-dimmed">
-                        Last used
-                      </dt>
-                      <dd className="mt-1 text-[0.714rem] leading-4 text-text-muted">
+                    <div className="flex gap-1.5">
+                      <dt className="text-text-dimmed">Last used</dt>
+                      <dd>
                         {item.lastUsedAt ? (
                           <time dateTime={item.lastUsedAt}>
                             {formatDate(item.lastUsedAt)}
@@ -464,52 +425,60 @@ export function ApiAccessSettings() {
                       </dd>
                     </div>
                   </dl>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-
-        <div className="grid min-w-0 gap-3 lg:grid-cols-2">
-          <div className="min-w-0 rounded-lg border border-border-subtle bg-base/60 p-4">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <h3 className="text-[0.857rem] font-semibold text-text">REST</h3>
-                <p className="mt-0.5 text-[0.714rem] text-text-dimmed">
-                  Authenticate with a Bearer token.
-                </p>
-              </div>
-              <CopyButton
-                label="REST curl snippet"
-                copied={copied === "rest"}
-                onCopy={() => void copy("rest", restSnippet)}
-              />
-            </div>
-            <pre className="mt-3 max-w-full overflow-x-auto rounded-md border border-border bg-base p-3 text-[0.714rem] leading-5 text-text-muted">
-              <code>{restSnippet}</code>
-            </pre>
-          </div>
-
-          <div className="min-w-0 rounded-lg border border-border-subtle bg-base/60 p-4">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <h3 className="text-[0.857rem] font-semibold text-text">MCP</h3>
-                <p className="mt-0.5 text-[0.714rem] text-text-dimmed">
-                  Add this Streamable HTTP server to your client.
-                </p>
-              </div>
-              <CopyButton
-                label="MCP JSON snippet"
-                copied={copied === "mcp"}
-                onCopy={() => void copy("mcp", mcpSnippet)}
-              />
-            </div>
-            <pre className="mt-3 max-w-full overflow-x-auto rounded-md border border-border bg-base p-3 text-[0.714rem] leading-5 text-text-muted">
-              <code>{mcpSnippet}</code>
-            </pre>
-          </div>
-        </div>
+                </div>
+                <div className="flex shrink-0 items-center gap-2 sm:justify-end">
+                  {confirmingId === item.id && (
+                    <button
+                      type="button"
+                      onClick={() => setConfirmingId(null)}
+                      className={settingsQuietButton}
+                    >
+                      Cancel
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => void revokeToken(item.id)}
+                    disabled={revokingId !== null}
+                    className={
+                      confirmingId === item.id
+                        ? settingsDangerButton
+                        : settingsSecondaryButton
+                    }
+                    aria-label={`Revoke ${item.name}`}
+                  >
+                    {revokingId === item.id
+                      ? "Revoking..."
+                      : confirmingId === item.id
+                        ? "Confirm revoke"
+                        : "Revoke"}
+                  </button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
       </div>
-    </section>
+
+      <div className={settingsCard}>
+        <ClientExample
+          title="REST"
+          hint="Authenticate with a Bearer token."
+          snippet={restSnippet}
+          copyLabel="REST curl snippet"
+          copied={copied === "rest"}
+          onCopy={() => void copy("rest", restSnippet)}
+          wrap
+        />
+        <ClientExample
+          title="MCP"
+          hint="Add this Streamable HTTP server to your client."
+          snippet={mcpSnippet}
+          copyLabel="MCP JSON snippet"
+          copied={copied === "mcp"}
+          onCopy={() => void copy("mcp", mcpSnippet)}
+        />
+      </div>
+    </SettingsSection>
   );
 }

@@ -54,8 +54,9 @@ The frontend unit/build checks do not substitute for real cookie-backend, browse
 - `web -> client` and `desktop -> client` are the only application dependencies.
   UI preferences and native credentials are distinct typed storage contracts;
   unsupported browser-native file/local-history capabilities are explicitly null.
-- Shared CSS discovers client sources relative to itself. The desktop CSS entry
-  adds desktop-only sources so native chrome/legacy dialogs keep their utilities.
+- Shared CSS discovers client sources relative to itself. Each app's CSS entry
+  (`desktop.css`, `web.css`) adds its own sources so platform-only utilities,
+  such as native chrome or the browser notification section, are discovered.
   Both builds serve the same `client/public` assets.
 - `pnpm test` discovers `client`, `web`, `desktop`, both integration locations and
   entrypoint/compiled graph gates alongside the existing backend/native suites.

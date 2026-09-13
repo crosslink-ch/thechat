@@ -138,6 +138,10 @@ SKIP_BUILD=1 pnpm test:e2e # Skip Tauri binary rebuild (use existing binary)
 
 **Requirements:** API server + PostgreSQL must be running (`pnpm dev:api`)
 
+## Pull request evidence
+
+Review screenshots are hosted externally and embedded in the PR description. Never commit screenshots or other visual evidence to the repository or its Git history.
+
 ## OpenCode as best practice
 
 For things related to the core chat loop, managing subagents, skills, preventing doom loops, having good system prompts, you can reference OpenCode when it makes sense.
