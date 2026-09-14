@@ -16,7 +16,13 @@ const messages: ChatMessage[] = Array.from({ length: 30 }, (_, index) => ({
   content: `Message ${index}: Some previous conversation history.`,
   createdAt: new Date(Date.UTC(2026, 0, 1, 9, index)).toISOString(),
 }));
+const copying = new URLSearchParams(location.search).has("copy");
+if (copying) {
+  messages[29].content = "  **Hello** 👋\n\n```ts\nconst answer = 42;\n```\n";
+  messages[28].reactions = [{ emoji: "👍", count: 1, reactedByMe: false, userNames: ["Ada"] }];
+}
 const props = {
+  onSetReaction: copying ? () => {} : undefined,
   messages,
   loading: false,
   typingUsers: new Map<string, string>(),
