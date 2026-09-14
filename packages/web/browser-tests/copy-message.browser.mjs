@@ -30,12 +30,12 @@ test("copy uses the real browser clipboard in shared chat views", async (t) => {
   const browser = await chromium.launch();
   t.after(() => browser.close());
   for (const view of ["channel", "hermes"]) {
-    for (const width of [1280, 390]) {
+    for (const width of [1280, 390, 320]) {
       await t.test(`${view}, ${width}px`, async () => {
         const context = await browser.newContext({
           viewport: { width, height: 800 },
           permissions: ["clipboard-read", "clipboard-write"],
-          hasTouch: width === 390,
+          hasTouch: width < 1024,
         });
         try {
           const page = await context.newPage();
@@ -56,9 +56,21 @@ test("copy uses the real browser clipboard in shared chat views", async (t) => {
           const reaction = row.getByRole("button", { name: "Add reaction" });
           const a = await reaction.boundingBox();
           const b = await copy.boundingBox();
-          assert.ok(a && b && a.x + a.width <= b.x && Math.abs(a.y - b.y) < 1, "actions must be adjacent, not overlapping");
-          if (width === 390) assert.ok(b.width >= 44 && b.height >= 44, "touch target must be at least 44px");
+          assert.ok(a && b && a.x + a.width <= b.x && Math.abs(a.y + a.height / 2 - b.y - b.height / 2) < 1, "actions must be adjacent, vertically centered and not overlapping");
+          if (width < 1024) assert.ok(b.width >= 44 && b.height >= 44, "touch target must be at least 44px");
           assert.ok(b.x >= 0 && b.x + b.width <= width);
+          const copyStyle = await copy.evaluate((el) => {
+            const style = getComputedStyle(el);
+            const icon = el.querySelector("svg").getBoundingClientRect();
+            return { border: style.borderTopWidth, background: style.backgroundColor, iconWidth: icon.width, iconHeight: icon.height };
+          });
+          assert.equal(copyStyle.border, "0px", "copy must not have oversized outlined chrome");
+          assert.equal(copyStyle.background, "rgba(0, 0, 0, 0)", "copy hit area stays visually transparent");
+          assert.ok(copyStyle.iconWidth <= 16 && copyStyle.iconHeight <= 16, "copy glyph stays small");
+          assert.equal(await reaction.evaluate((el) => getComputedStyle(el).borderTopWidth), "1px", "reaction chrome is unchanged");
+          const previousCopy = await page.locator('[data-message-id="message-28"]').getByRole("button", { name: "Copy message" }).boundingBox();
+          assert.ok(previousCopy && previousCopy.y + previousCopy.height <= b.y, "touch targets must not overlap neighboring rows");
+          if (evidenceDir) await page.screenshot({ path: path.join(evidenceDir, `${view}-${width}-idle.png`) });
           await copy.click();
           await page.waitForFunction(() => document.querySelector('[data-message-id="message-29"] [role="status"]')?.textContent === "Message copied");
           assert.equal(await page.evaluate(() => navigator.clipboard.readText()), source);
@@ -69,11 +81,37 @@ test("copy uses the real browser clipboard in shared chat views", async (t) => {
           // Keyboard activation also copies the right row when reactions exist.
           const reactedRow = page.locator('[data-message-id="message-28"]');
           const reactedCopy = reactedRow.getByRole("button", { name: "Copy message" });
-          await reactedCopy.focus();
+          await reactedRow.getByRole("button", { name: "Add reaction" }).focus();
+          await page.keyboard.press("Tab");
+          assert.ok(await reactedCopy.evaluate((el) => document.activeElement === el), "copy follows reactions in keyboard order");
+          const visual = reactedCopy.locator("[data-copy-message-visual]");
+          assert.ok(await visual.evaluate((el) => el.getBoundingClientRect().width <= 28));
+          assert.notEqual(await visual.evaluate((el) => getComputedStyle(el).boxShadow), "none", "keyboard focus must stay visible");
           await page.keyboard.press("Enter");
           await page.waitForFunction(() => document.querySelector('[data-message-id="message-28"] [role="status"]')?.textContent === "Message copied");
           assert.equal(await page.evaluate(() => navigator.clipboard.readText()), "Message 28: Some previous conversation history.");
           assert.equal(await reactedRow.getByRole("button", { name: "👍 1 reaction" }).count(), 1);
+
+          // Clipboard failures must remain visible above the composer, not
+          // clipped below the message viewport. The button remains retryable.
+          await page.evaluate(() => {
+            window.originalClipboardWriteText = navigator.clipboard.writeText;
+            navigator.clipboard.writeText = async () => { throw new Error("Permission denied"); };
+          });
+          await copy.click();
+          const alert = row.getByRole("alert");
+          await alert.waitFor();
+          const errorBox = await alert.boundingBox();
+          const scrollerBox = await page.getByTestId(view === "channel" ? "channel-chat-scroll" : "hermes-dm-chat-scroll").boundingBox();
+          assert.ok(errorBox && scrollerBox && errorBox.x >= 0 && errorBox.x + errorBox.width <= width && errorBox.y >= scrollerBox.y && errorBox.y + errorBox.height <= scrollerBox.y + scrollerBox.height, `copy error must not be clipped: ${JSON.stringify({ errorBox, scrollerBox })}`);
+          await page.evaluate(() => {
+            navigator.clipboard.writeText = window.originalClipboardWriteText;
+            delete window.originalClipboardWriteText;
+          });
+          await copy.click();
+          await page.waitForFunction(() => document.querySelector('[data-message-id="message-29"] [role="status"]')?.textContent === "Message copied");
+          assert.equal(await alert.count(), 0);
+          assert.equal(await page.evaluate(() => navigator.clipboard.readText()), source);
           assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth));
           assert.deepEqual(errors, []);
         } finally {

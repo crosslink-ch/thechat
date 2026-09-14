@@ -28,9 +28,10 @@ export function MessageReactions({
 }: MessageReactionsProps) {
   const [pendingEmoji, setPendingEmoji] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [copyError, setCopyError] = useState<string | null>(null);
   const pickerLabelId = useId();
   const hasReactions = reactions.length > 0;
-  const reservesSpace = hasReactions || error !== null;
+  const reservesSpace = hasReactions || error !== null || copyError !== null;
 
   const updateReaction = async (emoji: string, active: boolean) => {
     if (pendingEmoji || !onSetReaction) return;
@@ -134,9 +135,14 @@ export function MessageReactions({
             </DropdownMenu.Portal>
           </DropdownMenu.Root>
         )}
-        {copyText && <CopyMessageButton text={copyText} />}
+        {copyText && <CopyMessageButton text={copyText} onError={setCopyError} />}
       </div>
 
+      {copyError && (
+        <span role="alert" className="basis-full text-[0.714rem] text-error-bright">
+          {copyError}
+        </span>
+      )}
       {error && (
         <span
           role="alert"
