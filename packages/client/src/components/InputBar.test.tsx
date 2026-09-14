@@ -90,6 +90,26 @@ function openMenu(editor: HTMLElement) {
   return screen.getByTestId("slash-command-menu");
 }
 
+describe("InputBar attachment button", () => {
+  it.each([false, true])("opens the file picker with a decorative attachment icon (shared: %s)", (shared) => {
+    const { container } = renderInputBar(shared ? {
+      sharedUpload: { conversationId: "conv-1", token: "test-token" },
+    } : {});
+    const button = screen.getByRole("button", {
+      name: shared ? "Attach files" : "Attach image",
+    });
+    const fileInput = container.querySelector<HTMLInputElement>("input[type='file']")!;
+    const openPicker = vi.spyOn(fileInput, "click");
+
+    // The action owns the accessible name; the glyph is decorative.
+    expect(button.querySelector("svg")).toHaveAttribute("aria-hidden", "true");
+    fireEvent.click(button);
+    expect(openPicker).toHaveBeenCalledOnce();
+    expect(fileInput.multiple).toBe(true);
+    expect(fileInput.accept).toBe(shared ? "" : "image/png,image/jpeg,image/gif,image/webp,image/svg+xml,image/bmp");
+  });
+});
+
 describe("InputBar slash command menu", () => {
   it("does not render a slash command button", () => {
     renderInputBar();

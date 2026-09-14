@@ -1079,10 +1079,8 @@ function ScopedInputBar({
             disabled={Boolean(sharedUpload && sendingShared)}
             title={sharedUpload ? "Attach files" : "Attach image"}
           >
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-              <rect x="2" y="2" width="12" height="12" rx="2" />
-              <circle cx="5.5" cy="5.5" r="1" />
-              <path d="M14 10.5l-3.5-3.5L4 14" />
+            <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l9.9-9.9a4 4 0 0 1 5.66 5.66l-9.9 9.9a2 2 0 0 1-2.83-2.83l9.19-9.19" />
             </svg>
           </button>
           {isStreaming && canSend && (
