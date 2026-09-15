@@ -3,7 +3,7 @@ import { useEditor, EditorContent } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import Mention from "@tiptap/extension-mention";
 import Placeholder from "@tiptap/extension-placeholder";
-import { Extension, type AnyExtension } from "@tiptap/react";
+import { Extension, type AnyExtension, type TextSerializer } from "@tiptap/react";
 import { createMentionSuggestion } from "./mention-suggestion";
 import type { MentionUser } from "./MentionList";
 
@@ -22,8 +22,38 @@ interface RichInputProps {
   initialText?: string;
 }
 
-/** Newlines are paragraph splits, so serialize blocks with single "\n". */
-const TEXT_OPTIONS = { blockSeparator: "\n" } as const;
+const serializeText: TextSerializer = ({ node, parent, index }) => {
+  const hrefOf = (child: typeof node) => child.isText
+    ? child.marks.find((mark) => mark.type.name === "link")?.attrs.href
+    : undefined;
+  const href = hrefOf(node);
+  if (!href) return node.text ?? "";
+
+  // A single pasted anchor can be split into text nodes by other inline marks.
+  // Emit its whole contiguous run once, without overriding mention/break nodes.
+  if (index > 0 && hrefOf(parent.child(index - 1)) === href) return "";
+  let text = node.text ?? "";
+  for (let next = index + 1; next < parent.childCount; next++) {
+    const child = parent.child(next);
+    if (hrefOf(child) !== href) break;
+    text += child.text;
+  }
+  if (text === href || !text.trim() || !/^https?:\/\//i.test(href) || /[\s\u0000-\u001f\u007f]/.test(href)) return text;
+  // Markdown escapes are reversible; URL parsing/re-encoding can corrupt signed
+  // query strings. Escape ampersands too, so entity-looking text stays literal.
+  const label = text.replace(/[\\`*_[\]<>!~$&]/g, "\\$&");
+  const destination = href.replace(/[\\()<>"']/g, "\\$&")
+    .replace(/&(?=#\d+;|#x[\da-f]+;|[a-z][\da-z]+;)/gi, "\\&");
+  // Keep a preceding literal ! from turning the generated link into an image.
+  const boundary = index > 0 && parent.child(index - 1).text?.endsWith("!") ? " " : "";
+  return `${boundary}[${label}](${destination})`;
+};
+
+/** Newlines are paragraph splits; retain schema defaults for mentions/breaks. */
+const TEXT_OPTIONS = {
+  blockSeparator: "\n",
+  textSerializers: { text: serializeText },
+} as const;
 
 function textDocument(text: string) {
   return {
