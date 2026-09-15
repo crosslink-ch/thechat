@@ -2,6 +2,7 @@ import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import type { MessageReactionSummary } from "@thechat/shared";
 import { useId, useState } from "react";
 import { EmojiImage } from "./EmojiImage";
+import { CopyMessageButton } from "./CopyMessageButton";
 
 export const DEFAULT_REACTION_EMOJIS = [
   "👍",
@@ -15,22 +16,25 @@ export const DEFAULT_REACTION_EMOJIS = [
 ] as const;
 
 interface MessageReactionsProps {
+  copyText?: string;
   reactions: MessageReactionSummary[];
-  onSetReaction: (emoji: string, active: boolean) => void | Promise<void>;
+  onSetReaction?: (emoji: string, active: boolean) => void | Promise<void>;
 }
 
 export function MessageReactions({
+  copyText,
   reactions,
   onSetReaction,
 }: MessageReactionsProps) {
   const [pendingEmoji, setPendingEmoji] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [copyError, setCopyError] = useState<string | null>(null);
   const pickerLabelId = useId();
   const hasReactions = reactions.length > 0;
-  const reservesSpace = hasReactions || error !== null;
+  const reservesSpace = hasReactions || error !== null || copyError !== null;
 
   const updateReaction = async (emoji: string, active: boolean) => {
-    if (pendingEmoji) return;
+    if (pendingEmoji || !onSetReaction) return;
     setPendingEmoji(emoji);
     setError(null);
     try {
@@ -63,7 +67,7 @@ export function MessageReactions({
           aria-label={`${reaction.emoji} ${reaction.count} ${reaction.count === 1 ? "reaction" : "reactions"}`}
           aria-pressed={reaction.reactedByMe}
           title={`${formatNames(reaction.userNames)} reacted with ${reaction.emoji}`}
-          disabled={pendingEmoji !== null}
+          disabled={pendingEmoji !== null || !onSetReaction}
           onClick={() => {
             void updateReaction(reaction.emoji, !reaction.reactedByMe);
           }}
@@ -73,65 +77,77 @@ export function MessageReactions({
         </button>
       ))}
 
-      <DropdownMenu.Root>
-        <DropdownMenu.Trigger asChild>
-          <button
-            type="button"
-            className={`inline-flex size-7 items-center justify-center rounded-full border border-border-subtle bg-transparent text-text-dimmed transition-colors hover:border-border hover:bg-hover hover:text-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:cursor-wait disabled:opacity-50 ${
-              hasReactions
-                ? ""
-                : "absolute right-3 top-2 opacity-0 group-hover/message:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100"
-            }`}
-            aria-label="Add reaction"
-            title="Add reaction"
-            disabled={pendingEmoji !== null}
-          >
-            <ReactionIcon />
-          </button>
-        </DropdownMenu.Trigger>
-        <DropdownMenu.Portal>
-          <DropdownMenu.Content
-            side="top"
-            align={hasReactions ? "start" : "end"}
-            sideOffset={6}
-            collisionPadding={12}
-            aria-labelledby={pickerLabelId}
-            className="z-50 grid grid-cols-4 gap-1 rounded-xl border border-border bg-elevated p-2 shadow-2xl"
-          >
-            <DropdownMenu.Label id={pickerLabelId} className="sr-only">
-              Choose a reaction
-            </DropdownMenu.Label>
-            {DEFAULT_REACTION_EMOJIS.map((emoji) => {
-              const active = reactions.some(
-                (reaction) =>
-                  reaction.emoji === emoji && reaction.reactedByMe,
-              );
-              return (
-                <DropdownMenu.Item
-                  key={emoji}
-                  asChild
-                  onSelect={() => {
-                    void updateReaction(emoji, !active);
-                  }}
-                >
-                  <button
-                    type="button"
-                    className="flex size-9 items-center justify-center rounded-lg outline-none transition-transform hover:scale-110 hover:bg-hover focus:bg-hover data-[highlighted]:bg-hover"
-                    aria-label={`${active ? "Remove" : "React with"} ${emoji}`}
-                    title={`${active ? "Remove" : "React with"} ${emoji}`}
-                  >
-                    <EmojiImage emoji={emoji} size={22} />
-                  </button>
-                </DropdownMenu.Item>
-              );
-            })}
-            <DropdownMenu.Arrow className="fill-border" />
-          </DropdownMenu.Content>
-        </DropdownMenu.Portal>
-      </DropdownMenu.Root>
+      <div
+        data-message-actions
+        className={`inline-flex items-center gap-1 ${hasReactions ? "" : "absolute right-3 top-2 opacity-0 group-hover/message:opacity-100 focus-within:opacity-100 has-[[data-state=open]]:opacity-100"}`}
+      >
+        {onSetReaction && (
+          <DropdownMenu.Root>
+            <DropdownMenu.Trigger asChild>
+              <button
+                type="button"
+                className="inline-flex size-7 items-center justify-center rounded-full border border-border-subtle bg-transparent text-text-dimmed transition-colors hover:border-border hover:bg-hover hover:text-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:cursor-wait disabled:opacity-50"
+                aria-label="Add reaction"
+                title="Add reaction"
+                disabled={pendingEmoji !== null}
+              >
+                <ReactionIcon />
+              </button>
+            </DropdownMenu.Trigger>
+            <DropdownMenu.Portal>
+              <DropdownMenu.Content
+                side="top"
+                align={hasReactions ? "start" : "end"}
+                sideOffset={6}
+                collisionPadding={12}
+                aria-labelledby={pickerLabelId}
+                className="z-50 grid grid-cols-4 gap-1 rounded-xl border border-border bg-elevated p-2 shadow-2xl"
+              >
+                <DropdownMenu.Label id={pickerLabelId} className="sr-only">
+                  Choose a reaction
+                </DropdownMenu.Label>
+                {DEFAULT_REACTION_EMOJIS.map((emoji) => {
+                  const active = reactions.some(
+                    (reaction) =>
+                      reaction.emoji === emoji && reaction.reactedByMe,
+                  );
+                  return (
+                    <DropdownMenu.Item
+                      key={emoji}
+                      asChild
+                      onSelect={() => {
+                        void updateReaction(emoji, !active);
+                      }}
+                    >
+                      <button
+                        type="button"
+                        className="flex size-9 items-center justify-center rounded-lg outline-none transition-transform hover:scale-110 hover:bg-hover focus:bg-hover data-[highlighted]:bg-hover"
+                        aria-label={`${active ? "Remove" : "React with"} ${emoji}`}
+                        title={`${active ? "Remove" : "React with"} ${emoji}`}
+                      >
+                        <EmojiImage emoji={emoji} size={22} />
+                      </button>
+                    </DropdownMenu.Item>
+                  );
+                })}
+                <DropdownMenu.Arrow className="fill-border" />
+              </DropdownMenu.Content>
+            </DropdownMenu.Portal>
+          </DropdownMenu.Root>
+        )}
+        {copyText && <CopyMessageButton text={copyText} onError={setCopyError} />}
+      </div>
 
-      {error && (
+      {copyError && (
         <span role="alert" className="basis-full text-[0.714rem] text-error-bright">
+          {copyError}
+        </span>
+      )}
+      {error && (
+        <span
+          role="alert"
+          className="basis-full text-[0.714rem] text-error-bright"
+        >
           {error}
         </span>
       )}

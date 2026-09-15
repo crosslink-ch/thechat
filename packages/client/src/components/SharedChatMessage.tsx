@@ -117,11 +117,12 @@ export function SharedChatMessage({
         )}
         {children}
         <SharedMessageAttachments attachments={message.attachments ?? []} />
-        {onSetReaction && (
+        {(onSetReaction || message.content) && (
           <MessageReactions
+            copyText={message.content}
             reactions={message.reactions ?? []}
-            onSetReaction={(emoji, active) =>
-              onSetReaction(message.id, emoji, active)
+            onSetReaction={onSetReaction ? (emoji, active) =>
+              onSetReaction(message.id, emoji, active) : undefined
             }
           />
         )}
