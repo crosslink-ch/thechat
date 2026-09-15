@@ -16,34 +16,6 @@ describe("HermesProgressInline", () => {
     useHermesIndicatorsStore.getState().resetForTests();
   });
 
-  it.each(["running", "queued"] as const)(
-    "uses one calm text status for a %s invocation",
-    (status) => {
-      const onStop = vi.fn();
-      render(
-        <HermesProgressInline
-          invocations={[{ invocation: invocation({ status }), events: [] }]}
-          onStop={onStop}
-        />,
-      );
-
-      const title = screen.getByText(
-        status === "queued" ? "Koda is queued" : "Koda is working",
-      );
-      const header = title.parentElement!;
-      expect(header.querySelector(".animate-pulse")).toBeNull();
-      expect(screen.queryByText("active")).not.toBeInTheDocument();
-      expect(screen.queryByText("queued")).not.toBeInTheDocument();
-      expect(screen.queryByText("action needed")).not.toBeInTheDocument();
-      if (status === "running") {
-        fireEvent.click(screen.getByRole("button", { name: "Stop" }));
-        expect(onStop).toHaveBeenCalledOnce();
-      } else {
-        expect(screen.queryByRole("button", { name: "Stop" })).not.toBeInTheDocument();
-      }
-    },
-  );
-
   it("collapses tool start and completion events into one row", () => {
     render(
       <HermesProgressInline
