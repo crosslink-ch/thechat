@@ -158,11 +158,6 @@ export function HermesProgressInline({
         const elapsedLabel = invocation.startedAt
           ? formatElapsed(nowMs - Date.parse(invocation.startedAt))
           : null;
-        const statusLabel = needsInteraction
-          ? "action needed"
-          : invocation.status === "queued"
-            ? "queued"
-            : "active";
         const title = needsApproval
           ? "is waiting for your approval"
           : needsClarification
@@ -184,22 +179,11 @@ export function HermesProgressInline({
                 <span className="min-w-0 text-[0.929rem] font-medium text-text-secondary">
                   {invocation.botName} {title}
                 </span>
-                <span
-                  className={`inline-block size-1.5 shrink-0 rounded-full ${
-                    needsInteraction
-                      ? "bg-warning-text"
-                      : "animate-pulse bg-[#54894a]"
-                  }`}
-                />
-                <span
-                  className={`shrink-0 rounded-sm px-1.5 py-0.5 text-[0.714rem] font-medium ${
-                    needsInteraction
-                      ? "bg-warning-bg text-warning-text"
-                      : "bg-[#54894a]/10 text-[#8fcf84]"
-                  }`}
-                >
-                  {statusLabel}
-                </span>
+                {needsInteraction && (
+                  <span className="shrink-0 rounded-sm bg-warning-bg px-1.5 py-0.5 text-[0.714rem] font-medium text-warning-text">
+                    action needed
+                  </span>
+                )}
                 <div className="ml-auto flex shrink-0 items-center gap-2">
                   {elapsedLabel && (
                     <span className="tabular-nums text-[0.786rem] text-text-dimmed">
