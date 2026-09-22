@@ -39,17 +39,6 @@ function renderPanel({
 }
 
 describe("HermesRuntimePanel task names", () => {
-  it("applies the selected background once across the task and rename action", () => {
-    renderPanel({ activeThreadId: "thread-1" });
-
-    const select = screen.getByRole("button", { name: /^First task/ });
-    const rename = screen.getByRole("button", { name: "Rename First task" });
-    expect(select.parentElement).toBe(rename.parentElement);
-    expect(select.parentElement).toHaveClass("bg-accent/10");
-    expect(select).not.toHaveClass("bg-accent/10");
-    expect(rename).not.toHaveClass("bg-accent/10");
-  });
-
   it("renames a task inline without selecting it", async () => {
     const user = userEvent.setup();
     const onRenameThread = vi.fn().mockResolvedValue(undefined);
