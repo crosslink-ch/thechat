@@ -314,7 +314,7 @@ test(
                   name: "Open tasks and activity",
                   exact: true,
                 });
-                if (width < 1280) {
+                if (width < 900) {
                   assert.equal(
                     await trigger.evaluate(
                       (el) => !!el.closest(".chat-header"),
@@ -336,9 +336,31 @@ test(
                   );
                   await trigger.click();
                 }
+                // Selection is one surface across the task and its rename action.
+                const task = page.getByRole("button", { name: /^Plan the product launch/ });
+                const row = task.locator("..");
+                const rename = row.getByRole("button", { name: "Rename Plan the product launch" });
+                await page.mouse.move(0, 0);
+                await row.screenshot({ path: `${out}/task-row-${engineName}-${width}.png` });
+                const transparent = "rgba(0, 0, 0, 0)";
+                const background = (locator) => locator.evaluate((el) => getComputedStyle(el).backgroundColor);
+                assert.notEqual(await background(row), transparent, "selected row retains its highlight");
+                assert.equal(await background(task), transparent, "task must not paint a second highlight over the row");
+                assert.equal(await background(rename), transparent, "rename shares the row background");
+                await task.hover();
+                assert.equal(await background(task), transparent, "hover must not split the selected background");
+                await task.focus();
+                await page.keyboard.press("Tab");
+                assert.ok(await rename.evaluate((el) => el === document.activeElement));
+                await page.keyboard.press("Enter");
+                await page.getByRole("textbox", { name: "Task name" }).waitFor();
+                await page.getByRole("button", { name: "Cancel", exact: true }).click();
+                await rename.waitFor();
+                assert.ok(await rename.evaluate((el) => el === document.activeElement));
+                assert.equal(await background(task), transparent, "cancelling rename preserves the shared background");
                 await page
                   .getByRole("button", {
-                    name: /ReviewTheEntireCustomerOnboarding/,
+                    name: /^ReviewTheEntireCustomerOnboarding/,
                   })
                   .click();
                 await page
@@ -351,7 +373,7 @@ test(
                   ),
                   true,
                 );
-                if (width < 1280) {
+                if (width < 900) {
                   await page
                     .getByRole("dialog", {
                       name: "Tasks and activity",
@@ -367,7 +389,7 @@ test(
                   .locator(".chat-header")
                   .filter({ hasText: "General" })
                   .waitFor();
-                if (width < 1280) await trigger.click();
+                if (width < 900) await trigger.click();
                 await page
                   .getByRole("button", { name: "New task", exact: true })
                   .click();
