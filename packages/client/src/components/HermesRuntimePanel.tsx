@@ -449,7 +449,7 @@ function ThreadRow({
     >
       <button
         type="button"
-        className={`flex min-w-0 flex-1 cursor-pointer items-center gap-2.5 px-2.5 py-2.5 text-left ${active ? "bg-accent/10" : ""}`}
+        className="flex min-w-0 flex-1 cursor-pointer items-center gap-2.5 px-2.5 py-2.5 text-left"
         onClick={() => onSelect?.(thread.id)}
       >
         <span

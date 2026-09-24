@@ -39,14 +39,6 @@ function renderPanel({
 }
 
 describe("HermesRuntimePanel task names", () => {
-  it("keeps active styling on the selectable task control", () => {
-    renderPanel({ activeThreadId: "thread-1" });
-
-    expect(screen.getByRole("button", { name: /^First task/ })).toHaveClass(
-      "bg-accent/10",
-    );
-  });
-
   it("renames a task inline without selecting it", async () => {
     const user = userEvent.setup();
     const onRenameThread = vi.fn().mockResolvedValue(undefined);
