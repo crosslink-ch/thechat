@@ -8,6 +8,7 @@ import {
   settingsInput,
   settingsPrimaryButton,
 } from "../components/SettingsSection";
+import { avatarColor } from "../components/ui";
 import { useAuthStore } from "../stores/auth";
 import { ApiAccessSettings } from "./settings-api-access";
 
@@ -77,19 +78,21 @@ export function SettingsRoute() {
       className="flex h-full min-h-0 flex-col bg-base"
       aria-labelledby="settings-heading"
     >
-      <header className="shrink-0 border-b border-border px-5 py-4">
-        <h1
-          id="settings-heading"
-          className="text-[1.071rem] font-semibold text-text"
-        >
-          Settings
-        </h1>
-        <p className="mt-1 text-[0.786rem] text-text-muted">
-          Manage your signed-in TheChat account.
-        </p>
+      <header className="shrink-0 px-4 pb-4 pt-6 sm:px-8 sm:pt-8">
+        <div className="mx-auto w-full max-w-[720px]">
+          <h1
+            id="settings-heading"
+            className="text-[1.429rem] font-semibold tracking-tight text-text"
+          >
+            Settings
+          </h1>
+          <p className="mt-1 text-[0.929rem] text-text-muted">
+            Manage your signed-in TheChat account.
+          </p>
+        </div>
       </header>
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-6 sm:px-6 sm:py-8">
+      <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-10 pt-2 sm:px-8">
         <div className="mx-auto flex w-full max-w-[720px] min-w-0 flex-col gap-8">
           <SettingsSection id="profile-heading" title="Profile">
             {!user ? (
@@ -98,7 +101,7 @@ export function SettingsRoute() {
                   <p className="text-[0.929rem] font-medium text-text">
                     Sign in to view your profile
                   </p>
-                  <p className="mt-1 text-[0.857rem] leading-5 text-text-muted">
+                  <p className="mt-1 text-[0.929rem] leading-5 text-text-muted">
                     Your account details will appear here after authentication
                     finishes.
                   </p>
@@ -113,11 +116,12 @@ export function SettingsRoute() {
                 <div className="flex min-w-0 items-center gap-3 px-4 py-4 sm:px-5">
                   <div
                     aria-hidden="true"
-                    className="flex size-10 shrink-0 items-center justify-center rounded-full bg-elevated text-[0.857rem] font-semibold text-text-secondary"
+                    className="flex size-10 shrink-0 items-center justify-center rounded-full text-[0.929rem] font-semibold text-white"
+                    style={{ backgroundColor: avatarColor(user.id) }}
                   >
                     {getInitials(user.name)}
                   </div>
-                  <div className="min-w-0 truncate text-[0.929rem] font-medium text-text">
+                  <div className="min-w-0 truncate text-[1rem] font-medium text-text">
                     {user.name}
                   </div>
                 </div>
@@ -153,7 +157,7 @@ export function SettingsRoute() {
                 </dl>
 
                 <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 sm:px-5">
-                  <div className="min-w-0 flex-1 text-[0.857rem] leading-5">
+                  <div className="min-w-0 flex-1 text-[0.929rem] leading-5">
                     {error && (
                       <p className="text-error-bright" role="alert">
                         {error}

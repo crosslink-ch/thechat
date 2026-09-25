@@ -1,5 +1,6 @@
 import { Component, type ReactNode, type ErrorInfo } from "react";
 import { error as logError } from "../log";
+import { buttonClass } from "./ui";
 
 interface Props {
   children: ReactNode;
@@ -41,36 +42,16 @@ export class ErrorBoundary extends Component<Props, State> {
   render() {
     if (this.state.hasError) {
       return (
-        <div
-          style={{
-            padding: 20,
-            color: "#f87171",
-            background: "#1a1a1a",
-            borderRadius: 8,
-            margin: 16,
-            fontFamily: "monospace",
-            fontSize: "0.929rem",
-          }}
-        >
-          <div style={{ fontWeight: 600, marginBottom: 8 }}>
+        <div className="m-4 rounded-xl border border-error-msg-border bg-raised p-5 font-mono text-[0.929rem] text-error-bright">
+          <div className="mb-2 font-semibold">
             Something went wrong
           </div>
-          <div style={{ color: "#a1a1aa" }}>
+          <div className="text-text-muted">
             {this.state.errorMessage}
           </div>
           <button
             onClick={() => this.setState({ hasError: false, errorMessage: null })}
-            style={{
-              marginTop: 12,
-              padding: "6px 16px",
-              background: "#333",
-              color: "#e4e4e7",
-              border: "none",
-              borderRadius: 4,
-              cursor: "pointer",
-              fontFamily: "inherit",
-              fontSize: "0.929rem",
-            }}
+            className={`mt-3 ${buttonClass("secondary", "md")}`}
           >
             Try again
           </button>

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Check, Copy } from "lucide-react";
 
 export function CopyMessageButton({
   text,
@@ -27,7 +28,7 @@ export function CopyMessageButton({
             ? "Copied!"
             : "Copy message"
       }
-      className="group/copy-message inline-flex size-[28px] shrink-0 items-center justify-center border-0 bg-transparent p-0 text-text-dimmed focus-visible:outline-none"
+      className="group/copy-message inline-flex size-[28px] shrink-0 cursor-pointer items-center justify-center border-0 bg-transparent p-0 text-text-dimmed focus-visible:outline-none"
       onClick={async () => {
         setCopied(false);
         setFailed(false);
@@ -44,28 +45,13 @@ export function CopyMessageButton({
       {/* Keep the visual small while mobile.css supplies a 44px touch target. */}
       <span
         data-copy-message-visual
-        className="inline-flex size-[28px] shrink-0 items-center justify-center rounded-full transition-colors group-hover/copy-message:bg-hover group-hover/copy-message:text-text group-active/copy-message:bg-hover group-active/copy-message:text-text group-focus-visible/copy-message:ring-2 group-focus-visible/copy-message:ring-accent"
+        className="inline-flex size-[28px] shrink-0 items-center justify-center rounded-full transition-colors duration-150 group-hover/copy-message:bg-hover group-hover/copy-message:text-text group-active/copy-message:bg-hover group-active/copy-message:text-text group-focus-visible/copy-message:ring-2 group-focus-visible/copy-message:ring-accent"
       >
-        <svg
-          viewBox="0 0 24 24"
-          width="16"
-          height="16"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.75"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          aria-hidden="true"
-        >
-          {copied ? (
-            <path d="m5 12 4 4L19 6" />
-          ) : (
-            <>
-              <rect x="8" y="8" width="12" height="12" rx="2" />
-              <path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3" />
-            </>
-          )}
-        </svg>
+        {copied ? (
+          <Check size={16} className="text-success" aria-hidden="true" />
+        ) : (
+          <Copy size={16} aria-hidden="true" />
+        )}
       </span>
       <span
         role={copied ? "status" : undefined}

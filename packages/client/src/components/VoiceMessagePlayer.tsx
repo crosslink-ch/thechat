@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { Download } from "lucide-react";
 import { onSessionReset, sessionGeneration } from "../lib/session-boundary";
 import type { ChatAttachment } from "@thechat/shared";
 import { getAttachmentDownloadUrl, openSharedAttachmentDownload } from "../lib/shared-attachments";
@@ -62,7 +63,7 @@ function ScopedVoiceMessagePlayer({ attachment, token }: VoiceMessagePlayerProps
         return (await getAttachmentDownloadUrl(attachment.id, token, "attachment")).url;
       }} />
       <button type="button" className="voice-download" disabled={downloading} aria-label={`Download ${attachment.fileName}`} title={`Download ${attachment.fileName}`} onClick={() => void download()}>
-        <svg aria-hidden="true" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3v12m-4-4 4 4 4-4M5 17v3h14v-3" /></svg>
+        <Download size={16} aria-hidden="true" />
       </button>
       {saved && <p role="status" className="voice-notice">Saved to Downloads</p>}
       {error && <p role="alert" className="voice-notice">{error}</p>}

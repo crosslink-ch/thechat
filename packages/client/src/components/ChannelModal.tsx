@@ -5,39 +5,8 @@ import type { WorkspaceChannel } from "@thechat/shared";
 import { useWorkspacesStore } from "../stores/workspaces";
 import { useConversationsStore } from "../stores/conversations";
 import { useAuthStore } from "../stores/auth";
-
-function HashIcon({ className = "" }: { className?: string }) {
-  return (
-    <svg className={className} viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round">
-      <path d="M7 3 5.5 17M14.5 3 13 17M3 7h14M2.5 13h14" />
-    </svg>
-  );
-}
-
-function PencilIcon({ className = "" }: { className?: string }) {
-  return (
-    <svg className={className} viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
-      <path d="m13.8 3.2 3 3L7 16l-4 1 1-4Z" />
-      <path d="m11.8 5.2 3 3" />
-    </svg>
-  );
-}
-
-function TrashIcon({ className = "" }: { className?: string }) {
-  return (
-    <svg className={className} viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M3.5 5.5h13M8 3h4l1 2.5H7ZM6 8v7M10 8v7M14 8v7M5 5.5l.7 11.5h8.6L15 5.5" />
-    </svg>
-  );
-}
-
-function CloseIcon({ className = "" }: { className?: string }) {
-  return (
-    <svg className={className} viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round">
-      <path d="m5 5 10 10M15 5 5 15" />
-    </svg>
-  );
-}
+import { Hash, Pencil, Trash2, X } from "lucide-react";
+import { buttonClass, dialogContentClass, dialogOverlayClass, dialogTitleClass, iconButtonClass } from "./ui";
 
 type ChannelDialogState =
   | { mode: "create" }
@@ -232,10 +201,10 @@ export function ChannelModal() {
 
   const Icon =
     currentState.mode === "create"
-      ? HashIcon
+      ? Hash
       : currentState.mode === "rename"
-        ? PencilIcon
-        : TrashIcon;
+        ? Pencil
+        : Trash2;
 
   return (
     <Dialog.Root
@@ -245,7 +214,7 @@ export function ChannelModal() {
       }}
     >
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-50 bg-black/55 backdrop-blur-[1px]" />
+        <Dialog.Overlay className={`z-50 ${dialogOverlayClass}`} />
         <Dialog.Content
           asChild
           onOpenAutoFocus={(event) => {
@@ -265,19 +234,19 @@ export function ChannelModal() {
         >
           <form
             onSubmit={handleSubmit}
-            className="fixed left-1/2 top-1/2 z-50 w-[calc(100%-2rem)] max-w-[440px] -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-xl border border-border bg-surface shadow-2xl"
+            className={`fixed left-1/2 top-1/2 z-50 w-[calc(100%-2rem)] max-w-[440px] -translate-x-1/2 -translate-y-1/2 overflow-hidden ${dialogContentClass}`}
           >
             <div className="flex items-start gap-3 px-5 pb-4 pt-5">
               <div
                 className={`mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-lg ${
-                  isDelete ? "bg-red-500/10 text-red-400" : "bg-accent/10 text-accent"
+                  isDelete ? "bg-error/10 text-error-bright" : "bg-accent/10 text-accent"
                 }`}
               >
-                <Icon className="size-5" />
+                <Icon size={18} aria-hidden="true" />
               </div>
               <div className="min-w-0 flex-1">
                 <Dialog.Title asChild>
-                  <h2 className="text-[1.071rem] font-semibold text-text-primary">
+                  <h2 className={dialogTitleClass}>
                     {title}
                   </h2>
                 </Dialog.Title>
@@ -291,17 +260,17 @@ export function ChannelModal() {
                 <button
                   type="button"
                   disabled={submitting}
-                  className="rounded-md p-1 text-text-placeholder transition-colors hover:bg-hover hover:text-text-secondary disabled:opacity-40"
+                  className={`-mr-1.5 -mt-1 ${iconButtonClass("md")}`}
                   aria-label="Close channel dialog"
                 >
-                  <CloseIcon className="size-[17px]" />
+                  <X size={16} aria-hidden="true" />
                 </button>
               </Dialog.Close>
             </div>
 
-            <div className="border-y border-border bg-base/35 px-5 py-4">
+            <div className="px-5 pb-2 pt-1">
               {isDelete ? (
-                <div className="rounded-lg border border-red-500/25 bg-red-500/[0.06] px-3.5 py-3 text-[0.821rem] leading-5 text-text-muted">
+                <div className="rounded-lg border border-error-border bg-error-msg-bg px-3.5 py-3 text-[0.821rem] leading-5 text-text-muted">
                   <p>
                     <span className="font-medium text-text-secondary">#{currentState.channel.name}</span> will disappear for every workspace member. This cannot be undone.
                   </p>
@@ -311,11 +280,11 @@ export function ChannelModal() {
                 </div>
               ) : (
                 <label className="block">
-                  <span className="mb-1.5 block text-[0.786rem] font-medium text-text-secondary">
+                  <span className="mb-1.5 block text-[0.857rem] font-medium text-text-secondary">
                     Channel name
                   </span>
-                  <div className="flex items-center rounded-lg border border-border bg-base px-3 focus-within:border-accent/70 focus-within:ring-2 focus-within:ring-accent/15">
-                    <HashIcon className="size-[15px] shrink-0 text-text-placeholder" />
+                  <div className="flex items-center rounded-lg border border-border-strong bg-base px-3 transition-[border-color,box-shadow] duration-150 focus-within:border-accent/60 focus-within:ring-3 focus-within:ring-accent/15">
+                    <Hash size={15} className="shrink-0 text-text-placeholder" aria-hidden="true" />
                     <input
                       ref={inputRef}
                       value={name}
@@ -323,7 +292,7 @@ export function ChannelModal() {
                       maxLength={100}
                       aria-label="Channel name"
                       placeholder="e.g. product-updates"
-                      className="min-w-0 flex-1 bg-transparent px-2 py-2.5 text-[0.929rem] text-text-primary outline-none placeholder:text-text-placeholder"
+                      className="min-w-0 flex-1 bg-transparent px-2 py-2 text-[0.929rem] text-text outline-none placeholder:text-text-placeholder"
                     />
                   </div>
                   <p className="mt-2 text-[0.75rem] text-text-placeholder">
@@ -338,19 +307,19 @@ export function ChannelModal() {
                 </label>
               )}
               {error && (
-                <p role="alert" className="mt-3 text-[0.786rem] text-red-400">
+                <p role="alert" className="mt-3 text-[0.786rem] text-error-bright">
                   {error}
                 </p>
               )}
             </div>
 
-            <div className="flex justify-end gap-2 px-5 py-4">
+            <div className="flex justify-end gap-2 px-5 pb-5 pt-3">
               <Dialog.Close asChild>
                 <button
                   ref={cancelRef}
                   type="button"
                   disabled={submitting}
-                  className="rounded-md border border-border px-3.5 py-2 text-[0.857rem] font-medium text-text-secondary transition-colors hover:bg-hover disabled:opacity-40"
+                  className={buttonClass("ghost", "md")}
                 >
                   Cancel
                 </button>
@@ -358,11 +327,7 @@ export function ChannelModal() {
               <button
                 type="submit"
                 disabled={submitting || (!isDelete && !slug)}
-                className={`rounded-md px-3.5 py-2 text-[0.857rem] font-medium text-white transition-colors disabled:cursor-not-allowed disabled:opacity-45 ${
-                  isDelete
-                    ? "bg-red-600 hover:bg-red-500"
-                    : "bg-accent hover:bg-accent-hover"
-                }`}
+                className={buttonClass(isDelete ? "danger" : "primary", "md")}
               >
                 {submitting
                   ? currentState.mode === "delete"

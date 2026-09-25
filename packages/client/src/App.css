@@ -1,68 +1,85 @@
 @import "tailwindcss" source(".");
+@import "@fontsource-variable/geist";
+@import "@fontsource-variable/geist-mono";
 @import "./mobile.css";
 @import "./voice.css";
 
 @theme {
-  /* Surface colors — cool-tinted dark palette */
-  --color-base: #0f1115;
-  --color-raised: #151820;
-  --color-surface: #181b24;
-  --color-hover: #1e2230;
-  --color-elevated: #252a36;
-  --color-button: #2c3240;
-  --color-button-hover: #363d4d;
+  /* Surface colors — neutral graphite palette. The page (base) is lighter than
+     the chrome around it (surface: sidebar, panels, menus, dialogs). */
+  --color-base: #212121;
+  --color-sunken: #131313;
+  --color-raised: #1a1a1a;
+  --color-surface: #171717;
+  --color-hover: #2a2a2a;
+  --color-elevated: #303030;
+  --color-button: #333333;
+  --color-button-hover: #3d3d3d;
 
-  /* Border colors */
-  --color-border-subtle: #1c2030;
-  --color-border: #252a38;
-  --color-border-strong: #333a4a;
-  --color-border-focus: #4a5570;
-  --color-border-accent: #3a4560;
+  /* Border colors — translucent white hairlines that work on every surface */
+  --color-border-subtle: rgba(255, 255, 255, 0.05);
+  --color-border: rgba(255, 255, 255, 0.08);
+  --color-border-strong: rgba(255, 255, 255, 0.12);
+  --color-border-focus: rgba(255, 255, 255, 0.24);
+  --color-border-accent: rgba(68, 147, 240, 0.35);
 
   /* Text colors */
-  --color-text: #e8eaef;
-  --color-text-secondary: #c0c7d8;
-  --color-text-muted: #9fa8bb;
-  --color-text-dimmed: #7d879d;
-  --color-text-muted-hover: #c0c7d8;
-  --color-text-placeholder: #7d879d;
+  --color-text: #ececec;
+  --color-text-secondary: #cdcdcd;
+  --color-text-muted: #b4b4b4;
+  --color-text-dimmed: #8e8e8e;
+  --color-text-muted-hover: #cdcdcd;
+  --color-text-placeholder: #8e8e8e;
 
-  /* Accent blue */
-  --color-accent: #6a9df5;
-  --color-accent-border: #4a7ad0;
+  /* Accent blue — `accent` is the readable tone for text, borders, tints and
+     indicators; `accent-fill` is the deep navy used behind white text. */
+  --color-accent: #4493f0;
+  --color-accent-fill: #003f7a;
+  --color-accent-hover: #0055a4;
+  --color-accent-border: #2f6fb8;
   --color-accent-secondary: #a78bfa;
 
   /* Success green */
-  --color-success: #5cb87a;
-  --color-success-light: #8fd4a8;
-  --color-success-border: #3a7a52;
-  --color-success-bg: #121e18;
+  --color-success: #22c55e;
+  --color-success-light: #86efac;
+  --color-success-border: rgba(34, 197, 94, 0.35);
+  --color-success-bg: rgba(34, 197, 94, 0.1);
 
   /* Error red */
-  --color-error: #d45555;
-  --color-error-bright: #ef6b6b;
-  --color-error-light: #d09090;
-  --color-error-border: #7a3434;
-  --color-error-bg: #1e1214;
-  --color-error-msg-bg: #1e1216;
-  --color-error-msg-border: #4a1e22;
+  --color-error: #ef4444;
+  --color-error-bright: #f87171;
+  --color-error-light: #fca5a5;
+  --color-error-border: rgba(239, 68, 68, 0.35);
+  --color-error-bg: rgba(239, 68, 68, 0.1);
+  --color-error-msg-bg: rgba(239, 68, 68, 0.08);
+  --color-error-msg-border: rgba(239, 68, 68, 0.25);
 
   /* Warning */
-  --color-warning-bg: #221e10;
-  --color-warning-text: #e0a850;
+  --color-warning: #f59e0b;
+  --color-warning-bg: rgba(245, 158, 11, 0.1);
+  --color-warning-text: #f5a524;
 
   /* Danger */
-  --color-danger-bg: #3a1818;
-  --color-danger-bg-hover: #4a2222;
+  --color-danger-bg: #361c1c;
+  --color-danger-bg-hover: #4a2323;
 
   /* Overlay & shadow */
-  --color-overlay: rgba(0, 0, 0, 0.6);
-  --shadow-card: 0 8px 40px rgba(0, 0, 0, 0.6), 0 0 1px rgba(100, 120, 160, 0.15);
-  --shadow-input: 0 2px 12px rgba(0, 0, 0, 0.3), 0 0 1px rgba(100, 120, 160, 0.1);
+  --color-overlay: rgba(0, 0, 0, 0.5);
+  --shadow-card:
+    inset 0 1px 0 rgba(255, 255, 255, 0.06), 0 24px 60px -16px rgba(0, 0, 0, 0.6),
+    0 8px 24px -12px rgba(0, 0, 0, 0.45);
+  --shadow-input: 0 8px 24px -12px rgba(0, 0, 0, 0.5);
+
+  /* Radii — 6px controls, 10px rows and inputs, 14px panels and dialogs */
+  --radius-sm: 0.2857rem;
+  --radius-md: 0.4286rem;
+  --radius-lg: 0.7143rem;
+  --radius-xl: 1rem;
+  --radius-2xl: 1.4286rem;
 
   /* Fonts */
-  --font-mono: "JetBrains Mono", "SF Mono", "Fira Code", "Fira Mono", Menlo, monospace;
-  --font-sans: "DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --font-mono: "Geist Mono Variable", "Geist Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --font-sans: "Geist Variable", "Geist", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
 
   /* Custom animation */
   --animate-pulse: pulse 1.5s infinite;
@@ -71,11 +88,27 @@
   --animate-spin: spin 1s linear infinite;
   --animate-blink: blink 1s step-end infinite;
   --animate-shimmer: shimmer 2s linear infinite;
+  --animate-overlay-in: fadeIn 0.2s ease-out;
+  --animate-overlay-out: fadeOut 0.15s ease-in forwards;
+  --animate-dialog-in: dialogIn 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  --animate-dialog-out: dialogOut 0.15s ease-in forwards;
+  --animate-menu-in: menuIn 0.16s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 @layer base {
   button {
     cursor: pointer;
+  }
+
+  /* Replace the browser's bright default ring with a quiet one, and only for
+     keyboard focus. Components that style their own focus still win. */
+  :focus:not(:focus-visible) {
+    outline: none;
+  }
+
+  :focus-visible {
+    outline: 1.5px solid rgba(255, 255, 255, 0.35);
+    outline-offset: -1.5px;
   }
 }
 
@@ -109,6 +142,58 @@
   to { opacity: 1; transform: translateY(0); }
 }
 
+@keyframes fadeOut {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+
+/* Dialog motion uses `transform`, which composes with Tailwind's separate
+   `translate` property that centres the dialog. No scaling: controls must keep
+   their real size (44px touch targets) while the entrance plays. */
+@keyframes dialogIn {
+  from { opacity: 0; transform: translateY(12px); filter: blur(6px); }
+  to { opacity: 1; transform: none; filter: none; }
+}
+
+@keyframes dialogOut {
+  from { opacity: 1; transform: none; }
+  to { opacity: 0; transform: translateY(6px); }
+}
+
+@keyframes menuIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: none; }
+}
+
+/* A highlight sweeping across live agent activity text (as in T3 Code). */
+@keyframes live-shine {
+  from { background-position: -4.5rem 0, 0 0; }
+  to { background-position: calc(100% + 4.5rem) 0, 0 0; }
+}
+
+.live-shine {
+  color: var(--color-text-muted);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .live-shine {
+    color: transparent;
+    background-image:
+      linear-gradient(to right, transparent, var(--color-text), transparent),
+      linear-gradient(var(--color-text-muted), var(--color-text-muted));
+    background-size: 4.5rem 100%, 100% 100%;
+    background-repeat: no-repeat;
+    -webkit-background-clip: text;
+    background-clip: text;
+    animation: live-shine 2.2s linear infinite;
+  }
+}
+
+/* Lucide icons: one slightly lighter stroke everywhere. */
+svg.lucide {
+  stroke-width: 1.75;
+}
+
 html,
 body,
 #root {
@@ -118,7 +203,7 @@ body,
 }
 
 :root {
-  font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-family: var(--font-sans);
   font-size: 14px;
   line-height: 1.5;
   font-weight: 400;
@@ -139,16 +224,16 @@ body,
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: var(--color-border);
+  background: rgba(255, 255, 255, 0.14);
   border-radius: 3px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--color-border-strong);
+  background: rgba(255, 255, 255, 0.24);
 }
 
 /* Selection */
 ::selection {
-  background: rgba(106, 157, 245, 0.25);
+  background: rgba(0, 100, 180, 0.6);
   color: inherit;
 }
 
@@ -203,6 +288,22 @@ body,
   text-decoration: underline;
 }
 
+/* @mentions: a soft accent pill; mentions of you are amber. */
+.md-mention {
+  padding: 0 0.2em;
+  border-radius: 0.3em;
+  background: color-mix(in srgb, var(--color-accent) 16%, transparent);
+  color: var(--color-accent);
+  font-weight: 500;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+
+.md-mention-self {
+  background: color-mix(in srgb, var(--color-warning) 18%, transparent);
+  color: var(--color-warning-text);
+}
+
 .md-content ul,
 .md-content ol {
   margin: 0.25em 0 0.5em;
@@ -232,10 +333,9 @@ body,
 
 .md-content blockquote {
   margin: 0.5em 0;
-  padding: 0.25em 0.75em;
-  border-left: 2px solid var(--color-accent-border);
-  background: var(--color-raised);
-  border-radius: 0 4px 4px 0;
+  padding: 0.1em 0.9em;
+  border-left: 3px solid var(--color-border-strong);
+  color: var(--color-text-secondary);
 }
 
 .md-content blockquote p:last-child {
@@ -250,18 +350,18 @@ body,
 
 .md-content th,
 .md-content td {
-  border: 1px solid var(--color-border);
+  border: 1px solid var(--color-border-strong);
   padding: 6px 10px;
   text-align: left;
 }
 
 .md-content th {
-  background: var(--color-elevated);
+  background: var(--color-raised);
   font-weight: 600;
 }
 
 .md-content tr:nth-child(even) {
-  background: var(--color-raised);
+  background: rgba(255, 255, 255, 0.02);
 }
 
 .md-content hr {
@@ -356,7 +456,7 @@ body,
 .md-code-block {
   background: var(--color-raised);
   border: 1px solid var(--color-border);
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   overflow-x: auto;
   margin: 0.5em 0;
 }

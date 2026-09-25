@@ -8,6 +8,8 @@ import { useDmHeaderStore } from "../stores/chat-header";
 import { isWeb } from "../platform/environment";
 import { toggleSidebar, useSidebarState } from "./Sidebar";
 import { HeaderActionsSlot } from "./HeaderActions";
+import { PanelLeft } from "lucide-react";
+import { iconButtonClass } from "./ui";
 
 // Mini-store for agent chat title & project dir (set by agent-chat route)
 const useAgentChatTitle = create(() => ({ title: "", projectDir: null as string | null }));
@@ -58,14 +60,11 @@ export function ChatHeader() {
   if (isPage && !mobile && !showSidebarToggle) return null;
 
   return (
-    <header className="chat-header flex h-[48px] min-w-0 shrink-0 items-center gap-2 border-b border-border-subtle bg-surface pl-5 pr-3" aria-label={isPage ? "Page navigation" : "Conversation header"}>
+    <header className="chat-header flex h-[48px] min-w-0 shrink-0 items-center gap-2 border-b border-border-subtle bg-base pl-5 pr-3" aria-label={isPage ? "Page navigation" : "Conversation header"}>
       <NavigationToggle />
       {showSidebarToggle && (
-        <button type="button" className="flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-md text-text-muted hover:bg-hover hover:text-text focus-visible:outline-2 focus-visible:outline-accent" aria-label="Open sidebar" title="Open sidebar" onClick={toggleSidebar}>
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
-            <rect x="2" y="2.5" width="12" height="11" rx="1.5" />
-            <path d="M6 2.5v11" />
-          </svg>
+        <button type="button" className={iconButtonClass("md")} aria-label="Open sidebar" title="Open sidebar" onClick={toggleSidebar}>
+          <PanelLeft size={16} aria-hidden="true" />
         </button>
       )}
       <div className="flex min-w-0 flex-1 items-center">

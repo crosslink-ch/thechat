@@ -97,6 +97,7 @@ describe("HermesProgressInline", () => {
       />,
     );
 
+    expandFinishedSteps();
     expect(
       screen.getAllByText(
         "/home/bruno/projects/python-probability-study/tests/test_expected_value.py",
@@ -107,6 +108,8 @@ describe("HermesProgressInline", () => {
     ).toHaveLength(1);
     expect(screen.queryByText(/^patch: mode=replace/)).not.toBeInTheDocument();
     expect(screen.queryByText(/^terminal: command=pwd/)).not.toBeInTheDocument();
+    // Durations sit in each step's details, not on the row.
+    expandSteps("tool");
     expect(screen.getByText("0.2s")).toBeInTheDocument();
     expect(screen.getByText("4.5s")).toBeInTheDocument();
   });
@@ -187,11 +190,12 @@ describe("HermesProgressInline", () => {
       />,
     );
 
+    expandFinishedSteps();
     expect(screen.getByText("info")).toBeInTheDocument();
     expect(screen.getByText("warn")).toBeInTheDocument();
     expect(screen.getByText("Codex gpt-5.5 caps context at 272K")).toBeInTheDocument();
     expect(screen.getByText("Compression provider is unavailable")).toBeInTheDocument();
-    expect(screen.getByText("Thinking")).toBeInTheDocument();
+    expect(screen.getByText("Thought")).toBeInTheDocument();
     expect(screen.getByText("Drafting a response before using tools")).toBeInTheDocument();
     expect(screen.getByText("Read task context")).toBeInTheDocument();
   });
@@ -247,7 +251,7 @@ describe("HermesProgressInline", () => {
     expect(screen.getByText("Compression provider failed")).toBeInTheDocument();
   });
 
-  it("shows emitted tool names next to bare progress labels", () => {
+  it("shows emitted tool names in the details of bare progress labels", () => {
     render(
       <HermesProgressInline
         invocations={[
@@ -281,10 +285,12 @@ describe("HermesProgressInline", () => {
       />,
     );
 
-    expect(screen.getByText("skill_view")).toBeInTheDocument();
-    expect(screen.getByText("html-math-study-notes")).toBeInTheDocument();
-    expect(screen.getByText("custom_tool")).toBeInTheDocument();
     expect(screen.getByText("external context")).toBeInTheDocument();
+    expandFinishedSteps();
+    expect(screen.getByText("html-math-study-notes")).toBeInTheDocument();
+    expandSteps("tool");
+    expect(screen.getByText("skill_view")).toBeInTheDocument();
+    expect(screen.getByText("custom_tool")).toBeInTheDocument();
   });
 
   it("sends approval choices as direct interaction responses, never slash text", async () => {
@@ -435,6 +441,7 @@ describe("HermesProgressInline", () => {
         screen.queryByTestId("hermes-approval-request"),
       ).not.toBeInTheDocument(),
     );
+    expandFinishedSteps();
     expect(screen.getByTestId("hermes-approval-resolved")).toHaveAttribute(
       "data-confirmed",
       "false",
@@ -462,9 +469,10 @@ describe("HermesProgressInline", () => {
     );
 
     fireEvent.click(screen.getByRole("button", { name: "Deny" }));
-    await waitFor(() =>
-      expect(screen.getByTestId("hermes-approval-resolved")).toBeInTheDocument(),
-    );
+    await waitFor(() => {
+      expandFinishedSteps();
+      expect(screen.getByTestId("hermes-approval-resolved")).toBeInTheDocument();
+    });
     view.unmount();
 
     render(
@@ -474,6 +482,7 @@ describe("HermesProgressInline", () => {
     );
 
     expect(screen.queryByTestId("hermes-approval-request")).not.toBeInTheDocument();
+    expandFinishedSteps();
     expect(screen.getByText("Denied")).toBeInTheDocument();
   });
 
@@ -506,6 +515,7 @@ describe("HermesProgressInline", () => {
     );
 
     expect(screen.queryByTestId("hermes-approval-request")).not.toBeInTheDocument();
+    expandFinishedSteps();
     expect(screen.getByTestId("hermes-approval-resolved")).toHaveAttribute(
       "data-confirmed",
       "true",
@@ -558,6 +568,7 @@ describe("HermesProgressInline", () => {
       expect(onInteraction).toHaveBeenCalledWith(firstApproval, "once"),
     );
     // First request collapses into a resolved row; the second becomes actionable.
+    expandFinishedSteps();
     expect(screen.getByTestId("hermes-approval-resolved")).toBeInTheDocument();
     expect(screen.getByText("rm -rf /first")).toBeInTheDocument();
     expect(screen.getAllByRole("button", { name: "Approve" })).toHaveLength(1);
@@ -646,6 +657,7 @@ describe("HermesProgressInline", () => {
     await waitFor(() =>
       expect(onInteraction).toHaveBeenCalledWith(open, "Ship the focused fix"),
     );
+    expandFinishedSteps();
     expect(screen.getAllByTestId("hermes-clarify-resolved")).toHaveLength(3);
   });
 
@@ -736,9 +748,10 @@ describe("HermesProgressInline", () => {
     ).toEqual([expect.objectContaining({ eventId: clarify.id })]);
 
     fireEvent.click(screen.getByRole("button", { name: "Submit" }));
-    await waitFor(() =>
-      expect(screen.getByTestId("hermes-clarify-resolved")).toBeInTheDocument(),
-    );
+    await waitFor(() => {
+      expandFinishedSteps();
+      expect(screen.getByTestId("hermes-clarify-resolved")).toBeInTheDocument();
+    });
     expect(onInteraction).toHaveBeenLastCalledWith(clarify, "Asia Pacific");
     expect(
       useHermesIndicatorsStore.getState().pendingClarifications,
@@ -803,6 +816,7 @@ describe("HermesProgressInline", () => {
 
     expect(screen.getByText("First question")).toBeInTheDocument();
     expect(screen.queryByText("Second question")).not.toBeInTheDocument();
+    expandFinishedSteps();
     expect(screen.getByTestId("hermes-clarify-resolved")).toHaveTextContent("B");
     view.unmount();
     render(
@@ -813,6 +827,7 @@ describe("HermesProgressInline", () => {
         onInteraction={onInteraction}
       />,
     );
+    expandFinishedSteps();
     expect(screen.getByTestId("hermes-clarify-resolved")).toHaveAttribute(
       "data-confirmed",
       "true",
@@ -888,6 +903,7 @@ describe("HermesProgressInline", () => {
       />,
     );
 
+    expandFinishedSteps();
     const kinds = screen
       .getAllByTestId("hermes-activity-row")
       .map((row) => row.dataset.kind);
@@ -940,6 +956,7 @@ describe("HermesProgressInline", () => {
       />,
     );
 
+    expandFinishedSteps();
     const kinds = screen
       .getAllByTestId("hermes-activity-row")
       .map((row) => row.dataset.kind);
@@ -985,7 +1002,8 @@ describe("HermesProgressInline", () => {
 
     expect(screen.queryByTestId("hermes-activity-detail")).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: new RegExp("terminal") }));
+    expandFinishedSteps();
+    fireEvent.click(screen.getByRole("button", { name: /du -sh/ }));
     expect(screen.getByTestId("hermes-activity-detail")).toHaveTextContent(
       "head -50",
     );
@@ -995,7 +1013,7 @@ describe("HermesProgressInline", () => {
     expect(details).toHaveLength(2);
     expect(details[1]).toHaveTextContent("Line two with more detail");
 
-    fireEvent.click(screen.getByRole("button", { name: new RegExp("terminal") }));
+    fireEvent.click(screen.getByRole("button", { name: /du -sh/ }));
     expect(screen.getAllByTestId("hermes-activity-detail")).toHaveLength(1);
   });
 
@@ -1032,7 +1050,7 @@ describe("HermesProgressInline", () => {
 
     expect(screen.getByTestId("hermes-approval-request")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Approve" })).toBeInTheDocument();
-    expect(screen.getByText(/earlier update/)).toBeInTheDocument();
+    expect(screen.getByTestId("hermes-activity-summary")).toBeInTheDocument();
   });
 
   it("keeps pending clarification cards visible beyond the row window", () => {
@@ -1073,7 +1091,79 @@ describe("HermesProgressInline", () => {
     );
     expect(screen.getByTestId("hermes-clarify-request")).toBeInTheDocument();
     expect(screen.getByText("Which path should Hermes take?")).toBeInTheDocument();
-    expect(screen.getByText(/earlier update/)).toBeInTheDocument();
+    expect(screen.getByTestId("hermes-activity-summary")).toBeInTheDocument();
+  });
+
+  it("summarises finished steps in one line and keeps the live step separate", () => {
+    render(
+      <HermesProgressInline
+        invocations={[
+          {
+            invocation: invocation(),
+            events: [
+              progressEvent({ id: "r1", sequence: 1, type: "tool.completed", toolCallId: "c1", toolName: "read_file", label: "Read a.ts" }),
+              progressEvent({ id: "r2", sequence: 2, type: "tool.completed", toolCallId: "c2", toolName: "read_file", label: "Read b.ts" }),
+              progressEvent({ id: "t1", sequence: 3, type: "tool.failed", toolCallId: "c3", toolName: "terminal", label: "pnpm test" }),
+              progressEvent({ id: "t2", sequence: 4, type: "tool.started", toolCallId: "c4", toolName: "terminal", label: "pnpm build" }),
+            ],
+          },
+        ]}
+      />,
+    );
+
+    expect(screen.getByTestId("hermes-activity-summary")).toHaveTextContent(
+      "Read 2 files and ran 1 command · 1 failed",
+    );
+    expect(screen.getByText("Running pnpm build")).toBeInTheDocument();
+    expect(screen.queryByText("Read a.ts")).not.toBeInTheDocument();
+  });
+
+  it("animates the working agent and its current thinking with orbs", () => {
+    const { container } = render(
+      <HermesProgressInline
+        invocations={[
+          {
+            invocation: invocation(),
+            events: [
+              progressEvent({ id: "thought-1", sequence: 1, type: "reasoning.delta", toolCallId: null, toolName: null, payload: { text: "Plan" } }),
+              progressEvent({ id: "tool-1", sequence: 2, type: "tool.completed", toolCallId: "call-1" }),
+              progressEvent({ id: "thought-2", sequence: 3, type: "reasoning.delta", toolCallId: null, toolName: null, payload: { text: "Check" } }),
+            ],
+          },
+        ]}
+      />,
+    );
+
+    expect(container.querySelectorAll('[data-thinking-orb="composing"]')).toHaveLength(1);
+    // Only the thinking still in progress animates; the earlier one is done.
+    expect(container.querySelectorAll('[data-thinking-orb="solving"]')).toHaveLength(1);
+  });
+
+  it("stops animating while the agent waits for an approval", () => {
+    const { container } = render(
+      <HermesProgressInline
+        invocations={[
+          {
+            invocation: invocation(),
+            events: [
+              progressEvent({ id: "thought-1", sequence: 1, type: "reasoning.delta", toolCallId: null, toolName: null, payload: { text: "Plan" } }),
+              progressEvent({
+                id: "approval-1",
+                sequence: 2,
+                type: "approval.request",
+                status: "waiting",
+                toolCallId: null,
+                toolName: null,
+                payload: { command: "git push", choices: ["once", "deny"] },
+              }),
+            ],
+          },
+        ]}
+        onInteraction={vi.fn()}
+      />,
+    );
+
+    expect(container.querySelector("[data-thinking-orb]")).toBeNull();
   });
 });
 
@@ -1127,4 +1217,20 @@ function progressEvent(
     createdAt: now,
     ...overrides,
   };
+}
+
+/** Finished steps fold into one summary line; open it to inspect them. */
+function expandFinishedSteps() {
+  for (const summary of screen.queryAllByTestId("hermes-activity-summary")) {
+    if (summary.getAttribute("aria-expanded") !== "true") fireEvent.click(summary);
+  }
+}
+
+/** Opens every step of one kind to show its details. */
+function expandSteps(kind: string) {
+  for (const row of screen.queryAllByTestId("hermes-activity-row")) {
+    const toggle =
+      row.dataset.kind === kind ? row.querySelector("button[aria-expanded='false']") : null;
+    if (toggle) fireEvent.click(toggle);
+  }
 }

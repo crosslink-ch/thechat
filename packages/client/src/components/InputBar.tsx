@@ -1,4 +1,5 @@
 import { onSessionReset } from "../lib/session-boundary";
+import { ArrowUp, FileText, Paperclip, Square, X } from "lucide-react";
 import { memo, useEffect, useRef, useState, useCallback, type DragEvent } from "react";
 import { useIsStreaming } from "../stores/streaming";
 import { useInputFocusStore } from "../stores/input-focus";
@@ -6,6 +7,7 @@ import { useComposerDraftsStore } from "../stores/composer-drafts";
 import { RichInput, type RichInputHandle } from "./RichInput";
 import { VoiceRecorder } from "./VoiceRecorder";
 import { SlashCommandMenu } from "./SlashCommandMenu";
+import { iconButtonClass } from "./ui";
 import type { MentionUser } from "./MentionList";
 import type { ImageAttachment } from "../lib/image-types";
 import {
@@ -907,7 +909,7 @@ function ScopedInputBar({
     <div className="chat-composer min-w-0 shrink-0 px-4 pb-4 pt-2">
       <div
         ref={containerRef}
-        className={`relative rounded-xl border bg-raised shadow-input transition-colors duration-150 focus-within:border-border-strong ${dragOver ? "border-accent border-dashed bg-accent/5" : "border-border"}`}
+        className={`relative rounded-xl border bg-raised shadow-input transition-colors duration-150 focus-within:border-border-focus ${dragOver ? "border-accent border-dashed bg-accent/5" : "border-border"}`}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
@@ -931,13 +933,11 @@ function ScopedInputBar({
                 />
                 <button
                   type="button"
-                  className="absolute -top-1.5 -right-1.5 flex size-5 cursor-pointer items-center justify-center rounded-full border border-border bg-elevated text-[0.714rem] text-text-muted opacity-0 shadow-sm transition-opacity duration-100 group-hover:opacity-100 hover:bg-hover hover:text-text"
+                  className="absolute -top-1.5 -right-1.5 flex size-5 cursor-pointer items-center justify-center rounded-full border border-border-strong bg-elevated text-text-muted opacity-0 shadow-sm transition-[opacity,background-color,color] duration-100 group-hover:opacity-100 focus-visible:opacity-100 hover:bg-button-hover hover:text-text"
                   onClick={() => removeImage(img.id)}
                   title="Remove image"
                 >
-                  <svg width="8" height="8" viewBox="0 0 8 8" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
-                    <path d="M1 1l6 6M7 1l-6 6" />
-                  </svg>
+                  <X size={14} aria-hidden="true" />
                 </button>
               </div>
             ))}
@@ -956,24 +956,24 @@ function ScopedInputBar({
                 data-attachment-phase={draft.phase}
                 data-attachment-progress={draft.progress}
                 data-attachment-id={draft.attachment?.id ?? ""}
-                className="composer-attachment-draft relative flex min-w-44 max-w-64 items-center gap-2 rounded-lg border border-border bg-background p-2 pr-8"
+                className="composer-attachment-draft relative flex min-w-44 max-w-64 items-center gap-2 rounded-lg border border-border bg-base p-2 pr-8"
               >
                 {draft.previewUrl ? (
                   <img
                     src={draft.previewUrl}
                     alt=""
-                    className="size-12 shrink-0 rounded object-cover"
+                    className="size-12 shrink-0 rounded-md object-cover"
                   />
                 ) : (
-                  <div className="flex size-12 shrink-0 items-center justify-center rounded bg-elevated text-lg" aria-hidden="true">
-                    📎
+                  <div className="flex size-12 shrink-0 items-center justify-center rounded-md bg-elevated text-text-dimmed" aria-hidden="true">
+                    <FileText size={18} aria-hidden="true" />
                   </div>
                 )}
                 <div className="min-w-0 flex-1">
-                  <div className="truncate text-xs font-medium text-text">
+                  <div className="truncate text-[0.857rem] font-medium text-text">
                     {draft.file.name}
                   </div>
-                  <div className="text-[0.643rem] text-text-dimmed">
+                  <div className={`text-[0.786rem] ${draft.phase === "error" ? "text-error-bright" : "text-text-dimmed"}`}>
                     {formatFileSize(draft.file.size)} ·{" "}
                     {draft.phase === "error"
                       ? draft.error
@@ -984,13 +984,13 @@ function ScopedInputBar({
                       value={draft.progress}
                       max={100}
                       aria-label={`Uploading ${draft.file.name}`}
-                      className="mt-1 h-1 w-full accent-accent"
+                      className="mt-1.5 h-1 w-full accent-accent"
                     />
                   )}
                   {draft.phase === "error" && (
                     <button
                       type="button"
-                      className="mt-1 text-[0.714rem] text-accent hover:underline"
+                      className="mt-1 cursor-pointer border-none bg-transparent p-0 font-[inherit] text-[0.786rem] font-medium text-accent hover:underline disabled:cursor-not-allowed disabled:opacity-45"
                       onClick={() => void retrySharedDraft(draft)}
                       disabled={sendingShared}
                     >
@@ -1000,20 +1000,20 @@ function ScopedInputBar({
                 </div>
                 <button
                   type="button"
-                  className="absolute right-1.5 top-1.5 flex size-5 cursor-pointer items-center justify-center rounded-full border border-border bg-elevated text-[0.714rem] text-text-muted shadow-sm hover:bg-hover hover:text-text"
+                  className="absolute right-1.5 top-1.5 flex size-5 cursor-pointer items-center justify-center rounded-md border-none bg-transparent text-text-dimmed transition-colors duration-100 hover:bg-hover hover:text-text disabled:cursor-not-allowed disabled:opacity-45"
                   onClick={() => void removeSharedDraft(draft)}
                   disabled={draft.phase === "cancelling" || sendingShared}
                   title={`Remove ${draft.file.name}`}
                   aria-label={`Remove ${draft.file.name}`}
                 >
-                  ×
+                  <X size={14} aria-hidden="true" />
                 </button>
               </div>
             ))}
           </div>
         )}
         {sharedError && (
-          <div role="alert" className="px-3 pt-2 text-xs text-error-bright">
+          <div role="alert" className="px-4 pt-2 text-[0.857rem] text-error-bright">
             {sharedError}
           </div>
         )}
@@ -1068,54 +1068,44 @@ function ScopedInputBar({
           )}
           <div hidden={voiceBusy} className={voiceBusy ? "hidden" : "contents"}>
           {queuedCount > 0 && (
-            <span className="mr-1 rounded border border-border bg-background px-1.5 py-0.5 text-[0.643rem] font-medium uppercase text-text-dimmed">
+            <span className="mr-1 rounded-full border border-border bg-base px-2 py-0.5 text-[0.714rem] font-medium uppercase tracking-wide tabular-nums text-text-dimmed">
               {queuedCount} queued
             </span>
           )}
           <button
             type="button"
-            className="flex size-8 cursor-pointer items-center justify-center rounded-lg border-none bg-transparent text-text-dimmed shadow-none transition-colors duration-150 hover:bg-hover hover:text-text-muted disabled:cursor-default disabled:opacity-25"
+            className={iconButtonClass("md")}
             onClick={() => fileInputRef.current?.click()}
             disabled={Boolean(sharedUpload && sendingShared)}
             title={sharedUpload ? "Attach files" : "Attach image"}
           >
-            <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l9.9-9.9a4 4 0 0 1 5.66 5.66l-9.9 9.9a2 2 0 0 1-2.83-2.83l9.19-9.19" />
-            </svg>
+            <Paperclip size={16} aria-hidden="true" />
           </button>
           {isStreaming && canSend && (
             <button
-              className="flex size-8 cursor-pointer items-center justify-center rounded-lg border-none shadow-none transition-all duration-150 bg-accent/15 text-accent hover:bg-accent/25"
+              className="flex size-8 cursor-pointer items-center justify-center rounded-md border-none bg-accent/15 text-accent shadow-none transition-colors duration-150 hover:bg-accent/25"
               onClick={handleSendClick}
               title="Queue message"
             >
-              <svg width="15" height="15" viewBox="0 0 15 15" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M7.5 12V3.5" />
-                <path d="M3.5 7L7.5 3L11.5 7" />
-              </svg>
+              <ArrowUp size={16} aria-hidden="true" />
             </button>
           )}
           {isStreaming ? (
             <button
-              className="flex size-8 cursor-pointer items-center justify-center rounded-lg border-none bg-error/15 text-error-bright shadow-none transition-colors duration-150 hover:bg-error/25"
+              className="flex size-8 cursor-pointer items-center justify-center rounded-md border-none bg-error/15 text-error-bright shadow-none transition-colors duration-150 hover:bg-error/25"
               onClick={onStop}
               title="Stop generating"
             >
-              <svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor">
-                <rect x="2" y="2" width="10" height="10" rx="1.5" />
-              </svg>
+              <Square size={12} fill="currentColor" aria-hidden="true" />
             </button>
           ) : (
             <button
-              className="flex size-8 cursor-pointer items-center justify-center rounded-lg border-none shadow-none transition-all duration-150 disabled:cursor-default disabled:opacity-25 bg-accent/15 text-accent hover:not-disabled:bg-accent/25"
+              className="flex size-8 cursor-pointer items-center justify-center rounded-md border-none bg-accent-fill text-white shadow-none transition-colors duration-150 hover:not-disabled:bg-accent-hover disabled:cursor-default disabled:bg-elevated disabled:text-text-dimmed"
               disabled={!canSend}
               onClick={handleSendClick}
               title="Send message"
             >
-              <svg width="15" height="15" viewBox="0 0 15 15" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M7.5 12V3.5" />
-                <path d="M3.5 7L7.5 3L11.5 7" />
-              </svg>
+              <ArrowUp size={16} aria-hidden="true" />
             </button>
           )}
           </div>

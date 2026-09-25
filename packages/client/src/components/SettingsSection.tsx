@@ -1,31 +1,33 @@
 import type { ReactNode } from "react";
+import { buttonClass, inputClass } from "./ui";
 
 /**
- * Shared presentation for the Settings page: one flat card per section with
+ * Shared presentation for the Settings page: one grouped card per section with
  * labelled rows inside. Platform shells reuse these so their sections match
  * the shared route without duplicating utility classes.
  */
 
 export const settingsCard =
-  "divide-y divide-border-subtle overflow-hidden rounded-xl border border-border bg-surface";
+  "divide-y divide-border-subtle overflow-hidden rounded-xl border border-border bg-white/[0.03]";
 
 export const settingsRow =
-  "grid min-w-0 gap-2 px-4 py-4 sm:grid-cols-[160px_minmax(0,1fr)] sm:items-start sm:gap-6 sm:px-5";
+  "grid min-w-0 gap-2 px-4 py-3.5 sm:grid-cols-[180px_minmax(0,1fr)] sm:items-start sm:gap-6 sm:px-5";
 
-export const settingsLabel = "text-[0.857rem] font-medium leading-5 text-text";
-export const settingsHint = "mt-0.5 text-[0.786rem] leading-5 text-text-dimmed";
-export const settingsValue = "text-[0.857rem] leading-5 text-text-muted";
+export const settingsLabel = "text-[0.929rem] font-medium leading-5 text-text";
+export const settingsHint = "mt-0.5 text-[0.857rem] leading-5 text-text-dimmed";
+export const settingsValue = "text-[0.929rem] leading-5 text-text-muted";
 
-export const settingsInput =
-  "h-10 w-full min-w-0 rounded-lg border border-border bg-base px-3 text-[0.929rem] text-text outline-none transition-colors placeholder:text-text-placeholder focus:border-accent focus-visible:ring-2 focus-visible:ring-accent/30 disabled:cursor-wait disabled:opacity-70 max-sm:h-[44px] max-sm:text-[16px]";
+export const settingsInput = `${inputClass} h-8 max-sm:h-[44px] max-sm:text-[16px]`;
 
-const settingsButtonBase =
-  "inline-flex shrink-0 cursor-pointer items-center justify-center whitespace-nowrap rounded-lg text-[0.857rem] font-medium transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-not-allowed max-sm:h-[44px]";
+// Touch targets are declared in pixels: the root font size is 14px, so a
+// rem-based h-11 would render below 44px.
+const settingsButtonExtras =
+  "shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent max-sm:h-[44px]";
 
-export const settingsPrimaryButton = `${settingsButtonBase} h-10 bg-accent px-4 font-semibold text-white hover:bg-accent/90 disabled:opacity-45`;
-export const settingsSecondaryButton = `${settingsButtonBase} h-9 border border-border bg-raised px-3 text-text-secondary hover:bg-hover hover:text-text disabled:opacity-50`;
-export const settingsQuietButton = `${settingsButtonBase} h-9 px-2.5 text-text-muted hover:bg-hover hover:text-text disabled:opacity-50`;
-export const settingsDangerButton = `${settingsButtonBase} h-9 border border-error-msg-border bg-error-msg-bg px-3 text-error-bright hover:brightness-110 disabled:opacity-50`;
+export const settingsPrimaryButton = `${buttonClass("primary", "md")} ${settingsButtonExtras}`;
+export const settingsSecondaryButton = `${buttonClass("secondary", "md")} ${settingsButtonExtras}`;
+export const settingsQuietButton = `${buttonClass("ghost", "md")} ${settingsButtonExtras}`;
+export const settingsDangerButton = `${buttonClass("danger", "md")} ${settingsButtonExtras}`;
 
 export function SettingsSection({
   id,
@@ -45,7 +47,7 @@ export function SettingsSection({
           {title}
         </h2>
         {description && (
-          <p className="mt-1 max-w-[600px] text-[0.857rem] leading-5 text-text-muted">
+          <p className="mt-0.5 max-w-[600px] text-[0.929rem] leading-5 text-text-muted">
             {description}
           </p>
         )}
@@ -69,7 +71,7 @@ export function SettingsField({
 }) {
   return (
     <div className={settingsRow}>
-      <div className="min-w-0">
+      <div className="min-w-0 sm:pt-1.5">
         <label htmlFor={htmlFor} className={`block ${settingsLabel}`}>
           {label}
         </label>
@@ -100,7 +102,7 @@ export function SettingsFact({
       </dt>
       <dd
         className={`min-w-0 break-all ${
-          mono ? "font-mono text-[0.786rem] leading-5 text-text-muted" : settingsValue
+          mono ? "font-mono text-[0.857rem] leading-5 text-text-muted" : settingsValue
         }`}
       >
         {children}

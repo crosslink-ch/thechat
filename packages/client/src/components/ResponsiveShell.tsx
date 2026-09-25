@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useState, useSyncExternalStore, type ReactNode } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { HeaderActionsProvider } from "./HeaderActions";
+import { Menu, X } from "lucide-react";
 
 // Keep both sidebars at the default 1100px window width; hide navigation before Tasks.
 export const MOBILE_NAV_QUERY = "(max-width: 1023px)";
@@ -43,7 +44,7 @@ export function ResponsiveShell({ navigation, children, routeKey }: {
                 <Dialog.Content className="mobile-drawer mobile-navigation" aria-describedby={undefined}>
                   <div className="mobile-drawer-heading">
                     <Dialog.Title>Workspace navigation</Dialog.Title>
-                    <Dialog.Close className="mobile-touch-button" aria-label="Close navigation">✕</Dialog.Close>
+                    <Dialog.Close className="mobile-touch-button" aria-label="Close navigation"><X size={18} aria-hidden="true" /></Dialog.Close>
                   </div>
                   <nav aria-label="Workspace navigation" className="mobile-navigation-content">{navigation}</nav>
                 </Dialog.Content>
@@ -62,9 +63,7 @@ export function NavigationToggle() {
   if (!navigation?.mobile) return null;
   return (
     <Dialog.Trigger className="mobile-touch-button" aria-label="Open navigation" aria-expanded={navigation.open}>
-      <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
-        <path d="M3 5h14M3 10h14M3 15h14" />
-      </svg>
+      <Menu size={20} aria-hidden="true" />
     </Dialog.Trigger>
   );
 }

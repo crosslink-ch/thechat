@@ -4,6 +4,10 @@ import type { ActivityItem } from "@thechat/shared";
 import { useActivityStore } from "../stores/activity";
 import { useNotificationsStore } from "../stores/notifications";
 import { useWorkspacesStore } from "../stores/workspaces";
+import { Check, CheckCheck } from "lucide-react";
+import { buttonClass, iconButtonClass } from "../components/ui";
+
+const panelClass = "rounded-xl border border-border bg-white/[0.03]";
 
 function relativeTime(iso: string) {
   const elapsedMs = Date.now() - new Date(iso).getTime();
@@ -119,18 +123,20 @@ export function ActivityRoute() {
 
   return (
     <div className="flex h-full flex-col bg-base">
-      <div className="border-b border-border px-5 py-4">
-        <h1 className="text-[1.071rem] font-semibold text-text">Activity</h1>
-        <p className="mt-1 text-[0.786rem] text-text-muted">
-          Unread messages and requests from every workspace.
-        </p>
+      <div className="shrink-0 px-4 pb-4 pt-6 sm:px-8 sm:pt-8">
+        <div className="mx-auto max-w-3xl">
+          <h1 className="text-[1.429rem] font-semibold tracking-tight text-text">Activity</h1>
+          <p className="mt-1 text-[0.929rem] text-text-muted">
+            Unread messages and requests from every workspace.
+          </p>
+        </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto px-5 py-4">
+      <div className="flex-1 overflow-y-auto px-4 pb-10 pt-2 sm:px-8">
         {(activityError || notificationsError || actionError) && (
           <div
             role="alert"
-            className="mx-auto mb-4 max-w-3xl rounded-lg border border-error-border bg-error-msg-bg px-3 py-2 text-[0.857rem] text-error-bright"
+            className="mx-auto mb-4 max-w-3xl rounded-lg border border-error-msg-border bg-error-msg-bg px-3 py-2 text-[0.929rem] text-error-bright"
           >
             {actionError ?? activityError ?? notificationsError}
           </div>
@@ -138,27 +144,27 @@ export function ActivityRoute() {
 
         {noActivity ? (
           <div className="mx-auto max-w-3xl py-16 text-center">
-            <div className="text-[0.929rem] font-medium text-text-secondary">
+            <div className="text-[1rem] font-medium text-text-secondary">
               You&apos;re all caught up
             </div>
-            <div className="mt-1 text-[0.786rem] text-text-dimmed">
+            <div className="mt-1 text-[0.929rem] text-text-dimmed">
               New messages and requests will appear here.
             </div>
           </div>
         ) : (
-          <div className="mx-auto flex max-w-3xl flex-col gap-7">
+          <div className="mx-auto flex max-w-3xl flex-col gap-8">
             {(items.length > 0 || activityLoading) && (
               <section aria-labelledby="activity-unread-heading">
                 <div className="mb-3 flex items-center justify-between gap-3">
                   <div>
                     <h2
                       id="activity-unread-heading"
-                      className="text-[0.929rem] font-semibold text-text"
+                      className="text-[1rem] font-semibold text-text"
                     >
                       Unread messages
                     </h2>
                     {totalUnreadMessages > 0 && (
-                      <p className="mt-0.5 text-[0.714rem] text-text-dimmed">
+                      <p className="mt-0.5 text-[0.857rem] text-text-dimmed">
                         {totalUnreadMessages} unread across your workspaces
                       </p>
                     )}
@@ -167,22 +173,23 @@ export function ActivityRoute() {
                     <button
                       type="button"
                       disabled={processingIds.size > 0}
-                      className="cursor-pointer rounded-md border border-border bg-transparent px-2.5 py-1.5 text-[0.786rem] text-text-secondary transition-colors hover:bg-hover hover:text-text disabled:cursor-not-allowed disabled:opacity-50"
+                      className={buttonClass("secondary", "sm")}
                       onClick={() =>
                         void runAction("all", () => markAllRead())
                       }
                     >
+                      <CheckCheck size={14} aria-hidden="true" />
                       {processingIds.has("all") ? "Working..." : "Mark all as read"}
                     </button>
                   )}
                 </div>
 
                 {activityLoading && items.length === 0 ? (
-                  <div className="rounded-lg border border-border bg-raised px-4 py-8 text-center text-[0.857rem] text-text-muted">
+                  <div className={`px-4 py-8 text-center text-[0.929rem] text-text-dimmed ${panelClass}`}>
                     Loading activity...
                   </div>
                 ) : (
-                  <div className="flex flex-col gap-2">
+                  <div className={`flex flex-col gap-0.5 p-1 ${panelClass}`}>
                     {items.map((item) => {
                       const label =
                         item.conversationType === "group"
@@ -195,9 +202,9 @@ export function ActivityRoute() {
                         <article
                           key={item.conversationId}
                           data-testid={`activity-item-${item.conversationId}`}
-                          className="flex items-start gap-3 rounded-lg border border-border bg-raised p-3 transition-colors hover:border-border-strong"
+                          className="flex items-start gap-3 rounded-lg px-3 py-2.5 transition-colors duration-150 hover:bg-white/[0.04]"
                         >
-                          <span className="mt-1 flex size-8 shrink-0 items-center justify-center rounded-lg bg-accent/15 text-[0.786rem] font-semibold text-accent">
+                          <span className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-lg bg-white/[0.06] text-[0.857rem] font-semibold text-text-secondary">
                             {item.workspaceName.charAt(0).toUpperCase()}
                           </span>
                           <button
@@ -207,23 +214,23 @@ export function ActivityRoute() {
                             onClick={() => void openActivity(item)}
                           >
                             <span className="flex items-center gap-2">
-                              <span className="truncate text-[0.857rem] font-semibold text-text">
+                              <span className="truncate text-[0.929rem] font-semibold text-text">
                                 {label}
                               </span>
-                              <span className="truncate text-[0.714rem] text-text-dimmed">
+                              <span className="truncate text-[0.786rem] text-text-dimmed">
                                 {item.workspaceName}
                               </span>
-                              <span className="ml-auto shrink-0 text-[0.714rem] text-text-dimmed">
+                              <span className="ml-auto shrink-0 text-[0.786rem] text-text-dimmed">
                                 {relativeTime(item.latestMessage.createdAt)}
                               </span>
                             </span>
-                            <span className="mt-1 block truncate text-[0.786rem] text-text-secondary">
-                              <strong className="font-medium text-text-muted">
+                            <span className="mt-0.5 block truncate text-[0.929rem] text-text-muted">
+                              <strong className="font-medium text-text-secondary">
                                 {item.latestMessage.senderName}
                               </strong>{" "}
                               {messagePreview(item)}
                             </span>
-                            <span className="mt-1.5 inline-flex rounded-full bg-accent/15 px-2 py-0.5 text-[0.714rem] font-medium text-accent">
+                            <span className="mt-1.5 inline-flex rounded-full bg-accent/15 px-2 py-0.5 text-[0.786rem] font-medium text-accent">
                               {item.unreadCount} unread
                             </span>
                           </button>
@@ -232,14 +239,14 @@ export function ActivityRoute() {
                             disabled={processing}
                             aria-label={`Mark ${item.conversationName} as read`}
                             title="Mark as read"
-                            className="flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-md border-none bg-transparent text-text-dimmed transition-colors hover:bg-hover hover:text-text disabled:cursor-not-allowed disabled:opacity-50"
+                            className={iconButtonClass("md")}
                             onClick={() =>
                               void runAction(item.conversationId, () =>
                                 markConversationRead(item.conversationId),
                               )
                             }
                           >
-                            ✓
+                            <Check size={16} aria-hidden="true" />
                           </button>
                         </article>
                       );
@@ -253,12 +260,12 @@ export function ActivityRoute() {
               <section aria-labelledby="activity-requests-heading">
                 <h2
                   id="activity-requests-heading"
-                  className="mb-3 text-[0.929rem] font-semibold text-text"
+                  className="mb-3 text-[1rem] font-semibold text-text"
                 >
                   Requests
                 </h2>
                 {notificationsLoading && notifications.length === 0 ? (
-                  <div className="rounded-lg border border-border bg-raised px-4 py-8 text-center text-[0.857rem] text-text-muted">
+                  <div className={`px-4 py-8 text-center text-[0.929rem] text-text-dimmed ${panelClass}`}>
                     Loading requests...
                   </div>
                 ) : (
@@ -271,19 +278,19 @@ export function ActivityRoute() {
                           <article
                             key={`workspace:${invite.id}`}
                             data-testid="workspace-invite-notification"
-                            className="rounded-lg border border-border bg-raised p-4"
+                            className={`p-4 ${panelClass}`}
                           >
-                            <div className="text-[0.929rem] font-medium text-text">
+                            <div className="text-[1rem] font-medium text-text">
                               Join {invite.workspaceName}
                             </div>
-                            <div className="mt-1 text-[0.786rem] text-text-muted">
+                            <div className="mt-1 text-[0.929rem] text-text-muted">
                               {invite.inviterName} invited you to this workspace.
                             </div>
-                            <div className="mt-4 flex gap-2">
+                            <div className="mt-3.5 flex gap-2">
                               <button
                                 type="button"
                                 disabled={processing}
-                                className="cursor-pointer rounded-md bg-accent px-3 py-1.5 text-[0.786rem] font-medium text-white disabled:cursor-not-allowed disabled:opacity-50"
+                                className={buttonClass("primary", "sm")}
                                 onClick={() =>
                                   void runAction(invite.id, () =>
                                     acceptInvite(invite.id),
@@ -295,7 +302,7 @@ export function ActivityRoute() {
                               <button
                                 type="button"
                                 disabled={processing}
-                                className="cursor-pointer rounded-md border border-border px-3 py-1.5 text-[0.786rem] text-text-secondary hover:bg-hover disabled:cursor-not-allowed disabled:opacity-50"
+                                className={buttonClass("secondary", "sm")}
                                 onClick={() =>
                                   void runAction(invite.id, () =>
                                     declineInvite(invite.id),
@@ -315,20 +322,20 @@ export function ActivityRoute() {
                         <article
                           key={`bot:${invite.id}`}
                           data-testid="bot-workspace-invite-notification"
-                          className="rounded-lg border border-border bg-raised p-4"
+                          className={`p-4 ${panelClass}`}
                         >
-                          <div className="text-[0.929rem] font-medium text-text">
+                          <div className="text-[1rem] font-medium text-text">
                             Add {invite.botName} to {invite.workspaceName}
                           </div>
-                          <div className="mt-1 text-[0.786rem] leading-relaxed text-text-muted">
+                          <div className="mt-1 text-[0.929rem] leading-relaxed text-text-muted">
                             {invite.requesterName} wants to add a bot you own to this
                             workspace. Approve only if you trust the workspace members.
                           </div>
-                          <div className="mt-4 flex gap-2">
+                          <div className="mt-3.5 flex gap-2">
                             <button
                               type="button"
                               disabled={processing}
-                              className="cursor-pointer rounded-md bg-accent px-3 py-1.5 text-[0.786rem] font-medium text-white disabled:cursor-not-allowed disabled:opacity-50"
+                              className={buttonClass("primary", "sm")}
                               onClick={() =>
                                 void runAction(invite.id, () =>
                                   acceptBotWorkspaceInvite(invite.id),
@@ -340,7 +347,7 @@ export function ActivityRoute() {
                             <button
                               type="button"
                               disabled={processing}
-                              className="cursor-pointer rounded-md border border-border px-3 py-1.5 text-[0.786rem] text-text-secondary hover:bg-hover disabled:cursor-not-allowed disabled:opacity-50"
+                              className={buttonClass("secondary", "sm")}
                               onClick={() =>
                                 void runAction(invite.id, () =>
                                   declineBotWorkspaceInvite(invite.id),

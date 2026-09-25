@@ -4,12 +4,15 @@ import remarkMath from "remark-math";
 import rehypeHighlight from "rehype-highlight";
 import rehypeKatex from "rehype-katex";
 import type { Components } from "react-markdown";
-import { memo, useEffect, useRef, useState, type ComponentProps } from "react";
+import { memo, useEffect, useMemo, useRef, useState, type ComponentProps } from "react";
+import { remarkBareDomains } from "../lib/remark-bare-domains";
+import { remarkMentions, type MentionNames } from "../lib/remark-mentions";
 
 type ReactMarkdownProps = ComponentProps<typeof ReactMarkdown>;
 
 const remarkPlugins: NonNullable<ReactMarkdownProps["remarkPlugins"]> = [
   remarkGfm,
+  remarkBareDomains,
   [remarkMath, { singleDollarTextMath: false }],
 ];
 const rehypePlugins: NonNullable<ReactMarkdownProps["rehypePlugins"]> = [
@@ -56,6 +59,8 @@ interface MarkdownProps {
   defer?: boolean;
   deferDelayMs?: number;
   onDeferredRender?: () => void;
+  /** Workspace names to show as @mention pills (keep the object stable). */
+  mentions?: MentionNames;
 }
 
 export const Markdown = memo(function Markdown({
@@ -63,6 +68,7 @@ export const Markdown = memo(function Markdown({
   defer = false,
   deferDelayMs = 0,
   onDeferredRender,
+  mentions,
 }: MarkdownProps) {
   const [readyContent, setReadyContent] = useState<string | null>(() =>
     defer ? null : content,
@@ -95,14 +101,24 @@ export const Markdown = memo(function Markdown({
     return <MarkdownPreview content={content} />;
   }
 
-  return <MarkdownContent content={content} />;
+  return <MarkdownContent content={content} mentions={mentions} />;
 }, areMarkdownPropsEqual);
 
-const MarkdownContent = memo(function MarkdownContent({ content }: { content: string }) {
+const MarkdownContent = memo(function MarkdownContent({
+  content,
+  mentions,
+}: {
+  content: string;
+  mentions?: MentionNames;
+}) {
+  const plugins = useMemo(
+    () => (mentions ? [...remarkPlugins, [remarkMentions, mentions] as const] : remarkPlugins),
+    [mentions],
+  );
   return (
     <div className="md-content">
       <ReactMarkdown
-        remarkPlugins={remarkPlugins}
+        remarkPlugins={plugins as typeof remarkPlugins}
         rehypePlugins={rehypePlugins}
         components={components}
       >
@@ -124,7 +140,8 @@ function areMarkdownPropsEqual(previous: MarkdownProps, next: MarkdownProps) {
   return (
     previous.content === next.content &&
     (previous.defer ?? false) === (next.defer ?? false) &&
-    (previous.deferDelayMs ?? 0) === (next.deferDelayMs ?? 0)
+    (previous.deferDelayMs ?? 0) === (next.deferDelayMs ?? 0) &&
+    previous.mentions === next.mentions
   );
 }
 

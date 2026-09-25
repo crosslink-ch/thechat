@@ -1,5 +1,6 @@
 import type { ChatMessage } from "@thechat/shared";
 import type { ReactNode } from "react";
+import { Avatar } from "./Avatar";
 import { MessageReactions } from "./MessageReactions";
 import { SharedMessageAttachments } from "./SharedMessageAttachments";
 import {
@@ -48,6 +49,8 @@ interface SharedChatMessageProps {
   message: ChatMessage;
   merged: boolean;
   children: ReactNode;
+  /** The message @mentions the signed-in user. */
+  mentionsYou?: boolean;
   onSetReaction?: (
     messageId: string,
     emoji: string,
@@ -59,6 +62,7 @@ export function SharedChatMessage({
   message,
   merged,
   children,
+  mentionsYou = false,
   onSetReaction,
 }: SharedChatMessageProps) {
   // Grouped rows only have the avatar-width gutter for their hover time.
@@ -73,7 +77,12 @@ export function SharedChatMessage({
     <div
       data-message-id={message.id}
       data-message-grouped={merged ? "true" : "false"}
-      className={`group/message group relative flex gap-2.5 px-5 transition-colors duration-100 hover:bg-raised/50 ${
+      data-mentions-you={mentionsYou ? "true" : undefined}
+      className={`group/message group relative flex gap-2.5 px-5 transition-colors duration-100 ${
+        mentionsYou
+          ? "bg-warning/[0.06] shadow-[inset_2px_0_0_var(--color-warning)] hover:bg-warning/[0.09]"
+          : "hover:bg-white/[0.025]"
+      } ${
         merged ? "py-0.5" : "pb-0.5 pt-2.5"
       }`}
     >
@@ -88,12 +97,13 @@ export function SharedChatMessage({
           {displayTime}
         </time>
       ) : (
-        <div
+        <Avatar
           aria-hidden="true"
-          className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-full bg-elevated text-[0.857rem] font-semibold text-text-muted"
-        >
-          {message.senderName.charAt(0).toUpperCase()}
-        </div>
+          name={message.senderName}
+          colorKey={message.senderId}
+          bot={message.senderType === "bot"}
+          className="mt-0.5 size-8 text-[0.857rem]"
+        />
       )}
       <div className="min-w-0 flex-1">
         {merged ? (

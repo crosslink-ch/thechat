@@ -1,4 +1,6 @@
 import { isAuthenticated } from "../lib/auth-identity";
+import { useAuthStore } from "../stores/auth";
+import { mentionsName, type MentionNames } from "../lib/remark-mentions";
 import { useRef, useEffect, useCallback, useMemo, useLayoutEffect, useState } from "react";
 import { flushSync } from "react-dom";
 import { InputBar, type InputSendResult } from "./InputBar";
@@ -16,6 +18,10 @@ import type { MentionUser } from "./MentionList";
 import { HermesProgressInline } from "./HermesProgressInline";
 import type { HermesSlashCommand } from "../lib/hermes-slash-commands";
 import { MessageSendError } from "./MessageSendError";
+import { HermesWorkLog } from "./HermesWorkLog";
+import { foldHermesKeepAlives } from "../lib/hermes-keepalive";
+import { ArrowDown } from "lucide-react";
+import { buttonClass } from "./ui";
 import {
   SharedChatMessage,
   shouldMergeChatMessage,
@@ -62,7 +68,7 @@ interface HermesDmChatViewProps {
 }
 
 export function HermesDmChatView({
-  messages,
+  messages: incomingMessages,
   loading,
   loadingOlder = false,
   hasOlderMessages = false,
@@ -85,6 +91,29 @@ export function HermesDmChatView({
   token,
   composerKey,
 }: HermesDmChatViewProps) {
+  // Hermes keep-alive updates fold into the answer they precede; the answers
+  // (and ordinary messages) are what the list formats and renders.
+  const foldedMessages = useMemo(
+    () => foldHermesKeepAlives(incomingMessages),
+    [incomingMessages],
+  );
+  const answerItems = useMemo(
+    () => foldedMessages.filter((item) => item.kind === "message"),
+    [foldedMessages],
+  );
+  const messages = useMemo(
+    () => answerItems.map((item) => item.message),
+    [answerItems],
+  );
+  // Workspace names shown as @mention pills; mentions of you are highlighted.
+  const selfId = useAuthStore((state) => state.user?.id ?? null);
+  const selfName = useAuthStore((state) => state.user?.name ?? null);
+  const mentionNames = useMemo<MentionNames>(
+    () => ({ names: (mentions ?? []).map((mention) => mention.label), self: selfName }),
+    [mentions, selfName],
+  );
+  const mentionsYou = (message: { senderId: string; content: string }) =>
+    message.senderId !== selfId && mentionsName(message.content, selfName);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const { isAtBottom, pauseAutoScroll, scrollToBottom, shouldFollowBottom } =
     useAutoScroll(scrollContainerRef);
@@ -125,8 +154,16 @@ export function HermesDmChatView({
     progressInvocations.length > 0 || visibleTypingNames.length > 0;
 
   const messageScrollSignature = useMemo(
-    () => chatMessageWindowSignature(messages),
-    [messages],
+    () => chatMessageWindowSignature(incomingMessages),
+    [incomingMessages],
+  );
+  // The live timeline already shows a running bot; its keep-alives are redundant.
+  const workingItems = foldedMessages.filter(
+    (item) =>
+      item.kind === "working" &&
+      !progressInvocations.some(
+        ({ invocation }) => invocation.botUserId === item.message.senderId,
+      ),
   );
   const progressScrollSignature = useMemo(
     () =>
@@ -364,22 +401,22 @@ export function HermesDmChatView({
           className="flex flex-1 flex-col overflow-y-auto [overflow-anchor:none]"
         >
           {loading && (
-            <div className="flex flex-1 flex-col items-center justify-center text-[1rem] text-text-placeholder">Loading messages...</div>
+            <div className="flex flex-1 flex-col items-center justify-center text-[1rem] text-text-dimmed">Loading messages...</div>
           )}
           {!loading && hasOlderMessages && (
-            <div className="flex justify-center px-5 py-2">
+            <div className="flex justify-center px-5 py-3">
               <button
                 type="button"
                 onClick={requestOlderMessages}
                 disabled={loadingOlder}
-                className="rounded border border-border bg-elevated px-3 py-1 text-[0.786rem] text-text-muted hover:bg-raised disabled:cursor-default disabled:opacity-60"
+                className={buttonClass("secondary", "sm")}
               >
                 {loadingOlder ? "Loading earlier messages..." : "Load earlier messages"}
               </button>
             </div>
           )}
-          {!loading && messages.length === 0 && (
-            <div className="flex flex-1 flex-col items-center justify-center text-[1rem] text-text-placeholder">No messages yet. Start the conversation!</div>
+          {!loading && incomingMessages.length === 0 && (
+            <div className="flex flex-1 flex-col items-center justify-center text-[1rem] text-text-dimmed">No messages yet. Start the conversation!</div>
           )}
           {messages.map((msg, index) => (
             <SharedChatMessage
@@ -393,11 +430,14 @@ export function HermesDmChatView({
                   progressInvocations,
                 )
               }
+              mentionsYou={mentionsYou(msg)}
               onSetReaction={onSetReaction}
             >
+              {answerItems[index]?.run && <HermesWorkLog run={answerItems[index].run!} />}
               {msg.content && (
                 <Markdown
                   content={msg.content}
+                  mentions={mentionNames}
                   defer={shouldDeferFormatting(msg.id)}
                   deferDelayMs={
                     shouldDeferFormatting(msg.id)
@@ -411,6 +451,15 @@ export function HermesDmChatView({
                   }
                 />
               )}
+            </SharedChatMessage>
+          ))}
+          {workingItems.map((item) => (
+            <SharedChatMessage
+              key={item.message.id}
+              message={{ ...item.message, content: "" }}
+              merged={false}
+            >
+              {item.run && <HermesWorkLog run={item.run} live />}
             </SharedChatMessage>
           ))}
           <HermesProgressInline
@@ -430,7 +479,7 @@ export function HermesDmChatView({
             aria-live="polite"
             className="pointer-events-none absolute inset-x-0 top-2 z-10 flex justify-center px-5 py-1 text-[0.786rem] text-text-dimmed"
           >
-            <span className="rounded border border-border bg-surface/95 px-2.5 py-1 shadow-sm">
+            <span className="rounded-full border border-border bg-surface/95 px-3 py-1 shadow-card backdrop-blur-xl">
               Formatting message history...
             </span>
           </div>
@@ -439,9 +488,10 @@ export function HermesDmChatView({
           <button
             type="button"
             onClick={() => scrollToBottom({ force: true })}
-            className="absolute bottom-4 left-1/2 z-10 flex -translate-x-1/2 items-center gap-1.5 rounded-full bg-elevated/90 px-3 py-1.5 text-xs shadow-md"
+            className="absolute bottom-4 left-1/2 z-10 flex -translate-x-1/2 items-center gap-1.5 rounded-full border border-border bg-surface/95 px-3 py-1.5 text-[0.857rem] font-medium text-text-secondary shadow-card backdrop-blur-xl transition-colors duration-150 hover:bg-elevated hover:text-text animate-fade-in"
           >
-            ↓ Jump to bottom
+            <ArrowDown size={14} aria-hidden="true" />
+            Jump to bottom
           </button>
         )}
       </div>

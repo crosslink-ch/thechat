@@ -4,6 +4,8 @@ import {
   useImperativeHandle,
   useState,
 } from "react";
+import { Avatar } from "./Avatar";
+import { menuContentClass } from "./ui";
 
 export interface MentionUser {
   id: string;
@@ -48,22 +50,20 @@ export const MentionList = forwardRef<
   if (items.length === 0) return null;
 
   return (
-    <div className="flex flex-col rounded-lg border border-border bg-raised py-1 shadow-card">
+    <div className={`flex max-w-[280px] flex-col gap-px ${menuContentClass}`}>
       {items.map((item, index) => (
         <button
           key={item.id}
-          className={`flex cursor-pointer items-center gap-2 border-none bg-transparent px-3 py-1.5 text-left text-[0.929rem] text-text transition-colors duration-75 ${
-            index === selectedIndex ? "bg-hover" : ""
+          className={`flex cursor-pointer items-center gap-2.5 rounded-lg border-none px-2 py-1.5 text-left font-[inherit] text-[0.929rem] outline-none transition-colors duration-75 ${
+            index === selectedIndex ? "bg-hover text-text" : "bg-transparent text-text-secondary"
           }`}
           onClick={() => command(item)}
           onMouseEnter={() => setSelectedIndex(index)}
         >
-          <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-elevated text-[0.786rem] font-semibold text-text-muted">
-            {item.label.charAt(0).toUpperCase()}
-          </span>
-          <span className="flex-1 truncate">{item.label}</span>
+          <Avatar name={item.label} colorKey={item.id} className="size-6 text-[0.786rem]" />
+          <span className="min-w-0 flex-1 truncate">{item.label}</span>
           {item.type === "bot" && (
-            <span className="rounded bg-accent/15 px-1.5 py-0.5 text-[0.714rem] font-medium text-accent">
+            <span className="rounded-md bg-accent/15 px-1.5 py-0.5 text-[0.714rem] font-medium tracking-wide text-accent">
               BOT
             </span>
           )}

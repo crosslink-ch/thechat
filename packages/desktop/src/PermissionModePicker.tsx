@@ -70,24 +70,24 @@ function PermissionModePickerInner() {
   }, [highlightIndex]);
 
   return (
-    <div className="fixed inset-0 z-20 flex items-start justify-center bg-overlay pt-20 backdrop-blur-[2px] animate-fade-in" onClick={closePicker} onKeyDown={handleKeyDown}>
-      <div className="w-full max-w-[400px] overflow-hidden rounded-xl border border-border-strong bg-surface shadow-card animate-slide-up" onClick={(e) => e.stopPropagation()}>
-        <div className="border-b border-border px-4 py-3 text-[0.929rem] font-medium text-text-secondary">
-          Permission Mode
+    <div className="fixed inset-0 z-20 flex items-start justify-center bg-overlay px-4 pt-20 backdrop-blur-[2px] animate-overlay-in" onClick={closePicker} onKeyDown={handleKeyDown}>
+      <div className="w-full max-w-[400px] overflow-hidden rounded-xl border border-border bg-surface/95 shadow-card backdrop-blur-2xl backdrop-saturate-150 animate-menu-in" onClick={(e) => e.stopPropagation()}>
+        <div className="px-4 pb-1 pt-3 text-[0.786rem] font-medium text-text-dimmed">
+          Permission mode
         </div>
-        <div ref={listRef} tabIndex={-1} autoFocus>
+        <div ref={listRef} tabIndex={-1} autoFocus className="p-1.5 outline-none">
           {modes.map((mode, i) => (
             <button
               key={mode.id}
               autoFocus={i === highlightIndex}
-              className={`flex w-full cursor-pointer flex-col gap-0.5 border-none bg-none px-4 py-3 text-left font-[inherit] transition-colors duration-75 ${i === highlightIndex ? "bg-elevated" : "hover:bg-hover"}`}
+              className={`flex w-full cursor-pointer flex-col gap-0.5 rounded-lg border-none px-3 py-2.5 text-left font-[inherit] outline-none transition-colors duration-100 ${i === highlightIndex ? "bg-hover" : "bg-transparent hover:bg-hover"}`}
               onClick={() => handleSelect(mode.id)}
               onMouseEnter={() => setHighlightIndex(i)}
             >
               <span className={`flex items-center gap-2 text-[0.929rem] font-medium ${mode.style}`}>
                 {mode.label}
                 {mode.id === currentMode && (
-                  <span className="rounded-md bg-elevated px-1.5 py-0.5 text-[0.714rem] font-medium text-text-dimmed">current</span>
+                  <span className="rounded-md bg-white/[0.06] px-1.5 py-0.5 text-[0.714rem] font-medium text-text-dimmed">current</span>
                 )}
               </span>
               <span className="text-[0.857rem] text-text-dimmed">{mode.description}</span>

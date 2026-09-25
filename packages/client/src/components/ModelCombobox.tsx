@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { inputClass } from "./ui";
 
 export function ModelCombobox({
   value,
@@ -85,13 +86,14 @@ export function ModelCombobox({
           }
         }}
         placeholder="Search models..."
-        className="w-full rounded-lg border border-border bg-raised px-3 py-2 text-[0.929rem] text-text outline-none transition-colors placeholder:text-text-dimmed focus:border-accent disabled:cursor-not-allowed disabled:opacity-50"
+        className={inputClass}
         spellCheck={false}
       />
       {open && filtered.length > 0 && (
         <ul
           ref={listRef}
-          className="absolute z-50 mt-1 max-h-[200px] w-full overflow-y-auto rounded-lg border border-border bg-raised shadow-lg"
+          // Frosted menu surface; the list itself scrolls, so no overflow-hidden.
+          className="absolute z-50 mt-1 flex max-h-[200px] w-full flex-col gap-px overflow-y-auto rounded-xl border border-border bg-surface/95 p-1.5 shadow-card backdrop-blur-2xl backdrop-saturate-150 animate-menu-in"
         >
           {filtered.map((o, i) => (
             <li
@@ -101,12 +103,12 @@ export function ModelCombobox({
                 select(o.id);
               }}
               onMouseEnter={() => setActiveIdx(i)}
-              className={`cursor-pointer px-3 py-2 text-[0.929rem] ${
-                i === activeIdx ? "bg-accent/15 text-accent" : "text-text hover:bg-hover"
+              className={`flex shrink-0 cursor-pointer items-baseline gap-2 rounded-lg px-2.5 py-1.5 text-[0.929rem] transition-colors duration-75 ${
+                i === activeIdx ? "bg-hover text-text" : "text-text-secondary"
               }`}
             >
-              <span className="font-medium">{o.name}</span>
-              <span className="ml-2 text-text-dimmed">{o.id}</span>
+              <span className="truncate font-medium">{o.name}</span>
+              <span className="min-w-0 truncate font-mono text-[0.786rem] text-text-dimmed">{o.id}</span>
             </li>
           ))}
         </ul>

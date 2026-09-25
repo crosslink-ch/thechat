@@ -21,68 +21,29 @@ import {
 } from "./ChannelModal";
 import { api } from "../lib/api";
 import type { WorkspaceChannel, WorkspaceMember } from "@thechat/shared";
+import { Bell, Bot, ChevronDown, Ellipsis, LogIn, LogOut, Pencil, Plus, Settings, Trash2 } from "lucide-react";
+import { Avatar } from "./Avatar";
+import {
+  avatarColor,
+  buttonClass,
+  iconButtonClass,
+  menuContentClass,
+  menuDangerItemClass,
+  menuItemBaseClass,
+  menuItemClass,
+  menuSeparatorClass,
+  sectionLabelClass,
+} from "./ui";
 
 const SIDEBAR_WIDTH = 347;
 
-function PlusIcon({ className = "" }: { className?: string }) {
+function Chevron({ open = false }: { open?: boolean }) {
   return (
-    <svg className={className} width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round">
-      <path d="M7 3v8" />
-      <path d="M3 7h8" />
-    </svg>
-  );
-}
-
-function MoreIcon() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
-      <circle cx="3" cy="8" r="1.2" />
-      <circle cx="8" cy="8" r="1.2" />
-      <circle cx="13" cy="8" r="1.2" />
-    </svg>
-  );
-}
-
-function PencilIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="m9.6 2.3 2.1 2.1-6.8 6.8-2.8.7.7-2.8Z" />
-      <path d="m8.2 3.7 2.1 2.1" />
-    </svg>
-  );
-}
-
-function TrashIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M2.5 4h9M5.3 2.2h3.4L9.3 4H4.7ZM4 6v5M7 6v5M10 6v5M3.5 4l.5 8h6l.5-8" />
-    </svg>
-  );
-}
-
-function ChevronDownIcon({ open = false }: { open?: boolean }) {
-  return (
-    <svg className={`shrink-0 text-text-dimmed transition-transform duration-150 ${open ? "rotate-180" : ""}`} width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M3.5 5.25 7 8.75l3.5-3.5" />
-    </svg>
-  );
-}
-
-function BellIcon() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M13.5 6.25a4.5 4.5 0 0 0-9 0c0 5.25-2.25 6.75-2.25 6.75h13.5s-2.25-1.5-2.25-6.75" />
-      <path d="M10.3 15a1.5 1.5 0 0 1-2.6 0" />
-    </svg>
-  );
-}
-
-function SettingsIcon() {
-  return (
-    <svg width="15" height="15" viewBox="0 0 15 15" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
-      <circle cx="7.5" cy="7.5" r="2" />
-      <path d="M12.4 8.6a1.3 1.3 0 0 0 .25 1.43l.04.04a1.55 1.55 0 0 1-2.2 2.2l-.04-.04A1.3 1.3 0 0 0 9 12a1.3 1.3 0 0 0-.8 1.2v.1a1.55 1.55 0 0 1-3.1 0v-.06A1.3 1.3 0 0 0 4.25 12a1.3 1.3 0 0 0-1.43.25l-.04.04a1.55 1.55 0 0 1-2.2-2.2l.04-.04A1.3 1.3 0 0 0 .9 8.6a1.3 1.3 0 0 0-1.2-.8h-.1a1.55 1.55 0 0 1 0-3.1h.06A1.3 1.3 0 0 0 .9 3.9a1.3 1.3 0 0 0-.25-1.43L.61 2.43a1.55 1.55 0 0 1 2.2-2.2l.04.04A1.3 1.3 0 0 0 4.25.5a1.3 1.3 0 0 0 .8-1.2v-.1a1.55 1.55 0 0 1 3.1 0v.06A1.3 1.3 0 0 0 9 .5a1.3 1.3 0 0 0 1.43-.25l.04-.04a1.55 1.55 0 0 1 2.2 2.2l-.04.04a1.3 1.3 0 0 0-.25 1.43c.18.5.67.82 1.2.82h.1a1.55 1.55 0 0 1 0 3.1h-.06c-.53 0-1.02.32-1.2.8Z" />
-    </svg>
+    <ChevronDown
+      size={14}
+      aria-hidden="true"
+      className={`shrink-0 text-text-dimmed transition-transform duration-150 ${open ? "rotate-180" : ""}`}
+    />
   );
 }
 
@@ -226,19 +187,19 @@ export function Sidebar() {
         <span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">
           {activeWorkspace ? activeWorkspace.name : "Select workspace"}
         </span>
-        <ChevronDownIcon open={dropdownOpen} />
+        <Chevron open={dropdownOpen} />
       </button>
       {dropdownOpen && (
-        <div className="absolute top-full right-0 left-0 z-[15] mt-3 overflow-hidden rounded-md border border-border-strong bg-surface shadow-card animate-fade-in">
+        <div className={`absolute top-full right-0 left-0 z-[15] mt-3 ${menuContentClass}`}>
           {workspaces.map((ws) => {
             const hasUnread = unreadWorkspaceIds.has(ws.id);
             return (
               <button
                 key={ws.id}
-                className={`flex w-full cursor-pointer items-center gap-2 border-none px-3 py-2 text-left font-[inherit] text-[0.9rem] transition-colors duration-100 ${
+                className={`${menuItemBaseClass} ${
                   activeWorkspace?.id === ws.id
-                    ? "bg-elevated text-text"
-                    : "bg-transparent text-text-muted hover:bg-hover hover:text-text"
+                    ? "bg-hover text-text"
+                    : "text-text-secondary hover:bg-hover hover:text-text"
                 }`}
                 aria-label={`${ws.name}${hasUnread ? ", unread messages" : ""}`}
                 onClick={() => {
@@ -260,14 +221,16 @@ export function Sidebar() {
               </button>
             );
           })}
+          <div className={menuSeparatorClass} />
           <button
-            className="block w-full cursor-pointer border-t border-border bg-transparent px-3 py-2 text-left font-[inherit] text-[0.9rem] text-accent transition-colors duration-100 hover:bg-hover hover:text-text"
+            className={`${menuItemBaseClass} text-accent hover:bg-hover`}
             onClick={() => {
               openWorkspaceModal();
               setDropdownOpen(false);
               setProfileMenuOpen(false);
             }}
           >
+            <Plus size={14} aria-hidden="true" />
             Create workspace
           </button>
         </div>
@@ -276,17 +239,17 @@ export function Sidebar() {
   );
 
   const renderSectionLabel = (label: string, onAdd?: () => void) => (
-    <div className="flex items-center justify-between px-1 pb-2 pt-4 text-[0.786rem] font-semibold uppercase tracking-[0.04em] text-text-dimmed">
+    <div className={`flex items-center justify-between pb-1.5 pl-2.5 pr-1 pt-4 ${sectionLabelClass}`}>
       <span>{label}</span>
       {onAdd && (
         <button
           type="button"
           onClick={onAdd}
-          className="flex size-5 items-center justify-center rounded text-text-dimmed transition-colors hover:bg-hover hover:text-text"
+          className={iconButtonClass("sm")}
           aria-label={`Create ${label.toLowerCase().replace(/s$/, "")}`}
           title={`Create ${label.toLowerCase().replace(/s$/, "")}`}
         >
-          <PlusIcon />
+          <Plus size={14} aria-hidden="true" />
         </button>
       )}
     </div>
@@ -294,11 +257,13 @@ export function Sidebar() {
 
   const itemClassName = (active: boolean, unread = false) =>
     [
-      "group flex w-full cursor-pointer items-center gap-2 rounded-md border-none px-2 py-1.5 text-left font-[inherit] text-[0.929rem] transition-colors duration-100",
+      "group flex w-full cursor-pointer items-center gap-2.5 rounded-lg border-none px-2.5 py-1.5 text-left font-[inherit] text-[1rem] transition-colors duration-100",
       active
         ? "bg-elevated text-text"
-        : "bg-transparent text-text-muted hover:bg-hover hover:text-text",
-      unread ? "font-semibold text-text" : "",
+        : unread
+          ? "text-text hover:bg-hover"
+          : "text-text-muted hover:bg-hover hover:text-text",
+      unread ? "font-semibold" : "",
     ].join(" ");
 
   return (
@@ -306,9 +271,10 @@ export function Sidebar() {
       className="app-sidebar flex h-full shrink-0 border-r border-border-subtle bg-surface transition-[margin-left] duration-200 ease-out"
       style={{ width: SIDEBAR_WIDTH, marginLeft: open ? 0 : -SIDEBAR_WIDTH }}
     >
-      <div className="flex w-[57px] shrink-0 flex-col items-center border-r border-[rgba(245,245,245,0.16)] bg-base py-2">
+      <div className="flex w-[57px] shrink-0 flex-col items-center border-r border-border-subtle bg-sunken py-2">
         <button
-          className="relative flex size-9 cursor-pointer items-center justify-center rounded-lg border border-[rgba(245,245,245,0.5)] bg-surface text-[0.9rem] font-bold text-white transition-colors duration-150 hover:bg-hover"
+          className="relative flex size-9 cursor-pointer items-center justify-center rounded-lg text-[0.9rem] font-bold text-white ring-1 ring-inset ring-white/10 transition-[filter] duration-150 hover:brightness-110"
+          style={{ backgroundColor: avatarColor(activeWorkspace?.id ?? "thechat") }}
           onClick={() => {
             if (user) setDropdownOpen((open) => !open);
           }}
@@ -321,7 +287,7 @@ export function Sidebar() {
           }
           title={activeWorkspace?.name ?? "TheChat"}
         >
-          <span className="absolute -left-[11px] h-[30px] w-0.5 rounded-r-sm bg-[#2f88bf]" />
+          <span className="absolute -left-[11px] h-[30px] w-0.5 rounded-r-sm bg-accent" />
           {workspaceInitial}
           {otherUnreadWorkspaceCount > 0 && (
             <span
@@ -334,12 +300,12 @@ export function Sidebar() {
         </button>
 
         <button
-          className="mt-3 flex size-9 cursor-pointer items-center justify-center rounded-lg border border-dashed border-[rgba(245,245,245,0.5)] bg-surface text-text-dimmed transition-colors duration-150 hover:border-accent hover:text-text"
+          className="mt-3 flex size-9 cursor-pointer items-center justify-center rounded-lg border border-dashed border-border-strong bg-transparent text-text-dimmed transition-colors duration-150 hover:border-accent hover:text-text"
           onClick={openWorkspaceModal}
           aria-label="Create workspace"
           title="Create workspace"
         >
-          <PlusIcon />
+          <Plus size={16} aria-hidden="true" />
         </button>
       </div>
 
@@ -352,7 +318,7 @@ export function Sidebar() {
           </div>
           {user && (
             <button
-              className="relative ml-2 flex size-8 cursor-pointer items-center justify-center rounded-md border-none bg-transparent text-text-muted transition-colors duration-150 hover:bg-hover hover:text-text"
+              className={`relative ml-2 ${iconButtonClass("md")}`}
               onClick={() => navigate({ to: "/activity" })}
               aria-label={
                 activityCount > 0
@@ -361,7 +327,7 @@ export function Sidebar() {
               }
               title="Activity"
             >
-              <BellIcon />
+              <Bell size={16} aria-hidden="true" />
               {activityCount > 0 && (
                 <span
                   data-testid="activity-unread-count"
@@ -413,12 +379,12 @@ export function Sidebar() {
                             <DropdownMenu.Trigger asChild>
                               <button
                                 type="button"
-                                className={`absolute right-1 top-1/2 flex size-7 -translate-y-1/2 items-center justify-center rounded text-text-dimmed transition-all hover:bg-raised hover:text-text focus:opacity-100 ${
-                                  menuOpen ? "bg-raised text-text opacity-100" : "opacity-0 group-hover:opacity-100"
+                                className={`absolute right-1 top-1/2 flex size-7 -translate-y-1/2 items-center justify-center rounded-md text-text-dimmed transition-all hover:bg-hover hover:text-text focus:opacity-100 ${
+                                  menuOpen ? "bg-hover text-text opacity-100" : "opacity-0 group-hover:opacity-100"
                                 }`}
                                 aria-label={`Manage #${ch.name}`}
                               >
-                                <MoreIcon />
+                                <Ellipsis size={16} aria-hidden="true" />
                               </button>
                             </DropdownMenu.Trigger>
                             <DropdownMenu.Portal>
@@ -426,7 +392,7 @@ export function Sidebar() {
                                 align="end"
                                 sideOffset={4}
                                 loop
-                                className="z-50 min-w-[160px] overflow-hidden rounded-lg border border-border-strong bg-surface py-1 shadow-card animate-fade-in"
+                                className={`z-50 ${menuContentClass}`}
                               >
                                 <DropdownMenu.Item
                                   asChild
@@ -434,9 +400,9 @@ export function Sidebar() {
                                 >
                                   <button
                                     type="button"
-                                    className="flex w-full cursor-pointer items-center gap-2 border-none bg-transparent px-3 py-2 text-left text-[0.821rem] text-text-secondary outline-none transition-colors data-[highlighted]:bg-hover data-[highlighted]:text-text"
+                                    className={menuItemClass}
                                   >
-                                    <span className="text-text-dimmed"><PencilIcon /></span>
+                                    <Pencil size={14} className="text-text-dimmed" aria-hidden="true" />
                                     Rename channel
                                   </button>
                                 </DropdownMenu.Item>
@@ -446,9 +412,9 @@ export function Sidebar() {
                                 >
                                   <button
                                     type="button"
-                                    className="flex w-full cursor-pointer items-center gap-2 border-none bg-transparent px-3 py-2 text-left text-[0.821rem] text-red-400 outline-none transition-colors data-[highlighted]:bg-red-500/10 data-[highlighted]:text-red-300"
+                                    className={menuDangerItemClass}
                                   >
-                                    <TrashIcon />
+                                    <Trash2 size={14} aria-hidden="true" />
                                     Delete channel
                                   </button>
                                 </DropdownMenu.Item>
@@ -488,8 +454,7 @@ export function Sidebar() {
                       aria-label={ariaLabel}
                       aria-current={isActive ? "page" : undefined}
                     >
-                      <span className="relative flex size-5 shrink-0 items-center justify-center rounded-full bg-elevated text-[0.714rem] font-semibold text-text-muted">
-                        {m.user.name.charAt(0).toUpperCase()}
+                      <Avatar name={m.user.name} colorKey={m.userId} bot={m.user.type === "bot"} className="size-5 text-[0.643rem]">
                         {isOnline && (
                           <span
                             data-testid={`online-indicator-${m.userId}`}
@@ -498,7 +463,7 @@ export function Sidebar() {
                             aria-hidden="true"
                           />
                         )}
-                      </span>
+                      </Avatar>
                       <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap">{m.user.name}</span>
                       {isUnread && (
                         <span
@@ -534,7 +499,7 @@ export function Sidebar() {
             </div>
           ) : (
             <div className="flex min-h-0 flex-1 flex-col px-4 py-4">
-              <div className="mt-4 rounded-md border border-border-subtle bg-base/20 px-3 py-3">
+              <div className="mt-4 rounded-xl border border-border-subtle bg-white/[0.03] px-3 py-3">
                 <div className="text-[0.929rem] font-medium text-text-secondary">
                   {user ? "No workspace selected" : "Workspace"}
                 </div>
@@ -543,10 +508,10 @@ export function Sidebar() {
                 </div>
                 {user && (
                   <button
-                    className="mt-3 flex w-full cursor-pointer items-center justify-center gap-1.5 rounded-md border border-border bg-raised px-2.5 py-2 font-[inherit] text-[0.857rem] font-medium text-text-secondary transition-colors duration-150 hover:bg-hover hover:text-text"
+                    className={`mt-3 w-full ${buttonClass("secondary", "md")}`}
                     onClick={openWorkspaceModal}
                   >
-                    <PlusIcon className="shrink-0" />
+                    <Plus size={14} aria-hidden="true" />
                     Create workspace
                   </button>
                 )}
@@ -561,30 +526,29 @@ export function Sidebar() {
           {user ? (
             <div className="relative" ref={profileMenuRef}>
               <button
-                className="flex w-full cursor-pointer items-center justify-between gap-2 rounded-md border border-border bg-raised px-2 py-2 text-left font-[inherit] transition-colors duration-150 hover:bg-hover"
+                className={`flex w-full cursor-pointer items-center justify-between gap-2 rounded-lg border-none px-2 py-1.5 text-left font-[inherit] transition-colors duration-150 hover:bg-hover ${profileMenuOpen ? "bg-hover" : ""}`}
                 onClick={() => setProfileMenuOpen((v) => !v)}
               >
-                <span className="flex min-w-0 items-center gap-2">
-                  <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-elevated text-[0.857rem] font-semibold text-text">
-                    {initials}
-                  </span>
-                  <span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap text-[0.857rem] font-medium text-text-secondary">
+                <span className="flex min-w-0 items-center gap-2.5">
+                  <Avatar name={initials} colorKey={user.id} className="size-6 text-[0.786rem]" />
+                  <span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap text-[1rem] font-medium text-text-secondary">
                     {user.name}
                   </span>
                 </span>
-                <ChevronDownIcon open={profileMenuOpen} />
+                <Chevron open={profileMenuOpen} />
               </button>
 
               {profileMenuOpen && (
-                <div className="absolute right-0 bottom-[calc(100%+6px)] z-20 min-w-[220px] overflow-hidden rounded-lg border border-border-strong bg-surface shadow-card animate-fade-in">
+                <div className={`absolute right-0 left-0 bottom-[calc(100%+6px)] z-20 ${menuContentClass}`}>
                   <button
-                    className="flex w-full cursor-pointer items-center justify-between gap-2 border-none bg-transparent px-3 py-2.5 text-left font-[inherit] text-[0.857rem] text-text-secondary transition-colors duration-100 hover:bg-hover hover:text-text"
+                    className={menuItemClass}
                     onClick={() => {
                       navigate({ to: "/activity" });
                       setProfileMenuOpen(false);
                     }}
                   >
-                    <span>Activity</span>
+                    <Bell size={14} className="text-text-dimmed" aria-hidden="true" />
+                    <span className="flex-1">Activity</span>
                     {activityCount > 0 && (
                       <span className="min-w-[18px] rounded-full bg-accent px-1.5 py-px text-center text-[0.714rem] font-semibold text-white">
                         {activityCount > 99 ? "99+" : activityCount}
@@ -592,30 +556,34 @@ export function Sidebar() {
                     )}
                   </button>
                   <button
-                    className="block w-full cursor-pointer border-none bg-transparent px-3 py-2.5 text-left font-[inherit] text-[0.857rem] text-text-secondary transition-colors duration-100 hover:bg-hover hover:text-text"
+                    className={menuItemClass}
                     onClick={() => {
                       navigate({ to: "/bots/manage" });
                       setProfileMenuOpen(false);
                     }}
                   >
+                    <Bot size={14} className="text-text-dimmed" aria-hidden="true" />
                     Manage bots
                   </button>
                   <button
-                    className="block w-full cursor-pointer border-none bg-transparent px-3 py-2.5 text-left font-[inherit] text-[0.857rem] text-text-secondary transition-colors duration-100 hover:bg-hover hover:text-text"
+                    className={menuItemClass}
                     onClick={() => {
                       navigate({ to: "/settings" });
                       setProfileMenuOpen(false);
                     }}
                   >
+                    <Settings size={14} className="text-text-dimmed" aria-hidden="true" />
                     Settings
                   </button>
+                  <div className={menuSeparatorClass} />
                   <button
-                    className="block w-full cursor-pointer border-t border-border bg-transparent px-3 py-2.5 text-left font-[inherit] text-[0.857rem] text-text-dimmed transition-colors duration-100 hover:bg-hover hover:text-text"
+                    className={menuItemClass}
                     onClick={() => {
                       logout();
                       setProfileMenuOpen(false);
                     }}
                   >
+                    <LogOut size={14} className="text-text-dimmed" aria-hidden="true" />
                     Log out
                   </button>
                 </div>
@@ -624,21 +592,17 @@ export function Sidebar() {
           ) : (
             <div className="flex flex-col gap-1">
               <button
-                className={`flex w-full cursor-pointer items-center gap-2 rounded-md border-none px-2 py-1.5 text-left font-[inherit] text-[0.857rem] transition-colors duration-150 ${isSettings ? "bg-elevated text-text" : "bg-transparent text-text-secondary hover:bg-hover hover:text-text"}`}
+                className={`flex w-full cursor-pointer items-center gap-2.5 rounded-lg border-none px-2.5 py-1.5 text-left font-[inherit] text-[1rem] transition-colors duration-150 ${isSettings ? "bg-elevated text-text" : "text-text-secondary hover:bg-hover hover:text-text"}`}
                 onClick={() => navigate({ to: "/settings" })}
               >
-                <SettingsIcon />
+                <Settings size={16} aria-hidden="true" />
                 Settings
               </button>
               <button
-                className="mt-1 flex w-full cursor-pointer items-center justify-center gap-1.5 rounded-md border border-border bg-raised px-2.5 py-2 font-[inherit] text-[0.857rem] font-medium text-text-secondary transition-colors duration-150 hover:bg-hover hover:text-text"
+                className={`mt-1 w-full ${buttonClass("secondary", "md")}`}
                 onClick={() => openAuthModal()}
               >
-                <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M7.5 10.5v-1a2 2 0 0 0-2-2h-3a2 2 0 0 0-2 2v1" />
-                  <circle cx="4" cy="4" r="2" />
-                  <path d="M10 3.5v3M8.5 5h3" />
-                </svg>
+                <LogIn size={14} aria-hidden="true" />
                 Log in
               </button>
             </div>

@@ -1,6 +1,7 @@
 import { isAuthenticated } from "../lib/auth-identity";
 import { useCallback, useEffect, useRef, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
+import { Download, FileText, ImageOff, X } from "lucide-react";
 import type { ChatAttachment, TraceContextCarrier } from "@thechat/shared";
 import {
   getAttachmentDownloadUrl,
@@ -54,42 +55,6 @@ function imageFrame(attachment: ChatAttachment) {
       aspectRatio: "3 / 2",
     },
   };
-}
-
-function DownloadIcon({ className = "" }: { className?: string }) {
-  return (
-    <svg
-      aria-hidden="true"
-      focusable="false"
-      className={className}
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.8"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <path d="M12 3v12m0 0 4.5-4.5M12 15l-4.5-4.5" />
-      <path d="M5 17v2a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-2" />
-    </svg>
-  );
-}
-
-function CloseIcon({ className = "" }: { className?: string }) {
-  return (
-    <svg
-      aria-hidden="true"
-      focusable="false"
-      className={className}
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.8"
-      strokeLinecap="round"
-    >
-      <path d="M6 6l12 12M18 6 6 18" />
-    </svg>
-  );
 }
 
 export function SharedMessageAttachments({
@@ -250,8 +215,9 @@ function AuthorizedImage({
             setError(null);
             void authorize();
           }}
-          className="h-full w-full rounded-lg border border-border bg-raised px-3 py-2 text-xs text-error-bright"
+          className="inline-flex h-full w-full cursor-pointer items-center justify-center gap-1.5 rounded-lg border border-border bg-raised px-3 py-2 text-[0.857rem] text-error-bright transition-colors duration-150 hover:bg-hover"
         >
+          <ImageOff size={14} aria-hidden="true" />
           Image unavailable — retry
         </button>
       ) : url ? (
@@ -267,7 +233,7 @@ function AuthorizedImage({
                   "thumbnail",
                 );
               }}
-              className="block h-full w-full overflow-hidden rounded-lg border border-border bg-raised"
+              className="block h-full w-full cursor-zoom-in overflow-hidden rounded-lg border border-border bg-raised transition-colors duration-150 hover:border-border-strong focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
               aria-label={`Open ${attachment.fileName}`}
             >
               <img
@@ -334,8 +300,11 @@ function AuthorizedImage({
                   title={`Download ${attachment.fileName}`}
                   className={imageViewerControlClassName}
                 >
-                  <DownloadIcon
-                    className={`size-5 ${downloading ? "animate-pulse" : ""}`}
+                  <Download
+                    size={20}
+                    focusable="false"
+                    aria-hidden="true"
+                    className={downloading ? "animate-pulse" : undefined}
                   />
                 </button>
                 <Dialog.Close asChild>
@@ -346,7 +315,7 @@ function AuthorizedImage({
                     title="Close image viewer"
                     className={imageViewerControlClassName}
                   >
-                    <CloseIcon className="size-5" />
+                    <X size={20} focusable="false" aria-hidden="true" />
                   </button>
                 </Dialog.Close>
               </div>
@@ -385,7 +354,7 @@ function AuthorizedImage({
               {downloadError && (
                 <div
                   role="alert"
-                  className="max-w-full shrink-0 self-center rounded-lg border border-white/20 bg-black/80 px-3 py-2 text-center text-sm text-white shadow-lg backdrop-blur-md"
+                  className="max-w-full shrink-0 self-center rounded-lg border border-white/20 bg-black/80 px-3 py-2 text-center text-[0.929rem] text-white shadow-lg backdrop-blur-md"
                 >
                   Download failed. {downloadError}
                 </div>
@@ -438,7 +407,7 @@ function FileCard({
       type="button"
       onClick={() => void download()}
       disabled={loading}
-      className="flex max-w-sm items-center gap-2 rounded-lg border border-border bg-raised px-3 py-2 text-left hover:bg-hover disabled:opacity-60"
+      className="group/file flex max-w-sm cursor-pointer items-center gap-2.5 rounded-lg border border-border bg-raised py-2 pl-2 pr-3 text-left transition-colors duration-150 hover:border-border-strong hover:bg-hover disabled:cursor-wait disabled:opacity-60"
       title={
         error ??
         (downloaded
@@ -446,18 +415,28 @@ function FileCard({
           : `Download ${attachment.fileName}`)
       }
     >
-      <span aria-hidden="true">📎</span>
+      <span
+        aria-hidden="true"
+        className="flex size-9 shrink-0 items-center justify-center rounded-md bg-elevated text-text-dimmed"
+      >
+        <FileText size={18} aria-hidden="true" />
+      </span>
       <span className="min-w-0">
-        <span className="block truncate text-sm font-medium text-text">
+        <span className="block truncate text-[0.929rem] font-medium text-text">
           {attachment.fileName}
         </span>
-        <span className="block text-xs text-text-dimmed">
+        <span className={`block text-[0.786rem] ${error ? "text-error-bright" : "text-text-dimmed"}`}>
           {error ??
             (downloaded
               ? "Saved to Downloads"
               : `${formatBytes(attachment.sizeBytes)} · ${attachment.mediaType}`)}
         </span>
       </span>
+      <Download
+        size={16}
+        aria-hidden="true"
+        className="ml-1 shrink-0 text-text-dimmed transition-colors duration-150 group-hover/file:text-text"
+      />
     </button>
   );
 }

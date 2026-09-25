@@ -8,6 +8,15 @@ import { announceBotCreated } from "../lib/bot-events";
 import { useAuthStore } from "../stores/auth";
 import { requestInputBarFocus } from "../stores/input-focus";
 import { useWorkspacesStore } from "../stores/workspaces";
+import { Check, Copy } from "lucide-react";
+import {
+  buttonClass,
+  dialogContentClass,
+  dialogOverlayClass,
+  dialogTitleClass,
+  inputClass,
+  labelClass,
+} from "./ui";
 
 type HermesBotModalState = {
   open: boolean;
@@ -155,7 +164,7 @@ function HermesBotModalInner({ returnFocus }: { returnFocus: HTMLElement | null 
 
   return (
     <Dialog.Portal>
-      <Dialog.Overlay className="fixed inset-0 z-20 bg-overlay backdrop-blur-[2px] animate-fade-in" />
+      <Dialog.Overlay className={`z-20 ${dialogOverlayClass}`} />
       <Dialog.Content
         asChild
         onOpenAutoFocus={(event) => {
@@ -179,10 +188,10 @@ function HermesBotModalInner({ returnFocus }: { returnFocus: HTMLElement | null 
       >
         <div
           aria-modal="true"
-          className="fixed left-1/2 top-1/2 z-20 w-[calc(100%-2rem)] max-w-[460px] -translate-x-1/2 -translate-y-1/2 rounded-xl border border-border-strong bg-surface p-6 shadow-card animate-slide-up"
+          className={`fixed left-1/2 top-1/2 z-20 w-[calc(100%-2rem)] max-w-[460px] -translate-x-1/2 -translate-y-1/2 p-6 ${dialogContentClass}`}
         >
           <Dialog.Title asChild>
-            <h2 className="mb-5 text-[1.214rem] font-semibold tracking-tight text-text">Add Hermes Bot</h2>
+            <h2 className={`mb-5 ${dialogTitleClass}`}>Add Hermes Bot</h2>
           </Dialog.Title>
           <Dialog.Description className="sr-only">
             Choose an eligible workspace and create a Hermes bot. Its setup credential is shown once.
@@ -197,21 +206,22 @@ function HermesBotModalInner({ returnFocus }: { returnFocus: HTMLElement | null 
               Use polling for local or simple setups. Use webhook mode when Hermes has a reachable callback URL.
             </p>
             <textarea
-              className="mb-3 block min-h-56 w-full resize-none rounded-lg border border-border bg-base px-3.5 py-2.5 font-mono text-[0.786rem] leading-relaxed text-text outline-none"
+              className="mb-3 block min-h-56 w-full resize-none rounded-lg border border-border bg-raised px-3.5 py-2.5 font-mono text-[0.786rem] leading-relaxed text-text outline-none"
               value={envSnippet}
               readOnly
               spellCheck={false}
             />
             <div className="mt-1 flex gap-2">
               <button
-                className="block flex-1 cursor-pointer rounded-lg border border-border-strong bg-elevated px-3 py-2.5 font-[inherit] text-[0.929rem] font-medium text-text transition-colors duration-150 hover:bg-button"
+                className={`flex-1 ${buttonClass("primary", "lg")}`}
                 type="button"
                 onClick={copySetup}
               >
+                {copied ? <Check size={16} aria-hidden="true" /> : <Copy size={16} aria-hidden="true" />}
                 {copied ? "Copied" : "Copy .env"}
               </button>
               <button
-                className="cursor-pointer rounded-lg border border-border bg-raised px-3 py-2.5 font-[inherit] text-[0.929rem] text-text-muted transition-colors duration-150 hover:bg-hover hover:text-text"
+                className={buttonClass("ghost", "lg")}
                 type="button"
                 onClick={closeHermesBotModal}
               >
@@ -222,10 +232,10 @@ function HermesBotModalInner({ returnFocus }: { returnFocus: HTMLElement | null 
         ) : (
         <form onSubmit={handleSubmit} noValidate>
           <label className="mb-3.5 block">
-            <span className="mb-1.5 block text-[0.857rem] font-medium text-text-muted">Workspace</span>
+            <span className={labelClass}>Workspace</span>
             <select
               aria-label="Workspace"
-              className="block w-full rounded-lg border border-border bg-base px-3.5 py-2.5 font-[inherit] text-[0.929rem] text-text outline-none transition-colors duration-150 focus:border-border-focus disabled:opacity-50"
+              className={`block ${inputClass}`}
               value={workspaceId}
               onChange={(event) => setWorkspaceId(event.target.value)}
               disabled={eligibleWorkspaces.length === 0}
@@ -243,10 +253,10 @@ function HermesBotModalInner({ returnFocus }: { returnFocus: HTMLElement | null 
           </label>
 
           <label className="mb-3.5 block">
-            <span className="mb-1.5 block text-[0.857rem] font-medium text-text-muted">Bot name</span>
+            <span className={labelClass}>Bot name</span>
             <input
               ref={inputRef}
-              className="block w-full rounded-lg border border-border bg-base px-3.5 py-2.5 font-[inherit] text-[0.929rem] text-text outline-none transition-colors duration-150 placeholder:text-text-placeholder focus:border-border-focus"
+              className={`block ${inputClass}`}
               type="text"
               placeholder="Koda"
               value={name}
@@ -265,14 +275,14 @@ function HermesBotModalInner({ returnFocus }: { returnFocus: HTMLElement | null 
 
           <div className="mt-1 flex gap-2">
             <button
-              className="block flex-1 cursor-pointer rounded-lg border border-border-strong bg-elevated px-3 py-2.5 font-[inherit] text-[0.929rem] font-medium text-text transition-colors duration-150 hover:not-disabled:bg-button disabled:cursor-default disabled:opacity-40"
+              className={`flex-1 ${buttonClass("primary", "lg")}`}
               type="submit"
               disabled={submitting || !workspaceId}
             >
               {submitting ? "Adding..." : "Add Bot"}
             </button>
             <button
-              className="cursor-pointer rounded-lg border border-border bg-raised px-3 py-2.5 font-[inherit] text-[0.929rem] text-text-muted transition-colors duration-150 hover:bg-hover hover:text-text"
+              className={buttonClass("ghost", "lg")}
               type="button"
               onClick={closeHermesBotModal}
               disabled={submitting}

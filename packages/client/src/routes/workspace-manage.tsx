@@ -13,6 +13,21 @@ import { api } from "../lib/api";
 import { wsEvents } from "../lib/ws-events";
 import { useAuthStore } from "../stores/auth";
 import { useWorkspacesStore } from "../stores/workspaces";
+import { Bot as BotIcon } from "lucide-react";
+import { Avatar } from "../components/Avatar";
+import { buttonClass, inputClass, labelClass, monoInputClass } from "../components/ui";
+
+// Visual helpers local to this page (inline controls inside grouped cards).
+const cardClass = "rounded-xl border border-border bg-white/[0.03]";
+const listCardClass = `mt-3 divide-y divide-border-subtle overflow-hidden ${cardClass}`;
+const listRowClass = "flex flex-wrap items-center gap-3 px-4 py-3 transition-colors hover:bg-white/[0.02]";
+const selectClass =
+  "h-8 cursor-pointer rounded-lg border border-border-strong bg-base px-2.5 font-[inherit] text-[0.857rem] text-text-secondary outline-none transition-[border-color,box-shadow] duration-150 focus:border-accent/60 focus:ring-3 focus:ring-accent/15 disabled:cursor-not-allowed disabled:opacity-60";
+const quietRemoveClass =
+  "inline-flex h-7 cursor-pointer items-center rounded-md border-none bg-transparent px-2.5 font-[inherit] text-[0.857rem] font-medium text-error-bright transition-colors duration-150 hover:bg-error-bg";
+const inlineCopyClass =
+  "shrink-0 cursor-pointer rounded-md border-none bg-transparent px-1.5 py-0.5 font-[inherit] text-[0.786rem] font-medium text-accent transition-colors duration-150 hover:bg-hover";
+const roleBadgeClass = "rounded-md bg-white/[0.06] px-2 py-1 text-[0.786rem] text-text-muted";
 
 function authHeaders(token: string | null) {
   return requestAuth(token).headers;
@@ -188,7 +203,7 @@ export function WorkspaceManageRoute() {
 
   if (!activeWorkspace) {
     return (
-      <div className="flex h-full items-center justify-center text-[0.929rem] text-text-muted">
+      <div className="flex h-full items-center justify-center text-[0.929rem] text-text-dimmed">
         Select a workspace to manage.
       </div>
     );
@@ -322,31 +337,31 @@ export function WorkspaceManageRoute() {
 
   return (
     <div className="flex h-full flex-col bg-base">
-      <header className="border-b border-border px-5 py-4">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <h1 className="text-[1.071rem] font-semibold text-text">
+      <header className="shrink-0 px-4 pb-4 pt-6 sm:px-8 sm:pt-8">
+        <div className="mx-auto flex max-w-3xl flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h1 className="text-[1.429rem] font-semibold tracking-tight text-text">
               Manage {activeWorkspace.name}
             </h1>
-            <p className="mt-1 text-[0.786rem] text-text-muted">
+            <p className="mt-1 text-[0.929rem] text-text-muted">
               People and bots with access to this workspace.
             </p>
           </div>
-          <div className="min-w-0 rounded-lg border border-border bg-raised px-3 py-2">
-            <div className="text-[0.643rem] font-semibold uppercase tracking-[0.08em] text-text-dimmed">
+          <div className={`min-w-0 px-3 py-2 ${cardClass}`}>
+            <div className="text-[0.786rem] font-medium text-text-dimmed">
               Workspace ID
             </div>
-            <div className="mt-1 flex items-center gap-2">
+            <div className="mt-0.5 flex items-center gap-2">
               <code
                 data-testid="workspace-id"
                 data-workspace-value={activeWorkspace.id}
-                className="max-w-[280px] overflow-hidden text-ellipsis whitespace-nowrap text-[0.786rem] text-text-secondary"
+                className="max-w-[280px] overflow-hidden text-ellipsis whitespace-nowrap font-mono text-[0.786rem] text-text-secondary"
               >
                 {activeWorkspace.id}
               </code>
               <button
                 type="button"
-                className="cursor-pointer rounded px-1.5 py-0.5 text-[0.714rem] text-accent hover:bg-hover"
+                className={inlineCopyClass}
                 onClick={() => void copyWorkspaceId()}
               >
                 {copied ? "Copied" : "Copy"}
@@ -356,15 +371,15 @@ export function WorkspaceManageRoute() {
         </div>
       </header>
 
-      <main className="flex-1 overflow-y-auto px-5 py-5">
-        <div className="mx-auto flex max-w-3xl flex-col gap-6">
+      <main className="flex-1 overflow-y-auto px-4 pb-10 pt-2 sm:px-8">
+        <div className="mx-auto flex max-w-3xl flex-col gap-8">
           {(pageError || statusMessage) && (
             <div
               role={pageError ? "alert" : "status"}
-              className={`rounded-lg border px-3 py-2 text-[0.857rem] ${
+              className={`rounded-lg border px-3 py-2 text-[0.929rem] ${
                 pageError
-                  ? "border-error-border bg-error-msg-bg text-error-bright"
-                  : "border-success-border bg-success-bg text-success"
+                  ? "border-error-msg-border bg-error-msg-bg text-error-bright"
+                  : "border-success-border bg-success-bg text-success-light"
               }`}
             >
               {pageError ?? statusMessage}
@@ -372,7 +387,7 @@ export function WorkspaceManageRoute() {
           )}
 
           {!canManage && (
-            <div className="rounded-lg border border-border bg-raised px-3 py-2 text-[0.857rem] text-text-muted">
+            <div className={`px-4 py-3 text-[0.929rem] text-text-muted ${cardClass}`}>
               You can view workspace access. Only workspace owners and admins can
               make changes.
             </div>
@@ -383,11 +398,11 @@ export function WorkspaceManageRoute() {
               <div>
                 <h2
                   id="workspace-people-heading"
-                  className="text-[0.929rem] font-semibold text-text"
+                  className="text-[1rem] font-semibold text-text"
                 >
                   People
                 </h2>
-                <p className="mt-0.5 text-[0.786rem] text-text-muted">
+                <p className="mt-0.5 text-[0.857rem] text-text-dimmed">
                   {people.length} {people.length === 1 ? "person" : "people"}
                 </p>
               </div>
@@ -395,7 +410,7 @@ export function WorkspaceManageRoute() {
 
             {canManage && (
               <form
-                className="mt-3 rounded-lg border border-border bg-raised p-3"
+                className={`mt-3 p-4 ${cardClass}`}
                 onSubmit={(event) => {
                   event.preventDefault();
                   void runAction("invite-user", inviteUser);
@@ -403,13 +418,13 @@ export function WorkspaceManageRoute() {
               >
                 <label
                   htmlFor="workspace-invite-email"
-                  className="text-[0.714rem] font-medium text-text-secondary"
+                  className={labelClass}
                 >
                   Invite by email
                 </label>
                 <div
                   data-testid="invite-user-controls"
-                  className="mt-1 grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_auto] sm:gap-x-2"
+                  className="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_auto] sm:gap-x-2"
                 >
                   <input
                     id="workspace-invite-email"
@@ -420,11 +435,11 @@ export function WorkspaceManageRoute() {
                     value={inviteEmail}
                     onChange={(event) => setInviteEmail(event.target.value)}
                     placeholder="person@example.com"
-                    className="w-full rounded-md border border-border bg-base px-2.5 py-2 text-[0.857rem] text-text outline-none placeholder:text-text-dimmed focus:border-accent sm:col-start-1 sm:row-start-1 sm:min-w-0"
+                    className={`h-8 ${inputClass} sm:col-start-1 sm:row-start-1`}
                   />
                   <div
                     id="workspace-invite-email-help"
-                    className="mt-1 text-[0.643rem] text-text-dimmed sm:col-start-1 sm:row-start-2"
+                    className="mt-1.5 text-[0.786rem] text-text-dimmed sm:col-start-1 sm:row-start-2"
                   >
                     The person must already have a TheChat account.
                   </div>
@@ -432,7 +447,7 @@ export function WorkspaceManageRoute() {
                     data-testid="invite-user-submit"
                     type="submit"
                     disabled={busyAction === "invite-user"}
-                    className="mt-2 w-full cursor-pointer rounded-md bg-accent px-3 py-2 text-[0.786rem] font-medium text-white disabled:cursor-not-allowed disabled:opacity-50 sm:col-start-2 sm:row-start-1 sm:mt-0 sm:w-auto sm:self-stretch"
+                    className={`mt-2 w-full ${buttonClass("primary", "md")} sm:col-start-2 sm:row-start-1 sm:mt-0 sm:w-auto sm:self-stretch`}
                   >
                     {busyAction === "invite-user" ? "Inviting..." : "Invite"}
                   </button>
@@ -440,7 +455,7 @@ export function WorkspaceManageRoute() {
               </form>
             )}
 
-            <div className="mt-3 divide-y divide-border overflow-hidden rounded-lg border border-border bg-raised">
+            <div className={listCardClass}>
               {people.map((member) => {
                 const manageable = canManageMember(actorRole, member);
                 const removeKey = `remove-user:${member.userId}`;
@@ -448,25 +463,27 @@ export function WorkspaceManageRoute() {
                   <div
                     key={member.userId}
                     data-testid={`member-row-${member.userId}`}
-                    className="flex flex-wrap items-center gap-3 px-3 py-3"
+                    className={listRowClass}
                   >
-                    <div className="flex min-w-0 flex-1 items-center gap-2.5">
-                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-accent-muted text-[0.786rem] font-semibold text-accent">
-                        {member.user.name.slice(0, 1).toUpperCase()}
-                      </div>
+                    <div className="flex min-w-0 flex-1 items-center gap-3">
+                      <Avatar
+                        name={member.user.name}
+                        colorKey={member.userId}
+                        className="size-8 text-[0.857rem]"
+                      />
                       <div className="min-w-0">
-                        <div className="overflow-hidden text-ellipsis whitespace-nowrap text-[0.857rem] font-medium text-text">
+                        <div className="overflow-hidden text-ellipsis whitespace-nowrap text-[0.929rem] font-medium text-text">
                           {member.user.name}
                           {member.userId === currentUser?.id && (
-                            <span className="ml-1.5 text-[0.714rem] font-normal text-text-dimmed">
+                            <span className="ml-1.5 text-[0.786rem] font-normal text-text-dimmed">
                               You
                             </span>
                           )}
                         </div>
-                        <div className="overflow-hidden text-ellipsis whitespace-nowrap text-[0.714rem] text-text-muted">
+                        <div className="overflow-hidden text-ellipsis whitespace-nowrap text-[0.857rem] text-text-muted">
                           {member.user.email ?? "No email"}
                         </div>
-                        <div className="mt-0.5 flex flex-wrap items-baseline gap-x-1.5 text-[0.643rem] text-text-dimmed">
+                        <div className="mt-0.5 flex flex-wrap items-baseline gap-x-1.5 text-[0.786rem] text-text-dimmed">
                           <span>User ID</span>
                           <code
                             data-testid={`member-user-id-${member.userId}`}
@@ -477,7 +494,7 @@ export function WorkspaceManageRoute() {
                           <button
                             type="button"
                             aria-label={`Copy user ID for ${member.user.name}`}
-                            className="shrink-0 cursor-pointer rounded px-1 text-accent hover:bg-hover"
+                            className={inlineCopyClass}
                             onClick={() => void copyMemberUserId(member)}
                           >
                             {copiedMemberId === member.userId ? "Copied" : "Copy"}
@@ -491,7 +508,7 @@ export function WorkspaceManageRoute() {
                         aria-label={`Role for ${member.user.name}`}
                         value={member.role}
                         disabled={busyAction === `role:${member.userId}`}
-                        className="rounded-md border border-border bg-base px-2 py-1.5 text-[0.786rem] text-text-secondary outline-none focus:border-accent"
+                        className={selectClass}
                         onChange={(event) =>
                           void runAction(`role:${member.userId}`, () =>
                             updateRole(
@@ -505,7 +522,7 @@ export function WorkspaceManageRoute() {
                         <option value="admin">Admin</option>
                       </select>
                     ) : (
-                      <span className="rounded-md bg-base px-2 py-1 text-[0.714rem] capitalize text-text-muted">
+                      <span className={`${roleBadgeClass} capitalize`}>
                         {member.role}
                       </span>
                     )}
@@ -516,7 +533,7 @@ export function WorkspaceManageRoute() {
                           <button
                             type="button"
                             disabled={busyAction === removeKey}
-                            className="cursor-pointer rounded-md bg-error-msg-bg px-2 py-1.5 text-[0.714rem] font-medium text-error-bright"
+                            className={buttonClass("danger", "sm")}
                             onClick={() =>
                               void runAction(removeKey, () => removeUser(member))
                             }
@@ -525,7 +542,7 @@ export function WorkspaceManageRoute() {
                           </button>
                           <button
                             type="button"
-                            className="cursor-pointer rounded-md px-2 py-1.5 text-[0.714rem] text-text-muted hover:bg-hover"
+                            className={buttonClass("ghost", "sm")}
                             onClick={() => setConfirmingAction(null)}
                           >
                             Cancel
@@ -534,7 +551,7 @@ export function WorkspaceManageRoute() {
                       ) : (
                         <button
                           type="button"
-                          className="cursor-pointer rounded-md px-2 py-1.5 text-[0.714rem] text-error-bright hover:bg-error-msg-bg"
+                          className={quietRemoveClass}
                           onClick={() => setConfirmingAction(removeKey)}
                         >
                           Remove
@@ -550,18 +567,18 @@ export function WorkspaceManageRoute() {
             <div>
               <h2
                 id="workspace-bots-heading"
-                className="text-[0.929rem] font-semibold text-text"
+                className="text-[1rem] font-semibold text-text"
               >
                 Bots
               </h2>
-              <p className="mt-0.5 text-[0.786rem] text-text-muted">
+              <p className="mt-0.5 text-[0.857rem] text-text-dimmed">
                 {workspaceBots.length} {workspaceBots.length === 1 ? "bot" : "bots"}
               </p>
             </div>
 
             {canManage && (
               <form
-                className="mt-3 rounded-lg border border-border bg-raised p-3"
+                className={`mt-3 p-4 ${cardClass}`}
                 onSubmit={(event) => {
                   event.preventDefault();
                   void runAction("add-bot", addBot);
@@ -571,7 +588,7 @@ export function WorkspaceManageRoute() {
                   <div className="min-w-0 flex-1">
                     <label
                       htmlFor="workspace-bot-id"
-                      className="text-[0.714rem] font-medium text-text-secondary"
+                      className={labelClass}
                     >
                       Bot ID
                     </label>
@@ -583,7 +600,7 @@ export function WorkspaceManageRoute() {
                       value={botId}
                       onChange={(event) => setBotId(event.target.value)}
                       placeholder="Paste a bot ID"
-                      className="mt-1 w-full rounded-md border border-border bg-base px-2.5 py-2 font-mono text-[0.786rem] text-text outline-none placeholder:font-sans placeholder:text-text-dimmed focus:border-accent"
+                      className={`h-8 ${monoInputClass}`}
                     />
                     <datalist id="owned-bot-options">
                       {availableOwnedBots.map((bot) => (
@@ -597,25 +614,25 @@ export function WorkspaceManageRoute() {
                     data-testid="add-bot-submit"
                     type="submit"
                     disabled={busyAction === "add-bot"}
-                    className="cursor-pointer rounded-md bg-accent px-3 py-2 text-[0.786rem] font-medium text-white disabled:cursor-not-allowed disabled:opacity-50"
+                    className={buttonClass("primary", "md")}
                   >
                     {busyAction === "add-bot" ? "Adding..." : "Add bot"}
                   </button>
                 </div>
-                <p className="mt-2 text-[0.714rem] leading-relaxed text-text-muted">
+                <p className="mt-2 text-[0.786rem] leading-relaxed text-text-dimmed">
                   Bots you own are added immediately. For any other bot, its owner
                   receives an approval notification first.
                 </p>
                 {availableOwnedBots.length > 0 && (
-                  <div className="mt-2 flex flex-wrap gap-1.5">
-                    <span className="py-1 text-[0.643rem] text-text-dimmed">
+                  <div className="mt-3 flex flex-wrap items-center gap-1.5">
+                    <span className="text-[0.786rem] text-text-dimmed">
                       Your bots:
                     </span>
                     {availableOwnedBots.map((bot) => (
                       <button
                         key={bot.id}
                         type="button"
-                        className="cursor-pointer rounded-full border border-border bg-base px-2 py-1 text-[0.643rem] text-text-secondary hover:border-accent hover:text-accent"
+                        className="cursor-pointer rounded-full border border-border-strong bg-base px-2.5 py-0.5 font-[inherit] text-[0.786rem] text-text-secondary transition-colors duration-150 hover:border-border-accent hover:bg-accent/10 hover:text-text"
                         onClick={() => setBotId(bot.id)}
                       >
                         {bot.name}
@@ -626,9 +643,9 @@ export function WorkspaceManageRoute() {
               </form>
             )}
 
-            <div className="mt-3 divide-y divide-border overflow-hidden rounded-lg border border-border bg-raised">
+            <div className={listCardClass}>
               {workspaceBots.length === 0 ? (
-                <div className="px-3 py-5 text-center text-[0.786rem] text-text-muted">
+                <div className="px-4 py-6 text-center text-[0.857rem] text-text-dimmed">
                   No bots in this workspace.
                 </div>
               ) : (
@@ -643,22 +660,22 @@ export function WorkspaceManageRoute() {
                       data-testid={
                         member.bot ? `bot-row-${member.bot.id}` : undefined
                       }
-                      className="flex flex-wrap items-center gap-3 px-3 py-3"
+                      className={listRowClass}
                     >
-                      <div className="flex min-w-0 flex-1 items-center gap-2.5">
-                        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-accent-muted text-[0.714rem] font-bold text-accent">
-                          BOT
+                      <div className="flex min-w-0 flex-1 items-center gap-3">
+                        <div className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-accent/15 text-accent">
+                          <BotIcon size={16} aria-hidden="true" />
                         </div>
                         <div className="min-w-0">
-                          <div className="overflow-hidden text-ellipsis whitespace-nowrap text-[0.857rem] font-medium text-text">
+                          <div className="overflow-hidden text-ellipsis whitespace-nowrap text-[0.929rem] font-medium text-text">
                             {member.user.name}
                           </div>
-                          <div className="font-mono text-[0.643rem] text-text-muted">
+                          <div className="break-all font-mono text-[0.786rem] text-text-dimmed">
                             {member.bot?.id ?? member.userId}
                           </div>
                         </div>
                       </div>
-                      <span className="rounded-md bg-base px-2 py-1 text-[0.714rem] text-text-muted">
+                      <span className={roleBadgeClass}>
                         {ownedByCurrentUser
                           ? "Owned by you"
                           : member.bot?.kind ?? "Bot"}
@@ -669,7 +686,7 @@ export function WorkspaceManageRoute() {
                             <button
                               type="button"
                               disabled={busyAction === removeKey}
-                              className="cursor-pointer rounded-md bg-error-msg-bg px-2 py-1.5 text-[0.714rem] font-medium text-error-bright"
+                              className={buttonClass("danger", "sm")}
                               onClick={() =>
                                 void runAction(removeKey, () => removeBot(member))
                               }
@@ -678,7 +695,7 @@ export function WorkspaceManageRoute() {
                             </button>
                             <button
                               type="button"
-                              className="cursor-pointer rounded-md px-2 py-1.5 text-[0.714rem] text-text-muted hover:bg-hover"
+                              className={buttonClass("ghost", "sm")}
                               onClick={() => setConfirmingAction(null)}
                             >
                               Cancel
@@ -687,7 +704,7 @@ export function WorkspaceManageRoute() {
                         ) : (
                           <button
                             type="button"
-                            className="cursor-pointer rounded-md px-2 py-1.5 text-[0.714rem] text-error-bright hover:bg-error-msg-bg"
+                            className={quietRemoveClass}
                             onClick={() => setConfirmingAction(removeKey)}
                           >
                             Remove
@@ -701,31 +718,31 @@ export function WorkspaceManageRoute() {
 
             {canManage && pendingBotInvites.length > 0 && (
               <div className="mt-3">
-                <h3 className="text-[0.786rem] font-medium text-text-secondary">
+                <h3 className="text-[0.857rem] font-medium text-text-secondary">
                   Waiting for approval
                 </h3>
-                <div className="mt-2 divide-y divide-border overflow-hidden rounded-lg border border-border bg-raised">
+                <div className={listCardClass.replace("mt-3", "mt-2")}>
                   {pendingBotInvites.map((invite) => (
                     <div
                       key={invite.id}
                       data-testid={`pending-bot-request-${invite.id}`}
-                      className="flex flex-wrap items-center gap-3 px-3 py-3"
+                      className={listRowClass}
                     >
                       <div className="min-w-0 flex-1">
-                        <div className="text-[0.786rem] font-medium text-text">
+                        <div className="text-[0.929rem] font-medium text-text">
                           {invite.botName}
                         </div>
-                        <div className="mt-0.5 font-mono text-[0.643rem] text-text-muted">
+                        <div className="mt-0.5 break-all font-mono text-[0.786rem] text-text-dimmed">
                           {invite.botId}
                         </div>
-                        <div className="mt-1 text-[0.714rem] text-text-dimmed">
+                        <div className="mt-1 text-[0.857rem] text-text-muted">
                           The bot owner has been notified.
                         </div>
                       </div>
                       <button
                         type="button"
                         disabled={busyAction === `cancel-bot:${invite.id}`}
-                        className="cursor-pointer rounded-md px-2 py-1.5 text-[0.714rem] text-text-muted hover:bg-hover hover:text-text"
+                        className={buttonClass("ghost", "sm")}
                         onClick={() =>
                           void runAction(`cancel-bot:${invite.id}`, () =>
                             cancelBotInvite(invite),
@@ -742,7 +759,7 @@ export function WorkspaceManageRoute() {
           </section>
 
           {loadingManagementData && (
-            <div className="text-center text-[0.714rem] text-text-dimmed">
+            <div className="text-center text-[0.786rem] text-text-dimmed">
               Refreshing workspace access...
             </div>
           )}

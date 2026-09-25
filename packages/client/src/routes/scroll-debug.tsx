@@ -330,7 +330,7 @@ export function ScrollDebugRoute() {
           </ControlSection>
 
           <ControlSection title="Signals">
-            <label className="flex cursor-pointer items-center justify-between gap-2 rounded-md border border-border bg-background px-3 py-2 text-[0.857rem] text-text-secondary">
+            <label className="flex cursor-pointer items-center justify-between gap-2 rounded-md border border-border bg-base px-3 py-2 text-[0.857rem] text-text-secondary">
               <span>Typing</span>
               <input
                 type="checkbox"
@@ -338,7 +338,7 @@ export function ScrollDebugRoute() {
                 onChange={(event) => setShowTyping(event.currentTarget.checked)}
               />
             </label>
-            <label className="mt-1.5 flex cursor-pointer items-center justify-between gap-2 rounded-md border border-border bg-background px-3 py-2 text-[0.857rem] text-text-secondary">
+            <label className="mt-1.5 flex cursor-pointer items-center justify-between gap-2 rounded-md border border-border bg-base px-3 py-2 text-[0.857rem] text-text-secondary">
               <span>Hermes progress</span>
               <input
                 type="checkbox"
@@ -432,7 +432,7 @@ function DebugButton({
   return (
     <button
       type="button"
-      className={`cursor-pointer rounded-md border border-border bg-background px-3 py-2 text-center text-[0.786rem] font-medium text-text-muted transition-colors duration-150 hover:bg-hover hover:text-text ${className}`}
+      className={`cursor-pointer rounded-md border border-border bg-base px-3 py-2 text-center text-[0.786rem] font-medium text-text-muted transition-colors duration-150 hover:bg-hover hover:text-text ${className}`}
       onClick={onClick}
     >
       {children}
@@ -453,7 +453,7 @@ function rowButtonClass(active: boolean) {
   return `flex w-full cursor-pointer items-center justify-between gap-2 rounded-md border px-3 py-2 text-left text-[0.857rem] transition-colors duration-150 ${
     active
       ? "border-accent/40 bg-accent/10 text-text"
-      : "border-border bg-background text-text-muted hover:bg-hover hover:text-text"
+      : "border-border bg-base text-text-muted hover:bg-hover hover:text-text"
   }`;
 }
 

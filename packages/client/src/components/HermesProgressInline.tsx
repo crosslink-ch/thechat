@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import type {
   BotInvocationProgressEventPublic,
   BotInvocationPublic,
@@ -29,6 +29,29 @@ import {
   useHermesClarificationsStore,
 } from "../stores/hermes-clarifications";
 import { formatToolSummary } from "../lib/tool-summary";
+import {
+  Brain,
+  Check,
+  CircleAlert,
+  Info,
+  Square,
+  TriangleAlert,
+  X,
+  type LucideIcon,
+} from "lucide-react";
+import {
+  ExpandChevron,
+  STEP_KINDS,
+  StepIcon,
+  StepOrb,
+  plural,
+  times,
+  toolKind,
+  type StepKind,
+} from "./hermes-steps";
+import { Avatar } from "./Avatar";
+import { OrbLoader } from "./OrbLoader";
+import { buttonClass, inputClass, type ButtonVariant } from "./ui";
 
 type ToolCallPart = Extract<MessagePart, { type: "tool-call" }>;
 type NoticeSeverity = "info" | "warning" | "error";
@@ -50,13 +73,16 @@ type ApprovalRow = { kind: "approval"; key: string; state: ApprovalRequestState 
 type ClarifyRow = { kind: "clarify"; key: string; state: ClarifyRequestState };
 type ActivityRow = EventRow | ApprovalRow | ClarifyRow;
 
-const MAX_VISIBLE_ROWS = 8;
 const MAX_UI_LABEL_CHARS = 4_000;
 const MAX_UI_DESCRIPTION_CHARS = 10_000;
 const MAX_UI_COMMAND_CHARS = 100_000;
 const MAX_UI_DETAIL_CHARS = 20_000;
 const MAX_UI_CHOICE_CHARS = 500;
 const MAX_UI_CHOICES = 20;
+
+/** Neutral Hermes interaction card with a warning-coloured left edge. */
+const interactionCardClass =
+  "min-w-0 flex-1 rounded-lg border border-l-3 border-border border-l-warning bg-elevated/60 px-4.5 py-4 text-[0.929rem] text-text-secondary";
 
 export function HermesProgressInline({
   invocations,
@@ -144,17 +170,86 @@ export function HermesProgressInline({
           approvalStates,
           clarifyStates,
         );
-        let visibleRows = rows.slice(-MAX_VISIBLE_ROWS);
-        // Pending approvals must stay actionable even when older than the
-        // visible window (e.g. parallel tools kept emitting afterwards).
-        const hiddenPending = rows.filter(
+        const working = invocation.status === "running" && !needsInteraction;
+        const lastRow = rows[rows.length - 1];
+        // As in T3 Code: the step in progress gets a live line, everything
+        // already done folds into one expandable summary, and whatever needs
+        // attention (pending cards, warnings, errors) stays in view.
+        const liveRow =
+          working &&
+          (lastRow?.kind === "reasoning" ||
+            (lastRow?.kind === "tool" && toolStatus(lastRow.event) === "running"))
+            ? lastRow
+            : null;
+        const pendingRows = rows.filter(
           (row) =>
             (row.kind === "approval" || row.kind === "clarify") &&
-            row.state.status === "pending" &&
-            !visibleRows.includes(row),
+            row.state.status === "pending",
         );
-        visibleRows = [...hiddenPending, ...visibleRows];
-        const hiddenCount = rows.length - visibleRows.length;
+        const alertRows = rows.filter(
+          (row) => row.kind === "notice" && noticeSeverity(row.event) !== "info",
+        );
+        const doneRows = rows.filter(
+          (row) =>
+            row !== liveRow && !pendingRows.includes(row) && !alertRows.includes(row),
+        );
+        const summaryKey = `${invocation.id}:summary`;
+        const renderRow = (row: ActivityRow) => (
+          <div
+            key={row.key}
+            data-testid="hermes-activity-row"
+            data-kind={rowKind(row)}
+          >
+            {row.kind === "approval" ? (
+              row.state.status === "pending" ? (
+                <ApprovalRequestCard
+                  event={row.state.event}
+                  botName={invocation.botName}
+                  isActionable={actionableApprovalIds.has(row.state.event.id)}
+                  onDecision={(decision) =>
+                    handleInteraction(row.state.event, decision)
+                  }
+                />
+              ) : (
+                <ResolvedApprovalRow
+                  state={row.state}
+                  expanded={expandedRowKeys.has(row.key)}
+                  onToggle={() => toggleRow(row.key)}
+                />
+              )
+            ) : row.kind === "clarify" ? (
+              row.state.status === "pending" ? (
+                <ClarifyRequestCard
+                  state={row.state}
+                  botName={invocation.botName}
+                  onResponse={(response) =>
+                    handleInteraction(row.state.event, response)
+                  }
+                />
+              ) : (
+                <ResolvedClarifyRow state={row.state} />
+              )
+            ) : row.kind === "notice" ? (
+              <NoticeEventRow event={row.event} />
+            ) : row.kind === "reasoning" ? (
+              <ReasoningEventRow
+                event={row.event}
+                active={row === liveRow}
+                expanded={expandedRowKeys.has(row.key)}
+                onToggle={() => toggleRow(row.key)}
+              />
+            ) : row.kind === "tool" ? (
+              <ToolEventRow
+                event={row.event}
+                live={row === liveRow}
+                expanded={expandedRowKeys.has(row.key)}
+                onToggle={() => toggleRow(row.key)}
+              />
+            ) : (
+              <OtherEventRow event={row.event} />
+            )}
+          </div>
+        );
         const elapsedLabel = invocation.startedAt
           ? formatElapsed(nowMs - Date.parse(invocation.startedAt))
           : null;
@@ -171,16 +266,25 @@ export function HermesProgressInline({
             key={invocation.id}
             className="flex gap-2.5 px-5 py-2.5 transition-colors duration-100 hover:bg-raised/30"
           >
-            <div className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-full bg-elevated text-[0.857rem] font-semibold text-text-muted">
-              {invocation.botName.charAt(0).toUpperCase()}
-            </div>
+            {working ? (
+              <span className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-full bg-text">
+                <OrbLoader state="composing" design="avatar" size={26} invert />
+              </span>
+            ) : (
+              <Avatar
+                name={invocation.botName}
+                colorKey={invocation.botUserId}
+                bot
+                className="mt-0.5 size-8 text-[0.857rem]"
+              />
+            )}
             <div className="min-w-0 flex-1">
-              <div className="mb-2 flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1">
+              <div className="mb-1 flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1">
                 <span className="min-w-0 text-[0.929rem] font-medium text-text-secondary">
                   {invocation.botName} {title}
                 </span>
                 {needsInteraction && (
-                  <span className="shrink-0 rounded-sm bg-warning-bg px-1.5 py-0.5 text-[0.714rem] font-medium text-warning-text">
+                  <span className="shrink-0 rounded-full border border-warning/25 bg-warning-bg px-2 py-0.5 text-[0.714rem] font-medium text-warning-text">
                     action needed
                   </span>
                 )}
@@ -193,85 +297,35 @@ export function HermesProgressInline({
                   {onStop && invocation.status !== "queued" && (
                     <button
                       type="button"
-                      className="flex cursor-pointer items-center gap-1.5 rounded border border-border bg-transparent px-2 py-1 text-[0.786rem] font-medium text-text-muted transition-colors hover:bg-hover hover:text-text"
+                      className={buttonClass("secondary", "sm")}
                       onClick={onStop}
                     >
-                      <span className="size-2.5 rounded-sm border border-current bg-current" />
+                      <Square size={12} aria-hidden="true" className="fill-current" />
                       Stop
                     </button>
                   )}
                 </div>
               </div>
 
-              <div className="min-w-0">
-                {hiddenCount > 0 && (
-                  <div className="mb-3 flex items-center gap-2 text-[0.857rem] text-text-dimmed">
-                    <span className="inline-block size-[13px] rounded-full border border-border bg-base" />
-                    {hiddenCount} earlier update{hiddenCount === 1 ? "" : "s"}
-                  </div>
+              <div className="min-w-0 space-y-0.5">
+                {doneRows.length > 0 && (
+                  <ActivitySummary
+                    rows={doneRows}
+                    expanded={expandedRowKeys.has(summaryKey)}
+                    onToggle={() => toggleRow(summaryKey)}
+                  >
+                    {doneRows.map(renderRow)}
+                  </ActivitySummary>
                 )}
-
-                {visibleRows.length > 0 ? (
-                  <div className="relative space-y-3.5 before:absolute before:bottom-[8px] before:left-[6px] before:top-[8px] before:w-px before:bg-border-subtle">
-                    {visibleRows.map((row) => (
-                      <div
-                        key={row.key}
-                        data-testid="hermes-activity-row"
-                        data-kind={rowKind(row)}
-                      >
-                        {row.kind === "approval" ? (
-                          row.state.status === "pending" ? (
-                            <ApprovalRequestCard
-                              event={row.state.event}
-                              botName={invocation.botName}
-                              isActionable={actionableApprovalIds.has(
-                                row.state.event.id,
-                              )}
-                              onDecision={(decision) =>
-                                handleInteraction(row.state.event, decision)
-                              }
-                            />
-                          ) : (
-                            <ResolvedApprovalRow
-                              state={row.state}
-                              expanded={expandedRowKeys.has(row.key)}
-                              onToggle={() => toggleRow(row.key)}
-                            />
-                          )
-                        ) : row.kind === "clarify" ? (
-                          row.state.status === "pending" ? (
-                            <ClarifyRequestCard
-                              state={row.state}
-                              botName={invocation.botName}
-                              onResponse={(response) =>
-                                handleInteraction(row.state.event, response)
-                              }
-                            />
-                          ) : (
-                            <ResolvedClarifyRow state={row.state} />
-                          )
-                        ) : row.kind === "notice" ? (
-                          <NoticeEventRow event={row.event} />
-                        ) : row.kind === "reasoning" ? (
-                          <ReasoningEventRow
-                            event={row.event}
-                            expanded={expandedRowKeys.has(row.key)}
-                            onToggle={() => toggleRow(row.key)}
-                          />
-                        ) : row.kind === "tool" ? (
-                          <ToolEventRow
-                            event={row.event}
-                            expanded={expandedRowKeys.has(row.key)}
-                            onToggle={() => toggleRow(row.key)}
-                          />
-                        ) : (
-                          <OtherEventRow event={row.event} />
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="text-[0.929rem] text-text-dimmed">
+                {alertRows.map(renderRow)}
+                {liveRow
+                  ? renderRow(liveRow)
+                  : working && rows.length > 0 && <LiveThinkingLine />}
+                {pendingRows.length > 0 && (
+                  <div className="space-y-2 pt-1.5">{pendingRows.map(renderRow)}</div>
+                )}
+                {rows.length === 0 && (
+                  <div className="px-1 py-1 text-[0.929rem] text-text-dimmed">
                     {emptyStateLabel(invocation, nowMs)}
                   </div>
                 )}
@@ -418,99 +472,164 @@ function olderThan(iso: string | null, ageMs: number, nowMs: number) {
   return nowMs - Date.parse(iso) > ageMs;
 }
 
+/** Shared geometry for one-line timeline steps. */
+const stepRowClass =
+  "flex w-full min-w-0 cursor-pointer items-center gap-2 rounded-md px-1 py-1 text-left text-[0.929rem] text-text-muted transition-colors hover:bg-white/[0.03] hover:text-text-secondary";
+
+/** Expanded step details, indented under the step's text. */
+const stepDetailClass =
+  "mb-1.5 ml-8 mt-0.5 block max-h-72 overflow-y-auto whitespace-pre-wrap rounded-lg border border-border-subtle bg-raised px-3 py-2 leading-relaxed";
+
+function toolStatus(event: BotInvocationProgressEventPublic) {
+  return event.status ?? statusFromType(event.type);
+}
+
 function ToolEventRow({
   event,
+  live = false,
   expanded,
   onToggle,
 }: {
   event: BotInvocationProgressEventPublic;
+  /** The tool is running right now (shown on the live line). */
+  live?: boolean;
   expanded: boolean;
   onToggle: () => void;
 }) {
-  const status = event.status ?? statusFromType(event.type);
+  const status = toolStatus(event);
   const payload = event.payload ?? {};
   const duration = typeof payload.duration === "number" ? payload.duration : null;
+  const meta = [event.toolName, duration !== null ? formatDuration(duration) : null]
+    .filter(Boolean)
+    .join(" · ");
 
   return (
-    <div className="relative z-10 min-w-0">
+    <div className="min-w-0">
       <button
         type="button"
         aria-expanded={expanded}
         onClick={onToggle}
-        className="flex w-full min-w-0 cursor-pointer items-start gap-2.5 text-left text-[0.929rem] text-text-muted transition-colors hover:text-text-secondary"
+        className={stepRowClass}
+        title={meta || undefined}
       >
-        <StatusDot status={status} />
-        {event.toolName && (
-          <span
-            className="max-w-[10rem] shrink-0 truncate rounded-sm border border-border bg-base/70 px-1.5 py-0.5 font-mono text-[0.786rem] text-text-dimmed"
-            title={event.toolName}
-          >
-            {event.toolName}
-          </span>
+        {live ? (
+          <StepOrb state="working" />
+        ) : status === "failed" ? (
+          <StepIcon icon={X} className="text-error-bright" />
+        ) : (
+          <StepIcon icon={STEP_KINDS[toolKind(event.toolName)].icon} />
         )}
-        <span className="min-w-0 flex-1 truncate">{eventLabel(event)}</span>
-        {duration !== null && (
-          <span className="shrink-0 tabular-nums text-text-dimmed">
-            {formatDuration(duration)}
-          </span>
-        )}
-        <ExpandChevron expanded={expanded} />
+        <span className={`min-w-0 flex-1 truncate ${live ? "live-shine" : ""}`}>
+          {live && toolKind(event.toolName) === "command" && trimmedUiString(event.label)
+            ? `Running ${eventLabel(event)}`
+            : eventLabel(event)}
+        </span>
       </button>
       {expanded && (
-        <code
+        <div
           data-testid="hermes-activity-detail"
-          className="ml-6 mt-1.5 block max-h-72 overflow-y-auto whitespace-pre-wrap break-all border-l border-border-accent bg-raised/30 py-1.5 pl-3 pr-2 font-mono text-[0.786rem] leading-relaxed text-text-secondary"
+          className={`${stepDetailClass} text-[0.786rem]`}
         >
-          {toolDetailText(event)}
-        </code>
+          {meta && (
+            <div className="mb-1 flex gap-2 font-mono text-[0.714rem] text-text-dimmed">
+              {event.toolName && <span>{event.toolName}</span>}
+              {duration !== null && (
+                <span className="tabular-nums">{formatDuration(duration)}</span>
+              )}
+            </div>
+          )}
+          <code className="block break-all font-mono text-text-secondary">
+            {toolDetailText(event)}
+          </code>
+        </div>
       )}
+    </div>
+  );
+}
+
+/** One line summarising the finished steps; expands to the full list. */
+function ActivitySummary({
+  rows,
+  expanded,
+  onToggle,
+  children,
+}: {
+  rows: ActivityRow[];
+  expanded: boolean;
+  onToggle: () => void;
+  children: ReactNode;
+}) {
+  const { text, failed, icon } = summarizeRows(rows);
+  return (
+    <div className="min-w-0">
+      <button
+        type="button"
+        aria-expanded={expanded}
+        onClick={onToggle}
+        className={stepRowClass}
+        data-testid="hermes-activity-summary"
+      >
+        <StepIcon icon={icon} />
+        <span className="min-w-0 truncate">
+          {text}
+          {failed > 0 && <span className="text-error-bright"> · {failed} failed</span>}
+        </span>
+        <ExpandChevron expanded={expanded} className="-ml-0.5" />
+      </button>
+      {expanded && (
+        <div className="mb-1 ml-[13px] border-l border-border-subtle pl-2">
+          {children}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Live line while Hermes is between steps (no tool running yet). */
+function LiveThinkingLine() {
+  return (
+    <div className="flex min-w-0 items-center gap-2 px-1 py-1 text-[0.929rem]">
+      <StepOrb state="solving" />
+      <span className="live-shine font-medium">Thinking</span>
     </div>
   );
 }
 
 function NoticeEventRow({ event }: { event: BotInvocationProgressEventPublic }) {
   const severity = noticeSeverity(event);
-  const style =
+  const tone =
     severity === "error"
-      ? "border-error/60 text-error-light"
+      ? "text-error-bright"
       : severity === "warning"
-      ? "border-warning-text/70 text-warning-text"
-      : "border-accent/50 text-text-muted";
+        ? "text-warning-text"
+        : "text-text-muted";
   const badge = severity === "warning" ? "warn" : severity;
 
   return (
-    <div className="relative z-10 flex min-w-0 items-start gap-2.5">
-      <TimelineDot
-        tone={
-          severity === "error"
-            ? "error"
-            : severity === "warning"
-              ? "warning"
-              : "blue"
-        }
+    <div className={`flex min-w-0 items-start gap-2 px-1 py-1 text-[0.929rem] ${tone}`}>
+      <StepIcon
+        icon={severity === "error" ? CircleAlert : severity === "warning" ? TriangleAlert : Info}
+        className={`mt-px ${severity === "info" ? "text-text-dimmed" : tone}`}
       />
-      <div
-        className={`min-w-0 flex-1 border-l py-1 pl-3 text-[0.929rem] ${style}`}
-      >
-        <div className="flex min-w-0 items-start gap-2">
-          <span className="mt-0.5 shrink-0 rounded-sm border border-current/30 bg-base/30 px-1.5 py-0.5 text-[0.643rem] font-medium uppercase">
-            {badge}
-          </span>
-          <span className="min-w-0 whitespace-pre-wrap break-words leading-relaxed">
-            {eventText(event)}
-          </span>
-        </div>
-      </div>
+      <span className="mt-0.5 shrink-0 rounded-sm border border-current/30 px-1.5 text-[0.643rem] font-medium uppercase leading-4">
+        {badge}
+      </span>
+      <span className="min-w-0 whitespace-pre-wrap break-words leading-relaxed">
+        {eventText(event)}
+      </span>
     </div>
   );
 }
 
 function ReasoningEventRow({
   event,
+  active,
   expanded,
   onToggle,
 }: {
   event: BotInvocationProgressEventPublic;
+  /** The run is still reasoning here (newest row of a working run). */
+  active: boolean;
   expanded: boolean;
   onToggle: () => void;
 }) {
@@ -518,34 +637,29 @@ function ReasoningEventRow({
   const previewText = firstLine(fullText);
 
   return (
-    <div className="relative z-10 flex min-w-0 items-start gap-2.5">
-      <TimelineDot tone="blue" pulse />
-      <div className="min-w-0 flex-1 text-[0.929rem]">
-        <button
-          type="button"
-          aria-expanded={expanded}
-          onClick={onToggle}
-          className="flex w-full min-w-0 cursor-pointer items-start gap-2 text-left text-text-muted transition-colors hover:text-text-secondary"
+    <div className="min-w-0">
+      <button
+        type="button"
+        aria-expanded={expanded}
+        onClick={onToggle}
+        className={stepRowClass}
+      >
+        {active ? <StepOrb state="solving" /> : <StepIcon icon={Brain} />}
+        <span className={`shrink-0 font-medium ${active ? "live-shine" : "text-text-secondary"}`}>
+          {active ? "Thinking" : "Thought"}
+        </span>
+        <span className="min-w-0 flex-1 truncate text-text-dimmed">
+          {!expanded && previewText}
+        </span>
+      </button>
+      {expanded && fullText && (
+        <div
+          data-testid="hermes-activity-detail"
+          className={`${stepDetailClass} break-words text-text-muted`}
         >
-          <span className="min-w-0 flex-1">
-            <span className="block font-medium text-text-secondary">Thinking</span>
-            {!expanded && previewText && (
-              <span className="block truncate text-text-dimmed">
-                {previewText}
-              </span>
-            )}
-          </span>
-          <ExpandChevron expanded={expanded} className="mt-0.5" />
-        </button>
-        {expanded && fullText && (
-          <div
-            data-testid="hermes-activity-detail"
-            className="mt-1.5 whitespace-pre-wrap break-words border-l border-border-accent bg-raised/30 py-1.5 pl-3 pr-2 leading-relaxed text-text-dimmed"
-          >
-            {fullText}
-          </div>
-        )}
-      </div>
+          {fullText}
+        </div>
+      )}
     </div>
   );
 }
@@ -583,32 +697,31 @@ function ApprovalRequestCard({
   };
 
   return (
-    <div className="relative z-10 flex min-w-0 items-start gap-2.5">
-      <TimelineDot tone="warning" pulse />
+    <div className="flex min-w-0">
       <div
         data-testid="hermes-approval-request"
-        className="hermes-interaction-card min-w-0 flex-1 border-l-2 border-warning-text bg-warning-bg/35 py-2 pl-3 pr-2.5 text-[0.929rem] text-text-secondary"
+        className={`hermes-interaction-card ${interactionCardClass}`}
       >
-        <div className="mb-2 flex min-w-0 items-center gap-2">
+        <div className="mb-2.5 flex min-w-0 items-center gap-2">
           <div className="min-w-0 flex-1 font-medium text-text">
             {botName} wants to run a command
           </div>
         </div>
 
         {command && (
-          <code className="mb-2 block max-h-40 overflow-y-auto whitespace-pre-wrap break-all border-l border-warning-text/40 bg-base/60 py-1.5 pl-3 pr-2 font-mono text-[0.714rem] text-text">
+          <code className="mb-3 block max-h-40 overflow-y-auto whitespace-pre-wrap break-all rounded-md border border-border-subtle bg-raised px-3 py-2 font-mono text-[0.786rem] leading-relaxed text-text">
             {command}
           </code>
         )}
 
         {description && (
-          <div className="mb-2 whitespace-pre-wrap break-words text-text-muted">
+          <div className="mb-3 whitespace-pre-wrap break-words text-text-muted">
             {description}
           </div>
         )}
 
         {isActionable ? (
-          <div className="flex flex-wrap items-center gap-1.5">
+          <div className="flex flex-wrap items-center gap-2">
             {choices.includes("once") && (
               <ApprovalButton
                 label="Approve"
@@ -636,7 +749,7 @@ function ApprovalRequestCard({
             {choices.includes("deny") && (
               <ApprovalButton
                 label="Deny"
-                tone="danger"
+                tone="danger-soft"
                 disabled={submitting}
                 onClick={() => void submit("deny")}
               />
@@ -655,7 +768,7 @@ function ApprovalRequestCard({
         {error && (
           <div
             role="alert"
-            className="mt-2 text-[0.786rem] text-error-light"
+            className="mt-2 text-[0.786rem] text-error-bright"
           >
             {error}
           </div>
@@ -725,7 +838,7 @@ function ClarifyRequestCard({
       >
         {choices === null ? "Your response" : "Other response"}
       </label>
-      <div className="flex min-w-0 flex-col gap-1.5 sm:flex-row sm:items-end">
+      <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-end">
         <textarea
           id={`clarify-other-${event.id}`}
           aria-label={choices === null ? "Your response" : "Other response"}
@@ -748,7 +861,7 @@ function ClarifyRequestCard({
             }
           }}
           placeholder={choices === null ? "Type your response" : "Type another answer"}
-          className="min-h-9 min-w-0 flex-1 resize-y rounded border border-border bg-base px-2.5 py-2 text-[0.857rem] text-text outline-none placeholder:text-text-placeholder focus:border-accent disabled:opacity-60"
+          className={`${inputClass} min-h-9 flex-1 resize-y`}
         />
         <ApprovalButton
           label="Submit"
@@ -757,33 +870,33 @@ function ClarifyRequestCard({
           onClick={() => void submit(customAnswer)}
         />
       </div>
-      <div className="mt-1 text-[0.714rem] text-text-dimmed">
+      <div className="mt-1.5 text-[0.714rem] text-text-dimmed">
         Enter to submit · Shift+Enter for a new line
       </div>
     </div>
   );
 
   return (
-    <div className="relative z-10 flex min-w-0 items-start gap-2.5">
-      <TimelineDot tone="warning" pulse />
+    <div className="flex min-w-0">
       <div
         data-testid="hermes-clarify-request"
-        className="hermes-interaction-card min-w-0 flex-1 border-l-2 border-warning-text bg-warning-bg/25 py-2 pl-3 pr-2.5 text-[0.929rem] text-text-secondary"
+        className={`hermes-interaction-card ${interactionCardClass}`}
       >
         <div className="text-[0.786rem] font-medium text-warning-text">
           {botName} needs your input
         </div>
-        <div className="mt-1 whitespace-pre-wrap break-words font-medium text-text">
+        <div className="mt-1.5 whitespace-pre-wrap break-words font-medium text-text">
           {question}
         </div>
 
         {choices && !multiSelect && (
-          <div className="mt-2 flex flex-wrap gap-1.5">
+          <div className="mt-3 flex flex-wrap gap-2">
             {choices.map((choice) => (
               <ApprovalButton
                 key={choice}
                 label={choice}
                 tone="secondary"
+                wrap
                 disabled={submitting}
                 onClick={() => void submit(choice)}
               />
@@ -791,6 +904,7 @@ function ClarifyRequestCard({
             <ApprovalButton
               label={showOther ? "Hide other" : "Other"}
               tone="secondary"
+              selected={showOther}
               disabled={submitting}
               onClick={() => {
                 setShowOther((visible) => !visible);
@@ -801,13 +915,13 @@ function ClarifyRequestCard({
         )}
 
         {choices && multiSelect && (
-          <fieldset className="mt-2 min-w-0" disabled={submitting}>
+          <fieldset className="mt-3 min-w-0" disabled={submitting}>
             <legend className="sr-only">Select one or more answers</legend>
-            <div className="flex flex-wrap gap-1.5">
+            <div className="flex flex-wrap gap-2">
               {choices.map((choice) => (
                 <label
                   key={choice}
-                  className="inline-flex min-h-8 cursor-pointer items-center gap-2 rounded border border-border bg-button/70 px-2.5 py-1 text-[0.786rem] text-text-muted hover:bg-button-hover has-[:checked]:border-accent/60 has-[:checked]:bg-accent/15 has-[:checked]:text-accent"
+                  className="inline-flex min-h-7 cursor-pointer items-center gap-2 rounded-md border border-border-strong bg-elevated px-2.5 py-1 text-[0.857rem] font-medium text-text transition-colors duration-150 hover:bg-button-hover has-[:checked]:border-accent/60 has-[:checked]:bg-accent/15 has-[:disabled]:cursor-not-allowed has-[:disabled]:opacity-45"
                 >
                   <input
                     type="checkbox"
@@ -819,7 +933,7 @@ function ClarifyRequestCard({
                 </label>
               ))}
             </div>
-            <div className="mt-2 flex flex-wrap gap-1.5">
+            <div className="mt-2.5 flex flex-wrap gap-2">
               <ApprovalButton
                 label="Submit selected"
                 tone="primary"
@@ -829,6 +943,7 @@ function ClarifyRequestCard({
               <ApprovalButton
                 label={showOther ? "Hide custom answer" : "Custom answer"}
                 tone="secondary"
+                selected={showOther}
                 disabled={submitting}
                 onClick={() => {
                   setShowOther((visible) => !visible);
@@ -846,7 +961,7 @@ function ClarifyRequestCard({
           </div>
         )}
         {error && (
-          <div role="alert" className="mt-2 text-[0.786rem] text-error-light">
+          <div role="alert" className="mt-2 text-[0.786rem] text-error-bright">
             {error}
           </div>
         )}
@@ -859,12 +974,12 @@ function ResolvedClarifyRow({ state }: { state: ClarifyRequestState }) {
   const summary = clarifyResponseSummary(state.response);
   return (
     <div
-      className="relative z-10 flex min-w-0 items-start gap-2.5 text-[0.929rem]"
+      className="flex min-w-0 items-center gap-2 px-1 py-1 text-[0.929rem]"
       data-testid="hermes-clarify-resolved"
       data-confirmed={state.confirmed ? "true" : "false"}
     >
-      <TimelineDot tone="success" />
-      <span className="shrink-0 font-medium text-success-light">Answered</span>
+      <StepIcon icon={Check} />
+      <span className="shrink-0 font-medium text-text-secondary">Answered</span>
       <span className="min-w-0 flex-1 truncate text-text-dimmed" title={summary}>
         {summary}
       </span>
@@ -887,7 +1002,7 @@ function ResolvedApprovalRow({
 
   return (
     <div
-      className="relative z-10 min-w-0"
+      className="min-w-0"
       data-testid="hermes-approval-resolved"
       data-confirmed={state.confirmed ? "true" : "false"}
     >
@@ -895,12 +1010,16 @@ function ResolvedApprovalRow({
         type="button"
         aria-expanded={expanded}
         onClick={onToggle}
-        className="flex w-full min-w-0 cursor-pointer items-start gap-2.5 text-left text-[0.929rem] text-text-secondary hover:text-text"
+        className={stepRowClass}
       >
-        <TimelineDot tone={denied ? "error" : "success"} />
+        {denied ? (
+          <StepIcon icon={X} className="text-error-bright" />
+        ) : (
+          <StepIcon icon={Check} />
+        )}
         <span
           className={`shrink-0 font-medium ${
-            denied ? "text-error-light" : "text-success-light"
+            denied ? "text-error-light" : "text-text-secondary"
           }`}
         >
           {approvalDecisionLabel(decision)}
@@ -913,12 +1032,11 @@ function ResolvedApprovalRow({
             {command}
           </code>
         )}
-        <ExpandChevron expanded={expanded} />
       </button>
       {expanded && command && (
         <code
           data-testid="hermes-activity-detail"
-          className="ml-6 mt-1.5 block max-h-72 overflow-y-auto whitespace-pre-wrap break-all border-l border-border-accent bg-raised/30 py-1.5 pl-3 pr-2 font-mono text-[0.786rem] leading-relaxed text-text-secondary"
+          className={`${stepDetailClass} break-all font-mono text-[0.786rem] text-text-secondary`}
         >
           {command}
         </code>
@@ -931,27 +1049,31 @@ function ApprovalButton({
   label,
   tone,
   className = "",
+  wrap = false,
+  selected = false,
   disabled = false,
   onClick,
 }: {
   label: string;
-  tone: "primary" | "secondary" | "danger";
+  tone: ButtonVariant;
   className?: string;
+  /** Let long free-form labels (clarify choices) wrap instead of overflowing. */
+  wrap?: boolean;
+  /** Visual pressed state for toggles such as "Other". */
+  selected?: boolean;
   disabled?: boolean;
   onClick: () => void;
 }) {
-  const toneClass =
-    tone === "danger"
-      ? "bg-error-bg/80 text-error-bright hover:bg-danger-bg-hover"
-      : tone === "primary"
-      ? "bg-accent/15 text-accent hover:bg-accent/25"
-      : "bg-button/80 text-text-muted hover:bg-button-hover hover:text-text";
+  const wrapClass = wrap
+    ? "h-auto! min-h-7 whitespace-normal! break-words py-1 text-left"
+    : "";
 
   return (
     <button
       type="button"
       disabled={disabled}
-      className={`inline-flex min-h-7 cursor-pointer items-center rounded border border-border px-2.5 py-1 text-[0.786rem] font-medium transition-colors disabled:cursor-default disabled:opacity-55 ${toneClass} ${className}`}
+      data-selected={selected ? "true" : undefined}
+      className={`${buttonClass(tone, "sm")} data-[selected=true]:border-accent/60 data-[selected=true]:bg-accent/15 ${wrapClass} ${className}`}
       onClick={onClick}
     >
       {label}
@@ -961,98 +1083,64 @@ function ApprovalButton({
 
 function OtherEventRow({ event }: { event: BotInvocationProgressEventPublic }) {
   return (
-    <div className="relative z-10 flex min-w-0 items-start gap-2.5 text-[0.929rem] text-text-dimmed">
-      <TimelineDot tone="muted" />
+    <div className="flex min-w-0 items-center gap-2 px-1 py-1 text-[0.929rem] text-text-dimmed">
+      <StepIcon icon={Info} />
       <span className="shrink-0 font-medium text-text-muted">Update</span>
       <span className="min-w-0 flex-1 truncate">{eventText(event)}</span>
     </div>
   );
 }
 
-function ExpandChevron({
-  expanded,
-  className = "",
-}: {
-  expanded: boolean;
-  className?: string;
-}) {
-  return (
-    <svg
-      width="10"
-      height="10"
-      viewBox="0 0 10 10"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.4"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-      className={`shrink-0 text-text-dimmed transition-transform duration-150 ${
-        expanded ? "rotate-90" : ""
-      } ${className}`}
-    >
-      <path d="M3.5 2l3 3-3 3" />
-    </svg>
-  );
+function rowIcon(row: ActivityRow): LucideIcon {
+  if (row.kind === "tool") {
+    return toolStatus(row.event) === "failed" ? X : STEP_KINDS[toolKind(row.event.toolName)].icon;
+  }
+  if (row.kind === "reasoning") return Brain;
+  if (row.kind === "approval") return row.state.decision === "deny" ? X : Check;
+  if (row.kind === "clarify") return Check;
+  return Info;
 }
 
-function TimelineDot({
-  tone,
-  pulse = false,
-  className = "",
-}: {
-  tone: "blue" | "green" | "success" | "warning" | "error" | "muted";
-  pulse?: boolean;
-  className?: string;
-}) {
-  const colors =
-    tone === "blue"
-      ? {
-          outer: "border-accent/50",
-          inner: "bg-accent",
-        }
-      : tone === "green"
-      ? {
-          outer: "border-[rgba(84,137,74,0.5)]",
-          inner: "bg-[#54894a]",
-        }
-      : tone === "success"
-        ? {
-            outer: "border-success/50",
-            inner: "bg-success",
-          }
-        : tone === "warning"
-          ? {
-              outer: "border-warning-text/50",
-              inner: "bg-warning-text",
-            }
-          : tone === "error"
-            ? {
-                outer: "border-error/50",
-                inner: "bg-error",
-              }
-            : {
-                outer: "border-text-dimmed/50",
-                inner: "bg-text-dimmed",
-              };
-
-  return (
-    <span
-      className={`mt-1 flex size-[13px] shrink-0 items-center justify-center rounded-full border bg-base ${colors.outer} ${className}`}
-    >
-      <span
-        className={`size-[5px] rounded-full ${colors.inner} ${
-          pulse ? "animate-pulse" : ""
-        }`}
-      />
-    </span>
+/** "Read 2 files, searched the web and ran 1 command" for finished steps. */
+function summarizeRows(rows: ActivityRow[]) {
+  const toolCounts = new Map<StepKind, number>();
+  let thoughts = 0;
+  let approved = 0;
+  let denied = 0;
+  let answered = 0;
+  let updates = 0;
+  let failed = 0;
+  for (const row of rows) {
+    if (row.kind === "tool") {
+      const kind = toolKind(row.event.toolName);
+      toolCounts.set(kind, (toolCounts.get(kind) ?? 0) + 1);
+      if (toolStatus(row.event) === "failed") failed += 1;
+    } else if (row.kind === "reasoning") {
+      thoughts += 1;
+    } else if (row.kind === "approval") {
+      if (row.state.decision === "deny") denied += 1;
+      else approved += 1;
+    } else if (row.kind === "clarify") {
+      answered += 1;
+    } else {
+      updates += 1;
+    }
+  }
+  const parts = [...toolCounts].map(([kind, count]) => STEP_KINDS[kind].summary(count));
+  if (approved) parts.push(`Approved ${plural(approved, "request")}`);
+  if (denied) parts.push(`Denied ${plural(denied, "request")}`);
+  if (answered) parts.push(`Answered ${plural(answered, "question")}`);
+  // Thinking is implied once there are actions; alone it reads "Thought".
+  if (parts.length === 0 && thoughts) parts.push(times(thoughts, "Thought"));
+  if (updates) parts.push(`Received ${plural(updates, "update")}`);
+  const phrases = parts.map((part, index) =>
+    index === 0 ? part : part.charAt(0).toLowerCase() + part.slice(1),
   );
-}
-
-function StatusDot({ status }: { status: string | null }) {
-  if (status === "running") return <TimelineDot tone="green" pulse />;
-  if (status === "failed") return <TimelineDot tone="error" />;
-  return <TimelineDot tone="success" />;
+  const text =
+    phrases.length < 2
+      ? (phrases[0] ?? "")
+      : `${phrases.slice(0, -1).join(", ")} and ${phrases[phrases.length - 1]}`;
+  return { text, failed, icon: rowIcon(rows[rows.length - 1]) };
 }
 
 function eventLabel(event: BotInvocationProgressEventPublic) {

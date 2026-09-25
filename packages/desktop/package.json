@@ -30,6 +30,7 @@
     "turndown": "^7.2.2",
     "@thechat/client": "workspace:*",
     "@thechat/shared": "workspace:*",
+    "lucide-react": "^1.48.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "zustand": "^5.0.11",

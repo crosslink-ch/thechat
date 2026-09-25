@@ -7,7 +7,7 @@ import { ErrorBoundary } from "./components/ErrorBoundary";
 import { queryClient } from "./lib/query-client";
 import { error as logError, formatError } from "./log";
 import { initDesktopObservability } from "./lib/telemetry";
-import "highlight.js/styles/github-dark.css";
+import "highlight.js/styles/atom-one-dark.css";
 import "katex/dist/katex.min.css";
 
 export function mountClient(element: HTMLElement) {

@@ -87,11 +87,11 @@ function ClientExample({
       <h3 className={settingsLabel}>{title}</h3>
       <div className="min-w-0">
         <div className="flex items-center justify-between gap-3">
-          <p className="text-[0.786rem] leading-5 text-text-dimmed">{hint}</p>
+          <p className="text-[0.857rem] leading-5 text-text-dimmed">{hint}</p>
           <CopyButton label={copyLabel} copied={copied} onCopy={onCopy} />
         </div>
         <pre
-          className={`mt-2 max-w-full rounded-lg border border-border bg-base px-3 py-2.5 font-mono text-[0.857rem] leading-6 text-text-secondary ${
+          className={`mt-2 max-w-full rounded-lg border border-border-subtle bg-raised px-3 py-2.5 font-mono text-[0.857rem] leading-6 text-text-secondary ${
             wrap ? "whitespace-pre-wrap [overflow-wrap:anywhere]" : "overflow-x-auto"
           }`}
         >
@@ -298,7 +298,7 @@ export function ApiAccessSettings() {
         {notice && (
           <div
             role={notice.kind === "error" ? "alert" : "status"}
-            className={`px-4 py-3 text-[0.857rem] leading-5 sm:px-5 ${
+            className={`px-4 py-3 text-[0.929rem] leading-5 sm:px-5 ${
               notice.kind === "error"
                 ? "bg-error-msg-bg text-error-bright"
                 : "bg-success-bg text-success-light"
@@ -313,7 +313,7 @@ export function ApiAccessSettings() {
           onSubmit={createToken}
           className={settingsRow}
         >
-          <div className="min-w-0">
+          <div className="min-w-0 sm:pt-1.5">
             <label
               htmlFor="personal-access-token-name"
               className={`block ${settingsLabel}`}
@@ -321,7 +321,7 @@ export function ApiAccessSettings() {
               Token name
             </label>
           </div>
-          <div className="flex min-w-0 flex-col gap-2 sm:flex-row">
+          <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center">
             <input
               id="personal-access-token-name"
               value={name}
@@ -346,10 +346,10 @@ export function ApiAccessSettings() {
           <div className="bg-warning-bg px-4 py-4 sm:px-5">
             <div className="flex flex-wrap items-start justify-between gap-2">
               <div className="min-w-0 flex-1">
-                <h3 className="break-words text-[0.857rem] font-semibold leading-5 text-warning-text">
+                <h3 className="break-words text-[0.929rem] font-semibold leading-5 text-warning-text">
                   Copy {revealed.name} now
                 </h3>
-                <p className="mt-0.5 text-[0.786rem] leading-5 text-text-muted">
+                <p className="mt-0.5 text-[0.857rem] leading-5 text-text-muted">
                   This is the only time TheChat will return the complete token.
                 </p>
               </div>
@@ -361,12 +361,12 @@ export function ApiAccessSettings() {
                 Hide token
               </button>
             </div>
-            <div className="mt-3 flex min-w-0 gap-2">
+            <div className="mt-3 flex min-w-0 items-center gap-2">
               <input
                 aria-label="New personal access token"
                 readOnly
                 value={revealed.value}
-                className="h-10 min-w-0 flex-1 rounded-lg border border-border bg-base px-3 font-mono text-[0.857rem] text-text outline-none focus-visible:ring-2 focus-visible:ring-accent/30 max-sm:h-[44px]"
+                className="h-8 min-w-0 flex-1 rounded-lg border border-border-strong bg-base px-3 font-mono text-[0.857rem] text-text outline-none transition-[border-color,box-shadow] duration-150 focus:border-accent/60 focus:ring-3 focus:ring-accent/15 max-sm:h-[44px]"
               />
               <CopyButton
                 label="personal access token"
@@ -378,9 +378,9 @@ export function ApiAccessSettings() {
         )}
 
         {loading ? (
-          <p className={`px-4 py-4 sm:px-5 ${settingsValue}`}>Loading tokens...</p>
+          <p className={`px-4 py-3.5 sm:px-5 ${settingsValue}`}>Loading tokens...</p>
         ) : tokens.length === 0 ? (
-          <p className={`px-4 py-4 sm:px-5 ${settingsValue}`}>
+          <p className={`px-4 py-3.5 sm:px-5 ${settingsValue}`}>
             No personal access tokens yet.
           </p>
         ) : (
@@ -392,18 +392,18 @@ export function ApiAccessSettings() {
               <li
                 key={item.id}
                 aria-label={`${item.name} personal access token`}
-                className="flex min-w-0 flex-col gap-3 px-4 py-4 sm:flex-row sm:items-start sm:justify-between sm:gap-6 sm:px-5"
+                className="flex min-w-0 flex-col gap-3 px-4 py-3.5 sm:flex-row sm:items-center sm:justify-between sm:gap-6 sm:px-5"
               >
                 <div className="min-w-0 flex-1">
                   <div className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-1">
-                    <span className="min-w-0 max-w-full truncate text-[0.857rem] font-medium leading-5 text-text">
+                    <span className="min-w-0 max-w-full truncate text-[0.929rem] font-medium leading-5 text-text">
                       {item.name}
                     </span>
-                    <code className="font-mono text-[0.786rem] leading-5 text-text-dimmed">
+                    <code className="font-mono text-[0.857rem] leading-5 text-text-dimmed">
                       {item.start ? `${item.start}…` : "Identifier unavailable"}
                     </code>
                   </div>
-                  <dl className="mt-1 flex flex-wrap gap-x-4 gap-y-0.5 text-[0.786rem] leading-5 text-text-muted">
+                  <dl className="mt-1 flex flex-wrap gap-x-4 gap-y-0.5 text-[0.857rem] leading-5 text-text-muted">
                     <div className="flex gap-1.5">
                       <dt className="text-text-dimmed">Created</dt>
                       <dd>

@@ -9,6 +9,9 @@ import {
 import * as Dialog from "@radix-ui/react-dialog";
 import { useMediaQuery } from "./ResponsiveShell";
 import { HeaderAction } from "./HeaderActions";
+import { GitBranch, Inbox, Pencil, Plus, X } from "lucide-react";
+import { OrbLoader } from "./OrbLoader";
+import { buttonClass, iconButtonClass, sectionLabelClass } from "./ui";
 import type {
   BotInvocationPublic,
   BotRuntimeSnapshot,
@@ -92,41 +95,48 @@ export function HermesRuntimePanel({
   const generalActiveCount = activeInvocations.filter(
     (invocation) => invocation.threadId === null,
   ).length;
+  // Threads with a run in progress show the composing orb.
+  const runningThreadIds = new Set(
+    activeInvocations
+      .filter((invocation) => invocation.status === "running")
+      .map((invocation) => invocation.threadId),
+  );
 
   const panel = (
-    <aside className="hermes-runtime-panel flex w-80 min-h-0 shrink-0 flex-col border-l border-border bg-surface/80" aria-label="Hermes tasks and activity">
+    <aside className="hermes-runtime-panel flex w-80 min-h-0 shrink-0 flex-col border-l border-border bg-surface" aria-label="Hermes tasks and activity">
       <div className="border-b border-border px-4 py-3.5">
-        <div className="text-[0.786rem] font-medium uppercase text-text-dimmed">{title}</div>
-        <div className="truncate text-[1rem] font-semibold text-text">{botName}</div>
+        <div className={sectionLabelClass}>{title}</div>
+        <div className="mt-0.5 truncate text-[1rem] font-semibold text-text">{botName}</div>
       </div>
-      <div className="min-h-0 flex-1 overflow-y-auto px-3.5 py-4">
-        <section className="mb-5">
-          <div className="mb-2 px-1 text-[0.786rem] font-medium uppercase text-text-dimmed">
+      <div className="min-h-0 flex-1 overflow-y-auto px-3 py-4">
+        <section className="mb-6">
+          <div className={`mb-2 px-1.5 ${sectionLabelClass}`}>
             General
           </div>
           <GeneralThreadRow
             active={activeThreadId === null && !draftTaskActive}
             activeCount={generalActiveCount + generalQueuedCount}
+            running={runningThreadIds.has(null)}
             needsApproval={generalNeedsApproval}
             unread={generalUnread && (activeThreadId !== null || draftTaskActive)}
             onSelect={onSelectThread}
           />
         </section>
 
-        <section className="mb-5">
-          <div className="mb-2 flex items-center justify-between gap-2 px-1">
-            <div className="text-[0.786rem] font-medium uppercase text-text-dimmed">
+        <section className="mb-6">
+          <div className="mb-2 flex items-center justify-between gap-2 pl-1.5">
+            <div className={sectionLabelClass}>
               Tasks
             </div>
             {onCreateThread && (
               <button
                 type="button"
-                className="flex h-7 shrink-0 cursor-pointer items-center gap-1.5 rounded-md border border-accent/35 bg-accent/10 px-2 text-[0.786rem] font-medium text-accent transition-colors duration-150 hover:border-accent/55 hover:bg-accent/15 hover:text-text"
+                className={`shrink-0 ${buttonClass("ghost", "sm")}`}
                 onClick={onCreateThread}
                 title="New task (C-x n)"
                 aria-label="New task"
               >
-                <PlusIcon className="size-3" />
+                <Plus size={14} aria-hidden="true" />
                 <span>New</span>
               </button>
             )}
@@ -134,12 +144,12 @@ export function HermesRuntimePanel({
           {threadsLoading && threads.length === 0 && !draftTaskPresent ? (
             <PanelSkeleton />
           ) : threads.length === 0 && !draftTaskPresent ? (
-            <div className="rounded-md border border-dashed border-border-subtle bg-base/20 px-3 py-3 text-[0.857rem] text-text-placeholder">
+            <div className="rounded-lg border border-dashed border-border px-3 py-3 text-[0.857rem] text-text-dimmed">
               No tasks yet
             </div>
           ) : (
-            <div className="overflow-hidden rounded-md border border-border-subtle bg-base/20">
-              <div className="divide-y divide-border-subtle">
+            <div className="min-w-0">
+              <div className="flex flex-col gap-0.5">
                 {draftTaskPresent && (
                   <DraftThreadRow
                     active={draftTaskActive}
@@ -155,6 +165,7 @@ export function HermesRuntimePanel({
                       (activeCountsByThread.get(thread.id) ?? 0) +
                       (queuedCountsByThread?.get(thread.id) ?? 0)
                     }
+                    running={runningThreadIds.has(thread.id)}
                     needsApproval={approvalThreadIds?.has(thread.id) ?? false}
                     unread={
                       thread.id !== activeThreadId &&
@@ -170,7 +181,7 @@ export function HermesRuntimePanel({
           {threadsHasMore && (
             <button
               type="button"
-              className="mt-2 w-full cursor-pointer rounded-md border border-border bg-background px-3 py-2 text-center text-[0.786rem] font-medium text-text-muted transition-colors duration-150 hover:bg-hover hover:text-text disabled:cursor-default disabled:opacity-50"
+              className={`mt-2 w-full ${buttonClass("secondary", "sm")}`}
               onClick={onLoadMoreThreads}
               disabled={threadsLoadingMore}
             >
@@ -180,19 +191,27 @@ export function HermesRuntimePanel({
         </section>
 
         <section className="mb-5">
-          <div className="mb-2 px-1 text-[0.786rem] font-medium uppercase text-text-dimmed">
+          <div className={`mb-2 px-1.5 ${sectionLabelClass}`}>
             Activity
           </div>
           {loading && activeInvocations.length === 0 ? (
             <PanelSkeleton />
           ) : activeInvocations.length === 0 ? (
-            <div className="rounded-md border border-border-subtle bg-base/20 px-3 py-2 text-[0.857rem] text-text-placeholder">
+            <div className="rounded-lg border border-dashed border-border px-3 py-2.5 text-[0.857rem] text-text-dimmed">
               No active runs
             </div>
           ) : (
             <div className="flex flex-col gap-2">
               {activeInvocations.map((invocation) => (
-                <InvocationRow key={invocation.id} invocation={invocation} />
+                <InvocationRow
+                  key={invocation.id}
+                  invocation={invocation}
+                  waiting={
+                    invocation.threadId === null
+                      ? generalNeedsApproval
+                      : (approvalThreadIds?.has(invocation.threadId) ?? false)
+                  }
+                />
               ))}
             </div>
           )}
@@ -214,7 +233,7 @@ export function HermesRuntimePanel({
         <Dialog.Content className="mobile-drawer mobile-task-drawer" aria-describedby={undefined}>
           <div className="mobile-drawer-heading">
             <Dialog.Title>Tasks and activity</Dialog.Title>
-            <Dialog.Close className="mobile-touch-button" aria-label="Close tasks and activity">✕</Dialog.Close>
+            <Dialog.Close className="mobile-touch-button" aria-label="Close tasks and activity"><X size={18} aria-hidden="true" /></Dialog.Close>
           </div>
           {panel}
         </Dialog.Content>
@@ -223,87 +242,11 @@ export function HermesRuntimePanel({
   );
 }
 
-function PlusIcon({ className = "" }: { className?: string }) {
-  return (
-    <svg
-      className={className}
-      viewBox="0 0 12 12"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.5"
-      strokeLinecap="round"
-      aria-hidden="true"
-    >
-      <path d="M6 2.5V9.5" />
-      <path d="M2.5 6H9.5" />
-    </svg>
-  );
-}
-
-function PencilIcon({ className = "" }: { className?: string }) {
-  return (
-    <svg
-      className={className}
-      viewBox="0 0 14 14"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.4"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <path d="m3 10.75.5-2.25 6-6 2 2-6 6z" />
-      <path d="m8.5 3.5 2 2" />
-    </svg>
-  );
-}
-
-function InboxIcon() {
-  return (
-    <svg
-      width="15"
-      height="15"
-      viewBox="0 0 15 15"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.4"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <path d="M2.5 8.5 4 3.5h7l1.5 5" />
-      <path d="M2.5 8.5h3l.7 1.5h1.6l.7-1.5h3" />
-      <path d="M2.5 8.5v2.8a1.2 1.2 0 0 0 1.2 1.2h7.6a1.2 1.2 0 0 0 1.2-1.2V8.5" />
-    </svg>
-  );
-}
-
-function TaskIcon() {
-  return (
-    <svg
-      width="14"
-      height="14"
-      viewBox="0 0 14 14"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.4"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <path d="M4 3.5v4.25A2.75 2.75 0 0 0 6.75 10.5H10" />
-      <path d="M7.5 6h.75A1.75 1.75 0 0 0 10 4.25V3.5" />
-      <circle cx="4" cy="3.5" r="1.25" />
-      <circle cx="10" cy="3.5" r="1.25" />
-      <circle cx="10" cy="10.5" r="1.25" />
-    </svg>
-  );
-}
-
 function ThreadRow({
   thread,
   active,
   activeCount,
+  running = false,
   needsApproval,
   unread,
   onSelect,
@@ -312,6 +255,7 @@ function ThreadRow({
   thread: ConversationThreadPublic;
   active: boolean;
   activeCount: number;
+  running?: boolean;
   needsApproval?: boolean;
   unread?: boolean;
   onSelect?: (threadId: string | null) => void;
@@ -327,13 +271,13 @@ function ThreadRow({
   const rowTone = active
     ? "bg-accent/10 text-text"
     : needsApproval
-      ? "bg-warning-bg/50 text-text hover:bg-warning-bg/75"
-      : "bg-transparent text-text-secondary hover:bg-hover/70 hover:text-text";
+      ? "bg-warning-bg/60 text-text hover:bg-warning-bg"
+      : "bg-transparent text-text-secondary hover:bg-hover hover:text-text";
   const iconTone = active
-    ? "border-accent/35 bg-accent/10 text-accent"
+    ? "border-accent/30 bg-accent/10 text-accent"
     : needsApproval
-      ? "border-warning-text/35 bg-warning-bg text-warning-text"
-      : "border-border-subtle bg-raised/60 text-text-dimmed group-hover:text-text-muted";
+      ? "border-warning/30 bg-warning-bg text-warning-text"
+      : "border-border-subtle bg-raised text-text-dimmed group-hover:text-text-muted";
 
   useEffect(() => {
     if (!editing) return;
@@ -392,17 +336,17 @@ function ThreadRow({
   if (editing) {
     return (
       <form
-        className={`group relative flex w-full items-center gap-2 px-2.5 py-2 text-left ${rowTone}`}
+        className={`group relative flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left ${rowTone}`}
         onSubmit={handleRenameSubmit}
       >
         <span
-          className={`absolute top-2 bottom-2 left-0 w-0.5 rounded-r-sm ${
+          className={`absolute top-2.5 bottom-2.5 left-0 w-0.5 rounded-full ${
             active ? "bg-accent" : needsApproval ? "bg-warning-text" : "bg-transparent"
           }`}
           aria-hidden="true"
         />
-        <span className={`flex size-7 shrink-0 items-center justify-center rounded border ${iconTone}`}>
-          <TaskIcon />
+        <span className={`flex size-7 shrink-0 items-center justify-center rounded-md border ${iconTone}`}>
+          <GitBranch size={14} aria-hidden="true" />
         </span>
         <span className="flex min-w-0 flex-1 flex-col gap-1">
           <input
@@ -416,10 +360,10 @@ function ThreadRow({
             }}
             onKeyDown={handleRenameKeyDown}
             disabled={saving}
-            className="h-7 min-w-0 rounded border border-accent/45 bg-background px-2 text-[0.786rem] text-text outline-none focus:border-accent focus:ring-1 focus:ring-accent/25 disabled:opacity-60"
+            className="h-7 min-w-0 rounded-md border border-accent/45 bg-base px-2 text-[0.857rem] text-text outline-none transition-[border-color,box-shadow] duration-150 focus:border-accent/60 focus:ring-3 focus:ring-accent/15 disabled:opacity-60"
           />
           {renameError && (
-            <span role="alert" className="text-[0.643rem] text-error-bright">
+            <span role="alert" className="text-[0.714rem] text-error-bright">
               {renameError}
             </span>
           )}
@@ -427,7 +371,7 @@ function ThreadRow({
         <button
           type="submit"
           disabled={saving}
-          className="h-7 cursor-pointer rounded bg-accent px-2 text-[0.714rem] font-semibold text-on-accent disabled:cursor-default disabled:opacity-45"
+          className={buttonClass("primary", "sm")}
         >
           {saving ? "Saving..." : "Save"}
         </button>
@@ -435,7 +379,7 @@ function ThreadRow({
           type="button"
           onClick={cancelRename}
           disabled={saving}
-          className="h-7 cursor-pointer rounded px-1.5 text-[0.714rem] font-medium text-text-muted hover:bg-hover hover:text-text disabled:cursor-default disabled:opacity-45"
+          className={buttonClass("ghost", "sm")}
         >
           Cancel
         </button>
@@ -445,21 +389,25 @@ function ThreadRow({
 
   return (
     <div
-      className={`group relative flex w-full items-center transition-colors duration-150 ${rowTone}`}
+      className={`group relative flex w-full items-center rounded-lg transition-colors duration-150 ${rowTone}`}
     >
       <button
         type="button"
-        className="flex min-w-0 flex-1 cursor-pointer items-center gap-2.5 px-2.5 py-2.5 text-left"
+        className="flex min-w-0 flex-1 cursor-pointer items-center gap-2.5 px-2.5 py-2 text-left"
         onClick={() => onSelect?.(thread.id)}
       >
         <span
-          className={`absolute top-2 bottom-2 left-0 w-0.5 rounded-r-sm ${
+          className={`absolute top-2.5 bottom-2.5 left-0 w-0.5 rounded-full ${
             active ? "bg-accent" : needsApproval ? "bg-warning-text" : "bg-transparent"
           }`}
           aria-hidden="true"
         />
-        <span className={`flex size-7 shrink-0 items-center justify-center rounded border ${iconTone}`}>
-          <TaskIcon />
+        <span className={`flex size-7 shrink-0 items-center justify-center rounded-md border ${iconTone}`}>
+          {running && !needsApproval ? (
+            <OrbLoader state="composing" size={20} />
+          ) : (
+            <GitBranch size={14} aria-hidden="true" />
+          )}
         </span>
         <span className="flex min-w-0 flex-1 flex-col">
           <span className="truncate text-[0.857rem] font-medium">
@@ -486,9 +434,9 @@ function ThreadRow({
             setRenameError(null);
             setEditing(true);
           }}
-          className="mr-1 flex size-7 shrink-0 cursor-pointer items-center justify-center rounded text-text-dimmed opacity-0 transition hover:bg-raised hover:text-text group-hover:opacity-100 focus:opacity-100"
+          className={`mr-1.5 ${iconButtonClass("sm")} opacity-0 group-hover:opacity-100 focus:opacity-100`}
         >
-          <PencilIcon className="size-3.5" />
+          <Pencil size={14} aria-hidden="true" />
         </button>
       )}
     </div>
@@ -505,29 +453,29 @@ function DraftThreadRow({
   return (
     <button
       type="button"
-      className={`group relative flex w-full cursor-pointer items-center gap-2.5 px-2.5 py-2.5 text-left transition-colors duration-150 ${
+      className={`group relative flex w-full cursor-pointer items-center gap-2.5 rounded-lg px-2.5 py-2 text-left transition-colors duration-150 ${
         active
           ? "bg-accent/10 text-text"
-          : "bg-transparent text-text-secondary hover:bg-hover/70 hover:text-text"
+          : "bg-transparent text-text-secondary hover:bg-hover hover:text-text"
       }`}
       onClick={onSelect}
       data-testid="hermes-local-task-draft"
       aria-current={active ? "true" : undefined}
     >
       <span
-        className={`absolute top-2 bottom-2 left-0 w-0.5 rounded-r-sm ${
+        className={`absolute top-2.5 bottom-2.5 left-0 w-0.5 rounded-full ${
           active ? "bg-accent" : "bg-transparent"
         }`}
         aria-hidden="true"
       />
       <span
-        className={`flex size-7 shrink-0 items-center justify-center rounded border ${
+        className={`flex size-7 shrink-0 items-center justify-center rounded-md border ${
           active
-            ? "border-accent/35 bg-accent/10 text-accent"
-            : "border-border-subtle bg-raised/60 text-text-dimmed group-hover:text-text-muted"
+            ? "border-accent/30 bg-accent/10 text-accent"
+            : "border-border-subtle bg-raised text-text-dimmed group-hover:text-text-muted"
         }`}
       >
-        <TaskIcon />
+        <GitBranch size={14} aria-hidden="true" />
       </span>
       <span className="flex min-w-0 flex-1 flex-col">
         <span className="truncate text-[0.857rem] font-medium">New task</span>
@@ -540,41 +488,47 @@ function DraftThreadRow({
 function GeneralThreadRow({
   active,
   activeCount,
+  running = false,
   needsApproval,
   unread,
   onSelect,
 }: {
   active: boolean;
   activeCount: number;
+  running?: boolean;
   needsApproval?: boolean;
   unread?: boolean;
   onSelect?: (threadId: string | null) => void;
 }) {
   const rowTone = active
-    ? "border-accent/45 bg-accent/10 text-text"
+    ? "border-border-accent bg-accent/10 text-text"
     : needsApproval
-      ? "border-warning-text/40 bg-warning-bg/55 text-text hover:bg-warning-bg/80"
-      : "border-border bg-raised/55 text-text-secondary hover:bg-hover hover:text-text";
+      ? "border-warning/30 bg-warning-bg/60 text-text hover:bg-warning-bg"
+      : "border-border bg-raised text-text-secondary hover:bg-hover hover:text-text";
   const iconTone = active
-    ? "border-accent/35 bg-accent/10 text-accent"
+    ? "border-accent/30 bg-accent/10 text-accent"
     : needsApproval
-      ? "border-warning-text/35 bg-warning-bg text-warning-text"
-      : "border-border-subtle bg-base/35 text-text-dimmed";
+      ? "border-warning/30 bg-warning-bg text-warning-text"
+      : "border-border-subtle bg-elevated/60 text-text-dimmed";
 
   return (
     <button
       type="button"
-      className={`relative flex w-full cursor-pointer items-center gap-3 rounded-md border px-3 py-3 text-left transition-colors duration-150 ${rowTone}`}
+      className={`relative flex w-full cursor-pointer items-center gap-3 rounded-lg border px-3 py-2.5 text-left transition-colors duration-150 ${rowTone}`}
       onClick={() => onSelect?.(null)}
     >
       <span
-        className={`absolute top-2 bottom-2 left-0 w-0.5 rounded-r-sm ${
+        className={`absolute top-2.5 bottom-2.5 left-0 w-0.5 rounded-full ${
           active ? "bg-accent" : needsApproval ? "bg-warning-text" : "bg-transparent"
         }`}
         aria-hidden="true"
       />
-      <span className={`flex size-8 shrink-0 items-center justify-center rounded border ${iconTone}`}>
-        <InboxIcon />
+      <span className={`flex size-8 shrink-0 items-center justify-center rounded-md border ${iconTone}`}>
+        {running && !needsApproval ? (
+          <OrbLoader state="composing" size={22} />
+        ) : (
+          <Inbox size={16} aria-hidden="true" />
+        )}
       </span>
       <span className="flex min-w-0 flex-1 flex-col">
         <span className="truncate text-[0.929rem] font-semibold">
@@ -606,14 +560,14 @@ function ThreadRowBadges({
     <span className="flex shrink-0 items-center gap-1.5">
       {needsApproval && (
         <span
-          className="rounded-full border border-warning-text/40 bg-warning-bg px-2 py-0.5 text-[0.643rem] font-medium uppercase text-warning-text"
+          className="rounded-full border border-warning/30 bg-warning-bg px-2 py-0.5 text-[0.643rem] font-medium uppercase text-warning-text"
           title="Waiting for your approval"
         >
           Review
         </span>
       )}
       {activeCount > 0 && (
-        <span className="flex h-5 min-w-5 items-center justify-center rounded-full border border-accent/40 bg-accent/10 px-1.5 text-[0.643rem] font-semibold text-accent">
+        <span className="flex h-5 min-w-5 items-center justify-center rounded-full border border-border-accent bg-accent/15 px-1.5 text-[0.714rem] font-semibold tabular-nums text-accent">
           {activeCount}
         </span>
       )}
@@ -628,10 +582,20 @@ function ThreadRowBadges({
   );
 }
 
-function InvocationRow({ invocation }: { invocation: BotInvocationPublic }) {
+function InvocationRow({
+  invocation,
+  waiting,
+}: {
+  invocation: BotInvocationPublic;
+  /** Paused on an approval, so not animated as working. */
+  waiting: boolean;
+}) {
   return (
-    <div className="rounded-md border border-border-subtle bg-base/20 px-3 py-2">
+    <div className="rounded-lg border border-border-subtle bg-raised px-3 py-2.5">
       <div className="flex items-start justify-between gap-2">
+        {invocation.status === "running" && !waiting && (
+          <OrbLoader state="composing" size={18} className="-my-px shrink-0" />
+        )}
         <div className="min-w-0 flex-1 truncate text-[0.857rem] font-medium text-text">
           {invocationPreview(invocation) || "Working"}
         </div>
@@ -650,14 +614,14 @@ function PanelSkeleton() {
       {Array.from({ length: 2 }, (_, index) => (
         <div
           key={index}
-          className="rounded-md border border-border-subtle bg-base/20 px-3 py-2"
+          className="rounded-lg border border-border-subtle bg-raised px-3 py-2.5"
         >
           <div className="flex items-start justify-between gap-2">
-            <div className="h-3 w-28 animate-pulse rounded bg-raised" />
-            <div className="h-4 w-12 animate-pulse rounded bg-raised" />
+            <div className="h-3 w-28 animate-pulse rounded-sm bg-elevated" />
+            <div className="h-4 w-12 animate-pulse rounded-full bg-elevated" />
           </div>
-          <div className="mt-2 h-2.5 w-24 animate-pulse rounded bg-raised" />
-          <div className="mt-3 h-2.5 w-full animate-pulse rounded bg-raised" />
+          <div className="mt-2 h-2.5 w-24 animate-pulse rounded-sm bg-elevated" />
+          <div className="mt-3 h-2.5 w-full animate-pulse rounded-sm bg-elevated" />
         </div>
       ))}
     </div>
@@ -667,16 +631,16 @@ function PanelSkeleton() {
 function StatusPill({ status }: { status: string }) {
   const tone =
     status === "completed"
-      ? "border-success-border bg-success-bg text-success"
+      ? "border-success-border bg-success-bg text-success-light"
       : status === "failed"
         ? "border-error-border bg-error-bg text-error-bright"
         : status === "cancelled"
-          ? "border-border bg-raised text-text-muted"
+          ? "border-border bg-elevated text-text-muted"
           : status === "running"
-            ? "border-accent/40 bg-accent/10 text-accent"
-            : "border-border bg-raised text-text-muted";
+            ? "border-border-accent bg-accent/10 text-accent"
+            : "border-border bg-elevated text-text-muted";
   return (
-    <span className={`shrink-0 rounded px-1.5 py-0.5 text-[0.643rem] font-medium uppercase ${tone}`}>
+    <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[0.643rem] font-medium uppercase ${tone}`}>
       {status}
     </span>
   );

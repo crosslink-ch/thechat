@@ -11,6 +11,15 @@ import type { AppConfig, McpServerConfig } from "@thechat/shared";
 import type { McpToolInfo } from "@thechat/client/core/types";
 import { useToolsStore } from "./stores/tools";
 import { error as logError, info as logInfo } from "@thechat/client/log";
+import { Check, LoaderCircle } from "lucide-react";
+import { buttonClass, inputClass, labelClass } from "@thechat/client/components/ui";
+
+
+const segmentedClass = "inline-flex gap-0.5 rounded-lg border border-border bg-base p-0.5";
+const segmentClass = (selected: boolean) =>
+  `cursor-pointer rounded-md border-none px-3 py-1.5 font-[inherit] text-[0.857rem] font-medium transition-colors duration-150 disabled:cursor-not-allowed disabled:opacity-50 ${
+    selected ? "bg-elevated text-text shadow-sm" : "bg-transparent text-text-dimmed hover:not-disabled:text-text"
+  }`;
 
 const useDialogState = create(() => ({
   open: false,
@@ -209,16 +218,16 @@ function McpConfigDialogInner() {
 
   return (
     <div
-      className="fixed inset-0 z-20 flex items-center justify-center bg-overlay backdrop-blur-[2px] animate-fade-in"
+      className="fixed inset-0 z-20 flex items-center justify-center bg-overlay p-4 backdrop-blur-[2px] animate-overlay-in"
       onClick={() => {
         if (!isBusy) closeDialog();
       }}
     >
       <div
-        className="w-full max-w-[500px] rounded-xl border border-border-strong bg-surface p-6 shadow-card animate-slide-up"
+        className="w-full max-w-[500px] rounded-xl border border-border bg-surface/95 p-6 shadow-card backdrop-blur-2xl backdrop-saturate-150 animate-dialog-in"
         onClick={(e) => e.stopPropagation()}
       >
-        <h2 className="mb-5 text-[1.214rem] font-semibold tracking-tight text-text">
+        <h2 className="mb-5 text-[1.071rem] font-semibold text-text">
           Add MCP Server
         </h2>
 
@@ -226,7 +235,7 @@ function McpConfigDialogInner() {
           {/* Server name */}
           <div className="mb-3.5">
             <label
-              className="mb-1.5 block text-[0.857rem] font-medium text-text-muted"
+              className={labelClass}
               htmlFor="mcp-name"
             >
               Server Name
@@ -234,7 +243,7 @@ function McpConfigDialogInner() {
             <input
               ref={nameRef}
               id="mcp-name"
-              className="block w-full rounded-lg border border-border bg-base px-3.5 py-2.5 font-[inherit] text-[0.929rem] text-text outline-none transition-colors duration-150 placeholder:text-text-placeholder focus:border-border-focus"
+              className={`block ${inputClass}`}
               type="text"
               placeholder="my-server"
               value={name}
@@ -245,21 +254,17 @@ function McpConfigDialogInner() {
 
           {/* Transport selector */}
           <div className="mb-3.5">
-            <label className="mb-1.5 block text-[0.857rem] font-medium text-text-muted">
+            <label className={labelClass}>
               Transport
             </label>
-            <div className="flex gap-1">
+            <div className={segmentedClass}>
               {(["http", "stdio"] as const).map((t) => (
                 <button
                   key={t}
                   type="button"
                   onClick={() => setTransport(t)}
                   disabled={isBusy}
-                  className={`cursor-pointer rounded-lg border px-4 py-2 text-[0.857rem] font-medium transition-colors ${
-                    transport === t
-                      ? "border-accent bg-accent/15 text-accent"
-                      : "border-border bg-base text-text-muted hover:bg-hover"
-                  } disabled:cursor-not-allowed disabled:opacity-50`}
+                  className={segmentClass(transport === t)}
                 >
                   {t === "http" ? "HTTP" : "Stdio"}
                 </button>
@@ -272,14 +277,14 @@ function McpConfigDialogInner() {
             <>
               <div className="mb-3.5">
                 <label
-                  className="mb-1.5 block text-[0.857rem] font-medium text-text-muted"
+                  className={labelClass}
                   htmlFor="mcp-url"
                 >
                   Server URL
                 </label>
                 <input
                   id="mcp-url"
-                  className="block w-full rounded-lg border border-border bg-base px-3.5 py-2.5 font-[inherit] text-[0.929rem] text-text outline-none transition-colors duration-150 placeholder:text-text-placeholder focus:border-border-focus"
+                  className={`block ${inputClass}`}
                   type="url"
                   placeholder="https://mcp.example.com/sse"
                   value={url}
@@ -290,21 +295,17 @@ function McpConfigDialogInner() {
 
               {/* Auth method */}
               <div className="mb-3.5">
-                <label className="mb-1.5 block text-[0.857rem] font-medium text-text-muted">
+                <label className={labelClass}>
                   Authentication
                 </label>
-                <div className="flex gap-1">
+                <div className={segmentedClass}>
                   {([false, true] as const).map((isOAuth) => (
                     <button
                       key={String(isOAuth)}
                       type="button"
                       onClick={() => setUseOAuth(isOAuth)}
                       disabled={isBusy}
-                      className={`cursor-pointer rounded-lg border px-3 py-1.5 text-[0.786rem] font-medium transition-colors ${
-                        useOAuth === isOAuth
-                          ? "border-accent bg-accent/15 text-accent"
-                          : "border-border bg-base text-text-muted hover:bg-hover"
-                      } disabled:cursor-not-allowed disabled:opacity-50`}
+                      className={segmentClass(useOAuth === isOAuth)}
                     >
                       {isOAuth ? "OAuth" : "None / Token"}
                     </button>
@@ -315,7 +316,7 @@ function McpConfigDialogInner() {
               {!useOAuth && (
                 <div className="mb-3.5">
                   <label
-                    className="mb-1.5 block text-[0.857rem] font-medium text-text-muted"
+                    className={labelClass}
                     htmlFor="mcp-headers"
                   >
                     Headers
@@ -323,7 +324,7 @@ function McpConfigDialogInner() {
                   </label>
                   <textarea
                     id="mcp-headers"
-                    className="block max-h-[120px] min-h-[48px] w-full resize-y rounded-lg border border-border bg-base px-3.5 py-2.5 font-[inherit] text-[0.929rem] text-text outline-none transition-colors duration-150 placeholder:text-text-placeholder focus:border-border-focus"
+                    className={`max-h-[120px] min-h-[48px] resize-y block ${inputClass}`}
                     placeholder={"Authorization: Bearer sk-...\nx-api-key: your-key"}
                     value={customHeaders}
                     onChange={(e) => setCustomHeaders(e.target.value)}
@@ -341,14 +342,14 @@ function McpConfigDialogInner() {
             <>
               <div className="mb-3.5">
                 <label
-                  className="mb-1.5 block text-[0.857rem] font-medium text-text-muted"
+                  className={labelClass}
                   htmlFor="mcp-command"
                 >
                   Command
                 </label>
                 <input
                   id="mcp-command"
-                  className="block w-full rounded-lg border border-border bg-base px-3.5 py-2.5 font-[inherit] text-[0.929rem] text-text outline-none transition-colors duration-150 placeholder:text-text-placeholder focus:border-border-focus"
+                  className={`block ${inputClass}`}
                   type="text"
                   placeholder="npx"
                   value={command}
@@ -360,7 +361,7 @@ function McpConfigDialogInner() {
 
               <div className="mb-3.5">
                 <label
-                  className="mb-1.5 block text-[0.857rem] font-medium text-text-muted"
+                  className={labelClass}
                   htmlFor="mcp-args"
                 >
                   Arguments
@@ -368,7 +369,7 @@ function McpConfigDialogInner() {
                 </label>
                 <textarea
                   id="mcp-args"
-                  className="block max-h-[120px] min-h-[64px] w-full resize-y rounded-lg border border-border bg-base px-3.5 py-2.5 font-[inherit] text-[0.929rem] text-text outline-none transition-colors duration-150 placeholder:text-text-placeholder focus:border-border-focus"
+                  className={`max-h-[120px] min-h-[64px] resize-y block ${inputClass}`}
                   placeholder={"-y\n@modelcontextprotocol/server-filesystem\n/home/user/docs"}
                   value={args}
                   onChange={(e) => setArgs(e.target.value)}
@@ -380,7 +381,7 @@ function McpConfigDialogInner() {
 
               <div className="mb-3.5">
                 <label
-                  className="mb-1.5 block text-[0.857rem] font-medium text-text-muted"
+                  className={labelClass}
                   htmlFor="mcp-env"
                 >
                   Environment Variables
@@ -388,7 +389,7 @@ function McpConfigDialogInner() {
                 </label>
                 <textarea
                   id="mcp-env"
-                  className="block max-h-[120px] min-h-[48px] w-full resize-y rounded-lg border border-border bg-base px-3.5 py-2.5 font-[inherit] text-[0.929rem] text-text outline-none transition-colors duration-150 placeholder:text-text-placeholder focus:border-border-focus"
+                  className={`max-h-[120px] min-h-[48px] resize-y block ${inputClass}`}
                   placeholder={"API_KEY=abc123"}
                   value={envVars}
                   onChange={(e) => setEnvVars(e.target.value)}
@@ -409,16 +410,16 @@ function McpConfigDialogInner() {
           {isOAuthBusy && <StatusIndicator status={oauthStatus} />}
 
           {connecting && (
-            <div className="mb-3 flex items-center gap-2 rounded-lg border border-border bg-base px-3 py-2 text-[0.857rem] text-text-muted">
-              <span className="inline-block size-3.5 animate-spin rounded-full border-2 border-text-dimmed border-t-accent" />
+            <div className="mb-3 flex items-center gap-2 rounded-lg border border-border bg-white/[0.03] px-3 py-2 text-[0.857rem] text-text-muted">
+              <LoaderCircle size={14} className="shrink-0 animate-spin text-accent" aria-hidden="true" />
               <span>Connecting to server...</span>
             </div>
           )}
 
-          <div className="mt-4 flex gap-2">
+          <div className="mt-5 flex gap-2">
             <button
               type="button"
-              className="flex-1 cursor-pointer rounded-lg border border-border bg-base px-3 py-2.5 font-[inherit] text-[0.929rem] text-text-muted transition-colors duration-150 hover:bg-hover"
+              className={`flex-1 ${buttonClass("secondary", "lg")}`}
               onClick={() => {
                 if (isOAuthBusy) cancelMcpOAuthFlow();
                 closeDialog();
@@ -427,7 +428,7 @@ function McpConfigDialogInner() {
               Cancel
             </button>
             <button
-              className="flex-1 cursor-pointer rounded-lg border border-border-strong bg-elevated px-3 py-2.5 font-[inherit] text-[0.929rem] font-medium text-text transition-colors duration-150 hover:not-disabled:bg-button disabled:cursor-default disabled:opacity-40"
+              className={`flex-1 ${buttonClass("primary", "lg")}`}
               type="submit"
               disabled={isBusy}
             >
@@ -464,25 +465,15 @@ function StatusIndicator({ status }: { status: OAuthStatus }) {
     <div
       className={`mb-3 flex items-center gap-2 rounded-lg border px-3 py-2 text-[0.857rem] ${
         isDone
-          ? "border-green-800/40 bg-green-950/30 text-green-400"
-          : "border-border bg-base text-text-muted"
+          ? "border-success-border bg-success-bg text-success-light"
+          : "border-border bg-white/[0.03] text-text-muted"
       }`}
     >
       {!isDone && (
-        <span className="inline-block size-3.5 animate-spin rounded-full border-2 border-text-dimmed border-t-accent" />
+        <LoaderCircle size={14} className="shrink-0 animate-spin text-accent" aria-hidden="true" />
       )}
       {isDone && (
-        <svg
-          width="14"
-          height="14"
-          viewBox="0 0 14 14"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-        >
-          <path d="M3 7l3 3 5-5" />
-        </svg>
+        <Check size={14} className="shrink-0" aria-hidden="true" />
       )}
       <span className="min-w-0 flex-1 truncate">{message}</span>
     </div>

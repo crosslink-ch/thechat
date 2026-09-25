@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { ArrowUp, Mic, Square, Trash2, X } from "lucide-react";
 import { VoiceRecording } from "../lib/voice-recording";
 import { onSessionReset, sessionGeneration } from "../lib/session-boundary";
 import { cancelSharedAttachment, uploadSharedAttachment } from "../lib/shared-attachments";
 import { VoiceAudioPlayer, formatVoiceTime, pauseVoicePlayback } from "./VoiceAudioPlayer";
 import { services } from "#platform-services";
+import { iconButtonClass } from "./ui";
 
 interface VoiceRecorderProps {
   disabled: boolean;
@@ -153,7 +155,7 @@ function ScopedVoiceRecorder({ onSend, scope, onBusyChange, disabled }: VoiceRec
     <div className={state.phase === "idle" && !permission && !state.error ? "voice-record-trigger" : "voice-recorder"} aria-label="Voice recording">
       {permission || state.error ? (
         <div className="voice-permission">
-          <div className="voice-permission-icon" aria-hidden="true"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"><rect x="9" y="2" width="6" height="12" rx="3" /><path d="M5 10v2a7 7 0 0 0 14 0v-2M12 19v3M8 22h8" /></svg></div>
+          <div className="voice-permission-icon" aria-hidden="true"><Mic size={20} aria-hidden="true" /></div>
           <div className="voice-permission-content"><strong>{permission === "checking" ? "Checking microphone access" : permission === "denied" || state.error ? "Let’s connect your microphone" : "Your voice, when you choose"}</strong>
             {permission === "denied" || state.error ? <p role="alert" className="voice-helper">{permission === "denied" ? "TheChat has a saved microphone block. Windows settings cannot reset this app-specific choice. Resetting saved WebView permissions is not available here yet; the previous choice has been kept." : state.error}</p> : <p className="voice-helper">TheChat uses your microphone only while you record. Listen back before you send. Windows privacy settings stay in control.</p>}
             <div className="voice-permission-actions">
@@ -167,31 +169,28 @@ function ScopedVoiceRecorder({ onSend, scope, onBusyChange, disabled }: VoiceRec
           </div>
         </div>
       ) : state.phase === "idle" ? (
-        <button type="button" disabled={disabled} onClick={() => void start()} aria-label="Record voice message" title="Record voice message" className="flex size-8 items-center justify-center rounded-lg text-text-dimmed hover:bg-hover disabled:opacity-25">
-          <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
-            <rect x="9" y="2" width="6" height="12" rx="3" />
-            <path d="M5 10v2a7 7 0 0 0 14 0v-2M12 19v3M8 22h8" />
-          </svg>
+        <button type="button" disabled={disabled} onClick={() => void start()} aria-label="Record voice message" title="Record voice message" className={iconButtonClass("md")}>
+          <Mic size={16} aria-hidden="true" />
         </button>
       ) : state.phase === "preview" ? (
         <>
           <div className="voice-recorder-heading"><span role="status">{sending ? awaitingAck ? "Sending your message…" : transfer.phase === "uploading" ? "Uploading your message…" : transfer.phase === "processing" ? "Preparing your message…" : "Getting your message ready…" : "Review your message"}</span><span>{sending ? "Your text draft stays here" : "Only you can hear this"}</span></div>
           <div className="voice-review-row">
-            <button type="button" className="voice-discard" disabled={awaitingAck} onClick={discard} aria-label="Discard recording" title="Discard recording"><svg aria-hidden="true" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"><path d="M4 6h16M9 6V3h6v3M6 6l1 15h10l1-15M10 10v7m4-7v-7" /></svg></button>
+            <button type="button" className="voice-discard" disabled={awaitingAck} onClick={discard} aria-label="Discard recording" title="Discard recording"><Trash2 size={18} aria-hidden="true" /></button>
             {previewUrl && <VoiceAudioPlayer key={previewUrl} audioLabel="Voice message preview" label="voice message preview" source={previewUrl} durationSeconds={state.elapsedSeconds} disabled={sending} />}
-            <button type="button" className="voice-send" disabled={disabled || sending} onClick={() => void send()} aria-label="Send voice message">{sending ? <span className="voice-spinner" aria-hidden="true" /> : <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="m3 3 19 9-19 9 4-9-4-9Zm4 9h15" /></svg>}<span>{sending ? "Sending" : sendError ? "Retry" : "Send"}</span></button>
+            <button type="button" className="voice-send" disabled={disabled || sending} onClick={() => void send()} aria-label="Send voice message">{sending ? <span className="voice-spinner" aria-hidden="true" /> : <ArrowUp size={16} aria-hidden="true" />}<span>{sending ? "Sending" : sendError ? "Retry" : "Send"}</span></button>
           </div>
           {sending && !awaitingAck && transfer.phase === "uploading" && <progress className="voice-recording-progress" aria-label="Uploading voice message" value={transfer.progress} max={100} />}
         </>
       ) : (
         <>
           <div className="voice-capture-row">
-            <button type="button" className="voice-discard" onClick={discard} aria-label="Cancel recording" title="Cancel recording"><svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><path d="m6 6 12 12M18 6 6 18" /></svg></button>
+            <button type="button" className="voice-discard" onClick={discard} aria-label="Cancel recording" title="Cancel recording"><X size={18} aria-hidden="true" /></button>
             <div className="voice-capture-info">
               <div className="voice-meta"><span role="status">{state.phase === "requesting" ? "Connecting your microphone" : state.phase === "stopping" ? "Finishing recording…" : <><i className="voice-recording-dot" aria-hidden="true" />Recording</>}</span>{state.phase === "recording" && <span className="voice-time" role="timer" aria-label="Recording duration">{elapsed}<span className="voice-time-limit"> / 5:00</span></span>}</div>
               {state.phase === "recording" ? <progress className="voice-recording-progress" value={state.elapsedSeconds} max={300} aria-label="Recording time limit" /> : <p className="voice-helper">{state.phase === "requesting" ? "Allow microphone access in the permission prompt. You can review before sending." : "Your microphone is off. Preparing your preview."}</p>}
             </div>
-            {state.phase === "recording" && <button type="button" className="voice-stop" onClick={() => recording.stop()} aria-label="Stop recording" title="Stop and review"><svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><rect x="5" y="5" width="14" height="14" rx="3" /></svg><span>Review</span></button>}
+            {state.phase === "recording" && <button type="button" className="voice-stop" onClick={() => recording.stop()} aria-label="Stop recording" title="Stop and review"><Square size={14} fill="currentColor" aria-hidden="true" /><span>Review</span></button>}
           </div>
         </>
       )}

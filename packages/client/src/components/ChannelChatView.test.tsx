@@ -2,6 +2,7 @@ import { describe, expect, it, beforeAll, beforeEach, vi } from "vitest";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { ChatMessage } from "@thechat/shared";
 import { ChannelChatView } from "./ChannelChatView";
+import { useAuthStore } from "../stores/auth";
 
 beforeAll(() => {
   Element.prototype.scrollIntoView = vi.fn();
@@ -208,6 +209,48 @@ describe("ChannelChatView", () => {
     await waitFor(() =>
       expect(onSetReaction).toHaveBeenCalledWith("message-2", "👍", false),
     );
+  });
+
+  it("folds Hermes keep-alive messages into a Worked for line on the answer", () => {
+    render(
+      <ChannelChatView
+        messages={[
+          message({ id: "q", senderId: "user-1", senderName: "Tom", senderType: "human", content: "Check PHP?", createdAt: "2026-09-25T07:00:00.000Z" }),
+          message({ id: "k1", senderId: "bot-1", senderName: "Guardian", senderType: "bot", content: "⏳ Working — 3 min — iteration 14/2000, mcp__composio__COMPOSIO_SEARCH_TOOLS", createdAt: "2026-09-25T07:03:20.000Z" }),
+          message({ id: "a", senderId: "bot-1", senderName: "Guardian", senderType: "bot", content: "PHP is not exposed.", createdAt: "2026-09-25T07:05:56.000Z" }),
+        ]}
+        loading={false}
+        typingUsers={new Map()}
+        onSend={() => {}}
+      />,
+    );
+
+    expect(screen.queryByText(/iteration 14\/2000/)).not.toBeInTheDocument();
+    const toggle = screen.getByRole("button", { name: "Worked for 5m 56s" });
+    fireEvent.click(toggle);
+    expect(screen.getByText("Composio search tools")).toBeInTheDocument();
+    expect(screen.getByText("· 3 min · step 14/2000")).toBeInTheDocument();
+    expect(screen.getByText("PHP is not exposed.")).toBeInTheDocument();
+  });
+
+  it("highlights messages that mention the signed-in user", () => {
+    useAuthStore.setState({ user: { id: "me", name: "Tony", email: "tony@example.test", avatar: null, type: "human" } });
+    const { container } = render(
+      <ChannelChatView
+        messages={[
+          message({ id: "a", senderId: "user-2", senderName: "Bruno", senderType: "human", content: "@Tony I was not online" }),
+          message({ id: "b", senderId: "user-2", senderName: "Bruno", senderType: "human", content: "No mention here", createdAt: "2026-01-01T01:00:00.000Z" }),
+        ]}
+        loading={false}
+        typingUsers={new Map()}
+        onSend={() => {}}
+        mentions={[{ id: "user-2", label: "Bruno", type: "human" }]}
+      />,
+    );
+
+    expect(container.querySelector('[data-message-id="a"]')).toHaveAttribute("data-mentions-you", "true");
+    expect(container.querySelector('[data-message-id="b"]')).not.toHaveAttribute("data-mentions-you");
+    expect(container.querySelector(".md-mention-self")).toHaveTextContent("@Tony");
   });
 
   it("shows the generic typing indicator", () => {

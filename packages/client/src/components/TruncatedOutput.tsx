@@ -1,4 +1,5 @@
 import { useState, useMemo } from "react";
+import { ChevronDown } from "lucide-react";
 
 interface TruncatedOutputProps {
   text: string;
@@ -18,7 +19,7 @@ export function TruncatedOutput({ text, maxLines = 10, isError }: TruncatedOutpu
     <div>
       <div className={expanded ? "max-h-[400px] overflow-y-auto" : undefined}>
         <pre
-          className={`m-0 whitespace-pre-wrap font-mono text-[0.857rem] ${isError ? "text-error-light" : "text-text-secondary"}`}
+          className={`m-0 whitespace-pre-wrap font-mono text-[0.786rem] leading-relaxed ${isError ? "text-error-light" : "text-text-secondary"}`}
         >
           {displayText}
         </pre>
@@ -27,8 +28,13 @@ export function TruncatedOutput({ text, maxLines = 10, isError }: TruncatedOutpu
         <button
           type="button"
           onClick={() => setExpanded((v) => !v)}
-          className="mt-1 cursor-pointer border-none bg-transparent p-0 font-mono text-[0.786rem] text-text-muted hover:text-text-secondary"
+          className="mt-1.5 inline-flex cursor-pointer items-center gap-1 border-none bg-transparent p-0 text-[0.786rem] font-medium text-text-dimmed transition-colors duration-150 hover:text-text-secondary"
         >
+          <ChevronDown
+            size={14}
+            aria-hidden="true"
+            className={`transition-transform duration-150 ${expanded ? "rotate-180" : ""}`}
+          />
           {expanded ? "Show less" : `Show ${totalLines - maxLines} more lines...`}
         </button>
       )}

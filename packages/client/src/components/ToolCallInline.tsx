@@ -6,6 +6,7 @@ import { useElapsedTime } from "../hooks/useElapsedTime";
 import { TruncatedOutput } from "./TruncatedOutput";
 import { DiffPreview } from "./DiffPreview";
 import { WritePreview } from "./WritePreview";
+import { Check, ChevronRight, LoaderCircle, X } from "lucide-react";
 
 type ToolCallPart = Extract<MessagePart, { type: "tool-call" }>;
 type ToolResultPart = Extract<MessagePart, { type: "tool-result" }>;
@@ -63,18 +64,12 @@ function ToolCallPreview({ call }: { call: ToolCallPart }) {
 
 function StatusIcon({ result }: { result?: ToolResultPart }) {
   if (!result) {
-    // Spinner: 12px border-based CSS spinner with animate-spin
-    return (
-      <span
-        className="inline-block size-3 shrink-0 rounded-full border-2 border-text-dimmed border-t-transparent"
-        style={{ animation: "spin 1s linear infinite" }}
-      />
-    );
+    return <LoaderCircle size={14} aria-hidden="true" className="shrink-0 animate-spin text-text-dimmed" />;
   }
   if (result.isError) {
-    return <span className="shrink-0 text-[0.857rem] leading-none text-error">✕</span>;
+    return <X size={14} aria-hidden="true" className="shrink-0 text-error-bright" />;
   }
-  return <span className="shrink-0 text-[0.857rem] leading-none text-success">✓</span>;
+  return <Check size={14} aria-hidden="true" className="shrink-0 text-success" />;
 }
 
 export function ToolCallInline({
@@ -123,16 +118,13 @@ export function ToolCallInline({
               const cr = childResults?.[i];
               const childSummaryText = batchChildSummary(tc.tool, tc.args);
               return (
-                <div key={i} className="flex items-center gap-2 py-0.5 pl-5 text-[0.857rem] text-text-muted">
+                <div key={i} className="flex items-center gap-2 py-0.5 pl-6 text-[0.857rem] text-text-muted">
                   {isRunning ? (
-                    <span
-                      className="inline-block size-3 shrink-0 rounded-full border-2 border-text-dimmed border-t-transparent"
-                      style={{ animation: "spin 1s linear infinite" }}
-                    />
+                    <LoaderCircle size={14} aria-hidden="true" className="shrink-0 animate-spin text-text-dimmed" />
                   ) : cr && !cr.success ? (
-                    <span className="shrink-0 text-[0.857rem] leading-none text-error">✕</span>
+                    <X size={14} aria-hidden="true" className="shrink-0 text-error-bright" />
                   ) : (
-                    <span className="shrink-0 text-[0.857rem] leading-none text-success">✓</span>
+                    <Check size={14} aria-hidden="true" className="shrink-0 text-success" />
                   )}
                   <span className="min-w-0 flex-1 truncate">{childSummaryText}</span>
                 </div>
@@ -148,7 +140,7 @@ export function ToolCallInline({
     <div className="py-1.5 px-0">
       <button
         type="button"
-        className="flex w-full cursor-pointer items-center gap-2 border-none bg-transparent p-0 text-left text-[0.857rem] text-text-muted shadow-none hover:text-text-secondary"
+        className="flex w-full cursor-pointer items-center gap-2 border-none bg-transparent p-0 text-left text-[0.857rem] text-text-muted shadow-none transition-colors duration-150 hover:text-text-secondary"
         onClick={() => canExpand && setExpanded((v) => !v)}
         style={{ cursor: canExpand ? "pointer" : "default" }}
       >
@@ -160,19 +152,23 @@ export function ToolCallInline({
           </span>
         )}
         {canExpand && (
-          <span className="shrink-0 text-[0.714rem] text-text-dimmed">
-            {expanded ? "▾" : "▸"}
-          </span>
+          <ChevronRight
+            size={14}
+            aria-hidden="true"
+            className={`shrink-0 text-text-dimmed transition-transform duration-150 ${expanded ? "rotate-90" : ""}`}
+          />
         )}
       </button>
       {expanded && (
-        <div className="mt-1 pl-5">
+        <div className="mt-1.5 pl-6">
           {hasPreview && <ToolCallPreview call={call} />}
           {hasResult && (
-            <TruncatedOutput
-              text={typeof result.result === "string" ? result.result : JSON.stringify(result.result, null, 2)}
-              isError={result.isError}
-            />
+            <div className="rounded-lg border border-border-subtle bg-raised px-3 py-2">
+              <TruncatedOutput
+                text={typeof result.result === "string" ? result.result : JSON.stringify(result.result, null, 2)}
+                isError={result.isError}
+              />
+            </div>
           )}
         </div>
       )}

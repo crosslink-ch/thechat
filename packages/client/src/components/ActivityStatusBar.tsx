@@ -15,7 +15,7 @@ const PHASE_DOT_COLORS: Record<ActivityPhase, string> = {
   thinking: "bg-accent",
   working: "bg-accent",
   responding: "bg-success",
-  "waiting-permission": "bg-warning-text",
+  "waiting-permission": "bg-warning",
 };
 
 export function ActivityStatusBar({
@@ -37,7 +37,7 @@ export function ActivityStatusBar({
   const dotColor = PHASE_DOT_COLORS[activity.phase];
 
   return (
-    <div className="border-t border-border-subtle bg-base px-4 py-2">
+    <div className="border-t border-border-subtle bg-base px-5 py-2">
       <div className="flex items-center gap-2">
         {/* Pulsing dot */}
         <span
@@ -70,7 +70,7 @@ export function ActivityStatusBar({
 
       {/* Detail lines — active tool calls */}
       {activity.details.length > 0 && (
-        <div className="mt-1 flex flex-col gap-0.5 pl-4">
+        <div className="mt-1 flex min-w-0 flex-col gap-0.5 pl-4">
           {activity.details.map((detail, i) => (
             <span key={i} className="truncate text-[0.786rem] text-text-dimmed">
               {detail}

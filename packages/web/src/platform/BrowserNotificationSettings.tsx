@@ -19,7 +19,8 @@ export function BrowserNotificationSettings() {
     <SettingsSection id="browser-notifications-heading" title="Browser notifications">
       <div className={settingsCard}>
         <div className={settingsRow}>
-          <div className={settingsLabel}>Permission</div>
+          {/* Centre the label on the request button when it is shown. */}
+          <div className={`${settingsLabel} ${permission === "default" ? "sm:pt-1.5" : ""}`}>Permission</div>
           <div className="min-w-0">
             {permission === "granted" ? (
               <p className={settingsValue}>Notifications enabled while TheChat is open.</p>

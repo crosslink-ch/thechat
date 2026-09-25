@@ -8,8 +8,11 @@ import { edenErrorMessage } from "../lib/eden";
 import { openHermesBotModal } from "../components/HermesBotModal";
 import { useAuthStore } from "../stores/auth";
 import { useWorkspacesStore } from "../stores/workspaces";
+import { Bot as BotIcon, Plus } from "lucide-react";
+import { buttonClass, inputClass } from "../components/ui";
 
-
+const panelClass = "rounded-xl border border-border bg-white/[0.03]";
+const fieldLabelClass = "text-[0.857rem] font-medium text-text-secondary";
 
 type Notice = { kind: "success" | "error"; text: string };
 type ConfirmActionKind = "rotate-key" | "revoke-key" | "rotate-secret" | "delete";
@@ -25,7 +28,7 @@ type WorkspaceRow = {
 
 function BotKindBadge({ kind }: { kind: OwnedBot["kind"] }) {
   return (
-    <span className="rounded-full border border-border bg-base px-2 py-0.5 text-[0.714rem] font-semibold uppercase tracking-wide text-text-dimmed">
+    <span className="rounded-full border border-border bg-white/[0.04] px-2 py-0.5 text-[0.714rem] font-semibold uppercase tracking-wide text-text-dimmed">
       {kind === "hermes" ? "Hermes" : "Webhook"}
     </span>
   );
@@ -41,11 +44,11 @@ function Section({
   children: React.ReactNode;
 }) {
   return (
-    <section className="rounded-xl border border-border bg-raised/40 p-4">
+    <section className={`p-5 ${panelClass}`}>
       <div className="mb-4">
-        <h3 className="text-[0.929rem] font-semibold text-text">{title}</h3>
+        <h3 className="text-[1rem] font-semibold text-text">{title}</h3>
         {description && (
-          <p className="mt-1 text-[0.786rem] leading-relaxed text-text-dimmed">
+          <p className="mt-1 text-[0.857rem] leading-relaxed text-text-muted">
             {description}
           </p>
         )}
@@ -337,19 +340,20 @@ export function BotsManageRoute() {
 
   return (
     <div className="h-full overflow-y-auto bg-base">
-      <div className="mx-auto w-full max-w-[1080px] p-5 lg:p-7">
+      <div className="mx-auto w-full max-w-[1080px] px-4 py-6 sm:px-8 sm:py-8">
         <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
           <div>
-            <h1 className="text-[1.5rem] font-semibold tracking-tight text-text">Bots</h1>
-            <p className="mt-1 max-w-[620px] text-[0.857rem] leading-relaxed text-text-muted">
+            <h1 className="text-[1.429rem] font-semibold tracking-tight text-text">Bots</h1>
+            <p className="mt-1 max-w-[620px] text-[0.929rem] leading-relaxed text-text-muted">
               Manage every bot you own, independent of the workspace currently open.
             </p>
           </div>
           <button
             type="button"
             onClick={openHermesBotModal}
-            className="cursor-pointer rounded-lg border border-border-strong bg-elevated px-4 py-2 text-[0.857rem] font-semibold text-text transition-colors hover:bg-button"
+            className={buttonClass("primary", "md")}
           >
+            <Plus size={16} aria-hidden="true" />
             Add Hermes bot
           </button>
         </div>
@@ -357,10 +361,10 @@ export function BotsManageRoute() {
         {notice && (
           <div
             role={notice.kind === "error" ? "alert" : "status"}
-            className={`mb-4 rounded-lg border px-3.5 py-2.5 text-[0.857rem] ${
+            className={`mb-4 rounded-lg border px-3 py-2 text-[0.929rem] ${
               notice.kind === "error"
                 ? "border-error-msg-border bg-error-msg-bg text-error-bright"
-                : "border-green-500/30 bg-green-500/10 text-green-400"
+                : "border-success-border bg-success-bg text-success-light"
             }`}
           >
             {notice.text}
@@ -368,31 +372,34 @@ export function BotsManageRoute() {
         )}
 
         {loading ? (
-          <div className="rounded-xl border border-border bg-surface p-8 text-center text-[0.929rem] text-text-muted">
+          <div className={`p-8 text-center text-[0.929rem] text-text-dimmed ${panelClass}`}>
             Loading bots...
           </div>
         ) : bots.length === 0 ? (
-          <div className="rounded-xl border border-dashed border-border-strong bg-surface p-10 text-center">
-            <div className="mx-auto flex size-12 items-center justify-center rounded-xl bg-elevated text-[1.286rem] text-text">B</div>
-            <h2 className="mt-4 text-[1rem] font-semibold text-text">No bots yet</h2>
-            <p className="mx-auto mt-1 max-w-[440px] text-[0.857rem] leading-relaxed text-text-muted">
+          <div className="rounded-xl border border-dashed border-border-strong p-10 text-center">
+            <div className="mx-auto flex size-12 items-center justify-center rounded-xl bg-white/[0.06] text-text-secondary">
+              <BotIcon size={22} aria-hidden="true" />
+            </div>
+            <h2 className="mt-4 text-[1.071rem] font-semibold text-text">No bots yet</h2>
+            <p className="mx-auto mt-1 max-w-[440px] text-[0.929rem] leading-relaxed text-text-muted">
               Create a Hermes bot, then return here to manage its workspaces, credentials, and access.
             </p>
             <button
               type="button"
               onClick={openHermesBotModal}
-              className="mt-5 cursor-pointer rounded-lg border border-border-strong bg-elevated px-4 py-2 text-[0.857rem] font-semibold text-text transition-colors hover:bg-button"
+              className={`mt-5 ${buttonClass("primary", "md")}`}
             >
+              <Plus size={16} aria-hidden="true" />
               Add Hermes bot
             </button>
           </div>
         ) : (
           <div className="grid items-start gap-4 md:grid-cols-[minmax(220px,0.34fr)_minmax(0,1fr)]">
-            <aside className="overflow-hidden rounded-xl border border-border bg-surface md:sticky md:top-4">
-              <div className="border-b border-border-subtle px-3.5 py-3 text-[0.786rem] font-semibold uppercase tracking-wider text-text-dimmed">
+            <aside className={`overflow-hidden md:sticky md:top-4 ${panelClass}`}>
+              <div className="px-4 pb-1 pt-3 text-[0.786rem] font-medium text-text-dimmed">
                 Your bots · {bots.length}
               </div>
-              <div className="max-h-[calc(100vh-220px)] overflow-y-auto p-2">
+              <div className="max-h-[calc(100vh-220px)] overflow-y-auto p-1.5">
                 {bots.map((bot) => {
                   const selected = bot.id === selectedId;
                   return (
@@ -401,20 +408,20 @@ export function BotsManageRoute() {
                       type="button"
                       data-testid={`bot-list-item-${bot.id}`}
                       onClick={() => setSelectedId(bot.id)}
-                      className={`mb-1 block w-full cursor-pointer rounded-lg border px-3 py-2.5 text-left transition-colors ${
+                      className={`mb-0.5 block w-full cursor-pointer rounded-lg border-none px-3 py-2.5 text-left font-[inherit] transition-colors duration-150 ${
                         selected
-                          ? "border-border-strong bg-elevated"
-                          : "border-transparent bg-transparent hover:border-border hover:bg-hover"
+                          ? "bg-white/[0.07]"
+                          : "bg-transparent hover:bg-white/[0.04]"
                       }`}
                     >
                       <div className="flex items-start justify-between gap-2">
                         <span className="min-w-0 truncate text-[0.929rem] font-medium text-text">{bot.name}</span>
                         <span
-                          className={`mt-1 size-2 shrink-0 rounded-full ${bot.apiKeyEnabled ? "bg-green-400" : "bg-text-dimmed"}`}
+                          className={`mt-1.5 size-2 shrink-0 rounded-full ${bot.apiKeyEnabled ? "bg-success" : "bg-text-dimmed/60"}`}
                           title={bot.apiKeyEnabled ? "API key active" : "API key revoked"}
                         />
                       </div>
-                      <div className="mt-1.5 flex items-center gap-2 text-[0.714rem] text-text-dimmed">
+                      <div className="mt-1 flex items-center gap-1.5 text-[0.786rem] text-text-dimmed">
                         <span>{bot.kind === "hermes" ? "Hermes" : "Webhook"}</span>
                         <span>·</span>
                         <span>{bot.workspaces.length} workspace{bot.workspaces.length === 1 ? "" : "s"}</span>
@@ -427,38 +434,38 @@ export function BotsManageRoute() {
 
             {selectedBot && (
               <main data-testid="bot-management-detail" className="min-w-0 space-y-4">
-                <div className="rounded-xl border border-border bg-surface p-4">
+                <div className={`p-5 ${panelClass}`}>
                   <div className="flex flex-wrap items-center gap-2">
-                    <h2 className="min-w-0 truncate text-[1.214rem] font-semibold text-text">{selectedBot.name}</h2>
+                    <h2 className="min-w-0 truncate text-[1.214rem] font-semibold tracking-tight text-text">{selectedBot.name}</h2>
                     <BotKindBadge kind={selectedBot.kind} />
                   </div>
-                  <div className="mt-1 font-mono text-[0.714rem] text-text-dimmed">{selectedBot.id}</div>
+                  <div className="mt-1 break-all font-mono text-[0.786rem] text-text-dimmed">{selectedBot.id}</div>
                 </div>
 
                 <Section title="Details" description="Rename the bot and control the data it can receive.">
                   <div className="grid gap-4">
                     <label className="grid gap-1.5">
-                      <span className="text-[0.786rem] font-medium text-text-muted">Name</span>
+                      <span className={fieldLabelClass}>Name</span>
                       <input
                         aria-label="Bot name"
                         value={name}
                         onChange={(event) => setName(event.target.value)}
-                        className="rounded-lg border border-border bg-base px-3 py-2 text-[0.929rem] text-text outline-none transition-colors focus:border-border-focus"
+                        className={inputClass}
                       />
                     </label>
                     <label className="grid gap-1.5">
-                      <span className="text-[0.786rem] font-medium text-text-muted">Webhook URL</span>
+                      <span className={fieldLabelClass}>Webhook URL</span>
                       <input
                         aria-label="Webhook URL"
                         value={webhookUrl}
                         onChange={(event) => setWebhookUrl(event.target.value)}
                         placeholder="https://bot.example.com/webhook"
-                        className="rounded-lg border border-border bg-base px-3 py-2 text-[0.929rem] text-text outline-none transition-colors placeholder:text-text-placeholder focus:border-border-focus"
+                        className={inputClass}
                         spellCheck={false}
                       />
-                      <span className="text-[0.714rem] text-text-dimmed">Leave blank when the bot uses polling.</span>
+                      <span className="text-[0.786rem] text-text-dimmed">Leave blank when the bot uses polling.</span>
                     </label>
-                    <label className="flex cursor-pointer items-start gap-2.5 rounded-lg border border-border bg-base px-3 py-3">
+                    <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-border px-3.5 py-3 transition-colors duration-150 hover:bg-white/[0.02]">
                       <input
                         aria-label="Allow message attachments"
                         type="checkbox"
@@ -467,8 +474,8 @@ export function BotsManageRoute() {
                         className="mt-0.5 size-4 accent-accent"
                       />
                       <span>
-                        <span className="block text-[0.857rem] font-medium text-text-muted">Allow message attachments</span>
-                        <span className="mt-0.5 block text-[0.714rem] leading-relaxed text-text-dimmed">
+                        <span className="block text-[0.929rem] font-medium text-text">Allow message attachments</span>
+                        <span className="mt-0.5 block text-[0.857rem] leading-relaxed text-text-dimmed">
                           The bot may receive, download, and upload attachments in conversations it can access.
                         </span>
                       </span>
@@ -478,7 +485,7 @@ export function BotsManageRoute() {
                         type="button"
                         onClick={saveDetails}
                         disabled={busy !== null || !name.trim()}
-                        className="cursor-pointer rounded-lg border border-border-strong bg-elevated px-4 py-2 text-[0.857rem] font-semibold text-text transition-colors hover:not-disabled:bg-button disabled:cursor-not-allowed disabled:opacity-50"
+                        className={buttonClass("primary", "md")}
                       >
                         {busy === "save" ? "Saving..." : "Save changes"}
                       </button>
@@ -491,11 +498,11 @@ export function BotsManageRoute() {
                   description="Connect this bot to workspaces where you are an owner or admin. Disconnecting removes its channel access."
                 >
                   {workspaceRows.length === 0 ? (
-                    <div className="rounded-lg border border-dashed border-border px-4 py-5 text-center text-[0.857rem] text-text-dimmed">
+                    <div className="rounded-lg border border-dashed border-border-strong px-4 py-5 text-center text-[0.929rem] text-text-dimmed">
                       You are not a member of any workspaces yet.
                     </div>
                   ) : (
-                    <div className="space-y-2">
+                    <div className="divide-y divide-border-subtle overflow-hidden rounded-lg border border-border">
                       {workspaceRows.map((workspace) => {
                         const canConnect = workspace.role === "owner" || workspace.role === "admin";
                         const workspaceBusy = busy === `workspace:${workspace.id}`;
@@ -503,11 +510,11 @@ export function BotsManageRoute() {
                           <div
                             key={workspace.id}
                             data-testid={`bot-workspace-${workspace.id}`}
-                            className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-base px-3 py-2.5"
+                            className="flex flex-wrap items-center justify-between gap-3 px-3.5 py-2.5 transition-colors duration-150 hover:bg-white/[0.02]"
                           >
                             <div className="min-w-0">
-                              <div className="truncate text-[0.857rem] font-medium text-text">{workspace.name}</div>
-                              <div className="mt-0.5 text-[0.714rem] text-text-dimmed">
+                              <div className="truncate text-[0.929rem] font-medium text-text">{workspace.name}</div>
+                              <div className={`mt-0.5 text-[0.786rem] ${workspace.connected ? "text-success-light" : "text-text-dimmed"}`}>
                                 {workspace.connected
                                   ? "Connected"
                                   : canConnect
@@ -521,11 +528,11 @@ export function BotsManageRoute() {
                               type="button"
                               onClick={() => changeWorkspace(workspace)}
                               disabled={busy !== null || (!workspace.connected && !canConnect)}
-                              className={`cursor-pointer rounded-md border px-3 py-1.5 text-[0.786rem] font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-45 ${
+                              className={
                                 workspace.connected
-                                  ? "border-border bg-raised text-text-muted hover:not-disabled:bg-hover hover:not-disabled:text-text"
-                                  : "border-border-strong bg-elevated text-text hover:not-disabled:bg-button"
-                              }`}
+                                  ? buttonClass("ghost", "sm")
+                                  : buttonClass("secondary", "sm")
+                              }
                             >
                               {workspaceBusy
                                 ? workspace.connected ? "Disconnecting..." : "Connecting..."
@@ -543,21 +550,21 @@ export function BotsManageRoute() {
                   description="Rotated credentials take effect immediately. API keys are shown only once when issued."
                 >
                   {revealedApiKey?.botId === selectedBot.id && (
-                    <div className="mb-4 rounded-lg border border-amber-400/30 bg-amber-400/10 p-3">
-                      <div className="text-[0.786rem] font-semibold text-amber-300">Copy this API key now</div>
-                      <div className="mt-2 flex gap-2">
+                    <div className="mb-4 rounded-lg border border-warning/30 bg-warning-bg p-3">
+                      <div className="text-[0.857rem] font-semibold text-warning-text">Copy this API key now</div>
+                      <div className="mt-2 flex items-center gap-2">
                         <input
                           aria-label="New API key"
                           readOnly
                           value={revealedApiKey.value}
-                          className="min-w-0 flex-1 rounded-md border border-border bg-base px-2.5 py-1.5 font-mono text-[0.714rem] text-text outline-none"
+                          className="h-7 min-w-0 flex-1 rounded-md border border-border-strong bg-base px-2.5 font-mono text-[0.786rem] text-text outline-none transition-[border-color,box-shadow] duration-150 focus:border-accent/60 focus:ring-3 focus:ring-accent/15"
                         />
                         <button
                           type="button"
                           onClick={() =>
                             copyValue(selectedBot.id, "api-key", revealedApiKey.value)
                           }
-                          className="cursor-pointer rounded-md border border-border bg-raised px-3 py-1.5 text-[0.786rem] text-text-muted hover:bg-hover hover:text-text"
+                          className={buttonClass("secondary", "sm")}
                         >
                           {copied?.botId === selectedBot.id && copied.label === "api-key"
                             ? "Copied"
@@ -567,12 +574,12 @@ export function BotsManageRoute() {
                     </div>
                   )}
 
-                  <div className="space-y-3">
-                    <div className="rounded-lg border border-border bg-base p-3">
-                      <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div className="divide-y divide-border-subtle overflow-hidden rounded-lg border border-border">
+                    <div className="px-3.5 py-3">
+                      <div className="flex flex-wrap items-center justify-between gap-3">
                         <div>
-                          <div className="text-[0.857rem] font-medium text-text">Bot API key</div>
-                          <div className={`mt-1 text-[0.714rem] ${selectedBot.apiKeyEnabled ? "text-green-400" : "text-text-dimmed"}`}>
+                          <div className="text-[0.929rem] font-medium text-text">Bot API key</div>
+                          <div className={`mt-0.5 text-[0.786rem] ${selectedBot.apiKeyEnabled ? "text-success-light" : "text-text-dimmed"}`}>
                             {selectedBot.apiKeyEnabled ? "Active" : "Revoked"}
                           </div>
                         </div>
@@ -581,7 +588,7 @@ export function BotsManageRoute() {
                             type="button"
                             onClick={rotateApiKey}
                             disabled={busy !== null}
-                            className="cursor-pointer rounded-md border border-border bg-raised px-3 py-1.5 text-[0.786rem] text-text-muted transition-colors hover:not-disabled:bg-hover hover:not-disabled:text-text disabled:opacity-50"
+                            className={buttonClass("secondary", "sm")}
                           >
                             {busy === "rotate-key"
                               ? "Issuing..."
@@ -594,7 +601,7 @@ export function BotsManageRoute() {
                               type="button"
                               onClick={revokeApiKey}
                               disabled={busy !== null}
-                              className="cursor-pointer rounded-md border border-error-msg-border bg-error-msg-bg px-3 py-1.5 text-[0.786rem] text-error-bright transition-colors hover:not-disabled:brightness-110 disabled:opacity-50"
+                              className={buttonClass(isConfirming("revoke-key") ? "danger" : "danger-soft", "sm")}
                             >
                               {busy === "revoke-key"
                                 ? "Revoking..."
@@ -605,11 +612,11 @@ export function BotsManageRoute() {
                       </div>
                     </div>
 
-                    <div className="rounded-lg border border-border bg-base p-3">
-                      <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div className="px-3.5 py-3">
+                      <div className="flex flex-wrap items-center justify-between gap-3">
                         <div className="min-w-0 flex-1">
-                          <div className="text-[0.857rem] font-medium text-text">Webhook secret</div>
-                          <div className="mt-1 truncate font-mono text-[0.714rem] text-text-dimmed">
+                          <div className="text-[0.929rem] font-medium text-text">Webhook secret</div>
+                          <div className="mt-0.5 truncate font-mono text-[0.786rem] text-text-dimmed">
                             {showSecretForBotId === selectedBot.id
                               ? selectedBot.webhookSecret
                               : "••••••••••••••••••••••••"}
@@ -623,7 +630,7 @@ export function BotsManageRoute() {
                                 shownFor === selectedBot.id ? null : selectedBot.id,
                               )
                             }
-                            className="cursor-pointer rounded-md border border-border bg-raised px-3 py-1.5 text-[0.786rem] text-text-muted hover:bg-hover hover:text-text"
+                            className={buttonClass("secondary", "sm")}
                           >
                             {showSecretForBotId === selectedBot.id ? "Hide" : "Reveal"}
                           </button>
@@ -636,7 +643,7 @@ export function BotsManageRoute() {
                                 selectedBot.webhookSecret,
                               )
                             }
-                            className="cursor-pointer rounded-md border border-border bg-raised px-3 py-1.5 text-[0.786rem] text-text-muted hover:bg-hover hover:text-text"
+                            className={buttonClass("secondary", "sm")}
                           >
                             {copied?.botId === selectedBot.id &&
                             copied.label === "webhook-secret"
@@ -647,7 +654,7 @@ export function BotsManageRoute() {
                             type="button"
                             onClick={rotateWebhookSecret}
                             disabled={busy !== null}
-                            className="cursor-pointer rounded-md border border-border bg-raised px-3 py-1.5 text-[0.786rem] text-text-muted hover:not-disabled:bg-hover hover:not-disabled:text-text disabled:opacity-50"
+                            className={buttonClass("secondary", "sm")}
                           >
                             {busy === "rotate-secret"
                               ? "Rotating..."
@@ -659,17 +666,17 @@ export function BotsManageRoute() {
                   </div>
                 </Section>
 
-                <section className="rounded-xl border border-error-msg-border bg-error-msg-bg/35 p-4">
-                  <h3 className="text-[0.929rem] font-semibold text-error-bright">Danger zone</h3>
-                  <p className="mt-1 text-[0.786rem] leading-relaxed text-text-muted">
+                <section className="rounded-xl border border-error-msg-border bg-error-msg-bg p-5">
+                  <h3 className="text-[1rem] font-semibold text-error-bright">Danger zone</h3>
+                  <p className="mt-1 text-[0.857rem] leading-relaxed text-text-muted">
                     Deleting a bot revokes its credentials and removes it from every workspace and conversation.
                   </p>
-                  <div className="mt-3 flex flex-wrap items-center gap-3">
+                  <div className="mt-4 flex flex-wrap items-center gap-2">
                     <button
                       type="button"
                       onClick={deleteBot}
                       disabled={busy !== null}
-                      className="cursor-pointer rounded-lg border border-error-msg-border bg-error-msg-bg px-4 py-2 text-[0.857rem] font-semibold text-error-bright transition-colors hover:not-disabled:brightness-110 disabled:opacity-50"
+                      className={buttonClass(isConfirming("delete") ? "danger" : "danger-soft", "md")}
                     >
                       {busy === "delete"
                         ? "Deleting..."
@@ -681,7 +688,7 @@ export function BotsManageRoute() {
                       <button
                         type="button"
                         onClick={() => setConfirmAction(null)}
-                        className="cursor-pointer border-none bg-transparent text-[0.786rem] text-text-muted hover:text-text"
+                        className={buttonClass("ghost", "md")}
                       >
                         Cancel
                       </button>

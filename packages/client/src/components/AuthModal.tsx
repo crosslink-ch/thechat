@@ -8,6 +8,26 @@ import {
 import { api } from "../lib/api";
 import { edenErrorMessage } from "../lib/eden";
 import { requestInputBarFocus } from "../stores/input-focus";
+import { Mail } from "lucide-react";
+import {
+  buttonClass,
+  dialogOverlayClass,
+  dialogSurfaceClass,
+  dialogTitleClass,
+  inputClass,
+  labelClass,
+} from "./ui";
+
+const authCardClass = `w-full max-w-[400px] p-7 ${dialogSurfaceClass} animate-dialog-in`;
+const authInputClass = `block h-10 ${inputClass}`;
+const codeInputClass =
+  "block w-full rounded-lg border border-border-strong bg-base px-3.5 py-2.5 text-center font-mono text-text outline-none transition-[border-color,box-shadow] duration-150 placeholder:text-text-placeholder focus:border-accent/60 focus:ring-3 focus:ring-accent/15";
+const linkButtonClass =
+  "cursor-pointer border-none bg-transparent p-0 font-[inherit] font-medium text-accent transition-colors duration-150 hover:underline disabled:cursor-not-allowed disabled:opacity-50 disabled:no-underline";
+const errorBoxClass =
+  "rounded-lg border border-error-msg-border bg-error-msg-bg px-3 py-2 text-[0.857rem] text-error-bright";
+const noticeBoxClass =
+  "rounded-lg border border-border-accent bg-accent/10 px-3 py-2 text-[0.857rem] text-text-secondary";
 
 type AuthMode = "login" | "register";
 type AuthView = AuthMode | "password-reset";
@@ -92,11 +112,11 @@ export function AuthOnboarding() {
   return (
     <div className="flex min-h-0 flex-1 items-center justify-center bg-base px-4 py-8">
       <div className="w-full max-w-[420px]">
-        <div className="mb-5 text-center">
+        <div className="mb-6 text-center">
           <h1 className="text-[1.5rem] font-semibold tracking-tight text-text">
             {onboardingCopy.heading}
           </h1>
-          <p className="mt-2 text-[0.929rem] leading-relaxed text-text-muted">
+          <p className="mt-1.5 text-[0.929rem] leading-relaxed text-text-muted">
             {onboardingCopy.description}
           </p>
         </div>
@@ -115,7 +135,7 @@ function AuthOverlay({
 }) {
   return (
     <div
-      className="fixed inset-0 z-20 flex items-center justify-center bg-overlay backdrop-blur-[2px] animate-fade-in"
+      className={`z-20 flex items-center justify-center p-4 ${dialogOverlayClass}`}
       onClick={onCancel}
     >
       <div onClick={(e) => e.stopPropagation()}>
@@ -153,7 +173,7 @@ function ResendButton({ email }: { email: string }) {
   return (
     <div className="flex flex-col items-center gap-2">
       <button
-        className="cursor-pointer border-none bg-none p-0 font-[inherit] text-[0.929rem] text-accent underline transition-colors duration-150 hover:text-text disabled:cursor-default disabled:opacity-40 disabled:no-underline"
+        className={`${linkButtonClass} text-[0.929rem]`}
         onClick={handleResend}
         disabled={state === "sending" || cooldown > 0}
       >
@@ -206,14 +226,13 @@ function VerificationPendingPanel({
   };
 
   return (
-    <div className="w-full max-w-[400px] rounded-xl border border-border-strong bg-surface p-6 shadow-card animate-slide-up">
+    <div className={authCardClass}>
       <div className="flex flex-col items-center text-center">
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="mb-4 h-12 w-12 text-accent">
-          <rect x="2" y="4" width="20" height="16" rx="2" />
-          <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7" />
-        </svg>
+        <div className="mb-4 flex size-12 items-center justify-center rounded-full bg-accent/10 text-accent">
+          <Mail size={22} aria-hidden="true" />
+        </div>
 
-        <h2 className="mb-2 text-[1.214rem] font-semibold tracking-tight text-text">
+        <h2 className={`mb-1.5 ${dialogTitleClass}`}>
           Check your email
         </h2>
         <p className="mb-5 text-[0.929rem] leading-relaxed text-text-muted">
@@ -225,7 +244,7 @@ function VerificationPendingPanel({
         <form onSubmit={handleSubmit} className="w-full" noValidate>
           <input
             ref={codeInputRef}
-            className="block w-full rounded-lg border border-border bg-base px-3.5 py-2.5 text-center font-mono text-[1.5rem] tracking-[0.4em] text-text outline-none transition-colors duration-150 placeholder:text-text-placeholder focus:border-border-focus"
+            className={`${codeInputClass} text-[1.5rem] tracking-[0.4em]`}
             type="text"
             inputMode="numeric"
             autoComplete="one-time-code"
@@ -235,10 +254,10 @@ function VerificationPendingPanel({
             onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
           />
 
-          {error && <div className="mt-3 rounded-lg border border-error-msg-border bg-error-msg-bg px-3 py-2 text-[0.857rem] text-error-bright">{error}</div>}
+          {error && <div className={`mt-3 ${errorBoxClass}`}>{error}</div>}
 
           <button
-            className="mt-3 block w-full cursor-pointer rounded-lg border border-border-strong bg-elevated px-3 py-2.5 font-[inherit] text-[0.929rem] font-medium text-text transition-colors duration-150 hover:not-disabled:bg-button disabled:cursor-default disabled:opacity-40"
+            className={`mt-3 w-full ${buttonClass("primary", "lg")}`}
             type="submit"
             disabled={submitting || code.length !== 6}
           >
@@ -251,7 +270,7 @@ function VerificationPendingPanel({
         </div>
 
         <button
-          className="mt-4 cursor-pointer border-none bg-none p-0 font-[inherit] text-[0.857rem] text-text-muted underline transition-colors duration-150 hover:text-text"
+          className="mt-4 cursor-pointer border-none bg-transparent p-0 font-[inherit] text-[0.857rem] text-text-dimmed transition-colors duration-150 hover:text-text"
           onClick={onBackToLogin}
         >
           Back to login
@@ -372,10 +391,10 @@ function PasswordResetPanel({
 
   return (
     <div>
-      <h2 className="m-0 mb-1 text-[1.15rem] font-semibold text-text">
+      <h2 className={`m-0 mb-1 ${dialogTitleClass}`}>
         {stage === "request" ? "Reset password" : "Enter reset code"}
       </h2>
-      <p className="m-0 mb-5 text-[0.84rem] leading-relaxed text-text-muted">
+      <p className="m-0 mb-5 text-[0.929rem] leading-relaxed text-text-muted">
         {stage === "request"
           ? "Enter your account email and we'll send a 6-digit reset code."
           : "Enter the code from your email, then choose a new password."}
@@ -384,7 +403,7 @@ function PasswordResetPanel({
       {stage === "request" ? (
         <form noValidate onSubmit={handleRequest}>
           <label
-            className="mb-1.5 block text-[0.78rem] font-medium text-text-secondary"
+            className={labelClass}
             htmlFor="reset-email"
           >
             Email
@@ -392,7 +411,7 @@ function PasswordResetPanel({
           <input
             autoComplete="email"
             autoFocus
-            className="mb-5 w-full rounded-lg border border-border bg-base px-3 py-2.5 font-[inherit] text-[0.875rem] text-text outline-none transition-colors duration-150 placeholder:text-text-faint focus:border-accent"
+            className={`mb-5 ${authInputClass}`}
             id="reset-email"
             onChange={(event) => setEmail(event.target.value)}
             placeholder="you@example.com"
@@ -402,7 +421,7 @@ function PasswordResetPanel({
 
           {error && (
             <div
-              className="mb-4 rounded-md border border-error-msg-border bg-error-msg-bg px-3 py-2 text-[0.8rem] text-error-bright"
+              className={`mb-4 ${errorBoxClass}`}
               role="alert"
             >
               {error}
@@ -410,7 +429,7 @@ function PasswordResetPanel({
           )}
 
           <button
-            className="w-full cursor-pointer rounded-lg border-none bg-accent px-3 py-2.5 font-[inherit] text-[0.875rem] font-semibold text-white transition-opacity disabled:cursor-not-allowed disabled:opacity-50"
+            className={`w-full ${buttonClass("primary", "lg")}`}
             disabled={submitting}
             type="submit"
           >
@@ -422,7 +441,7 @@ function PasswordResetPanel({
           {message && (
             <div
               aria-live="polite"
-              className="mb-4 rounded-md border border-accent/30 bg-accent/10 px-3 py-2 text-[0.8rem] text-text-secondary"
+              className={`mb-4 ${noticeBoxClass}`}
               role="status"
             >
               {message}
@@ -430,7 +449,7 @@ function PasswordResetPanel({
           )}
 
           <label
-            className="mb-1.5 block text-[0.78rem] font-medium text-text-secondary"
+            className={labelClass}
             htmlFor="reset-code"
           >
             Reset code
@@ -438,7 +457,7 @@ function PasswordResetPanel({
           <input
             autoComplete="one-time-code"
             autoFocus
-            className="mb-3 w-full rounded-lg border border-border bg-base px-3 py-2.5 text-center font-mono text-lg tracking-[0.35em] text-text outline-none transition-colors duration-150 placeholder:text-text-faint focus:border-accent"
+            className={`mb-3.5 ${codeInputClass} text-[1.286rem] tracking-[0.35em]`}
             id="reset-code"
             inputMode="numeric"
             maxLength={6}
@@ -451,14 +470,14 @@ function PasswordResetPanel({
           />
 
           <label
-            className="mb-1.5 block text-[0.78rem] font-medium text-text-secondary"
+            className={labelClass}
             htmlFor="reset-password"
           >
             New password
           </label>
           <input
             autoComplete="new-password"
-            className="mb-3 w-full rounded-lg border border-border bg-base px-3 py-2.5 font-[inherit] text-[0.875rem] text-text outline-none transition-colors duration-150 placeholder:text-text-faint focus:border-accent"
+            className={`mb-3.5 ${authInputClass}`}
             id="reset-password"
             maxLength={128}
             minLength={8}
@@ -469,14 +488,14 @@ function PasswordResetPanel({
           />
 
           <label
-            className="mb-1.5 block text-[0.78rem] font-medium text-text-secondary"
+            className={labelClass}
             htmlFor="reset-password-confirmation"
           >
             Confirm new password
           </label>
           <input
             autoComplete="new-password"
-            className="mb-4 w-full rounded-lg border border-border bg-base px-3 py-2.5 font-[inherit] text-[0.875rem] text-text outline-none transition-colors duration-150 placeholder:text-text-faint focus:border-accent"
+            className={`mb-4 ${authInputClass}`}
             id="reset-password-confirmation"
             maxLength={128}
             minLength={8}
@@ -488,7 +507,7 @@ function PasswordResetPanel({
 
           {error && (
             <div
-              className="mb-4 rounded-md border border-error-msg-border bg-error-msg-bg px-3 py-2 text-[0.8rem] text-error-bright"
+              className={`mb-4 ${errorBoxClass}`}
               role="alert"
             >
               {error}
@@ -496,7 +515,7 @@ function PasswordResetPanel({
           )}
 
           <button
-            className="w-full cursor-pointer rounded-lg border-none bg-accent px-3 py-2.5 font-[inherit] text-[0.875rem] font-semibold text-white transition-opacity disabled:cursor-not-allowed disabled:opacity-50"
+            className={`w-full ${buttonClass("primary", "lg")}`}
             disabled={submitting}
             type="submit"
           >
@@ -505,7 +524,7 @@ function PasswordResetPanel({
 
           <div className="mt-3 flex items-center justify-between gap-3">
             <button
-              className="cursor-pointer border-none bg-transparent p-0 text-[0.78rem] text-accent hover:underline disabled:cursor-not-allowed disabled:opacity-50"
+              className={`${linkButtonClass} text-[0.857rem]`}
               disabled={submitting}
               onClick={() => {
                 setStage("request");
@@ -520,7 +539,7 @@ function PasswordResetPanel({
               Use a different email
             </button>
             <button
-              className="cursor-pointer border-none bg-transparent p-0 text-[0.78rem] text-accent hover:underline disabled:cursor-not-allowed disabled:opacity-50"
+              className={`${linkButtonClass} text-[0.857rem]`}
               disabled={submitting}
               onClick={requestCode}
               type="button"
@@ -531,10 +550,10 @@ function PasswordResetPanel({
         </form>
       )}
 
-      <div className="mt-5 border-t border-border pt-4 text-center text-[0.8rem] text-text-muted">
+      <div className="mt-5 border-t border-border pt-4 text-center text-[0.857rem] text-text-muted">
         Remembered your password?{" "}
         <button
-          className="cursor-pointer border-none bg-transparent p-0 font-[inherit] text-accent hover:underline"
+          className={linkButtonClass}
           onClick={() => onBackToLogin(normalizedEmail)}
           type="button"
         >
@@ -649,7 +668,7 @@ function AuthPanel({
 
   if (mode === "password-reset") {
     return (
-      <div className="w-full max-w-[400px] rounded-xl border border-border-strong bg-surface p-6 shadow-card animate-slide-up">
+      <div className={authCardClass}>
         <PasswordResetPanel
           initialEmail={email}
           onBackToLogin={(resetEmail, resetNotice) => {
@@ -665,21 +684,21 @@ function AuthPanel({
   }
 
   return (
-    <div className="w-full max-w-[400px] rounded-xl border border-border-strong bg-surface p-6 shadow-card animate-slide-up">
-      <h2 className="mb-5 text-[1.214rem] font-semibold tracking-tight text-text">
+    <div className={authCardClass}>
+      <h2 className={`mb-5 ${dialogTitleClass}`}>
         {mode === "login" ? "Log in" : "Create account"}
       </h2>
 
       <form onSubmit={handleSubmit} noValidate>
         {mode === "register" && (
           <div className="mb-3.5">
-            <label className="mb-1.5 block text-[0.857rem] font-medium text-text-muted" htmlFor="auth-name">
+            <label className={labelClass} htmlFor="auth-name">
               Name
             </label>
             <input
               ref={mode === "register" ? firstInputRef : undefined}
               id="auth-name"
-              className="block w-full rounded-lg border border-border bg-base px-3.5 py-2.5 font-[inherit] text-[0.929rem] text-text outline-none transition-colors duration-150 placeholder:text-text-placeholder focus:border-border-focus"
+              className={authInputClass}
               type="text"
               placeholder="John Doe"
               value={name}
@@ -688,13 +707,13 @@ function AuthPanel({
           </div>
         )}
         <div className="mb-3.5">
-          <label className="mb-1.5 block text-[0.857rem] font-medium text-text-muted" htmlFor="auth-email">
+          <label className={labelClass} htmlFor="auth-email">
             Email
           </label>
           <input
             ref={mode === "login" ? firstInputRef : undefined}
             id="auth-email"
-            className="block w-full rounded-lg border border-border bg-base px-3.5 py-2.5 font-[inherit] text-[0.929rem] text-text outline-none transition-colors duration-150 placeholder:text-text-placeholder focus:border-border-focus"
+            className={authInputClass}
             type="email"
             placeholder="you@example.com"
             value={email}
@@ -704,14 +723,14 @@ function AuthPanel({
         <div className="mb-3.5">
           <div className="mb-1.5 flex items-center justify-between gap-3">
             <label
-              className="block text-[0.857rem] font-medium text-text-muted"
+              className="block text-[0.857rem] font-medium text-text-secondary"
               htmlFor="auth-password"
             >
               Password
             </label>
             {mode === "login" && (
               <button
-                className="cursor-pointer border-none bg-transparent p-0 font-[inherit] text-[0.78rem] text-accent hover:underline"
+                className={`${linkButtonClass} text-[0.857rem]`}
                 onClick={() => {
                   setMode("password-reset");
                   setPassword("");
@@ -726,7 +745,7 @@ function AuthPanel({
           </div>
           <input
             id="auth-password"
-            className="block w-full rounded-lg border border-border bg-base px-3.5 py-2.5 font-[inherit] text-[0.929rem] text-text outline-none transition-colors duration-150 placeholder:text-text-placeholder focus:border-border-focus"
+            className={authInputClass}
             type="password"
             placeholder={mode === "register" ? "At least 8 characters" : ""}
             value={password}
@@ -737,7 +756,7 @@ function AuthPanel({
         {notice && (
           <div
             aria-live="polite"
-            className="mb-3 rounded-lg border border-accent/30 bg-accent/10 px-3 py-2 text-[0.857rem] text-text-secondary"
+            className={`mb-3 ${noticeBoxClass}`}
             role="status"
           >
             {notice}
@@ -745,13 +764,13 @@ function AuthPanel({
         )}
 
         {error && (
-          <div className="mb-3 rounded-lg border border-error-msg-border bg-error-msg-bg px-3 py-2 text-[0.857rem] text-error-bright">
+          <div className={`mb-3 ${errorBoxClass}`}>
             {error}
           </div>
         )}
 
         <button
-          className="mt-1 block w-full cursor-pointer rounded-lg border border-border-strong bg-elevated px-3 py-2.5 font-[inherit] text-[0.929rem] font-medium text-text transition-colors duration-150 hover:not-disabled:bg-button disabled:cursor-default disabled:opacity-40"
+          className={`mt-2 w-full ${buttonClass("primary", "lg")}`}
           type="submit"
           disabled={submitting}
         >
@@ -763,16 +782,16 @@ function AuthPanel({
         </button>
       </form>
 
-      <div className="mt-4 text-center text-[0.857rem] text-text-muted">
+      <div className="mt-5 text-center text-[0.857rem] text-text-muted">
         {mode === "login" ? (
           <>
             Don't have an account?{" "}
-            <button className="cursor-pointer border-none bg-none p-0 font-[inherit] text-[0.857rem] text-accent underline transition-colors duration-150 hover:text-text" onClick={() => switchMode("register")}>Register</button>
+            <button className={linkButtonClass} onClick={() => switchMode("register")}>Register</button>
           </>
         ) : (
           <>
             Already have an account?{" "}
-            <button className="cursor-pointer border-none bg-none p-0 font-[inherit] text-[0.857rem] text-accent underline transition-colors duration-150 hover:text-text" onClick={() => switchMode("login")}>Log in</button>
+            <button className={linkButtonClass} onClick={() => switchMode("login")}>Log in</button>
           </>
         )}
       </div>

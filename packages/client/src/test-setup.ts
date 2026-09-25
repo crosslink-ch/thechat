@@ -1,6 +1,13 @@
 import "@testing-library/jest-dom/vitest";
 import { clearMocks } from "@tauri-apps/api/mocks";
-import { afterEach } from "vitest";
+import { createElement } from "react";
+import { afterEach, vi } from "vitest";
+
+// thinking-orbs animates a canvas, which jsdom doesn't implement.
+vi.mock("thinking-orbs", () => ({
+  ThinkingOrb: ({ state }: { state?: string }) =>
+    createElement("span", { "data-thinking-orb": state ?? "working", "aria-hidden": true }),
+}));
 
 // jsdom doesn't implement browser geometry APIs used by scrolling editors.
 Element.prototype.scrollIntoView = () => {};

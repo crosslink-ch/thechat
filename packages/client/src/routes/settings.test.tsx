@@ -312,16 +312,17 @@ describe("SettingsRoute", () => {
     expect(within(item).getByText("Last used")).toBeInTheDocument();
     expect(within(item).getByText("Never")).toBeInTheDocument();
 
-    // Revoke reads as a quiet action until the user asks to confirm it.
+    // Revoke reads as a quiet action until the user asks to confirm it; the
+    // confirmation uses the destructive (danger) button fill.
     const revoke = within(item).getByRole("button", { name: "Revoke Existing CLI" });
     expect(revoke).toHaveTextContent("Revoke");
-    expect(revoke).not.toHaveClass("bg-error-msg-bg");
+    expect(revoke).not.toHaveClass("bg-error");
     await user.click(revoke);
     expect(revoke).toHaveTextContent("Confirm revoke");
-    expect(revoke).toHaveClass("bg-error-msg-bg");
+    expect(revoke).toHaveClass("bg-error");
     await user.click(within(item).getByRole("button", { name: "Cancel" }));
     expect(revoke).toHaveTextContent("Revoke");
-    expect(revoke).not.toHaveClass("bg-error-msg-bg");
+    expect(revoke).not.toHaveClass("bg-error");
     expect(tokenEndpointMock).not.toHaveBeenCalled();
 
     // Examples are level-3 headings under API access; curl wraps, JSON scrolls.

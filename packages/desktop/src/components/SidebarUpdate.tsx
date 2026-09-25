@@ -1,3 +1,4 @@
+import { Download } from "lucide-react";
 import { useUpdaterStore } from "../stores/updater";
 
 /** Persistent update entry point, outside the sidebar's scrolling content. */
@@ -30,14 +31,12 @@ export function SidebarUpdate() {
       aria-busy={busy}
       title={`Update to v${update.version}`}
       onClick={() => void (downloaded ? restartToUpdate() : retryDownload())}
-      className="mb-2 flex w-full cursor-pointer items-center gap-2.5 rounded-md border border-accent/40 bg-accent/10 px-3 py-2 text-left font-[inherit] text-text transition-colors duration-150 hover:bg-accent/20 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-default"
+      className="mb-2 flex w-full cursor-pointer items-center gap-2.5 rounded-lg border border-border-accent bg-accent/10 px-3 py-2 text-left font-[inherit] text-text transition-colors duration-150 hover:not-disabled:bg-accent/15 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-default"
     >
-      <svg className="shrink-0 text-accent" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-        <path d="M12 3v12m-4-4 4 4 4-4M5 16v4h14v-4" />
-      </svg>
+      <Download size={16} className="shrink-0 text-accent" aria-hidden="true" />
       <span className="min-w-0">
-        <span className="block text-[0.857rem] font-semibold">{label}</span>
-        <span className="block break-words text-[0.786rem] text-text-muted">{detail}</span>
+        <span className="block text-[0.929rem] font-medium">{label}</span>
+        <span className="block break-words text-[0.857rem] text-text-muted">{detail}</span>
       </span>
     </button>
   );

@@ -16,6 +16,10 @@ function dispatchWheel(init: WheelEventInit) {
   return event;
 }
 
+function holdControl() {
+  window.dispatchEvent(new KeyboardEvent("keydown", { key: "Control", ctrlKey: true }));
+}
+
 beforeEach(() => {
   mockIPC(() => null);
   useFontSizeStore.setState({ size: DEFAULT_FONT_SIZE });
@@ -25,6 +29,7 @@ beforeEach(() => {
 describe("useCtrlWheelZoom", () => {
   it("zooms in one level on Ctrl+scroll up", () => {
     renderHook(() => useCtrlWheelZoom());
+    holdControl();
 
     const event = dispatchWheel({ ctrlKey: true, deltaY: -100 });
 
@@ -35,12 +40,36 @@ describe("useCtrlWheelZoom", () => {
 
   it("zooms out one level on Ctrl+scroll down", () => {
     renderHook(() => useCtrlWheelZoom());
+    holdControl();
 
     const event = dispatchWheel({ ctrlKey: true, deltaY: 100 });
 
     expect(event.defaultPrevented).toBe(true);
     expect(useFontSizeStore.getState().size).toBe(13);
     expect(document.documentElement.style.fontSize).toBe("13px");
+  });
+
+  it("ignores trackpad pinches, which report ctrlKey without Control held", () => {
+    renderHook(() => useCtrlWheelZoom());
+
+    const event = dispatchWheel({ ctrlKey: true, deltaY: -100 });
+
+    // The page itself must not zoom either.
+    expect(event.defaultPrevented).toBe(true);
+    expect(useFontSizeStore.getState().size).toBe(DEFAULT_FONT_SIZE);
+  });
+
+  it("stops zooming once Control is released or the window loses focus", () => {
+    renderHook(() => useCtrlWheelZoom());
+
+    holdControl();
+    window.dispatchEvent(new KeyboardEvent("keyup", { key: "Control", ctrlKey: false }));
+    dispatchWheel({ ctrlKey: true, deltaY: -100 });
+    holdControl();
+    window.dispatchEvent(new Event("blur"));
+    dispatchWheel({ ctrlKey: true, deltaY: -100 });
+
+    expect(useFontSizeStore.getState().size).toBe(DEFAULT_FONT_SIZE);
   });
 
   it("leaves regular scrolling alone", () => {

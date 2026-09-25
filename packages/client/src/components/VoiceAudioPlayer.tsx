@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import { flushSync } from "react-dom";
+import { Pause, Play } from "lucide-react";
 import { sessionGeneration } from "../lib/session-boundary";
 
 interface VoiceAudioPlayerProps {
@@ -110,7 +111,7 @@ export function VoiceAudioPlayer({ audioLabel, label = "voice message", source, 
           setError("Audio could not be played. Try Play again or save the file.");
         }} />
       <button type="button" className="voice-play" disabled={loading || disabled} aria-label={`${playing ? "Pause" : "Play"} ${label}`} onClick={() => void play()} title={error ? "Retry playback" : undefined}>
-        {loading ? <span className="voice-spinner" aria-hidden="true" /> : <svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24" fill="currentColor">{playing ? <path d="M6 5h4v14H6zm8 0h4v14h-4z" /> : <path d="m8 4 12 8-12 8z" />}</svg>}
+        {loading ? <span className="voice-spinner" aria-hidden="true" /> : playing ? <Pause size={18} fill="currentColor" aria-hidden="true" /> : <Play size={18} fill="currentColor" aria-hidden="true" />}
       </button>
       <div className="voice-timeline">
         <div className="voice-meta"><span>Voice message</span><span className="voice-time">{position > 0 && `${formatVoiceTime(position)} / `}{duration || durationSeconds !== undefined ? formatVoiceTime(duration || durationSeconds || 0) : ""}</span></div>
