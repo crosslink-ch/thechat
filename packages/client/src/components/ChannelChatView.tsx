@@ -9,8 +9,6 @@ import { useMessageTopCommand } from "../hooks/useMessageTopCommand";
 import { useOlderHistoryScroll } from "../hooks/useOlderHistoryScroll";
 import { useScrollStability } from "../hooks/useScrollStability";
 import { MessageSendError } from "./MessageSendError";
-import { HermesWorkLog } from "./HermesWorkLog";
-import { foldHermesKeepAlives } from "../lib/hermes-keepalive";
 import { ArrowDown } from "lucide-react";
 import { buttonClass } from "./ui";
 import type { ChatMessage } from "@thechat/shared";
@@ -47,7 +45,7 @@ interface ChannelChatViewProps {
 }
 
 export function ChannelChatView({
-  messages: incomingMessages,
+  messages,
   loading,
   loadingOlder = false,
   hasOlderMessages = false,
@@ -67,7 +65,7 @@ export function ChannelChatView({
     useAutoScroll(scrollContainerRef);
   useMessageTopCommand(
     scrollContainerRef,
-    incomingMessages.length > 0,
+    messages.length > 0,
     pauseAutoScroll,
   );
   const forceNextContentScrollRef = useRef(false);
@@ -88,14 +86,9 @@ export function ChannelChatView({
   );
   const mentionsYou = (message: { senderId: string; content: string }) =>
     message.senderId !== selfId && mentionsName(message.content, selfName);
-  // Hermes keep-alive updates fold into the answer they precede.
-  const foldedMessages = useMemo(
-    () => foldHermesKeepAlives(incomingMessages),
-    [incomingMessages],
-  );
   const messageScrollSignature = useMemo(
-    () => chatMessageWindowSignature(incomingMessages),
-    [incomingMessages],
+    () => chatMessageWindowSignature(messages),
+    [messages],
   );
   const typingScrollSignature = useMemo(
     () => visibleTypingNames.join("|"),
@@ -169,36 +162,20 @@ export function ChannelChatView({
               </button>
             </div>
           )}
-          {!loading && incomingMessages.length === 0 && (
+          {!loading && messages.length === 0 && (
             <div className="flex flex-1 flex-col items-center justify-center text-[1rem] text-text-dimmed">No messages yet. Start the conversation!</div>
           )}
-          {foldedMessages.map((item, index) =>
-            item.kind === "working" ? (
-              <SharedChatMessage
-                key={item.message.id}
-                message={{ ...item.message, content: "" }}
-                merged={false}
-              >
-                <HermesWorkLog run={item.run} live />
-              </SharedChatMessage>
-            ) : (
-              <SharedChatMessage
-                key={item.message.id}
-                message={item.message}
-                merged={shouldMergeChatMessage(
-                  foldedMessages[index - 1]?.message,
-                  item.message,
-                )}
-                mentionsYou={mentionsYou(item.message)}
-                onSetReaction={onSetReaction}
-              >
-                {item.run && <HermesWorkLog run={item.run} />}
-                {item.message.content && (
-                  <Markdown content={item.message.content} mentions={mentionNames} />
-                )}
-              </SharedChatMessage>
-            ),
-          )}
+          {messages.map((msg, index) => (
+            <SharedChatMessage
+              key={msg.id}
+              message={msg}
+              merged={shouldMergeChatMessage(messages[index - 1], msg)}
+              mentionsYou={mentionsYou(msg)}
+              onSetReaction={onSetReaction}
+            >
+              {msg.content && <Markdown content={msg.content} mentions={mentionNames} />}
+            </SharedChatMessage>
+          ))}
           {visibleTypingNames.length > 0 && (
             <div className="animate-pulse px-5 py-1 pb-2 text-[0.786rem] text-text-dimmed">
               {visibleTypingNames.join(", ")} {visibleTypingNames.length === 1 ? "is" : "are"} typing...

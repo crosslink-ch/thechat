@@ -18,8 +18,6 @@ import type { MentionUser } from "./MentionList";
 import { HermesProgressInline } from "./HermesProgressInline";
 import type { HermesSlashCommand } from "../lib/hermes-slash-commands";
 import { MessageSendError } from "./MessageSendError";
-import { HermesWorkLog } from "./HermesWorkLog";
-import { foldHermesKeepAlives } from "../lib/hermes-keepalive";
 import { ArrowDown } from "lucide-react";
 import { buttonClass } from "./ui";
 import {
@@ -68,7 +66,7 @@ interface HermesDmChatViewProps {
 }
 
 export function HermesDmChatView({
-  messages: incomingMessages,
+  messages,
   loading,
   loadingOlder = false,
   hasOlderMessages = false,
@@ -91,20 +89,6 @@ export function HermesDmChatView({
   token,
   composerKey,
 }: HermesDmChatViewProps) {
-  // Hermes keep-alive updates fold into the answer they precede; the answers
-  // (and ordinary messages) are what the list formats and renders.
-  const foldedMessages = useMemo(
-    () => foldHermesKeepAlives(incomingMessages),
-    [incomingMessages],
-  );
-  const answerItems = useMemo(
-    () => foldedMessages.filter((item) => item.kind === "message"),
-    [foldedMessages],
-  );
-  const messages = useMemo(
-    () => answerItems.map((item) => item.message),
-    [answerItems],
-  );
   // Workspace names shown as @mention pills; mentions of you are highlighted.
   const selfId = useAuthStore((state) => state.user?.id ?? null);
   const selfName = useAuthStore((state) => state.user?.name ?? null);
@@ -154,16 +138,8 @@ export function HermesDmChatView({
     progressInvocations.length > 0 || visibleTypingNames.length > 0;
 
   const messageScrollSignature = useMemo(
-    () => chatMessageWindowSignature(incomingMessages),
-    [incomingMessages],
-  );
-  // The live timeline already shows a running bot; its keep-alives are redundant.
-  const workingItems = foldedMessages.filter(
-    (item) =>
-      item.kind === "working" &&
-      !progressInvocations.some(
-        ({ invocation }) => invocation.botUserId === item.message.senderId,
-      ),
+    () => chatMessageWindowSignature(messages),
+    [messages],
   );
   const progressScrollSignature = useMemo(
     () =>
@@ -415,7 +391,7 @@ export function HermesDmChatView({
               </button>
             </div>
           )}
-          {!loading && incomingMessages.length === 0 && (
+          {!loading && messages.length === 0 && (
             <div className="flex flex-1 flex-col items-center justify-center text-[1rem] text-text-dimmed">No messages yet. Start the conversation!</div>
           )}
           {messages.map((msg, index) => (
@@ -433,7 +409,6 @@ export function HermesDmChatView({
               mentionsYou={mentionsYou(msg)}
               onSetReaction={onSetReaction}
             >
-              {answerItems[index]?.run && <HermesWorkLog run={answerItems[index].run!} />}
               {msg.content && (
                 <Markdown
                   content={msg.content}
@@ -451,15 +426,6 @@ export function HermesDmChatView({
                   }
                 />
               )}
-            </SharedChatMessage>
-          ))}
-          {workingItems.map((item) => (
-            <SharedChatMessage
-              key={item.message.id}
-              message={{ ...item.message, content: "" }}
-              merged={false}
-            >
-              {item.run && <HermesWorkLog run={item.run} live />}
             </SharedChatMessage>
           ))}
           <HermesProgressInline
