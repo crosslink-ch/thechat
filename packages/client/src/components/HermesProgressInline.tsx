@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState } from "react";
 import type {
   BotInvocationProgressEventPublic,
   BotInvocationPublic,
@@ -36,18 +36,13 @@ import {
   Info,
   Square,
   TriangleAlert,
+  Wrench,
   X,
-  type LucideIcon,
 } from "lucide-react";
 import {
   ExpandChevron,
-  STEP_KINDS,
   StepIcon,
   StepOrb,
-  plural,
-  times,
-  toolKind,
-  type StepKind,
 } from "./hermes-steps";
 import { Avatar } from "./Avatar";
 import { OrbLoader } from "./OrbLoader";
@@ -73,6 +68,7 @@ type ApprovalRow = { kind: "approval"; key: string; state: ApprovalRequestState 
 type ClarifyRow = { kind: "clarify"; key: string; state: ClarifyRequestState };
 type ActivityRow = EventRow | ApprovalRow | ClarifyRow;
 
+const MAX_VISIBLE_ROWS = 8;
 const MAX_UI_LABEL_CHARS = 4_000;
 const MAX_UI_DESCRIPTION_CHARS = 10_000;
 const MAX_UI_COMMAND_CHARS = 100_000;
@@ -171,29 +167,17 @@ export function HermesProgressInline({
           clarifyStates,
         );
         const working = invocation.status === "running" && !needsInteraction;
-        const lastRow = rows[rows.length - 1];
-        // As in T3 Code: the step in progress gets a live line, everything
-        // already done folds into one expandable summary, and whatever needs
-        // attention (pending cards, warnings, errors) stays in view.
-        const liveRow =
-          working &&
-          (lastRow?.kind === "reasoning" ||
-            (lastRow?.kind === "tool" && toolStatus(lastRow.event) === "running"))
-            ? lastRow
-            : null;
-        const pendingRows = rows.filter(
+        let visibleRows = rows.slice(-MAX_VISIBLE_ROWS);
+        // Keep pending interactions actionable even when older than the
+        // visible window; ordinary activity remains in event order.
+        const hiddenPending = rows.filter(
           (row) =>
             (row.kind === "approval" || row.kind === "clarify") &&
-            row.state.status === "pending",
+            row.state.status === "pending" &&
+            !visibleRows.includes(row),
         );
-        const alertRows = rows.filter(
-          (row) => row.kind === "notice" && noticeSeverity(row.event) !== "info",
-        );
-        const doneRows = rows.filter(
-          (row) =>
-            row !== liveRow && !pendingRows.includes(row) && !alertRows.includes(row),
-        );
-        const summaryKey = `${invocation.id}:summary`;
+        visibleRows = [...hiddenPending, ...visibleRows];
+        const hiddenCount = rows.length - visibleRows.length;
         const renderRow = (row: ActivityRow) => (
           <div
             key={row.key}
@@ -234,14 +218,14 @@ export function HermesProgressInline({
             ) : row.kind === "reasoning" ? (
               <ReasoningEventRow
                 event={row.event}
-                active={row === liveRow}
+                animated={working}
                 expanded={expandedRowKeys.has(row.key)}
                 onToggle={() => toggleRow(row.key)}
               />
             ) : row.kind === "tool" ? (
               <ToolEventRow
                 event={row.event}
-                live={row === liveRow}
+                animated={working}
                 expanded={expandedRowKeys.has(row.key)}
                 onToggle={() => toggleRow(row.key)}
               />
@@ -308,23 +292,12 @@ export function HermesProgressInline({
               </div>
 
               <div className="min-w-0 space-y-0.5">
-                {doneRows.length > 0 && (
-                  <ActivitySummary
-                    rows={doneRows}
-                    expanded={expandedRowKeys.has(summaryKey)}
-                    onToggle={() => toggleRow(summaryKey)}
-                  >
-                    {doneRows.map(renderRow)}
-                  </ActivitySummary>
+                {hiddenCount > 0 && (
+                  <div className="px-1 py-1 text-[0.857rem] text-text-dimmed">
+                    {hiddenCount} earlier update{hiddenCount === 1 ? "" : "s"}
+                  </div>
                 )}
-                {alertRows.map(renderRow)}
-                {liveRow
-                  ? renderRow(liveRow)
-                  : working && rows.length > 0 && <LiveThinkingLine />}
-                {pendingRows.length > 0 && (
-                  <div className="space-y-2 pt-1.5">{pendingRows.map(renderRow)}</div>
-                )}
-                {rows.length === 0 && (
+                {visibleRows.length > 0 ? visibleRows.map(renderRow) : (
                   <div className="px-1 py-1 text-[0.929rem] text-text-dimmed">
                     {emptyStateLabel(invocation, nowMs)}
                   </div>
@@ -486,13 +459,12 @@ function toolStatus(event: BotInvocationProgressEventPublic) {
 
 function ToolEventRow({
   event,
-  live = false,
+  animated,
   expanded,
   onToggle,
 }: {
   event: BotInvocationProgressEventPublic;
-  /** The tool is running right now (shown on the live line). */
-  live?: boolean;
+  animated: boolean;
   expanded: boolean;
   onToggle: () => void;
 }) {
@@ -512,18 +484,28 @@ function ToolEventRow({
         className={stepRowClass}
         title={meta || undefined}
       >
-        {live ? (
+        {status === "running" && animated ? (
           <StepOrb state="working" />
         ) : status === "failed" ? (
           <StepIcon icon={X} className="text-error-bright" />
         ) : (
-          <StepIcon icon={STEP_KINDS[toolKind(event.toolName)].icon} />
+          <StepIcon icon={Wrench} />
         )}
-        <span className={`min-w-0 flex-1 truncate ${live ? "live-shine" : ""}`}>
-          {live && toolKind(event.toolName) === "command" && trimmedUiString(event.label)
-            ? `Running ${eventLabel(event)}`
-            : eventLabel(event)}
-        </span>
+        {event.toolName && (
+          <span
+            className="max-w-[10rem] shrink-0 truncate rounded-md border border-border-subtle bg-raised px-1.5 py-0.5 font-mono text-[0.786rem] text-text-dimmed"
+            title={event.toolName}
+          >
+            {event.toolName}
+          </span>
+        )}
+        <span className="min-w-0 flex-1 truncate">{eventLabel(event)}</span>
+        {duration !== null && (
+          <span className="shrink-0 tabular-nums text-[0.786rem] text-text-dimmed">
+            {formatDuration(duration)}
+          </span>
+        )}
+        <ExpandChevron expanded={expanded} />
       </button>
       {expanded && (
         <div
@@ -543,54 +525,6 @@ function ToolEventRow({
           </code>
         </div>
       )}
-    </div>
-  );
-}
-
-/** One line summarising the finished steps; expands to the full list. */
-function ActivitySummary({
-  rows,
-  expanded,
-  onToggle,
-  children,
-}: {
-  rows: ActivityRow[];
-  expanded: boolean;
-  onToggle: () => void;
-  children: ReactNode;
-}) {
-  const { text, failed, icon } = summarizeRows(rows);
-  return (
-    <div className="min-w-0">
-      <button
-        type="button"
-        aria-expanded={expanded}
-        onClick={onToggle}
-        className={stepRowClass}
-        data-testid="hermes-activity-summary"
-      >
-        <StepIcon icon={icon} />
-        <span className="min-w-0 truncate">
-          {text}
-          {failed > 0 && <span className="text-error-bright"> · {failed} failed</span>}
-        </span>
-        <ExpandChevron expanded={expanded} className="-ml-0.5" />
-      </button>
-      {expanded && (
-        <div className="mb-1 ml-[13px] border-l border-border-subtle pl-2">
-          {children}
-        </div>
-      )}
-    </div>
-  );
-}
-
-/** Live line while Hermes is between steps (no tool running yet). */
-function LiveThinkingLine() {
-  return (
-    <div className="flex min-w-0 items-center gap-2 px-1 py-1 text-[0.929rem]">
-      <StepOrb state="solving" />
-      <span className="live-shine font-medium">Thinking</span>
     </div>
   );
 }
@@ -623,13 +557,12 @@ function NoticeEventRow({ event }: { event: BotInvocationProgressEventPublic }) 
 
 function ReasoningEventRow({
   event,
-  active,
+  animated,
   expanded,
   onToggle,
 }: {
   event: BotInvocationProgressEventPublic;
-  /** The run is still reasoning here (newest row of a working run). */
-  active: boolean;
+  animated: boolean;
   expanded: boolean;
   onToggle: () => void;
 }) {
@@ -644,13 +577,12 @@ function ReasoningEventRow({
         onClick={onToggle}
         className={stepRowClass}
       >
-        {active ? <StepOrb state="solving" /> : <StepIcon icon={Brain} />}
-        <span className={`shrink-0 font-medium ${active ? "live-shine" : "text-text-secondary"}`}>
-          {active ? "Thinking" : "Thought"}
-        </span>
+        {animated ? <StepOrb state="solving" /> : <StepIcon icon={Brain} />}
+        <span className="shrink-0 font-medium text-text-secondary">Thinking</span>
         <span className="min-w-0 flex-1 truncate text-text-dimmed">
           {!expanded && previewText}
         </span>
+        <ExpandChevron expanded={expanded} />
       </button>
       {expanded && fullText && (
         <div
@@ -1089,58 +1021,6 @@ function OtherEventRow({ event }: { event: BotInvocationProgressEventPublic }) {
       <span className="min-w-0 flex-1 truncate">{eventText(event)}</span>
     </div>
   );
-}
-
-function rowIcon(row: ActivityRow): LucideIcon {
-  if (row.kind === "tool") {
-    return toolStatus(row.event) === "failed" ? X : STEP_KINDS[toolKind(row.event.toolName)].icon;
-  }
-  if (row.kind === "reasoning") return Brain;
-  if (row.kind === "approval") return row.state.decision === "deny" ? X : Check;
-  if (row.kind === "clarify") return Check;
-  return Info;
-}
-
-/** "Read 2 files, searched the web and ran 1 command" for finished steps. */
-function summarizeRows(rows: ActivityRow[]) {
-  const toolCounts = new Map<StepKind, number>();
-  let thoughts = 0;
-  let approved = 0;
-  let denied = 0;
-  let answered = 0;
-  let updates = 0;
-  let failed = 0;
-  for (const row of rows) {
-    if (row.kind === "tool") {
-      const kind = toolKind(row.event.toolName);
-      toolCounts.set(kind, (toolCounts.get(kind) ?? 0) + 1);
-      if (toolStatus(row.event) === "failed") failed += 1;
-    } else if (row.kind === "reasoning") {
-      thoughts += 1;
-    } else if (row.kind === "approval") {
-      if (row.state.decision === "deny") denied += 1;
-      else approved += 1;
-    } else if (row.kind === "clarify") {
-      answered += 1;
-    } else {
-      updates += 1;
-    }
-  }
-  const parts = [...toolCounts].map(([kind, count]) => STEP_KINDS[kind].summary(count));
-  if (approved) parts.push(`Approved ${plural(approved, "request")}`);
-  if (denied) parts.push(`Denied ${plural(denied, "request")}`);
-  if (answered) parts.push(`Answered ${plural(answered, "question")}`);
-  // Thinking is implied once there are actions; alone it reads "Thought".
-  if (parts.length === 0 && thoughts) parts.push(times(thoughts, "Thought"));
-  if (updates) parts.push(`Received ${plural(updates, "update")}`);
-  const phrases = parts.map((part, index) =>
-    index === 0 ? part : part.charAt(0).toLowerCase() + part.slice(1),
-  );
-  const text =
-    phrases.length < 2
-      ? (phrases[0] ?? "")
-      : `${phrases.slice(0, -1).join(", ")} and ${phrases[phrases.length - 1]}`;
-  return { text, failed, icon: rowIcon(rows[rows.length - 1]) };
 }
 
 function eventLabel(event: BotInvocationProgressEventPublic) {
