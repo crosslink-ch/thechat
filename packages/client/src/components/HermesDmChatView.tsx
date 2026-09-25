@@ -109,7 +109,6 @@ export function HermesDmChatView({
   const isAtBottomRef = useRef(isAtBottom);
   const forceNextContentScrollRef = useRef(false);
   const initializedScrollKeyRef = useRef<string | null>(null);
-  const progressScrollFrameRef = useRef<number | null>(null);
   const deferredFormattedIdsRef = useRef<Set<string>>(new Set());
   const deferredFormattingScopeRef = useRef<string | null>(null);
   const deferredFormattingPendingIdsRef = useRef<Set<string>>(new Set());
@@ -333,21 +332,11 @@ export function HermesDmChatView({
     return () => container.removeEventListener("scroll", handleScroll);
   }, [deferMessageFormatting, loading, promoteVisibleMessages]);
 
-  useEffect(() => {
-    if (progressScrollFrameRef.current !== null) {
-      cancelAnimationFrame(progressScrollFrameRef.current);
-    }
-    progressScrollFrameRef.current = requestAnimationFrame(() => {
-      progressScrollFrameRef.current = null;
-      scrollToBottom();
-    });
-
-    return () => {
-      if (progressScrollFrameRef.current !== null) {
-        cancelAnimationFrame(progressScrollFrameRef.current);
-        progressScrollFrameRef.current = null;
-      }
-    };
+  // Follow a newly shown/updated progress row before the browser can dispatch
+  // a scroll event for its height change and mistake that change for the user
+  // scrolling away. scrollToBottom still respects deliberate upward scrolling.
+  useLayoutEffect(() => {
+    scrollToBottom();
   }, [progressScrollSignature, scrollToBottom]);
 
   useEffect(() => {
