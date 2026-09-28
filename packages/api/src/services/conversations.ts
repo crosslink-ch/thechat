@@ -1,5 +1,5 @@
 import { and, asc, desc, eq, gt, inArray, isNull, lt, ne, or, sql } from "drizzle-orm";
-import type { WsServerEvent } from "@thechat/shared";
+import { resolveBotAppearance, type WsServerEvent } from "@thechat/shared";
 import { db } from "../db";
 import {
   attachments,
@@ -23,6 +23,24 @@ import { ServiceError } from "./errors";
 import { canUserAccessAttachments } from "./messages";
 
 const channelLog = log.child({ component: "channels" });
+
+/** The `otherBot` of a DM whose other participant is a bot. */
+function directBot(user: {
+  id: string;
+  botId: string | null;
+  botKind: "webhook" | "hermes" | null;
+  botAvatarShape: string | null;
+  botAvatarColor: string | null;
+}) {
+  return {
+    id: user.botId!,
+    kind: user.botKind!,
+    avatar: resolveBotAppearance(user.id, {
+      avatarShape: user.botAvatarShape,
+      avatarColor: user.botAvatarColor,
+    }),
+  };
+}
 
 export async function createOrGetDm(
   workspaceId: string,
@@ -92,6 +110,8 @@ export async function createOrGetDm(
           type: users.type,
           botId: bots.id,
           botKind: bots.kind,
+          botAvatarShape: bots.avatarShape,
+          botAvatarColor: bots.avatarColor,
         })
         .from(users)
         .leftJoin(bots, eq(bots.userId, users.id))
@@ -107,7 +127,7 @@ export async function createOrGetDm(
           avatar: otherUser!.avatar,
           type: otherUser!.type,
         },
-        otherBot: otherUser?.botId ? { id: otherUser.botId, kind: otherUser.botKind! } : null,
+        otherBot: otherUser?.botId ? directBot(otherUser) : null,
         lastMessage: null,
       };
     }
@@ -123,6 +143,8 @@ export async function createOrGetDm(
     type: users.type,
     botId: bots.id,
     botKind: bots.kind,
+    botAvatarShape: bots.avatarShape,
+    botAvatarColor: bots.avatarColor,
   })
   .from(users)
   .leftJoin(bots, eq(bots.userId, users.id))
@@ -155,7 +177,7 @@ export async function createOrGetDm(
       avatar: otherUser.avatar,
       type: otherUser.type,
     },
-    otherBot: otherUser.botId ? { id: otherUser.botId, kind: otherUser.botKind! } : null,
+    otherBot: otherUser.botId ? directBot(otherUser) : null,
     lastMessage: null,
   };
 }
@@ -223,6 +245,8 @@ export async function listUserDms(workspaceId: string, userId: string) {
       type: users.type,
       botId: bots.id,
       botKind: bots.kind,
+      botAvatarShape: bots.avatarShape,
+      botAvatarColor: bots.avatarColor,
     })
     .from(users)
     .leftJoin(bots, eq(bots.userId, users.id))
@@ -260,7 +284,7 @@ export async function listUserDms(workspaceId: string, userId: string) {
         avatar: otherUser.avatar,
         type: otherUser.type,
       },
-      otherBot: otherUser.botId ? { id: otherUser.botId, kind: otherUser.botKind! } : null,
+      otherBot: otherUser.botId ? directBot(otherUser) : null,
       lastMessage: lastMsg
         ? {
             id: lastMsg.id,
@@ -394,6 +418,8 @@ export async function getConversationDetail(conversationId: string, userId: stri
       userType: users.type,
       botId: bots.id,
       botKind: bots.kind,
+      botAvatarShape: bots.avatarShape,
+      botAvatarColor: bots.avatarColor,
       botCommands: bots.commandsJson,
     })
     .from(conversationParticipants)
@@ -419,7 +445,15 @@ export async function getConversationDetail(conversationId: string, userId: stri
         type: p.userType,
       },
       bot: p.botId
-        ? { id: p.botId, kind: p.botKind!, commands: p.botCommands ?? null }
+        ? {
+            id: p.botId,
+            kind: p.botKind!,
+            avatar: resolveBotAppearance(p.userId, {
+              avatarShape: p.botAvatarShape,
+              avatarColor: p.botAvatarColor,
+            }),
+            commands: p.botCommands ?? null,
+          }
         : null,
     })),
   };

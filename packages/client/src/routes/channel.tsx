@@ -9,6 +9,7 @@ import { useChannelChat } from "../hooks/useChannelChat";
 import { usePersistConversationRead } from "../hooks/usePersistConversationRead";
 import { ChannelChatView } from "../components/ChannelChatView";
 import { wsEvents, type WsEvents } from "../lib/ws-events";
+import { botAppearanceFor } from "../lib/bot-appearance";
 
 export function ChannelRoute() {
   const { id: channelId } = useParams({ from: "/channel/$id" });
@@ -21,7 +22,15 @@ export function ChannelRoute() {
     () =>
       members
         ?.filter((m) => m.userId !== user?.id)
-        .map((m) => ({ id: m.userId, label: m.user.name, type: m.user.type })),
+        .map((m) => ({
+          id: m.userId,
+          label: m.user.name,
+          type: m.user.type,
+          botAvatar:
+            m.user.type === "bot"
+              ? botAppearanceFor(m.userId, m.bot?.avatar)
+              : undefined,
+        })),
     [members, user?.id]
   );
 

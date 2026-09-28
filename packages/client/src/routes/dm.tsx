@@ -26,6 +26,7 @@ import { HermesRuntimePanel } from "../components/HermesRuntimePanel";
 import { closePaletteAndRefocus } from "../CommandPalette";
 import type { Command } from "../commands";
 import { wsEvents, type WsEvents } from "../lib/ws-events";
+import { botAppearanceFor } from "../lib/bot-appearance";
 import { selectHermesConversationProgress } from "../lib/hermes-progress";
 import {
   decisionFromApprovalCommand,
@@ -64,7 +65,15 @@ export function DmRoute() {
     () =>
       members
         ?.filter((m) => m.userId !== user?.id)
-        .map((m) => ({ id: m.userId, label: m.user.name, type: m.user.type })),
+        .map((m) => ({
+          id: m.userId,
+          label: m.user.name,
+          type: m.user.type,
+          botAvatar:
+            m.user.type === "bot"
+              ? botAppearanceFor(m.userId, m.bot?.avatar)
+              : undefined,
+        })),
     [members, user?.id]
   );
 

@@ -540,6 +540,39 @@ describe("registerGlobalWsHandlers", () => {
     cleanup();
   });
 
+  it("updates a bot's avatar along with its identity", () => {
+    useWorkspacesStore.setState({
+      activeWorkspace: {
+        ...structuredClone(baseWorkspace),
+        members: [
+          ...structuredClone(baseWorkspace.members),
+          {
+            userId: "u-bot",
+            role: "member",
+            joinedAt: "2026-01-02T00:00:00.000Z",
+            user: { id: "u-bot", name: "Koda", email: null, avatar: null, type: "bot" },
+            bot: { id: "bot-1", kind: "hermes", avatar: { shape: "blob", color: "#2ECC71" } },
+          },
+        ],
+      },
+    });
+    const cleanup = registerGlobalWsHandlers(() => {});
+
+    wsEvents.emit("ws:member_updated", {
+      workspaceId: "ws-1",
+      userId: "u-bot",
+      name: "Koda",
+      botAvatar: { shape: "cat", color: "#6C5CE7" },
+    });
+
+    expect(
+      useWorkspacesStore
+        .getState()
+        .activeWorkspace?.members.find((member) => member.userId === "u-bot")?.bot,
+    ).toEqual({ id: "bot-1", kind: "hermes", avatar: { shape: "cat", color: "#6C5CE7" } });
+    cleanup();
+  });
+
   it("fires direct-message notifications with a stable message dedupe key", () => {
     useAuthStore.setState({
       token: "token-1",

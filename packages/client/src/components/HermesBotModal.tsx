@@ -10,6 +10,13 @@ import { requestInputBarFocus } from "../stores/input-focus";
 import { useWorkspacesStore } from "../stores/workspaces";
 import { Check, Copy } from "lucide-react";
 import {
+  BOT_AVATAR_COLORS,
+  BOT_AVATAR_SHAPES,
+  type BotAppearance,
+} from "@thechat/shared";
+import { Avatar } from "./Avatar";
+import { BotAppearancePicker } from "./BotAppearancePicker";
+import {
   buttonClass,
   dialogContentClass,
   dialogOverlayClass,
@@ -43,7 +50,12 @@ const closeHermesBotModal = () => {
   useHermesBotModalState.setState({ open: false });
 };
 
-
+/** A new bot starts with a random look, so it has a face before it exists. */
+function randomAppearance(): BotAppearance {
+  const pick = <T,>(values: readonly T[]) =>
+    values[Math.floor(Math.random() * values.length)];
+  return { shape: pick(BOT_AVATAR_SHAPES), color: pick(BOT_AVATAR_COLORS) };
+}
 
 export function HermesBotModal() {
   const open = useHermesBotModalState((state) => state.open);
@@ -76,6 +88,8 @@ function HermesBotModalInner({ returnFocus }: { returnFocus: HTMLElement | null 
       "",
   );
   const [name, setName] = useState("");
+  const [appearance, setAppearance] = useState(randomAppearance);
+  const [avatarPickerOpen, setAvatarPickerOpen] = useState(false);
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [createdBotName, setCreatedBotName] = useState("");
@@ -117,6 +131,8 @@ function HermesBotModalInner({ returnFocus }: { returnFocus: HTMLElement | null 
           kind: "hermes",
           workspaceId,
           name: name.trim(),
+          avatarShape: appearance.shape,
+          avatarColor: appearance.color,
         },
         auth(token),
       );
@@ -199,9 +215,20 @@ function HermesBotModalInner({ returnFocus }: { returnFocus: HTMLElement | null 
 
         {botToken ? (
           <div>
-            <p className="mb-3 text-[0.929rem] leading-relaxed text-text-muted">
-              {createdBotName} was added. Add these variables to the Hermes Gateway .env file for this bot:
-            </p>
+            <div className="mb-3 flex items-center gap-3">
+              <Avatar
+                aria-hidden="true"
+                name={createdBotName}
+                bot
+                botAvatar={appearance}
+                botMotion="idle"
+                size={40}
+                className="size-10 text-[0.929rem]"
+              />
+              <p className="min-w-0 flex-1 text-[0.929rem] leading-relaxed text-text-muted">
+                {createdBotName} was added. Add these variables to the Hermes Gateway .env file for this bot:
+              </p>
+            </div>
             <p className="mb-3 text-[0.857rem] leading-relaxed text-text-muted">
               Use polling for local or simple setups. Use webhook mode when Hermes has a reachable callback URL.
             </p>
@@ -263,6 +290,39 @@ function HermesBotModalInner({ returnFocus }: { returnFocus: HTMLElement | null 
               onChange={(e) => setName(e.target.value)}
             />
           </label>
+
+          <div className="mb-3.5">
+            <span className={labelClass}>Avatar</span>
+            <div className="flex items-center gap-3">
+              <Avatar
+                aria-hidden="true"
+                name={name.trim() || "Bot"}
+                bot
+                botAvatar={appearance}
+                botMotion="idle"
+                size={40}
+                className="size-10 text-[0.929rem]"
+              />
+              <button
+                type="button"
+                className={buttonClass("secondary", "sm")}
+                onClick={() => setAvatarPickerOpen((open) => !open)}
+                aria-expanded={avatarPickerOpen}
+                disabled={submitting}
+              >
+                {avatarPickerOpen ? "Hide choices" : "Change avatar"}
+              </button>
+            </div>
+            {avatarPickerOpen && (
+              <div className="mt-3">
+                <BotAppearancePicker
+                  value={appearance}
+                  onChange={setAppearance}
+                  disabled={submitting}
+                />
+              </div>
+            )}
+          </div>
 
           {error && (
             <div

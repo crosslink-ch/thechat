@@ -43,6 +43,7 @@
     "@tiptap/react": "^3.20.0",
     "@tiptap/starter-kit": "^3.20.0",
     "@tiptap/suggestion": "^3.20.0",
+    "bot-avatars": "0.1.1",
     "emoji-datasource": "16.0.0",
     "fix-webm-duration": "1.0.6",
     "highlight.js": "^11.11.1",

@@ -404,6 +404,40 @@ describe("Sidebar", () => {
     expect(screen.queryByTestId("online-indicator-u-bot")).not.toBeInTheDocument();
   });
 
+  it("wakes a bot in the list only while it waits on you", async () => {
+    useAuthStore.setState({ user, token: "test-token" });
+    useWorkspacesStore.setState({ workspaces: workspaceList, activeWorkspace });
+
+    await renderWithRouter(<Sidebar />);
+
+    const idleRow = screen.getByRole("button", { name: "Koda" });
+    await waitFor(() =>
+      expect(idleRow.querySelector("[data-bot-avatar]")).toHaveAttribute("data-paused", "true"),
+    );
+
+    act(() => {
+      useHermesIndicatorsStore.setState({
+        pendingApprovals: [
+          {
+            eventId: "event-1",
+            invocationId: "invocation-1",
+            conversationId: "dm-bot",
+            threadId: null,
+            botUserId: "u-bot",
+            createdAt: "2026-01-03T00:00:00.000Z",
+            requestId: null,
+            sessionKey: null,
+          },
+        ],
+      });
+    });
+
+    const waitingRow = screen.getByRole("button", { name: "Koda, waiting for you" });
+    const bot = waitingRow.querySelector("[data-bot-avatar]");
+    expect(bot).toHaveAttribute("data-state", "default");
+    expect(bot).toHaveAttribute("data-paused", "false");
+  });
+
   it("shows and clears an unread indicator for a person's background DM", async () => {
     useAuthStore.setState({ user, token: "test-token" });
     useWorkspacesStore.setState({ workspaces: workspaceList, activeWorkspace });

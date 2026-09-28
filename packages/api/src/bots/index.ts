@@ -1,5 +1,6 @@
 import { Elysia } from "elysia";
 import { z } from "zod";
+import { BOT_AVATAR_COLORS, BOT_AVATAR_SHAPES } from "@thechat/shared";
 import { resolveRequestUser } from "../auth/middleware";
 import { browserAuthPolicy } from "../auth/browser";
 import { ServiceError } from "../services/errors";
@@ -30,18 +31,36 @@ const httpWebhookUrlSchema = z.string().url().refine((value) => {
   }
 }, "Webhook URL must use http or https");
 
+const avatarShapeSchema = z.enum(BOT_AVATAR_SHAPES, {
+  error: "Unknown bot avatar shape",
+});
+
+const avatarColorSchema = z
+  .string()
+  .toUpperCase()
+  .pipe(
+    z.enum(BOT_AVATAR_COLORS, {
+      error: "Bot avatar colour must come from the palette",
+    }),
+  );
+
 const createSchema = z.object({
   name: z.string().trim().min(1, "Bot name is required"),
   webhookUrl: httpWebhookUrlSchema.nullish(),
   kind: z.enum(["webhook", "hermes"]).optional().default("webhook"),
   attachmentAccess: z.boolean().optional().default(true),
   workspaceId: z.string().trim().min(1, "Workspace ID is required").optional(),
+  avatarShape: avatarShapeSchema.optional(),
+  avatarColor: avatarColorSchema.optional(),
 });
 
 const updateSchema = z.object({
   name: z.string().trim().min(1, "Bot name is required").optional(),
   webhookUrl: httpWebhookUrlSchema.nullish(),
   attachmentAccess: z.boolean().optional(),
+  // null returns that part of the avatar to the bot's default.
+  avatarShape: avatarShapeSchema.nullish(),
+  avatarColor: avatarColorSchema.nullish(),
 });
 
 const registerWebhookSchema = z.object({
@@ -104,6 +123,10 @@ export const botRoutes = new Elysia({ prefix: "/bots" })
     }
 
     const { name, webhookUrl, kind, attachmentAccess, workspaceId } = parsed.data;
+    const avatar = {
+      avatarShape: parsed.data.avatarShape,
+      avatarColor: parsed.data.avatarColor,
+    };
 
     try {
       if (kind === "hermes") {
@@ -117,6 +140,7 @@ export const botRoutes = new Elysia({ prefix: "/bots" })
           user.id,
           workspaceId,
           attachmentAccess,
+          { avatar },
         );
         const { webhookSecret: _webhookSecret, ...publicBot } = bot;
         return publicBot;
@@ -127,6 +151,7 @@ export const botRoutes = new Elysia({ prefix: "/bots" })
         user.id,
         kind,
         attachmentAccess,
+        avatar,
       );
     } catch (e: any) {
       set.status = e instanceof ServiceError ? e.status : 500;
@@ -234,16 +259,16 @@ export const botRoutes = new Elysia({ prefix: "/bots" })
       return { error: parsed.error.issues[0]?.message ?? "Invalid input" };
     }
 
-    const updates: {
-      name?: string;
-      webhookUrl?: string | null;
-      attachmentAccess?: boolean;
-    } = {};
+    const updates: Parameters<typeof updateBot>[2] = {};
     if (parsed.data.name !== undefined) updates.name = parsed.data.name;
     if (parsed.data.webhookUrl !== undefined)
       updates.webhookUrl = parsed.data.webhookUrl ?? null;
     if (parsed.data.attachmentAccess !== undefined)
       updates.attachmentAccess = parsed.data.attachmentAccess;
+    if (parsed.data.avatarShape !== undefined)
+      updates.avatarShape = parsed.data.avatarShape;
+    if (parsed.data.avatarColor !== undefined)
+      updates.avatarColor = parsed.data.avatarColor;
 
     if (Object.keys(updates).length === 0) {
       set.status = 400;

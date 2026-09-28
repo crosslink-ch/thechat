@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useNotificationsStore } from "../stores/notifications";
+import { Avatar } from "../components/Avatar";
 import { buttonClass } from "../components/ui";
 
 const requestCardClass = "rounded-xl border border-border bg-white/[0.03] p-4";
@@ -123,8 +124,18 @@ export function NotificationsRoute() {
                   data-testid="bot-workspace-invite-notification"
                   className={requestCardClass}
                 >
-                  <div className="text-[1rem] font-medium text-text">
-                    Add {invite.botName} to {invite.workspaceName}
+                  <div className="flex items-center gap-2.5 text-[1rem] font-medium text-text">
+                    <Avatar
+                      aria-hidden="true"
+                      name={invite.botName}
+                      bot
+                      botAvatar={invite.botAvatar}
+                      size={24}
+                      className="size-6 text-[0.786rem]"
+                    />
+                    <span className="min-w-0">
+                      Add {invite.botName} to {invite.workspaceName}
+                    </span>
                   </div>
                   <div className="mt-1 text-[0.929rem] leading-relaxed text-text-muted">
                     {invite.requesterName} wants to add a bot you own to this

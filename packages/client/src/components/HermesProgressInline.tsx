@@ -44,8 +44,9 @@ import {
   StepIcon,
   StepOrb,
 } from "./hermes-steps";
+import { botAppearanceFor, botAvatarsOf } from "../lib/bot-appearance";
+import { useWorkspacesStore } from "../stores/workspaces";
 import { Avatar } from "./Avatar";
-import { OrbLoader } from "./OrbLoader";
 import { buttonClass, inputClass, type ButtonVariant } from "./ui";
 
 type ToolCallPart = Extract<MessagePart, { type: "tool-call" }>;
@@ -96,6 +97,7 @@ export function HermesProgressInline({
   const clarifyResponses = useHermesClarificationsStore(
     (state) => state.responses,
   );
+  const members = useWorkspacesStore((state) => state.activeWorkspace?.members);
   const nowMs = useNowTick(invocations.length > 0);
   const [expandedRowKeys, setExpandedRowKeys] = useState<Set<string>>(
     () => new Set(),
@@ -250,18 +252,20 @@ export function HermesProgressInline({
             key={invocation.id}
             className="flex gap-2.5 px-5 py-2.5 transition-colors duration-100 hover:bg-raised/30"
           >
-            {working ? (
-              <span className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-full bg-text">
-                <OrbLoader state="composing" design="avatar" size={26} invert />
-              </span>
-            ) : (
-              <Avatar
-                name={invocation.botName}
-                colorKey={invocation.botUserId}
-                bot
-                className="mt-0.5 size-8 text-[0.857rem]"
-              />
-            )}
+            {/* The run's one animated avatar: it hops while working and
+                looks around while it waits on you. */}
+            <Avatar
+              name={invocation.botName}
+              colorKey={invocation.botUserId}
+              bot
+              botAvatar={botAppearanceFor(
+                invocation.botUserId,
+                members && botAvatarsOf(members).get(invocation.botUserId),
+              )}
+              botMotion={working ? "working" : needsInteraction ? "idle" : "still"}
+              size={32}
+              className="mt-0.5 size-8 text-[0.857rem]"
+            />
             <div className="min-w-0 flex-1">
               <div className="mb-1 flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1">
                 <span className="min-w-0 text-[0.929rem] font-medium text-text-secondary">

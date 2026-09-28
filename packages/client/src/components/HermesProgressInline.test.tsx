@@ -1108,7 +1108,7 @@ describe("HermesProgressInline", () => {
     expect(screen.getByText("pnpm build")).toBeInTheDocument();
   });
 
-  it("keeps the new orb styling for visible thinking rows", () => {
+  it("hops the bot in place of an orb and keeps orbs on thinking rows", async () => {
     const { container } = render(
       <HermesProgressInline
         invocations={[
@@ -1124,11 +1124,19 @@ describe("HermesProgressInline", () => {
       />,
     );
 
-    expect(container.querySelectorAll('[data-thinking-orb="composing"]')).toHaveLength(1);
+    const bot = await waitFor(() => {
+      const found = container.querySelector("[data-bot-avatar]");
+      expect(found).not.toBeNull();
+      return found!;
+    });
+    expect(bot).toHaveAttribute("data-state", "working");
+    expect(bot).toHaveAttribute("data-paused", "false");
+    expect(bot).toHaveAttribute("data-interactive", "false");
+    expect(container.querySelector('[data-thinking-orb="composing"]')).toBeNull();
     expect(container.querySelectorAll('[data-thinking-orb="solving"]')).toHaveLength(2);
   });
 
-  it("stops animating while the agent waits for an approval", () => {
+  it("stops working and looks around while the agent waits for an approval", async () => {
     const { container } = render(
       <HermesProgressInline
         invocations={[
@@ -1153,6 +1161,13 @@ describe("HermesProgressInline", () => {
     );
 
     expect(container.querySelector("[data-thinking-orb]")).toBeNull();
+    const bot = await waitFor(() => {
+      const found = container.querySelector("[data-bot-avatar]");
+      expect(found).not.toBeNull();
+      return found!;
+    });
+    expect(bot).toHaveAttribute("data-state", "default");
+    expect(bot).toHaveAttribute("data-paused", "false");
   });
 });
 

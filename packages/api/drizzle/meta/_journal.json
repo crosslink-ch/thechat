@@ -113,6 +113,13 @@
       "when": 1788272142895,
       "tag": "0015_activity_unreads",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1790536871396,
+      "tag": "0016_bot_avatars",
+      "breakpoints": true
     }
   ]
 }

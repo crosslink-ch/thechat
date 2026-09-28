@@ -1,4 +1,5 @@
 import { and, eq, inArray } from "drizzle-orm";
+import { resolveBotAppearance } from "@thechat/shared";
 import { db } from "../db";
 import {
   workspaces,
@@ -90,6 +91,8 @@ export async function getWorkspaceDetail(workspaceId: string, userId: string) {
       userType: users.type,
       botId: bots.id,
       botKind: bots.kind,
+      botAvatarShape: bots.avatarShape,
+      botAvatarColor: bots.avatarColor,
     })
     .from(workspaceMembers)
     .innerJoin(users, eq(workspaceMembers.userId, users.id))
@@ -122,7 +125,16 @@ export async function getWorkspaceDetail(workspaceId: string, userId: string) {
         avatar: m.userAvatar,
         type: m.userType,
       },
-      bot: m.botId ? { id: m.botId, kind: m.botKind! } : null,
+      bot: m.botId
+        ? {
+            id: m.botId,
+            kind: m.botKind!,
+            avatar: resolveBotAppearance(m.userId, {
+              avatarShape: m.botAvatarShape,
+              avatarColor: m.botAvatarColor,
+            }),
+          }
+        : null,
     })),
     channels: channels.map((c) => ({
       id: c.id,

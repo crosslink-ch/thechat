@@ -205,6 +205,7 @@ export function registerGlobalWsHandlers(
     workspaceId,
     userId,
     name,
+    botAvatar,
   }: WsEvents["ws:member_updated"]) => {
     const { activeWorkspace } = useWorkspacesStore.getState();
     if (!activeWorkspace || activeWorkspace.id !== workspaceId) return;
@@ -213,7 +214,14 @@ export function registerGlobalWsHandlers(
         ...activeWorkspace,
         members: activeWorkspace.members.map((member) =>
           member.userId === userId
-            ? { ...member, user: { ...member.user, name } }
+            ? {
+                ...member,
+                user: { ...member.user, name },
+                bot:
+                  member.bot && botAvatar
+                    ? { ...member.bot, avatar: botAvatar }
+                    : member.bot,
+              }
             : member,
         ),
       },

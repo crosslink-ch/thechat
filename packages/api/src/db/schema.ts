@@ -351,6 +351,9 @@ export const bots = pgTable(
     kind: botKindEnum("kind").notNull().default("webhook"),
     attachmentAccess: boolean("attachment_access").notNull().default(true),
     commandsJson: jsonb("commands_json").$type<BotCommandPublic[]>(),
+    // The owner's avatar picks; null keeps the default derived from userId.
+    avatarShape: varchar("avatar_shape", { length: 32 }),
+    avatarColor: varchar("avatar_color", { length: 16 }),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
       .notNull(),

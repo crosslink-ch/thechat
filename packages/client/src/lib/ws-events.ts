@@ -1,5 +1,6 @@
 import mitt from "mitt";
 import type {
+  BotAppearance,
   BotInvocationPublic,
   BotInvocationProgressEventPublic,
   BotWorkspaceInvite,
@@ -61,6 +62,7 @@ export type WsEvents = {
     workspaceId: string;
     userId: string;
     name: string;
+    botAvatar?: BotAppearance;
   };
   "ws:member_removed": {
     workspaceId: string;

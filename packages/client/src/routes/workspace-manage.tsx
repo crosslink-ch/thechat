@@ -13,7 +13,7 @@ import { api } from "../lib/api";
 import { wsEvents } from "../lib/ws-events";
 import { useAuthStore } from "../stores/auth";
 import { useWorkspacesStore } from "../stores/workspaces";
-import { Bot as BotIcon } from "lucide-react";
+import { botAppearanceFor } from "../lib/bot-appearance";
 import { Avatar } from "../components/Avatar";
 import { buttonClass, inputClass, labelClass, monoInputClass } from "../components/ui";
 
@@ -663,9 +663,14 @@ export function WorkspaceManageRoute() {
                       className={listRowClass}
                     >
                       <div className="flex min-w-0 flex-1 items-center gap-3">
-                        <div className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-accent/15 text-accent">
-                          <BotIcon size={16} aria-hidden="true" />
-                        </div>
+                        <Avatar
+                          aria-hidden="true"
+                          name={member.user.name}
+                          bot
+                          botAvatar={botAppearanceFor(member.userId, member.bot?.avatar)}
+                          size={32}
+                          className="size-8 text-[0.857rem]"
+                        />
                         <div className="min-w-0">
                           <div className="overflow-hidden text-ellipsis whitespace-nowrap text-[0.929rem] font-medium text-text">
                             {member.user.name}
@@ -728,15 +733,25 @@ export function WorkspaceManageRoute() {
                       data-testid={`pending-bot-request-${invite.id}`}
                       className={listRowClass}
                     >
-                      <div className="min-w-0 flex-1">
-                        <div className="text-[0.929rem] font-medium text-text">
-                          {invite.botName}
-                        </div>
-                        <div className="mt-0.5 break-all font-mono text-[0.786rem] text-text-dimmed">
-                          {invite.botId}
-                        </div>
-                        <div className="mt-1 text-[0.857rem] text-text-muted">
-                          The bot owner has been notified.
+                      <div className="flex min-w-0 flex-1 items-start gap-3">
+                        <Avatar
+                          aria-hidden="true"
+                          name={invite.botName}
+                          bot
+                          botAvatar={invite.botAvatar}
+                          size={32}
+                          className="size-8 text-[0.857rem]"
+                        />
+                        <div className="min-w-0">
+                          <div className="text-[0.929rem] font-medium text-text">
+                            {invite.botName}
+                          </div>
+                          <div className="mt-0.5 break-all font-mono text-[0.786rem] text-text-dimmed">
+                            {invite.botId}
+                          </div>
+                          <div className="mt-1 text-[0.857rem] text-text-muted">
+                            The bot owner has been notified.
+                          </div>
                         </div>
                       </div>
                       <button

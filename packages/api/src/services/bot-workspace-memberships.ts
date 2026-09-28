@@ -1,11 +1,12 @@
 import { and, eq } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
-import type {
-  BotWorkspaceInvite,
-  BotWorkspaceInviteResult,
-  BotWorkspaceInviteStatus,
-  WorkspaceMember,
-  WsServerEvent,
+import {
+  resolveBotAppearance,
+  type BotWorkspaceInvite,
+  type BotWorkspaceInviteResult,
+  type BotWorkspaceInviteStatus,
+  type WorkspaceMember,
+  type WsServerEvent,
 } from "@thechat/shared";
 import { db } from "../db";
 import {
@@ -28,6 +29,8 @@ type BotRecord = {
   ownerId: string;
   name: string;
   kind: "webhook" | "hermes";
+  avatarShape: string | null;
+  avatarColor: string | null;
 };
 
 type InviteRecord = {
@@ -35,7 +38,10 @@ type InviteRecord = {
   workspaceId: string;
   workspaceName: string;
   botId: string;
+  botUserId: string;
   botName: string;
+  botAvatarShape: string | null;
+  botAvatarColor: string | null;
   requesterId: string;
   requesterName: string;
   status: BotWorkspaceInviteStatus;
@@ -52,6 +58,10 @@ function serializeInvite(invite: InviteRecord): BotWorkspaceInvite {
     workspaceName: invite.workspaceName,
     botId: invite.botId,
     botName: invite.botName,
+    botAvatar: resolveBotAppearance(invite.botUserId, {
+      avatarShape: invite.botAvatarShape,
+      avatarColor: invite.botAvatarColor,
+    }),
     requesterId: invite.requesterId,
     requesterName: invite.requesterName,
     status: invite.status,
@@ -108,6 +118,8 @@ async function getBotRecord(tx: DbTransaction, botId: string): Promise<BotRecord
       ownerId: bots.ownerId,
       name: users.name,
       kind: bots.kind,
+      avatarShape: bots.avatarShape,
+      avatarColor: bots.avatarColor,
     })
     .from(bots)
     .innerJoin(users, eq(bots.userId, users.id))
@@ -210,7 +222,11 @@ async function attachBotMembership(
         avatar: null,
         type: "bot",
       },
-      bot: { id: bot.id, kind: bot.kind },
+      bot: {
+        id: bot.id,
+        kind: bot.kind,
+        avatar: resolveBotAppearance(bot.userId, bot),
+      },
       role: "member",
       joinedAt: joinedAt.toISOString(),
     },
@@ -388,7 +404,10 @@ export async function requestBotForWorkspace(
       workspaceId,
       workspaceName: workspace.name,
       botId,
+      botUserId: bot.userId,
       botName: bot.name,
+      botAvatarShape: bot.avatarShape,
+      botAvatarColor: bot.avatarColor,
       requesterId,
       requesterName: requester.name,
       status: inserted.status,
@@ -433,7 +452,10 @@ function pendingInviteSelect() {
       workspaceId: botWorkspaceInvites.workspaceId,
       workspaceName: workspaces.name,
       botId: botWorkspaceInvites.botId,
+      botUserId: bots.userId,
       botName: botUsers.name,
+      botAvatarShape: bots.avatarShape,
+      botAvatarColor: bots.avatarColor,
       requesterId: botWorkspaceInvites.requesterId,
       requesterName: requesterUsers.name,
       status: botWorkspaceInvites.status,
@@ -509,6 +531,8 @@ async function getInviteForResolution(
       botOwnerId: bots.ownerId,
       botName: resolutionBotUsers.name,
       botKind: bots.kind,
+      botAvatarShape: bots.avatarShape,
+      botAvatarColor: bots.avatarColor,
       requesterId: botWorkspaceInvites.requesterId,
       requesterName: resolutionRequesterUsers.name,
       status: botWorkspaceInvites.status,
@@ -586,6 +610,8 @@ export async function acceptBotWorkspaceInvite(
       ownerId: invite.botOwnerId,
       name: invite.botName,
       kind: invite.botKind,
+      avatarShape: invite.botAvatarShape,
+      avatarColor: invite.botAvatarColor,
     });
     const recipients = await getHumanWorkspaceRecipientIds(
       tx,

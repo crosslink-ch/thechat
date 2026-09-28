@@ -1,5 +1,6 @@
 import { describe, test, expect, afterAll, beforeAll } from "bun:test";
 import { Elysia } from "elysia";
+import { defaultBotAppearance } from "@thechat/shared";
 import { and, asc, eq, inArray } from "drizzle-orm";
 import { db } from "../db";
 import {
@@ -1438,6 +1439,7 @@ describe("Bots: Update bot", () => {
             workspaceId,
             userId: botRes.body.userId,
             name: "RealtimeNewName",
+            botAvatar: botRes.body.avatar,
           },
         }),
       );
@@ -1446,6 +1448,94 @@ describe("Bots: Update bot", () => {
       await observerBus.close();
       await closeRealtimeBusForTests();
     }
+  });
+
+  test("a bot without avatar picks shows its stable default", async () => {
+    const human = await registerUser("AvatarDefaultOwner");
+    const botRes = await createBot(human.token, "DefaultLook");
+
+    expect(botRes.status).toBe(200);
+    expect(botRes.body.avatar).toEqual(defaultBotAppearance(botRes.body.userId));
+  });
+
+  test("create stores the avatar picked in the create dialog", async () => {
+    const human = await registerUser("AvatarCreateOwner");
+    const { workspaceId } = await createWorkspaceWithGeneralChannel(
+      human.token,
+      "Avatar Create Workspace",
+    );
+    const botRes = await createBot(human.token, "PickedLook", undefined, {
+      kind: "hermes",
+      workspaceId,
+      avatarShape: "cat",
+      avatarColor: "#6c5ce7",
+    });
+
+    expect(botRes.status).toBe(200);
+    expect(botRes.body.avatar).toEqual({ shape: "cat", color: "#6C5CE7" });
+    const detail = await req("GET", `/workspaces/${workspaceId}`, undefined, human.token);
+    const member = detail.body.members.find(
+      (candidate: { userId: string }) => candidate.userId === botRes.body.userId,
+    );
+    expect(member.bot.avatar).toEqual({ shape: "cat", color: "#6C5CE7" });
+  });
+
+  test("owner can change the avatar, and null returns it to the default", async () => {
+    const human = await registerUser("AvatarUpdateOwner");
+    const botRes = await createBot(human.token, "ChangingLook");
+
+    const picked = await req(
+      "PATCH",
+      `/bots/${botRes.body.id}`,
+      { avatarShape: "ghost", avatarColor: "#00B894" },
+      human.token,
+    );
+    expect(picked.status).toBe(200);
+    expect(picked.body.avatar).toEqual({ shape: "ghost", color: "#00B894" });
+
+    const reset = await req(
+      "PATCH",
+      `/bots/${botRes.body.id}`,
+      { avatarShape: null, avatarColor: null },
+      human.token,
+    );
+    expect(reset.status).toBe(200);
+    expect(reset.body.avatar).toEqual(defaultBotAppearance(botRes.body.userId));
+  });
+
+  test("rejects shapes and colours outside the avatar set", async () => {
+    const human = await registerUser("AvatarRejectOwner");
+    const botRes = await createBot(human.token, "StrictLook");
+
+    const badShape = await req(
+      "PATCH",
+      `/bots/${botRes.body.id}`,
+      { avatarShape: "dragon" },
+      human.token,
+    );
+    expect(badShape.status).toBe(400);
+
+    const badColor = await req(
+      "PATCH",
+      `/bots/${botRes.body.id}`,
+      { avatarColor: "#123456" },
+      human.token,
+    );
+    expect(badColor.status).toBe(400);
+  });
+
+  test("only the owner can change a bot's avatar", async () => {
+    const owner = await registerUser("AvatarRealOwner");
+    const other = await registerUser("AvatarNotOwner");
+    const botRes = await createBot(owner.token, "GuardedLook");
+
+    const res = await req(
+      "PATCH",
+      `/bots/${botRes.body.id}`,
+      { avatarShape: "star" },
+      other.token,
+    );
+    expect(res.status).toBe(403);
   });
 
   test("owner can update webhook URL", async () => {

@@ -156,6 +156,98 @@ describe("BotsManageRoute", () => {
     expect(screen.getByTestId("bot-list-item-bot-1")).toHaveTextContent("Renamed Bot");
   });
 
+  it("saves an avatar pick at once, keeping unsaved details", async () => {
+    mocks.botPatch.mockResolvedValue({
+      data: { ...ownedBot, avatar: { shape: "ghost", color: "#3498DB" } },
+      error: null,
+    });
+    render(<BotsManageRoute />);
+    await screen.findByDisplayValue("Research Bot");
+    fireEvent.change(screen.getByLabelText("Bot name"), { target: { value: "Draft Name" } });
+
+    fireEvent.click(screen.getByRole("button", { name: "Change avatar" }));
+    expect(
+      screen.getByText("Changes save as you pick. Everyone in its workspace sees them."),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Ghost bot" }));
+
+    await waitFor(() => {
+      expect(mocks.botPatch).toHaveBeenCalledWith(
+        { avatarShape: "ghost", avatarColor: expect.any(String) },
+        expect.objectContaining({ headers: { authorization: "Bearer user-token" } }),
+      );
+    });
+    expect(screen.getByRole("button", { name: "Ghost bot" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    // The avatar saves on its own; the name draft is untouched.
+    expect(screen.getByLabelText("Bot name")).toHaveValue("Draft Name");
+  });
+
+  it("saves quick picks one at a time, ending on the last", async () => {
+    let finishFirst: (value: unknown) => void = () => {};
+    mocks.botPatch
+      .mockImplementationOnce(() => new Promise((resolve) => (finishFirst = resolve)))
+      .mockResolvedValue({ data: null, error: null });
+    render(<BotsManageRoute />);
+    await screen.findByDisplayValue("Research Bot");
+
+    fireEvent.click(screen.getByRole("button", { name: "Change avatar" }));
+    fireEvent.click(screen.getByRole("button", { name: "Ghost bot" }));
+    fireEvent.click(screen.getByRole("button", { name: "Cat bot" }));
+    fireEvent.click(screen.getByRole("button", { name: "Star bot" }));
+
+    // Nothing more is sent while the first save runs.
+    expect(mocks.botPatch).toHaveBeenCalledTimes(1);
+    expect(mocks.botPatch.mock.calls[0]?.[0]).toMatchObject({ avatarShape: "ghost" });
+    expect(screen.getByRole("button", { name: "Star bot" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+
+    await act(async () => finishFirst({ data: null, error: null }));
+    await waitFor(() => expect(mocks.botPatch).toHaveBeenCalledTimes(2));
+    expect(mocks.botPatch.mock.calls[1]?.[0]).toMatchObject({ avatarShape: "star" });
+    expect(screen.getByRole("button", { name: "Star bot" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+  });
+
+  it("returns to the saved avatar when a pick fails", async () => {
+    const saved = { ...ownedBot, avatar: { shape: "star" as const, color: "#F39C12" as const } };
+    mocks.listGet.mockResolvedValue({ data: [saved], error: null });
+    mocks.botPatch.mockResolvedValue({ data: null, error: { status: 500, value: { error: "Nope" } } });
+    mocks.botGet.mockResolvedValue({ data: saved, error: null });
+    render(<BotsManageRoute />);
+    await screen.findByDisplayValue("Research Bot");
+
+    fireEvent.click(screen.getByRole("button", { name: "Change avatar" }));
+    fireEvent.click(screen.getByRole("button", { name: "Cat bot" }));
+
+    expect(await screen.findByRole("alert")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Star bot" })).toHaveAttribute(
+        "aria-pressed",
+        "true",
+      ),
+    );
+  });
+
+  it("puts a bot without an API key to sleep", async () => {
+    mocks.listGet.mockResolvedValue({
+      data: [{ ...ownedBot, apiKeyEnabled: false }],
+      error: null,
+    });
+    render(<BotsManageRoute />);
+    const row = await screen.findByTestId("bot-list-item-bot-1");
+
+    await waitFor(() =>
+      expect(row.querySelector("[data-bot-avatar]")).toHaveAttribute("data-state", "sleeping"),
+    );
+  });
+
   it("connects an owned bot to an admin workspace and refreshes membership", async () => {
     mocks.botGet.mockResolvedValue({
       data: withWorkspaces(ownedBot, ["ws-1", "ws-2"]),

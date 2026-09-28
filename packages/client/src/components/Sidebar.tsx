@@ -12,6 +12,8 @@ import { useConversationsStore } from "../stores/conversations";
 import { useNotificationsStore } from "../stores/notifications";
 import { useActivityStore } from "../stores/activity";
 import { usePresenceStore } from "../stores/presence";
+import { useHermesIndicatorsStore } from "../stores/hermes-indicators";
+import { botAppearanceFor } from "../lib/bot-appearance";
 import { openAuthModal } from "./AuthModal";
 import { openWorkspaceModal } from "./WorkspaceModal";
 import {
@@ -132,6 +134,15 @@ export function Sidebar() {
   const activityCount = unreadMessageCount + notificationCount;
   const unreadActivityConversationIds = new Set(
     activityItems.map((item) => item.conversationId),
+  );
+  const pendingApprovals = useHermesIndicatorsStore((s) => s.pendingApprovals);
+  const pendingClarifications = useHermesIndicatorsStore(
+    (s) => s.pendingClarifications,
+  );
+  // Bots waiting on the user's approval or answer wake up in the list; a bot
+  // that is only working stays still, since there is nothing to do yet.
+  const botsWaitingOnYou = new Set(
+    [...pendingApprovals, ...pendingClarifications].map((p) => p.botUserId),
   );
   const unreadActivitySenderIds = new Set(
     activityItems
@@ -439,10 +450,13 @@ export function Sidebar() {
                   const isUnread = unreadActivitySenderIds.has(m.userId);
                   const isOnline =
                     m.user.type === "human" && onlineUserIds.has(m.userId);
+                  const isWaiting =
+                    m.user.type === "bot" && botsWaitingOnYou.has(m.userId);
                   const ariaLabel = [
                     m.user.name,
                     isUnread ? "unread" : null,
                     isOnline ? "online" : null,
+                    isWaiting ? "waiting for you" : null,
                   ]
                     .filter(Boolean)
                     .join(", ");
@@ -454,7 +468,20 @@ export function Sidebar() {
                       aria-label={ariaLabel}
                       aria-current={isActive ? "page" : undefined}
                     >
-                      <Avatar name={m.user.name} colorKey={m.userId} bot={m.user.type === "bot"} className="size-5 text-[0.643rem]">
+                      <Avatar
+                        name={m.user.name}
+                        colorKey={m.userId}
+                        bot={m.user.type === "bot"}
+                        botAvatar={
+                          m.user.type === "bot"
+                            ? botAppearanceFor(m.userId, m.bot?.avatar)
+                            : null
+                        }
+                        // Its open DM already shows the waiting bot.
+                        botMotion={isWaiting && !isActive ? "idle" : "still"}
+                        size={20}
+                        className="size-5 text-[0.643rem]"
+                      >
                         {isOnline && (
                           <span
                             data-testid={`online-indicator-${m.userId}`}

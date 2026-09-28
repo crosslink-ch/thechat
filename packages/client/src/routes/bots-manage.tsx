@@ -1,10 +1,13 @@
 import { authHeaders as auth } from "../lib/eden";
 import { isAuthenticated } from "../lib/auth-identity";
-import { useCallback, useEffect, useMemo, useState } from "react";
-import type { OwnedBot, WorkspaceListItem } from "@thechat/shared";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { BotAppearance, OwnedBot, WorkspaceListItem } from "@thechat/shared";
 import { api } from "../lib/api";
+import { botAppearanceFor } from "../lib/bot-appearance";
 import { BOT_CREATED_EVENT } from "../lib/bot-events";
 import { edenErrorMessage } from "../lib/eden";
+import { Avatar } from "../components/Avatar";
+import { BotAppearancePicker } from "../components/BotAppearancePicker";
 import { openHermesBotModal } from "../components/HermesBotModal";
 import { useAuthStore } from "../stores/auth";
 import { useWorkspacesStore } from "../stores/workspaces";
@@ -76,6 +79,12 @@ export function BotsManageRoute() {
   const [showSecretForBotId, setShowSecretForBotId] = useState<string | null>(null);
   const [revealedApiKey, setRevealedApiKey] = useState<RevealedApiKey>(null);
   const [copied, setCopied] = useState<{ botId: string; label: string } | null>(null);
+  const [avatarPickerOpen, setAvatarPickerOpen] = useState(false);
+  // Avatar saves run one at a time per bot, so the server commits them in the
+  // order they were picked; picks made meanwhile collapse into the newest.
+  const avatarSaves = useRef(
+    new Map<string, { saving: boolean; next: BotAppearance | null }>(),
+  );
 
   const selectedBot = useMemo(
     () => bots.find((bot) => bot.id === selectedId) ?? null,
@@ -126,6 +135,7 @@ export function BotsManageRoute() {
     setConfirmAction(null);
     setCopied(null);
     setNotice(null);
+    setAvatarPickerOpen(false);
   }, [selectedBot?.id]);
 
   const isConfirming = (action: ConfirmActionKind) =>
@@ -158,8 +168,15 @@ export function BotsManageRoute() {
     return Array.from(rows.values()).sort((a, b) => a.name.localeCompare(b.name));
   }, [selectedBot, workspaces]);
 
+  // Applies the server's copy of a bot, keeping its newer avatar pick while
+  // that pick is still saving.
   const replaceBot = (bot: OwnedBot) => {
-    setBots((current) => current.map((item) => (item.id === bot.id ? bot : item)));
+    const avatarSaving = avatarSaves.current.get(bot.id)?.saving ?? false;
+    setBots((current) =>
+      current.map((item) =>
+        item.id === bot.id ? (avatarSaving ? { ...bot, avatar: item.avatar } : bot) : item,
+      ),
+    );
   };
 
   const refreshBot = async (botId: string) => {
@@ -199,6 +216,52 @@ export function BotsManageRoute() {
       replaceBot(data as OwnedBot);
       setNotice({ kind: "success", text: "Bot details saved." });
     });
+  };
+
+  // A pick shows at once and saves in the background. A failure drops any
+  // queued pick and returns to what the server has.
+  const saveAvatar = (next: BotAppearance) => {
+    if (!isAuthenticated(token) || !selectedBot) return;
+    const botId = selectedBot.id;
+    setBots((current) =>
+      current.map((item) => (item.id === botId ? { ...item, avatar: next } : item)),
+    );
+    setNotice(null);
+    const queue = avatarSaves.current.get(botId) ?? { saving: false, next: null };
+    queue.next = next;
+    avatarSaves.current.set(botId, queue);
+    if (!queue.saving) void flushAvatarSaves(botId, queue);
+  };
+
+  const flushAvatarSaves = async (
+    botId: string,
+    queue: { saving: boolean; next: BotAppearance | null },
+  ) => {
+    queue.saving = true;
+    let failure: unknown = null;
+    try {
+      while (queue.next) {
+        const pick = queue.next;
+        queue.next = null;
+        const { error } = await api.bots({ botId }).patch(
+          { avatarShape: pick.shape, avatarColor: pick.color },
+          auth(token),
+        );
+        if (error) throw new Error(edenErrorMessage(error, "Failed to update the avatar"));
+      }
+    } catch (error) {
+      queue.next = null;
+      failure = error;
+    } finally {
+      queue.saving = false;
+    }
+    if (failure) {
+      setNotice({
+        kind: "error",
+        text: failure instanceof Error ? failure.message : "Failed to update the avatar",
+      });
+      await refreshBot(botId).catch(() => {});
+    }
   };
 
   const changeWorkspace = (workspace: WorkspaceRow) => {
@@ -414,17 +477,31 @@ export function BotsManageRoute() {
                           : "bg-transparent hover:bg-white/[0.04]"
                       }`}
                     >
-                      <div className="flex items-start justify-between gap-2">
-                        <span className="min-w-0 truncate text-[0.929rem] font-medium text-text">{bot.name}</span>
-                        <span
-                          className={`mt-1.5 size-2 shrink-0 rounded-full ${bot.apiKeyEnabled ? "bg-success" : "bg-text-dimmed/60"}`}
-                          title={bot.apiKeyEnabled ? "API key active" : "API key revoked"}
+                      <div className="flex items-start gap-2.5">
+                        <Avatar
+                          aria-hidden="true"
+                          name={bot.name}
+                          bot
+                          botAvatar={botAppearanceFor(bot.userId, bot.avatar)}
+                          // A bot without an API key cannot act: it sleeps.
+                          botMotion={bot.apiKeyEnabled ? "still" : "sleeping"}
+                          size={28}
+                          className="mt-0.5 size-7 text-[0.786rem]"
                         />
-                      </div>
-                      <div className="mt-1 flex items-center gap-1.5 text-[0.786rem] text-text-dimmed">
-                        <span>{bot.kind === "hermes" ? "Hermes" : "Webhook"}</span>
-                        <span>·</span>
-                        <span>{bot.workspaces.length} workspace{bot.workspaces.length === 1 ? "" : "s"}</span>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-start justify-between gap-2">
+                            <span className="min-w-0 truncate text-[0.929rem] font-medium text-text">{bot.name}</span>
+                            <span
+                              className={`mt-1.5 size-2 shrink-0 rounded-full ${bot.apiKeyEnabled ? "bg-success" : "bg-text-dimmed/60"}`}
+                              title={bot.apiKeyEnabled ? "API key active" : "API key revoked"}
+                            />
+                          </div>
+                          <div className="mt-1 flex items-center gap-1.5 text-[0.786rem] text-text-dimmed">
+                            <span>{bot.kind === "hermes" ? "Hermes" : "Webhook"}</span>
+                            <span>·</span>
+                            <span>{bot.workspaces.length} workspace{bot.workspaces.length === 1 ? "" : "s"}</span>
+                          </div>
+                        </div>
                       </div>
                     </button>
                   );
@@ -435,11 +512,51 @@ export function BotsManageRoute() {
             {selectedBot && (
               <main data-testid="bot-management-detail" className="min-w-0 space-y-4">
                 <div className={`p-5 ${panelClass}`}>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <h2 className="min-w-0 truncate text-[1.214rem] font-semibold tracking-tight text-text">{selectedBot.name}</h2>
-                    <BotKindBadge kind={selectedBot.kind} />
+                  <div className="flex items-center gap-4">
+                    <Avatar
+                      aria-hidden="true"
+                      name={selectedBot.name}
+                      bot
+                      botAvatar={botAppearanceFor(selectedBot.userId, selectedBot.avatar)}
+                      // The one place a bot plays: it follows the pointer and
+                      // hops when clicked, unless it sleeps without a key.
+                      botMotion={selectedBot.apiKeyEnabled ? "live" : "sleeping"}
+                      size={72}
+                      className="size-[72px] text-[1.714rem]"
+                    />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <h2 className="min-w-0 truncate text-[1.214rem] font-semibold tracking-tight text-text">{selectedBot.name}</h2>
+                        <BotKindBadge kind={selectedBot.kind} />
+                      </div>
+                      <div className="mt-1 break-all font-mono text-[0.786rem] text-text-dimmed">{selectedBot.id}</div>
+                      <button
+                        type="button"
+                        onClick={() => setAvatarPickerOpen((open) => !open)}
+                        aria-expanded={avatarPickerOpen}
+                        className={`mt-2.5 ${buttonClass("secondary", "sm")}`}
+                      >
+                        {avatarPickerOpen ? "Done" : "Change avatar"}
+                      </button>
+                    </div>
                   </div>
-                  <div className="mt-1 break-all font-mono text-[0.786rem] text-text-dimmed">{selectedBot.id}</div>
+                  {avatarPickerOpen && (
+                    <div className="mt-5 border-t border-border pt-5">
+                      <BotAppearancePicker
+                        value={botAppearanceFor(selectedBot.userId, selectedBot.avatar)}
+                        onChange={saveAvatar}
+                      />
+                      <p className="mt-4 text-[0.786rem] text-text-dimmed">
+                        {selectedBot.workspaces.length === 0
+                          ? "Changes save as you pick. The bot is in no workspace yet."
+                          : `Changes save as you pick. Everyone in ${
+                              selectedBot.workspaces.length === 1
+                                ? "its workspace"
+                                : `its ${selectedBot.workspaces.length} workspaces`
+                            } sees them.`}
+                      </p>
+                    </div>
+                  )}
                 </div>
 
                 <Section title="Details" description="Rename the bot and control the data it can receive.">

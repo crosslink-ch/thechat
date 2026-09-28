@@ -1,9 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import type {
-  AuthUser,
-  WorkspaceListItem,
-  WorkspaceWithDetails,
+import {
+  BOT_AVATAR_COLORS,
+  BOT_AVATAR_SHAPES,
+  type AuthUser,
+  type WorkspaceListItem,
+  type WorkspaceWithDetails,
 } from "@thechat/shared";
 import { BOT_CREATED_EVENT } from "../lib/bot-events";
 import { useAuthStore } from "../stores/auth";
@@ -130,13 +132,17 @@ describe("HermesBotModal", () => {
 
     await waitFor(() => expect(createPostMock).toHaveBeenCalledTimes(1));
     expect(createPostMock).toHaveBeenCalledWith(
-      {
+      expect.objectContaining({
         kind: "hermes",
         workspaceId: activeWorkspace.id,
         name: "Koda",
-      },
+      }),
       { headers: { authorization: "Bearer human-token" } },
     );
+    // Untouched, the new bot keeps the random look it was shown with.
+    const body = createPostMock.mock.calls[0]?.[0];
+    expect(BOT_AVATAR_SHAPES).toContain(body.avatarShape);
+    expect(BOT_AVATAR_COLORS).toContain(body.avatarColor);
     expect(createPostMock.mock.calls[0]?.[0]).not.toHaveProperty("attachmentAccess");
     expect(createPostMock.mock.calls[0]?.[0]).not.toHaveProperty("defaultInstructions");
     await waitFor(() => expect(selectWorkspaceMock).toHaveBeenCalledWith(activeWorkspace.id));
@@ -155,6 +161,13 @@ describe("HermesBotModal", () => {
     fireEvent.change(screen.getByLabelText("Bot name"), {
       target: { value: "Workspace Bot" },
     });
+    fireEvent.click(screen.getByRole("button", { name: "Change avatar" }));
+    fireEvent.click(screen.getByRole("button", { name: "Ghost bot" }));
+    fireEvent.click(screen.getByRole("button", { name: "Mint" }));
+    expect(screen.getByRole("button", { name: "Ghost bot" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
     fireEvent.click(screen.getByRole("button", { name: "Add Bot" }));
 
     await waitFor(() => expect(createPostMock).toHaveBeenCalledTimes(1));
@@ -163,6 +176,8 @@ describe("HermesBotModal", () => {
         kind: "hermes",
         workspaceId: "workspace-2",
         name: "Workspace Bot",
+        avatarShape: "ghost",
+        avatarColor: "#00B894",
       },
       { headers: { authorization: "Bearer human-token" } },
     );

@@ -1,6 +1,13 @@
 import crypto from "crypto";
 import { and, eq, inArray, or, sql } from "drizzle-orm";
-import type { BotCommandPublic, WsServerEvent } from "@thechat/shared";
+import {
+  resolveBotAppearance,
+  type BotAppearance,
+  type BotAvatarColor,
+  type BotAvatarShape,
+  type BotCommandPublic,
+  type WsServerEvent,
+} from "@thechat/shared";
 import { db } from "../db";
 import {
   users,
@@ -25,6 +32,12 @@ import {
 } from "../auth/bot-api-keys";
 import { BOT_API_KEY_CONFIG_ID } from "../auth/better-auth";
 
+/** An owner's avatar picks; null returns that part to the bot's default. */
+export type BotAvatarChoice = {
+  avatarShape?: BotAvatarShape | null;
+  avatarColor?: BotAvatarColor | null;
+};
+
 export function generateWebhookSecret(): string {
   return `whsec_${crypto.randomBytes(32).toString("hex")}`;
 }
@@ -35,6 +48,7 @@ export async function createBot(
   ownerId: string,
   kind: "webhook" | "hermes" = "webhook",
   attachmentAccess = true,
+  avatar: BotAvatarChoice = {},
 ) {
   const webhookSecret = generateWebhookSecret();
   const botUserId = crypto.randomUUID();
@@ -55,6 +69,8 @@ export async function createBot(
         webhookSecret,
         kind,
         attachmentAccess,
+        avatarShape: avatar.avatarShape ?? null,
+        avatarColor: avatar.avatarColor ?? null,
       })
       .returning();
 
@@ -69,6 +85,7 @@ export async function createBot(
     name: botUser.name,
     apiKey: credential.rawKey,
     kind: bot.kind,
+    avatar: resolveBotAppearance(botUser.id, bot),
     attachmentAccess: bot.attachmentAccess,
     webhookUrl: bot.webhookUrl,
     webhookSecret: bot.webhookSecret,
@@ -82,7 +99,10 @@ export async function createHermesBotInWorkspace(
   ownerId: string,
   workspaceId: string,
   attachmentAccess = true,
-  options: { afterWorkspaceLocked?: () => Promise<void> } = {},
+  options: {
+    afterWorkspaceLocked?: () => Promise<void>;
+    avatar?: BotAvatarChoice;
+  } = {},
 ) {
   const webhookSecret = generateWebhookSecret();
   const botUserId = crypto.randomUUID();
@@ -131,6 +151,8 @@ export async function createHermesBotInWorkspace(
         webhookSecret,
         kind: "hermes",
         attachmentAccess,
+        avatarShape: options.avatar?.avatarShape ?? null,
+        avatarColor: options.avatar?.avatarColor ?? null,
       })
       .returning();
     await tx.insert(apikey).values(credential.values);
@@ -181,6 +203,7 @@ export async function createHermesBotInWorkspace(
     botKind: "hermes",
     botUserId: botUser.id,
     botName: botUser.name,
+    botAvatar: resolveBotAppearance(botUser.id, bot),
     joinedAt,
   });
 
@@ -190,6 +213,7 @@ export async function createHermesBotInWorkspace(
     name: botUser.name,
     apiKey: credential.rawKey,
     kind: bot.kind,
+    avatar: resolveBotAppearance(botUser.id, bot),
     attachmentAccess: bot.attachmentAccess,
     webhookUrl: bot.webhookUrl,
     webhookSecret: bot.webhookSecret,
@@ -205,6 +229,8 @@ export async function listBots(ownerId: string) {
       webhookUrl: bots.webhookUrl,
       webhookSecret: bots.webhookSecret,
       kind: bots.kind,
+      avatarShape: bots.avatarShape,
+      avatarColor: bots.avatarColor,
       attachmentAccess: bots.attachmentAccess,
       createdAt: bots.createdAt,
       name: users.name,
@@ -223,6 +249,8 @@ type OwnedBotRow = {
   webhookUrl: string | null;
   webhookSecret: string;
   kind: "webhook" | "hermes";
+  avatarShape: string | null;
+  avatarColor: string | null;
   attachmentAccess: boolean;
   createdAt: Date;
   name: string;
@@ -288,6 +316,7 @@ function serializeOwnedBot(row: OwnedBotRow, metadata: BotManagementMetadata) {
     userId: row.userId,
     name: row.name,
     kind: row.kind,
+    avatar: resolveBotAppearance(row.userId, row),
     attachmentAccess: row.attachmentAccess,
     webhookUrl: row.webhookUrl,
     webhookSecret: row.webhookSecret,
@@ -309,6 +338,8 @@ export async function addBotToWorkspace(
       userId: bots.userId,
       ownerId: bots.ownerId,
       kind: bots.kind,
+      avatarShape: bots.avatarShape,
+      avatarColor: bots.avatarColor,
       name: users.name,
     })
     .from(bots)
@@ -411,6 +442,7 @@ export async function addBotToWorkspace(
       botKind: bot.kind,
       botUserId: bot.userId,
       botName: bot.name,
+      botAvatar: resolveBotAppearance(bot.userId, bot),
       joinedAt: result.joinedAt,
     });
   }
@@ -424,6 +456,7 @@ async function broadcastBotJoinedWorkspace({
   botKind,
   botUserId,
   botName,
+  botAvatar,
   joinedAt,
 }: {
   workspaceId: string;
@@ -431,6 +464,7 @@ async function broadcastBotJoinedWorkspace({
   botKind: "webhook" | "hermes";
   botUserId: string;
   botName: string;
+  botAvatar: BotAppearance;
   joinedAt: Date;
 }) {
   const members = await db
@@ -452,7 +486,7 @@ async function broadcastBotJoinedWorkspace({
         avatar: null,
         type: "bot",
       },
-      bot: { id: botId, kind: botKind },
+      bot: { id: botId, kind: botKind, avatar: botAvatar },
     },
   };
 
@@ -663,6 +697,8 @@ export async function getBot(botId: string, ownerId: string) {
       webhookUrl: bots.webhookUrl,
       webhookSecret: bots.webhookSecret,
       kind: bots.kind,
+      avatarShape: bots.avatarShape,
+      avatarColor: bots.avatarColor,
       attachmentAccess: bots.attachmentAccess,
       createdAt: bots.createdAt,
       ownerId: bots.ownerId,
@@ -692,8 +728,14 @@ export async function updateBot(
     name?: string;
     webhookUrl?: string | null;
     attachmentAccess?: boolean;
-  },
+  } & BotAvatarChoice,
 ) {
+  // Name and avatar are the bot's identity in every workspace it is in.
+  const identityChanged =
+    updates.name !== undefined ||
+    updates.avatarShape !== undefined ||
+    updates.avatarColor !== undefined;
+
   const result = await db.transaction(async (tx) => {
     const [bot] = await tx
       .select({ id: bots.id, ownerId: bots.ownerId, userId: bots.userId })
@@ -708,7 +750,7 @@ export async function updateBot(
       throw new ServiceError("Only the bot owner can update the bot", 403);
     }
 
-    let renameNotifications: Array<{
+    let identityNotifications: Array<{
       workspaceId: string;
       recipients: Array<{ userId: string }>;
     }> = [];
@@ -717,7 +759,8 @@ export async function updateBot(
         .update(users)
         .set({ name: updates.name })
         .where(eq(users.id, bot.userId));
-
+    }
+    if (identityChanged) {
       const memberships = await tx
         .select({ workspaceId: workspaceMembers.workspaceId })
         .from(workspaceMembers)
@@ -731,7 +774,7 @@ export async function updateBot(
           })
           .from(workspaceMembers)
           .where(inArray(workspaceMembers.workspaceId, workspaceIds));
-        renameNotifications = workspaceIds.map((workspaceId) => ({
+        identityNotifications = workspaceIds.map((workspaceId) => ({
           workspaceId,
           recipients: recipientRows
             .filter((recipient) => recipient.workspaceId === workspaceId)
@@ -742,7 +785,9 @@ export async function updateBot(
 
     if (
       updates.webhookUrl !== undefined ||
-      updates.attachmentAccess !== undefined
+      updates.attachmentAccess !== undefined ||
+      updates.avatarShape !== undefined ||
+      updates.avatarColor !== undefined
     ) {
       await tx
         .update(bots)
@@ -753,30 +798,36 @@ export async function updateBot(
           ...(updates.attachmentAccess !== undefined
             ? { attachmentAccess: updates.attachmentAccess }
             : {}),
+          ...(updates.avatarShape !== undefined
+            ? { avatarShape: updates.avatarShape }
+            : {}),
+          ...(updates.avatarColor !== undefined
+            ? { avatarColor: updates.avatarColor }
+            : {}),
         })
         .where(eq(bots.id, botId));
     }
 
-    return { botUserId: bot.userId, renameNotifications };
+    return { botUserId: bot.userId, identityNotifications };
   });
 
-  if (updates.name !== undefined) {
-    for (const notification of result.renameNotifications) {
-      const event: WsServerEvent = {
-        type: "member_updated",
-        workspaceId: notification.workspaceId,
-        userId: result.botUserId,
-        name: updates.name,
-      };
-      for (const recipient of notification.recipients) {
-        if (recipient.userId !== result.botUserId) {
-          broadcastToUser(recipient.userId, event);
-        }
+  const updated = await getBot(botId, ownerId);
+  for (const notification of result.identityNotifications) {
+    const event: WsServerEvent = {
+      type: "member_updated",
+      workspaceId: notification.workspaceId,
+      userId: result.botUserId,
+      name: updated.name,
+      botAvatar: updated.avatar,
+    };
+    for (const recipient of notification.recipients) {
+      if (recipient.userId !== result.botUserId) {
+        broadcastToUser(recipient.userId, event);
       }
     }
   }
 
-  return getBot(botId, ownerId);
+  return updated;
 }
 
 export async function updateAuthenticatedBotWebhook(

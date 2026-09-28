@@ -1,3 +1,7 @@
+import type { BotAppearance } from "./bot-avatars";
+
+export * from "./bot-avatars";
+
 // -- Message Parts (rich message model) --
 
 export type MessagePart =
@@ -133,7 +137,7 @@ export interface WorkspaceMember {
   role: WorkspaceMemberRole;
   joinedAt: string;
   user: AuthUser;
-  bot?: { id: string; kind: BotKind } | null;
+  bot?: { id: string; kind: BotKind; avatar?: BotAppearance } | null;
 }
 
 export interface WorkspaceChannel {
@@ -267,7 +271,7 @@ export type AttachmentView = ChatAttachment;
 export interface DirectConversation {
   id: string;
   otherUser: AuthUser;
-  otherBot?: { id: string; kind: BotKind } | null;
+  otherBot?: { id: string; kind: BotKind; avatar?: BotAppearance } | null;
   lastMessage: ChatMessage | null;
 }
 
@@ -276,7 +280,12 @@ export interface ConversationParticipantPublic {
   role: WorkspaceMemberRole;
   joinedAt: string;
   user: AuthUser;
-  bot?: { id: string; kind: BotKind; commands?: BotCommandPublic[] | null } | null;
+  bot?: {
+    id: string;
+    kind: BotKind;
+    avatar?: BotAppearance;
+    commands?: BotCommandPublic[] | null;
+  } | null;
 }
 
 export interface ConversationDetail {
@@ -381,6 +390,7 @@ export interface Bot {
   userId: string;
   name: string;
   kind: BotKind;
+  avatar?: BotAppearance;
   attachmentAccess?: boolean;
   webhookUrl: string | null;
   createdAt: string;
@@ -524,6 +534,7 @@ export interface BotWorkspaceInvite {
   workspaceName: string;
   botId: string;
   botName: string;
+  botAvatar?: BotAppearance;
   requesterId: string;
   requesterName: string;
   status: BotWorkspaceInviteStatus;
@@ -615,7 +626,13 @@ export type WsServerEvent =
       userId: string;
       newRole: WorkspaceMemberRole;
     }
-  | { type: "member_updated"; workspaceId: string; userId: string; name: string }
+  | {
+      type: "member_updated";
+      workspaceId: string;
+      userId: string;
+      name: string;
+      botAvatar?: BotAppearance;
+    }
   | { type: "member_removed"; workspaceId: string; userId: string }
   | {
       type: "channel_created";

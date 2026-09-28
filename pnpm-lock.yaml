@@ -162,6 +162,9 @@ importers:
       '@tiptap/suggestion':
         specifier: ^3.20.0
         version: 3.20.0(@tiptap/core@3.20.0(@tiptap/pm@3.20.0))(@tiptap/pm@3.20.0)
+      bot-avatars:
+        specifier: 0.1.1
+        version: 0.1.1(react@19.2.4)
       emoji-datasource:
         specifier: 16.0.0
         version: 16.0.0
@@ -3076,6 +3079,11 @@ packages:
   boolean@3.2.0:
     resolution: {integrity: sha512-d0II/GO9uf9lfUHH2BQsjxzRJZBdsjgsBiW4BvhWk/3qoKwQFjIDVN19PfX8F2D/r9PCMTtLWjYVCFrpeYUzsw==}
     deprecated: Package no longer supported. Contact Support at https://www.npmjs.com/support for more info.
+
+  bot-avatars@0.1.1:
+    resolution: {integrity: sha512-J1gamb44dLXWViX6N+qz8wQyMmVUEtv9GrrHXo+xP3GlzbVzPTO4g+bWme0F9OXpX31nyDXSnUG9/mctUi7t3w==}
+    peerDependencies:
+      react: '>=18.0.0'
 
   bowser@2.14.1:
     resolution: {integrity: sha512-tzPjzCxygAKWFOJP011oxFHs57HzIhOEracIgAePE4pqB3LikALKnSzUyU4MGs9/iCEUuHlAJTjTc5M+u7YEGg==}
@@ -8844,6 +8852,10 @@ snapshots:
 
   boolean@3.2.0:
     optional: true
+
+  bot-avatars@0.1.1(react@19.2.4):
+    dependencies:
+      react: 19.2.4
 
   bowser@2.14.1: {}
 

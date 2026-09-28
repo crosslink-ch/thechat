@@ -1,5 +1,6 @@
 import type { ChatMessage } from "@thechat/shared";
 import type { ReactNode } from "react";
+import { useBotAppearance } from "../lib/bot-appearance";
 import { Avatar } from "./Avatar";
 import { MessageReactions } from "./MessageReactions";
 import { SharedMessageAttachments } from "./SharedMessageAttachments";
@@ -65,6 +66,9 @@ export function SharedChatMessage({
   mentionsYou = false,
   onSetReaction,
 }: SharedChatMessageProps) {
+  const botAvatar = useBotAppearance(
+    message.senderType === "bot" ? message.senderId : null,
+  );
   // Grouped rows only have the avatar-width gutter for their hover time.
   // Their full date remains available through the tooltip and accessible label.
   const displayTime = merged
@@ -102,6 +106,8 @@ export function SharedChatMessage({
           name={message.senderName}
           colorKey={message.senderId}
           bot={message.senderType === "bot"}
+          botAvatar={botAvatar}
+          size={32}
           className="mt-0.5 size-8 text-[0.857rem]"
         />
       )}
