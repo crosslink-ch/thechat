@@ -25,7 +25,7 @@ function LinkPasteFixture() {
       <nav aria-label="Drafts" style={{ display: "flex", gap: 24, margin: "20px 0" }}>
         {["A", "B"].map((key) => <button key={key} type="button" aria-pressed={scope === key} onClick={() => setScope(key)}>Draft {key}</button>)}
       </nav>
-      <p>Active draft: {scope}. Switch away and back before sending to test string restoration (raw Markdown is expected).</p>
+      <p>Active draft: {scope}. Pasting must immediately show [label](url) as editable Markdown, not hide the URL behind its label. Edit the URL directly, then switch away and back before sending: the same source must remain visible.</p>
       <InputBar convId={undefined} draftKey={`link-paste:${scope}`} onStop={() => {}} onSend={(content) => { setSent((previous) => [...previous, content]); return true; }} />
       <h2>Current serialized draft</h2>
       <pre data-testid="draft" style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{draft}</pre>

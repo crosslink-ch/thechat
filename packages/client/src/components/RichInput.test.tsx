@@ -32,10 +32,30 @@ function pasteHtml(editor: HTMLElement, html: string, text: string) {
 }
 
 describe("RichInput", () => {
+  it("shows pasted Markdown and literal URLs without hidden formatting", () => {
+    const { editor, ref, onSubmit } = renderRichInput();
+    const source = "**bold** _under_ [already](https://example.com/a) `code` <b>literal</b>";
+    pasteHtml(editor, "", source);
+    expect(editor.textContent).toBe(source);
+    expect(editor.querySelector("a, strong, em, u, code")).toBeNull();
+    act(() => ref.current!.submit());
+    expect(onSubmit).toHaveBeenCalledWith(source);
+  });
+  it("does not turn a separately pasted named link after existing ! into an image", () => {
+    const { editor, ref, onSubmit } = renderRichInput("Look!");
+    act(() => ref.current!.setText("Look!"));
+    pasteHtml(editor, `<a href="${LINK_URL}">${LINK_LABEL}</a>`, LINK_LABEL);
+    expect(editor.textContent).toBe(`Look! [${LINK_LABEL}](${LINK_URL})`);
+    act(() => ref.current!.submit());
+    const message = render(<Markdown content={onSubmit.mock.calls[0][0]} />);
+    expect(message.container.querySelector("img")).toBeNull();
+    expect(message.container.querySelector("a")?.getAttribute("href")).toBe(LINK_URL);
+  });
   it("preserves a named pasted link destination when submitted with Enter", () => {
     const { editor, onSubmit } = renderRichInput();
     pasteHtml(editor, `<a href="${LINK_URL}">${LINK_LABEL}</a>`, LINK_LABEL);
-    expect(editor.querySelector("a")?.getAttribute("href")).toBe(LINK_URL);
+    expect(editor.textContent).toBe(`[${LINK_LABEL}](${LINK_URL})`);
+    expect(editor.querySelector("a")).toBeNull();
     fireEvent.keyDown(editor, { key: "Enter" });
     expect(onSubmit).toHaveBeenCalledWith(`[${LINK_LABEL}](${LINK_URL})`);
   });
@@ -43,6 +63,8 @@ describe("RichInput", () => {
     const { editor, ref, onSubmit, onTextChange } = renderRichInput();
     pasteHtml(editor, "", url);
     expect(onTextChange).toHaveBeenLastCalledWith(url);
+    expect(editor.textContent).toBe(url);
+    expect(editor.querySelector("a")).toBeNull();
     act(() => ref.current!.submit());
     expect(onSubmit).toHaveBeenCalledWith(url);
   });
@@ -50,7 +72,8 @@ describe("RichInput", () => {
   it("preserves an explicit destination even when the label looks like a bare URL", () => {
     const { editor, ref, onSubmit } = renderRichInput();
     pasteHtml(editor, '<a href="http://www.example.com/path">www.example.com/path</a>', "www.example.com/path");
-    expect(editor.querySelector("a")?.getAttribute("href")).toBe("http://www.example.com/path");
+    expect(editor.textContent).toBe("[www.example.com/path](http://www.example.com/path)");
+    expect(editor.querySelector("a")).toBeNull();
     act(() => ref.current!.submit());
     expect(onSubmit).toHaveBeenCalledWith("[www.example.com/path](http://www.example.com/path)");
     const message = render(<Markdown content={onSubmit.mock.calls[0][0]} />);
@@ -156,13 +179,15 @@ describe("RichInput", () => {
     pasteHtml(editor, `<a href="${LINK_URL}">${LINK_LABEL}</a>`, LINK_LABEL);
     act(() => ref.current!.submit());
     await act(async () => settle(false));
-    expect(editor.querySelector("a")?.getAttribute("href")).toBe(LINK_URL);
+    expect(editor.textContent).toBe(`[${LINK_LABEL}](${LINK_URL})`);
+    expect(editor.querySelector("a")).toBeNull();
     fireEvent.keyDown(editor, { key: "Enter" });
     act(() => ref.current!.setText(""));
     const newer = `${LINK_URL}-new`;
     pasteHtml(editor, `<a href="${newer}">${LINK_LABEL}</a>`, LINK_LABEL);
     await act(async () => settle(true));
-    expect(editor.querySelector("a")?.getAttribute("href")).toBe(newer);
+    expect(editor.textContent).toBe(`[${LINK_LABEL}](${newer})`);
+    expect(editor.querySelector("a")).toBeNull();
     expect(onSubmit).toHaveBeenCalledTimes(2);
     expect(onSubmit).toHaveBeenLastCalledWith(`[${LINK_LABEL}](${LINK_URL})`);
   });

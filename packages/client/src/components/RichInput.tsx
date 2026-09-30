@@ -3,7 +3,9 @@ import { useEditor, EditorContent } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import Mention from "@tiptap/extension-mention";
 import Placeholder from "@tiptap/extension-placeholder";
-import { Extension, type AnyExtension, type TextSerializer } from "@tiptap/react";
+import { Extension, type AnyExtension } from "@tiptap/react";
+import { Fragment, Slice, type Node as ProseMirrorNode } from "@tiptap/pm/model";
+import type { EditorView } from "@tiptap/pm/view";
 import { createMentionSuggestion } from "./mention-suggestion";
 import type { MentionUser } from "./MentionList";
 
@@ -22,7 +24,12 @@ interface RichInputProps {
   initialText?: string;
 }
 
-const serializeText: TextSerializer = ({ node, parent, index }) => {
+function serializeTextNode(
+  node: ProseMirrorNode,
+  parent: ProseMirrorNode,
+  index: number,
+  precedingText = "",
+): string {
   const hrefOf = (child: typeof node) => child.isText
     ? child.marks.find((mark) => mark.type.name === "link")?.attrs.href
     : undefined;
@@ -45,14 +52,18 @@ const serializeText: TextSerializer = ({ node, parent, index }) => {
   const destination = href.replace(/[\\()<>"']/g, "\\$&")
     .replace(/&(?=#\d+;|#x[\da-f]+;|[a-z][\da-z]+;)/gi, "\\&");
   // Keep a preceding literal ! from turning the generated link into an image.
-  const boundary = index > 0 && parent.child(index - 1).text?.endsWith("!") ? " " : "";
+  const previousText = index > 0 ? parent.child(index - 1).text : precedingText;
+  const boundary = previousText?.endsWith("!") ? " " : "";
   return `${boundary}[${label}](${destination})`;
-};
+}
 
 /** Newlines are paragraph splits; retain schema defaults for mentions/breaks. */
 const TEXT_OPTIONS = {
   blockSeparator: "\n",
-  textSerializers: { text: serializeText },
+  textSerializers: {
+    text: ({ node, parent, index }: { node: ProseMirrorNode; parent: ProseMirrorNode; index: number }) =>
+      serializeTextNode(node, parent, index),
+  },
 } as const;
 
 function textDocument(text: string) {
@@ -63,6 +74,34 @@ function textDocument(text: string) {
       content: line ? [{ type: "text", text: line }] : [],
     })),
   };
+}
+
+/** Convert clipboard link marks before insertion, so display and send agree.
+ * Preserve paragraphs, hard breaks and mention atoms; discard hidden text marks.
+ * A slice keeps its openness so native paste still replaces/inserts at the caret.
+ */
+function markdownPaste(slice: Slice, view: EditorView): Slice {
+  const { from } = view.state.selection;
+  const precedingText = view.state.doc.textBetween(Math.max(0, from - 1), from);
+  const normalize = (parent: ProseMirrorNode, atStart: boolean): ProseMirrorNode => {
+    const children: ProseMirrorNode[] = [];
+    parent.forEach((child, _offset, index) => {
+      if (child.isText) {
+        const text = serializeTextNode(
+          child, parent, index, atStart && index === 0 ? precedingText : "",
+        );
+        if (text) children.push(parent.type.schema.text(text));
+      } else {
+        children.push(child.isLeaf ? child : normalize(child, atStart && index === 0));
+      }
+    });
+    return parent.copy(Fragment.fromArray(children));
+  };
+  if (!slice.content.firstChild) return slice;
+  // Inline clipboard slices can contain text directly, without a paragraph.
+  const schema = slice.content.firstChild.type.schema;
+  const parent = schema.topNodeType.create(null, slice.content);
+  return new Slice(normalize(parent, true).content, slice.openStart, slice.openEnd);
 }
 
 export interface RichInputHandle {
@@ -196,6 +235,9 @@ export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function Ri
         italic: false,
         strike: false,
         code: false,
+        underline: false,
+        // Keep the parser for clipboard anchors, not a rich/autolinking editor.
+        link: { autolink: false, linkOnPaste: false, openOnClick: false },
       }),
       Placeholder.configure({ placeholder }),
       submitExtension,
@@ -216,6 +258,8 @@ export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function Ri
 
   const editor = useEditor({
     extensions,
+    // Link's paste rule would otherwise mark URLs inside generated Markdown.
+    enablePasteRules: false,
     content: textDocument(initialText),
     editorProps: {
       attributes: {
@@ -228,6 +272,7 @@ export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function Ri
       // Direct view props run before extension keymaps, so interceptors
       // (slash command menu navigation) win over Enter-to-submit.
       handleKeyDown: (_view, event) => onKeyInterceptRef.current?.(event) ?? false,
+      transformPasted: markdownPaste,
     },
     onCreate: ({ editor: currentEditor }) => {
       const text = currentEditor.getText(TEXT_OPTIONS);
