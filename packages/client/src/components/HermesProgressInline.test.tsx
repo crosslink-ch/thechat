@@ -1108,7 +1108,7 @@ describe("HermesProgressInline", () => {
     expect(screen.getByText("pnpm build")).toBeInTheDocument();
   });
 
-  it("hops the bot in place of an orb and keeps orbs on thinking rows", async () => {
+  it("uses the pre-avatar orb for working progress and thinking rows", () => {
     const { container } = render(
       <HermesProgressInline
         invocations={[
@@ -1124,19 +1124,13 @@ describe("HermesProgressInline", () => {
       />,
     );
 
-    const bot = await waitFor(() => {
-      const found = container.querySelector("[data-bot-avatar]");
-      expect(found).not.toBeNull();
-      return found!;
-    });
-    expect(bot).toHaveAttribute("data-state", "working");
-    expect(bot).toHaveAttribute("data-paused", "false");
-    expect(bot).toHaveAttribute("data-interactive", "false");
-    expect(container.querySelector('[data-thinking-orb="composing"]')).toBeNull();
+    expect(container.querySelectorAll('[data-thinking-orb="composing"]')).toHaveLength(1);
+    expect(container.querySelector("[data-bot-avatar]")).toBeNull();
+    expect(screen.getByText("Koda is working")).toBeInTheDocument();
     expect(container.querySelectorAll('[data-thinking-orb="solving"]')).toHaveLength(2);
   });
 
-  it("stops working and looks around while the agent waits for an approval", async () => {
+  it("uses a static status marker without avatars while waiting for approval", () => {
     const { container } = render(
       <HermesProgressInline
         invocations={[
@@ -1161,14 +1155,48 @@ describe("HermesProgressInline", () => {
     );
 
     expect(container.querySelector("[data-thinking-orb]")).toBeNull();
-    const bot = await waitFor(() => {
-      const found = container.querySelector("[data-bot-avatar]");
-      expect(found).not.toBeNull();
-      return found!;
-    });
-    expect(bot).toHaveAttribute("data-state", "default");
-    expect(bot).toHaveAttribute("data-paused", "false");
+    expect(screen.getByTestId("hermes-invocation-indicator")).toHaveAttribute("aria-hidden", "true");
+    expect(container.querySelector("[data-bot-avatar]")).toBeNull();
+    expect(screen.getByText("Koda is waiting for your approval")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Approve" })).toBeInTheDocument();
   });
+
+  it.each(["queued", "clarification"] as const)(
+    "uses a static status marker without avatars for %s progress",
+    (state) => {
+      const events = state === "queued" ? [] : [progressEvent({
+        type: "clarify.request",
+        status: "waiting",
+        toolCallId: null,
+        toolName: null,
+        payload: {
+          requestId: "request-static",
+          sessionKey: "session-static",
+          question: "Which checks should run?",
+          choices: ["Unit", "Build"],
+          multiSelect: false,
+          allowOther: true,
+        },
+      })];
+      const { container } = render(
+        <HermesProgressInline
+          invocations={[{
+            invocation: invocation({ status: state === "queued" ? "queued" : "running" }),
+            events,
+          }]}
+          onInteraction={vi.fn()}
+        />,
+      );
+
+      expect(screen.getByTestId("hermes-invocation-indicator")).toHaveAttribute("aria-hidden", "true");
+      expect(container.querySelector("[data-bot-avatar]")).toBeNull();
+      expect(container.querySelector("[data-thinking-orb]")).toBeNull();
+      expect(screen.getByText(state === "queued" ? "Koda is queued" : "Koda is waiting for your response")).toBeInTheDocument();
+      if (state === "clarification") {
+        expect(screen.getByRole("button", { name: "Unit" })).toBeInTheDocument();
+      }
+    },
+  );
 });
 
 function invocation(
