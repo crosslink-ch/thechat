@@ -62,16 +62,18 @@ for (const engine of [chromium, webkit]) {
     await editor.waitFor();
 
     await copyPaste(page, "copy-source");
-    // Prove native clipboard included HTML, not just the plain filename.
-    await editor.locator("a").waitFor();
-    assert.equal(await editor.locator("a").getAttribute("href"), href);
+    // Native copy contains a named HTML link. The editor must show the
+    // exact Markdown source that is saved and submitted, not a hidden anchor.
+    await page.waitForFunction((value) => document.querySelector('[role="textbox"]').textContent === value, markdown);
+    assert.equal(await editor.textContent(), markdown);
+    assert.equal(await editor.locator("a").count(), 0);
     assert.equal(await page.getByTestId("draft").textContent(), markdown);
     await page.getByTitle("Send message", { exact: true }).click();
     await assertSent(page, 0, markdown);
     await page.waitForFunction(() => document.querySelector('[role="textbox"]').textContent === "");
 
     await copyPaste(page, "copy-source");
-    await editor.locator("a").waitFor();
+    await page.waitForFunction((value) => document.querySelector('[role="textbox"]').textContent === value, markdown);
     await page.getByRole("button", { name: "Draft B", exact: true }).click();
     assert.equal(await editor.textContent(), "");
     await editor.fill("separate B draft");
@@ -94,5 +96,47 @@ for (const engine of [chromium, webkit]) {
     await page.keyboard.press("Enter");
     await assertSent(page, 2, href);
     assert.deepEqual(errors, []);
+  });
+}
+
+for (const engine of [chromium, webkit]) {
+  test(`${engine.name()}: pasted source is editable and paste undo is atomic`, async (t) => {
+    const browser = await engine.launch();
+    t.after(() => browser.close());
+    const page = await browser.newPage();
+    await page.goto(`${baseUrl}/browser-tests/fixtures/link-paste.html`);
+    const editor = page.getByRole("textbox", { name: "Message" });
+    await editor.waitFor();
+    await copyPaste(page, "copy-source");
+    await page.waitForFunction((value) => document.querySelector('[role="textbox"]').textContent === value, markdown);
+    await page.keyboard.press("ControlOrMeta+z");
+    await page.waitForFunction(() => document.querySelector('[role="textbox"]').textContent === "");
+    await page.keyboard.press("ControlOrMeta+Shift+z");
+    await page.waitForFunction((value) => document.querySelector('[role="textbox"]').textContent === value, markdown);
+
+    // Select and edit the URL text itself, not a hidden href property.
+    const replacement = "https://example.org/edited?keep=a%2Fb&x=2#fragment";
+    await editor.evaluate(async (element, value) => {
+      const node = element.querySelector("p").firstChild;
+      const start = node.textContent.indexOf(value);
+      const range = document.createRange();
+      range.setStart(node, start);
+      range.setEnd(node, start + value.length);
+      const selection = window.getSelection();
+      selection.removeAllRanges();
+      selection.addRange(range);
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    }, href);
+    await page.keyboard.type(replacement);
+    const edited = `[${label}](${replacement})`;
+    assert.equal(await editor.textContent(), edited);
+    assert.equal(await editor.locator("a").count(), 0);
+    assert.equal(await page.getByTestId("draft").textContent(), edited);
+    await page.keyboard.press("Enter");
+    const message = page.getByTestId("sent-message").first();
+    await message.waitFor();
+    assert.equal(await message.getByTestId("sent-source").textContent(), edited);
+    assert.equal(await message.getByTestId("rendered-message").locator("a").getAttribute("href"), replacement);
+    assert.equal(await message.getByTestId("rendered-message").locator("a").textContent(), label);
   });
 }
