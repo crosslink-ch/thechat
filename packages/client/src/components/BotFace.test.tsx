@@ -1,16 +1,33 @@
-import { render } from "@testing-library/react";
+import { render, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import { BOT_AVATAR_SHAPES } from "@thechat/shared";
+import { BOT_AVATAR_SHAPES, PLAYFUL_BOT_AVATAR_SHAPES } from "@thechat/shared";
 import { Avatar } from "./Avatar";
 import { BotFace } from "./BotFace";
 
 const ghost = { shape: "ghost", color: "#3498DB" } as const;
 
 describe("BotFace", () => {
-  it("offers exactly the library's shapes", async () => {
+  it("keeps the playful pool exactly aligned with the library's shapes", async () => {
     const library =
       await vi.importActual<typeof import("bot-avatars")>("bot-avatars");
-    expect([...BOT_AVATAR_SHAPES]).toEqual([...library.botAvatarTypes]);
+    expect([...PLAYFUL_BOT_AVATAR_SHAPES]).toEqual([...library.botAvatarTypes]);
+    expect([...BOT_AVATAR_SHAPES]).toEqual([...library.botAvatarTypes, "minimal"]);
+  });
+
+  it("renders Minimal as the same inert geometric glyph in every motion state", () => {
+    const appearance = { shape: "minimal", color: "#00B894" } as const;
+    const { container, rerender } = render(<BotFace appearance={appearance} size={32} />);
+    const glyph = container.querySelector("[data-bot-minimal]");
+    expect(glyph).not.toBeNull();
+    const drawing = glyph!.innerHTML;
+    for (const motion of ["still", "idle", "live", "working", "sleeping"] as const) {
+      rerender(<BotFace appearance={appearance} size={32} motion={motion} />);
+      expect(container.querySelector("[data-bot-minimal]")!.innerHTML).toBe(drawing);
+      expect(container.querySelector("[data-bot-avatar], circle, ellipse, animate, animateTransform")).toBeNull();
+      expect(glyph).toHaveAttribute("aria-hidden", "true");
+      expect(glyph).toHaveAttribute("width", "32");
+      expect(glyph).toHaveStyle({ color: "#00B894" });
+    }
   });
 
   it("maps each motion onto the library's state, pause and pointer play", async () => {
@@ -25,7 +42,7 @@ describe("BotFace", () => {
       const { container, unmount } = render(
         <BotFace appearance={ghost} size={32} motion={motion} />,
       );
-      const bot = await vi.waitFor(() => {
+      const bot = await waitFor(() => {
         const found = container.querySelector("[data-bot-avatar]");
         expect(found).not.toBeNull();
         return found!;
@@ -43,7 +60,7 @@ describe("BotFace", () => {
     const { container, rerender } = render(
       <BotFace appearance={ghost} size={32} motion="working" />,
     );
-    const working = await vi.waitFor(() => {
+    const working = await waitFor(() => {
       const found = container.querySelector("[data-bot-avatar]");
       expect(found).not.toBeNull();
       return found!;
@@ -62,7 +79,7 @@ describe("Avatar", () => {
     const { container } = render(
       <Avatar name="Koda" bot botAvatar={ghost} size={32} />,
     );
-    await vi.waitFor(() =>
+    await waitFor(() =>
       expect(container.querySelector("[data-bot-avatar]")).toHaveAttribute(
         "data-bot-avatar",
         "ghost",

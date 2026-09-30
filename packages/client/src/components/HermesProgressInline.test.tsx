@@ -3,17 +3,140 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   BotInvocationProgressEventPublic,
   BotInvocationPublic,
+  BotAppearance,
+  WorkspaceWithDetails,
 } from "@thechat/shared";
 import { HermesProgressInline } from "./HermesProgressInline";
 import { useHermesApprovalsStore } from "../stores/hermes-approvals";
 import { useHermesClarificationsStore } from "../stores/hermes-clarifications";
 import { useHermesIndicatorsStore } from "../stores/hermes-indicators";
+import { useWorkspacesStore } from "../stores/workspaces";
 
 describe("HermesProgressInline", () => {
   beforeEach(() => {
+    useWorkspacesStore.setState({ activeWorkspace: null });
     useHermesApprovalsStore.getState().resetForTests();
     useHermesClarificationsStore.getState().resetForTests();
     useHermesIndicatorsStore.getState().resetForTests();
+  });
+
+  it.each(["workspace switch", "mismatched-workspace deep link"])(
+    "keeps the conversation's saved Minimal style across a %s", (scenario) => {
+      const saved = new Map<string, BotAppearance>([
+        ["bot-user-1", { shape: "minimal", color: "#00B894" }],
+      ]);
+      if (scenario === "workspace switch") {
+        selectAppearance({ shape: "minimal", color: "#00B894" });
+      }
+      const { container } = render(<HermesProgressInline
+        invocations={[{ invocation: invocation(), events: [] }]}
+        botAppearances={saved}
+      />);
+      expect(screen.getByTestId("hermes-invocation-indicator").querySelector(".lucide-loader-circle")).not.toBeNull();
+      act(() => useWorkspacesStore.setState({
+        activeWorkspace: { id: "unrelated-workspace", members: [] } as unknown as WorkspaceWithDetails,
+      }));
+      expect(screen.getByTestId("hermes-invocation-indicator").querySelector(".lucide-loader-circle")).not.toBeNull();
+      expect(container.querySelector("[data-bot-avatar]")).toBeNull();
+    },
+  );
+
+  it("uses a conventional spinner for an explicitly selected Minimal running bot", () => {
+    selectAppearance({ shape: "minimal", color: "#3498DB" });
+    const onStop = vi.fn();
+    const { container } = render(<HermesProgressInline
+      invocations={[{ invocation: invocation(), events: [progressEvent({
+        type: "reasoning.delta", toolName: null, toolCallId: null,
+        payload: { text: "Plan the next step" },
+      })] }]}
+      onStop={onStop}
+    />);
+    const indicator = screen.getByTestId("hermes-invocation-indicator");
+    expect(indicator.querySelector(".lucide-loader-circle")).not.toBeNull();
+    expect(indicator.querySelector("svg")).toHaveClass("motion-safe:animate-spin");
+    expect(container.querySelector("[data-bot-avatar], [data-bot-minimal]")).toBeNull();
+    expect(container.querySelector('[data-thinking-orb="solving"]')).not.toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Stop" }));
+    expect(onStop).toHaveBeenCalledOnce();
+    expect(screen.getByText("Koda is working")).toBeInTheDocument();
+  });
+
+  it("shows a static clock for a queued Minimal bot without Stop", () => {
+    selectAppearance({ shape: "minimal", color: "#3498DB" });
+    render(<HermesProgressInline
+      invocations={[{ invocation: invocation({ status: "queued" }), events: [] }]}
+      onStop={vi.fn()}
+    />);
+    const indicator = screen.getByTestId("hermes-invocation-indicator");
+    expect(indicator.querySelector(".lucide-clock-3")).not.toBeNull();
+    expect(indicator.querySelector(".lucide-loader-circle")).toBeNull();
+    expect(screen.getByText("Koda is queued")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Stop" })).not.toBeInTheDocument();
+  });
+
+  it.each(["approval.request", "clarify.request"])(
+    "shows a static status marker for a Minimal bot awaiting %s", async (type) => {
+      selectAppearance({ shape: "minimal", color: "#3498DB" });
+      const onInteraction = vi.fn().mockResolvedValue(undefined);
+      render(<HermesProgressInline
+        invocations={[{ invocation: invocation(), events: [progressEvent({
+          type, status: "waiting", toolName: null, toolCallId: null,
+          payload: type === "approval.request"
+            ? { command: "pwd", choices: ["once", "deny"] }
+            : { requestId: "minimal-clarify", question: "Which approach?", choices: ["Safe"] },
+        })] }]}
+        onInteraction={onInteraction}
+      />);
+      const marker = screen.getByTestId("hermes-invocation-indicator");
+      expect(marker.querySelector(".lucide-circle-alert")).not.toBeNull();
+      expect(marker.querySelector(".lucide-loader-circle")).toBeNull();
+      expect(screen.getByText("action needed")).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: type === "approval.request" ? "Approve" : "Safe" }));
+      await waitFor(() => expect(onInteraction).toHaveBeenCalledWith(
+        expect.objectContaining({ type }), type === "approval.request" ? "once" : "Safe",
+      ));
+      await waitFor(() => expect(marker.querySelector(".lucide-loader-circle")).not.toBeNull());
+    },
+  );
+
+  it("updates running progress immediately when the workspace switches styles or loses the member", async () => {
+    selectAppearance({ shape: "ghost", color: "#00B894" });
+    const { container } = render(<HermesProgressInline
+      invocations={[{ invocation: invocation(), events: [] }]}
+    />);
+    await waitFor(() => expect(container.querySelector("[data-bot-avatar]")).toHaveAttribute("data-state", "working"));
+    act(() => selectAppearance({ shape: "minimal", color: "#00B894" }));
+    expect(screen.getByTestId("hermes-invocation-indicator").querySelector(".lucide-loader-circle")).not.toBeNull();
+    expect(container.querySelector("[data-bot-avatar]")).toBeNull();
+    act(() => selectAppearance({ shape: "cat", color: "#00B894" }));
+    await waitFor(() => expect(container.querySelector("[data-bot-avatar]")).toHaveAttribute("data-bot-avatar", "cat"));
+    expect(screen.queryByTestId("hermes-invocation-indicator")).toBeNull();
+    for (const activeWorkspace of [
+      { id: "workspace-1", members: [] } as unknown as WorkspaceWithDetails,
+      { id: "workspace-1", members: [{ userId: "bot-user-1", bot: { id: "bot-1", kind: "hermes" } }] } as WorkspaceWithDetails,
+      null,
+    ]) {
+      act(() => useWorkspacesStore.setState({ activeWorkspace }));
+      await waitFor(() => expect(container.querySelector("[data-bot-avatar]")).toHaveAttribute("data-state", "working"));
+      expect(screen.queryByTestId("hermes-invocation-indicator")).toBeNull();
+    }
+  });
+
+  it("keeps the elapsed timer ticking for Minimal", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-01-01T00:00:08Z"));
+    try {
+      selectAppearance({ shape: "minimal", color: "#3498DB" });
+      const { unmount } = render(<HermesProgressInline
+        invocations={[{ invocation: invocation(), events: [] }]}
+      />);
+      expect(screen.getByText("8s")).toBeInTheDocument();
+      act(() => vi.advanceTimersByTime(1000));
+      expect(screen.getByText("9s")).toBeInTheDocument();
+      unmount();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("collapses tool start and completion events into one row", () => {
@@ -1108,7 +1231,7 @@ describe("HermesProgressInline", () => {
     expect(screen.getByText("pnpm build")).toBeInTheDocument();
   });
 
-  it("uses the pre-avatar orb for working progress and thinking rows", () => {
+  it("hops the bot in place of an orb and keeps orbs on thinking rows", async () => {
     const { container } = render(
       <HermesProgressInline
         invocations={[
@@ -1124,13 +1247,19 @@ describe("HermesProgressInline", () => {
       />,
     );
 
-    expect(container.querySelectorAll('[data-thinking-orb="composing"]')).toHaveLength(1);
-    expect(container.querySelector("[data-bot-avatar]")).toBeNull();
-    expect(screen.getByText("Koda is working")).toBeInTheDocument();
+    const bot = await waitFor(() => {
+      const found = container.querySelector("[data-bot-avatar]");
+      expect(found).not.toBeNull();
+      return found!;
+    });
+    expect(bot).toHaveAttribute("data-state", "working");
+    expect(bot).toHaveAttribute("data-paused", "false");
+    expect(bot).toHaveAttribute("data-interactive", "false");
+    expect(container.querySelector('[data-thinking-orb="composing"]')).toBeNull();
     expect(container.querySelectorAll('[data-thinking-orb="solving"]')).toHaveLength(2);
   });
 
-  it("uses a static status marker without avatars while waiting for approval", () => {
+  it("stops working and looks around while the agent waits for an approval", async () => {
     const { container } = render(
       <HermesProgressInline
         invocations={[
@@ -1155,49 +1284,22 @@ describe("HermesProgressInline", () => {
     );
 
     expect(container.querySelector("[data-thinking-orb]")).toBeNull();
-    expect(screen.getByTestId("hermes-invocation-indicator")).toHaveAttribute("aria-hidden", "true");
-    expect(container.querySelector("[data-bot-avatar]")).toBeNull();
-    expect(screen.getByText("Koda is waiting for your approval")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Approve" })).toBeInTheDocument();
+    const bot = await waitFor(() => {
+      const found = container.querySelector("[data-bot-avatar]");
+      expect(found).not.toBeNull();
+      return found!;
+    });
+    expect(bot).toHaveAttribute("data-state", "default");
+    expect(bot).toHaveAttribute("data-paused", "false");
   });
-
-  it.each(["queued", "clarification"] as const)(
-    "uses a static status marker without avatars for %s progress",
-    (state) => {
-      const events = state === "queued" ? [] : [progressEvent({
-        type: "clarify.request",
-        status: "waiting",
-        toolCallId: null,
-        toolName: null,
-        payload: {
-          requestId: "request-static",
-          sessionKey: "session-static",
-          question: "Which checks should run?",
-          choices: ["Unit", "Build"],
-          multiSelect: false,
-          allowOther: true,
-        },
-      })];
-      const { container } = render(
-        <HermesProgressInline
-          invocations={[{
-            invocation: invocation({ status: state === "queued" ? "queued" : "running" }),
-            events,
-          }]}
-          onInteraction={vi.fn()}
-        />,
-      );
-
-      expect(screen.getByTestId("hermes-invocation-indicator")).toHaveAttribute("aria-hidden", "true");
-      expect(container.querySelector("[data-bot-avatar]")).toBeNull();
-      expect(container.querySelector("[data-thinking-orb]")).toBeNull();
-      expect(screen.getByText(state === "queued" ? "Koda is queued" : "Koda is waiting for your response")).toBeInTheDocument();
-      if (state === "clarification") {
-        expect(screen.getByRole("button", { name: "Unit" })).toBeInTheDocument();
-      }
-    },
-  );
 });
+
+function selectAppearance(avatar: BotAppearance) {
+  useWorkspacesStore.setState({ activeWorkspace: {
+    id: "workspace-1",
+    members: [{ userId: "bot-user-1", bot: { id: "bot-1", kind: "hermes", avatar } }],
+  } as WorkspaceWithDetails });
+}
 
 function invocation(
   overrides: Partial<BotInvocationPublic> = {},

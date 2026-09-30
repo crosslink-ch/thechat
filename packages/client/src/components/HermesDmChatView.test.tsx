@@ -8,6 +8,7 @@ import {
   waitFor,
 } from "@testing-library/react";
 import type {
+  BotAppearance,
   BotInvocationProgressEventPublic,
   BotInvocationPublic,
   ChatMessage,
@@ -87,6 +88,21 @@ beforeEach(() => {
 });
 
 describe("HermesDmChatView", () => {
+  it("passes the displayed conversation's Minimal identity to active progress", () => {
+    render(<HermesDmChatView
+      messages={[]}
+      loading={false}
+      typingUsers={new Map()}
+      progressInvocations={[{ invocation: invocation(), events: [] }]}
+      typingSuppressedUserIds={[]}
+      botAppearances={new Map<string, BotAppearance>([
+        ["bot-user-1", { shape: "minimal", color: "#00B894" }],
+      ])}
+      onSend={() => {}}
+    />);
+    expect(screen.getByTestId("hermes-invocation-indicator").querySelector(".lucide-loader-circle")).not.toBeNull();
+  });
+
   it("distinguishes yesterday's timestamp from today's at the same time", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date(2026, 6, 15, 12));

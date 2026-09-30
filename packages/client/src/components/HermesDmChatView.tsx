@@ -10,6 +10,7 @@ import { useMessageTopCommand } from "../hooks/useMessageTopCommand";
 import { useOlderHistoryScroll } from "../hooks/useOlderHistoryScroll";
 import { useScrollStability } from "../hooks/useScrollStability";
 import type {
+  BotAppearance,
   BotInvocationProgressEventPublic,
   ChatMessage,
 } from "@thechat/shared";
@@ -38,6 +39,7 @@ interface HermesDmChatViewProps {
   sendError?: string | null;
   typingUsers: Map<string, string>;
   progressInvocations: ActiveHermesInvocationProgress[];
+  botAppearances?: ReadonlyMap<string, BotAppearance>;
   typingSuppressedUserIds: string[];
   onSend: (
     content: string,
@@ -73,6 +75,7 @@ export function HermesDmChatView({
   sendError,
   typingUsers,
   progressInvocations,
+  botAppearances,
   typingSuppressedUserIds,
   onSend,
   onInteraction,
@@ -419,6 +422,7 @@ export function HermesDmChatView({
           ))}
           <HermesProgressInline
             invocations={progressInvocations}
+            botAppearances={botAppearances}
             onInteraction={onInteraction}
             onStop={onStop}
           />

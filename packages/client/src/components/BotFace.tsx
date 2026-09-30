@@ -26,6 +26,29 @@ export function BotFace({
   /** Shown while the library loads. */
   fallback?: ReactNode;
 }) {
+  // Minimal is deliberately outside the animated library: no face, pointer
+  // interaction, idle loop or motion-state remounting, even while working.
+  if (appearance.shape === "minimal") {
+    return (
+      <svg
+        data-bot-minimal="true"
+        aria-hidden="true"
+        focusable="false"
+        width={size}
+        height={size}
+        viewBox="0 0 32 32"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth={2}
+        className="shrink-0"
+        style={{ color: appearance.color }}
+      >
+        <rect x={4} y={4} width={24} height={24} rx={6} />
+        <path d="M16 10 22 16 16 22 10 16Z" />
+      </svg>
+    );
+  }
+
   return (
     <Suspense fallback={fallback}>
       {/* A new instance per motion: pausing freezes the current frame, so a

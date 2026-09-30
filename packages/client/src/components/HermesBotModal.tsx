@@ -11,7 +11,7 @@ import { useWorkspacesStore } from "../stores/workspaces";
 import { Check, Copy } from "lucide-react";
 import {
   BOT_AVATAR_COLORS,
-  BOT_AVATAR_SHAPES,
+  PLAYFUL_BOT_AVATAR_SHAPES,
   type BotAppearance,
 } from "@thechat/shared";
 import { Avatar } from "./Avatar";
@@ -54,7 +54,7 @@ const closeHermesBotModal = () => {
 function randomAppearance(): BotAppearance {
   const pick = <T,>(values: readonly T[]) =>
     values[Math.floor(Math.random() * values.length)];
-  return { shape: pick(BOT_AVATAR_SHAPES), color: pick(BOT_AVATAR_COLORS) };
+  return { shape: pick(PLAYFUL_BOT_AVATAR_SHAPES), color: pick(BOT_AVATAR_COLORS) };
 }
 
 export function HermesBotModal() {

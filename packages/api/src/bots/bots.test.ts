@@ -1450,6 +1450,32 @@ describe("Bots: Update bot", () => {
     }
   });
 
+  test("Minimal avatar survives create, update, get, list and workspace serialization", async () => {
+    const owner = await registerUser("MinimalAvatarOwner");
+    const { workspaceId } = await createWorkspaceWithGeneralChannel(owner.token, "Minimal Avatar Workspace");
+    const created = await createBot(owner.token, "Minimal Assistant", undefined, {
+      kind: "hermes", workspaceId, avatarShape: "minimal", avatarColor: "#00b894",
+    });
+    expect(created.status).toBe(200);
+    expect(created.body.avatar).toEqual({ shape: "minimal", color: "#00B894" });
+    const [stored] = await db.select().from(bots).where(eq(bots.id, created.body.id));
+    expect(stored.avatarShape).toBe("minimal");
+    const detail = await req("GET", `/bots/${created.body.id}`, undefined, owner.token);
+    expect(detail.body.avatar).toEqual(created.body.avatar);
+    const list = await req("GET", "/bots/list", undefined, owner.token);
+    expect(list.body.find((bot: { id: string }) => bot.id === created.body.id).avatar).toEqual(created.body.avatar);
+    const workspace = await req("GET", `/workspaces/${workspaceId}`, undefined, owner.token);
+    expect(workspace.body.members.find((member: { userId: string }) => member.userId === created.body.userId).bot.avatar).toEqual(created.body.avatar);
+    const playful = await req("PATCH", `/bots/${created.body.id}`, { avatarShape: "ghost" }, owner.token);
+    expect(playful.body.avatar.shape).toBe("ghost");
+    const minimal = await req("PATCH", `/bots/${created.body.id}`, { avatarShape: "minimal" }, owner.token);
+    expect(minimal.status).toBe(200);
+    expect(minimal.body.avatar.shape).toBe("minimal");
+    const reset = await req("PATCH", `/bots/${created.body.id}`, { avatarShape: null, avatarColor: null }, owner.token);
+    expect(reset.body.avatar).toEqual(defaultBotAppearance(created.body.userId));
+    expect(reset.body.avatar.shape).not.toBe("minimal");
+  });
+
   test("a bot without avatar picks shows its stable default", async () => {
     const human = await registerUser("AvatarDefaultOwner");
     const botRes = await createBot(human.token, "DefaultLook");
