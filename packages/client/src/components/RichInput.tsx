@@ -191,6 +191,12 @@ export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function Ri
         addKeyboardShortcuts() {
           return {
             Enter: ({ editor }) => {
+              // Phone/tablet Return is for writing, not sending. Use the
+              // primary pointer, not viewport width, so narrow desktop windows
+              // retain Enter-to-send and touch devices work in landscape too.
+              if (window.matchMedia?.("(pointer: coarse)").matches) {
+                return editor.commands.splitBlock();
+              }
               const submittedText = editor.getText(TEXT_OPTIONS);
               void submitIfNotEmpty(submittedText, () => {
                 // Do not erase edits made while an asynchronous submit was
@@ -266,6 +272,7 @@ export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function Ri
         role: "textbox",
         "aria-label": "Message",
         "aria-multiline": "true",
+        enterkeyhint: "enter",
         class:
           "block max-h-[200px] w-full overflow-y-auto bg-transparent px-4 pb-1.5 pt-3 font-[inherit] text-[1rem] leading-relaxed text-text outline-none",
       },

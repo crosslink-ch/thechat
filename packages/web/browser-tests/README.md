@@ -74,6 +74,25 @@ pnpm --filter @thechat/web test:browser
 On persistent devboxes, set `PLAYWRIGHT_BROWSERS_PATH` to a directory outside the
 checkout before both installation and testing.
 
+## Phone Return / desktop Enter regression
+
+```sh
+pnpm --filter @thechat/web exec node --test browser-tests/composer-keyboard.browser.mjs
+```
+
+Runs the real InputBar and draft store in Chromium and WebKit with coarse/touch
+and fine/desktop primary pointers at 390px and 1200px. Touch Enter inserts
+paragraphs (including blank lines), and only the Send button submits the exact
+multiline draft. Desktop Enter still sends even at phone-sized window widths;
+Shift+Enter remains a newline everywhere. The fixture is
+`/browser-tests/fixtures/composer-keyboard.html` on the dev server above.
+
+Set `THECHAT_KEYBOARD_EVIDENCE_DIR` to save optional screenshots outside Git.
+Keyboard events are Playwright-driven with touch/mobile browser emulation, not
+physical Android/iOS virtual keyboards. Sends are local callback captures, not
+API persistence or bot delivery. A real-device check should confirm that the
+keyboard displays Return and inserts newlines before tapping Send.
+
 `composer-scroll.browser.mjs` covers deletion of the final character using
 Backspace, forward Delete and select-all deletion, in channel/human-DM and Hermes
 chat views at desktop and narrow widths. It verifies that bottom-pinned history
