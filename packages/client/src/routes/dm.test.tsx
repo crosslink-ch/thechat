@@ -25,6 +25,7 @@ const mocks = vi.hoisted(() => ({
   messageQueryStale: false,
   participantName: "Hermes",
   participantKind: "hermes" as string | undefined,
+  participantAvatar: undefined as { shape: "minimal"; color: "#00B894" } | undefined,
 }));
 
 vi.mock("../stores/auth", () => ({
@@ -67,7 +68,7 @@ vi.mock("../hooks/useConversationDetail", () => ({
         {
           userId: "bot-user-1",
           user: { id: "bot-user-1", name: mocks.participantName, type: mocks.participantKind ? "bot" : "human" },
-          bot: mocks.participantKind ? { id: "bot-1", kind: mocks.participantKind, commands: [] } : undefined,
+          bot: mocks.participantKind ? { id: "bot-1", kind: mocks.participantKind, commands: [], avatar: mocks.participantAvatar } : undefined,
         },
       ],
     },
@@ -176,6 +177,7 @@ vi.mock("../components/HermesDmChatView", async () => {
       sendError,
       composerKey,
       draftKey,
+      botAppearances,
     }: any) => {
       const draft = useComposerDraftsStore(
         (state) => state.drafts[draftKey] ?? "",
@@ -187,6 +189,7 @@ vi.mock("../components/HermesDmChatView", async () => {
           data-message-count={messages.length}
           data-composer-key={composerKey}
           data-draft-key={draftKey}
+          data-bot-style={botAppearances?.get("bot-user-1")?.shape}
         >
           <textarea
             aria-label="Task prompt draft"
@@ -280,11 +283,18 @@ beforeEach(() => {
   mocks.messageQueryStale = false;
   mocks.participantName = "Hermes";
   mocks.participantKind = "hermes";
+  mocks.participantAvatar = undefined;
   mocks.createThread.mockResolvedValue(persistedThread);
   mocks.addOptimisticSentMessage.mockReturnValue("client-message-1");
 });
 
 describe("DmRoute deferred Hermes task drafts", () => {
+  it("uses the displayed participant's Minimal identity with unrelated sidebar members", async () => {
+    mocks.participantAvatar = { shape: "minimal", color: "#00B894" };
+    await renderRoute("/dm/dm-1?threadId=thread-1");
+    expect(screen.getByTestId("hermes-chat")).toHaveAttribute("data-bot-style", "minimal");
+  });
+
   it("shows the actual participant and follows the selected task in the header", async () => {
     mocks.threads = [persistedThread];
     await renderRoute("/dm/dm-1", true);

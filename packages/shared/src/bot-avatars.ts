@@ -1,8 +1,8 @@
 /**
- * Bot avatar shapes, as named by the bot-avatars library. Kept here so the API
- * can validate saved choices without loading the React library.
+ * Original playful shapes, in their stable default/random selection order.
+ * Keep this pool separate: opt-in styles must never change existing defaults.
  */
-export const BOT_AVATAR_SHAPES = [
+export const PLAYFUL_BOT_AVATAR_SHAPES = [
   "clover",
   "flower",
   "triangle",
@@ -22,6 +22,9 @@ export const BOT_AVATAR_SHAPES = [
   "pebble",
   "puddle",
 ] as const;
+
+/** Supported saved choices. Minimal is selected manually, never automatically. */
+export const BOT_AVATAR_SHAPES = [...PLAYFUL_BOT_AVATAR_SHAPES, "minimal"] as const;
 
 export type BotAvatarShape = (typeof BOT_AVATAR_SHAPES)[number];
 
@@ -88,10 +91,10 @@ export function defaultBotAppearance(botUserId: string): BotAppearance {
   }
   const value = hash >>> 0;
   return {
-    shape: BOT_AVATAR_SHAPES[value % BOT_AVATAR_SHAPES.length],
+    shape: PLAYFUL_BOT_AVATAR_SHAPES[value % PLAYFUL_BOT_AVATAR_SHAPES.length],
     color:
       BOT_AVATAR_COLORS[
-        Math.floor(value / BOT_AVATAR_SHAPES.length) % BOT_AVATAR_COLORS.length
+        Math.floor(value / PLAYFUL_BOT_AVATAR_SHAPES.length) % BOT_AVATAR_COLORS.length
       ],
   };
 }

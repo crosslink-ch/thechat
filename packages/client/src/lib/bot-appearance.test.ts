@@ -13,10 +13,33 @@ import { useBotAppearance } from "./bot-appearance";
 const botUserId = "11111111-2222-4333-8444-555555555555";
 
 afterEach(() => {
-  useWorkspacesStore.setState({ activeWorkspace: null });
+  act(() => useWorkspacesStore.setState({ activeWorkspace: null }));
 });
 
 describe("bot appearance", () => {
+  it("resolves an explicitly saved Minimal appearance", () => {
+    expect(resolveBotAppearance(botUserId, {
+      avatarShape: "minimal", avatarColor: "#00b894",
+    })).toEqual({ shape: "minimal", color: "#00B894" });
+  });
+  it("preserves every legacy default shape and colour without opting into Minimal", () => {
+    const legacyShapes = ["clover", "flower", "triangle", "square", "blob", "ghost",
+      "circle", "drop", "star", "droid", "mech", "alien", "hexagon", "cat",
+      "cloud", "pill", "pebble", "puddle"];
+    for (const id of ["", botUserId, "🤖", ...Array.from({ length: 10_000 }, (_, i) => `bot-${i}`)]) {
+      let hash = 0;
+      for (let i = 0; i < id.length; i++) hash = (hash * 31 + id.charCodeAt(i)) | 0;
+      const value = hash >>> 0;
+      const expected = {
+        shape: legacyShapes[value % 18],
+        color: BOT_AVATAR_COLORS[Math.floor(value / 18) % 22],
+      };
+      expect(defaultBotAppearance(id)).toEqual(expected);
+      expect(resolveBotAppearance(id, {})).toEqual(expected);
+      expect(resolveBotAppearance(id, { avatarShape: "invalid" })).toEqual(expected);
+    }
+  });
+
   it("gives each bot a stable default from the palette", () => {
     const first = defaultBotAppearance(botUserId);
     expect(defaultBotAppearance(botUserId)).toEqual(first);

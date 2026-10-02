@@ -94,6 +94,38 @@ beforeEach(() => {
 });
 
 describe("HermesBotModal", () => {
+  it.each(Array.from({ length: 18 }, (_, i) => (i + 0.99) / 18))(
+    "never automatically picks Minimal when randomness is %s", async (random) => {
+      const randomSpy = vi.spyOn(Math, "random").mockReturnValue(random);
+      try {
+        render(<HermesBotModal />);
+        fireEvent.change(screen.getByLabelText("Bot name"), { target: { value: "Untouched Bot" } });
+        fireEvent.click(screen.getByRole("button", { name: "Add Bot" }));
+        await waitFor(() => expect(createPostMock).toHaveBeenCalledTimes(1));
+        const shape = createPostMock.mock.calls[0][0].avatarShape;
+        expect(shape).not.toBe("minimal");
+        expect(shape).toBe(BOT_AVATAR_SHAPES[Math.floor(random * 18)]);
+      } finally {
+        randomSpy.mockRestore();
+      }
+    },
+  );
+  it("explains Minimal as opt-in and submits it only after a manual pick", async () => {
+    render(<HermesBotModal />);
+    fireEvent.click(screen.getByRole("button", { name: "Change avatar" }));
+    const minimal = screen.getByRole("button", { name: "Minimal bot" });
+    expect(minimal).toHaveAttribute("aria-pressed", "false");
+    expect(screen.getByText(/Minimal is a static, faceless glyph/)).toHaveTextContent(
+      /standard activity indicators.*only when you select it/,
+    );
+    fireEvent.click(minimal);
+    expect(minimal).toHaveAttribute("aria-pressed", "true");
+    fireEvent.change(screen.getByLabelText("Bot name"), { target: { value: "Minimal Assistant" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add Bot" }));
+    await waitFor(() => expect(createPostMock).toHaveBeenCalledTimes(1));
+    expect(createPostMock.mock.calls[0][0]).toMatchObject({ avatarShape: "minimal" });
+  });
+
   it("asks for an eligible workspace and bot name only", () => {
     render(<HermesBotModal />);
 

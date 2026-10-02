@@ -8,7 +8,7 @@ import {
   useBotRuntimeCache,
   submitHermesInteraction,
 } from "../hooks/useBotRuntime";
-import type { BotInvocationProgressEventPublic } from "@thechat/shared";
+import type { BotAppearance, BotInvocationProgressEventPublic } from "@thechat/shared";
 import { useConversationThreads } from "../hooks/useConversationThreads";
 import { useConversationDetail } from "../hooks/useConversationDetail";
 import { useScopedCommands } from "../hooks/useScopedCommands";
@@ -83,6 +83,14 @@ export function DmRoute() {
   const otherParticipant = useMemo(
     () => conversation?.participants.find((p) => p.userId !== user?.id) ?? null,
     [conversation, user?.id],
+  );
+  const progressBotAppearances = useMemo(
+    () => new Map<string, BotAppearance>(
+      conversation?.participants.flatMap((participant) =>
+        participant.bot?.avatar ? [[participant.userId, participant.bot.avatar] as const] : [],
+      ),
+    ),
+    [conversation],
   );
   const isHermesDm = conversation?.type === "direct" && otherParticipant?.bot?.kind === "hermes";
   const registeredBotCommands = otherParticipant?.bot?.commands;
@@ -640,6 +648,7 @@ export function DmRoute() {
             sendError={draftSendError ?? channelChat.sendError}
             typingUsers={typingUsers}
             progressInvocations={activeHermesProgress.invocations}
+            botAppearances={progressBotAppearances}
             typingSuppressedUserIds={activeHermesProgress.typingSuppressedUserIds}
             onSend={handleSend}
             onInteraction={handleHermesInteraction}

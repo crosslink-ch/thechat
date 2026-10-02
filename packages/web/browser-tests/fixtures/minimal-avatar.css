@@ -1,0 +1,4 @@
+@import "@thechat/client/styles";
+
+/* Fixture layout utilities in addition to the real production component CSS. */
+@source "./minimal-avatar.tsx";

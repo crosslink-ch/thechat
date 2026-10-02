@@ -82,6 +82,10 @@ export function BotAppearancePicker({
             );
           })}
         </div>
+        <p className="text-[0.786rem] leading-relaxed text-text-dimmed">
+          Minimal is a static, faceless glyph with standard activity indicators.
+          It is used only when you select it, never by default or at random.
+        </p>
       </div>
 
       <div className="grid gap-2">

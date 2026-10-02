@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import type {
+  BotAppearance,
   BotInvocationProgressEventPublic,
   BotInvocationPublic,
   MessagePart,
@@ -35,6 +36,7 @@ import {
   CircleAlert,
   Clock3,
   Info,
+  LoaderCircle,
   Square,
   TriangleAlert,
   Wrench,
@@ -45,7 +47,9 @@ import {
   StepIcon,
   StepOrb,
 } from "./hermes-steps";
-import { OrbLoader } from "./OrbLoader";
+import { botAppearanceFor, botAvatarsOf } from "../lib/bot-appearance";
+import { useWorkspacesStore } from "../stores/workspaces";
+import { Avatar } from "./Avatar";
 import { buttonClass, inputClass, type ButtonVariant } from "./ui";
 
 type ToolCallPart = Extract<MessagePart, { type: "tool-call" }>;
@@ -84,8 +88,11 @@ export function HermesProgressInline({
   invocations,
   onInteraction,
   onStop,
+  botAppearances,
 }: {
   invocations: ActiveHermesInvocationProgress[];
+  /** Saved identities from the displayed conversation, independent of sidebar selection. */
+  botAppearances?: ReadonlyMap<string, BotAppearance>;
   onInteraction?: (
     event: BotInvocationProgressEventPublic,
     response: string | string[],
@@ -96,6 +103,7 @@ export function HermesProgressInline({
   const clarifyResponses = useHermesClarificationsStore(
     (state) => state.responses,
   );
+  const members = useWorkspacesStore((state) => state.activeWorkspace?.members);
   const nowMs = useNowTick(invocations.length > 0);
   const [expandedRowKeys, setExpandedRowKeys] = useState<Set<string>>(
     () => new Set(),
@@ -167,6 +175,11 @@ export function HermesProgressInline({
           clarifyStates,
         );
         const working = invocation.status === "running" && !needsInteraction;
+        const appearance = botAppearanceFor(
+          invocation.botUserId,
+          (members && botAvatarsOf(members).get(invocation.botUserId))
+            ?? botAppearances?.get(invocation.botUserId),
+        );
         let visibleRows = rows.slice(-MAX_VISIBLE_ROWS);
         // Keep pending interactions actionable even when older than the
         // visible window; ordinary activity remains in event order.
@@ -250,18 +263,28 @@ export function HermesProgressInline({
             key={invocation.id}
             className="flex gap-2.5 px-5 py-2.5 transition-colors duration-100 hover:bg-raised/30"
           >
-            {working ? (
-              <span className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-full bg-text">
-                <OrbLoader state="composing" design="avatar" size={26} invert />
-              </span>
-            ) : (
+            {/* Only the explicitly selected Minimal style uses standard status
+                indicators. Playful avatars retain their hopping/idle behavior. */}
+            {appearance.shape === "minimal" ? (
               <span
                 data-testid="hermes-invocation-indicator"
                 aria-hidden="true"
                 className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-full bg-elevated text-text-dimmed"
               >
-                {needsInteraction ? <CircleAlert size={18} /> : <Clock3 size={18} />}
+                {needsInteraction ? <CircleAlert size={18} /> : working ? (
+                  <LoaderCircle size={18} className="motion-safe:animate-spin" />
+                ) : <Clock3 size={18} />}
               </span>
+            ) : (
+              <Avatar
+                name={invocation.botName}
+                colorKey={invocation.botUserId}
+                bot
+                botAvatar={appearance}
+                botMotion={working ? "working" : needsInteraction ? "idle" : "still"}
+                size={32}
+                className="mt-0.5 size-8 text-[0.857rem]"
+              />
             )}
             <div className="min-w-0 flex-1">
               <div className="mb-1 flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1">

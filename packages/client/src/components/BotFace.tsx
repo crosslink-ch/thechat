@@ -1,4 +1,5 @@
 import { lazy, Suspense, type ReactNode } from "react";
+import { Orbit } from "lucide-react";
 import type { BotAppearance } from "@thechat/shared";
 
 // Loaded once a bot is on screen, so screens without bots start no slower.
@@ -12,7 +13,7 @@ const BotAvatar = lazy(() => import("bot-avatars"));
  */
 export type BotMotion = "still" | "idle" | "live" | "working" | "sleeping";
 
-/** An animated bot-avatars body. Decorative: the bot's name sits beside it. */
+/** A bot avatar. Decorative: the bot's name sits beside it. */
 export function BotFace({
   appearance,
   size,
@@ -26,6 +27,22 @@ export function BotFace({
   /** Shown while the library loads. */
   fallback?: ReactNode;
 }) {
+  // Lucide's Orbit artwork stays outside the animated library: no face,
+  // pointer interaction, idle loop or motion-state remounting while working.
+  if (appearance.shape === "minimal") {
+    return (
+      <Orbit
+        data-bot-minimal="true"
+        aria-hidden="true"
+        focusable="false"
+        size={size}
+        strokeWidth={1.75}
+        className="shrink-0"
+        style={{ color: appearance.color }}
+      />
+    );
+  }
+
   return (
     <Suspense fallback={fallback}>
       {/* A new instance per motion: pausing freezes the current frame, so a
