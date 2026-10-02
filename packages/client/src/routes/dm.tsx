@@ -552,7 +552,7 @@ export function DmRoute() {
     if (!isHermesDm) {
       return channelSendMessage(content, attachmentIds);
     }
-    if (draftTaskActive && !content.trim()) return false;
+    if (draftTaskActive && !content.trim() && attachmentIds.length === 0) return false;
 
     const slash = parseHermesSlashCommand(content);
     const canonical = slash
