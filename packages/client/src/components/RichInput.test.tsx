@@ -196,6 +196,11 @@ describe("RichInput", () => {
     const { getByRole } = renderRichInput();
     expect(getByRole("textbox", { name: "Message" })).toHaveAttribute("aria-multiline", "true");
   });
+  it("requests a Return key from virtual keyboards", () => {
+    const { editor } = renderRichInput();
+    expect(editor).toHaveAttribute("enterkeyhint", "enter");
+  });
+
   it("renders an initial multiline draft", () => {
     const { editor } = renderRichInput("first line\nsecond line");
 
@@ -220,6 +225,27 @@ describe("RichInput", () => {
 
     expect(onSubmit).toHaveBeenCalledWith("hello");
     expect(onTextChange).toHaveBeenLastCalledWith("");
+  });
+
+  it("inserts newlines instead of submitting on a touch-primary device", () => {
+    vi.stubGlobal("matchMedia", (query: string) => ({
+      matches: query === "(pointer: coarse)",
+    }));
+    try {
+      const { ref, onSubmit, onTextChange, editor } = renderRichInput();
+      act(() => ref.current!.setText("hello"));
+      fireEvent.keyDown(editor, { key: "Enter" });
+      expect(onSubmit).not.toHaveBeenCalled();
+      expect(editor.querySelectorAll("p")).toHaveLength(2);
+      expect(onTextChange).toHaveBeenLastCalledWith("hello\n");
+      fireEvent.keyDown(editor, { key: "Enter" });
+      expect(editor.querySelectorAll("p")).toHaveLength(3);
+      act(() => ref.current!.setText("hello\n\nworld"));
+      act(() => ref.current!.submit());
+      expect(onSubmit).toHaveBeenCalledExactlyOnceWith("hello\n\nworld");
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   // Regression: Shift+Enter used to insert hard breaks; WebKitGTK renders the
