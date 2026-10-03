@@ -23,7 +23,8 @@ describe("BotFace", () => {
     for (const motion of ["still", "idle", "live", "working", "sleeping"] as const) {
       rerender(<BotFace appearance={appearance} size={32} motion={motion} />);
       expect(container.querySelector("[data-bot-minimal]")!.innerHTML).toBe(drawing);
-      expect(container.querySelector("[data-bot-avatar], circle, ellipse, animate, animateTransform")).toBeNull();
+      // Orbit's SVG geometry is static artwork, not an animation signal.
+      expect(container.querySelector("[data-bot-avatar], canvas, animate, animateTransform")).toBeNull();
       expect(glyph).toHaveAttribute("aria-hidden", "true");
       expect(glyph).toHaveAttribute("width", "32");
       expect(glyph).toHaveStyle({ color: "#00B894" });

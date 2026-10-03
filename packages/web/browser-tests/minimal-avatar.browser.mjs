@@ -142,7 +142,8 @@ for (const [engineName, engine] of Object.entries({ chromium, webkit })) {
             await page.mouse.move(0, 0);
             await settle(page);
             assert.deepEqual(await glyph.evaluate((el) => ({ html: el.innerHTML, transform: getComputedStyle(el).transform })), before);
-            assert.equal(await sample.locator("canvas, circle, ellipse, animate, animateTransform").count(), 0);
+            // Orbit's SVG geometry is static artwork, not an animation signal.
+            assert.equal(await sample.locator("[data-bot-avatar], canvas, animate, animateTransform").count(), 0);
             assert.equal((await styles(glyph)).animation, "none");
             assert.equal(await glyph.evaluate((el) => el.getAnimations({ subtree: true }).length), 0);
           }
