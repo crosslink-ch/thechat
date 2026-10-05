@@ -505,6 +505,25 @@ export interface BotInvocationProgressEventPublic {
   createdAt: string;
 }
 
+export interface VaultUnlockRequest {
+  version: 1;
+  requestId: string;
+  sessionKey: string;
+  profileId: string;
+  backend: "bitwarden";
+  ownerUserId: string;
+  requesterUserId: string;
+  nonce: string;
+  expiresAt: number;
+  algorithm: "RSA-OAEP-3072-SHA256+A256GCM";
+  publicKeySpkiB64: string;
+}
+
+/** Secret ciphertext travels only through the dedicated transient POST. */
+export type VaultUnlockResponse =
+  | { version: 1; action: "submit"; wrappedKeyB64: string; ivB64: string; ciphertextB64: string }
+  | { version: 1; action: "cancel" };
+
 export interface BotRuntimeSnapshot {
   invocations: BotInvocationPublic[];
   events: BotInvocationProgressEventPublic[];

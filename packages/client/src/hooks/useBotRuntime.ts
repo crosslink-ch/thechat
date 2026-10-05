@@ -5,6 +5,7 @@ import type {
   BotInvocationProgressEventPublic,
   BotInvocationPublic,
   BotRuntimeSnapshot,
+  VaultUnlockResponse,
 } from "@thechat/shared";
 import { api } from "../lib/api";
 import { authHeaders, edenErrorMessage } from "../lib/eden";
@@ -49,6 +50,13 @@ export async function submitHermesInteraction(
       edenErrorMessage(error, "Failed to deliver the Hermes response"),
     );
   }
+}
+
+export async function submitHermesVaultUnlock(invocationId: string, eventId: string, response: VaultUnlockResponse, token: string | null): Promise<void> {
+  try {
+    const {data,error} = await api["bot-runtime"].invocations({invocationId}).interactions({eventId})["vault-unlock"].post(response,authHeaders(token));
+    if (error || !data || !("ok" in data) || data.ok !== true) throw new Error();
+  } catch { throw new Error("Could not deliver the vault unlock response"); }
 }
 
 export function useBotRuntime(

@@ -5,6 +5,7 @@ import type {
 } from "@thechat/shared";
 import { deriveApprovalStates } from "./hermes-approvals";
 import { deriveClarifyStates } from "./hermes-clarifications";
+import { deriveVaultUnlockStates } from "./hermes-vault-unlock";
 
 export interface ActiveHermesProgress {
   invocations: ActiveHermesInvocationProgress[];
@@ -93,6 +94,8 @@ function selectActiveHermesProgress(
             ) ||
             deriveClarifyStates(events, {}).some(
               (clarify) => clarify.status === "pending",
+            ) || deriveVaultUnlockStates(events).some(
+              state=>state.outcome === null,
             )
           );
         })
