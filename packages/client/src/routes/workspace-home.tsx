@@ -68,7 +68,7 @@ export function WorkspaceHomeRoute() {
       <div className="mx-auto flex h-full w-full min-w-0 max-w-[620px] flex-col justify-center px-6 py-8">
         <h1 className="text-[1.429rem] font-semibold tracking-tight text-text">Workspace unavailable</h1>
         <p role="alert" className="mt-1 text-[0.929rem] leading-relaxed text-text-muted">
-          {error} Check your connection and try again.
+          You're offline. Check your internet connection.
         </p>
         <button type="button" className={`mt-5 w-fit ${buttonClass("secondary", "md")}`} onClick={() => void initialize()}>
           Retry

@@ -95,12 +95,11 @@ it("does not label ordinary workspace loading as a connection failure", () => {
   expect(screen.queryByRole("status")).not.toBeInTheDocument();
 });
 
-it("shows realtime reconnection without calling an initial connection Internet offline", () => {
+it("shows the shared offline wording during realtime reconnection", () => {
   render(<RootView authLoading={false} authenticated />);
   expect(screen.queryByRole("status")).not.toBeInTheDocument();
   act(() => useWebSocketStore.setState({ connected: false, reconnecting: true }));
-  expect(screen.getByRole("status")).toHaveTextContent("Connection lost. Reconnecting");
-  expect(screen.getByRole("status")).not.toHaveTextContent("You're offline");
+  expect(screen.getByRole("status").textContent).toBe("You're offline. Check your internet connection.");
   act(() => useWebSocketStore.setState({ connected: true, reconnecting: false }));
   expect(screen.queryByRole("status")).not.toBeInTheDocument();
 });
@@ -112,8 +111,8 @@ it("keeps workspace failures visible across routes and retries without restartin
   });
   const connect = vi.spyOn(useWebSocketStore.getState(), "connect");
   const mounted = render(<RootView authLoading={false} authenticated routeKey="/channel/a" />);
-  expect(screen.getByRole("status")).toHaveTextContent("Unable to load workspaces.");
-  expect(screen.getByRole("status")).not.toHaveTextContent("You're offline");
+  expect(screen.getByRole("status")).toHaveTextContent("You're offline. Check your internet connection.");
+  expect(screen.getByRole("status")).not.toHaveTextContent("Unable to load");
   mounted.rerender(<RootView authLoading={false} authenticated routeKey="/dm/b" />);
   await userEvent.click(screen.getByRole("button", { name: "Retry" }));
   expect(initialize).toHaveBeenCalledOnce();

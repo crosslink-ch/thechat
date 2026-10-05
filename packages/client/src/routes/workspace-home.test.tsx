@@ -103,7 +103,7 @@ describe("WorkspaceHomeRoute", () => {
       useWorkspacesStore.setState({ error: null, loaded: true });
     });
     await renderHome();
-    expect(screen.getByRole("alert")).toHaveTextContent("Unable to load workspaces.");
+    expect(screen.getByRole("alert").textContent).toBe("You're offline. Check your internet connection.");
     expect(screen.queryByRole("button", { name: "Create workspace" })).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Retry" }));
     expect(initialize).toHaveBeenCalledOnce();

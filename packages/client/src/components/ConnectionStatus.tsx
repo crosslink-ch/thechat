@@ -36,13 +36,9 @@ export function ConnectionStatus({ authenticated }: { authenticated: boolean }) 
       window.removeEventListener("offline", update);
     };
   }, [authenticated]);
-  const message = !online
+  const message = !online || (authenticated && (reconnecting || error))
     ? "You're offline. Check your internet connection."
-    : authenticated && reconnecting
-      ? "Connection lost. Reconnecting to TheChat..."
-      : authenticated && error
-        ? `${error} Check your connection and retry.`
-        : null;
+    : null;
   if (!message) return null;
 
   return (
