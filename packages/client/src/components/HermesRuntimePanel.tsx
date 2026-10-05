@@ -194,7 +194,9 @@ export function HermesRuntimePanel({
                     onSelect={onSelectThread}
                     onRename={onRenameThread}
                     editing={editingThreadId === thread.id}
-                    onEditingChange={(editing) => setEditingThreadId(editing ? thread.id : null)}
+                    onEditingChange={(editing) => setEditingThreadId((current) =>
+                      editing ? thread.id : current === thread.id ? null : current,
+                    )}
                   />
                 ))}
               </div>

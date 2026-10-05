@@ -32,7 +32,7 @@ describe("Hermes task Rename command", () => {
     const user = userEvent.setup();
     const onRenameThread = vi.fn().mockResolvedValue(undefined);
     render(panel(onRenameThread, secondTask.id));
-    act(() => openPaletteInCommandMode());
+    await act(async () => openPaletteInCommandMode());
     await user.type(screen.getByPlaceholderText("Type a command..."), "Rename");
     expect(screen.getByRole("button", { name: "Rename" })).toBeInTheDocument();
     await user.keyboard("{Enter}");
@@ -53,7 +53,7 @@ describe("Hermes task Rename command", () => {
     const user = userEvent.setup();
     render(panel());
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-    act(() => openPaletteInCommandMode());
+    await act(async () => openPaletteInCommandMode());
     await user.click(screen.getByRole("button", { name: "Rename" }));
     expect(screen.getByRole("dialog", { name: "Tasks and activity" })).toBeInTheDocument();
     const input = screen.getByRole("textbox", { name: "Task name" });
@@ -82,7 +82,7 @@ describe("Hermes task Rename command", () => {
     const user = userEvent.setup();
     const { rerender, unmount } = render(panel());
     rerender(panel(undefined, secondTask.id));
-    act(() => openPaletteInCommandMode());
+    await act(async () => openPaletteInCommandMode());
     await user.click(screen.getByRole("button", { name: "Rename" }));
     expect(screen.getByRole("textbox", { name: "Task name" })).toHaveValue(secondTask.title);
     unmount();
@@ -93,7 +93,7 @@ describe("Hermes task Rename command", () => {
     const user = userEvent.setup();
     const onRenameThread = vi.fn().mockRejectedValueOnce(new Error("Offline")).mockResolvedValue(undefined);
     render(panel(onRenameThread));
-    act(() => openPaletteInCommandMode());
+    await act(async () => openPaletteInCommandMode());
     await user.click(screen.getByRole("button", { name: "Rename" }));
     const input = screen.getByRole("textbox", { name: "Task name" });
     await user.clear(input);
@@ -103,7 +103,7 @@ describe("Hermes task Rename command", () => {
     await user.keyboard("{Escape}");
     expect(screen.queryByRole("textbox", { name: "Task name" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Rename First task" })).toHaveFocus();
-    act(() => openPaletteInCommandMode());
+    await act(async () => openPaletteInCommandMode());
     await user.click(screen.getByRole("button", { name: "Rename" }));
     await user.keyboard("Retried title{Enter}");
     expect(await screen.findByRole("alert")).toHaveTextContent("Could not rename task. Try again.");
@@ -119,11 +119,36 @@ describe("Hermes task Rename command", () => {
       threads={[{ ...firstTask, title }]} activeThreadId={firstTask.id} onRenameThread={onRenameThread} />;
     const { rerender } = render(<>{view(firstTask.title)}<CommandPalette /></>);
     rerender(<>{view("A longer updated task title")}<CommandPalette /></>);
-    act(() => openPaletteInCommandMode());
+    await act(async () => openPaletteInCommandMode());
     await user.click(screen.getByRole("button", { name: "Rename" }));
     const input = screen.getByRole("textbox", { name: "Task name" });
     expect(input).toHaveValue("A longer updated task title");
     expect(input).toHaveProperty("selectionStart", 0);
     expect(input).toHaveProperty("selectionEnd", "A longer updated task title".length);
+  });
+
+  it("keeps another task's draft open when an earlier save completes", async () => {
+    const user = userEvent.setup();
+    let finishFirstSave!: () => void;
+    const firstSave = new Promise<void>(resolve => { finishFirstSave = resolve; });
+    const onRenameThread = vi.fn().mockReturnValueOnce(firstSave).mockResolvedValue(undefined);
+    const { rerender } = render(panel(onRenameThread));
+    await act(async () => openPaletteInCommandMode());
+    await user.click(screen.getByRole("button", { name: "Rename" }));
+    await user.keyboard("Updated first task{Enter}");
+    expect(onRenameThread).toHaveBeenCalledWith(firstTask.id, "Updated first task");
+
+    rerender(panel(onRenameThread, secondTask.id));
+    await act(async () => openPaletteInCommandMode());
+    await user.click(screen.getByRole("button", { name: "Rename" }));
+    await user.keyboard("Second task draft");
+    await act(async () => finishFirstSave());
+
+    const input = screen.getByRole("textbox", { name: "Task name" });
+    expect(input).toHaveValue("Second task draft");
+    expect(input).toHaveFocus();
+    expect(onRenameThread).toHaveBeenCalledTimes(1);
+    await user.keyboard("{Enter}");
+    await waitFor(() => expect(onRenameThread).toHaveBeenLastCalledWith(secondTask.id, "Second task draft"));
   });
 });
