@@ -1,4 +1,5 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import userEvent from "@testing-library/user-event";
 import { render, screen, act, waitFor } from "@testing-library/react";
 import {
   RouterProvider,
@@ -62,15 +63,53 @@ async function renderHome(initialEntry = "/") {
   return result;
 }
 
+const initializeWorkspaces = useWorkspacesStore.getState().initialize;
+const selectWorkspace = useWorkspacesStore.getState().selectWorkspace;
+
 beforeEach(() => {
   useWorkspacesStore.setState({
+    initialize: initializeWorkspaces,
+    selectWorkspace,
     workspaces: [],
     activeWorkspace: null,
     loading: false,
+    loaded: true,
+    error: null,
   });
 });
 
+afterEach(() => vi.restoreAllMocks());
+
 describe("WorkspaceHomeRoute", () => {
+  it("does not show creation before the first list response", async () => {
+    useWorkspacesStore.setState({ loaded: false });
+    await renderHome();
+    expect(screen.getByText("Loading workspace...")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Create workspace" })).not.toBeInTheDocument();
+  });
+
+  it("does not automatically retry a failed single-workspace selection on new list references", async () => {
+    const list = [{ id: "ws-1", name: "Team Alpha", role: "owner" as const, createdAt: "2026-01-01", updatedAt: "2026-01-01" }];
+    useWorkspacesStore.setState({ workspaces: list, error: "Unable to load workspace." });
+    const select = vi.spyOn(useWorkspacesStore.getState(), "selectWorkspace").mockResolvedValue(false);
+    await renderHome();
+    await act(async () => { useWorkspacesStore.setState({ workspaces: [...list] }); });
+    expect(select).not.toHaveBeenCalled();
+    expect(screen.getByRole("alert")).toBeInTheDocument();
+  });
+  it("shows a retryable loading error instead of pretending the workspace list is empty", async () => {
+    useWorkspacesStore.setState({ loaded: false, error: "Unable to load workspaces." });
+    const initialize = vi.spyOn(useWorkspacesStore.getState(), "initialize").mockImplementation(async () => {
+      useWorkspacesStore.setState({ error: null, loaded: true });
+    });
+    await renderHome();
+    expect(screen.getByRole("alert")).toHaveTextContent("Unable to load workspaces.");
+    expect(screen.queryByRole("button", { name: "Create workspace" })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(initialize).toHaveBeenCalledOnce();
+    expect(await screen.findByRole("button", { name: "Create workspace" })).toBeInTheDocument();
+  });
+
   it("routes an active workspace to its first channel", async () => {
     useWorkspacesStore.setState({
       workspaces: [{ id: "ws-1", name: "Team Alpha", role: "owner", createdAt: "2026-01-01", updatedAt: "2026-01-01" }],
