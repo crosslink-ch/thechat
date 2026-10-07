@@ -7,6 +7,9 @@ import {
   type KeyboardEvent,
 } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
+import { closePalette } from "../CommandPalette";
+import type { Command } from "../commands";
+import { useScopedCommands } from "../hooks/useScopedCommands";
 import { useMediaQuery } from "./ResponsiveShell";
 import { HeaderAction } from "./HeaderActions";
 import { GitBranch, Inbox, Pencil, Plus, X } from "lucide-react";
@@ -65,6 +68,23 @@ export function HermesRuntimePanel({
 }) {
   const mobile = useMediaQuery("(max-width: 899px)");
   const [open, setOpen] = useState(false);
+  const [editingThreadId, setEditingThreadId] = useState<string | null>(null);
+  const activeThread = threads.find((thread) => thread.id === activeThreadId);
+  const commands = useMemo<Command[]>(() => [{
+    id: "hermes.rename-task",
+    label: "Rename",
+    shortcut: null,
+    keybinding: null,
+    enabled: !!activeThread && !!onRenameThread && !draftTaskActive,
+    priority: 100,
+    execute: () => {
+      if (!activeThread || !onRenameThread || draftTaskActive) return;
+      closePalette();
+      setEditingThreadId(activeThread.id);
+      if (mobile) setOpen(true);
+    },
+  }], [activeThread, onRenameThread, draftTaskActive, mobile]);
+  useScopedCommands(commands);
   useEffect(() => setOpen(false), [mobile, botName]);
   useEffect(() => {
     const dismiss = () => setOpen(false);
@@ -173,6 +193,10 @@ export function HermesRuntimePanel({
                     }
                     onSelect={onSelectThread}
                     onRename={onRenameThread}
+                    editing={editingThreadId === thread.id}
+                    onEditingChange={(editing) => setEditingThreadId((current) =>
+                      editing ? thread.id : current === thread.id ? null : current,
+                    )}
                   />
                 ))}
               </div>
@@ -251,6 +275,8 @@ function ThreadRow({
   unread,
   onSelect,
   onRename,
+  editing,
+  onEditingChange: setEditing,
 }: {
   thread: ConversationThreadPublic;
   active: boolean;
@@ -260,8 +286,9 @@ function ThreadRow({
   unread?: boolean;
   onSelect?: (threadId: string | null) => void;
   onRename?: (threadId: string, title: string) => Promise<unknown>;
+  editing: boolean;
+  onEditingChange: (editing: boolean) => void;
 }) {
-  const [editing, setEditing] = useState(false);
   const [draftTitle, setDraftTitle] = useState(thread.title);
   const [saving, setSaving] = useState(false);
   const [renameError, setRenameError] = useState<string | null>(null);
@@ -280,7 +307,12 @@ function ThreadRow({
       : "border-border-subtle bg-raised text-text-dimmed group-hover:text-text-muted";
 
   useEffect(() => {
+    if (!editing) setDraftTitle(thread.title);
+  }, [thread.title, editing]);
+
+  useEffect(() => {
     if (!editing) return;
+    setRenameError(null);
     renameInputRef.current?.focus();
     renameInputRef.current?.select();
   }, [editing]);
