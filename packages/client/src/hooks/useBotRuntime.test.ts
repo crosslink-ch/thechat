@@ -32,11 +32,11 @@ describe("useBotRuntime", () => {
     vi.mocked(api["bot-runtime"].invocations).mockReturnValue({interactions} as any);
     const submit = (runtimeHooks as any).submitHermesVaultUnlock;
     expect(typeof submit).toBe("function");
-    await submit("invocation","event",{version:1,action:"cancel"},"token");
+    await submit("invocation","event",{version:2,action:"cancel"},"token");
     expect(interactions).toHaveBeenCalledWith({eventId:"event"});
-    expect(post).toHaveBeenCalledWith({version:1,action:"cancel"},{headers:{authorization:"Bearer token"}});
+    expect(post).toHaveBeenCalledWith({version:2,action:"cancel"},{headers:{authorization:"Bearer token"}});
     post.mockResolvedValue({data:null,error:{value:{error:"DO_NOT_REFLECT"}}});
-    await expect(submit("invocation","event",{version:1,action:"cancel"},"token")).rejects.toThrow("Could not deliver the vault unlock response");
+    await expect(submit("invocation","event",{version:2,action:"cancel"},"token")).rejects.toThrow("Could not deliver the vault unlock response");
   });
   beforeEach(() => {
     vi.resetAllMocks();

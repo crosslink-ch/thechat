@@ -39,6 +39,7 @@ import { updateMemberRole } from "../services/workspaces";
 import {
   closeBotProgressStoreForTests,
   createLocalBotProgressStoreForTests,
+  createRedisBotProgressStoreForTests,
   getBotProgressStore,
   setBotProgressStoreForTests,
 } from "../services/bot-progress-store";
@@ -313,6 +314,7 @@ async function addBotToWorkspace(botId: string, workspaceId: string, token: stri
 async function createHermesInteractionFixture(
   label: string,
   webhookUrl?: string,
+  nonOwnerRequester = false,
 ) {
   const human = await registerUser(`${label}Owner`);
   const { workspaceId } = await createWorkspaceWithGeneralChannel(
@@ -331,11 +333,16 @@ async function createHermesInteractionFixture(
     human.token,
   );
   expect(dmRes.status).toBe(200);
+  const requester = nonOwnerRequester ? await registerUser(`${label}Requester`) : human;
+  if (nonOwnerRequester) {
+    await db.insert(workspaceMembers).values({ workspaceId, userId: requester.user.id, role: "member" });
+    await db.insert(conversationParticipants).values({ conversationId: dmRes.body.id, userId: requester.user.id });
+  }
   const sendRes = await req(
     "POST",
     `/messages/${dmRes.body.id}`,
     { content: `Run ${label}` },
-    human.token,
+    requester.token,
   );
   expect(sendRes.status).toBe(200);
   await waitForResult(async () => {
@@ -364,6 +371,7 @@ async function createHermesInteractionFixture(
   }
   return {
     human,
+    requester,
     workspaceId,
     botRes,
     conversationId: dmRes.body.id as string,
@@ -392,13 +400,145 @@ function interactionPath(invocationId: string, eventId: string) {
   return `/bot-runtime/invocations/${invocationId}/interactions/${eventId}`;
 }
 
-function vaultRequest(owner: string) {
+function vaultRequest(requester: string) {
   const key = crypto.generateKeyPairSync("rsa", { modulusLength: 3072 }).publicKey;
-  return { version: 1, requestId: crypto.randomUUID(), sessionKey: "vault-session", profileId: "runtime-profile", backend: "bitwarden", ownerUserId: owner, requesterUserId: owner, nonce: crypto.randomBytes(32).toString("base64url"), expiresAt: Date.now() + 120_000, algorithm: "RSA-OAEP-3072-SHA256+A256GCM", publicKeySpkiB64: key.export({ format: "der", type: "spki" }).toString("base64") };
+  return { version: 2, requestId: crypto.randomUUID(), sessionKey: "vault-session", profileId: "runtime-profile", backend: "bitwarden", requesterUserId: requester, nonce: crypto.randomBytes(32).toString("base64url"), expiresAt: Date.now() + 120_000, algorithm: "RSA-OAEP-3072-SHA256+A256GCM", publicKeySpkiB64: key.export({ format: "der", type: "spki" }).toString("base64") };
 }
 
 describe("Native vault unlock", () => {
-  test("relays owner-only ciphertext with canonical signed context and no persistence", async () => {
+  test("preserves bot credential, original requester, event and current conversation admission gates", async () => {
+    const webhook = startWebhookServer(() => Response.json({ ok: true, duplicate: false }));
+    const fixture = await createHermesInteractionFixture("VaultAdmission", webhook.url, true);
+    const unrelated = await createHermesInteractionFixture("VaultUnrelated");
+    try {
+      const payload = vaultRequest(fixture.requester.user.id);
+      const progressPath = `/hermes-platform/invocations/${fixture.invocationId}/progress`;
+      expect((await req("POST", progressPath, { type: "vault.unlock.request", payload }, unrelated.botRes.body.apiKey)).status).toBe(403);
+      expect((await req("POST", progressPath, { type: "vault.unlock.request", payload: { ...payload, requesterUserId: fixture.human.user.id } }, fixture.botRes.body.apiKey)).status).toBe(403);
+      const event = await publishInteractionProgress(fixture, "vault.unlock.request", payload);
+      const response = { version: 2, action: "cancel" };
+      const path = interactionPath(fixture.invocationId, event.id) + "/vault-unlock";
+      expect((await req("POST", path, { ...response, version: 1 }, fixture.requester.token)).status).toBe(400);
+      expect((await req("POST", path, response, fixture.botRes.body.apiKey)).status).toBe(403);
+      expect((await req("POST", interactionPath(fixture.invocationId, crypto.randomUUID()) + "/vault-unlock", response, fixture.requester.token)).status).toBe(404);
+      const unauthorized = await req("POST", path, response);
+      expect(unauthorized.status).toBe(401);
+      expect(unauthorized.headers.get("cache-control")).toBe("no-store");
+      // Bitwarden must not depend on stale/current bot owner metadata.
+      await db.update(bots).set({ ownerId: unrelated.human.user.id }).where(eq(bots.id, fixture.botRes.body.id));
+      expect((await req("POST", path, response, fixture.requester.token)).status).toBe(200);
+      await db.delete(conversationParticipants).where(and(eq(conversationParticipants.conversationId, fixture.conversationId), eq(conversationParticipants.userId, fixture.requester.user.id)));
+      expect((await req("POST", path, response, fixture.requester.token)).status).toBe(403);
+      expect((await req("POST", progressPath, { type: "vault.unlock.request", payload: { ...payload, requestId: crypto.randomUUID() } }, fixture.botRes.body.apiKey)).status).toBe(403);
+      await db.insert(conversationParticipants).values({ conversationId: fixture.conversationId, userId: fixture.requester.user.id });
+      await db.delete(conversationParticipants).where(and(eq(conversationParticipants.conversationId, fixture.conversationId), eq(conversationParticipants.userId, fixture.botRes.body.userId)));
+      expect((await req("POST", path, response, fixture.requester.token)).status).toBe(403);
+      expect((await req("POST", progressPath, { type: "vault.unlock.request", payload }, fixture.botRes.body.apiKey)).status).toBe(403);
+      expect(webhook.requests).toHaveLength(1);
+    } finally { webhook.stop(); }
+  });
+  test("rejects a concurrent changed request without replacing the atomic first context", async () => {
+    const fixture = await createHermesInteractionFixture("VaultConcurrentRetry", undefined, true);
+    const store = createLocalBotProgressStoreForTests();
+    let reads = 0;
+    let release!: () => void;
+    const barrier = new Promise<void>(resolve => { release = resolve; });
+    await setBotProgressStoreForTests({
+      append: input => store.append(input),
+      touch: input => store.touch(input),
+      clear: input => store.clear(input),
+      findRequest: (...args) => store.findRequest!(...args),
+      listForConversation: async (...args) => {
+        const events = await store.listForConversation(...args);
+        reads += 1;
+        if (reads <= 2) { if (reads === 2) release(); await barrier; }
+        return events;
+      },
+    });
+    try {
+      const payload = vaultRequest(fixture.requester.user.id);
+      const results = await Promise.all([payload, { ...payload, profileId: "concurrent-change" }].map(p => req("POST", `/hermes-platform/invocations/${fixture.invocationId}/progress`, { type: "vault.unlock.request", payload: p }, fixture.botRes.body.apiKey)));
+      expect(results.map(result => result.status).sort()).toEqual([200, 409]);
+      const winner = results.find(result => result.status === 200)!;
+      expect(await store.listForConversation(fixture.conversationId)).toEqual([winner.body.event]);
+    } finally { release(); await setBotProgressStoreForTests(createLocalBotProgressStoreForTests()); }
+  });
+  test("keeps the first v2 context on exact Redis retries and rejects modified replays", async () => {
+    const fixture = await createHermesInteractionFixture("VaultRedisRetry", undefined, true);
+    await setBotProgressStoreForTests(createRedisBotProgressStoreForTests({ redisUrl: process.env.REDIS_URL!, redisKeyPrefix: `vault-retry-${crypto.randomUUID()}` }));
+    try {
+      const payload = vaultRequest(fixture.requester.user.id);
+      const first = await publishInteractionProgress(fixture, "vault.unlock.request", payload);
+      const retry = await publishInteractionProgress(fixture, "vault.unlock.request", { ...payload });
+      expect(retry).toEqual(first);
+      for (const change of [
+        { profileId: "changed-profile" }, { sessionKey: "changed-session" },
+        { nonce: crypto.randomBytes(32).toString("base64url") }, { expiresAt: payload.expiresAt - 1 },
+        { publicKeySpkiB64: vaultRequest(fixture.requester.user.id).publicKeySpkiB64 },
+      ]) {
+        const result = await req("POST", `/hermes-platform/invocations/${fixture.invocationId}/progress`, { type: "vault.unlock.request", payload: { ...payload, ...change } }, fixture.botRes.body.apiKey);
+        expect(result.status).toBe(409);
+      }
+      expect(await getBotProgressStore().listForConversation(fixture.conversationId)).toEqual([first]);
+    } finally { await setBotProgressStoreForTests(createLocalBotProgressStoreForTests()); }
+  });
+  test("routes nonowner request and resolution only to requester via snapshots and websocket fanout", async () => {
+    const fixture = await createHermesInteractionFixture("VaultRequesterPrivacy", undefined, true);
+    const other = await registerUser("VaultPrivacyParticipant");
+    await db.insert(workspaceMembers).values({ workspaceId: fixture.workspaceId, userId: other.user.id, role: "member" });
+    await db.insert(conversationParticipants).values({ conversationId: fixture.conversationId, userId: other.user.id });
+    const redisKeyPrefix = `vault-requester-privacy-${crypto.randomUUID()}`;
+    const serviceBus = new RedisRealtimeBus({ redisKeyPrefix });
+    const observerBus = new RedisRealtimeBus({ redisKeyPrefix });
+    const received: RealtimeEvent[] = [];
+    await setRealtimeBusForTests(serviceBus);
+    const unsubscribe = await observerBus.subscribe(e => { received.push(e); });
+    try {
+      const payload = vaultRequest(fixture.requester.user.id);
+      const event = await publishInteractionProgress(fixture, "vault.unlock.request", payload);
+      const resolved = await publishInteractionProgress(fixture, "vault.unlock.resolved", {
+        version: 2, requestId: payload.requestId, sessionKey: payload.sessionKey, outcome: "cancelled",
+      });
+      for (const expected of [event, resolved]) {
+        const publication = await waitForResult(async () => received.find(e => e.type === "ws.event" && e.event.type === "bot_invocation_progress" && e.event.event.id === expected.id), "requester-private vault event");
+        expect(publication.type === "ws.event" && publication.targetUserIds).toEqual([fixture.requester.user.id]);
+      }
+      for (const actor of [fixture.requester, fixture.human, other]) {
+        const snapshot = await req("GET", `/bot-runtime/conversations/${fixture.conversationId}`, undefined, actor.token);
+        expect(snapshot.status).toBe(200);
+        for (const expected of [event, resolved]) {
+          expect(snapshot.body.events.some((e: any) => e.id === expected.id)).toBe(actor === fixture.requester);
+        }
+      }
+    } finally { await unsubscribe(); await observerBus.close(); await closeRealtimeBusForTests(); }
+  });
+  test("admits a nonowner human requester and signs only their canonical v2 relay", async () => {
+    const webhook = startWebhookServer(() => Response.json({ ok: true, duplicate: false }));
+    const fixture = await createHermesInteractionFixture("VaultNonowner", webhook.url, true);
+    try {
+      expect(fixture.requester.user.id).not.toBe(fixture.human.user.id);
+      const payload = vaultRequest(fixture.requester.user.id);
+      const event = await publishInteractionProgress(fixture, "vault.unlock.request", payload);
+      const path = interactionPath(fixture.invocationId, event.id) + "/vault-unlock";
+      const response = { version: 2, action: "submit", wrappedKeyB64: Buffer.alloc(384, 9).toString("base64"), ivB64: Buffer.alloc(12, 8).toString("base64"), ciphertextB64: Buffer.alloc(17, 7).toString("base64") };
+      expect((await req("POST", path, response, fixture.requester.token)).status).toBe(200);
+      expect(webhook.requests).toHaveLength(1);
+      const delivery = webhook.requests[0];
+      expect(delivery.payload.interaction).toEqual({
+        id: event.id, requestType: "vault.unlock.request", requestId: payload.requestId,
+        invocationId: fixture.invocationId, conversationId: fixture.conversationId, threadId: null,
+        sessionKey: payload.sessionKey, profileId: payload.profileId, backend: "bitwarden",
+        requesterUserId: fixture.requester.user.id, nonce: payload.nonce, expiresAt: payload.expiresAt,
+        algorithm: payload.algorithm, actorUserId: fixture.requester.user.id, ...response,
+      });
+      expect(delivery.headers["x-webhook-signature"]).toBe(crypto.createHmac("sha256", fixture.webhookSecret!).update(`${delivery.headers["x-webhook-timestamp"]}.${delivery.body}`).digest("hex"));
+      for (const action of ["submit", "cancel"]) {
+        expect((await req("POST", path, action === "submit" ? response : { version: 2, action }, fixture.human.token)).status).toBe(403);
+      }
+      expect(webhook.requests).toHaveLength(1);
+    } finally { webhook.stop(); }
+  });
+  test("relays requester-only ciphertext with canonical signed context and no persistence", async () => {
     const webhook = startWebhookServer(() => Response.json({ ok: true, duplicate: true, password: "DO_NOT_REFLECT" }));
     const fixture = await createHermesInteractionFixture("VaultOwner", webhook.url);
     try {
@@ -408,32 +548,32 @@ describe("Native vault unlock", () => {
       const health = await req("GET", "/hermes-platform/health", undefined, fixture.botRes.body.apiKey);
       expect(health.body.ownerUserId).toBe(fixture.human.user.id);
       const before = await db.query.botInvocations.findFirst({where:eq(botInvocations.id,fixture.invocationId)});
-      const response = { version:1, action:"submit", wrappedKeyB64:Buffer.alloc(384,9).toString("base64"), ivB64:Buffer.alloc(12,8).toString("base64"), ciphertextB64:Buffer.alloc(17,7).toString("base64") };
+      const response = { version:2, action:"submit", wrappedKeyB64:Buffer.alloc(384,9).toString("base64"), ivB64:Buffer.alloc(12,8).toString("base64"), ciphertextB64:Buffer.alloc(17,7).toString("base64") };
       const result = await req("POST", path, response, fixture.human.token);
       expect(result.status).toBe(200);
       expect(result.body).toEqual({ok:true,duplicate:true});
       expect(result.headers.get("cache-control")).toBe("no-store");
       expect(webhook.requests).toHaveLength(1);
       const delivery = webhook.requests[0];
-      expect(delivery.payload).toEqual({type:"thechat.hermes_platform.vault_unlock",interaction:{ id:event.id,requestType:"vault.unlock.request",requestId:payload.requestId,invocationId:fixture.invocationId,conversationId:fixture.conversationId,threadId:null,sessionKey:payload.sessionKey,profileId:payload.profileId,backend:"bitwarden",ownerUserId:fixture.human.user.id,requesterUserId:fixture.human.user.id,nonce:payload.nonce,expiresAt:payload.expiresAt,algorithm:payload.algorithm,actorUserId:fixture.human.user.id,...response}});
+      expect(delivery.payload).toEqual({type:"thechat.hermes_platform.vault_unlock",interaction:{ id:event.id,requestType:"vault.unlock.request",requestId:payload.requestId,invocationId:fixture.invocationId,conversationId:fixture.conversationId,threadId:null,sessionKey:payload.sessionKey,profileId:payload.profileId,backend:"bitwarden",requesterUserId:fixture.human.user.id,nonce:payload.nonce,expiresAt:payload.expiresAt,algorithm:payload.algorithm,actorUserId:fixture.human.user.id,...response}});
       expect(delivery.headers["x-webhook-signature"]).toBe(crypto.createHmac("sha256",fixture.webhookSecret!).update(`${delivery.headers["x-webhook-timestamp"]}.${delivery.body}`).digest("hex"));
       expect(await db.query.botInvocations.findFirst({where:eq(botInvocations.id,fixture.invocationId)})).toEqual(before);
       expect(JSON.stringify(await getBotProgressStore().listForConversation(fixture.conversationId))).not.toContain(response.ciphertextB64);
-      expect((await req("POST",path,{version:1,action:"cancel"},fixture.botRes.body.apiKey)).status).toBe(403);
+      expect((await req("POST",path,{version:2,action:"cancel"},fixture.botRes.body.apiKey)).status).toBe(403);
       const other = await registerUser("VaultOther");
       await db.insert(conversationParticipants).values({conversationId:fixture.conversationId,userId:other.user.id});
-      expect((await req("POST",path,{version:1,action:"cancel"},other.token)).status).toBe(403);
+      expect((await req("POST",path,{version:2,action:"cancel"},other.token)).status).toBe(403);
       const ownerSnapshot = await req("GET",`/bot-runtime/conversations/${fixture.conversationId}`,undefined,fixture.human.token);
       const otherSnapshot = await req("GET",`/bot-runtime/conversations/${fixture.conversationId}`,undefined,other.token);
       expect(ownerSnapshot.body.events.some((e: any) => e.id === event.id)).toBe(true);
       expect(otherSnapshot.body.events.some((e: any) => e.id === event.id)).toBe(false);
       expect((await req("POST",path,{...response,ownerUserId:other.user.id},fixture.human.token)).status).toBe(400);
-      expect((await req("POST",path,{version:1,action:"cancel"},fixture.human.token)).status).toBe(200);
-      await publishInteractionProgress(fixture,"vault.unlock.resolved",{version:1,requestId:payload.requestId,sessionKey:payload.sessionKey,outcome:"cancelled"});
-      expect((await req("POST",path,{version:1,action:"cancel"},fixture.human.token)).status).toBe(409);
+      expect((await req("POST",path,{version:2,action:"cancel"},fixture.human.token)).status).toBe(200);
+      await publishInteractionProgress(fixture,"vault.unlock.resolved",{version:2,requestId:payload.requestId,sessionKey:payload.sessionKey,outcome:"cancelled"});
+      expect((await req("POST",path,{version:2,action:"cancel"},fixture.human.token)).status).toBe(409);
     } finally { webhook.stop(); }
   });
-  test("publishes vault progress only to the owner and returns safe no-store failures", async () => {
+  test("publishes vault progress only to the requester with shared-access disclosure and safe no-store failures", async () => {
     const fixture = await createHermesInteractionFixture("VaultPrivacy");
     const redisKeyPrefix = `vault-privacy-${crypto.randomUUID()}`;
     const serviceBus = new RedisRealtimeBus({redisKeyPrefix});
@@ -447,8 +587,9 @@ describe("Native vault unlock", () => {
       const published = await waitForResult(async ()=>received.find(e=>e.type === "ws.event" && e.event.type === "bot_invocation_progress" && e.event.event.id === event.id),"owner vault websocket event");
       expect(published.type === "ws.event" && published.targetUserIds).toEqual([fixture.human.user.id]);
       expect(event.label).toBe("Unlock Bitwarden");
+      expect(event.preview).toBe("Unlocking gives all users of this agent/profile access to Bitwarden.");
       const path = interactionPath(fixture.invocationId,event.id)+"/vault-unlock";
-      const bad = await req("POST",path,{version:1,action:"cancel",password:"DO_NOT_REFLECT"},fixture.human.token);
+      const bad = await req("POST",path,{version:2,action:"cancel",password:"DO_NOT_REFLECT"},fixture.human.token);
       expect(bad.status).toBe(400);
       expect(bad.headers.get("cache-control")).toBe("no-store");
       expect(JSON.stringify(bad.body)).not.toContain("DO_NOT_REFLECT");
@@ -468,15 +609,15 @@ describe("Native vault unlock", () => {
     expect(await getBotProgressStore().listForConversation(fixture.conversationId)).toEqual([]);
     const changed = await req("POST",`/hermes-platform/invocations/${fixture.invocationId}/progress`,{type:"vault.unlock.request",payload:{...payload,profileId:"changed-profile"}},fixture.botRes.body.apiKey);
     expect(changed.status).toBe(409);
-    const result = await req("POST",`/hermes-platform/invocations/${fixture.invocationId}/progress`,{type:"vault.unlock.resolved",payload:{version:1,requestId:payload.requestId,sessionKey:payload.sessionKey,outcome:"expired"}},fixture.botRes.body.apiKey);
+    const result = await req("POST",`/hermes-platform/invocations/${fixture.invocationId}/progress`,{type:"vault.unlock.resolved",payload:{version:2,requestId:payload.requestId,sessionKey:payload.sessionKey,outcome:"expired"}},fixture.botRes.body.apiKey);
     expect(result.status).toBe(200);
     expect(result.body.event.payload.outcome).toBe("expired");
     await setBotProgressStoreForTests(createLocalBotProgressStoreForTests());
   });
-  test("rejects malformed and non-owner prompts, expired requests and terminal runs", async () => {
+  test("rejects malformed and forged requester prompts, expired requests and terminal runs", async () => {
     const fixture = await createHermesInteractionFixture("VaultInvalid");
     const payload = vaultRequest(fixture.human.user.id);
-    for (const bad of [{...payload,password:"secret"},{...payload,ownerUserId:"other"},{...payload,requesterUserId:"other"},{...payload,publicKeySpkiB64:"AAAA"},{...payload,expiresAt:Date.now()+240000},{...payload,backend:"onepassword"}]) {
+    for (const bad of [{...payload,version:1},{...payload,password:"secret"},{...payload,ownerUserId:"other"},{...payload,requesterUserId:"other"},{...payload,publicKeySpkiB64:"AAAA"},{...payload,expiresAt:Date.now()+240000},{...payload,backend:"onepassword"}]) {
       const result = await req("POST",`/hermes-platform/invocations/${fixture.invocationId}/progress`,{type:"vault.unlock.request",payload:bad},fixture.botRes.body.apiKey);
       expect([400,403]).toContain(result.status);
       expect(JSON.stringify(result.body)).not.toContain("secret");
@@ -485,10 +626,10 @@ describe("Native vault unlock", () => {
     const path = interactionPath(fixture.invocationId,event.id)+"/vault-unlock";
     const events = await getBotProgressStore().listForConversation(fixture.conversationId);
     events.find(e=>e.id===event.id)!.payload!.expiresAt = Date.now()-1;
-    expect((await req("POST",path,{version:1,action:"cancel"},fixture.human.token)).status).toBe(409);
+    expect((await req("POST",path,{version:2,action:"cancel"},fixture.human.token)).status).toBe(409);
     events.find(e=>e.id===event.id)!.payload!.expiresAt = payload.expiresAt;
     await req("POST",`/hermes-platform/invocations/${fixture.invocationId}/completed`,{},fixture.botRes.body.apiKey);
-    expect((await req("POST",path,{version:1,action:"cancel"},fixture.human.token)).status).toBe(409);
+    expect((await req("POST",path,{version:2,action:"cancel"},fixture.human.token)).status).toBe(409);
   });
 });
 

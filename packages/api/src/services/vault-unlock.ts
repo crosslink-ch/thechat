@@ -28,12 +28,11 @@ const base64 = (min: number, max = min) =>
     });
 export const vaultUnlockRequestSchema = z
   .object({
-    version: z.literal(1),
+    version: z.literal(2),
     requestId: z.string().uuid(),
     sessionKey: token(1000),
     profileId: token(255),
     backend: z.literal("bitwarden"),
-    ownerUserId: token(255),
     requesterUserId: token(255),
     nonce: z
       .string()
@@ -50,7 +49,7 @@ export const vaultUnlockRequestSchema = z
   .strict();
 export const vaultUnlockResolvedSchema = z
   .object({
-    version: z.literal(1),
+    version: z.literal(2),
     requestId: z.string().uuid(),
     sessionKey: token(1000),
     outcome: z.enum(["submitted", "cancelled", "expired", "failed"]),
@@ -59,14 +58,14 @@ export const vaultUnlockResolvedSchema = z
 export const vaultUnlockResponseSchema = z.discriminatedUnion("action", [
   z
     .object({
-      version: z.literal(1),
+      version: z.literal(2),
       action: z.literal("submit"),
       wrappedKeyB64: base64(384),
       ivB64: base64(12),
       ciphertextB64: base64(17, 4112),
     })
     .strict(),
-  z.object({ version: z.literal(1), action: z.literal("cancel") }).strict(),
+  z.object({ version: z.literal(2), action: z.literal("cancel") }).strict(),
 ]);
 export function validateVaultPublicKey(value: string) {
   try {
@@ -87,4 +86,4 @@ export function validateVaultPublicKey(value: string) {
   }
 }
 export const VAULT_UNLOCK_PREVIEW =
-  "Unlocking allows Hermes to access your owner vault for this runtime profile.";
+  "Unlocking gives all users of this agent/profile access to Bitwarden.";

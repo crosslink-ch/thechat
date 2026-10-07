@@ -22,7 +22,6 @@ export function deriveVaultUnlockStates(
         "sessionKey",
         "profileId",
         "backend",
-        "ownerUserId",
         "requesterUserId",
         "nonce",
         "expiresAt",
@@ -33,7 +32,7 @@ export function deriveVaultUnlockStates(
         !p ||
         Object.keys(p).length !== keys.length ||
         keys.some((k) => !(k in p)) ||
-        p.version !== 1 ||
+        p.version !== 2 ||
         p.backend !== "bitwarden" ||
         p.algorithm !== "RSA-OAEP-3072-SHA256+A256GCM" ||
         typeof p.expiresAt !== "number" ||
@@ -42,7 +41,6 @@ export function deriveVaultUnlockStates(
           "requestId",
           "sessionKey",
           "profileId",
-          "ownerUserId",
           "requesterUserId",
           "nonce",
           "publicKeySpkiB64",
@@ -66,7 +64,7 @@ export function deriveVaultUnlockStates(
       const p = event.payload;
       if (
         !p ||
-        p.version !== 1 ||
+        p.version !== 2 ||
         !["submitted", "cancelled", "expired", "failed"].includes(
           String(p.outcome),
         ) ||
@@ -94,9 +92,8 @@ export function vaultUnlockContext(
   request: VaultUnlockRequest,
 ) {
   return JSON.stringify([
-    1,
+    2,
     event.botId,
-    request.ownerUserId,
     request.requesterUserId,
     request.profileId,
     request.sessionKey,
@@ -131,6 +128,8 @@ export async function encryptVaultUnlock(
       !cryptoApi?.subtle ||
       bytes.length === 0 ||
       bytes.length > 4096 ||
+      request.version !== 2 ||
+      request.backend !== "bitwarden" ||
       request.expiresAt <= Date.now() ||
       request.algorithm !== "RSA-OAEP-3072-SHA256+A256GCM"
     )
@@ -167,7 +166,7 @@ export async function encryptVaultUnlock(
       aesBytes,
     );
     return {
-      version: 1,
+      version: 2,
       action: "submit",
       wrappedKeyB64: toBase64(new Uint8Array(wrapped)),
       ivB64: toBase64(iv),

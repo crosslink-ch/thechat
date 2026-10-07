@@ -57,7 +57,7 @@ export function HermesVaultUnlock({
       const encrypted =
         action === "submit"
           ? encryptVaultUnlock(state.event, state.request, secret)
-          : Promise.resolve({ version: 1 as const, action: "cancel" as const });
+          : Promise.resolve({ version: 2 as const, action: "cancel" as const });
       secret = "";
       const response = await encrypted;
       if (!active.current || state.request.expiresAt <= Date.now()) return;
@@ -94,8 +94,7 @@ export function HermesVaultUnlock({
     >
       <div className="font-medium text-text">Unlock Bitwarden</div>
       <p className="mt-1 text-sm">
-        Unlocking allows Hermes to access your owner vault for this runtime
-        profile.
+        Unlocking gives all users of this agent/profile access to Bitwarden.
       </p>
       <form
         className="mt-3 space-y-2"

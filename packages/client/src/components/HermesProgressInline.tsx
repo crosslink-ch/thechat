@@ -176,7 +176,7 @@ export function HermesProgressInline({
           (state) => state.status === "pending",
         );
         const vaultStates = deriveVaultUnlockStates(invocationEvents,nowMs)
-          .filter(state=>self?.type === "human" && state.request.ownerUserId === self.id && state.request.requesterUserId === self.id);
+          .filter(state=>self?.type === "human" && state.request.requesterUserId === self.id);
         const needsVaultUnlock = vaultStates.some(state=>state.outcome === null);
         const needsInteraction = needsApproval || needsClarification || needsVaultUnlock;
         const rows = buildActivityRows(

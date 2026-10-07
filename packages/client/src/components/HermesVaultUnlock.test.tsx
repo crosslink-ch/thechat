@@ -28,9 +28,9 @@ beforeEach(async () => {
   vi.stubGlobal("crypto", webcrypto);
   useAuthStore.setState({
     user: {
-      id: "owner",
+      id: "requester",
       type: "human",
-      name: "Owner",
+      name: "Requester",
       email: null,
       avatar: null,
     },
@@ -59,13 +59,12 @@ beforeEach(async () => {
     label: "Unlock Bitwarden",
     preview: null,
     payload: {
-      version: 1,
+      version: 2,
       requestId: "11111111-1111-4111-a111-111111111111",
       sessionKey: "session",
       profileId: "profile",
       backend: "bitwarden",
-      ownerUserId: "owner",
-      requesterUserId: "owner",
+      requesterUserId: "requester",
       nonce: Buffer.alloc(32).toString("base64url"),
       expiresAt: Date.now() + 120000,
       algorithm: "RSA-OAEP-3072-SHA256+A256GCM",
@@ -77,7 +76,7 @@ beforeEach(async () => {
     occurredAt: new Date().toISOString(),
   };
 });
-it("masks and clears the secret before encrypted submission, keeping errors fixed", async () => {
+it("shows a nonowner requester their private prompt and shared-access disclosure, masking and clearing on submit", async () => {
   const submit = vi.fn().mockRejectedValue(new Error("DO_NOT_REFLECT"));
   render(
     <HermesProgressInline
@@ -86,7 +85,7 @@ it("masks and clears the secret before encrypted submission, keeping errors fixe
     />,
   );
   expect(screen.getByTestId("hermes-vault-unlock-request")).toHaveTextContent(
-    /owner vault/,
+    /all users of this agent\/profile access to Bitwarden/,
   );
   const input = screen.getByLabelText("Master password") as HTMLInputElement;
   expect(input.type).toBe("password");
@@ -95,7 +94,7 @@ it("masks and clears the secret before encrypted submission, keeping errors fixe
   expect(input.value).toBe("");
   await waitFor(() => expect(submit).toHaveBeenCalledOnce());
   expect(submit.mock.calls[0][1]).toEqual({
-    version: 1,
+    version: 2,
     action: "submit",
     wrappedKeyB64: expect.any(String),
     ivB64: expect.any(String),
@@ -154,18 +153,22 @@ it("clears on cancellation, request replacement, and unmount without requiring c
   fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
   await waitFor(() =>
     expect(submit).toHaveBeenCalledWith(event, {
-      version: 1,
+      version: 2,
       action: "cancel",
     }),
   );
   expect(cancelledInput.value).toBe("");
 });
-it("does not expose an actionable vault prompt to other users or bots", () => {
+it.each([
+  { id: "owner", type: "human" as const },
+  { id: "other", type: "human" as const },
+  { id: "requester", type: "bot" as const },
+])("does not expose request or resolution to $type $id", ({ id, type }) => {
   act(() =>
     useAuthStore.setState({
       user: {
-        id: "other",
-        type: "human",
+        id,
+        type,
         name: "Other",
         email: null,
         avatar: null,
@@ -178,6 +181,45 @@ it("does not expose an actionable vault prompt to other users or bots", () => {
       onVaultUnlock={vi.fn()}
     />,
   );
+  expect(screen.queryByLabelText("Master password")).toBeNull();
+  expect(screen.queryByText("Unlock Bitwarden")).toBeNull();
+  expect(screen.queryByTestId("hermes-vault-unlock-resolved")).toBeNull();
+  render(
+    <HermesProgressInline invocations={[{ invocation, events: [event, {
+      ...event, id: "resolved", sequence: 2, type: "vault.unlock.resolved",
+      payload: { version: 2, requestId: event.payload!.requestId, sessionKey: event.payload!.sessionKey, outcome: "submitted" },
+    }] }]} onVaultUnlock={vi.fn()} />,
+  );
+  expect(screen.queryByTestId("hermes-vault-unlock-resolved")).toBeNull();
+});
+
+it.each(["resolution", "expiry", "viewer change"])("clears the captured password input on %s", reason => {
+  vi.useFakeTimers();
+  try {
+    const view = render(<HermesProgressInline invocations={[{ invocation, events: [event] }]} onVaultUnlock={vi.fn()} />);
+    const input = screen.getByLabelText("Master password") as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "synthetic-sensitive" } });
+    if (reason === "resolution") {
+      view.rerender(<HermesProgressInline invocations={[{ invocation, events: [event, {
+        ...event, id: "resolved", sequence: 2, type: "vault.unlock.resolved",
+        payload: { version: 2, requestId: event.payload!.requestId, sessionKey: event.payload!.sessionKey, outcome: "cancelled" },
+      }] }]} onVaultUnlock={vi.fn()} />);
+      expect(screen.getByTestId("hermes-vault-unlock-resolved")).toHaveTextContent("cancelled");
+    } else if (reason === "expiry") {
+      act(() => { vi.setSystemTime(Number(event.payload!.expiresAt) + 1); vi.advanceTimersByTime(1000); });
+      expect(screen.getByTestId("hermes-vault-unlock-resolved")).toHaveTextContent("expired");
+    } else {
+      act(() => useAuthStore.setState({ user: { id: "owner", type: "human", name: "Owner", email: null, avatar: null } }));
+      expect(screen.queryByTestId("hermes-vault-unlock-resolved")).toBeNull();
+    }
+    expect(input.value).toBe("");
+    expect(screen.queryByLabelText("Master password")).toBeNull();
+    view.unmount();
+  } finally { vi.useRealTimers(); }
+});
+
+it("rejects legacy v1 prompts instead of reinterpreting their authenticated context", () => {
+  render(<HermesProgressInline invocations={[{ invocation, events: [{ ...event, payload: { ...event.payload, version: 1, ownerUserId: "owner" } }] }]} onVaultUnlock={vi.fn()} />);
   expect(screen.queryByLabelText("Master password")).toBeNull();
   expect(screen.queryByText("Unlock Bitwarden")).toBeNull();
 });

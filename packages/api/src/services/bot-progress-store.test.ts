@@ -162,7 +162,7 @@ describe("local bot progress store", () => {
   test("retains a vault request past inactivity and overflow only until its expiry", async () => {
     let now = Date.now();
     const store = createLocalBotProgressStoreForTests({now:()=>now,maxEvents:2});
-    const event = await store.append(progressInput({type:"vault.unlock.request",payload:{version:1,requestId:"vault",sessionKey:"session",expiresAt:now+120000}}));
+    const event = await store.append(progressInput({type:"vault.unlock.request",payload:{version:2,requestId:"vault",sessionKey:"session",expiresAt:now+120000}}));
     for (let i=0;i<4;i++) await store.append(progressInput({toolCallId:`overflow-${i}`}));
     now+=31000;
     expect(await store.listForConversation("conversation-1")).toContainEqual(event);
@@ -192,7 +192,7 @@ describe("redis bot progress store", () => {
     let now = Date.now();
     const store = createRedisBotProgressStoreForTests({redisUrl:redisTestUrl!,redisKeyPrefix:`vault-store-${crypto.randomUUID()}`,maxEvents:2,now:()=>now});
     try {
-      const request = await store.append(progressInput({type:"vault.unlock.request",payload:{version:1,requestId:"redis-vault",sessionKey:"session",expiresAt:now+120000}}));
+      const request = await store.append(progressInput({type:"vault.unlock.request",payload:{version:2,requestId:"redis-vault",sessionKey:"session",expiresAt:now+120000}}));
       for(let i=0;i<4;i++) await store.append(progressInput({toolCallId:`overflow-${i}`}));
       now+=31000;
       expect(await store.listForConversation("conversation-1")).toContainEqual(request);
