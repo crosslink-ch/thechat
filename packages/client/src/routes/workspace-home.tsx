@@ -10,15 +10,18 @@ export function WorkspaceHomeRoute() {
   const workspaces = useWorkspacesStore((s) => s.workspaces);
   const activeWorkspace = useWorkspacesStore((s) => s.activeWorkspace);
   const loading = useWorkspacesStore((s) => s.loading);
+  const loaded = useWorkspacesStore((s) => s.loaded);
+  const error = useWorkspacesStore((s) => s.error);
+  const initialize = useWorkspacesStore((s) => s.initialize);
   const selectWorkspace = useWorkspacesStore((s) => s.selectWorkspace);
   const [selectingId, setSelectingId] = useState<string | null>(null);
 
   useEffect(() => {
-    if (loading || activeWorkspace || workspaces.length !== 1) return;
+    if (loading || error || activeWorkspace || workspaces.length !== 1) return;
     const workspace = workspaces[0];
     setSelectingId(workspace.id);
     void selectWorkspace(workspace.id).finally(() => setSelectingId(null));
-  }, [activeWorkspace, loading, selectWorkspace, workspaces]);
+  }, [activeWorkspace, error, loading, selectWorkspace, workspaces]);
 
   useEffect(() => {
     const firstChannel = activeWorkspace?.channels[0];
@@ -30,7 +33,7 @@ export function WorkspaceHomeRoute() {
     });
   }, [activeWorkspace, navigate]);
 
-  if (loading || selectingId) {
+  if (loading || selectingId || (!loaded && !error && !activeWorkspace)) {
     return (
       <div className="flex h-full items-center justify-center text-[0.929rem] text-text-dimmed">
         Loading workspace...
@@ -56,6 +59,20 @@ export function WorkspaceHomeRoute() {
             Manage workspace
           </button>
         </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="mx-auto flex h-full w-full min-w-0 max-w-[620px] flex-col justify-center px-6 py-8">
+        <h1 className="text-[1.429rem] font-semibold tracking-tight text-text">Workspace unavailable</h1>
+        <p role="alert" className="mt-1 text-[0.929rem] leading-relaxed text-text-muted">
+          You're offline. Check your internet connection.
+        </p>
+        <button type="button" className={`mt-5 w-fit ${buttonClass("secondary", "md")}`} onClick={() => void initialize()}>
+          Retry
+        </button>
       </div>
     );
   }

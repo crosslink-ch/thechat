@@ -82,17 +82,24 @@ vi.mock("../stores/updater", () => ({
   },
 }));
 vi.mock("@thechat/client/stores/websocket", () => ({
-  useWebSocketStore: {
-    getState: () => ({ connect: mocks.connect, disconnect: mocks.disconnect }),
-  },
+  useWebSocketStore: Object.assign(
+    (selector: (state: { reconnecting: boolean }) => unknown) => selector({ reconnecting: false }),
+    {
+      getState: () => ({ connect: mocks.connect, disconnect: mocks.disconnect }),
+      subscribe: vi.fn(() => vi.fn()),
+    },
+  ),
 }));
 vi.mock("@thechat/client/stores/workspaces", () => ({
-  useWorkspacesStore: {
-    getState: () => ({
-      initialize: mocks.initializeWorkspaces,
-      reset: mocks.resetWorkspaces,
-    }),
-  },
+  useWorkspacesStore: Object.assign(
+    (selector: (state: { error: null; loading: boolean }) => unknown) => selector({ error: null, loading: false }),
+    {
+      getState: () => ({
+        initialize: mocks.initializeWorkspaces,
+        reset: mocks.resetWorkspaces,
+      }),
+    },
+  ),
 }));
 vi.mock("@thechat/client/stores/notifications", () => ({
   useNotificationsStore: {
