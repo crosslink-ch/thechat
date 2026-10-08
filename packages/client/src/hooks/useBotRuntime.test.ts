@@ -6,6 +6,7 @@ import type {
   BotRuntimeSnapshot,
 } from "@thechat/shared";
 import { api } from "../lib/api";
+import * as runtimeHooks from "./useBotRuntime";
 import { createQueryWrapper, createTestQueryClient } from "../test-utils/query";
 import {
   botRuntimeQueryKey,
@@ -25,6 +26,18 @@ vi.mock("../lib/api", () => ({
 }));
 
 describe("useBotRuntime", () => {
+  it("uses the dedicated transient Eden vault route and never reflects errors", async () => {
+    const post = vi.fn().mockResolvedValue({data:{ok:true,duplicate:false},error:null});
+    const interactions = vi.fn().mockReturnValue({"vault-unlock":{post}});
+    vi.mocked(api["bot-runtime"].invocations).mockReturnValue({interactions} as any);
+    const submit = (runtimeHooks as any).submitHermesVaultUnlock;
+    expect(typeof submit).toBe("function");
+    await submit("invocation","event",{version:2,action:"cancel"},"token");
+    expect(interactions).toHaveBeenCalledWith({eventId:"event"});
+    expect(post).toHaveBeenCalledWith({version:2,action:"cancel"},{headers:{authorization:"Bearer token"}});
+    post.mockResolvedValue({data:null,error:{value:{error:"DO_NOT_REFLECT"}}});
+    await expect(submit("invocation","event",{version:2,action:"cancel"},"token")).rejects.toThrow("Could not deliver the vault unlock response");
+  });
   beforeEach(() => {
     vi.resetAllMocks();
   });

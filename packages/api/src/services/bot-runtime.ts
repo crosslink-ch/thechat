@@ -58,6 +58,8 @@ import {
 } from "./messages";
 import { requireConversationMutationAccess } from "./conversation-mutation-access";
 import { recordMessageUnreads } from "./activity";
+import { vaultUnlockRequestSchema, vaultUnlockResolvedSchema, vaultUnlockResponseSchema, validateVaultPublicKey, VAULT_UNLOCK_PREVIEW } from "./vault-unlock";
+import type { VaultUnlockResponse } from "@thechat/shared";
 
 export const BOT_QUEUE_NAME = "thechat:bots";
 export const BOT_INVOKE_JOB_NAME = "bot.invoke";
@@ -385,6 +387,54 @@ export async function submitHermesPlatformInteraction(input: {
   }
 
   return { ok: true };
+}
+
+/** Transient encrypted relay: deliberately no DB, inbox, queue or progress write. */
+export async function submitHermesPlatformVaultUnlock(input: {
+  userId: string; userType: "human" | "bot"; invocationId: string; eventId: string; response: VaultUnlockResponse;
+}): Promise<{ok:true;duplicate:boolean}> {
+  const reject = (status: number) => new ServiceError("Could not deliver the vault unlock response",status);
+  if (input.userType !== "human") throw reject(403);
+  const response = vaultUnlockResponseSchema.safeParse(input.response);
+  if (!response.success) throw reject(400);
+  const loaded = await loadInvocationContext(input.invocationId);
+  if (!loaded) throw reject(404);
+  if (loaded.triggerMessage.senderId !== input.userId || loaded.triggerSender.type !== "human") throw reject(403);
+  await requireConversationParticipant(loaded.conversation.id,input.userId);
+  await requireCurrentBotConversationAccess(loaded.conversation.id,loaded.bot.userId);
+  if (loaded.bot.kind !== "hermes" || loaded.invocation.adapterKind !== "hermes") throw reject(400);
+  if (interactionInvocationIsTerminal(loaded.invocation) || !["running","claimed"].includes(loaded.invocation.status)) throw reject(409);
+  const events = await getBotProgressStore().listForConversation(loaded.conversation.id,[loaded.invocation.id]);
+  const event = events.find(e => e.id === input.eventId && e.type === "vault.unlock.request" && e.invocationId === loaded.invocation.id && e.botId === loaded.bot.id && e.conversationId === loaded.conversation.id && e.threadId === resolveInvocationThreadId(loaded));
+  if (!event) throw reject(404);
+  const parsed = vaultUnlockRequestSchema.safeParse(event.payload);
+  if (!parsed.success) throw reject(409);
+  const request = parsed.data;
+  validateVaultPublicKey(request.publicKeySpkiB64);
+  if (request.requesterUserId !== input.userId || request.expiresAt <= Date.now() || request.expiresAt > Date.parse(event.createdAt)+120_000) throw reject(409);
+  if (events.some(e => e.invocationId === event.invocationId && e.botId === event.botId && e.type === "vault.unlock.resolved" && e.payload?.requestId === request.requestId && e.payload?.sessionKey === request.sessionKey)) throw reject(409);
+  const webhookUrl = loaded.bot.webhookUrl;
+  try { if (!webhookUrl || !["http:","https:"].includes(new URL(webhookUrl).protocol)) throw new Error(); }
+  catch { throw reject(409); }
+  const body = JSON.stringify({type:"thechat.hermes_platform.vault_unlock", interaction:{
+    id:event.id,requestType:"vault.unlock.request",requestId:request.requestId,invocationId:loaded.invocation.id,conversationId:loaded.conversation.id,threadId:resolveInvocationThreadId(loaded),sessionKey:request.sessionKey,
+    profileId:request.profileId,backend:"bitwarden",requesterUserId:input.userId,nonce:request.nonce,expiresAt:request.expiresAt,algorithm:request.algorithm,actorUserId:input.userId,
+    ...response.data,
+  }});
+  const timestamp = Math.floor(Date.now()/1000);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(),HERMES_INTERACTION_TIMEOUT_MS);
+  try {
+    const upstream = await fetch(webhookUrl!, {method:"POST",redirect:"error",signal:controller.signal,headers:{"Content-Type":"application/json","Cache-Control":"no-store","X-Webhook-Timestamp":String(timestamp),"X-Webhook-Signature":signWebhookPayload(body,loaded.bot.webhookSecret,timestamp),"X-TheChat-Bot-Id":loaded.bot.id,"X-TheChat-Invocation-Id":loaded.invocation.id},body});
+    if (!upstream.ok) throw reject(upstream.status === 409 ? 409 : 502);
+    // Never reflect upstream text or extra properties (including diagnostic secrets).
+    const ack: unknown = await upstream.json();
+    if (!ack || typeof ack !== "object" || (ack as {ok?:unknown}).ok !== true || typeof (ack as {duplicate?:unknown}).duplicate !== "boolean") throw reject(502);
+    return {ok:true,duplicate:(ack as {duplicate:boolean}).duplicate};
+  } catch (error) {
+    if (error instanceof ServiceError) throw error;
+    throw reject(controller.signal.aborted ? 504 : 502);
+  } finally { clearTimeout(timeout); }
 }
 
 type ValidatedHermesInteractionRequest =
@@ -771,6 +821,7 @@ export async function listConversationBotRuntime(conversationId: string, userId:
           botUserId: bots.userId,
           botName: users.name,
           botKind: bots.kind,
+          requesterUserId: messages.senderId,
           conversationId: botInvocations.conversationId,
           threadId: botInvocations.threadId,
           triggerMessageId: botInvocations.triggerMessageId,
@@ -789,6 +840,7 @@ export async function listConversationBotRuntime(conversationId: string, userId:
         .from(botInvocations)
         .innerJoin(bots, eq(botInvocations.botId, bots.id))
         .innerJoin(users, eq(bots.userId, users.id))
+        .innerJoin(messages, eq(botInvocations.triggerMessageId, messages.id))
         .where(
           and(
             eq(botInvocations.conversationId, conversationId),
@@ -800,8 +852,10 @@ export async function listConversationBotRuntime(conversationId: string, userId:
       const visibleInvocationIds = new Set(
         activeInvocationRows.map((invocation) => invocation.id),
       );
+      const requesterByInvocation = new Map(activeInvocationRows.map(row => [row.id, row.requesterUserId]));
       const visibleEvents = events.filter((event) =>
-        visibleInvocationIds.has(event.invocationId),
+        visibleInvocationIds.has(event.invocationId) &&
+        (!event.type.startsWith("vault.unlock.") || requesterByInvocation.get(event.invocationId) === userId),
       );
 
       span.setAttribute("thechat.bot_runtime.active_invocations", activeInvocationRows.length);
@@ -2370,6 +2424,35 @@ export async function publishHermesPlatformProgress(
         await updateHermesThreadTitleFromProgress(loaded, generatedTitle);
       }
 
+      if (input.type.startsWith("vault.unlock.")) {
+        const events = await getBotProgressStore().listForConversation(loaded.conversation.id, [loaded.invocation.id]);
+        if (input.type === "vault.unlock.request") {
+          const parsed = vaultUnlockRequestSchema.safeParse(input.payload);
+          if (!parsed.success) throw new ServiceError("Invalid vault unlock request", 400);
+          const request = parsed.data;
+          validateVaultPublicKey(request.publicKeySpkiB64);
+          if (request.requesterUserId !== loaded.triggerMessage.senderId || loaded.triggerSender.type !== "human") {
+            throw new ServiceError("Vault unlock requires the original human requester", 403);
+          }
+          await requireConversationParticipant(loaded.conversation.id, request.requesterUserId);
+          if (request.expiresAt <= Date.now() || request.expiresAt > Date.now()+120_000) throw new ServiceError("Invalid vault unlock expiry",400);
+          const previous = events.find(e => e.invocationId === loaded.invocation.id && e.type === input.type && e.payload?.requestId === request.requestId)
+            ?? await getBotProgressStore().findRequest?.(loaded.invocation.id,"vault.unlock.request",request.requestId);
+          // Redis's Lua JSON encoder may reorder keys; compare schema-canonical
+          // metadata without changing any authenticated context value.
+          const original = previous ? vaultUnlockRequestSchema.safeParse(previous.payload) : null;
+          if (original && (!original.success || JSON.stringify(original.data) !== JSON.stringify(request))) throw new ServiceError("Vault unlock request changed",409);
+          input = {...input, status:"waiting",toolCallId:null,toolName:null,label:"Unlock Bitwarden",preview:VAULT_UNLOCK_PREVIEW,payload:request};
+        } else if (input.type === "vault.unlock.resolved") {
+          const parsed = vaultUnlockResolvedSchema.safeParse(input.payload);
+          if (!parsed.success) throw new ServiceError("Invalid vault unlock resolution",400);
+          const request = events.find(e => e.invocationId === loaded.invocation.id && e.type === "vault.unlock.request" && e.payload?.requestId === parsed.data.requestId && e.payload?.sessionKey === parsed.data.sessionKey)
+            ?? await getBotProgressStore().findRequest?.(loaded.invocation.id,"vault.unlock.request",parsed.data.requestId);
+          if (!request || request.botId !== loaded.bot.id || request.conversationId !== loaded.conversation.id || request.payload?.sessionKey !== parsed.data.sessionKey) throw new ServiceError("Vault unlock request not found",409);
+          input = {...input,status:"completed",toolCallId:null,toolName:null,label:"Bitwarden unlock response",preview:null,payload:parsed.data};
+        } else { throw new ServiceError("Invalid vault unlock progress",400); }
+      }
+
       const participantRows = await db
         .select({ userId: conversationParticipants.userId })
         .from(conversationParticipants)
@@ -2390,6 +2473,14 @@ export async function publishHermesPlatformProgress(
         payload: input.payload ?? null,
         occurredAt: input.occurredAt ?? new Date(),
       });
+      // The store atomically chooses the first request even if concurrent
+      // preflight reads both saw no request. Reject the losing altered replay.
+      if (input.type === "vault.unlock.request") {
+        const canonical = vaultUnlockRequestSchema.safeParse(event.payload);
+        if (!canonical.success || JSON.stringify(canonical.data) !== JSON.stringify(input.payload)) {
+          throw new ServiceError("Vault unlock request changed", 409);
+        }
+      }
       // Re-check after the transient write so a completion that won the race
       // cannot be followed by a resurrecting progress event.
       const latestInvocation = await db.query.botInvocations.findFirst({
@@ -2415,7 +2506,8 @@ export async function publishHermesPlatformProgress(
         throw new ServiceError("Invocation execution is already terminal", 409);
       }
       span.setAttribute("thechat.hermes_progress.sequence", event.sequence);
-      const participantUserIds = participantRows.map((participant) => participant.userId);
+      const participantUserIds = participantRows.map((participant) => participant.userId)
+        .filter(id => !input.type.startsWith("vault.unlock.") || id === loaded.triggerMessage.senderId);
       const progressInvocation = toProgressCompatibleInvocation(
         toPublicInvocationFromContext(loaded),
       );
@@ -2629,7 +2721,7 @@ async function loadInvocationContext(invocationId: string) {
   if (!row) return null;
 
   const [triggerSender] = await db
-    .select({ name: users.name })
+    .select({ name: users.name, type: users.type })
     .from(users)
     .where(eq(users.id, row.triggerMessage.senderId))
     .limit(1);
@@ -2646,7 +2738,7 @@ async function loadInvocationContext(invocationId: string) {
     bot: row.bot,
     botName: row.botName,
     triggerMessage: row.triggerMessage,
-    triggerSender: { name: triggerSender?.name ?? "Unknown" },
+    triggerSender: { name: triggerSender?.name ?? "Unknown", type: triggerSender?.type },
     conversation: row.conversation,
     thread,
   };

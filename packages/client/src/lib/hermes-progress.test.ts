@@ -8,6 +8,14 @@ import { pendingApprovalEvents } from "./hermes-approvals";
 import { selectHermesConversationProgress } from "./hermes-progress";
 
 describe("Hermes progress selectors", () => {
+  it("preserves a pending vault unlock across an overlapping invocation", () => {
+    const selected = selectHermesConversationProgress(runtime({
+      invocations:[invocation({id:"vault",startedAt:"2026-01-01T00:00:00Z"}),invocation({id:"new",startedAt:"2026-01-01T00:00:01Z"})],
+      events:[progressEvent({invocationId:"vault",type:"vault.unlock.request",payload:{version:2,requestId:"11111111-1111-4111-a111-111111111111",sessionKey:"session",profileId:"profile",backend:"bitwarden",requesterUserId:"requester",nonce:"nonce",expiresAt:Date.now()+120000,algorithm:"RSA-OAEP-3072-SHA256+A256GCM",publicKeySpkiB64:"key"}}),progressEvent({invocationId:"new"})],
+    }));
+    expect(selected.invocations.map(row=>row.invocation.id)).toEqual(["new","vault"]);
+  });
+
   it("coalesces overlapping invocations for one Hermes conversation lane", () => {
     const snapshot = runtime({
       invocations: [

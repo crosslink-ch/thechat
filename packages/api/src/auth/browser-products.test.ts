@@ -98,6 +98,7 @@ const routes = [
   ["/bots/create", "POST", 400],
   [`/bots/${id}/hermes`, "PATCH", 400],
   [`/bot-runtime/invocations/${id}/interactions/${id}`, "POST", 400],
+  [`/bot-runtime/invocations/${id}/interactions/${id}/vault-unlock`, "POST", 400],
   ["/attachments/", "POST", 400],
   ["/activity/", "GET", 200],
   [`/activity/conversations/${id}/read`, "POST", 400],
