@@ -51,6 +51,9 @@ import { botAppearanceFor, botAvatarsOf } from "../lib/bot-appearance";
 import { useWorkspacesStore } from "../stores/workspaces";
 import { Avatar } from "./Avatar";
 import { buttonClass, inputClass, type ButtonVariant } from "./ui";
+import { HermesVaultUnlock, type VaultUnlockCallback } from "./HermesVaultUnlock";
+import { deriveVaultUnlockStates, type VaultUnlockState } from "../lib/hermes-vault-unlock";
+import { useAuthStore } from "../stores/auth";
 
 type ToolCallPart = Extract<MessagePart, { type: "tool-call" }>;
 type NoticeSeverity = "info" | "warning" | "error";
@@ -70,7 +73,8 @@ type EventRow = {
 };
 type ApprovalRow = { kind: "approval"; key: string; state: ApprovalRequestState };
 type ClarifyRow = { kind: "clarify"; key: string; state: ClarifyRequestState };
-type ActivityRow = EventRow | ApprovalRow | ClarifyRow;
+type VaultRow = {kind:"vault";key:string;state:VaultUnlockState};
+type ActivityRow = EventRow | ApprovalRow | ClarifyRow | VaultRow;
 
 const MAX_VISIBLE_ROWS = 8;
 const MAX_UI_LABEL_CHARS = 4_000;
@@ -87,6 +91,7 @@ const interactionCardClass =
 export function HermesProgressInline({
   invocations,
   onInteraction,
+  onVaultUnlock,
   onStop,
   botAppearances,
 }: {
@@ -98,7 +103,9 @@ export function HermesProgressInline({
     response: string | string[],
   ) => void | Promise<void>;
   onStop?: () => void;
+  onVaultUnlock?: VaultUnlockCallback;
 }) {
+  const self = useAuthStore(state=>state.user);
   const decisions = useHermesApprovalsStore((state) => state.decisions);
   const clarifyResponses = useHermesClarificationsStore(
     (state) => state.responses,
@@ -168,11 +175,15 @@ export function HermesProgressInline({
         const needsClarification = clarifyStates.some(
           (state) => state.status === "pending",
         );
-        const needsInteraction = needsApproval || needsClarification;
+        const vaultStates = deriveVaultUnlockStates(invocationEvents,nowMs)
+          .filter(state=>self?.type === "human" && state.request.requesterUserId === self.id);
+        const needsVaultUnlock = vaultStates.some(state=>state.outcome === null);
+        const needsInteraction = needsApproval || needsClarification || needsVaultUnlock;
         const rows = buildActivityRows(
           invocationEvents,
           approvalStates,
           clarifyStates,
+          vaultStates,
         );
         const working = invocation.status === "running" && !needsInteraction;
         const appearance = botAppearanceFor(
@@ -185,8 +196,7 @@ export function HermesProgressInline({
         // visible window; ordinary activity remains in event order.
         const hiddenPending = rows.filter(
           (row) =>
-            (row.kind === "approval" || row.kind === "clarify") &&
-            row.state.status === "pending" &&
+            ((row.kind === "approval" || row.kind === "clarify") ? row.state.status === "pending" : row.kind === "vault" && row.state.outcome === null) &&
             !visibleRows.includes(row),
         );
         visibleRows = [...hiddenPending, ...visibleRows];
@@ -226,6 +236,8 @@ export function HermesProgressInline({
               ) : (
                 <ResolvedClarifyRow state={row.state} />
               )
+            ) : row.kind === "vault" ? (
+              <HermesVaultUnlock key={JSON.stringify([row.state.event.id,row.state.request])} state={row.state} onResponse={onVaultUnlock}/>
             ) : row.kind === "notice" ? (
               <NoticeEventRow event={row.event} />
             ) : row.kind === "reasoning" ? (
@@ -252,7 +264,7 @@ export function HermesProgressInline({
           : null;
         const title = needsApproval
           ? "is waiting for your approval"
-          : needsClarification
+          : needsClarification || needsVaultUnlock
             ? "is waiting for your response"
           : invocation.status === "queued"
             ? "is queued"
@@ -351,6 +363,7 @@ function buildActivityRows(
   sortedEvents: BotInvocationProgressEventPublic[],
   approvalStates: ApprovalRequestState[],
   clarifyStates: ClarifyRequestState[],
+  vaultStates: VaultUnlockState[],
 ): ActivityRow[] {
   const approvalStateByEventId = new Map(
     approvalStates.map((state) => [state.event.id, state]),
@@ -362,6 +375,11 @@ function buildActivityRows(
   const toolRowByCallId = new Map<string, EventRow>();
 
   for (const event of sortedEvents) {
+    if (event.type.startsWith("vault.unlock.")) {
+      const state = vaultStates.find(state=>state.event.id === event.id);
+      if (state) rows.push({kind:"vault",key:event.id,state});
+      continue;
+    }
     if (isApprovalRequestEvent(event)) {
       const state = approvalStateByEventId.get(event.id);
       if (state) rows.push({ kind: "approval", key: event.id, state });

@@ -159,6 +159,18 @@ describe("local bot progress store", () => {
     ).toBe(false);
   });
 
+  test("retains a vault request past inactivity and overflow only until its expiry", async () => {
+    let now = Date.now();
+    const store = createLocalBotProgressStoreForTests({now:()=>now,maxEvents:2});
+    const event = await store.append(progressInput({type:"vault.unlock.request",payload:{version:2,requestId:"vault",sessionKey:"session",expiresAt:now+120000}}));
+    for (let i=0;i<4;i++) await store.append(progressInput({toolCallId:`overflow-${i}`}));
+    now+=31000;
+    expect(await store.listForConversation("conversation-1")).toContainEqual(event);
+    now+=90000;
+    expect(await store.listForConversation("conversation-1")).toEqual([]);
+    expect(await store.findRequest?.("invocation-1","vault.unlock.request","vault")).toEqual(event);
+  });
+
   test("clear removes events and the conversation index", async () => {
     const store = createLocalBotProgressStoreForTests();
     await store.append(progressInput());
@@ -176,6 +188,20 @@ const redisTestUrl = process.env.TEST_REDIS_URL;
 const redisTest = redisTestUrl ? test : test.skip;
 
 describe("redis bot progress store", () => {
+  redisTest("retains metadata for expiry resolution without keeping an expired prompt active", async () => {
+    let now = Date.now();
+    const store = createRedisBotProgressStoreForTests({redisUrl:redisTestUrl!,redisKeyPrefix:`vault-store-${crypto.randomUUID()}`,maxEvents:2,now:()=>now});
+    try {
+      const request = await store.append(progressInput({type:"vault.unlock.request",payload:{version:2,requestId:"redis-vault",sessionKey:"session",expiresAt:now+120000}}));
+      for(let i=0;i<4;i++) await store.append(progressInput({toolCallId:`overflow-${i}`}));
+      now+=31000;
+      expect(await store.listForConversation("conversation-1")).toContainEqual(request);
+      now+=90000;
+      expect(await store.listForConversation("conversation-1")).toEqual([]);
+      expect(await store.findRequest?.("invocation-1","vault.unlock.request","redis-vault")).toEqual(request);
+    } finally { await store.clear({invocationId:"invocation-1",conversationId:"conversation-1"});await store.close?.(); }
+  });
+
   redisTest("deduplicates retries and retains a live request beyond the list cap", async () => {
     const store = createRedisBotProgressStoreForTests({
       redisUrl: redisTestUrl!,

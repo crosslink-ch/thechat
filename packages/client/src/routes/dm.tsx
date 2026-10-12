@@ -7,6 +7,7 @@ import {
   useBotRuntime,
   useBotRuntimeCache,
   submitHermesInteraction,
+  submitHermesVaultUnlock,
 } from "../hooks/useBotRuntime";
 import type { BotAppearance, BotInvocationProgressEventPublic } from "@thechat/shared";
 import { useConversationThreads } from "../hooks/useConversationThreads";
@@ -652,6 +653,11 @@ export function DmRoute() {
             typingSuppressedUserIds={activeHermesProgress.typingSuppressedUserIds}
             onSend={handleSend}
             onInteraction={handleHermesInteraction}
+            onVaultUnlock={async (event,response)=> {
+              if (!isHermesDm || !isAuthenticated(token)) throw new Error("Vault unlock unavailable");
+              await submitHermesVaultUnlock(event.invocationId,event.id,response,token);
+              invalidate(conversationId);
+            }}
             onStop={handleStopHermesTask}
             onLoadOlderMessages={channelChat.loadOlderMessages}
             onSetReaction={channelChat.setReaction}

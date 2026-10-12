@@ -14,6 +14,7 @@ import {
 } from "../services/bot-runtime";
 import { ServiceError } from "../services/errors";
 import { resolveTokenToUser } from "../auth/middleware";
+import { vaultUnlockRequestSchema, vaultUnlockResolvedSchema } from "../services/vault-unlock";
 
 const messageSchema = z.object({
   invocationId: z.string().min(1).optional(),
@@ -107,6 +108,8 @@ const interactionProgressPayloadSchemas = {
   "approval.resolved": approvalResolvedPayloadSchema,
   "clarify.request": clarifyRequestPayloadSchema,
   "clarify.resolved": clarifyResolvedPayloadSchema,
+  "vault.unlock.request": vaultUnlockRequestSchema,
+  "vault.unlock.resolved": vaultUnlockResolvedSchema,
 } as const;
 
 const progressSchema = z.object({
@@ -160,6 +163,7 @@ const cancelledSchema = z.object({
 
 type HermesPlatformBot = {
   id: string;
+  ownerUserId: string;
   userId: string;
   name: string;
   kind: "webhook" | "hermes";
@@ -186,6 +190,7 @@ async function resolveHermesPlatformBot(headers: Record<string, string | undefin
   const [bot] = await db
     .select({
       id: bots.id,
+      ownerUserId: bots.ownerId,
       userId: bots.userId,
       kind: bots.kind,
       name: users.name,
@@ -222,6 +227,7 @@ export const hermesPlatformRoutes = new Elysia({ prefix: "/hermes-platform" })
   .get("/health", ({ platformBot }) => ({
     ok: true,
     platform: "thechat",
+    ownerUserId: platformBot?.ownerUserId ?? null,
     bot: platformBot ? { id: platformBot.id, userId: platformBot.userId, name: platformBot.name } : null,
   }))
   .get("/events", async ({ query, platformBot, set }) => {

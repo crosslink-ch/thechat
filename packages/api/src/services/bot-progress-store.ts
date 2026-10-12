@@ -63,6 +63,8 @@ export interface ProgressEventInput {
 
 export interface BotProgressStore {
   append(input: ProgressEventInput): Promise<BotInvocationProgressEventPublic>;
+  /** Lifecycle metadata lookup, including expired/inactive requests; never public snapshot access. */
+  findRequest?(invocationId: string, requestType: string, requestId: string): Promise<BotInvocationProgressEventPublic | null>;
   touch(input: { invocationId: string; conversationId: string }): Promise<void>;
   listForConversation(
     conversationId: string,
@@ -251,7 +253,7 @@ class RedisBotProgressStore implements BotProgressStore {
       }
       if (
         isRecentlyActive(effectiveActivityAt, now, this.activityTimeoutMs) ||
-        hasUnresolvedInteraction(invocationEvents)
+        hasUnresolvedInteraction(invocationEvents, now)
       ) {
         events.push(...invocationEvents);
       }
@@ -290,6 +292,11 @@ class RedisBotProgressStore implements BotProgressStore {
 
   async close(): Promise<void> {
     await this.redis.quit();
+  }
+
+  async findRequest(invocationId: string, requestType: string, requestId: string) {
+    await connectRedisIfNeeded(this.redis);
+    return parseProgressEvent(await this.redis.hget(this.requestIdentityKey(invocationId), `${requestType}:${requestId}`));
   }
 
   private eventKey(invocationId: string) {
@@ -413,7 +420,7 @@ class LocalBotProgressStore implements BotProgressStore {
     events.push(event);
     this.eventsByInvocation.set(
       input.invocationId,
-      compactProgressEvents(events, this.maxEvents),
+      compactProgressEvents(events, this.maxEvents, now),
     );
     return event;
   }
@@ -434,7 +441,7 @@ class LocalBotProgressStore implements BotProgressStore {
         const events = this.eventsByInvocation.get(invocationId) ?? [];
         const activityAt = this.activityAtByInvocation.get(invocationId) ?? Number.NaN;
         return isRecentlyActive(activityAt, now, this.activityTimeoutMs) ||
-          hasUnresolvedInteraction(events)
+          hasUnresolvedInteraction(events, now)
           ? events
           : [];
       })
@@ -443,6 +450,11 @@ class LocalBotProgressStore implements BotProgressStore {
 
   async clear(input: { invocationId: string; conversationId: string }): Promise<void> {
     this.deleteInvocation(input.invocationId, input.conversationId);
+  }
+
+  async findRequest(invocationId: string, requestType: string, requestId: string) {
+    this.pruneExpired();
+    return this.requestEventsByInvocation.get(invocationId)?.get(`${requestType}:${requestId}`) ?? null;
   }
 
   private indexInvocation(invocationId: string, conversationId: string, now: number) {
@@ -557,6 +569,14 @@ class ResilientBotProgressStore implements BotProgressStore {
 
   async close(): Promise<void> {
     await Promise.allSettled([this.redis.close?.(), this.fallback.close?.()]);
+  }
+
+  async findRequest(invocationId: string, requestType: string, requestId: string) {
+    try {
+      const event = await this.redis.findRequest?.(invocationId,requestType,requestId);
+      if (event) return event;
+    } catch (error) { this.warn(error); }
+    return await this.fallback.findRequest?.(invocationId,requestType,requestId) ?? null;
   }
 
   private warn(error: unknown) {
@@ -701,16 +721,17 @@ function isRecentlyActive(activityAt: number, now: number, timeoutMs: number) {
   return Number.isFinite(activityAt) && now - activityAt <= timeoutMs;
 }
 
-function hasUnresolvedInteraction(events: BotInvocationProgressEventPublic[]) {
-  return unresolvedInteractionRequestIds(events).size > 0;
+function hasUnresolvedInteraction(events: BotInvocationProgressEventPublic[], now = Date.now()) {
+  return unresolvedInteractionRequestIds(events, now).size > 0;
 }
 
 function compactProgressEvents(
   events: BotInvocationProgressEventPublic[],
   maxEvents: number,
+  now = Date.now(),
 ) {
   if (events.length <= maxEvents) return events;
-  const pendingIds = unresolvedInteractionRequestIds(events);
+  const pendingIds = unresolvedInteractionRequestIds(events, now);
   const compactable = events.filter((event) => !pendingIds.has(event.id));
   const retainedCompactableIds = new Set(
     compactable.slice(-maxEvents).map((event) => event.id),
@@ -722,16 +743,20 @@ function compactProgressEvents(
 
 function unresolvedInteractionRequestIds(
   events: BotInvocationProgressEventPublic[],
+  now = Date.now(),
 ) {
   const pendingByType = new Map<string, BotInvocationProgressEventPublic[]>([
     ["approval", []],
     ["clarify", []],
+    ["vault.unlock", []],
   ]);
   for (const event of [...events].sort(compareProgressEvents)) {
     const requestKind = event.type === "approval.request"
       ? "approval"
       : event.type === "clarify.request"
         ? "clarify"
+        : event.type === "vault.unlock.request" && typeof event.payload?.expiresAt === "number" && event.payload.expiresAt > now
+          ? "vault.unlock"
         : null;
     if (requestKind) {
       pendingByType.get(requestKind)!.push(event);
@@ -741,6 +766,8 @@ function unresolvedInteractionRequestIds(
       ? "approval"
       : event.type === "clarify.resolved"
         ? "clarify"
+        : event.type === "vault.unlock.resolved"
+          ? "vault.unlock"
         : null;
     if (!resolutionKind) continue;
     const pending = pendingByType.get(resolutionKind)!;
@@ -748,7 +775,8 @@ function unresolvedInteractionRequestIds(
     const sessionKey = stringField(event.payload, "sessionKey");
     const candidates = requestId
       ? pending.filter(
-          (request) => stringField(request.payload, "requestId") === requestId,
+          (request) => stringField(request.payload, "requestId") === requestId &&
+            (resolutionKind !== "vault.unlock" || stringField(request.payload,"sessionKey") === sessionKey),
         )
       : pending.filter(
           (request) =>
@@ -776,7 +804,7 @@ function unresolvedInteractionRequestIds(
 }
 
 function interactionRequestIdentity(input: ProgressEventInput) {
-  if (input.type !== "approval.request" && input.type !== "clarify.request") {
+  if (input.type !== "approval.request" && input.type !== "clarify.request" && input.type !== "vault.unlock.request") {
     return null;
   }
   const requestId = stringField(input.payload, "requestId");
@@ -788,6 +816,8 @@ function interactionResolution(input: ProgressEventInput) {
     ? "approval.request"
     : input.type === "clarify.resolved"
       ? "clarify.request"
+      : input.type === "vault.unlock.resolved"
+        ? "vault.unlock.request"
       : null;
   if (!requestType) return null;
   return {

@@ -17,6 +17,7 @@ import type {
 import type { ActiveHermesInvocationProgress } from "../lib/hermes-progress";
 import type { MentionUser } from "./MentionList";
 import { HermesProgressInline } from "./HermesProgressInline";
+import type { VaultUnlockCallback } from "./HermesVaultUnlock";
 import type { HermesSlashCommand } from "../lib/hermes-slash-commands";
 import { MessageSendError } from "./MessageSendError";
 import { ArrowDown } from "lucide-react";
@@ -50,6 +51,7 @@ interface HermesDmChatViewProps {
     response: string | string[],
   ) => void | Promise<void>;
   onStop?: () => void;
+  onVaultUnlock?: VaultUnlockCallback;
   onLoadOlderMessages?: () => boolean | void | Promise<boolean | void>;
   onSetReaction?: (
     messageId: string,
@@ -79,6 +81,7 @@ export function HermesDmChatView({
   typingSuppressedUserIds,
   onSend,
   onInteraction,
+  onVaultUnlock,
   onStop,
   onLoadOlderMessages,
   onSetReaction,
@@ -424,6 +427,7 @@ export function HermesDmChatView({
             invocations={progressInvocations}
             botAppearances={botAppearances}
             onInteraction={onInteraction}
+            onVaultUnlock={onVaultUnlock}
             onStop={onStop}
           />
           {visibleTypingNames.length > 0 && (

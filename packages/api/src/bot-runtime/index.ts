@@ -6,7 +6,9 @@ import { ServiceError } from "../services/errors";
 import {
   listConversationBotRuntime,
   submitHermesPlatformInteraction,
+  submitHermesPlatformVaultUnlock,
 } from "../services/bot-runtime";
+import { vaultUnlockResponseSchema } from "../services/vault-unlock";
 
 const interactionResponseSchema = z.object({
   response: z.union([
@@ -16,9 +18,19 @@ const interactionResponseSchema = z.object({
 });
 
 export const botRuntimeRoutes = new Elysia({ prefix: "/bot-runtime" })
+  .onRequest(({request,set})=> {
+    if (new URL(request.url).pathname.endsWith("/vault-unlock")) set.headers["Cache-Control"] = "no-store";
+  })
+  .onError(({request,set,code})=> {
+    if (!new URL(request.url).pathname.endsWith("/vault-unlock")) return;
+    set.headers["Cache-Control"] = "no-store";
+    set.status = code === "PARSE" || code === "VALIDATION" ? 400 : 500;
+    return {error:"Could not deliver the vault unlock response"};
+  })
   .use(browserAuthPolicy)
   .derive(async ({ headers }) => ({ user: await resolveRequestUser(headers) } as any))
-  .onBeforeHandle(({ user, set }) => {
+  .onBeforeHandle(({ user, set, path }) => {
+    if (path.endsWith("/vault-unlock")) set.headers["Cache-Control"] = "no-store";
     if (!user) {
       set.status = 401;
       return { error: "Authentication required" };
@@ -58,4 +70,15 @@ export const botRuntimeRoutes = new Elysia({ prefix: "/bot-runtime" })
         };
       }
     },
-  );
+  )
+  .post("/invocations/:invocationId/interactions/:eventId/vault-unlock", async ({params, body, user, set}) => {
+    set.headers["Cache-Control"] = "no-store";
+    const parsed = vaultUnlockResponseSchema.safeParse(body);
+    if (!parsed.success) { set.status = 400; return {error: "Invalid vault unlock response"}; }
+    try {
+      return await submitHermesPlatformVaultUnlock({userId:user.id,userType:user.type,invocationId:params.invocationId,eventId:params.eventId,response:parsed.data});
+    } catch (error) {
+      set.status = error instanceof ServiceError ? error.status : 500;
+      return {error: "Could not deliver the vault unlock response"};
+    }
+  });
