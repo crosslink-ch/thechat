@@ -10,8 +10,8 @@ import type {
 } from "./auth";
 
 const users = new Map([
-  ["token-alice", { id: "user-alice", name: "Alice" }],
-  ["token-bob", { id: "user-bob", name: "Bob" }],
+  ["token-alice", { id: "00000000-0000-4000-8000-000000000001", name: "Alice" }],
+  ["token-bob", { id: "00000000-0000-4000-8000-000000000002", name: "Bob" }],
 ]);
 
 function authenticate({ request }: { request: Request }): Promise<McpAuthenticationResult> {
@@ -189,10 +189,10 @@ describe("official MCP Streamable HTTP transport", () => {
     expect(alice.tools.tools.map((tool) => tool.name)).toContain("whoami");
     expect(bob.tools.tools.map((tool) => tool.name)).toContain("whoami");
     expect(alice.result.content).toEqual([
-      { type: "text", text: "user-alice" },
+      { type: "text", text: "00000000-0000-4000-8000-000000000001" },
     ]);
     expect(bob.result.content).toEqual([
-      { type: "text", text: "user-bob" },
+      { type: "text", text: "00000000-0000-4000-8000-000000000002" },
     ]);
 
     for (const exchange of [...aliceExchanges, ...bobExchanges]) {

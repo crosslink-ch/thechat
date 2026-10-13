@@ -7,7 +7,7 @@ import {
   PERSONAL_ACCESS_TOKEN_PREFIX,
 } from "./better-auth";
 import { authRoutes } from "./index";
-import { db } from "../db";
+import { authDb as db } from "../db";
 import {
   authInfrastructureErrors,
   resolveTokenToUser,

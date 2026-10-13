@@ -5,7 +5,7 @@ process.env.REQUIRE_EMAIL_VERIFICATION = "true";
 import { describe, test, expect, afterAll } from "bun:test";
 import { Elysia } from "elysia";
 import { desc, eq, like } from "drizzle-orm";
-import { db } from "../db";
+import { db } from "../db/testing";
 import {
   users,
   verification,

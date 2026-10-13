@@ -1,7 +1,8 @@
 import { afterAll, expect, spyOn, test } from "bun:test";
 import { Elysia } from "elysia";
 import { eq } from "drizzle-orm";
-import { db } from "../db";
+import { db } from "../db/testing";
+import { authDb } from '../db';
 import { users } from "../db/schema";
 import { authRoutes } from ".";
 import { workspaceRoutes } from "../workspaces";
@@ -107,7 +108,7 @@ const routes = [
   ["/optional", "GET", 200],
 ] as const;
 test("every protected surface rejects missing or forged CSRF context before authentication lookup", async () => {
-  const lookup = spyOn(db, "select");
+  const lookup = spyOn(authDb, "select");
   try {
     for (const [path, method] of routes) {
       for (const unsafeHeaders of [

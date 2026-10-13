@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { and, asc, desc, eq, inArray, isNull, lt } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, lt, sql } from "drizzle-orm";
 import type { ChatMessage, WsServerEvent } from "@thechat/shared";
 import { attachmentsByMessageIds } from "../attachments/public";
 import { loadAttachmentConfig } from "../attachments/config";
@@ -25,6 +25,7 @@ import { requireConversationMutationAccess } from "./conversation-mutation-acces
 import { resolveMessageBotTargetIds } from "./message-bot-targets";
 import { messageReactionsByMessageIds } from "./message-reactions";
 import { recordMessageUnreads } from "./activity";
+import { decodeMessageCursor, encodeMessageCursor, persistedMessageCursor } from './message-cursor';
 
 const messageLog = log.child({ component: "messages" });
 
@@ -53,7 +54,10 @@ export async function getMessages(
     conditions.push(isNull(messages.threadId));
   }
   if (options?.before) {
-    conditions.push(lt(messages.createdAt, new Date(options.before)));
+    const cursor = decodeMessageCursor(options.before, conversationId, options.threadId, options.unthreaded);
+    conditions.push(cursor instanceof Date
+      ? lt(messages.createdAt, cursor)
+      : sql`(${messages.createdAt},${messages.id}) < (${cursor.timestamp}::timestamptz,${cursor.id}::uuid)`);
   }
 
   const rows = await db
@@ -65,13 +69,14 @@ export async function getMessages(
       content: messages.content,
       parts: messages.parts,
       createdAt: messages.createdAt,
+      cursorCreatedAt: sql<string>`to_char(${messages.createdAt} at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`,
       senderName: users.name,
       senderType: users.type,
     })
     .from(messages)
     .innerJoin(users, eq(messages.senderId, users.id))
     .where(and(...conditions))
-    .orderBy(desc(messages.createdAt))
+    .orderBy(desc(messages.createdAt), desc(messages.id))
     .limit(limit);
   const chronological = rows.reverse();
   const includeAttachments =
@@ -106,6 +111,7 @@ export async function getMessageByIdForParticipant(
       content: messages.content,
       parts: messages.parts,
       createdAt: messages.createdAt,
+      cursorCreatedAt: sql<string>`to_char(${messages.createdAt} at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`,
       senderName: users.name,
       senderType: users.type,
     })
@@ -322,6 +328,7 @@ export async function sendMessage(
         attachmentMap.get(result.message.id) ?? [],
         reactions,
       );
+      publicMessage.paginationCursor = await persistedMessageCursor(result.message.id);
       span.setAttribute("thechat.message.idempotent_replay", result.duplicate);
       span.setAttribute(
         "thechat.message.outcome",
@@ -464,6 +471,7 @@ export async function attachReadyAttachments(
       await tx.insert(messageAttachments).values(
         input.attachmentIds.map((attachmentId, position) => ({
           messageId: input.messageId,
+          conversationId: input.conversationId,
           attachmentId,
           position,
         })),
@@ -596,7 +604,7 @@ async function requireParticipant(
     .limit(1);
   if (
     !participant ||
-    (participant.conversationType === "group" && !participant.workspaceMemberUserId)
+    (participant.workspaceId !== null && !participant.workspaceMemberUserId)
   ) {
     throw new ServiceError(
       "You are not a participant of this conversation",
@@ -651,6 +659,7 @@ function toChatMessage(
     content: string;
     parts: typeof messages.$inferSelect.parts;
     createdAt: Date;
+    cursorCreatedAt?: string;
   },
   messageAttachments: ChatMessage["attachments"],
   reactions: NonNullable<ChatMessage["reactions"]>,
@@ -667,5 +676,6 @@ function toChatMessage(
     attachments: messageAttachments,
     reactions,
     createdAt: row.createdAt.toISOString(),
+    ...(row.cursorCreatedAt ? { paginationCursor: encodeMessageCursor({ timestamp: row.cursorCreatedAt, id: row.id, conversationId: row.conversationId, threadId: row.threadId }) } : {}),
   };
 }

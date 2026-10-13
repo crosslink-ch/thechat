@@ -1,7 +1,6 @@
 import { Elysia } from "elysia";
 import { browserCors } from "./auth/browser";
-import { sql } from "drizzle-orm";
-import { db } from "./db";
+import { db, assertDatabaseSafety, checkDatabaseHealth } from "./db";
 import { authRoutes } from "./auth";
 import { drainAuthenticationCodeDeliveries } from "./auth/better-auth";
 import { authInfrastructureErrors } from "./auth/middleware";
@@ -53,6 +52,7 @@ function installLoopbackOnlyE2EGuard() {
 
 installLoopbackOnlyE2EGuard();
 
+await assertDatabaseSafety();
 await initObservability("thechat-api");
 
 const app = new Elysia()
@@ -76,7 +76,7 @@ const app = new Elysia()
   .use(botWorkspaceInviteRoutes)
   .use(mcpRoutes)
   .get("/", () => "TheChat API")
-  .get("/health", async ({ db }) => {
+  .get("/health", async () => {
     return withSpan(
       "http.health",
       {
@@ -85,7 +85,7 @@ const app = new Elysia()
       },
       async () => {
         try {
-          await db.execute(sql`SELECT 1`);
+          await checkDatabaseHealth();
           const e2eRunId =
             process.env.THECHAT_E2E_LOOPBACK_ONLY === "1"
               ? process.env.THECHAT_E2E_RUN_ID

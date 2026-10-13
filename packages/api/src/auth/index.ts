@@ -3,7 +3,7 @@ import { browserAuthPolicy, browserSessionCookie, isWebClient } from "./browser"
 import { Elysia } from "elysia";
 import { and, eq, sql } from "drizzle-orm";
 import { z } from "zod";
-import { db } from "../db";
+import { authDb as db } from "../db";
 import { log } from "../logging";
 import { rateLimit, session, users } from "../db/schema";
 import {

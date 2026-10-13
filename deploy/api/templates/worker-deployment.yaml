@@ -38,7 +38,9 @@ spec:
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           command: ["bun", "run", "dist/scripts/worker.js"]
           env:
-            {{- include "thechat-api.env" . | nindent 12 }}
+            {{- include "thechat-api.workerEnv" . | nindent 12 }}
+            {{- include "thechat-api.workerDatabaseEnv" . | trim | nindent 12 }}
+            {{- include "thechat-api.sharedCredentialEnv" . | trim | nindent 12 }}
             {{- include "thechat-api.workerAwsCredentialEnv" . | trim | nindent 12 }}
           resources:
             {{- toYaml .Values.worker.resources | nindent 12 }}

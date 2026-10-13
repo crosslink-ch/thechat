@@ -45,6 +45,16 @@ function directBot(user: {
 export async function createOrGetDm(
   workspaceId: string,
   userId: string,
+  otherUserId: string,
+) {
+  // RLS bootstrap authority exists only in the creating SQL transaction.
+  // Keep the conversation and both participants in that same transaction.
+  return db.transaction(() => createOrGetDmInTransaction(workspaceId, userId, otherUserId));
+}
+
+async function createOrGetDmInTransaction(
+  workspaceId: string,
+  userId: string,
   otherUserId: string
 ) {
   if (otherUserId === userId) {
@@ -155,13 +165,14 @@ export async function createOrGetDm(
     throw new ServiceError("User not found", 404);
   }
 
-  const [conv] = await db
+  const conv = { id: crypto.randomUUID() };
+  await db
     .insert(conversations)
     .values({
+      id: conv.id,
       type: "direct",
       workspaceId,
-    })
-    .returning();
+    });
 
   await db.insert(conversationParticipants).values([
     { conversationId: conv.id, userId, role: "member" as const },

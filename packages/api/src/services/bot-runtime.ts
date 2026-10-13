@@ -27,6 +27,7 @@ import { BullMqAsyncBus } from "../async";
 import { AsyncWorkerRuntime } from "../async/worker";
 import type { AsyncJobHandler, QueueCommand } from "../async/types";
 import { db } from "../db";
+import { persistedMessageCursor } from './message-cursor';
 import {
   botInvocations,
   bots,
@@ -2834,6 +2835,7 @@ async function publishBotMessage(
       parts: message.parts ?? null,
       attachments: attachmentMetadata,
       createdAt: message.createdAt.toISOString(),
+      paginationCursor: await persistedMessageCursor(message.id),
     } as ChatMessage,
     conversationType,
   };

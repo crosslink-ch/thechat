@@ -4,7 +4,7 @@ import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { apiKey, defaultKeyHasher } from "@better-auth/api-key";
 import { bearer, emailOTP } from "better-auth/plugins";
 import { AsyncLocalStorage } from "node:async_hooks";
-import { db } from "../db";
+import { authDb as db } from "../db";
 import * as schema from "../db/schema";
 import { log } from "../logging";
 import { sendPasswordResetCode, sendVerificationCode } from "./email";

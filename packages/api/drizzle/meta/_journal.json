@@ -120,6 +120,13 @@
       "when": 1790536871396,
       "tag": "0016_bot_avatars",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1791921101152,
+      "tag": "0017_tenant_database_hardening",
+      "breakpoints": true
     }
   ]
 }

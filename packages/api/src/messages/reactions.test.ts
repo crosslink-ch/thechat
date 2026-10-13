@@ -4,7 +4,7 @@ import { eq } from "drizzle-orm";
 import { Elysia } from "elysia";
 import { authRoutes } from "../auth";
 import { conversationRoutes } from "../conversations";
-import { db } from "../db";
+import { db } from "../db/testing";
 import { users, workspaces } from "../db/schema";
 import { inviteRoutes } from "../invites";
 import { messageRoutes } from "../messages";

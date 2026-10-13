@@ -1,7 +1,7 @@
 import { Elysia } from "elysia";
 import { browserAuthPolicy, browserSessionToken, isWebClient } from "./browser";
 import { and, eq } from "drizzle-orm";
-import { db } from "../db";
+import { authDb as db } from "../db";
 import { bots, session, users } from "../db/schema";
 import {
   auth,

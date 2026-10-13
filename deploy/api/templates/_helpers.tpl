@@ -81,7 +81,7 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- fail "API and worker service accounts must be distinct" -}}
 {{- end -}}
 {{- $env := .Values.env | default dict -}}
-{{- $reservedEnvNames := list "AWS_ACCESS_KEY_ID" "AWS_SECRET_ACCESS_KEY" "AWS_SESSION_TOKEN" "AWS_SECURITY_TOKEN" "AWS_PROFILE" "AWS_SHARED_CREDENTIALS_FILE" "AWS_CONFIG_FILE" "AWS_WEB_IDENTITY_TOKEN_FILE" "AWS_ROLE_ARN" "AWS_ROLE_SESSION_NAME" "AWS_CONTAINER_CREDENTIALS_FULL_URI" "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI" "AWS_CONTAINER_AUTHORIZATION_TOKEN" "AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE" "DATABASE_URL" "JWT_SECRET" "REDIS_URL" "SMTP_HOST" "SMTP_PORT" "SMTP_USER" "SMTP_PASS" "POSTMARK_API_TOKEN" -}}
+{{- $reservedEnvNames := list "AWS_ACCESS_KEY_ID" "AWS_SECRET_ACCESS_KEY" "AWS_SESSION_TOKEN" "AWS_SECURITY_TOKEN" "AWS_PROFILE" "AWS_SHARED_CREDENTIALS_FILE" "AWS_CONFIG_FILE" "AWS_WEB_IDENTITY_TOKEN_FILE" "AWS_ROLE_ARN" "AWS_ROLE_SESSION_NAME" "AWS_CONTAINER_CREDENTIALS_FULL_URI" "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI" "AWS_CONTAINER_AUTHORIZATION_TOKEN" "AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE" "DATABASE_URL" "DATABASE_AUTH_URL" "DATABASE_WORKER_URL" "DATABASE_MIGRATION_URL" "JWT_SECRET" "REDIS_URL" "SMTP_HOST" "SMTP_PORT" "SMTP_USER" "SMTP_PASS" "POSTMARK_API_TOKEN" -}}
 {{- range $key, $_ := $env -}}
 {{- $keyUpper := upper $key -}}
 {{- if or (regexMatch "^AWS_" $keyUpper) (has $keyUpper $reservedEnvNames) -}}
@@ -239,7 +239,7 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 redis://{{ include "thechat-api.redisFullname" . }}.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.redis.service.port }}/0
 {{- end }}
 
-{{- define "thechat-api.env" -}}
+{{- define "thechat-api.sharedEnv" -}}
 {{- $configuredEnv := default (dict) .Values.env -}}
 {{- $backendUrl := default "https://api.thechat.app" (index $configuredEnv "THECHAT_BACKEND_URL") -}}
 {{- $defaultEnv := dict
@@ -261,11 +261,38 @@ redis://{{ include "thechat-api.redisFullname" . }}.{{ .Release.Namespace }}.svc
 - name: {{ $key }}
   value: {{ $value | quote }}
 {{- end }}
+{{- end }}
+
+{{- define "thechat-api.workerEnv" -}}
+{{- include "thechat-api.sharedEnv" . -}}
+{{- end }}
+
+{{- define "thechat-api.env" -}}
+{{- include "thechat-api.sharedEnv" . }}
 - name: DATABASE_URL
   valueFrom:
     secretKeyRef:
       name: {{ .Values.databaseSecret }}
       key: DATABASE_URL
+{{- end }}
+
+{{- define "thechat-api.authDatabaseEnv" -}}
+- name: DATABASE_AUTH_URL
+  valueFrom:
+    secretKeyRef:
+      name: {{ .Values.authDatabaseSecret | default "thechat-auth-db" }}
+      key: DATABASE_AUTH_URL
+{{- end }}
+
+{{- define "thechat-api.workerDatabaseEnv" -}}
+- name: DATABASE_WORKER_URL
+  valueFrom:
+    secretKeyRef:
+      name: {{ .Values.workerDatabaseSecret | default "thechat-worker-db" }}
+      key: DATABASE_WORKER_URL
+{{- end }}
+
+{{- define "thechat-api.sharedCredentialEnv" -}}
 {{- $betterAuthSecret := "thechat-better-auth" -}}
 {{- if and (hasKey .Values "betterAuthSecret") (ne .Values.betterAuthSecret nil) -}}
 {{- $betterAuthSecret = required "betterAuthSecret is required" .Values.betterAuthSecret -}}

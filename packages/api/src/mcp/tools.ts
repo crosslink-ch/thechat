@@ -250,7 +250,7 @@ export function registerTools(server: McpServer) {
           .string()
           .optional()
           .describe(
-            "ISO timestamp cursor for pagination — fetch messages before this time"
+            "Returned paginationCursor (stable created_at/id tuple); legacy ISO timestamps retain strictly-before-time behavior"
           ),
       },
     },

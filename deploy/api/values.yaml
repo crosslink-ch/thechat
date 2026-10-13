@@ -28,9 +28,12 @@ migrationJob:
       cpu: 500m
       memory: 512Mi
 
-# Name of an existing Kubernetes Secret containing DATABASE_URL
-# The secret must have a key called DATABASE_URL
+# Restricted non-owner/NOBYPASSRLS role. These are separate credentials and
+# workload Secret keys; migration/worker authority is never injected into API.
 databaseSecret: thechat-db
+authDatabaseSecret: thechat-auth-db
+workerDatabaseSecret: thechat-worker-db
+migrationDatabaseSecret: thechat-migration-db
 
 # Name of the Kubernetes Secret containing BETTER_AUTH_SECRET.
 # When betterAuthInfisical.enabled=true, the Infisical operator creates and

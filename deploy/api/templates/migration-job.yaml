@@ -46,11 +46,11 @@ spec:
           image: "{{ $migrateImage.repository }}:{{ $migrateImage.tag }}"
           imagePullPolicy: {{ $migrateImage.pullPolicy }}
           env:
-            - name: DATABASE_URL
+            - name: DATABASE_MIGRATION_URL
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Values.databaseSecret }}
-                  key: DATABASE_URL
+                  name: {{ .Values.migrationDatabaseSecret | default "thechat-migration-db" }}
+                  key: DATABASE_MIGRATION_URL
           {{- with (get $migrationJob "resources") }}
           resources:
             {{- toYaml . | nindent 12 }}

@@ -1,7 +1,7 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import crypto from "crypto";
 import { eq, inArray } from "drizzle-orm";
-import { db } from "../db";
+import { db } from "../db/testing";
 import { eventOutbox } from "../db/schema";
 import { parseDomainEventEnvelope } from "./envelope";
 import { enqueueDomainEvent } from "./outbox";

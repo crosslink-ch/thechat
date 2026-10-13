@@ -3,7 +3,7 @@ import crypto from "crypto";
 import { eq } from "drizzle-orm";
 import { Elysia } from "elysia";
 import { authRoutes } from "../auth";
-import { db } from "../db";
+import { db } from "../db/testing";
 import { createBotApiKey } from "../auth/bot-api-keys";
 import {
   bots,

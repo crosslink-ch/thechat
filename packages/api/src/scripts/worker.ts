@@ -5,6 +5,7 @@ import {
 } from "../events/runtime";
 import { initObservability, shutdownObservability } from "../observability";
 import { log } from "../logging";
+import { assertWorkerDatabaseSafety, closeDatabaseConnections, withWorkerDatabaseContext } from '../db';
 import {
   closeAttachmentCleanup,
   startAttachmentCleanup,
@@ -13,6 +14,7 @@ import {
 const workerLog = log.child({ component: "worker" });
 
 async function main() {
+  await assertWorkerDatabaseSafety();
   await initObservability("thechat-worker");
 
   try {
@@ -30,6 +32,7 @@ async function main() {
       closeBotRuntime(),
     ]);
     await shutdownObservability();
+    await closeDatabaseConnections();
   }
 }
 
@@ -41,7 +44,7 @@ function waitForShutdownSignal(): Promise<void> {
   });
 }
 
-main().catch(async (error) => {
+withWorkerDatabaseContext(main).catch(async (error) => {
   workerLog.error({ err: error }, "TheChat worker failed");
   await Promise.all([
     closeAttachmentCleanup(),
@@ -49,5 +52,6 @@ main().catch(async (error) => {
     closeBotRuntime(),
   ]);
   await shutdownObservability();
+  await closeDatabaseConnections();
   process.exitCode = 1;
 });

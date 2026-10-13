@@ -6,7 +6,7 @@ import { authRoutes } from "../auth";
 import { botRoutes } from "../bots";
 import { conversationRoutes } from "../conversations";
 import { botWorkspaceInviteRoutes } from "./index";
-import { db } from "../db";
+import { db } from "../db/testing";
 import {
   botWorkspaceInvites,
   conversationParticipants,

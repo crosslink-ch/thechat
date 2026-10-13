@@ -10,7 +10,7 @@ import {
 } from "@thechat/shared";
 import { db } from "../db";
 import {
-  bots,
+  botIdentities as bots,
   botWorkspaceInvites,
   conversationParticipants,
   conversations,

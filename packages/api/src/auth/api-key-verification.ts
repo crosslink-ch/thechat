@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { db } from "../db";
+import { authDb as db } from "../db";
 import { API_KEY_HASHER } from "./better-auth";
 
 type StoredApiKeyState = {

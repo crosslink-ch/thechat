@@ -5,7 +5,8 @@ import { Elysia } from "elysia";
 import { authRoutes } from "../auth";
 import { auth } from "../auth/better-auth";
 import { botRoutes } from "../bots";
-import { db } from "../db";
+import { db } from "../db/testing";
+import { authDb } from '../db';
 import { users } from "../db/schema";
 import { publishWsEventToUsers } from "../realtime";
 import { wsRoutes } from ".";
@@ -216,7 +217,7 @@ describe("WebSocket session revocation", () => {
           message: "Invalid API key",
         },
       } as any);
-      executeSpy = spyOn(db, "execute").mockRejectedValue(
+      executeSpy = spyOn(authDb, "execute").mockRejectedValue(
         new Error("simulated api-key store outage"),
       );
     };

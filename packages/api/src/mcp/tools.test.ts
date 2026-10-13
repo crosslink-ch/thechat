@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { inArray } from "drizzle-orm";
-import { db } from "../db";
+import { db } from "../db/testing";
 import { users, workspaceMembers, workspaces } from "../db/schema";
 import type { McpUser as AuthUser } from "./auth";
 import { registerTools } from "./tools";

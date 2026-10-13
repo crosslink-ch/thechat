@@ -21,7 +21,7 @@ import { authRoutes } from "../auth";
 import { botRoutes } from "../bots";
 import { hermesPlatformRoutes } from "../hermes-platform";
 import { conversationRoutes } from "../conversations";
-import { db } from "../db";
+import { db } from "../db/testing";
 import {
   attachments,
   eventOutbox,

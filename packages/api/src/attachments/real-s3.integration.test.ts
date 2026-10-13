@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import crypto from "node:crypto";
 import { S3Client } from "@aws-sdk/client-s3";
 import { and, eq } from "drizzle-orm";
-import { db } from "../db";
+import { db } from "../db/testing";
 import {
   attachments,
   conversations,

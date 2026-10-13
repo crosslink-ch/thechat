@@ -44,6 +44,23 @@ def render(
     ).stdout
 
 
+class DatabaseAuthorityRenderTests(unittest.TestCase):
+    def test_database_roles_are_separated_between_api_worker_and_migrations(self) -> None:
+        api = render('templates/deployment.yaml')
+        worker = render('templates/worker-deployment.yaml')
+        migration = render('templates/migration-job.yaml')
+        self.assertIn('name: DATABASE_AUTH_URL', api)
+        self.assertIn('key: DATABASE_AUTH_URL', api)
+        self.assertNotIn('name: DATABASE_WORKER_URL', api)
+        self.assertNotIn('name: DATABASE_MIGRATION_URL', api)
+        self.assertIn('name: DATABASE_WORKER_URL', worker)
+        self.assertNotIn('name: DATABASE_URL', worker)
+        self.assertNotIn('name: DATABASE_AUTH_URL', worker)
+        self.assertIn('name: DATABASE_MIGRATION_URL', migration)
+        self.assertIn('key: DATABASE_MIGRATION_URL', migration)
+        self.assertNotIn('name: DATABASE_URL', migration)
+
+
 class MigrationHookRenderTests(unittest.TestCase):
     def test_migration_is_a_blocking_helm_hook(self) -> None:
         job = render("templates/migration-job.yaml")
@@ -71,8 +88,8 @@ class MigrationHookRenderTests(unittest.TestCase):
             "image: \"ghcr.io/crosslink-ch/thechat-api-migrate:sha-test\"",
             job,
         )
-        self.assertIn("name: thechat-db", job)
-        self.assertIn("key: DATABASE_URL", job)
+        self.assertIn("name: thechat-migration-db", job)
+        self.assertIn("key: DATABASE_MIGRATION_URL", job)
 
     def test_migration_job_settings_are_configurable(self) -> None:
         job = render(

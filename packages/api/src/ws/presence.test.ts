@@ -3,7 +3,7 @@ import crypto from "crypto";
 import { eq, inArray } from "drizzle-orm";
 import { Elysia } from "elysia";
 import { authRoutes } from "../auth";
-import { db } from "../db";
+import { db, withDatabaseContext } from "../db/testing";
 import { users, workspaceMembers, workspaces } from "../db/schema";
 import {
   LocalPresenceRegistry,
@@ -165,7 +165,7 @@ describe("WebSocket presence", () => {
       { workspaceId, userId: bob.user.id, role: "member" },
       { workspaceId, userId: botId, role: "member" },
     ]);
-    expect(await listSharedWorkspacePeerIds(alice.user.id)).toEqual([
+    expect(await withDatabaseContext({actorId:alice.user.id,scope:'actor'},()=>listSharedWorkspacePeerIds(alice.user.id))).toEqual([
       bob.user.id,
     ]);
 

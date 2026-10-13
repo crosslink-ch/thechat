@@ -2,7 +2,7 @@ import { describe, test, expect, afterAll, beforeAll } from "bun:test";
 import { Elysia } from "elysia";
 import { defaultBotAppearance } from "@thechat/shared";
 import { and, asc, eq, inArray } from "drizzle-orm";
-import { db } from "../db";
+import { db } from "../db/testing";
 import {
   apikey,
   botInvocations,
