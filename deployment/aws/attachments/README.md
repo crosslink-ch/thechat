@@ -27,7 +27,10 @@ Both templates manage:
 
 The production definition additionally retains its bucket policy, rejects SSE-C
 and explicit non-SSE-S3 encryption, removes expired delete markers, and retains
-both current and noncurrent clean versions for at least 30 days. Its 15-minute
+both current and noncurrent clean versions until the application explicitly
+reconciles retention/deletion using exact-version durable work. See
+[`docs/workspace-resource-lifecycle.md`](../../../docs/workspace-resource-lifecycle.md)
+for migration 0019, deployment ordering and rollback boundaries. Its 15-minute
 signature-age ceiling matches the application's maximum upload TTL. Production
 bucket names exclude dots so packaged clients use TLS virtual-host addressing
 without wildcard-certificate ambiguity.

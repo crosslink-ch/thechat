@@ -13,6 +13,7 @@ import {
   index,
   uniqueIndex,
   foreignKey,
+  check,
 } from "drizzle-orm/pg-core";
 import { relations, sql } from "drizzle-orm";
 import type { BotCommandPublic, MessagePart } from "@thechat/shared";
@@ -551,6 +552,8 @@ export const attachments = pgTable(
     expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
     processingAt: timestamp("processing_at", { withTimezone: true }),
     readyAt: timestamp("ready_at", { withTimezone: true }),
+    retentionSeconds: integer("retention_seconds"),
+    retainedUntil: timestamp("retained_until", { withTimezone: true }),
     attachedAt: timestamp("attached_at", { withTimezone: true }),
     rejectedAt: timestamp("rejected_at", { withTimezone: true }),
     deletingAt: timestamp("deleting_at", { withTimezone: true }),
@@ -567,8 +570,64 @@ export const attachments = pgTable(
     index("attachments_conversation_idx").on(t.conversationId),
     index("attachments_uploader_idx").on(t.uploaderId),
     index("attachments_status_expiry_idx").on(t.status, t.expiresAt),
+    index("attachments_retained_until_idx").on(t.retainedUntil).where(sql`${t.status}='attached'`),
+    check("attachments_retention_seconds_check",sql`${t.retentionSeconds}>0`),
   ],
 );
+
+export const workspaceResourceLimits = pgTable("workspace_resource_limits", {
+  workspaceId: varchar("workspace_id", {length:100}).primaryKey().references(() => workspaces.id,{onDelete:"cascade"}),
+  retainedBytes: bigint("retained_bytes",{mode:"bigint"}).notNull(),
+  pendingValidation: integer("pending_validation").notNull(),
+  pendingBot: integer("pending_bot").notNull(),
+  concurrentValidation: integer("concurrent_validation").notNull(),
+  concurrentBot: integer("concurrent_bot").notNull(),
+},t => [
+  check("workspace_resource_limits_retained_bytes_check",sql`${t.retainedBytes}>0`),
+  check("workspace_resource_limits_pending_validation_check",sql`${t.pendingValidation}>0`),
+  check("workspace_resource_limits_pending_bot_check",sql`${t.pendingBot}>0`),
+  check("workspace_resource_limits_concurrent_validation_check",sql`${t.concurrentValidation}>0`),
+  check("workspace_resource_limits_concurrent_bot_check",sql`${t.concurrentBot}>0`),
+]);
+
+export const workspaceWork = pgTable("workspace_work", {
+  workspaceId: varchar("workspace_id",{length:100}).notNull().references(() => workspaces.id,{onDelete:"cascade"}),
+  kind: varchar("kind",{length:20}).notNull(),
+  idempotencyKey: text("idempotency_key").notNull(),
+  state: varchar("state",{length:20}).notNull().default("pending"),
+  leaseToken: uuid("lease_token"),
+  leaseUntil: timestamp("lease_until",{withTimezone:true}),
+  createdAt: timestamp("created_at",{withTimezone:true}).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at",{withTimezone:true}).notNull().defaultNow(),
+},t => [
+  primaryKey({columns:[t.workspaceId,t.kind,t.idempotencyKey]}),
+  index("workspace_work_admission_idx").on(t.workspaceId,t.kind,t.state,t.createdAt,t.idempotencyKey),
+  check("workspace_work_kind_check",sql`${t.kind} in ('validation','bot')`),
+  check("workspace_work_state_check",sql`${t.state} in ('pending','running','completed','cancelled')`),
+  check("workspace_work_check",sql`(${t.state}='running')=(${t.leaseToken} is not null and ${t.leaseUntil} is not null)`),
+]);
+
+// Charges survive channel/attachment deletion until durable object work finishes.
+export const workspaceAttachmentCharges = pgTable("workspace_attachment_charges", {
+  attachmentId: uuid("attachment_id").primaryKey(),
+  workspaceId: varchar("workspace_id",{length:100}).notNull().references(() => workspaces.id,{onDelete:"cascade"}),
+  bytes: bigint("bytes",{mode:"bigint"}).notNull(),
+  capabilityUntil: timestamp("capability_until",{withTimezone:true}).notNull(),
+  cleanupRequested: boolean("cleanup_requested").notNull().default(false),
+  releasedAt: timestamp("released_at",{withTimezone:true}),
+},t => [index("workspace_attachment_charges_usage_idx").on(t.workspaceId,t.releasedAt),
+  check("workspace_attachment_charges_bytes_check",sql`${t.bytes}>0`)]);
+
+// Intentionally no canonical FK: cleanup receipts must survive even workspace deletion.
+export const attachmentObjectCleanup = pgTable("attachment_object_cleanup", {
+  attachmentId: uuid("attachment_id").notNull(),
+  objectKey: text("object_key").notNull(),
+  versionId: text("version_id").notNull(),
+  createdAt: timestamp("created_at",{withTimezone:true}).notNull().defaultNow(),
+  completedAt: timestamp("completed_at",{withTimezone:true}),
+  requested: boolean("requested").notNull().default(true),
+},t => [primaryKey({columns:[t.attachmentId,t.objectKey,t.versionId]}),
+  index("attachment_object_cleanup_pending_idx").on(t.createdAt).where(sql`${t.completedAt} is null`)]);
 
 export const messageAttachments = pgTable(
   "message_attachments",

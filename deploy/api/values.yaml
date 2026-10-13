@@ -103,7 +103,13 @@ env:
   ATTACHMENT_S3_REGION: "eu-central-1"
   ATTACHMENT_S3_FORCE_PATH_STYLE: "false"
   ATTACHMENT_UNATTACHED_TTL_SECONDS: "2592000"
-  ATTACHMENT_VALIDATION_CONCURRENCY: "1"
+  ATTACHMENT_RETAINED_TTL_SECONDS: "0" # Persistent; positive values explicitly expire newly reserved content after binding.
+  WORKSPACE_RETAINED_BYTES_LIMIT: "10737418240"
+  WORKSPACE_PENDING_VALIDATION_LIMIT: "32"
+  WORKSPACE_PENDING_BOT_LIMIT: "32"
+  WORKSPACE_CONCURRENT_VALIDATION_LIMIT: "1"
+  WORKSPACE_CONCURRENT_BOT_LIMIT: "2"
+  WORKSPACE_WORK_LEASE_SECONDS: "120"
 
 # Static AWS credentials for attachment storage. The chart only references
 # existing Secrets; it never accepts or renders credential values.

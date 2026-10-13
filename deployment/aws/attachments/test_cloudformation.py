@@ -53,6 +53,16 @@ def load_template(path: Path) -> dict[str, Any]:
     return document
 
 
+class PersistentCleanRetentionTests(unittest.TestCase):
+    def test_every_template_protects_current_and_noncurrent_clean_versions(self) -> None:
+        for path in (DEVELOPMENT_TEMPLATE, PRODUCTION_TEMPLATE):
+            bucket = load_template(path)["Resources"]["AttachmentsBucket"]["Properties"]
+            for rule in bucket["LifecycleConfiguration"]["Rules"]:
+                if rule.get("Prefix") == "clean/":
+                    self.assertNotIn("ExpirationInDays", rule, path.name)
+                    self.assertNotIn("NoncurrentVersionExpiration", rule, path.name)
+
+
 def actions(statement: dict[str, Any]) -> set[str]:
     value = statement["Action"]
     return {value} if isinstance(value, str) else set(value)
@@ -327,12 +337,12 @@ class ProductionAttachmentTemplateTests(unittest.TestCase):
                 "ExpiredObjectDeleteMarker"
             ]
         )
-        clean = lifecycle["ExpireCleanObjectVersions"]
-        self.assertEqual(clean["ExpirationInDays"], {"Ref": "CleanObjectRetentionDays"})
-        self.assertEqual(
-            clean["NoncurrentVersionExpiration"]["NoncurrentDays"],
-            {"Ref": "CleanObjectRetentionDays"},
-        )
+        # DB coordinates may pin noncurrent versions; neither may auto-expire.
+        self.assertNotIn("ExpireCleanObjectVersions", lifecycle)
+        for rule in lifecycle.values():
+            if rule.get("Prefix") == "clean/":
+                self.assertNotIn("ExpirationInDays", rule)
+                self.assertNotIn("NoncurrentVersionExpiration", rule)
         self.assertTrue(
             lifecycle["RemoveExpiredCleanDeleteMarkers"]["ExpiredObjectDeleteMarker"]
         )
