@@ -1064,7 +1064,7 @@ describe("Channel management", () => {
       .where(eq(eventOutbox.partitionKey, created.body.id));
   });
 
-  test("delete refuses channels with attachment lifecycle records", async () => {
+  test("delete durably handles channels with attachment lifecycle records", async () => {
     const owner = await registerUser("Attachment Owner");
     const workspaceId = await createWorkspace(
       owner.token,
@@ -1099,8 +1099,8 @@ describe("Channel management", () => {
       owner.token,
     );
     expect(deleted).toMatchObject({
-      status: 409,
-      body: { error: "Channels with attachments cannot be deleted" },
+      status: 200,
+      body: { ok: true, deletedChannelId: created.body.id },
     });
 
     const detail = await req(
@@ -1109,7 +1109,7 @@ describe("Channel management", () => {
       undefined,
       owner.token,
     );
-    expect(detail.body.channels).toEqual(
+    expect(detail.body.channels).not.toEqual(
       expect.arrayContaining([expect.objectContaining({ id: created.body.id })]),
     );
   });

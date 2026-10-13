@@ -12,7 +12,7 @@ Parameters:
     Type: Number
     Default: 30
     MinValue: 1
-    Description: Days to retain attached clean object versions
+    Description: Deprecated compatibility parameter; retained clean content is expired only by application reconciliation
 
 Resources:
   AttachmentsBucket:
@@ -68,12 +68,7 @@ Resources:
             ExpirationInDays: 1
             NoncurrentVersionExpiration:
               NoncurrentDays: 1
-          - Id: ExpireCleanObjects
-            Status: Enabled
-            Prefix: clean/
-            ExpirationInDays: !Ref CleanObjectRetentionDays
-            NoncurrentVersionExpiration:
-              NoncurrentDays: 7
+          # Retained clean versions are reconciled by the application, including noncurrent versions.
           - Id: AbortIncompleteMultipartUploads
             Status: Enabled
             Prefix: ""

@@ -9,6 +9,7 @@ import {
   conversationParticipants,
   conversationThreads,
   eventOutbox,
+  messageAttachments,
   messages,
   users,
   workspaceMembers,
@@ -1081,19 +1082,14 @@ export async function deleteChannel(
       );
     }
 
-    // Attachment rows own private object-store coordinates. Cascading them
-    // away would make their exact S3 versions impossible to clean up safely.
-    const [attachment] = await tx
-      .select({ id: attachments.id })
-      .from(attachments)
-      .where(eq(attachments.conversationId, channel.id))
-      .limit(1);
-    if (attachment) {
-      throw new ServiceError(
-        "Channels with attachments cannot be deleted",
-        409,
-      );
-    }
+    await tx.update(attachments).set({ status: "deleting", deletingAt: new Date() })
+      .where(and(eq(attachments.conversationId, channel.id), ne(attachments.status, "deleted")));
+    // The BEFORE DELETE trigger snapshots exact versions durably before the
+    // canonical attachment cascades. Remove message links first (RESTRICT FK).
+    await tx.delete(messageAttachments).where(inArray(
+      messageAttachments.messageId,
+      tx.select({ id: messages.id }).from(messages).where(eq(messages.conversationId, channel.id)),
+    ));
 
     const targetUsers = await tx
       .select({ userId: workspaceMembers.userId })

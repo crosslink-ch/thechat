@@ -10,6 +10,7 @@ import {
 import { enqueueDomainEvent } from "../events/outbox";
 import { withSpan } from "../observability";
 import { requireConversationMutationAccess } from "../services/conversation-mutation-access";
+import { admitWorkspaceWork, enforceWorkspaceRetainedBytes } from "../services/workspace-resource-budgets";
 import { ServiceError } from "../services/errors";
 import { requireConversationParticipant } from "../services/conversations";
 import { loadAttachmentConfig } from "./config";
@@ -124,6 +125,7 @@ export async function reserveAttachment(
             config.maxPerMessage,
             config.draftQuotaBytes,
           );
+          await enforceWorkspaceRetainedBytes(tx, input.conversationId, input.sizeBytes);
           return tx
             .insert(attachments)
             .values({
@@ -137,6 +139,7 @@ export async function reserveAttachment(
               quarantineKey,
               cleanKey,
               uploadExpiresAt: upload.expiresAt,
+              retentionSeconds: config.retainedTtlSeconds,
               expiresAt,
             })
             .returning();
@@ -263,6 +266,8 @@ async function completeAttachmentOperation(
     if (!current) throw new ServiceError("Attachment not found", 404);
     if (current.status !== "pending_upload") return current;
 
+    const [scope] = await tx.execute<{ workspace_id: string | null }>(sql`select workspace_id from conversations where id=${current.conversationId}`);
+    if (scope?.workspace_id) await admitWorkspaceWork(tx, scope.workspace_id, "validation", current.id);
     const now = new Date();
     const [processing] = await tx
       .update(attachments)
@@ -360,6 +365,7 @@ async function getAttachmentDownloadOperation(
   await requireParticipant(row.conversationId, userId);
   if (
     row.status !== "attached" ||
+    (row.retainedUntil !== null && row.retainedUntil.getTime() <= Date.now()) ||
     !row.cleanKey ||
     !row.cleanVersionId ||
     !row.verifiedMediaType
@@ -423,12 +429,6 @@ async function deleteAttachmentOperation(attachmentId: string, userId: string) {
     throw new ServiceError("Only the uploader can delete this attachment", 403);
   }
   await requireParticipant(row.conversationId, userId);
-  if (row.status === "attached") {
-    throw new ServiceError(
-      "Attached files cannot be deleted from the draft API",
-      409,
-    );
-  }
   if (row.status === "deleted" || row.status === "deleting") {
     return {
       response: { ok: true },
@@ -447,9 +447,10 @@ export async function requestExpiredAttachmentCleanup(
     .select()
     .from(attachments)
     .where(
-      and(
-        inArray(attachments.status, ["pending_upload", "processing", "ready"]),
-        lte(attachments.expiresAt, new Date()),
+      or(
+        and(inArray(attachments.status, ["pending_upload", "processing", "ready"]),
+          lte(attachments.expiresAt, new Date())),
+        and(eq(attachments.status, "attached"), lte(attachments.retainedUntil, new Date())),
       ),
     )
     .limit(limit);
@@ -468,7 +469,12 @@ export async function requestExpiredAttachmentCleanup(
               "pending_upload",
               "processing",
               "ready",
+              "attached",
             ]),
+            or(
+              and(eq(attachments.status, "attached"), lte(attachments.retainedUntil, now)),
+              and(inArray(attachments.status, ["pending_upload", "processing", "ready"]), lte(attachments.expiresAt, now)),
+            ),
           ),
         )
         .returning({ id: attachments.id });
@@ -505,6 +511,7 @@ async function requestAttachmentDeletion(
             "pending_upload",
             "processing",
             "ready",
+            "attached",
             "rejected",
           ]),
         ),
@@ -556,7 +563,7 @@ async function authorizeAttachmentRead(
   row: typeof attachments.$inferSelect,
   userId: string,
 ) {
-  if (row.status !== "attached") {
+  if (row.status !== "attached" && row.attachedAt === null) {
     if (row.uploaderId !== userId) {
       throw new ServiceError("Attachment is visible only to its uploader", 403);
     }
@@ -596,11 +603,11 @@ async function enforceDraftQuota(
 
   const [userUsage] = await executor
     .select({
-      bytes: sql<number>`coalesce(sum(${attachments.declaredSizeBytes}), 0)::int`,
+      bytes: sql<string>`coalesce(sum(${attachments.declaredSizeBytes}::bigint), 0)::text`,
     })
     .from(attachments)
     .where(and(eq(attachments.uploaderId, userId), quotaEligible));
-  if ((userUsage?.bytes ?? 0) + addedBytes > quotaBytes) {
+  if (BigInt(userUsage?.bytes ?? "0") + BigInt(addedBytes) > BigInt(quotaBytes)) {
     throw new ServiceError("Attachment draft quota exceeded", 429);
   }
 }
