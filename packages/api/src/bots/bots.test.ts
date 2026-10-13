@@ -311,6 +311,15 @@ async function addBotToWorkspace(botId: string, workspaceId: string, token: stri
   expect(res.status).toBe(200);
 }
 
+async function approveBotEndpoint(botId: string, workspaceId: string, ownerToken: string) {
+  const path = `/workspaces/${workspaceId}/bots/${botId}/installation`;
+  const current = await req("GET", path, undefined, ownerToken);
+  expect(current.status).toBe(200);
+  const grant = current.body;
+  const approved = await req("PUT", path, { enabled: grant.enabled, channelScope: grant.channelScope, conversationIds: grant.conversationIds, attachmentAccess: grant.attachmentAccess, sharedRuntimeConsent: true, approveEndpoint: true, expectedRevision: grant.revision }, ownerToken);
+  expect(approved.status).toBe(200);
+}
+
 async function createHermesInteractionFixture(
   label: string,
   webhookUrl?: string,
@@ -367,6 +376,7 @@ async function createHermesInteractionFixture(
       botRes.body.apiKey,
     );
     expect(webhookRes.status).toBe(200);
+    await approveBotEndpoint(botRes.body.id, workspaceId, human.token);
     webhookSecret = webhookRes.body.webhookSecret as string;
   }
   return {
@@ -561,6 +571,7 @@ describe("Native vault unlock", () => {
       expect(JSON.stringify(await getBotProgressStore().listForConversation(fixture.conversationId))).not.toContain(response.ciphertextB64);
       expect((await req("POST",path,{version:2,action:"cancel"},fixture.botRes.body.apiKey)).status).toBe(403);
       const other = await registerUser("VaultOther");
+      await db.insert(workspaceMembers).values({workspaceId:fixture.workspaceId,userId:other.user.id,role:"member"}).onConflictDoNothing();
       await db.insert(conversationParticipants).values({conversationId:fixture.conversationId,userId:other.user.id});
       expect((await req("POST",path,{version:2,action:"cancel"},other.token)).status).toBe(403);
       const ownerSnapshot = await req("GET",`/bot-runtime/conversations/${fixture.conversationId}`,undefined,fixture.human.token);
@@ -730,10 +741,10 @@ describe("Bots: Create", () => {
       null,
       botOwner.user.id,
       wsRes.body.id,
-    );
+    ).then(() => null, error => error);
     releaseDemotion();
     await demotion;
-    await expect(creation).rejects.toMatchObject({ status: 403 });
+    expect(await creation).toMatchObject({ status: 403 });
 
     const ownedBots = await db
       .select({ id: bots.id })
@@ -1892,6 +1903,7 @@ describe("Bots: Update bot", () => {
         botRes.body.apiKey,
       );
       expect(registerRes.status).toBe(200);
+    if (registerRes.body.webhookUrl) await approveBotEndpoint(botRes.body.id, workspaceId, human.token);
       expect(registerRes.body.webhookUrl).toBe(webhook.url);
       expect(registerRes.body.webhookSecret).toBe(
         rotateSecretRes.body.webhookSecret,
@@ -1974,6 +1986,7 @@ describe("Bots: Update bot", () => {
       botRes.body.apiKey,
     );
     expect(registerRes.status).toBe(200);
+    if (registerRes.body.webhookUrl) await approveBotEndpoint(botRes.body.id, workspaceId, human.token);
     expect(registerRes.body.commands).toEqual([
       {
         command: "new",
@@ -3701,6 +3714,7 @@ describe("Bots: runtime state", () => {
       botRes.body.apiKey,
     );
     expect(registerRes.status).toBe(200);
+    if (registerRes.body.webhookUrl) await approveBotEndpoint(botRes.body.id, workspaceId, human.token);
     expect(registerRes.body.webhookUrl).toBe(webhook.url);
     expect(registerRes.body.webhookSecret).toStartWith("whsec_");
 
@@ -3793,6 +3807,7 @@ describe("Bots: runtime state", () => {
       botRes.body.apiKey,
     );
     expect(registerRes.status).toBe(200);
+    if (registerRes.body.webhookUrl) await approveBotEndpoint(botRes.body.id, workspaceId, human.token);
     const dmRes = await req(
       "POST",
       "/conversations/dm",
@@ -3865,6 +3880,7 @@ describe("Bots: runtime state", () => {
       botRes.body.apiKey,
     );
     expect(registerRes.status).toBe(200);
+    if (registerRes.body.webhookUrl) await approveBotEndpoint(botRes.body.id, workspaceId, human.token);
 
     const dmRes = await req(
       "POST",
@@ -3936,6 +3952,7 @@ describe("Bots: runtime state", () => {
       botRes.body.apiKey,
     );
     expect(registerRes.status).toBe(200);
+    if (registerRes.body.webhookUrl) await approveBotEndpoint(botRes.body.id, workspaceId, human.token);
 
     const dmRes = await req(
       "POST",
@@ -4722,6 +4739,8 @@ describe("Bot runtime: direct Hermes interactions", () => {
       .update(bots)
       .set({ webhookUrl: "http://127.0.0.1:1/unreachable" })
       .where(eq(bots.id, failureFixture.botRes.body.id));
+    // Changing the callback requires a fresh workspace approval before connectivity is exercised.
+    await approveBotEndpoint(failureFixture.botRes.body.id, failureFixture.workspaceId, failureFixture.human.token);
     const connectivityRes = await req(
       "POST",
       failurePath,

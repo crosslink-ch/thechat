@@ -19,6 +19,7 @@ import { log } from "../logging";
 import { publishWsEventToUsers } from "../realtime";
 import { currentHermesDispatchTimeoutCutoff } from "./bot-runtime";
 import { requireConversationMutationAccess } from "./conversation-mutation-access";
+import { requireBotInstallationAccess } from "./bot-installation-access";
 import { ServiceError } from "./errors";
 import { canUserAccessAttachments } from "./messages";
 
@@ -194,7 +195,7 @@ async function createOrGetDmInTransaction(
 }
 
 export async function listUserDms(workspaceId: string, userId: string) {
-  const includeAttachments = await canUserAccessAttachments(db, userId);
+  // Installation attachment permission is evaluated separately for every DM.
   // Check user is workspace member
   const [membership] = await db
     .select()
@@ -283,6 +284,8 @@ export async function listUserDms(workspaceId: string, userId: string) {
       .orderBy(desc(messages.createdAt))
       .limit(1);
 
+    await requireConversationParticipant(conversationId, userId);
+    const includeAttachments = await canUserAccessAttachments(db, userId, conversationId);
     const lastMessageAttachments = includeAttachments && lastMsg
       ? (await attachmentsByMessageIds([lastMsg.id])).get(lastMsg.id) ?? []
       : [];
@@ -375,10 +378,12 @@ async function repairCorruptedDirectDms(workspaceId: string, userId: string) {
 }
 
 export async function getConversationDetail(conversationId: string, userId: string) {
+  await requireBotInstallationAccess(db, conversationId, userId);
   const [participant] = await db
     .select({
       userId: conversationParticipants.userId,
       conversationType: conversations.type,
+      workspaceId: conversations.workspaceId,
       workspaceMemberUserId: workspaceMembers.userId,
     })
     .from(conversationParticipants)
@@ -403,7 +408,7 @@ export async function getConversationDetail(conversationId: string, userId: stri
 
   if (
     !participant ||
-    (participant.conversationType === "group" && !participant.workspaceMemberUserId)
+    ((participant.workspaceId || participant.conversationType === "group") && !participant.workspaceMemberUserId)
   ) {
     throw new ServiceError("You are not a participant of this conversation", 403);
   }
@@ -596,10 +601,12 @@ export async function updateConversationThread(
 }
 
 export async function requireConversationParticipant(conversationId: string, userId: string) {
+  await requireBotInstallationAccess(db, conversationId, userId);
   const [participant] = await db
     .select({
       userId: conversationParticipants.userId,
       conversationType: conversations.type,
+      workspaceId: conversations.workspaceId,
       workspaceMemberUserId: workspaceMembers.userId,
     })
     .from(conversationParticipants)
@@ -624,7 +631,7 @@ export async function requireConversationParticipant(conversationId: string, use
 
   if (
     !participant ||
-    (participant.conversationType === "group" && !participant.workspaceMemberUserId)
+    ((participant.workspaceId || participant.conversationType === "group") && !participant.workspaceMemberUserId)
   ) {
     throw new ServiceError("You are not a participant of this conversation", 403);
   }

@@ -1,6 +1,6 @@
 import { Elysia } from "elysia";
 import { z } from "zod";
-import { eq, and, ne } from "drizzle-orm";
+
 import { resolveRequestUser } from "../auth/middleware";
 import { browserAuthPolicy } from "../auth/browser";
 import { ServiceError } from "../services/errors";
@@ -10,10 +10,7 @@ import {
   acceptInvite,
   declineInvite,
 } from "../services/invites";
-import { broadcastToUser } from "../ws";
-import { db } from "../db";
-import { workspaceMembers } from "../db/schema";
-import type { WsServerEvent } from "@thechat/shared";
+
 
 const createInviteSchema = z.object({
   workspaceId: z.string().trim().min(1, "Workspace ID is required"),
@@ -49,14 +46,6 @@ export const inviteRoutes = new Elysia({ prefix: "/invites" })
         parsed.data.email
       );
 
-      // Broadcast invite_received to invitee via WebSocket
-      const event: WsServerEvent = {
-        type: "invite_received",
-        invite,
-      };
-
-      broadcastToUser(invite.inviteeId, event);
-
       return invite;
     } catch (e) {
       if (e instanceof ServiceError) {
@@ -81,41 +70,7 @@ export const inviteRoutes = new Elysia({ prefix: "/invites" })
     }
 
     try {
-      const result = await acceptInvite(parsed.data.inviteId, user.id);
-
-      // Broadcast member_joined to existing workspace members
-      const members = await db
-        .select({ userId: workspaceMembers.userId })
-        .from(workspaceMembers)
-        .where(
-          and(
-            eq(workspaceMembers.workspaceId, result.workspaceId),
-            ne(workspaceMembers.userId, user.id)
-          )
-        );
-
-      const event: WsServerEvent = {
-        type: "member_joined",
-        workspaceId: result.workspaceId,
-        member: {
-          userId: user.id,
-          role: "member",
-          joinedAt: new Date().toISOString(),
-          user: {
-            id: user.id,
-            name: user.name,
-            email: user.email,
-            avatar: user.avatar,
-            type: user.type,
-          },
-        },
-      };
-
-      for (const m of members) {
-        broadcastToUser(m.userId, event);
-      }
-
-      return result;
+      return await acceptInvite(parsed.data.inviteId, user.id);
     } catch (e) {
       if (e instanceof ServiceError) {
         set.status = e.status;

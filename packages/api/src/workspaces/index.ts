@@ -1,9 +1,11 @@
 import { Elysia } from "elysia";
 import { z } from "zod";
-import { eq } from "drizzle-orm";
+
 import { resolveRequestUser } from "../auth/middleware";
 import { browserAuthPolicy } from "../auth/browser";
 import { ServiceError } from "../services/errors";
+import { getBotInstallation, updateBotInstallation } from "../services/bot-installation-access";
+import { botInstallationInputSchema } from "../services/bot-installation-contract";
 import {
   listUserWorkspaces,
   getWorkspaceDetail,
@@ -17,10 +19,7 @@ import {
   removeBotWorkspaceMembership,
   requestBotForWorkspace,
 } from "../services/bot-workspace-memberships";
-import { broadcastToUser } from "../ws";
-import { db } from "../db";
-import { workspaceMembers } from "../db/schema";
-import type { WsServerEvent, WorkspaceMemberRole } from "@thechat/shared";
+
 
 const createSchema = z.object({
   name: z.string().trim().min(1, "Workspace name is required"),
@@ -93,6 +92,16 @@ export const workspaceRoutes = new Elysia({ prefix: "/workspaces" })
   })
 
   // List approval requests initiated by workspace admins.
+  .get("/:id/bots/:botId/installation", async ({ params, user, set }) => {
+    try { return await getBotInstallation(params.id, params.botId, user.id); }
+    catch (error) { if (error instanceof ServiceError) { set.status = error.status; return { error: error.message }; } throw error; }
+  })
+  .put("/:id/bots/:botId/installation", async ({ params, body, user, set }) => {
+    const parsed = botInstallationInputSchema.safeParse(body);
+    if (!parsed.success) { set.status = 400; return { error: parsed.error.issues[0]?.message ?? "Invalid installation grant" }; }
+    try { return await updateBotInstallation(params.id, params.botId, user.id, parsed.data); }
+    catch (error) { if (error instanceof ServiceError) { set.status = error.status; return { error: error.message }; } throw error; }
+  })
   .get("/:id/bot-invites", async ({ params, user, set }) => {
     try {
       return await listWorkspaceBotInvites(params.id, user.id);
@@ -157,23 +166,6 @@ export const workspaceRoutes = new Elysia({ prefix: "/workspaces" })
         parsed.data.role
       );
 
-      // Broadcast to all workspace members
-      const members = await db
-        .select({ userId: workspaceMembers.userId })
-        .from(workspaceMembers)
-        .where(eq(workspaceMembers.workspaceId, params.id));
-
-      const event: WsServerEvent = {
-        type: "member_role_changed",
-        workspaceId: params.id,
-        userId: params.userId,
-        newRole: parsed.data.role as WorkspaceMemberRole,
-      };
-
-      for (const m of members) {
-        broadcastToUser(m.userId, event);
-      }
-
       return result;
     } catch (e) {
       if (e instanceof ServiceError) {
@@ -187,26 +179,7 @@ export const workspaceRoutes = new Elysia({ prefix: "/workspaces" })
   // Remove member
   .delete("/:id/members/:userId", async ({ params, user, set }) => {
     try {
-      // Get all members before removal (so we can broadcast to removed user too)
-      const membersBefore = await db
-        .select({ userId: workspaceMembers.userId })
-        .from(workspaceMembers)
-        .where(eq(workspaceMembers.workspaceId, params.id));
-
-      const result = await removeMember(params.id, user.id, params.userId);
-
-      // Broadcast to all workspace members including the removed user
-      const event: WsServerEvent = {
-        type: "member_removed",
-        workspaceId: params.id,
-        userId: params.userId,
-      };
-
-      for (const m of membersBefore) {
-        broadcastToUser(m.userId, event);
-      }
-
-      return result;
+      return await removeMember(params.id, user.id, params.userId);
     } catch (e) {
       if (e instanceof ServiceError) {
         set.status = e.status;

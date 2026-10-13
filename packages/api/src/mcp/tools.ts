@@ -7,7 +7,7 @@ import {
   updateMemberRole,
   removeMember,
 } from "../services/workspaces";
-import { createInvite } from "../services/invites";
+import { createInvite, acceptInvite, declineInvite, listPendingInvites } from "../services/invites";
 import {
   createOrGetDm,
   listUserDms,
@@ -35,6 +35,8 @@ import {
   removeBotWorkspaceMembership,
 } from "../services/bot-workspace-memberships";
 import type { McpUser } from "./auth";
+import { getBotInstallation, updateBotInstallation } from "../services/bot-installation-access";
+import { botInstallationInputSchema } from "../services/bot-installation-contract";
 
 function getUser(extra: { authInfo?: unknown }): McpUser {
   const user = extra.authInfo as McpUser | undefined;
@@ -66,6 +68,11 @@ async function withService<T>(fn: () => Promise<T>) {
 }
 
 export function registerTools(server: McpServer) {
+  server.registerTool("get_bot_installation", { description: "Read a workspace bot installation; human workspace admins only", inputSchema: { workspaceId: z.string().min(1), botId: z.string().uuid() } }, async ({ workspaceId, botId }, extra) => withService(() => getBotInstallation(workspaceId, botId, getUser(extra).id)));
+  server.registerTool("update_bot_installation", { description: "Approve current bot endpoint and explicit workspace channel, attachment and shared-runtime consent grants; optimistic revision required. Shared sessions do not isolate runtime files or credentials.", inputSchema: { workspaceId: z.string().min(1), botId: z.string().uuid(), ...botInstallationInputSchema.shape } }, async ({ workspaceId, botId, ...input }, extra) => withService(() => updateBotInstallation(workspaceId, botId, getUser(extra).id, input)));
+  server.registerTool("list_workspace_invites", { description: "List my pending workspace invitations", inputSchema: {} }, async (_args, extra) => withService(() => listPendingInvites(getUser(extra).id)));
+  server.registerTool("accept_workspace_invite", { description: "Atomically accept my workspace invitation and enroll", inputSchema: { inviteId: z.string().uuid() } }, async ({ inviteId }, extra) => withService(() => acceptInvite(inviteId, getUser(extra).id)));
+  server.registerTool("decline_workspace_invite", { description: "Decline my workspace invitation", inputSchema: { inviteId: z.string().uuid() } }, async ({ inviteId }, extra) => withService(async () => { await declineInvite(inviteId, getUser(extra).id); return { success: true }; }));
   // --- get_me ---
   server.registerTool(
     "get_me",

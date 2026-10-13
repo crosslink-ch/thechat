@@ -8,6 +8,7 @@ import {
 import { loadDomainEventsConfig, type DomainEventsConfig } from "./config";
 import { logDomainEvent } from "./log";
 import { createChatMessageSentHandler } from "./message-handler";
+import { createWorkspaceLifecycleNotificationHandler } from "./workspace-lifecycle";
 import {
   createAttachmentDeletionHandler,
   createAttachmentValidationHandler,
@@ -35,6 +36,7 @@ export interface DomainEventRuntimeOptions {
 export function createDefaultDomainEventRegistry() {
   return new DomainEventRegistry()
     .register(createChatMessageSentHandler())
+    .register(createWorkspaceLifecycleNotificationHandler())
     .register(createAttachmentValidationHandler())
     .register(createAttachmentDeletionHandler());
 }

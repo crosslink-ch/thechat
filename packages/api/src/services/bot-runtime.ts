@@ -58,6 +58,7 @@ import {
   findIdempotentMessage,
 } from "./messages";
 import { requireConversationMutationAccess } from "./conversation-mutation-access";
+import { requireBotInstallationAccess, canBotAccessConversationAttachments } from "./bot-installation-access";
 import { recordMessageUnreads } from "./activity";
 import { vaultUnlockRequestSchema, vaultUnlockResolvedSchema, vaultUnlockResponseSchema, validateVaultPublicKey, VAULT_UNLOCK_PREVIEW } from "./vault-unlock";
 import type { VaultUnlockResponse } from "@thechat/shared";
@@ -253,7 +254,7 @@ export async function submitHermesPlatformInteraction(input: {
   invocationId: string;
   eventId: string;
   response: HermesInteractionResponse;
-}): Promise<{ ok: true }> {
+}, options: { beforeDispatch?: () => Promise<void> } = {}): Promise<{ ok: true }> {
   if (input.userType !== "human") {
     throw new ServiceError("A human participant is required", 403);
   }
@@ -354,19 +355,15 @@ export async function submitHermesPlatformInteraction(input: {
   }, HERMES_INTERACTION_TIMEOUT_MS);
 
   try {
-    const upstream = await fetch(webhookUrl, {
-      method: "POST",
-      headers: {
+    await options.beforeDispatch?.();
+    const upstream = await dispatchCurrentWebhook(loaded.invocation.id, loaded.bot.endpointRevision, webhookUrl, body, {
         "Content-Type": "application/json",
         "X-Webhook-Timestamp": String(timestamp),
         "X-Webhook-Signature": signature,
         "X-TheChat-Bot-Id": loaded.bot.id,
         "X-TheChat-Invocation-Id": loaded.invocation.id,
-      },
-      body,
-      signal: controller.signal,
-      redirect: "error",
-    });
+    }, { actorId: input.userId, signal: controller.signal });
+    if (!upstream) throw new ServiceError("Interaction access was revoked before dispatch", 409);
     if (!upstream.ok) {
       throw new ServiceError(
         upstream.status >= 500
@@ -393,7 +390,7 @@ export async function submitHermesPlatformInteraction(input: {
 /** Transient encrypted relay: deliberately no DB, inbox, queue or progress write. */
 export async function submitHermesPlatformVaultUnlock(input: {
   userId: string; userType: "human" | "bot"; invocationId: string; eventId: string; response: VaultUnlockResponse;
-}): Promise<{ok:true;duplicate:boolean}> {
+}, options: { beforeDispatch?: () => Promise<void> } = {}): Promise<{ok:true;duplicate:boolean}> {
   const reject = (status: number) => new ServiceError("Could not deliver the vault unlock response",status);
   if (input.userType !== "human") throw reject(403);
   const response = vaultUnlockResponseSchema.safeParse(input.response);
@@ -426,7 +423,9 @@ export async function submitHermesPlatformVaultUnlock(input: {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(),HERMES_INTERACTION_TIMEOUT_MS);
   try {
-    const upstream = await fetch(webhookUrl!, {method:"POST",redirect:"error",signal:controller.signal,headers:{"Content-Type":"application/json","Cache-Control":"no-store","X-Webhook-Timestamp":String(timestamp),"X-Webhook-Signature":signWebhookPayload(body,loaded.bot.webhookSecret,timestamp),"X-TheChat-Bot-Id":loaded.bot.id,"X-TheChat-Invocation-Id":loaded.invocation.id},body});
+    await options.beforeDispatch?.();
+    const upstream = await dispatchCurrentWebhook(loaded.invocation.id, loaded.bot.endpointRevision, webhookUrl!, body, {"Content-Type":"application/json","Cache-Control":"no-store","X-Webhook-Timestamp":String(timestamp),"X-Webhook-Signature":signWebhookPayload(body,loaded.bot.webhookSecret,timestamp),"X-TheChat-Bot-Id":loaded.bot.id,"X-TheChat-Invocation-Id":loaded.invocation.id}, { actorId: input.userId, signal: controller.signal, expiresAt: request.expiresAt });
+    if (!upstream) throw reject(409);
     if (!upstream.ok) throw reject(upstream.status === 409 ? 409 : 502);
     // Never reflect upstream text or extra properties (including diagnostic secrets).
     const ack: unknown = await upstream.json();
@@ -1075,6 +1074,7 @@ async function getOrCreateInvocation(
       throw error;
     }
 
+    const installation = await requireBotInstallationAccess(tx, conversation.id, bot.botUserId);
     const inserted = await tx
       .insert(botInvocations)
       .values({
@@ -1086,9 +1086,10 @@ async function getOrCreateInvocation(
         status: "queued",
         requestJson: {
           messageId: message.id,
+          ...(installation ? { installationRevision: installation.revision, endpointRevision: installation.approvedEndpointRevision } : {}),
           threadId: message.threadId,
           messageContent: message.content,
-          attachments: bot.attachmentAccess ? message.attachments : [],
+          attachments: (await canBotAccessConversationAttachments(tx, conversation.id, bot.botUserId)) ? message.attachments : [],
           domainEventId: message.domainEventId,
           correlationId: message.correlationId,
           automationDepth: message.automationDepth,
@@ -1225,6 +1226,54 @@ async function handleQueuedBotInvocation(invocationId: string, context: { setPro
   }
 }
 
+function botWebhookTimeoutMs() {
+  const value = Number(process.env.BOT_WEBHOOK_TIMEOUT_MS ?? 10_000);
+  return Number.isFinite(value) && value > 0 ? Math.min(Math.trunc(value), 30_000) : 10_000;
+}
+
+/** Final outbound admission. Locks are held through fetch() initiation, not the
+ * network response. A removal committed before this boundary prevents dispatch;
+ * an already-initiated HTTP request cannot be recalled by a later removal.
+ */
+async function dispatchCurrentWebhook(invocationId: string, endpointRevision: number, endpointUrl: string, body: string, headers: Record<string, string>, options: { actorId?: string; signal?: AbortSignal; expiresAt?: number } = {}): Promise<Response | null> {
+  let admitted: { response: Promise<Response> } | null;
+  try {
+    admitted = await db.transaction(async tx => {
+      const [candidate] = await tx.select().from(botInvocations).where(eq(botInvocations.id, invocationId)).limit(1);
+      if (!candidate) return null;
+      const [initialBot] = await tx.select().from(bots).where(eq(bots.id, candidate.botId)).limit(1);
+      if (!initialBot) return null;
+      await requireConversationMutationAccess(tx, candidate.conversationId, initialBot.userId);
+      const [bot] = await tx.select().from(bots).where(eq(bots.id, candidate.botId)).for("share").limit(1);
+      const [invocation] = await tx.select().from(botInvocations).where(eq(botInvocations.id, invocationId)).for("update").limit(1);
+      if (!invocation || (options.actorId ? !["running", "claimed"].includes(invocation.status) || interactionInvocationIsTerminal(invocation) : invocation.status !== "running") || bot.endpointRevision !== endpointRevision || bot.webhookUrl !== endpointUrl || (options.expiresAt !== undefined && Date.now() >= options.expiresAt) || options.signal?.aborted) return null;
+      if (options.actorId) await requireConversationMutationAccess(tx, invocation.conversationId, options.actorId);
+      const grant = await requireBotInstallationAccess(tx, invocation.conversationId, bot.userId, { endpoint: true });
+      const pinnedRevision = invocation.requestJson?.installationRevision;
+      if (!options.actorId && grant && pinnedRevision !== undefined && pinnedRevision !== grant.revision) return null;
+      const [trigger] = await tx.select().from(messages).where(eq(messages.id, invocation.triggerMessageId)).limit(1);
+      if (!trigger) return null;
+      await requireConversationMutationAccess(tx, invocation.conversationId, trigger.senderId);
+      if (!(await canBotAccessConversationAttachments(tx, invocation.conversationId, bot.userId))) {
+        const parsed = JSON.parse(body);
+        if (parsed.message) parsed.message.attachments = [];
+        if (parsed.event) parsed.event.attachments = [];
+        body = JSON.stringify(parsed);
+      }
+      const timestamp = Math.floor(Date.now() / 1000);
+      const timeout = AbortSignal.timeout(botWebhookTimeoutMs());
+      const response = fetch(endpointUrl, { method: "POST", redirect: "error", signal: options.signal ? AbortSignal.any([timeout, options.signal]) : timeout, headers: { ...headers, "X-Webhook-Timestamp": String(timestamp), "X-Webhook-Signature": signWebhookPayload(body, bot.webhookSecret, timestamp) }, body });
+      // Attach rejection handling immediately while the admission transaction commits.
+      void response.catch(() => undefined);
+      return { response };
+    });
+  } catch (error) {
+    if (error instanceof ServiceError && error.status === 403) return null;
+    throw error;
+  }
+  return admitted ? await admitted.response : null;
+}
+
 async function handleWebhookInvocation(invocationId: string) {
   const loaded = await loadInvocationContext(invocationId);
   if (!loaded) throw new Error(`Bot invocation not found: ${invocationId}`);
@@ -1267,15 +1316,12 @@ async function handleWebhookInvocation(invocationId: string) {
   const timestamp = Math.floor(Date.now() / 1000);
   const signature = signWebhookPayload(body, loaded.bot.webhookSecret, timestamp);
 
-  const response = await fetch(loaded.bot.webhookUrl, {
-    method: "POST",
-    headers: {
+  const response = await dispatchCurrentWebhook(invocationId, loaded.bot.endpointRevision, loaded.bot.webhookUrl, body, {
       "Content-Type": "application/json",
       "X-Webhook-Timestamp": String(timestamp),
       "X-Webhook-Signature": signature,
-    },
-    body,
   });
+  if (!response) return;
 
   if (!response.ok) {
     throw new Error(`Webhook failed with HTTP ${response.status}`);
@@ -1347,6 +1393,17 @@ async function claimHermesPlatformInvocation(
         prepared.event.conversation.id,
         prepared.event.bot.userId,
       );
+      const grant = await requireBotInstallationAccess(tx, prepared.event.conversation.id, prepared.event.bot.userId);
+      if (grant && prepared.requestJson.installationRevision !== grant.revision) {
+        throw new ServiceError("Installation changed after payload capture", 403);
+      }
+      if (!(await canBotAccessConversationAttachments(tx, prepared.event.conversation.id, prepared.event.bot.userId))) {
+        prepared.event.attachments = [];
+        persistedRequestJson.attachments = [];
+        if (deliveryMode === "webhook") {
+          (persistedRequestJson as Record<string, unknown>)[HERMES_WEBHOOK_BODY_FIELD] = JSON.stringify({ type: "thechat.hermes_platform.event", event: prepared.event });
+        }
+      }
     } catch (error) {
       if (!(error instanceof ServiceError) || error.status !== 403) throw error;
       await tx
@@ -1442,8 +1499,11 @@ async function prepareHermesPlatformEvent(
   const loaded = await loadInvocationContext(invocationId);
   if (!loaded || loaded.bot.kind !== "hermes") return null;
 
+  let installation;
+  try { installation = await requireBotInstallationAccess(db, loaded.conversation.id, loaded.bot.userId); }
+  catch (error) { if (error instanceof ServiceError && error.status === 403) return null; throw error; }
   const text = stripBotMention(loaded.triggerMessage.content, loaded.botName) || loaded.triggerMessage.content;
-  const attachmentMetadata = loaded.bot.attachmentAccess
+  const attachmentMetadata = await canBotAccessConversationAttachments(db, loaded.conversation.id, loaded.bot.userId)
     ? await messageAttachmentsForBotDelivery(loaded.triggerMessage.id)
     : [];
   const chatId = conversationChatId(loaded.conversation);
@@ -1457,6 +1517,7 @@ async function prepareHermesPlatformEvent(
     : null;
   const requestJson = {
     ...recordFromJson(loaded.invocation.requestJson),
+    ...(installation ? { installationRevision: loaded.invocation.requestJson?.installationRevision ?? installation.revision, endpointRevision: loaded.invocation.requestJson?.endpointRevision ?? installation.approvedEndpointRevision } : {}),
     platform: "thechat",
     deliveryMode,
     chatId,
@@ -1505,7 +1566,7 @@ async function prepareHermesPlatformEvent(
 
 async function deliverHermesPlatformWebhookInvocation(
   invocationId: string,
-  options: { failOnError?: boolean } = {},
+  options: { failOnError?: boolean; beforeDispatch?: () => Promise<void> } = {},
 ): Promise<void> {
   await withSpan(
     "hermes_platform.webhook.deliver",
@@ -1603,17 +1664,15 @@ async function deliverHermesPlatformWebhookInvocation(
       const timestamp = Math.floor(Date.now() / 1000);
       const signature = signWebhookPayload(body, loaded.bot.webhookSecret, timestamp);
       try {
-        const response = await fetch(loaded.bot.webhookUrl, {
-          method: "POST",
-          headers: {
+        await options.beforeDispatch?.();
+        const response = await dispatchCurrentWebhook(invocationId, loaded.bot.endpointRevision, loaded.bot.webhookUrl, body, {
             "Content-Type": "application/json",
             "X-Webhook-Timestamp": String(timestamp),
             "X-Webhook-Signature": signature,
             "X-TheChat-Bot-Id": loaded.bot.id,
             "X-TheChat-Invocation-Id": invocationId,
-          },
-          body,
         });
+        if (!response) return;
         span.setAttribute("http.response.status_code", response.status);
         if (!response.ok) {
           const error = new Error(`Hermes webhook failed with HTTP ${response.status}`);
@@ -1811,7 +1870,7 @@ export async function publishHermesPlatformMessage(input: {
           target.bot.userId,
         ),
       );
-      if (attachmentIds.length > 0 && !target.bot.attachmentAccess) {
+      if (attachmentIds.length > 0 && !(await canBotAccessConversationAttachments(db, target.conversation.id, target.bot.userId))) {
         throw new ServiceError(
           "Attachment access is not enabled for this bot",
           403,
@@ -1874,6 +1933,7 @@ export async function publishHermesPlatformMessage(input: {
           target.conversation.id,
           target.bot.userId,
         );
+        if (attachmentIds.length > 0 && !(await canBotAccessConversationAttachments(tx, target.conversation.id, target.bot.userId))) throw new ServiceError("Attachment access is not enabled for this installation", 403);
         const [inserted] = await tx
           .insert(messages)
           .values({
@@ -2696,6 +2756,8 @@ async function failInvocation(
 }
 
 export const __botRuntimeInternalsForTests = {
+  handleQueuedBotInvocation,
+  deliverHermesPlatformWebhookInvocation,
   failQueuedHermesDispatch(invocationId: string, error: Error) {
     return failInvocation(invocationId, error, { onlyQueuedHermes: true });
   },
@@ -2881,10 +2943,12 @@ async function requireCurrentBotConversationAccess(
 }
 
 async function requireConversationParticipant(conversationId: string, userId: string) {
+  await requireBotInstallationAccess(db, conversationId, userId);
   const [participant] = await db
     .select({
       userId: conversationParticipants.userId,
       conversationType: conversations.type,
+      workspaceId: conversations.workspaceId,
       workspaceMemberUserId: workspaceMembers.userId,
     })
     .from(conversationParticipants)
@@ -2908,7 +2972,7 @@ async function requireConversationParticipant(conversationId: string, userId: st
     .limit(1);
   if (
     !participant ||
-    (participant.conversationType === "group" && !participant.workspaceMemberUserId)
+    ((participant.workspaceId || participant.conversationType === "group") && !participant.workspaceMemberUserId)
   ) {
     throw new ServiceError("You are not a participant of this conversation", 403);
   }

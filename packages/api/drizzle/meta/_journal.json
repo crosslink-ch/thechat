@@ -127,6 +127,13 @@
       "when": 1791921101152,
       "tag": "0017_tenant_database_hardening",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1791921101153,
+      "tag": "0018_workspace_bot_installations",
+      "breakpoints": true
     }
   ]
 }

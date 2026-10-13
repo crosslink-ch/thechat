@@ -364,6 +364,21 @@ export type WsClientEvent =
 // -- Bot Types --
 
 export type BotKind = "webhook" | "hermes";
+export interface BotWorkspaceInstallation {
+  workspaceId: string;
+  botId: string;
+  enabled: boolean;
+  channelScope: "all" | "selected";
+  conversationIds: string[];
+  attachmentAccess: boolean;
+  sharedRuntimeConsent: boolean;
+  approvedEndpointUrl: string | null;
+  approvedEndpointRevision: number;
+  revision: number;
+  approvedById: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
 
 export interface BotWorkspaceMembership {
   id: string;
