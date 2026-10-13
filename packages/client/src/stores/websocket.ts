@@ -195,6 +195,8 @@ function doConnect() {
         clientMessageId: event.clientMessageId,
         message: event.message,
       });
+    } else if (event.type === "bot_activity_changed") {
+      wsEvents.emit("ws:bot_activity_changed", {conversationId:event.conversationId});
     } else if (event.type === "bot_invocation_updated") {
       wsEvents.emit("ws:bot_invocation_updated", {
         conversationId: event.conversationId,

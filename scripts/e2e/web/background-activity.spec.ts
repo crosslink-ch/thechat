@@ -1,0 +1,42 @@
+import { test, expect } from '@playwright/test';
+import { randomUUID } from 'node:crypto';
+import { apiURL, webURL, seedWorkspace, login, call, clearCredentialFields, assertContained, openNavigation } from './fixtures';
+test.afterEach(async ({page}) => clearCredentialFields(page));
+// Receiver/UI contract fixture only. This is NOT evidence of Hermes owner callbacks.
+test('synthetic full background snapshot recovers on reload at desktop and phone', async ({page,request},info) => {
+ const f = await seedWorkspace(request);
+ const bot = await call(request,'POST','/bots/create',{name:'Synthetic Background Hermes',kind:'hermes',workspaceId:f.workspace.id},f.a.accessToken);
+ const dm = await call(request,'POST','/conversations/dm',{workspaceId:f.workspace.id,otherUserId:bot.userId},f.a.accessToken);
+ await login(page,f.alice);
+ await expect(page).toHaveURL(new RegExp(`/channel/${f.channel.id}`));
+ await page.goto(`${webURL}/#/dm/${dm.id}`);
+ await page.getByRole('textbox',{name:'Message',exact:true}).fill('Synthetic isolated background activity contract');
+ await page.getByTitle('Send message',{exact:true}).click();
+ let origin:any;
+ await expect.poll(async () => {
+  const events = await call(request,'GET','/hermes-platform/events?limit=10',undefined,bot.apiKey);
+  origin ||= events.events.find((e:any) => e.conversation?.id === dm.id);
+  return Boolean(origin?.invocationId);
+ }).toBe(true);
+ await expect(page.getByTestId('hermes-dm-chat-scroll').getByText('Synthetic isolated background activity contract',{exact:true})).toBeVisible();
+ await call(request,'POST','/hermes-platform/messages',{invocationId:origin.invocationId,content:'Synthetic parent reply. Background snapshot remains independent.',complete:true},bot.apiKey);
+ const now = new Date().toISOString();
+ const snapshot = {schemaVersion:1,eventId:randomUUID(),taskId:randomUUID(),sequence:1,originInvocationId:origin.invocationId,sessionId:'synthetic-browser-session',occurredAt:now,parent:{state:'waiting_worker',action:null,updatedAt:now},workers:[{id:'synthetic-worker',kind:'subagent',parentId:null,goal:'Synthetic contract worker — not a real Hermes execution',state:'running',action:'read_file',startedAt:now,updatedAt:now,lastActionAt:now}],activities:[{id:'synthetic-quiet-tool',workerId:'synthetic-worker',toolName:'terminal',state:'running',startedAt:now,finishedAt:null}]};
+ await call(request,'POST','/hermes-platform/activity',snapshot,bot.apiKey);
+ await page.reload();
+ const card = page.getByTestId('background-activity-card').filter({visible:true});
+ await expect(card).toHaveCount(1);
+ await expect(card.getByText('Waiting for worker',{exact:true})).toBeVisible();
+ await expect(page.getByText('Synthetic parent reply. Background snapshot remains independent.',{exact:true})).toBeVisible();
+ await assertContained(page,'[data-testid="background-activity-card"]');
+ await card.getByRole('button',{name:'Recent activity'}).click();
+ await expect(card.getByText('terminal · running',{exact:true})).toBeVisible();
+ await page.screenshot({path:info.outputPath('synthetic-background-active.png'),fullPage:true});
+ await openNavigation(page);
+ await expect(page.getByRole('button',{name:/Synthetic Background Hermes.*working in background/})).toBeVisible({timeout:40_000});
+ const closeNav = page.getByRole('button',{name:'Close navigation',exact:true}); if(await closeNav.isVisible()) await closeNav.click();
+ await call(request,'POST','/hermes-platform/activity',{...snapshot,eventId:randomUUID(),sequence:2,parent:{state:'verifying',action:'Check synthetic test receipt',updatedAt:new Date().toISOString()},workers:[{...snapshot.workers[0],state:'finished'}]},bot.apiKey);
+ await page.reload(); await expect(page.getByText('Verifying results',{exact:true})).toBeVisible();
+ await call(request,'POST','/hermes-platform/activity',{...snapshot,eventId:randomUUID(),sequence:3,parent:{state:'finished',action:null,updatedAt:new Date().toISOString()},workers:[{...snapshot.workers[0],state:'finished'}]},bot.apiKey);
+ await page.reload(); await expect(page.getByRole('heading',{name:'Finished',exact:true})).toBeVisible();
+});

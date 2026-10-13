@@ -1,6 +1,7 @@
 import { authHeaders as auth } from "./eden";
 import { isAuthenticated } from "./auth-identity";
 import { wsEvents } from "./ws-events";
+import { refreshConversationBackgroundActivity, refreshWorkspaceBackgroundActivity } from "./background-activity-recovery";
 import { useAuthStore } from "../stores/auth";
 import {
   updateExistingWorkspaceChannel,
@@ -69,6 +70,11 @@ export function registerGlobalWsHandlers(
 ): () => void {
   const deletedChannelIds = new Set<string>();
   let workspaceRefreshGeneration = 0;
+  // Full snapshots are the recovery source; websocket delivery is not durable.
+  const backgroundRefetch = setInterval(() => {
+    void refreshWorkspaceBackgroundActivity();
+    void messageQueryClient.invalidateQueries({ queryKey: ["bot-runtime"] });
+  }, 30_000);
 
   const reconcileWorkspace = (workspaceId: string) => {
     if (useWorkspacesStore.getState().activeWorkspace?.id !== workspaceId) return;
@@ -80,6 +86,8 @@ export function registerGlobalWsHandlers(
   };
 
   const onAuthenticated = () => {
+    void refreshWorkspaceBackgroundActivity();
+    void messageQueryClient.invalidateQueries({ queryKey: ["bot-runtime"] });
     const workspaceId = useWorkspacesStore.getState().activeWorkspace?.id;
     if (workspaceId) reconcileWorkspace(workspaceId);
     void messageQueryClient.invalidateQueries({ queryKey: ["messages"] });
@@ -373,6 +381,11 @@ export function registerGlobalWsHandlers(
   };
 
   wsEvents.on("ws:authenticated", onAuthenticated);
+  const onActivityChanged = ({conversationId}: WsEvents["ws:bot_activity_changed"]) => {
+    void messageQueryClient.invalidateQueries({queryKey:["bot-runtime",conversationId]});
+    void refreshConversationBackgroundActivity(conversationId);
+  };
+  wsEvents.on("ws:bot_activity_changed", onActivityChanged);
   wsEvents.on("ws:presence_snapshot", onPresenceSnapshot);
   wsEvents.on("ws:presence_changed", onPresenceChanged);
   wsEvents.on("ws:new_message", onNewMessage);
@@ -391,6 +404,8 @@ export function registerGlobalWsHandlers(
   wsEvents.on("ws:bot_invocation_progress", onBotInvocationProgress);
 
   return () => {
+    clearInterval(backgroundRefetch);
+    wsEvents.off("ws:bot_activity_changed", onActivityChanged);
     workspaceRefreshGeneration += 1;
     wsEvents.off("ws:authenticated", onAuthenticated);
     wsEvents.off("ws:presence_snapshot", onPresenceSnapshot);

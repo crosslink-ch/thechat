@@ -13,6 +13,7 @@ import { useNotificationsStore } from "../stores/notifications";
 import { useActivityStore } from "../stores/activity";
 import { usePresenceStore } from "../stores/presence";
 import { useHermesIndicatorsStore } from "../stores/hermes-indicators";
+import { backgroundTaskTerminal } from "@thechat/shared";
 import { botAppearanceFor } from "../lib/bot-appearance";
 import { openAuthModal } from "./AuthModal";
 import { openWorkspaceModal } from "./WorkspaceModal";
@@ -136,6 +137,7 @@ export function Sidebar() {
     activityItems.map((item) => item.conversationId),
   );
   const pendingApprovals = useHermesIndicatorsStore((s) => s.pendingApprovals);
+  const backgroundActivity = useHermesIndicatorsStore((s) => s.backgroundActivity);
   const pendingClarifications = useHermesIndicatorsStore(
     (s) => s.pendingClarifications,
   );
@@ -452,11 +454,13 @@ export function Sidebar() {
                     m.user.type === "human" && onlineUserIds.has(m.userId);
                   const isWaiting =
                     m.user.type === "bot" && botsWaitingOnYou.has(m.userId);
+                  const isBackground = m.user.type === "bot" && Object.values(backgroundActivity).some(task => task.botUserId === m.userId && task.conversationId === directConversationIdsByUserId[m.userId] && !backgroundTaskTerminal(task.parent.state));
                   const ariaLabel = [
                     m.user.name,
                     isUnread ? "unread" : null,
                     isOnline ? "online" : null,
                     isWaiting ? "waiting for you" : null,
+                    isBackground ? "working in background" : null,
                   ]
                     .filter(Boolean)
                     .join(", ");
@@ -492,6 +496,7 @@ export function Sidebar() {
                         )}
                       </Avatar>
                       <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap">{m.user.name}</span>
+                      {isBackground && <span data-testid={`background-indicator-${m.userId}`} className="shrink-0 rounded border border-border px-1.5 py-0.5 text-[0.643rem] text-text-muted">Background</span>}
                       {isUnread && (
                         <span
                           className="size-1.5 shrink-0 rounded-full bg-accent"

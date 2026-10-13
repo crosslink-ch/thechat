@@ -77,6 +77,7 @@ const commandNameSchema = z
   );
 
 const registerCommandsSchema = z.object({
+  backgroundTaskControlVersion: z.literal(1).optional(),
   commands: z
     .array(
       z.object({
@@ -209,7 +210,7 @@ export const botRoutes = new Elysia({ prefix: "/bots" })
     }
 
     try {
-      return await updateAuthenticatedBotCommands(user.id, parsed.data.commands);
+      return await updateAuthenticatedBotCommands(user.id, parsed.data.commands, parsed.data.backgroundTaskControlVersion ?? null);
     } catch (e: any) {
       set.status = e instanceof ServiceError ? e.status : 500;
       return { error: e.message ?? "Unknown error" };

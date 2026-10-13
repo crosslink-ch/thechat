@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { waitFor } from "@testing-library/react";
 import { QueryClient } from "@tanstack/react-query";
 import type {
   BotInvocationProgressEventPublic,
@@ -20,9 +21,10 @@ import {
   useHermesIndicatorsStore,
 } from "../stores/hermes-indicators";
 
-const { workspacesGetMock, workspacesRouteMock } = vi.hoisted(() => {
+const { workspacesGetMock, workspacesRouteMock, dmsGetMock, runtimeGetMock } = vi.hoisted(() => {
   const getMock = vi.fn();
   return {
+    dmsGetMock: vi.fn(), runtimeGetMock: vi.fn(),
     workspacesGetMock: getMock,
     workspacesRouteMock: vi.fn(() => ({ get: getMock })),
   };
@@ -31,6 +33,8 @@ const { workspacesGetMock, workspacesRouteMock } = vi.hoisted(() => {
 vi.mock("./api", () => ({
   api: {
     workspaces: workspacesRouteMock,
+    conversations: vi.fn(() => ({dms:{get:dmsGetMock}})),
+    "bot-runtime": {conversations:vi.fn(() => ({get:runtimeGetMock}))},
   },
 }));
 
@@ -61,6 +65,39 @@ const baseWorkspace: WorkspaceWithDetails = {
 };
 
 describe("registerGlobalWsHandlers", () => {
+  it("refetches the durable scope when realtime only invalidates background activity", async () => {
+    const t = {botId:"bot",botUserId:"bot-user",conversationId:"dm-live",threadId:null,taskId:"task-live",sequence:2,parent:{state:"verifying"}} as any;
+    runtimeGetMock.mockResolvedValue({data:{invocations:[],events:[],activity:[t]},error:null});
+    const client = new QueryClient(); const invalidate = vi.spyOn(client,"invalidateQueries").mockResolvedValue(undefined);
+    const cleanup = registerGlobalWsHandlers(() => {}, () => "/channel/other", client);
+    try {
+      wsEvents.emit("ws:bot_activity_changed" as any,{conversationId:"dm-live"});
+      await waitFor(() => expect(useHermesIndicatorsStore.getState().backgroundActivity["bot:task-live"]).toEqual(t));
+      expect(invalidate).toHaveBeenCalledWith({queryKey:["bot-runtime","dm-live"]});
+    } finally { cleanup(); runtimeGetMock.mockReset(); }
+  });
+  it("recovers a missed activity event by bounded safety refetch even while an unrelated route is open", async () => {
+    vi.useFakeTimers();
+    const t = {botId:"bot",botUserId:"bot-user",conversationId:"dm-safety",threadId:null,taskId:"task-safety",sequence:1,parent:{state:"waiting_worker"}} as any;
+    dmsGetMock.mockResolvedValue({data:[{id:"dm-safety",otherUser:{id:"bot-user"},otherBot:{kind:"hermes"}}],error:null});
+    runtimeGetMock.mockResolvedValue({data:{invocations:[],events:[],activity:[t]},error:null});
+    const cleanup = registerGlobalWsHandlers(() => {}, () => "/channel/other");
+    try {
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(useHermesIndicatorsStore.getState().backgroundActivity["bot:task-safety"]).toEqual(t);
+    } finally { cleanup(); vi.useRealTimers(); dmsGetMock.mockReset(); runtimeGetMock.mockReset(); }
+  });
+  it("recovers background badges from authorized workspace DMs after reconnect", async () => {
+    const t = {botId:"bot",botUserId:"bot-user",conversationId:"dm-recovery",threadId:"other-thread",taskId:"task-recovery",sequence:3,parent:{state:"waiting_worker"}} as any;
+    dmsGetMock.mockResolvedValue({data:[{id:"dm-recovery",otherUser:{id:"bot-user"},otherBot:{kind:"hermes"}}],error:null});
+    runtimeGetMock.mockResolvedValue({data:{invocations:[],events:[],activity:[t]},error:null});
+    const cleanup = registerGlobalWsHandlers(() => {});
+    try {
+      wsEvents.emit("ws:authenticated", {});
+      await waitFor(() => expect(useHermesIndicatorsStore.getState().backgroundActivity["bot:task-recovery"]).toEqual(t));
+      expect(useConversationsStore.getState().directConversationIdsByUserId["bot-user"]).toBe("dm-recovery");
+    } finally { cleanup(); dmsGetMock.mockReset(); runtimeGetMock.mockReset(); }
+  });
   beforeEach(() => {
     vi.clearAllMocks();
     window.location.hash = "";

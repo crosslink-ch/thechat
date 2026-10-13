@@ -1,3 +1,5 @@
+import { requestBackgroundTaskStop } from "../services/background-task-control";
+import { enqueueHermesTaskControl } from "../services/bot-runtime";
 import { Elysia } from "elysia";
 import { z } from "zod";
 import { resolveRequestUser } from "../auth/middleware";
@@ -9,6 +11,7 @@ import {
   submitHermesPlatformVaultUnlock,
 } from "../services/bot-runtime";
 import { vaultUnlockResponseSchema } from "../services/vault-unlock";
+
 
 const interactionResponseSchema = z.object({
   response: z.union([
@@ -34,6 +37,19 @@ export const botRuntimeRoutes = new Elysia({ prefix: "/bot-runtime" })
     if (!user) {
       set.status = 401;
       return { error: "Authentication required" };
+    }
+  })
+
+  .post("/bots/:botId/activity/:taskId/stop", async ({params,body,user,set}) => {
+    const ids = z.object({botId:z.string().uuid(),taskId:z.string().uuid()}).safeParse(params);
+    if (!ids.success || !z.object({}).strict().safeParse(body ?? {}).success) {set.status=400;return {error:"Invalid task stop request"};}
+    try {
+      const receipt = await requestBackgroundTaskStop(ids.data.botId,ids.data.taskId,user.id);
+      await enqueueHermesTaskControl(receipt.invocationId);
+      return receipt;
+    } catch (error) {
+      set.status=error instanceof ServiceError ? error.status : 500;
+      return {error:error instanceof ServiceError ? error.message : "Could not request task stop"};
     }
   })
   .get("/conversations/:conversationId", async ({ params, user, set }) => {

@@ -897,7 +897,8 @@ export function normalizeBotCommands(commands: BotCommandPublic[]): BotCommandPu
 
 export async function updateAuthenticatedBotCommands(
   botUserId: string,
-  commands: BotCommandPublic[] | null
+  commands: BotCommandPublic[] | null,
+  backgroundTaskControlVersion: 1 | null = null
 ) {
   const [bot] = await db
     .select({
@@ -919,7 +920,7 @@ export async function updateAuthenticatedBotCommands(
 
   await db
     .update(bots)
-    .set({ commandsJson })
+    .set({ commandsJson, backgroundTaskControlVersion: bot.kind === "hermes" ? backgroundTaskControlVersion : null })
     .where(eq(bots.id, bot.id));
 
   return {

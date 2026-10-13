@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { useHermesIndicatorsStore } from "../stores/hermes-indicators";
 import type {
   BotInvocationProgressEventPublic,
   BotInvocationPublic,
@@ -10,6 +11,21 @@ import {
 } from "../lib/bot-runtime-state";
 
 describe("Hermes runtime progress state", () => {
+  it("hydrates background state without older snapshots overwriting newer revisions", () => {
+    const store = useHermesIndicatorsStore.getState(); store.resetForTests();
+    const newer = {botId:"bot",taskId:"durable-task",sequence:4,parent:{state:"verifying"},conversationId:"conversation-1"} as any;
+    store.seedFromSnapshot("conversation-1", {invocations:[],events:[],activity:[newer]}, {}, {});
+    store.seedFromSnapshot("conversation-1", {invocations:[],events:[],activity:[{...newer,sequence:3,parent:{state:"waiting_worker"}}]}, {}, {});
+    expect(useHermesIndicatorsStore.getState().backgroundActivity).toEqual({"bot:durable-task":newer});
+    store.resetForTests();
+    expect(useHermesIndicatorsStore.getState().backgroundActivity).toEqual({});
+  });
+  it("keeps background tasks independent when foreground invocation completion clears progress", () => {
+    const activity = [{botId:"bot",taskId:"durable-task",sequence:4,parent:{state:"waiting_worker"}}] as any;
+    const snapshot = {invocations:[invocation({status:"running"})],events:[progressEvent(1)],activity};
+    expect(mergeRuntimeUpdate(snapshot, invocation({status:"completed"})).activity).toEqual(activity);
+    expect(mergeRuntimeProgressEvent(snapshot, progressEvent(2,{type:"invocation.completed"})).activity).toEqual(activity);
+  });
   it("keeps only the latest progress events for an active invocation", () => {
     let snapshot: BotRuntimeSnapshot = {
       invocations: [invocation({ status: "running" })],

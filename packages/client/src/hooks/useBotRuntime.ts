@@ -1,4 +1,5 @@
 import { isAuthenticated } from "../lib/auth-identity";
+import { backgroundTaskTerminal } from "@thechat/shared";
 import { useCallback, useMemo } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type {
@@ -59,6 +60,13 @@ export async function submitHermesVaultUnlock(invocationId: string, eventId: str
   } catch { throw new Error("Could not deliver the vault unlock response"); }
 }
 
+export async function submitBackgroundTaskStop(task: {botId:string;taskId:string}, token: string | null): Promise<void> {
+  try {
+    const {data,error} = await api["bot-runtime"].bots({botId:task.botId}).activity({taskId:task.taskId}).stop.post({},authHeaders(token));
+    if (error || !data || !("ok" in data) || data.ok !== true || !("taskId" in data) || data.taskId !== task.taskId || !("state" in data) || data.state !== "requested") throw new Error();
+  } catch { throw new Error("Could not request task stop"); }
+}
+
 export function useBotRuntime(
   conversationId: string | null,
   token: string | null,
@@ -69,6 +77,16 @@ export function useBotRuntime(
       ? botRuntimeQueryKey(conversationId)
       : ["bot-runtime", "disabled"],
     queryFn: () => fetchBotRuntime(conversationId!, token!),
+    structuralSharing: (oldData, newData) => {
+      const previous = oldData as BotRuntimeSnapshot | undefined;
+      const next = newData as BotRuntimeSnapshot;
+      if (!next.activity || !previous?.activity) return next;
+      const current = new Map(previous.activity.map(task => [`${task.botId}:${task.taskId}`, task]));
+      return { ...next, activity: next.activity.map(task => {
+        const newer = current.get(`${task.botId}:${task.taskId}`);
+        return newer && newer.sequence > task.sequence ? newer : task;
+      }) };
+    },
     enabled: enabled && !!conversationId && isAuthenticated(token),
     staleTime: BOT_RUNTIME_STALE_MS,
     refetchInterval: (query) =>
@@ -129,6 +147,6 @@ export function hasActiveBotRuntimeActivity(snapshot: BotRuntimeSnapshot | undef
       (invocation) =>
         invocation.status === "queued" ||
         (invocation.botKind !== "hermes" && invocation.status === "running"),
-    ) || (snapshot?.events.length ?? 0) > 0
+    ) || (snapshot?.events.length ?? 0) > 0 || (snapshot?.activity?.some(task => !backgroundTaskTerminal(task.parent.state)) ?? false)
   );
 }

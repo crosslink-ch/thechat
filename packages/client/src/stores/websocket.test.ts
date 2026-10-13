@@ -117,6 +117,15 @@ describe("WebSocket application send boundary", () => {
     ]);
   });
 
+  it("dispatches background invalidation without activity content on the websocket", () => {
+    useWebSocketStore.getState().connect("token");
+    const socket = FakeWebSocket.instances.at(-1)!; socket.authenticate();
+    const listener = vi.fn(); wsEvents.on("ws:bot_activity_changed",listener);
+    try {
+      socket.receive({type:"bot_activity_changed",conversationId:"conversation-1"});
+      expect(listener).toHaveBeenCalledWith({conversationId:"conversation-1"});
+    } finally {wsEvents.off("ws:bot_activity_changed",listener);}
+  });
   it("dispatches reaction update events from the server", () => {
     useWebSocketStore.getState().connect("token");
     const socket = FakeWebSocket.instances.at(-1);

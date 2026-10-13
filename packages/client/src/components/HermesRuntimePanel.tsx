@@ -14,10 +14,13 @@ import { useMediaQuery } from "./ResponsiveShell";
 import { HeaderAction } from "./HeaderActions";
 import { GitBranch, Inbox, Pencil, Plus, X } from "lucide-react";
 import { OrbLoader } from "./OrbLoader";
+import { BackgroundActivityCard } from "./BackgroundActivityCard";
+import { backgroundTaskTerminal } from "@thechat/shared";
 import { buttonClass, iconButtonClass, sectionLabelClass } from "./ui";
 import type {
   BotInvocationPublic,
   BotRuntimeSnapshot,
+  BackgroundActivityPublic,
   ConversationThreadPublic,
 } from "@thechat/shared";
 
@@ -43,6 +46,7 @@ export function HermesRuntimePanel({
   onCreateThread: createThread,
   onRenameThread,
   onLoadMoreThreads,
+  onStopBackground,
 }: {
   title?: string;
   botName: string;
@@ -65,8 +69,10 @@ export function HermesRuntimePanel({
   onRenameThread?: (threadId: string, title: string) => Promise<unknown>;
   onCreateThread?: () => void;
   onLoadMoreThreads?: () => void;
+  onStopBackground?: (task: BackgroundActivityPublic) => Promise<void>;
 }) {
   const mobile = useMediaQuery("(max-width: 899px)");
+  const selectedActivity = (runtime?.activity ?? []).filter(task => !draftTaskActive && task.threadId === activeThreadId);
   const [open, setOpen] = useState(false);
   const [editingThreadId, setEditingThreadId] = useState<string | null>(null);
   const activeThread = threads.find((thread) => thread.id === activeThreadId);
@@ -110,11 +116,14 @@ export function HermesRuntimePanel({
       if (!invocation.threadId) continue;
       counts.set(invocation.threadId, (counts.get(invocation.threadId) ?? 0) + 1);
     }
+    for (const task of runtime?.activity ?? []) {
+      if (task.threadId && !backgroundTaskTerminal(task.parent.state) && !activeInvocations.some(invocation => invocation.id === task.originInvocationId)) counts.set(task.threadId, (counts.get(task.threadId) ?? 0) + 1);
+    }
     return counts;
-  }, [activeInvocations]);
+  }, [activeInvocations, runtime?.activity]);
   const generalActiveCount = activeInvocations.filter(
     (invocation) => invocation.threadId === null,
-  ).length;
+  ).length + (runtime?.activity ?? []).filter(task => task.threadId === null && !backgroundTaskTerminal(task.parent.state) && !activeInvocations.some(invocation => invocation.id === task.originInvocationId)).length;
   // Threads with a run in progress show the composing orb.
   const runningThreadIds = new Set(
     activeInvocations
@@ -218,9 +227,10 @@ export function HermesRuntimePanel({
           <div className={`mb-2 px-1.5 ${sectionLabelClass}`}>
             Activity
           </div>
-          {loading && activeInvocations.length === 0 ? (
+          {selectedActivity.map(task => <BackgroundActivityCard key={`${task.botId}:${task.taskId}`} task={task} onStop={task.canStop === true ? onStopBackground : undefined} />)}
+          {loading && activeInvocations.length === 0 && !selectedActivity.length ? (
             <PanelSkeleton />
-          ) : activeInvocations.length === 0 ? (
+          ) : activeInvocations.length === 0 && !selectedActivity.length ? (
             <div className="rounded-lg border border-dashed border-border px-3 py-2.5 text-[0.857rem] text-text-dimmed">
               No active runs
             </div>

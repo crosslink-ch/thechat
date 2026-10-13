@@ -21,11 +21,43 @@ vi.mock("../lib/api", () => ({
     "bot-runtime": {
       conversations: vi.fn(),
       invocations: vi.fn(),
+      bots: vi.fn(),
     },
   },
 }));
 
 describe("useBotRuntime", () => {
+  it("requests only the selected immutable task through authenticated Eden and requires its acknowledgement", async () => {
+    const task = {botId:crypto.randomUUID(),taskId:crypto.randomUUID()};
+    const post = vi.fn().mockResolvedValue({data:{ok:true,taskId:task.taskId,state:"requested",invocationId:crypto.randomUUID()},error:null});
+    const activity = vi.fn().mockReturnValue({stop:{post}});
+    vi.mocked(api["bot-runtime"].bots).mockReturnValue({activity} as any);
+    const submit = (runtimeHooks as any).submitBackgroundTaskStop;
+    expect(typeof submit).toBe("function");
+    await submit(task,"token");
+    expect(api["bot-runtime"].bots).toHaveBeenCalledWith({botId:task.botId});
+    expect(activity).toHaveBeenCalledWith({taskId:task.taskId});
+    expect(post).toHaveBeenCalledWith({},{headers:{authorization:"Bearer token"}});
+    post.mockResolvedValue({data:{ok:true,taskId:crypto.randomUUID(),state:"requested",invocationId:crypto.randomUUID()},error:null});
+    await expect(submit(task,"token")).rejects.toThrow("Could not request task stop");
+    post.mockResolvedValue({data:null,error:{value:{error:"DO_NOT_REFLECT"}}});
+    await expect(submit(task,"token")).rejects.toThrow("Could not request task stop");
+  });
+  it("does not regress a newer background snapshot when delayed hydration completes", async () => {
+    const latest = {botId:"bot",taskId:"task",sequence:4,parent:{state:"verifying"}} as any;
+    const get = vi.fn().mockResolvedValue({data:runtime({activity:[{...latest,sequence:3,parent:{state:"waiting_worker"}}]}),error:null});
+    vi.mocked(api["bot-runtime"].conversations).mockReturnValue({get} as any);
+    const client = createTestQueryClient();
+    client.setQueryData(botRuntimeQueryKey("conversation-1"), runtime({activity:[latest]}));
+    const {result} = renderHook(() => useBotRuntime("conversation-1", "token-1"),{wrapper:createQueryWrapper(client)});
+    await act(async () => { await result.current.refetch(); });
+    expect(client.getQueryData<BotRuntimeSnapshot>(botRuntimeQueryKey("conversation-1"))?.activity).toEqual([latest]);
+  });
+  it("keeps polling actual background workers after all message invocations are terminal", () => {
+    const activity = [{parent:{state:"waiting_worker"}}] as any;
+    expect(hasActiveBotRuntimeActivity(runtime({activity}))).toBe(true);
+    expect(hasActiveBotRuntimeActivity(runtime({activity:[{parent:{state:"finished"}}] as any}))).toBe(false);
+  });
   it("uses the dedicated transient Eden vault route and never reflects errors", async () => {
     const post = vi.fn().mockResolvedValue({data:{ok:true,duplicate:false},error:null});
     const interactions = vi.fn().mockReturnValue({"vault-unlock":{post}});

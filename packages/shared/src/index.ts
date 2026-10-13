@@ -2,6 +2,8 @@ import type { BotAppearance } from "./bot-avatars";
 
 export * from "./bot-avatars";
 
+export * from "./background-activity";
+
 // -- Message Parts (rich message model) --
 
 export type MessagePart =
@@ -524,6 +526,7 @@ export type VaultUnlockResponse =
   | { version: 2; action: "cancel" };
 
 export interface BotRuntimeSnapshot {
+  activity?: import("./background-activity").BackgroundActivityPublic[];
   invocations: BotInvocationPublic[];
   events: BotInvocationProgressEventPublic[];
 }
@@ -593,6 +596,7 @@ export interface TraceContextCarrier {
 }
 
 export type WsServerEvent =
+  | { type: "bot_activity_changed"; conversationId: string }
   | { type: "auth_ok"; userId: string }
   | { type: "auth_error"; message: string; retryable?: boolean }
   | {

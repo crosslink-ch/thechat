@@ -195,6 +195,19 @@ beforeEach(() => {
 });
 
 describe("Sidebar", () => {
+  it("shows real background work in a different thread without marking unrelated bots or completed tasks active", async () => {
+    useAuthStore.setState({user,token:"test-token"});
+    useWorkspacesStore.setState({workspaces:workspaceList,activeWorkspace});
+    useConversationsStore.setState({directConversationIdsByUserId:{"u-bot":"dm-koda"}});
+    const t = {botId:"bot-1",botUserId:"u-bot",conversationId:"dm-koda",threadId:"other-thread",taskId:"background-task",sequence:1,parent:{state:"waiting_worker"}} as any;
+    useHermesIndicatorsStore.getState().seedFromSnapshot("dm-koda",{invocations:[],events:[],activity:[t]}, {}, {});
+    await renderSidebarAt("/dm/dm-koda");
+    expect(screen.getByRole("button", {name:"Koda, working in background"})).toBeInTheDocument();
+    expect(screen.getByTestId("background-indicator-u-bot")).toHaveTextContent("Background");
+    act(() => useHermesIndicatorsStore.getState().seedFromSnapshot("dm-koda",{invocations:[],events:[],activity:[{...t,sequence:2,parent:{state:"finished"}}]}, {}, {}));
+    expect(screen.queryByTestId("background-indicator-u-bot")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", {name:"Alice"})).toBeInTheDocument();
+  });
   it("surfaces persisted unread activity across workspace boundaries", async () => {
     const activity: ActivitySnapshot = {
       totalUnreadMessages: 4,

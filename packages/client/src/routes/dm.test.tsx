@@ -9,6 +9,8 @@ import {
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
+  mobile: false,
+  activity: [] as any[],
   createThread: vi.fn(),
   renameThread: vi.fn(),
   touchThread: vi.fn(),
@@ -21,6 +23,7 @@ const mocks = vi.hoisted(() => ({
   fetchMessages: vi.fn(),
   invalidateBotRuntime: vi.fn(),
   submitHermesInteraction: vi.fn(),
+  submitBackgroundTaskStop: vi.fn(),
   threads: [] as any[],
   messageQueryStale: false,
   participantName: "Hermes",
@@ -92,7 +95,7 @@ vi.mock("../hooks/useConversationThreads", () => ({
 
 vi.mock("../hooks/useBotRuntime", () => ({
   useBotRuntime: () => ({
-    data: { invocations: [], events: [] },
+    data: { invocations: [], events: [], activity:mocks.activity },
     isLoading: false,
   }),
   useBotRuntimeCache: () => ({
@@ -101,6 +104,7 @@ vi.mock("../hooks/useBotRuntime", () => ({
     invalidate: mocks.invalidateBotRuntime,
   }),
   submitHermesInteraction: mocks.submitHermesInteraction,
+  submitBackgroundTaskStop: mocks.submitBackgroundTaskStop,
 }));
 
 vi.mock("../hooks/useChannelChat", () => ({
@@ -211,9 +215,12 @@ vi.mock("../components/HermesRuntimePanel", () => ({
     draftTaskActive,
     onSelectThread,
     onRenameThread,
+    onStopBackground,
+    runtime,
     threads,
   }: any) => (
     <aside>
+      {!mocks.mobile && onStopBackground && runtime.activity?.[0]?.canStop && <button type="button" onClick={() => void onStopBackground(runtime.activity[0])}>Stop task</button>}
       <button type="button" onClick={onCreateThread}>New task</button>
       <button type="button" onClick={() => onSelectThread(null)}>General</button>
       {threads.map((thread: { id: string; title: string }) => (
@@ -237,6 +244,7 @@ vi.mock("../components/HermesRuntimePanel", () => ({
 import { DmRoute } from "./dm";
 import { ChatHeader } from "../components/ChatHeader";
 import { useComposerDraftsStore } from "../stores/composer-drafts";
+vi.mock("../components/ResponsiveShell", async (importOriginal) => ({...await importOriginal<typeof import("../components/ResponsiveShell")>(), useMediaQuery: () => mocks.mobile}));
 
 const persistedThread = {
   id: "thread-1",
@@ -280,6 +288,7 @@ beforeEach(() => {
     sendingAttachments: {},
   });
   mocks.threads = [];
+  mocks.mobile = false; mocks.activity = [];
   mocks.messageQueryStale = false;
   mocks.participantName = "Hermes";
   mocks.participantKind = "hermes";
@@ -289,6 +298,29 @@ beforeEach(() => {
 });
 
 describe("DmRoute deferred Hermes task drafts", () => {
+  it.each([false,true])("wires task-bound Stop without issuing mutable conversation /stop (phone=%s)", async mobile => {
+    mocks.mobile = mobile;
+    const now = new Date().toISOString();
+    const task = {botId:"bot-1",botUserId:"bot-user-1",botName:"Hermes",conversationId:"dm-1",threadId:null,canStop:true,taskId:"original-task",sessionId:"old-session",sequence:1,originInvocationId:"parent-replied",observedAt:now,parent:{state:"waiting_worker",action:null,updatedAt:now},workers:[],activities:[]};
+    mocks.activity = [task];
+    mocks.submitBackgroundTaskStop.mockResolvedValue(undefined);
+    await renderRoute();
+    fireEvent.click(screen.getByRole("button",{name:"Stop task"}));
+    await waitFor(() => expect(mocks.submitBackgroundTaskStop).toHaveBeenCalledWith(task,"token-1"));
+    expect(mocks.wsSendMessage).not.toHaveBeenCalled();
+    expect(mocks.sendChannelMessage).not.toHaveBeenCalled();
+    expect(mocks.invalidateBotRuntime).toHaveBeenCalledWith("dm-1");
+  });
+  it("keeps selected background activity visible on phone without opening the task drawer", async () => {
+    mocks.mobile = true;
+    const now = new Date().toISOString();
+    const t = {botId:"bot-1",botUserId:"bot-user-1",botName:"Hermes",conversationId:"dm-1",threadId:null,taskId:"phone-task",sequence:1,sessionId:"phone-session",originInvocationId:"complete",observedAt:now,parent:{state:"waiting_worker",action:null,updatedAt:now},workers:[{id:"phone-worker",kind:"process",parentId:null,goal:"Phone background check",state:"running",action:"terminal",startedAt:now,updatedAt:now,lastActionAt:now}],activities:[]};
+    mocks.activity = [t,{...t,taskId:"other-task",threadId:"other-thread",workers:[{...t.workers[0],goal:"Other thread private detail"}]}];
+    await renderRoute();
+    expect(screen.getByText("Working in background")).toBeVisible();
+    expect(screen.getByText("Phone background check")).toBeVisible();
+    expect(screen.queryByText("Other thread private detail")).not.toBeInTheDocument();
+  });
   it("uses the displayed participant's Minimal identity with unrelated sidebar members", async () => {
     mocks.participantAvatar = { shape: "minimal", color: "#00B894" };
     await renderRoute("/dm/dm-1?threadId=thread-1");

@@ -1,3 +1,4 @@
+import { backgroundActivitySchema, publishBackgroundActivity } from "../services/background-activity";
 import { Elysia } from "elysia";
 import { z } from "zod";
 import { eq } from "drizzle-orm";
@@ -15,6 +16,7 @@ import {
 import { ServiceError } from "../services/errors";
 import { resolveTokenToUser } from "../auth/middleware";
 import { vaultUnlockRequestSchema, vaultUnlockResolvedSchema } from "../services/vault-unlock";
+
 
 const messageSchema = z.object({
   invocationId: z.string().min(1).optional(),
@@ -224,6 +226,7 @@ export const hermesPlatformRoutes = new Elysia({ prefix: "/hermes-platform" })
     const error = requireHermesBot(platformBot, set);
     if (error) return error;
   })
+
   .get("/health", ({ platformBot }) => ({
     ok: true,
     platform: "thechat",
@@ -239,6 +242,14 @@ export const hermesPlatformRoutes = new Elysia({ prefix: "/hermes-platform" })
       set.status = e instanceof ServiceError ? e.status : 500;
       return { error: e.message ?? "Unknown error" };
     }
+  })
+  .post("/activity", async ({body, platformBot, set}) => {
+    const parsed = backgroundActivitySchema.safeParse(body);
+    if (!parsed.success || new TextEncoder().encode(JSON.stringify(body)).byteLength > 64 * 1024) {
+      set.status = 400; return {error: "Invalid background activity snapshot"};
+    }
+    try { return await publishBackgroundActivity(platformBot!.id, parsed.data); }
+    catch (error) { set.status = error instanceof ServiceError ? error.status : 500; return {error: error instanceof ServiceError ? error.message : "Could not store background activity"}; }
   })
   .post("/messages", async ({ body, platformBot, set }) => {
     const parsed = messageSchema.safeParse(body);

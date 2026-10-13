@@ -120,6 +120,27 @@
       "when": 1790536871396,
       "tag": "0016_bot_avatars",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1791792729379,
+      "tag": "0017_background_activity",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1791795883330,
+      "tag": "0018_background_activity_receipts",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1791812403885,
+      "tag": "0019_background_task_control_capability",
+      "breakpoints": true
     }
   ]
 }

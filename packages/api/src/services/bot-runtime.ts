@@ -1,3 +1,5 @@
+import { listBackgroundActivity } from "./background-activity";
+import { backgroundTaskControlSchema } from "./background-task-control";
 import crypto from "crypto";
 import {
   and,
@@ -869,6 +871,7 @@ export async function listConversationBotRuntime(conversationId: string, userId:
             : publicInvocation;
         }),
         events: visibleEvents,
+        activity: await listBackgroundActivity(conversationId, userId),
       };
     },
   );
@@ -1287,6 +1290,15 @@ async function handleWebhookInvocation(invocationId: string) {
   await publishInvocationUpdate(invocationId);
 }
 
+export async function enqueueHermesTaskControl(invocationId: string) {
+  const loaded = await loadInvocationContext(invocationId);
+  if (!loaded || !backgroundTaskControlSchema.safeParse(loaded.invocation.requestJson?.taskControl).success) throw new ServiceError("Task control invocation not found",404);
+  await publishInvocationUpdate(invocationId);
+  if (loaded.bot.webhookUrl && loaded.invocation.status === "queued") {
+    await getAsyncBus().enqueue(createHermesWebhookDeliveryCommand(invocationId,loaded.conversation.workspaceId,invocationId,invocationId));
+  }
+}
+
 export interface HermesPlatformEvent {
   id: string;
   invocationId: string;
@@ -1294,6 +1306,7 @@ export interface HermesPlatformEvent {
   chatType: "dm" | "group";
   threadId: string | null;
   sessionIntent?: Record<string, unknown>;
+  taskControl?: {version:1;action:"stop";taskId:string;sessionId:string};
   text: string;
   attachments: ChatAttachment[];
   messageId: string;
@@ -1440,6 +1453,10 @@ async function prepareHermesPlatformEvent(
 ): Promise<PreparedHermesPlatformEvent | null> {
   const loaded = await loadInvocationContext(invocationId);
   if (!loaded || loaded.bot.kind !== "hermes") return null;
+  const rawControl = loaded.invocation.requestJson?.taskControl;
+  const parsedControl = rawControl === undefined ? null : backgroundTaskControlSchema.safeParse(rawControl);
+  if (parsedControl && (!parsedControl.success || loaded.bot.backgroundTaskControlVersion !== 1)) return null;
+  const taskControl = parsedControl?.success ? parsedControl.data : null;
 
   const text = stripBotMention(loaded.triggerMessage.content, loaded.botName) || loaded.triggerMessage.content;
   const attachmentMetadata = loaded.bot.attachmentAccess
@@ -1480,6 +1497,7 @@ async function prepareHermesPlatformEvent(
       chatType: loaded.conversation.type === "direct" ? "dm" : "group",
       threadId,
       ...(sessionIntent ? { sessionIntent } : {}),
+      ...(taskControl ? { taskControl } : {}),
       text,
       attachments: attachmentMetadata,
       messageId: loaded.triggerMessage.id,

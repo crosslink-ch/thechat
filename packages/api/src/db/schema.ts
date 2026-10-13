@@ -18,6 +18,7 @@ import { relations, sql } from "drizzle-orm";
 import type { BotCommandPublic, MessagePart } from "@thechat/shared";
 import type { DomainEventEnvelope } from "../events/envelope";
 
+
 // -- Enums --
 
 export const userTypeEnum = pgEnum("user_type", ["human", "bot"]);
@@ -351,6 +352,7 @@ export const bots = pgTable(
     kind: botKindEnum("kind").notNull().default("webhook"),
     attachmentAccess: boolean("attachment_access").notNull().default(true),
     commandsJson: jsonb("commands_json").$type<BotCommandPublic[]>(),
+    backgroundTaskControlVersion: integer("background_task_control_version"),
     // The owner's avatar picks; null keeps the default derived from userId.
     avatarShape: varchar("avatar_shape", { length: 32 }),
     avatarColor: varchar("avatar_color", { length: 16 }),
@@ -464,6 +466,26 @@ export const botInvocations = pgTable(
     ),
   ]
 );
+
+export const botActivitySnapshots = pgTable("bot_activity_snapshots", {
+  botId: uuid("bot_id").notNull().references(() => bots.id, {onDelete: "cascade"}),
+  taskId: uuid("task_id").notNull(),
+  conversationId: uuid("conversation_id").notNull().references(() => conversations.id, {onDelete: "cascade"}),
+  // Immutable provenance, deliberately not invocation-owned/cascading.
+  originInvocationId: uuid("origin_invocation_id").notNull(),
+  threadId: uuid("thread_id"),
+  requesterUserId: uuid("requester_user_id"),
+  sessionId: varchar("session_id", {length: 255}).notNull(),
+  snapshot: jsonb("snapshot").$type<import("@thechat/shared").BackgroundActivityInput>().notNull(),
+  observedAt: timestamp("observed_at", {withTimezone: true}).defaultNow().notNull(),
+}, t => [primaryKey({columns: [t.botId, t.taskId]}), index("bot_activity_conversation_idx").on(t.conversationId, t.observedAt)]);
+
+
+export const botActivityReceipts = pgTable("bot_activity_receipts", {
+  botId: uuid("bot_id").notNull(), taskId: uuid("task_id").notNull(),
+  eventId: uuid("event_id").notNull(), sequence: varchar("sequence", {length: 20}).notNull(),
+  contentHash: varchar("content_hash", {length: 64}).notNull(),
+}, t => [primaryKey({columns:[t.botId,t.eventId]}), uniqueIndex("bot_activity_receipt_sequence_idx").on(t.botId,t.taskId,t.sequence), foreignKey({columns:[t.botId,t.taskId],foreignColumns:[botActivitySnapshots.botId,botActivitySnapshots.taskId]}).onDelete("cascade")]);
 
 export const conversationThreads = pgTable(
   "conversation_threads",

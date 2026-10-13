@@ -14,6 +14,7 @@ import type {
 } from "@thechat/shared";
 
 export type WsEvents = {
+  "ws:bot_activity_changed": { conversationId: string };
   "ws:authenticated": Record<string, never>;
   "ws:new_message": {
     message: ChatMessage;

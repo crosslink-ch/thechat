@@ -1,6 +1,7 @@
 import { onSessionReset } from "../lib/session-boundary";
 import { create } from "zustand";
 import type {
+  BackgroundActivityPublic,
   BotInvocationProgressEventPublic,
   BotInvocationPublic,
   BotRuntimeSnapshot,
@@ -60,6 +61,7 @@ interface InvocationMeta {
 }
 
 interface HermesIndicatorsStore {
+  backgroundActivity: Record<string, BackgroundActivityPublic>;
   pendingApprovals: HermesPendingApproval[];
   pendingClarifications: HermesPendingClarification[];
   unreadScopes: Record<string, HermesUnreadScope>;
@@ -109,6 +111,7 @@ function rememberTerminalSequence(
 }
 
 const initialState = {
+  backgroundActivity: {} as Record<string, BackgroundActivityPublic>,
   pendingApprovals: [] as HermesPendingApproval[],
   pendingClarifications: [] as HermesPendingClarification[],
   unreadScopes: {} as Record<string, HermesUnreadScope>,
@@ -426,6 +429,12 @@ export const useHermesIndicatorsStore = create<HermesIndicatorsStore>()((set, ge
     localClarificationResponses,
   ) => {
     set((state) => {
+      const backgroundActivity = { ...state.backgroundActivity };
+      for (const task of snapshot.activity ?? []) {
+        if (task.conversationId !== conversationId) continue;
+        const key = `${task.botId}:${task.taskId}`;
+        if (!backgroundActivity[key] || backgroundActivity[key].sequence < task.sequence) backgroundActivity[key] = task;
+      }
       const activeInvocations = snapshot.invocations.filter(
         (invocation) => {
           if (
@@ -493,6 +502,7 @@ export const useHermesIndicatorsStore = create<HermesIndicatorsStore>()((set, ge
       );
 
       return {
+        backgroundActivity,
         invocationMeta,
         pendingApprovals: [
           ...state.pendingApprovals.filter(

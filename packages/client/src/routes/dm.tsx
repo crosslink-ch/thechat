@@ -8,8 +8,9 @@ import {
   useBotRuntimeCache,
   submitHermesInteraction,
   submitHermesVaultUnlock,
+  submitBackgroundTaskStop,
 } from "../hooks/useBotRuntime";
-import type { BotAppearance, BotInvocationProgressEventPublic } from "@thechat/shared";
+import type { BackgroundActivityPublic, BotAppearance, BotInvocationProgressEventPublic } from "@thechat/shared";
 import { useConversationThreads } from "../hooks/useConversationThreads";
 import { useConversationDetail } from "../hooks/useConversationDetail";
 import { useScopedCommands } from "../hooks/useScopedCommands";
@@ -24,6 +25,8 @@ import { usePersistConversationRead } from "../hooks/usePersistConversationRead"
 import { ChannelChatView } from "../components/ChannelChatView";
 import { HermesDmChatView } from "../components/HermesDmChatView";
 import { HermesRuntimePanel } from "../components/HermesRuntimePanel";
+import { BackgroundActivityCard } from "../components/BackgroundActivityCard";
+import { useMediaQuery } from "../components/ResponsiveShell";
 import { closePaletteAndRefocus } from "../CommandPalette";
 import type { Command } from "../commands";
 import { wsEvents, type WsEvents } from "../lib/ws-events";
@@ -51,6 +54,7 @@ import {
 const LOCAL_TASK_DRAFT_SCOPE = "__local_task_draft__";
 
 export function DmRoute() {
+  const mobile = useMediaQuery("(max-width: 899px)");
   const { id: conversationId } = useParams({ from: "/dm/$id" });
   const { threadId: requestedThreadId } = useSearch({ from: "/dm/$id" });
   const token = useAuthStore((s) => s.token);
@@ -612,6 +616,12 @@ export function DmRoute() {
     slashCommands,
   ]);
 
+  const handleBackgroundTaskStop = useCallback(async (task: BackgroundActivityPublic) => {
+    if (!isHermesDm || !isAuthenticated(token) || task.canStop !== true || task.conversationId !== conversationId || task.botId !== otherParticipant?.bot?.id) throw new Error("Task stop unavailable");
+    await submitBackgroundTaskStop(task,token);
+    invalidate(conversationId);
+  }, [conversationId,invalidate,isHermesDm,otherParticipant?.bot?.id,token]);
+
   const handleHermesInteraction = useCallback(
     async (
       event: BotInvocationProgressEventPublic,
@@ -634,6 +644,9 @@ export function DmRoute() {
   return (
     <div className="shared-dm-layout flex min-h-0 min-w-0 flex-1">
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+        {mobile && isHermesDm && !draftTaskActive && (runtime?.activity ?? []).some(task => task.threadId === activeThreadId) && <section className="max-h-[40dvh] shrink-0 space-y-2 overflow-y-auto border-b border-border p-2" aria-label="Background task activity">
+          {(runtime?.activity ?? []).filter(task => task.threadId === activeThreadId).map(task => <BackgroundActivityCard key={`${task.botId}:${task.taskId}`} task={task} onStop={task.canStop === true ? handleBackgroundTaskStop : undefined} />)}
+        </section>}
         {isHermesDm ? (
           <HermesDmChatView
             messages={draftTaskActive ? [] : channelChat.messages}
@@ -703,6 +716,7 @@ export function DmRoute() {
         <HermesRuntimePanel
           botName={otherParticipant.user.name}
           runtime={runtime}
+          onStopBackground={handleBackgroundTaskStop}
           loading={runtimeLoading}
           threads={threads}
           threadsLoading={threadsLoading}

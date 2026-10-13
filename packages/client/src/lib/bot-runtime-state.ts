@@ -34,6 +34,7 @@ export function mergeRuntimeUpdate(
     ? snapshot.events
     : snapshot.events.filter((event) => event.invocationId !== invocation.id);
   return {
+    ...snapshot,
     invocations,
     events: pruneProgressEvents(events),
   };
@@ -56,6 +57,7 @@ export function mergeRuntimeProgressEvent(
     terminalSequence >= event.sequence
   ) {
     return {
+    ...snapshot,
       invocations: snapshot.invocations.filter(
         (existing) => existing.id !== event.invocationId,
       ),
@@ -67,6 +69,7 @@ export function mergeRuntimeProgressEvent(
   }
   if (isTerminalHermesProgressEvent(event)) {
     return {
+    ...snapshot,
       invocations: snapshot.invocations.filter(
         (existing) => existing.id !== event.invocationId,
       ),
@@ -79,6 +82,7 @@ export function mergeRuntimeProgressEvent(
     };
   }
   return {
+    ...snapshot,
     invocations: invocation
       ? upsertById(snapshot.invocations, invocation)
       : snapshot.invocations,

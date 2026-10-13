@@ -1,0 +1,1 @@
+ALTER TABLE "bots" ADD COLUMN "background_task_control_version" integer;
