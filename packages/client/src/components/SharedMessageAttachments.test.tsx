@@ -166,6 +166,22 @@ describe("SharedMessageAttachments", () => {
     expect(screen.getByTitle("Downloaded message.eml")).toBeInTheDocument();
   });
 
+  it("renders a CSV as a downloadable file instead of a voice player", async () => {
+    render(<SharedMessageAttachments attachments={[{
+      id: "attachment-csv", fileName: "keywords.csv", name: "keywords.csv",
+      mediaType: "text/csv", mimeType: "text/csv", sizeBytes: 128,
+      kind: "file", contentPath: "/attachments/attachment-csv/content",
+    }]} />);
+
+    expect(screen.queryByTestId("voice-message-player")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Play voice message" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /keywords\.csv/i }));
+    await waitFor(() => expect(openSharedAttachmentDownload).toHaveBeenCalledWith(
+      "attachment-csv", "test-token", "attachment", "keywords.csv",
+    ));
+    expect(getAttachmentDownloadUrl).not.toHaveBeenCalled();
+  });
+
   it("renders recognizable icon controls with accessible names and tooltips", async () => {
     await openImageViewer();
 
