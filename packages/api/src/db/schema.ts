@@ -172,8 +172,34 @@ export const conversations = pgTable(
   (t) => [
     index("conversations_workspace_id_idx").on(t.workspaceId),
     uniqueIndex("conversations_workspace_name_idx").on(t.workspaceId, t.name),
+    uniqueIndex("conversations_workspace_id_id_idx").on(t.workspaceId, t.id),
   ]
 );
+
+export const botWorkspaceInstallations = pgTable("bot_workspace_installations", {
+  workspaceId: varchar("workspace_id", { length: 100 }).notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  botId: uuid("bot_id").notNull().references(() => bots.id, { onDelete: "cascade" }),
+  enabled: boolean("enabled").notNull().default(false),
+  channelScope: varchar("channel_scope", { length: 20 }).$type<"all" | "selected">().notNull().default("selected"),
+  attachmentAccess: boolean("attachment_access").notNull().default(false),
+  sharedRuntimeConsent: boolean("shared_runtime_consent").notNull().default(false),
+  approvedEndpointUrl: text("approved_endpoint_url"),
+  approvedEndpointRevision: integer("approved_endpoint_revision").notNull().default(1),
+  revision: integer("revision").notNull().default(1),
+  approvedById: uuid("approved_by_id").references(() => users.id, { onDelete: "set null" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, t => [primaryKey({ columns: [t.workspaceId, t.botId] })]);
+
+export const botInstallationChannels = pgTable("bot_installation_channels", {
+  workspaceId: varchar("workspace_id", { length: 100 }).notNull(),
+  botId: uuid("bot_id").notNull(),
+  conversationId: uuid("conversation_id").notNull(),
+}, t => [
+  primaryKey({ columns: [t.workspaceId, t.botId, t.conversationId] }),
+  foreignKey({ columns: [t.workspaceId, t.botId], foreignColumns: [botWorkspaceInstallations.workspaceId, botWorkspaceInstallations.botId] }).onDelete("cascade"),
+  foreignKey({ columns: [t.workspaceId, t.conversationId], foreignColumns: [conversations.workspaceId, conversations.id] }).onDelete("cascade"),
+]);
 
 export const conversationParticipants = pgTable(
   "conversation_participants",
@@ -347,6 +373,7 @@ export const bots = pgTable(
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
     webhookUrl: text("webhook_url"),
+    endpointRevision: integer("endpoint_revision").notNull().default(1),
     webhookSecret: varchar("webhook_secret", { length: 128 }).notNull(),
     kind: botKindEnum("kind").notNull().default("webhook"),
     attachmentAccess: boolean("attachment_access").notNull().default(true),

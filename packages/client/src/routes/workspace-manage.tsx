@@ -623,6 +623,9 @@ export function WorkspaceManageRoute() {
                   Bots you own are added immediately. For any other bot, its owner
                   receives an approval notification first.
                 </p>
+                <p className="mt-2 text-[0.786rem] leading-relaxed text-text-dimmed">
+                  By adding this bot, you approve its shared runtime for this workspace. Separate sessions do not isolate files, credentials, or memory. Use a workspace-dedicated runtime and credentials for unrelated customers.
+                </p>
                 {availableOwnedBots.length > 0 && (
                   <div className="mt-3 flex flex-wrap items-center gap-1.5">
                     <span className="text-[0.786rem] text-text-dimmed">

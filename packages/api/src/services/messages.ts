@@ -20,6 +20,7 @@ import { enqueueDomainEvent } from "../events/outbox";
 import { log } from "../logging";
 import { withSpan } from "../observability";
 import { publishWsEventToUsers } from "../realtime";
+import { requireBotInstallationAccess, canBotAccessConversationAttachments } from "./bot-installation-access";
 import { ServiceError } from "./errors";
 import { requireConversationMutationAccess } from "./conversation-mutation-access";
 import { resolveMessageBotTargetIds } from "./message-bot-targets";
@@ -75,7 +76,7 @@ export async function getMessages(
     .limit(limit);
   const chronological = rows.reverse();
   const includeAttachments =
-    options?.includeAttachments ?? (await canUserAccessAttachments(db, userId));
+    options?.includeAttachments !== false && (await canUserAccessAttachments(db, userId, conversationId));
   const attachmentMap = includeAttachments
     ? await attachmentsByMessageIds(rows.map((row) => row.id))
     : new Map<string, NonNullable<ChatMessage["attachments"]>>();
@@ -115,7 +116,9 @@ export async function getMessageByIdForParticipant(
     .limit(1);
   if (!row) throw new ServiceError("Message not found", 404);
   await requireParticipant(db, row.conversationId, userId);
-  const attachmentMap = await attachmentsByMessageIds([row.id]);
+  const attachmentMap = await canUserAccessAttachments(db, userId, row.conversationId)
+    ? await attachmentsByMessageIds([row.id])
+    : new Map<string, NonNullable<ChatMessage["attachments"]>>();
   const reactionMap = await messageReactionsByMessageIds([row.id], userId);
   return toChatMessage(
     row,
@@ -174,12 +177,8 @@ export async function sendMessage(
           { afterWorkspaceLocked: options.afterWorkspaceLocked },
         );
         if (participant.senderType === "bot" && attachmentIds.length > 0) {
-          const [bot] = await tx
-            .select({ attachmentAccess: bots.attachmentAccess })
-            .from(bots)
-            .where(eq(bots.userId, userId))
-            .limit(1);
-          if (bot?.attachmentAccess !== true) {
+
+          if (!(await canUserAccessAttachments(tx, userId, conversationId))) {
             throw new ServiceError(
               "Attachment access is not enabled for this bot token",
               403,
@@ -495,7 +494,9 @@ export async function attachReadyAttachments(
 export async function canUserAccessAttachments(
   executor: MessageReadExecutor,
   userId: string,
+  conversationId?: string,
 ) {
+  if (conversationId) return canBotAccessConversationAttachments(executor, conversationId, userId);
   const [actor] = await executor
     .select({
       userType: users.type,
@@ -566,6 +567,7 @@ async function requireParticipant(
   userId: string,
   includeContext = false,
 ) {
+  await requireBotInstallationAccess(executor, conversationId, userId);
   const [participant] = await executor
     .select({
       userId: conversationParticipants.userId,
@@ -596,7 +598,7 @@ async function requireParticipant(
     .limit(1);
   if (
     !participant ||
-    (participant.conversationType === "group" && !participant.workspaceMemberUserId)
+    ((participant.workspaceId || participant.conversationType === "group") && !participant.workspaceMemberUserId)
   ) {
     throw new ServiceError(
       "You are not a participant of this conversation",

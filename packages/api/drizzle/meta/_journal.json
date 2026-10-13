@@ -120,6 +120,13 @@
       "when": 1790536871396,
       "tag": "0016_bot_avatars",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1791910777814,
+      "tag": "0018_workspace_bot_installations",
+      "breakpoints": true
     }
   ]
 }

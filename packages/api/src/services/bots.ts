@@ -19,10 +19,13 @@ import {
   apikey,
   botInvocations,
   botWorkspaceInvites,
+  botWorkspaceInstallations,
   eventOutbox,
   hermesBotConfigs,
 } from "../db/schema";
 import { ServiceError } from "./errors";
+import { createApprovedBotInstallation, requireInstallationAdmin } from "./bot-installation-access";
+import { lifecycleTransaction, stageLifecycleNotification } from "../events/workspace-lifecycle";
 import { broadcastToUser } from "../ws";
 import {
   BotApiKeyRotationConflictError,
@@ -54,7 +57,7 @@ export async function createBot(
   const botUserId = crypto.randomUUID();
   const credential = await prepareBotApiKey(botUserId);
 
-  const { botUser, bot } = await db.transaction(async (tx) => {
+  const { botUser, bot } = await lifecycleTransaction(async (tx) => {
     const [createdUser] = await tx
       .insert(users)
       .values({ id: botUserId, name, type: "bot" })
@@ -108,7 +111,7 @@ export async function createHermesBotInWorkspace(
   const botUserId = crypto.randomUUID();
   const credential = await prepareBotApiKey(botUserId);
 
-  const { botUser, bot, joinedAt } = await db.transaction(async (tx) => {
+  const { botUser, bot } = await lifecycleTransaction(async (tx) => {
     const [workspace] = await tx
       .select({ id: workspaces.id })
       .from(workspaces)
@@ -121,22 +124,7 @@ export async function createHermesBotInWorkspace(
 
     await options.afterWorkspaceLocked?.();
 
-    const [callerMembership] = await tx
-      .select({ role: workspaceMembers.role })
-      .from(workspaceMembers)
-      .where(
-        and(
-          eq(workspaceMembers.workspaceId, workspaceId),
-          eq(workspaceMembers.userId, ownerId),
-        ),
-      )
-      .limit(1);
-    if (!callerMembership) {
-      throw new ServiceError("You are not a member of this workspace", 403);
-    }
-    if (callerMembership.role !== "owner" && callerMembership.role !== "admin") {
-      throw new ServiceError("Only workspace admins can add bots", 403);
-    }
+    await requireInstallationAdmin(tx, workspaceId, ownerId);
 
     const [createdUser] = await tx
       .insert(users)
@@ -170,6 +158,7 @@ export async function createHermesBotInWorkspace(
         role: "member",
       })
       .returning({ joinedAt: workspaceMembers.joinedAt });
+    await createApprovedBotInstallation(tx, workspaceId, createdBot.id, ownerId);
 
     const channels = await tx
       .select({ id: conversations.id })
@@ -190,6 +179,7 @@ export async function createHermesBotInWorkspace(
       );
     }
 
+    await stageBotJoinedWorkspace(tx, { workspaceId, botId: createdBot.id, botKind: createdBot.kind, botUserId: createdUser.id, botName: createdUser.name, botAvatar: resolveBotAppearance(createdUser.id, createdBot), joinedAt: membership.joinedAt });
     return {
       botUser: createdUser,
       bot: createdBot,
@@ -197,15 +187,6 @@ export async function createHermesBotInWorkspace(
     };
   });
 
-  await broadcastBotJoinedWorkspace({
-    workspaceId,
-    botId: bot.id,
-    botKind: "hermes",
-    botUserId: botUser.id,
-    botName: botUser.name,
-    botAvatar: resolveBotAppearance(botUser.id, bot),
-    joinedAt,
-  });
 
   return {
     id: bot.id,
@@ -354,7 +335,7 @@ export async function addBotToWorkspace(
     throw new ServiceError("Only the bot owner can add it directly", 403);
   }
 
-  const result = await db.transaction(async (tx) => {
+  await lifecycleTransaction(async (tx) => {
     const [workspace] = await tx
       .select({ id: workspaces.id })
       .from(workspaces)
@@ -405,6 +386,7 @@ export async function addBotToWorkspace(
             role: "member",
           })
           .returning({ joinedAt: workspaceMembers.joinedAt });
+    await createApprovedBotInstallation(tx, workspaceId, botId, callerId);
 
     const channels = await tx
       .select({ id: conversations.id })
@@ -429,28 +411,19 @@ export async function addBotToWorkspace(
         .onConflictDoNothing();
     }
 
+    const joinedAt = existingMember?.joinedAt ?? insertedMember?.joinedAt ?? new Date();
+    if (!existingMember) await stageBotJoinedWorkspace(tx, { workspaceId, botId, botKind: bot.kind, botUserId: bot.userId, botName: bot.name, botAvatar: resolveBotAppearance(bot.userId, bot), joinedAt });
     return {
       added: !existingMember,
-      joinedAt: existingMember?.joinedAt ?? insertedMember?.joinedAt ?? new Date(),
+      joinedAt,
     };
   });
 
-  if (result.added) {
-    await broadcastBotJoinedWorkspace({
-      workspaceId,
-      botId,
-      botKind: bot.kind,
-      botUserId: bot.userId,
-      botName: bot.name,
-      botAvatar: resolveBotAppearance(bot.userId, bot),
-      joinedAt: result.joinedAt,
-    });
-  }
 
   return { success: true };
 }
 
-async function broadcastBotJoinedWorkspace({
+async function stageBotJoinedWorkspace(tx: Parameters<Parameters<typeof db.transaction>[0]>[0], {
   workspaceId,
   botId,
   botKind,
@@ -467,7 +440,7 @@ async function broadcastBotJoinedWorkspace({
   botAvatar: BotAppearance;
   joinedAt: Date;
 }) {
-  const members = await db
+  const members = await tx
     .select({ userId: workspaceMembers.userId })
     .from(workspaceMembers)
     .where(eq(workspaceMembers.workspaceId, workspaceId));
@@ -490,11 +463,7 @@ async function broadcastBotJoinedWorkspace({
     },
   };
 
-  for (const member of members) {
-    if (member.userId !== botUserId) {
-      broadcastToUser(member.userId, event);
-    }
-  }
+  await stageLifecycleNotification(tx, workspaceId, members.filter(member => member.userId !== botUserId).map(member => member.userId), event);
 }
 
 export async function removeBotFromWorkspace(
@@ -513,7 +482,7 @@ export async function removeBotFromWorkspace(
     throw new ServiceError("Bot not found", 404);
   }
 
-  const result = await db.transaction(async (tx) => {
+  const result = await lifecycleTransaction(async (tx) => {
     const [workspace] = await tx
       .select({ id: workspaces.id })
       .from(workspaces)
@@ -654,6 +623,7 @@ export async function removeBotFromWorkspace(
         );
     }
 
+    await tx.delete(botWorkspaceInstallations).where(and(eq(botWorkspaceInstallations.workspaceId, workspaceId), eq(botWorkspaceInstallations.botId, botId)));
     const removedMemberships = await tx
       .delete(workspaceMembers)
       .where(
@@ -678,6 +648,7 @@ export async function removeBotFromWorkspace(
               ),
             );
 
+    if (removedMemberships.length > 0) await stageLifecycleNotification(tx, workspaceId, [...recipients.map(r => r.userId), bot.userId], { type: "member_removed", workspaceId, userId: bot.userId });
     return {
       success: true,
       removed: removedMemberships.length > 0,
@@ -736,7 +707,7 @@ export async function updateBot(
     updates.avatarShape !== undefined ||
     updates.avatarColor !== undefined;
 
-  const result = await db.transaction(async (tx) => {
+  const result = await lifecycleTransaction(async (tx) => {
     const [bot] = await tx
       .select({ id: bots.id, ownerId: bots.ownerId, userId: bots.userId })
       .from(bots)
@@ -793,7 +764,7 @@ export async function updateBot(
         .update(bots)
         .set({
           ...(updates.webhookUrl !== undefined
-            ? { webhookUrl: updates.webhookUrl }
+            ? { webhookUrl: updates.webhookUrl, endpointRevision: sql`CASE WHEN ${bots.webhookUrl} IS DISTINCT FROM ${updates.webhookUrl} THEN ${bots.endpointRevision} + 1 ELSE ${bots.endpointRevision} END` }
             : {}),
           ...(updates.attachmentAccess !== undefined
             ? { attachmentAccess: updates.attachmentAccess }
@@ -836,7 +807,7 @@ export async function updateAuthenticatedBotWebhook(
 ) {
   const [updatedBot] = await db
     .update(bots)
-    .set({ webhookUrl })
+    .set({ webhookUrl, endpointRevision: sql`CASE WHEN ${bots.webhookUrl} IS DISTINCT FROM ${webhookUrl} THEN ${bots.endpointRevision} + 1 ELSE ${bots.endpointRevision} END` })
     .where(eq(bots.userId, botUserId))
     .returning({
       id: bots.id,
@@ -932,7 +903,7 @@ export async function updateAuthenticatedBotCommands(
 }
 
 export async function deleteBot(botId: string, ownerId: string) {
-  await db.transaction(async (tx) => {
+  await lifecycleTransaction(async (tx) => {
     const [bot] = await tx
       .select({ id: bots.id, ownerId: bots.ownerId, userId: bots.userId })
       .from(bots)
