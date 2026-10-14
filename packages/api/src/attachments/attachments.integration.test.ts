@@ -538,6 +538,11 @@ describe("attachment lifecycle", () => {
     const { conversationId } = await workspaceWithMembers(owner);
     const cases = [
       {
+        fileName: "keywords.csv",
+        mediaType: "text/csv",
+        bytes: new Uint8Array(Buffer.from('\uFEFF"#","keyword"\r\n"1","synthetic term"\r\n', "utf16le")),
+      },
+      {
         fileName: "message.eml",
         mediaType: "message/rfc822",
         bytes: new TextEncoder().encode("From: sender@example.test\r\n\r\nHello"),
@@ -609,6 +614,7 @@ describe("attachment lifecycle", () => {
       expect(ready.status).toBe(200);
       expect(ready.body).toMatchObject({
         fileName: entry.fileName,
+        mediaType: entry.mediaType || "application/octet-stream",
         kind: "file",
         status: "ready",
       });
@@ -630,6 +636,13 @@ describe("attachment lifecycle", () => {
       owner.token,
     );
     expect(sent.status).toBe(200);
+
+    const listed = await request("GET", `/messages/${conversationId}`, undefined, owner.token);
+    expect(listed.status).toBe(200);
+    const storedMessage = listed.body.find((message: { id: string }) => message.id === sent.body.id);
+    expect(storedMessage.attachments).toHaveLength(cases.length);
+    expect(storedMessage.attachments.find((attachment: { fileName: string }) => attachment.fileName === "keywords.csv"))
+      .toMatchObject({ mediaType: "text/csv", mimeType: "text/csv", kind: "file" });
 
     const downloadCallStart = store.downloadCalls.length;
     for (const attachmentId of attachmentIds) {

@@ -36,6 +36,34 @@ export function normalizeDeclaredMediaType(value: string) {
     : OPAQUE_ATTACHMENT_MEDIA_TYPE;
 }
 
+function isDeclaredUtf16Text(bytes: Uint8Array, declared: string) {
+  if (
+    !declared.startsWith("text/") ||
+    bytes.length < 4 ||
+    bytes.length % 2 !== 0
+  ) {
+    return false;
+  }
+
+  const encoding =
+    bytes[0] === 0xff && bytes[1] === 0xfe
+      ? "utf-16le"
+      : bytes[0] === 0xfe && bytes[1] === 0xff
+        ? "utf-16be"
+        : null;
+  if (!encoding) return false;
+
+  try {
+    const text = new TextDecoder(encoding, { fatal: true }).decode(bytes);
+    return (
+      text.length > 0 &&
+      !/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u.test(text)
+    );
+  } catch {
+    return false;
+  }
+}
+
 export async function verifyFileType(
   bytes: Uint8Array,
   declaredMediaType: string,
@@ -43,7 +71,11 @@ export async function verifyFileType(
   const declared = normalizeDeclaredMediaType(declaredMediaType);
   let detectedMediaType: string | null = null;
   try {
-    const detected = await fileTypeFromBuffer(bytes);
+    // UTF-16LE's BOM overlaps a weak MPEG frame signature. Strictly decoded
+    // declared text remains opaque; other files still use binary detection.
+    const detected = isDeclaredUtf16Text(bytes, declared)
+      ? undefined
+      : await fileTypeFromBuffer(bytes);
     detectedMediaType = detected
       ? normalizeDeclaredMediaType(detected.mime)
       : null;
