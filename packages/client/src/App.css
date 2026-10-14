@@ -288,7 +288,7 @@ body,
   text-decoration: underline;
 }
 
-/* @mentions: a soft accent pill; mentions of you are amber. */
+/* @mentions share the same soft accent pill, including mentions of you. */
 .md-mention {
   padding: 0 0.2em;
   border-radius: 0.3em;
@@ -297,11 +297,6 @@ body,
   font-weight: 500;
   -webkit-box-decoration-break: clone;
   box-decoration-break: clone;
-}
-
-.md-mention-self {
-  background: color-mix(in srgb, var(--color-warning) 18%, transparent);
-  color: var(--color-warning-text);
 }
 
 .md-content ul,

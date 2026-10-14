@@ -211,7 +211,7 @@ describe("ChannelChatView", () => {
     );
   });
 
-  it("highlights messages that mention the signed-in user", () => {
+  it("preserves self-mention metadata with regular message styling", () => {
     useAuthStore.setState({ user: { id: "me", name: "Tony", email: "tony@example.test", avatar: null, type: "human" } });
     const { container } = render(
       <ChannelChatView
@@ -226,8 +226,12 @@ describe("ChannelChatView", () => {
       />,
     );
 
-    expect(container.querySelector('[data-message-id="a"]')).toHaveAttribute("data-mentions-you", "true");
-    expect(container.querySelector('[data-message-id="b"]')).not.toHaveAttribute("data-mentions-you");
+    const mentionRow = container.querySelector('[data-message-id="a"]');
+    const regularRow = container.querySelector('[data-message-id="b"]');
+    expect(mentionRow).toHaveAttribute("data-mentions-you", "true");
+    expect(regularRow).not.toHaveAttribute("data-mentions-you");
+    expect(mentionRow?.className).toBe(regularRow?.className);
+    expect(mentionRow).toHaveClass("hover:bg-white/[0.025]");
     expect(container.querySelector(".md-mention-self")).toHaveTextContent("@Tony");
   });
 

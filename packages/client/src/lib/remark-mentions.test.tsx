@@ -14,7 +14,7 @@ function pills(content: string) {
 }
 
 describe("remarkMentions", () => {
-  it("shows members, multi-word names and bots as pills, and you in amber", () => {
+  it("shows members, multi-word names and bots as pills, identifying your mentions", () => {
     expect(pills("@Razvan Cuceu and @bruno, ask @Guardian. Thanks @Tony!")).toEqual([
       ["@Razvan Cuceu", false],
       ["@bruno", false],
