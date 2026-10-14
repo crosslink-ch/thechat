@@ -82,11 +82,7 @@ export function SharedChatMessage({
       data-message-id={message.id}
       data-message-grouped={merged ? "true" : "false"}
       data-mentions-you={mentionsYou ? "true" : undefined}
-      className={`group/message group relative flex gap-2.5 px-5 transition-colors duration-100 ${
-        mentionsYou
-          ? "bg-warning/[0.06] shadow-[inset_2px_0_0_var(--color-warning)] hover:bg-warning/[0.09]"
-          : "hover:bg-white/[0.025]"
-      } ${
+      className={`group/message group relative flex gap-2.5 px-5 transition-colors duration-100 hover:bg-white/[0.025] ${
         merged ? "py-0.5" : "pb-0.5 pt-2.5"
       }`}
     >
