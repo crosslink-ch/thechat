@@ -1,3 +1,4 @@
+import { withDatabaseContext,withWorkerDatabaseContext } from '../db';
 import { afterAll, describe, expect, test } from "bun:test";
 import crypto from "crypto";
 import { eq, inArray } from "drizzle-orm";
@@ -43,17 +44,17 @@ describe("transactional outbox claiming", () => {
       .set({ lockedBy: "live-worker", lockedAt: new Date("1999-12-31T23:59:45.000Z") })
       .where(eq(eventOutbox.id, freshEvent.id));
 
-    const claimed = await claimOutboxEvents({
+    const claimed = await withWorkerDatabaseContext(()=>claimOutboxEvents({
       workerId: "replacement-worker",
       batchSize: 10,
       lockTimeoutMs: 30_000,
       now,
-    });
+    }));
     expect(claimed.map((row) => row.id)).toContain(staleEvent.id);
     expect(claimed.map((row) => row.id)).not.toContain(freshEvent.id);
 
     const staleClaim = claimed.find((row) => row.id === staleEvent.id)!;
-    expect(await releaseOutboxEvent(staleClaim, new Error("handler unavailable"), now)).toMatchObject({
+    expect(await withWorkerDatabaseContext(()=>releaseOutboxEvent(staleClaim, new Error("handler unavailable"), now))).toMatchObject({
       kind: "released",
       attempts: 1,
     });
@@ -75,20 +76,20 @@ describe("transactional outbox claiming", () => {
       partitionKey: `fenced-${item.id}`,
       availableAt: new Date("1999-12-31T23:00:00.000Z"),
     });
-    const [claimed] = await claimOutboxEvents({
+    const [claimed] = await withWorkerDatabaseContext(()=>claimOutboxEvents({
       workerId: "lease-owner",
       batchSize: 1,
       lockTimeoutMs: 30_000,
       now,
-    });
+    }));
 
-    expect(await markOutboxEventPublished(claimed.id, "stale-worker", now)).toEqual({
+    expect(await withWorkerDatabaseContext(()=>markOutboxEventPublished(claimed.id, "stale-worker", now))).toEqual({
       kind: "lease_lost",
     });
-    expect(await releaseOutboxEvent({ ...claimed, lockedBy: "stale-worker" }, new Error("late"), now)).toEqual({
+    expect(await withWorkerDatabaseContext(()=>releaseOutboxEvent({ ...claimed, lockedBy: "stale-worker" }, new Error("late"), now))).toEqual({
       kind: "lease_lost",
     });
-    expect(await markOutboxEventPublished(claimed.id, claimed.lockedBy, now)).toMatchObject({
+    expect(await withWorkerDatabaseContext(()=>markOutboxEventPublished(claimed.id, claimed.lockedBy, now))).toMatchObject({
       kind: "published",
       publishedAt: now,
     });
@@ -111,19 +112,19 @@ describe("transactional outbox claiming", () => {
     await db.update(eventOutbox).set({ createdAt: new Date("2000-12-31T23:00:01.000Z") })
       .where(eq(eventOutbox.id, following.id));
 
-    const claimed = await claimOutboxEvents({
+    const claimed = await withWorkerDatabaseContext(()=>claimOutboxEvents({
       workerId: "poison-worker", batchSize: 10, lockTimeoutMs: 300_000, now,
-    });
+    }));
     const poisonClaim = claimed.find((row) => row.id === poison.id)!;
-    expect(await releaseOutboxEvent(poisonClaim, new Error("unsupported"), now, 1)).toMatchObject({
+    expect(await withWorkerDatabaseContext(()=>releaseOutboxEvent(poisonClaim, new Error("unsupported"), now, 1))).toMatchObject({
       kind: "dead",
       attempts: 1,
       deadAt: now,
     });
 
-    const nextClaim = await claimOutboxEvents({
+    const nextClaim = await withWorkerDatabaseContext(()=>claimOutboxEvents({
       workerId: "following-worker", batchSize: 10, lockTimeoutMs: 300_000, now,
-    });
+    }));
     expect(nextClaim.map((row) => row.id)).toContain(following.id);
   });
 
@@ -146,17 +147,17 @@ describe("transactional outbox claiming", () => {
     await db.update(eventOutbox).set({ createdAt: new Date("2001-12-31T23:00:01.000Z") })
       .where(eq(eventOutbox.id, second.id));
 
-    const firstClaim = await claimOutboxEvents({
+    const firstClaim = await withWorkerDatabaseContext(()=>claimOutboxEvents({
       workerId: "ordered-worker", batchSize: 10, lockTimeoutMs: 30_000, now,
-    });
+    }));
     expect(firstClaim.map((row) => row.id)).toContain(first.id);
     expect(firstClaim.map((row) => row.id)).not.toContain(second.id);
     const claimedFirst = firstClaim.find((row) => row.id === first.id)!;
-    await markOutboxEventPublished(claimedFirst.id, claimedFirst.lockedBy, now);
+    await withWorkerDatabaseContext(()=>markOutboxEventPublished(claimedFirst.id, claimedFirst.lockedBy, now));
 
-    const secondClaim = await claimOutboxEvents({
+    const secondClaim = await withWorkerDatabaseContext(()=>claimOutboxEvents({
       workerId: "ordered-worker-2", batchSize: 10, lockTimeoutMs: 30_000, now,
-    });
+    }));
     expect(secondClaim.map((row) => row.id)).toContain(second.id);
 
     await db.update(eventOutbox).set({
@@ -168,10 +169,10 @@ describe("transactional outbox claiming", () => {
       deadAt: new Date("2000-01-02T00:00:00.000Z"),
     }).where(eq(eventOutbox.id, live.id));
 
-    expect(await prunePublishedOutboxEvents({
+    expect(await withWorkerDatabaseContext(()=>prunePublishedOutboxEvents({
       before: new Date("2001-01-01T00:00:00.000Z"),
       batchSize: 10,
-    })).toBe(1);
+    }))).toBe(1);
     expect(await db.select({ id: eventOutbox.id }).from(eventOutbox)
       .where(eq(eventOutbox.id, dead.id))).toEqual([]);
     expect((await db.select({ id: eventOutbox.id }).from(eventOutbox)

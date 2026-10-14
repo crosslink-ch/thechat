@@ -1,6 +1,8 @@
+import { withDatabaseContext, withWorkerDatabaseContext } from '../db/index';
+import { asFixtureBot, joinFixtureWorkspace } from '../test-context';
 import { afterEach, expect, test } from "bun:test";
 import { and, eq, inArray } from "drizzle-orm";
-import { db } from "../db";
+import { db } from "../db/testing";
 import {
   users,
   bots,
@@ -32,12 +34,12 @@ import { attachments, messageAttachments } from "../db/schema";
 
 test("single-message reads cannot bypass the installation attachment grant", async () => {
   const f = await botFixture();
-  const message = await sendMessage(
+  const message = await withDatabaseContext({actorId:f.owner.id,scope:'actor'}, () => sendMessage(
     f.channel.id,
     f.owner.id,
     f.owner.name,
     "Synthetic file message",
-  );
+  ));
   const [attachment] = await db
     .insert(attachments)
     .values({
@@ -63,7 +65,7 @@ test("single-message reads cannot bypass the installation attachment grant", asy
     attachmentId: attachment.id,
     position: 0,
   });
-  await installationService.updateBotInstallation(
+  await withDatabaseContext({actorId:f.owner.id,scope:'actor'}, () => installationService.updateBotInstallation(
     f.workspace.id,
     f.bot.id,
     f.owner.id,
@@ -75,12 +77,12 @@ test("single-message reads cannot bypass the installation attachment grant", asy
       sharedRuntimeConsent: true,
       expectedRevision: 1,
     },
-  );
+  ));
   expect(
-    (await getMessageByIdForParticipant(message.id, f.botUser.id)).attachments,
+    (await withDatabaseContext({actorId:f.botUser.id,scope:'actor'}, () => getMessageByIdForParticipant(message.id, f.botUser.id))).attachments,
   ).toEqual([]);
   expect(
-    (await getMessageByIdForParticipant(message.id, f.owner.id)).attachments,
+    (await withDatabaseContext({actorId:f.owner.id,scope:'actor'}, () => getMessageByIdForParticipant(message.id, f.owner.id))).attachments,
   ).toHaveLength(1);
 });
 import {
@@ -97,13 +99,13 @@ import { removeBotFromWorkspace } from "./bots";
 
 test("bot invite and removal commit durable invalidations from shared services", async () => {
   const f = await botFixture();
-  const second = await createWorkspace("Second bot approval", f.member.id);
+  const second = await withDatabaseContext({actorId:f.member.id,scope:'actor'}, () => createWorkspace("Second bot approval", f.member.id));
   workspaceIds.push(second.id);
-  const request = await requestBotForWorkspace(
+  const request = await withDatabaseContext({actorId:f.member.id,scope:'actor'}, () => requestBotForWorkspace(
     second.id,
     f.bot.id,
     f.member.id,
-  );
+  ));
   expect(request.status).toBe("pending");
   let rows = await db
     .select()
@@ -123,24 +125,24 @@ test("bot invite and removal commit durable invalidations from shared services",
   ).toBe(true);
   if (request.status !== "pending")
     throw new Error("expected pending approval");
-  await acceptBotWorkspaceInvite(request.invite.id, f.owner.id);
-  const grant = await installationService.getBotInstallation(
+  await withDatabaseContext({actorId:f.owner.id,scope:'actor'}, () => acceptBotWorkspaceInvite(request.invite.id, f.owner.id));
+  const grant = await withDatabaseContext({actorId:f.member.id,scope:'actor'}, () => installationService.getBotInstallation(
     second.id,
     f.bot.id,
     f.member.id,
-  );
+  ));
   expect(grant.approvedById).toBe(f.member.id);
   expect(
     (
-      await installationService
-        .getBotInstallation(second.id, f.bot.id, f.owner.id)
+      await withDatabaseContext({actorId:f.owner.id,scope:'actor'}, () => installationService
+        .getBotInstallation(second.id, f.bot.id, f.owner.id))
         .then(
           () => null,
           (e) => e,
         )
     )?.status,
   ).toBe(403);
-  await removeBotFromWorkspace(f.bot.id, second.id, f.member.id);
+  await withDatabaseContext({actorId:f.member.id,scope:'actor'}, () => removeBotFromWorkspace(f.bot.id, second.id, f.member.id));
   rows = await db
     .select()
     .from(eventOutbox)
@@ -168,12 +170,12 @@ import {
 
 test("direct Hermes bootstrap stages its bot membership notification atomically", async () => {
   const f = await fixture();
-  const bot = await createHermesBotInWorkspace(
+  const bot = await withDatabaseContext({actorId:f.owner.id,scope:'actor'}, () => createHermesBotInWorkspace(
     "Atomic Hermes",
     null,
     f.owner.id,
     f.workspace.id,
-  );
+  ));
   userIds.push(bot.userId);
   const rows = await db
     .select()
@@ -210,7 +212,7 @@ async function botFixture() {
       webhookSecret: "synthetic-secret",
     })
     .returning();
-  await addOwnedBotToWorkspace(bot.id, f.workspace.id, f.owner.id);
+  await withDatabaseContext({actorId:f.owner.id,scope:'actor'}, () => addOwnedBotToWorkspace(bot.id, f.workspace.id, f.owner.id));
   const [channel] = await db
     .select()
     .from(conversations)
@@ -220,7 +222,7 @@ async function botFixture() {
 
 test("admin-selected installation scopes, attachment ceiling and endpoint consent are workspace-specific", async () => {
   const f = await botFixture();
-  const update = (installationService as any).updateBotInstallation;
+  const update = (workspaceId:string, botId:string, actorId:string, input:any) => withDatabaseContext({actorId,scope:"actor"},()=>installationService.updateBotInstallation(workspaceId,botId,actorId,input));
   expect(typeof update).toBe("function");
   const grant = await update(f.workspace.id, f.bot.id, f.owner.id, {
     enabled: true,
@@ -232,7 +234,7 @@ test("admin-selected installation scopes, attachment ceiling and endpoint consen
     expectedRevision: 1,
   });
   expect(grant.revision).toBe(2);
-  await requireConversationParticipant(f.channel.id, f.botUser.id);
+  await withDatabaseContext({actorId:f.botUser.id,scope:'actor'}, () => requireConversationParticipant(f.channel.id, f.botUser.id));
   expect(
     (
       await update(f.workspace.id, f.bot.id, f.botUser.id, {
@@ -264,22 +266,22 @@ test("admin-selected installation scopes, attachment ceiling and endpoint consen
     .values({ conversationId: denied.id, userId: f.botUser.id });
   expect(
     (
-      await requireConversationParticipant(denied.id, f.botUser.id).then(
+      await withDatabaseContext({actorId:f.botUser.id,scope:'actor'}, () => requireConversationParticipant(denied.id, f.botUser.id)).then(
         () => null,
         (e) => e,
       )
     )?.status,
   ).toBe(403);
-  await updateAuthenticatedBotWebhook(
+  await withDatabaseContext({actorId:f.botUser.id,scope:'actor'}, () => updateAuthenticatedBotWebhook(
     f.botUser.id,
     "https://synthetic.example.test/second",
-  );
+  ));
   expect(
     (
-      await installationService
+      await withDatabaseContext({actorId:f.botUser.id,scope:'actor'}, () => installationService
         .requireBotInstallationAccess(db, f.channel.id, f.botUser.id, {
           endpoint: true,
-        })
+        }))
         .then(
           () => null,
           (e) => e,
@@ -295,7 +297,7 @@ test("admin-selected installation scopes, attachment ceiling and endpoint consen
     approveEndpoint: true,
     expectedRevision: 2,
   });
-  await requireConversationParticipant(f.channel.id, f.botUser.id);
+  await withDatabaseContext({actorId:f.botUser.id,scope:'actor'}, () => requireConversationParticipant(f.channel.id, f.botUser.id));
   expect(
     (
       await update(f.workspace.id, f.bot.id, f.owner.id, {
@@ -315,7 +317,7 @@ test("admin-selected installation scopes, attachment ceiling and endpoint consen
 
 test("attachment permission is installation grant intersected with global safety", async () => {
   const f = await botFixture();
-  await installationService.updateBotInstallation(
+  await withDatabaseContext({actorId:f.owner.id,scope:'actor'}, () => installationService.updateBotInstallation(
     f.workspace.id,
     f.bot.id,
     f.owner.id,
@@ -327,11 +329,11 @@ test("attachment permission is installation grant intersected with global safety
       sharedRuntimeConsent: true,
       expectedRevision: 1,
     },
-  );
+  ));
   expect(
-    await (canUserAccessAttachments as any)(db, f.botUser.id, f.channel.id),
+    await withDatabaseContext({actorId:f.botUser.id,scope:'actor'}, () => (canUserAccessAttachments as any)(db, f.botUser.id, f.channel.id)),
   ).toBe(false);
-  await installationService.updateBotInstallation(
+  await withDatabaseContext({actorId:f.owner.id,scope:'actor'}, () => installationService.updateBotInstallation(
     f.workspace.id,
     f.bot.id,
     f.owner.id,
@@ -343,16 +345,16 @@ test("attachment permission is installation grant intersected with global safety
       sharedRuntimeConsent: true,
       expectedRevision: 2,
     },
-  );
+  ));
   expect(
-    await (canUserAccessAttachments as any)(db, f.botUser.id, f.channel.id),
+    await withDatabaseContext({actorId:f.botUser.id,scope:'actor'}, () => (canUserAccessAttachments as any)(db, f.botUser.id, f.channel.id)),
   ).toBe(true);
   await db
     .update(bots)
     .set({ attachmentAccess: false })
     .where(eq(bots.id, f.bot.id));
   expect(
-    await (canUserAccessAttachments as any)(db, f.botUser.id, f.channel.id),
+    await withDatabaseContext({actorId:f.botUser.id,scope:'actor'}, () => (canUserAccessAttachments as any)(db, f.botUser.id, f.channel.id)),
   ).toBe(false);
 });
 
@@ -362,11 +364,11 @@ import { eventOutbox, workspaceInvites } from "../db/schema";
 test("workspace bootstrap rolls back owner and General on injected post-owner failure", async () => {
   const { owner } = await fixture();
   const name = `rollback-${crypto.randomUUID()}`;
-  const error = await (createWorkspace as any)(name, owner.id, {
+  const error = await withDatabaseContext({actorId:owner.id,scope:'actor'}, () => (createWorkspace as any)(name, owner.id, {
     afterOwnerInserted: async () => {
       throw new Error("synthetic bootstrap failure");
     },
-  }).then(
+  })).then(
     (w: any) => {
       workspaceIds.push(w.id);
       return null;
@@ -389,12 +391,12 @@ test("invite enrollment rollback retains pending state without membership or lif
     })
     .returning();
   userIds.push(invitee.id);
-  const invite = await createInvite(f.workspace.id, f.owner.id, invitee.email!);
-  const outcome = await acceptInvite(invite.id, invitee.id, {
+  const invite = await withDatabaseContext({actorId:f.owner.id,scope:'actor'}, () => createInvite(f.workspace.id, f.owner.id, invitee.email!));
+  const outcome = await withDatabaseContext({actorId:invitee.id,scope:'actor'}, () => acceptInvite(invite.id, invitee.id, {
     afterEnrollment: async () => {
       throw new Error("synthetic enrollment rollback");
     },
-  }).then(
+  })).then(
     () => null,
     (error) => error,
   );
@@ -444,10 +446,10 @@ test("concurrent invitation acceptances consume once and emit one durable enroll
     })
     .returning();
   userIds.push(invitee.id);
-  const invite = await createInvite(f.workspace.id, f.owner.id, invitee.email!);
+  const invite = await withDatabaseContext({actorId:f.owner.id,scope:'actor'}, () => createInvite(f.workspace.id, f.owner.id, invitee.email!));
   const outcomes = await Promise.allSettled([
-    acceptInvite(invite.id, invitee.id),
-    acceptInvite(invite.id, invitee.id),
+    withDatabaseContext({actorId:invitee.id,scope:'actor'}, () => acceptInvite(invite.id, invitee.id)),
+    withDatabaseContext({actorId:invitee.id,scope:'actor'}, () => acceptInvite(invite.id, invitee.id)),
   ]);
   expect(outcomes.filter((o) => o.status === "fulfilled")).toHaveLength(1);
   expect(outcomes.filter((o) => o.status === "rejected")).toHaveLength(1);
@@ -494,15 +496,15 @@ test("outstanding invite cannot enroll after inviter loses authority", async () 
     })
     .returning();
   userIds.push(invitee.id);
-  const invite = await createInvite(
+  const invite = await withDatabaseContext({actorId:f.member.id,scope:'actor'}, () => createInvite(
     f.workspace.id,
     f.member.id,
     invitee.email!,
-  );
-  await removeMember(f.workspace.id, f.owner.id, f.member.id);
+  ));
+  await withDatabaseContext({actorId:f.owner.id,scope:'actor'}, () => removeMember(f.workspace.id, f.owner.id, f.member.id));
   expect(
     (
-      await acceptInvite(invite.id, invitee.id).then(
+      await withDatabaseContext({actorId:invitee.id,scope:'actor'}, () => acceptInvite(invite.id, invitee.id)).then(
         () => null,
         (e) => e,
       )
@@ -528,7 +530,7 @@ test("outstanding invite cannot enroll after inviter loses authority", async () 
 
 test("membership mutations persist lifecycle notifications in their own transaction", async () => {
   const f = await fixture();
-  await updateMemberRole(f.workspace.id, f.owner.id, f.member.id, "admin");
+  await withDatabaseContext({actorId:f.owner.id,scope:'actor'}, () => updateMemberRole(f.workspace.id, f.owner.id, f.member.id, "admin"));
   const notifications = await db
     .select()
     .from(eventOutbox)
@@ -555,7 +557,7 @@ test("membership mutations persist lifecycle notifications in their own transact
 
 test("installation attachment denial fences normal sends before attachment binding", async () => {
   const f = await botFixture();
-  await installationService.updateBotInstallation(
+  await withDatabaseContext({actorId:f.owner.id,scope:'actor'}, () => installationService.updateBotInstallation(
     f.workspace.id,
     f.bot.id,
     f.owner.id,
@@ -567,12 +569,12 @@ test("installation attachment denial fences normal sends before attachment bindi
       sharedRuntimeConsent: true,
       expectedRevision: 1,
     },
-  );
+  ));
   expect(
     (
-      await sendMessage(f.channel.id, f.botUser.id, f.botUser.name, "file", {
+      await withDatabaseContext({actorId:f.botUser.id,scope:'actor'}, () => sendMessage(f.channel.id, f.botUser.id, f.botUser.name, "file", {
         attachmentIds: [crypto.randomUUID()],
-      }).then(
+      })).then(
         () => null,
         (e) => e,
       )
@@ -583,7 +585,7 @@ test("installation attachment denial fences normal sends before attachment bindi
 test("installation attachment denial fences Hermes response uploads", async () => {
   const f = await botFixture();
   await db.update(bots).set({ kind: "hermes" }).where(eq(bots.id, f.bot.id));
-  await installationService.updateBotInstallation(
+  await withDatabaseContext({actorId:f.owner.id,scope:'actor'}, () => installationService.updateBotInstallation(
     f.workspace.id,
     f.bot.id,
     f.owner.id,
@@ -595,15 +597,20 @@ test("installation attachment denial fences Hermes response uploads", async () =
       sharedRuntimeConsent: true,
       expectedRevision: 1,
     },
-  );
+  ));
   expect(
     (
-      await publishHermesPlatformMessage({
+      await asFixtureBot(({
         authenticatedBotId: f.bot.id,
         conversationId: f.channel.id,
         content: "file",
         attachmentIds: [crypto.randomUUID()],
-      }).then(
+      }).authenticatedBotId, () => publishHermesPlatformMessage({
+        authenticatedBotId: f.bot.id,
+        conversationId: f.channel.id,
+        content: "file",
+        attachmentIds: [crypto.randomUUID()],
+      })).then(
         () => null,
         (e) => e,
       )
@@ -635,7 +642,7 @@ import { resolveMessageBotTargetIds } from "./message-bot-targets";
 
 test("mentions and runtime reads obey the installation channel scope", async () => {
   const f = await botFixture();
-  await installationService.updateBotInstallation(
+  await withDatabaseContext({actorId:f.owner.id,scope:'actor'}, () => installationService.updateBotInstallation(
     f.workspace.id,
     f.bot.id,
     f.owner.id,
@@ -647,7 +654,7 @@ test("mentions and runtime reads obey the installation channel scope", async () 
       sharedRuntimeConsent: true,
       expectedRevision: 1,
     },
-  );
+  ));
   expect(
     await resolveMessageBotTargetIds(db, {
       conversationId: f.channel.id,
@@ -658,7 +665,7 @@ test("mentions and runtime reads obey the installation channel scope", async () 
   ).toEqual([]);
   expect(
     (
-      await listConversationBotRuntime(f.channel.id, f.botUser.id).then(
+      await withDatabaseContext({actorId:f.botUser.id,scope:'actor'}, () => listConversationBotRuntime(f.channel.id, f.botUser.id)).then(
         () => null,
         (e) => e,
       )
@@ -668,7 +675,7 @@ test("mentions and runtime reads obey the installation channel scope", async () 
 
 test("workspace channel discovery honors bot scope without privatizing human channels", async () => {
   const f = await botFixture();
-  await installationService.updateBotInstallation(
+  await withDatabaseContext({actorId:f.owner.id,scope:'actor'}, () => installationService.updateBotInstallation(
     f.workspace.id,
     f.bot.id,
     f.owner.id,
@@ -680,12 +687,12 @@ test("workspace channel discovery honors bot scope without privatizing human cha
       sharedRuntimeConsent: true,
       expectedRevision: 1,
     },
-  );
+  ));
   expect(
-    (await getWorkspaceDetail(f.workspace.id, f.botUser.id)).channels,
+    (await withDatabaseContext({actorId:f.botUser.id,scope:'actor'}, () => getWorkspaceDetail(f.workspace.id, f.botUser.id))).channels,
   ).toEqual([]);
   expect(
-    (await getWorkspaceDetail(f.workspace.id, f.member.id)).channels.map(
+    (await withDatabaseContext({actorId:f.member.id,scope:'actor'}, () => getWorkspaceDetail(f.workspace.id, f.member.id))).channels.map(
       (c) => c.id,
     ),
   ).toContain(f.channel.id);
@@ -695,7 +702,7 @@ import { withAuthorizedRealtimeEvent } from "../ws/resource-authorization";
 
 test("workspace realtime roster events also require a live bot installation grant", async () => {
   const f = await botFixture();
-  await installationService.updateBotInstallation(
+  await withDatabaseContext({actorId:f.owner.id,scope:'actor'}, () => installationService.updateBotInstallation(
     f.workspace.id,
     f.bot.id,
     f.owner.id,
@@ -707,9 +714,9 @@ test("workspace realtime roster events also require a live bot installation gran
       sharedRuntimeConsent: true,
       expectedRevision: 1,
     },
-  );
+  ));
   let delivered = 0;
-  await withAuthorizedRealtimeEvent(
+  await withDatabaseContext({actorId:f.botUser.id,scope:'actor'}, () => withAuthorizedRealtimeEvent(
     f.botUser.id,
     {
       type: "member_role_changed",
@@ -720,15 +727,15 @@ test("workspace realtime roster events also require a live bot installation gran
     () => {
       delivered++;
     },
-  );
+  ));
   expect(delivered).toBe(0);
-  await withAuthorizedRealtimeEvent(
+  await withDatabaseContext({actorId:f.botUser.id,scope:'actor'}, () => withAuthorizedRealtimeEvent(
     f.botUser.id,
     { type: "presence_changed", userId: f.owner.id, online: true },
     () => {
       delivered++;
     },
-  );
+  ));
   expect(delivered).toBe(0);
 });
 
@@ -745,7 +752,7 @@ test("a bot credential cannot administer installation requests even with an admi
     );
   expect(
     (
-      await requestBotForWorkspace(f.workspace.id, f.bot.id, f.botUser.id).then(
+      await withDatabaseContext({actorId:f.botUser.id,scope:'actor'}, () => requestBotForWorkspace(f.workspace.id, f.bot.id, f.botUser.id)).then(
         () => null,
         (e) => e,
       )
@@ -764,12 +771,12 @@ test("a bot credential cannot bootstrap another workspace installation even with
         eq(workspaceMembers.userId, f.botUser.id),
       ),
     );
-  const outcome = await createHermesBotInWorkspace(
+  const outcome = await withDatabaseContext({actorId:f.botUser.id,scope:'actor'}, () => createHermesBotInWorkspace(
     "denied bot bootstrap",
     null,
     f.botUser.id,
     f.workspace.id,
-  ).then(
+  )).then(
     () => null,
     (e) => e,
   );
@@ -778,21 +785,21 @@ test("a bot credential cannot bootstrap another workspace installation even with
 
 test("a captured bot approval notification drops after requester demotion", async () => {
   const f = await botFixture();
-  const second = await createWorkspace("Captured bot invite", f.owner.id);
+  const second = await withDatabaseContext({actorId:f.owner.id,scope:'actor'}, () => createWorkspace("Captured bot invite", f.owner.id));
   workspaceIds.push(second.id);
-  await joinWorkspace(second.id, f.member.id);
-  await updateMemberRole(second.id, f.owner.id, f.member.id, "admin");
-  const result = await requestBotForWorkspace(second.id, f.bot.id, f.member.id);
+  await withDatabaseContext({actorId:f.member.id,scope:'actor'}, () => joinFixtureWorkspace(second.id, f.member.id));
+  await withDatabaseContext({actorId:f.owner.id,scope:'actor'}, () => updateMemberRole(second.id, f.owner.id, f.member.id, "admin"));
+  const result = await withDatabaseContext({actorId:f.member.id,scope:'actor'}, () => requestBotForWorkspace(second.id, f.bot.id, f.member.id));
   if (result.status !== "pending") throw new Error("expected pending invite");
-  await updateMemberRole(second.id, f.owner.id, f.member.id, "member");
+  await withDatabaseContext({actorId:f.owner.id,scope:'actor'}, () => updateMemberRole(second.id, f.owner.id, f.member.id, "member"));
   let delivered = 0;
-  await withAuthorizedRealtimeEvent(
+  await withDatabaseContext({actorId:f.owner.id,scope:'actor'}, () => withAuthorizedRealtimeEvent(
     f.owner.id,
     { type: "bot_workspace_invite_received", invite: result.invite },
     () => {
       delivered++;
     },
-  );
+  ));
   expect(delivered).toBe(0);
 });
 
@@ -825,14 +832,14 @@ test("bot membership without explicit workspace installation fails closed", asyn
     webhookUrl: "https://synthetic.example.test/first",
     webhookSecret: "synthetic-secret",
   });
-  await joinWorkspace(workspace.id, botUser.id);
+  await withDatabaseContext({actorId:botUser.id,scope:'actor'}, () => joinFixtureWorkspace(workspace.id, botUser.id));
   const [channel] = await db
     .select()
     .from(conversations)
     .where(eq(conversations.workspaceId, workspace.id));
   expect(
     (
-      await requireConversationParticipant(channel.id, botUser.id).then(
+      await withDatabaseContext({actorId:botUser.id,scope:'actor'}, () => requireConversationParticipant(channel.id, botUser.id)).then(
         () => null,
         (e) => e,
       )
@@ -840,7 +847,7 @@ test("bot membership without explicit workspace installation fails closed", asyn
   ).toBe(403);
   expect(
     (
-      await getMessages(channel.id, botUser.id).then(
+      await withDatabaseContext({actorId:botUser.id,scope:'actor'}, () => getMessages(channel.id, botUser.id)).then(
         () => null,
         (e) => e,
       )
@@ -848,7 +855,7 @@ test("bot membership without explicit workspace installation fails closed", asyn
   ).toBe(403);
   expect(
     (
-      await sendMessage(channel.id, botUser.id, botUser.name, "denied").then(
+      await withDatabaseContext({actorId:botUser.id,scope:'actor'}, () => sendMessage(channel.id, botUser.id, botUser.name, "denied")).then(
         () => null,
         (e) => e,
       )
@@ -871,18 +878,18 @@ export async function fixture() {
     ])
     .returning();
   userIds.push(owner.id, member.id);
-  const workspace = await createWorkspace(
+  const workspace = await withDatabaseContext({actorId:owner.id,scope:'actor'}, () => createWorkspace(
     `Auth ${crypto.randomUUID()}`,
     owner.id,
-  );
+  ));
   workspaceIds.push(workspace.id);
-  await joinWorkspace(workspace.id, member.id);
+  await withDatabaseContext({actorId:member.id,scope:'actor'}, () => joinFixtureWorkspace(workspace.id, member.id));
   return { owner, member, workspace };
 }
 
 test("workspace-owned DM denies all shared reads after membership disappears even with stale participation", async () => {
   const { owner, member, workspace } = await fixture();
-  const dm = await createOrGetDm(workspace.id, owner.id, member.id);
+  const dm = await withDatabaseContext({actorId:owner.id,scope:'actor'}, () => createOrGetDm(workspace.id, owner.id, member.id));
   await db
     .delete(workspaceMembers)
     .where(
@@ -898,7 +905,7 @@ test("workspace-owned DM denies all shared reads after membership disappears eve
     listConversationThreads,
     listConversationBotRuntime,
   ]) {
-    const error = await read(dm.id, member.id).then(
+    const error = await withDatabaseContext<unknown>({actorId:member.id,scope:'actor'}, () => read(dm.id, member.id)).then(
       () => null,
       (e) => e,
     );
@@ -906,7 +913,7 @@ test("workspace-owned DM denies all shared reads after membership disappears eve
   }
   expect(
     (
-      await sendMessage(dm.id, member.id, member.name, "denied").then(
+      await withDatabaseContext({actorId:member.id,scope:'actor'}, () => sendMessage(dm.id, member.id, member.name, "denied")).then(
         () => null,
         (e) => e,
       )
@@ -916,7 +923,7 @@ test("workspace-owned DM denies all shared reads after membership disappears eve
 
 test("member removal deletes workspace DM participation but preserves unscoped personal DM access", async () => {
   const { owner, member, workspace } = await fixture();
-  const dm = await createOrGetDm(workspace.id, owner.id, member.id);
+  const dm = await withDatabaseContext({actorId:owner.id,scope:'actor'}, () => createOrGetDm(workspace.id, owner.id, member.id));
   const [personal] = await db
     .insert(conversations)
     .values({ type: "direct" })
@@ -926,7 +933,7 @@ test("member removal deletes workspace DM participation but preserves unscoped p
     { conversationId: personal.id, userId: member.id },
     { conversationId: personal.id, userId: owner.id },
   ]);
-  await removeMember(workspace.id, owner.id, member.id);
+  await withDatabaseContext({actorId:owner.id,scope:'actor'}, () => removeMember(workspace.id, owner.id, member.id));
   const stale = await db
     .select()
     .from(conversationParticipants)
@@ -937,8 +944,8 @@ test("member removal deletes workspace DM participation but preserves unscoped p
       ),
     );
   expect(stale).toHaveLength(0);
-  await requireConversationParticipant(personal.id, member.id);
-  expect((await getConversationDetail(personal.id, member.id)).id).toBe(
+  await withDatabaseContext({actorId:member.id,scope:'actor'}, () => requireConversationParticipant(personal.id, member.id));
+  expect((await withDatabaseContext({actorId:member.id,scope:'actor'}, () => getConversationDetail(personal.id, member.id))).id).toBe(
     personal.id,
   );
 });

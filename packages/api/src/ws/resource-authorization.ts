@@ -2,7 +2,7 @@ import { and, eq, sql } from "drizzle-orm";
 import type { WsServerEvent } from "@thechat/shared";
 import { db } from "../db";
 import {
-  bots,
+  botIdentities as bots,
   botWorkspaceInstallations,
   botWorkspaceInvites,
   workspaceInvites,
@@ -13,7 +13,6 @@ import {
 import { requireConversationMutationAccess } from "../services/conversation-mutation-access";
 import { canUserAccessAttachments } from "../services/messages";
 import { ServiceError } from "../services/errors";
-import { requireInstallationAdmin } from "../services/bot-installation-access";
 
 type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
 /** Hold the same workspace lock as removal through the synchronous socket sink.
@@ -125,18 +124,8 @@ async function authorize(
       .limit(1);
     if (!invite || invite.inviteeId !== userId || invite.status !== "pending")
       return null;
-    await workspaceAccess(tx, invite.workspaceId, invite.inviterId);
-    const [inviter] = await tx
-      .select()
-      .from(workspaceMembers)
-      .where(
-        and(
-          eq(workspaceMembers.workspaceId, invite.workspaceId),
-          eq(workspaceMembers.userId, invite.inviterId),
-        ),
-      )
-      .limit(1);
-    return inviter && ["owner", "admin"].includes(inviter.role) ? event : null;
+    const [authorization] = await tx.execute<{allowed:boolean}>(sql`select thechat_inviter_authorized(${invite.id}::uuid) as allowed`);
+    return authorization?.allowed ? event : null;
   }
   if (
     event.type === "bot_workspace_invite_received" ||
@@ -160,13 +149,8 @@ async function authorize(
     if (!invite) return null;
     if (event.type === "bot_workspace_invite_received") {
       if (invite.ownerId !== userId || invite.status !== "pending") return null;
-      await workspaceAccess(tx, invite.workspaceId, invite.requesterId);
-      await requireInstallationAdmin(
-        tx,
-        invite.workspaceId,
-        invite.requesterId,
-      );
-      return event;
+      const [authorization] = await tx.execute<{allowed:boolean}>(sql`select thechat_bot_inviter_authorized(${id}::uuid) as allowed`);
+      return authorization?.allowed ? event : null;
     }
     // Resolution is an identifier-only invalidation, also safe for departed requesters.
     if (invite.ownerId === userId || invite.requesterId === userId)

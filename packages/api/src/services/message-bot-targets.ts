@@ -3,7 +3,7 @@ import { db } from "../db";
 import { requireBotInstallationAccess } from "./bot-installation-access";
 import { ServiceError } from "./errors";
 import {
-  bots,
+  botRuntimeMetadata as bots,
   conversationParticipants,
   conversations,
   users,

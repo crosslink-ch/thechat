@@ -1,4 +1,4 @@
-import { eq, and } from "drizzle-orm";
+import { eq, and, sql } from "drizzle-orm";
 import { db } from "../db";
 import {
   workspaces,
@@ -152,9 +152,14 @@ export async function acceptInvite(
   } = {},
 ) {
   return lifecycleTransaction(async (tx) => {
+    const [visible] = await tx.select({inviteeId:workspaceInvites.inviteeId,status:workspaceInvites.status}).from(workspaceInvites).where(eq(workspaceInvites.id,inviteId)).limit(1);
+    if (visible?.inviteeId === userId && visible.status !== 'pending') throw new ServiceError('This invite has already been resolved',400);
+    const [authorized] = await tx.execute<{allowed:boolean}>(sql`select thechat_inviter_authorized(${inviteId}::uuid) as allowed`);
+    if (!authorized?.allowed) throw new ServiceError("The inviter is no longer a workspace admin",403);
     const invite = await lockInvite(tx, inviteId, userId, options);
-    // Authority is live, not captured when the invitation was created.
-    await requireInstallationAdmin(tx, invite.workspaceId, invite.inviterId);
+    // Revalidate under the workspace lock; no cross-tenant roster read required.
+    const [current] = await tx.execute<{allowed:boolean}>(sql`select thechat_inviter_authorized(${inviteId}::uuid) as allowed`);
+    if (!current?.allowed) throw new ServiceError("The inviter is no longer a workspace admin",403);
     await joinWorkspaceInTransaction(tx, invite.workspaceId, userId);
     await options.afterEnrollment?.();
     await tx

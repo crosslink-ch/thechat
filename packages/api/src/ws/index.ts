@@ -311,7 +311,7 @@ async function deliverPresenceToLocalSocket(
 
     if (ws.readyState !== WebSocket.OPEN) return;
     let result = { sent: 0, failed: 0 };
-    await withAuthorizedRealtimeEvent(userId, event, async projected => { result = await deliverWebSocketEvent(projected, [ws]); });
+    await withIndependentActorDatabaseContext({actorId:userId,scope:'actor'}, () => withAuthorizedRealtimeEvent(userId, event, async projected => { result = await deliverWebSocketEvent(projected, [ws]); }));
     if (result.failed > 0) {
       websocketLog.warn(
         { sent: result.sent, failed: result.failed },
@@ -385,7 +385,7 @@ async function deliverToLocalUser(userId: string, event: WsServerEvent, options:
   await options.beforeResourceAuthorization?.();
   let result = { sent: 0, failed: 0 };
   try {
-    await withAuthorizedRealtimeEvent(userId, event, async projected => { result = await deliverWebSocketEvent(projected, openSockets); });
+    await withIndependentActorDatabaseContext({actorId:userId,scope:'actor'}, () => withAuthorizedRealtimeEvent(userId, event, async projected => { result = await deliverWebSocketEvent(projected, openSockets); }));
   } catch (error) {
     websocketLog.error({ err: error, userId }, "WebSocket resource revalidation failed");
     return;

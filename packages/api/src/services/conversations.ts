@@ -4,7 +4,7 @@ import { db } from "../db";
 import {
   attachments,
   botInvocations,
-  bots,
+  botRuntimeMetadata as bots,
   conversations,
   conversationParticipants,
   conversationThreads,
@@ -833,15 +833,16 @@ export async function createChannel(
         throw new ServiceError("A channel with this name already exists", 409);
       }
 
-      const [channel] = await tx
+      const channelId = crypto.randomUUID();
+      await tx
         .insert(conversations)
         .values({
+          id: channelId,
           title: normalized.title,
           type: "group",
           workspaceId,
           name: normalized.slug,
-        })
-        .returning();
+        });
 
       const allMembers = await tx
         .select({
@@ -854,13 +855,14 @@ export async function createChannel(
       if (allMembers.length > 0) {
         await tx.insert(conversationParticipants).values(
           allMembers.map((member) => ({
-            conversationId: channel.id,
+            conversationId: channelId,
             userId: member.userId,
             role: member.role,
           })),
         );
       }
 
+      const [channel] = await tx.select().from(conversations).where(eq(conversations.id,channelId)).limit(1);
       return {
         channel: toWorkspaceChannel(channel),
         targetUserIds: allMembers.map((member) => member.userId),

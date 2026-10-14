@@ -134,6 +134,13 @@
       "when": 1791921101153,
       "tag": "0018_workspace_bot_installations",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1791921101154,
+      "tag": "0019_workspace_resource_lifecycle",
+      "breakpoints": true
     }
   ]
 }

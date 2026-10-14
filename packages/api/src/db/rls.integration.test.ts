@@ -5,13 +5,15 @@ const tag = (tx: postgres.TransactionSql) => tx as unknown as postgres.Sql;
 import crypto from "node:crypto";
 import { drizzle } from 'drizzle-orm/postgres-js';
 import { sql as querySql } from 'drizzle-orm';
+import { collaborationPolicyDefinitions } from "./policies";
+const runtimeRole=new URL(process.env.DATABASE_URL!).username;
 import { verifyRuntimeDatabase } from './role';
 
 test('startup refuses a same-name permissive policy that weakens the canonical tenant guard', async()=> {
   const marker=new Error('rollback unsafe policy');
   try {await drizzle(owner).transaction(async tx=> {
     await tx.execute(querySql`alter policy tenant_access on messages using (thechat_can_conversation(conversation_id) OR true)`);
-    await tx.execute(querySql`set local role tenancy_db_runtime`);
+    await tx.execute(querySql`set local role ${querySql.identifier(runtimeRole)}`);
     await expect(verifyRuntimeDatabase(tx)).rejects.toThrow('Unsafe collaboration RLS policy');
     throw marker;
   });} catch(error) {if(error!==marker) throw error;}
@@ -31,7 +33,7 @@ test('RLS cannot be laundered by detaching workspace ownership or retargeting an
     const [conversation]=await tag(tx)`insert into conversations(type,workspace_id) values ('direct',${a}) returning id`;
     await tag(tx)`insert into conversation_participants(conversation_id,user_id) values (${conversation!.id},${actor!.id})`;
     const [invite]=await tag(tx)`insert into workspace_invites(workspace_id,inviter_id,invitee_id) values (${a},${actor!.id},${actor!.id}) returning id`;
-    await tag(tx)`set local role tenancy_db_runtime`;
+    await tag(tx)`set local role ${tag(tx)(runtimeRole)}`;
     await tag(tx)`select set_config('thechat.actor_id',${actor!.id},true),set_config('thechat.scope','actor',true)`;
     for (const mutation of [
       (sp: postgres.TransactionSql)=>tag(sp)`update conversations set workspace_id=NULL where id=${conversation!.id}`,
@@ -51,7 +53,7 @@ test('legacy unscoped groups do not become public through workspace-wide channel
     const [actor,other]=await tag(tx)`insert into users(name) values ('legacy outsider'),('legacy sender') returning id`;
     const [conversation]=await tag(tx)`insert into conversations(type) values ('group') returning id`;
     const [message]=await tag(tx)`insert into messages(conversation_id,sender_id,content) values (${conversation!.id},${other!.id},'unscoped legacy group secret') returning id`;
-    await tag(tx)`set local role tenancy_db_runtime`;
+    await tag(tx)`set local role ${tag(tx)(runtimeRole)}`;
     await tag(tx)`select set_config('thechat.actor_id',${actor!.id},true),set_config('thechat.scope','actor',true)`;
     expect(await tag(tx)`select id from messages where id=${message!.id}`).toHaveLength(0);
     throw marker;
@@ -64,14 +66,14 @@ test('startup refuses an unregistered tenant table even when its permissive poli
     await tx.execute(querySql`create table public.rls_extension_probe(id uuid primary key,workspace_id text not null)`);
     await tx.execute(querySql`alter table public.rls_extension_probe enable row level security`);
     await tx.execute(querySql`create policy tenant_access on public.rls_extension_probe using (thechat_can_workspace(workspace_id) OR true) with check (thechat_can_workspace(workspace_id) OR true)`);
-    await tx.execute(querySql`grant select,insert,update,delete on public.rls_extension_probe to tenancy_db_runtime`);
-    await tx.execute(querySql`set local role tenancy_db_runtime`);
+    await tx.execute(querySql`grant select,insert,update,delete on public.rls_extension_probe to ${querySql.identifier(runtimeRole)}`);
+    await tx.execute(querySql`set local role ${querySql.identifier(runtimeRole)}`);
     await expect(verifyRuntimeDatabase(tx)).rejects.toThrow('Unregistered protected database table: rls_extension_probe');
     throw marker;
   });} catch(error) {if(error!==marker) throw error;}
 });
 
-const protectedTables = ['workspaces','workspace_members','workspace_invites','conversations','conversation_participants','messages','conversation_threads','attachments','message_attachments','message_reactions','message_unreads','bot_invocations','workspace_configs','bot_workspace_invites','event_outbox'];
+const protectedTables = Object.keys(collaborationPolicyDefinitions).filter(name=>name!=="attachment_object_cleanup" && name!=="apikey");
 
 test('every protected collaboration table has an enabled fail-closed policy', async () => {
   try { await owner.begin(async tx => {
@@ -80,7 +82,7 @@ test('every protected collaboration table has an enabled fail-closed policy', as
     for (const row of rows) {
       expect({ table: row.relname, enabled: row.relrowsecurity, policies: row.policies>0 }).toEqual({ table: row.relname, enabled: true, policies: true });
     }
-    await tag(tx)`set local role tenancy_db_runtime`;
+    await tag(tx)`set local role ${tag(tx)(runtimeRole)}`;
     for (const table of protectedTables) expect(await tx.unsafe(`select * from ${table}`)).toHaveLength(0);
     throw rollbackMarker;
   }); } catch (error) { if (error !== rollbackMarker) throw error; }
@@ -96,7 +98,7 @@ test('RLS hides and rejects cross-workspace collaboration tuples for actor A', a
     // Deliberately stale participation: B-workspace membership is absent for A.
     await tag(tx)`insert into conversation_participants(conversation_id,user_id) values (${ca!.id},${a!.id}),(${cb!.id},${b!.id}),(${cb!.id},${a!.id})`;
     const [ma, mb] = await tag(tx)`insert into messages(conversation_id,sender_id,content) values (${ca!.id},${a!.id},'A secret'),(${cb!.id},${b!.id},'B secret') returning id`;
-    await tag(tx)`set local role tenancy_db_runtime`;
+    await tag(tx)`set local role ${tag(tx)(runtimeRole)}`;
     await tag(tx)`select set_config('thechat.actor_id',${a!.id},true),set_config('thechat.scope','actor',true)`;
     expect((await tag(tx)`select id from messages where id in (${ma!.id},${mb!.id})`).map(row => row.id)).toEqual([ma!.id]);
     expect(await tag(tx)`update messages set content='stolen' where id=${mb!.id} returning id`).toHaveLength(0);
@@ -118,7 +120,7 @@ test('restricted non-owner role without actor and scope cannot read collaboratio
     const workspace = `rls-${crypto.randomUUID()}`;
     await tag(tx)`insert into workspaces(id,name,created_by_id) values (${workspace},'RLS sentinel',${user!.id})`;
     await tag(tx)`insert into workspace_members(workspace_id,user_id) values (${workspace},${user!.id})`;
-    await tag(tx)`set local role tenancy_db_runtime`;
+    await tag(tx)`set local role ${tag(tx)(runtimeRole)}`;
     const [role] = await tag(tx)`select current_user as name,rolsuper,rolbypassrls from pg_roles where rolname=current_user`;
     expect(role!.rolsuper).toBe(false);
     expect(role!.rolbypassrls).toBe(false);

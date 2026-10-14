@@ -5,6 +5,7 @@ import {
 } from "./envelope";
 import { createChatMessageSentHandler } from "./message-handler";
 import { PermanentDomainEventError } from "./registry";
+import { withWorkerDatabaseContext } from '../db';
 
 const ids = {
   message: "11111111-1111-4111-8111-111111111111",
@@ -30,7 +31,7 @@ describe("chat.message.sent automation guards", () => {
 
   test("classifies a missing canonical message as a permanent poison event", async () => {
     await expect(
-      createChatMessageSentHandler().handle(
+      withWorkerDatabaseContext(() => createChatMessageSentHandler().handle(
         createChatMessageSentV1({
           messageId: ids.message,
           conversationId: ids.conversation,
@@ -40,7 +41,7 @@ describe("chat.message.sent automation guards", () => {
           senderId: ids.sender,
           senderType: "human",
         }),
-      ),
+      )),
     ).rejects.toBeInstanceOf(PermanentDomainEventError);
   });
 

@@ -505,10 +505,7 @@ def _run() -> None:
     try:
         harness.start_postgres()
         harness.start_redis()
-        harness.run(
-            [harness.PNPM, "--dir", "packages/api", "exec", "drizzle-kit", "migrate"],
-            env=env,
-        )
+        harness.bootstrap_disposable_database(env, harness.PG_CONTAINER)
         api_proc = harness.start_api(env)
         worker_proc = harness.start_worker(env)
         model_proc = _start_fake_model(env)

@@ -5,10 +5,12 @@ import { db } from "../db";
 import {
   attachments,
   bots,
+  botIdentities,
   users,
 } from "../db/schema";
 import { enqueueDomainEvent } from "../events/outbox";
 import { withSpan } from "../observability";
+import { canUserAccessAttachments } from "../services/messages";
 import { requireConversationMutationAccess } from "../services/conversation-mutation-access";
 import { admitWorkspaceWork, enforceWorkspaceRetainedBytes } from "../services/workspace-resource-budgets";
 import { ServiceError } from "../services/errors";
@@ -359,9 +361,18 @@ async function getAttachmentDownloadOperation(
     disposition?: "attachment" | "inline";
   } = {},
 ) {
+  return db.transaction(async tx => {
+  let row = await loadAttachment(attachmentId);
+  // Deny unseen and absent download identifiers identically; no existence oracle.
+  if (!row) throw new ServiceError("Attachment access denied", 403);
+  await requireConversationMutationAccess(tx, row.conversationId, userId);
+  // Workspace -> bot -> attachment is the same authorization lock order as
+  // grant administration and deletion. Retain all locks through signing.
+  const [identity] = await tx.select({id:botIdentities.id}).from(botIdentities).where(eq(botIdentities.userId,userId)).limit(1);
+  if (identity) await tx.execute(sql`select thechat_lock_bot_endpoint(${identity.id}::uuid)`);
+  row = (await tx.select().from(attachments).where(eq(attachments.id,attachmentId)).for('share').limit(1))[0];
+  if (!row) throw new ServiceError('Attachment access denied',403);
   await requireAttachmentActor(userId);
-  const row = await loadAttachment(attachmentId);
-  if (!row) throw new ServiceError("Attachment not found", 404);
   await requireParticipant(row.conversationId, userId);
   if (
     row.status !== "attached" ||
@@ -400,6 +411,7 @@ async function getAttachmentDownloadOperation(
     url: request.url,
     expiresAt: request.expiresAt.toISOString(),
   };
+  });
 }
 
 export async function deleteAttachment(attachmentId: string, userId: string) {
@@ -614,6 +626,9 @@ async function enforceDraftQuota(
 
 async function requireParticipant(conversationId: string, userId: string) {
   await requireConversationParticipant(conversationId, userId);
+  if (!(await canUserAccessAttachments(db, userId, conversationId))) {
+    throw new ServiceError("Attachment access is not enabled for this bot installation", 403);
+  }
 }
 
 async function requireAttachmentActor(userId: string) {

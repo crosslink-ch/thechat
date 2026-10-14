@@ -56,7 +56,9 @@ export interface WorkspaceWorkLease {
 
 export async function claimWorkspaceWork(tx: Executor, workspaceId: string, kind: WorkspaceWorkKind, key: string, leaseSeconds = integerSetting("WORKSPACE_WORK_LEASE_SECONDS",120)): Promise<WorkspaceWorkLease | null> {
   const limits = await lockWorkspaceResourceLimits(tx, workspaceId);
-  await tx.execute(sql`update workspace_work set state='pending',lease_token=null,lease_until=null,updated_at=now()
+  // Validation can be retried with a new fenced epoch. External bot execution
+  // cannot: maintenance terminalizes expired bot runs before any new admission.
+  if (kind === 'validation') await tx.execute(sql`update workspace_work set state='pending',lease_token=null,lease_until=null,updated_at=now()
     where workspace_id=${workspaceId} and kind=${kind} and state='running' and lease_until<=now()`);
   const [current] = await tx.execute<{ state: string }>(sql`select state from workspace_work where workspace_id=${workspaceId} and kind=${kind} and idempotency_key=${key}`);
   if (!current) throw new ServiceError("Work must be admitted before claim",409);
@@ -116,6 +118,14 @@ export async function withWorkspaceWorkBudget<T>(workspaceId: string, kind: Work
   try {
     await assertLease();
     const result = await operation({ signal: controller.signal, assertLease, lease });
+    // A canonical bot terminal trigger can settle before ancillary notification
+    // delivery returns. Accept only this epoch's recorded terminal transition.
+    if (kind === 'bot') {
+      const [terminal] = await db.execute<{state:string}>(sql`select w.state from workspace_work w join bot_invocations i on i.id::text=w.idempotency_key
+        where w.workspace_id=${workspaceId} and w.kind='bot' and w.idempotency_key=${key} and w.state in ('completed','cancelled')
+        and i.request_json->>'workToken'=${lease.token} and i.status in ('completed','failed','cancelled')`);
+      if (terminal) return terminal.state==='completed' ? result : undefined;
+    }
     await assertLease();
     await settleWorkspaceWork(lease,true);
     return result;

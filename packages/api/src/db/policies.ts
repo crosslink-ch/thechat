@@ -8,8 +8,9 @@ export interface CollaborationPolicyDefinition {
   withCheck: string | null;
 }
 
-// Canonical PostgreSQL expressions from migration 0017. Keep schema, migration
-// and startup verification in agreement when deliberately changing a policy.
+// Canonical PostgreSQL policy expressions from the ordered 0017-0019 chain.
+// Helpers also enforce live installation grants; direct SQL contracts exercise
+// those function bodies independently of the startup expression checks.
 export const collaborationPolicyDefinitions: Record<string, CollaborationPolicyDefinition[]> = {
   "apikey": [
     {
@@ -37,6 +38,14 @@ export const collaborationPolicyDefinitions: Record<string, CollaborationPolicyD
       "withCheck": "thechat_identity_authority()"
     }
   ],
+  "attachment_object_cleanup": [
+    {
+      "name": "tenant_access",
+      "command": "all",
+      "using": "thechat_worker_only()",
+      "withCheck": "thechat_worker_only()"
+    }
+  ],
   "attachments": [
     {
       "name": "tenant_access",
@@ -45,12 +54,58 @@ export const collaborationPolicyDefinitions: Record<string, CollaborationPolicyD
       "withCheck": "thechat_can_conversation(conversation_id)"
     }
   ],
+  "bot_installation_channels": [
+    {
+      "name": "tenant_delete",
+      "command": "delete",
+      "using": "thechat_manage_workspace((workspace_id)::text)",
+      "withCheck": null
+    },
+    {
+      "name": "tenant_insert",
+      "command": "insert",
+      "using": null,
+      "withCheck": "thechat_manage_workspace((workspace_id)::text)"
+    },
+    {
+      "name": "tenant_read",
+      "command": "select",
+      "using": "(thechat_can_workspace((workspace_id)::text) OR thechat_installation_owner((workspace_id)::text, bot_id))",
+      "withCheck": null
+    }
+  ],
   "bot_invocations": [
     {
       "name": "tenant_access",
       "command": "all",
       "using": "thechat_can_conversation(conversation_id)",
       "withCheck": "thechat_can_conversation(conversation_id)"
+    }
+  ],
+  "bot_workspace_installations": [
+    {
+      "name": "tenant_delete",
+      "command": "delete",
+      "using": "thechat_manage_workspace((workspace_id)::text)",
+      "withCheck": null
+    },
+    {
+      "name": "tenant_insert",
+      "command": "insert",
+      "using": null,
+      "withCheck": "thechat_manage_workspace((workspace_id)::text)"
+    },
+    {
+      "name": "tenant_read",
+      "command": "select",
+      "using": "(thechat_can_workspace((workspace_id)::text) OR thechat_installation_owner((workspace_id)::text, bot_id))",
+      "withCheck": null
+    },
+    {
+      "name": "tenant_update",
+      "command": "update",
+      "using": "thechat_manage_workspace((workspace_id)::text)",
+      "withCheck": "thechat_manage_workspace((workspace_id)::text)"
     }
   ],
   "bot_workspace_invites": [
@@ -95,7 +150,7 @@ export const collaborationPolicyDefinitions: Record<string, CollaborationPolicyD
     {
       "name": "tenant_read",
       "command": "select",
-      "using": "(thechat_identity_authority() OR (thechat_has_actor() AND (owner_id = thechat_actor())) OR thechat_read_bot(id))",
+      "using": "(thechat_identity_authority() OR (thechat_has_actor() AND ((owner_id = thechat_actor()) OR (user_id = thechat_actor()))))",
       "withCheck": null
     },
     {
@@ -215,6 +270,14 @@ export const collaborationPolicyDefinitions: Record<string, CollaborationPolicyD
       "withCheck": "(thechat_identity_authority() OR (thechat_has_actor() AND ((id = thechat_actor()) OR thechat_owns_bot_user(id))))"
     }
   ],
+  "workspace_attachment_charges": [
+    {
+      "name": "tenant_read",
+      "command": "select",
+      "using": "thechat_can_workspace((workspace_id)::text)",
+      "withCheck": null
+    }
+  ],
   "workspace_configs": [
     {
       "name": "tenant_access",
@@ -275,6 +338,22 @@ export const collaborationPolicyDefinitions: Record<string, CollaborationPolicyD
       "withCheck": "thechat_manage_workspace((workspace_id)::text)"
     }
   ],
+  "workspace_resource_limits": [
+    {
+      "name": "tenant_access",
+      "command": "all",
+      "using": "thechat_can_workspace((workspace_id)::text)",
+      "withCheck": "thechat_can_workspace((workspace_id)::text)"
+    }
+  ],
+  "workspace_work": [
+    {
+      "name": "tenant_access",
+      "command": "all",
+      "using": "thechat_can_workspace((workspace_id)::text)",
+      "withCheck": "thechat_can_workspace((workspace_id)::text)"
+    }
+  ],
   "workspaces": [
     {
       "name": "tenant_access",
@@ -297,7 +376,7 @@ export const collaborationPolicyDefinitions: Record<string, CollaborationPolicyD
     {
       "name": "tenant_update",
       "command": "update",
-      "using": "(thechat_can_workspace((id)::text) OR thechat_can_enroll((id)::text, thechat_actor()))",
+      "using": "(thechat_can_workspace((id)::text) OR thechat_invited_workspace((id)::text))",
       "withCheck": "thechat_manage_workspace((id)::text)"
     }
   ]

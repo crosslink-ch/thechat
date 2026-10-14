@@ -26,11 +26,14 @@ import type {
 import { BullMqAsyncBus } from "../async";
 import { AsyncWorkerRuntime } from "../async/worker";
 import type { AsyncJobHandler, QueueCommand } from "../async/types";
-import { db } from "../db";
+import { db, withWorkerDatabaseContext } from "../db";
+import { admitWorkspaceWork, claimWorkspaceWork, cancelWorkspaceWork, withWorkspaceWorkBudget, type WorkspaceWorkLease } from "./workspace-resource-budgets";
+import { requireBotWorkLease, finishBotWork, renewBotWork, reconcileExpiredBotWork } from "./bot-work-lifetime";
+import { log } from '../logging';
 import { persistedMessageCursor } from './message-cursor';
 import {
   botInvocations,
-  bots,
+  botRuntimeMetadata as bots,
   conversationParticipants,
   conversationThreads,
   conversations,
@@ -63,6 +66,7 @@ import { recordMessageUnreads } from "./activity";
 import { vaultUnlockRequestSchema, vaultUnlockResolvedSchema, vaultUnlockResponseSchema, validateVaultPublicKey, VAULT_UNLOCK_PREVIEW } from "./vault-unlock";
 import type { VaultUnlockResponse } from "@thechat/shared";
 
+const botMetadataFields = { id:bots.id,userId:bots.userId,ownerId:bots.ownerId,webhookUrl:bots.webhookUrl,endpointRevision:bots.endpointRevision,kind:bots.kind,attachmentAccess:bots.attachmentAccess,commandsJson:bots.commandsJson,avatarShape:bots.avatarShape,avatarColor:bots.avatarColor,createdAt:bots.createdAt,updatedAt:bots.updatedAt };
 export const BOT_QUEUE_NAME = "thechat:bots";
 export const BOT_INVOKE_JOB_NAME = "bot.invoke";
 export const HERMES_WEBHOOK_DELIVERY_JOB_NAME = "bot.hermes_webhook.deliver";
@@ -103,7 +107,6 @@ interface TriggeredBot {
   botUserId: string;
   kind: BotKind;
   webhookUrl: string | null;
-  webhookSecret: string;
   botName: string;
   attachmentAccess: boolean;
 }
@@ -125,6 +128,7 @@ interface HermesWebhookDeliveryPayload {
 
 interface HermesPlatformProgressInput {
   authenticatedBotId: string;
+  workToken?: string;
   invocationId: string;
   botId?: string;
   conversationId?: string;
@@ -151,6 +155,8 @@ interface HermesPlatformMessageTarget {
 let asyncBus: BullMqAsyncBus | null = null;
 let botWorker: AsyncWorkerRuntime | null = null;
 let botWorkerStartPromise: Promise<AsyncWorkerRuntime> | null = null;
+let botMaintenanceTimer: ReturnType<typeof setInterval> | null = null;
+let botMaintenanceRun: Promise<unknown> | null = null;
 
 function recordFromJson(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -346,7 +352,7 @@ export async function submitHermesPlatformInteraction(input: {
   };
   const body = JSON.stringify(envelope);
   const timestamp = Math.floor(Date.now() / 1000);
-  const signature = signWebhookPayload(body, loaded.bot.webhookSecret, timestamp);
+
   const controller = new AbortController();
   let timedOut = false;
   const timeout = setTimeout(() => {
@@ -359,7 +365,6 @@ export async function submitHermesPlatformInteraction(input: {
     const upstream = await dispatchCurrentWebhook(loaded.invocation.id, loaded.bot.endpointRevision, webhookUrl, body, {
         "Content-Type": "application/json",
         "X-Webhook-Timestamp": String(timestamp),
-        "X-Webhook-Signature": signature,
         "X-TheChat-Bot-Id": loaded.bot.id,
         "X-TheChat-Invocation-Id": loaded.invocation.id,
     }, { actorId: input.userId, signal: controller.signal });
@@ -424,7 +429,7 @@ export async function submitHermesPlatformVaultUnlock(input: {
   const timeout = setTimeout(() => controller.abort(),HERMES_INTERACTION_TIMEOUT_MS);
   try {
     await options.beforeDispatch?.();
-    const upstream = await dispatchCurrentWebhook(loaded.invocation.id, loaded.bot.endpointRevision, webhookUrl!, body, {"Content-Type":"application/json","Cache-Control":"no-store","X-Webhook-Timestamp":String(timestamp),"X-Webhook-Signature":signWebhookPayload(body,loaded.bot.webhookSecret,timestamp),"X-TheChat-Bot-Id":loaded.bot.id,"X-TheChat-Invocation-Id":loaded.invocation.id}, { actorId: input.userId, signal: controller.signal, expiresAt: request.expiresAt });
+    const upstream = await dispatchCurrentWebhook(loaded.invocation.id, loaded.bot.endpointRevision, webhookUrl!, body, {"Content-Type":"application/json","Cache-Control":"no-store","X-Webhook-Timestamp":String(timestamp),"X-TheChat-Bot-Id":loaded.bot.id,"X-TheChat-Invocation-Id":loaded.invocation.id}, { actorId: input.userId, signal: controller.signal, expiresAt: request.expiresAt });
     if (!upstream) throw reject(409);
     if (!upstream.ok) throw reject(upstream.status === 409 ? 409 : 502);
     // Never reflect upstream text or extra properties (including diagnostic secrets).
@@ -720,8 +725,7 @@ export async function processMessageMentions(msg: TriggerMessage) {
           botUserId: bots.userId,
           kind: bots.kind,
           webhookUrl: bots.webhookUrl,
-          webhookSecret: bots.webhookSecret,
-          attachmentAccess: bots.attachmentAccess,
+              attachmentAccess: bots.attachmentAccess,
           botName: users.name,
         })
         .from(bots)
@@ -925,8 +929,32 @@ export async function failTimedOutHermesDispatchesForConversation(conversationId
   for (const invocation of staleQueued) {
     await failInvocation(invocation.id, hermesDispatchTimeoutError(timeoutMs), {
       onlyQueuedHermes: true,
+      capacityTimeout:true,
     });
   }
+}
+
+function hasPendingBotAdmission() {
+  // Pending is not itself proof of saturation: a missing consumer must still
+  // time out. FIFO/concurrency blocking pauses dispatch expiry. Once an older
+  // epoch settles, its durable settlement time grants a fresh dispatch window.
+  const cutoff = hermesDispatchTimeoutCutoff(hermesDispatchTimeoutMs()).toISOString();
+  return sql`exists(
+    select 1 from workspace_work w join workspace_resource_limits limits using(workspace_id)
+    where w.kind='bot' and w.state='pending' and w.idempotency_key=${botInvocations.id}::text
+      and w.workspace_id=(select c.workspace_id from conversations c where c.id=${botInvocations.conversationId})
+      and (
+        (select count(*) from workspace_work active where active.workspace_id=w.workspace_id
+          and active.kind='bot' and active.state='running' and active.lease_until>now())>=limits.concurrent_bot
+        or exists(select 1 from workspace_work older where older.workspace_id=w.workspace_id
+          and older.kind='bot' and older.state='pending'
+          and (older.created_at,older.idempotency_key)<(w.created_at,w.idempotency_key))
+        or greatest(${botInvocations.createdAt},coalesce(
+          (select max(settled.updated_at) from workspace_work settled where settled.workspace_id=w.workspace_id
+            and settled.kind='bot' and settled.state in ('completed','cancelled')
+            and (settled.created_at,settled.idempotency_key)<(w.created_at,w.idempotency_key)),${botInvocations.createdAt}))>${cutoff}::timestamptz
+      )
+  )`;
 }
 
 async function failTimedOutHermesDispatchesForBot(botId: string) {
@@ -946,6 +974,7 @@ async function failTimedOutHermesDispatchesForBot(botId: string) {
   for (const invocation of staleQueued) {
     await failInvocation(invocation.id, hermesDispatchTimeoutError(timeoutMs), {
       onlyQueuedHermes: true,
+      capacityTimeout:true,
     });
   }
 }
@@ -973,17 +1002,25 @@ async function failHermesDispatchIfTimedOut(
 
   return failInvocation(invocationId, hermesDispatchTimeoutError(timeoutMs), {
     onlyQueuedHermes: true,
+    capacityTimeout:true,
   });
 }
 
 export async function startBotWorker(options: { concurrency?: number } = {}): Promise<AsyncWorkerRuntime> {
   if (botWorkerStartPromise) return botWorkerStartPromise;
   botWorkerStartPromise = (async () => {
+    await withWorkerDatabaseContext(reconcileExpiredBotWork);
     const runtime = new AsyncWorkerRuntime({ concurrency: options.concurrency });
     runtime.register(createBotInvokeHandler());
     runtime.register(createHermesWebhookDeliveryHandler());
     await runtime.start([BOT_QUEUE_NAME]);
     botWorker = runtime;
+    botMaintenanceTimer = setInterval(() => {
+      if (botMaintenanceRun) return;
+      botMaintenanceRun = withWorkerDatabaseContext(reconcileExpiredBotWork)
+        .catch(error => log.error({err:error}, 'Failed to reconcile expired bot work'))
+        .finally(() => { botMaintenanceRun = null; });
+    }, 10_000);
     return runtime;
   })();
   return botWorkerStartPromise;
@@ -994,6 +1031,9 @@ export async function closeBotRuntimeForTests(): Promise<void> {
 }
 
 export async function closeBotRuntime(): Promise<void> {
+  if (botMaintenanceTimer) clearInterval(botMaintenanceTimer);
+  botMaintenanceTimer = null;
+  await botMaintenanceRun;
   await Promise.allSettled([asyncBus?.close(), botWorker?.close(true)]);
   asyncBus = null;
   botWorker = null;
@@ -1005,9 +1045,15 @@ function createBotInvokeHandler(): AsyncJobHandler<BotInvokePayload> {
     queue: BOT_QUEUE_NAME,
     name: BOT_INVOKE_JOB_NAME,
     async handle(job, context) {
-      await context.setProgress(5, { invocationId: job.message.payload.invocationId });
-      await handleQueuedBotInvocation(job.message.payload.invocationId, context);
-      await context.setProgress(100, { invocationId: job.message.payload.invocationId });
+      await withWorkerDatabaseContext(async () => {
+        await context.setProgress(5, { invocationId: job.message.payload.invocationId });
+        try { await handleQueuedBotInvocation(job.message.payload.invocationId, context); }
+        catch(error){
+          if(error instanceof ServiceError && error.status===429 && context.defer) await context.defer(2000);
+          throw error;
+        }
+        await context.setProgress(100, { invocationId: job.message.payload.invocationId });
+      });
     },
   };
 }
@@ -1017,11 +1063,17 @@ function createHermesWebhookDeliveryHandler(): AsyncJobHandler<HermesWebhookDeli
     queue: BOT_QUEUE_NAME,
     name: HERMES_WEBHOOK_DELIVERY_JOB_NAME,
     async handle(job, context) {
-      const { invocationId } = job.message.payload;
-      await context.setProgress(5, { invocationId });
-      const isFinalAttempt = job.attemptsMade + 1 >= job.maxAttempts;
-      await deliverHermesPlatformWebhookInvocation(invocationId, { failOnError: isFinalAttempt });
-      await context.setProgress(100, { invocationId });
+      await withWorkerDatabaseContext(async () => {
+        const { invocationId } = job.message.payload;
+        await context.setProgress(5, { invocationId });
+        const isFinalAttempt = job.attemptsMade + 1 >= job.maxAttempts;
+        try { await deliverHermesPlatformWebhookInvocation(invocationId, { failOnError: isFinalAttempt }); }
+        catch(error){
+          if(error instanceof ServiceError && error.status===429 && context.defer) await context.defer(2000);
+          throw error;
+        }
+        await context.setProgress(100, { invocationId });
+      });
     },
   };
 }
@@ -1101,7 +1153,10 @@ async function getOrCreateInvocation(
       })
       .returning();
 
-    if (inserted[0]) return inserted[0];
+    if (inserted[0]) {
+      if (conversation.workspaceId) await admitWorkspaceWork(tx, conversation.workspaceId, "bot", inserted[0].id);
+      return inserted[0];
+    }
 
     const [existing] = await tx
       .select()
@@ -1206,24 +1261,22 @@ async function handleQueuedBotInvocation(invocationId: string, context: { setPro
     if (ageMs < 10 * 60 * 1000) return;
   }
 
-  const started = await markInvocationStatus(invocationId, "running", {
-    startedAt: new Date(),
-    error: null,
-  });
-  if (!started) return;
-  await publishInvocationUpdate(invocationId);
-  await context.setProgress(15, { status: "running" });
+  if (loaded.bot.kind === "hermes") return; // Remote claims own their actual lifetime.
+  const run = async (budget?: {signal:AbortSignal;assertLease:()=>Promise<void>;lease:WorkspaceWorkLease}) => {
+    const started = await markInvocationStatus(invocationId, "running", {
+      startedAt:new Date(),error:null,
+      ...(budget ? {requestJson:{...loaded.invocation.requestJson,workToken:budget.lease.token}} : {}),
+    });
+    if(!started)return;
+    await publishInvocationUpdate(invocationId);
+    await context.setProgress(15,{status:"running"});
+    try { await handleWebhookInvocation(invocationId,budget); }
+    catch(error) { await failInvocation(invocationId,error); throw error; }
+  };
+  if (loaded.conversation.workspaceId) {
+    await withWorkspaceWorkBudget(loaded.conversation.workspaceId,"bot",invocationId,run);
+  } else await run();
 
-  try {
-    if (loaded.bot.kind === "hermes") {
-      await context.setProgress(100, { status: "claimed_by_hermes_platform" });
-    } else {
-      await handleWebhookInvocation(invocationId);
-    }
-  } catch (error: any) {
-    await failInvocation(invocationId, error);
-    throw error;
-  }
 }
 
 function botWebhookTimeoutMs() {
@@ -1235,6 +1288,13 @@ function botWebhookTimeoutMs() {
  * network response. A removal committed before this boundary prevents dispatch;
  * an already-initiated HTTP request cannot be recalled by a later removal.
  */
+async function terminalizeRefusedDispatch(invocationId:string) {
+  // Cleanup cannot depend on the bot permission which was just revoked.
+  await db.update(botInvocations).set({status:'cancelled',error:'Outbound dispatch authorization refused',completedAt:new Date(),updatedAt:new Date()})
+    .where(and(eq(botInvocations.id,invocationId),inArray(botInvocations.status,['queued','running','claimed']),
+      sql`${botInvocations.responseJson}->'completion' is null and coalesce(${botInvocations.responseJson}->>'silent','false')<>'true'`));
+}
+
 async function dispatchCurrentWebhook(invocationId: string, endpointRevision: number, endpointUrl: string, body: string, headers: Record<string, string>, options: { actorId?: string; signal?: AbortSignal; expiresAt?: number } = {}): Promise<Response | null> {
   let admitted: { response: Promise<Response> } | null;
   try {
@@ -1244,7 +1304,7 @@ async function dispatchCurrentWebhook(invocationId: string, endpointRevision: nu
       const [initialBot] = await tx.select().from(bots).where(eq(bots.id, candidate.botId)).limit(1);
       if (!initialBot) return null;
       await requireConversationMutationAccess(tx, candidate.conversationId, initialBot.userId);
-      const [bot] = await tx.select().from(bots).where(eq(bots.id, candidate.botId)).for("share").limit(1);
+      const [bot] = await tx.select().from(bots).where(eq(bots.id, candidate.botId)).limit(1);
       const [invocation] = await tx.select().from(botInvocations).where(eq(botInvocations.id, invocationId)).for("update").limit(1);
       if (!invocation || (options.actorId ? !["running", "claimed"].includes(invocation.status) || interactionInvocationIsTerminal(invocation) : invocation.status !== "running") || bot.endpointRevision !== endpointRevision || bot.webhookUrl !== endpointUrl || (options.expiresAt !== undefined && Date.now() >= options.expiresAt) || options.signal?.aborted) return null;
       if (options.actorId) await requireConversationMutationAccess(tx, invocation.conversationId, options.actorId);
@@ -1256,13 +1316,15 @@ async function dispatchCurrentWebhook(invocationId: string, endpointRevision: nu
       await requireConversationMutationAccess(tx, invocation.conversationId, trigger.senderId);
       if (!(await canBotAccessConversationAttachments(tx, invocation.conversationId, bot.userId))) {
         const parsed = JSON.parse(body);
-        if (parsed.message) parsed.message.attachments = [];
-        if (parsed.event) parsed.event.attachments = [];
+        if (parsed.message && typeof parsed.message === 'object') parsed.message.attachments = [];
+        if (parsed.event && typeof parsed.event === 'object') parsed.event.attachments = [];
         body = JSON.stringify(parsed);
       }
       const timestamp = Math.floor(Date.now() / 1000);
+      const [signed] = await tx.execute<{signature:string|null}>(sql`select thechat_sign_invocation(${invocationId}::uuid,${body},${timestamp}::bigint) as signature`);
+      if (!signed?.signature) return null;
       const timeout = AbortSignal.timeout(botWebhookTimeoutMs());
-      const response = fetch(endpointUrl, { method: "POST", redirect: "error", signal: options.signal ? AbortSignal.any([timeout, options.signal]) : timeout, headers: { ...headers, "X-Webhook-Timestamp": String(timestamp), "X-Webhook-Signature": signWebhookPayload(body, bot.webhookSecret, timestamp) }, body });
+      const response = fetch(endpointUrl, { method: "POST", redirect: "error", signal: options.signal ? AbortSignal.any([timeout, options.signal]) : timeout, headers: { ...headers, "X-Webhook-Timestamp": String(timestamp), "X-Webhook-Signature": signed.signature }, body });
       // Attach rejection handling immediately while the admission transaction commits.
       void response.catch(() => undefined);
       return { response };
@@ -1274,7 +1336,7 @@ async function dispatchCurrentWebhook(invocationId: string, endpointRevision: nu
   return admitted ? await admitted.response : null;
 }
 
-async function handleWebhookInvocation(invocationId: string) {
+async function handleWebhookInvocation(invocationId: string, budget?: {signal:AbortSignal;assertLease:()=>Promise<void>;lease:WorkspaceWorkLease}) {
   const loaded = await loadInvocationContext(invocationId);
   if (!loaded) throw new Error(`Bot invocation not found: ${invocationId}`);
   if (!loaded.bot.webhookUrl) throw new Error("Webhook bot does not have a webhook URL");
@@ -1314,22 +1376,25 @@ async function handleWebhookInvocation(invocationId: string) {
 
   const body = JSON.stringify(payload);
   const timestamp = Math.floor(Date.now() / 1000);
-  const signature = signWebhookPayload(body, loaded.bot.webhookSecret, timestamp);
 
+
+  await budget?.assertLease();
   const response = await dispatchCurrentWebhook(invocationId, loaded.bot.endpointRevision, loaded.bot.webhookUrl, body, {
       "Content-Type": "application/json",
       "X-Webhook-Timestamp": String(timestamp),
-      "X-Webhook-Signature": signature,
-  });
-  if (!response) return;
+  }, {signal:budget?.signal});
+  if (!response) { await terminalizeRefusedDispatch(invocationId); return; }
 
   if (!response.ok) {
     throw new Error(`Webhook failed with HTTP ${response.status}`);
   }
 
-  await markInvocationStatus(invocationId, "completed", {
+  await db.transaction(async tx => {
+    if (budget) await requireBotWorkLease(tx, loaded.invocation, loaded.conversation, loaded.bot.userId, budget.lease.token);
+    await markInvocationStatus(invocationId, "completed", {
     completedAt: new Date(),
     responseJson: { status: response.status },
+    });
   });
   await publishInvocationUpdate(invocationId);
 }
@@ -1337,6 +1402,7 @@ async function handleWebhookInvocation(invocationId: string) {
 export interface HermesPlatformEvent {
   id: string;
   invocationId: string;
+  workToken?: string;
   chatId: string;
   chatType: "dm" | "group";
   threadId: string | null;
@@ -1363,8 +1429,10 @@ interface PreparedHermesPlatformEvent {
 async function claimHermesPlatformInvocation(
   invocationId: string,
   deliveryMode: HermesPlatformDeliveryMode = "polling",
+  afterCapture?: () => Promise<void>,
 ): Promise<HermesPlatformEvent | null> {
   const prepared = await prepareHermesPlatformEvent(invocationId, deliveryMode);
+  await afterCapture?.();
   if (!prepared) {
     await failInvocation(invocationId, new Error("Hermes invocation context is incomplete"));
     return null;
@@ -1423,6 +1491,19 @@ async function claimHermesPlatformInvocation(
       return null;
     }
 
+    const workspaceId = prepared.event.conversation.workspaceId;
+    const [waiting]=await tx.select({pending:hasPendingBotAdmission()}).from(botInvocations).where(eq(botInvocations.id,invocationId)).limit(1);
+    const wasPendingAdmission=waiting?.pending===true;
+    if (workspaceId) {
+      await admitWorkspaceWork(tx, workspaceId, "bot", invocationId);
+      let lease;
+      try { lease = await claimWorkspaceWork(tx, workspaceId, "bot", invocationId); }
+      catch(error) { if(error instanceof ServiceError && error.status===429 && deliveryMode==='polling') return null; throw error; }
+      if (!lease) return null;
+      prepared.event.workToken = lease.token;
+      persistedRequestJson.workToken = lease.token;
+      if (deliveryMode === "webhook") (persistedRequestJson as Record<string,unknown>)[HERMES_WEBHOOK_BODY_FIELD] = JSON.stringify({type:"thechat.hermes_platform.event",event:prepared.event});
+    }
     const [row] = await tx
       .update(botInvocations)
       .set({
@@ -1439,7 +1520,7 @@ async function claimHermesPlatformInvocation(
           eq(botInvocations.id, invocationId),
           eq(botInvocations.status, "queued"),
           eq(botInvocations.adapterKind, "hermes"),
-          gt(botInvocations.createdAt, hermesDispatchTimeoutCutoff(timeoutMs)),
+          or(gt(botInvocations.createdAt, hermesDispatchTimeoutCutoff(timeoutMs)),sql`${wasPendingAdmission}`),
         ),
       )
       .returning({ id: botInvocations.id });
@@ -1464,6 +1545,7 @@ export async function claimHermesPlatformEvents(botId: string, limit = 10): Prom
     async (span) => {
       const cappedLimit = Math.max(1, Math.min(limit, 50));
       span.setAttribute("thechat.hermes_platform.events.limit", cappedLimit);
+      await reconcileExpiredBotWork();
       await failTimedOutHermesDispatchesForBot(botId);
       const pending = await db
         .select({ id: botInvocations.id })
@@ -1475,7 +1557,7 @@ export async function claimHermesPlatformEvents(botId: string, limit = 10): Prom
             eq(botInvocations.adapterKind, "hermes"),
             eq(botInvocations.botId, botId),
             eq(bots.kind, "hermes"),
-            gt(botInvocations.createdAt, hermesDispatchTimeoutCutoff(hermesDispatchTimeoutMs())),
+            or(gt(botInvocations.createdAt, hermesDispatchTimeoutCutoff(hermesDispatchTimeoutMs())),hasPendingBotAdmission()),
           ),
         )
         .orderBy(asc(botInvocations.createdAt))
@@ -1662,17 +1744,16 @@ async function deliverHermesPlatformWebhookInvocation(
       }
 
       const timestamp = Math.floor(Date.now() / 1000);
-      const signature = signWebhookPayload(body, loaded.bot.webhookSecret, timestamp);
+
       try {
         await options.beforeDispatch?.();
         const response = await dispatchCurrentWebhook(invocationId, loaded.bot.endpointRevision, loaded.bot.webhookUrl, body, {
             "Content-Type": "application/json",
             "X-Webhook-Timestamp": String(timestamp),
-            "X-Webhook-Signature": signature,
-            "X-TheChat-Bot-Id": loaded.bot.id,
+                "X-TheChat-Bot-Id": loaded.bot.id,
             "X-TheChat-Invocation-Id": invocationId,
         });
-        if (!response) return;
+        if (!response) { await terminalizeRefusedDispatch(invocationId); return; }
         span.setAttribute("http.response.status_code", response.status);
         if (!response.ok) {
           const error = new Error(`Hermes webhook failed with HTTP ${response.status}`);
@@ -1738,6 +1819,7 @@ function conversationIdFromHermesChatId(chatId: string | null | undefined): stri
 
 async function resolveHermesPlatformMessageTarget(input: {
   authenticatedBotId: string;
+  workToken?: string;
   invocationId?: string | null;
   botId?: string;
   conversationId?: string;
@@ -1772,7 +1854,7 @@ async function resolveHermesPlatformMessageTarget(input: {
 
   const [botRow] = await db
     .select({
-      bot: bots,
+      bot: botMetadataFields,
       botName: users.name,
     })
     .from(bots)
@@ -1827,6 +1909,7 @@ function resolveInvocationThreadId(
 
 export async function publishHermesPlatformMessage(input: {
   authenticatedBotId: string;
+  workToken?: string;
   invocationId?: string | null;
   content: string;
   attachmentIds?: string[];
@@ -1933,6 +2016,7 @@ export async function publishHermesPlatformMessage(input: {
           target.conversation.id,
           target.bot.userId,
         );
+        const workLease = target.invocation ? await requireBotWorkLease(tx, target.invocation, target.conversation, target.bot.userId, input.workToken) : null;
         if (attachmentIds.length > 0 && !(await canBotAccessConversationAttachments(tx, target.conversation.id, target.bot.userId))) throw new ServiceError("Attachment access is not enabled for this installation", 403);
         const [inserted] = await tx
           .insert(messages)
@@ -2006,6 +2090,7 @@ export async function publishHermesPlatformMessage(input: {
             })
             .where(eq(botInvocations.id, target.invocation.id));
         }
+        if (shouldFinalize) await finishBotWork(tx, workLease);
         if (target.threadId) {
           await tx
             .update(conversationThreads)
@@ -2075,6 +2160,7 @@ export async function publishHermesPlatformMessage(input: {
 
 export async function completeHermesPlatformInvocationSilently(input: {
   authenticatedBotId: string;
+  workToken?: string;
   invocationId: string;
   reason?: string | null;
 }) {
@@ -2122,6 +2208,7 @@ export async function completeHermesPlatformInvocationSilently(input: {
           loaded.conversation.id,
           loaded.bot.userId,
         );
+    const workLease = await requireBotWorkLease(tx, loaded.invocation, loaded.conversation, loaded.bot.userId, input.workToken);
         const [updated] = await tx
           .update(botInvocations)
           .set({
@@ -2159,6 +2246,7 @@ export async function completeHermesPlatformInvocationSilently(input: {
             ),
           )
           .returning({ id: botInvocations.id });
+        if (updated) await finishBotWork(tx, workLease, false);
         return updated ?? null;
       });
       if (!completed) {
@@ -2176,6 +2264,7 @@ export async function completeHermesPlatformInvocationSilently(input: {
 
 export async function failHermesPlatformInvocation(input: {
   authenticatedBotId: string;
+  workToken?: string;
   invocationId: string;
   error: string;
 }) {
@@ -2187,11 +2276,12 @@ export async function failHermesPlatformInvocation(input: {
     loaded.conversation.id,
     loaded.bot.userId,
   );
-  return recordHermesExecutionFailure(loaded, input.error);
+  return recordHermesExecutionFailure(loaded, input.error, input.workToken);
 }
 
 export async function cancelHermesPlatformInvocation(input: {
   authenticatedBotId: string;
+  workToken?: string;
   invocationId: string;
   reason?: string | null;
 }) {
@@ -2230,6 +2320,7 @@ export async function cancelHermesPlatformInvocation(input: {
       loaded.conversation.id,
       loaded.bot.userId,
     );
+    const workLease = await requireBotWorkLease(tx, loaded.invocation, loaded.conversation, loaded.bot.userId, input.workToken);
     const [updated] = await tx
       .update(botInvocations)
       .set({
@@ -2252,7 +2343,8 @@ export async function cancelHermesPlatformInvocation(input: {
         ),
       )
       .returning({ id: botInvocations.id });
-    return updated ?? null;
+    if (updated) await finishBotWork(tx, workLease, true);
+        return updated ?? null;
   });
   if (!cancelled) {
     return { ok: true, duplicate: true };
@@ -2266,6 +2358,7 @@ export async function cancelHermesPlatformInvocation(input: {
 async function recordHermesExecutionFailure(
   loaded: NonNullable<Awaited<ReturnType<typeof loadInvocationContext>>>,
   error: string,
+  token?: string,
 ) {
   const previousResponseJson = recordFromJson(loaded.invocation.responseJson);
   if (
@@ -2293,6 +2386,7 @@ async function recordHermesExecutionFailure(
       loaded.conversation.id,
       loaded.bot.userId,
     );
+    const workLease = await requireBotWorkLease(tx, loaded.invocation, loaded.conversation, loaded.bot.userId, token);
     const [inserted] = await tx
       .insert(messages)
       .values({
@@ -2342,6 +2436,7 @@ async function recordHermesExecutionFailure(
     await enqueueDomainEvent(tx, event, {
       partitionKey: inserted.conversationId,
     });
+    await finishBotWork(tx, workLease, true);
     return inserted;
   });
 
@@ -2400,8 +2495,25 @@ async function finishHermesProgress(
   }
 }
 
+/** Silent remote liveness: no progress-store, message, typing or notification write. */
+export async function heartbeatHermesPlatformInvocation(input:{authenticatedBotId:string;invocationId:string;workToken?:string}) {
+  const loaded=await loadInvocationContext(input.invocationId);
+  if(!loaded)throw new ServiceError('Invocation not found',404);
+  if(loaded.bot.kind!=='hermes')throw new ServiceError('Invocation is not for a Hermes bot',400);
+  if(loaded.bot.id!==input.authenticatedBotId)throw new ServiceError('Bot token does not match invocation',403);
+  return db.transaction(async tx=>{
+    await requireConversationMutationAccess(tx,loaded.conversation.id,loaded.bot.userId);
+    const [current]=await tx.select().from(botInvocations).where(eq(botInvocations.id,input.invocationId)).for('update').limit(1);
+    if(!current || !['running','claimed'].includes(current.status) || interactionInvocationIsTerminal(current))throw new ServiceError('Workspace work lease lost',409);
+    const lease=await requireBotWorkLease(tx,current,loaded.conversation,loaded.bot.userId,input.workToken);
+    const expiresAt=await renewBotWork(tx,lease);
+    return {ok:true,leaseExpiresAt:expiresAt?.toISOString()??null};
+  });
+}
+
 export async function publishHermesPlatformTyping(input: {
   authenticatedBotId: string;
+  workToken?: string;
   invocationId: string;
   botId?: string;
   conversationId?: string;
@@ -2419,6 +2531,7 @@ export async function publishHermesPlatformTyping(input: {
     loaded.conversation.id,
     loaded.bot.userId,
   );
+await db.transaction(async tx => { await requireConversationMutationAccess(tx, loaded.conversation.id, loaded.bot.userId); const lease = await requireBotWorkLease(tx, loaded.invocation, loaded.conversation, loaded.bot.userId, input.workToken); await renewBotWork(tx, lease); });
   const threadId = resolveInvocationThreadId(loaded);
   if (input.threadId && input.threadId !== threadId) {
     throw new ServiceError("Thread does not match invocation", 400);
@@ -2467,6 +2580,7 @@ export async function publishHermesPlatformProgress(
         loaded.conversation.id,
         loaded.bot.userId,
       );
+await db.transaction(async tx => { await requireConversationMutationAccess(tx, loaded.conversation.id, loaded.bot.userId); const lease = await requireBotWorkLease(tx, loaded.invocation, loaded.conversation, loaded.bot.userId, input.workToken); await renewBotWork(tx, lease); });
       const responseJson = recordFromJson(loaded.invocation.responseJson);
       const generatedTitle = titleFromProgressInput(input);
       const executionAlreadyTerminal =
@@ -2552,6 +2666,15 @@ export async function publishHermesPlatformProgress(
         },
       });
       const latestResponseJson = recordFromJson(latestInvocation?.responseJson);
+      try {
+        await db.transaction(async tx => {
+          await requireConversationMutationAccess(tx, loaded.conversation.id, loaded.bot.userId);
+          await requireBotWorkLease(tx, loaded.invocation, loaded.conversation, loaded.bot.userId, input.workToken);
+        });
+      } catch (error) {
+        await progressStore.clear({invocationId:loaded.invocation.id,conversationId:loaded.conversation.id});
+        throw error;
+      }
       if (
         !latestInvocation ||
         latestInvocation.status === "completed" ||
@@ -2656,7 +2779,7 @@ async function publishConversationThreadUpdate(
 async function failInvocation(
   invocationId: string,
   error: any,
-  options: { onlyQueuedHermes?: boolean } = {},
+  options: { onlyQueuedHermes?: boolean; capacityTimeout?: boolean } = {},
 ) {
   const message = error?.message ?? String(error);
   const loaded = await loadInvocationContext(invocationId);
@@ -2666,6 +2789,7 @@ async function failInvocation(
         eq(botInvocations.id, invocationId),
         eq(botInvocations.adapterKind, "hermes"),
         eq(botInvocations.status, "queued"),
+        options.capacityTimeout ? sql`not ${hasPendingBotAdmission()}` : undefined,
       )
     : and(
         eq(botInvocations.id, invocationId),
@@ -2697,6 +2821,7 @@ async function failInvocation(
       .where(where)
       .returning({ id: botInvocations.id });
     if (!failed) return { failed: false as const, responseMessage: null };
+    if (loaded?.conversation.workspaceId) await cancelWorkspaceWork(tx, loaded.conversation.workspaceId, "bot", invocationId);
 
     if (loaded?.bot.kind !== "hermes") {
       return { failed: true as const, responseMessage: null };
@@ -2758,8 +2883,9 @@ async function failInvocation(
 export const __botRuntimeInternalsForTests = {
   handleQueuedBotInvocation,
   deliverHermesPlatformWebhookInvocation,
+  claimHermesPlatformInvocation,
   failQueuedHermesDispatch(invocationId: string, error: Error) {
-    return failInvocation(invocationId, error, { onlyQueuedHermes: true });
+    return failInvocation(invocationId, error, { onlyQueuedHermes: true, capacityTimeout:true });
   },
 };
 
@@ -2767,7 +2893,7 @@ async function loadInvocationContext(invocationId: string) {
   const [row] = await db
     .select({
       invocation: botInvocations,
-      bot: bots,
+      bot: botMetadataFields,
       botName: users.name,
       triggerMessage: messages,
       triggerSenderName: users.name,

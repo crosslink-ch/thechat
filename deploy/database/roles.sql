@@ -28,14 +28,43 @@ WHERE n.nspname='public' AND c.relkind='r' AND (
 -- Global identity/bot administration remains a service-level ownership plane.
 GRANT SELECT,INSERT,UPDATE,DELETE ON users,bots,hermes_bot_configs TO :"runtime_role";
 GRANT SELECT ON users,bots,hermes_bot_configs TO :"worker_role";
+-- Endpoint row locks use the narrow SECURITY DEFINER RPC. Remove the obsolete
+-- column grant too when upgrading an earlier candidate's role recipe.
+REVOKE UPDATE(endpoint_revision) ON bots FROM :"worker_role";
 GRANT SELECT,INSERT,UPDATE,DELETE ON users,session,account,verification,apikey,rate_limit TO :"auth_role";
 GRANT SELECT ON bots TO :"auth_role";
+GRANT SELECT ON bot_invite_metadata TO :"runtime_role";
+GRANT SELECT ON bot_runtime_metadata TO :"runtime_role", :"worker_role";
 GRANT SELECT ON bot_identities TO :"runtime_role", :"auth_role", :"worker_role";
 GRANT thechat_identity_authority TO :"auth_role";
+-- No authority depends on PUBLIC function execution. Runtime gets the named,
+-- actor-gated application RPC surface; auth/worker get only their required
+-- helpers. In particular maintenance cannot call global endpoint/command or
+-- owner-consent/withdrawal mutations by manufacturing an actor GUC.
+REVOKE ALL ON ALL FUNCTIONS IN SCHEMA public FROM :"runtime_role", :"auth_role", :"worker_role";
+SELECT format('GRANT EXECUTE ON FUNCTION %s TO %I',p.oid::regprocedure,:'runtime_role')
+FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
+WHERE n.nspname='public' AND p.proname LIKE 'thechat_%' AND p.prorettype<>'trigger'::regtype \gexec
+SELECT format('GRANT EXECUTE ON FUNCTION %s TO %I',p.oid::regprocedure,:'auth_role')
+FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
+WHERE n.nspname='public' AND p.proname IN ('thechat_actor','thechat_has_actor','thechat_scope_allows','thechat_identity_authority','thechat_owns_bot_user','thechat_claim_bot_user') \gexec
+SELECT format('GRANT EXECUTE ON FUNCTION %s TO %I',p.oid::regprocedure,:'worker_role')
+FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
+WHERE n.nspname='public' AND p.proname IN (
+ 'thechat_actor','thechat_has_actor','thechat_scope_allows','thechat_identity_authority','thechat_owns_bot_user',
+ 'thechat_can_workspace','thechat_can_conversation','thechat_manage_workspace','thechat_manage_bot',
+ 'thechat_bootstrap_workspace','thechat_bootstrap_conversation','thechat_invited_workspace','thechat_can_enroll',
+ 'thechat_can_event','thechat_read_bot','thechat_installation_owner','thechat_worker_only',
+ 'thechat_lock_bot_endpoint','thechat_sign_invocation'
+) \gexec
 -- Bot identity and first credential commit atomically in the actor transaction.
 -- Credential values are not readable/mutable by collaboration runtime SQL.
 GRANT INSERT ON apikey TO :"runtime_role";
 GRANT SELECT(reference_id,enabled,config_id) ON apikey TO :"runtime_role";
+-- Ledger release and exact storage receipts are worker-only. API may read usage
+-- for its own tenant; trigger SECURITY DEFINER writes originate from admitted rows.
+REVOKE INSERT,UPDATE,DELETE ON workspace_attachment_charges FROM :"runtime_role";
+GRANT SELECT,INSERT,UPDATE,DELETE ON attachment_object_cleanup TO :"worker_role";
 -- No membership grants between these roles; no TRUNCATE/TRIGGER/DDL grants.
 -- The migrator must own the tables/functions (or have administrator authority),
 -- and must never be inherited/SET ROLE-able by runtime/auth/worker identities.

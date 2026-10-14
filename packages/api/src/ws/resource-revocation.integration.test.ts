@@ -1,9 +1,11 @@
+import { withDatabaseContext, withWorkerDatabaseContext } from '../db/index';
+import { asFixtureBot, joinFixtureWorkspace } from '../test-context';
 import { afterAll, expect, test } from "bun:test";
 import { Elysia } from "elysia";
 import { eq, inArray } from "drizzle-orm";
 import { authRoutes } from "../auth";
 
-import { db } from "../db";
+import { db } from "../db/testing";
 import { users, workspaces } from "../db/schema";
 import {
   createWorkspace,
@@ -69,10 +71,10 @@ function deferred() {
 test("captured DM fanout is denied when member removal commits during session revalidation", async () => {
   const owner = await register("Owner"),
     member = await register("Member");
-  const workspace = await createWorkspace("Realtime revocation", owner.user.id);
+  const workspace = await withDatabaseContext({actorId:owner.user.id,scope:'actor'}, () => createWorkspace("Realtime revocation", owner.user.id));
   wids.push(workspace.id);
-  await joinWorkspace(workspace.id, member.user.id);
-  const dm = await createOrGetDm(workspace.id, owner.user.id, member.user.id);
+  await withDatabaseContext({actorId:member.user.id,scope:'actor'}, () => joinFixtureWorkspace(workspace.id, member.user.id));
+  const dm = await withDatabaseContext({actorId:owner.user.id,scope:'actor'}, () => createOrGetDm(workspace.id, owner.user.id, member.user.id));
   const { ws, events } = await connect(member.accessToken);
   await Bun.sleep(80);
   events.length = 0;
@@ -96,7 +98,7 @@ test("captured DM fanout is denied when member removal commits during session re
   );
   try {
     await entered.promise;
-    await removeMember(workspace.id, owner.user.id, member.user.id);
+    await withDatabaseContext({actorId:owner.user.id,scope:'actor'}, () => removeMember(workspace.id, owner.user.id, member.user.id));
   } finally {
     release.resolve();
   }
@@ -125,13 +127,13 @@ test("captured DM fanout is denied when member removal commits during session re
 test("captured presence peers are revalidated after losing the last shared workspace", async () => {
   const owner = await register("Presence Owner"),
     member = await register("Presence Member");
-  const workspace = await createWorkspace("Presence revocation", owner.user.id);
+  const workspace = await withDatabaseContext({actorId:owner.user.id,scope:'actor'}, () => createWorkspace("Presence revocation", owner.user.id));
   wids.push(workspace.id);
-  await joinWorkspace(workspace.id, member.user.id);
+  await withDatabaseContext({actorId:member.user.id,scope:'actor'}, () => joinFixtureWorkspace(workspace.id, member.user.id));
   const { ws, events } = await connect(member.accessToken);
   await Bun.sleep(80);
   events.length = 0;
-  await removeMember(workspace.id, owner.user.id, member.user.id);
+  await withDatabaseContext({actorId:owner.user.id,scope:'actor'}, () => removeMember(workspace.id, owner.user.id, member.user.id));
   await __wsResourceInternalsForTests.deliverToLocalUser(member.user.id, {
     type: "presence_changed",
     userId: owner.user.id,

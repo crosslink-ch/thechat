@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import { and, eq, inArray } from "drizzle-orm";
 import { resolveBotAppearance } from "@thechat/shared";
 import { db } from "../db";
@@ -6,7 +7,7 @@ import {
   workspaceMembers,
   conversations,
   conversationParticipants,
-  bots,
+  botIdentities as bots,
   users,
 } from "../db/schema";
 import { ServiceError } from "./errors";
@@ -154,11 +155,14 @@ export async function createWorkspace(name: string, userId: string, options: { a
     const id = generateWorkspaceId(name);
     try {
       return await lifecycleTransaction(async tx => {
-        const [workspace] = await tx.insert(workspaces).values({ id, name, createdById: userId }).returning();
+        // RLS cannot SELECT an INSERT RETURNING candidate before enrollment.
+        await tx.insert(workspaces).values({ id, name, createdById: userId });
         await tx.insert(workspaceMembers).values({ workspaceId: id, userId, role: "owner" });
         await options.afterOwnerInserted?.();
-        const [channel] = await tx.insert(conversations).values({ title: "General", type: "group", workspaceId: id, name: "general" }).returning();
-        await tx.insert(conversationParticipants).values({ conversationId: channel.id, userId, role: "owner" });
+        const channelId = crypto.randomUUID();
+        await tx.insert(conversations).values({ id: channelId, title: "General", type: "group", workspaceId: id, name: "general" });
+        await tx.insert(conversationParticipants).values({ conversationId: channelId, userId, role: "owner" });
+        const [workspace] = await tx.select().from(workspaces).where(eq(workspaces.id, id)).limit(1);
         return { id: workspace.id, name: workspace.name, createdAt: workspace.createdAt.toISOString(), updatedAt: workspace.updatedAt.toISOString() };
       });
     } catch (error: any) {

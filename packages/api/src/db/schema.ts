@@ -195,17 +195,17 @@ export const botWorkspaceInstallations = pgTable("bot_workspace_installations", 
   approvedById: uuid("approved_by_id").references(() => users.id, { onDelete: "set null" }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
-}, t => [primaryKey({ columns: [t.workspaceId, t.botId] })]);
+}, t => [...collaborationPolicies('bot_workspace_installations'),primaryKey({ columns: [t.workspaceId, t.botId] })]).enableRLS();
 
 export const botInstallationChannels = pgTable("bot_installation_channels", {
   workspaceId: varchar("workspace_id", { length: 100 }).notNull(),
   botId: uuid("bot_id").notNull(),
   conversationId: uuid("conversation_id").notNull(),
-}, t => [
+}, t => [...collaborationPolicies('bot_installation_channels'),
   primaryKey({ columns: [t.workspaceId, t.botId, t.conversationId] }),
   foreignKey({ columns: [t.workspaceId, t.botId], foreignColumns: [botWorkspaceInstallations.workspaceId, botWorkspaceInstallations.botId] }).onDelete("cascade"),
   foreignKey({ columns: [t.workspaceId, t.conversationId], foreignColumns: [conversations.workspaceId, conversations.id] }).onDelete("cascade"),
-]);
+]).enableRLS();
 
 export const conversationParticipants = pgTable(
   "conversation_participants",
@@ -435,6 +435,23 @@ export const botIdentities = pgView('bot_identities', {
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull(),
 }).existing();
 
+/** Scoped runtime projection deliberately excludes global signing credentials. */
+export const botRuntimeMetadata = pgView('bot_runtime_metadata', {
+ id:uuid('id').notNull(),userId:uuid('user_id').notNull(),ownerId:uuid('owner_id').notNull(),
+ webhookUrl:text('webhook_url'),endpointRevision:integer('endpoint_revision').notNull(),kind:botKindEnum('kind').notNull(),
+ attachmentAccess:boolean('attachment_access').notNull(),commandsJson:jsonb('commands_json').$type<BotCommandPublic[]>(),
+ avatarShape:varchar('avatar_shape',{length:32}),avatarColor:varchar('avatar_color',{length:16}),
+ createdAt:timestamp('created_at',{withTimezone:true}).notNull(),updatedAt:timestamp('updated_at',{withTimezone:true}).notNull(),
+}).existing();
+
+export const botInviteMetadata = pgView('bot_invite_metadata', {
+ id:uuid('id').notNull(),workspaceId:varchar('workspace_id',{length:100}).notNull(),workspaceName:varchar('workspace_name',{length:255}).notNull(),
+ botId:uuid('bot_id').notNull(),botUserId:uuid('bot_user_id').notNull(),botName:varchar('bot_name',{length:255}).notNull(),
+ botAvatarShape:varchar('bot_avatar_shape',{length:32}),botAvatarColor:varchar('bot_avatar_color',{length:16}),
+ requesterId:uuid('requester_id').notNull(),requesterName:varchar('requester_name',{length:255}).notNull(),
+ status:botWorkspaceInviteStatusEnum('status').notNull(),createdAt:timestamp('created_at',{withTimezone:true}).notNull(),ownerId:uuid('owner_id').notNull(),
+}).existing();
+
 export const botWorkspaceInvites = pgTable(
   "bot_workspace_invites",
   {
@@ -662,13 +679,13 @@ export const workspaceResourceLimits = pgTable("workspace_resource_limits", {
   pendingBot: integer("pending_bot").notNull(),
   concurrentValidation: integer("concurrent_validation").notNull(),
   concurrentBot: integer("concurrent_bot").notNull(),
-},t => [
+},t => [...collaborationPolicies('workspace_resource_limits'),
   check("workspace_resource_limits_retained_bytes_check",sql`${t.retainedBytes}>0`),
   check("workspace_resource_limits_pending_validation_check",sql`${t.pendingValidation}>0`),
   check("workspace_resource_limits_pending_bot_check",sql`${t.pendingBot}>0`),
   check("workspace_resource_limits_concurrent_validation_check",sql`${t.concurrentValidation}>0`),
   check("workspace_resource_limits_concurrent_bot_check",sql`${t.concurrentBot}>0`),
-]);
+]).enableRLS();
 
 export const workspaceWork = pgTable("workspace_work", {
   workspaceId: varchar("workspace_id",{length:100}).notNull().references(() => workspaces.id,{onDelete:"cascade"}),
@@ -679,13 +696,13 @@ export const workspaceWork = pgTable("workspace_work", {
   leaseUntil: timestamp("lease_until",{withTimezone:true}),
   createdAt: timestamp("created_at",{withTimezone:true}).notNull().defaultNow(),
   updatedAt: timestamp("updated_at",{withTimezone:true}).notNull().defaultNow(),
-},t => [
+},t => [...collaborationPolicies('workspace_work'),
   primaryKey({columns:[t.workspaceId,t.kind,t.idempotencyKey]}),
   index("workspace_work_admission_idx").on(t.workspaceId,t.kind,t.state,t.createdAt,t.idempotencyKey),
   check("workspace_work_kind_check",sql`${t.kind} in ('validation','bot')`),
   check("workspace_work_state_check",sql`${t.state} in ('pending','running','completed','cancelled')`),
   check("workspace_work_check",sql`(${t.state}='running')=(${t.leaseToken} is not null and ${t.leaseUntil} is not null)`),
-]);
+]).enableRLS();
 
 // Charges survive channel/attachment deletion until durable object work finishes.
 export const workspaceAttachmentCharges = pgTable("workspace_attachment_charges", {
@@ -695,8 +712,8 @@ export const workspaceAttachmentCharges = pgTable("workspace_attachment_charges"
   capabilityUntil: timestamp("capability_until",{withTimezone:true}).notNull(),
   cleanupRequested: boolean("cleanup_requested").notNull().default(false),
   releasedAt: timestamp("released_at",{withTimezone:true}),
-},t => [index("workspace_attachment_charges_usage_idx").on(t.workspaceId,t.releasedAt),
-  check("workspace_attachment_charges_bytes_check",sql`${t.bytes}>0`)]);
+},t => [...collaborationPolicies('workspace_attachment_charges'),index("workspace_attachment_charges_usage_idx").on(t.workspaceId,t.releasedAt),
+  check("workspace_attachment_charges_bytes_check",sql`${t.bytes}>0`)]).enableRLS();
 
 // Intentionally no canonical FK: cleanup receipts must survive even workspace deletion.
 export const attachmentObjectCleanup = pgTable("attachment_object_cleanup", {
@@ -706,8 +723,8 @@ export const attachmentObjectCleanup = pgTable("attachment_object_cleanup", {
   createdAt: timestamp("created_at",{withTimezone:true}).notNull().defaultNow(),
   completedAt: timestamp("completed_at",{withTimezone:true}),
   requested: boolean("requested").notNull().default(true),
-},t => [primaryKey({columns:[t.attachmentId,t.objectKey,t.versionId]}),
-  index("attachment_object_cleanup_pending_idx").on(t.createdAt).where(sql`${t.completedAt} is null`)]);
+},t => [...collaborationPolicies('attachment_object_cleanup'),primaryKey({columns:[t.attachmentId,t.objectKey,t.versionId]}),
+  index("attachment_object_cleanup_pending_idx").on(t.createdAt).where(sql`${t.completedAt} is null`)]).enableRLS();
 
 export const messageAttachments = pgTable(
   "message_attachments",

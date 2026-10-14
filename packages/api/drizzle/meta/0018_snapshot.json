@@ -1,6 +1,6 @@
 {
-  "id": "a0aca6b4-2377-469f-91ae-ada55c71643e",
-  "prevId": "0e3cbf22-183b-4412-9f47-1cb43bd93071",
+  "id": "42358f76-cf14-4039-a2db-93e2d3ddeb0f",
+  "prevId": "3586cd57-c769-486c-89b7-5511cc614578",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -362,9 +362,47 @@
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
-      "policies": {},
+      "policies": {
+        "tenant_delete": {
+          "name": "tenant_delete",
+          "as": "PERMISSIVE",
+          "for": "DELETE",
+          "to": [
+            "public"
+          ],
+          "using": "thechat_identity_authority()"
+        },
+        "tenant_insert": {
+          "name": "tenant_insert",
+          "as": "PERMISSIVE",
+          "for": "INSERT",
+          "to": [
+            "public"
+          ],
+          "withCheck": "(thechat_identity_authority() OR (thechat_has_actor() AND (config_id = 'bot'::text) AND thechat_owns_bot_user(reference_id) AND thechat_claim_bot_user(reference_id)))"
+        },
+        "tenant_read": {
+          "name": "tenant_read",
+          "as": "PERMISSIVE",
+          "for": "SELECT",
+          "to": [
+            "public"
+          ],
+          "using": "(thechat_identity_authority() OR (thechat_has_actor() AND (config_id = 'bot'::text) AND thechat_owns_bot_user(reference_id)))"
+        },
+        "tenant_update": {
+          "name": "tenant_update",
+          "as": "PERMISSIVE",
+          "for": "UPDATE",
+          "to": [
+            "public"
+          ],
+          "using": "thechat_identity_authority()",
+          "withCheck": "thechat_identity_authority()"
+        }
+      },
       "checkConstraints": {},
-      "isRLSEnabled": false
+      "isRLSEnabled": true
     },
     "public.attachments": {
       "name": "attachments",
@@ -545,6 +583,27 @@
         }
       },
       "indexes": {
+        "attachments_id_conversation_idx": {
+          "name": "attachments_id_conversation_idx",
+          "columns": [
+            {
+              "expression": "id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "conversation_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
         "attachments_conversation_idx": {
           "name": "attachments_conversation_idx",
           "columns": [
@@ -627,9 +686,20 @@
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
-      "policies": {},
+      "policies": {
+        "tenant_access": {
+          "name": "tenant_access",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "public"
+          ],
+          "using": "thechat_can_conversation(conversation_id)",
+          "withCheck": "thechat_can_conversation(conversation_id)"
+        }
+      },
       "checkConstraints": {},
-      "isRLSEnabled": false
+      "isRLSEnabled": true
     },
     "public.bot_installation_channels": {
       "name": "bot_installation_channels",
@@ -698,9 +768,37 @@
         }
       },
       "uniqueConstraints": {},
-      "policies": {},
+      "policies": {
+        "tenant_delete": {
+          "name": "tenant_delete",
+          "as": "PERMISSIVE",
+          "for": "DELETE",
+          "to": [
+            "public"
+          ],
+          "using": "thechat_manage_workspace((workspace_id)::text)"
+        },
+        "tenant_insert": {
+          "name": "tenant_insert",
+          "as": "PERMISSIVE",
+          "for": "INSERT",
+          "to": [
+            "public"
+          ],
+          "withCheck": "thechat_manage_workspace((workspace_id)::text)"
+        },
+        "tenant_read": {
+          "name": "tenant_read",
+          "as": "PERMISSIVE",
+          "for": "SELECT",
+          "to": [
+            "public"
+          ],
+          "using": "(thechat_can_workspace((workspace_id)::text) OR thechat_installation_owner((workspace_id)::text, bot_id))"
+        }
+      },
       "checkConstraints": {},
-      "isRLSEnabled": false
+      "isRLSEnabled": true
     },
     "public.bot_invocations": {
       "name": "bot_invocations",
@@ -748,6 +846,16 @@
           "type": "varchar(20)",
           "primaryKey": false,
           "notNull": true
+        },
+        "thread_scope_id": {
+          "name": "thread_scope_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "generated": {
+            "as": "coalesce(thread_id::text, '')",
+            "type": "stored"
+          }
         },
         "status": {
           "name": "status",
@@ -970,13 +1078,105 @@
           ],
           "onDelete": "set null",
           "onUpdate": "no action"
+        },
+        "bot_invocations_trigger_conversation_fk": {
+          "name": "bot_invocations_trigger_conversation_fk",
+          "tableFrom": "bot_invocations",
+          "tableTo": "messages",
+          "columnsFrom": [
+            "trigger_message_id",
+            "conversation_id"
+          ],
+          "columnsTo": [
+            "id",
+            "conversation_id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "bot_invocations_response_conversation_fk": {
+          "name": "bot_invocations_response_conversation_fk",
+          "tableFrom": "bot_invocations",
+          "tableTo": "messages",
+          "columnsFrom": [
+            "response_message_id",
+            "conversation_id"
+          ],
+          "columnsTo": [
+            "id",
+            "conversation_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "bot_invocations_trigger_thread_scope_fk": {
+          "name": "bot_invocations_trigger_thread_scope_fk",
+          "tableFrom": "bot_invocations",
+          "tableTo": "messages",
+          "columnsFrom": [
+            "trigger_message_id",
+            "conversation_id",
+            "thread_scope_id"
+          ],
+          "columnsTo": [
+            "id",
+            "conversation_id",
+            "thread_scope_id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "bot_invocations_response_thread_scope_fk": {
+          "name": "bot_invocations_response_thread_scope_fk",
+          "tableFrom": "bot_invocations",
+          "tableTo": "messages",
+          "columnsFrom": [
+            "response_message_id",
+            "conversation_id",
+            "thread_scope_id"
+          ],
+          "columnsTo": [
+            "id",
+            "conversation_id",
+            "thread_scope_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "bot_invocations_thread_conversation_bot_fk": {
+          "name": "bot_invocations_thread_conversation_bot_fk",
+          "tableFrom": "bot_invocations",
+          "tableTo": "conversation_threads",
+          "columnsFrom": [
+            "thread_id",
+            "conversation_id",
+            "bot_id"
+          ],
+          "columnsTo": [
+            "id",
+            "conversation_id",
+            "bot_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
-      "policies": {},
+      "policies": {
+        "tenant_access": {
+          "name": "tenant_access",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "public"
+          ],
+          "using": "thechat_can_conversation(conversation_id)",
+          "withCheck": "thechat_can_conversation(conversation_id)"
+        }
+      },
       "checkConstraints": {},
-      "isRLSEnabled": false
+      "isRLSEnabled": true
     },
     "public.bot_workspace_installations": {
       "name": "bot_workspace_installations",
@@ -1115,9 +1315,47 @@
         }
       },
       "uniqueConstraints": {},
-      "policies": {},
+      "policies": {
+        "tenant_delete": {
+          "name": "tenant_delete",
+          "as": "PERMISSIVE",
+          "for": "DELETE",
+          "to": [
+            "public"
+          ],
+          "using": "thechat_manage_workspace((workspace_id)::text)"
+        },
+        "tenant_insert": {
+          "name": "tenant_insert",
+          "as": "PERMISSIVE",
+          "for": "INSERT",
+          "to": [
+            "public"
+          ],
+          "withCheck": "thechat_manage_workspace((workspace_id)::text)"
+        },
+        "tenant_read": {
+          "name": "tenant_read",
+          "as": "PERMISSIVE",
+          "for": "SELECT",
+          "to": [
+            "public"
+          ],
+          "using": "(thechat_can_workspace((workspace_id)::text) OR thechat_installation_owner((workspace_id)::text, bot_id))"
+        },
+        "tenant_update": {
+          "name": "tenant_update",
+          "as": "PERMISSIVE",
+          "for": "UPDATE",
+          "to": [
+            "public"
+          ],
+          "using": "thechat_manage_workspace((workspace_id)::text)",
+          "withCheck": "thechat_manage_workspace((workspace_id)::text)"
+        }
+      },
       "checkConstraints": {},
-      "isRLSEnabled": false
+      "isRLSEnabled": true
     },
     "public.bot_workspace_invites": {
       "name": "bot_workspace_invites",
@@ -1283,9 +1521,47 @@
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
-      "policies": {},
+      "policies": {
+        "tenant_delete": {
+          "name": "tenant_delete",
+          "as": "PERMISSIVE",
+          "for": "DELETE",
+          "to": [
+            "public"
+          ],
+          "using": "thechat_manage_workspace((workspace_id)::text)"
+        },
+        "tenant_insert": {
+          "name": "tenant_insert",
+          "as": "PERMISSIVE",
+          "for": "INSERT",
+          "to": [
+            "public"
+          ],
+          "withCheck": "(thechat_manage_workspace((workspace_id)::text) AND (requester_id = thechat_actor()))"
+        },
+        "tenant_read": {
+          "name": "tenant_read",
+          "as": "PERMISSIVE",
+          "for": "SELECT",
+          "to": [
+            "public"
+          ],
+          "using": "(thechat_scope_allows((workspace_id)::text) AND (thechat_manage_workspace((workspace_id)::text) OR (EXISTS ( SELECT 1\n   FROM bots b\n  WHERE ((b.id = bot_workspace_invites.bot_id) AND (b.owner_id = thechat_actor()))))))"
+        },
+        "tenant_update": {
+          "name": "tenant_update",
+          "as": "PERMISSIVE",
+          "for": "UPDATE",
+          "to": [
+            "public"
+          ],
+          "using": "(thechat_scope_allows((workspace_id)::text) AND (thechat_manage_workspace((workspace_id)::text) OR (EXISTS ( SELECT 1\n   FROM bots b\n  WHERE ((b.id = bot_workspace_invites.bot_id) AND (b.owner_id = thechat_actor()))))))",
+          "withCheck": "(thechat_scope_allows((workspace_id)::text) AND (thechat_manage_workspace((workspace_id)::text) OR (EXISTS ( SELECT 1\n   FROM bots b\n  WHERE ((b.id = bot_workspace_invites.bot_id) AND (b.owner_id = thechat_actor()))))))"
+        }
+      },
       "checkConstraints": {},
-      "isRLSEnabled": false
+      "isRLSEnabled": true
     },
     "public.bots": {
       "name": "bots",
@@ -1439,9 +1715,47 @@
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
-      "policies": {},
+      "policies": {
+        "tenant_delete": {
+          "name": "tenant_delete",
+          "as": "PERMISSIVE",
+          "for": "DELETE",
+          "to": [
+            "public"
+          ],
+          "using": "(thechat_identity_authority() OR (thechat_has_actor() AND (owner_id = thechat_actor())))"
+        },
+        "tenant_insert": {
+          "name": "tenant_insert",
+          "as": "PERMISSIVE",
+          "for": "INSERT",
+          "to": [
+            "public"
+          ],
+          "withCheck": "(thechat_identity_authority() OR (thechat_has_actor() AND (owner_id = thechat_actor()) AND thechat_claim_bot_user(user_id)))"
+        },
+        "tenant_read": {
+          "name": "tenant_read",
+          "as": "PERMISSIVE",
+          "for": "SELECT",
+          "to": [
+            "public"
+          ],
+          "using": "(thechat_identity_authority() OR (thechat_has_actor() AND ((owner_id = thechat_actor()) OR (user_id = thechat_actor()))))"
+        },
+        "tenant_update": {
+          "name": "tenant_update",
+          "as": "PERMISSIVE",
+          "for": "UPDATE",
+          "to": [
+            "public"
+          ],
+          "using": "(thechat_identity_authority() OR (thechat_has_actor() AND (owner_id = thechat_actor())))",
+          "withCheck": "(thechat_identity_authority() OR (thechat_has_actor() AND (owner_id = thechat_actor())))"
+        }
+      },
       "checkConstraints": {},
-      "isRLSEnabled": false
+      "isRLSEnabled": true
     },
     "public.conversation_participants": {
       "name": "conversation_participants",
@@ -1545,9 +1859,20 @@
         }
       },
       "uniqueConstraints": {},
-      "policies": {},
+      "policies": {
+        "tenant_access": {
+          "name": "tenant_access",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "public"
+          ],
+          "using": "(thechat_can_conversation(conversation_id) OR thechat_bootstrap_conversation(conversation_id))",
+          "withCheck": "(thechat_can_conversation(conversation_id) OR thechat_bootstrap_conversation(conversation_id))"
+        }
+      },
       "checkConstraints": {},
-      "isRLSEnabled": false
+      "isRLSEnabled": true
     },
     "public.conversation_threads": {
       "name": "conversation_threads",
@@ -1602,7 +1927,7 @@
           "name": "created_by_id",
           "type": "uuid",
           "primaryKey": false,
-          "notNull": true
+          "notNull": false
         },
         "last_activity_at": {
           "name": "last_activity_at",
@@ -1627,6 +1952,54 @@
         }
       },
       "indexes": {
+        "conversation_threads_id_conversation_bot_idx": {
+          "name": "conversation_threads_id_conversation_bot_idx",
+          "columns": [
+            {
+              "expression": "id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "conversation_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "bot_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "conversation_threads_id_conversation_idx": {
+          "name": "conversation_threads_id_conversation_idx",
+          "columns": [
+            {
+              "expression": "id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "conversation_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
         "conversation_threads_conversation_id_idx": {
           "name": "conversation_threads_conversation_id_idx",
           "columns": [
@@ -1737,7 +2110,22 @@
           "columnsTo": [
             "id"
           ],
-          "onDelete": "cascade",
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        },
+        "conversation_threads_branch_conversation_fk": {
+          "name": "conversation_threads_branch_conversation_fk",
+          "tableFrom": "conversation_threads",
+          "tableTo": "conversation_threads",
+          "columnsFrom": [
+            "branch_from_thread_id",
+            "conversation_id"
+          ],
+          "columnsTo": [
+            "id",
+            "conversation_id"
+          ],
+          "onDelete": "no action",
           "onUpdate": "no action"
         },
         "conversation_threads_branch_from_thread_id_fk": {
@@ -1756,9 +2144,20 @@
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
-      "policies": {},
+      "policies": {
+        "tenant_access": {
+          "name": "tenant_access",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "public"
+          ],
+          "using": "thechat_can_conversation(conversation_id)",
+          "withCheck": "thechat_can_conversation(conversation_id)"
+        }
+      },
       "checkConstraints": {},
-      "isRLSEnabled": false
+      "isRLSEnabled": true
     },
     "public.conversations": {
       "name": "conversations",
@@ -1887,9 +2286,20 @@
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
-      "policies": {},
+      "policies": {
+        "tenant_access": {
+          "name": "tenant_access",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "public"
+          ],
+          "using": "(thechat_can_conversation(id) OR thechat_bootstrap_conversation(id))",
+          "withCheck": "(thechat_scope_allows((workspace_id)::text) AND (((workspace_id IS NULL) AND (type = 'direct'::conversation_type)) OR thechat_can_workspace((workspace_id)::text)))"
+        }
+      },
       "checkConstraints": {},
-      "isRLSEnabled": false
+      "isRLSEnabled": true
     },
     "public.event_outbox": {
       "name": "event_outbox",
@@ -2174,9 +2584,20 @@
       "foreignKeys": {},
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
-      "policies": {},
+      "policies": {
+        "tenant_access": {
+          "name": "tenant_access",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "public"
+          ],
+          "using": "thechat_can_event((tenant_id)::text, (partition_key)::text)",
+          "withCheck": "thechat_can_event((tenant_id)::text, (partition_key)::text)"
+        }
+      },
       "checkConstraints": {},
-      "isRLSEnabled": false
+      "isRLSEnabled": true
     },
     "public.hermes_bot_configs": {
       "name": "hermes_bot_configs",
@@ -2240,9 +2661,20 @@
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
-      "policies": {},
+      "policies": {
+        "tenant_access": {
+          "name": "tenant_access",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "public"
+          ],
+          "using": "(thechat_identity_authority() OR thechat_manage_bot(bot_id))",
+          "withCheck": "(thechat_identity_authority() OR thechat_manage_bot(bot_id))"
+        }
+      },
       "checkConstraints": {},
-      "isRLSEnabled": false
+      "isRLSEnabled": true
     },
     "public.message_attachments": {
       "name": "message_attachments",
@@ -2259,6 +2691,13 @@
           "type": "uuid",
           "primaryKey": false,
           "notNull": true
+        },
+        "conversation_id": {
+          "name": "conversation_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "NULL"
         },
         "position": {
           "name": "position",
@@ -2331,6 +2770,36 @@
           ],
           "onDelete": "restrict",
           "onUpdate": "no action"
+        },
+        "message_attachments_message_conversation_fk": {
+          "name": "message_attachments_message_conversation_fk",
+          "tableFrom": "message_attachments",
+          "tableTo": "messages",
+          "columnsFrom": [
+            "message_id",
+            "conversation_id"
+          ],
+          "columnsTo": [
+            "id",
+            "conversation_id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "message_attachments_attachment_conversation_fk": {
+          "name": "message_attachments_attachment_conversation_fk",
+          "tableFrom": "message_attachments",
+          "tableTo": "attachments",
+          "columnsFrom": [
+            "attachment_id",
+            "conversation_id"
+          ],
+          "columnsTo": [
+            "id",
+            "conversation_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {
@@ -2343,9 +2812,20 @@
         }
       },
       "uniqueConstraints": {},
-      "policies": {},
+      "policies": {
+        "tenant_access": {
+          "name": "tenant_access",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "public"
+          ],
+          "using": "thechat_can_conversation(conversation_id)",
+          "withCheck": "thechat_can_conversation(conversation_id)"
+        }
+      },
       "checkConstraints": {},
-      "isRLSEnabled": false
+      "isRLSEnabled": true
     },
     "public.message_reactions": {
       "name": "message_reactions",
@@ -2454,9 +2934,20 @@
         }
       },
       "uniqueConstraints": {},
-      "policies": {},
+      "policies": {
+        "tenant_access": {
+          "name": "tenant_access",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "public"
+          ],
+          "using": "(EXISTS ( SELECT 1\n   FROM messages m\n  WHERE ((m.id = message_reactions.message_id) AND thechat_can_conversation(m.conversation_id))))",
+          "withCheck": "(EXISTS ( SELECT 1\n   FROM messages m\n  WHERE ((m.id = message_reactions.message_id) AND thechat_can_conversation(m.conversation_id))))"
+        }
+      },
       "checkConstraints": {},
-      "isRLSEnabled": false
+      "isRLSEnabled": true
     },
     "public.message_unreads": {
       "name": "message_unreads",
@@ -2559,6 +3050,21 @@
           "onDelete": "cascade",
           "onUpdate": "no action"
         },
+        "message_unreads_message_conversation_fk": {
+          "name": "message_unreads_message_conversation_fk",
+          "tableFrom": "message_unreads",
+          "tableTo": "messages",
+          "columnsFrom": [
+            "message_id",
+            "conversation_id"
+          ],
+          "columnsTo": [
+            "id",
+            "conversation_id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
         "message_unreads_participant_fk": {
           "name": "message_unreads_participant_fk",
           "tableFrom": "message_unreads",
@@ -2585,9 +3091,37 @@
         }
       },
       "uniqueConstraints": {},
-      "policies": {},
+      "policies": {
+        "tenant_delete": {
+          "name": "tenant_delete",
+          "as": "PERMISSIVE",
+          "for": "DELETE",
+          "to": [
+            "public"
+          ],
+          "using": "((user_id = thechat_actor()) AND thechat_can_conversation(conversation_id))"
+        },
+        "tenant_insert": {
+          "name": "tenant_insert",
+          "as": "PERMISSIVE",
+          "for": "INSERT",
+          "to": [
+            "public"
+          ],
+          "withCheck": "thechat_can_conversation(conversation_id)"
+        },
+        "tenant_read": {
+          "name": "tenant_read",
+          "as": "PERMISSIVE",
+          "for": "SELECT",
+          "to": [
+            "public"
+          ],
+          "using": "((user_id = thechat_actor()) AND thechat_can_conversation(conversation_id))"
+        }
+      },
       "checkConstraints": {},
-      "isRLSEnabled": false
+      "isRLSEnabled": true
     },
     "public.messages": {
       "name": "messages",
@@ -2617,6 +3151,16 @@
           "type": "uuid",
           "primaryKey": false,
           "notNull": true
+        },
+        "thread_scope_id": {
+          "name": "thread_scope_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "generated": {
+            "as": "coalesce(thread_id::text, '')",
+            "type": "stored"
+          }
         },
         "client_message_id": {
           "name": "client_message_id",
@@ -2652,6 +3196,114 @@
         }
       },
       "indexes": {
+        "messages_id_conversation_idx": {
+          "name": "messages_id_conversation_idx",
+          "columns": [
+            {
+              "expression": "id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "conversation_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "messages_id_conversation_thread_scope_idx": {
+          "name": "messages_id_conversation_thread_scope_idx",
+          "columns": [
+            {
+              "expression": "id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "conversation_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "thread_scope_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "messages_conversation_order_idx": {
+          "name": "messages_conversation_order_idx",
+          "columns": [
+            {
+              "expression": "conversation_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "messages_conversation_thread_order_idx": {
+          "name": "messages_conversation_thread_order_idx",
+          "columns": [
+            {
+              "expression": "conversation_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "thread_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
         "messages_conversation_id_idx": {
           "name": "messages_conversation_id_idx",
           "columns": [
@@ -2773,13 +3425,39 @@
           ],
           "onDelete": "cascade",
           "onUpdate": "no action"
+        },
+        "messages_thread_conversation_fk": {
+          "name": "messages_thread_conversation_fk",
+          "tableFrom": "messages",
+          "tableTo": "conversation_threads",
+          "columnsFrom": [
+            "thread_id",
+            "conversation_id"
+          ],
+          "columnsTo": [
+            "id",
+            "conversation_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
-      "policies": {},
+      "policies": {
+        "tenant_access": {
+          "name": "tenant_access",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "public"
+          ],
+          "using": "thechat_can_conversation(conversation_id)",
+          "withCheck": "thechat_can_conversation(conversation_id)"
+        }
+      },
       "checkConstraints": {},
-      "isRLSEnabled": false
+      "isRLSEnabled": true
     },
     "public.rate_limit": {
       "name": "rate_limit",
@@ -3036,9 +3714,47 @@
       "foreignKeys": {},
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
-      "policies": {},
+      "policies": {
+        "tenant_delete": {
+          "name": "tenant_delete",
+          "as": "PERMISSIVE",
+          "for": "DELETE",
+          "to": [
+            "public"
+          ],
+          "using": "(thechat_identity_authority() OR (thechat_has_actor() AND ((id = thechat_actor()) OR thechat_owns_bot_user(id))))"
+        },
+        "tenant_insert": {
+          "name": "tenant_insert",
+          "as": "PERMISSIVE",
+          "for": "INSERT",
+          "to": [
+            "public"
+          ],
+          "withCheck": "(thechat_identity_authority() OR (thechat_has_actor() AND (type = 'bot'::user_type)))"
+        },
+        "tenant_read": {
+          "name": "tenant_read",
+          "as": "PERMISSIVE",
+          "for": "SELECT",
+          "to": [
+            "public"
+          ],
+          "using": "(thechat_has_actor() OR thechat_identity_authority())"
+        },
+        "tenant_update": {
+          "name": "tenant_update",
+          "as": "PERMISSIVE",
+          "for": "UPDATE",
+          "to": [
+            "public"
+          ],
+          "using": "(thechat_identity_authority() OR (thechat_has_actor() AND ((id = thechat_actor()) OR thechat_owns_bot_user(id))))",
+          "withCheck": "(thechat_identity_authority() OR (thechat_has_actor() AND ((id = thechat_actor()) OR thechat_owns_bot_user(id))))"
+        }
+      },
       "checkConstraints": {},
-      "isRLSEnabled": false
+      "isRLSEnabled": true
     },
     "public.verification": {
       "name": "verification",
@@ -3205,9 +3921,20 @@
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
-      "policies": {},
+      "policies": {
+        "tenant_access": {
+          "name": "tenant_access",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "public"
+          ],
+          "using": "thechat_can_workspace((workspace_id)::text)",
+          "withCheck": "thechat_manage_workspace((workspace_id)::text)"
+        }
+      },
       "checkConstraints": {},
-      "isRLSEnabled": false
+      "isRLSEnabled": true
     },
     "public.workspace_invites": {
       "name": "workspace_invites",
@@ -3378,9 +4105,47 @@
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
-      "policies": {},
+      "policies": {
+        "tenant_delete": {
+          "name": "tenant_delete",
+          "as": "PERMISSIVE",
+          "for": "DELETE",
+          "to": [
+            "public"
+          ],
+          "using": "thechat_manage_workspace((workspace_id)::text)"
+        },
+        "tenant_insert": {
+          "name": "tenant_insert",
+          "as": "PERMISSIVE",
+          "for": "INSERT",
+          "to": [
+            "public"
+          ],
+          "withCheck": "((inviter_id = thechat_actor()) AND thechat_manage_workspace((workspace_id)::text))"
+        },
+        "tenant_read": {
+          "name": "tenant_read",
+          "as": "PERMISSIVE",
+          "for": "SELECT",
+          "to": [
+            "public"
+          ],
+          "using": "(thechat_scope_allows((workspace_id)::text) AND ((invitee_id = thechat_actor()) OR thechat_manage_workspace((workspace_id)::text)))"
+        },
+        "tenant_update": {
+          "name": "tenant_update",
+          "as": "PERMISSIVE",
+          "for": "UPDATE",
+          "to": [
+            "public"
+          ],
+          "using": "(thechat_scope_allows((workspace_id)::text) AND ((invitee_id = thechat_actor()) OR thechat_manage_workspace((workspace_id)::text)))",
+          "withCheck": "(thechat_scope_allows((workspace_id)::text) AND ((invitee_id = thechat_actor()) OR thechat_manage_workspace((workspace_id)::text)))"
+        }
+      },
       "checkConstraints": {},
-      "isRLSEnabled": false
+      "isRLSEnabled": true
     },
     "public.workspace_members": {
       "name": "workspace_members",
@@ -3484,9 +4249,47 @@
         }
       },
       "uniqueConstraints": {},
-      "policies": {},
+      "policies": {
+        "tenant_delete": {
+          "name": "tenant_delete",
+          "as": "PERMISSIVE",
+          "for": "DELETE",
+          "to": [
+            "public"
+          ],
+          "using": "(thechat_manage_workspace((workspace_id)::text) OR (thechat_scope_allows((workspace_id)::text) AND (user_id = thechat_actor())))"
+        },
+        "tenant_insert": {
+          "name": "tenant_insert",
+          "as": "PERMISSIVE",
+          "for": "INSERT",
+          "to": [
+            "public"
+          ],
+          "withCheck": "(thechat_manage_workspace((workspace_id)::text) OR ((role = 'member'::workspace_member_role) AND thechat_can_enroll((workspace_id)::text, user_id)))"
+        },
+        "tenant_read": {
+          "name": "tenant_read",
+          "as": "PERMISSIVE",
+          "for": "SELECT",
+          "to": [
+            "public"
+          ],
+          "using": "(thechat_can_workspace((workspace_id)::text) OR thechat_bootstrap_workspace((workspace_id)::text))"
+        },
+        "tenant_update": {
+          "name": "tenant_update",
+          "as": "PERMISSIVE",
+          "for": "UPDATE",
+          "to": [
+            "public"
+          ],
+          "using": "thechat_manage_workspace((workspace_id)::text)",
+          "withCheck": "thechat_manage_workspace((workspace_id)::text)"
+        }
+      },
       "checkConstraints": {},
-      "isRLSEnabled": false
+      "isRLSEnabled": true
     },
     "public.workspaces": {
       "name": "workspaces",
@@ -3508,7 +4311,7 @@
           "name": "created_by_id",
           "type": "uuid",
           "primaryKey": false,
-          "notNull": true
+          "notNull": false
         },
         "created_at": {
           "name": "created_at",
@@ -3537,15 +4340,53 @@
           "columnsTo": [
             "id"
           ],
-          "onDelete": "cascade",
+          "onDelete": "set null",
           "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
-      "policies": {},
+      "policies": {
+        "tenant_access": {
+          "name": "tenant_access",
+          "as": "PERMISSIVE",
+          "for": "SELECT",
+          "to": [
+            "public"
+          ],
+          "using": "(thechat_can_workspace((id)::text) OR thechat_bootstrap_workspace((id)::text) OR thechat_invited_workspace((id)::text))"
+        },
+        "tenant_delete": {
+          "name": "tenant_delete",
+          "as": "PERMISSIVE",
+          "for": "DELETE",
+          "to": [
+            "public"
+          ],
+          "using": "thechat_manage_workspace((id)::text)"
+        },
+        "tenant_insert": {
+          "name": "tenant_insert",
+          "as": "PERMISSIVE",
+          "for": "INSERT",
+          "to": [
+            "public"
+          ],
+          "withCheck": "(thechat_scope_allows((id)::text) AND (created_by_id = thechat_actor()))"
+        },
+        "tenant_update": {
+          "name": "tenant_update",
+          "as": "PERMISSIVE",
+          "for": "UPDATE",
+          "to": [
+            "public"
+          ],
+          "using": "(thechat_can_workspace((id)::text) OR thechat_invited_workspace((id)::text))",
+          "withCheck": "thechat_manage_workspace((id)::text)"
+        }
+      },
       "checkConstraints": {},
-      "isRLSEnabled": false
+      "isRLSEnabled": true
     }
   },
   "enums": {
@@ -3638,7 +4479,65 @@
   "sequences": {},
   "roles": {},
   "policies": {},
-  "views": {},
+  "views": {
+    "public.bot_identities": {
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "owner_id": {
+          "name": "owner_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "kind": {
+          "name": "kind",
+          "type": "bot_kind",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "avatar_shape": {
+          "name": "avatar_shape",
+          "type": "varchar(32)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "avatar_color": {
+          "name": "avatar_color",
+          "type": "varchar(16)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "name": "bot_identities",
+      "schema": "public",
+      "isExisting": true,
+      "materialized": false
+    }
+  },
   "_meta": {
     "columns": {},
     "schemas": {},

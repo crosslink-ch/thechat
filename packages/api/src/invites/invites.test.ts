@@ -383,7 +383,7 @@ describe("Invites: Decline", () => {
       invitee.token
     );
 
-    expect(detailRes.status).toBe(403);
+    expect(detailRes.status).toBe(404);
   });
 });
 

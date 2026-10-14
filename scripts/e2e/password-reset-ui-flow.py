@@ -17,6 +17,7 @@ import urllib.parse
 import urllib.request
 from contextlib import contextmanager
 from pathlib import Path
+from database_authority import bootstrap_disposable_database
 
 ROOT = Path(__file__).resolve().parents[2]
 TMP = ROOT / ".tmp"
@@ -423,10 +424,7 @@ def main() -> int:
         try:
             assert_ports_available()
             start_containers()
-            run(
-                ["pnpm", "--filter", "@thechat/api", "exec", "drizzle-kit", "push"],
-                env=env,
-            )
+            bootstrap_disposable_database(env, CONTAINERS['postgres'], docker_env=docker_env())
             run_focused_api_tests(
                 env,
                 args.all_api_tests,
@@ -439,10 +437,13 @@ def main() -> int:
                 return 0
 
             with API_LOG.open("wb") as log:
+                api_env = dict(env)
+                for key in ['DATABASE_MIGRATION_URL', 'DATABASE_WORKER_URL']:
+                    api_env.pop(key, None)
                 api = subprocess.Popen(
                     ["bun", "--no-env-file", "run", "src/index.ts"],
                     cwd=ROOT / "packages/api",
-                    env=env,
+                    env=api_env,
                     stdout=log,
                     stderr=subprocess.STDOUT,
                 )

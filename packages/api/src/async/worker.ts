@@ -1,4 +1,4 @@
-import { Worker, type ConnectionOptions, type Job } from "bullmq";
+import { Worker, DelayedError, type ConnectionOptions, type Job } from "bullmq";
 import { withSpan } from "../observability";
 import { log } from "../logging";
 import { createBullMqConnection } from "./bullmq";
@@ -36,7 +36,7 @@ export class AsyncWorkerRuntime {
     for (const queueName of uniqueQueueNames) {
       const worker = new Worker<AsyncMessage, unknown, string>(
         toBullMqQueueName(queueName),
-        (job) => this.processBullMqJob(queueName, job),
+        (job, token) => this.processBullMqJob(queueName, job, token),
         {
           connection: this.connection,
           prefix: this.redisKeyPrefix,
@@ -71,7 +71,7 @@ export class AsyncWorkerRuntime {
     this.workers.length = 0;
   }
 
-  private async processBullMqJob(queueName: QueueName, bullmqJob: Job<AsyncMessage, unknown, string>): Promise<unknown> {
+  private async processBullMqJob(queueName: QueueName, bullmqJob: Job<AsyncMessage, unknown, string>, token?: string): Promise<unknown> {
     const handler = this.handlers.get(handlerKey(queueName, bullmqJob.name));
     if (!handler) {
       throw new Error(`No async handler registered for ${queueName}/${bullmqJob.name}`);
@@ -95,6 +95,10 @@ export class AsyncWorkerRuntime {
       },
       async () => {
         const context: AsyncJobContext = {
+          defer: async delayMs => {
+            await bullmqJob.moveToDelayed(Date.now()+delayMs,token);
+            throw new DelayedError();
+          },
           setProgress: async (progress, detail) => {
             const normalized = Math.max(0, Math.min(100, Math.round(Number.isFinite(progress) ? progress : 0)));
             await bullmqJob.updateProgress(detail === undefined ? normalized : { progress: normalized, detail });

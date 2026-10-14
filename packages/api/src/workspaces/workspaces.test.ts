@@ -1,3 +1,5 @@
+import { withDatabaseContext, withWorkerDatabaseContext } from '../db/index';
+import { asFixtureBot, joinFixtureWorkspace } from '../test-context';
 import { describe, test, expect, afterAll } from "bun:test";
 import { Elysia } from "elysia";
 import { eq, and } from "drizzle-orm";
@@ -332,7 +334,7 @@ describe("Workspaces: Detail", () => {
       stranger.token
     );
 
-    expect(detailRes.status).toBe(403);
+    expect(detailRes.status).toBe(404);
   });
 
   test("rejects nonexistent workspace", async () => {
@@ -365,14 +367,14 @@ describe("Workspaces: Member Management", () => {
     const workspaceId = createRes.body.id;
 
     // Add member directly via service
-    await joinWorkspace(workspaceId, member.user.id);
+    await withDatabaseContext({actorId:member.user.id,scope:'actor'}, () => joinFixtureWorkspace(workspaceId, member.user.id));
 
     return { owner, member, workspaceId };
   }
 
   // Helper: add user to workspace as a member via service
   async function addMember(workspaceId: string, userId: string) {
-    await joinWorkspace(workspaceId, userId);
+    await withDatabaseContext({actorId:userId,scope:'actor'}, () => joinFixtureWorkspace(workspaceId, userId));
   }
 
   test("owner changes member → admin", async () => {
@@ -649,6 +651,6 @@ describe("Workspaces: Member Management", () => {
       undefined,
       member.token
     );
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(404);
   });
 });

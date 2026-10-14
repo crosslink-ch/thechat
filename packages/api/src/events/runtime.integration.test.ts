@@ -1,3 +1,4 @@
+import {withWorkerDatabaseContext} from '../db';
 import { afterAll, describe, expect, test } from "bun:test";
 import crypto from "crypto";
 import { eq, inArray } from "drizzle-orm";
@@ -20,7 +21,7 @@ afterAll(async () => {
 });
 
 describe("PostgreSQL domain-event runtime", () => {
-  test("drains an outbox row directly and acknowledges it only after the handler succeeds", async () => {
+  test("drains an outbox row directly and acknowledges it only after the handler succeeds", async () => withWorkerDatabaseContext(async () => {
     const item = event("test.runtime.success");
     ids.push(item.id);
     const handled: string[] = [];
@@ -53,9 +54,9 @@ describe("PostgreSQL domain-event runtime", () => {
     }
 
     expect(handled).toEqual([item.id]);
-  });
+  }));
 
-  test("quarantines permanent handler failures without retrying", async () => {
+  test("quarantines permanent handler failures without retrying", async () => withWorkerDatabaseContext(async () => {
     const item = event("test.runtime.permanent");
     ids.push(item.id);
     const registry = new DomainEventRegistry().register({
@@ -85,7 +86,7 @@ describe("PostgreSQL domain-event runtime", () => {
     } finally {
       await runtime.close();
     }
-  });
+  }));
 });
 
 function testConfig() {

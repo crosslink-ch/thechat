@@ -12,6 +12,7 @@ import { db } from "../db";
 import {
   users,
   bots,
+  botIdentities,
   workspaceMembers,
   workspaces,
   conversations,
@@ -473,9 +474,9 @@ export async function removeBotFromWorkspace(
   options: { afterWorkspaceLocked?: () => Promise<void> } = {},
 ) {
   const [bot] = await db
-    .select({ userId: bots.userId, ownerId: bots.ownerId })
-    .from(bots)
-    .where(eq(bots.id, botId))
+    .select({ userId: botIdentities.userId, ownerId: botIdentities.ownerId })
+    .from(botIdentities)
+    .where(eq(botIdentities.id, botId))
     .limit(1);
 
   if (!bot) {
@@ -489,11 +490,7 @@ export async function removeBotFromWorkspace(
       .where(eq(workspaces.id, workspaceId))
       .for("update")
       .limit(1);
-    if (!workspace) {
-      throw new ServiceError("Workspace not found", 404);
-    }
-
-    await options.afterWorkspaceLocked?.();
+    if (workspace) await options.afterWorkspaceLocked?.();
 
     const [callerMembership] = await tx
       .select({ role: workspaceMembers.role })
@@ -507,6 +504,16 @@ export async function removeBotFromWorkspace(
       .limit(1);
     const callerIsWorkspaceAdmin =
       callerMembership?.role === "owner" || callerMembership?.role === "admin";
+    if (bot.ownerId === callerId && !callerIsWorkspaceAdmin) {
+      // Identity ownership authorizes only withdrawal of this bot. Do not
+      // elevate its owner to a customer actor or expose recipient/roster IDs.
+      const [locked] = await tx.execute<{ locked: boolean }>(sql`select public.thechat_lock_owned_bot_removal(${botId}::uuid,${workspaceId}) as locked`);
+      if (!locked!.locked) return {success:true,removed:false,botUserId:bot.userId,recipientIds:[] as string[]};
+      if (!workspace) await options.afterWorkspaceLocked?.();
+      const [withdrawn] = await tx.execute<{ removed: boolean }>(sql`select public.thechat_withdraw_owned_bot(${botId}::uuid,${workspaceId}) as removed`);
+      return {success:true,removed:withdrawn!.removed,botUserId:bot.userId,recipientIds:[] as string[]};
+    }
+    if (!workspace) throw new ServiceError("Workspace not found", 404);
     if (bot.ownerId !== callerId && !callerIsWorkspaceAdmin) {
       throw new ServiceError(
         "Only the bot owner or a workspace admin can remove it",
@@ -660,7 +667,15 @@ export async function removeBotFromWorkspace(
   return result;
 }
 
+async function requireOwnedBotIdentity(botId:string,ownerId:string) {
+ const [identity]=await db.select().from(botIdentities).where(eq(botIdentities.id,botId)).limit(1);
+ if(!identity)throw new ServiceError("Bot not found",404);
+ if(identity.ownerId!==ownerId)throw new ServiceError("Only the bot owner can manage this bot",403);
+ return identity;
+}
+
 export async function getBot(botId: string, ownerId: string) {
+  await requireOwnedBotIdentity(botId,ownerId);
   const [row] = await db
     .select({
       id: bots.id,
@@ -701,6 +716,7 @@ export async function updateBot(
     attachmentAccess?: boolean;
   } & BotAvatarChoice,
 ) {
+  await requireOwnedBotIdentity(botId,ownerId);
   // Name and avatar are the bot's identity in every workspace it is in.
   const identityChanged =
     updates.name !== undefined ||
@@ -805,16 +821,7 @@ export async function updateAuthenticatedBotWebhook(
   botUserId: string,
   webhookUrl: string | null
 ) {
-  const [updatedBot] = await db
-    .update(bots)
-    .set({ webhookUrl, endpointRevision: sql`CASE WHEN ${bots.webhookUrl} IS DISTINCT FROM ${webhookUrl} THEN ${bots.endpointRevision} + 1 ELSE ${bots.endpointRevision} END` })
-    .where(eq(bots.userId, botUserId))
-    .returning({
-      id: bots.id,
-      userId: bots.userId,
-      kind: bots.kind,
-      webhookSecret: bots.webhookSecret,
-    });
+  const [updatedBot] = await db.execute<{id:string;userId:string;kind:"webhook"|"hermes";webhookSecret:string}>(sql`select id,user_id as "userId",kind,webhook_secret as "webhookSecret" from thechat_update_own_bot_endpoint(${botUserId}::uuid,${webhookUrl})`);
 
   if (!updatedBot) {
     throw new ServiceError("Bot not found", 404);
@@ -888,10 +895,8 @@ export async function updateAuthenticatedBotCommands(
 
   const commandsJson = commands ? normalizeBotCommands(commands) : null;
 
-  await db
-    .update(bots)
-    .set({ commandsJson })
-    .where(eq(bots.id, bot.id));
+  const changed=await db.execute(sql`select * from thechat_update_own_bot_commands(${botUserId}::uuid,${commandsJson===null?null:JSON.stringify(commandsJson)}::jsonb)`);
+  if(!changed.length)throw new ServiceError("Bot command update denied",403);
 
   return {
     id: bot.id,
@@ -903,6 +908,7 @@ export async function updateAuthenticatedBotCommands(
 }
 
 export async function deleteBot(botId: string, ownerId: string) {
+  await requireOwnedBotIdentity(botId,ownerId);
   await lifecycleTransaction(async (tx) => {
     const [bot] = await tx
       .select({ id: bots.id, ownerId: bots.ownerId, userId: bots.userId })
@@ -934,7 +940,8 @@ export async function deleteBot(botId: string, ownerId: string) {
         ),
       )
       .limit(1);
-    if (workspaceMembership || pendingInvite) {
+    const [dependencies]=await tx.execute<{present:boolean}>(sql`select thechat_bot_has_dependencies(${botId}::uuid) as present`);
+    if (workspaceMembership || pendingInvite || dependencies?.present) {
       throw new ServiceError(
         "Remove the bot from all workspaces and resolve pending workspace requests before deleting it",
         409,
@@ -942,7 +949,8 @@ export async function deleteBot(botId: string, ownerId: string) {
     }
 
     // The Better Auth API-key row cascades with the bot user.
-    await tx.delete(bots).where(eq(bots.id, botId));
+    // Authorize while the owned bot row still exists; its user FK then cascades
+    // identity and key removal atomically. Never delete the ownership witness first.
     await tx.delete(users).where(eq(users.id, bot.userId));
   });
 
@@ -950,6 +958,7 @@ export async function deleteBot(botId: string, ownerId: string) {
 }
 
 export async function regenerateBotKey(botId: string, ownerId: string) {
+  await requireOwnedBotIdentity(botId,ownerId);
   const [bot] = await db
     .select({ id: bots.id, ownerId: bots.ownerId, userId: bots.userId })
     .from(bots)
@@ -981,6 +990,7 @@ export async function regenerateBotKey(botId: string, ownerId: string) {
 }
 
 export async function revokeBotKey(botId: string, ownerId: string) {
+  await requireOwnedBotIdentity(botId,ownerId);
   const [bot] = await db
     .select({ id: bots.id, ownerId: bots.ownerId, userId: bots.userId })
     .from(bots)
@@ -997,6 +1007,7 @@ export async function revokeBotKey(botId: string, ownerId: string) {
 }
 
 export async function regenerateBotSecret(botId: string, ownerId: string) {
+  await requireOwnedBotIdentity(botId,ownerId);
   const [bot] = await db
     .select({ id: bots.id, ownerId: bots.ownerId })
     .from(bots)

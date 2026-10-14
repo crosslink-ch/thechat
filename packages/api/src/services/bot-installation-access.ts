@@ -1,7 +1,8 @@
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { db } from "../db";
 import {
-  bots,
+  botRuntimeMetadata as bots,
+  botIdentities,
   botWorkspaceInstallations,
   botInstallationChannels,
   conversations,
@@ -19,11 +20,12 @@ export async function canBotAccessConversationAttachments(
 ) {
   const [bot] = await executor
     .select()
-    .from(bots)
-    .where(eq(bots.userId, userId))
+    .from(botIdentities)
+    .where(eq(botIdentities.userId, userId))
     .limit(1);
   if (!bot) return true;
-  if (!bot.attachmentAccess) return false;
+  const [safety] = await executor.select({ attachmentAccess: bots.attachmentAccess }).from(bots).where(eq(bots.id, bot.id)).limit(1);
+  if (!safety?.attachmentAccess) return false;
   try {
     const grant = await requireBotInstallationAccess(
       executor,
@@ -45,8 +47,8 @@ export async function requireBotInstallationAccess(
 ) {
   const [bot] = await executor
     .select()
-    .from(bots)
-    .where(eq(bots.userId, userId))
+    .from(botIdentities)
+    .where(eq(botIdentities.userId, userId))
     .limit(1);
   if (!bot) return null;
   const [conversation] = await executor
@@ -54,7 +56,8 @@ export async function requireBotInstallationAccess(
     .from(conversations)
     .where(eq(conversations.id, conversationId))
     .limit(1);
-  if (!conversation?.workspaceId) return null; // Personal DMs retain participation-based authority.
+  if (!conversation) throw new ServiceError('Bot installation does not permit this conversation',403);
+  if (!conversation.workspaceId) return null; // Only a visible personal DM retains participant-based authority.
   const [grant] = await executor
     .select()
     .from(botWorkspaceInstallations)
@@ -70,10 +73,11 @@ export async function requireBotInstallationAccess(
       "Bot installation does not permit this conversation",
       403,
     );
+  const [endpoint] = options.endpoint ? await executor.select({ webhookUrl: bots.webhookUrl, endpointRevision: bots.endpointRevision }).from(bots).where(eq(bots.id, bot.id)).limit(1) : [];
   if (
     options.endpoint &&
-    (grant.approvedEndpointUrl !== bot.webhookUrl ||
-      grant.approvedEndpointRevision !== bot.endpointRevision)
+    (!endpoint || grant.approvedEndpointUrl !== endpoint.webhookUrl ||
+      grant.approvedEndpointRevision !== endpoint.endpointRevision)
   )
     throw new ServiceError(
       "Bot endpoint is not approved for this workspace",
@@ -231,8 +235,8 @@ export async function updateBotInstallation(
       .select()
       .from(bots)
       .where(eq(bots.id, botId))
-      .for("update")
       .limit(1);
+    await tx.execute(sql`select thechat_lock_bot_endpoint(${botId}::uuid)`);
     if (!bot) throw new ServiceError("Bot not found", 404);
     const [membership] = await tx
       .select()

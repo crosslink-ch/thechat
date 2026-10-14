@@ -1,3 +1,5 @@
+import { withDatabaseContext, withWorkerDatabaseContext } from '../db/index';
+import { asFixtureBot } from '../test-context';
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { AsyncLocalStorage } from "node:async_hooks";
 import crypto from "node:crypto";
@@ -244,7 +246,7 @@ describe("attachment lifecycle", () => {
     const id = reserved.body.attachment.id;
     store.acceptLatestUpload(bytes);
     expect((await request("POST", `/attachments/${id}/complete`, {}, owner.token)).status).toBe(200);
-    await validateAndPromoteAttachment(id, { store, maxBytes: 1024 });
+    await withWorkerDatabaseContext(()=>validateAndPromoteAttachment(id, { store, maxBytes: 1024 }));
     const sent = await request("POST", `/messages/${conversationId}`, {
       content: "", attachmentIds: [id], clientMessageId: crypto.randomUUID(),
     }, owner.token);
@@ -261,10 +263,10 @@ describe("attachment lifecycle", () => {
     expect(await db.select().from(attachments).where(eq(attachments.id, id))).toHaveLength(0);
     store.deleteErrorKey = coordinates!.quarantineKey;
     try {
-      await expect(deleteAttachmentObjects(id, store)).rejects.toThrow("simulated attachment object delete failure");
+      await expect(withWorkerDatabaseContext(()=>deleteAttachmentObjects(id, store))).rejects.toThrow("simulated attachment object delete failure");
     } finally { store.deleteErrorKey = null; }
-    await deleteAttachmentObjects(id, store);
-    await deleteAttachmentObjects(id, store);
+    await withWorkerDatabaseContext(()=>deleteAttachmentObjects(id, store));
+    await withWorkerDatabaseContext(()=>deleteAttachmentObjects(id, store));
     expect(await store.headObject({ key: coordinates!.cleanKey!, versionId: coordinates!.cleanVersionId! })).toBeNull();
     expect(await store.headObject({ key: coordinates!.quarantineKey, versionId: coordinates!.quarantineVersionId! })).toBeNull();
     expect(store.deleteCalls.filter(c => c.key === coordinates!.cleanKey).every(c => c.versionId === coordinates!.cleanVersionId)).toBe(true);
@@ -280,13 +282,13 @@ describe("attachment lifecycle", () => {
     expect((await request("POST",`/attachments/${id}/complete`,{},owner.token)).status).toBe(200);
     const lease=(await db.transaction(tx=>claimWorkspaceWork(tx,workspaceId,"validation",id)))!;
     let checks=0;
-    await validateAndPromoteAttachment(id,{store,maxBytes:1024,lease,assertLease:async () => {
+    await withWorkerDatabaseContext(()=>validateAndPromoteAttachment(id,{store,maxBytes:1024,lease,assertLease:async () => {
       await assertWorkspaceWorkLease(lease);
       if(++checks===2){
         await db.execute(sql`update workspace_work set lease_until=now()-interval '1 second' where workspace_id=${workspaceId} and idempotency_key=${id}`);
         await db.transaction(tx=>claimWorkspaceWork(tx,workspaceId,"validation",id));
       }
-    }} as Parameters<typeof validateAndPromoteAttachment>[1]);
+    }} as Parameters<typeof validateAndPromoteAttachment>[1]));
     const [row]=await db.select().from(attachments).where(eq(attachments.id,id));
     expect(row!.status).toBe("processing");
   });
@@ -301,7 +303,7 @@ describe("attachment lifecycle", () => {
       expect((await request("DELETE",`/conversations/channel/${conversationId}`,undefined,owner.token)).status).toBe(200);
       const next=await request("POST","/conversations/channel",{workspaceId,name:"Next"},owner.token); expect(next.status).toBe(200);
       expect((await request("POST","/attachments",{...input,conversationId:next.body.id},owner.token)).status).toBe(429);
-      await retryDurableObjectCleanup(store,1000);
+      await withWorkerDatabaseContext(() => retryDurableObjectCleanup(store,1000));
       expect((await request("POST","/attachments",{...input,conversationId:next.body.id},owner.token)).status).toBe(200);
     }finally{restoreEnv("WORKSPACE_RETAINED_BYTES_LIMIT",old);}
   });
@@ -324,9 +326,9 @@ describe("attachment lifecycle", () => {
       return result;
     };
     try {
-      await expect(validateAndPromoteAttachment(id,{store,maxBytes:1024})).rejects.toThrow("simulated attachment object delete failure");
+      await expect(withWorkerDatabaseContext(()=>validateAndPromoteAttachment(id,{store,maxBytes:1024}))).rejects.toThrow("simulated attachment object delete failure");
     } finally { store.copyObject=original; store.deleteErrorKey=null; }
-    await deleteAttachmentObjects(id,store);
+    await withWorkerDatabaseContext(()=>deleteAttachmentObjects(id,store));
     expect(await store.headObject({key:copiedKey,versionId:copiedVersion})).toBeNull();
   });
   test("channel removal retains workspace byte charges until exact-version cleanup completes", async () => {
@@ -343,13 +345,13 @@ describe("attachment lifecycle", () => {
       const id = reserved.body.attachment.id;
       store.acceptLatestUpload(bytes);
       expect((await request("POST", `/attachments/${id}/complete`, {}, owner.token)).status).toBe(200);
-      await validateAndPromoteAttachment(id, { store, maxBytes: 1024 });
+      await withWorkerDatabaseContext(()=>validateAndPromoteAttachment(id, { store, maxBytes: 1024 }));
       await db.update(attachments).set({ uploadExpiresAt: new Date(0) }).where(eq(attachments.id, id));
       expect((await request("DELETE", `/conversations/channel/${conversationId}`, undefined, owner.token)).status).toBe(200);
       const next = await request("POST", "/conversations/channel", { workspaceId, name: "Remaining" }, owner.token);
       expect(next.status).toBe(200);
       expect((await request("POST", "/attachments", { ...input, conversationId: next.body.id }, owner.token)).status).toBe(429);
-      await deleteAttachmentObjects(id, store);
+      await withWorkerDatabaseContext(()=>deleteAttachmentObjects(id, store));
       expect((await request("POST", "/attachments", { ...input, conversationId: next.body.id }, owner.token)).status).toBe(200);
     } finally { restoreEnv("WORKSPACE_RETAINED_BYTES_LIMIT", old); }
   });
@@ -373,7 +375,7 @@ describe("attachment lifecycle", () => {
       expect((await request("DELETE", `/attachments/${first}`, undefined, owner.token)).status).toBe(200);
       expect((await request("POST", `/attachments/${second}/complete`, {}, owner.token)).status).toBe(200);
       const copies = store.copyCalls.length;
-      await createAttachmentValidationHandler({ store }).handle(createValidationEvent(ATTACHMENT_VALIDATION_REQUESTED, first, owner.user.id));
+      await withWorkerDatabaseContext(()=>createAttachmentValidationHandler({ store }).handle(createValidationEvent(ATTACHMENT_VALIDATION_REQUESTED, first, owner.user.id)));
       expect(store.copyCalls.length).toBe(copies);
     } finally { restoreEnv("WORKSPACE_PENDING_VALIDATION_LIMIT",old); }
   });
@@ -404,17 +406,17 @@ describe("attachment lifecycle", () => {
       return original(input);
     };
     const event = (id: string) => createValidationEvent(ATTACHMENT_VALIDATION_REQUESTED, id, owner.user.id);
-    const running = createAttachmentValidationHandler({ store }).handle(event(first));
+    const running = withWorkerDatabaseContext(()=>createAttachmentValidationHandler({ store }).handle(event(first)));
     await started;
-    const contender = createAttachmentValidationHandler({ store }).handle(event(second)).then(() => ({ status: 200 }), (error: any) => ({ status: error.status }));
+    const contender = withWorkerDatabaseContext(()=>createAttachmentValidationHandler({ store }).handle(event(second))).then(() => ({ status: 200 }), (error: any) => ({ status: error.status }));
     try {
       const result = await Promise.race([contender, Bun.sleep(200).then(() => ({ status: "blocked" }))]);
       expect(result.status).toBe(429);
-      await createAttachmentValidationHandler({ store }).handle(event(other));
+      await withWorkerDatabaseContext(()=>createAttachmentValidationHandler({ store }).handle(event(other)));
       const [progressed] = await db.select().from(attachments).where(eq(attachments.id, other));
       expect(progressed!.status).toBe("ready");
     } finally { release(); await running; await contender; store.getObject = original; }
-    await createAttachmentValidationHandler({ store }).handle(event(second));
+    await withWorkerDatabaseContext(()=>createAttachmentValidationHandler({ store }).handle(event(second)));
     const [done] = await db.select().from(attachments).where(eq(attachments.id, second));
     expect(done!.status).toBe("ready");
   });
@@ -437,8 +439,8 @@ describe("attachment lifecycle", () => {
       const completed = await Promise.all(ids.map(id => request("POST", `/attachments/${id}/complete`, {}, owner.token)));
       expect(completed.map(r => r.status).sort()).toEqual([200, 429]);
       const winner = completed.findIndex(r => r.status === 200);
-      await createAttachmentValidationHandler({ store }).handle(createValidationEvent(
-        ATTACHMENT_VALIDATION_REQUESTED, ids[winner]!, owner.user.id));
+      await withWorkerDatabaseContext(()=>createAttachmentValidationHandler({ store }).handle(createValidationEvent(
+        ATTACHMENT_VALIDATION_REQUESTED, ids[winner]!, owner.user.id)));
       expect((await request("POST", `/attachments/${ids[1-winner]}/complete`, {}, owner.token)).status).toBe(200);
     } finally { restoreEnv("WORKSPACE_PENDING_VALIDATION_LIMIT", old); }
   });
@@ -457,7 +459,7 @@ describe("attachment lifecycle", () => {
       const id = results[winner].body.attachment.id;
       const actor = [owner, member][winner]!;
       expect((await request("DELETE", `/attachments/${id}`, undefined, actor.token)).status).toBe(200);
-      await deleteAttachmentObjects(id, store);
+      await withWorkerDatabaseContext(()=>deleteAttachmentObjects(id, store));
       // The outstanding signed upload capability remains reserved until its TTL.
       expect((await request("POST", "/attachments", input, owner.token)).status).toBe(429);
       await db.update(attachments).set({ uploadExpiresAt: new Date(0) }).where(eq(attachments.id, id));
@@ -480,10 +482,10 @@ describe("attachment lifecycle", () => {
       const id=reserved.body.attachment.id;
       store.acceptLatestUpload(bytes);
       expect((await request("POST",`/attachments/${id}/complete`,{},owner.token)).status).toBe(200);
-      await validateAndPromoteAttachment(id,{store,maxBytes:1024});
+      await withWorkerDatabaseContext(()=>validateAndPromoteAttachment(id,{store,maxBytes:1024}));
       expect((await request("POST",`/messages/${conversationId}`,{content:"",attachmentIds:[id]},owner.token)).status).toBe(200);
       await db.update(attachments).set({expiresAt:new Date(0),uploadExpiresAt:new Date(0)}).where(eq(attachments.id,id));
-      await requestExpiredAttachmentCleanup();
+      await withWorkerDatabaseContext(() => requestExpiredAttachmentCleanup());
       const [row]=await db.select().from(attachments).where(eq(attachments.id,id));
       expect(row!.status).toBe("attached"); expect(row!.retainedUntil).toBeNull();
       expect((await request("GET",`/attachments/${id}/download`,undefined,owner.token)).status).toBe(200);
@@ -505,13 +507,13 @@ describe("attachment lifecycle", () => {
       const id = reserved.body.attachment.id;
       store.acceptLatestUpload(bytes);
       expect((await request("POST", `/attachments/${id}/complete`, {}, owner.token)).status).toBe(200);
-      await validateAndPromoteAttachment(id, { store, maxBytes: 1024 });
+      await withWorkerDatabaseContext(()=>validateAndPromoteAttachment(id, { store, maxBytes: 1024 }));
       expect((await request("POST", `/messages/${conversationId}`, { content: "", attachmentIds: [id] }, owner.token)).status).toBe(200);
       await Bun.sleep(1100);
-      await requestExpiredAttachmentCleanup();
+      await withWorkerDatabaseContext(() => requestExpiredAttachmentCleanup());
       const [row] = await db.select().from(attachments).where(eq(attachments.id, id));
       expect(row!.status).toBe("deleting");
-      await deleteAttachmentObjects(id, store);
+      await withWorkerDatabaseContext(()=>deleteAttachmentObjects(id, store));
       expect((await request("GET", `/attachments/${id}/download`, undefined, owner.token)).status).toBe(409);
       const history = await request("GET", `/messages/${conversationId}`, undefined, owner.token);
       expect(history.body[0].attachments[0].status).toBe("deleted");
@@ -533,7 +535,7 @@ describe("attachment lifecycle", () => {
     const removalLocked = new Promise<void>((resolve) => {
       resolveRemovalLocked = resolve;
     });
-    const removing = removeMember(
+    const removing = withDatabaseContext({actorId:owner.user.id,scope:'actor'}, () => removeMember(
       workspaceId,
       owner.user.id,
       member.user.id,
@@ -543,11 +545,11 @@ describe("attachment lifecycle", () => {
           await removalGate;
         },
       },
-    );
+    ));
     await removalLocked;
 
     let reservationAcquiredWorkspaceLock = false;
-    const reservation = reserveAttachment(
+    const reservation = withDatabaseContext({actorId:member.user.id,scope:'actor'}, () => reserveAttachment(
       member.user.id,
       {
         conversationId,
@@ -565,7 +567,7 @@ describe("attachment lifecycle", () => {
           reservationAcquiredWorkspaceLock = true;
         },
       },
-    ).then(
+    )).then(
       () => ({ status: "fulfilled" as const }),
       (error: unknown) => ({ status: "rejected" as const, error }),
     );
@@ -651,10 +653,10 @@ describe("attachment lifecycle", () => {
       );
     expect(validationEvents).toHaveLength(1);
 
-    await validateAndPromoteAttachment(attachmentId, {
+    await withWorkerDatabaseContext(()=>validateAndPromoteAttachment(attachmentId, {
       store,
       maxBytes: 25 * 1024 * 1024,
-    });
+    }));
     const ready = await request(
       "GET",
       `/attachments/${attachmentId}`,
@@ -898,10 +900,10 @@ describe("attachment lifecycle", () => {
           )
         ).status,
       ).toBe(200);
-      await validateAndPromoteAttachment(attachmentId, {
+      await withWorkerDatabaseContext(()=>validateAndPromoteAttachment(attachmentId, {
         store,
         maxBytes: 25 * 1024 * 1024,
-      });
+      }));
       const ready = await request(
         "GET",
         `/attachments/${attachmentId}`,
@@ -991,10 +993,10 @@ describe("attachment lifecycle", () => {
         )
       ).status,
     ).toBe(200);
-    await validateAndPromoteAttachment(attachmentId, {
+    await withWorkerDatabaseContext(()=>validateAndPromoteAttachment(attachmentId, {
       store,
       maxBytes: 25 * 1024 * 1024,
-    });
+    }));
 
     const ready = await request(
       "GET",
@@ -1193,10 +1195,10 @@ describe("attachment lifecycle", () => {
         )
       ).status,
     ).toBe(200);
-    await validateAndPromoteAttachment(attachmentId, {
+    await withWorkerDatabaseContext(()=>validateAndPromoteAttachment(attachmentId, {
       store,
       maxBytes: 25 * 1024 * 1024,
-    });
+    }));
 
     const remoteTraceparent =
       "00-33333333333333333333333333333333-4444444444444444-01";
@@ -1302,10 +1304,10 @@ describe("attachment lifecycle", () => {
     expect(completed.status).toBe(200);
     expect(completed.body.status).toBe("processing");
 
-    await validateAndPromoteAttachment(attachmentId, {
+    await withWorkerDatabaseContext(()=>validateAndPromoteAttachment(attachmentId, {
       store,
       maxBytes: 25 * 1024 * 1024,
-    });
+    }));
 
     const ready = await request(
       "GET",
@@ -1431,10 +1433,10 @@ describe("attachment lifecycle", () => {
         )
       ).status,
     ).toBe(200);
-    await validateAndPromoteAttachment(botAttachmentId, {
+    await withWorkerDatabaseContext(()=>validateAndPromoteAttachment(botAttachmentId, {
       store,
       maxBytes: 25 * 1024 * 1024,
-    });
+    }));
 
     const command = {
       conversationId,
@@ -1591,7 +1593,7 @@ describe("attachment lifecycle", () => {
 
     const headCallsBefore = store.headCalls;
     const { spans: deletionSpans } = await captureSpans(() =>
-      deleteAttachmentObjects(reserved.body.attachment.id, store),
+      withWorkerDatabaseContext(()=>deleteAttachmentObjects(reserved.body.attachment.id, store)),
     );
     const deletionSpan = exactlyOneSpan(
       deletionSpans,
@@ -1643,10 +1645,10 @@ describe("attachment lifecycle", () => {
         )
       ).status,
     ).toBe(200);
-    await validateAndPromoteAttachment(attachmentId, {
+    await withWorkerDatabaseContext(()=>validateAndPromoteAttachment(attachmentId, {
       store,
       maxBytes: 25 * 1024 * 1024,
-    });
+    }));
 
     const [coordinates] = await db
       .select({
@@ -1672,7 +1674,7 @@ describe("attachment lifecycle", () => {
     ).toBe(200);
 
     store.deleteErrorKey = coordinates!.quarantineKey;
-    await expect(deleteAttachmentObjects(attachmentId, store)).rejects.toThrow(
+    await expect(withWorkerDatabaseContext(()=>deleteAttachmentObjects(attachmentId, store))).rejects.toThrow(
       "simulated attachment object delete failure",
     );
     const [partial] = await db
@@ -1705,7 +1707,7 @@ describe("attachment lifecycle", () => {
     ).not.toBeNull();
 
     store.deleteErrorKey = null;
-    await deleteAttachmentObjects(attachmentId, store);
+    await withWorkerDatabaseContext(()=>deleteAttachmentObjects(attachmentId, store));
     const [deleted] = await db
       .select({
         status: attachments.status,

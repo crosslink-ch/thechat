@@ -1,7 +1,9 @@
+import { withDatabaseContext, withWorkerDatabaseContext } from '../db/index';
+import { asFixtureBot, joinFixtureWorkspace } from '../test-context';
 import { afterAll, expect, test } from "bun:test";
 import { Elysia } from "elysia";
 import { and, eq, inArray } from "drizzle-orm";
-import { db } from "../db";
+import { db } from "../db/testing";
 import { users, workspaces, eventOutbox } from "../db/schema";
 import { authRoutes } from "../auth";
 import { workspaceRoutes } from "../workspaces";
@@ -14,13 +16,13 @@ import { addOwnedBotToWorkspace } from "./bot-workspace-memberships";
 
 test("installation management REST and MCP expose the same human-admin grant contract", async () => {
   const f = await setup();
-  const bot = await createBot(
+  const bot = await withDatabaseContext({actorId:f.owner.user.id,scope:'actor'}, () => createBot(
     "Parity bot",
     "https://synthetic.example.test/hook",
     f.owner.user.id,
-  );
+  ));
   ids.push(bot.userId);
-  await addOwnedBotToWorkspace(bot.id, f.workspace.id, f.owner.user.id);
+  await withDatabaseContext({actorId:f.owner.user.id,scope:'actor'}, () => addOwnedBotToWorkspace(bot.id, f.workspace.id, f.owner.user.id));
   const path = `/workspaces/${f.workspace.id}/bots/${bot.id}/installation`;
   const read = await req("GET", path, f.owner.accessToken);
   expect(read.status).toBe(200);
@@ -47,14 +49,14 @@ test("installation management REST and MCP expose the same human-admin grant con
   expect(write.body.revision).toBe(2);
   expect(typeof tools.get("get_bot_installation")).toBe("function");
   const mcpRead = decode(
-    await tools.get("get_bot_installation")(
+    await withDatabaseContext({actorId:({ authInfo: f.owner.user }).authInfo.id,scope:'actor'}, () => tools.get("get_bot_installation")(
       { workspaceId: f.workspace.id, botId: bot.id },
       { authInfo: f.owner.user },
-    ),
+    )),
   );
   expect(mcpRead).toEqual(write.body);
   const mcpWrite = decode(
-    await tools.get("update_bot_installation")(
+    await withDatabaseContext({actorId:({ authInfo: f.owner.user }).authInfo.id,scope:'actor'}, () => tools.get("update_bot_installation")(
       {
         workspaceId: f.workspace.id,
         botId: bot.id,
@@ -66,7 +68,7 @@ test("installation management REST and MCP expose the same human-admin grant con
         expectedRevision: 2,
       },
       { authInfo: f.owner.user },
-    ),
+    )),
   );
   expect(mcpWrite.revision).toBe(3);
   expect((await req("GET", path, f.owner.accessToken)).body).toEqual(mcpWrite);
@@ -124,9 +126,9 @@ async function register() {
 async function setup() {
   const owner = await register(),
     member = await register();
-  const workspace = await createWorkspace("Parity workspace", owner.user.id);
+  const workspace = await withDatabaseContext({actorId:owner.user.id,scope:'actor'}, () => createWorkspace("Parity workspace", owner.user.id));
   wids.push(workspace.id);
-  await joinWorkspace(workspace.id, member.user.id);
+  await withDatabaseContext({actorId:member.user.id,scope:'actor'}, () => joinFixtureWorkspace(workspace.id, member.user.id));
   return { owner, member, workspace };
 }
 function decode(r: any) {
@@ -159,10 +161,10 @@ test("MCP invite, enrollment and removal persist identical service event contrac
   const f = await setup(),
     invitee = await register();
   const invite = decode(
-    await tools.get("invite_to_workspace")(
+    await withDatabaseContext({actorId:({ authInfo: f.owner.user }).authInfo.id,scope:'actor'}, () => tools.get("invite_to_workspace")(
       { workspaceId: f.workspace.id, email: invitee.user.email },
       { authInfo: f.owner.user },
-    ),
+    )),
   );
   let rows = await db
     .select()
@@ -180,16 +182,16 @@ test("MCP invite, enrollment and removal persist identical service event contrac
   ).toBe(true);
   expect(typeof tools.get("accept_workspace_invite")).toBe("function");
   decode(
-    await tools.get("accept_workspace_invite")(
+    await withDatabaseContext({actorId:({ authInfo: invitee.user }).authInfo.id,scope:'actor'}, () => tools.get("accept_workspace_invite")(
       { inviteId: invite.id },
       { authInfo: invitee.user },
-    ),
+    )),
   );
   decode(
-    await tools.get("remove_member")(
+    await withDatabaseContext({actorId:({ authInfo: f.owner.user }).authInfo.id,scope:'actor'}, () => tools.get("remove_member")(
       { workspaceId: f.workspace.id, userId: invitee.user.id },
       { authInfo: f.owner.user },
-    ),
+    )),
   );
   rows = await db
     .select()

@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import * as database from './index';
-import { eq, sql } from "drizzle-orm";
+import { eq, inArray, sql } from "drizzle-orm";
 import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
 import crypto from 'node:crypto';
@@ -55,7 +55,7 @@ test('explicit worker context uses a separate non-owner maintenance role', async
   await withWorkerDatabaseContext(async()=> {
     const [role]=await database.db.execute<{name: string; bypass: boolean; superuser: boolean}>(sql`select current_user as name,rolbypassrls as bypass,rolsuper as superuser from pg_roles where rolname=current_user`);
     expect(role).toEqual({name:new URL(process.env.DATABASE_WORKER_URL!).username,bypass:true,superuser:false});
-    expect((await database.db.select({id:messages.id}).from(messages)).map(row=>row.id).sort()).toEqual([...messageIds].sort());
+    expect((await database.db.select({id:messages.id}).from(messages).where(inArray(messages.id,messageIds))).map(row=>row.id).sort()).toEqual([...messageIds].sort());
   });
 });
 

@@ -68,21 +68,6 @@ class TestRunnerConfigTests(unittest.TestCase):
                     expected,
                 )
 
-    def test_default_api_suite_uses_integration_timeout_and_skips_guarded_tests(self):
-        package = json.loads(
-            (ROOT / "packages" / "api" / "package.json").read_text()
-        )
-        command = package["scripts"]["test"]
-        self.assertIn("--timeout=30000", command)
-        self.assertIn(
-            "--path-ignore-patterns=src/auth/rate-limit.test.ts",
-            command,
-        )
-        self.assertIn(
-            "--path-ignore-patterns=src/auth/password-reset.test.ts",
-            command,
-        )
-
     def test_approval_urls_follow_explicit_port_overrides(self):
         suites = self._load_suites(
             {

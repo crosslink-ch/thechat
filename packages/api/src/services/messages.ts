@@ -6,7 +6,7 @@ import { loadAttachmentConfig } from "../attachments/config";
 import { db } from "../db";
 import {
   attachments,
-  bots,
+  botRuntimeMetadata as bots,
   conversationParticipants,
   conversationThreads,
   conversations,

@@ -2,7 +2,12 @@
  * Helpers for integration tests that run outside the API package
  * (e.g. desktop hook tests) and need DB cleanup.
  */
-import { db } from "./db";
+import { db as defaultFixtureDb, createFixtureDatabase } from "./db/testing";
+// A live API stack may use a different disposable DB from the isolated API
+// unit suite. This override is fixture/cleanup authority only, never a service.
+const db=process.env.THECHAT_INTEGRATION_FIXTURE_DATABASE_URL
+  ? createFixtureDatabase(process.env.THECHAT_INTEGRATION_FIXTURE_DATABASE_URL)
+  : defaultFixtureDb;
 import { users, workspaces } from "./db/schema";
 import { eq } from "drizzle-orm";
 
