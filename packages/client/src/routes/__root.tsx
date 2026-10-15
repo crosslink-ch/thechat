@@ -2,6 +2,7 @@ import { isWeb } from "../platform/environment";
 import { useEffect } from "react";
 import { Outlet, useNavigate, useRouterState } from "@tanstack/react-router";
 import { AppViewport } from "../components/AppViewport";
+import { ConnectionStatus } from "../components/ConnectionStatus";
 import { ResponsiveShell } from "../components/ResponsiveShell";
 import { useAuthStore } from "../stores/auth";
 import { useWebSocketStore } from "../stores/websocket";
@@ -85,6 +86,7 @@ export function RootView({ authLoading, authenticated, routeKey = "" }: RootView
   return (
     <AppViewport className="relative flex flex-col bg-base">
       <PlatformTitlebar />
+      <ConnectionStatus authenticated={authenticated && !authLoading} />
       {authLoading ? (
         <div className="flex min-h-0 flex-1 items-center justify-center text-[0.929rem] text-text-placeholder">
           Loading...

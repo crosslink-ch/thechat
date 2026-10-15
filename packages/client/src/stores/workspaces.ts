@@ -14,6 +14,7 @@ import { useAuthStore } from "./auth";
 const KV_ACTIVE_WORKSPACE = "active_workspace_id";
 let workspaceSelectionGeneration = 0;
 let workspaceInitializationGeneration = 0;
+let pendingWorkspaceSelection: number | null = null;
 
 async function kvGet(key: PreferenceKey): Promise<string | null> {
   return preferences.get(key, useAuthStore.getState().user?.id);
@@ -31,6 +32,8 @@ interface WorkspacesStore {
   workspaces: WorkspaceListItem[];
   activeWorkspace: WorkspaceWithDetails | null;
   loading: boolean;
+  loaded: boolean;
+  error: string | null;
   initialize: () => Promise<void>;
   selectWorkspace: (id: string) => Promise<boolean>;
   createWorkspace: (name: string) => Promise<void>;
@@ -74,19 +77,19 @@ export function updateExistingWorkspaceChannel(
 }
 
 async function fetchWorkspacesList(token: string | null): Promise<WorkspaceListItem[]> {
-  try {
-    const { data, error } = await api.workspaces.list.get(auth(token));
-    if (error) throw new Error((error as any).error || "Request failed");
-    return data as WorkspaceListItem[];
-  } catch {
-    return [];
-  }
+  const { data, error } = await api.workspaces.list.get(auth(token));
+  if (error) throw new Error(apiErrorMessage(error));
+  return data as WorkspaceListItem[];
 }
 
 type WorkspaceUpdate = Partial<WorkspacesStore> | ((state: WorkspacesStore) => Partial<WorkspacesStore>);
 function workspaceSession(set: (update: WorkspaceUpdate) => void) {
   const generation = sessionGeneration();
-  const current = () => !isWeb || generation === sessionGeneration();
+  const userId = useAuthStore.getState().user?.id;
+  const token = useAuthStore.getState().token;
+  const current = () => generation === sessionGeneration() &&
+    useAuthStore.getState().user?.id === userId &&
+    useAuthStore.getState().token === token;
   return { current, commit: (update: WorkspaceUpdate) => { if (current()) set(update); } };
 }
 
@@ -94,8 +97,12 @@ export const useWorkspacesStore = create<WorkspacesStore>()((set) => ({
   workspaces: [],
   activeWorkspace: null,
   loading: false,
+  loaded: false,
+  error: null,
 
   initialize: async () => {
+    // Background recovery must not supersede a user's in-flight selection.
+    if (pendingWorkspaceSelection !== null) return;
     const session = workspaceSession(set);
     const token = useAuthStore.getState().token;
     if (!authenticated(token)) return;
@@ -112,21 +119,24 @@ export const useWorkspacesStore = create<WorkspacesStore>()((set) => ({
     try {
       const list = await fetchWorkspacesList(token);
       if (!isCurrent()) return;
-      session.commit({ workspaces: list });
+      session.commit((state) => ({
+        workspaces: list,
+        loaded: true,
+        activeWorkspace: list.some((workspace) => workspace.id === state.activeWorkspace?.id)
+          ? state.activeWorkspace : null,
+      }));
 
       const savedId = await kvGet(KV_ACTIVE_WORKSPACE);
       if (!isCurrent()) return;
       if (savedId && list.some((workspace) => workspace.id === savedId)) {
         const { data, error } = await api.workspaces({ id: savedId }).get(auth(token));
         if (!isCurrent()) return;
-        if (error) {
-          session.commit({ activeWorkspace: null });
-          return;
-        }
+        if (error) throw new Error(apiErrorMessage(error));
         session.commit({ activeWorkspace: data as WorkspaceWithDetails });
       }
+      session.commit({ error: null });
     } catch {
-      // A later initialize/select operation owns state once this request is stale.
+      if (isCurrent()) session.commit({ error: "Unable to load workspaces." });
     } finally {
       if (
         initializationRequest === workspaceInitializationGeneration &&
@@ -142,6 +152,7 @@ export const useWorkspacesStore = create<WorkspacesStore>()((set) => ({
     const token = useAuthStore.getState().token;
     if (!authenticated(token)) return false;
     const requestGeneration = ++workspaceSelectionGeneration;
+    pendingWorkspaceSelection = requestGeneration;
     const isCurrent = () =>
       session.current() &&
       requestGeneration === workspaceSelectionGeneration &&
@@ -153,10 +164,13 @@ export const useWorkspacesStore = create<WorkspacesStore>()((set) => ({
       if (!isCurrent()) return false;
       await kvSet(KV_ACTIVE_WORKSPACE, id);
       if (!isCurrent()) return false;
-      session.commit({ activeWorkspace: data as WorkspaceWithDetails });
+      session.commit({ activeWorkspace: data as WorkspaceWithDetails, error: null });
       return true;
     } catch {
+      if (isCurrent()) session.commit({ error: "Unable to load workspace." });
       return false;
+    } finally {
+      if (pendingWorkspaceSelection === requestGeneration) pendingWorkspaceSelection = null;
     }
   },
 
@@ -168,20 +182,20 @@ export const useWorkspacesStore = create<WorkspacesStore>()((set) => ({
     const { data, error } = await api.workspaces.create.post({ name }, auth(token));
     if (error) throw new Error((error as any).error || "Request failed");
 
-    const list = await fetchWorkspacesList(token);
-    session.commit({ workspaces: list });
-
-    // Select the new workspace
-    const id = (data as any).id;
+    if (!session.current()) return;
+    // Creation is already committed server-side. Retain its ID and reconcile
+    // through the read-only retry path; do not make the form repeat the POST.
+    const created = { ...(data as WorkspaceListItem), role: "owner" as const };
+    session.commit((state) => ({
+      workspaces: [...state.workspaces.filter((workspace) => workspace.id !== created.id), created],
+    }));
     try {
-      const res = await api.workspaces({ id }).get(auth(token));
-      if (!res.error) {
-        session.commit({ activeWorkspace: res.data as WorkspaceWithDetails });
-        if (session.current()) await kvSet(KV_ACTIVE_WORKSPACE, id);
-      }
+      await kvSet(KV_ACTIVE_WORKSPACE, created.id);
     } catch {
-      // ignore
+      session.commit({ error: "Workspace created, but unable to save its selection." });
+      return;
     }
+    if (session.current()) await useWorkspacesStore.getState().initialize();
   },
 
   createChannel: async (name: string) => {
@@ -266,7 +280,8 @@ export const useWorkspacesStore = create<WorkspacesStore>()((set) => ({
   reset: () => {
     workspaceSelectionGeneration += 1;
     workspaceInitializationGeneration += 1;
-    set({ workspaces: [], activeWorkspace: null, loading: false });
+    pendingWorkspaceSelection = null;
+    set({ workspaces: [], activeWorkspace: null, loading: false, loaded: false, error: null });
   },
 }));
 
