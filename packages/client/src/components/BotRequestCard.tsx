@@ -503,11 +503,12 @@ function ResolvedBotRequestRow({
       data-request-id={request.id}
       className="flex min-w-0 flex-col gap-0.5 px-1 py-1 text-[0.929rem]"
     >
-      <div className="flex min-w-0 items-center gap-2">
+      {/* One line when it fits; wraps on narrow columns so who answered stays visible. */}
+      <div className="flex min-w-0 items-start gap-2">
         <Icon
           size={15}
           aria-hidden="true"
-          className={`shrink-0 ${
+          className={`mt-[0.2em] shrink-0 ${
             outcome.tone === "denied"
               ? "text-error-bright"
               : outcome.tone === "ok"
@@ -515,17 +516,19 @@ function ResolvedBotRequestRow({
                 : "text-text-dimmed"
           }`}
         />
-        <span className="shrink-0 font-medium text-text-secondary">
-          {request.kind === "approval" ? request.title : boundText(request.title, 120)}
-        </span>
-        <span
-          className={`min-w-0 flex-1 truncate ${
-            outcome.tone === "denied" ? "text-error-light" : "text-text-dimmed"
-          }`}
-          title={outcome.text}
-        >
-          {outcome.text}
-        </span>
+        <div className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-2">
+          <span className="min-w-0 break-words font-medium text-text-secondary">
+            {request.kind === "approval" ? request.title : boundText(request.title, 120)}
+          </span>
+          <span
+            data-testid="bot-request-outcome"
+            className={`min-w-0 break-words ${
+              outcome.tone === "denied" ? "text-error-light" : "text-text-dimmed"
+            }`}
+          >
+            {outcome.text}
+          </span>
+        </div>
       </div>
       {command && (
         <code
