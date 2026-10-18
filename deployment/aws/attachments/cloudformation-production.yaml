@@ -76,6 +76,7 @@ Resources:
             AllowedHeaders:
               - Content-Type
               - If-None-Match
+              - x-amz-sdk-checksum-algorithm
               - x-amz-checksum-sha256
             MaxAge: 300
           - !If
@@ -89,6 +90,7 @@ Resources:
               AllowedHeaders:
                 - Content-Type
                 - If-None-Match
+                - x-amz-sdk-checksum-algorithm
                 - x-amz-checksum-sha256
               MaxAge: 300
             - !Ref AWS::NoValue
@@ -271,6 +273,9 @@ Resources:
               - !Sub "${AttachmentsBucket.Arn}/clean/*"
 
 Outputs:
+  DeprecatedCleanObjectRetentionDays:
+    Description: Legacy input retained for stack-update compatibility; has no effect on clean-version retention
+    Value: !Ref CleanObjectRetentionDays
   BucketName:
     Description: Production attachment bucket
     Value: !Ref AttachmentsBucket

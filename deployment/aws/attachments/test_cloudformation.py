@@ -54,6 +54,19 @@ def load_template(path: Path) -> dict[str, Any]:
 
 
 class PersistentCleanRetentionTests(unittest.TestCase):
+    def test_legacy_retention_setting_is_reported_but_cannot_configure_resources(self) -> None:
+        for path in (DEVELOPMENT_TEMPLATE, PRODUCTION_TEMPLATE):
+            with self.subTest(template=path.name):
+                template = load_template(path)
+                self.assertIn("CleanObjectRetentionDays", template["Parameters"])
+                output = template["Outputs"].get("DeprecatedCleanObjectRetentionDays")
+                self.assertIsNotNone(output, "Report the ignored legacy value during stack inspection")
+                self.assertEqual(output["Value"], {"Ref": "CleanObjectRetentionDays"})
+                self.assertIn("no effect", output["Description"])
+                # It must not influence resources directly, or through a condition/rule.
+                for section in ("Resources", "Conditions", "Rules"):
+                    self.assertNotIn("CleanObjectRetentionDays", json.dumps(template.get(section, {})))
+
     def test_every_template_protects_current_and_noncurrent_clean_versions(self) -> None:
         for path in (DEVELOPMENT_TEMPLATE, PRODUCTION_TEMPLATE):
             bucket = load_template(path)["Resources"]["AttachmentsBucket"]["Properties"]
@@ -264,6 +277,7 @@ class ProductionAttachmentTemplateTests(unittest.TestCase):
                 "AllowedHeaders": [
                     "Content-Type",
                     "If-None-Match",
+                    "x-amz-sdk-checksum-algorithm",
                     "x-amz-checksum-sha256",
                 ],
                 "MaxAge": 300,
@@ -296,7 +310,7 @@ class ProductionAttachmentTemplateTests(unittest.TestCase):
             "Id": "TheChatBrowserClient",
             "AllowedOrigins": [{"Ref": "BrowserOrigin"}],
             "AllowedMethods": ["GET", "PUT"],
-            "AllowedHeaders": ["Content-Type", "If-None-Match", "x-amz-checksum-sha256"],
+            "AllowedHeaders": ["Content-Type", "If-None-Match", "x-amz-sdk-checksum-algorithm", "x-amz-checksum-sha256"],
             "MaxAge": 300,
         })
 
@@ -414,11 +428,12 @@ class ProductionAttachmentTemplateTests(unittest.TestCase):
         self.assertIsNone(pattern.fullmatch("thechat.attachments.production"))
         self.assertIsNone(pattern.fullmatch("-thechat-attachments"))
 
-    def test_outputs_contain_identity_handles_but_no_credentials(self) -> None:
+    def test_outputs_contain_identity_handles_and_nonsecret_compatibility_value(self) -> None:
         output_names = set(self.template["Outputs"])
         self.assertEqual(
             output_names,
             {
+                "DeprecatedCleanObjectRetentionDays",
                 "BucketName",
                 "BucketArn",
                 "Region",

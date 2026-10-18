@@ -61,6 +61,16 @@ workerTest('actual maintenance worker publishes a REST-produced event without ru
   const message:any=await sent.json();
   const [event]=await owner`select id,event from event_outbox where event->'payload'->>'messageId'=${message.id}`;
   expect((event!.event as any).payload.targetBotIds).toEqual([]);
+  // Exercise the worker's lazy Redis publisher too, not only outbox accounting.
+  const { db: runtimeDb, withWorkerDatabaseContext } = await import('./index');
+  const { stageLifecycleNotification } = await import('../events/workspace-lifecycle');
+  await withWorkerDatabaseContext(() => runtimeDb.transaction(tx =>
+    stageLifecycleNotification(tx, workspaceId, [actorId], {
+      type: 'member_role_changed', workspaceId, userId: actorId, newRole: 'owner',
+    }),
+  ));
+  const [notification] = await owner`select id from event_outbox where tenant_id=${workspaceId} and event_type='workspace.lifecycle.notification'`;
+  expect(notification).toBeDefined();
   const env={...process.env};
   for(const name of ['DATABASE_URL','DATABASE_AUTH_URL','DATABASE_MIGRATION_URL']) delete env[name];
   child=Bun.spawn(['bun','run','--env-file','/dev/null',fileURLToPath(new URL('../scripts/worker.ts',import.meta.url))],{
@@ -71,8 +81,8 @@ workerTest('actual maintenance worker publishes a REST-produced event without ru
   const deadline=Date.now()+20000;
   let published=false;
   while(Date.now()<deadline && child.exitCode===null) {
-    const [state]=await owner`select published_at,dead_at from event_outbox where id=${event!.id}`;
-    if(state?.published_at && !state.dead_at) {published=true;break;}
+    const states=await owner`select published_at,dead_at from event_outbox where id in (${event!.id},${notification!.id})`;
+    if(states.length===2 && states.every(state => state.published_at && !state.dead_at)) {published=true;break;}
     await Bun.sleep(25);
   }
   child.kill('SIGTERM');

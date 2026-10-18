@@ -51,6 +51,7 @@ Resources:
             AllowedHeaders:
               - Content-Type
               - If-None-Match
+              - x-amz-sdk-checksum-algorithm
               - x-amz-checksum-sha256
               - x-amz-content-sha256
               - x-amz-date
@@ -257,6 +258,9 @@ Resources:
           Value: cloudformation
 
 Outputs:
+  DeprecatedCleanObjectRetentionDays:
+    Description: Legacy input retained for stack-update compatibility; has no effect on clean-version retention
+    Value: !Ref CleanObjectRetentionDays
   BucketName:
     Description: Development attachment bucket
     Value: !Ref AttachmentsBucket

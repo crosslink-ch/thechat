@@ -5,6 +5,7 @@ import {
 } from "../events/runtime";
 import { initObservability, shutdownObservability } from "../observability";
 import { log } from "../logging";
+import { closeRealtimeBus } from "../realtime";
 import { assertWorkerDatabaseSafety, closeDatabaseConnections, withWorkerDatabaseContext } from '../db';
 import {
   closeAttachmentCleanup,
@@ -31,6 +32,8 @@ async function main() {
       closeDomainEventRuntime(),
       closeBotRuntime(),
     ]);
+    // Handlers can lazily create the Redis publisher; drain them before closing it.
+    await closeRealtimeBus();
     await shutdownObservability();
     await closeDatabaseConnections();
   }
@@ -51,6 +54,7 @@ withWorkerDatabaseContext(main).catch(async (error) => {
     closeDomainEventRuntime(),
     closeBotRuntime(),
   ]);
+  await closeRealtimeBus();
   await shutdownObservability();
   await closeDatabaseConnections();
   process.exitCode = 1;
