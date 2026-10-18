@@ -1,5 +1,5 @@
-import { and, eq } from "drizzle-orm";
-import { alias } from "drizzle-orm/pg-core";
+import { and, eq, sql } from "drizzle-orm";
+
 import {
   resolveBotAppearance,
   type BotWorkspaceInvite,
@@ -10,7 +10,8 @@ import {
 } from "@thechat/shared";
 import { db } from "../db";
 import {
-  bots,
+  botIdentities as bots,
+  botInviteMetadata,
   botWorkspaceInvites,
   conversationParticipants,
   conversations,
@@ -18,8 +19,10 @@ import {
   workspaceMembers,
   workspaces,
 } from "../db/schema";
-import { broadcastToUser } from "../ws";
+
 import { ServiceError } from "./errors";
+import { createApprovedBotInstallation } from "./bot-installation-access";
+import { lifecycleTransaction, stageLifecycleNotification } from "../events/workspace-lifecycle";
 import { removeBotFromWorkspace } from "./bots";
 
 type DbTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
@@ -48,8 +51,7 @@ type InviteRecord = {
   createdAt: Date;
 };
 
-const botUsers = alias(users, "bot_workspace_invite_bot_users");
-const requesterUsers = alias(users, "bot_workspace_invite_requester_users");
+
 
 function serializeInvite(invite: InviteRecord): BotWorkspaceInvite {
   return {
@@ -75,8 +77,9 @@ async function requireWorkspaceAdmin(
   userId: string,
 ) {
   const [membership] = await tx
-    .select({ role: workspaceMembers.role })
+    .select({ role: workspaceMembers.role, userType: users.type })
     .from(workspaceMembers)
+    .innerJoin(users, eq(users.id, workspaceMembers.userId))
     .where(
       and(
         eq(workspaceMembers.workspaceId, workspaceId),
@@ -85,7 +88,7 @@ async function requireWorkspaceAdmin(
     )
     .limit(1);
 
-  if (!membership || !["owner", "admin"].includes(membership.role)) {
+  if (!membership || membership.userType !== "human" || !["owner", "admin"].includes(membership.role)) {
     throw new ServiceError(
       "Only workspace admins can manage bots",
       403,
@@ -158,7 +161,9 @@ async function attachBotMembership(
   tx: DbTransaction,
   workspaceId: string,
   bot: BotRecord,
+  workspaceApproverId: string,
 ): Promise<{ member: WorkspaceMember; inserted: boolean }> {
+  await createApprovedBotInstallation(tx, workspaceId, bot.id, workspaceApproverId);
   const [insertedMembership] = await tx
     .insert(workspaceMembers)
     .values({
@@ -211,9 +216,7 @@ async function attachBotMembership(
     throw new ServiceError("Could not add bot to workspace", 500);
   }
 
-  return {
-    inserted: Boolean(insertedMembership),
-    member: {
+  const member: WorkspaceMember = {
       userId: bot.userId,
       user: {
         id: bot.userId,
@@ -229,27 +232,14 @@ async function attachBotMembership(
       },
       role: "member",
       joinedAt: joinedAt.toISOString(),
-    },
   };
-}
-
-function broadcastToRecipients(userIds: Iterable<string>, event: WsServerEvent) {
-  for (const userId of new Set(userIds)) {
-    broadcastToUser(userId, event);
+  if (insertedMembership) {
+    const recipients = await getHumanWorkspaceRecipientIds(tx, workspaceId);
+    await stageLifecycleNotification(tx, workspaceId, recipients, { type: "member_joined", workspaceId, member });
   }
+  return { inserted: Boolean(insertedMembership), member };
 }
 
-function broadcastMemberJoined(
-  workspaceId: string,
-  member: WorkspaceMember,
-  recipientIds: string[],
-) {
-  broadcastToRecipients(recipientIds, {
-    type: "member_joined",
-    workspaceId,
-    member,
-  });
-}
 
 function resolvedEvent(
   inviteId: string,
@@ -271,7 +261,7 @@ async function resolveOutstandingRequestsForAttachedBot(
   workspaceId: string,
   botId: string,
 ) {
-  return tx
+  const resolved = await tx
     .update(botWorkspaceInvites)
     .set({ status: "accepted", updatedAt: new Date() })
     .where(
@@ -285,6 +275,12 @@ async function resolveOutstandingRequestsForAttachedBot(
       id: botWorkspaceInvites.id,
       requesterId: botWorkspaceInvites.requesterId,
     });
+  if (resolved.length) {
+    const bot = await getBotRecord(tx, botId);
+    const recipients = await getHumanWorkspaceRecipientIds(tx, workspaceId);
+    for (const invite of resolved) await stageLifecycleNotification(tx, workspaceId, [...recipients, invite.requesterId, bot.ownerId], resolvedEvent(invite.id, workspaceId, botId, "accepted"));
+  }
+  return resolved;
 }
 
 export async function addOwnedBotToWorkspace(
@@ -292,7 +288,7 @@ export async function addOwnedBotToWorkspace(
   workspaceId: string,
   callerId: string,
 ) {
-  const result = await db.transaction(async (tx) => {
+  await lifecycleTransaction(async (tx) => {
     await lockWorkspace(tx, workspaceId);
     await requireWorkspaceAdmin(tx, workspaceId, callerId);
     const bot = await getBotRecord(tx, botId);
@@ -303,7 +299,7 @@ export async function addOwnedBotToWorkspace(
       );
     }
 
-    const attachment = await attachBotMembership(tx, workspaceId, bot);
+    const attachment = await attachBotMembership(tx, workspaceId, bot, callerId);
     const recipients = await getHumanWorkspaceRecipientIds(tx, workspaceId);
     const resolved = await resolveOutstandingRequestsForAttachedBot(
       tx,
@@ -314,18 +310,8 @@ export async function addOwnedBotToWorkspace(
     return { bot, attachment, recipients, resolved };
   });
 
-  if (result.attachment.inserted) {
-    broadcastMemberJoined(
-      workspaceId,
-      result.attachment.member,
-      result.recipients,
-    );
-  }
-  for (const invite of result.resolved) {
-    broadcastToRecipients([...result.recipients, invite.requesterId, result.bot.ownerId],
-      resolvedEvent(invite.id, workspaceId, botId, "accepted"),
-    );
-  }
+
+
 
   return { success: true, botId };
 }
@@ -336,7 +322,7 @@ export async function requestBotForWorkspace(
   requesterId: string,
   options: { afterWorkspaceLocked?: () => Promise<void> } = {},
 ): Promise<BotWorkspaceInviteResult> {
-  const result = await db.transaction(async (tx) => {
+  const result = await lifecycleTransaction(async (tx) => {
     const workspace = await lockWorkspace(tx, workspaceId);
     await options.afterWorkspaceLocked?.();
     await requireWorkspaceAdmin(tx, workspaceId, requesterId);
@@ -352,7 +338,7 @@ export async function requestBotForWorkspace(
     }
 
     if (bot.ownerId === requesterId) {
-      const attachment = await attachBotMembership(tx, workspaceId, bot);
+      const attachment = await attachBotMembership(tx, workspaceId, bot, requesterId);
       const recipients = await getHumanWorkspaceRecipientIds(tx, workspaceId);
       const resolved = await resolveOutstandingRequestsForAttachedBot(
         tx,
@@ -414,23 +400,13 @@ export async function requestBotForWorkspace(
       createdAt: inserted.createdAt,
     });
 
+    await stageLifecycleNotification(tx, workspaceId, [bot.ownerId], { type: "bot_workspace_invite_received", invite });
     return { kind: "pending" as const, bot, invite };
   });
 
   if (result.kind === "added") {
-    if (result.attachment.inserted) {
-      broadcastMemberJoined(
-        workspaceId,
-        result.attachment.member,
-        result.recipients,
-      );
-    }
-    for (const invite of result.resolved) {
-      broadcastToRecipients(
-        [...result.recipients, invite.requesterId, result.bot.ownerId],
-        resolvedEvent(invite.id, workspaceId, botId, "accepted"),
-      );
-    }
+
+
     return { status: "added", botId };
   }
 
@@ -438,38 +414,12 @@ export async function requestBotForWorkspace(
     return { status: "added", botId };
   }
 
-  broadcastToUser(result.bot.ownerId, {
-    type: "bot_workspace_invite_received",
-    invite: result.invite,
-  });
+
   return { status: "pending", invite: result.invite };
 }
 
 function pendingInviteSelect() {
-  return db
-    .select({
-      id: botWorkspaceInvites.id,
-      workspaceId: botWorkspaceInvites.workspaceId,
-      workspaceName: workspaces.name,
-      botId: botWorkspaceInvites.botId,
-      botUserId: bots.userId,
-      botName: botUsers.name,
-      botAvatarShape: bots.avatarShape,
-      botAvatarColor: bots.avatarColor,
-      requesterId: botWorkspaceInvites.requesterId,
-      requesterName: requesterUsers.name,
-      status: botWorkspaceInvites.status,
-      createdAt: botWorkspaceInvites.createdAt,
-      ownerId: bots.ownerId,
-    })
-    .from(botWorkspaceInvites)
-    .innerJoin(workspaces, eq(botWorkspaceInvites.workspaceId, workspaces.id))
-    .innerJoin(bots, eq(botWorkspaceInvites.botId, bots.id))
-    .innerJoin(botUsers, eq(bots.userId, botUsers.id))
-    .innerJoin(
-      requesterUsers,
-      eq(botWorkspaceInvites.requesterId, requesterUsers.id),
-    );
+  return db.select().from(botInviteMetadata);
 }
 
 export async function listWorkspaceBotInvites(
@@ -477,8 +427,9 @@ export async function listWorkspaceBotInvites(
   callerId: string,
 ): Promise<BotWorkspaceInvite[]> {
   const [membership] = await db
-    .select({ role: workspaceMembers.role })
+    .select({ role: workspaceMembers.role, userType: users.type })
     .from(workspaceMembers)
+    .innerJoin(users, eq(users.id, workspaceMembers.userId))
     .where(
       and(
         eq(workspaceMembers.workspaceId, workspaceId),
@@ -486,7 +437,7 @@ export async function listWorkspaceBotInvites(
       ),
     )
     .limit(1);
-  if (!membership || !["owner", "admin"].includes(membership.role)) {
+  if (!membership || membership.userType !== "human" || !["owner", "admin"].includes(membership.role)) {
     throw new ServiceError(
       "Only workspace admins can view bot approval requests",
       403,
@@ -495,8 +446,8 @@ export async function listWorkspaceBotInvites(
 
   const rows = await pendingInviteSelect().where(
     and(
-      eq(botWorkspaceInvites.workspaceId, workspaceId),
-      eq(botWorkspaceInvites.status, "pending"),
+      eq(botInviteMetadata.workspaceId, workspaceId),
+      eq(botInviteMetadata.status, "pending"),
     ),
   );
   return rows.map(serializeInvite);
@@ -507,189 +458,33 @@ export async function listOwnedPendingBotWorkspaceInvites(
 ): Promise<BotWorkspaceInvite[]> {
   const rows = await pendingInviteSelect().where(
     and(
-      eq(bots.ownerId, ownerId),
-      eq(botWorkspaceInvites.status, "pending"),
+      eq(botInviteMetadata.ownerId, ownerId),
+      eq(botInviteMetadata.status, "pending"),
     ),
   );
   return rows.map(serializeInvite);
 }
 
-async function getInviteForResolution(
-  tx: DbTransaction,
-  inviteId: string,
-  ownerId: string,
-) {
-  const resolutionBotUsers = alias(users, "resolution_bot_users");
-  const resolutionRequesterUsers = alias(users, "resolution_requester_users");
-  const [invite] = await tx
-    .select({
-      id: botWorkspaceInvites.id,
-      workspaceId: botWorkspaceInvites.workspaceId,
-      workspaceName: workspaces.name,
-      botId: botWorkspaceInvites.botId,
-      botUserId: bots.userId,
-      botOwnerId: bots.ownerId,
-      botName: resolutionBotUsers.name,
-      botKind: bots.kind,
-      botAvatarShape: bots.avatarShape,
-      botAvatarColor: bots.avatarColor,
-      requesterId: botWorkspaceInvites.requesterId,
-      requesterName: resolutionRequesterUsers.name,
-      status: botWorkspaceInvites.status,
-      createdAt: botWorkspaceInvites.createdAt,
-    })
-    .from(botWorkspaceInvites)
-    .innerJoin(workspaces, eq(botWorkspaceInvites.workspaceId, workspaces.id))
-    .innerJoin(bots, eq(botWorkspaceInvites.botId, bots.id))
-    .innerJoin(resolutionBotUsers, eq(bots.userId, resolutionBotUsers.id))
-    .innerJoin(
-      resolutionRequesterUsers,
-      eq(botWorkspaceInvites.requesterId, resolutionRequesterUsers.id),
-    )
-    .where(eq(botWorkspaceInvites.id, inviteId))
-    .limit(1);
 
-  if (!invite) {
-    throw new ServiceError("Bot approval request not found", 404);
+async function resolveOwnedBotConsent(inviteId: string, ownerId: string, decision: 'accepted'|'declined') {
+  try {
+    const [result] = await db.execute<{result: {success:true;workspaceId:string;botId:string}}>(sql`select thechat_resolve_bot_installation_invite(${inviteId}::uuid,${decision}) as result where thechat_actor()=${ownerId}::uuid`);
+    if (!result) throw new ServiceError('Only the bot owner can resolve this request',403);
+    return result.result;
+  } catch(error:any) {
+    const cause=error.cause??error;
+    if(cause.code==='42501')throw new ServiceError(cause.message,403);
+    if(cause.code==='P0002')throw new ServiceError(cause.message,404);
+    if(cause.code==='P0001')throw new ServiceError(cause.message,409);
+    throw error;
   }
-  if (invite.botOwnerId !== ownerId) {
-    throw new ServiceError(
-      "Only the bot owner can resolve this request",
-      403,
-    );
-  }
-  if (invite.status !== "pending") {
-    throw new ServiceError(
-      "Bot approval request is no longer pending",
-      409,
-    );
-  }
-
-  return invite;
 }
-
-export async function acceptBotWorkspaceInvite(
-  inviteId: string,
-  ownerId: string,
-) {
-  const result = await db.transaction(async (tx) => {
-    const invite = await getInviteForResolution(tx, inviteId, ownerId);
-    await lockWorkspace(tx, invite.workspaceId);
-    await requireWorkspaceAdmin(tx, invite.workspaceId, invite.requesterId).catch(
-      (error) => {
-        if (error instanceof ServiceError && error.status === 403) {
-          throw new ServiceError(
-            "The requester is no longer a workspace admin",
-            409,
-          );
-        }
-        throw error;
-      },
-    );
-
-    const [updated] = await tx
-      .update(botWorkspaceInvites)
-      .set({ status: "accepted", updatedAt: new Date() })
-      .where(
-        and(
-          eq(botWorkspaceInvites.id, inviteId),
-          eq(botWorkspaceInvites.status, "pending"),
-        ),
-      )
-      .returning({ id: botWorkspaceInvites.id });
-    if (!updated) {
-      throw new ServiceError(
-        "Bot approval request is no longer pending",
-        409,
-      );
-    }
-
-    const attachment = await attachBotMembership(tx, invite.workspaceId, {
-      id: invite.botId,
-      userId: invite.botUserId,
-      ownerId: invite.botOwnerId,
-      name: invite.botName,
-      kind: invite.botKind,
-      avatarShape: invite.botAvatarShape,
-      avatarColor: invite.botAvatarColor,
-    });
-    const recipients = await getHumanWorkspaceRecipientIds(
-      tx,
-      invite.workspaceId,
-    );
-    const adminRecipients = await getHumanWorkspaceRecipientIds(
-      tx,
-      invite.workspaceId,
-      true,
-    );
-
-    return { invite, attachment, recipients, adminRecipients };
-  });
-
-  if (result.attachment.inserted) {
-    broadcastMemberJoined(
-      result.invite.workspaceId,
-      result.attachment.member,
-      result.recipients,
-    );
-  }
-  broadcastToRecipients(
-    [...result.adminRecipients, result.invite.requesterId, ownerId],
-    resolvedEvent(
-      inviteId,
-      result.invite.workspaceId,
-      result.invite.botId,
-      "accepted",
-    ),
-  );
-
-  return {
-    success: true,
-    workspaceId: result.invite.workspaceId,
-    botId: result.invite.botId,
-  };
+export async function acceptBotWorkspaceInvite(inviteId:string,ownerId:string) {
+  return resolveOwnedBotConsent(inviteId,ownerId,'accepted');
 }
-
-export async function declineBotWorkspaceInvite(
-  inviteId: string,
-  ownerId: string,
-) {
-  const result = await db.transaction(async (tx) => {
-    const invite = await getInviteForResolution(tx, inviteId, ownerId);
-    const [updated] = await tx
-      .update(botWorkspaceInvites)
-      .set({ status: "declined", updatedAt: new Date() })
-      .where(
-        and(
-          eq(botWorkspaceInvites.id, inviteId),
-          eq(botWorkspaceInvites.status, "pending"),
-        ),
-      )
-      .returning({ id: botWorkspaceInvites.id });
-    if (!updated) {
-      throw new ServiceError(
-        "Bot approval request is no longer pending",
-        409,
-      );
-    }
-    const admins = await getHumanWorkspaceRecipientIds(
-      tx,
-      invite.workspaceId,
-      true,
-    );
-    return { invite, admins };
-  });
-
-  broadcastToRecipients(
-    [...result.admins, result.invite.requesterId, ownerId],
-    resolvedEvent(
-      inviteId,
-      result.invite.workspaceId,
-      result.invite.botId,
-      "declined",
-    ),
-  );
-  return { success: true };
+export async function declineBotWorkspaceInvite(inviteId:string,ownerId:string) {
+  await resolveOwnedBotConsent(inviteId,ownerId,'declined');
+  return {success:true};
 }
 
 export async function cancelBotWorkspaceInvite(
@@ -697,7 +492,7 @@ export async function cancelBotWorkspaceInvite(
   inviteId: string,
   callerId: string,
 ) {
-  const result = await db.transaction(async (tx) => {
+  await lifecycleTransaction(async (tx) => {
     await lockWorkspace(tx, workspaceId);
     await requireWorkspaceAdmin(tx, workspaceId, callerId);
     const [invite] = await tx
@@ -744,13 +539,11 @@ export async function cancelBotWorkspaceInvite(
       );
     }
     const admins = await getHumanWorkspaceRecipientIds(tx, workspaceId, true);
+    await stageLifecycleNotification(tx, workspaceId, [invite.ownerId, invite.requesterId, ...admins], resolvedEvent(inviteId, workspaceId, invite.botId, "cancelled"));
     return { invite, admins };
   });
 
-  broadcastToRecipients(
-    [result.invite.ownerId, result.invite.requesterId, ...result.admins],
-    resolvedEvent(inviteId, workspaceId, result.invite.botId, "cancelled"),
-  );
+
   return { success: true };
 }
 
@@ -760,12 +553,6 @@ export async function removeBotWorkspaceMembership(
   callerId: string,
 ) {
   const result = await removeBotFromWorkspace(botId, workspaceId, callerId);
-  if (result.removed) {
-    broadcastToRecipients(result.recipientIds, {
-      type: "member_removed",
-      workspaceId,
-      userId: result.botUserId,
-    });
-  }
+
   return { success: result.success };
 }

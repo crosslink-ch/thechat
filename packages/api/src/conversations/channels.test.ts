@@ -1,10 +1,12 @@
+import { withDatabaseContext, withWorkerDatabaseContext } from '../db/index';
+import { asFixtureBot } from '../test-context';
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import crypto from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import { Elysia } from "elysia";
 import { authRoutes } from "../auth";
 import { conversationRoutes } from "../conversations";
-import { db } from "../db";
+import { db } from "../db/testing";
 import {
   attachments,
   botInvocations,
@@ -293,7 +295,7 @@ describe("Channel management", () => {
           outsider.token,
         )
       ).status,
-    ).toBe(403);
+    ).toBe(404);
     expect(
       (
         await req(
@@ -386,7 +388,7 @@ describe("Channel management", () => {
     const createLocked = new Promise<void>((resolve) => {
       resolveCreateLocked = resolve;
     });
-    const creating = createChannel(
+    const creating = withDatabaseContext({actorId:member.user.id,scope:'actor'}, () => createChannel(
       workspaceId,
       "Race Protected",
       member.user.id,
@@ -396,11 +398,11 @@ describe("Channel management", () => {
           await createGate;
         },
       },
-    );
+    ));
     await createLocked;
 
     let removalAcquiredWorkspaceLock = false;
-    const removing = removeMember(
+    const removing = withDatabaseContext({actorId:owner.user.id,scope:'actor'}, () => removeMember(
       workspaceId,
       owner.user.id,
       member.user.id,
@@ -409,7 +411,7 @@ describe("Channel management", () => {
           removalAcquiredWorkspaceLock = true;
         },
       },
-    );
+    ));
     await Bun.sleep(100);
     const removalWasBlocked = !removalAcquiredWorkspaceLock;
     releaseCreate();
@@ -476,7 +478,7 @@ describe("Channel management", () => {
     const removalLocked = new Promise<void>((resolve) => {
       resolveRemovalLocked = resolve;
     });
-    const removing = removeMember(
+    const removing = withDatabaseContext({actorId:owner.user.id,scope:'actor'}, () => removeMember(
       workspaceId,
       owner.user.id,
       member.user.id,
@@ -486,11 +488,11 @@ describe("Channel management", () => {
           await removalGate;
         },
       },
-    );
+    ));
     await removalLocked;
 
     let creationAcquiredWorkspaceLock = false;
-    const creationResult = createChannel(
+    const creationResult = withDatabaseContext({actorId:member.user.id,scope:'actor'}, () => createChannel(
       workspaceId,
       "Must Not Exist",
       member.user.id,
@@ -499,7 +501,7 @@ describe("Channel management", () => {
           creationAcquiredWorkspaceLock = true;
         },
       },
-    ).then(
+    )).then(
       () => ({ status: "fulfilled" as const }),
       (error: unknown) => ({ status: "rejected" as const, error }),
     );
@@ -536,13 +538,13 @@ describe("Channel management", () => {
       `Write Race ${crypto.randomUUID()}`,
     );
     await addMember(workspaceId, owner.token, member);
-    const channel = await createChannel(
+    const channel = await withDatabaseContext({actorId:owner.user.id,scope:'actor'}, () => createChannel(
       workspaceId,
       "Write Race",
       owner.user.id,
-    );
+    ));
     const bot = await createHermesBot(owner.user.id);
-    await addBotToWorkspace(bot.id, workspaceId, owner.user.id);
+    await withDatabaseContext({actorId:owner.user.id,scope:'actor'}, () => addBotToWorkspace(bot.id, workspaceId, owner.user.id));
 
     let releaseRemoval!: () => void;
     const removalGate = new Promise<void>((resolve) => {
@@ -552,7 +554,7 @@ describe("Channel management", () => {
     const removalLocked = new Promise<void>((resolve) => {
       resolveRemovalLocked = resolve;
     });
-    const removing = removeMember(
+    const removing = withDatabaseContext({actorId:owner.user.id,scope:'actor'}, () => removeMember(
       workspaceId,
       owner.user.id,
       member.user.id,
@@ -562,12 +564,12 @@ describe("Channel management", () => {
           await removalGate;
         },
       },
-    );
+    ));
     await removalLocked;
 
     let sendAcquiredWorkspaceLock = false;
     let threadAcquiredWorkspaceLock = false;
-    const sending = sendMessage(
+    const sending = withDatabaseContext({actorId:member.user.id,scope:'actor'}, () => sendMessage(
       channel.id,
       member.user.id,
       "Write Race Member",
@@ -577,8 +579,8 @@ describe("Channel management", () => {
           sendAcquiredWorkspaceLock = true;
         },
       },
-    );
-    const creatingThread = createConversationThread(
+    ));
+    const creatingThread = withDatabaseContext({actorId:member.user.id,scope:'actor'}, () => createConversationThread(
       channel.id,
       member.user.id,
       { botId: bot.id, title: "This stale thread must not commit" },
@@ -587,7 +589,7 @@ describe("Channel management", () => {
           threadAcquiredWorkspaceLock = true;
         },
       },
-    );
+    ));
     const outcomes = Promise.all([
       sending.then(
         () => ({ status: "fulfilled" as const }),
@@ -631,16 +633,16 @@ describe("Channel management", () => {
     const addLocked = new Promise<void>((resolve) => {
       resolveAddLocked = resolve;
     });
-    const adding = addBotToWorkspace(bot.id, workspaceId, owner.user.id, {
+    const adding = withDatabaseContext({actorId:owner.user.id,scope:'actor'}, () => addBotToWorkspace(bot.id, workspaceId, owner.user.id, {
       afterWorkspaceLocked: async () => {
         resolveAddLocked();
         await addGate;
       },
-    });
+    }));
     await addLocked;
 
     let createAfterAddAcquiredLock = false;
-    const createAfterAdd = createChannel(
+    const createAfterAdd = withDatabaseContext({actorId:owner.user.id,scope:'actor'}, () => createChannel(
       workspaceId,
       "Bot Added First",
       owner.user.id,
@@ -649,7 +651,7 @@ describe("Channel management", () => {
           createAfterAddAcquiredLock = true;
         },
       },
-    );
+    ));
     await Bun.sleep(100);
     expect(createAfterAddAcquiredLock).toBe(false);
     releaseAdd();
@@ -676,7 +678,7 @@ describe("Channel management", () => {
     const removeLocked = new Promise<void>((resolve) => {
       resolveRemoveLocked = resolve;
     });
-    const removing = removeBotFromWorkspace(
+    const removing = withDatabaseContext({actorId:owner.user.id,scope:'actor'}, () => removeBotFromWorkspace(
       bot.id,
       workspaceId,
       owner.user.id,
@@ -686,11 +688,11 @@ describe("Channel management", () => {
           await removeGate;
         },
       },
-    );
+    ));
     await removeLocked;
 
     let createAfterRemoveAcquiredLock = false;
-    const createAfterRemove = createChannel(
+    const createAfterRemove = withDatabaseContext({actorId:owner.user.id,scope:'actor'}, () => createChannel(
       workspaceId,
       "Bot Removed First",
       owner.user.id,
@@ -699,7 +701,7 @@ describe("Channel management", () => {
           createAfterRemoveAcquiredLock = true;
         },
       },
-    );
+    ));
     await Bun.sleep(100);
     expect(createAfterRemoveAcquiredLock).toBe(false);
     releaseRemove();
@@ -727,7 +729,7 @@ describe("Channel management", () => {
       `Demotion Race ${crypto.randomUUID()}`,
     );
     await addMember(workspaceId, owner.token, admin);
-    await updateMemberRole(workspaceId, owner.user.id, admin.user.id, "admin");
+    await withDatabaseContext({actorId:owner.user.id,scope:'actor'}, () => updateMemberRole(workspaceId, owner.user.id, admin.user.id, "admin"));
     const workspace = await req(
       "GET",
       `/workspaces/${workspaceId}`,
@@ -744,7 +746,7 @@ describe("Channel management", () => {
     const demotionLocked = new Promise<void>((resolve) => {
       resolveDemotionLocked = resolve;
     });
-    const demoting = updateMemberRole(
+    const demoting = withDatabaseContext({actorId:owner.user.id,scope:'actor'}, () => updateMemberRole(
       workspaceId,
       owner.user.id,
       admin.user.id,
@@ -755,15 +757,15 @@ describe("Channel management", () => {
           await demotionGate;
         },
       },
-    );
+    ));
     await demotionLocked;
 
     let renameAcquiredWorkspaceLock = false;
-    const renameResult = renameChannel(channelId, "Denied Rename", admin.user.id, {
+    const renameResult = withDatabaseContext({actorId:admin.user.id,scope:'actor'}, () => renameChannel(channelId, "Denied Rename", admin.user.id, {
       afterWorkspaceLocked: async () => {
         renameAcquiredWorkspaceLock = true;
       },
-    }).then(
+    })).then(
       () => ({ status: "fulfilled" as const }),
       (error: unknown) => ({ status: "rejected" as const, error }),
     );
@@ -778,7 +780,7 @@ describe("Channel management", () => {
       expect(deniedRename.error).toMatchObject({ status: 403 });
     }
 
-    await updateMemberRole(workspaceId, owner.user.id, admin.user.id, "admin");
+    await withDatabaseContext({actorId:owner.user.id,scope:'actor'}, () => updateMemberRole(workspaceId, owner.user.id, admin.user.id, "admin"));
     let releaseRename!: () => void;
     const renameGate = new Promise<void>((resolve) => {
       releaseRename = resolve;
@@ -787,16 +789,16 @@ describe("Channel management", () => {
     const renameLocked = new Promise<void>((resolve) => {
       resolveRenameLocked = resolve;
     });
-    const renaming = renameChannel(channelId, "Allowed Rename", admin.user.id, {
+    const renaming = withDatabaseContext({actorId:admin.user.id,scope:'actor'}, () => renameChannel(channelId, "Allowed Rename", admin.user.id, {
       afterWorkspaceLocked: async () => {
         resolveRenameLocked();
         await renameGate;
       },
-    });
+    }));
     await renameLocked;
 
     let demotionAcquiredWorkspaceLock = false;
-    const secondDemotion = updateMemberRole(
+    const secondDemotion = withDatabaseContext({actorId:owner.user.id,scope:'actor'}, () => updateMemberRole(
       workspaceId,
       owner.user.id,
       admin.user.id,
@@ -806,7 +808,7 @@ describe("Channel management", () => {
           demotionAcquiredWorkspaceLock = true;
         },
       },
-    );
+    ));
     await Bun.sleep(100);
     expect(demotionAcquiredWorkspaceLock).toBe(false);
     releaseRename();
@@ -984,7 +986,7 @@ describe("Channel management", () => {
       `Stale Invocations ${crypto.randomUUID()}`,
     );
     const bot = await createHermesBot(owner.user.id);
-    await addBotToWorkspace(bot.id, workspaceId, owner.user.id);
+    await withDatabaseContext({actorId:owner.user.id,scope:'actor'}, () => addBotToWorkspace(bot.id, workspaceId, owner.user.id));
     const created = await req(
       "POST",
       "/conversations/channel",
@@ -1022,7 +1024,7 @@ describe("Channel management", () => {
           outsider.token,
         )
       ).status,
-    ).toBe(403);
+    ).toBe(404);
     expect(
       await db
         .select({ status: botInvocations.status })
@@ -1043,7 +1045,7 @@ describe("Channel management", () => {
 
     const [, authorizedDelete] = await Promise.race([
       Promise.all([
-        failTimedOutHermesDispatchesForConversation(created.body.id),
+        withWorkerDatabaseContext(() => failTimedOutHermesDispatchesForConversation(created.body.id)),
         req(
           "DELETE",
           `/conversations/channel/${created.body.id}`,
@@ -1064,7 +1066,7 @@ describe("Channel management", () => {
       .where(eq(eventOutbox.partitionKey, created.body.id));
   });
 
-  test("delete refuses channels with attachment lifecycle records", async () => {
+  test("delete durably handles channels with attachment lifecycle records", async () => {
     const owner = await registerUser("Attachment Owner");
     const workspaceId = await createWorkspace(
       owner.token,
@@ -1099,8 +1101,8 @@ describe("Channel management", () => {
       owner.token,
     );
     expect(deleted).toMatchObject({
-      status: 409,
-      body: { error: "Channels with attachments cannot be deleted" },
+      status: 200,
+      body: { ok: true, deletedChannelId: created.body.id },
     });
 
     const detail = await req(
@@ -1109,7 +1111,7 @@ describe("Channel management", () => {
       undefined,
       owner.token,
     );
-    expect(detail.body.channels).toEqual(
+    expect(detail.body.channels).not.toEqual(
       expect.arrayContaining([expect.objectContaining({ id: created.body.id })]),
     );
   });

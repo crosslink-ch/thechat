@@ -1,5 +1,6 @@
 import {
   pgTable,
+  pgView,
   pgEnum,
   uuid,
   varchar,
@@ -13,8 +14,10 @@ import {
   index,
   uniqueIndex,
   foreignKey,
+  check,
 } from "drizzle-orm/pg-core";
 import { relations, sql } from "drizzle-orm";
+import { collaborationPolicies } from './policies';
 import type { BotCommandPublic, MessagePart } from "@thechat/shared";
 import type { DomainEventEnvelope } from "../events/envelope";
 
@@ -75,17 +78,17 @@ export const users = pgTable(
       .$onUpdate(() => new Date()),
   },
   (t) => [
+    ...collaborationPolicies('users'),
     uniqueIndex("users_email_idx").on(t.email),
     index("users_type_idx").on(t.type),
   ]
-);
+).enableRLS();
 
 export const workspaces = pgTable("workspaces", {
   id: varchar("id", { length: 100 }).primaryKey(),
   name: varchar("name", { length: 255 }).notNull(),
   createdById: uuid("created_by_id")
-    .notNull()
-    .references(() => users.id, { onDelete: "cascade" }),
+    .references(() => users.id, { onDelete: "set null" }),
   createdAt: timestamp("created_at", { withTimezone: true })
     .defaultNow()
     .notNull(),
@@ -93,7 +96,7 @@ export const workspaces = pgTable("workspaces", {
     .defaultNow()
     .notNull()
     .$onUpdate(() => new Date()),
-});
+}, () => collaborationPolicies('workspaces')).enableRLS();
 
 export const workspaceMembers = pgTable(
   "workspace_members",
@@ -110,11 +113,12 @@ export const workspaceMembers = pgTable(
       .notNull(),
   },
   (t) => [
+    ...collaborationPolicies('workspace_members'),
     primaryKey({ columns: [t.workspaceId, t.userId] }),
     index("wm_workspace_id_idx").on(t.workspaceId),
     index("wm_user_id_idx").on(t.userId),
   ]
-);
+).enableRLS();
 
 export const workspaceInvites = pgTable(
   "workspace_invites",
@@ -139,6 +143,7 @@ export const workspaceInvites = pgTable(
       .$onUpdate(() => new Date()),
   },
   (t) => [
+    ...collaborationPolicies('workspace_invites'),
     index("wi_workspace_id_idx").on(t.workspaceId),
     index("wi_invitee_id_idx").on(t.inviteeId),
     index("wi_inviter_id_idx").on(t.inviterId),
@@ -148,7 +153,7 @@ export const workspaceInvites = pgTable(
       t.status
     ),
   ]
-);
+).enableRLS();
 
 export const conversations = pgTable(
   "conversations",
@@ -170,10 +175,37 @@ export const conversations = pgTable(
       .$onUpdate(() => new Date()),
   },
   (t) => [
+    ...collaborationPolicies('conversations'),
     index("conversations_workspace_id_idx").on(t.workspaceId),
     uniqueIndex("conversations_workspace_name_idx").on(t.workspaceId, t.name),
+    uniqueIndex("conversations_workspace_id_id_idx").on(t.workspaceId, t.id),
   ]
-);
+).enableRLS();
+
+export const botWorkspaceInstallations = pgTable("bot_workspace_installations", {
+  workspaceId: varchar("workspace_id", { length: 100 }).notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  botId: uuid("bot_id").notNull().references(() => bots.id, { onDelete: "cascade" }),
+  enabled: boolean("enabled").notNull().default(false),
+  channelScope: varchar("channel_scope", { length: 20 }).$type<"all" | "selected">().notNull().default("selected"),
+  attachmentAccess: boolean("attachment_access").notNull().default(false),
+  sharedRuntimeConsent: boolean("shared_runtime_consent").notNull().default(false),
+  approvedEndpointUrl: text("approved_endpoint_url"),
+  approvedEndpointRevision: integer("approved_endpoint_revision").notNull().default(1),
+  revision: integer("revision").notNull().default(1),
+  approvedById: uuid("approved_by_id").references(() => users.id, { onDelete: "set null" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, t => [...collaborationPolicies('bot_workspace_installations'),primaryKey({ columns: [t.workspaceId, t.botId] })]).enableRLS();
+
+export const botInstallationChannels = pgTable("bot_installation_channels", {
+  workspaceId: varchar("workspace_id", { length: 100 }).notNull(),
+  botId: uuid("bot_id").notNull(),
+  conversationId: uuid("conversation_id").notNull(),
+}, t => [...collaborationPolicies('bot_installation_channels'),
+  primaryKey({ columns: [t.workspaceId, t.botId, t.conversationId] }),
+  foreignKey({ columns: [t.workspaceId, t.botId], foreignColumns: [botWorkspaceInstallations.workspaceId, botWorkspaceInstallations.botId] }).onDelete("cascade"),
+  foreignKey({ columns: [t.workspaceId, t.conversationId], foreignColumns: [conversations.workspaceId, conversations.id] }).onDelete("cascade"),
+]).enableRLS();
 
 export const conversationParticipants = pgTable(
   "conversation_participants",
@@ -190,11 +222,12 @@ export const conversationParticipants = pgTable(
       .notNull(),
   },
   (t) => [
+    ...collaborationPolicies('conversation_participants'),
     primaryKey({ columns: [t.conversationId, t.userId] }),
     index("cp_conversation_id_idx").on(t.conversationId),
     index("cp_user_id_idx").on(t.userId),
   ]
-);
+).enableRLS();
 
 export const messages = pgTable(
   "messages",
@@ -209,6 +242,8 @@ export const messages = pgTable(
     senderId: uuid("sender_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
+    // Null is an explicit scope value, not MATCH SIMPLE's omitted FK key.
+    threadScopeId: text("thread_scope_id").generatedAlwaysAs(sql`coalesce(thread_id::text, '')`),
     clientMessageId: varchar("client_message_id", { length: 255 }),
     content: text("content").notNull(),
     parts: jsonb("parts").$type<MessagePart[]>(),
@@ -221,6 +256,16 @@ export const messages = pgTable(
       .$onUpdate(() => new Date()),
   },
   (t) => [
+    ...collaborationPolicies('messages'),
+    uniqueIndex("messages_id_conversation_idx").on(t.id, t.conversationId),
+    uniqueIndex("messages_id_conversation_thread_scope_idx").on(t.id, t.conversationId, t.threadScopeId),
+    index("messages_conversation_order_idx").on(t.conversationId, t.createdAt, t.id),
+    index("messages_conversation_thread_order_idx").on(t.conversationId, t.threadId, t.createdAt, t.id),
+    foreignKey({
+      name: "messages_thread_conversation_fk",
+      columns: [t.threadId, t.conversationId],
+      foreignColumns: [conversationThreads.id, conversationThreads.conversationId],
+    }),
     index("messages_conversation_id_idx").on(t.conversationId),
     index("messages_thread_id_idx").on(t.threadId),
     index("messages_sender_id_idx").on(t.senderId),
@@ -230,7 +275,7 @@ export const messages = pgTable(
       t.clientMessageId,
     ),
   ]
-);
+).enableRLS();
 
 export const messageReactions = pgTable(
   "message_reactions",
@@ -247,11 +292,12 @@ export const messageReactions = pgTable(
       .notNull(),
   },
   (t) => [
+    ...collaborationPolicies('message_reactions'),
     primaryKey({ columns: [t.messageId, t.userId, t.emoji] }),
     index("message_reactions_message_emoji_idx").on(t.messageId, t.emoji),
     index("message_reactions_user_id_idx").on(t.userId),
   ]
-);
+).enableRLS();
 
 // Durable, bounded unread state. A row exists only while a human participant
 // has not read the corresponding message; marking messages read deletes rows.
@@ -270,7 +316,13 @@ export const messageUnreads = pgTable(
       .notNull(),
   },
   (t) => [
+    ...collaborationPolicies('message_unreads'),
     primaryKey({ columns: [t.messageId, t.userId] }),
+    foreignKey({
+      name: "message_unreads_message_conversation_fk",
+      columns: [t.messageId, t.conversationId],
+      foreignColumns: [messages.id, messages.conversationId],
+    }).onDelete("cascade"),
     foreignKey({
       name: "message_unreads_participant_fk",
       columns: [t.conversationId, t.userId],
@@ -285,7 +337,7 @@ export const messageUnreads = pgTable(
     ),
     index("message_unreads_user_created_at_idx").on(t.userId, t.createdAt),
   ],
-);
+).enableRLS();
 
 export const eventOutbox = pgTable(
   "event_outbox",
@@ -316,6 +368,7 @@ export const eventOutbox = pgTable(
       .notNull(),
   },
   (t) => [
+    ...collaborationPolicies('event_outbox'),
     index("event_outbox_pending_idx").on(
       t.publishedAt,
       t.deadAt,
@@ -334,7 +387,7 @@ export const eventOutbox = pgTable(
     index("event_outbox_correlation_idx").on(t.correlationId),
     index("event_outbox_published_retention_idx").on(t.publishedAt),
   ],
-);
+).enableRLS();
 
 export const bots = pgTable(
   "bots",
@@ -347,6 +400,7 @@ export const bots = pgTable(
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
     webhookUrl: text("webhook_url"),
+    endpointRevision: integer("endpoint_revision").notNull().default(1),
     webhookSecret: varchar("webhook_secret", { length: 128 }).notNull(),
     kind: botKindEnum("kind").notNull().default("webhook"),
     attachmentAccess: boolean("attachment_access").notNull().default(true),
@@ -363,10 +417,40 @@ export const bots = pgTable(
       .$onUpdate(() => new Date()),
   },
   (t) => [
+    ...collaborationPolicies('bots'),
     uniqueIndex("bots_user_id_idx").on(t.userId),
     index("bots_owner_id_idx").on(t.ownerId),
   ]
-);
+).enableRLS();
+
+/** Public global identity projection; private connector columns are absent. */
+export const botIdentities = pgView('bot_identities', {
+  id: uuid('id').notNull(),
+  userId: uuid('user_id').notNull(),
+  ownerId: uuid('owner_id').notNull(),
+  kind: botKindEnum('kind').notNull(),
+  avatarShape: varchar('avatar_shape', { length: 32 }),
+  avatarColor: varchar('avatar_color', { length: 16 }),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull(),
+}).existing();
+
+/** Scoped runtime projection deliberately excludes global signing credentials. */
+export const botRuntimeMetadata = pgView('bot_runtime_metadata', {
+ id:uuid('id').notNull(),userId:uuid('user_id').notNull(),ownerId:uuid('owner_id').notNull(),
+ webhookUrl:text('webhook_url'),endpointRevision:integer('endpoint_revision').notNull(),kind:botKindEnum('kind').notNull(),
+ attachmentAccess:boolean('attachment_access').notNull(),commandsJson:jsonb('commands_json').$type<BotCommandPublic[]>(),
+ avatarShape:varchar('avatar_shape',{length:32}),avatarColor:varchar('avatar_color',{length:16}),
+ createdAt:timestamp('created_at',{withTimezone:true}).notNull(),updatedAt:timestamp('updated_at',{withTimezone:true}).notNull(),
+}).existing();
+
+export const botInviteMetadata = pgView('bot_invite_metadata', {
+ id:uuid('id').notNull(),workspaceId:varchar('workspace_id',{length:100}).notNull(),workspaceName:varchar('workspace_name',{length:255}).notNull(),
+ botId:uuid('bot_id').notNull(),botUserId:uuid('bot_user_id').notNull(),botName:varchar('bot_name',{length:255}).notNull(),
+ botAvatarShape:varchar('bot_avatar_shape',{length:32}),botAvatarColor:varchar('bot_avatar_color',{length:16}),
+ requesterId:uuid('requester_id').notNull(),requesterName:varchar('requester_name',{length:255}).notNull(),
+ status:botWorkspaceInviteStatusEnum('status').notNull(),createdAt:timestamp('created_at',{withTimezone:true}).notNull(),ownerId:uuid('owner_id').notNull(),
+}).existing();
 
 export const botWorkspaceInvites = pgTable(
   "bot_workspace_invites",
@@ -391,6 +475,7 @@ export const botWorkspaceInvites = pgTable(
       .$onUpdate(() => new Date()),
   },
   (t) => [
+    ...collaborationPolicies('bot_workspace_invites'),
     index("bwi_workspace_id_idx").on(t.workspaceId),
     index("bwi_bot_id_idx").on(t.botId),
     index("bwi_requester_id_idx").on(t.requesterId),
@@ -398,7 +483,7 @@ export const botWorkspaceInvites = pgTable(
       .on(t.workspaceId, t.botId)
       .where(sql`${t.status} = 'pending'`),
   ],
-);
+).enableRLS();
 
 export const hermesBotConfigs = pgTable("hermes_bot_configs", {
   botId: uuid("bot_id")
@@ -414,7 +499,7 @@ export const hermesBotConfigs = pgTable("hermes_bot_configs", {
     .defaultNow()
     .notNull()
     .$onUpdate(() => new Date()),
-});
+}, () => collaborationPolicies('hermes_bot_configs')).enableRLS();
 
 export const botInvocations = pgTable(
   "bot_invocations",
@@ -437,6 +522,7 @@ export const botInvocations = pgTable(
       { onDelete: "set null" }
     ),
     adapterKind: varchar("adapter_kind", { length: 20 }).notNull(),
+    threadScopeId: text("thread_scope_id").generatedAlwaysAs(sql`coalesce(thread_id::text, '')`),
     status: varchar("status", { length: 20 }).notNull().default("queued"),
     externalRunId: text("external_run_id"),
     requestJson: jsonb("request_json").$type<Record<string, unknown>>(),
@@ -453,6 +539,13 @@ export const botInvocations = pgTable(
       .$onUpdate(() => new Date()),
   },
   (t) => [
+    ...collaborationPolicies('bot_invocations'),
+    foreignKey({ name: "bot_invocations_trigger_conversation_fk", columns: [t.triggerMessageId, t.conversationId], foreignColumns: [messages.id, messages.conversationId] }).onDelete("cascade"),
+    foreignKey({ name: "bot_invocations_response_conversation_fk", columns: [t.responseMessageId, t.conversationId], foreignColumns: [messages.id, messages.conversationId] }),
+    // Migration makes these DEFERRABLE for atomic child-key SET NULL actions.
+    foreignKey({ name: "bot_invocations_trigger_thread_scope_fk", columns: [t.triggerMessageId, t.conversationId, t.threadScopeId], foreignColumns: [messages.id, messages.conversationId, messages.threadScopeId] }).onDelete("cascade"),
+    foreignKey({ name: "bot_invocations_response_thread_scope_fk", columns: [t.responseMessageId, t.conversationId, t.threadScopeId], foreignColumns: [messages.id, messages.conversationId, messages.threadScopeId] }),
+    foreignKey({ name: "bot_invocations_thread_conversation_bot_fk", columns: [t.threadId, t.conversationId, t.botId], foreignColumns: [conversationThreads.id, conversationThreads.conversationId, conversationThreads.botId] }),
     index("bot_invocations_bot_id_idx").on(t.botId),
     index("bot_invocations_conversation_id_idx").on(t.conversationId),
     index("bot_invocations_thread_id_idx").on(t.threadId),
@@ -463,7 +556,7 @@ export const botInvocations = pgTable(
       t.triggerMessageId
     ),
   ]
-);
+).enableRLS();
 
 export const conversationThreads = pgTable(
   "conversation_threads",
@@ -480,8 +573,7 @@ export const conversationThreads = pgTable(
     branchPending: boolean("branch_pending").notNull().default(false),
     branchFromThreadId: uuid("branch_from_thread_id"),
     createdById: uuid("created_by_id")
-      .notNull()
-      .references(() => users.id, { onDelete: "cascade" }),
+      .references(() => users.id, { onDelete: "set null" }),
     lastActivityAt: timestamp("last_activity_at", { withTimezone: true })
       .defaultNow()
       .notNull(),
@@ -494,6 +586,10 @@ export const conversationThreads = pgTable(
       .$onUpdate(() => new Date()),
   },
   (t) => [
+    ...collaborationPolicies('conversation_threads'),
+    uniqueIndex("conversation_threads_id_conversation_bot_idx").on(t.id, t.conversationId, t.botId),
+    foreignKey({ name: "conversation_threads_branch_conversation_fk", columns: [t.branchFromThreadId, t.conversationId], foreignColumns: [t.id, t.conversationId] }),
+    uniqueIndex("conversation_threads_id_conversation_idx").on(t.id, t.conversationId),
     index("conversation_threads_conversation_id_idx").on(t.conversationId),
     index("conversation_threads_bot_id_idx").on(t.botId),
     index("conversation_threads_conversation_activity_idx").on(
@@ -508,7 +604,7 @@ export const conversationThreads = pgTable(
       foreignColumns: [t.id],
     }).onDelete("set null"),
   ],
-);
+).enableRLS();
 
 /**
  * PostgreSQL is authoritative for attachment ownership and lifecycle. The
@@ -551,6 +647,8 @@ export const attachments = pgTable(
     expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
     processingAt: timestamp("processing_at", { withTimezone: true }),
     readyAt: timestamp("ready_at", { withTimezone: true }),
+    retentionSeconds: integer("retention_seconds"),
+    retainedUntil: timestamp("retained_until", { withTimezone: true }),
     attachedAt: timestamp("attached_at", { withTimezone: true }),
     rejectedAt: timestamp("rejected_at", { withTimezone: true }),
     deletingAt: timestamp("deleting_at", { withTimezone: true }),
@@ -564,11 +662,69 @@ export const attachments = pgTable(
       .$onUpdate(() => new Date()),
   },
   (t) => [
+    ...collaborationPolicies('attachments'),
+    uniqueIndex("attachments_id_conversation_idx").on(t.id, t.conversationId),
     index("attachments_conversation_idx").on(t.conversationId),
     index("attachments_uploader_idx").on(t.uploaderId),
     index("attachments_status_expiry_idx").on(t.status, t.expiresAt),
+    index("attachments_retained_until_idx").on(t.retainedUntil).where(sql`${t.status}='attached'`),
+    check("attachments_retention_seconds_check",sql`${t.retentionSeconds}>0`),
   ],
-);
+).enableRLS();
+
+export const workspaceResourceLimits = pgTable("workspace_resource_limits", {
+  workspaceId: varchar("workspace_id", {length:100}).primaryKey().references(() => workspaces.id,{onDelete:"cascade"}),
+  retainedBytes: bigint("retained_bytes",{mode:"bigint"}).notNull(),
+  pendingValidation: integer("pending_validation").notNull(),
+  pendingBot: integer("pending_bot").notNull(),
+  concurrentValidation: integer("concurrent_validation").notNull(),
+  concurrentBot: integer("concurrent_bot").notNull(),
+},t => [...collaborationPolicies('workspace_resource_limits'),
+  check("workspace_resource_limits_retained_bytes_check",sql`${t.retainedBytes}>0`),
+  check("workspace_resource_limits_pending_validation_check",sql`${t.pendingValidation}>0`),
+  check("workspace_resource_limits_pending_bot_check",sql`${t.pendingBot}>0`),
+  check("workspace_resource_limits_concurrent_validation_check",sql`${t.concurrentValidation}>0`),
+  check("workspace_resource_limits_concurrent_bot_check",sql`${t.concurrentBot}>0`),
+]).enableRLS();
+
+export const workspaceWork = pgTable("workspace_work", {
+  workspaceId: varchar("workspace_id",{length:100}).notNull().references(() => workspaces.id,{onDelete:"cascade"}),
+  kind: varchar("kind",{length:20}).notNull(),
+  idempotencyKey: text("idempotency_key").notNull(),
+  state: varchar("state",{length:20}).notNull().default("pending"),
+  leaseToken: uuid("lease_token"),
+  leaseUntil: timestamp("lease_until",{withTimezone:true}),
+  createdAt: timestamp("created_at",{withTimezone:true}).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at",{withTimezone:true}).notNull().defaultNow(),
+},t => [...collaborationPolicies('workspace_work'),
+  primaryKey({columns:[t.workspaceId,t.kind,t.idempotencyKey]}),
+  index("workspace_work_admission_idx").on(t.workspaceId,t.kind,t.state,t.createdAt,t.idempotencyKey),
+  check("workspace_work_kind_check",sql`${t.kind} in ('validation','bot')`),
+  check("workspace_work_state_check",sql`${t.state} in ('pending','running','completed','cancelled')`),
+  check("workspace_work_check",sql`(${t.state}='running')=(${t.leaseToken} is not null and ${t.leaseUntil} is not null)`),
+]).enableRLS();
+
+// Charges survive channel/attachment deletion until durable object work finishes.
+export const workspaceAttachmentCharges = pgTable("workspace_attachment_charges", {
+  attachmentId: uuid("attachment_id").primaryKey(),
+  workspaceId: varchar("workspace_id",{length:100}).notNull().references(() => workspaces.id,{onDelete:"cascade"}),
+  bytes: bigint("bytes",{mode:"bigint"}).notNull(),
+  capabilityUntil: timestamp("capability_until",{withTimezone:true}).notNull(),
+  cleanupRequested: boolean("cleanup_requested").notNull().default(false),
+  releasedAt: timestamp("released_at",{withTimezone:true}),
+},t => [...collaborationPolicies('workspace_attachment_charges'),index("workspace_attachment_charges_usage_idx").on(t.workspaceId,t.releasedAt),
+  check("workspace_attachment_charges_bytes_check",sql`${t.bytes}>0`)]).enableRLS();
+
+// Intentionally no canonical FK: cleanup receipts must survive even workspace deletion.
+export const attachmentObjectCleanup = pgTable("attachment_object_cleanup", {
+  attachmentId: uuid("attachment_id").notNull(),
+  objectKey: text("object_key").notNull(),
+  versionId: text("version_id").notNull(),
+  createdAt: timestamp("created_at",{withTimezone:true}).notNull().defaultNow(),
+  completedAt: timestamp("completed_at",{withTimezone:true}),
+  requested: boolean("requested").notNull().default(true),
+},t => [...collaborationPolicies('attachment_object_cleanup'),primaryKey({columns:[t.attachmentId,t.objectKey,t.versionId]}),
+  index("attachment_object_cleanup_pending_idx").on(t.createdAt).where(sql`${t.completedAt} is null`)]).enableRLS();
 
 export const messageAttachments = pgTable(
   "message_attachments",
@@ -579,17 +735,31 @@ export const messageAttachments = pgTable(
     attachmentId: uuid("attachment_id")
       .notNull()
       .references(() => attachments.id, { onDelete: "restrict" }),
+    // Older writers omit this field; the DB trigger derives it from the message.
+    // Both composite FKs then verify that derivation against the attachment.
+    conversationId: uuid("conversation_id").notNull().default(sql`NULL`),
     position: integer("position").notNull(),
   },
   (t) => [
+    ...collaborationPolicies('message_attachments'),
     primaryKey({ columns: [t.messageId, t.position] }),
+    foreignKey({
+      name: "message_attachments_message_conversation_fk",
+      columns: [t.messageId, t.conversationId],
+      foreignColumns: [messages.id, messages.conversationId],
+    }).onDelete("cascade"),
+    foreignKey({
+      name: "message_attachments_attachment_conversation_fk",
+      columns: [t.attachmentId, t.conversationId],
+      foreignColumns: [attachments.id, attachments.conversationId],
+    }).onDelete("restrict"),
     uniqueIndex("message_attachments_attachment_idx").on(t.attachmentId),
     uniqueIndex("message_attachments_message_attachment_idx").on(
       t.messageId,
       t.attachmentId,
     ),
   ],
-);
+).enableRLS();
 
 // Better Auth owns human sessions and credentials as well as bot API keys.
 export const session = pgTable(
@@ -709,13 +879,14 @@ export const apikey = pgTable(
     metadata: text("metadata"),
   },
   (t) => [
+    ...collaborationPolicies('apikey'),
     uniqueIndex("apikey_key_idx").on(t.key),
     uniqueIndex("apikey_bot_reference_idx")
       .on(t.configId, t.referenceId)
       .where(sql`${t.configId} = 'bot'`),
     index("apikey_reference_id_idx").on(t.referenceId),
   ]
-);
+).enableRLS();
 
 // Shared Better Auth rate-limit state. Database storage keeps enforcement
 // consistent and atomic across API replicas.
@@ -757,7 +928,7 @@ export const workspaceConfigs = pgTable("workspace_configs", {
     .defaultNow()
     .notNull()
     .$onUpdate(() => new Date()),
-});
+}, () => collaborationPolicies('workspace_configs')).enableRLS();
 
 // -- Relations --
 

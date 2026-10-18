@@ -8,6 +8,7 @@ import {
   claimHermesPlatformEvents,
   completeHermesPlatformInvocationSilently,
   failHermesPlatformInvocation,
+  heartbeatHermesPlatformInvocation,
   publishHermesPlatformMessage,
   publishHermesPlatformProgress,
   publishHermesPlatformTyping,
@@ -17,6 +18,7 @@ import { resolveTokenToUser } from "../auth/middleware";
 import { vaultUnlockRequestSchema, vaultUnlockResolvedSchema } from "../services/vault-unlock";
 
 const messageSchema = z.object({
+  workToken:z.string().uuid().optional(),
   invocationId: z.string().min(1).optional(),
   botId: z.string().min(1).optional(),
   conversationId: z.string().min(1).optional(),
@@ -32,6 +34,7 @@ const messageSchema = z.object({
 );
 
 const typingSchema = z.object({
+  workToken:z.string().uuid().optional(),
   invocationId: z.string().min(1),
   botId: z.string().min(1).optional(),
   conversationId: z.string().min(1).optional(),
@@ -113,6 +116,7 @@ const interactionProgressPayloadSchemas = {
 } as const;
 
 const progressSchema = z.object({
+  workToken:z.string().uuid().optional(),
   botId: z.string().min(1).optional(),
   conversationId: z.string().min(1).optional(),
   type: z.string().min(1).max(64),
@@ -150,14 +154,17 @@ const progressSchema = z.object({
 });
 
 const failedSchema = z.object({
+  workToken:z.string().uuid().optional(),
   error: z.string().min(1),
 });
 
 const silentCompleteSchema = z.object({
+  workToken:z.string().uuid().optional(),
   reason: z.string().optional(),
 });
 
 const cancelledSchema = z.object({
+  workToken:z.string().uuid().optional(),
   reason: z.string().optional(),
 });
 
@@ -249,6 +256,7 @@ export const hermesPlatformRoutes = new Elysia({ prefix: "/hermes-platform" })
     try {
       return await publishHermesPlatformMessage({
         authenticatedBotId: platformBot!.id,
+        workToken:parsed.data.workToken,
         invocationId: parsed.data.invocationId ?? null,
         botId: parsed.data.botId,
         conversationId: parsed.data.conversationId,
@@ -273,6 +281,7 @@ export const hermesPlatformRoutes = new Elysia({ prefix: "/hermes-platform" })
     try {
       return await publishHermesPlatformTyping({
         authenticatedBotId: platformBot!.id,
+        workToken:parsed.data.workToken,
         ...parsed.data,
         threadId: parsed.data.threadId ?? null,
       });
@@ -280,6 +289,12 @@ export const hermesPlatformRoutes = new Elysia({ prefix: "/hermes-platform" })
       set.status = e instanceof ServiceError ? e.status : 500;
       return { error: e.message ?? "Unknown error" };
     }
+  })
+  .post('/invocations/:invocationId/heartbeat',async({params,body,platformBot,set})=>{
+    const parsed=z.object({workToken:z.string().uuid().optional()}).safeParse(body??{});
+    if(!parsed.success || !z.string().uuid().safeParse(params.invocationId).success){set.status=400;return {error:'Invalid heartbeat'};}
+    try {return await heartbeatHermesPlatformInvocation({authenticatedBotId:platformBot!.id,invocationId:params.invocationId,workToken:parsed.data.workToken});}
+    catch(e:any){set.status=e instanceof ServiceError?e.status:500;return {error:e instanceof ServiceError?e.message:'Heartbeat failed'};}
   })
   .post("/invocations/:invocationId/progress", async ({ params, body, platformBot, set }) => {
     const parsed = progressSchema.safeParse(body);
@@ -290,6 +305,7 @@ export const hermesPlatformRoutes = new Elysia({ prefix: "/hermes-platform" })
     try {
       return await publishHermesPlatformProgress({
         authenticatedBotId: platformBot!.id,
+        workToken:parsed.data.workToken,
         invocationId: params.invocationId,
         ...parsed.data,
         status: parsed.data.status ?? null,
@@ -314,6 +330,7 @@ export const hermesPlatformRoutes = new Elysia({ prefix: "/hermes-platform" })
     try {
       return await failHermesPlatformInvocation({
         authenticatedBotId: platformBot!.id,
+        workToken:parsed.data.workToken,
         invocationId: params.invocationId,
         error: parsed.data.error,
       });
@@ -331,6 +348,7 @@ export const hermesPlatformRoutes = new Elysia({ prefix: "/hermes-platform" })
     try {
       return await completeHermesPlatformInvocationSilently({
         authenticatedBotId: platformBot!.id,
+        workToken:parsed.data.workToken,
         invocationId: params.invocationId,
         reason: parsed.data.reason ?? null,
       });
@@ -348,6 +366,7 @@ export const hermesPlatformRoutes = new Elysia({ prefix: "/hermes-platform" })
     try {
       return await cancelHermesPlatformInvocation({
         authenticatedBotId: platformBot!.id,
+        workToken:parsed.data.workToken,
         invocationId: params.invocationId,
         reason: parsed.data.reason ?? null,
       });

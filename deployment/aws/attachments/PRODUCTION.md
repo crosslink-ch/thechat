@@ -24,7 +24,7 @@ separate Kubernetes Secrets.
 | Worker Kubernetes Secret | `thechat-attachments-worker-aws` |
 | API ServiceAccount | `thechat-api` |
 | Worker ServiceAccount | `thechat-api-worker` |
-| Clean retention | current and noncurrent versions, at least 30 days |
+| Clean retention | persistent current and noncurrent versions; only app-reconciled explicit retention/deletion |
 | Quarantine retention | current and noncurrent versions, 1 day |
 | Packaged desktop origins | `http://tauri.localhost`, `tauri://localhost` |
 
@@ -512,7 +512,7 @@ Before any deliberate CloudFormation deletion:
 
 - [ ] Change set reviewed; no unexpected replacement.
 - [ ] Bucket and bucket policy are retained, private, versioned, and encrypted.
-- [ ] Clean current/noncurrent retention is at least 30 days.
+- [ ] Clean current/noncurrent versions have **no** automatic expiration; migration 0019 and app retention reconciliation are deployed in the [reviewed order](../../../docs/workspace-resource-lifecycle.md).
 - [ ] IAM users, policies, and access-key IDs are distinct.
 - [ ] Both Infisical resources use `cluster-operator`; API/worker paths remain
   distinct.

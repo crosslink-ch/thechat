@@ -1,8 +1,11 @@
+import { withIndependentActorDatabaseContext } from '../db/context';
+import { withDatabaseContext, withWorkerDatabaseContext } from '../db/index';
+import { asFixtureBot, holdFixtureWorkerContext } from '../test-context';
 import { describe, test, expect, afterAll, beforeAll } from "bun:test";
 import { Elysia } from "elysia";
 import { defaultBotAppearance } from "@thechat/shared";
-import { and, asc, eq, inArray } from "drizzle-orm";
-import { db } from "../db";
+import { and, asc, eq, inArray, sql } from "drizzle-orm";
+import { db } from "../db/testing";
 import {
   apikey,
   botInvocations,
@@ -77,15 +80,19 @@ const createdBotUserIds: string[] = [];
 const originalRedisKeyPrefix = process.env.REDIS_KEY_PREFIX;
 const botsTestRedisKeyPrefix = `thechat-bots-test-${crypto.randomUUID()}`;
 
+let closeFixtureMaintenance: (()=>Promise<void>) | undefined;
+let closeFixtureBotWorker: (()=>Promise<void>) | undefined;
 beforeAll(async () => {
   process.env.REDIS_KEY_PREFIX = botsTestRedisKeyPrefix;
   await setBotProgressStoreForTests(createLocalBotProgressStoreForTests());
-  await startDomainEventRuntime();
+  closeFixtureMaintenance=await holdFixtureWorkerContext(()=>startDomainEventRuntime());
 });
 
 afterAll(async () => {
   await closeDomainEventRuntime();
   await closeBotRuntimeForTests();
+  await closeFixtureBotWorker?.();
+  await closeFixtureMaintenance?.();
   await closeBotProgressStoreForTests();
   await closeRealtimeBusForTests();
   if (originalRedisKeyPrefix === undefined) {
@@ -133,12 +140,20 @@ afterAll(async () => {
   }
 });
 
+const receivedWorkTokens = new Map<string, string>();
 async function req(
   method: string,
   path: string,
   body?: unknown,
   token?: string
 ) {
+  // Canonical fixtures echo the token actually received by the bot adapter.
+  // Missing/stale-token denial is exercised explicitly in bot-work-lifetime.
+  if (method === 'POST' && path.startsWith('/hermes-platform/') && body && typeof body === 'object') {
+    const invocationId = /\/invocations\/([^/]+)/.exec(path)?.[1] ?? (body as any).invocationId;
+    const workToken = receivedWorkTokens.get(invocationId);
+    if (workToken && !('workToken' in body)) body = { ...body, workToken };
+  }
   const headers: Record<string, string> = {};
   if (body) headers["Content-Type"] = "application/json";
   if (token) headers["Authorization"] = `Bearer ${token}`;
@@ -157,6 +172,9 @@ async function req(
     json = JSON.parse(text);
   } catch {
     json = text;
+  }
+  if (path.startsWith('/hermes-platform/events') && Array.isArray(json?.events)) {
+    for (const event of json.events) if (event.workToken) receivedWorkTokens.set(event.invocationId, event.workToken);
   }
   return { status: response.status, body: json, headers: response.headers };
 }
@@ -263,7 +281,8 @@ async function messageContentsForConversation(conversationId: string) {
 }
 
 async function startBotWorkerForTest() {
-  await startBotWorker({ concurrency: 1 });
+  await closeFixtureBotWorker?.();
+  closeFixtureBotWorker = await holdFixtureWorkerContext(()=>startBotWorker({concurrency:1}));
 }
 
 function startWebhookServer(
@@ -311,6 +330,15 @@ async function addBotToWorkspace(botId: string, workspaceId: string, token: stri
   expect(res.status).toBe(200);
 }
 
+async function approveBotEndpoint(botId: string, workspaceId: string, ownerToken: string) {
+  const path = `/workspaces/${workspaceId}/bots/${botId}/installation`;
+  const current = await req("GET", path, undefined, ownerToken);
+  expect(current.status).toBe(200);
+  const grant = current.body;
+  const approved = await req("PUT", path, { enabled: grant.enabled, channelScope: grant.channelScope, conversationIds: grant.conversationIds, attachmentAccess: grant.attachmentAccess, sharedRuntimeConsent: true, approveEndpoint: true, expectedRevision: grant.revision }, ownerToken);
+  expect(approved.status).toBe(200);
+}
+
 async function createHermesInteractionFixture(
   label: string,
   webhookUrl?: string,
@@ -338,6 +366,13 @@ async function createHermesInteractionFixture(
     await db.insert(workspaceMembers).values({ workspaceId, userId: requester.user.id, role: "member" });
     await db.insert(conversationParticipants).values({ conversationId: dmRes.body.id, userId: requester.user.id });
   }
+  let webhookSecret = botRes.body.webhookSecret as string | undefined;
+  if (webhookUrl) {
+    const webhookRes = await req("POST", "/bots/me/webhook", {url: webhookUrl}, botRes.body.apiKey);
+    expect(webhookRes.status).toBe(200);
+    await approveBotEndpoint(botRes.body.id, workspaceId, human.token);
+    webhookSecret = webhookRes.body.webhookSecret as string;
+  }
   const sendRes = await req(
     "POST",
     `/messages/${dmRes.body.id}`,
@@ -358,17 +393,6 @@ async function createHermesInteractionFixture(
   expect(claimRes.status).toBe(200);
   expect(claimRes.body.events).toHaveLength(1);
   const invocationId = claimRes.body.events[0].invocationId as string;
-  let webhookSecret = botRes.body.webhookSecret as string | undefined;
-  if (webhookUrl) {
-    const webhookRes = await req(
-      "POST",
-      "/bots/me/webhook",
-      { url: webhookUrl },
-      botRes.body.apiKey,
-    );
-    expect(webhookRes.status).toBe(200);
-    webhookSecret = webhookRes.body.webhookSecret as string;
-  }
   return {
     human,
     requester,
@@ -380,6 +404,27 @@ async function createHermesInteractionFixture(
     webhookSecret,
   };
 }
+
+test('Hermes heartbeat renews the received epoch without progress or message side effects',async()=>{
+  const previous=process.env.WORKSPACE_WORK_LEASE_SECONDS;process.env.WORKSPACE_WORK_LEASE_SECONDS='120';
+  try {
+    const fixture=await createHermesInteractionFixture('Heartbeat');
+    const path=`/hermes-platform/invocations/${fixture.invocationId}/heartbeat`;
+    const before=await db.select({id:messages.id}).from(messages).where(eq(messages.conversationId,fixture.conversationId));
+    await db.execute(sql`update workspace_work set lease_until=clock_timestamp()+interval '30 seconds' where workspace_id=${fixture.workspaceId} and idempotency_key=${fixture.invocationId}`);
+    const result=await req('POST',path,{},fixture.botRes.body.apiKey);
+    expect(result.body).toMatchObject({ok:true});expect(result.status).toBe(200);expect(result.body.leaseExpiresAt).toBeString();
+    const [lease]=await db.execute<{lease_until:string;lease_token:string}>(sql`select lease_until,lease_token from workspace_work where workspace_id=${fixture.workspaceId} and idempotency_key=${fixture.invocationId}`);
+    expect(new Date(lease!.lease_until).toISOString()).toBe(result.body.leaseExpiresAt);expect(lease!.lease_token).toBe(receivedWorkTokens.get(fixture.invocationId)!);
+    expect(await db.select({id:messages.id}).from(messages).where(eq(messages.conversationId,fixture.conversationId))).toEqual(before);
+    expect(await getBotProgressStore().listForConversation(fixture.conversationId)).toHaveLength(0);
+    expect((await req('POST',path,{workToken:undefined},fixture.botRes.body.apiKey)).status).toBe(409);
+    expect((await req('POST',path,{workToken:crypto.randomUUID()},fixture.botRes.body.apiKey)).status).toBe(409);
+    expect((await req('POST',path,{},fixture.human.token)).status).toBe(401);
+    await db.execute(sql`update workspace_work set lease_until=clock_timestamp()-interval '1 second' where workspace_id=${fixture.workspaceId} and idempotency_key=${fixture.invocationId}`);
+    expect((await req('POST',path,{},fixture.botRes.body.apiKey)).status).toBe(409);
+  } finally {if(previous===undefined)delete process.env.WORKSPACE_WORK_LEASE_SECONDS;else process.env.WORKSPACE_WORK_LEASE_SECONDS=previous;}
+});
 
 async function publishInteractionProgress(
   fixture: Awaited<ReturnType<typeof createHermesInteractionFixture>>,
@@ -413,7 +458,7 @@ describe("Native vault unlock", () => {
     try {
       const payload = vaultRequest(fixture.requester.user.id);
       const progressPath = `/hermes-platform/invocations/${fixture.invocationId}/progress`;
-      expect((await req("POST", progressPath, { type: "vault.unlock.request", payload }, unrelated.botRes.body.apiKey)).status).toBe(403);
+      expect((await req("POST", progressPath, { type: "vault.unlock.request", payload }, unrelated.botRes.body.apiKey)).status).toBe(404);
       expect((await req("POST", progressPath, { type: "vault.unlock.request", payload: { ...payload, requesterUserId: fixture.human.user.id } }, fixture.botRes.body.apiKey)).status).toBe(403);
       const event = await publishInteractionProgress(fixture, "vault.unlock.request", payload);
       const response = { version: 2, action: "cancel" };
@@ -428,12 +473,12 @@ describe("Native vault unlock", () => {
       await db.update(bots).set({ ownerId: unrelated.human.user.id }).where(eq(bots.id, fixture.botRes.body.id));
       expect((await req("POST", path, response, fixture.requester.token)).status).toBe(200);
       await db.delete(conversationParticipants).where(and(eq(conversationParticipants.conversationId, fixture.conversationId), eq(conversationParticipants.userId, fixture.requester.user.id)));
-      expect((await req("POST", path, response, fixture.requester.token)).status).toBe(403);
+      expect((await req("POST", path, response, fixture.requester.token)).status).toBe(404);
       expect((await req("POST", progressPath, { type: "vault.unlock.request", payload: { ...payload, requestId: crypto.randomUUID() } }, fixture.botRes.body.apiKey)).status).toBe(403);
       await db.insert(conversationParticipants).values({ conversationId: fixture.conversationId, userId: fixture.requester.user.id });
       await db.delete(conversationParticipants).where(and(eq(conversationParticipants.conversationId, fixture.conversationId), eq(conversationParticipants.userId, fixture.botRes.body.userId)));
       expect((await req("POST", path, response, fixture.requester.token)).status).toBe(403);
-      expect((await req("POST", progressPath, { type: "vault.unlock.request", payload }, fixture.botRes.body.apiKey)).status).toBe(403);
+      expect((await req("POST", progressPath, { type: "vault.unlock.request", payload }, fixture.botRes.body.apiKey)).status).toBe(404);
       expect(webhook.requests).toHaveLength(1);
     } finally { webhook.stop(); }
   });
@@ -561,6 +606,7 @@ describe("Native vault unlock", () => {
       expect(JSON.stringify(await getBotProgressStore().listForConversation(fixture.conversationId))).not.toContain(response.ciphertextB64);
       expect((await req("POST",path,{version:2,action:"cancel"},fixture.botRes.body.apiKey)).status).toBe(403);
       const other = await registerUser("VaultOther");
+      await db.insert(workspaceMembers).values({workspaceId:fixture.workspaceId,userId:other.user.id,role:"member"}).onConflictDoNothing();
       await db.insert(conversationParticipants).values({conversationId:fixture.conversationId,userId:other.user.id});
       expect((await req("POST",path,{version:2,action:"cancel"},other.token)).status).toBe(403);
       const ownerSnapshot = await req("GET",`/bot-runtime/conversations/${fixture.conversationId}`,undefined,fixture.human.token);
@@ -710,7 +756,7 @@ describe("Bots: Create", () => {
     const demotionReleased = new Promise<void>((resolve) => {
       releaseDemotion = resolve;
     });
-    const demotion = updateMemberRole(
+    const demotion = withDatabaseContext({actorId:workspaceOwner.user.id,scope:'actor'}, () => updateMemberRole(
       wsRes.body.id,
       workspaceOwner.user.id,
       botOwner.user.id,
@@ -721,19 +767,19 @@ describe("Bots: Create", () => {
           await demotionReleased;
         },
       },
-    );
+    ));
     await demotionLocked;
 
     const botName = `AtomicHermes-${crypto.randomUUID()}`;
-    const creation = createHermesBotInWorkspace(
+    const creation = withDatabaseContext({actorId:botOwner.user.id,scope:'actor'}, () => createHermesBotInWorkspace(
       botName,
       null,
       botOwner.user.id,
       wsRes.body.id,
-    );
+    )).then(() => null, error => error);
     releaseDemotion();
     await demotion;
-    await expect(creation).rejects.toMatchObject({ status: 403 });
+    expect(await creation).toMatchObject({ status: 403 });
 
     const ownedBots = await db
       .select({ id: bots.id })
@@ -801,7 +847,7 @@ describe("Bots: Workspace management", () => {
     expect(botMember).toBeDefined();
   });
 
-  test("non-member user cannot add bot to workspace → 403", async () => {
+  test("non-member cannot discover or add a bot to a foreign workspace → 404", async () => {
     const owner = await registerUser("WSOwnr");
     const stranger = await registerUser("Stranger");
 
@@ -822,7 +868,7 @@ describe("Bots: Workspace management", () => {
       { workspaceId: wsRes.body.id },
       stranger.token
     );
-    expect(addRes.status).toBe(403);
+    expect(addRes.status).toBe(404);
   });
 
   test("workspace admin cannot connect a bot owned by another user", async () => {
@@ -1056,7 +1102,7 @@ describe("Bots: Workspace management", () => {
       },
       botRes.body.apiKey,
     );
-    expect(publishRes.status).toBe(403);
+    expect(publishRes.status).toBe(404);
 
     const directWriteRes = await req(
       "POST",
@@ -1892,6 +1938,7 @@ describe("Bots: Update bot", () => {
         botRes.body.apiKey,
       );
       expect(registerRes.status).toBe(200);
+    if (registerRes.body.webhookUrl) await approveBotEndpoint(botRes.body.id, workspaceId, human.token);
       expect(registerRes.body.webhookUrl).toBe(webhook.url);
       expect(registerRes.body.webhookSecret).toBe(
         rotateSecretRes.body.webhookSecret,
@@ -1974,6 +2021,7 @@ describe("Bots: Update bot", () => {
       botRes.body.apiKey,
     );
     expect(registerRes.status).toBe(200);
+    if (registerRes.body.webhookUrl) await approveBotEndpoint(botRes.body.id, workspaceId, human.token);
     expect(registerRes.body.commands).toEqual([
       {
         command: "new",
@@ -2084,10 +2132,10 @@ describe("Bots: Delete bot", () => {
     expect(ids).not.toContain(botRes.body.id);
 
     await expect(
-      updateAuthenticatedBotWebhook(
+      withIndependentActorDatabaseContext({actorId:botUserId,scope:'actor'},()=>updateAuthenticatedBotWebhook(
         botUserId,
         "https://deleted.example.com/webhook",
-      ),
+      )),
     ).rejects.toMatchObject({ status: 404 });
 
     // Remove from cleanup list since we already deleted it
@@ -2625,7 +2673,7 @@ describe("Bots: runtime state", () => {
         "POST",
         "/hermes-platform/messages",
         {
-          invocationId: completed.invocationId,
+          conversationId: dmRes.body.id,
           content: "Hermes follow-up after completion",
           platformMessageId: "follow-up-message",
         },
@@ -3025,10 +3073,10 @@ describe("Bots: runtime state", () => {
 
     await markInvocationDispatchStale(queued.id);
 
-    const failed = await __botRuntimeInternalsForTests.failQueuedHermesDispatch(
+    const failed = await withWorkerDatabaseContext(()=>__botRuntimeInternalsForTests.failQueuedHermesDispatch(
       queued.id,
       new Error("Hermes dispatch timed out after 2 minutes"),
-    );
+    ));
     expect(failed).toBe(false);
 
     const [running] = await invocationsForMessage(sendRes.body.id);
@@ -3373,6 +3421,8 @@ describe("Bots: runtime state", () => {
       };
     }
 
+    // This routing fixture explicitly exercises three simultaneous runtimes.
+    await db.execute(sql`insert into workspace_resource_limits values (${workspaceId},10737418240,32,32,1,3) on conflict (workspace_id) do update set concurrent_bot=3`);
     const first = await sendAndClaim("First threaded prompt", firstThreadRes.body.id);
     const second = await sendAndClaim("Second threaded prompt", secondThreadRes.body.id);
     const branch = await sendAndClaim("Branched threaded prompt", branchThreadRes.body.id);
@@ -3537,8 +3587,7 @@ describe("Bots: runtime state", () => {
       },
       botRes.body.apiKey,
     );
-    expect(lateTitleRes.status).toBe(200);
-    expect(lateTitleRes.body).toEqual({ ok: true, event: null });
+    expect(lateTitleRes.status).toBe(409);
 
     const threadsAfterLateTitle = await req(
       "GET",
@@ -3549,7 +3598,7 @@ describe("Bots: runtime state", () => {
     expect(threadsAfterLateTitle.status).toBe(200);
     expect(
       threadsAfterLateTitle.body.items.find((thread: any) => thread.id === first.threadId),
-    ).toEqual(expect.objectContaining({ title: "Investigate threaded checkout complete" }));
+    ).toEqual(expect.objectContaining({ title: "Investigate threaded checkout" }));
 
     const runtimeAfterLateTitle = await req(
       "GET",
@@ -3569,8 +3618,8 @@ describe("Bots: runtime state", () => {
       "POST",
       "/hermes-platform/messages",
       {
-        invocationId: first.invocationId,
-        threadId: null,
+        conversationId: dmRes.body.id,
+        threadId: first.threadId,
         content: "Async watcher says the AWS SSO login is complete",
         platformMessageId: "threaded-async-follow-up",
       },
@@ -3611,8 +3660,7 @@ describe("Bots: runtime state", () => {
       },
       botRes.body.apiKey,
     );
-    expect(staleTitleRetryRes.status).toBe(200);
-    expect(staleTitleRetryRes.body).toEqual({ ok: true, event: null });
+    expect(staleTitleRetryRes.status).toBe(409);
     const threadsAfterStaleTitle = await req(
       "GET",
       `/conversations/threads/${dmRes.body.id}?limit=3`,
@@ -3621,7 +3669,7 @@ describe("Bots: runtime state", () => {
     );
     expect(
       threadsAfterStaleTitle.body.items.find((thread: any) => thread.id === first.threadId),
-    ).toEqual(expect.objectContaining({ title: "Investigate threaded checkout complete" }));
+    ).toEqual(expect.objectContaining({ title: "Investigate threaded checkout" }));
 
     const secondThreadMessages = await req(
       "GET",
@@ -3701,6 +3749,7 @@ describe("Bots: runtime state", () => {
       botRes.body.apiKey,
     );
     expect(registerRes.status).toBe(200);
+    if (registerRes.body.webhookUrl) await approveBotEndpoint(botRes.body.id, workspaceId, human.token);
     expect(registerRes.body.webhookUrl).toBe(webhook.url);
     expect(registerRes.body.webhookSecret).toStartWith("whsec_");
 
@@ -3793,6 +3842,7 @@ describe("Bots: runtime state", () => {
       botRes.body.apiKey,
     );
     expect(registerRes.status).toBe(200);
+    if (registerRes.body.webhookUrl) await approveBotEndpoint(botRes.body.id, workspaceId, human.token);
     const dmRes = await req(
       "POST",
       "/conversations/dm",
@@ -3865,6 +3915,7 @@ describe("Bots: runtime state", () => {
       botRes.body.apiKey,
     );
     expect(registerRes.status).toBe(200);
+    if (registerRes.body.webhookUrl) await approveBotEndpoint(botRes.body.id, workspaceId, human.token);
 
     const dmRes = await req(
       "POST",
@@ -3936,6 +3987,7 @@ describe("Bots: runtime state", () => {
       botRes.body.apiKey,
     );
     expect(registerRes.status).toBe(200);
+    if (registerRes.body.webhookUrl) await approveBotEndpoint(botRes.body.id, workspaceId, human.token);
 
     const dmRes = await req(
       "POST",
@@ -4324,7 +4376,7 @@ describe("Bot runtime: direct Hermes interactions", () => {
       const stranger = await registerUser("DirectInteractionStranger");
       expect(
         (await req("POST", path, { response: "once" }, stranger.token)).status,
-      ).toBe(403);
+      ).toBe(404);
       expect(
         (
           await req(
@@ -4722,11 +4774,17 @@ describe("Bot runtime: direct Hermes interactions", () => {
       .update(bots)
       .set({ webhookUrl: "http://127.0.0.1:1/unreachable" })
       .where(eq(bots.id, failureFixture.botRes.body.id));
+    // Changing the callback requires a fresh workspace approval before connectivity is exercised.
+    await approveBotEndpoint(failureFixture.botRes.body.id, failureFixture.workspaceId, failureFixture.human.token);
+    // Reapproval must not upgrade an already-admitted invocation epoch.
+    expect((await req("POST", failurePath, {response:"once"}, failureFixture.human.token)).status).toBe(409);
+    const connectivityFixture = await createHermesInteractionFixture("DirectConnectivity", "http://127.0.0.1:1/unreachable");
+    const connectivityApproval = await publishInteractionProgress(connectivityFixture, "approval.request", {requestId:"connectivity",sessionKey:"connectivity",command:"pwd",description:"directory",choices:["once"]});
     const connectivityRes = await req(
       "POST",
-      failurePath,
+      interactionPath(connectivityFixture.invocationId, connectivityApproval.id),
       { response: "once" },
-      failureFixture.human.token,
+      connectivityFixture.human.token,
     );
     expect(connectivityRes.status).toBe(502);
     expect(connectivityRes.body.error).toBe(

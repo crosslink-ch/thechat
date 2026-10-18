@@ -1,6 +1,7 @@
 import { log } from "../logging";
 import { loadAttachmentConfig } from "./config";
-import { requestExpiredAttachmentCleanup } from "./service";
+import { requestExpiredAttachmentCleanup, getAttachmentObjectStore } from "./service";
+import { retryDurableObjectCleanup } from "./durable-cleanup";
 
 const cleanupLog = log.child({ component: "attachment-cleanup" });
 
@@ -28,6 +29,7 @@ async function runCleanup(signal: AbortSignal) {
       const requested = await requestExpiredAttachmentCleanup(
         config.cleanupBatchSize,
       );
+      await retryDurableObjectCleanup(getAttachmentObjectStore(), config.cleanupBatchSize);
       if (requested > 0) {
         cleanupLog.info(
           { count: requested },

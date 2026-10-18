@@ -31,7 +31,7 @@ Parameters:
     Default: 30
     MinValue: 30
     MaxValue: 3650
-    Description: Days to retain both current and noncurrent clean object versions
+    Description: Deprecated compatibility parameter; clean versions are retained and only the application expires content
 
 Rules:
   DedicatedAttachmentUsersMustDiffer:
@@ -76,6 +76,7 @@ Resources:
             AllowedHeaders:
               - Content-Type
               - If-None-Match
+              - x-amz-sdk-checksum-algorithm
               - x-amz-checksum-sha256
             MaxAge: 300
           - !If
@@ -89,6 +90,7 @@ Resources:
               AllowedHeaders:
                 - Content-Type
                 - If-None-Match
+                - x-amz-sdk-checksum-algorithm
                 - x-amz-checksum-sha256
               MaxAge: 300
             - !Ref AWS::NoValue
@@ -104,12 +106,8 @@ Resources:
             Status: Enabled
             Prefix: quarantine/
             ExpiredObjectDeleteMarker: true
-          - Id: ExpireCleanObjectVersions
-            Status: Enabled
-            Prefix: clean/
-            ExpirationInDays: !Ref CleanObjectRetentionDays
-            NoncurrentVersionExpiration:
-              NoncurrentDays: !Ref CleanObjectRetentionDays
+          # Clean current AND noncurrent versions are retained until application
+          # reconciliation explicitly deletes their pinned versions.
           - Id: RemoveExpiredCleanDeleteMarkers
             Status: Enabled
             Prefix: clean/
@@ -275,6 +273,9 @@ Resources:
               - !Sub "${AttachmentsBucket.Arn}/clean/*"
 
 Outputs:
+  DeprecatedCleanObjectRetentionDays:
+    Description: Legacy input retained for stack-update compatibility; has no effect on clean-version retention
+    Value: !Ref CleanObjectRetentionDays
   BucketName:
     Description: Production attachment bucket
     Value: !Ref AttachmentsBucket

@@ -4,11 +4,12 @@ import { db } from "../db";
 import {
   attachments,
   botInvocations,
-  bots,
+  botRuntimeMetadata as bots,
   conversations,
   conversationParticipants,
   conversationThreads,
   eventOutbox,
+  messageAttachments,
   messages,
   users,
   workspaceMembers,
@@ -19,6 +20,7 @@ import { log } from "../logging";
 import { publishWsEventToUsers } from "../realtime";
 import { currentHermesDispatchTimeoutCutoff } from "./bot-runtime";
 import { requireConversationMutationAccess } from "./conversation-mutation-access";
+import { requireBotInstallationAccess } from "./bot-installation-access";
 import { ServiceError } from "./errors";
 import { canUserAccessAttachments } from "./messages";
 
@@ -43,6 +45,16 @@ function directBot(user: {
 }
 
 export async function createOrGetDm(
+  workspaceId: string,
+  userId: string,
+  otherUserId: string,
+) {
+  // RLS bootstrap authority exists only in the creating SQL transaction.
+  // Keep the conversation and both participants in that same transaction.
+  return db.transaction(() => createOrGetDmInTransaction(workspaceId, userId, otherUserId));
+}
+
+async function createOrGetDmInTransaction(
   workspaceId: string,
   userId: string,
   otherUserId: string
@@ -155,13 +167,14 @@ export async function createOrGetDm(
     throw new ServiceError("User not found", 404);
   }
 
-  const [conv] = await db
+  const conv = { id: crypto.randomUUID() };
+  await db
     .insert(conversations)
     .values({
+      id: conv.id,
       type: "direct",
       workspaceId,
-    })
-    .returning();
+    });
 
   await db.insert(conversationParticipants).values([
     { conversationId: conv.id, userId, role: "member" as const },
@@ -183,7 +196,7 @@ export async function createOrGetDm(
 }
 
 export async function listUserDms(workspaceId: string, userId: string) {
-  const includeAttachments = await canUserAccessAttachments(db, userId);
+  // Installation attachment permission is evaluated separately for every DM.
   // Check user is workspace member
   const [membership] = await db
     .select()
@@ -272,6 +285,8 @@ export async function listUserDms(workspaceId: string, userId: string) {
       .orderBy(desc(messages.createdAt))
       .limit(1);
 
+    await requireConversationParticipant(conversationId, userId);
+    const includeAttachments = await canUserAccessAttachments(db, userId, conversationId);
     const lastMessageAttachments = includeAttachments && lastMsg
       ? (await attachmentsByMessageIds([lastMsg.id])).get(lastMsg.id) ?? []
       : [];
@@ -364,10 +379,12 @@ async function repairCorruptedDirectDms(workspaceId: string, userId: string) {
 }
 
 export async function getConversationDetail(conversationId: string, userId: string) {
+  await requireBotInstallationAccess(db, conversationId, userId);
   const [participant] = await db
     .select({
       userId: conversationParticipants.userId,
       conversationType: conversations.type,
+      workspaceId: conversations.workspaceId,
       workspaceMemberUserId: workspaceMembers.userId,
     })
     .from(conversationParticipants)
@@ -392,7 +409,7 @@ export async function getConversationDetail(conversationId: string, userId: stri
 
   if (
     !participant ||
-    (participant.conversationType === "group" && !participant.workspaceMemberUserId)
+    ((participant.workspaceId || participant.conversationType === "group") && !participant.workspaceMemberUserId)
   ) {
     throw new ServiceError("You are not a participant of this conversation", 403);
   }
@@ -585,10 +602,12 @@ export async function updateConversationThread(
 }
 
 export async function requireConversationParticipant(conversationId: string, userId: string) {
+  await requireBotInstallationAccess(db, conversationId, userId);
   const [participant] = await db
     .select({
       userId: conversationParticipants.userId,
       conversationType: conversations.type,
+      workspaceId: conversations.workspaceId,
       workspaceMemberUserId: workspaceMembers.userId,
     })
     .from(conversationParticipants)
@@ -613,7 +632,7 @@ export async function requireConversationParticipant(conversationId: string, use
 
   if (
     !participant ||
-    (participant.conversationType === "group" && !participant.workspaceMemberUserId)
+    ((participant.workspaceId || participant.conversationType === "group") && !participant.workspaceMemberUserId)
   ) {
     throw new ServiceError("You are not a participant of this conversation", 403);
   }
@@ -814,15 +833,16 @@ export async function createChannel(
         throw new ServiceError("A channel with this name already exists", 409);
       }
 
-      const [channel] = await tx
+      const channelId = crypto.randomUUID();
+      await tx
         .insert(conversations)
         .values({
+          id: channelId,
           title: normalized.title,
           type: "group",
           workspaceId,
           name: normalized.slug,
-        })
-        .returning();
+        });
 
       const allMembers = await tx
         .select({
@@ -835,13 +855,14 @@ export async function createChannel(
       if (allMembers.length > 0) {
         await tx.insert(conversationParticipants).values(
           allMembers.map((member) => ({
-            conversationId: channel.id,
+            conversationId: channelId,
             userId: member.userId,
             role: member.role,
           })),
         );
       }
 
+      const [channel] = await tx.select().from(conversations).where(eq(conversations.id,channelId)).limit(1);
       return {
         channel: toWorkspaceChannel(channel),
         targetUserIds: allMembers.map((member) => member.userId),
@@ -1063,19 +1084,14 @@ export async function deleteChannel(
       );
     }
 
-    // Attachment rows own private object-store coordinates. Cascading them
-    // away would make their exact S3 versions impossible to clean up safely.
-    const [attachment] = await tx
-      .select({ id: attachments.id })
-      .from(attachments)
-      .where(eq(attachments.conversationId, channel.id))
-      .limit(1);
-    if (attachment) {
-      throw new ServiceError(
-        "Channels with attachments cannot be deleted",
-        409,
-      );
-    }
+    await tx.update(attachments).set({ status: "deleting", deletingAt: new Date() })
+      .where(and(eq(attachments.conversationId, channel.id), ne(attachments.status, "deleted")));
+    // The BEFORE DELETE trigger snapshots exact versions durably before the
+    // canonical attachment cascades. Remove message links first (RESTRICT FK).
+    await tx.delete(messageAttachments).where(inArray(
+      messageAttachments.messageId,
+      tx.select({ id: messages.id }).from(messages).where(eq(messages.conversationId, channel.id)),
+    ));
 
     const targetUsers = await tx
       .select({ userId: workspaceMembers.userId })

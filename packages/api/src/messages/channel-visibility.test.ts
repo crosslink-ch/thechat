@@ -1,7 +1,7 @@
 import { describe, test, expect, afterAll } from "bun:test";
 import { Elysia } from "elysia";
 import { eq } from "drizzle-orm";
-import { db } from "../db";
+import { db } from "../db/testing";
 import { users, workspaces } from "../db/schema";
 import { authRoutes } from "../auth";
 import { workspaceRoutes } from "../workspaces";

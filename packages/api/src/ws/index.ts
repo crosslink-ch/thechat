@@ -1,7 +1,8 @@
 import { Elysia } from "elysia";
 import { z } from "zod";
 import { eq } from "drizzle-orm";
-import { db } from "../db";
+import { db, withDatabaseContext } from "../db";
+import { withIndependentActorDatabaseContext } from '../db/context';
 import { conversationParticipants } from "../db/schema";
 import type { WsClientEvent, WsServerEvent } from "@thechat/shared";
 import { resolveTokenToUser, resolveSessionTokenToHumanUser } from "../auth/middleware";
@@ -16,6 +17,7 @@ import {
 } from "../presence";
 import { log } from "../logging";
 import { deliverWebSocketEvent } from "./delivery";
+import { withAuthorizedRealtimeEvent } from "./resource-authorization";
 
 const websocketLog = log.child({ component: "websocket" });
 
@@ -95,7 +97,7 @@ async function addSocket(
 
   if (userType === "human") {
     socketUser.presenceConnectionId = crypto.randomUUID();
-    socketUser.presenceReady = activatePresence(ws, socketUser);
+    socketUser.presenceReady = withIndependentActorDatabaseContext({ actorId: userId, scope: 'actor' }, () => activatePresence(ws, socketUser));
   }
 }
 
@@ -154,7 +156,7 @@ async function tryBroadcastToUsers(userIds: string[], event: WsServerEvent) {
 }
 
 async function broadcastPresenceChanged(userId: string, online: boolean) {
-  const peerIds = await listSharedWorkspacePeerIds(userId);
+  const peerIds = await withIndependentActorDatabaseContext({ actorId: userId, scope: 'actor' }, () => listSharedWorkspacePeerIds(userId));
   await tryBroadcastToUsers(peerIds, {
     type: "presence_changed",
     userId,
@@ -242,7 +244,7 @@ async function refreshAuthenticatedPresence(ws: WebSocket, socketUser: SocketUse
 
   socketUser.name = currentUser.name;
   socketUser.type = currentUser.type;
-  await refreshPresence(ws, socketUser);
+  await withIndependentActorDatabaseContext({ actorId: socketUser.id, scope: 'actor' }, () => refreshPresence(ws, socketUser));
 }
 
 async function queuePresenceSend(
@@ -272,7 +274,8 @@ async function sendPresenceSnapshot(
   if (skipWhenEmpty && peerIds.length === 0) return;
   await queuePresenceSend(ws, async () => {
     const userIds = await getPresenceRegistry().onlineUserIds(peerIds);
-    sendTo(ws, { type: "presence_snapshot", userIds });
+    const user = socketUsers.get(ws);
+    if (user) await withAuthorizedRealtimeEvent(user.id, { type: "presence_snapshot", userIds }, projected => sendTo(ws, projected));
   });
 }
 
@@ -307,7 +310,8 @@ async function deliverPresenceToLocalSocket(
     }
 
     if (ws.readyState !== WebSocket.OPEN) return;
-    const result = await deliverWebSocketEvent(event, [ws]);
+    let result = { sent: 0, failed: 0 };
+    await withIndependentActorDatabaseContext({actorId:userId,scope:'actor'}, () => withAuthorizedRealtimeEvent(userId, event, async projected => { result = await deliverWebSocketEvent(projected, [ws]); }));
     if (result.failed > 0) {
       websocketLog.warn(
         { sent: result.sent, failed: result.failed },
@@ -317,7 +321,7 @@ async function deliverPresenceToLocalSocket(
   });
 }
 
-async function deliverToLocalUser(userId: string, event: WsServerEvent) {
+async function deliverToLocalUser(userId: string, event: WsServerEvent, options: { beforeResourceAuthorization?: () => Promise<void> } = {}) {
   const sockets = userSockets.get(userId);
   if (!sockets) return;
 
@@ -378,7 +382,14 @@ async function deliverToLocalUser(userId: string, event: WsServerEvent) {
   const openSockets = validSockets.filter(
     (socket) => socket.readyState === WebSocket.OPEN,
   );
-  const result = await deliverWebSocketEvent(event, openSockets);
+  await options.beforeResourceAuthorization?.();
+  let result = { sent: 0, failed: 0 };
+  try {
+    await withIndependentActorDatabaseContext({actorId:userId,scope:'actor'}, () => withAuthorizedRealtimeEvent(userId, event, async projected => { result = await deliverWebSocketEvent(projected, openSockets); }));
+  } catch (error) {
+    websocketLog.error({ err: error, userId }, "WebSocket resource revalidation failed");
+    return;
+  }
   if (result.failed > 0) {
     websocketLog.warn(
       { sent: result.sent, failed: result.failed },
@@ -388,6 +399,7 @@ async function deliverToLocalUser(userId: string, event: WsServerEvent) {
 }
 
 let realtimeSubscriptionStarted = false;
+export const __wsResourceInternalsForTests = { deliverToLocalUser };
 
 function startRealtimeSubscription() {
   if (realtimeSubscriptionStarted) return;
@@ -397,7 +409,7 @@ function startRealtimeSubscription() {
       if (event.type !== "ws.event") return;
       await Promise.all(
         event.targetUserIds.map((userId) =>
-          deliverToLocalUser(userId, event.event),
+          withIndependentActorDatabaseContext({ actorId: userId, scope: 'actor' }, () => deliverToLocalUser(userId, event.event)),
         ),
       );
     })
@@ -567,7 +579,7 @@ export const wsRoutes = new Elysia().ws("/ws", {
         ws.close();
         return;
       }
-      await addSocket(user.id, user.name, user.type, token!, socket, mode);
+      await withDatabaseContext({ actorId: user.id, scope: 'actor' }, () => addSocket(user.id, user.name, user.type, token!, socket, mode));
       sendTo(socket, { type: "auth_ok", userId: user.id });
       return;
     }
@@ -636,6 +648,7 @@ export const wsRoutes = new Elysia().ws("/ws", {
     }
     socketUser.name = currentUser.name;
 
+    await withDatabaseContext({ actorId: currentUser.id, scope: 'actor' }, async () => {
     if (event.type === "send_message") {
       await handleSendMessage(
         socket,
@@ -656,6 +669,7 @@ export const wsRoutes = new Elysia().ws("/ws", {
         event.threadId ?? null,
       );
     }
+    });
   },
   close(ws) {
     void removeSocket(ws.raw as unknown as WebSocket);

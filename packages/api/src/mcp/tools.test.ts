@@ -1,6 +1,7 @@
+import { withDatabaseContext } from '../db';
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { inArray } from "drizzle-orm";
-import { db } from "../db";
+import { db } from "../db/testing";
 import { users, workspaceMembers, workspaces } from "../db/schema";
 import type { McpUser as AuthUser } from "./auth";
 import { registerTools } from "./tools";
@@ -20,7 +21,9 @@ const fakeServer = {
     config: unknown,
     handler: RegisteredTool["handler"],
   ) {
-    tools.set(name, { config, handler });
+    tools.set(name, {config, handler: (args, extra) => extra.authInfo
+      ? withDatabaseContext({actorId:extra.authInfo.id,scope:'actor'},()=>handler(args,extra))
+      : handler(args,extra)});
   },
 };
 
@@ -128,10 +131,10 @@ describe("Hermes MCP management tools", () => {
     expect(config).toMatchObject({ botId, defaultMode: "run" });
 
     const updated = parseSuccess(
-      await tools.get("update_hermes_bot_config")!.handler(
+      await withDatabaseContext({actorId:({ authInfo: owner }).authInfo.id,scope:'actor'}, () => tools.get("update_hermes_bot_config")!.handler(
         { botId, defaultMode: "response" },
         { authInfo: owner },
-      ),
+      )),
     );
     expect(updated).toMatchObject({ botId, defaultMode: "response" });
 
@@ -158,7 +161,7 @@ describe("Hermes MCP management tools", () => {
       .get("get_hermes_bot_config")!
       .handler({ botId }, { authInfo: outsider });
     expect(forbidden.isError).toBe(true);
-    expect(forbidden.content[0]?.text).toContain("Only the bot owner");
+    expect(forbidden.content[0]?.text).toBe("Bot not found");
   });
 
   test("does not let bots or unauthorized humans create Hermes bots", async () => {
@@ -182,8 +185,6 @@ describe("Hermes MCP management tools", () => {
       { authInfo: outsider },
     );
     expect(outsiderResult.isError).toBe(true);
-    expect(outsiderResult.content[0]?.text).toContain(
-      "not a member of this workspace",
-    );
+    expect(outsiderResult.content[0]?.text).toBe("Workspace not found");
   });
 });

@@ -22,7 +22,8 @@ export function toAttachmentView(
     kind: isInlinePreview(mediaType, row.width, row.height) ? "image" : "file",
     width: row.width,
     height: row.height,
-    ...(options.includeStatus ? { status: row.status } : {}),
+    ...(options.includeStatus || row.status === "deleting" || row.status === "deleted"
+      ? { status: row.status } : {}),
     contentPath: `/attachments/${row.id}/content`,
   };
 }

@@ -94,6 +94,11 @@ beforeEach(() => {
 });
 
 describe("HermesBotModal", () => {
+  it("discloses shared runtime consent without claiming session isolation", () => {
+    render(<HermesBotModal />);
+    expect(screen.getByText(/By adding this bot, you approve its shared runtime/)).toHaveTextContent(/Separate sessions do not isolate files, credentials, or memory/);
+    expect(screen.getByText(/workspace-dedicated runtime and credentials/)).toBeInTheDocument();
+  });
   it.each(Array.from({ length: 18 }, (_, i) => (i + 0.99) / 18))(
     "never automatically picks Minimal when randomness is %s", async (random) => {
       const randomSpy = vi.spyOn(Math, "random").mockReturnValue(random);

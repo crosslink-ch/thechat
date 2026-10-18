@@ -1,7 +1,7 @@
 import { afterAll, expect, test } from "bun:test";
 import { Elysia } from "elysia";
 import { eq, like } from "drizzle-orm";
-import { db } from "../db";
+import { db } from "../db/testing";
 import { users, verification } from "../db/schema";
 const names = [
   "THECHAT_WEB_ORIGINS",

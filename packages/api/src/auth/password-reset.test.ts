@@ -12,7 +12,7 @@ import { assertDisposablePasswordResetTestEnvironment } from "../test-safety";
 
 assertDisposablePasswordResetTestEnvironment();
 
-const [{ db }, schema, betterAuthModule, resetModule, emailModule] =
+const [{ authDb: db }, schema, betterAuthModule, resetModule, emailModule] =
   await Promise.all([
     import("../db"),
     import("../db/schema"),

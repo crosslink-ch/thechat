@@ -167,6 +167,7 @@ function HermesBotModalInner({ returnFocus }: { returnFocus: HTMLElement | null 
         "THECHAT_POLL_INTERVAL=1.0",
         "",
         "# Webhook mode:",
+        "# A workspace admin must approve the registered endpoint revision before webhook delivery.",
         "# THECHAT_WEBHOOK_URL=https://your-hermes-gateway.example.com/thechat/webhook",
       ].join("\n")
     : "";
@@ -333,6 +334,9 @@ function HermesBotModalInner({ returnFocus }: { returnFocus: HTMLElement | null 
             </div>
           )}
 
+          <p className="mb-3 text-[0.786rem] leading-relaxed text-text-muted">
+            By adding this bot, you approve its shared runtime for this workspace. Separate sessions do not isolate files, credentials, or memory. Use a workspace-dedicated runtime and credentials for unrelated customers.
+          </p>
           <div className="mt-1 flex gap-2">
             <button
               className={`flex-1 ${buttonClass("primary", "lg")}`}

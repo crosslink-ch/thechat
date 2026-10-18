@@ -5,11 +5,14 @@ import { db } from "../db";
 import {
   attachments,
   bots,
+  botIdentities,
   users,
 } from "../db/schema";
 import { enqueueDomainEvent } from "../events/outbox";
 import { withSpan } from "../observability";
+import { canUserAccessAttachments } from "../services/messages";
 import { requireConversationMutationAccess } from "../services/conversation-mutation-access";
+import { admitWorkspaceWork, enforceWorkspaceRetainedBytes } from "../services/workspace-resource-budgets";
 import { ServiceError } from "../services/errors";
 import { requireConversationParticipant } from "../services/conversations";
 import { loadAttachmentConfig } from "./config";
@@ -124,6 +127,7 @@ export async function reserveAttachment(
             config.maxPerMessage,
             config.draftQuotaBytes,
           );
+          await enforceWorkspaceRetainedBytes(tx, input.conversationId, input.sizeBytes);
           return tx
             .insert(attachments)
             .values({
@@ -137,6 +141,7 @@ export async function reserveAttachment(
               quarantineKey,
               cleanKey,
               uploadExpiresAt: upload.expiresAt,
+              retentionSeconds: config.retainedTtlSeconds,
               expiresAt,
             })
             .returning();
@@ -263,6 +268,8 @@ async function completeAttachmentOperation(
     if (!current) throw new ServiceError("Attachment not found", 404);
     if (current.status !== "pending_upload") return current;
 
+    const [scope] = await tx.execute<{ workspace_id: string | null }>(sql`select workspace_id from conversations where id=${current.conversationId}`);
+    if (scope?.workspace_id) await admitWorkspaceWork(tx, scope.workspace_id, "validation", current.id);
     const now = new Date();
     const [processing] = await tx
       .update(attachments)
@@ -354,12 +361,22 @@ async function getAttachmentDownloadOperation(
     disposition?: "attachment" | "inline";
   } = {},
 ) {
+  return db.transaction(async tx => {
+  let row = await loadAttachment(attachmentId);
+  // Deny unseen and absent download identifiers identically; no existence oracle.
+  if (!row) throw new ServiceError("Attachment access denied", 403);
+  await requireConversationMutationAccess(tx, row.conversationId, userId);
+  // Workspace -> bot -> attachment is the same authorization lock order as
+  // grant administration and deletion. Retain all locks through signing.
+  const [identity] = await tx.select({id:botIdentities.id}).from(botIdentities).where(eq(botIdentities.userId,userId)).limit(1);
+  if (identity) await tx.execute(sql`select thechat_lock_bot_endpoint(${identity.id}::uuid)`);
+  row = (await tx.select().from(attachments).where(eq(attachments.id,attachmentId)).for('share').limit(1))[0];
+  if (!row) throw new ServiceError('Attachment access denied',403);
   await requireAttachmentActor(userId);
-  const row = await loadAttachment(attachmentId);
-  if (!row) throw new ServiceError("Attachment not found", 404);
   await requireParticipant(row.conversationId, userId);
   if (
     row.status !== "attached" ||
+    (row.retainedUntil !== null && row.retainedUntil.getTime() <= Date.now()) ||
     !row.cleanKey ||
     !row.cleanVersionId ||
     !row.verifiedMediaType
@@ -394,6 +411,7 @@ async function getAttachmentDownloadOperation(
     url: request.url,
     expiresAt: request.expiresAt.toISOString(),
   };
+  });
 }
 
 export async function deleteAttachment(attachmentId: string, userId: string) {
@@ -423,12 +441,6 @@ async function deleteAttachmentOperation(attachmentId: string, userId: string) {
     throw new ServiceError("Only the uploader can delete this attachment", 403);
   }
   await requireParticipant(row.conversationId, userId);
-  if (row.status === "attached") {
-    throw new ServiceError(
-      "Attached files cannot be deleted from the draft API",
-      409,
-    );
-  }
   if (row.status === "deleted" || row.status === "deleting") {
     return {
       response: { ok: true },
@@ -447,9 +459,10 @@ export async function requestExpiredAttachmentCleanup(
     .select()
     .from(attachments)
     .where(
-      and(
-        inArray(attachments.status, ["pending_upload", "processing", "ready"]),
-        lte(attachments.expiresAt, new Date()),
+      or(
+        and(inArray(attachments.status, ["pending_upload", "processing", "ready"]),
+          lte(attachments.expiresAt, new Date())),
+        and(eq(attachments.status, "attached"), lte(attachments.retainedUntil, new Date())),
       ),
     )
     .limit(limit);
@@ -468,7 +481,12 @@ export async function requestExpiredAttachmentCleanup(
               "pending_upload",
               "processing",
               "ready",
+              "attached",
             ]),
+            or(
+              and(eq(attachments.status, "attached"), lte(attachments.retainedUntil, now)),
+              and(inArray(attachments.status, ["pending_upload", "processing", "ready"]), lte(attachments.expiresAt, now)),
+            ),
           ),
         )
         .returning({ id: attachments.id });
@@ -505,6 +523,7 @@ async function requestAttachmentDeletion(
             "pending_upload",
             "processing",
             "ready",
+            "attached",
             "rejected",
           ]),
         ),
@@ -556,7 +575,7 @@ async function authorizeAttachmentRead(
   row: typeof attachments.$inferSelect,
   userId: string,
 ) {
-  if (row.status !== "attached") {
+  if (row.status !== "attached" && row.attachedAt === null) {
     if (row.uploaderId !== userId) {
       throw new ServiceError("Attachment is visible only to its uploader", 403);
     }
@@ -596,17 +615,20 @@ async function enforceDraftQuota(
 
   const [userUsage] = await executor
     .select({
-      bytes: sql<number>`coalesce(sum(${attachments.declaredSizeBytes}), 0)::int`,
+      bytes: sql<string>`coalesce(sum(${attachments.declaredSizeBytes}::bigint), 0)::text`,
     })
     .from(attachments)
     .where(and(eq(attachments.uploaderId, userId), quotaEligible));
-  if ((userUsage?.bytes ?? 0) + addedBytes > quotaBytes) {
+  if (BigInt(userUsage?.bytes ?? "0") + BigInt(addedBytes) > BigInt(quotaBytes)) {
     throw new ServiceError("Attachment draft quota exceeded", 429);
   }
 }
 
 async function requireParticipant(conversationId: string, userId: string) {
   await requireConversationParticipant(conversationId, userId);
+  if (!(await canUserAccessAttachments(db, userId, conversationId))) {
+    throw new ServiceError("Attachment access is not enabled for this bot installation", 403);
+  }
 }
 
 async function requireAttachmentActor(userId: string) {

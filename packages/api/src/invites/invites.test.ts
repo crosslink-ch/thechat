@@ -1,7 +1,7 @@
 import { describe, test, expect, afterAll } from "bun:test";
 import { Elysia } from "elysia";
 import { eq } from "drizzle-orm";
-import { db } from "../db";
+import { db } from "../db/testing";
 import {
   users,
   workspaces,
@@ -383,7 +383,7 @@ describe("Invites: Decline", () => {
       invitee.token
     );
 
-    expect(detailRes.status).toBe(403);
+    expect(detailRes.status).toBe(404);
   });
 });
 

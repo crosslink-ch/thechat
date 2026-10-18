@@ -20,7 +20,7 @@ process.env.BETTER_AUTH_RATE_LIMIT_ENABLED = "true";
 process.env.AUTH_TRUST_PROXY = "true";
 process.env.REQUIRE_EMAIL_VERIFICATION = "true";
 
-const [{ db }, schema] = await Promise.all([
+const [{ authDb: db }, schema] = await Promise.all([
   import("../db"),
   import("../db/schema"),
 ]);

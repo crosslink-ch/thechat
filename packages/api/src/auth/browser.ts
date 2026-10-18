@@ -1,4 +1,5 @@
 import { Elysia } from "elysia";
+import { databaseHttpContext } from "../db/http-context";
 import { cors } from "@elysiajs/cors";
 
 const nativeOrigins = new Set([
@@ -142,35 +143,23 @@ export const browserCors = new Elysia({ name: "browser-cors" })
   )
   .as("scoped");
 
+export function browserRequestPolicyError(request: Request): string | null {
+  if (request.method === 'GET' && new URL(request.url).pathname === '/ws' && request.headers.get('upgrade')?.toLowerCase() === 'websocket') return null;
+  const marker = request.headers.get('x-thechat-client');
+  const origin = effectiveBrowserOrigin(request);
+  const hasCookie = /(?:^|;\s*)(?:__Host-thechat_session|thechat_session)=/.test(request.headers.get('cookie') ?? '');
+  if (!marker && !hasCookie && (!origin || isNativeOrigin(origin))) return null;
+  if (marker === 'web' && trustedWebOrigin(origin) && request.headers.get('sec-fetch-site') !== 'cross-site') return null;
+  return 'Trusted browser origin and X-TheChat-Client: web required';
+}
+
 /** Check before any auth endpoint work, including login/session minting. */
 export const browserAuthPolicy = new Elysia({ name: "browser-auth-policy" })
   .use(browserCors)
+  .use(databaseHttpContext)
   .onRequest(({ request, set }) => {
-    // WebSocket clients cannot set the HTTP browser marker. /ws validates the
-    // original handshake Origin and cookie when processing its cookie frame.
-    if (
-      request.method === "GET" &&
-      new URL(request.url).pathname === "/ws" &&
-      request.headers.get("upgrade")?.toLowerCase() === "websocket"
-    )
-      return;
-    const marker = request.headers.get("x-thechat-client");
-    const origin = effectiveBrowserOrigin(request);
-    const hasCookie =
-      /(?:^|;\s*)(?:__Host-thechat_session|thechat_session)=/.test(
-        request.headers.get("cookie") ?? "",
-      );
-    if (!marker && !hasCookie && (!origin || isNativeOrigin(origin))) return;
-    if (
-      marker === "web" &&
-      trustedWebOrigin(origin) &&
-      request.headers.get("sec-fetch-site") !== "cross-site"
-    )
-      return;
-    set.status = 403;
-    return {
-      error: "Trusted browser origin and X-TheChat-Client: web required",
-    };
+    const error = browserRequestPolicyError(request);
+    if (error) { set.status = 403; return { error }; }
   })
   .onTransform(({ request, headers }) => {
     // Only the validated context is normalized; the original handshake/request

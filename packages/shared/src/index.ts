@@ -228,6 +228,8 @@ export interface ChatMessage {
   attachments?: ChatAttachment[];
   reactions?: MessageReactionSummary[];
   createdAt: string;
+  /** Opaque, scope-bound (created_at,id) cursor; send as messages.before. */
+  paginationCursor?: string;
 }
 
 export interface MessageReactionSummary {
@@ -331,7 +333,7 @@ export interface ConversationThreadPublic {
   status: string;
   branchPending?: boolean;
   branchFromThreadId?: string | null;
-  createdById: string;
+  createdById: string | null;
   lastActivityAt: string;
   createdAt: string;
   updatedAt: string;
@@ -362,6 +364,21 @@ export type WsClientEvent =
 // -- Bot Types --
 
 export type BotKind = "webhook" | "hermes";
+export interface BotWorkspaceInstallation {
+  workspaceId: string;
+  botId: string;
+  enabled: boolean;
+  channelScope: "all" | "selected";
+  conversationIds: string[];
+  attachmentAccess: boolean;
+  sharedRuntimeConsent: boolean;
+  approvedEndpointUrl: string | null;
+  approvedEndpointRevision: number;
+  revision: number;
+  approvedById: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
 
 export interface BotWorkspaceMembership {
   id: string;

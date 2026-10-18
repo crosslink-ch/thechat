@@ -173,6 +173,10 @@ beforeEach(() => {
 });
 
 describe("WorkspaceManageRoute", () => {
+  it("states shared-runtime consent before the workspace bot install action", async () => {
+    render(<WorkspaceManageRoute />);
+    expect(await screen.findByText(/By adding this bot, you approve its shared runtime/)).toHaveTextContent(/Separate sessions do not isolate files, credentials, or memory/);
+  });
   it("shows the workspace ID, people and bots instead of LLM configuration", async () => {
     render(<WorkspaceManageRoute />);
 

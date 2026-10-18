@@ -1,12 +1,12 @@
 import crypto from "node:crypto";
-import { and, asc, desc, eq, inArray, isNull, lt } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, lt, sql } from "drizzle-orm";
 import type { ChatMessage, WsServerEvent } from "@thechat/shared";
 import { attachmentsByMessageIds } from "../attachments/public";
 import { loadAttachmentConfig } from "../attachments/config";
 import { db } from "../db";
 import {
   attachments,
-  bots,
+  botRuntimeMetadata as bots,
   conversationParticipants,
   conversationThreads,
   conversations,
@@ -20,11 +20,13 @@ import { enqueueDomainEvent } from "../events/outbox";
 import { log } from "../logging";
 import { withSpan } from "../observability";
 import { publishWsEventToUsers } from "../realtime";
+import { requireBotInstallationAccess, canBotAccessConversationAttachments } from "./bot-installation-access";
 import { ServiceError } from "./errors";
 import { requireConversationMutationAccess } from "./conversation-mutation-access";
 import { resolveMessageBotTargetIds } from "./message-bot-targets";
 import { messageReactionsByMessageIds } from "./message-reactions";
 import { recordMessageUnreads } from "./activity";
+import { decodeMessageCursor, encodeMessageCursor, persistedMessageCursor } from './message-cursor';
 
 const messageLog = log.child({ component: "messages" });
 
@@ -53,7 +55,10 @@ export async function getMessages(
     conditions.push(isNull(messages.threadId));
   }
   if (options?.before) {
-    conditions.push(lt(messages.createdAt, new Date(options.before)));
+    const cursor = decodeMessageCursor(options.before, conversationId, options.threadId, options.unthreaded);
+    conditions.push(cursor instanceof Date
+      ? lt(messages.createdAt, cursor)
+      : sql`(${messages.createdAt},${messages.id}) < (${cursor.timestamp}::timestamptz,${cursor.id}::uuid)`);
   }
 
   const rows = await db
@@ -65,17 +70,18 @@ export async function getMessages(
       content: messages.content,
       parts: messages.parts,
       createdAt: messages.createdAt,
+      cursorCreatedAt: sql<string>`to_char(${messages.createdAt} at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`,
       senderName: users.name,
       senderType: users.type,
     })
     .from(messages)
     .innerJoin(users, eq(messages.senderId, users.id))
     .where(and(...conditions))
-    .orderBy(desc(messages.createdAt))
+    .orderBy(desc(messages.createdAt), desc(messages.id))
     .limit(limit);
   const chronological = rows.reverse();
   const includeAttachments =
-    options?.includeAttachments ?? (await canUserAccessAttachments(db, userId));
+    options?.includeAttachments !== false && (await canUserAccessAttachments(db, userId, conversationId));
   const attachmentMap = includeAttachments
     ? await attachmentsByMessageIds(rows.map((row) => row.id))
     : new Map<string, NonNullable<ChatMessage["attachments"]>>();
@@ -106,6 +112,7 @@ export async function getMessageByIdForParticipant(
       content: messages.content,
       parts: messages.parts,
       createdAt: messages.createdAt,
+      cursorCreatedAt: sql<string>`to_char(${messages.createdAt} at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`,
       senderName: users.name,
       senderType: users.type,
     })
@@ -115,7 +122,9 @@ export async function getMessageByIdForParticipant(
     .limit(1);
   if (!row) throw new ServiceError("Message not found", 404);
   await requireParticipant(db, row.conversationId, userId);
-  const attachmentMap = await attachmentsByMessageIds([row.id]);
+  const attachmentMap = await canUserAccessAttachments(db, userId, row.conversationId)
+    ? await attachmentsByMessageIds([row.id])
+    : new Map<string, NonNullable<ChatMessage["attachments"]>>();
   const reactionMap = await messageReactionsByMessageIds([row.id], userId);
   return toChatMessage(
     row,
@@ -174,12 +183,8 @@ export async function sendMessage(
           { afterWorkspaceLocked: options.afterWorkspaceLocked },
         );
         if (participant.senderType === "bot" && attachmentIds.length > 0) {
-          const [bot] = await tx
-            .select({ attachmentAccess: bots.attachmentAccess })
-            .from(bots)
-            .where(eq(bots.userId, userId))
-            .limit(1);
-          if (bot?.attachmentAccess !== true) {
+
+          if (!(await canUserAccessAttachments(tx, userId, conversationId))) {
             throw new ServiceError(
               "Attachment access is not enabled for this bot token",
               403,
@@ -322,6 +327,7 @@ export async function sendMessage(
         attachmentMap.get(result.message.id) ?? [],
         reactions,
       );
+      publicMessage.paginationCursor = await persistedMessageCursor(result.message.id);
       span.setAttribute("thechat.message.idempotent_replay", result.duplicate);
       span.setAttribute(
         "thechat.message.outcome",
@@ -464,6 +470,7 @@ export async function attachReadyAttachments(
       await tx.insert(messageAttachments).values(
         input.attachmentIds.map((attachmentId, position) => ({
           messageId: input.messageId,
+          conversationId: input.conversationId,
           attachmentId,
           position,
         })),
@@ -495,7 +502,9 @@ export async function attachReadyAttachments(
 export async function canUserAccessAttachments(
   executor: MessageReadExecutor,
   userId: string,
+  conversationId?: string,
 ) {
+  if (conversationId) return canBotAccessConversationAttachments(executor, conversationId, userId);
   const [actor] = await executor
     .select({
       userType: users.type,
@@ -566,6 +575,7 @@ async function requireParticipant(
   userId: string,
   includeContext = false,
 ) {
+  await requireBotInstallationAccess(executor, conversationId, userId);
   const [participant] = await executor
     .select({
       userId: conversationParticipants.userId,
@@ -596,7 +606,7 @@ async function requireParticipant(
     .limit(1);
   if (
     !participant ||
-    (participant.conversationType === "group" && !participant.workspaceMemberUserId)
+    ((participant.workspaceId !== null || participant.conversationType === "group") && !participant.workspaceMemberUserId)
   ) {
     throw new ServiceError(
       "You are not a participant of this conversation",
@@ -651,6 +661,7 @@ function toChatMessage(
     content: string;
     parts: typeof messages.$inferSelect.parts;
     createdAt: Date;
+    cursorCreatedAt?: string;
   },
   messageAttachments: ChatMessage["attachments"],
   reactions: NonNullable<ChatMessage["reactions"]>,
@@ -667,5 +678,6 @@ function toChatMessage(
     attachments: messageAttachments,
     reactions,
     createdAt: row.createdAt.toISOString(),
+    ...(row.cursorCreatedAt ? { paginationCursor: encodeMessageCursor({ timestamp: row.cursorCreatedAt, id: row.id, conversationId: row.conversationId, threadId: row.threadId }) } : {}),
   };
 }

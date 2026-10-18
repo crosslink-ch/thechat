@@ -1,6 +1,6 @@
 import crypto from "crypto";
 import { and, desc, eq, ne } from "drizzle-orm";
-import { db } from "../db";
+import { authDb as db } from "../db";
 import { account, session, users, verification } from "../db/schema";
 import { hashAuthenticationOtp, hashAuthPassword } from "./better-auth";
 

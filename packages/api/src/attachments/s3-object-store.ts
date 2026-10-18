@@ -102,6 +102,7 @@ export class S3ObjectStore implements ObjectStore {
         const url = await getSignedUrl(this.signingClient, command, {
           expiresIn: input.expiresInSeconds,
           unhoistableHeaders: new Set([
+            "x-amz-sdk-checksum-algorithm",
             "x-amz-checksum-sha256",
             "if-none-match",
           ]),
@@ -115,6 +116,7 @@ export class S3ObjectStore implements ObjectStore {
           headers: {
             "content-type": input.mediaType,
             "if-none-match": "*",
+            "x-amz-sdk-checksum-algorithm": ChecksumAlgorithm.SHA256,
             "x-amz-checksum-sha256": input.checksumSha256Base64,
           },
           expiresAt: new Date(Date.now() + input.expiresInSeconds * 1000),

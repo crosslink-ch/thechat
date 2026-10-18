@@ -48,6 +48,8 @@ spec:
               protocol: TCP
           env:
             {{- include "thechat-api.env" . | trim | nindent 12 }}
+            {{- include "thechat-api.authDatabaseEnv" . | trim | nindent 12 }}
+            {{- include "thechat-api.sharedCredentialEnv" . | trim | nindent 12 }}
             {{- include "thechat-api.apiAwsCredentialEnv" . | trim | nindent 12 }}
           livenessProbe:
             httpGet:

@@ -35,6 +35,7 @@ from e2e_run import (
     refuse_port_collision,
     validate_run_id,
 )
+from database_authority import bootstrap_disposable_database
 
 ROOT = Path(__file__).resolve().parents[2]
 ENV_BEFORE_DOTENV = set(os.environ)
@@ -630,7 +631,7 @@ def start_api(
     if refuse_collision:
         refuse_port_collision(API_PORT, "API port")
     api_env = env | {
-        "DATABASE_URL": DATABASE_URL,
+        "DATABASE_URL": env['DATABASE_URL'],
         "REDIS_URL": REDIS_URL,
         "REALTIME_DRIVER": "redis",
         "REDIS_KEY_PREFIX": f"thechat-hermes-e2e:{CONTROL_NAMESPACE}",
@@ -641,8 +642,10 @@ def start_api(
         "THECHAT_BACKEND_PORT": str(API_PORT),
         "LOG_LEVEL": "error",
     }
+    for key in ['DATABASE_MIGRATION_URL', 'DATABASE_WORKER_URL']:
+        api_env.pop(key, None)
     proc = subprocess.Popen(
-        [BUN, "run", "packages/api/src/index.ts"],
+        [BUN, "--no-env-file", "run", "packages/api/src/index.ts"],
         cwd=ROOT,
         env=api_env,
         start_new_session=True,
@@ -663,7 +666,6 @@ def start_api(
 def start_worker(env: dict[str, str]) -> subprocess.Popen:
     """Start the bot worker and durable PostgreSQL event relay for E2E."""
     worker_env = env | {
-        "DATABASE_URL": DATABASE_URL,
         "REDIS_URL": REDIS_URL,
         "REALTIME_DRIVER": "redis",
         "REDIS_KEY_PREFIX": f"thechat-hermes-e2e:{CONTROL_NAMESPACE}",
@@ -672,8 +674,10 @@ def start_worker(env: dict[str, str]) -> subprocess.Popen:
         "THECHAT_SECRET_KEY": "thechat-hermes-e2e-secret-key",
         "LOG_LEVEL": "error",
     }
+    for key in ['DATABASE_URL', 'DATABASE_AUTH_URL', 'DATABASE_MIGRATION_URL']:
+        worker_env.pop(key, None)
     proc = subprocess.Popen(
-        [BUN, "run", "packages/api/src/scripts/worker.ts"],
+        [BUN, "--no-env-file", "run", "packages/api/src/scripts/worker.ts"],
         cwd=ROOT,
         env=worker_env,
         start_new_session=True,
@@ -833,7 +837,7 @@ def main():
         start_postgres()
         start_redis()
 
-        run([PNPM, "--dir", "packages/api", "exec", "drizzle-kit", "migrate"], env=env)
+        bootstrap_disposable_database(env, PG_CONTAINER)
         api_proc = start_api(env)
         worker_proc = start_worker(env)
 

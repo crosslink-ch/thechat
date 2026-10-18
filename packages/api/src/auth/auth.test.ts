@@ -2,7 +2,7 @@ import { afterAll, describe, expect, spyOn, test } from "bun:test";
 import crypto from "crypto";
 import { eq } from "drizzle-orm";
 import { Elysia } from "elysia";
-import { db } from "../db";
+import { db } from "../db/testing";
 import { account, bots, session, users } from "../db/schema";
 import { auth } from "./better-auth";
 import { createBotApiKey } from "./bot-api-keys";

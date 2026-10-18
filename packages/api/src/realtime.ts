@@ -302,10 +302,12 @@ export async function setRealtimeBusForTests(bus: RealtimeBus): Promise<void> {
   realtimeBus = bus;
 }
 
-export async function closeRealtimeBusForTests(): Promise<void> {
+export async function closeRealtimeBus(): Promise<void> {
   await realtimeBus?.close?.();
   realtimeBus = null;
 }
+
+export const closeRealtimeBusForTests = closeRealtimeBus;
 
 export async function publishWsEventToUsers(
   targetUserIds: string[],

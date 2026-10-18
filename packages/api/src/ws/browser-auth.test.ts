@@ -1,7 +1,7 @@
 import { afterAll, expect, spyOn, test } from "bun:test";
 import { Elysia } from "elysia";
 import { eq } from "drizzle-orm";
-import { db } from "../db";
+import { db } from "../db/testing";
 import { session, users } from "../db/schema";
 import { authRoutes } from "../auth";
 import { auth } from "../auth/better-auth";

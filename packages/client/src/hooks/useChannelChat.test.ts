@@ -777,6 +777,19 @@ describe("useChannelChat", () => {
     expect(api.messages).toHaveBeenCalledTimes(1);
   });
 
+  it("round-trips the server tuple cursor when equal timestamps span pages", async () => {
+    const timestamp = '2026-01-01T00:00:00.123Z';
+    const recent = Array.from({length: MESSAGE_PAGE_SIZE}, (_,i) => ({...message('dm-tuples',`recent ${i}`,null,timestamp), paginationCursor: `m1.cursor-${i}`}));
+    const older = [message('dm-tuples','older equal timestamp',null,timestamp)];
+    const get=vi.fn(({query}:{query:Record<string,unknown>})=>Promise.resolve({data:query.before ? older : recent}));
+    vi.mocked(api.messages).mockReturnValue({get} as any);
+    const {result}=renderHook(()=>useChannelChat({conversationId:'dm-tuples',token:'test-token',wsSendMessage:vi.fn()}),{wrapper:createQueryWrapper()});
+    await waitFor(()=>expect(result.current.messages).toHaveLength(MESSAGE_PAGE_SIZE));
+    await act(async()=>{await result.current.loadOlderMessages();});
+    expect(get).toHaveBeenLastCalledWith({query:{limit:MESSAGE_PAGE_SIZE,before:recent[0].paginationCursor},headers:{authorization:'Bearer test-token'}});
+    await waitFor(() => expect(result.current.messages.map(row=>row.content)).toEqual(['older equal timestamp',...recent.map(row=>row.content)]));
+  });
+
   it("loads older messages before the current oldest cursor", async () => {
     const recent = Array.from({ length: MESSAGE_PAGE_SIZE }, (_, i) =>
       message(

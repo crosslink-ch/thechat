@@ -5,7 +5,7 @@ import { Elysia } from "elysia";
 import { activityRoutes } from "./index";
 import { authRoutes } from "../auth";
 import { conversationRoutes } from "../conversations";
-import { db } from "../db";
+import { db } from "../db/testing";
 import { messages, users, workspaces } from "../db/schema";
 import { recordMessageUnreads } from "../services/activity";
 import { inviteRoutes } from "../invites";

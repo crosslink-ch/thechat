@@ -1,8 +1,10 @@
+import { withDatabaseContext, withWorkerDatabaseContext } from '../db/index';
+import { asFixtureBot } from '../test-context';
 import { expect, test } from "bun:test";
 import crypto from "node:crypto";
 import { S3Client } from "@aws-sdk/client-s3";
 import { and, eq } from "drizzle-orm";
-import { db } from "../db";
+import { db } from "../db/testing";
 import {
   attachments,
   conversations,
@@ -70,7 +72,7 @@ integrationTest(
         .returning({ id: users.id });
       userId = user.id;
 
-      const workspace = await createWorkspace(`Real S3 ${suffix}`, user.id);
+      const workspace = await withDatabaseContext({actorId:user.id,scope:'actor'}, () => createWorkspace(`Real S3 ${suffix}`, user.id));
       workspaceId = workspace.id;
       const [conversation] = await db
         .select({ id: conversations.id })
@@ -94,13 +96,13 @@ integrationTest(
         .digest("hex");
       const checksumBase64 = Buffer.from(checksumHex, "hex").toString("base64");
 
-      const reservation = await reserveAttachment(user.id, {
+      const reservation = await withDatabaseContext({actorId:user.id,scope:'actor'}, () => reserveAttachment(user.id, {
         conversationId: conversation.id,
         fileName: "real-s3.txt",
         mediaType: "text/plain",
         sizeBytes: bytes.byteLength,
         checksumSha256: checksumHex,
-      });
+      }));
       const reservedAttachmentId = reservation.attachment.id;
       attachmentId = reservedAttachmentId;
       expect(reservation.upload.method).toBe("PUT");
@@ -134,7 +136,7 @@ integrationTest(
       expect(uploadedObject?.contentType).toBe("text/plain");
       expect(uploadedObject?.checksumSha256Base64).toBe(checksumBase64);
 
-      const completed = await completeAttachment(reservedAttachmentId, user.id);
+      const completed = await withDatabaseContext({actorId:user.id,scope:'actor'}, () => completeAttachment(reservedAttachmentId, user.id));
       expect(completed.status).toBe("processing");
 
       const [processingRow] = await db
@@ -149,14 +151,14 @@ integrationTest(
       });
       expect(Buffer.from(workerRead)).toEqual(bytes);
 
-      await validateAndPromoteAttachment(reservedAttachmentId, {
+      await withWorkerDatabaseContext(()=>validateAndPromoteAttachment(reservedAttachmentId, {
         store: workerStore,
         maxBytes: 25 * 1024 * 1024,
-      });
-      const ready = await getAttachment(reservedAttachmentId, user.id);
+      }));
+      const ready = await withDatabaseContext({actorId:user.id,scope:'actor'}, () => getAttachment(reservedAttachmentId, user.id));
       expect(ready.status).toBe("ready");
 
-      const sent = await sendMessage(
+      const sent = await withDatabaseContext({actorId:user.id,scope:'actor'}, () => sendMessage(
         conversation.id,
         user.id,
         userName,
@@ -165,7 +167,7 @@ integrationTest(
           attachmentIds: [reservedAttachmentId],
           clientMessageId: `real-s3-${suffix}`,
         },
-      );
+      ));
       expect(sent.attachments).toHaveLength(1);
       expect(sent.attachments?.[0]).toMatchObject({
         id: reservedAttachmentId,
@@ -173,7 +175,7 @@ integrationTest(
         mediaType: "text/plain",
       });
 
-      const download = await getAttachmentDownload(reservedAttachmentId, user.id);
+      const download = await withDatabaseContext({actorId:user.id,scope:'actor'}, () => getAttachmentDownload(reservedAttachmentId, user.id));
       const downloaded = await fetch(download.url);
       expect(downloaded.status).toBe(200);
       expect(Buffer.from(await downloaded.arrayBuffer())).toEqual(bytes);

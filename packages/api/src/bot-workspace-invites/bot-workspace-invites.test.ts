@@ -1,3 +1,5 @@
+import { withDatabaseContext, withWorkerDatabaseContext } from '../db/index';
+import { asFixtureBot } from '../test-context';
 import { afterAll, describe, expect, test } from "bun:test";
 import crypto from "crypto";
 import { and, eq } from "drizzle-orm";
@@ -6,7 +8,7 @@ import { authRoutes } from "../auth";
 import { botRoutes } from "../bots";
 import { conversationRoutes } from "../conversations";
 import { botWorkspaceInviteRoutes } from "./index";
-import { db } from "../db";
+import { db } from "../db/testing";
 import {
   botWorkspaceInvites,
   conversationParticipants,
@@ -505,7 +507,7 @@ describe("bot workspace membership approvals", () => {
       releaseLock = resolve;
     });
 
-    const attachment = requestBotForWorkspace(
+    const attachment = withDatabaseContext({actorId:owner.user.id,scope:'actor'}, () => requestBotForWorkspace(
       workspace.id,
       bot.id,
       owner.user.id,
@@ -515,7 +517,7 @@ describe("bot workspace membership approvals", () => {
           await release;
         },
       },
-    );
+    ));
     await locked;
 
     let channelSettled = false;

@@ -69,6 +69,8 @@ export interface AsyncJob<TPayload = unknown> {
 
 export interface AsyncJobContext {
   setProgress(progress: number, detail?: unknown): Promise<void>;
+  /** Durable admission deferral, not a failed execution/retry attempt. */
+  defer?(delayMs: number): Promise<never>;
 }
 
 export interface AsyncJobHandler<TPayload = unknown> {

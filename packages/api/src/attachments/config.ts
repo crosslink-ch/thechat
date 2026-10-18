@@ -7,6 +7,7 @@ export interface AttachmentConfig {
   uploadTtlSeconds: number;
   downloadTtlSeconds: number;
   unattachedTtlSeconds: number;
+  retainedTtlSeconds: number | null;
   cleanupIntervalMs: number;
   cleanupBatchSize: number;
 }
@@ -35,6 +36,7 @@ export function loadAttachmentConfig(
   );
 
   return {
+    retainedTtlSeconds: retainedTtl(env.ATTACHMENT_RETAINED_TTL_SECONDS),
     maxBytes,
     maxPerMessage,
     draftQuotaBytes,
@@ -69,6 +71,15 @@ export function loadAttachmentConfig(
       1_000,
     ),
   };
+}
+
+function retainedTtl(raw: string | undefined) {
+  if (!raw || raw === "0") return null;
+  const seconds = Number(raw);
+  if (!Number.isSafeInteger(seconds) || seconds < 1 || seconds > 315360000) {
+    throw new Error("ATTACHMENT_RETAINED_TTL_SECONDS must be 0 (persistent) or 1..315360000");
+  }
+  return seconds;
 }
 
 function boundedInteger(

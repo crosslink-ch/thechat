@@ -1,9 +1,10 @@
 import crypto from "node:crypto";
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { db } from "../db";
 import { attachments } from "../db/schema";
 import type { DomainEventHandler } from "../events/registry";
 import { withSpan } from "../observability";
+import { drainAttachmentObjectCleanup, persistObjectCleanup } from "./durable-cleanup";
 import { loadAttachmentConfig } from "./config";
 import {
   ATTACHMENT_DELETION_REQUESTED,
@@ -14,6 +15,7 @@ import {
 } from "./events";
 import { verifyFileType } from "./file-validation";
 import type { ObjectStore } from "./object-store";
+import { withWorkspaceWorkBudget, type WorkspaceWorkLease } from "../services/workspace-resource-budgets";
 import { getAttachmentObjectStore } from "./service";
 
 type ValidationEvent = AttachmentLifecycleEvent & {
@@ -23,11 +25,6 @@ type DeletionEvent = AttachmentLifecycleEvent & {
   type: typeof ATTACHMENT_DELETION_REQUESTED;
 };
 
-const attachmentValidationConcurrency = boundedConcurrency(
-  process.env.ATTACHMENT_VALIDATION_CONCURRENCY,
-);
-const validationWaiters: Array<() => void> = [];
-let activeValidations = 0;
 
 export function createAttachmentValidationHandler(options: {
   store?: ObjectStore;
@@ -44,12 +41,14 @@ export function createAttachmentValidationHandler(options: {
     },
     async handle(event) {
       const config = loadAttachmentConfig();
-      await withValidationSlot(() =>
+      const [scope] = await db.execute<{ workspace_id: string | null }>(sql`select c.workspace_id from attachments a join conversations c on c.id=a.conversation_id where a.id=${event.payload.attachmentId}`);
+      const operation = (context?: { signal: AbortSignal; assertLease: () => Promise<void>; lease: WorkspaceWorkLease }) =>
         validateAndPromoteAttachment(event.payload.attachmentId, {
-          store: options.store ?? getAttachmentObjectStore(),
-          maxBytes: config.maxBytes,
-        }),
-      );
+          store: options.store ?? getAttachmentObjectStore(), maxBytes: config.maxBytes, ...context,
+        });
+      if (scope?.workspace_id) {
+        await withWorkspaceWorkBudget(scope.workspace_id, "validation", event.payload.attachmentId, operation);
+      } else { await operation(); }
     },
   };
 }
@@ -76,30 +75,14 @@ export function createAttachmentDeletionHandler(options: {
   };
 }
 
-async function withValidationSlot<T>(operation: () => Promise<T>) {
-  if (activeValidations >= attachmentValidationConcurrency) {
-    await new Promise<void>((resolve) => validationWaiters.push(resolve));
-  }
-  activeValidations += 1;
-  try {
-    return await operation();
-  } finally {
-    activeValidations -= 1;
-    validationWaiters.shift()?.();
-  }
-}
-
-function boundedConcurrency(raw: string | undefined) {
-  const parsed = Number.parseInt(raw ?? "1", 10);
-  if (!Number.isFinite(parsed)) return 1;
-  return Math.max(1, Math.min(parsed, 8));
-}
-
 export async function validateAndPromoteAttachment(
   attachmentId: string,
   input: {
     store: ObjectStore;
     maxBytes: number;
+    signal?: AbortSignal;
+    assertLease?: () => Promise<void>;
+    lease?: WorkspaceWorkLease;
   },
 ) {
   return withSpan(
@@ -180,8 +163,10 @@ export async function validateAndPromoteAttachment(
 
       // Do not probe a not-yet-created clean key: S3 intentionally returns
       // AccessDenied rather than NotFound to identities without ListBucket.
-      // A retry can safely create another version at this deterministic key;
-      // the bucket lifecycle removes superseded versions.
+      // A retry may copy another version; durable receipts reconcile abandoned
+      // copies. Clean version expiration must not remove retained coordinates.
+      input.signal?.throwIfAborted();
+      await input.assertLease?.();
       const copied = await input.store.copyObject({
         sourceKey: row.quarantineKey,
         sourceVersionId: row.quarantineVersionId,
@@ -193,6 +178,9 @@ export async function validateAndPromoteAttachment(
           "Attachment bucket versioning is required for clean objects",
         );
       }
+      await persistObjectCleanup(db, row.id, row.cleanKey, copied.versionId, false);
+      let published = false;
+      try {
       const clean = await input.store.headObject({
         key: row.cleanKey,
         versionId: copied.versionId,
@@ -205,6 +193,8 @@ export async function validateAndPromoteAttachment(
         throw new Error("Promoted clean object failed integrity verification");
       }
 
+      input.signal?.throwIfAborted();
+      await input.assertLease?.();
       const now = new Date();
       const [promoted] = await db
         .update(attachments)
@@ -224,6 +214,10 @@ export async function validateAndPromoteAttachment(
           and(
             eq(attachments.id, row.id),
             eq(attachments.status, "processing"),
+            input.lease ? sql`exists(select 1 from workspace_work w
+              where w.workspace_id=${input.lease.workspaceId} and w.kind=${input.lease.kind}
+              and w.idempotency_key=${input.lease.key} and w.lease_token=${input.lease.token}
+              and w.state='running' and w.lease_until>now())` : undefined,
           ),
         )
         .returning({ id: attachments.id });
@@ -235,6 +229,7 @@ export async function validateAndPromoteAttachment(
         });
         return;
       }
+      published = true;
       span.setAttribute("thechat.attachment.kind", verified.kind);
       span.setAttribute("thechat.attachment.size_bytes", bytes.byteLength);
       span.setAttribute("thechat.attachment.outcome", "ready");
@@ -242,6 +237,9 @@ export async function validateAndPromoteAttachment(
       // Keep the pinned quarantine version until the bucket lifecycle removes it.
       // The signed PUT uses If-None-Match: *, so retaining the object makes the
       // upload URL one-shot for its entire validity window.
+      } finally {
+        if (!published) await persistObjectCleanup(db, row.id, row.cleanKey, copied.versionId);
+      }
     },
     { errorAttributes: { "thechat.attachment.outcome": "failed" } },
   );
@@ -260,6 +258,7 @@ export async function deleteAttachmentObjects(
       try {
         const row = await loadAttachment(attachmentId);
         if (!row) {
+          await drainAttachmentObjectCleanup(attachmentId, store);
           span.setAttribute("thechat.attachment.outcome", "missing");
           return;
         }
@@ -329,16 +328,15 @@ async function deletePinnedAttachmentObjects(
   row: typeof attachments.$inferSelect,
   store: ObjectStore,
 ) {
-  if (row.cleanKey && row.cleanVersionId) {
-    await store.deleteObject({
-      key: row.cleanKey,
-      versionId: row.cleanVersionId,
-    });
-  }
-  await store.deleteObject({
-    key: row.quarantineKey,
-    versionId: row.quarantineVersionId,
+  await db.transaction(async (tx) => {
+    if (row.cleanKey && row.cleanVersionId) {
+      await persistObjectCleanup(tx, row.id, row.cleanKey, row.cleanVersionId);
+    }
+    if (row.quarantineVersionId) {
+      await persistObjectCleanup(tx, row.id, row.quarantineKey, row.quarantineVersionId);
+    }
   });
+  await drainAttachmentObjectCleanup(row.id, store);
 }
 
 async function loadAttachment(id: string) {

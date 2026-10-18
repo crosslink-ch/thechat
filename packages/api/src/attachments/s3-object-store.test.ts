@@ -141,11 +141,52 @@ describe("S3 attachment object store", () => {
     expect(request.headers).toEqual({
       "content-type": "text/plain",
       "if-none-match": "*",
+      "x-amz-sdk-checksum-algorithm": "SHA256",
       "x-amz-checksum-sha256": checksum,
     });
     expect(request.expiresAt.getTime()).toBeGreaterThan(Date.now());
     expect(request.expiresAt.getTime()).toBeLessThanOrEqual(Date.now() + 301_000);
   });
+
+  test("keeps the checksum algorithm in the signed headers clients must send", async () => {
+    const store = new S3ObjectStore({
+      bucket: "private-attachment-bucket", region: "eu-central-1", client: signingClient(),
+    });
+    const request = await store.createUploadRequest({
+      key: "quarantine/explicit-algorithm", mediaType: "text/plain", sizeBytes: 5,
+      checksumSha256Base64: "LPJNul+wow4m6DsqxbninhsWHlwfp0JecwQzYpOLmCQ=", expiresInSeconds: 300,
+    });
+    const url = new URL(request.url);
+    expect(request.headers["x-amz-sdk-checksum-algorithm"]).toBe("SHA256");
+    expect(url.searchParams.get("X-Amz-SignedHeaders")?.split(";")).toContain("x-amz-sdk-checksum-algorithm");
+    expect(Array.from(url.searchParams.keys()).some(name => name.toLowerCase() === "x-amz-sdk-checksum-algorithm")).toBe(false);
+  });
+
+  test.each(["cloudformation.yaml", "cloudformation-production.yaml"])(
+    "every enabled CORS rule admits the actual signed upload headers in %s",
+    async (filename) => {
+      const store = new S3ObjectStore({
+        bucket: "synthetic-cors-bucket", region: "eu-central-1", client: signingClient(),
+      });
+      const request = await store.createUploadRequest({
+        key: "quarantine/cors-contract", mediaType: "text/plain", sizeBytes: 5,
+        checksumSha256Base64: "LPJNul+wow4m6DsqxbninhsWHlwfp0JecwQzYpOLmCQ=", expiresInSeconds: 300,
+      });
+      const template = Bun.YAML.parse(await Bun.file(new URL(
+        `../../../../deployment/aws/attachments/${filename}`, import.meta.url,
+      )).text()) as {
+        Resources: { AttachmentsBucket: { Properties: { CorsConfiguration: {
+          CorsRules: Array<{ AllowedHeaders: string[] } | [string, { AllowedHeaders: string[] }, string]>;
+        } } } };
+      };
+      for (const configured of template.Resources.AttachmentsBucket.Properties.CorsConfiguration.CorsRules) {
+        // Bun parses !If as a sequence; exercise its enabled browser-origin branch too.
+        const rule = Array.isArray(configured) ? configured[1] : configured;
+        const allowed = new Set(rule.AllowedHeaders.map(name => name.toLowerCase()));
+        expect(Object.keys(request.headers).filter(name => !allowed.has(name.toLowerCase()))).toEqual([]);
+      }
+    },
+  );
 
   test("pins downloads to the clean object version and disposition", async () => {
     const store = new S3ObjectStore({

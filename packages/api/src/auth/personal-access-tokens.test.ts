@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { eq, inArray } from "drizzle-orm";
-import { db } from "../db";
+import { db } from "../db/testing";
 import { apikey, users } from "../db/schema";
 import { mcpRoutes } from "../mcp";
 import { mcpAuthenticate } from "../mcp/auth";

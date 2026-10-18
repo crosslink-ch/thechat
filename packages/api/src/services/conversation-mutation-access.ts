@@ -7,6 +7,7 @@ import {
   workspaceMembers,
   workspaces,
 } from "../db/schema";
+import { requireBotInstallationAccess } from "./bot-installation-access";
 import { ServiceError } from "./errors";
 
 type DbTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
@@ -98,6 +99,7 @@ export async function requireConversationMutationAccess(
     }
   }
 
+  await requireBotInstallationAccess(executor, conversationId, userId);
   return {
     conversationId: conversation.id,
     conversationType: conversation.type,

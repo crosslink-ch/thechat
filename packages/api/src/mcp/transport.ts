@@ -1,4 +1,5 @@
 import { Elysia } from "elysia";
+import { withDatabaseContext } from "../db";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import type { McpAuthenticationResult } from "./auth";
@@ -40,6 +41,7 @@ export function createMcpRoutes({
       // session operations are not exposed.
       if (request.method !== "POST") return methodNotAllowed();
 
+      return withDatabaseContext({ actorId: authentication.authInfo.id, scope: 'actor' }, async () => {
       const server = new McpServer(
         { name: "thechat", version: "0.1.0" },
         { capabilities: { tools: {} } },
@@ -59,6 +61,7 @@ export function createMcpRoutes({
       } finally {
         await server.close();
       }
+      });
     },
     // Authentication and the official transport must see the untouched request.
     // Otherwise Elysia turns malformed JSON into a plain 400 before either runs.

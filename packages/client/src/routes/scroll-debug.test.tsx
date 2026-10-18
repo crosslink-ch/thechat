@@ -30,7 +30,9 @@ describe("ScrollDebugRoute", () => {
       unmount();
       vi.useRealTimers();
     }
-  });
+  // Rendering the generated LaTeX history is CPU-heavy in the bounded
+  // repository gate alongside Rust/typecheck. Do not change its assertions.
+  }, 30_000);
 
   it("can switch to the channel scroll surface", async () => {
     render(<ScrollDebugRoute />);

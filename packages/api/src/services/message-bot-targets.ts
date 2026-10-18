@@ -1,7 +1,9 @@
 import { and, eq } from "drizzle-orm";
 import { db } from "../db";
+import { requireBotInstallationAccess } from "./bot-installation-access";
+import { ServiceError } from "./errors";
 import {
-  bots,
+  botRuntimeMetadata as bots,
   conversationParticipants,
   conversations,
   users,
@@ -54,7 +56,12 @@ export async function resolveMessageBotTargetIds(
       ),
     );
 
-  return participantBots
+  const permittedBots = [];
+  for (const bot of participantBots) {
+    try { await requireBotInstallationAccess(executor, input.conversationId, bot.botUserId); permittedBots.push(bot); }
+    catch (error) { if (!(error instanceof ServiceError) || error.status !== 403) throw error; }
+  }
+  return permittedBots
     .filter((bot) => {
       if (bot.botUserId === input.senderId) return false;
       if (bot.kind === "webhook" && !bot.webhookUrl) return false;

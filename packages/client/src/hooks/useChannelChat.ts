@@ -1054,7 +1054,7 @@ function buildNewestFirstPages(
 }
 
 function oldestMessageCursor(messages: ChatMessage[]) {
-  return messages[0]?.createdAt;
+  return messages[0]?.paginationCursor ?? messages[0]?.createdAt;
 }
 
 function buildPageParams(pages: MessagePage[]) {

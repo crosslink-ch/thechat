@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import { and, eq, inArray } from "drizzle-orm";
 import { resolveBotAppearance } from "@thechat/shared";
 import { db } from "../db";
@@ -6,10 +7,12 @@ import {
   workspaceMembers,
   conversations,
   conversationParticipants,
-  bots,
+  botIdentities as bots,
   users,
 } from "../db/schema";
 import { ServiceError } from "./errors";
+import { lifecycleTransaction, stageLifecycleNotification } from "../events/workspace-lifecycle";
+import { requireBotInstallationAccess } from "./bot-installation-access";
 
 function generateWorkspaceId(name: string): string {
   const slug = name
@@ -136,7 +139,7 @@ export async function getWorkspaceDetail(workspaceId: string, userId: string) {
           }
         : null,
     })),
-    channels: channels.map((c) => ({
+    channels: (await filterAllowedChannels(channels, userId)).map((c) => ({
       id: c.id,
       workspaceId: c.workspaceId,
       name: c.name,
@@ -147,61 +150,43 @@ export async function getWorkspaceDetail(workspaceId: string, userId: string) {
   };
 }
 
-export async function createWorkspace(name: string, userId: string) {
-  // Retry slug generation on collision (max 3 attempts)
-  let id = "";
+export async function createWorkspace(name: string, userId: string, options: { afterOwnerInserted?: () => Promise<void> } = {}) {
   for (let attempt = 0; attempt < 3; attempt++) {
-    id = generateWorkspaceId(name);
-    const [existing] = await db
-      .select({ id: workspaces.id })
-      .from(workspaces)
-      .where(eq(workspaces.id, id))
-      .limit(1);
-    if (!existing) break;
-    if (attempt === 2) {
-      throw new ServiceError("Failed to generate unique workspace ID", 500);
+    const id = generateWorkspaceId(name);
+    try {
+      return await lifecycleTransaction(async tx => {
+        // RLS cannot SELECT an INSERT RETURNING candidate before enrollment.
+        await tx.insert(workspaces).values({ id, name, createdById: userId });
+        await tx.insert(workspaceMembers).values({ workspaceId: id, userId, role: "owner" });
+        await options.afterOwnerInserted?.();
+        const channelId = crypto.randomUUID();
+        await tx.insert(conversations).values({ id: channelId, title: "General", type: "group", workspaceId: id, name: "general" });
+        await tx.insert(conversationParticipants).values({ conversationId: channelId, userId, role: "owner" });
+        const [workspace] = await tx.select().from(workspaces).where(eq(workspaces.id, id)).limit(1);
+        return { id: workspace.id, name: workspace.name, createdAt: workspace.createdAt.toISOString(), updatedAt: workspace.updatedAt.toISOString() };
+      });
+    } catch (error: any) {
+      if (attempt < 2 && (error.code === "23505" || error.cause?.code === "23505")) continue;
+      throw error;
     }
   }
+  throw new ServiceError("Failed to generate unique workspace ID", 500);
+}
 
-  const [workspace] = await db
-    .insert(workspaces)
-    .values({ id, name, createdById: userId })
-    .returning();
-
-  // Add creator as owner
-  await db.insert(workspaceMembers).values({
-    workspaceId: id,
-    userId,
-    role: "owner",
-  });
-
-  // Create default "General" channel
-  const [channel] = await db
-    .insert(conversations)
-    .values({
-      title: "General",
-      type: "group",
-      workspaceId: id,
-      name: "general",
-    })
-    .returning();
-
-  await db.insert(conversationParticipants).values({
-    conversationId: channel.id,
-    userId,
-    role: "owner",
-  });
-
-  return {
-    id: workspace.id,
-    name: workspace.name,
-    createdAt: workspace.createdAt.toISOString(),
-    updatedAt: workspace.updatedAt.toISOString(),
-  };
+async function filterAllowedChannels(channels: typeof conversations.$inferSelect[], userId: string) {
+  const allowed = [];
+  for (const channel of channels) {
+    try { await requireBotInstallationAccess(db, channel.id, userId); allowed.push(channel); }
+    catch (error) { if (!(error instanceof ServiceError) || error.status !== 403) throw error; }
+  }
+  return allowed;
 }
 
 export async function joinWorkspace(workspaceId: string, userId: string) {
-  return db.transaction(async (tx) => {
+  return lifecycleTransaction(tx => joinWorkspaceInTransaction(tx, workspaceId, userId));
+}
+
+export async function joinWorkspaceInTransaction(tx: Parameters<Parameters<typeof db.transaction>[0]>[0], workspaceId: string, userId: string) {
     const [workspace] = await tx
       .select({ id: workspaces.id })
       .from(workspaces)
@@ -255,8 +240,15 @@ export async function joinWorkspace(workspaceId: string, userId: string) {
         .onConflictDoNothing();
     }
 
+    if (!existingMember) {
+      const [member] = await tx.select().from(workspaceMembers).where(and(eq(workspaceMembers.workspaceId, workspaceId), eq(workspaceMembers.userId, userId))).limit(1);
+      const [user] = await tx.select().from(users).where(eq(users.id, userId)).limit(1);
+      if (user.type === "human") {
+        const recipients = await tx.select({ userId: workspaceMembers.userId }).from(workspaceMembers).where(eq(workspaceMembers.workspaceId, workspaceId));
+        await stageLifecycleNotification(tx, workspaceId, recipients.map(r => r.userId), { type: "member_joined", workspaceId, member: { userId, role: member.role, joinedAt: member.joinedAt.toISOString(), user: { id: user.id, name: user.name, email: user.email, avatar: user.avatar, type: user.type } } });
+      }
+    }
     return { success: true };
-  });
 }
 
 export async function updateMemberRole(
@@ -270,7 +262,7 @@ export async function updateMemberRole(
     throw new ServiceError("Role must be 'member' or 'admin'", 400);
   }
 
-  return db.transaction(async (tx) => {
+  return lifecycleTransaction(async (tx) => {
     const [workspace] = await tx
       .select({ id: workspaces.id })
       .from(workspaces)
@@ -330,6 +322,8 @@ export async function updateMemberRole(
         ),
       );
 
+    const recipients = await tx.select({ userId: workspaceMembers.userId }).from(workspaceMembers).where(eq(workspaceMembers.workspaceId, workspaceId));
+    await stageLifecycleNotification(tx, workspaceId, recipients.map(r => r.userId), { type: "member_role_changed", workspaceId, userId: targetUserId, newRole });
     return { success: true };
   });
 }
@@ -340,7 +334,7 @@ export async function removeMember(
   targetUserId: string,
   options: { afterWorkspaceLocked?: () => Promise<void> } = {},
 ) {
-  return db.transaction(async (tx) => {
+  return lifecycleTransaction(async (tx) => {
     const [workspace] = await tx
       .select({ id: workspaces.id })
       .from(workspaces)
@@ -390,15 +384,12 @@ export async function removeMember(
       throw new ServiceError("Admins can only remove regular members", 403);
     }
 
+    // Every workspace-bound conversation is workspace-owned, including DMs.
+    const recipients = await tx.select({ userId: workspaceMembers.userId }).from(workspaceMembers).where(eq(workspaceMembers.workspaceId, workspaceId));
     const channels = await tx
       .select({ id: conversations.id })
       .from(conversations)
-      .where(
-        and(
-          eq(conversations.workspaceId, workspaceId),
-          eq(conversations.type, "group"),
-        ),
-      );
+      .where(eq(conversations.workspaceId, workspaceId));
 
     if (channels.length > 0) {
       await tx
@@ -423,6 +414,7 @@ export async function removeMember(
         ),
       );
 
+    await stageLifecycleNotification(tx, workspaceId, recipients.map(r => r.userId), { type: "member_removed", workspaceId, userId: targetUserId });
     return { success: true };
   });
 }

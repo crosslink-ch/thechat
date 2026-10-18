@@ -1,6 +1,6 @@
 import crypto from "crypto";
 import { and, eq, sql } from "drizzle-orm";
-import { db } from "../db";
+import { authDb as db } from "../db";
 import { apikey } from "../db/schema";
 import {
   auth,

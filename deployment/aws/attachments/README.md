@@ -16,6 +16,13 @@ resources, write Infisical secrets, or change Kubernetes.
 
 ## Shared storage controls
 
+`CleanObjectRetentionDays` remains accepted so existing stack-update parameter
+sets keep working. Both templates report the supplied value as
+`DeprecatedCleanObjectRetentionDays` with an explicit no-effect description.
+It does not configure any resource, condition or rule, and must not be used to
+restore automatic clean-version expiration. Actual retained-content policy is
+owned by the application; the output is only a compatibility diagnostic.
+
 Both templates manage:
 
 - a private bucket with S3-managed `AES256` encryption;
@@ -27,7 +34,10 @@ Both templates manage:
 
 The production definition additionally retains its bucket policy, rejects SSE-C
 and explicit non-SSE-S3 encryption, removes expired delete markers, and retains
-both current and noncurrent clean versions for at least 30 days. Its 15-minute
+both current and noncurrent clean versions until the application explicitly
+reconciles retention/deletion using exact-version durable work. See
+[`docs/workspace-resource-lifecycle.md`](../../../docs/workspace-resource-lifecycle.md)
+for migration 0019, deployment ordering and rollback boundaries. Its 15-minute
 signature-age ceiling matches the application's maximum upload TTL. Production
 bucket names exclude dots so packaged clients use TLS virtual-host addressing
 without wildcard-certificate ambiguity.
