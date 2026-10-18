@@ -9,14 +9,11 @@ import { useAutoScroll } from "../hooks/useAutoScroll";
 import { useMessageTopCommand } from "../hooks/useMessageTopCommand";
 import { useOlderHistoryScroll } from "../hooks/useOlderHistoryScroll";
 import { useScrollStability } from "../hooks/useScrollStability";
-import type {
-  BotAppearance,
-  BotInvocationProgressEventPublic,
-  ChatMessage,
-} from "@thechat/shared";
+import type { BotAppearance, ChatMessage } from "@thechat/shared";
 import type { ActiveHermesInvocationProgress } from "../lib/hermes-progress";
 import type { MentionUser } from "./MentionList";
 import { HermesProgressInline } from "./HermesProgressInline";
+import { BotRequestsInline } from "./BotRequestsInline";
 import type { VaultUnlockCallback } from "./HermesVaultUnlock";
 import type { HermesSlashCommand } from "../lib/hermes-slash-commands";
 import { MessageSendError } from "./MessageSendError";
@@ -46,10 +43,8 @@ interface HermesDmChatViewProps {
     content: string,
     attachmentIds?: string[],
   ) => InputSendResult | Promise<InputSendResult>;
-  onInteraction?: (
-    event: BotInvocationProgressEventPublic,
-    response: string | string[],
-  ) => void | Promise<void>;
+  /** Where inline bot request cards come from; omit to show none. */
+  requestScope?: { conversationId: string; threadId: string | null };
   onStop?: () => void;
   onVaultUnlock?: VaultUnlockCallback;
   onLoadOlderMessages?: () => boolean | void | Promise<boolean | void>;
@@ -80,7 +75,7 @@ export function HermesDmChatView({
   botAppearances,
   typingSuppressedUserIds,
   onSend,
-  onInteraction,
+  requestScope,
   onVaultUnlock,
   onStop,
   onLoadOlderMessages,
@@ -426,10 +421,15 @@ export function HermesDmChatView({
           <HermesProgressInline
             invocations={progressInvocations}
             botAppearances={botAppearances}
-            onInteraction={onInteraction}
             onVaultUnlock={onVaultUnlock}
             onStop={onStop}
           />
+          {requestScope && (
+            <BotRequestsInline
+              conversationId={requestScope.conversationId}
+              threadId={requestScope.threadId}
+            />
+          )}
           {visibleTypingNames.length > 0 && (
             <div className="animate-pulse px-5 py-1 pb-2 text-[0.786rem] text-text-dimmed">
               {visibleTypingNames.join(", ")} {visibleTypingNames.length === 1 ? "is" : "are"} typing...

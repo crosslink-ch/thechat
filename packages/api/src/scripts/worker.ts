@@ -9,6 +9,10 @@ import {
   closeAttachmentCleanup,
   startAttachmentCleanup,
 } from "../attachments/cleanup";
+import {
+  closeBotRequestExpirySweep,
+  startBotRequestExpirySweep,
+} from "../bot-requests/expiry";
 
 const workerLog = log.child({ component: "worker" });
 
@@ -19,6 +23,7 @@ async function main() {
     await startBotWorker();
     await startDomainEventRuntime();
     void startAttachmentCleanup();
+    void startBotRequestExpirySweep();
     workerLog.info({ queue: BOT_QUEUE_NAME }, "TheChat bot worker is listening");
     workerLog.info("TheChat PostgreSQL domain-event outbox relay is running");
 
@@ -26,6 +31,7 @@ async function main() {
   } finally {
     await Promise.all([
       closeAttachmentCleanup(),
+      closeBotRequestExpirySweep(),
       closeDomainEventRuntime(),
       closeBotRuntime(),
     ]);
@@ -45,6 +51,7 @@ main().catch(async (error) => {
   workerLog.error({ err: error }, "TheChat worker failed");
   await Promise.all([
     closeAttachmentCleanup(),
+    closeBotRequestExpirySweep(),
     closeDomainEventRuntime(),
     closeBotRuntime(),
   ]);

@@ -207,6 +207,11 @@ function doConnect() {
         event: event.event,
         invocation: event.invocation,
       });
+    } else if (event.type === "bot_request_updated") {
+      wsEvents.emit("ws:bot_request_updated", {
+        conversationId: event.conversationId,
+        request: event.request,
+      });
     } else if (event.type === "conversation_thread_updated") {
       wsEvents.emit("ws:conversation_thread_updated", {
         conversationId: event.conversationId,

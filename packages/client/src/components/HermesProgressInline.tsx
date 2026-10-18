@@ -6,33 +6,10 @@ import type {
   MessagePart,
 } from "@thechat/shared";
 import type { ActiveHermesInvocationProgress } from "../lib/hermes-progress";
-import {
-  approvalDecisionLabel,
-  deriveApprovalStates,
-  isApprovalRequestEvent,
-  isApprovalResolutionEvent,
-  type ApprovalDecision,
-  type ApprovalRequestState,
-} from "../lib/hermes-approvals";
-import {
-  deriveClarifyStates,
-  isClarifyRequestEvent,
-  isClarifyResolutionEvent,
-  type ClarifyRequestState,
-  type ClarifyResponse,
-} from "../lib/hermes-clarifications";
-import {
-  recordApprovalDecision,
-  useHermesApprovalsStore,
-} from "../stores/hermes-approvals";
-import {
-  recordClarifyResponse,
-  useHermesClarificationsStore,
-} from "../stores/hermes-clarifications";
+import { useBotRequestsStore } from "../stores/bot-requests";
 import { formatToolSummary } from "../lib/tool-summary";
 import {
   Brain,
-  Check,
   CircleAlert,
   Clock3,
   Info,
@@ -50,7 +27,7 @@ import {
 import { botAppearanceFor, botAvatarsOf } from "../lib/bot-appearance";
 import { useWorkspacesStore } from "../stores/workspaces";
 import { Avatar } from "./Avatar";
-import { buttonClass, inputClass, type ButtonVariant } from "./ui";
+import { buttonClass } from "./ui";
 import { HermesVaultUnlock, type VaultUnlockCallback } from "./HermesVaultUnlock";
 import { deriveVaultUnlockStates, type VaultUnlockState } from "../lib/hermes-vault-unlock";
 import { useAuthStore } from "../stores/auth";
@@ -63,34 +40,23 @@ type NoticeSeverity = "info" | "warning" | "error";
  * invocation's events in sequence order, so the list reflects the actual
  * order things happened: a tool row sits where the tool started (its
  * completion only updates it in place), a thinking row sits where that
- * reasoning block began (consecutive reasoning events collapse into it),
- * and an approval sits where Hermes asked — pending or resolved.
+ * reasoning block began (consecutive reasoning events collapse into it).
+ * Approvals and questions are bot requests and render from their rows.
  */
 type EventRow = {
   kind: "tool" | "notice" | "reasoning" | "other";
   key: string;
   event: BotInvocationProgressEventPublic;
 };
-type ApprovalRow = { kind: "approval"; key: string; state: ApprovalRequestState };
-type ClarifyRow = { kind: "clarify"; key: string; state: ClarifyRequestState };
 type VaultRow = {kind:"vault";key:string;state:VaultUnlockState};
-type ActivityRow = EventRow | ApprovalRow | ClarifyRow | VaultRow;
+type ActivityRow = EventRow | VaultRow;
 
 const MAX_VISIBLE_ROWS = 8;
 const MAX_UI_LABEL_CHARS = 4_000;
-const MAX_UI_DESCRIPTION_CHARS = 10_000;
-const MAX_UI_COMMAND_CHARS = 100_000;
 const MAX_UI_DETAIL_CHARS = 20_000;
-const MAX_UI_CHOICE_CHARS = 500;
-const MAX_UI_CHOICES = 20;
-
-/** Neutral Hermes interaction card with a warning-coloured left edge. */
-const interactionCardClass =
-  "min-w-0 flex-1 rounded-lg border border-l-3 border-border border-l-warning bg-elevated/60 px-4.5 py-4 text-[0.929rem] text-text-secondary";
 
 export function HermesProgressInline({
   invocations,
-  onInteraction,
   onVaultUnlock,
   onStop,
   botAppearances,
@@ -98,18 +64,11 @@ export function HermesProgressInline({
   invocations: ActiveHermesInvocationProgress[];
   /** Saved identities from the displayed conversation, independent of sidebar selection. */
   botAppearances?: ReadonlyMap<string, BotAppearance>;
-  onInteraction?: (
-    event: BotInvocationProgressEventPublic,
-    response: string | string[],
-  ) => void | Promise<void>;
   onStop?: () => void;
   onVaultUnlock?: VaultUnlockCallback;
 }) {
   const self = useAuthStore(state=>state.user);
-  const decisions = useHermesApprovalsStore((state) => state.decisions);
-  const clarifyResponses = useHermesClarificationsStore(
-    (state) => state.responses,
-  );
+  const requestsById = useBotRequestsStore((state) => state.byId);
   const members = useWorkspacesStore((state) => state.activeWorkspace?.members);
   const nowMs = useNowTick(invocations.length > 0);
   const [expandedRowKeys, setExpandedRowKeys] = useState<Set<string>>(
@@ -126,65 +85,25 @@ export function HermesProgressInline({
     });
   };
 
-  const approvalStatesByInvocation = new Map(
-    invocations.map(({ invocation, events }) => [
-      invocation.id,
-      deriveApprovalStates(events, decisions),
-    ]),
-  );
-  const clarifyStatesByInvocation = new Map(
-    invocations.map(({ invocation, events }) => [
-      invocation.id,
-      deriveClarifyStates(events, clarifyResponses),
-    ]),
-  );
-  // Approval ordering is scoped to the Hermes session. Independent sessions
-  // may each expose their oldest pending request.
-  const actionableApprovalIds = oldestPendingApprovalsBySession(
-    [...approvalStatesByInvocation.values()].flat(),
-  );
-
-  const handleInteraction = async (
-    event: BotInvocationProgressEventPublic,
-    response: ApprovalDecision | ClarifyResponse,
-  ) => {
-    if (!onInteraction) {
-      throw new Error("Hermes interactions are unavailable");
-    }
-    await onInteraction(event, response);
-    // Persist optimistic state only after the callback was accepted. Gateway
-    // resolution events remain authoritative and mark the row confirmed.
-    if (event.type === "approval.request") {
-      recordApprovalDecision(event.id, response as ApprovalDecision);
-    } else {
-      recordClarifyResponse(event.id, response);
-    }
-  };
-
   return (
     <div className="py-1">
       {invocations.map(({ invocation, events }) => {
         const invocationEvents = [...events].sort(compareEvents);
-        const approvalStates =
-          approvalStatesByInvocation.get(invocation.id) ?? [];
-        const clarifyStates =
-          clarifyStatesByInvocation.get(invocation.id) ?? [];
-        const needsApproval = approvalStates.some(
-          (state) => state.status === "pending",
+        // Open requests this run is blocked on. The cards themselves render
+        // from request rows (BotRequestsInline), not from progress events.
+        const openRequests = Object.values(requestsById).filter(
+          (request) =>
+            request.invocationId === invocation.id && request.status === "open",
         );
-        const needsClarification = clarifyStates.some(
-          (state) => state.status === "pending",
+        const needsApproval = openRequests.some((request) => request.kind === "approval");
+        const needsClarification = openRequests.some(
+          (request) => request.kind !== "approval",
         );
         const vaultStates = deriveVaultUnlockStates(invocationEvents,nowMs)
           .filter(state=>self?.type === "human" && state.request.requesterUserId === self.id);
         const needsVaultUnlock = vaultStates.some(state=>state.outcome === null);
         const needsInteraction = needsApproval || needsClarification || needsVaultUnlock;
-        const rows = buildActivityRows(
-          invocationEvents,
-          approvalStates,
-          clarifyStates,
-          vaultStates,
-        );
+        const rows = buildActivityRows(invocationEvents, vaultStates);
         const working = invocation.status === "running" && !needsInteraction;
         const appearance = botAppearanceFor(
           invocation.botUserId,
@@ -196,7 +115,7 @@ export function HermesProgressInline({
         // visible window; ordinary activity remains in event order.
         const hiddenPending = rows.filter(
           (row) =>
-            ((row.kind === "approval" || row.kind === "clarify") ? row.state.status === "pending" : row.kind === "vault" && row.state.outcome === null) &&
+            row.kind === "vault" && row.state.outcome === null &&
             !visibleRows.includes(row),
         );
         visibleRows = [...hiddenPending, ...visibleRows];
@@ -207,36 +126,8 @@ export function HermesProgressInline({
             data-testid="hermes-activity-row"
             data-kind={rowKind(row)}
           >
-            {row.kind === "approval" ? (
-              row.state.status === "pending" ? (
-                <ApprovalRequestCard
-                  event={row.state.event}
-                  botName={invocation.botName}
-                  isActionable={actionableApprovalIds.has(row.state.event.id)}
-                  onDecision={(decision) =>
-                    handleInteraction(row.state.event, decision)
-                  }
-                />
-              ) : (
-                <ResolvedApprovalRow
-                  state={row.state}
-                  expanded={expandedRowKeys.has(row.key)}
-                  onToggle={() => toggleRow(row.key)}
-                />
-              )
-            ) : row.kind === "clarify" ? (
-              row.state.status === "pending" ? (
-                <ClarifyRequestCard
-                  state={row.state}
-                  botName={invocation.botName}
-                  onResponse={(response) =>
-                    handleInteraction(row.state.event, response)
-                  }
-                />
-              ) : (
-                <ResolvedClarifyRow state={row.state} />
-              )
-            ) : row.kind === "vault" ? (
+
+            {row.kind === "vault" ? (
               <HermesVaultUnlock key={JSON.stringify([row.state.event.id,row.state.request])} state={row.state} onResponse={onVaultUnlock}/>
             ) : row.kind === "notice" ? (
               <NoticeEventRow event={row.event} />
@@ -361,16 +252,8 @@ function useNowTick(active: boolean) {
 
 function buildActivityRows(
   sortedEvents: BotInvocationProgressEventPublic[],
-  approvalStates: ApprovalRequestState[],
-  clarifyStates: ClarifyRequestState[],
   vaultStates: VaultUnlockState[],
 ): ActivityRow[] {
-  const approvalStateByEventId = new Map(
-    approvalStates.map((state) => [state.event.id, state]),
-  );
-  const clarifyStateByEventId = new Map(
-    clarifyStates.map((state) => [state.event.id, state]),
-  );
   const rows: ActivityRow[] = [];
   const toolRowByCallId = new Map<string, EventRow>();
 
@@ -380,20 +263,9 @@ function buildActivityRows(
       if (state) rows.push({kind:"vault",key:event.id,state});
       continue;
     }
-    if (isApprovalRequestEvent(event)) {
-      const state = approvalStateByEventId.get(event.id);
-      if (state) rows.push({ kind: "approval", key: event.id, state });
-      continue;
-    }
-    if (isApprovalResolutionEvent(event)) continue; // consumed by deriveApprovalStates
-    if (isClarifyRequestEvent(event)) {
-      const state = clarifyStateByEventId.get(event.id);
-      if (state) {
-        rows.push({ kind: "clarify", key: clarifyRowKey(state.event), state });
-      }
-      continue;
-    }
-    if (isClarifyResolutionEvent(event)) continue;
+    // Approval/clarify progress from an older gateway: request rows carry
+    // these now, so they never render as activity.
+    if (event.type.startsWith("approval.") || event.type.startsWith("clarify.")) continue;
 
     if (isNoticeEvent(event)) {
       rows.push({ kind: "notice", key: event.id, event });
@@ -448,12 +320,6 @@ function buildActivityRows(
 }
 
 function rowKind(row: ActivityRow) {
-  if (row.kind === "approval") {
-    return row.state.status === "pending" ? "approval-pending" : "approval-resolved";
-  }
-  if (row.kind === "clarify") {
-    return row.state.status === "pending" ? "clarify-pending" : "clarify-resolved";
-  }
   return row.kind;
 }
 
@@ -638,423 +504,6 @@ function ReasoningEventRow({
   );
 }
 
-function ApprovalRequestCard({
-  event,
-  botName,
-  isActionable,
-  onDecision,
-}: {
-  event: BotInvocationProgressEventPublic;
-  botName: string;
-  isActionable: boolean;
-  onDecision: (decision: ApprovalDecision) => void | Promise<void>;
-}) {
-  const command = approvalCommandText(event);
-  const description = boundedUiText(
-    stringField(event.payload, "description"),
-    MAX_UI_DESCRIPTION_CHARS,
-  );
-  const choices = approvalChoices(event);
-  const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const submit = async (decision: ApprovalDecision) => {
-    if (submitting) return;
-    setSubmitting(true);
-    setError(null);
-    try {
-      await onDecision(decision);
-    } catch (cause) {
-      setError(interactionErrorMessage(cause));
-      setSubmitting(false);
-    }
-  };
-
-  return (
-    <div className="flex min-w-0">
-      <div
-        data-testid="hermes-approval-request"
-        className={`hermes-interaction-card ${interactionCardClass}`}
-      >
-        <div className="mb-2.5 flex min-w-0 items-center gap-2">
-          <div className="min-w-0 flex-1 font-medium text-text">
-            {botName} wants to run a command
-          </div>
-        </div>
-
-        {command && (
-          <code className="mb-3 block max-h-40 overflow-y-auto whitespace-pre-wrap break-all rounded-md border border-border-subtle bg-raised px-3 py-2 font-mono text-[0.786rem] leading-relaxed text-text">
-            {command}
-          </code>
-        )}
-
-        {description && (
-          <div className="mb-3 whitespace-pre-wrap break-words text-text-muted">
-            {description}
-          </div>
-        )}
-
-        {isActionable ? (
-          <div className="flex flex-wrap items-center gap-2">
-            {choices.includes("once") && (
-              <ApprovalButton
-                label="Approve"
-                tone="primary"
-                disabled={submitting}
-                onClick={() => void submit("once")}
-              />
-            )}
-            {choices.includes("session") && (
-              <ApprovalButton
-                label="Approve for session"
-                tone="secondary"
-                disabled={submitting}
-                onClick={() => void submit("session")}
-              />
-            )}
-            {choices.includes("always") && (
-              <ApprovalButton
-                label="Always approve"
-                tone="secondary"
-                disabled={submitting}
-                onClick={() => void submit("always")}
-              />
-            )}
-            {choices.includes("deny") && (
-              <ApprovalButton
-                label="Deny"
-                tone="danger-soft"
-                disabled={submitting}
-                onClick={() => void submit("deny")}
-              />
-            )}
-          </div>
-        ) : (
-          <div className="text-text-dimmed">
-            Waiting for the earlier approval to be resolved first.
-          </div>
-        )}
-        {submitting && (
-          <div role="status" className="mt-2 text-[0.786rem] text-text-dimmed">
-            Sending response…
-          </div>
-        )}
-        {error && (
-          <div
-            role="alert"
-            className="mt-2 text-[0.786rem] text-error-bright"
-          >
-            {error}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function ClarifyRequestCard({
-  state,
-  botName,
-  onResponse,
-}: {
-  state: ClarifyRequestState;
-  botName: string;
-  onResponse: (response: ClarifyResponse) => void | Promise<void>;
-}) {
-  const event = state.event;
-  const question = boundedUiText(
-    stringField(event.payload, "question") || eventText(event),
-    MAX_UI_DETAIL_CHARS,
-  );
-  const choices = clarifyChoices(event);
-  const multiSelect = event.payload?.multiSelect === true;
-  const [selected, setSelected] = useState<string[]>([]);
-  const [showOther, setShowOther] = useState(choices === null);
-  const [customAnswer, setCustomAnswer] = useState("");
-  const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const submit = async (response: ClarifyResponse) => {
-    if (submitting) return;
-    const normalized =
-      typeof response === "string" ? response.trim() : response;
-    if (
-      (typeof normalized === "string" && !normalized) ||
-      (Array.isArray(normalized) && normalized.length === 0)
-    ) {
-      setError("Enter or select a response.");
-      return;
-    }
-    setSubmitting(true);
-    setError(null);
-    try {
-      await onResponse(normalized);
-    } catch (cause) {
-      setError(interactionErrorMessage(cause));
-      setSubmitting(false);
-    }
-  };
-
-  const toggleChoice = (choice: string) => {
-    setSelected((previous) =>
-      previous.includes(choice)
-        ? previous.filter((item) => item !== choice)
-        : [...previous, choice],
-    );
-    setError(null);
-  };
-
-  const customField = (
-    <div className="mt-2">
-      <label
-        htmlFor={`clarify-other-${event.id}`}
-        className="sr-only"
-      >
-        {choices === null ? "Your response" : "Other response"}
-      </label>
-      <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-end">
-        <textarea
-          id={`clarify-other-${event.id}`}
-          aria-label={choices === null ? "Your response" : "Other response"}
-          rows={choices === null ? 2 : 1}
-          maxLength={4_000}
-          value={customAnswer}
-          disabled={submitting}
-          onChange={(event) => {
-            setCustomAnswer(event.target.value);
-            setError(null);
-          }}
-          onKeyDown={(keyboardEvent) => {
-            if (
-              keyboardEvent.key === "Enter" &&
-              !keyboardEvent.shiftKey &&
-              !keyboardEvent.nativeEvent.isComposing
-            ) {
-              keyboardEvent.preventDefault();
-              void submit(customAnswer);
-            }
-          }}
-          placeholder={choices === null ? "Type your response" : "Type another answer"}
-          className={`${inputClass} min-h-9 flex-1 resize-y`}
-        />
-        <ApprovalButton
-          label="Submit"
-          tone="primary"
-          disabled={submitting || customAnswer.trim().length === 0}
-          onClick={() => void submit(customAnswer)}
-        />
-      </div>
-      <div className="mt-1.5 text-[0.714rem] text-text-dimmed">
-        Enter to submit · Shift+Enter for a new line
-      </div>
-    </div>
-  );
-
-  return (
-    <div className="flex min-w-0">
-      <div
-        data-testid="hermes-clarify-request"
-        className={`hermes-interaction-card ${interactionCardClass}`}
-      >
-        <div className="text-[0.786rem] font-medium text-warning-text">
-          {botName} needs your input
-        </div>
-        <div className="mt-1.5 whitespace-pre-wrap break-words font-medium text-text">
-          {question}
-        </div>
-
-        {choices && !multiSelect && (
-          <div className="mt-3 flex flex-wrap gap-2">
-            {choices.map((choice) => (
-              <ApprovalButton
-                key={choice}
-                label={choice}
-                tone="secondary"
-                wrap
-                disabled={submitting}
-                onClick={() => void submit(choice)}
-              />
-            ))}
-            <ApprovalButton
-              label={showOther ? "Hide other" : "Other"}
-              tone="secondary"
-              selected={showOther}
-              disabled={submitting}
-              onClick={() => {
-                setShowOther((visible) => !visible);
-                setError(null);
-              }}
-            />
-          </div>
-        )}
-
-        {choices && multiSelect && (
-          <fieldset className="mt-3 min-w-0" disabled={submitting}>
-            <legend className="sr-only">Select one or more answers</legend>
-            <div className="flex flex-wrap gap-2">
-              {choices.map((choice) => (
-                <label
-                  key={choice}
-                  className="inline-flex min-h-7 cursor-pointer items-center gap-2 rounded-md border border-border-strong bg-elevated px-2.5 py-1 text-[0.857rem] font-medium text-text transition-colors duration-150 hover:bg-button-hover has-[:checked]:border-accent/60 has-[:checked]:bg-accent/15 has-[:disabled]:cursor-not-allowed has-[:disabled]:opacity-45"
-                >
-                  <input
-                    type="checkbox"
-                    checked={selected.includes(choice)}
-                    onChange={() => toggleChoice(choice)}
-                    className="size-3.5 accent-accent"
-                  />
-                  <span className="break-words">{choice}</span>
-                </label>
-              ))}
-            </div>
-            <div className="mt-2.5 flex flex-wrap gap-2">
-              <ApprovalButton
-                label="Submit selected"
-                tone="primary"
-                disabled={submitting || selected.length === 0}
-                onClick={() => void submit(selected)}
-              />
-              <ApprovalButton
-                label={showOther ? "Hide custom answer" : "Custom answer"}
-                tone="secondary"
-                selected={showOther}
-                disabled={submitting}
-                onClick={() => {
-                  setShowOther((visible) => !visible);
-                  setError(null);
-                }}
-              />
-            </div>
-          </fieldset>
-        )}
-
-        {showOther && customField}
-        {submitting && (
-          <div role="status" className="mt-2 text-[0.786rem] text-text-dimmed">
-            Sending response…
-          </div>
-        )}
-        {error && (
-          <div role="alert" className="mt-2 text-[0.786rem] text-error-bright">
-            {error}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function ResolvedClarifyRow({ state }: { state: ClarifyRequestState }) {
-  const summary = clarifyResponseSummary(state.response);
-  return (
-    <div
-      className="flex min-w-0 items-center gap-2 px-1 py-1 text-[0.929rem]"
-      data-testid="hermes-clarify-resolved"
-      data-confirmed={state.confirmed ? "true" : "false"}
-    >
-      <StepIcon icon={Check} />
-      <span className="shrink-0 font-medium text-text-secondary">Answered</span>
-      <span className="min-w-0 flex-1 truncate text-text-dimmed" title={summary}>
-        {summary}
-      </span>
-    </div>
-  );
-}
-
-function ResolvedApprovalRow({
-  state,
-  expanded,
-  onToggle,
-}: {
-  state: ApprovalRequestState;
-  expanded: boolean;
-  onToggle: () => void;
-}) {
-  const command = approvalCommandText(state.event);
-  const decision = state.decision ?? "once";
-  const denied = decision === "deny";
-
-  return (
-    <div
-      className="min-w-0"
-      data-testid="hermes-approval-resolved"
-      data-confirmed={state.confirmed ? "true" : "false"}
-    >
-      <button
-        type="button"
-        aria-expanded={expanded}
-        onClick={onToggle}
-        className={stepRowClass}
-      >
-        {denied ? (
-          <StepIcon icon={X} className="text-error-bright" />
-        ) : (
-          <StepIcon icon={Check} />
-        )}
-        <span
-          className={`shrink-0 font-medium ${
-            denied ? "text-error-light" : "text-text-secondary"
-          }`}
-        >
-          {approvalDecisionLabel(decision)}
-        </span>
-        {command && (
-          <code
-            className="min-w-0 flex-1 truncate font-mono text-[0.714rem] text-text-dimmed"
-            title={command}
-          >
-            {command}
-          </code>
-        )}
-      </button>
-      {expanded && command && (
-        <code
-          data-testid="hermes-activity-detail"
-          className={`${stepDetailClass} break-all font-mono text-[0.786rem] text-text-secondary`}
-        >
-          {command}
-        </code>
-      )}
-    </div>
-  );
-}
-
-function ApprovalButton({
-  label,
-  tone,
-  className = "",
-  wrap = false,
-  selected = false,
-  disabled = false,
-  onClick,
-}: {
-  label: string;
-  tone: ButtonVariant;
-  className?: string;
-  /** Let long free-form labels (clarify choices) wrap instead of overflowing. */
-  wrap?: boolean;
-  /** Visual pressed state for toggles such as "Other". */
-  selected?: boolean;
-  disabled?: boolean;
-  onClick: () => void;
-}) {
-  const wrapClass = wrap
-    ? "h-auto! min-h-7 whitespace-normal! break-words py-1 text-left"
-    : "";
-
-  return (
-    <button
-      type="button"
-      disabled={disabled}
-      data-selected={selected ? "true" : undefined}
-      className={`${buttonClass(tone, "sm")} data-[selected=true]:border-accent/60 data-[selected=true]:bg-accent/15 ${wrapClass} ${className}`}
-      onClick={onClick}
-    >
-      {label}
-    </button>
-  );
-}
-
 function OtherEventRow({ event }: { event: BotInvocationProgressEventPublic }) {
   return (
     <div className="flex min-w-0 items-center gap-2 px-1 py-1 text-[0.929rem] text-text-dimmed">
@@ -1127,112 +576,9 @@ function trimmedUiString(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
 }
 
-function approvalCommandText(event: BotInvocationProgressEventPublic) {
-  return boundedUiText(
-    stringField(event.payload, "command") ||
-      trimmedUiString(event.preview) ||
-      "",
-    MAX_UI_COMMAND_CHARS,
-  );
-}
-
-function approvalChoices(event: BotInvocationProgressEventPublic): ApprovalDecision[] {
-  const value = event.payload?.choices;
-  const choices = Array.isArray(value)
-    ? [...new Set(value.slice(0, 4).filter(isApprovalDecision))]
-    : [];
-  return choices.length > 0 ? choices : ["once", "session", "always", "deny"];
-}
-
-function clarifyChoices(
-  event: BotInvocationProgressEventPublic,
-): string[] | null {
-  const value = event.payload?.choices;
-  if (value === null) return null;
-  if (!Array.isArray(value)) return null;
-  const choices = value
-    .slice(0, MAX_UI_CHOICES)
-    .filter(
-      (choice): choice is string =>
-        typeof choice === "string" &&
-        choice.trim().length > 0 &&
-        choice.length <= MAX_UI_CHOICE_CHARS,
-    );
-  return choices.length > 0 ? choices : null;
-}
-
-function clarifyRowKey(event: BotInvocationProgressEventPublic) {
-  const requestId = stringField(event.payload, "requestId");
-  return requestId ? `clarify:${requestId}` : `clarify:${event.id}`;
-}
-
-function clarifyResponseSummary(response: ClarifyResponse | null) {
-  if (Array.isArray(response)) {
-    return boundedUiText(
-      response
-        .slice(0, MAX_UI_CHOICES)
-        .map((item) => boundedUiText(item, MAX_UI_CHOICE_CHARS))
-        .join(", "),
-      MAX_UI_LABEL_CHARS,
-    );
-  }
-  if (response?.trim()) {
-    return boundedUiText(response.trim(), MAX_UI_LABEL_CHARS);
-  }
-  return "Response recorded";
-}
-
 function boundedUiText(value: string, maxChars: number) {
   if (value.length <= maxChars) return value;
   return `${value.slice(0, Math.max(0, maxChars - 1))}…`;
-}
-
-function interactionErrorMessage(cause: unknown) {
-  return cause instanceof Error && cause.message.trim()
-    ? cause.message
-    : "Could not send the response. Try again.";
-}
-
-function oldestPendingApprovalsBySession(states: ApprovalRequestState[]) {
-  const oldestBySession = new Map<string, ApprovalRequestState>();
-  for (const state of states) {
-    if (state.status !== "pending") continue;
-    const sessionKey =
-      state.event.botId +
-      ":" +
-      (stringField(state.event.payload, "sessionKey") || "__legacy__");
-    const existing = oldestBySession.get(sessionKey);
-    if (
-      !existing ||
-      compareInteractionRequestAge(state.event, existing.event) < 0
-    ) {
-      oldestBySession.set(sessionKey, state);
-    }
-  }
-  return new Set(
-    Array.from(oldestBySession.values()).map((state) => state.event.id),
-  );
-}
-
-function compareInteractionRequestAge(
-  left: BotInvocationProgressEventPublic,
-  right: BotInvocationProgressEventPublic,
-) {
-  const createdDelta = Date.parse(left.createdAt) - Date.parse(right.createdAt);
-  if (createdDelta !== 0) return createdDelta;
-  if (left.invocationId === right.invocationId) {
-    return left.sequence - right.sequence;
-  }
-  return left.id.localeCompare(right.id);
-}
-
-function isApprovalDecision(value: unknown): value is ApprovalDecision {
-  return (
-    value === "once" ||
-    value === "session" ||
-    value === "always" ||
-    value === "deny"
-  );
 }
 
 function firstLine(text: string) {

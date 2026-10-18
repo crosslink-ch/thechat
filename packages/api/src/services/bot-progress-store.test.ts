@@ -40,69 +40,19 @@ describe("local bot progress store", () => {
     ]);
   });
 
-  test("retains unresolved approvals without a heartbeat", async () => {
-    let now = Date.parse("2026-01-01T00:00:00.000Z");
-    const store = createLocalBotProgressStoreForTests({
-      activityTimeoutMs: 30_000,
-      now: () => now,
-    });
-
-    await store.append(progressInput({
-      type: "approval.request",
-      toolCallId: null,
-      payload: { sessionKey: "session-1" },
-    }));
-    await store.append(progressInput({
-      type: "approval.request",
-      toolCallId: null,
-      payload: { sessionKey: "session-1" },
-    }));
-    now += 30_001;
-
-    expect(await store.listForConversation("conversation-1")).toHaveLength(2);
-
-    await store.append(progressInput({
-      type: "approval.resolved",
-      toolCallId: null,
-      payload: { sessionKey: "session-1", resolvedCount: 2 },
-    }));
-    now += 30_001;
-
-    expect(await store.listForConversation("conversation-1")).toEqual([]);
-  });
-
-  test("retains clarifications and resolves an explicit requestId", async () => {
+  test("gives approval and clarify progress no special retention", async () => {
     let now = Date.parse("2026-01-01T00:00:00.000Z");
     const store = createLocalBotProgressStoreForTests({
       activityTimeoutMs: 30_000,
       now: () => now,
     });
     await store.append(progressInput({
-      type: "clarify.request",
+      type: "approval.request",
       toolCallId: null,
-      payload: { requestId: "clarify-1", sessionKey: "session-1" },
+      payload: { requestId: "approval-1", sessionKey: "session-1" },
     }));
     await store.append(progressInput({
       type: "clarify.request",
-      toolCallId: null,
-      payload: { requestId: "clarify-2", sessionKey: "session-1" },
-    }));
-    await store.append(progressInput({
-      type: "clarify.resolved",
-      toolCallId: null,
-      payload: { requestId: "clarify-2", sessionKey: "session-1" },
-    }));
-    now += 30_001;
-
-    const retained = await store.listForConversation("conversation-1");
-    expect(retained.map((event) => event.type)).toEqual([
-      "clarify.request",
-      "clarify.request",
-      "clarify.resolved",
-    ]);
-
-    await store.append(progressInput({
-      type: "clarify.resolved",
       toolCallId: null,
       payload: { requestId: "clarify-1", sessionKey: "session-1" },
     }));
@@ -110,12 +60,17 @@ describe("local bot progress store", () => {
     expect(await store.listForConversation("conversation-1")).toEqual([]);
   });
 
-  test("reuses one stable request event for an ambiguous retry", async () => {
+  test("reuses one stable vault request event for an ambiguous retry", async () => {
     const store = createLocalBotProgressStoreForTests();
     const input = progressInput({
-      type: "approval.request",
+      type: "vault.unlock.request",
       toolCallId: null,
-      payload: { requestId: "approval-stable", sessionKey: "session-1" },
+      payload: {
+        version: 2,
+        requestId: "vault-stable",
+        sessionKey: "session-1",
+        expiresAt: Date.now() + 120_000,
+      },
     });
 
     const first = await store.append(input);
@@ -123,40 +78,6 @@ describe("local bot progress store", () => {
 
     expect(retry).toEqual(first);
     expect(await store.listForConversation("conversation-1")).toEqual([first]);
-  });
-
-  test("never compacts an unresolved interaction request at the event cap", async () => {
-    const store = createLocalBotProgressStoreForTests({ maxEvents: 3 });
-    const request = await store.append(progressInput({
-      type: "clarify.request",
-      toolCallId: null,
-      payload: { requestId: "clarify-overflow", sessionKey: "session-1" },
-    }));
-    for (let index = 0; index < 8; index += 1) {
-      await store.append(progressInput({
-        toolCallId: `call-${index}`,
-        payload: { index },
-      }));
-    }
-
-    const retained = await store.listForConversation("conversation-1");
-    expect(retained).toHaveLength(4);
-    expect(retained).toContainEqual(request);
-
-    await store.append(progressInput({
-      type: "clarify.resolved",
-      toolCallId: null,
-      payload: {
-        requestId: "clarify-overflow",
-        sessionKey: "session-1",
-        response: "done",
-      },
-    }));
-    expect(
-      (await store.listForConversation("conversation-1")).some(
-        (event) => event.id === request.id,
-      ),
-    ).toBe(false);
   });
 
   test("retains a vault request past inactivity and overflow only until its expiry", async () => {
@@ -210,9 +131,14 @@ describe("redis bot progress store", () => {
     });
     try {
       const input = progressInput({
-        type: "approval.request",
+        type: "vault.unlock.request",
         toolCallId: null,
-        payload: { requestId: "redis-stable", sessionKey: "session-redis" },
+        payload: {
+          version: 2,
+          requestId: "redis-stable",
+          sessionKey: "session-redis",
+          expiresAt: Date.now() + 120_000,
+        },
       });
       const first = await Promise.all([
         store.append(input),
@@ -262,7 +188,7 @@ describe("resilient bot progress store", () => {
     const store = createResilientBotProgressStoreForTests(primary, fallback);
 
     await store.append(progressInput({
-      type: "approval.request",
+      type: "notice.lifecycle",
       toolCallId: null,
       occurredAt: new Date(now),
     }));
@@ -275,7 +201,7 @@ describe("resilient bot progress store", () => {
 
     const merged = await store.listForConversation("conversation-1");
     expect(merged.map((event) => event.type)).toEqual([
-      "approval.request",
+      "notice.lifecycle",
       "tool.started",
     ]);
     expect(merged.map((event) => event.sequence)).toEqual([1, 2]);

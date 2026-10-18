@@ -9,6 +9,7 @@ import { useMessageTopCommand } from "../hooks/useMessageTopCommand";
 import { useOlderHistoryScroll } from "../hooks/useOlderHistoryScroll";
 import { useScrollStability } from "../hooks/useScrollStability";
 import { MessageSendError } from "./MessageSendError";
+import { BotRequestsInline } from "./BotRequestsInline";
 import { ArrowDown } from "lucide-react";
 import { buttonClass } from "./ui";
 import type { ChatMessage } from "@thechat/shared";
@@ -176,6 +177,11 @@ export function ChannelChatView({
               {msg.content && <Markdown content={msg.content} mentions={mentionNames} />}
             </SharedChatMessage>
           ))}
+          {/* Requests from any bot in this conversation. Any participant may
+              answer unless the bot addressed one person. */}
+          {conversationId && !loading && (
+            <BotRequestsInline conversationId={conversationId} />
+          )}
           {visibleTypingNames.length > 0 && (
             <div className="animate-pulse px-5 py-1 pb-2 text-[0.786rem] text-text-dimmed">
               {visibleTypingNames.join(", ")} {visibleTypingNames.length === 1 ? "is" : "are"} typing...

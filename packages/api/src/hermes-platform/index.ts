@@ -15,6 +15,7 @@ import {
 import { ServiceError } from "../services/errors";
 import { resolveTokenToUser } from "../auth/middleware";
 import { vaultUnlockRequestSchema, vaultUnlockResolvedSchema } from "../services/vault-unlock";
+import { listUndeliveredAnswersForBot } from "../services/bot-requests";
 
 const messageSchema = z.object({
   invocationId: z.string().min(1).optional(),
@@ -42,72 +43,20 @@ const MAX_PROGRESS_PAYLOAD_BYTES = 128 * 1024;
 const MAX_PROGRESS_LABEL_LENGTH = 1_000;
 const MAX_PROGRESS_PREVIEW_LENGTH = 10_000;
 const MAX_PROGRESS_TOOL_TOKEN_LENGTH = 255;
-const MAX_INTERACTION_REQUEST_ID_LENGTH = 255;
-const MAX_INTERACTION_SESSION_KEY_LENGTH = 1_000;
-const MAX_INTERACTION_QUESTION_LENGTH = 10_000;
-const MAX_INTERACTION_COMMAND_LENGTH = 100_000;
-const MAX_INTERACTION_DESCRIPTION_LENGTH = 10_000;
-const MAX_INTERACTION_RESPONSE_LENGTH = 4_000;
-const MAX_CLARIFY_CHOICE_LENGTH = 500;
-const MAX_CLARIFY_CHOICES = 20;
-
-const boundedToken = (max: number) =>
-  z.string().min(1).max(max).refine((value) => value === value.trim(), {
-    message: "Token must not contain surrounding whitespace",
-  });
-
-const approvalChoiceSchema = z.enum(["once", "session", "always", "deny"]);
-const approvalRequestPayloadSchema = z.object({
-  requestId: boundedToken(MAX_INTERACTION_REQUEST_ID_LENGTH),
-  sessionKey: boundedToken(MAX_INTERACTION_SESSION_KEY_LENGTH),
-  command: z.string().max(MAX_INTERACTION_COMMAND_LENGTH),
-  description: z.string().max(MAX_INTERACTION_DESCRIPTION_LENGTH),
-  choices: z.array(approvalChoiceSchema).min(1).max(4).refine(
-    (choices) => new Set(choices).size === choices.length,
-    { message: "Approval choices must be unique" },
-  ),
-}).strict();
-const approvalResolvedPayloadSchema = z.object({
-  requestId: boundedToken(MAX_INTERACTION_REQUEST_ID_LENGTH).optional(),
-  sessionKey: boundedToken(MAX_INTERACTION_SESSION_KEY_LENGTH),
-  choice: approvalChoiceSchema,
-  resolveAll: z.boolean().optional(),
-  resolvedCount: z.number().int().positive().max(10_000).optional(),
-}).strict();
-const clarifyChoicesSchema = z.array(
-  z.string().trim().min(1).max(MAX_CLARIFY_CHOICE_LENGTH),
-).min(1).max(MAX_CLARIFY_CHOICES).refine(
-  (choices) => new Set(choices).size === choices.length,
-  { message: "Clarification choices must be unique" },
-);
-const clarifyRequestPayloadSchema = z.object({
-  requestId: boundedToken(MAX_INTERACTION_REQUEST_ID_LENGTH),
-  sessionKey: boundedToken(MAX_INTERACTION_SESSION_KEY_LENGTH),
-  question: z.string().trim().min(1).max(MAX_INTERACTION_QUESTION_LENGTH),
-  choices: clarifyChoicesSchema.nullable(),
-  multiSelect: z.boolean(),
-  allowOther: z.literal(true),
-}).strict().refine(
-  (payload) => !payload.multiSelect || payload.choices !== null,
-  { message: "Multi-select clarification requires choices" },
-);
-const clarifyResponseSchema = z.union([
-  z.string().trim().min(1).max(MAX_INTERACTION_RESPONSE_LENGTH),
-  z.array(z.string().trim().min(1).max(MAX_CLARIFY_CHOICE_LENGTH))
-    .min(1)
-    .max(MAX_CLARIFY_CHOICES),
+/**
+ * Approvals and clarifications are bot requests now (`POST /bot-requests`);
+ * the progress stream only carries tool activity, titles and the transient
+ * vault unlock. Rejecting the retired types makes an outdated gateway fall
+ * back to its plain-text prompt instead of rendering a dead card.
+ */
+const RETIRED_INTERACTION_PROGRESS_TYPES = new Set([
+  "approval.request",
+  "approval.resolved",
+  "clarify.request",
+  "clarify.resolved",
 ]);
-const clarifyResolvedPayloadSchema = z.object({
-  requestId: boundedToken(MAX_INTERACTION_REQUEST_ID_LENGTH),
-  sessionKey: boundedToken(MAX_INTERACTION_SESSION_KEY_LENGTH),
-  response: clarifyResponseSchema,
-}).strict();
 
 const interactionProgressPayloadSchemas = {
-  "approval.request": approvalRequestPayloadSchema,
-  "approval.resolved": approvalResolvedPayloadSchema,
-  "clarify.request": clarifyRequestPayloadSchema,
-  "clarify.resolved": clarifyResolvedPayloadSchema,
   "vault.unlock.request": vaultUnlockRequestSchema,
   "vault.unlock.resolved": vaultUnlockResolvedSchema,
 } as const;
@@ -133,6 +82,14 @@ const progressSchema = z.object({
         message: "Progress payload is too large",
       });
     }
+  }
+  if (RETIRED_INTERACTION_PROGRESS_TYPES.has(progress.type)) {
+    context.addIssue({
+      code: "custom",
+      path: ["type"],
+      message: `${progress.type} progress is no longer supported; create a bot request with POST /bot-requests`,
+    });
+    return;
   }
   const interactionSchema = interactionProgressPayloadSchemas[
     progress.type as keyof typeof interactionProgressPayloadSchemas
@@ -227,6 +184,8 @@ export const hermesPlatformRoutes = new Elysia({ prefix: "/hermes-platform" })
   .get("/health", ({ platformBot }) => ({
     ok: true,
     platform: "thechat",
+    // Lets a gateway choose the request inbox over the retired progress cards.
+    capabilities: { botRequests: 1 },
     ownerUserId: platformBot?.ownerUserId ?? null,
     bot: platformBot ? { id: platformBot.id, userId: platformBot.userId, name: platformBot.name } : null,
   }))
@@ -234,7 +193,10 @@ export const hermesPlatformRoutes = new Elysia({ prefix: "/hermes-platform" })
     try {
       const rawLimit = typeof query.limit === "string" ? Number.parseInt(query.limit, 10) : 10;
       const events = await claimHermesPlatformEvents(platformBot!.id, Number.isFinite(rawLimit) ? rawLimit : 10);
-      return { events };
+      // Answers stay here until the bot acknowledges them, so a poll that is
+      // lost in transit is simply repeated.
+      const requestAnswers = await listUndeliveredAnswersForBot(platformBot!.id);
+      return { events, requestAnswers };
     } catch (e: any) {
       set.status = e instanceof ServiceError ? e.status : 500;
       return { error: e.message ?? "Unknown error" };

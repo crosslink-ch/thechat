@@ -2,19 +2,18 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   BotInvocationProgressEventPublic,
   BotInvocationPublic,
+  BotRequestAnswer,
+  BotRequestPublic,
   ChatMessage,
 } from "@thechat/shared";
 import { HermesDmChatView } from "../components/HermesDmChatView";
 import type { ActiveHermesInvocationProgress } from "../lib/hermes-progress";
 import {
-  approvalDecisionLabel,
-  decisionFromApprovalCommand,
-  pendingApprovalEvents,
-} from "../lib/hermes-approvals";
-import {
-  recordApprovalDecision,
-  useHermesApprovalsStore,
-} from "../stores/hermes-approvals";
+  BotRequestAnswererContext,
+  compareRequests,
+  useBotRequestsStore,
+  type BotRequestAnswerer,
+} from "../stores/bot-requests";
 import { HERMES_FALLBACK_SLASH_COMMANDS } from "../lib/hermes-slash-commands";
 
 const CONVERSATION_ID = "hermes-debug-conversation";
@@ -22,6 +21,12 @@ const BOT_ID = "hermes-debug-bot";
 const BOT_USER_ID = "hermes-debug-hermes";
 const BOT_NAME = "Hermes";
 const SESSION_KEY = "hermes-debug:general";
+const APPROVAL_LABELS: Record<string, string> = {
+  once: "Allowed once",
+  session: "Allowed for session",
+  always: "Always allowed",
+  deny: "Denied",
+};
 
 const DEBUG_COMMANDS = [
   "rm -rf ~/.cache/old-builds",
@@ -53,11 +58,10 @@ export function HermesDebugRoute() {
     ...INITIAL_INVOCATION,
   });
   const [secondInvocation, setSecondInvocation] = useState(false);
-  const [gatewayEmitsResolution, setGatewayEmitsResolution] = useState(false);
   const [remountKey, setRemountKey] = useState(0);
   const counterRef = useRef(0);
   const timersRef = useRef<number[]>([]);
-  const localDecisions = useHermesApprovalsStore((state) => state.decisions);
+  const requestsById = useBotRequestsStore((state) => state.byId);
 
   useEffect(() => {
     return () => {
@@ -189,30 +193,30 @@ export function HermesDebugRoute() {
   }, []);
 
   const addApprovalRequest = useCallback(() => {
-    const command = DEBUG_COMMANDS[counterRef.current % DEBUG_COMMANDS.length];
+    const command = DEBUG_COMMANDS[counterRef.current % DEBUG_COMMANDS.length]!;
     counterRef.current += 1;
-    emitEvent({
-      type: "approval.request",
-      status: "waiting",
-      label: "Command approval required",
-      preview: command,
-      payload: {
-        command,
-        description: "dangerous command",
-        sessionKey: SESSION_KEY,
-        choices: ["once", "session", "always", "deny"],
-      },
-    });
-  }, [emitEvent]);
+    setPrimary((previous) => ({
+      ...previous,
+      status: previous.status === "idle" ? "running" : previous.status,
+      startedAt: previous.startedAt ?? Date.now(),
+    }));
+    useBotRequestsStore.getState().upsert(makeApprovalRequest(nextId("request"), command));
+  }, [nextId]);
+
+  /** Settle the oldest open request the way the bot would. */
+  const settleOldest = useCallback(
+    (update: (request: BotRequestPublic) => BotRequestPublic, all = false) => {
+      const open = debugOpenRequests(useBotRequestsStore.getState().byId);
+      const targets = all ? open : open.slice(0, 1);
+      for (const request of targets) useBotRequestsStore.getState().upsert(update(request));
+      return targets;
+    },
+    [],
+  );
 
   const addResolutionEvent = useCallback(() => {
-    emitEvent({
-      type: "approval.resolved",
-      status: "completed",
-      label: "Approval resolved",
-      payload: { choice: "once", sessionKey: SESSION_KEY },
-    });
-  }, [emitEvent]);
+    settleOldest((request) => answeredRow(request, { choice: "once" }, "delivered"));
+  }, [settleOldest]);
 
   const addNotice = useCallback(
     (severity: "info" | "warn" | "error") => {
@@ -268,7 +272,7 @@ export function HermesDebugRoute() {
       makeMessage("seed-1", "human", "Can you clean up the old build caches on the server?"),
       makeMessage("seed-2", "bot", "Sure — let me check what's there first."),
     ]);
-    useHermesApprovalsStore.getState().resetForTests();
+    useBotRequestsStore.getState().reset();
   }, []);
 
   const invocations = useMemo<ActiveHermesInvocationProgress[]>(() => {
@@ -285,63 +289,79 @@ export function HermesDebugRoute() {
     return active;
   }, [primary, secondInvocation]);
 
-  const pendingApprovals = useMemo(
-    () => pendingApprovalEvents(invocations, localDecisions),
-    [invocations, localDecisions],
+  const pendingApprovals = useMemo(() => debugOpenRequests(requestsById), [requestsById]);
+
+  /** What Hermes does once it has an approval decision. */
+  const runApproved = useCallback(
+    (request: BotRequestPublic, choice: string) => {
+      const command = String(request.details?.command ?? "the command");
+      schedule(700, () => {
+        appendMessage(
+          "bot",
+          choice === "deny"
+            ? "🚫 Denied. I'll skip that command."
+            : `✅ ${APPROVAL_LABELS[choice] ?? choice}, running it now.`,
+        );
+        if (choice === "deny") return;
+        emitEvent({
+          type: "tool.started",
+          status: "running",
+          toolCallId: nextId("approved-call"),
+          toolName: "terminal",
+          label: command,
+          payload: { args: { command } },
+        });
+        schedule(1600, () => completeLastTool());
+      });
+    },
+    [appendMessage, completeLastTool, emitEvent, nextId, schedule],
   );
 
-  // Simulated Hermes gateway: mirrors how the DM route records optimistic
-  // decisions, then answers /approve and /deny like the real gateway does.
+  // Simulated TheChat + Hermes: the answer lands on the row, the bot picks it
+  // up a moment later, exactly like the real answered -> delivered path.
+  const answerer = useMemo<BotRequestAnswerer>(
+    () => ({
+      local: true,
+      answer: async (requestId: string, answer: BotRequestAnswer) => {
+        const store = useBotRequestsStore.getState();
+        const request = store.byId[requestId];
+        if (!request || request.status !== "open") {
+          throw new Error("This request was already resolved.");
+        }
+        const answered = answeredRow(request, answer, "answered");
+        store.upsert(answered);
+        schedule(500, () => {
+          useBotRequestsStore.getState().upsert(answeredRow(request, answer, "delivered"));
+          runApproved(request, answer.choice ?? "once");
+        });
+        return answered;
+      },
+    }),
+    [runApproved, schedule],
+  );
+
+  // Typed /approve and /deny resolve the waiter in Hermes, which withdraws
+  // the matching request.
   const handleSend = useCallback(
     (content: string) => {
       appendMessage("human", content);
 
-      const approval = decisionFromApprovalCommand(content);
+      const approval = typedApproval(content);
       if (approval) {
-        const pending = pendingApprovalEvents(
-          invocations,
-          useHermesApprovalsStore.getState().decisions,
+        const settled = settleOldest(
+          (request) => ({
+            ...request,
+            status: "cancelled",
+            cancelReason: `${APPROVAL_LABELS[approval.choice]} in chat.`,
+            updatedAt: new Date().toISOString(),
+          }),
+          approval.all,
         );
-        if (pending.length === 0) {
+        if (settled.length === 0) {
           schedule(400, () => appendMessage("bot", "No pending approvals."));
           return true;
         }
-        const targets = approval.all ? pending : pending.slice(0, 1);
-        const command = String(targets[0]?.payload?.command ?? "the command");
-        for (const event of targets) {
-          recordApprovalDecision(event.id, approval.decision);
-        }
-        schedule(700, () => {
-          appendMessage(
-            "bot",
-            approval.decision === "deny"
-              ? "🚫 Denied. I'll skip that command."
-              : `✅ ${approvalDecisionLabel(approval.decision)} — running it now.`,
-          );
-          if (gatewayEmitsResolution) {
-            emitEvent({
-              type: "approval.resolved",
-              status: "completed",
-              payload: {
-                choice: approval.decision,
-                sessionKey: SESSION_KEY,
-                resolveAll: approval.all,
-              },
-            });
-          }
-          if (approval.decision !== "deny") {
-            const callId = nextId("approved-call");
-            emitEvent({
-              type: "tool.started",
-              status: "running",
-              toolCallId: callId,
-              toolName: "terminal",
-              label: command,
-              payload: { args: { command } },
-            });
-            schedule(1600, () => completeLastTool());
-          }
-        });
+        runApproved(settled[0]!, approval.choice);
         return true;
       }
 
@@ -363,12 +383,10 @@ export function HermesDebugRoute() {
       appendMessage,
       completeInvocation,
       completeLastTool,
-      emitEvent,
-      gatewayEmitsResolution,
-      invocations,
-      nextId,
       primary.status,
+      runApproved,
       schedule,
+      settleOldest,
       startRunning,
     ],
   );
@@ -402,6 +420,7 @@ export function HermesDebugRoute() {
   return (
     <div className="flex min-h-0 flex-1 bg-base">
       <div className="flex min-w-0 flex-1 flex-col">
+        <BotRequestAnswererContext.Provider value={answerer}>
         <HermesDmChatView
           key={remountKey}
           messages={messages}
@@ -414,7 +433,9 @@ export function HermesDebugRoute() {
           scrollKey={`hermes-debug:${remountKey}`}
           taskActive={invocations.length > 0}
           slashCommands={HERMES_FALLBACK_SLASH_COMMANDS}
+          requestScope={{ conversationId: CONVERSATION_ID, threadId: null }}
         />
+        </BotRequestAnswererContext.Provider>
       </div>
 
       <aside className="hidden w-[404px] shrink-0 flex-col border-l border-[rgba(245,245,245,0.12)] bg-surface lg:flex">
@@ -438,7 +459,7 @@ export function HermesDebugRoute() {
 
             <ControlSection title="Fire event">
               <DebugButton icon="hand" onClick={addApprovalRequest}>Approval req</DebugButton>
-              <DebugButton icon="check" onClick={addResolutionEvent}>Resolve</DebugButton>
+              <DebugButton icon="check" onClick={addResolutionEvent}>Bot resolves</DebugButton>
               <DebugButton icon="tool" onClick={addToolStarted}>Tool started</DebugButton>
               <DebugButton icon="tool" tone="accent" onClick={completeLastTool}>Tool completed</DebugButton>
               <DebugButton icon="info" onClick={() => addNotice("info")}>Notice info</DebugButton>
@@ -471,18 +492,13 @@ export function HermesDebugRoute() {
                 label="Second invocation"
                 onChange={setSecondInvocation}
               />
-              <ToggleRow
-                checked={gatewayEmitsResolution}
-                label="Gateway emits approval.resolved"
-                onChange={setGatewayEmitsResolution}
-              />
               <DebugButton
                 className="col-span-2 w-full"
                 icon="trash"
                 tone="danger"
-                onClick={() => useHermesApprovalsStore.getState().resetForTests()}
+                onClick={() => useBotRequestsStore.getState().reset()}
               >
-                Clear local decisions
+                Clear requests
               </DebugButton>
             </ControlSection>
 
@@ -493,10 +509,16 @@ export function HermesDebugRoute() {
             <ControlSection title="State">
               <Metric label="Status" value={statusLabel(primary.status)} />
               <Metric label="Events" value={primary.events.length} />
-              <Metric label="Pending approvals" value={pendingApprovals.length} />
+              <Metric label="Open requests" value={pendingApprovals.length} />
               <Metric
-                label="Local decisions"
-                value={Object.keys(localDecisions).length}
+                label="Resolved requests"
+                value={
+                  Object.values(requestsById).filter(
+                    (request) =>
+                      request.conversationId === CONVERSATION_ID &&
+                      request.status !== "open",
+                  ).length
+                }
               />
             </ControlSection>
           </div>
@@ -504,6 +526,77 @@ export function HermesDebugRoute() {
       </aside>
     </div>
   );
+}
+
+function debugOpenRequests(byId: Record<string, BotRequestPublic>) {
+  return Object.values(byId)
+    .filter(
+      (request) => request.conversationId === CONVERSATION_ID && request.status === "open",
+    )
+    .sort(compareRequests);
+}
+
+function typedApproval(content: string): { choice: string; all: boolean } | null {
+  const [command, ...rest] = content.trim().split(/\s+/);
+  const args = rest.map((arg) => arg.toLowerCase());
+  const all = args.includes("all");
+  if (command === "/deny") return { choice: "deny", all };
+  if (command !== "/approve") return null;
+  const choice = args.find((arg) => arg === "session" || arg === "always") ?? "once";
+  return { choice, all };
+}
+
+function makeApprovalRequest(id: string, command: string): BotRequestPublic {
+  const nowIso = new Date().toISOString();
+  return {
+    id,
+    botId: BOT_ID,
+    botUserId: BOT_USER_ID,
+    botName: BOT_NAME,
+    conversationId: CONVERSATION_ID,
+    conversationType: "direct",
+    conversationName: null,
+    workspaceId: null,
+    threadId: null,
+    threadTitle: null,
+    invocationId: primaryInvocationId(),
+    kind: "approval",
+    title: "Run a dangerous command",
+    body: "Flagged as a dangerous command.",
+    details: { command, cwd: "/srv/app" },
+    response: { type: "choice", choices: ["once", "session", "always", "deny"] },
+    orderGroup: SESSION_KEY,
+    audienceUserId: null,
+    status: "open",
+    answer: null,
+    answeredBy: null,
+    answeredAt: null,
+    deliveredAt: null,
+    deliveryApplied: null,
+    deliveryNote: null,
+    cancelReason: null,
+    expiresAt: null,
+    createdAt: nowIso,
+    updatedAt: nowIso,
+  };
+}
+
+function answeredRow(
+  request: BotRequestPublic,
+  answer: BotRequestAnswer,
+  status: "answered" | "delivered",
+): BotRequestPublic {
+  const nowIso = new Date().toISOString();
+  return {
+    ...request,
+    status,
+    answer,
+    answeredBy: { id: "hermes-debug-user", name: "Bruno" },
+    answeredAt: request.answeredAt ?? nowIso,
+    deliveredAt: status === "delivered" ? nowIso : null,
+    deliveryApplied: status === "delivered" ? true : null,
+    updatedAt: nowIso,
+  };
 }
 
 function primaryInvocationId() {
@@ -790,7 +883,7 @@ function ToggleRow({
 function PendingApprovals({
   approvals,
 }: {
-  approvals: BotInvocationProgressEventPublic[];
+  approvals: BotRequestPublic[];
 }) {
   if (approvals.length === 0) {
     return (
@@ -812,11 +905,11 @@ function PendingApprovals({
           className="rounded border border-[rgba(245,245,245,0.12)] bg-elevated px-3 py-2"
         >
           <div className="text-[0.786rem] font-medium text-text-secondary">
-            {approval.label ?? "Approval required"}
+            {approval.title}
           </div>
-          {approval.preview && (
+          {typeof approval.details?.command === "string" && (
             <div className="mt-1 truncate font-mono text-[0.714rem] text-text-dimmed">
-              {approval.preview}
+              {approval.details.command}
             </div>
           )}
         </div>

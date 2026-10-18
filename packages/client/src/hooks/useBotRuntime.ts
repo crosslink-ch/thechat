@@ -35,23 +35,6 @@ export async function fetchBotRuntime(
   return data as BotRuntimeSnapshot;
 }
 
-export async function submitHermesInteraction(
-  invocationId: string,
-  eventId: string,
-  response: string | string[],
-  token: string | null,
-): Promise<void> {
-  const { error } = await api["bot-runtime"]
-    .invocations({ invocationId })
-    .interactions({ eventId })
-    .post({ response }, authHeaders(token));
-  if (error) {
-    throw new Error(
-      edenErrorMessage(error, "Failed to deliver the Hermes response"),
-    );
-  }
-}
-
 export async function submitHermesVaultUnlock(invocationId: string, eventId: string, response: VaultUnlockResponse, token: string | null): Promise<void> {
   try {
     const {data,error} = await api["bot-runtime"].invocations({invocationId}).interactions({eventId})["vault-unlock"].post(response,authHeaders(token));

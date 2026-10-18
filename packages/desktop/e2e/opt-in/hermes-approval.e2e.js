@@ -33,7 +33,7 @@ function containsTypedApprovalFallback(text) {
 }
 
 describeApproval("real Hermes approval UI", () => {
-  it("renders and resolves the structured command approval card", async function () {
+  it("renders and resolves Hermes approval and question requests", async function () {
     this.timeout(240_000);
 
     const email = required("HERMES_APPROVAL_E2E_EMAIL");
@@ -87,7 +87,10 @@ describeApproval("real Hermes approval UI", () => {
       }, trigger);
       await browser.keys("Enter");
 
-      const approvalCard = await $("[data-testid='hermes-approval-request']");
+      // Approvals and questions are durable bot requests rendered from request rows.
+      const approvalCard = await $(
+        "[data-testid='bot-request-card'][data-kind='approval'][data-status='open']",
+      );
       await browser.waitUntil(
         async () =>
           (await approvalCard.isExisting()) ||
@@ -103,12 +106,15 @@ describeApproval("real Hermes approval UI", () => {
       expect(containsTypedApprovalFallback(pendingBodyText)).toBe(false);
       await approvalCard.waitForDisplayed({ timeout: 5_000 });
 
+      const approvalId = await approvalCard.getAttribute("data-request-id");
       const cardText = await approvalCard.getText();
-      expect(cardText).toContain(`${botName} wants to run a command`);
+      expect(cardText).toContain(botName);
       expect(cardText).toContain(command);
       expect(cardText).toContain(reason);
-      expect(cardText).toContain("Approve");
-      expect(cardText).toContain("Approve for session");
+      expect(cardText).toContain("Allow once");
+      expect(cardText).toContain("Allow for this session");
+      // TheChat offers "Always allow" whenever Hermes does.
+      expect(cardText).toContain("Always allow");
       expect(cardText).toContain("Deny");
 
       const absoluteScreenshotPath = path.resolve(screenshotPath);
@@ -116,19 +122,23 @@ describeApproval("real Hermes approval UI", () => {
       await browser.saveScreenshot(absoluteScreenshotPath);
 
       const approveButton = await approvalCard.$(
-        ".//button[normalize-space(.)='Approve']",
+        ".//button[normalize-space(.)='Allow once']",
       );
       await approveButton.waitForClickable({ timeout: 10_000 });
       await approveButton.click();
 
+      // "delivered" only appears after the real Hermes webhook acknowledged the answer.
       const confirmedResolution = await $(
-        '[data-testid="hermes-approval-resolved"][data-confirmed="true"]',
+        `[data-testid="bot-request-resolved"][data-request-id="${approvalId}"][data-status="delivered"]`,
       );
       await confirmedResolution.waitForDisplayed({ timeout: 30_000 });
-      expect(await confirmedResolution.getText()).toContain("Approved");
+      expect(await confirmedResolution.getText()).toContain("Allowed once");
 
-      const clarifyCard = await $("[data-testid='hermes-clarify-request']");
+      const clarifyCard = await $(
+        "[data-testid='bot-request-card'][data-kind='question'][data-status='open']",
+      );
       await clarifyCard.waitForDisplayed({ timeout: 120_000 });
+      const clarifyId = await clarifyCard.getAttribute("data-request-id");
       const clarifyText = await clarifyCard.getText();
       expect(clarifyText).toContain(`${botName} needs your input`);
       expect(clarifyText).toContain(clarifyQuestion);
@@ -146,7 +156,8 @@ describeApproval("real Hermes approval UI", () => {
 
       for (const choice of clarifyResponse) {
         const checkbox = await clarifyCard.$(
-          `.//label[.//span[normalize-space(.)="${choice}"]]//input[@type="checkbox"]`,
+          // Hermes labels its first choice "(Recommended)"; the answer value stays the bare choice.
+          `.//label[.//span[starts-with(normalize-space(.), "${choice}")]]//input[@type="checkbox"]`,
         );
         await checkbox.waitForClickable({ timeout: 10_000 });
         await checkbox.click();
@@ -158,17 +169,19 @@ describeApproval("real Hermes approval UI", () => {
       await submitClarify.waitForClickable({ timeout: 10_000 });
       await submitClarify.click();
 
-      // A confirmed row can only arrive after the API's signed interaction
-      // envelope was accepted by the real Hermes webhook adapter.
+      // A delivered row can only arrive after the outbox pushed the stored
+      // answer to the real Hermes webhook and Hermes acknowledged it.
       const confirmedClarify = await $(
-        '[data-testid="hermes-clarify-resolved"][data-confirmed="true"]',
+        `[data-testid="bot-request-resolved"][data-request-id="${clarifyId}"][data-status="delivered"]`,
       );
       await confirmedClarify.waitForDisplayed({ timeout: 30_000 });
 
       const finalReply = await $(`//*[normalize-space(text())='${finalMessage}']`);
       await finalReply.waitForDisplayed({ timeout: 120_000 });
+      // Answered requests stay in the conversation as one-line rows; no open card is left.
       await approvalCard.waitForExist({ reverse: true, timeout: 30_000 });
       await clarifyCard.waitForExist({ reverse: true, timeout: 30_000 });
+      await confirmedResolution.waitForDisplayed({ timeout: 5_000 });
       expect(containsTypedApprovalFallback(await bodyText())).toBe(false);
     } catch (error) {
       const failurePath = path.resolve(

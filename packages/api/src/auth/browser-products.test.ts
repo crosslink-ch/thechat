@@ -15,6 +15,7 @@ import { hermesRoutes } from "../hermes";
 import { botRuntimeRoutes } from "../bot-runtime";
 import { attachmentRoutes } from "../attachments";
 import { activityRoutes } from "../activity";
+import { botRequestRoutes, inboxRoutes } from "../bot-requests";
 import {
   authInfrastructureErrors,
   optionalAuth,
@@ -42,6 +43,8 @@ const app = new Elysia()
   .use(botRuntimeRoutes)
   .use(attachmentRoutes)
   .use(activityRoutes)
+  .use(botRequestRoutes)
+  .use(inboxRoutes)
   .use(
     new Elysia()
       .use(requireAuth)
@@ -97,7 +100,8 @@ const routes = [
   ["/bot-workspace-invites/accept", "POST", 400],
   ["/bots/create", "POST", 400],
   [`/bots/${id}/hermes`, "PATCH", 400],
-  [`/bot-runtime/invocations/${id}/interactions/${id}`, "POST", 400],
+  [`/bot-requests/${id}/answer`, "POST", 400],
+  ["/inbox/", "GET", 200],
   [`/bot-runtime/invocations/${id}/interactions/${id}/vault-unlock`, "POST", 400],
   ["/attachments/", "POST", 400],
   ["/activity/", "GET", 200],

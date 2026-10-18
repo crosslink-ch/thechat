@@ -104,6 +104,11 @@ APPROVAL_REDIS_PORT = approval_e2e_port(
 )
 APPROVAL_MODEL_PORT = unique_e2e_port("HERMES_APPROVAL_E2E_MODEL_PORT")
 APPROVAL_WEBHOOK_PORT = unique_e2e_port("HERMES_APPROVAL_E2E_WEBHOOK_PORT")
+REQUESTS_API_PORT = unique_e2e_port("THECHAT_REQUESTS_E2E_API_PORT")
+REQUESTS_POSTGRES_PORT = unique_e2e_port("THECHAT_REQUESTS_E2E_POSTGRES_PORT")
+REQUESTS_REDIS_PORT = unique_e2e_port("THECHAT_REQUESTS_E2E_REDIS_PORT")
+REQUESTS_MODEL_PORT = unique_e2e_port("HERMES_REQUESTS_E2E_MODEL_PORT")
+REQUESTS_WEBHOOK_PORT = unique_e2e_port("HERMES_REQUESTS_E2E_WEBHOOK_PORT")
 
 BACKEND_PORT = int(os.environ.get("THECHAT_BACKEND_PORT", 3000))
 
@@ -285,6 +290,34 @@ SUITES = [
         # Command-capable desktop E2E: require the suite name, never broad --all.
         "explicit_only": True,
         "timeout": 600,
+    },
+    {
+        "name": "hermes-requests",
+        "cmd": ["python3", "scripts/e2e/hermes-bot-requests-flow.py"],
+        "env": {
+            "THECHAT_E2E_API_PORT": REQUESTS_API_PORT,
+            "THECHAT_E2E_POSTGRES_PORT": REQUESTS_POSTGRES_PORT,
+            "THECHAT_E2E_REDIS_PORT": REQUESTS_REDIS_PORT,
+            "THECHAT_E2E_DATABASE_URL": explicit_env_or_default(
+                "THECHAT_E2E_DATABASE_URL",
+                f"postgres://thechat:thechat@localhost:{REQUESTS_POSTGRES_PORT}/thechat",
+            ),
+            "THECHAT_E2E_REDIS_URL": explicit_env_or_default(
+                "THECHAT_E2E_REDIS_URL",
+                f"redis://localhost:{REQUESTS_REDIS_PORT}",
+            ),
+            "HERMES_REQUESTS_E2E_MODEL_PORT": REQUESTS_MODEL_PORT,
+            "HERMES_REQUESTS_E2E_WEBHOOK_PORT": REQUESTS_WEBHOOK_PORT,
+            "HERMES_E2E_SOURCE_DIR": explicit_env_or_default(
+                "HERMES_E2E_SOURCE_DIR",
+                str(ROOT.parent / "hermes-agent"),
+            ),
+        },
+        # Real Hermes Gateway (webhook + polling), real API/worker/Postgres/Redis,
+        # deterministic local model. Runs a real dangerous-command approval.
+        "opt_in": True,
+        "explicit_only": True,
+        "timeout": 900,
     },
     {
         "name": "attachments-ui",

@@ -11,7 +11,6 @@ import { createQueryWrapper, createTestQueryClient } from "../test-utils/query";
 import {
   botRuntimeQueryKey,
   hasActiveBotRuntimeActivity,
-  submitHermesInteraction,
   useBotRuntime,
   useBotRuntimeCache,
 } from "./useBotRuntime";
@@ -182,30 +181,6 @@ describe("useBotRuntime", () => {
     expect(hasActiveBotRuntimeActivity(runtime({
       invocations: [invocation({ botKind: "webhook", status: "running" })],
     }))).toBe(true);
-  });
-
-  it("posts interaction responses with the current bearer token", async () => {
-    const post = vi.fn().mockResolvedValue({ data: { ok: true }, error: null });
-    const interactions = vi.fn(() => ({ post }));
-    vi.mocked(api["bot-runtime"].invocations).mockReturnValue({
-      interactions,
-    } as any);
-
-    await submitHermesInteraction(
-      "invocation-1",
-      "event-1",
-      ["Unit", "Build"],
-      "human-token",
-    );
-
-    expect(api["bot-runtime"].invocations).toHaveBeenCalledWith({
-      invocationId: "invocation-1",
-    });
-    expect(interactions).toHaveBeenCalledWith({ eventId: "event-1" });
-    expect(post).toHaveBeenCalledWith(
-      { response: ["Unit", "Build"] },
-      { headers: { authorization: "Bearer human-token" } },
-    );
   });
 
 });

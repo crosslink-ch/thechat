@@ -528,6 +528,90 @@ export interface BotRuntimeSnapshot {
   events: BotInvocationProgressEventPublic[];
 }
 
+// -- Bot request inbox --
+
+/** What a bot asks a human for. TheChat does not interpret the purpose. */
+export type BotRequestKind = "approval" | "question" | "review";
+
+/**
+ * `answered` means TheChat stored the answer; `delivered` means the bot
+ * confirmed it received it (`deliveryApplied` says whether it could use it).
+ */
+export type BotRequestStatus =
+  | "open"
+  | "answered"
+  | "delivered"
+  | "cancelled"
+  | "expired";
+
+/**
+ * The answers a request accepts. `choice` offers fixed options (optionally
+ * several at once, optionally free text as "Other", optionally a comment);
+ * `text` accepts free text only.
+ */
+export interface BotRequestResponseSpec {
+  type: "choice" | "text";
+  choices?: string[];
+  /** Display labels keyed by choice. Missing labels show the choice itself. */
+  labels?: Record<string, string>;
+  multiple?: boolean;
+  allowText?: boolean;
+  allowComment?: boolean;
+  maxLength?: number;
+}
+
+/** Exactly one of `choice`, `choices` or `text`; `comment` is optional. */
+export interface BotRequestAnswer {
+  choice?: string;
+  choices?: string[];
+  text?: string;
+  comment?: string;
+}
+
+export interface BotRequestPublic {
+  id: string;
+  botId: string;
+  botUserId: string;
+  botName: string;
+  botAvatar?: BotAppearance;
+  conversationId: string;
+  conversationType: "direct" | "group";
+  conversationName: string | null;
+  workspaceId: string | null;
+  threadId: string | null;
+  threadTitle: string | null;
+  invocationId: string | null;
+  kind: BotRequestKind;
+  title: string;
+  body: string | null;
+  details: Record<string, unknown> | null;
+  response: BotRequestResponseSpec;
+  /** Requests sharing a group must be answered oldest first. Opaque. */
+  orderGroup: string | null;
+  audienceUserId: string | null;
+  status: BotRequestStatus;
+  answer: BotRequestAnswer | null;
+  answeredBy: { id: string; name: string } | null;
+  answeredAt: string | null;
+  deliveredAt: string | null;
+  deliveryApplied: boolean | null;
+  deliveryNote: string | null;
+  cancelReason: string | null;
+  expiresAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** The bot's own view of a request also carries its idempotency key. */
+export interface BotRequestBotView extends BotRequestPublic {
+  clientKey: string;
+}
+
+export interface BotRequestInbox {
+  open: BotRequestPublic[];
+  recent: BotRequestPublic[];
+}
+
 // -- Workspace Invite Types --
 
 export interface WorkspaceInvite {
@@ -624,6 +708,11 @@ export type WsServerEvent =
       invocationId: string;
       event: BotInvocationProgressEventPublic;
       invocation?: BotInvocationPublic;
+    }
+  | {
+      type: "bot_request_updated";
+      conversationId: string;
+      request: BotRequestPublic;
     }
   | {
       type: "conversation_thread_updated";
