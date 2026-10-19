@@ -109,7 +109,8 @@ def _start_fake_model(env: dict[str, str]) -> subprocess.Popen[Any]:
     log_path = TMP / "fake-model.log"
     with log_path.open("w") as log:
         proc = subprocess.Popen(
-            [sys.executable, "-u", str(ROOT / "scripts/e2e/fake-openai-approval-server.py"), "--port", str(MODEL_PORT)],
+            [sys.executable, "-u", str(ROOT / "scripts/e2e/fake-openai-approval-server.py"), "--port", str(MODEL_PORT),
+             *(["--execution-target", NAMED_TARGET] if NAMED_TARGET else [])],
             cwd=ROOT, env=env, stdout=log, stderr=subprocess.STDOUT, text=True, start_new_session=True,
         )
 
@@ -143,15 +144,38 @@ def _wait_for_webhook_registration(base: str, token: str, bot_id: str) -> None:
     harness.wait_for(registered, timeout=90, label="Hermes gateway webhook registration")
 
 
+# Optional: run the approved command on a named SSH execution target (Hermes builds with
+# named targets). Point it at any SSH host the runner can reach with a key.
+NAMED_TARGET = os.environ.get("HERMES_REQUESTS_E2E_NAMED_TARGET", "").strip()
+
+
+def _terminal_config() -> str:
+    if not NAMED_TARGET:
+        return "terminal:\n  backend: local\n"
+    ssh = {key: os.environ[f"HERMES_REQUESTS_E2E_SSH_{key.upper()}"] for key in ("host", "user", "port", "key", "cwd")}
+    return (
+        "terminal:\n"
+        "  default_target: local\n"
+        "  targets:\n"
+        "    local:\n"
+        "      backend: local\n"
+        f"    {NAMED_TARGET}:\n"
+        "      backend: ssh\n"
+        f"      ssh_host: {ssh['host']}\n"
+        f"      ssh_user: {ssh['user']}\n"
+        f"      ssh_port: {ssh['port']}\n"
+        f"      ssh_key: {ssh['key']}\n"
+        f"      cwd: {ssh['cwd']}\n"
+    )
+
+
 GATEWAY_CONFIG = """
 platform_toolsets:
   thechat:
     - terminal
     - clarify
     - no_mcp
-terminal:
-  backend: local
-security:
+""" + _terminal_config() + """security:
   tirith_enabled: false
 auxiliary:
   title_generation:
@@ -277,6 +301,9 @@ def _scenario_inbox_answers(env: dict[str, str], base: str, token: str, workspac
     approval = _wait_for_open_request(base, token, dm_id, "approval")
     assert approval["details"]["command"] == fake_model.APPROVAL_COMMAND, approval
     assert fake_model.APPROVAL_REASON_MARKER in (approval.get("body") or ""), approval
+    if NAMED_TARGET:
+        # The person can see where the command will run before allowing it.
+        assert f"execution target: '{NAMED_TARGET}'; backend: ssh" in (approval.get("body") or ""), approval
     # TheChat offers what Hermes offers: "Always allow" included, nothing narrowed.
     assert approval["response"]["choices"] == ["once", "session", "always", "deny"], approval
     assert approval["invocationId"], approval
@@ -307,6 +334,9 @@ def _scenario_inbox_answers(env: dict[str, str], base: str, token: str, workspac
 
     config = (harness.HERMES_HOME_ROOT / harness.slug("Hermes Requests E2E") / "config.yaml").read_text()
     assert "command_allowlist" in config, "Always allow from TheChat was not persisted by Hermes"
+    if NAMED_TARGET:
+        # Always allow on a named target covers only that target.
+        assert "target:" in config.split("command_allowlist", 1)[1], config
 
     assert not (_inbox(base, token).get("open") or []), "requests left open after the run"
     model_state = _model_state()
