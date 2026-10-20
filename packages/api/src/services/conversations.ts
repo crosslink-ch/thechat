@@ -4,23 +4,38 @@ import { db } from "../db";
 import {
   attachments,
   botInvocations,
+  botRequests,
   bots,
   conversations,
   conversationParticipants,
   conversationThreads,
   eventOutbox,
+  messageAttachments,
   messages,
+  taskProjects,
   users,
   workspaceMembers,
   workspaces,
 } from "../db/schema";
 import { attachmentsByMessageIds } from "../attachments/public";
+import {
+  ATTACHMENT_DELETION_REQUESTED,
+  createAttachmentLifecycleEvent,
+} from "../attachments/events";
+import { CHAT_MESSAGE_SENT_EVENT_TYPE } from "../events/envelope";
+import { enqueueDomainEvent } from "../events/outbox";
 import { log } from "../logging";
 import { publishWsEventToUsers } from "../realtime";
 import { currentHermesDispatchTimeoutCutoff } from "./bot-runtime";
 import { requireConversationMutationAccess } from "./conversation-mutation-access";
 import { ServiceError } from "./errors";
 import { canUserAccessAttachments } from "./messages";
+import {
+  publishToConversation,
+  requireHuman,
+  requireTaskProjectInConversation,
+  toPublicConversationThread,
+} from "./task-project-records";
 
 const channelLog = log.child({ component: "channels" });
 
@@ -510,7 +525,7 @@ export async function listConversationThreads(
   const pageRows = rows.slice(0, limit);
   const hasMore = rows.length > limit;
   return {
-    items: pageRows.map(toPublicThread),
+    items: pageRows.map(toPublicConversationThread),
     nextCursor: hasMore
       ? encodeConversationThreadCursor(pageRows.at(-1) ?? null)
       : null,
@@ -521,25 +536,44 @@ export async function listConversationThreads(
 export async function createConversationThread(
   conversationId: string,
   userId: string,
-  input: { botId?: string | null; title?: string | null; branchFromThreadId?: string | null },
+  input: {
+    botId?: string | null;
+    title?: string | null;
+    branchFromThreadId?: string | null;
+    projectId?: string | null;
+  },
   options: { afterWorkspaceLocked?: () => Promise<void> } = {},
 ) {
   return db.transaction(async (tx) => {
-    await requireConversationMutationAccess(tx, conversationId, userId, options);
+    const access = await requireConversationMutationAccess(tx, conversationId, userId, options);
     const botId = input.botId ?? (await inferHermesBotId(tx, conversationId));
     await requireHermesBotParticipant(tx, conversationId, botId);
 
     const title = normalizeThreadTitle(input.title);
     const branchPending = input.branchFromThreadId !== undefined;
     const branchFromThreadId = input.branchFromThreadId ?? null;
-    if (branchFromThreadId) {
-      await requireConversationThread(tx, conversationId, branchFromThreadId, botId);
+    const source = branchFromThreadId
+      ? await requireConversationThread(tx, conversationId, branchFromThreadId, botId)
+      : null;
+
+    let projectId: string | null = null;
+    if (input.projectId !== undefined) {
+      if (input.projectId) {
+        requireHuman(access);
+        await requireTaskProjectInConversation(tx, conversationId, input.projectId);
+        projectId = input.projectId;
+      }
+    } else if (source?.projectId) {
+      // A branch stays next to the task it came from.
+      projectId = await lockProjectIfPresent(tx, conversationId, source.projectId);
     }
+
     const [thread] = await tx
       .insert(conversationThreads)
       .values({
         conversationId,
         botId,
+        projectId,
         title,
         branchPending,
         branchFromThreadId,
@@ -547,7 +581,7 @@ export async function createConversationThread(
       })
       .returning();
 
-    return toPublicThread(thread);
+    return toPublicConversationThread(thread!);
   });
 }
 
@@ -555,19 +589,32 @@ export async function updateConversationThread(
   conversationId: string,
   threadId: string,
   userId: string,
-  input: { title: string },
+  input: { title?: string; projectId?: string | null },
   options: { afterWorkspaceLocked?: () => Promise<void> } = {},
 ) {
-  return db.transaction(async (tx) => {
-    await requireConversationMutationAccess(tx, conversationId, userId, options);
+  if (input.title === undefined && input.projectId === undefined) {
+    throw new ServiceError("Nothing to update", 400);
+  }
+  const thread = await db.transaction(async (tx) => {
+    const access = await requireConversationMutationAccess(tx, conversationId, userId, options);
 
-    const now = new Date();
-    const [thread] = await tx
+    const changes: Partial<typeof conversationThreads.$inferInsert> = {
+      updatedAt: new Date(),
+    };
+    if (input.title !== undefined) {
+      changes.title = normalizeThreadTitle(input.title);
+    }
+    if (input.projectId !== undefined) {
+      requireHuman(access);
+      if (input.projectId) {
+        await requireTaskProjectInConversation(tx, conversationId, input.projectId);
+      }
+      changes.projectId = input.projectId;
+    }
+
+    const [updated] = await tx
       .update(conversationThreads)
-      .set({
-        title: normalizeThreadTitle(input.title),
-        updatedAt: now,
-      })
+      .set(changes)
       .where(
         and(
           eq(conversationThreads.id, threadId),
@@ -576,12 +623,209 @@ export async function updateConversationThread(
       )
       .returning();
 
+    if (!updated) {
+      throw new ServiceError("Thread not found", 404);
+    }
+    return toPublicConversationThread(updated);
+  });
+
+  // Other open clients regroup the task without reloading.
+  await publishToConversation(conversationId, {
+    type: "conversation_thread_updated",
+    conversationId,
+    thread,
+  });
+  return thread;
+}
+
+/**
+ * Permanently deletes a task and everything inside it: its messages (with
+ * their reactions, unread markers and bot runs) and its bot requests. Attached
+ * files move to `deleting` and are removed from object storage by the outbox
+ * worker, so no stored object loses its owning row.
+ */
+export async function deleteConversationThread(
+  conversationId: string,
+  threadId: string,
+  userId: string,
+  options: { afterWorkspaceLocked?: () => Promise<void> } = {},
+) {
+  const hermesDispatchCutoff = currentHermesDispatchTimeoutCutoff();
+
+  const deleted = await db.transaction(async (tx) => {
+    const access = requireHuman(
+      await requireConversationMutationAccess(tx, conversationId, userId, options),
+    );
+
+    // Blocks new messages, which key-share lock the thread through their
+    // foreign key, while the deletion is decided.
+    const [thread] = await tx
+      .select()
+      .from(conversationThreads)
+      .where(
+        and(
+          eq(conversationThreads.id, threadId),
+          eq(conversationThreads.conversationId, conversationId),
+        ),
+      )
+      .for("update")
+      .limit(1);
     if (!thread) {
       throw new ServiceError("Thread not found", 404);
     }
 
-    return toPublicThread(thread);
+    if (access.conversationType === "group" && thread.createdById !== userId) {
+      const [membership] = await tx
+        .select({ role: workspaceMembers.role })
+        .from(workspaceMembers)
+        .where(
+          and(
+            eq(workspaceMembers.workspaceId, access.workspaceId!),
+            eq(workspaceMembers.userId, userId),
+          ),
+        )
+        .limit(1);
+      if (membership?.role !== "owner" && membership?.role !== "admin") {
+        throw new ServiceError(
+          "Only the task's creator or a workspace admin can delete it",
+          403,
+        );
+      }
+    }
+
+    const threadMessageIds = tx
+      .select({ id: messages.id })
+      .from(messages)
+      .where(eq(messages.threadId, thread.id));
+
+    const [activeInvocation] = await tx
+      .select({ id: botInvocations.id })
+      .from(botInvocations)
+      .where(
+        and(
+          eq(botInvocations.conversationId, conversationId),
+          or(
+            eq(botInvocations.threadId, thread.id),
+            inArray(botInvocations.triggerMessageId, threadMessageIds),
+          ),
+          or(
+            and(
+              eq(botInvocations.status, "queued"),
+              or(
+                ne(botInvocations.adapterKind, "hermes"),
+                gt(botInvocations.createdAt, hermesDispatchCutoff),
+              ),
+            ),
+            eq(botInvocations.status, "running"),
+            and(
+              eq(botInvocations.status, "claimed"),
+              sql`NULLIF(${botInvocations.responseJson}->'completion'->>'type', '') IS NULL`,
+              sql`COALESCE(${botInvocations.responseJson}->>'silent', 'false') <> 'true'`,
+            ),
+          ),
+        ),
+      )
+      .limit(1);
+
+    // Same rule as channel deletion: a bot-targeted message whose dispatch has
+    // not been processed yet is still on its way to a bot.
+    const [pendingTargetedEvent] = await tx
+      .select({ id: eventOutbox.id })
+      .from(eventOutbox)
+      .where(
+        and(
+          eq(eventOutbox.eventType, CHAT_MESSAGE_SENT_EVENT_TYPE),
+          eq(eventOutbox.partitionKey, conversationId),
+          isNull(eventOutbox.publishedAt),
+          isNull(eventOutbox.deadAt),
+          sql`jsonb_typeof(${eventOutbox.event}->'payload'->'targetBotIds') = 'array'`,
+          sql`jsonb_array_length(${eventOutbox.event}->'payload'->'targetBotIds') > 0`,
+          sql`${eventOutbox.event}->'payload'->>'messageId' IN (
+            SELECT ${messages.id}::text FROM ${messages}
+            WHERE ${messages.threadId} = ${thread.id}
+          )`,
+        ),
+      )
+      .limit(1);
+    if (activeInvocation || pendingTargetedEvent) {
+      throw new ServiceError(
+        "Wait for the bot to finish working on this task before deleting it",
+        409,
+      );
+    }
+
+    const now = new Date();
+    const doomedAttachments = await tx
+      .update(attachments)
+      .set({ status: "deleting", deletingAt: now, updatedAt: now })
+      .where(
+        and(
+          eq(attachments.conversationId, conversationId),
+          eq(attachments.status, "attached"),
+          inArray(
+            attachments.id,
+            tx
+              .select({ id: messageAttachments.attachmentId })
+              .from(messageAttachments)
+              .innerJoin(messages, eq(messageAttachments.messageId, messages.id))
+              .where(eq(messages.threadId, thread.id)),
+          ),
+        ),
+      )
+      .returning({ id: attachments.id });
+    for (const attachment of doomedAttachments) {
+      await enqueueDomainEvent(
+        tx,
+        createAttachmentLifecycleEvent(
+          ATTACHMENT_DELETION_REQUESTED,
+          attachment.id,
+          userId,
+        ),
+        { partitionKey: `attachment:${attachment.id}` },
+      );
+    }
+
+    const threadInvocationIds = tx
+      .select({ id: botInvocations.id })
+      .from(botInvocations)
+      .where(
+        or(
+          eq(botInvocations.threadId, thread.id),
+          inArray(botInvocations.triggerMessageId, threadMessageIds),
+        ),
+      );
+    const deletedRequests = await tx
+      .delete(botRequests)
+      .where(
+        and(
+          eq(botRequests.conversationId, conversationId),
+          or(
+            eq(botRequests.threadId, thread.id),
+            inArray(botRequests.invocationId, threadInvocationIds),
+          ),
+        ),
+      )
+      .returning({ id: botRequests.id });
+    const deletedMessages = await tx
+      .delete(messages)
+      .where(eq(messages.threadId, thread.id))
+      .returning({ id: messages.id });
+    await tx.delete(conversationThreads).where(eq(conversationThreads.id, thread.id));
+
+    return {
+      deletedThreadId: thread.id,
+      deletedMessageCount: deletedMessages.length,
+      deletedRequestCount: deletedRequests.length,
+      deletedAttachmentCount: doomedAttachments.length,
+    };
   });
+
+  await publishToConversation(conversationId, {
+    type: "conversation_thread_deleted",
+    conversationId,
+    threadId: deleted.deletedThreadId,
+  });
+  return { ok: true as const, ...deleted };
 }
 
 export async function requireConversationParticipant(conversationId: string, userId: string) {
@@ -626,7 +870,7 @@ async function requireConversationThread(
   botId: string,
 ) {
   const [thread] = await executor
-    .select({ id: conversationThreads.id })
+    .select({ id: conversationThreads.id, projectId: conversationThreads.projectId })
     .from(conversationThreads)
     .where(
       and(
@@ -639,6 +883,27 @@ async function requireConversationThread(
   if (!thread) {
     throw new ServiceError("Branch source thread not found for this bot", 404);
   }
+  return thread;
+}
+
+/** Key-share locks a project if it still exists; a concurrent delete wins. */
+async function lockProjectIfPresent(
+  executor: Parameters<Parameters<typeof db.transaction>[0]>[0],
+  conversationId: string,
+  projectId: string,
+) {
+  const [project] = await executor
+    .select({ id: taskProjects.id })
+    .from(taskProjects)
+    .where(
+      and(
+        eq(taskProjects.id, projectId),
+        eq(taskProjects.conversationId, conversationId),
+      ),
+    )
+    .for("key share")
+    .limit(1);
+  return project?.id ?? null;
 }
 
 async function inferHermesBotId(
@@ -745,22 +1010,6 @@ function parseConversationThreadCursor(
   } catch {
     throw new ServiceError("Invalid thread pagination cursor", 400);
   }
-}
-
-function toPublicThread(thread: typeof conversationThreads.$inferSelect) {
-  return {
-    id: thread.id,
-    conversationId: thread.conversationId,
-    botId: thread.botId,
-    title: thread.title,
-    status: thread.status,
-    branchPending: thread.branchPending,
-    branchFromThreadId: thread.branchFromThreadId,
-    createdById: thread.createdById,
-    lastActivityAt: thread.lastActivityAt.toISOString(),
-    createdAt: thread.createdAt.toISOString(),
-    updatedAt: thread.updatedAt.toISOString(),
-  };
 }
 
 export async function createChannel(
