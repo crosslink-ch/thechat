@@ -6,10 +6,9 @@ import { useDmHeaderIdentity } from "../stores/chat-header";
 import {
   useBotRuntime,
   useBotRuntimeCache,
-  submitHermesInteraction,
   submitHermesVaultUnlock,
 } from "../hooks/useBotRuntime";
-import type { BotAppearance, BotInvocationProgressEventPublic } from "@thechat/shared";
+import type { BotAppearance } from "@thechat/shared";
 import { useConversationThreads } from "../hooks/useConversationThreads";
 import { useConversationDetail } from "../hooks/useConversationDetail";
 import { useScopedCommands } from "../hooks/useScopedCommands";
@@ -29,15 +28,7 @@ import type { Command } from "../commands";
 import { wsEvents, type WsEvents } from "../lib/ws-events";
 import { botAppearanceFor } from "../lib/bot-appearance";
 import { selectHermesConversationProgress } from "../lib/hermes-progress";
-import {
-  decisionFromApprovalCommand,
-  pendingApprovalEvents,
-} from "../lib/hermes-approvals";
-import {
-  recordApprovalDecision,
-  useHermesApprovalsStore,
-} from "../stores/hermes-approvals";
-import { useHermesClarificationsStore } from "../stores/hermes-clarifications";
+import { useConversationBotRequests } from "../stores/bot-requests";
 import {
   hermesScopeKey,
   useHermesIndicatorsStore,
@@ -164,14 +155,17 @@ export function DmRoute() {
   const chatConversationId = conversation ? conversationId : null;
   const taskActive = activeHermesProgress.taskActive;
 
-  // Attention indicators: which tasks in this DM need approval or finished unread.
-  const pendingApprovals = useHermesIndicatorsStore((s) => s.pendingApprovals);
-  const pendingClarifications = useHermesIndicatorsStore(
-    (state) => state.pendingClarifications,
-  );
+  // Attention indicators: which tasks in this DM wait on a request or
+  // finished unread. Requests come from PostgreSQL rows, not progress events.
+  const conversationRequests = useConversationBotRequests(conversationId);
   const pendingInteractions = useMemo(
-    () => [...pendingApprovals, ...pendingClarifications],
-    [pendingApprovals, pendingClarifications],
+    () =>
+      conversationRequests.filter(
+        (request) =>
+          request.status === "open" &&
+          (!request.audienceUserId || request.audienceUserId === user?.id),
+      ),
+    [conversationRequests, user?.id],
   );
   const unreadScopes = useHermesIndicatorsStore((s) => s.unreadScopes);
   const approvalThreadIds = useMemo(() => {
@@ -207,9 +201,13 @@ export function DmRoute() {
     [conversationId, unreadScopes],
   );
 
-  // Keep the indicators store in sync with what the user is looking at, and
-  // seed it from the fetched runtime snapshot so approvals requested before
-  // this client connected still show up.
+  // Runs that started before this client connected still count for unread.
+  useEffect(() => {
+    if (!isHermesDm || !runtime) return;
+    useHermesIndicatorsStore.getState().seedFromSnapshot(runtime);
+  }, [isHermesDm, runtime]);
+
+  // Keep the indicators store in sync with what the user is looking at.
   useEffect(() => {
     if (!isHermesDm) return;
     const store = useHermesIndicatorsStore.getState();
@@ -220,18 +218,6 @@ export function DmRoute() {
       useHermesIndicatorsStore.getState().setVisibleScope(null);
     };
   }, [activeThreadId, conversationId, draftTaskActive, isHermesDm]);
-
-  useEffect(() => {
-    if (!isHermesDm || !runtime) return;
-    useHermesIndicatorsStore
-      .getState()
-      .seedFromSnapshot(
-        conversationId,
-        runtime,
-        useHermesApprovalsStore.getState().decisions,
-        useHermesClarificationsStore.getState().responses,
-      );
-  }, [conversationId, isHermesDm, runtime]);
 
   const channelChat = useChannelChat({
     conversationId: chatConversationId,
@@ -574,27 +560,8 @@ export function DmRoute() {
       return persistDraftAndSend(content, attachmentIds);
     }
     if (slash) {
-      // Manual typed approval commands remain regular visible chat messages.
-      // Record their optimistic state only after the send pipeline accepts
-      // the message; inline buttons use the direct interaction route instead.
-      const approvalDecision = decisionFromApprovalCommand(content);
-      if (approvalDecision) {
-        const pending = pendingApprovalEvents(
-          activeHermesProgressRef.current.invocations,
-          useHermesApprovalsStore.getState().decisions,
-        );
-        const targets = approvalDecision.all ? pending : pending.slice(0, 1);
-        return sendHermesMessageNow(content, activeThreadId, attachmentIds).then(
-          (accepted) => {
-            if (accepted !== false) {
-              for (const event of targets) {
-                recordApprovalDecision(event.id, approvalDecision.decision);
-              }
-            }
-            return accepted;
-          },
-        );
-      }
+      // Typed /approve and /deny stay regular chat messages. Hermes resolves
+      // its waiter and withdraws the matching request, which closes the card.
       return sendHermesMessageNow(content, activeThreadId, attachmentIds);
     }
     // TheChat intentionally does not queue normal Hermes DM messages locally.
@@ -611,25 +578,6 @@ export function DmRoute() {
     sendHermesMessageNow,
     slashCommands,
   ]);
-
-  const handleHermesInteraction = useCallback(
-    async (
-      event: BotInvocationProgressEventPublic,
-      response: string | string[],
-    ) => {
-      if (!isHermesDm || !isAuthenticated(token)) {
-        throw new Error("Sign in to respond to Hermes");
-      }
-      await submitHermesInteraction(
-        event.invocationId,
-        event.id,
-        response,
-        token,
-      );
-      invalidate(conversationId);
-    },
-    [conversationId, invalidate, isHermesDm, token],
-  );
 
   return (
     <div className="shared-dm-layout flex min-h-0 min-w-0 flex-1">
@@ -652,7 +600,10 @@ export function DmRoute() {
             botAppearances={progressBotAppearances}
             typingSuppressedUserIds={activeHermesProgress.typingSuppressedUserIds}
             onSend={handleSend}
-            onInteraction={handleHermesInteraction}
+            requestScope={{
+              conversationId,
+              threadId: draftTaskActive ? LOCAL_TASK_DRAFT_SCOPE : activeThreadId,
+            }}
             onVaultUnlock={async (event,response)=> {
               if (!isHermesDm || !isAuthenticated(token)) throw new Error("Vault unlock unavailable");
               await submitHermesVaultUnlock(event.invocationId,event.id,response,token);

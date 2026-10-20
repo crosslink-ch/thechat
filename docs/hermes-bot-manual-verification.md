@@ -373,23 +373,33 @@ of these assertions across the live stack:
 1. Login through the desktop UI and send a DM to the real Hermes bot.
 2. The Hermes adapter registers its loopback webhook, receives the invocation
    there instead of polling, requests the exact built-in-classified command,
-   and posts `approval.request` through TheChat's invocation-progress endpoint.
-3. The desktop renders `[data-testid="hermes-approval-request"]` with the
-   policy-offered approval and denial actions, while no fallback message tells
-   the user to type `/approve`.
-4. Clicking **Approve** sends no human `/approve`, `/approve session`,
-   `/approve always`, or `/deny` message. The API signs a direct interaction
-   envelope to the real Hermes webhook; only its resulting server-confirmed
-   `approval.resolved` row satisfies the test.
+   and creates an `approval` bot request (`POST /bot-requests`).
+3. The desktop renders the open `[data-testid="bot-request-card"]` with every
+   choice Hermes offered (including **Always allow**), while no fallback
+   message tells the user to type `/approve`.
+4. Clicking **Allow once** sends no human `/approve`, `/approve session`,
+   `/approve always`, or `/deny` message. TheChat stores the answer, the outbox
+   pushes it to the real Hermes webhook, and only the resulting `delivered`
+   request row (Hermes acknowledged it) satisfies the test.
 5. The harmless print command executes, then the fixture requests one
-   multi-select `clarify` interaction. The desktop submits two selections
-   through the structured Clarify UI and must observe server-confirmed
-   `clarify.resolved` before the final answer.
+   multi-select `clarify`, shown as a `question` request. The desktop submits
+   two selections and must observe the `delivered` row before the final answer.
 6. The model fixture accepts only the matching tool-call IDs, explicit
    user-approval evidence, exit code `0`, an empty error, exact output marker,
    and exact Clarify response. The original Hermes turn must then post its final
    DM message. The fixture requires exactly one approval-driving tool call, one
    Clarify tool call, and one successful final response.
+
+### Bot requests against real Hermes (API level)
+
+`python3 scripts/test.py hermes-requests` (or `pnpm test:e2e:hermes:requests`)
+runs the same deterministic model against a real Hermes Gateway without the
+desktop build. It answers the approval with **Always allow** and the question
+through the human API, then checks that Hermes acknowledged both as applied,
+persisted the allowlist entry, and finished the run with no request left open.
+A second gateway is killed with SIGKILL while its approval is open; a fresh
+process with the same bot token must cancel it on startup ("Hermes restarted.
+Ask again.") so a late answer gets 409 instead of a dead card.
 
 A screenshot of the pending approval card is saved under
 `~/.cache/thechat-e2e/hermes-approval/<run-id>/` by default, with the run ID in

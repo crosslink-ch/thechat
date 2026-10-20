@@ -15,8 +15,11 @@ import type {
 } from "@thechat/shared";
 import { HermesDmChatView } from "./HermesDmChatView";
 import { selectHermesConversationProgress } from "../lib/hermes-progress";
-import { useHermesApprovalsStore } from "../stores/hermes-approvals";
-import { useHermesClarificationsStore } from "../stores/hermes-clarifications";
+import {
+  BotRequestAnswererContext,
+  useBotRequestsStore,
+} from "../stores/bot-requests";
+import type { BotRequestPublic } from "@thechat/shared";
 import {
   cancelSharedAttachment,
   uploadSharedAttachment,
@@ -62,8 +65,7 @@ beforeEach(() => {
     scopedCommands: {},
     commands: [],
   });
-  useHermesApprovalsStore.getState().resetForTests();
-  useHermesClarificationsStore.getState().resetForTests();
+  useBotRequestsStore.getState().reset();
   vi.mocked(uploadSharedAttachment).mockReset();
   vi.mocked(cancelSharedAttachment).mockReset();
   vi.mocked(cancelSharedAttachment).mockResolvedValue();
@@ -578,48 +580,80 @@ describe("HermesDmChatView", () => {
     expect(screen.queryByText("Koda is typing...")).toBeNull();
   });
 
-  it("routes approval buttons directly without sending a slash message", async () => {
+  it("renders request cards from rows and answers them without a chat message", async () => {
     const onSend = vi.fn();
-    const onInteraction = vi.fn().mockResolvedValue(undefined);
-    const approval = progressEvent({
-      id: "approval-1",
-      type: "approval.request",
-      status: "waiting",
-      toolCallId: null,
-      toolName: null,
-      label: "Command approval required",
-      preview: "rm -rf /important",
-      payload: {
-        requestId: "approval-request-1",
-        sessionKey: "session-1",
-        command: "rm -rf /important",
-        description: "recursive delete",
-        choices: ["once", "deny"],
-      },
+    const request: BotRequestPublic = {
+      id: "request-1",
+      botId: "bot-1",
+      botUserId: "bot-user-1",
+      botName: "Koda",
+      conversationId: "conversation-1",
+      conversationType: "direct",
+      conversationName: null,
+      workspaceId: null,
+      threadId: null,
+      threadTitle: null,
+      invocationId: "invocation-1",
+      kind: "approval",
+      title: "Run a dangerous command",
+      body: null,
+      details: { command: "rm -rf /important" },
+      response: { type: "choice", choices: ["once", "session", "always", "deny"] },
+      orderGroup: "session-1",
+      audienceUserId: null,
+      status: "open",
+      answer: null,
+      answeredBy: null,
+      answeredAt: null,
+      deliveredAt: null,
+      deliveryApplied: null,
+      deliveryNote: null,
+      cancelReason: null,
+      expiresAt: null,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    };
+    useBotRequestsStore.getState().upsert(request);
+    const answer = vi.fn(async (_id: string, value: { choice?: string }) => {
+      const answered: BotRequestPublic = {
+        ...request,
+        status: "answered",
+        answer: value,
+        answeredBy: { id: "user-1", name: "Bruno" },
+        answeredAt: "2026-01-01T00:00:05.000Z",
+        updatedAt: "2026-01-01T00:00:05.000Z",
+      };
+      useBotRequestsStore.getState().upsert(answered);
+      return answered;
     });
     render(
-      <HermesDmChatView
-        messages={[]}
-        loading={false}
-        typingUsers={new Map()}
-        progressInvocations={[
-          {
-            invocation: invocation({ status: "running" }),
-            events: [approval],
-          },
-        ]}
-        typingSuppressedUserIds={[]}
-        onSend={onSend}
-        onInteraction={onInteraction}
-      />,
+      <BotRequestAnswererContext.Provider value={{ answer, local: true }}>
+        <HermesDmChatView
+          messages={[]}
+          loading={false}
+          typingUsers={new Map()}
+          progressInvocations={[]}
+          typingSuppressedUserIds={[]}
+          onSend={onSend}
+          requestScope={{ conversationId: "conversation-1", threadId: null }}
+        />
+      </BotRequestAnswererContext.Provider>,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Approve" }));
+    expect(screen.getByText("rm -rf /important")).toBeInTheDocument();
+    // TheChat offers every choice Hermes sent, including Always allow.
+    for (const name of ["Allow once", "Allow for session", "Always allow", "Deny"]) {
+      expect(screen.getByRole("button", { name })).toBeInTheDocument();
+    }
+    fireEvent.click(screen.getByRole("button", { name: "Always allow" }));
 
     await waitFor(() =>
-      expect(onInteraction).toHaveBeenCalledWith(approval, "once"),
+      expect(answer).toHaveBeenCalledWith("request-1", { choice: "always" }),
     );
     expect(onSend).not.toHaveBeenCalled();
+    expect(await screen.findByTestId("bot-request-resolved")).toHaveTextContent(
+      "Always allowed by Bruno",
+    );
   });
 
   it("does not jump for Hermes progress props with unchanged visible content", () => {

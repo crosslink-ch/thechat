@@ -5,7 +5,6 @@ import type {
 } from "@thechat/shared";
 import {
   hermesScopeKey,
-  resolveHermesApprovalIndicator,
   useHermesIndicatorsStore,
 } from "./hermes-indicators";
 
@@ -46,7 +45,7 @@ function makeEvent(
     conversationId: "conv-1",
     threadId: null,
     sequence: 1,
-    type: "approval.request",
+    type: "tool.started",
     status: null,
     toolCallId: null,
     toolName: null,
@@ -203,332 +202,42 @@ describe("useHermesIndicatorsStore", () => {
     });
   });
 
-  describe("pending approvals", () => {
-    it("tracks approval requests and dedupes by event id", () => {
-      store().trackProgressEvent(makeEvent({ id: "evt-1" }));
-      store().trackProgressEvent(makeEvent({ id: "evt-1" }));
-
-      expect(store().pendingApprovals).toHaveLength(1);
-      expect(store().pendingApprovals[0]).toMatchObject({
-        eventId: "evt-1",
-        invocationId: "inv-1",
-        conversationId: "conv-1",
-        threadId: null,
-      });
-    });
-
-    it("fills thread and bot metadata from the tracked invocation", () => {
-      store().trackInvocation(makeInvocation({ threadId: "t-1", status: "queued" }));
-      store().trackProgressEvent(makeEvent({ threadId: null }));
-
-      expect(store().pendingApprovals[0]).toMatchObject({
-        threadId: "t-1",
-        botUserId: "u-bot",
-      });
-    });
-
-    it("resolves the oldest pending approval per invocation", () => {
-      store().trackProgressEvent(makeEvent({ id: "evt-1", sequence: 1 }));
-      store().trackProgressEvent(makeEvent({ id: "evt-2", sequence: 2 }));
-
-      store().trackProgressEvent(
-        makeEvent({ id: "evt-3", sequence: 3, type: "approval.resolved" }),
-      );
-
-      expect(store().pendingApprovals.map((p) => p.eventId)).toEqual(["evt-2"]);
-    });
-
-    it("resolves the approval named by requestId when present", () => {
-      store().trackProgressEvent(makeEvent({
-        id: "evt-1",
-        sequence: 1,
-        payload: { requestId: "request-1", sessionKey: "session-1" },
-      }));
-      store().trackProgressEvent(makeEvent({
-        id: "evt-2",
-        sequence: 2,
-        payload: { requestId: "request-2", sessionKey: "session-1" },
-      }));
-
-      store().trackProgressEvent(makeEvent({
-        id: "evt-3",
-        sequence: 3,
-        type: "approval.resolved",
-        payload: { requestId: "request-2", sessionKey: "session-1" },
-      }));
-
-      expect(store().pendingApprovals.map((p) => p.eventId)).toEqual(["evt-1"]);
-    });
-
-    it("resolves all pending approvals when the resolution carries resolveAll", () => {
-      store().trackProgressEvent(makeEvent({ id: "evt-1", sequence: 1 }));
-      store().trackProgressEvent(makeEvent({ id: "evt-2", sequence: 2 }));
-
-      store().trackProgressEvent(
-        makeEvent({
-          id: "evt-3",
-          sequence: 3,
-          type: "approval.resolved",
-          payload: { resolveAll: true },
-        }),
-      );
-
-      expect(store().pendingApprovals).toEqual([]);
-    });
-
-    it("only resolves approvals of the resolution's invocation", () => {
-      store().trackProgressEvent(makeEvent({ id: "evt-1", invocationId: "inv-1" }));
-      store().trackProgressEvent(makeEvent({ id: "evt-2", invocationId: "inv-2" }));
-
-      store().trackProgressEvent(
-        makeEvent({ id: "evt-3", invocationId: "inv-2", type: "approval.resolved" }),
-      );
-
-      expect(store().pendingApprovals.map((p) => p.eventId)).toEqual(["evt-1"]);
-    });
-
-    it("drops pending approvals when their invocation finishes", () => {
-      store().trackInvocation(makeInvocation({ status: "queued" }));
-      store().trackProgressEvent(makeEvent({ id: "evt-1" }));
-
-      store().trackInvocation(makeInvocation({ status: "cancelled" }));
-
-      expect(store().pendingApprovals).toEqual([]);
-    });
-
-    it("clears claimed progress metadata and approvals on terminal progress", () => {
-      const claimed = makeInvocation({ status: "claimed", threadId: "t-1" });
-      store().trackProgressEvent(
-        makeEvent({ id: "evt-1", threadId: "t-1" }),
-        claimed,
-      );
-
-      store().trackProgressEvent(
-        makeEvent({
-          id: "evt-terminal",
-          type: "invocation.cancelled",
-          threadId: "t-1",
-        }),
-        claimed,
-      );
-
-      expect(store().pendingApprovals).toEqual([]);
-      expect(store().invocationMeta).toEqual({});
-    });
-
-    it("resolves a pending approval by event id (local decision)", () => {
-      store().trackProgressEvent(makeEvent({ id: "evt-1" }));
-
-      resolveHermesApprovalIndicator("evt-1");
-
-      expect(store().pendingApprovals).toEqual([]);
-    });
-  });
-
-  describe("pending clarifications", () => {
-    it("tracks another thread and clears only the exact resolved request", () => {
-      const otherThread = makeInvocation({
-        id: "inv-other-thread",
-        conversationId: "conv-other",
-        threadId: "thread-other",
-        status: "queued",
-      });
-      store().trackInvocation(otherThread);
-      store().trackProgressEvent(
-        makeEvent({
-          id: "clarify-first-event",
-          invocationId: otherThread.id,
-          conversationId: otherThread.conversationId,
-          threadId: otherThread.threadId,
-          type: "clarify.request",
-          payload: {
-            requestId: "clarify-first",
-            sessionKey: "session-other",
-          },
-        }),
-      );
-      store().trackProgressEvent(
-        makeEvent({
-          id: "clarify-second-event",
-          invocationId: otherThread.id,
-          conversationId: otherThread.conversationId,
-          threadId: otherThread.threadId,
-          sequence: 2,
-          type: "clarify.request",
-          payload: {
-            requestId: "clarify-second",
-            sessionKey: "session-other",
-          },
-        }),
-      );
-
-      expect(store().pendingClarifications.map((item) => item.eventId)).toEqual([
-        "clarify-first-event",
-        "clarify-second-event",
-      ]);
-      expect(store().pendingClarifications[0]).toMatchObject({
-        conversationId: "conv-other",
-        threadId: "thread-other",
-        botUserId: "u-bot",
-      });
-
-      store().trackProgressEvent(
-        makeEvent({
-          id: "clarify-resolution",
-          invocationId: otherThread.id,
-          conversationId: otherThread.conversationId,
-          threadId: otherThread.threadId,
-          sequence: 3,
-          type: "clarify.resolved",
-          payload: {
-            requestId: "clarify-second",
-            sessionKey: "session-other",
-            response: "B",
-          },
-        }),
-      );
-
-      expect(store().pendingClarifications.map((item) => item.eventId)).toEqual([
-        "clarify-first-event",
-      ]);
-    });
-
-    it("seeds a clarification requested before this client connected", () => {
-      const invocation = makeInvocation({ status: "claimed", threadId: "thread-2" });
-      store().seedFromSnapshot(
-        "conv-1",
-        {
-          invocations: [invocation],
-          events: [
-            makeEvent({
-              type: "clarify.request",
-              threadId: "thread-2",
-              payload: {
-                requestId: "clarify-snapshot",
-                sessionKey: "session-snapshot",
-              },
-            }),
-          ],
-        },
-        {},
-        {},
-      );
-
-      expect(store().pendingClarifications).toEqual([
-        expect.objectContaining({
-          requestId: "clarify-snapshot",
-          threadId: "thread-2",
-        }),
-      ]);
-    });
-  });
-
   describe("seedFromSnapshot", () => {
-    it("seeds pending approvals from active invocations only", () => {
-      const active = makeInvocation({ id: "inv-1", threadId: "t-1", status: "claimed" });
-      const done = makeInvocation({ id: "inv-2", status: "completed" });
-      const snapshot = {
-        invocations: [active, done],
-        events: [
-          makeEvent({ id: "evt-1", invocationId: "inv-1", threadId: "t-1" }),
-          makeEvent({ id: "evt-2", invocationId: "inv-2" }),
-        ],
-      };
-
-      store().seedFromSnapshot("conv-1", snapshot, {}, {});
-
-      expect(store().pendingApprovals.map((p) => p.eventId)).toEqual(["evt-1"]);
-      expect(store().pendingApprovals[0]).toMatchObject({
-        invocationId: "inv-1",
-        threadId: "t-1",
-        botUserId: "u-bot",
-      });
-    });
-
-    it("skips approvals already resolved by a local decision", () => {
-      const snapshot = {
-        invocations: [makeInvocation({ status: "claimed" })],
-        events: [makeEvent({ id: "evt-1" })],
-      };
-
-      store().seedFromSnapshot("conv-1", snapshot, { "evt-1": "once" }, {});
-
-      expect(store().pendingApprovals).toEqual([]);
-    });
-
-    it("does not restore a locally answered clarification from a stale snapshot", () => {
-      const request = makeEvent({
-        id: "clarify-other",
-        type: "clarify.request",
-        status: "waiting",
-        payload: {
-          requestId: "request-other",
-          sessionKey: "session-other",
-          question: "Choose a deployment region",
-          choices: ["US", "EU"],
-          multiSelect: false,
-          allowOther: true,
-        },
-      });
-      const snapshot = {
-        invocations: [makeInvocation({ status: "claimed" })],
-        events: [request],
-      };
-
-      store().seedFromSnapshot(
-        "conv-1",
-        snapshot,
-        {},
-        { [request.id]: "Asia Pacific" },
-      );
-
-      expect(store().pendingClarifications).toEqual([]);
-    });
-
-    it("replaces previously seeded approvals for the same conversation but keeps other conversations", () => {
-      store().trackProgressEvent(
-        makeEvent({ id: "evt-other", invocationId: "inv-9", conversationId: "conv-2" }),
-      );
-      store().seedFromSnapshot(
-        "conv-1",
-        {
-          invocations: [makeInvocation({ status: "claimed" })],
-          events: [makeEvent({ id: "evt-1" })],
-        },
-        {},
-        {},
-      );
-
-      store().seedFromSnapshot(
-        "conv-1",
-        {
-          invocations: [makeInvocation({ status: "claimed" })],
-          events: [makeEvent({ id: "evt-2" })],
-        },
-        {},
-        {},
-      );
-
-      expect(store().pendingApprovals.map((p) => p.eventId).sort()).toEqual([
-        "evt-2",
-        "evt-other",
-      ]);
-    });
-
     it("registers active invocations so later terminal updates mark unread", () => {
-      store().seedFromSnapshot(
-        "conv-1",
-        {
-          invocations: [makeInvocation({ status: "claimed" })],
-          events: [makeEvent({ type: "tool.started" })],
-        },
-        {},
-        {},
-      );
+      store().seedFromSnapshot({
+        invocations: [makeInvocation({ status: "claimed" })],
+        events: [makeEvent({ type: "tool.started" })],
+      });
 
       store().trackInvocation(makeInvocation({ status: "completed" }));
 
       expect(store().unreadScopes[hermesScopeKey("conv-1", null)]).toBeDefined();
+    });
+
+    it("ignores finished invocations and idle claimed ones", () => {
+      store().seedFromSnapshot({
+        invocations: [
+          makeInvocation({ id: "inv-done", status: "completed" }),
+          makeInvocation({ id: "inv-idle", status: "claimed" }),
+        ],
+        events: [makeEvent({ invocationId: "inv-done" })],
+      });
+
+      expect(store().invocationMeta).toEqual({});
+    });
+
+    it("never derives requests from approval or clarify progress", () => {
+      store().seedFromSnapshot({
+        invocations: [makeInvocation({ status: "claimed" })],
+        events: [
+          makeEvent({ id: "evt-approval", type: "approval.request", status: "waiting" }),
+          makeEvent({ id: "evt-clarify", type: "clarify.request", status: "waiting" }),
+        ],
+      });
+
+      expect(Object.keys(store())).not.toContain("pendingApprovals");
+      expect(Object.keys(store())).not.toContain("pendingClarifications");
+      expect(store().invocationMeta["inv-1"]).toMatchObject({ conversationId: "conv-1" });
     });
   });
 });

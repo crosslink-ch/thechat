@@ -952,7 +952,7 @@ describe("registerGlobalWsHandlers", () => {
       conversationId: "conv-1",
       threadId: "t-1",
       sequence: 1,
-      type: "approval.request",
+      type: "tool.started",
       status: null,
       toolCallId: null,
       toolName: null,
@@ -972,9 +972,7 @@ describe("registerGlobalWsHandlers", () => {
       invocation,
     });
 
-    expect(
-      useHermesIndicatorsStore.getState().pendingApprovals.map((p) => p.eventId),
-    ).toEqual(["evt-1"]);
+    expect(useHermesIndicatorsStore.getState().invocationMeta["inv-1"]).toBeDefined();
 
     const completedInvocation = {
       ...invocation,
@@ -999,7 +997,7 @@ describe("registerGlobalWsHandlers", () => {
     });
 
     const state = useHermesIndicatorsStore.getState();
-    expect(state.pendingApprovals).toEqual([]);
+    expect(state.invocationMeta["inv-1"]).toBeUndefined();
     expect(state.unreadScopes[hermesScopeKey("conv-1", "t-1")]).toBeDefined();
 
     cleanup();

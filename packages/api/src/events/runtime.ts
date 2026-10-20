@@ -8,6 +8,7 @@ import {
 import { loadDomainEventsConfig, type DomainEventsConfig } from "./config";
 import { logDomainEvent } from "./log";
 import { createChatMessageSentHandler } from "./message-handler";
+import { createBotRequestAnsweredHandler } from "../bot-requests/delivery";
 import {
   createAttachmentDeletionHandler,
   createAttachmentValidationHandler,
@@ -36,7 +37,8 @@ export function createDefaultDomainEventRegistry() {
   return new DomainEventRegistry()
     .register(createChatMessageSentHandler())
     .register(createAttachmentValidationHandler())
-    .register(createAttachmentDeletionHandler());
+    .register(createAttachmentDeletionHandler())
+    .register(createBotRequestAnsweredHandler());
 }
 
 /**

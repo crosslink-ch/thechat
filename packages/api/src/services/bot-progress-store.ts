@@ -741,91 +741,52 @@ function compactProgressEvents(
   );
 }
 
+/**
+ * Only the transient vault unlock still lives in the progress stream; it is
+ * retained while its short expiry is live. Approvals and clarifications are
+ * durable bot requests in PostgreSQL and never enter this store.
+ */
 function unresolvedInteractionRequestIds(
   events: BotInvocationProgressEventPublic[],
   now = Date.now(),
 ) {
-  const pendingByType = new Map<string, BotInvocationProgressEventPublic[]>([
-    ["approval", []],
-    ["clarify", []],
-    ["vault.unlock", []],
-  ]);
+  const pending: BotInvocationProgressEventPublic[] = [];
   for (const event of [...events].sort(compareProgressEvents)) {
-    const requestKind = event.type === "approval.request"
-      ? "approval"
-      : event.type === "clarify.request"
-        ? "clarify"
-        : event.type === "vault.unlock.request" && typeof event.payload?.expiresAt === "number" && event.payload.expiresAt > now
-          ? "vault.unlock"
-        : null;
-    if (requestKind) {
-      pendingByType.get(requestKind)!.push(event);
+    if (
+      event.type === "vault.unlock.request" &&
+      typeof event.payload?.expiresAt === "number" &&
+      event.payload.expiresAt > now
+    ) {
+      pending.push(event);
       continue;
     }
-    const resolutionKind = event.type === "approval.resolved"
-      ? "approval"
-      : event.type === "clarify.resolved"
-        ? "clarify"
-        : event.type === "vault.unlock.resolved"
-          ? "vault.unlock"
-        : null;
-    if (!resolutionKind) continue;
-    const pending = pendingByType.get(resolutionKind)!;
+    if (event.type !== "vault.unlock.resolved") continue;
     const requestId = stringField(event.payload, "requestId");
     const sessionKey = stringField(event.payload, "sessionKey");
-    const candidates = requestId
-      ? pending.filter(
-          (request) => stringField(request.payload, "requestId") === requestId &&
-            (resolutionKind !== "vault.unlock" || stringField(request.payload,"sessionKey") === sessionKey),
-        )
-      : pending.filter(
-          (request) =>
-            request.invocationId === event.invocationId &&
-            (!sessionKey ||
-              !stringField(request.payload, "sessionKey") ||
-              stringField(request.payload, "sessionKey") === sessionKey),
-        );
-    const requestedCount = numberField(event.payload, "resolvedCount");
-    const count = resolutionKind === "approval" && event.payload?.resolveAll === true
-      ? candidates.length
-      : resolutionKind === "approval"
-        ? Math.max(1, requestedCount ?? 1)
-        : 1;
-    const resolved = candidates.slice(0, count);
-    for (const request of resolved) {
-      pending.splice(pending.indexOf(request), 1);
-    }
+    const match = pending.find(
+      (request) =>
+        stringField(request.payload, "requestId") === requestId &&
+        stringField(request.payload, "sessionKey") === sessionKey,
+    );
+    if (match) pending.splice(pending.indexOf(match), 1);
   }
-  return new Set(
-    Array.from(pendingByType.values())
-      .flat()
-      .map((event) => event.id),
-  );
+  return new Set(pending.map((event) => event.id));
 }
 
 function interactionRequestIdentity(input: ProgressEventInput) {
-  if (input.type !== "approval.request" && input.type !== "clarify.request" && input.type !== "vault.unlock.request") {
-    return null;
-  }
+  if (input.type !== "vault.unlock.request") return null;
   const requestId = stringField(input.payload, "requestId");
   return requestId ? `${input.type}:${requestId}` : null;
 }
 
 function interactionResolution(input: ProgressEventInput) {
-  const requestType = input.type === "approval.resolved"
-    ? "approval.request"
-    : input.type === "clarify.resolved"
-      ? "clarify.request"
-      : input.type === "vault.unlock.resolved"
-        ? "vault.unlock.request"
-      : null;
-  if (!requestType) return null;
+  if (input.type !== "vault.unlock.resolved") return null;
   return {
-    requestType,
+    requestType: "vault.unlock.request",
     requestId: stringField(input.payload, "requestId"),
     sessionKey: stringField(input.payload, "sessionKey"),
-    resolveAll: input.type === "approval.resolved" && input.payload?.resolveAll === true,
-    resolvedCount: numberField(input.payload, "resolvedCount") ?? 1,
+    resolveAll: false,
+    resolvedCount: 1,
   };
 }
 
@@ -835,11 +796,6 @@ function stableInteractionEventId(invocationId: string, requestIdentity: string)
     .update(`${invocationId}\0${requestIdentity}`)
     .digest("hex");
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-a${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
-}
-
-function numberField(source: Record<string, unknown> | null, key: string) {
-  const value = source?.[key];
-  return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
 function stringField(source: Record<string, unknown> | null, key: string) {

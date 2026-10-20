@@ -7,7 +7,7 @@ import { api } from "./api";
 import { openSharedAttachmentDownload, uploadSharedAttachment } from "./shared-attachments";
 import { resetPrivateSession } from "./session-boundary";
 import { useHermesIndicatorsStore } from "../stores/hermes-indicators";
-import { useHermesApprovalsStore } from "../stores/hermes-approvals";
+import { useBotRequestsStore } from "../stores/bot-requests";
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 it("aborts and never hands off an earlier account's delayed download", async () => {
   const createObjectURL = vi.fn(() => "blob:old-account");
@@ -40,10 +40,11 @@ it("does not reserve or cancel an old account's file using a new account's cooki
   await expect(operation).rejects.toThrow("Session changed");
   expect(api.attachments.post).not.toHaveBeenCalled();
 });
-it("resets Hermes transient indicators and approval decisions at the account boundary", () => {
+it("resets Hermes transient indicators and bot requests at the account boundary", () => {
   useHermesIndicatorsStore.setState({ unreadScopes: { secret: {} } } as never);
-  useHermesApprovalsStore.setState({ decisions: { secret: {} } } as never);
+  useBotRequestsStore.setState({ byId: { secret: {} }, inboxLoaded: true } as never);
   resetPrivateSession();
   expect(useHermesIndicatorsStore.getState()).toMatchObject(useHermesIndicatorsStore.getInitialState());
-  expect(useHermesApprovalsStore.getState().decisions).toEqual({});
+  expect(useBotRequestsStore.getState().byId).toEqual({});
+  expect(useBotRequestsStore.getState().inboxLoaded).toBe(false);
 });

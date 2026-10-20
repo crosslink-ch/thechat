@@ -34,6 +34,12 @@ import {
   addOwnedBotToWorkspace,
   removeBotWorkspaceMembership,
 } from "../services/bot-workspace-memberships";
+import {
+  createBotRequest,
+  MAX_BOT_REQUEST_WAIT_SECONDS,
+  newBotRequestIdempotencyKey,
+  waitForBotRequest,
+} from "../services/bot-requests";
 import type { McpUser } from "./auth";
 
 function getUser(extra: { authInfo?: unknown }): McpUser {
@@ -624,6 +630,243 @@ export function registerTools(server: McpServer) {
       const user = getUser(extra);
       return withService(() =>
         getHermesBotCapabilities(botId as string, user.id),
+      );
+    },
+  );
+
+  // --- Bot requests: ask a human through TheChat's inbox ---
+  // Bot tokens only. The request shows in the conversation and the Inbox;
+  // any participant may answer unless `audienceUserId` names one person.
+  const requestPlacement = {
+    conversationId: z
+      .string()
+      .uuid()
+      .optional()
+      .describe(
+        "Conversation to ask in. Defaults to the bot's DM with its owner.",
+      ),
+    threadId: z.string().uuid().optional().describe("Thread in that conversation"),
+    audienceUserId: z
+      .string()
+      .uuid()
+      .optional()
+      .describe("Only this person may answer. Omit to let any participant answer."),
+    clientKey: z
+      .string()
+      .min(1)
+      .max(255)
+      .optional()
+      .describe(
+        "Idempotency key. Retrying with the same key returns the same request.",
+      ),
+    expiresInSeconds: z
+      .number()
+      .int()
+      .positive()
+      .max(30 * 24 * 60 * 60)
+      .optional()
+      .describe("Close the request automatically after this many seconds"),
+    waitSeconds: z
+      .number()
+      .int()
+      .min(0)
+      .max(MAX_BOT_REQUEST_WAIT_SECONDS)
+      .optional()
+      .describe(
+        `Wait up to this long for an answer before returning (default 45, max ${MAX_BOT_REQUEST_WAIT_SECONDS}). Call get_request to keep waiting.`,
+      ),
+  };
+
+  const createAndWait = async (
+    user: McpUser,
+    input: {
+      kind: "approval" | "question";
+      title: string;
+      body?: string;
+      details?: Record<string, unknown>;
+      response?: Parameters<typeof createBotRequest>[1]["response"];
+      conversationId?: string;
+      threadId?: string;
+      audienceUserId?: string;
+      clientKey?: string;
+      expiresInSeconds?: number;
+      waitSeconds?: number;
+    },
+    signal?: AbortSignal,
+  ) => {
+    const actor = { id: user.id, type: user.type };
+    const { request } = await createBotRequest(actor, {
+      clientKey: input.clientKey ?? newBotRequestIdempotencyKey(),
+      kind: input.kind,
+      title: input.title,
+      body: input.body ?? null,
+      details: input.details ?? null,
+      response: input.response ?? null,
+      conversationId: input.conversationId ?? null,
+      threadId: input.threadId ?? null,
+      audienceUserId: input.audienceUserId ?? null,
+      expiresAt: input.expiresInSeconds
+        ? new Date(Date.now() + input.expiresInSeconds * 1000)
+        : null,
+    });
+    const waitSeconds = input.waitSeconds ?? 45;
+    if (waitSeconds === 0 || request.status !== "open") return request;
+    return waitForBotRequest(actor, request.id, waitSeconds, signal);
+  };
+
+  server.registerTool(
+    "request_approval",
+    {
+      description:
+        "Ask a person in TheChat to approve an action, then wait for the decision. " +
+        "Returns the request; status is open until someone answers. Bot tokens only.",
+      inputSchema: {
+        title: z.string().min(1).max(500).describe("What needs approval"),
+        body: z.string().max(20_000).optional().describe("Markdown context"),
+        command: z.string().max(100_000).optional().describe("Command to show verbatim"),
+        cwd: z.string().max(1_000).optional().describe("Working directory of the command"),
+        links: z
+          .array(z.object({ url: z.string().url(), label: z.string().max(200).optional() }))
+          .max(10)
+          .optional()
+          .describe("Links to show, e.g. a diff or CI run"),
+        choices: z
+          .array(z.string().min(1).max(200))
+          .min(1)
+          .max(20)
+          .optional()
+          .describe("Allowed decisions. Defaults to approve and deny."),
+        labels: z
+          .record(z.string(), z.string().min(1).max(200))
+          .optional()
+          .describe("Button labels keyed by choice"),
+        allowComment: z.boolean().optional().describe("Let the person add a comment"),
+        ...requestPlacement,
+      },
+    },
+    async (args, extra) => {
+      const user = getUser(extra);
+      const details: Record<string, unknown> = {};
+      if (args.command) details.command = args.command;
+      if (args.cwd) details.cwd = args.cwd;
+      if (args.links?.length) details.links = args.links;
+      return withService(() =>
+        createAndWait(
+          user,
+          {
+            kind: "approval",
+            title: args.title,
+            body: args.body,
+            details: Object.keys(details).length > 0 ? details : undefined,
+            response: args.choices
+              ? {
+                  type: "choice",
+                  choices: args.choices,
+                  ...(args.labels ? { labels: args.labels } : {}),
+                  ...(args.allowComment ? { allowComment: true } : {}),
+                }
+              : args.allowComment
+                ? {
+                    type: "choice",
+                    choices: ["approve", "deny"],
+                    labels: { approve: "Approve", deny: "Deny" },
+                    allowComment: true,
+                  }
+                : undefined,
+            conversationId: args.conversationId,
+            threadId: args.threadId,
+            audienceUserId: args.audienceUserId,
+            clientKey: args.clientKey,
+            expiresInSeconds: args.expiresInSeconds,
+            waitSeconds: args.waitSeconds,
+          },
+          extra.signal,
+        ),
+      );
+    },
+  );
+
+  server.registerTool(
+    "ask_question",
+    {
+      description:
+        "Ask a person in TheChat a question, with optional fixed choices, then wait for the answer. " +
+        "Returns the request; status is open until someone answers. Bot tokens only.",
+      inputSchema: {
+        question: z.string().min(1).max(500).describe("The question"),
+        body: z.string().max(20_000).optional().describe("Markdown context"),
+        choices: z
+          .array(z.string().min(1).max(200))
+          .min(1)
+          .max(20)
+          .optional()
+          .describe("Fixed answers. Omit for a free-text answer."),
+        multiple: z.boolean().optional().describe("Allow picking several choices"),
+        allowText: z
+          .boolean()
+          .optional()
+          .describe("With choices: also allow a typed answer"),
+        ...requestPlacement,
+      },
+    },
+    async (args, extra) => {
+      const user = getUser(extra);
+      return withService(() =>
+        createAndWait(
+          user,
+          {
+            kind: "question",
+            title: args.question,
+            body: args.body,
+            response: args.choices
+              ? {
+                  type: "choice",
+                  choices: args.choices,
+                  ...(args.multiple ? { multiple: true } : {}),
+                  ...(args.allowText ? { allowText: true } : {}),
+                }
+              : { type: "text" },
+            conversationId: args.conversationId,
+            threadId: args.threadId,
+            audienceUserId: args.audienceUserId,
+            clientKey: args.clientKey,
+            expiresInSeconds: args.expiresInSeconds,
+            waitSeconds: args.waitSeconds,
+          },
+          extra.signal,
+        ),
+      );
+    },
+  );
+
+  server.registerTool(
+    "get_request",
+    {
+      description:
+        "Get a bot request by ID, optionally waiting for its status to change. " +
+        "A bot sees its own requests; a person sees requests in conversations they belong to.",
+      inputSchema: {
+        requestId: z.string().uuid().describe("The request ID"),
+        waitSeconds: z
+          .number()
+          .int()
+          .min(0)
+          .max(MAX_BOT_REQUEST_WAIT_SECONDS)
+          .optional()
+          .describe(
+            `While the request is open, wait up to this long for an answer (default 0, max ${MAX_BOT_REQUEST_WAIT_SECONDS})`,
+          ),
+      },
+    },
+    async ({ requestId, waitSeconds }, extra) => {
+      const user = getUser(extra);
+      return withService(() =>
+        waitForBotRequest(
+          { id: user.id, type: user.type },
+          requestId as string,
+          (waitSeconds as number | undefined) ?? 0,
+          extra.signal,
+        ),
       );
     },
   );

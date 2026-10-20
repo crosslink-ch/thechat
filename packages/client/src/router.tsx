@@ -11,6 +11,7 @@ import { ChannelRoute } from "./routes/channel";
 import { DmRoute } from "./routes/dm";
 import { NotificationsRoute } from "./routes/notifications";
 import { ActivityRoute } from "./routes/activity";
+import { InboxRoute } from "./routes/inbox";
 import { HermesDebugRoute } from "./routes/hermes-debug";
 import { ScrollDebugRoute } from "./routes/scroll-debug";
 import { SettingsRoute } from "./routes/settings";
@@ -70,6 +71,12 @@ const activityRoute = createRoute({
   component: ActivityRoute,
 });
 
+const inboxRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/inbox",
+  component: InboxRoute,
+});
+
 const settingsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/settings",
@@ -118,6 +125,7 @@ const routeTree = rootRoute.addChildren([
   dmRoute,
   notificationsRoute,
   activityRoute,
+  inboxRoute,
   settingsRoute,
   workspaceManageRoute,
   botsManageRoute,

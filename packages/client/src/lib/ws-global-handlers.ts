@@ -16,6 +16,7 @@ import {
   useHermesIndicatorsStore,
 } from "../stores/hermes-indicators";
 import { fireNotification } from "./notifications";
+import { useBotRequestsStore } from "../stores/bot-requests";
 import { queryClient } from "./query-client";
 import { cacheIncomingMessage } from "../hooks/useChannelChat";
 import { api } from "./api";
@@ -85,6 +86,8 @@ export function registerGlobalWsHandlers(
     void messageQueryClient.invalidateQueries({ queryKey: ["messages"] });
     void useNotificationsStore.getState().fetchNotifications();
     void useActivityStore.getState().fetchActivity();
+    // Reconcile requests answered, cancelled or expired while disconnected.
+    void useBotRequestsStore.getState().fetchInbox();
   };
 
   const onMessageReactionsUpdated = ({
@@ -372,7 +375,16 @@ export function registerGlobalWsHandlers(
     useHermesIndicatorsStore.getState().trackProgressEvent(event, invocation);
   };
 
+  // Push/email for new requests waits on the notification-controls work; the
+  // Inbox badge and inline cards are the signal for now.
+  const onBotRequestUpdated = ({
+    request,
+  }: WsEvents["ws:bot_request_updated"]) => {
+    useBotRequestsStore.getState().upsert(request);
+  };
+
   wsEvents.on("ws:authenticated", onAuthenticated);
+  wsEvents.on("ws:bot_request_updated", onBotRequestUpdated);
   wsEvents.on("ws:presence_snapshot", onPresenceSnapshot);
   wsEvents.on("ws:presence_changed", onPresenceChanged);
   wsEvents.on("ws:new_message", onNewMessage);
@@ -393,6 +405,7 @@ export function registerGlobalWsHandlers(
   return () => {
     workspaceRefreshGeneration += 1;
     wsEvents.off("ws:authenticated", onAuthenticated);
+    wsEvents.off("ws:bot_request_updated", onBotRequestUpdated);
     wsEvents.off("ws:presence_snapshot", onPresenceSnapshot);
     wsEvents.off("ws:presence_changed", onPresenceChanged);
     wsEvents.off("ws:new_message", onNewMessage);

@@ -417,10 +417,27 @@ def _verify_backend_contract(
     human_user_id: str,
     bot_id: str,
 ) -> dict[str, Any]:
-    # Terminal progress is intentionally cleared from the public runtime store
-    # after completion. The WebDriver assertion observes approval.request while
-    # it is live; post-completion verification therefore focuses on the
-    # resulting Hermes message and the absence of the text fallback.
+    # Approvals and questions are durable bot requests. After the run both must
+    # be stored as delivered (Hermes acknowledged the answer it applied), and no
+    # request in this conversation may be left open.
+    req_status, req_body = harness.http_json(
+        "GET",
+        f"{base}/bot-requests/conversations/{conversation_id}",
+        token=token,
+    )
+    assert req_status == 200, (req_status, req_body)
+    requests = req_body.get("requests") or []
+    by_kind = {request.get("kind"): request for request in requests}
+    assert set(by_kind) == {"approval", "question"}, requests
+    for request in requests:
+        assert request.get("status") == "delivered", request
+        assert request.get("deliveryApplied") is True, request
+        assert (request.get("answeredBy") or {}).get("id") == human_user_id, request
+    assert (by_kind["approval"].get("answer") or {}).get("choice") == "once", by_kind
+    assert sorted((by_kind["question"].get("answer") or {}).get("choices") or []) == sorted(
+        fake_model.CLARIFY_RESPONSE
+    ), by_kind
+
     status, messages = harness.http_json(
         "GET",
         f"{base}/messages/{conversation_id}",
@@ -468,7 +485,8 @@ def _verify_backend_contract(
 
     return {
         "finalMessage": fake_model.FINAL_MESSAGE,
-        "interactionDelivery": "signed-webhook",
+        "requestDelivery": "outbox-signed-webhook",
+        "deliveredRequests": len(requests),
         "humanMessages": len(human_messages),
         "screenshot": str(TMP / f"hermes-approval-ui-e2e-{RUN_ID}.png"),
     }

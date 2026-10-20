@@ -1,7 +1,7 @@
 import { isAuthenticated } from "../lib/auth-identity";
 import { useAuthStore } from "../stores/auth";
 import { mentionsName, type MentionNames } from "../lib/remark-mentions";
-import { useRef, useEffect, useCallback, useMemo, useLayoutEffect } from "react";
+import { Fragment, useRef, useEffect, useCallback, useMemo, useLayoutEffect } from "react";
 import { InputBar, type InputSendResult } from "./InputBar";
 import { Markdown } from "./Markdown";
 import { useAutoScroll } from "../hooks/useAutoScroll";
@@ -9,6 +9,10 @@ import { useMessageTopCommand } from "../hooks/useMessageTopCommand";
 import { useOlderHistoryScroll } from "../hooks/useOlderHistoryScroll";
 import { useScrollStability } from "../hooks/useScrollStability";
 import { MessageSendError } from "./MessageSendError";
+import {
+  BotRequestTimelineItems,
+  useBotRequestTimeline,
+} from "./BotRequestTimeline";
 import { ArrowDown } from "lucide-react";
 import { buttonClass } from "./ui";
 import type { ChatMessage } from "@thechat/shared";
@@ -76,6 +80,14 @@ export function ChannelChatView({
     [typingUsers],
   );
   const hasLiveActivity = visibleTypingNames.length > 0;
+  // Requests from any bot in this conversation, placed where they were asked.
+  // Any participant may answer unless the bot addressed one person.
+  const requestTimeline = useBotRequestTimeline({
+    scope: conversationId ? { conversationId } : null,
+    messages,
+    hasOlderMessages,
+    enabled: !loading,
+  });
 
   // Workspace names shown as @mention pills; mentions of you are highlighted.
   const selfId = useAuthStore((state) => state.user?.id ?? null);
@@ -165,17 +177,32 @@ export function ChannelChatView({
           {!loading && messages.length === 0 && (
             <div className="flex flex-1 flex-col items-center justify-center text-[1rem] text-text-dimmed">No messages yet. Start the conversation!</div>
           )}
-          {messages.map((msg, index) => (
-            <SharedChatMessage
-              key={msg.id}
-              message={msg}
-              merged={shouldMergeChatMessage(messages[index - 1], msg)}
-              mentionsYou={mentionsYou(msg)}
-              onSetReaction={onSetReaction}
-            >
-              {msg.content && <Markdown content={msg.content} mentions={mentionNames} />}
-            </SharedChatMessage>
-          ))}
+          {messages.map((msg, index) => {
+            const requestsBefore = requestTimeline.beforeMessage.get(msg.id);
+            return (
+              <Fragment key={msg.id}>
+                <BotRequestTimelineItems
+                  requests={requestsBefore}
+                  blocked={requestTimeline.blocked}
+                />
+                <SharedChatMessage
+                  message={msg}
+                  merged={
+                    !requestsBefore &&
+                    shouldMergeChatMessage(messages[index - 1], msg)
+                  }
+                  mentionsYou={mentionsYou(msg)}
+                  onSetReaction={onSetReaction}
+                >
+                  {msg.content && <Markdown content={msg.content} mentions={mentionNames} />}
+                </SharedChatMessage>
+              </Fragment>
+            );
+          })}
+          <BotRequestTimelineItems
+            requests={requestTimeline.trailing}
+            blocked={requestTimeline.blocked}
+          />
           {visibleTypingNames.length > 0 && (
             <div className="animate-pulse px-5 py-1 pb-2 text-[0.786rem] text-text-dimmed">
               {visibleTypingNames.join(", ")} {visibleTypingNames.length === 1 ? "is" : "are"} typing...

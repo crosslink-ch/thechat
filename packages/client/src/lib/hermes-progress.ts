@@ -3,8 +3,6 @@ import type {
   BotInvocationProgressEventPublic,
   BotRuntimeSnapshot,
 } from "@thechat/shared";
-import { deriveApprovalStates } from "./hermes-approvals";
-import { deriveClarifyStates } from "./hermes-clarifications";
 import { deriveVaultUnlockStates } from "./hermes-vault-unlock";
 
 export interface ActiveHermesProgress {
@@ -84,19 +82,14 @@ function selectActiveHermesProgress(
         invocation: displayInvocation,
         events: eventsByInvocationId.get(displayInvocation.id) ?? [],
       };
+      // Approvals and questions render from bot request rows; only a vault
+      // unlock still lives in progress and keeps an older run visible.
       const pendingInteractionRows = laneInvocations
         .filter((invocation) => invocation.id !== displayInvocation.id)
         .filter((invocation) => {
           const events = eventsByInvocationId.get(invocation.id) ?? [];
-          return (
-            deriveApprovalStates(events, {}).some(
-              (approval) => approval.status === "pending",
-            ) ||
-            deriveClarifyStates(events, {}).some(
-              (clarify) => clarify.status === "pending",
-            ) || deriveVaultUnlockStates(events).some(
-              state=>state.outcome === null,
-            )
+          return deriveVaultUnlockStates(events).some(
+            (state) => state.outcome === null,
           );
         })
         .map((invocation) => ({

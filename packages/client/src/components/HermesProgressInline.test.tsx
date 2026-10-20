@@ -4,19 +4,18 @@ import type {
   BotInvocationProgressEventPublic,
   BotInvocationPublic,
   BotAppearance,
+  BotRequestPublic,
   WorkspaceWithDetails,
 } from "@thechat/shared";
 import { HermesProgressInline } from "./HermesProgressInline";
-import { useHermesApprovalsStore } from "../stores/hermes-approvals";
-import { useHermesClarificationsStore } from "../stores/hermes-clarifications";
+import { useBotRequestsStore } from "../stores/bot-requests";
 import { useHermesIndicatorsStore } from "../stores/hermes-indicators";
 import { useWorkspacesStore } from "../stores/workspaces";
 
 describe("HermesProgressInline", () => {
   beforeEach(() => {
     useWorkspacesStore.setState({ activeWorkspace: null });
-    useHermesApprovalsStore.getState().resetForTests();
-    useHermesClarificationsStore.getState().resetForTests();
+    useBotRequestsStore.getState().reset();
     useHermesIndicatorsStore.getState().resetForTests();
   });
 
@@ -74,28 +73,33 @@ describe("HermesProgressInline", () => {
     expect(screen.queryByRole("button", { name: "Stop" })).not.toBeInTheDocument();
   });
 
-  it.each(["approval.request", "clarify.request"])(
-    "shows a static status marker for a Minimal bot awaiting %s", async (type) => {
+  it.each(["approval", "question"] as const)(
+    "shows a static status marker for a Minimal bot awaiting a %s request", (kind) => {
       selectAppearance({ shape: "minimal", color: "#3498DB" });
-      const onInteraction = vi.fn().mockResolvedValue(undefined);
+      useBotRequestsStore.getState().upsert(botRequest({ kind }));
       render(<HermesProgressInline
-        invocations={[{ invocation: invocation(), events: [progressEvent({
-          type, status: "waiting", toolName: null, toolCallId: null,
-          payload: type === "approval.request"
-            ? { command: "pwd", choices: ["once", "deny"] }
-            : { requestId: "minimal-clarify", question: "Which approach?", choices: ["Safe"] },
-        })] }]}
-        onInteraction={onInteraction}
+        invocations={[{ invocation: invocation(), events: [] }]}
       />);
       const marker = screen.getByTestId("hermes-invocation-indicator");
       expect(marker.querySelector(".lucide-circle-alert")).not.toBeNull();
       expect(marker.querySelector(".lucide-loader-circle")).toBeNull();
       expect(screen.getByText("action needed")).toBeInTheDocument();
-      fireEvent.click(screen.getByRole("button", { name: type === "approval.request" ? "Approve" : "Safe" }));
-      await waitFor(() => expect(onInteraction).toHaveBeenCalledWith(
-        expect.objectContaining({ type }), type === "approval.request" ? "once" : "Safe",
-      ));
-      await waitFor(() => expect(marker.querySelector(".lucide-loader-circle")).not.toBeNull());
+      expect(
+        screen.getByText(
+          kind === "approval"
+            ? "Koda is waiting for your approval"
+            : "Koda is waiting for your response",
+        ),
+      ).toBeInTheDocument();
+      // The card itself renders from the request row elsewhere.
+      expect(screen.queryByRole("button", { name: /allow/i })).not.toBeInTheDocument();
+      act(() => useBotRequestsStore.getState().upsert(botRequest({
+        kind,
+        status: "answered",
+        answer: { choice: "once" },
+        updatedAt: "2026-01-01T00:01:00.000Z",
+      })));
+      expect(marker.querySelector(".lucide-loader-circle")).not.toBeNull();
     },
   );
 
@@ -413,542 +417,10 @@ describe("HermesProgressInline", () => {
     expect(screen.getAllByText("custom_tool")).toHaveLength(2);
   });
 
-  it("sends approval choices as direct interaction responses, never slash text", async () => {
-    const onInteraction = vi.fn().mockResolvedValue(undefined);
-    const approval = progressEvent({
-      id: "approval-1",
-      type: "approval.request",
-      status: "waiting",
-      toolCallId: null,
-      toolName: null,
-      label: "Command approval required",
-      preview: "rm -rf /important",
-      payload: {
-        command: "rm -rf /important",
-        description: "recursive delete",
-        choices: ["once", "session", "always", "deny"],
-      },
-    });
-    const { rerender } = render(
-      <HermesProgressInline
-        invocations={[{ invocation: invocation(), events: [approval] }]}
-        onInteraction={onInteraction}
-      />,
-    );
-
-    expect(screen.getByText("Koda wants to run a command")).toBeInTheDocument();
-    expect(screen.getByText("recursive delete")).toBeInTheDocument();
-    expect(screen.getByText("rm -rf /important")).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("button", { name: "Approve" }));
-    await waitFor(() =>
-      expect(onInteraction).toHaveBeenLastCalledWith(approval, "once"),
-    );
-
-    rerender(
-      <HermesProgressInline
-        invocations={[
-          {
-            invocation: invocation(),
-            events: [{ ...approval, id: "approval-2" }],
-          },
-        ]}
-        onInteraction={onInteraction}
-      />,
-    );
-    fireEvent.click(screen.getByRole("button", { name: "Approve for session" }));
-    await waitFor(() =>
-      expect(onInteraction).toHaveBeenLastCalledWith(
-        expect.objectContaining({ id: "approval-2" }),
-        "session",
-      ),
-    );
-
-    rerender(
-      <HermesProgressInline
-        invocations={[
-          {
-            invocation: invocation(),
-            events: [{ ...approval, id: "approval-3" }],
-          },
-        ]}
-        onInteraction={onInteraction}
-      />,
-    );
-    fireEvent.click(screen.getByRole("button", { name: "Always approve" }));
-    await waitFor(() =>
-      expect(onInteraction).toHaveBeenLastCalledWith(
-        expect.objectContaining({ id: "approval-3" }),
-        "always",
-      ),
-    );
-
-    rerender(
-      <HermesProgressInline
-        invocations={[
-          {
-            invocation: invocation(),
-            events: [{ ...approval, id: "approval-4" }],
-          },
-        ]}
-        onInteraction={onInteraction}
-      />,
-    );
-    fireEvent.click(screen.getByRole("button", { name: "Deny" }));
-    await waitFor(() =>
-      expect(onInteraction).toHaveBeenLastCalledWith(
-        expect.objectContaining({ id: "approval-4" }),
-        "deny",
-      ),
-    );
-    expect(onInteraction.mock.calls.flat()).not.toContain("/approve");
-    expect(onInteraction.mock.calls.flat()).not.toContain("/deny");
-  });
-
-  it("shows the full bounded approval command instead of hiding its tail", () => {
-    const tailMarker = "__VISIBLE_COMMAND_TAIL__";
-    const command = `${"x".repeat(25_000)}${tailMarker}`;
-    const approval = progressEvent({
-      id: "approval-long-command",
-      type: "approval.request",
-      status: "waiting",
-      toolCallId: null,
-      toolName: null,
-      payload: {
-        command,
-        description: "Inspect the complete command before approving",
-        choices: ["once", "deny"],
-      },
-    });
-
-    render(
-      <HermesProgressInline
-        invocations={[{ invocation: invocation(), events: [approval] }]}
-      />,
-    );
-
-    expect(screen.getByTestId("hermes-approval-request")).toHaveTextContent(
-      tailMarker,
-    );
-  });
-
-  it("collapses the approval card only after the direct response is accepted", async () => {
-    const onInteraction = vi.fn().mockResolvedValue(undefined);
-    const approval = progressEvent({
-      id: "approval-1",
-      type: "approval.request",
-      status: "waiting",
-      toolCallId: null,
-      toolName: null,
-      preview: "rm -rf /important",
-      payload: { command: "rm -rf /important" },
-    });
-
-    render(
-      <HermesProgressInline
-        invocations={[{ invocation: invocation(), events: [approval] }]}
-        onInteraction={onInteraction}
-      />,
-    );
-
-    expect(screen.getByText(/is waiting for your approval/)).toBeInTheDocument();
-    expect(screen.getByText("action needed")).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("button", { name: "Approve" }));
-
-    await waitFor(() =>
-      expect(
-        screen.queryByTestId("hermes-approval-request"),
-      ).not.toBeInTheDocument(),
-    );
-    expect(screen.getByTestId("hermes-approval-resolved")).toHaveAttribute(
-      "data-confirmed",
-      "false",
-    );
-    expect(screen.getByText("Approved")).toBeInTheDocument();
-    expect(screen.queryByText("action needed")).not.toBeInTheDocument();
-    expect(screen.getByText(/is working/)).toBeInTheDocument();
-  });
-
-  it("keeps an accepted decision after the component remounts", async () => {
-    const onInteraction = vi.fn().mockResolvedValue(undefined);
-    const approval = progressEvent({
-      id: "approval-1",
-      type: "approval.request",
-      status: "waiting",
-      toolCallId: null,
-      toolName: null,
-      payload: { command: "rm -rf /important" },
-    });
-    const view = render(
-      <HermesProgressInline
-        invocations={[{ invocation: invocation(), events: [approval] }]}
-        onInteraction={onInteraction}
-      />,
-    );
-
-    fireEvent.click(screen.getByRole("button", { name: "Deny" }));
-    await waitFor(() => {
-      expect(screen.getByTestId("hermes-approval-resolved")).toBeInTheDocument();
-    });
-    view.unmount();
-
-    render(
-      <HermesProgressInline
-        invocations={[{ invocation: invocation(), events: [approval] }]}
-      />,
-    );
-
-    expect(screen.queryByTestId("hermes-approval-request")).not.toBeInTheDocument();
-    expect(screen.getByText("Denied")).toBeInTheDocument();
-  });
-
-  it("resolves approval requests from gateway approval.resolved events", () => {
-    const approval = progressEvent({
-      id: "approval-1",
-      sequence: 1,
-      type: "approval.request",
-      status: "waiting",
-      toolCallId: null,
-      toolName: null,
-      payload: { command: "sudo systemctl restart api", sessionKey: "dm:1" },
-    });
-    const resolution = progressEvent({
-      id: "resolution-1",
-      sequence: 2,
-      type: "approval.resolved",
-      status: "completed",
-      toolCallId: null,
-      toolName: null,
-      payload: { choice: "session", sessionKey: "dm:1" },
-    });
-
-    render(
-      <HermesProgressInline
-        invocations={[
-          { invocation: invocation(), events: [approval, resolution] },
-        ]}
-      />,
-    );
-
-    expect(screen.queryByTestId("hermes-approval-request")).not.toBeInTheDocument();
-    expect(screen.getByTestId("hermes-approval-resolved")).toHaveAttribute(
-      "data-confirmed",
-      "true",
-    );
-    expect(screen.getByText("Approved for session")).toBeInTheDocument();
-    expect(screen.getByText("sudo systemctl restart api")).toBeInTheDocument();
-  });
-
-  it("enables pending approval actions in FIFO order", async () => {
-    const onInteraction = vi.fn().mockResolvedValue(undefined);
-    const firstApproval = progressEvent({
-      id: "approval-1",
-      sequence: 1,
-      type: "approval.request",
-      status: "waiting",
-      toolCallId: null,
-      toolName: null,
-      createdAt: "2026-01-01T00:00:00.000Z",
-      payload: { command: "rm -rf /first" },
-    });
-    const secondApproval = progressEvent({
-      id: "approval-2",
-      sequence: 2,
-      type: "approval.request",
-      status: "waiting",
-      toolCallId: null,
-      toolName: null,
-      createdAt: "2026-01-01T00:00:01.000Z",
-      payload: { command: "rm -rf /second" },
-    });
-
-    render(
-      <HermesProgressInline
-        invocations={[
-          { invocation: invocation(), events: [firstApproval, secondApproval] },
-        ]}
-        onInteraction={onInteraction}
-      />,
-    );
-
-    // Only the oldest pending approval is actionable; the later one waits.
-    expect(screen.getAllByRole("button", { name: "Approve" })).toHaveLength(1);
-    expect(
-      screen.getByText("Waiting for the earlier approval to be resolved first."),
-    ).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("button", { name: "Approve" }));
-
-    await waitFor(() =>
-      expect(onInteraction).toHaveBeenCalledWith(firstApproval, "once"),
-    );
-    // First request collapses into a resolved row; the second becomes actionable.
-    expect(screen.getByTestId("hermes-approval-resolved")).toBeInTheDocument();
-    expect(screen.getByText("rm -rf /first")).toBeInTheDocument();
-    expect(screen.getAllByRole("button", { name: "Approve" })).toHaveLength(1);
-    expect(
-      screen.queryByText("Waiting for the earlier approval to be resolved first."),
-    ).not.toBeInTheDocument();
-  });
-
-  it("supports single-select, multi-select, and open clarification responses", async () => {
-    const onInteraction = vi.fn().mockResolvedValue(undefined);
-    const single = progressEvent({
-      id: "clarify-single",
-      sequence: 1,
-      type: "clarify.request",
-      status: "waiting",
-      toolCallId: null,
-      toolName: null,
-      payload: {
-        requestId: "request-single",
-        sessionKey: "session-1",
-        question: "Which color should we use?",
-        choices: ["Blue", "Green"],
-        multiSelect: false,
-        allowOther: true,
-      },
-    });
-    const multi = progressEvent({
-      id: "clarify-multi",
-      sequence: 2,
-      type: "clarify.request",
-      status: "waiting",
-      toolCallId: null,
-      toolName: null,
-      payload: {
-        requestId: "request-multi",
-        sessionKey: "session-1",
-        question: "Which checks should run?",
-        choices: ["Unit", "Typecheck", "Build"],
-        multiSelect: true,
-        allowOther: true,
-      },
-    });
-    const open = progressEvent({
-      id: "clarify-open",
-      sequence: 3,
-      type: "clarify.request",
-      status: "waiting",
-      toolCallId: null,
-      toolName: null,
-      payload: {
-        requestId: "request-open",
-        sessionKey: "session-1",
-        question: "What should Hermes do next?",
-        choices: null,
-        multiSelect: false,
-        allowOther: true,
-      },
-    });
-
-    render(
-      <HermesProgressInline
-        invocations={[
-          { invocation: invocation(), events: [single, multi, open] },
-        ]}
-        onInteraction={onInteraction}
-      />,
-    );
-
-    expect(screen.getByText(/is waiting for your response/)).toBeInTheDocument();
-    expect(screen.getByText("action needed")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Blue" }));
-    await waitFor(() =>
-      expect(onInteraction).toHaveBeenCalledWith(single, "Blue"),
-    );
-
-    fireEvent.click(screen.getByRole("checkbox", { name: "Unit" }));
-    fireEvent.click(screen.getByRole("checkbox", { name: "Typecheck" }));
-    fireEvent.click(screen.getByRole("button", { name: "Submit selected" }));
-    await waitFor(() =>
-      expect(onInteraction).toHaveBeenCalledWith(multi, ["Unit", "Typecheck"]),
-    );
-
-    const openInput = screen.getByRole("textbox", { name: "Your response" });
-    fireEvent.change(openInput, { target: { value: "Ship the focused fix" } });
-    fireEvent.keyDown(openInput, { key: "Enter", shiftKey: false });
-    await waitFor(() =>
-      expect(onInteraction).toHaveBeenCalledWith(open, "Ship the focused fix"),
-    );
-    expect(screen.getAllByTestId("hermes-clarify-resolved")).toHaveLength(3);
-  });
-
-  it("defensively caps clarification choices from retained progress", () => {
-    const choices = Array.from({ length: 25 }, (_, index) => `Choice ${index + 1}`);
-    choices[5] = "x".repeat(501);
-    const clarify = progressEvent({
-      id: "clarify-bounded-ui",
-      type: "clarify.request",
-      status: "waiting",
-      toolCallId: null,
-      toolName: null,
-      payload: {
-        requestId: "request-bounded-ui",
-        sessionKey: "session-1",
-        question: "Choose one",
-        choices,
-        multiSelect: false,
-        allowOther: true,
-      },
-    });
-
-    render(
-      <HermesProgressInline
-        invocations={[{ invocation: invocation(), events: [clarify] }]}
-      />,
-    );
-
-    expect(screen.getByRole("button", { name: "Choice 20" })).toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: "Choice 21" }),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: choices[5] }),
-    ).not.toBeInTheDocument();
-  });
-
-  it("offers an Other path and recovers from direct callback errors", async () => {
-    let rejectFirst!: (error: Error) => void;
-    const failed = new Promise<void>((_resolve, reject) => {
-      rejectFirst = reject;
-    });
-    const onInteraction = vi
-      .fn()
-      .mockReturnValueOnce(failed)
-      .mockResolvedValue(undefined);
-    const clarify = progressEvent({
-      id: "clarify-other",
-      type: "clarify.request",
-      status: "waiting",
-      toolCallId: null,
-      toolName: null,
-      payload: {
-        requestId: "request-other",
-        sessionKey: "session-other",
-        question: "Choose a deployment region",
-        choices: ["US", "EU"],
-        multiSelect: false,
-        allowOther: true,
-      },
-    });
-    useHermesIndicatorsStore.getState().trackProgressEvent(clarify);
-    render(
-      <HermesProgressInline
-        invocations={[{ invocation: invocation(), events: [clarify] }]}
-        onInteraction={onInteraction}
-      />,
-    );
-
-    fireEvent.click(screen.getByRole("button", { name: "Other" }));
-    const input = screen.getByRole("textbox", { name: "Other response" });
-    fireEvent.change(input, { target: { value: "Asia Pacific" } });
-    fireEvent.click(screen.getByRole("button", { name: "Submit" }));
-    expect(input).toBeDisabled();
-    expect(screen.getByRole("status")).toHaveTextContent("Sending response");
-
-    await act(async () => {
-      rejectFirst(new Error("Hermes is temporarily unavailable"));
-      await failed.catch(() => undefined);
-    });
-    expect(screen.getByRole("alert")).toHaveTextContent(
-      "Hermes is temporarily unavailable",
-    );
-    expect(input).not.toBeDisabled();
-    expect(screen.getByTestId("hermes-clarify-request")).toBeInTheDocument();
-    expect(
-      useHermesIndicatorsStore.getState().pendingClarifications,
-    ).toEqual([expect.objectContaining({ eventId: clarify.id })]);
-
-    fireEvent.click(screen.getByRole("button", { name: "Submit" }));
-    await waitFor(() => {
-      expect(screen.getByTestId("hermes-clarify-resolved")).toBeInTheDocument();
-    });
-    expect(onInteraction).toHaveBeenLastCalledWith(clarify, "Asia Pacific");
-    expect(
-      useHermesIndicatorsStore.getState().pendingClarifications,
-    ).toEqual([]);
-  });
-
-  it("matches clarify resolutions by requestId and stays resolved after remount", () => {
-    const first = progressEvent({
-      id: "clarify-first",
-      sequence: 1,
-      type: "clarify.request",
-      status: "waiting",
-      toolCallId: null,
-      toolName: null,
-      payload: {
-        requestId: "request-first",
-        sessionKey: "session-1",
-        question: "First question",
-        choices: ["A"],
-        multiSelect: false,
-        allowOther: true,
-      },
-    });
-    const second = progressEvent({
-      id: "clarify-second",
-      sequence: 2,
-      type: "clarify.request",
-      status: "waiting",
-      toolCallId: null,
-      toolName: null,
-      payload: {
-        requestId: "request-second",
-        sessionKey: "session-1",
-        question: "Second question",
-        choices: ["B"],
-        multiSelect: false,
-        allowOther: true,
-      },
-    });
-    const resolution = progressEvent({
-      id: "clarify-resolution",
-      sequence: 3,
-      type: "clarify.resolved",
-      status: "completed",
-      toolCallId: null,
-      toolName: null,
-      payload: {
-        requestId: "request-second",
-        sessionKey: "session-1",
-        response: "B",
-      },
-    });
-    const onInteraction = vi.fn();
-    const view = render(
-      <HermesProgressInline
-        invocations={[
-          { invocation: invocation(), events: [first, second, resolution] },
-        ]}
-        onInteraction={onInteraction}
-      />,
-    );
-
-    expect(screen.getByText("First question")).toBeInTheDocument();
-    expect(screen.queryByText("Second question")).not.toBeInTheDocument();
-    expect(screen.getByTestId("hermes-clarify-resolved")).toHaveTextContent("B");
-    view.unmount();
-    render(
-      <HermesProgressInline
-        invocations={[
-          { invocation: invocation(), events: [first, second, resolution] },
-        ]}
-        onInteraction={onInteraction}
-      />,
-    );
-    expect(screen.getByTestId("hermes-clarify-resolved")).toHaveAttribute(
-      "data-confirmed",
-      "true",
-    );
-    expect(onInteraction).not.toHaveBeenCalled();
-  });
-
   it("renders activity rows in the order events happened", () => {
-    // Terminal -> approval (resolved) -> thinking -> terminal: rows must keep
-    // this order instead of grouping by type.
+    // Terminal -> thinking -> terminal: rows keep this order instead of
+    // grouping by type. Approval progress from an older gateway never renders;
+    // the request row carries it.
     render(
       <HermesProgressInline
         invocations={[
@@ -1017,7 +489,8 @@ describe("HermesProgressInline", () => {
     const kinds = screen
       .getAllByTestId("hermes-activity-row")
       .map((row) => row.dataset.kind);
-    expect(kinds).toEqual(["tool", "approval-resolved", "reasoning", "tool"]);
+    expect(kinds).toEqual(["tool", "reasoning", "tool"]);
+    expect(screen.queryByText(/rm -rf/)).not.toBeInTheDocument();
   });
 
   it("collapses consecutive reasoning events but keeps separated blocks apart", () => {
@@ -1125,87 +598,6 @@ describe("HermesProgressInline", () => {
     expect(screen.getAllByTestId("hermes-activity-detail")).toHaveLength(1);
   });
 
-  it("keeps pending approvals visible beyond the row window", () => {
-    const events = [
-      progressEvent({
-        id: "approval-early",
-        sequence: 1,
-        type: "approval.request",
-        status: "waiting",
-        toolCallId: null,
-        toolName: null,
-        createdAt: "2026-01-01T00:00:00.000Z",
-        payload: { command: "rm -rf /important" },
-      }),
-      ...Array.from({ length: 12 }, (_, index) =>
-        progressEvent({
-          id: `tool-${index}`,
-          sequence: index + 2,
-          type: "tool.started",
-          status: "running",
-          toolCallId: `call-${index}`,
-          toolName: "terminal",
-          label: `step ${index}`,
-        }),
-      ),
-    ];
-
-    render(
-      <HermesProgressInline
-        invocations={[{ invocation: invocation(), events }]}
-      />,
-    );
-
-    expect(screen.getByTestId("hermes-approval-request")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Approve" })).toBeInTheDocument();
-    expect(screen.getByText("4 earlier updates")).toBeInTheDocument();
-    expect(screen.queryByText("step 0")).not.toBeInTheDocument();
-    expect(screen.getByText("step 11")).toBeInTheDocument();
-  });
-
-  it("keeps pending clarification cards visible beyond the row window", () => {
-    const events = [
-      progressEvent({
-        id: "clarify-early",
-        sequence: 1,
-        type: "clarify.request",
-        status: "waiting",
-        toolCallId: null,
-        toolName: null,
-        payload: {
-          requestId: "clarify-early-request",
-          sessionKey: "session-early",
-          question: "Which path should Hermes take?",
-          choices: ["Safe", "Fast"],
-          multiSelect: false,
-          allowOther: true,
-        },
-      }),
-      ...Array.from({ length: 12 }, (_, index) =>
-        progressEvent({
-          id: `clarify-tool-${index}`,
-          sequence: index + 2,
-          type: "tool.started",
-          status: "running",
-          toolCallId: `clarify-call-${index}`,
-          toolName: "terminal",
-          label: `clarify step ${index}`,
-        }),
-      ),
-    ];
-
-    render(
-      <HermesProgressInline
-        invocations={[{ invocation: invocation(), events }]}
-      />,
-    );
-    expect(screen.getByTestId("hermes-clarify-request")).toBeInTheDocument();
-    expect(screen.getByText("Which path should Hermes take?")).toBeInTheDocument();
-    expect(screen.getByText("4 earlier updates")).toBeInTheDocument();
-    expect(screen.queryByText("clarify step 0")).not.toBeInTheDocument();
-    expect(screen.getByText("clarify step 11")).toBeInTheDocument();
-  });
-
   it("shows recent tool steps individually without a generated summary", () => {
     render(
       <HermesProgressInline
@@ -1267,21 +659,12 @@ describe("HermesProgressInline", () => {
             invocation: invocation(),
             events: [
               progressEvent({ id: "thought-1", sequence: 1, type: "reasoning.delta", toolCallId: null, toolName: null, payload: { text: "Plan" } }),
-              progressEvent({
-                id: "approval-1",
-                sequence: 2,
-                type: "approval.request",
-                status: "waiting",
-                toolCallId: null,
-                toolName: null,
-                payload: { command: "git push", choices: ["once", "deny"] },
-              }),
             ],
           },
         ]}
-        onInteraction={vi.fn()}
       />,
     );
+    act(() => useBotRequestsStore.getState().upsert(botRequest()));
 
     expect(container.querySelector("[data-thinking-orb]")).toBeNull();
     const bot = await waitFor(() => {
@@ -1299,6 +682,42 @@ function selectAppearance(avatar: BotAppearance) {
     id: "workspace-1",
     members: [{ userId: "bot-user-1", bot: { id: "bot-1", kind: "hermes", avatar } }],
   } as WorkspaceWithDetails });
+}
+
+function botRequest(overrides: Partial<BotRequestPublic> = {}): BotRequestPublic {
+  const now = "2026-01-01T00:00:00.000Z";
+  return {
+    id: "request-1",
+    botId: "bot-1",
+    botUserId: "bot-user-1",
+    botName: "Koda",
+    conversationId: "conversation-1",
+    conversationType: "direct",
+    conversationName: null,
+    workspaceId: null,
+    threadId: null,
+    threadTitle: null,
+    invocationId: "invocation-1",
+    kind: "approval",
+    title: "Run a command",
+    body: null,
+    details: { command: "git push" },
+    response: { type: "choice", choices: ["once", "session", "always", "deny"] },
+    orderGroup: "session-1",
+    audienceUserId: null,
+    status: "open",
+    answer: null,
+    answeredBy: null,
+    answeredAt: null,
+    deliveredAt: null,
+    deliveryApplied: null,
+    deliveryNote: null,
+    cancelReason: null,
+    expiresAt: null,
+    createdAt: now,
+    updatedAt: now,
+    ...overrides,
+  };
 }
 
 function invocation(

@@ -4,7 +4,6 @@ import type {
   BotInvocationPublic,
   BotRuntimeSnapshot,
 } from "@thechat/shared";
-import { pendingApprovalEvents } from "./hermes-approvals";
 import { selectHermesConversationProgress } from "./hermes-progress";
 
 describe("Hermes progress selectors", () => {
@@ -67,7 +66,7 @@ describe("Hermes progress selectors", () => {
     expect(replacementSelected.typingSuppressedUserIds).toEqual(["bot-user-1"]);
   });
 
-  it("preserves pending approvals from an older invocation during a lane handoff", () => {
+  it("does not pin an older lane invocation for approval progress", () => {
     const snapshot = runtime({
       invocations: [
         invocation({
@@ -99,16 +98,14 @@ describe("Hermes progress selectors", () => {
 
     const selected = selectHermesConversationProgress(snapshot);
 
+    // The approval is a bot request row now; it renders independently of
+    // which invocation the progress view shows.
     expect(selected.invocations.map(({ invocation }) => invocation.id)).toEqual([
       "replacement-invocation",
-      "approval-invocation",
-    ]);
-    expect(pendingApprovalEvents(selected.invocations, {}).map((event) => event.id)).toEqual([
-      "approval-event",
     ]);
   });
 
-  it("preserves a pending clarification from an older lane invocation", () => {
+  it("does not pin an older lane invocation for clarify progress", () => {
     const selected = selectHermesConversationProgress(runtime({
       invocations: [
         invocation({
@@ -137,7 +134,6 @@ describe("Hermes progress selectors", () => {
 
     expect(selected.invocations.map(({ invocation }) => invocation.id)).toEqual([
       "new-invocation",
-      "clarify-invocation",
     ]);
   });
 

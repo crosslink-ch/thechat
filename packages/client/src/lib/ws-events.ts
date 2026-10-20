@@ -3,6 +3,7 @@ import type {
   BotAppearance,
   BotInvocationPublic,
   BotInvocationProgressEventPublic,
+  BotRequestPublic,
   BotWorkspaceInvite,
   BotWorkspaceInviteStatus,
   ChatMessage,
@@ -38,6 +39,10 @@ export type WsEvents = {
     invocationId: string;
     event: BotInvocationProgressEventPublic;
     invocation?: BotInvocationPublic;
+  };
+  "ws:bot_request_updated": {
+    conversationId: string;
+    request: BotRequestPublic;
   };
   "ws:conversation_thread_updated": {
     conversationId: string;

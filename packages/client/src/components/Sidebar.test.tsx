@@ -13,6 +13,7 @@ import { useWorkspacesStore } from "../stores/workspaces";
 import { useConversationsStore } from "../stores/conversations";
 import { useActivityStore } from "../stores/activity";
 import { useHermesIndicatorsStore } from "../stores/hermes-indicators";
+import { useBotRequestsStore } from "../stores/bot-requests";
 import { usePresenceStore } from "../stores/presence";
 import { registerGlobalWsHandlers } from "../lib/ws-global-handlers";
 import { wsEvents } from "../lib/ws-events";
@@ -20,6 +21,7 @@ import type { Conversation } from "../core/types";
 import type {
   ActivitySnapshot,
   AuthUser,
+  BotRequestPublic,
   WorkspaceListItem,
   WorkspaceWithDetails,
 } from "@thechat/shared";
@@ -181,6 +183,7 @@ beforeEach(() => {
   useAuthStore.setState({ user: null, token: null, loading: false });
   useWorkspacesStore.setState({ workspaces: [], activeWorkspace: null, loading: false });
   useHermesIndicatorsStore.getState().resetForTests();
+  useBotRequestsStore.getState().reset();
   usePresenceStore.getState().clear();
   useConversationsStore.setState({
     conversations: [],
@@ -416,20 +419,7 @@ describe("Sidebar", () => {
     );
 
     act(() => {
-      useHermesIndicatorsStore.setState({
-        pendingApprovals: [
-          {
-            eventId: "event-1",
-            invocationId: "invocation-1",
-            conversationId: "dm-bot",
-            threadId: null,
-            botUserId: "u-bot",
-            createdAt: "2026-01-03T00:00:00.000Z",
-            requestId: null,
-            sessionKey: null,
-          },
-        ],
-      });
+      useBotRequestsStore.getState().upsert(openRequest({ botUserId: "u-bot" }));
     });
 
     const waitingRow = screen.getByRole("button", { name: "Koda, waiting for you" });
@@ -693,3 +683,38 @@ describe("Sidebar", () => {
     cleanup();
   });
 });
+
+function openRequest(overrides: Partial<BotRequestPublic> = {}): BotRequestPublic {
+  return {
+    id: "request-1",
+    botId: "bot-1",
+    botUserId: "u-bot",
+    botName: "Koda",
+    conversationId: "dm-bot",
+    conversationType: "direct",
+    conversationName: null,
+    workspaceId: "ws-1",
+    threadId: null,
+    threadTitle: null,
+    invocationId: "invocation-1",
+    kind: "approval",
+    title: "Run a command",
+    body: null,
+    details: { command: "pwd" },
+    response: { type: "choice", choices: ["once", "session", "always", "deny"] },
+    orderGroup: null,
+    audienceUserId: null,
+    status: "open",
+    answer: null,
+    answeredBy: null,
+    answeredAt: null,
+    deliveredAt: null,
+    deliveryApplied: null,
+    deliveryNote: null,
+    cancelReason: null,
+    expiresAt: null,
+    createdAt: "2026-01-03T00:00:00.000Z",
+    updatedAt: "2026-01-03T00:00:00.000Z",
+    ...overrides,
+  };
+}

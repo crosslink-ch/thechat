@@ -12,7 +12,7 @@ import { useConversationsStore } from "../stores/conversations";
 import { useNotificationsStore } from "../stores/notifications";
 import { useActivityStore } from "../stores/activity";
 import { usePresenceStore } from "../stores/presence";
-import { useHermesIndicatorsStore } from "../stores/hermes-indicators";
+import { useOpenBotRequests } from "../stores/bot-requests";
 import { botAppearanceFor } from "../lib/bot-appearance";
 import { openAuthModal } from "./AuthModal";
 import { openWorkspaceModal } from "./WorkspaceModal";
@@ -23,7 +23,7 @@ import {
 } from "./ChannelModal";
 import { api } from "../lib/api";
 import type { WorkspaceChannel, WorkspaceMember } from "@thechat/shared";
-import { Bell, Bot, ChevronDown, Ellipsis, LogIn, LogOut, Pencil, Plus, Settings, Trash2 } from "lucide-react";
+import { Bell, Bot, ChevronDown, Ellipsis, Inbox, LogIn, LogOut, Pencil, Plus, Settings, Trash2 } from "lucide-react";
 import { Avatar } from "./Avatar";
 import {
   avatarColor,
@@ -95,6 +95,7 @@ export function Sidebar() {
   const isChannel = routePath.startsWith("/channel");
   const isDm = routePath.startsWith("/dm");
   const isSettings = routePath === "/settings";
+  const isInbox = routePath === "/inbox";
   const activeChannelId = isChannel ? routeParams.id : null;
   const activeDmConversationId = isDm ? routeParams.id : null;
 
@@ -135,14 +136,12 @@ export function Sidebar() {
   const unreadActivityConversationIds = new Set(
     activityItems.map((item) => item.conversationId),
   );
-  const pendingApprovals = useHermesIndicatorsStore((s) => s.pendingApprovals);
-  const pendingClarifications = useHermesIndicatorsStore(
-    (s) => s.pendingClarifications,
-  );
+  const openRequests = useOpenBotRequests();
+  const inboxCount = openRequests.length;
   // Bots waiting on the user's approval or answer wake up in the list; a bot
   // that is only working stays still, since there is nothing to do yet.
   const botsWaitingOnYou = new Set(
-    [...pendingApprovals, ...pendingClarifications].map((p) => p.botUserId),
+    openRequests.map((request) => request.botUserId),
   );
   const unreadActivitySenderIds = new Set(
     activityItems
@@ -329,7 +328,30 @@ export function Sidebar() {
           </div>
           {user && (
             <button
-              className={`relative ml-2 ${iconButtonClass("md")}`}
+              className={`relative ml-2 ${iconButtonClass("md")} ${isInbox ? "bg-elevated text-text" : ""}`}
+              onClick={() => navigate({ to: "/inbox" })}
+              aria-label={
+                inboxCount > 0
+                  ? `Inbox, ${inboxCount} open ${inboxCount === 1 ? "request" : "requests"}`
+                  : "Inbox"
+              }
+              aria-current={isInbox ? "page" : undefined}
+              title="Inbox"
+            >
+              <Inbox size={16} aria-hidden="true" />
+              {inboxCount > 0 && (
+                <span
+                  data-testid="inbox-open-count"
+                  className="absolute -right-1.5 -top-1.5 min-w-[16px] rounded-full bg-warning px-1 text-center text-[0.571rem] font-semibold leading-4 text-white"
+                >
+                  {inboxCount > 99 ? "99+" : inboxCount}
+                </span>
+              )}
+            </button>
+          )}
+          {user && (
+            <button
+              className={`relative ml-1 ${iconButtonClass("md")}`}
               onClick={() => navigate({ to: "/activity" })}
               aria-label={
                 activityCount > 0
@@ -579,6 +601,21 @@ export function Sidebar() {
                     {activityCount > 0 && (
                       <span className="min-w-[18px] rounded-full bg-accent px-1.5 py-px text-center text-[0.714rem] font-semibold text-white">
                         {activityCount > 99 ? "99+" : activityCount}
+                      </span>
+                    )}
+                  </button>
+                  <button
+                    className={menuItemClass}
+                    onClick={() => {
+                      navigate({ to: "/inbox" });
+                      setProfileMenuOpen(false);
+                    }}
+                  >
+                    <Inbox size={14} className="text-text-dimmed" aria-hidden="true" />
+                    <span className="flex-1">Inbox</span>
+                    {inboxCount > 0 && (
+                      <span className="min-w-[18px] rounded-full bg-warning px-1.5 py-px text-center text-[0.714rem] font-semibold text-white">
+                        {inboxCount > 99 ? "99+" : inboxCount}
                       </span>
                     )}
                   </button>

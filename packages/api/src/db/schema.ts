@@ -511,6 +511,70 @@ export const conversationThreads = pgTable(
 );
 
 /**
+ * A bot's request for a human decision: approve a command, answer a question,
+ * review something. Content is immutable after creation; only the lifecycle
+ * columns change. PostgreSQL is authoritative, so an answer survives API,
+ * Redis and bot restarts and is delivered at least once through the outbox.
+ */
+export const botRequests = pgTable(
+  "bot_requests",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    botId: uuid("bot_id")
+      .notNull()
+      .references(() => bots.id, { onDelete: "cascade" }),
+    conversationId: uuid("conversation_id")
+      .notNull()
+      .references(() => conversations.id, { onDelete: "cascade" }),
+    threadId: uuid("thread_id").references(() => conversationThreads.id, {
+      onDelete: "set null",
+    }),
+    invocationId: uuid("invocation_id").references(() => botInvocations.id, {
+      onDelete: "set null",
+    }),
+    clientKey: varchar("client_key", { length: 255 }).notNull(),
+    kind: varchar("kind", { length: 20 }).notNull(),
+    title: varchar("title", { length: 300 }).notNull(),
+    body: text("body"),
+    details: jsonb("details").$type<Record<string, unknown>>(),
+    responseSpec: jsonb("response_spec")
+      .$type<Record<string, unknown>>()
+      .notNull(),
+    orderGroup: varchar("order_group", { length: 255 }),
+    audienceUserId: uuid("audience_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    status: varchar("status", { length: 20 }).notNull().default("open"),
+    answer: jsonb("answer").$type<Record<string, unknown>>(),
+    answeredBy: uuid("answered_by").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    answeredAt: timestamp("answered_at", { withTimezone: true }),
+    deliveredAt: timestamp("delivered_at", { withTimezone: true }),
+    deliveryApplied: boolean("delivery_applied"),
+    deliveryNote: varchar("delivery_note", { length: 500 }),
+    cancelReason: varchar("cancel_reason", { length: 500 }),
+    expiresAt: timestamp("expires_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (t) => [
+    uniqueIndex("bot_requests_bot_client_key_idx").on(t.botId, t.clientKey),
+    index("bot_requests_conversation_status_idx").on(t.conversationId, t.status),
+    index("bot_requests_bot_status_idx").on(t.botId, t.status),
+    index("bot_requests_audience_status_idx").on(t.audienceUserId, t.status),
+    index("bot_requests_invocation_idx").on(t.invocationId),
+    index("bot_requests_open_expiry_idx")
+      .on(t.expiresAt)
+      .where(sql`${t.status} = 'open' AND ${t.expiresAt} IS NOT NULL`),
+  ],
+);
+
+/**
  * PostgreSQL is authoritative for attachment ownership and lifecycle. The
  * object-store coordinates below are private implementation details and must
  * never be serialized into messages, events, webhooks, or logs.

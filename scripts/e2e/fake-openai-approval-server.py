@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 import threading
 import time
@@ -29,6 +30,14 @@ APPROVAL_EVIDENCE = (
     f"Command required approval ({APPROVAL_REASON_MARKER}) "
     "and was approved by the user."
 )
+# Hermes with named execution targets names the target inside the parentheses.
+_APPROVAL_NOTE = re.compile(
+    r"Command required approval \(" + re.escape(APPROVAL_REASON_MARKER)
+    + r"(?: \[execution target: '(?P<target>[^']*)'; backend: (?P<backend>[^\]]+)\])?"
+    + r"\) and was approved by the user\."
+)
+# Set by --execution-target: the terminal call is sent to this named target.
+EXECUTION_TARGET: str | None = None
 FINAL_MESSAGE = "Hermes approval UI E2E completed after approval."
 CLARIFY_QUESTION = "Which verification checks should Hermes record?"
 CLARIFY_CHOICES = ["Unit tests", "Typecheck", "Real-stack E2E"]
@@ -125,7 +134,12 @@ def _tool_result_succeeded(message: dict[str, Any]) -> bool:
         return False
     if result.get("error") not in {None, ""}:
         return False
-    if result.get("approval") != APPROVAL_EVIDENCE:
+    note = _APPROVAL_NOTE.fullmatch(str(result.get("approval") or ""))
+    if note is None:
+        return False
+    if EXECUTION_TARGET is not None and (
+        result.get("target") != EXECUTION_TARGET or note.group("target") != EXECUTION_TARGET
+    ):
         return False
     output = result.get("output")
     if not isinstance(output, str):
@@ -180,7 +194,10 @@ def completion_for(payload: dict[str, Any]) -> dict[str, Any]:
                         "type": "function",
                         "function": {
                             "name": "terminal",
-                            "arguments": json.dumps({"command": APPROVAL_COMMAND}),
+                            "arguments": json.dumps({
+                                "command": APPROVAL_COMMAND,
+                                **({"execution_target": EXECUTION_TARGET} if EXECUTION_TARGET else {}),
+                            }),
                         },
                     }
                 ],
@@ -359,7 +376,10 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=18081)
+    parser.add_argument("--execution-target", default=None)
     args = parser.parse_args()
+    global EXECUTION_TARGET
+    EXECUTION_TARGET = args.execution_target or None
 
     server = ThreadingHTTPServer((args.host, args.port), Handler)
     print(
