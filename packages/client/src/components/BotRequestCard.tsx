@@ -19,6 +19,13 @@ const openCardClass =
   "min-w-0 flex-1 rounded-lg border border-l-3 border-border border-l-warning bg-elevated/60 px-4.5 py-4 text-[0.929rem] text-text-secondary";
 
 /**
+ * `stack`: a standalone list such as the Inbox. `timeline`: a row inside a
+ * message list, indented like message content so it reads as part of the
+ * conversation.
+ */
+export type BotRequestCardLayout = "stack" | "timeline";
+
+/**
  * One bot request, rendered from its PostgreSQL row. Used inline in threads
  * and channels and in the Inbox, so it never depends on tool activity.
  */
@@ -27,6 +34,7 @@ export function BotRequestCard({
   blocked = false,
   showContext = false,
   onOpenContext,
+  layout = "stack",
 }: {
   request: BotRequestPublic;
   /** An earlier request in the same order group must be answered first. */
@@ -34,8 +42,12 @@ export function BotRequestCard({
   /** Inbox: show where the request was asked and link back to it. */
   showContext?: boolean;
   onOpenContext?: () => void;
+  layout?: BotRequestCardLayout;
 }) {
   if (request.status !== "open") {
+    if (layout === "timeline") {
+      return <ResolvedBotRequestTimelineRow request={request} />;
+    }
     return (
       <ResolvedBotRequestRow
         request={request}
@@ -44,13 +56,21 @@ export function BotRequestCard({
       />
     );
   }
-  return (
+  const card = (
     <OpenBotRequestCard
       request={request}
       blocked={blocked}
       showContext={showContext}
       onOpenContext={onOpenContext}
     />
+  );
+  if (layout !== "timeline") return card;
+  // Avatar-width gutter, so the card lines up with message text.
+  return (
+    <div data-testid="bot-request-timeline-item" className="flex gap-2.5 px-5 py-1.5">
+      <div aria-hidden="true" className="w-8 shrink-0" />
+      <div className="min-w-0 flex-1">{card}</div>
+    </div>
   );
 }
 
@@ -476,6 +496,73 @@ function answerSummary(request: BotRequestPublic) {
   return `Answered “${boundText(answer.text ?? "", 160)}”`;
 }
 
+/**
+ * A resolved request in a message list: an icon in the avatar gutter, then
+ * the question and its outcome as a quoted pair. It sits where it was
+ * resolved, so newer messages follow it.
+ */
+function ResolvedBotRequestTimelineRow({ request }: { request: BotRequestPublic }) {
+  const outcome = botRequestOutcome(request);
+  const Icon = resolvedIcon(request, outcome.tone);
+  const command = detailString(request.details, "command", 400);
+  const asker = request.conversationType === "group" ? `${request.botName} · ` : "";
+  const fullAnswer = request.answer?.text;
+  return (
+    <div
+      data-testid="bot-request-resolved"
+      data-layout="timeline"
+      data-kind={request.kind}
+      data-status={request.status}
+      data-request-id={request.id}
+      className="group/request flex gap-2.5 px-5 py-1 transition-colors duration-100 hover:bg-white/[0.025]"
+    >
+      <div className="flex w-8 shrink-0 justify-center pt-[0.2em]">
+        <Icon size={15} aria-hidden="true" className={resolvedIconClass(outcome.tone)} />
+      </div>
+      <div className="min-w-0 flex-1 border-l-2 border-border pl-3 text-[0.857rem] leading-snug">
+        <div className="break-words text-text-muted">
+          {asker && <span className="text-text-dimmed">{asker}</span>}
+          <span className="font-medium text-text-secondary">
+            {request.kind === "approval" ? request.title : boundText(request.title, 200)}
+          </span>
+        </div>
+        {command && (
+          <code
+            className="mt-0.5 block truncate font-mono text-[0.714rem] text-text-dimmed"
+            title={command}
+          >
+            {command}
+          </code>
+        )}
+        <div
+          data-testid="bot-request-outcome"
+          title={fullAnswer && fullAnswer.length > 160 ? fullAnswer : undefined}
+          className={`mt-0.5 break-words ${
+            outcome.tone === "denied" ? "text-error-light" : "text-text-dimmed"
+          }`}
+        >
+          {outcome.text}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function resolvedIcon(
+  request: BotRequestPublic,
+  tone: ReturnType<typeof botRequestOutcome>["tone"],
+) {
+  if (request.status === "expired") return Clock3;
+  if (request.status === "cancelled") return CircleSlash;
+  return tone === "denied" ? X : Check;
+}
+
+function resolvedIconClass(tone: ReturnType<typeof botRequestOutcome>["tone"]) {
+  if (tone === "denied") return "text-error-bright";
+  if (tone === "ok") return "text-text-secondary";
+  return "text-text-dimmed";
+}
+
 function ResolvedBotRequestRow({
   request,
   showContext,
@@ -486,14 +573,7 @@ function ResolvedBotRequestRow({
   onOpenContext?: () => void;
 }) {
   const outcome = botRequestOutcome(request);
-  const Icon =
-    request.status === "expired"
-      ? Clock3
-      : request.status === "cancelled"
-        ? CircleSlash
-        : outcome.tone === "denied"
-          ? X
-          : Check;
+  const Icon = resolvedIcon(request, outcome.tone);
   const command = detailString(request.details, "command", 400);
   return (
     <div
@@ -508,13 +588,7 @@ function ResolvedBotRequestRow({
         <Icon
           size={15}
           aria-hidden="true"
-          className={`mt-[0.2em] shrink-0 ${
-            outcome.tone === "denied"
-              ? "text-error-bright"
-              : outcome.tone === "ok"
-                ? "text-text-secondary"
-                : "text-text-dimmed"
-          }`}
+          className={`mt-[0.2em] shrink-0 ${resolvedIconClass(outcome.tone)}`}
         />
         <div className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-2">
           <span className="min-w-0 break-words font-medium text-text-secondary">

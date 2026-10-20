@@ -1,7 +1,15 @@
 import { isAuthenticated } from "../lib/auth-identity";
 import { useAuthStore } from "../stores/auth";
 import { mentionsName, type MentionNames } from "../lib/remark-mentions";
-import { useRef, useEffect, useCallback, useMemo, useLayoutEffect, useState } from "react";
+import {
+  Fragment,
+  useRef,
+  useEffect,
+  useCallback,
+  useMemo,
+  useLayoutEffect,
+  useState,
+} from "react";
 import { flushSync } from "react-dom";
 import { InputBar, type InputSendResult } from "./InputBar";
 import { Markdown } from "./Markdown";
@@ -13,7 +21,10 @@ import type { BotAppearance, ChatMessage } from "@thechat/shared";
 import type { ActiveHermesInvocationProgress } from "../lib/hermes-progress";
 import type { MentionUser } from "./MentionList";
 import { HermesProgressInline } from "./HermesProgressInline";
-import { BotRequestsInline } from "./BotRequestsInline";
+import {
+  BotRequestTimelineItems,
+  useBotRequestTimeline,
+} from "./BotRequestTimeline";
 import type { VaultUnlockCallback } from "./HermesVaultUnlock";
 import type { HermesSlashCommand } from "../lib/hermes-slash-commands";
 import { MessageSendError } from "./MessageSendError";
@@ -43,7 +54,10 @@ interface HermesDmChatViewProps {
     content: string,
     attachmentIds?: string[],
   ) => InputSendResult | Promise<InputSendResult>;
-  /** Where inline bot request cards come from; omit to show none. */
+  /**
+   * Where bot request rows come from; omit to show none. Rows sit in the
+   * message timeline at the time they were asked.
+   */
   requestScope?: { conversationId: string; threadId: string | null };
   onStop?: () => void;
   onVaultUnlock?: VaultUnlockCallback;
@@ -136,6 +150,12 @@ export function HermesDmChatView({
   }, [progressInvocations, typingSuppressedUserIds, typingUsers]);
   const hasLiveActivity =
     progressInvocations.length > 0 || visibleTypingNames.length > 0;
+  const requestTimeline = useBotRequestTimeline({
+    scope: requestScope,
+    messages,
+    hasOlderMessages,
+    enabled: !loading,
+  });
 
   const messageScrollSignature = useMemo(
     () => chatMessageWindowSignature(messages),
@@ -384,52 +404,61 @@ export function HermesDmChatView({
           {!loading && messages.length === 0 && (
             <div className="flex flex-1 flex-col items-center justify-center text-[1rem] text-text-dimmed">No messages yet. Start the conversation!</div>
           )}
-          {messages.map((msg, index) => (
-            <SharedChatMessage
-              key={msg.id}
-              message={msg}
-              merged={
-                shouldMergeChatMessage(messages[index - 1], msg) &&
-                !hasInterveningHermesEvent(
-                  messages[index - 1],
-                  msg,
-                  progressInvocations,
-                )
-              }
-              mentionsYou={mentionsYou(msg)}
-              onSetReaction={onSetReaction}
-            >
-              {msg.content && (
-                <Markdown
-                  content={msg.content}
-                  mentions={mentionNames}
-                  defer={shouldDeferFormatting(msg.id)}
-                  deferDelayMs={
-                    shouldDeferFormatting(msg.id)
-                      ? deferredMarkdownDelayMs(messages.length, index)
-                      : 0
-                  }
-                  onDeferredRender={
-                    shouldDeferFormatting(msg.id)
-                      ? () => handleDeferredMarkdownRender(msg.id)
-                      : undefined
-                  }
+          {messages.map((msg, index) => {
+            const requestsBefore = requestTimeline.beforeMessage.get(msg.id);
+            return (
+              <Fragment key={msg.id}>
+                <BotRequestTimelineItems
+                  requests={requestsBefore}
+                  blocked={requestTimeline.blocked}
                 />
-              )}
-            </SharedChatMessage>
-          ))}
+                <SharedChatMessage
+                  message={msg}
+                  merged={
+                    !requestsBefore &&
+                    shouldMergeChatMessage(messages[index - 1], msg) &&
+                    !hasInterveningHermesEvent(
+                      messages[index - 1],
+                      msg,
+                      progressInvocations,
+                    )
+                  }
+                  mentionsYou={mentionsYou(msg)}
+                  onSetReaction={onSetReaction}
+                >
+                  {msg.content && (
+                    <Markdown
+                      content={msg.content}
+                      mentions={mentionNames}
+                      defer={shouldDeferFormatting(msg.id)}
+                      deferDelayMs={
+                        shouldDeferFormatting(msg.id)
+                          ? deferredMarkdownDelayMs(messages.length, index)
+                          : 0
+                      }
+                      onDeferredRender={
+                        shouldDeferFormatting(msg.id)
+                          ? () => handleDeferredMarkdownRender(msg.id)
+                          : undefined
+                      }
+                    />
+                  )}
+                </SharedChatMessage>
+              </Fragment>
+            );
+          })}
           <HermesProgressInline
             invocations={progressInvocations}
             botAppearances={botAppearances}
             onVaultUnlock={onVaultUnlock}
             onStop={onStop}
           />
-          {requestScope && (
-            <BotRequestsInline
-              conversationId={requestScope.conversationId}
-              threadId={requestScope.threadId}
-            />
-          )}
+          {/* Requests asked after the newest message, usually by the run in
+              progress. Once the bot replies they move above that reply. */}
+          <BotRequestTimelineItems
+            requests={requestTimeline.trailing}
+            blocked={requestTimeline.blocked}
+          />
           {visibleTypingNames.length > 0 && (
             <div className="animate-pulse px-5 py-1 pb-2 text-[0.786rem] text-text-dimmed">
               {visibleTypingNames.join(", ")} {visibleTypingNames.length === 1 ? "is" : "are"} typing...

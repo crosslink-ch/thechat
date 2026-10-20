@@ -90,7 +90,7 @@ export function HermesProgressInline({
       {invocations.map(({ invocation, events }) => {
         const invocationEvents = [...events].sort(compareEvents);
         // Open requests this run is blocked on. The cards themselves render
-        // from request rows (BotRequestsInline), not from progress events.
+        // from request rows (BotRequestTimeline), not from progress events.
         const openRequests = Object.values(requestsById).filter(
           (request) =>
             request.invocationId === invocation.id && request.status === "open",
