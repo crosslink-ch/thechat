@@ -153,6 +153,7 @@ export function registerGlobalWsHandlers(
     ) {
       fireNotification(msg.senderName, notificationBodyPreview(msg.content), {
         dedupeKey: `message:${msg.id}`,
+        coveredByBackgroundPush: true,
       });
     }
   };

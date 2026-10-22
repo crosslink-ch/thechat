@@ -20,6 +20,8 @@ import { botRuntimeRoutes } from "./bot-runtime";
 import { attachmentRoutes } from "./attachments";
 import { activityRoutes } from "./activity";
 import { botRequestRoutes, inboxRoutes } from "./bot-requests";
+import { pushRoutes } from "./push";
+import { webPushConfig } from "./push/config";
 import { initObservability, shutdownObservability, withSpan } from "./observability";
 import { log } from "./logging";
 import { getQueueClient, closeQueueClient, closeQueueDatabase } from './async/queue';
@@ -54,6 +56,8 @@ function installLoopbackOnlyE2EGuard() {
 }
 
 installLoopbackOnlyE2EGuard();
+// Fail at startup, not on the first notification, if Web Push is misconfigured.
+webPushConfig();
 
 await initObservability("thechat-api");
 await getQueueClient();
@@ -77,6 +81,7 @@ const app = new Elysia()
   .use(botRuntimeRoutes)
   .use(botRequestRoutes)
   .use(inboxRoutes)
+  .use(pushRoutes)
   .use(inviteRoutes)
   .use(botWorkspaceInviteRoutes)
   .use(mcpRoutes)

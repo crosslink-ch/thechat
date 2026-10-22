@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import { sql } from "drizzle-orm";
 import { fromDrizzle } from "pg-boss";
 import { activeTraceContext } from "../observability";
-import { getQueueClient, QUEUES, type Executor } from "./queue";
+import { getQueueClient, QUEUES, type Executor, type QueueId } from "./queue";
 import type { QueueCommand, QueuedJob } from "./types";
 /** Stable UUID from a logical job key, preserved across cutover and redelivery. */
 export function queueJobId(key: string) {
@@ -10,6 +10,8 @@ export function queueJobId(key: string) {
   return `${h.slice(0, 8)}-${h.slice(8, 12)}-5${h.slice(13, 16)}-a${h.slice(17, 20)}-${h.slice(20, 32)}`;
 }
 export class PgBossAsyncBus {
+  /** Named-job commands for one pg-boss queue: bot dispatch unless told otherwise. */
+  constructor(private readonly queue: QueueId = QUEUES.bots) {}
   async enqueue<T>(command: QueueCommand<T>, tx: Executor): Promise<QueuedJob> {
     const boss = await getQueueClient();
     const id = queueJobId(command.jobId);
@@ -19,7 +21,7 @@ export class PgBossAsyncBus {
       traceContext: activeTraceContext() ?? command.message.traceContext,
     };
     const sent = await boss.send(
-      QUEUES.bots,
+      this.queue,
       { name: command.name, message },
       {
         id,
@@ -33,10 +35,14 @@ export class PgBossAsyncBus {
     );
     if (
       !sent &&
-      !(await boss.findJobs(QUEUES.bots, { id, db: fromDrizzle(tx, sql) }))
+      !(await boss.findJobs(this.queue, { id, db: fromDrizzle(tx, sql) }))
         .length
     )
-      throw Error("Bot dispatch was not durably inserted");
+      throw Error(
+        this.queue === QUEUES.bots
+          ? "Bot dispatch was not durably inserted"
+          : `${this.queue} job was not durably inserted`,
+      );
     return {
       queue: command.queue,
       name: command.name,

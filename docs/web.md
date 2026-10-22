@@ -126,5 +126,6 @@ recorded. Test failures report statuses/booleans rather than secret values.
 The suite uses actual browser login and server-backed conversation state, not a
 Tauri mock or injected user store. Device profiles and short viewport probes are
 emulation, not proof of a physical phone's on-screen keyboard. Complete a real
-phone playtest before production rollout. Offline storage, installable PWA and
-background web push are outside this initial scope.
+phone playtest before production rollout. Offline storage is outside this
+scope. Background notifications and the installable web app are covered in
+[web-push.md](web-push.md).

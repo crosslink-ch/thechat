@@ -1,10 +1,12 @@
 import type { PgBoss } from "pg-boss";
-import { createQueueClient, QUEUES, queueConfig } from "./queue";
+import { createQueueClient, QUEUES, queueConfig, type QueueId } from "./queue";
 import { contextFromTraceContext, withSpan } from "../observability";
 import { log } from "../logging";
 import type { AsyncJobHandler, AsyncMessage, QueueName } from "./types";
 export interface AsyncWorkerRuntimeOptions {
   concurrency?: number;
+  /** pg-boss queue of named-job commands to consume (default: bot dispatch). */
+  queue?: QueueId;
 }
 export class AsyncWorkerRuntime {
   private boss: PgBoss | undefined;
@@ -15,6 +17,7 @@ export class AsyncWorkerRuntime {
     return this;
   }
   async start(_queueNames: QueueName[]) {
+    const queue = this.options.queue ?? QUEUES.bots;
     const boss = createQueueClient({ worker: true });
     await boss.start();
     this.boss = boss;
@@ -29,19 +32,24 @@ export class AsyncWorkerRuntime {
         pollingIntervalSeconds: number;
       }
     >(
-      QUEUES.bots,
+      queue,
       {
         includeMetadata: true,
         perJobResults: true,
         batchSize: 1,
         localConcurrency:
-          this.options.concurrency ?? queueConfig.concurrency[QUEUES.bots],
+          this.options.concurrency ?? queueConfig.concurrency[queue],
         pollingIntervalSeconds: 0.5,
       },
       async ([job]) => {
         const handler = this.handlers.get(job.data.name);
         try {
-          if (!handler) throw Error("Missing bot dispatch handler");
+          if (!handler)
+            throw Error(
+              queue === QUEUES.bots
+                ? "Missing bot dispatch handler"
+                : `Missing ${queue} handler`,
+            );
           await withSpan(
             "async.worker.handle",
             { "messaging.system": "pg-boss", "async.job.name": job.data.name },
@@ -72,11 +80,11 @@ export class AsyncWorkerRuntime {
           log.warn(
             {
               component: "pg-boss",
-              queue: QUEUES.bots,
+              queue,
               jobId: job.id,
               errorType,
             },
-            "Bot dispatch failed",
+            queue === QUEUES.bots ? "Bot dispatch failed" : "Queued job failed",
           );
           return [{ id: job.id, status: "failed", output: { errorType } }];
         }

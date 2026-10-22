@@ -36,6 +36,11 @@ export interface PlatformServices {
   notifications: {
     permitDelivery(): Promise<boolean>;
     send(title: string, body: string): void | Promise<void>;
+    /**
+     * True while background (Web Push) notifications are on for this device.
+     * The server then notifies about messages, so the page must not as well.
+     */
+    backgroundPushActive?(): boolean;
   };
   localConversations: { list(): Promise<Conversation[]> } | null;
   nativeFiles: {

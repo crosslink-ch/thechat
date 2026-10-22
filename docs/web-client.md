@@ -38,7 +38,7 @@ The native `THECHAT_BACKEND_URL` setting still controls desktop builds. It inten
 
 Each executable Vite config resolves `#platform-shell` and `#platform-services` to its own implementations. The shared package typechecks against its own `platform/contracts.ts` and ambient module declarations, never TS paths to an app. Desktop and web implementations independently satisfy the same contracts. The parsed and emitted browser module graph excludes all Tauri SDK imports as well as the legacy local tool runner, provider OAuth, MCP initialization and updater. Preferences use the explicit, allowlisted UI preference adapter (`ui_font_size` and account-scoped `active_workspace_id`), never a generic fake Tauri invoke.
 
-Browser attachments keep the existing presigned upload/download path. Clipboard uses the existing browser API. Browser notifications can be enabled by an explicit Settings action and run only while the page is open; no background push/service worker is registered. No offline authentication cache is provided.
+Browser attachments keep the existing presigned upload/download path. Clipboard uses the existing browser API. Notifications are turned on by an explicit Settings or prompt action. The service worker (`/sw.js`) delivers background Web Push when TheChat is closed and shows in-page notifications on phones; it caches nothing. See [background notifications](web-push.md). No offline authentication cache is provided.
 
 The frontend unit/build checks do not substitute for real cookie-backend, browser-engine, mobile-geometry and two-account end-to-end acceptance. See [web setup and verification](web.md) for the integrated runtime contract and `pnpm test:e2e:web`.
 
