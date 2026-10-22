@@ -15,6 +15,9 @@ import {
 } from "./registry";
 import { logDomainEvent } from "./log";
 import { attachmentsByMessageIds } from "../attachments/public";
+import { schedulePushNotifications } from "../push/jobs";
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export function createChatMessageSentHandler(): DomainEventHandler<ChatMessageSentV1> {
   return {
@@ -22,6 +25,16 @@ export function createChatMessageSentHandler(): DomainEventHandler<ChatMessageSe
     version: CHAT_MESSAGE_SENT_EVENT_VERSION,
     parse: parseChatMessageSentV1,
     async handle(event) {
+      // Idempotent per message, so an outbox retry never notifies twice. A
+      // scheduling failure retries the event like any other side effect.
+      await schedulePushNotifications({
+        type: "message",
+        messageId: event.payload.messageId,
+        // Bot messages are caused by the agent run they answer.
+        ...(event.actor?.type === "bot" && event.causationId && UUID.test(event.causationId)
+          ? { invocationId: event.causationId }
+          : {}),
+      });
       if (event.payload.messageKind === "system_failure") {
         logDomainEvent("info", "domain_event.message_automation_suppressed", event, {
           reason: "system_failure",

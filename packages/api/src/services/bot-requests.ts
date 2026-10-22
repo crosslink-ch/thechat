@@ -36,6 +36,7 @@ import {
 } from "../db/schema";
 import { enqueueDomainEvent } from "../events/outbox";
 import { publishWsEventToUsers } from "../realtime";
+import { schedulePushNotificationsSafely } from "../push/jobs";
 import { createOrGetDm } from "./conversations";
 import { requireConversationMutationAccess } from "./conversation-mutation-access";
 import { ServiceError } from "./errors";
@@ -714,6 +715,7 @@ export async function createBotRequest(
     };
   }
   await publishBotRequestUpdate(insertedId);
+  await schedulePushNotificationsSafely({ type: "bot_request", requestId: insertedId });
   return { request: (await loadBotRequestBotView(insertedId))!, created: true };
 }
 

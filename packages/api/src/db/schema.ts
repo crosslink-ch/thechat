@@ -781,6 +781,64 @@ export const apikey = pgTable(
   ]
 );
 
+/**
+ * One Web Push subscription per browser. It belongs to the exact signed-in
+ * session that registered it: logging out (or the session expiring) removes the
+ * device, so a shared browser never receives a previous account's messages.
+ * The endpoint is a capability URL; it must never be logged.
+ */
+export const pushSubscriptions = pgTable(
+  "push_subscriptions",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    sessionId: text("session_id")
+      .notNull()
+      .references(() => session.id, { onDelete: "cascade" }),
+    endpoint: text("endpoint").notNull(),
+    p256dh: varchar("p256dh", { length: 128 }).notNull(),
+    auth: varchar("auth", { length: 64 }).notNull(),
+    // The VAPID public key the browser subscribed with. After a key rotation
+    // the push service rejects old subscriptions, so they are skipped.
+    applicationServerKey: varchar("application_server_key", {
+      length: 128,
+    }).notNull(),
+    userAgent: varchar("user_agent", { length: 255 }),
+    lastSuccessAt: timestamp("last_success_at", { withTimezone: true }),
+    failureCount: integer("failure_count").notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull()
+      .$onUpdate(() => new Date()),
+  },
+  (t) => [
+    uniqueIndex("push_subscriptions_endpoint_idx").on(t.endpoint),
+    index("push_subscriptions_user_idx").on(t.userId),
+    index("push_subscriptions_session_idx").on(t.sessionId),
+  ],
+);
+
+/** Account-wide choices for background (push) notifications. */
+export const notificationPreferences = pgTable("notification_preferences", {
+  userId: uuid("user_id")
+    .primaryKey()
+    .references(() => users.id, { onDelete: "cascade" }),
+  directMessages: boolean("direct_messages").notNull().default(true),
+  mentions: boolean("mentions").notNull().default(true),
+  agentReplies: boolean("agent_replies").notNull().default(true),
+  agentRequests: boolean("agent_requests").notNull().default(true),
+  showPreviews: boolean("show_previews").notNull().default(true),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .defaultNow()
+    .notNull()
+    .$onUpdate(() => new Date()),
+});
+
 // Shared Better Auth rate-limit state. Database storage keeps enforcement
 // consistent and atomic across API replicas.
 export const rateLimit = pgTable(

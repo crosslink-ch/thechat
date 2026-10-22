@@ -651,6 +651,44 @@ export type AppNotification =
   | { type: "workspace_invite"; invite: WorkspaceInvite }
   | { type: "bot_workspace_invite"; invite: BotWorkspaceInvite };
 
+// -- Background (Web Push) notification types --
+
+/** Account-wide choices for notifications delivered while TheChat is closed. */
+export interface NotificationPreferences {
+  directMessages: boolean;
+  mentions: boolean;
+  /** Replies from agents (bots) in direct conversations and tasks. */
+  agentReplies: boolean;
+  /** Approvals, questions and reviews that an agent is waiting on. */
+  agentRequests: boolean;
+  /** Show message text on the lock screen. */
+  showPreviews: boolean;
+}
+
+export type PushNotificationKind =
+  | "direct_message"
+  | "mention"
+  | "agent_reply"
+  | "agent_request"
+  | "test";
+
+/** The decrypted payload a service worker receives for one notification. */
+export interface PushNotificationPayload {
+  v: 1;
+  /** Stable per notification; the same event never shows twice. */
+  id: string;
+  kind: PushNotificationKind;
+  title: string;
+  body: string;
+  /** Notifications with the same tag replace each other (one per conversation). */
+  tag: string;
+  /** App-relative hash route to open, e.g. "#/open?conversationId=...". */
+  url: string;
+  timestamp: number;
+  /** Unread messages for the app icon badge, when known. */
+  badge?: number;
+}
+
 // -- Workspace Config Types --
 
 export type WorkspaceProvider = "openrouter" | "codex" | "glm" | "featherless";

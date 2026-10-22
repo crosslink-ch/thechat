@@ -26,6 +26,7 @@
   },
   "include": [
     "src",
+    "pwa",
     "../client/src/platform/*.d.ts",
     "../client/src/vite-env.d.ts"
   ]

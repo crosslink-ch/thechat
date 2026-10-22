@@ -96,7 +96,7 @@ describe("SettingsRoute", () => {
     expect(screen.queryByText("Integrations")).not.toBeInTheDocument();
     // The desktop shell contributes no browser notification section.
     expect(
-      screen.queryByRole("heading", { name: "Browser notifications" }),
+      screen.queryByRole("heading", { name: "Notifications" }),
     ).not.toBeInTheDocument();
     expect(
       await screen.findByText("No personal access tokens yet."),

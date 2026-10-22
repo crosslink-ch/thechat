@@ -127,6 +127,13 @@
       "when": 1792351012317,
       "tag": "0017_bot_requests",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1792684407997,
+      "tag": "0018_web_push_notifications",
+      "breakpoints": true
     }
   ]
 }

@@ -17,6 +17,7 @@ import { ScrollDebugRoute } from "./routes/scroll-debug";
 import { SettingsRoute } from "./routes/settings";
 import { WorkspaceManageRoute } from "./routes/workspace-manage";
 import { BotsManageRoute } from "./routes/bots-manage";
+import { OpenConversationRoute, validateOpenSearch } from "./routes/open";
 
 const rootRoute = createRootRoute({
   component: RootLayout,
@@ -95,6 +96,14 @@ const botsManageRoute = createRoute({
   component: BotsManageRoute,
 });
 
+// Where a tapped background notification lands (see the web service worker).
+const openRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/open",
+  validateSearch: validateOpenSearch,
+  component: OpenConversationRoute,
+});
+
 const scrollDebugRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/debug/scroll",
@@ -129,6 +138,7 @@ const routeTree = rootRoute.addChildren([
   settingsRoute,
   workspaceManageRoute,
   botsManageRoute,
+  openRoute,
   scrollDebugRoute,
   hermesDebugRoute,
 ]);
