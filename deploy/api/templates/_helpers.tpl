@@ -81,7 +81,7 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- fail "API and worker service accounts must be distinct" -}}
 {{- end -}}
 {{- $env := .Values.env | default dict -}}
-{{- $reservedEnvNames := list "AWS_ACCESS_KEY_ID" "AWS_SECRET_ACCESS_KEY" "AWS_SESSION_TOKEN" "AWS_SECURITY_TOKEN" "AWS_PROFILE" "AWS_SHARED_CREDENTIALS_FILE" "AWS_CONFIG_FILE" "AWS_WEB_IDENTITY_TOKEN_FILE" "AWS_ROLE_ARN" "AWS_ROLE_SESSION_NAME" "AWS_CONTAINER_CREDENTIALS_FULL_URI" "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI" "AWS_CONTAINER_AUTHORIZATION_TOKEN" "AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE" "DATABASE_URL" "JWT_SECRET" "REDIS_URL" "SMTP_HOST" "SMTP_PORT" "SMTP_USER" "SMTP_PASS" "POSTMARK_API_TOKEN" -}}
+{{- $reservedEnvNames := list "AWS_ACCESS_KEY_ID" "AWS_SECRET_ACCESS_KEY" "AWS_SESSION_TOKEN" "AWS_SECURITY_TOKEN" "AWS_PROFILE" "AWS_SHARED_CREDENTIALS_FILE" "AWS_CONFIG_FILE" "AWS_WEB_IDENTITY_TOKEN_FILE" "AWS_ROLE_ARN" "AWS_ROLE_SESSION_NAME" "AWS_CONTAINER_CREDENTIALS_FULL_URI" "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI" "AWS_CONTAINER_AUTHORIZATION_TOKEN" "AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE" "DATABASE_URL" "JWT_SECRET" "REDIS_URL" "SMTP_HOST" "SMTP_PORT" "SMTP_USER" "SMTP_PASS" "POSTMARK_API_TOKEN" "WEB_PUSH_VAPID_PUBLIC_KEY" "WEB_PUSH_VAPID_PRIVATE_KEY" "WEB_PUSH_SUBJECT" -}}
 {{- range $key, $_ := $env -}}
 {{- $keyUpper := upper $key -}}
 {{- if or (regexMatch "^AWS_" $keyUpper) (has $keyUpper $reservedEnvNames) -}}
@@ -308,5 +308,22 @@ redis://{{ include "thechat-api.redisFullname" . }}.{{ .Release.Namespace }}.svc
     secretKeyRef:
       name: {{ .Values.postmarkSecret }}
       key: POSTMARK_API_TOKEN
+{{- end }}
+{{- if .Values.webPushSecret }}
+- name: WEB_PUSH_VAPID_PUBLIC_KEY
+  valueFrom:
+    secretKeyRef:
+      name: {{ .Values.webPushSecret }}
+      key: WEB_PUSH_VAPID_PUBLIC_KEY
+- name: WEB_PUSH_VAPID_PRIVATE_KEY
+  valueFrom:
+    secretKeyRef:
+      name: {{ .Values.webPushSecret }}
+      key: WEB_PUSH_VAPID_PRIVATE_KEY
+- name: WEB_PUSH_SUBJECT
+  valueFrom:
+    secretKeyRef:
+      name: {{ .Values.webPushSecret }}
+      key: WEB_PUSH_SUBJECT
 {{- end }}
 {{- end }}

@@ -3,6 +3,8 @@ import { services } from "#platform-services";
 type FireNotificationOptions = {
   dedupeKey?: string;
   dedupeMs?: number;
+  /** The server also sends this as a background push to subscribed devices. */
+  coveredByBackgroundPush?: boolean;
 };
 
 const DEFAULT_DEDUPE_MS = 5_000;
@@ -41,6 +43,9 @@ export async function fireNotification(
   options: FireNotificationOptions = {},
 ) {
   try {
+    if (options.coveredByBackgroundPush && services.notifications.backgroundPushActive?.()) {
+      return;
+    }
     const permitted = await services.notifications.permitDelivery();
     if (permitted) {
       const dedupeKey = options.dedupeKey ?? `${title}\u0000${body}`;

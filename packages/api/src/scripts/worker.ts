@@ -13,6 +13,7 @@ import {
   closeBotRequestExpirySweep,
   startBotRequestExpirySweep,
 } from "../bot-requests/expiry";
+import { closePushRuntime, startPushWorker } from "../push/jobs";
 
 const workerLog = log.child({ component: "worker" });
 
@@ -21,6 +22,7 @@ async function main() {
 
   try {
     await startBotWorker();
+    await startPushWorker();
     await startDomainEventRuntime();
     void startAttachmentCleanup();
     void startBotRequestExpirySweep();
@@ -34,6 +36,7 @@ async function main() {
       closeBotRequestExpirySweep(),
       closeDomainEventRuntime(),
       closeBotRuntime(),
+      closePushRuntime(),
     ]);
     await shutdownObservability();
   }
@@ -54,6 +57,7 @@ main().catch(async (error) => {
     closeBotRequestExpirySweep(),
     closeDomainEventRuntime(),
     closeBotRuntime(),
+    closePushRuntime(),
   ]);
   await shutdownObservability();
   process.exitCode = 1;

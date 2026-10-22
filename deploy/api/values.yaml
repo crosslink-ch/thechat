@@ -85,6 +85,13 @@ smtpSecret: ""
 # Set to "" to disable
 postmarkSecret: ""
 
+# Name of an existing Kubernetes Secret for background (Web Push) notifications
+# (optional). Expected keys: WEB_PUSH_VAPID_PUBLIC_KEY, WEB_PUSH_VAPID_PRIVATE_KEY,
+# WEB_PUSH_SUBJECT (mailto: or https: contact URL). Generate the key pair once
+# with `bunx web-push generate-vapid-keys`; rotating it invalidates every
+# browser subscription. Both the API and the worker read it. Set to "" to disable.
+webPushSecret: ""
+
 env:
   NODE_ENV: "production"
   THECHAT_BACKEND_PORT: "3000"

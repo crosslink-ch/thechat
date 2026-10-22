@@ -46,11 +46,13 @@
     "ioredis": "^5.10.1",
     "nodemailer": "^6.9.0",
     "postgres": "^3.4.8",
+    "web-push": "^3.6.7",
     "zod": "^4.3.6"
   },
   "devDependencies": {
     "@types/bun": "latest",
     "@types/nodemailer": "^6.4.0",
+    "@types/web-push": "^3.6.4",
     "drizzle-kit": "^0.31.9",
     "typescript": "~5.8.3"
   }

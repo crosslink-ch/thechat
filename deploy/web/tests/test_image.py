@@ -87,6 +87,31 @@ class StaticImageTests(unittest.TestCase):
             self.assertIn(b"https://thechat-api.pranexa.com", bundle)
             self.assertIn(b"wss://thechat-api.pranexa.com/ws", bundle)
             self.assertNotIn(b"http://localhost:3000", bundle)
+            # Installable web app: a real classic-script worker at the root scope,
+            # a manifest with the right type, and icons. None may be immutable,
+            # and a missing one must 404 instead of falling back to index.html.
+            sw_status, sw_headers, sw_body = get("/sw.js")
+            self.assertEqual(sw_status, 200)
+            self.assertIn("javascript", sw_headers["Content-Type"])
+            self.assertEqual(sw_headers["Cache-Control"], "no-cache")
+            self.assertIn(b"showNotification", sw_body)
+            self.assertNotIn(b"<!doctype html", sw_body.lower())
+            manifest_status, manifest_headers, manifest_body = get("/manifest.webmanifest")
+            self.assertEqual(manifest_status, 200)
+            self.assertIn("application/manifest+json", manifest_headers["Content-Type"])
+            self.assertEqual(manifest_headers["Cache-Control"], "no-cache")
+            manifest = json.loads(manifest_body)
+            self.assertEqual(manifest["display"], "standalone")
+            for icon in manifest["icons"]:
+                icon_status, icon_headers, icon_body = get(icon["src"])
+                self.assertEqual(icon_status, 200, icon["src"])
+                self.assertIn("image/png", icon_headers["Content-Type"], icon["src"])
+                self.assertTrue(icon_body.startswith(b"\x89PNG"), icon["src"])
+            self.assertEqual(get("/icons/apple-touch-icon.png")[0], 200)
+            missing_status, _, missing_body = get("/icons/missing.png")
+            self.assertEqual(missing_status, 404)
+            self.assertNotEqual(missing_body, index)
+            self.assertIn("manifest-src 'self'", get("/")[1]["Content-Security-Policy"])
             self.assertNotIn("immutable", get("/thechat.png")[1].get("Cache-Control", ""))
             self.assertNotIn("immutable", get("/assets/missing.js")[1].get("Cache-Control", ""))
             print(json.dumps({"image": image, "id": json.loads(docker("image", "inspect", image))[0]["Id"],
