@@ -1,6 +1,7 @@
 import type { BotAppearance } from "./bot-avatars";
 
 export * from "./bot-avatars";
+export * from "./secure-input";
 
 // -- Message Parts (rich message model) --
 
