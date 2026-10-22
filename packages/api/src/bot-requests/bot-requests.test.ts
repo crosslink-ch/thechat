@@ -510,7 +510,7 @@ describe("bot requests: lifecycle", () => {
   test("Hermes picks answers up from its poll until it acknowledges them", async () => {
     const f = await hermesFixture("Poll");
     const health = await req("GET", "/hermes-platform/health", undefined, f.bot.apiKey);
-    expect(health.body.capabilities).toEqual({ botRequests: 1 });
+    expect(health.body.capabilities).toEqual({ botRequests: 1, secureInput: 3 });
 
     const { body } = await req("POST", "/bot-requests", hermesApproval("poll-1"), f.bot.apiKey);
     const id = body.request.id as string;

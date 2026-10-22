@@ -742,7 +742,7 @@ function compactProgressEvents(
 }
 
 /**
- * Only the transient vault unlock still lives in the progress stream; it is
+ * Transient vault unlock and secure-input metadata live in the progress stream; each is
  * retained while its short expiry is live. Approvals and clarifications are
  * durable bot requests in PostgreSQL and never enter this store.
  */
@@ -753,18 +753,19 @@ function unresolvedInteractionRequestIds(
   const pending: BotInvocationProgressEventPublic[] = [];
   for (const event of [...events].sort(compareProgressEvents)) {
     if (
-      event.type === "vault.unlock.request" &&
+      (event.type === "vault.unlock.request" || event.type === "secure.input.request") &&
       typeof event.payload?.expiresAt === "number" &&
       event.payload.expiresAt > now
     ) {
       pending.push(event);
       continue;
     }
-    if (event.type !== "vault.unlock.resolved") continue;
+    if (event.type !== "vault.unlock.resolved" && event.type !== "secure.input.resolved") continue;
     const requestId = stringField(event.payload, "requestId");
     const sessionKey = stringField(event.payload, "sessionKey");
     const match = pending.find(
       (request) =>
+        request.type === event.type.replace(/resolved$/, "request") &&
         stringField(request.payload, "requestId") === requestId &&
         stringField(request.payload, "sessionKey") === sessionKey,
     );
@@ -774,15 +775,15 @@ function unresolvedInteractionRequestIds(
 }
 
 function interactionRequestIdentity(input: ProgressEventInput) {
-  if (input.type !== "vault.unlock.request") return null;
+  if (input.type !== "vault.unlock.request" && input.type !== "secure.input.request") return null;
   const requestId = stringField(input.payload, "requestId");
   return requestId ? `${input.type}:${requestId}` : null;
 }
 
 function interactionResolution(input: ProgressEventInput) {
-  if (input.type !== "vault.unlock.resolved") return null;
+  if (input.type !== "vault.unlock.resolved" && input.type !== "secure.input.resolved") return null;
   return {
-    requestType: "vault.unlock.request",
+    requestType: input.type.replace(/resolved$/, "request"),
     requestId: stringField(input.payload, "requestId"),
     sessionKey: stringField(input.payload, "sessionKey"),
     resolveAll: false,

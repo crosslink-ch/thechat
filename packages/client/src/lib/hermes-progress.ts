@@ -4,6 +4,7 @@ import type {
   BotRuntimeSnapshot,
 } from "@thechat/shared";
 import { deriveVaultUnlockStates } from "./hermes-vault-unlock";
+import { deriveSecureInputStates } from "./hermes-secure-input";
 
 export interface ActiveHermesProgress {
   invocations: ActiveHermesInvocationProgress[];
@@ -88,7 +89,7 @@ function selectActiveHermesProgress(
         .filter((invocation) => invocation.id !== displayInvocation.id)
         .filter((invocation) => {
           const events = eventsByInvocationId.get(invocation.id) ?? [];
-          return deriveVaultUnlockStates(events).some(
+          return [...deriveVaultUnlockStates(events), ...deriveSecureInputStates(events)].some(
             (state) => state.outcome === null,
           );
         })

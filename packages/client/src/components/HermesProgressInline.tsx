@@ -30,6 +30,8 @@ import { Avatar } from "./Avatar";
 import { buttonClass } from "./ui";
 import { HermesVaultUnlock, type VaultUnlockCallback } from "./HermesVaultUnlock";
 import { deriveVaultUnlockStates, type VaultUnlockState } from "../lib/hermes-vault-unlock";
+import { HermesSecureInput, type SecureInputCallback } from "./HermesSecureInput";
+import { deriveSecureInputStates, type SecureInputState } from "../lib/hermes-secure-input";
 import { useAuthStore } from "../stores/auth";
 
 type ToolCallPart = Extract<MessagePart, { type: "tool-call" }>;
@@ -49,7 +51,7 @@ type EventRow = {
   event: BotInvocationProgressEventPublic;
 };
 type VaultRow = {kind:"vault";key:string;state:VaultUnlockState};
-type ActivityRow = EventRow | VaultRow;
+type ActivityRow = EventRow | VaultRow | { kind: "secure"; key: string; state: SecureInputState };
 
 const MAX_VISIBLE_ROWS = 8;
 const MAX_UI_LABEL_CHARS = 4_000;
@@ -58,6 +60,7 @@ const MAX_UI_DETAIL_CHARS = 20_000;
 export function HermesProgressInline({
   invocations,
   onVaultUnlock,
+  onSecureInput,
   onStop,
   botAppearances,
 }: {
@@ -66,6 +69,7 @@ export function HermesProgressInline({
   botAppearances?: ReadonlyMap<string, BotAppearance>;
   onStop?: () => void;
   onVaultUnlock?: VaultUnlockCallback;
+  onSecureInput?: SecureInputCallback;
 }) {
   const self = useAuthStore(state=>state.user);
   const requestsById = useBotRequestsStore((state) => state.byId);
@@ -87,7 +91,7 @@ export function HermesProgressInline({
 
   return (
     <div className="py-1">
-      {invocations.map(({ invocation, events }) => {
+      {invocations.filter(({ invocation }) => !["completed", "failed", "cancelled"].includes(invocation.status)).map(({ invocation, events }) => {
         const invocationEvents = [...events].sort(compareEvents);
         // Open requests this run is blocked on. The cards themselves render
         // from request rows (BotRequestTimeline), not from progress events.
@@ -102,8 +106,11 @@ export function HermesProgressInline({
         const vaultStates = deriveVaultUnlockStates(invocationEvents,nowMs)
           .filter(state=>self?.type === "human" && state.request.requesterUserId === self.id);
         const needsVaultUnlock = vaultStates.some(state=>state.outcome === null);
-        const needsInteraction = needsApproval || needsClarification || needsVaultUnlock;
-        const rows = buildActivityRows(invocationEvents, vaultStates);
+        const secureStates = deriveSecureInputStates(invocationEvents, nowMs)
+          .filter(state => self?.type === "human" && state.request.requesterUserId === self.id);
+        const needsSecureInput = secureStates.some(state => state.outcome === null);
+        const needsInteraction = needsApproval || needsClarification || needsVaultUnlock || needsSecureInput;
+        const rows = buildActivityRows(invocationEvents, vaultStates, secureStates);
         const working = invocation.status === "running" && !needsInteraction;
         const appearance = botAppearanceFor(
           invocation.botUserId,
@@ -115,7 +122,7 @@ export function HermesProgressInline({
         // visible window; ordinary activity remains in event order.
         const hiddenPending = rows.filter(
           (row) =>
-            row.kind === "vault" && row.state.outcome === null &&
+            (row.kind === "vault" || row.kind === "secure") && row.state.outcome === null &&
             !visibleRows.includes(row),
         );
         visibleRows = [...hiddenPending, ...visibleRows];
@@ -127,7 +134,9 @@ export function HermesProgressInline({
             data-kind={rowKind(row)}
           >
 
-            {row.kind === "vault" ? (
+            {row.kind === "secure" ? (
+              <HermesSecureInput state={row.state} onResponse={onSecureInput} />
+            ) : row.kind === "vault" ? (
               <HermesVaultUnlock key={JSON.stringify([row.state.event.id,row.state.request])} state={row.state} onResponse={onVaultUnlock}/>
             ) : row.kind === "notice" ? (
               <NoticeEventRow event={row.event} />
@@ -155,7 +164,7 @@ export function HermesProgressInline({
           : null;
         const title = needsApproval
           ? "is waiting for your approval"
-          : needsClarification || needsVaultUnlock
+          : needsClarification || needsVaultUnlock || needsSecureInput
             ? "is waiting for your response"
           : invocation.status === "queued"
             ? "is queued"
@@ -253,11 +262,17 @@ function useNowTick(active: boolean) {
 function buildActivityRows(
   sortedEvents: BotInvocationProgressEventPublic[],
   vaultStates: VaultUnlockState[],
+  secureStates: SecureInputState[],
 ): ActivityRow[] {
   const rows: ActivityRow[] = [];
   const toolRowByCallId = new Map<string, EventRow>();
 
   for (const event of sortedEvents) {
+    if (event.type.startsWith("secure.input.")) {
+      const state = secureStates.find(state => state.event.id === event.id);
+      if (state) rows.push({ kind: "secure", key: event.id, state });
+      continue;
+    }
     if (event.type.startsWith("vault.unlock.")) {
       const state = vaultStates.find(state=>state.event.id === event.id);
       if (state) rows.push({kind:"vault",key:event.id,state});

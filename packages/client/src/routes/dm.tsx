@@ -7,6 +7,7 @@ import {
   useBotRuntime,
   useBotRuntimeCache,
   submitHermesVaultUnlock,
+  submitHermesSecureInput,
 } from "../hooks/useBotRuntime";
 import type { BotAppearance } from "@thechat/shared";
 import { useConversationThreads } from "../hooks/useConversationThreads";
@@ -607,6 +608,11 @@ export function DmRoute() {
             onVaultUnlock={async (event,response)=> {
               if (!isHermesDm || !isAuthenticated(token)) throw new Error("Vault unlock unavailable");
               await submitHermesVaultUnlock(event.invocationId,event.id,response,token);
+              invalidate(conversationId);
+            }}
+            onSecureInput={async (event, response) => {
+              if (!isHermesDm || !isAuthenticated(token)) throw new Error("Secure input unavailable");
+              await submitHermesSecureInput(event.invocationId, event.id, response, token);
               invalidate(conversationId);
             }}
             onStop={handleStopHermesTask}

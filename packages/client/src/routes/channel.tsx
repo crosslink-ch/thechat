@@ -10,6 +10,14 @@ import { usePersistConversationRead } from "../hooks/usePersistConversationRead"
 import { ChannelChatView } from "../components/ChannelChatView";
 import { wsEvents, type WsEvents } from "../lib/ws-events";
 import { botAppearanceFor } from "../lib/bot-appearance";
+import { isAuthenticated } from "../lib/auth-identity";
+import { selectHermesConversationProgress } from "../lib/hermes-progress";
+import {
+  useBotRuntime,
+  useBotRuntimeCache,
+  submitHermesSecureInput,
+  submitHermesVaultUnlock,
+} from "../hooks/useBotRuntime";
 
 export function ChannelRoute() {
   const { id: channelId } = useParams({ from: "/channel/$id" });
@@ -17,6 +25,22 @@ export function ChannelRoute() {
   const user = useAuthStore((s) => s.user);
   const members = useWorkspacesStore((s) => s.activeWorkspace?.members);
   const wsSendMessage = useWebSocketStore((s) => s.sendMessage);
+  const runtimeQuery = useBotRuntime(channelId, token, user?.type === "human");
+  const { invalidate, mergeInvocationUpdate, mergeProgressEvent } = useBotRuntimeCache();
+  // Channels display all threads, like their messages and bot request timeline.
+  // Only metadata is cached; the API filters private prompts to their requester.
+  const progress = useMemo(() => {
+    const runtime = runtimeQuery.data;
+    if (!runtime) return selectHermesConversationProgress(null);
+    const invocations = runtime.invocations.filter(run => run.conversationId === channelId);
+    const byId = new Map(invocations.map(run => [run.id, run]));
+    const events = runtime.events.filter(event => {
+      const run = byId.get(event.invocationId);
+      return event.conversationId === channelId && run?.botId === event.botId &&
+        run.threadId === event.threadId;
+    });
+    return selectHermesConversationProgress({ ...runtime, invocations, events });
+  }, [channelId, runtimeQuery.data]);
 
   const mentions = useMemo(
     () =>
@@ -56,6 +80,33 @@ export function ChannelRoute() {
   useEffect(() => {
     useConversationsStore.getState().markChannelRead(channelId);
   }, [channelId]);
+
+  useEffect(() => {
+    const onInvocation = ({ conversationId, invocation }: WsEvents["ws:bot_invocation_updated"]) => {
+      if (conversationId !== channelId || invocation.conversationId !== channelId) return;
+      mergeInvocationUpdate(channelId, invocation);
+    };
+    const onProgress = ({ conversationId, invocationId, event, invocation }: WsEvents["ws:bot_invocation_progress"]) => {
+      if (conversationId !== channelId || event.conversationId !== channelId ||
+          event.invocationId !== invocationId) return;
+      if (invocation && (invocation.conversationId !== channelId ||
+          invocation.id !== invocationId || invocation.botId !== event.botId ||
+          invocation.threadId !== event.threadId)) return;
+      mergeProgressEvent(channelId, event, invocation);
+    };
+    // This route only subscribes to its active channel: a cached snapshot can
+    // have missed a resolution while away, even inside the normal stale window.
+    invalidate(channelId);
+    const onAuthenticated = () => invalidate(channelId);
+    wsEvents.on("ws:bot_invocation_updated", onInvocation);
+    wsEvents.on("ws:bot_invocation_progress", onProgress);
+    wsEvents.on("ws:authenticated", onAuthenticated);
+    return () => {
+      wsEvents.off("ws:bot_invocation_updated", onInvocation);
+      wsEvents.off("ws:bot_invocation_progress", onProgress);
+      wsEvents.off("ws:authenticated", onAuthenticated);
+    };
+  }, [channelId, invalidate, mergeInvocationUpdate, mergeProgressEvent]);
 
   // Subscribe to WebSocket messages for this channel
   useEffect(() => {
@@ -129,6 +180,23 @@ export function ChannelRoute() {
           draftKey={composerDraftKey.channel(user?.id, channelId)}
           conversationId={channelId}
           token={token}
+          progressInvocations={progress.invocations}
+          onSecureInput={async (event, response) => {
+            if (!isAuthenticated(token) || user?.type !== "human" ||
+                event.conversationId !== channelId || event.payload?.requesterUserId !== user.id) {
+              throw new Error("Secure input unavailable");
+            }
+            await submitHermesSecureInput(event.invocationId, event.id, response, token);
+            invalidate(channelId);
+          }}
+          onVaultUnlock={async (event, response) => {
+            if (!isAuthenticated(token) || user?.type !== "human" ||
+                event.conversationId !== channelId || event.payload?.requesterUserId !== user.id) {
+              throw new Error("Vault unlock unavailable");
+            }
+            await submitHermesVaultUnlock(event.invocationId, event.id, response, token);
+            invalidate(channelId);
+          }}
         />
       </div>
     </div>
