@@ -15,6 +15,7 @@ import {
 import { ServiceError } from "../services/errors";
 import { resolveTokenToUser } from "../auth/middleware";
 import { vaultUnlockRequestSchema, vaultUnlockResolvedSchema } from "../services/vault-unlock";
+import { secureInputRequestSchema, secureInputResolvedSchema } from "../services/secure-input";
 import { listUndeliveredAnswersForBot } from "../services/bot-requests";
 
 const messageSchema = z.object({
@@ -59,6 +60,8 @@ const RETIRED_INTERACTION_PROGRESS_TYPES = new Set([
 const interactionProgressPayloadSchemas = {
   "vault.unlock.request": vaultUnlockRequestSchema,
   "vault.unlock.resolved": vaultUnlockResolvedSchema,
+  "secure.input.request": secureInputRequestSchema,
+  "secure.input.resolved": secureInputResolvedSchema,
 } as const;
 
 const progressSchema = z.object({
@@ -174,6 +177,15 @@ function requireHermesBot(platformBot: HermesPlatformBot | null, set: { status?:
 }
 
 export const hermesPlatformRoutes = new Elysia({ prefix: "/hermes-platform" })
+  .onRequest(({ request, set }) => {
+    if (new URL(request.url).pathname.endsWith("/progress")) set.headers["Cache-Control"] = "no-store";
+  })
+  .onError(({ request, set, code }) => {
+    if (!new URL(request.url).pathname.endsWith("/progress")) return;
+    set.headers["Cache-Control"] = "no-store";
+    set.status = code === "PARSE" || code === "VALIDATION" ? 400 : 500;
+    return { error: "Invalid progress input" };
+  })
   .derive(async ({ headers }) => ({
     platformBot: await resolveHermesPlatformBot(headers),
   }))
@@ -185,7 +197,7 @@ export const hermesPlatformRoutes = new Elysia({ prefix: "/hermes-platform" })
     ok: true,
     platform: "thechat",
     // Lets a gateway choose the request inbox over the retired progress cards.
-    capabilities: { botRequests: 1 },
+    capabilities: { botRequests: 1, secureInput: 3 },
     ownerUserId: platformBot?.ownerUserId ?? null,
     bot: platformBot ? { id: platformBot.id, userId: platformBot.userId, name: platformBot.name } : null,
   }))
@@ -247,7 +259,7 @@ export const hermesPlatformRoutes = new Elysia({ prefix: "/hermes-platform" })
     const parsed = progressSchema.safeParse(body);
     if (!parsed.success) {
       set.status = 400;
-      return { error: parsed.error.issues[0]?.message ?? "Invalid input" };
+      return { error: typeof body === "object" && body !== null && "type" in body && typeof body.type === "string" && body.type.startsWith("secure.input.") ? "Invalid secure input progress" : parsed.error.issues[0]?.message ?? "Invalid input" };
     }
     try {
       return await publishHermesPlatformProgress({

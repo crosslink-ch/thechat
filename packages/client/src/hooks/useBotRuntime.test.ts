@@ -25,6 +25,17 @@ vi.mock("../lib/api", () => ({
 }));
 
 describe("useBotRuntime", () => {
+  it("uses the v3 Eden memory-only response lane with a fixed failure", async () => {
+    const post = vi.fn().mockResolvedValue({ data: { ok: true, duplicate: false }, error: null });
+    const interactions = vi.fn().mockReturnValue({ "secure-input": { post } });
+    vi.mocked(api["bot-runtime"].invocations).mockReturnValue({ interactions } as any);
+    const response = { version: 3 as const, action: "cancel" as const };
+    await runtimeHooks.submitHermesSecureInput("invocation", "event", response, "token");
+    expect(interactions).toHaveBeenCalledWith({ eventId: "event" });
+    expect(post).toHaveBeenCalledWith(response, { headers: { authorization: "Bearer token" } });
+    post.mockResolvedValue({ data: null, error: { value: { error: "DO_NOT_REFLECT" } } });
+    await expect(runtimeHooks.submitHermesSecureInput("invocation", "event", response, "token")).rejects.toThrow("Could not deliver the secure input response");
+  });
   it("uses the dedicated transient Eden vault route and never reflects errors", async () => {
     const post = vi.fn().mockResolvedValue({data:{ok:true,duplicate:false},error:null});
     const interactions = vi.fn().mockReturnValue({"vault-unlock":{post}});

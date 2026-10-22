@@ -103,6 +103,7 @@ const routes = [
   [`/bot-requests/${id}/answer`, "POST", 400],
   ["/inbox/", "GET", 200],
   [`/bot-runtime/invocations/${id}/interactions/${id}/vault-unlock`, "POST", 400],
+  [`/bot-runtime/invocations/${id}/interactions/${id}/secure-input`, "POST", 400],
   ["/attachments/", "POST", 400],
   ["/activity/", "GET", 200],
   [`/activity/conversations/${id}/read`, "POST", 400],
@@ -128,6 +129,7 @@ test("every protected surface rejects missing or forged CSRF context before auth
           method,
         );
         expect(response.status).toBe(403);
+        if (path.endsWith("/secure-input")) expect(response.headers.get("cache-control")).toBe("no-store");
       }
     }
     expect(lookup).not.toHaveBeenCalled();
