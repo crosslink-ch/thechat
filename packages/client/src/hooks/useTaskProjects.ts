@@ -16,7 +16,29 @@ async function fetchTaskProjects(conversationId: string, token: string | null) {
     .projects({ conversationId })
     .get(authHeaders(token));
   if (error) throw new Error(edenErrorMessage(error, "Failed to load projects"));
-  return data as TaskProjectPublic[];
+  return (data as unknown as WireTaskProject[]).map(normalizeProject);
+}
+
+/**
+ * Eden Treaty revives ISO timestamps in REST responses as `Date` objects,
+ * while WebSocket events carry plain strings. Normalize both to the shared
+ * string contract so the cache never holds mixed types.
+ */
+type WireTaskProject = Omit<TaskProjectPublic, "createdAt" | "updatedAt"> & {
+  createdAt: string | Date;
+  updatedAt: string | Date;
+};
+
+function toIsoString(value: string | Date) {
+  return value instanceof Date ? value.toISOString() : value;
+}
+
+export function normalizeProject(project: WireTaskProject): TaskProjectPublic {
+  return {
+    ...project,
+    createdAt: toIsoString(project.createdAt),
+    updatedAt: toIsoString(project.updatedAt),
+  };
 }
 
 /** Server-backed task projects for one conversation, kept live over WebSocket. */
@@ -69,7 +91,7 @@ export function useTaskProjects(
         .projects({ conversationId })
         .post({ name }, authHeaders(token));
       if (error) throw new Error(edenErrorMessage(error, "Could not create the project"));
-      const project = data as TaskProjectPublic;
+      const project = normalizeProject(data as unknown as WireTaskProject);
       upsert(project);
       return project;
     },
@@ -83,7 +105,7 @@ export function useTaskProjects(
         .projects({ conversationId })({ projectId })
         .patch({ name }, authHeaders(token));
       if (error) throw new Error(edenErrorMessage(error, "Could not rename the project"));
-      const project = data as TaskProjectPublic;
+      const project = normalizeProject(data as unknown as WireTaskProject);
       upsert(project);
       return project;
     },
@@ -108,7 +130,7 @@ export function useTaskProjects(
       conversationId: eventConversationId,
       project,
     }: WsEvents["ws:task_project_updated"]) => {
-      if (eventConversationId === conversationId) upsert(project);
+      if (eventConversationId === conversationId) upsert(normalizeProject(project));
     };
     const onDeleted = ({
       conversationId: eventConversationId,
@@ -146,6 +168,7 @@ function upsertProject(
     ? list.map((item) => (item.id === project.id ? project : item))
     : [...list, project];
   return next.sort(
-    (a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id),
+    (a, b) =>
+      Date.parse(a.createdAt) - Date.parse(b.createdAt) || a.id.localeCompare(b.id),
   );
 }
