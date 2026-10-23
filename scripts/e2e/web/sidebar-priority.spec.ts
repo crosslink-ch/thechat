@@ -71,14 +71,14 @@ test('Hermes DM collapses navigation before Tasks across resize and drawer inter
   await page.keyboard.press('Escape');
   await expect(page.getByRole('dialog')).toHaveCount(0);
   await expect(navToggle).toBeFocused();
-  await tasksPanel.getByRole('button', { name: /Review responsive layout/ }).click();
+  await tasksPanel.getByRole('button', { name: /^Review responsive layout/ }).click();
   await expect(scroller.getByText('Ready to work on: Review responsive layout.', { exact: true })).toBeVisible();
 
   await page.setViewportSize({ width: 390, height: 844 });
   await tasksToggle.click();
   await expect(page.getByRole('dialog', { name: 'Tasks and activity' })).toBeVisible();
   await page.screenshot({ path: info.outputPath('phone-tasks-drawer.png'), fullPage: true });
-  await tasksPanel.getByRole('button', { name: /Plan next release/ }).click();
+  await tasksPanel.getByRole('button', { name: /^Plan next release/ }).click();
   await expect(page.getByRole('dialog')).toHaveCount(0);
   await expect(scroller.getByText('Ready to work on: Plan next release.', { exact: true })).toBeVisible();
   await expect(tasksToggle).toBeFocused();

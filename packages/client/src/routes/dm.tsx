@@ -10,6 +10,7 @@ import {
 } from "../hooks/useBotRuntime";
 import type { BotAppearance } from "@thechat/shared";
 import { useConversationThreads } from "../hooks/useConversationThreads";
+import { useTaskProjects } from "../hooks/useTaskProjects";
 import { useConversationDetail } from "../hooks/useConversationDetail";
 import { useScopedCommands } from "../hooks/useScopedCommands";
 import { useWebSocketStore } from "../stores/websocket";
@@ -123,8 +124,18 @@ export function DmRoute() {
     loadMore: loadMoreThreads,
     createThread,
     renameThread,
+    moveThread,
+    deleteThread,
     touchThread,
   } = threadState;
+  const {
+    projects,
+    createProject,
+    renameProject,
+    deleteProject,
+  } = useTaskProjects(conversationId, token, isHermesDm);
+  // The project a new draft task will be filed under when it is first sent.
+  const [draftTaskProjectId, setDraftTaskProjectId] = useState<string | null>(null);
   const { mergeInvocationUpdate, mergeProgressEvent, invalidate } =
     useBotRuntimeCache();
   const generalThreadActive = isHermesDm && !draftTaskActive && activeThreadId === null;
@@ -358,13 +369,26 @@ export function DmRoute() {
     }
   }, [activeThreadId, isHermesDm, threads, threadsLoading]);
 
-  const handleCreateThread = useCallback(() => {
+  const handleCreateThread = useCallback((projectId: string | null = null) => {
     if (!isHermesDm || draftPersistingRef.current) return;
     setDraftSendError(null);
     setActiveThreadId(null);
     setDraftTaskActive(true);
+    setDraftTaskProjectId(projectId);
     setDraftComposerRevision((revision) => revision + 1);
   }, [isHermesDm]);
+
+  const handleDeleteThread = useCallback(async (threadId: string) => {
+    await deleteThread(threadId);
+    if (activeThreadId === threadId) setActiveThreadId(null);
+  }, [activeThreadId, deleteThread]);
+
+  // Deleting the project a draft was aimed at files the draft nowhere.
+  useEffect(() => {
+    if (draftTaskProjectId && !projects.some((project) => project.id === draftTaskProjectId)) {
+      setDraftTaskProjectId(null);
+    }
+  }, [draftTaskProjectId, projects]);
 
   const handleSelectThread = useCallback((threadId: string | null) => {
     if (draftPersistingRef.current) return;
@@ -428,6 +452,7 @@ export function DmRoute() {
       const thread = await createThread({
         botId: otherParticipant?.bot?.id,
         ...(parseHermesSlashCommand(content) ? {} : { title: titleFromMessage(content) }),
+        ...(draftTaskProjectId ? { projectId: draftTaskProjectId } : {}),
       });
       const isCurrentDraft =
         draftPersistingRef.current === persistAttempt &&
@@ -479,6 +504,7 @@ export function DmRoute() {
     addOptimisticSentMessage,
     conversationId,
     createThread,
+    draftTaskProjectId,
     isHermesDm,
     otherParticipant?.bot?.id,
     touchThread,
@@ -665,6 +691,13 @@ export function DmRoute() {
           onSelectThread={handleSelectThread}
           onRenameThread={renameThread}
           onCreateThread={handleCreateThread}
+          projects={projects}
+          draftTaskProjectId={draftTaskProjectId}
+          onCreateProject={createProject}
+          onRenameProject={renameProject}
+          onDeleteProject={deleteProject}
+          onMoveThread={moveThread}
+          onDeleteThread={handleDeleteThread}
           approvalThreadIds={approvalThreadIds}
           generalNeedsApproval={generalNeedsApproval}
           unreadThreadIds={unreadThreadIds}

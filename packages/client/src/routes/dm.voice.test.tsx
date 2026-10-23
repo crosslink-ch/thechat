@@ -5,6 +5,7 @@ import { uploadSharedAttachment } from "../lib/shared-attachments";
 
 const mocks = vi.hoisted(() => ({
   createThread: vi.fn(), renameThread: vi.fn(), touchThread: vi.fn(),
+  projects: [] as any[],
   addOptimisticSentMessage: vi.fn(() => "client-message-1"),
   sendChannelMessage: vi.fn(), sendChannelMessageToThread: vi.fn(async () => true),
   wsSendMessage: vi.fn(), sendTyping: vi.fn(),
@@ -33,6 +34,16 @@ vi.mock("../hooks/useConversationDetail", () => ({
 vi.mock("../hooks/useConversationThreads", () => ({
   useConversationThreads: () => ({ threads: mocks.threads, loading: false, loadingMore: false, hasMore: false, loadMore: vi.fn(), createThread: mocks.createThread, renameThread: mocks.renameThread, touchThread: mocks.touchThread }),
 }));
+vi.mock("../hooks/useTaskProjects", () => ({
+  useTaskProjects: () => ({
+    projects: mocks.projects ?? [],
+    loading: false,
+    createProject: vi.fn(),
+    renameProject: vi.fn(),
+    deleteProject: vi.fn(),
+  }),
+}));
+
 vi.mock("../hooks/useBotRuntime", () => ({
   useBotRuntime: () => ({ data: { invocations: [], events: [] }, isLoading: false }),
   useBotRuntimeCache: () => ({ mergeInvocationUpdate: vi.fn(), mergeProgressEvent: vi.fn(), invalidate: vi.fn() }),

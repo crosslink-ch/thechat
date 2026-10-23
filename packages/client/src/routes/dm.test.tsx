@@ -22,6 +22,7 @@ const mocks = vi.hoisted(() => ({
   invalidateBotRuntime: vi.fn(),
   submitHermesInteraction: vi.fn(),
   threads: [] as any[],
+  projects: [] as any[],
   messageQueryStale: false,
   participantName: "Hermes",
   participantKind: "hermes" as string | undefined,
@@ -87,6 +88,16 @@ vi.mock("../hooks/useConversationThreads", () => ({
     createThread: mocks.createThread,
     renameThread: mocks.renameThread,
     touchThread: mocks.touchThread,
+  }),
+}));
+
+vi.mock("../hooks/useTaskProjects", () => ({
+  useTaskProjects: () => ({
+    projects: mocks.projects ?? [],
+    loading: false,
+    createProject: vi.fn(),
+    renameProject: vi.fn(),
+    deleteProject: vi.fn(),
   }),
 }));
 
@@ -214,7 +225,8 @@ vi.mock("../components/HermesRuntimePanel", () => ({
     threads,
   }: any) => (
     <aside>
-      <button type="button" onClick={onCreateThread}>New task</button>
+      <button type="button" onClick={() => onCreateThread()}>New task</button>
+      <button type="button" onClick={() => onCreateThread("project-1")}>New task in Research</button>
       <button type="button" onClick={() => onSelectThread(null)}>General</button>
       {threads.map((thread: { id: string; title: string }) => (
         <div key={thread.id}>
@@ -462,6 +474,24 @@ describe("DmRoute deferred Hermes task drafts", () => {
       "client-message-1",
     );
     expect(mocks.touchThread).toHaveBeenCalledWith("thread-1");
+  });
+
+  it("files a task started inside a project under that project when first sent", async () => {
+    mocks.projects = [{ id: "project-1", conversationId: "dm-1", name: "Research" }];
+    await renderRoute();
+
+    fireEvent.click(screen.getByRole("button", { name: "New task in Research" }));
+    expect(mocks.createThread).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Send first prompt" }));
+
+    await waitFor(() => {
+      expect(mocks.createThread).toHaveBeenCalledWith({
+        botId: "bot-1",
+        title: "First task prompt",
+        projectId: "project-1",
+      });
+    });
+    mocks.projects = [];
   });
 
   it("does not persist an empty first prompt", async () => {
