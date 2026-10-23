@@ -1,9 +1,19 @@
-import { useRef, useState, type FormEvent, type ReactNode, type RefObject } from "react";
+import {
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  type FormEvent,
+  type KeyboardEvent,
+  type ReactNode,
+  type RefObject,
+} from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import {
   Check,
   Folder,
   FolderInput,
+  FolderOpen,
   FolderPlus,
   Inbox,
   Pencil,
@@ -12,6 +22,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import type { ConversationThreadPublic, TaskProjectPublic } from "@thechat/shared";
+import { requestInputBarFocus } from "../stores/input-focus";
 import {
   buttonClass,
   dialogContentClass,
@@ -25,11 +36,18 @@ import {
 export const MAX_PROJECT_NAME_LENGTH = 100;
 
 export type TaskPanelDialog =
-  | { kind: "create-project"; moveThreadId?: string }
+  | {
+      kind: "create-project";
+      moveThreadId?: string;
+      /** Start a draft task in the new project once it exists. */
+      startTask?: boolean;
+      initialName?: string;
+    }
   | { kind: "rename-project"; project: TaskProjectPublic }
   | { kind: "delete-project"; project: TaskProjectPublic }
   | { kind: "move-task"; thread: ConversationThreadPublic }
-  | { kind: "delete-task"; thread: ConversationThreadPublic };
+  | { kind: "delete-task"; thread: ConversationThreadPublic }
+  | { kind: "new-task-in-project"; defaultProjectId: string | null };
 
 export function TaskPanelDialogs({
   dialog,
@@ -41,6 +59,7 @@ export function TaskPanelDialogs({
   onDeleteProject,
   onMoveThread,
   onDeleteThread,
+  onCreateTaskInProject,
 }: {
   dialog: TaskPanelDialog | null;
   projects: TaskProjectPublic[];
@@ -51,23 +70,44 @@ export function TaskPanelDialogs({
   onDeleteProject?: (projectId: string) => Promise<unknown>;
   onMoveThread?: (threadId: string, projectId: string | null) => Promise<unknown>;
   onDeleteThread?: (threadId: string) => Promise<unknown>;
+  onCreateTaskInProject?: (projectId: string) => void;
 }) {
   if (!dialog) return null;
   switch (dialog.kind) {
-    case "create-project":
+    case "create-project": {
       if (!onCreateProject) return null;
+      const startTask = dialog.startTask && onCreateTaskInProject;
       return (
         <ProjectNameDialog
           key="create-project"
           mode="create"
-          initialName=""
+          initialName={dialog.initialName ?? ""}
+          focusComposerOnClose={!!startTask}
           onClose={onClose}
           onSubmit={async (name) => {
             const project = await onCreateProject(name);
             if (project && dialog.moveThreadId && onMoveThread) {
               await onMoveThread(dialog.moveThreadId, project.id);
             }
+            if (project && startTask) startTask(project.id);
           }}
+        />
+      );
+    }
+    case "new-task-in-project":
+      if (!onCreateTaskInProject) return null;
+      return (
+        <NewTaskInProjectDialog
+          key="new-task-in-project"
+          projects={projects}
+          defaultProjectId={dialog.defaultProjectId}
+          onClose={onClose}
+          onSelect={onCreateTaskInProject}
+          onNewProject={
+            onCreateProject
+              ? (initialName) => onOpen({ kind: "create-project", startTask: true, initialName })
+              : undefined
+          }
         />
       );
     case "rename-project":
@@ -133,6 +173,7 @@ function DialogShell({
   danger = false,
   busy,
   initialFocusRef,
+  focusComposerOnCloseRef,
   onClose,
   onSubmit,
   children,
@@ -144,6 +185,8 @@ function DialogShell({
   danger?: boolean;
   busy: boolean;
   initialFocusRef?: RefObject<HTMLInputElement | HTMLButtonElement | null>;
+  /** When set to true before closing, focus the message composer instead of the opener. */
+  focusComposerOnCloseRef?: RefObject<boolean>;
   onClose: () => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
   children?: ReactNode;
@@ -166,6 +209,12 @@ function DialogShell({
             event.preventDefault();
             target.focus();
             if (target instanceof HTMLInputElement) target.select();
+          }}
+          onCloseAutoFocus={(event) => {
+            if (!focusComposerOnCloseRef?.current) return;
+            // A new draft task remounts the composer; focus it, not the old opener.
+            event.preventDefault();
+            requestInputBarFocus();
           }}
           onEscapeKeyDown={(event) => {
             if (busy) event.preventDefault();
@@ -230,11 +279,13 @@ function errorMessage(error: unknown) {
 function ProjectNameDialog({
   mode,
   initialName,
+  focusComposerOnClose = false,
   onSubmit,
   onClose,
 }: {
   mode: "create" | "rename";
   initialName: string;
+  focusComposerOnClose?: boolean;
   onSubmit: (name: string) => Promise<unknown>;
   onClose: () => void;
 }) {
@@ -242,6 +293,7 @@ function ProjectNameDialog({
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const submittedRef = useRef(false);
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -259,6 +311,7 @@ function ProjectNameDialog({
     setError(null);
     try {
       await onSubmit(normalized);
+      submittedRef.current = focusComposerOnClose;
       onClose();
     } catch (caught) {
       setError(errorMessage(caught));
@@ -271,12 +324,15 @@ function ProjectNameDialog({
       title={mode === "create" ? "New project" : "Rename project"}
       description={
         mode === "create"
-          ? "Group related tasks. Hermes sees the other tasks in a project when it works on one."
+          ? focusComposerOnClose
+            ? "Name the project for your new task. Hermes sees the other tasks in a project when it works on one."
+            : "Group related tasks. Hermes sees the other tasks in a project when it works on one."
           : "Choose a clear name for this group of tasks."
       }
       icon={mode === "create" ? FolderPlus : Pencil}
       busy={busy}
       initialFocusRef={inputRef}
+      focusComposerOnCloseRef={submittedRef}
       onClose={onClose}
       onSubmit={submit}
       actions={
@@ -479,6 +535,161 @@ function MoveTaskDialog({
         )}
       </div>
       <ErrorText error={error} />
+    </DialogShell>
+  );
+}
+
+/**
+ * Picks the project a new task is filed under. Typing filters projects;
+ * Enter starts the task in the highlighted one, or offers a new project
+ * named after the query when nothing matches.
+ */
+function NewTaskInProjectDialog({
+  projects,
+  defaultProjectId,
+  onSelect,
+  onNewProject,
+  onClose,
+}: {
+  projects: TaskProjectPublic[];
+  defaultProjectId: string | null;
+  onSelect: (projectId: string) => void;
+  onNewProject?: (initialName: string) => void;
+  onClose: () => void;
+}) {
+  const [query, setQuery] = useState("");
+  const inputRef = useRef<HTMLInputElement>(null);
+  const focusComposerRef = useRef(false);
+  const listId = useId();
+  const normalizedQuery = query.trim().replace(/\s+/g, " ");
+  const filtered = projects.filter((project) =>
+    project.name.toLowerCase().includes(normalizedQuery.toLowerCase()),
+  );
+  const exactMatch = filtered.some(
+    (project) => project.name.toLowerCase() === normalizedQuery.toLowerCase(),
+  );
+  const options: Array<
+    { kind: "project"; project: TaskProjectPublic } | { kind: "new"; name: string }
+  > = [
+    ...filtered.map((project) => ({ kind: "project" as const, project })),
+    ...(onNewProject && !exactMatch ? [{ kind: "new" as const, name: normalizedQuery }] : []),
+  ];
+  const defaultIndex = Math.max(
+    0,
+    normalizedQuery ? 0 : filtered.findIndex((project) => project.id === defaultProjectId),
+  );
+  const [highlight, setHighlight] = useState(defaultIndex);
+  useEffect(() => setHighlight(defaultIndex), [defaultIndex, normalizedQuery]);
+  const highlighted = Math.min(highlight, Math.max(options.length - 1, 0));
+
+  const choose = (index: number) => {
+    const option = options[index];
+    if (!option) return;
+    if (option.kind === "new") {
+      onNewProject?.(option.name);
+      return;
+    }
+    focusComposerRef.current = true;
+    onSelect(option.project.id);
+    onClose();
+  };
+
+  const onKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      setHighlight(Math.min(highlighted + 1, Math.max(options.length - 1, 0)));
+    } else if (event.key === "ArrowUp") {
+      event.preventDefault();
+      setHighlight(Math.max(highlighted - 1, 0));
+    } else if (event.key === "Enter" && !event.nativeEvent.isComposing) {
+      event.preventDefault();
+      choose(highlighted);
+    }
+  };
+
+  return (
+    <DialogShell
+      title="New task in project"
+      description="Choose the project for the new task. Hermes sees the other tasks in the project."
+      icon={FolderOpen}
+      busy={false}
+      initialFocusRef={inputRef}
+      focusComposerOnCloseRef={focusComposerRef}
+      onClose={onClose}
+      onSubmit={(event) => {
+        event.preventDefault();
+        choose(highlighted);
+      }}
+      actions={
+        <Dialog.Close asChild>
+          <button type="button" className={buttonClass("ghost", "md")}>
+            Cancel
+          </button>
+        </Dialog.Close>
+      }
+    >
+      <input
+        ref={inputRef}
+        value={query}
+        maxLength={MAX_PROJECT_NAME_LENGTH}
+        onChange={(event) => setQuery(event.target.value)}
+        onKeyDown={onKeyDown}
+        aria-label="Find a project"
+        aria-controls={listId}
+        aria-activedescendant={options.length > 0 ? `${listId}-${highlighted}` : undefined}
+        role="combobox"
+        aria-expanded="true"
+        aria-autocomplete="list"
+        placeholder={projects.length > 0 ? "Find a project..." : "Name a new project..."}
+        className={inputClass}
+      />
+      <div
+        id={listId}
+        role="listbox"
+        aria-label="Projects"
+        className="mt-2 flex max-h-[280px] flex-col gap-0.5 overflow-y-auto"
+      >
+        {options.map((option, index) => {
+          const active = index === highlighted;
+          const Icon = option.kind === "new" ? FolderPlus : Folder;
+          const label =
+            option.kind === "new"
+              ? option.name
+                ? `New project “${option.name}”...`
+                : "New project..."
+              : option.project.name;
+          return (
+            <button
+              key={option.kind === "new" ? "new-project" : option.project.id}
+              id={`${listId}-${index}`}
+              type="button"
+              role="option"
+              aria-selected={active}
+              tabIndex={-1}
+              onMouseEnter={() => setHighlight(index)}
+              onClick={() => choose(index)}
+              className={`${menuItemBaseClass} ${active ? "bg-hover" : ""} ${
+                option.kind === "new"
+                  ? "text-accent"
+                  : active
+                    ? "text-text"
+                    : "text-text-secondary"
+              }`}
+            >
+              <Icon size={14} className="shrink-0 text-text-dimmed" aria-hidden="true" />
+              <span className="min-w-0 flex-1 truncate">{label}</span>
+              {option.kind === "project" && option.project.id === defaultProjectId && (
+                <span className="shrink-0 text-[0.714rem] text-text-dimmed">Current</span>
+              )}
+            </button>
+          );
+        })}
+        {options.length === 0 && (
+          <div className="px-2.5 py-3 text-center text-[0.857rem] text-text-placeholder">
+            No matching projects
+          </div>
+        )}
+      </div>
     </DialogShell>
   );
 }

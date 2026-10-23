@@ -117,6 +117,10 @@ export function HermesRuntimePanel({
   const [moveError, setMoveError] = useState<string | null>(null);
   const activeThread = threads.find((thread) => thread.id === activeThreadId);
   const canEditActiveTask = !!activeThread && !draftTaskActive;
+  // The project the user is working in, used as the default for new tasks.
+  const currentProjectId = draftTaskActive
+    ? draftTaskProjectId
+    : (activeThread?.projectId ?? null);
   const commands = useMemo<Command[]>(() => [
     {
       id: "hermes.rename-task",
@@ -142,6 +146,18 @@ export function HermesRuntimePanel({
       execute: () => {
         closePalette();
         setDialog({ kind: "create-project" });
+      },
+    },
+    {
+      id: "hermes.new-task-in-project",
+      label: "New Task in Project",
+      shortcut: "C-x p n",
+      keybinding: { prefix: "C-x p", key: "n" },
+      enabled: !!createThread && (projects.length > 0 || !!onCreateProject),
+      priority: 100,
+      execute: () => {
+        closePalette();
+        setDialog({ kind: "new-task-in-project", defaultProjectId: currentProjectId });
       },
     },
     {
@@ -173,6 +189,8 @@ export function HermesRuntimePanel({
   ], [
     activeThread,
     canEditActiveTask,
+    createThread,
+    currentProjectId,
     draftTaskActive,
     mobile,
     onCreateProject,
@@ -305,6 +323,7 @@ export function HermesRuntimePanel({
         onDeleteProject={onDeleteProject}
         onMoveThread={onMoveThread}
         onDeleteThread={onDeleteThread}
+        onCreateTaskInProject={onCreateThread}
       />
       {drag && (
         <div

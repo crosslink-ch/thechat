@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ConversationThreadPublic, TaskProjectPublic } from "@thechat/shared";
 import { CommandPalette, closePalette, openPaletteInCommandMode } from "../CommandPalette";
 import { useCommandsStore } from "../commands";
+import { useKeybindings } from "../hooks/useKeybindings";
 import { HermesRuntimePanel } from "./HermesRuntimePanel";
 
 const at = "2026-10-20T12:00:00.000Z";
@@ -51,9 +52,25 @@ function renderPanel(
         {...h}
       />
       <CommandPalette />
+      <Keybindings />
     </>,
   );
   return h;
+}
+
+function Keybindings() {
+  useKeybindings({
+    onPermissionAllow: null,
+    onPermissionDeny: null,
+    onPermissionDenyWithFeedback: null,
+  });
+  return null;
+}
+
+function pressNewTaskInProjectChord() {
+  fireEvent.keyDown(window, { key: "x", ctrlKey: true });
+  fireEvent.keyDown(window, { key: "p" });
+  fireEvent.keyDown(window, { key: "n" });
 }
 
 async function runCommand(user: ReturnType<typeof userEvent.setup>, label: string) {
@@ -246,5 +263,99 @@ describe("Hermes task projects", () => {
     expect(ids).toContain("hermes.new-project");
     expect(ids).not.toContain("hermes.move-task");
     expect(ids).not.toContain("hermes.delete-task");
+  });
+
+  describe("New Task in Project (C-x p n)", () => {
+    it("opens the project picker on C-x p n with the current task's project selected", async () => {
+      const user = userEvent.setup();
+      const h = renderPanel(handlers(), { activeThreadId: pricing.id });
+      act(() => pressNewTaskInProjectChord());
+
+      const dialog = await screen.findByRole("dialog", { name: "New task in project" });
+      const input = within(dialog).getByRole("combobox", { name: "Find a project" });
+      await waitFor(() => expect(input).toHaveFocus());
+      expect(within(dialog).getByRole("option", { name: /Research/ })).toHaveAttribute(
+        "aria-selected",
+        "true",
+      );
+
+      await user.keyboard("{Enter}");
+      expect(h.onCreateThread).toHaveBeenCalledWith(research.id);
+      await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    });
+
+    it("filters projects as you type and starts the task in the chosen one", async () => {
+      const user = userEvent.setup();
+      const h = renderPanel();
+      await act(async () => openPaletteInCommandMode());
+      await user.type(screen.getByPlaceholderText("Type a command..."), "New Task in Project");
+      // The palette entry's accessible name also includes its shortcut.
+      await user.click(screen.getByRole("button", { name: /^New Task in Project/ }));
+
+      const input = await screen.findByRole("combobox", { name: "Find a project" });
+      await waitFor(() => expect(input).toHaveFocus());
+      await user.type(input, "lau");
+      const options = screen.getAllByRole("option");
+      expect(options.map((option) => option.textContent)).toEqual([
+        "Launch",
+        "New project “lau”...",
+      ]);
+      await user.click(screen.getByRole("option", { name: "Launch" }));
+      expect(h.onCreateThread).toHaveBeenCalledWith(launch.id);
+    });
+
+    it("moves through projects with the arrow keys", async () => {
+      const user = userEvent.setup();
+      const h = renderPanel(handlers(), { activeThreadId: null });
+      act(() => pressNewTaskInProjectChord());
+      const input = await screen.findByRole("combobox", { name: "Find a project" });
+      await waitFor(() => expect(input).toHaveFocus());
+
+      await user.keyboard("{ArrowDown}{Enter}");
+      expect(h.onCreateThread).toHaveBeenCalledWith(launch.id);
+    });
+
+    it("creates a project named after the query and starts the task in it", async () => {
+      const user = userEvent.setup();
+      const h = renderPanel();
+      act(() => pressNewTaskInProjectChord());
+      const input = await screen.findByRole("combobox", { name: "Find a project" });
+      await waitFor(() => expect(input).toHaveFocus());
+      await user.type(input, "Security{Enter}");
+
+      const nameInput = await screen.findByRole("textbox", { name: "Project name" });
+      expect(nameInput).toHaveValue("Security");
+      await user.click(screen.getByRole("button", { name: "Create project" }));
+
+      await waitFor(() => expect(h.onCreateProject).toHaveBeenCalledWith("Security"));
+      await waitFor(() => expect(h.onCreateThread).toHaveBeenCalledWith("project-new"));
+      await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    });
+
+    it("offers a new project when there are no projects yet", async () => {
+      const user = userEvent.setup();
+      const h = renderPanel(handlers(), { projects: [] });
+      act(() => pressNewTaskInProjectChord());
+      const input = await screen.findByRole("combobox", { name: "Find a project" });
+      await waitFor(() => expect(input).toHaveFocus());
+      expect(screen.getAllByRole("option").map((option) => option.textContent)).toEqual([
+        "New project...",
+      ]);
+      await user.type(input, "Docs{Enter}");
+      await user.click(await screen.findByRole("button", { name: "Create project" }));
+      await waitFor(() => expect(h.onCreateThread).toHaveBeenCalledWith("project-new"));
+    });
+
+    it("is listed in the palette with its shortcut", () => {
+      renderPanel();
+      const command = useCommandsStore
+        .getState()
+        .commands.find((item) => item.id === "hermes.new-task-in-project");
+      expect(command).toMatchObject({
+        label: "New Task in Project",
+        shortcut: "C-x p n",
+        keybinding: { prefix: "C-x p", key: "n" },
+      });
+    });
   });
 });
