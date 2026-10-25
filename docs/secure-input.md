@@ -73,7 +73,7 @@ endpoint with exactly this payload (no custom field types/labels or extra keys):
   requesterUserId: originalInvocationHumanRequester,
   promptKind, fields, target,          // table above; target <=2000 chars, never a secret
   nonce: canonicalBase64url32Bytes,     // 43 chars, no padding
-  expiresAt: integerUnixMilliseconds,  // live, at most 120 seconds
+  expiresAt: integerUnixMilliseconds,  // live, at most 120 s (+30 s clock-skew allowance)
   algorithm: 'RSA-OAEP-3072-SHA256+A256GCM',
   publicKeySpkiB64: canonicalBase64Rsa3072Spki
 }

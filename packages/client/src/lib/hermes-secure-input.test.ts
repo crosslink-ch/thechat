@@ -32,6 +32,12 @@ it.each(Object.keys(SECURE_INPUT_KINDS) as SecureInputKind[])("decrypts exact %s
     await expect(api.subtle.decrypt({ name: "AES-GCM", iv: bytes(encrypted.ivB64), additionalData: aad }, key, bytes(encrypted.ciphertextB64))).rejects.toThrow();
   }
 });
+it("encrypts a request stamped by a Hermes clock running ahead, but not an overlong lifetime", async () => {
+  const values = { identifier: "i", password: "p" };
+  const ahead = { ...request("vault.save_login"), expiresAt: Date.now() + 125_000 };
+  await expect(encryptSecureInput(event, ahead, values, api)).resolves.toMatchObject({ version: 3, action: "submit" });
+  await expect(encryptSecureInput(event, { ...ahead, expiresAt: Date.now() + 240_000 }, values, api)).rejects.toThrow();
+});
 it("fails closed for missing/extra values, byte limits, expiry, bad key, and unavailable WebCrypto", async () => {
   const r = request("vault.save_login");
   const invalid: Record<string, string>[] = [{ identifier: "i" }, { identifier: "i", password: "p", extra: "x" }, { identifier: "i", password: "" }, { identifier: "ü".repeat(513), password: "p" }, { identifier: "i", password: "ü".repeat(2049) }];

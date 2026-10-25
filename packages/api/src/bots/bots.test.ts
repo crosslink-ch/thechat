@@ -550,6 +550,22 @@ describe("Secure input v3", () => {
       }
     } finally { webhook.stop(); }
   });
+  test("accepts a full lifetime stamped by a Hermes clock running ahead, on publish and on submit", async () => {
+    const webhook = startWebhookServer(() => Response.json({ ok: true, duplicate: false }));
+    const fixture = await createHermesInteractionFixture("SecureSkew", webhook.url);
+    try {
+      // Hermes stamps expiresAt from its own clock; a host 5 s ahead must not lose the prompt.
+      const ahead = { ...secureRequest(fixture.human.user.id, "vault.save_login"), expiresAt: Date.now() + 125_000 };
+      const event = await publishInteractionProgress(fixture, "secure.input.request", ahead);
+      const path = interactionPath(fixture.invocationId, event.id) + "/secure-input";
+      const result = await req("POST", path, { version: 3, action: "cancel" }, fixture.human.token);
+      expect(result.status).toBe(200);
+      expect(webhook.requests).toHaveLength(1);
+      const overlong = { ...secureRequest(fixture.human.user.id, "vault.save_login"), expiresAt: Date.now() + 240_000 };
+      const rejected = await req("POST", `/hermes-platform/invocations/${fixture.invocationId}/progress`, { type: "secure.input.request", payload: overlong }, fixture.botRes.body.apiKey);
+      expect(rejected.status).toBe(400);
+    } finally { webhook.stop(); }
+  });
   test("owner-only kinds reject shared requesters while code relays privately without durable writes", async () => {
     const webhook = startWebhookServer(() => Response.json({ ok: true, duplicate: false, diagnostic: "DO_NOT_REFLECT" }));
     const fixture = await createHermesInteractionFixture("SecureRequester", webhook.url, true);
@@ -792,6 +808,17 @@ describe("Native vault unlock", () => {
     expect(result.status).toBe(200);
     expect(result.body.event.payload.outcome).toBe("expired");
     await setBotProgressStoreForTests(createLocalBotProgressStoreForTests());
+  });
+  test("accepts a full unlock lifetime stamped by a Hermes clock running ahead", async () => {
+    const webhook = startWebhookServer(() => Response.json({ ok: true, duplicate: false }));
+    const fixture = await createHermesInteractionFixture("VaultSkew", webhook.url);
+    try {
+      const ahead = { ...vaultRequest(fixture.human.user.id), expiresAt: Date.now() + 125_000 };
+      const event = await publishInteractionProgress(fixture, "vault.unlock.request", ahead);
+      const path = interactionPath(fixture.invocationId, event.id) + "/vault-unlock";
+      expect((await req("POST", path, { version: 2, action: "cancel" }, fixture.human.token)).status).toBe(200);
+      expect(webhook.requests).toHaveLength(1);
+    } finally { webhook.stop(); }
   });
   test("rejects malformed and forged requester prompts, expired requests and terminal runs", async () => {
     const fixture = await createHermesInteractionFixture("VaultInvalid");

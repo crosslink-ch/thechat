@@ -1,3 +1,11 @@
+/** Hermes stamps `expiresAt` from its own clock, which can run ahead of TheChat's. */
+export const MASKED_PROMPT_LIFETIME_MS = 120_000;
+export const MASKED_PROMPT_CLOCK_SKEW_MS = 30_000;
+/** Latest acceptable `expiresAt` relative to a local reference time (now, or the event's createdAt). */
+export function maskedPromptExpiryTooFar(expiresAt: number, reference: number) {
+  return expiresAt > reference + MASKED_PROMPT_LIFETIME_MS + MASKED_PROMPT_CLOCK_SKEW_MS;
+}
+
 /** v3 public metadata only. Secret values must never enter a store or message. */
 export const SECURE_INPUT_KINDS = {
   "onepassword.unlock": { fields: ["password"], title: "Unlock 1Password", description: "Unlock 1Password for this agent/profile. Owner only." },

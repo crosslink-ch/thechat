@@ -1,4 +1,4 @@
-import { SECURE_INPUT_KINDS, type BotInvocationProgressEventPublic, type SecureInputRequest, type SecureInputResolved, type SecureInputResponse } from "@thechat/shared";
+import { SECURE_INPUT_KINDS, maskedPromptExpiryTooFar, type BotInvocationProgressEventPublic, type SecureInputRequest, type SecureInputResolved, type SecureInputResponse } from "@thechat/shared";
 export interface SecureInputState {
   event: BotInvocationProgressEventPublic;
   request: SecureInputRequest;
@@ -59,7 +59,7 @@ export async function encryptSecureInput(event: ContextEvent, request: SecureInp
   let bytes: Uint8Array<ArrayBuffer> | undefined;
   let aesBytes: Uint8Array<ArrayBuffer> | undefined;
   try {
-    if (!cryptoApi?.subtle || !isSecureInputRequest(request) || request.expiresAt <= Date.now() || request.expiresAt > Date.now() + 120_000 || !secureInputValuesValid(request, values)) throw new Error();
+    if (!cryptoApi?.subtle || !isSecureInputRequest(request) || request.expiresAt <= Date.now() || maskedPromptExpiryTooFar(request.expiresAt, Date.now()) || !secureInputValuesValid(request, values)) throw new Error();
     // Take the plaintext copy synchronously, so callers can immediately clear their local fields.
     const plaintext = new Uint8Array(new TextEncoder().encode(JSON.stringify(Object.fromEntries(request.fields.map(field => [field, values[field]])))));
     bytes = plaintext;

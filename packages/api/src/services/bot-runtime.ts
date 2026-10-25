@@ -62,7 +62,7 @@ import { recordMessageUnreads } from "./activity";
 import { toPublicConversationThread } from "./task-project-records";
 import { vaultUnlockRequestSchema, vaultUnlockResolvedSchema, vaultUnlockResponseSchema, validateVaultPublicKey, VAULT_UNLOCK_PREVIEW } from "./vault-unlock";
 import type { VaultUnlockResponse } from "@thechat/shared";
-import { SECURE_INPUT_KINDS, type SecureInputResponse } from "@thechat/shared";
+import { SECURE_INPUT_KINDS, maskedPromptExpiryTooFar, type SecureInputResponse } from "@thechat/shared";
 import { secureInputRequestSchema, secureInputResolvedSchema, secureInputResponseSchema, secureInputError } from "./secure-input";
 
 const botRuntimeLog = log.child({ component: "bot-runtime" });
@@ -245,7 +245,7 @@ export async function submitHermesPlatformVaultUnlock(input: {
   if (!parsed.success) throw reject(409);
   const request = parsed.data;
   validateVaultPublicKey(request.publicKeySpkiB64);
-  if (request.requesterUserId !== input.userId || request.expiresAt <= Date.now() || request.expiresAt > Date.parse(event.createdAt)+120_000) throw reject(409);
+  if (request.requesterUserId !== input.userId || request.expiresAt <= Date.now() || maskedPromptExpiryTooFar(request.expiresAt, Date.parse(event.createdAt))) throw reject(409);
   if (events.some(e => e.invocationId === event.invocationId && e.botId === event.botId && e.type === "vault.unlock.resolved" && e.payload?.requestId === request.requestId && e.payload?.sessionKey === request.sessionKey)) throw reject(409);
   const webhookUrl = loaded.bot.webhookUrl;
   try { if (!webhookUrl || !["http:","https:"].includes(new URL(webhookUrl).protocol)) throw new Error(); }
@@ -294,7 +294,7 @@ export async function submitHermesPlatformSecureInput(input: {
   const request = parsed.data;
   if (request.requesterUserId !== input.userId) throw reject(403);
   if (request.promptKind !== "vault.code" && loaded.bot.ownerId !== input.userId) throw reject(403);
-  if (request.expiresAt <= Date.now() || request.expiresAt > Date.parse(event.createdAt) + 120_000) throw reject(409);
+  if (request.expiresAt <= Date.now() || maskedPromptExpiryTooFar(request.expiresAt, Date.parse(event.createdAt))) throw reject(409);
   if (events.some(e => e.invocationId === event.invocationId && e.botId === event.botId && e.type === "secure.input.resolved" && e.payload?.requestId === request.requestId && e.payload?.sessionKey === request.sessionKey)) throw reject(409);
   const webhookUrl = loaded.bot.webhookUrl;
   try { if (!webhookUrl || !["http:", "https:"].includes(new URL(webhookUrl).protocol)) throw new Error(); }
@@ -2171,7 +2171,7 @@ export async function publishHermesPlatformProgress(
           if (request.requesterUserId !== loaded.triggerMessage.senderId || loaded.triggerSender.type !== "human") throw secureInputError(403);
           if (request.promptKind !== "vault.code" && loaded.bot.ownerId !== request.requesterUserId) throw secureInputError(403);
           await requireSecureInputHumanAccess(loaded.conversation.id, request.requesterUserId);
-          if (!loaded.bot.webhookUrl || request.expiresAt <= Date.now() || request.expiresAt > Date.now() + 120_000) throw secureInputError(400);
+          if (!loaded.bot.webhookUrl || request.expiresAt <= Date.now() || maskedPromptExpiryTooFar(request.expiresAt, Date.now())) throw secureInputError(400);
           const previous = await store.findRequest?.(loaded.invocation.id, "secure.input.request", request.requestId);
           const original = previous ? secureInputRequestSchema.safeParse(previous.payload) : null;
           if (original && (!original.success || JSON.stringify(original.data) !== JSON.stringify(request))) throw secureInputError(409);
@@ -2200,7 +2200,7 @@ export async function publishHermesPlatformProgress(
             throw new ServiceError("Vault unlock requires the original human requester", 403);
           }
           await requireConversationParticipant(loaded.conversation.id, request.requesterUserId);
-          if (request.expiresAt <= Date.now() || request.expiresAt > Date.now()+120_000) throw new ServiceError("Invalid vault unlock expiry",400);
+          if (request.expiresAt <= Date.now() || maskedPromptExpiryTooFar(request.expiresAt, Date.now())) throw new ServiceError("Invalid vault unlock expiry",400);
           const previous = events.find(e => e.invocationId === loaded.invocation.id && e.type === input.type && e.payload?.requestId === request.requestId)
             ?? await getBotProgressStore().findRequest?.(loaded.invocation.id,"vault.unlock.request",request.requestId);
           // Redis's Lua JSON encoder may reorder keys; compare schema-canonical

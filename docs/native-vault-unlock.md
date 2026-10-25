@@ -46,7 +46,10 @@ The API strictly validates this metadata-only payload:
 }
 ```
 
-Lifetime is at most 120 seconds. The original invocation requester must be a
+Lifetime is at most 120 seconds. Hermes stamps `expiresAt` from its own clock,
+so TheChat accepts up to 30 seconds of clock skew on that upper bound
+(`MASKED_PROMPT_CLOCK_SKEW_MS`); expiry itself is still judged on TheChat's
+clock. The original invocation requester must be a
 human with current conversation access. The bot credential must match the
 invocation, and the bot must still have access to the conversation. The API
 rejects extra properties (including `ownerUserId`), non-SPKI/non-RSA3072 keys,
