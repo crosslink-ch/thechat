@@ -6,7 +6,7 @@ import {
   parseDomainEventEnvelope,
   type DomainEventEnvelope,
 } from "./envelope";
-import { loadDomainEventsConfig } from "./config";
+import { handlerBudgetMs, loadDomainEventsConfig } from "./config";
 import {
   DomainEventRegistry,
   InvalidDomainEventError,
@@ -84,6 +84,17 @@ describe("domain event envelopes", () => {
 });
 
 describe("domain event registry", () => {
+  test("assigns handlers to lanes and refuses mixed lanes for one event type", () => {
+    const registry = new DomainEventRegistry()
+      .register({ type: "lane.default", version: 1, parse: parseDomainEventEnvelope, async handle() {} })
+      .register({ type: "lane.storage", version: 1, lane: "attachments", parse: parseDomainEventEnvelope, async handle() {} })
+      .register({ type: "lane.storage", version: 2, lane: "attachments", parse: parseDomainEventEnvelope, async handle() {} });
+    expect(registry.eventTypesForLane("attachments")).toEqual(["lane.storage"]);
+    expect(() =>
+      registry.register({ type: "lane.storage", version: 3, parse: parseDomainEventEnvelope, async handle() {} }),
+    ).toThrow("same worker lane");
+  });
+
   test("dispatches registered handlers after envelope and event-specific validation", async () => {
     const handled: string[] = [];
     const registry = new DomainEventRegistry().register({
@@ -176,6 +187,41 @@ describe("outbox configuration and retry policy", () => {
       maxAttempts: 25,
     });
     expect(loadDomainEventsConfig({ DOMAIN_EVENTS_BATCH_SIZE: "0" }).batchSize).toBe(50);
+  });
+
+  test("gives attachments a longer budget and never caps below a configured base", () => {
+    const config = loadDomainEventsConfig({});
+    expect(config).toMatchObject({
+      handlerTimeoutMs: 60_000,
+      attachmentHandlerTimeoutMs: 300_000,
+      maxHandlerTimeoutMs: 1_800_000,
+      lockTimeoutMs: 60_000,
+      attachmentConcurrency: 1,
+    });
+    expect(
+      loadDomainEventsConfig({
+        DOMAIN_EVENTS_ATTACHMENT_HANDLER_TIMEOUT_MS: "3600000",
+        DOMAIN_EVENTS_MAX_HANDLER_TIMEOUT_MS: "600000",
+      }).maxHandlerTimeoutMs,
+    ).toBe(3_600_000);
+    expect(
+      loadDomainEventsConfig({ ATTACHMENT_VALIDATION_CONCURRENCY: "50" })
+        .attachmentConcurrency,
+    ).toBe(8);
+  });
+
+  test("doubles the attempt budget on every retry up to the cap", () => {
+    // A job that needs 3 minutes fails twice at most, then always fits.
+    expect([0, 1, 2, 3, 4, 5].map((attempts) => handlerBudgetMs(60_000, 1_800_000, attempts))).toEqual([
+      60_000,
+      120_000,
+      240_000,
+      480_000,
+      960_000,
+      1_800_000,
+    ]);
+    expect(handlerBudgetMs(300_000, 1_800_000, 25)).toBe(1_800_000);
+    expect(handlerBudgetMs(300_000, 100_000, 0)).toBe(300_000);
   });
 
   test("backs off retries with a bounded delay", () => {

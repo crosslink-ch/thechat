@@ -14,10 +14,11 @@
   "scripts": {
     "dev": "bun run --env-file ../../.env --watch src/index.ts",
     "dev:worker": "bun run --env-file ../../.env --watch src/scripts/worker.ts",
-    "build": "bun build src/index.ts src/scripts/worker.ts --outdir dist --target bun",
+    "build": "bun build src/index.ts src/scripts/worker.ts src/scripts/outbox-dlq.ts --outdir dist --target bun",
     "start": "bun run --env-file ../../.env dist/index.js",
     "start:worker": "bun run --env-file ../../.env dist/scripts/worker.js",
     "worker": "bun run --env-file ../../.env src/scripts/worker.ts",
+    "outbox:dlq": "bun run --env-file ../../.env src/scripts/outbox-dlq.ts",
     "test": "bun test --isolate --env-file ../../.env --timeout=30000 --path-ignore-patterns=src/auth/rate-limit.test.ts --path-ignore-patterns=src/auth/password-reset.test.ts",
     "db:generate": "bun run --env-file ../../.env drizzle-kit generate",
     "db:check": "bun run --env-file ../../.env drizzle-kit check",

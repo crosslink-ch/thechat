@@ -1,4 +1,4 @@
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, isNull, sql, type SQL } from "drizzle-orm";
 import { SpanKind } from "@opentelemetry/api";
 import { db } from "../db";
 import { eventOutbox } from "../db/schema";
@@ -28,6 +28,16 @@ export type ReleaseOutboxOutcome =
   | { kind: "released"; attempts: number; deadAt: null }
   | { kind: "dead"; attempts: number; deadAt: Date }
   | { kind: "lease_lost" };
+
+/**
+ * Restricts a claim to one worker lane. `include` claims only the listed
+ * event types; `exclude` claims everything except them. Partition ordering is
+ * still checked against every live row, whatever its lane.
+ */
+export interface OutboxEventTypeFilter {
+  include?: readonly string[];
+  exclude?: readonly string[];
+}
 
 type OutboxInsertExecutor = Pick<typeof db, "insert">;
 
@@ -82,6 +92,8 @@ export async function claimOutboxEvents(options: {
   workerId: string;
   batchSize: number;
   lockTimeoutMs: number;
+  eventTypes?: OutboxEventTypeFilter;
+  lane?: string;
   now?: Date;
 }): Promise<ClaimedOutboxEvent[]> {
   const now = options.now ?? new Date();
@@ -90,6 +102,7 @@ export async function claimOutboxEvents(options: {
     now.getTime() - options.lockTimeoutMs,
   ).toISOString();
   const batchSize = Math.max(1, Math.min(options.batchSize, 500));
+  const typeFilter = eventTypeCondition(options.eventTypes);
 
   const startedAt = new Date();
   return traceOutboxClaimOperation(
@@ -103,6 +116,7 @@ export async function claimOutboxEvents(options: {
           AND pending.dead_at IS NULL
           AND pending.available_at <= ${nowIso}
           AND (pending.locked_at IS NULL OR pending.locked_at < ${staleBeforeIso})
+          ${typeFilter}
           AND NOT EXISTS (
             SELECT 1
             FROM event_outbox AS earlier
@@ -142,9 +156,27 @@ export async function claimOutboxEvents(options: {
     {
       workerId: options.workerId,
       batchSize,
+      lane: options.lane,
       startedAt,
     },
   );
+}
+
+function eventTypeCondition(filter: OutboxEventTypeFilter | undefined): SQL {
+  const include = filter?.include ? [...filter.include] : undefined;
+  const exclude = filter?.exclude ? [...filter.exclude] : [];
+  if (include) {
+    if (include.length === 0) return sql`AND FALSE`;
+    return sql`AND pending.event_type IN (${sql.join(
+      include.map((type) => sql`${type}`),
+      sql`, `,
+    )})`;
+  }
+  if (exclude.length === 0) return sql``;
+  return sql`AND pending.event_type NOT IN (${sql.join(
+    exclude.map((type) => sql`${type}`),
+    sql`, `,
+  )})`;
 }
 
 export async function traceOutboxClaimOperation(
@@ -152,6 +184,7 @@ export async function traceOutboxClaimOperation(
   options: {
     workerId: string;
     batchSize: number;
+    lane?: string;
     startedAt?: Date;
     slowThresholdMs?: number;
   },
@@ -179,7 +212,7 @@ export async function traceOutboxClaimOperation(
 
 function traceOutboxClaimResult(
   rows: ClaimedOutboxEvent[],
-  options: { workerId: string; batchSize: number },
+  options: { workerId: string; batchSize: number; lane?: string },
   startedAt: Date,
   durationMs: number,
 ): Promise<ClaimedOutboxEvent[]> {
@@ -197,7 +230,7 @@ function traceOutboxClaimResult(
 }
 
 function claimSpanAttributes(
-  options: { workerId: string; batchSize: number },
+  options: { workerId: string; batchSize: number; lane?: string },
   claimedCount: number,
   durationMs: number,
   outcome: "claimed" | "slow_empty" | "error",
@@ -209,11 +242,38 @@ function claimSpanAttributes(
     "thechat.outbox.claimed_count": claimedCount,
     "thechat.outbox.claim_duration_ms": durationMs,
     "thechat.outbox.outcome": outcome,
+    ...(options.lane ? { "thechat.outbox.lane": options.lane } : {}),
   };
 }
 
 function elapsedMs(startedAt: Date) {
   return Math.max(0, Date.now() - startedAt.getTime());
+}
+
+/**
+ * Extend the lease of rows this worker is still processing. Returns the IDs
+ * whose lease was renewed; any other requested ID was lost to another worker
+ * (or already finished) and its handler should stop.
+ */
+export async function renewOutboxLeases(
+  ids: readonly string[],
+  workerId: string,
+  now = new Date(),
+): Promise<Set<string>> {
+  if (ids.length === 0) return new Set();
+  const renewed = await db
+    .update(eventOutbox)
+    .set({ lockedAt: now })
+    .where(
+      and(
+        inArray(eventOutbox.id, [...ids]),
+        eq(eventOutbox.lockedBy, workerId),
+        isNull(eventOutbox.publishedAt),
+        isNull(eventOutbox.deadAt),
+      ),
+    )
+    .returning({ id: eventOutbox.id });
+  return new Set(renewed.map((row) => row.id));
 }
 
 export async function markOutboxEventPublished(
@@ -272,6 +332,29 @@ export async function releaseOutboxEvent(
     : { kind: "released", attempts: updated.attempts, deadAt: null };
 }
 
+/**
+ * Give an unfinished claim back without counting a failed attempt, so another
+ * worker can take it immediately instead of waiting for the lease to expire.
+ * Used when a worker shuts down while a handler is still running.
+ */
+export async function handOffOutboxEvent(
+  event: Pick<ClaimedOutboxEvent, "id" | "lockedBy">,
+): Promise<boolean> {
+  const updated = await db
+    .update(eventOutbox)
+    .set({ lockedBy: null, lockedAt: null })
+    .where(
+      and(
+        eq(eventOutbox.id, event.id),
+        eq(eventOutbox.lockedBy, event.lockedBy),
+        isNull(eventOutbox.publishedAt),
+        isNull(eventOutbox.deadAt),
+      ),
+    )
+    .returning({ id: eventOutbox.id });
+  return updated.length > 0;
+}
+
 /** Delete one bounded batch of successful, non-quarantined event rows. */
 export async function prunePublishedOutboxEvents(options: {
   before: Date;
@@ -294,6 +377,106 @@ export async function prunePublishedOutboxEvents(options: {
     RETURNING outbox.id
   `);
   return Array.from(rows).length;
+}
+
+// -- Dead-letter queue -------------------------------------------------------
+//
+// Events that exhausted their attempts (or failed permanently) stay in the
+// outbox with `dead_at` set. They are never pruned, never block their
+// partition, and are only processed again after an explicit replay.
+
+export interface DeadOutboxEvent {
+  id: string;
+  eventType: string;
+  eventVersion: number;
+  aggregateType: string;
+  aggregateId: string;
+  partitionKey: string;
+  attempts: number;
+  lastError: string | null;
+  createdAt: Date;
+  deadAt: Date;
+}
+
+export interface DeadOutboxSelector {
+  ids?: readonly string[];
+  eventType?: string;
+}
+
+export async function countDeadOutboxEvents(): Promise<number> {
+  const [row] = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(eventOutbox)
+    .where(isNotNull(eventOutbox.deadAt));
+  return row?.count ?? 0;
+}
+
+export async function listDeadOutboxEvents(
+  options: DeadOutboxSelector & { limit?: number } = {},
+): Promise<DeadOutboxEvent[]> {
+  const limit = Math.max(1, Math.min(options.limit ?? 50, 1_000));
+  const rows = await db
+    .select({
+      id: eventOutbox.id,
+      eventType: eventOutbox.eventType,
+      eventVersion: eventOutbox.eventVersion,
+      aggregateType: eventOutbox.aggregateType,
+      aggregateId: eventOutbox.aggregateId,
+      partitionKey: eventOutbox.partitionKey,
+      attempts: eventOutbox.attempts,
+      lastError: eventOutbox.lastError,
+      createdAt: eventOutbox.createdAt,
+      deadAt: eventOutbox.deadAt,
+    })
+    .from(eventOutbox)
+    .where(deadSelector(options))
+    .orderBy(eventOutbox.deadAt, eventOutbox.id)
+    .limit(limit);
+  return rows.map((row) => ({ ...row, deadAt: row.deadAt! }));
+}
+
+/** Full stored event for one dead row, for operator inspection. */
+export async function getDeadOutboxEvent(id: string) {
+  const [row] = await db
+    .select()
+    .from(eventOutbox)
+    .where(and(eq(eventOutbox.id, id), isNotNull(eventOutbox.deadAt)))
+    .limit(1);
+  return row ?? null;
+}
+
+/**
+ * Move dead events back to the live queue with a fresh attempt budget. A
+ * replayed row keeps its original position in its partition, so newer events
+ * of the same partition wait behind it again until it succeeds or dies.
+ */
+export async function replayDeadOutboxEvents(
+  selector: DeadOutboxSelector,
+  now = new Date(),
+): Promise<string[]> {
+  if (!selector.ids?.length && !selector.eventType) {
+    throw new Error("Replay needs explicit event IDs or an event type");
+  }
+  const replayed = await db
+    .update(eventOutbox)
+    .set({
+      deadAt: null,
+      attempts: 0,
+      availableAt: now,
+      lockedBy: null,
+      lockedAt: null,
+    })
+    .where(deadSelector(selector))
+    .returning({ id: eventOutbox.id });
+  return replayed.map((row) => row.id);
+}
+
+function deadSelector(selector: DeadOutboxSelector) {
+  return and(
+    isNotNull(eventOutbox.deadAt),
+    selector.ids?.length ? inArray(eventOutbox.id, [...selector.ids]) : undefined,
+    selector.eventType ? eq(eventOutbox.eventType, selector.eventType) : undefined,
+  );
 }
 
 function errorMessage(error: unknown) {

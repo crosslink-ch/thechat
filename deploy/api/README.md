@@ -141,15 +141,62 @@ Validate chart rendering locally with:
 helm lint deploy/api
 python3 deploy/api/tests/test_migration_hook.py
 python3 deploy/api/tests/test_attachment_credentials.py
+python3 deploy/api/tests/test_worker.py
 ```
 
 ## Worker
 
 With `worker.enabled=true` (the default), the chart also renders:
 
-- a dedicated worker `Deployment` running `bun run dist/scripts/worker.js`;
+- a dedicated worker `Deployment` running `bun run dist/scripts/worker.js`
+  (`worker.replicaCount`, default 3, spread across nodes);
 - a dedicated worker `ServiceAccount` (override with `worker.serviceAccount.name`);
-- shared runtime configuration through the same Redis and application Secret references.
+- shared runtime configuration through the same Redis and application Secret references;
+- worker-only environment from `worker.env`, merged over `env` (the worker uses a
+  small PostgreSQL pool per replica, `DATABASE_POOL_MAX`).
+
+Several replicas are safe: outbox rows are claimed with leases
+(`FOR UPDATE SKIP LOCKED`), a running handler renews its lease, and the periodic
+attachment-cleanup and bot-request-expiry sweeps use conditional updates.
+`helm upgrade -f current-release-values.yaml` keeps the old `replicaCount`; the
+production example overlay sets `worker.replicaCount: 3` explicitly.
+
+### Domain-event lanes and deadlines
+
+Each worker drains the outbox in two lanes with separate capacity, refilling a
+slot as soon as a handler finishes:
+
+| Lane | Events | Capacity | First-attempt budget |
+| --- | --- | --- | --- |
+| default | `chat.message.sent`, `bot_request.answered`, ... | `DOMAIN_EVENTS_BATCH_SIZE` (50) | `DOMAIN_EVENTS_HANDLER_TIMEOUT_MS` (60 s) |
+| attachments | `attachment.validation_requested`, `attachment.deletion_requested` | `ATTACHMENT_VALIDATION_CONCURRENCY` (1) | `DOMAIN_EVENTS_ATTACHMENT_HANDLER_TIMEOUT_MS` (5 min) |
+
+A timed-out attempt is retried with double the budget, up to
+`DOMAIN_EVENTS_MAX_HANDLER_TIMEOUT_MS` (30 min), so slow but valid work is never
+failed forever by a fixed limit. S3 calls additionally fail fast on a dead
+connection (`ATTACHMENT_S3_CONNECT_TIMEOUT_MS`, `ATTACHMENT_S3_RESPONSE_TIMEOUT_MS`,
+`ATTACHMENT_S3_BODY_IDLE_TIMEOUT_MS`) without limiting transfers that keep
+making progress.
+
+### Dead-letter queue
+
+An event that fails `DOMAIN_EVENTS_MAX_ATTEMPTS` times (or fails permanently) is
+kept in `event_outbox` with `dead_at` set: never pruned, never retried, and it
+no longer blocks its partition. The worker logs `domain_event.outbox.dead_lettered`
+for each one and `domain_event.outbox.dead_letter_backlog` (with the count)
+hourly while any remain. Inspect and replay from a worker pod:
+
+```bash
+kubectl -n thechat exec deploy/thechat-api-worker -- bun run dist/scripts/outbox-dlq.js count
+kubectl -n thechat exec deploy/thechat-api-worker -- bun run dist/scripts/outbox-dlq.js list --limit 20
+kubectl -n thechat exec deploy/thechat-api-worker -- bun run dist/scripts/outbox-dlq.js show <event-id>
+kubectl -n thechat exec deploy/thechat-api-worker -- bun run dist/scripts/outbox-dlq.js replay <event-id> [...]
+kubectl -n thechat exec deploy/thechat-api-worker -- bun run dist/scripts/outbox-dlq.js replay --type <event-type> --all
+```
+
+Replay resets the attempt count and puts the event back in its original
+partition order. Handlers are idempotent, so replaying an event whose effect
+already happened is safe.
 
 ## Production attachment credentials
 

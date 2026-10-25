@@ -48,6 +48,7 @@ jobs:
         run: |
           python deploy/api/tests/test_migration_hook.py
           python deploy/api/tests/test_attachment_credentials.py
+          python deploy/api/tests/test_worker.py
           helm lint deploy/web
           python deploy/web/tests/test_chart.py
           python deploy/web/tests/test_workflow.py

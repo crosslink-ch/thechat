@@ -37,6 +37,9 @@ attachments:
 
 worker:
   enabled: true
+  # Set explicitly: the production upgrade reuses the current release values
+  # first, and those pin the old replicaCount.
+  replicaCount: 3
   serviceAccount:
     create: true
     name: "" # Defaults to thechat-api-worker for release thechat-api

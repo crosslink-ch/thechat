@@ -28,6 +28,9 @@ spec:
     spec:
       serviceAccountName: {{ include "thechat-api.workerServiceAccountName" . }}
       automountServiceAccountToken: false
+      # Shutdown lets running outbox handlers finish (DOMAIN_EVENTS_SHUTDOWN_GRACE_MS)
+      # and hands unfinished events back before the pod is killed.
+      terminationGracePeriodSeconds: {{ .Values.worker.terminationGracePeriodSeconds | default 45 }}
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
@@ -38,7 +41,10 @@ spec:
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           command: ["bun", "run", "dist/scripts/worker.js"]
           env:
-            {{- include "thechat-api.env" . | nindent 12 }}
+            {{- /* Worker-only settings (worker.env) override the shared env. */}}
+            {{- $workerValues := deepCopy .Values -}}
+            {{- $_ := set $workerValues "env" (mergeOverwrite (deepCopy (default (dict) .Values.env)) (default (dict) .Values.worker.env)) }}
+            {{- include "thechat-api.env" (dict "Values" $workerValues) | nindent 12 }}
             {{- include "thechat-api.workerAwsCredentialEnv" . | trim | nindent 12 }}
           resources:
             {{- toYaml .Values.worker.resources | nindent 12 }}
@@ -49,6 +55,16 @@ spec:
       {{- with .Values.affinity }}
       affinity:
         {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if gt (int .Values.worker.replicaCount) 1 }}
+      # Prefer one worker per node so losing a node leaves the others draining.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              {{- include "thechat-api.workerSelectorLabels" . | nindent 14 }}
       {{- end }}
       {{- with .Values.tolerations }}
       tolerations:

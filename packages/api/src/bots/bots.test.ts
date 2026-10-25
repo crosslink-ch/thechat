@@ -5,6 +5,7 @@ import { and, asc, eq, inArray } from "drizzle-orm";
 import { db } from "../db";
 import {
   apikey,
+  attachments,
   botInvocations,
   bots,
   conversationParticipants,
@@ -56,6 +57,12 @@ import {
 import { closeDomainEventRuntime, startDomainEventRuntime } from "../events/runtime";
 import { createChatMessageSentV1 } from "../events/envelope";
 import { enqueueDomainEvent } from "../events/outbox";
+import { setAttachmentObjectStoreForTests } from "../attachments/service";
+import {
+  ATTACHMENT_VALIDATION_REQUESTED,
+  createAttachmentLifecycleEvent,
+} from "../attachments/events";
+import type { ObjectStore } from "../attachments/object-store";
 import crypto from "crypto";
 
 const app = new Elysia()
@@ -4299,3 +4306,136 @@ describe("Bots: @mention webhook", () => {
     expect(receivedHeaders["x-webhook-signature"]).toBe(expectedSignature);
   });
 });
+
+describe("Bots: background isolation", () => {
+  test("a bot mention is delivered while an attachment check is stuck on storage", async () => {
+    // Production incident: one attachment validation waited 217 s on S3 and
+    // every bot trigger queued behind it. The attachment lane must not delay
+    // chat events, whatever happens to storage.
+    const storage = createStuckStorage();
+    setAttachmentObjectStoreForTests(storage.store);
+    const webhook = startWebhookServer();
+    try {
+      const human = await registerUser("IsolationOwner");
+      const { workspaceId, channelId } = await createWorkspaceWithGeneralChannel(
+        human.token,
+        "Isolation WS",
+      );
+      const bot = await createBot(human.token, "IsolationBot", webhook.url);
+      await addBotToWorkspace(bot.body.id, workspaceId, human.token);
+      await startBotWorkerForTest();
+
+      const attachmentId = crypto.randomUUID();
+      const now = new Date();
+      await db.insert(attachments).values({
+        id: attachmentId,
+        conversationId: channelId,
+        uploaderId: human.user.id,
+        fileName: "deep-dive.docx",
+        declaredMediaType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        declaredSizeBytes: 1_234,
+        declaredChecksumSha256: "a".repeat(64),
+        status: "processing",
+        quarantineKey: `quarantine/${attachmentId}`,
+        quarantineVersionId: "quarantine-v1",
+        cleanKey: `clean/${attachmentId}`,
+        uploadExpiresAt: new Date(now.getTime() + 300_000),
+        expiresAt: new Date(now.getTime() + 86_400_000),
+        processingAt: now,
+      });
+      await enqueueDomainEvent(
+        db,
+        createAttachmentLifecycleEvent(
+          ATTACHMENT_VALIDATION_REQUESTED,
+          attachmentId,
+          human.user.id,
+        ),
+        { partitionKey: `attachment:${attachmentId}` },
+      );
+      await waitForResult(
+        async () => (storage.stuckCalls() > 0 ? true : null),
+        "attachment validation to reach storage",
+      );
+
+      const sentAt = Date.now();
+      const sendRes = await req(
+        "POST",
+        `/messages/${channelId}`,
+        { content: "@IsolationBot are you there?" },
+        human.token,
+      );
+      expect(sendRes.status).toBe(200);
+      const delivery = await waitForResult(
+        async () =>
+          webhook.requests.find(
+            (request) => request.payload.message?.id === sendRes.body.id,
+          ),
+        "bot webhook delivery during a stuck attachment check",
+      );
+      expect(delivery.payload.bot.id).toBe(bot.body.id);
+      expect(Date.now() - sentAt).toBeLessThan(5_000);
+      expect(storage.released()).toBe(false);
+
+      // Unstick storage; the attachment then finishes normally (rejected,
+      // because the fake object does not match).
+      storage.release();
+      const [settled] = await waitForResult(async () => {
+        const rows = await db
+          .select({ status: attachments.status })
+          .from(attachments)
+          .where(eq(attachments.id, attachmentId));
+        return rows[0]?.status === "rejected" ? rows : null;
+      }, "attachment validation to finish after storage recovers");
+      expect(settled?.status).toBe("rejected");
+    } finally {
+      storage.release();
+      setAttachmentObjectStoreForTests(null);
+      webhook.stop();
+    }
+  });
+});
+
+/**
+ * Fake storage whose worker-side reads hang (until released or aborted).
+ * API-side calls (no abort signal) are never made by this test.
+ */
+function createStuckStorage() {
+  let releaseGate!: () => void;
+  let isReleased = false;
+  const gate = new Promise<void>((resolve) => {
+    releaseGate = resolve;
+  });
+  let stuck = 0;
+  const wait = (signal?: AbortSignal) =>
+    new Promise<void>((resolve, reject) => {
+      stuck += 1;
+      gate.then(resolve);
+      signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
+    });
+  const unused = async (): Promise<never> => {
+    throw new Error("not used by this test");
+  };
+  const store: ObjectStore = {
+    createUploadRequest: unused,
+    createDownloadRequest: unused,
+    async headObject(input) {
+      await wait(input.signal);
+      return null;
+    },
+    async getObject(input) {
+      await wait(input.signal);
+      throw new Error("not used by this test");
+    },
+    copyObject: unused,
+    async deleteObject() {},
+  };
+  return {
+    store,
+    stuckCalls: () => stuck,
+    released: () => isReleased,
+    release() {
+      isReleased = true;
+      releaseGate();
+    },
+  };
+}
