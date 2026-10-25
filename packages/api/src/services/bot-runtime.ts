@@ -19,7 +19,6 @@ import type {
   BotRuntimeSnapshot,
   ChatMessage,
   ChatAttachment,
-  ConversationThreadPublic,
   WebhookPayload,
   WsServerEvent,
 } from "@thechat/shared";
@@ -34,6 +33,7 @@ import {
   conversationThreads,
   conversations,
   messages,
+  taskProjects,
   users,
   workspaceMembers,
   workspaces,
@@ -59,6 +59,7 @@ import {
 } from "./messages";
 import { requireConversationMutationAccess } from "./conversation-mutation-access";
 import { recordMessageUnreads } from "./activity";
+import { toPublicConversationThread } from "./task-project-records";
 import { vaultUnlockRequestSchema, vaultUnlockResolvedSchema, vaultUnlockResponseSchema, validateVaultPublicKey, VAULT_UNLOCK_PREVIEW } from "./vault-unlock";
 import type { VaultUnlockResponse } from "@thechat/shared";
 
@@ -868,6 +869,11 @@ export interface HermesPlatformEvent {
   chatType: "dm" | "group";
   threadId: string | null;
   sessionIntent?: Record<string, unknown>;
+  /**
+   * The project the task belongs to, so Hermes can find related tasks.
+   * Absent when the event is not in a task or the task has no project.
+   */
+  project?: HermesPlatformProject;
   text: string;
   attachments: ChatAttachment[];
   messageId: string;
@@ -878,6 +884,79 @@ export interface HermesPlatformEvent {
     type: ConversationType;
     name: string | null;
     workspaceId: string | null;
+  };
+}
+
+export interface HermesPlatformProject {
+  id: string;
+  name: string;
+  /** The task this event belongs to. */
+  task: { id: string; title: string };
+  /** Other tasks in the project, most recently active first. */
+  otherTasks: Array<{ id: string; title: string; lastActivityAt: string }>;
+  /** True when more tasks exist than `otherTasks` lists. */
+  otherTasksTruncated: boolean;
+}
+
+const MAX_PROJECT_TASKS_IN_EVENT = 20;
+
+async function loadHermesPlatformProject(
+  conversationId: string,
+  threadId: string | null,
+): Promise<HermesPlatformProject | null> {
+  if (!threadId) return null;
+  const [current] = await db
+    .select({
+      id: conversationThreads.id,
+      title: conversationThreads.title,
+      projectId: taskProjects.id,
+      projectName: taskProjects.name,
+    })
+    .from(conversationThreads)
+    .innerJoin(
+      taskProjects,
+      and(
+        eq(taskProjects.id, conversationThreads.projectId),
+        eq(taskProjects.conversationId, conversationThreads.conversationId),
+      ),
+    )
+    .where(
+      and(
+        eq(conversationThreads.id, threadId),
+        eq(conversationThreads.conversationId, conversationId),
+      ),
+    )
+    .limit(1);
+  if (!current) return null;
+  const others = await db
+    .select({
+      id: conversationThreads.id,
+      title: conversationThreads.title,
+      lastActivityAt: conversationThreads.lastActivityAt,
+    })
+    .from(conversationThreads)
+    .where(
+      and(
+        eq(conversationThreads.conversationId, conversationId),
+        eq(conversationThreads.projectId, current.projectId),
+        ne(conversationThreads.id, current.id),
+      ),
+    )
+    .orderBy(
+      desc(conversationThreads.lastActivityAt),
+      desc(conversationThreads.id),
+    )
+    .limit(MAX_PROJECT_TASKS_IN_EVENT + 1);
+  return {
+    id: current.projectId,
+    name: current.projectName,
+    task: { id: current.id, title: current.title },
+    otherTasks: others.slice(0, MAX_PROJECT_TASKS_IN_EVENT).map((task) => ({
+      id: task.id,
+      title: task.title,
+      lastActivityAt: task.lastActivityAt.toISOString(),
+    })),
+    otherTasksTruncated: others.length > MAX_PROJECT_TASKS_IN_EVENT,
   };
 }
 
@@ -1028,6 +1107,7 @@ async function prepareHermesPlatformEvent(
         title: loaded.thread.title,
       }
     : null;
+  const project = await loadHermesPlatformProject(loaded.conversation.id, threadId);
   const requestJson = {
     ...recordFromJson(loaded.invocation.requestJson),
     platform: "thechat",
@@ -1037,6 +1117,7 @@ async function prepareHermesPlatformEvent(
     conversationId: loaded.conversation.id,
     botId: loaded.bot.id,
     ...(sessionIntent ? { sessionIntent } : {}),
+    ...(project ? { projectId: project.id } : {}),
     messageId: loaded.triggerMessage.id,
     messageContent: loaded.triggerMessage.content,
     text,
@@ -1054,6 +1135,7 @@ async function prepareHermesPlatformEvent(
       chatType: loaded.conversation.type === "direct" ? "dm" : "group",
       threadId,
       ...(sessionIntent ? { sessionIntent } : {}),
+      ...(project ? { project } : {}),
       text,
       attachments: attachmentMetadata,
       messageId: loaded.triggerMessage.id,
@@ -2593,23 +2675,5 @@ function toPublicInvocation(row: {
     completedAt: row.completedAt?.toISOString() ?? null,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
-  };
-}
-
-function toPublicConversationThread(
-  thread: typeof conversationThreads.$inferSelect,
-): ConversationThreadPublic {
-  return {
-    id: thread.id,
-    conversationId: thread.conversationId,
-    botId: thread.botId,
-    title: thread.title,
-    status: thread.status,
-    branchPending: thread.branchPending,
-    branchFromThreadId: thread.branchFromThreadId,
-    createdById: thread.createdById,
-    lastActivityAt: thread.lastActivityAt.toISOString(),
-    createdAt: thread.createdAt.toISOString(),
-    updatedAt: thread.updatedAt.toISOString(),
   };
 }

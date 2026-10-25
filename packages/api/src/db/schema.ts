@@ -465,6 +465,38 @@ export const botInvocations = pgTable(
   ]
 );
 
+/**
+ * A named group of task threads inside one conversation. Projects only
+ * organize; deleting one leaves its tasks in place without a project.
+ */
+export const taskProjects = pgTable(
+  "task_projects",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    conversationId: uuid("conversation_id")
+      .notNull()
+      .references(() => conversations.id, { onDelete: "cascade" }),
+    name: varchar("name", { length: 100 }).notNull(),
+    createdById: uuid("created_by_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull()
+      .$onUpdate(() => new Date()),
+  },
+  (t) => [
+    index("task_projects_conversation_idx").on(t.conversationId, t.createdAt),
+    uniqueIndex("task_projects_conversation_name_idx").on(
+      t.conversationId,
+      sql`lower(${t.name})`,
+    ),
+  ],
+);
+
 export const conversationThreads = pgTable(
   "conversation_threads",
   {
@@ -475,6 +507,10 @@ export const conversationThreads = pgTable(
     botId: uuid("bot_id")
       .notNull()
       .references(() => bots.id, { onDelete: "cascade" }),
+    // The service keeps a thread's project inside the thread's conversation.
+    projectId: uuid("project_id").references(() => taskProjects.id, {
+      onDelete: "set null",
+    }),
     title: varchar("title", { length: 255 }).notNull(),
     status: varchar("status", { length: 20 }).notNull().default("active"),
     branchPending: boolean("branch_pending").notNull().default(false),
@@ -502,6 +538,7 @@ export const conversationThreads = pgTable(
       t.id,
     ),
     index("conversation_threads_last_activity_idx").on(t.lastActivityAt),
+    index("conversation_threads_project_idx").on(t.projectId),
     foreignKey({
       name: "conversation_threads_branch_from_thread_id_fk",
       columns: [t.branchFromThreadId],
@@ -1036,8 +1073,23 @@ export const conversationThreadsRelations = relations(
       fields: [conversationThreads.createdById],
       references: [users.id],
     }),
+    project: one(taskProjects, {
+      fields: [conversationThreads.projectId],
+      references: [taskProjects.id],
+    }),
     messages: many(messages),
     invocations: many(botInvocations),
+  }),
+);
+
+export const taskProjectsRelations = relations(
+  taskProjects,
+  ({ one, many }) => ({
+    conversation: one(conversations, {
+      fields: [taskProjects.conversationId],
+      references: [conversations.id],
+    }),
+    threads: many(conversationThreads),
   }),
 );
 

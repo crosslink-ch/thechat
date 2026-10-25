@@ -217,6 +217,21 @@ function doConnect() {
         conversationId: event.conversationId,
         thread: event.thread,
       });
+    } else if (event.type === "conversation_thread_deleted") {
+      wsEvents.emit("ws:conversation_thread_deleted", {
+        conversationId: event.conversationId,
+        threadId: event.threadId,
+      });
+    } else if (event.type === "task_project_updated") {
+      wsEvents.emit("ws:task_project_updated", {
+        conversationId: event.conversationId,
+        project: event.project,
+      });
+    } else if (event.type === "task_project_deleted") {
+      wsEvents.emit("ws:task_project_deleted", {
+        conversationId: event.conversationId,
+        projectId: event.projectId,
+      });
     } else if (event.type === "typing") {
       wsEvents.emit("ws:typing", {
         conversationId: event.conversationId,

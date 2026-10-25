@@ -331,6 +331,8 @@ export interface ConversationThreadPublic {
   status: string;
   branchPending?: boolean;
   branchFromThreadId?: string | null;
+  /** The project this task is filed under, or null when it has none. */
+  projectId?: string | null;
   createdById: string;
   lastActivityAt: string;
   createdAt: string;
@@ -341,6 +343,22 @@ export interface ConversationThreadsPage {
   items: ConversationThreadPublic[];
   nextCursor: string | null;
   hasMore: boolean;
+}
+
+/** A named group of tasks inside one conversation. */
+export interface TaskProjectPublic {
+  id: string;
+  conversationId: string;
+  name: string;
+  createdById: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface TaskProjectDetail {
+  project: TaskProjectPublic;
+  /** Tasks filed under the project, most recently active first. */
+  tasks: ConversationThreadPublic[];
 }
 
 // -- WebSocket Event Types --
@@ -718,6 +736,21 @@ export type WsServerEvent =
       type: "conversation_thread_updated";
       conversationId: string;
       thread: ConversationThreadPublic;
+    }
+  | {
+      type: "conversation_thread_deleted";
+      conversationId: string;
+      threadId: string;
+    }
+  | {
+      type: "task_project_updated";
+      conversationId: string;
+      project: TaskProjectPublic;
+    }
+  | {
+      type: "task_project_deleted";
+      conversationId: string;
+      projectId: string;
     }
   | {
       type: "typing";

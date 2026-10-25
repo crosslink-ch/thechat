@@ -70,7 +70,12 @@ async function fetchConversationThreads(
 async function createConversationThread(
   conversationId: string,
   token: string | null,
-  input: { botId?: string; title?: string; branchFromThreadId?: string | null },
+  input: {
+    botId?: string;
+    title?: string;
+    branchFromThreadId?: string | null;
+    projectId?: string | null;
+  },
 ): Promise<ConversationThreadPublic> {
   const { data, error } = await api.conversations.threads({ conversationId }).post(
     input,
@@ -87,7 +92,7 @@ async function createConversationThread(
 async function updateConversationThread(
   conversationId: string,
   token: string | null,
-  input: { threadId: string; title: string },
+  input: { threadId: string; title?: string; projectId?: string | null },
 ): Promise<ConversationThreadPublic> {
   const { data, error } = await api.conversations.threads({ conversationId }).patch(
     input,
@@ -99,6 +104,19 @@ async function updateConversationThread(
   }
 
   return data as ConversationThreadPublic;
+}
+
+async function deleteConversationThread(
+  conversationId: string,
+  token: string | null,
+  threadId: string,
+) {
+  const { error } = await api.conversations
+    .threads({ conversationId })({ threadId })
+    .delete(undefined, authHeaders(token));
+  if (error) {
+    throw new Error(edenErrorMessage(error, "Could not delete the task"));
+  }
 }
 
 export function useConversationThreads(
@@ -139,7 +157,14 @@ export function useConversationThreads(
   );
 
   const createThread = useCallback(
-    async (input: { botId?: string; title?: string; branchFromThreadId?: string | null } = {}) => {
+    async (
+      input: {
+        botId?: string;
+        title?: string;
+        branchFromThreadId?: string | null;
+        projectId?: string | null;
+      } = {},
+    ) => {
       if (!conversationId || !isAuthenticated(token)) return null;
       const thread = await createConversationThread(conversationId, token, input);
       queryClient.setQueryData<ThreadsInfiniteData>(
@@ -163,6 +188,54 @@ export function useConversationThreads(
         (previous) => updateLoadedThread(previous, thread),
       );
       return thread;
+    },
+    [botId, conversationId, pageSize, queryClient, status, token],
+  );
+
+  /** Files a task under a project, or unfiles it with `null`. */
+  const moveThread = useCallback(
+    async (threadId: string, projectId: string | null) => {
+      if (!conversationId || !isAuthenticated(token)) return null;
+      const key = conversationThreadsQueryKey(conversationId, { botId, status, pageSize });
+      const previous = queryClient.getQueryData<ThreadsInfiniteData>(key);
+      const current = previous?.pages
+        .flatMap((page) => page.items)
+        .find((thread) => thread.id === threadId);
+      // Optimistic so drag and drop feels immediate; rolled back on failure.
+      if (current) {
+        queryClient.setQueryData<ThreadsInfiniteData>(key, (data) =>
+          updateLoadedThread(data, { ...current, projectId }),
+        );
+      }
+      try {
+        const thread = await updateConversationThread(conversationId, token, {
+          threadId,
+          projectId,
+        });
+        queryClient.setQueryData<ThreadsInfiniteData>(key, (data) =>
+          updateLoadedThread(data, thread),
+        );
+        return thread;
+      } catch (error) {
+        if (current) {
+          queryClient.setQueryData<ThreadsInfiniteData>(key, (data) =>
+            updateLoadedThread(data, current),
+          );
+        }
+        throw error;
+      }
+    },
+    [botId, conversationId, pageSize, queryClient, status, token],
+  );
+
+  const deleteThread = useCallback(
+    async (threadId: string) => {
+      if (!conversationId || !isAuthenticated(token)) return;
+      await deleteConversationThread(conversationId, token, threadId);
+      queryClient.setQueryData<ThreadsInfiniteData>(
+        conversationThreadsQueryKey(conversationId, { botId, status, pageSize }),
+        (data) => removeLoadedThread(data, threadId),
+      );
     },
     [botId, conversationId, pageSize, queryClient, status, token],
   );
@@ -208,9 +281,36 @@ export function useConversationThreads(
       );
     };
 
+    const onConversationThreadDeleted = ({
+      conversationId: eventConversationId,
+      threadId,
+    }: WsEvents["ws:conversation_thread_deleted"]) => {
+      if (eventConversationId !== conversationId) return;
+      queryClient.setQueryData<ThreadsInfiniteData>(
+        queryKey,
+        (previous) => removeLoadedThread(previous, threadId),
+      );
+    };
+
+    // Deleting a project unfiles its tasks on the server; mirror it locally.
+    const onTaskProjectDeleted = ({
+      conversationId: eventConversationId,
+      projectId,
+    }: WsEvents["ws:task_project_deleted"]) => {
+      if (eventConversationId !== conversationId) return;
+      queryClient.setQueryData<ThreadsInfiniteData>(
+        queryKey,
+        (previous) => unfileLoadedThreads(previous, projectId),
+      );
+    };
+
     wsEvents.on("ws:conversation_thread_updated", onConversationThreadUpdated);
+    wsEvents.on("ws:conversation_thread_deleted", onConversationThreadDeleted);
+    wsEvents.on("ws:task_project_deleted", onTaskProjectDeleted);
     return () => {
       wsEvents.off("ws:conversation_thread_updated", onConversationThreadUpdated);
+      wsEvents.off("ws:conversation_thread_deleted", onConversationThreadDeleted);
+      wsEvents.off("ws:task_project_deleted", onTaskProjectDeleted);
     };
   }, [botId, conversationId, enabled, query.refetch, queryClient, queryKey, status, token]);
 
@@ -223,11 +323,15 @@ export function useConversationThreads(
       loadMore: query.fetchNextPage,
       createThread,
       renameThread,
+      moveThread,
+      deleteThread,
       touchThread,
       refetchThreads: query.refetch,
     }),
     [
       createThread,
+      deleteThread,
+      moveThread,
       query.fetchNextPage,
       query.hasNextPage,
       query.isFetchingNextPage,
@@ -297,6 +401,36 @@ function updateLoadedThread(
     pages: data.pages.map((page) => ({
       ...page,
       items: page.items.map((item) => (item.id === thread.id ? thread : item)),
+    })),
+  };
+}
+
+function removeLoadedThread(
+  data: ThreadsInfiniteData | undefined,
+  threadId: string,
+): ThreadsInfiniteData | undefined {
+  if (!data) return data;
+  return {
+    ...data,
+    pages: data.pages.map((page) => ({
+      ...page,
+      items: page.items.filter((item) => item.id !== threadId),
+    })),
+  };
+}
+
+function unfileLoadedThreads(
+  data: ThreadsInfiniteData | undefined,
+  projectId: string,
+): ThreadsInfiniteData | undefined {
+  if (!data) return data;
+  return {
+    ...data,
+    pages: data.pages.map((page) => ({
+      ...page,
+      items: page.items.map((item) =>
+        item.projectId === projectId ? { ...item, projectId: null } : item,
+      ),
     })),
   };
 }

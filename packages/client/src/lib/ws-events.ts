@@ -8,6 +8,7 @@ import type {
   BotWorkspaceInviteStatus,
   ChatMessage,
   ConversationThreadPublic,
+  TaskProjectPublic,
   WorkspaceChannel,
   WorkspaceMember,
   WorkspaceMemberRole,
@@ -47,6 +48,18 @@ export type WsEvents = {
   "ws:conversation_thread_updated": {
     conversationId: string;
     thread: ConversationThreadPublic;
+  };
+  "ws:conversation_thread_deleted": {
+    conversationId: string;
+    threadId: string;
+  };
+  "ws:task_project_updated": {
+    conversationId: string;
+    project: TaskProjectPublic;
+  };
+  "ws:task_project_deleted": {
+    conversationId: string;
+    projectId: string;
   };
   "ws:typing": {
     conversationId: string;
