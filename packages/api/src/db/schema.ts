@@ -57,6 +57,20 @@ export const attachmentStatusEnum = pgEnum("attachment_status", [
 
 // -- Tables --
 
+// pg-boss owns its private schema. These application-owned audit/receipt tables
+// survive native job retention and must never be dropped during the cutover.
+export const queueDeadLetters = pgTable('queue_dead_letters', {
+  queue:text('queue').notNull(), id:uuid('id').notNull(), data:jsonb('data').notNull(),
+  singletonKey:text('singleton_key'), attempts:integer('attempts').notNull(), error:jsonb('error'),
+  createdAt:timestamp('created_at',{withTimezone:true}).notNull(),
+  deadAt:timestamp('dead_at',{withTimezone:true}).notNull().defaultNow(),
+  replayId:uuid('replay_id'), replayedAt:timestamp('replayed_at',{withTimezone:true}),
+}, t=>[primaryKey({columns:[t.queue,t.id]})]);
+export const queueLegacyImports = pgTable('queue_legacy_imports', {
+  source:text('source').notNull(), id:text('id').notNull(), queue:text('queue').notNull(),
+  jobId:uuid('job_id').notNull(), importedAt:timestamp('imported_at',{withTimezone:true}).notNull().defaultNow(),
+}, t=>[primaryKey({columns:[t.source,t.id]})]);
+
 export const users = pgTable(
   "users",
   {

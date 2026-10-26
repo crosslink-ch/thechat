@@ -25,6 +25,7 @@ export interface AsyncMessage<TPayload = unknown> {
   correlationId: string;
   causationId?: string;
   idempotencyKey?: string;
+  traceContext?: { traceparent: string; tracestate?: string };
   occurredAt: string;
   payload: TPayload;
 }
@@ -42,33 +43,34 @@ export interface QueueCommand<TPayload = unknown> {
   attempts?: number;
   backoff?: AsyncBackoffOptions;
   delayMs?: number;
-  removeOnComplete?: boolean | number | { age: number; count?: number; limit?: number };
-  removeOnFail?: boolean | number | { age: number; count?: number; limit?: number };
+  removeOnComplete?:
+    | boolean
+    | number
+    | { age: number; count?: number; limit?: number };
+  removeOnFail?:
+    | boolean
+    | number
+    | { age: number; count?: number; limit?: number };
 }
 
 export interface QueuedJob {
   queue: QueueName;
   name: string;
-  bullmqJobId: string;
+  jobId: string;
   messageId: string;
-}
-
-export interface AsyncBus {
-  enqueue<TPayload>(command: QueueCommand<TPayload>): Promise<QueuedJob>;
-  close?(): Promise<void>;
 }
 
 export interface AsyncJob<TPayload = unknown> {
   queue: QueueName;
   name: string;
-  bullmqJobId: string;
+  jobId: string;
   message: AsyncMessage<TPayload>;
   attemptsMade: number;
   maxAttempts: number;
 }
 
 export interface AsyncJobContext {
-  setProgress(progress: number, detail?: unknown): Promise<void>;
+  signal?: AbortSignal;
 }
 
 export interface AsyncJobHandler<TPayload = unknown> {

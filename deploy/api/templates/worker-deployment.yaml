@@ -28,8 +28,8 @@ spec:
     spec:
       serviceAccountName: {{ include "thechat-api.workerServiceAccountName" . }}
       automountServiceAccountToken: false
-      # Shutdown lets running outbox handlers finish (DOMAIN_EVENTS_SHUTDOWN_GRACE_MS)
-      # and hands unfinished events back before the pod is killed.
+      # pg-boss allows 20 seconds to finish, then aborts unfinished attempts;
+      # leave additional time for telemetry and database cleanup.
       terminationGracePeriodSeconds: {{ .Values.worker.terminationGracePeriodSeconds | default 45 }}
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:

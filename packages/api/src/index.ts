@@ -22,6 +22,7 @@ import { activityRoutes } from "./activity";
 import { botRequestRoutes, inboxRoutes } from "./bot-requests";
 import { initObservability, shutdownObservability, withSpan } from "./observability";
 import { log } from "./logging";
+import { getQueueClient, closeQueueClient, closeQueueDatabase } from './async/queue';
 
 const apiLog = log.child({ component: "api" });
 
@@ -55,6 +56,7 @@ function installLoopbackOnlyE2EGuard() {
 installLoopbackOnlyE2EGuard();
 
 await initObservability("thechat-api");
+await getQueueClient();
 
 const app = new Elysia()
   .use(browserCors)
@@ -128,6 +130,8 @@ apiLog.info(
 
 async function shutdownAndExit(code: number) {
   app.stop();
+  await closeQueueClient();
+  await closeQueueDatabase();
   await drainAuthenticationCodeDeliveries().catch((error) => {
     apiLog.error(
       {

@@ -19,7 +19,7 @@ import {
   apikey,
   botInvocations,
   botWorkspaceInvites,
-  eventOutbox,
+
   hermesBotConfigs,
 } from "../db/schema";
 import { ServiceError } from "./errors";
@@ -600,44 +600,39 @@ export async function removeBotFromWorkspace(
             (
               select jsonb_agg(target.value)
               from jsonb_array_elements(
-                pending.event->'payload'->'targetBotIds'
+                pending.data->'payload'->'targetBotIds'
               ) as target(value)
               where target.value <> to_jsonb(${botId}::text)
             ),
             '[]'::jsonb
           ) as remaining_targets
-        from ${eventOutbox} as pending
-        where pending.event_type = 'chat.message.sent'
-          and pending.published_at is null
-          and pending.dead_at is null
-          and pending.event->'tenant'->>'workspaceId' = ${workspaceId}
-          and pending.event->'payload'->'targetBotIds' @> jsonb_build_array(${botId}::text)
+        from pgboss.job as pending
+        where pending.name = 'chat.message.sent'
+          and pending.state in ('created','retry','active')
+          and pending.data->'tenant'->>'workspaceId' = ${workspaceId}
+          and pending.data->'payload'->'targetBotIds' @> jsonb_build_array(${botId}::text)
       )
-      update ${eventOutbox} as pending
-      set event = jsonb_set(
-            pending.event,
+      update pgboss.job as pending
+      set data = jsonb_set(
+            pending.data,
             '{payload,targetBotIds}',
             revoked.remaining_targets
           ),
-          dead_at = case
-            when jsonb_array_length(revoked.remaining_targets) = 0 then now()
-            else pending.dead_at
+          state = case
+            when jsonb_array_length(revoked.remaining_targets) = 0 then 'cancelled'::pgboss.job_state
+            else pending.state
           end,
-          last_error = case
+          output = case
             when jsonb_array_length(revoked.remaining_targets) = 0
-              then 'Target bot removed from workspace'
-            else pending.last_error
+              then '{"reason":"Target bot removed from workspace"}'::jsonb
+            else pending.output
           end,
-          locked_by = case
-            when jsonb_array_length(revoked.remaining_targets) = 0 then null
-            else pending.locked_by
-          end,
-          locked_at = case
-            when jsonb_array_length(revoked.remaining_targets) = 0 then null
-            else pending.locked_at
+          completed_on = case
+            when jsonb_array_length(revoked.remaining_targets) = 0 then now()
+            else pending.completed_on
           end
       from revoked
-      where pending.id = revoked.id
+      where pending.id = revoked.id and pending.name='chat.message.sent'
     `);
 
     if (workspaceConversations.length > 0) {

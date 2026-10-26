@@ -52,7 +52,7 @@ betterAuthInfisical:
 
 # Name of a Kubernetes Secret containing REDIS_URL.
 # When redis.enabled=true, this chart creates the secret.
-# Required when REALTIME_DRIVER=redis or BullMQ workers are enabled.
+# Required for realtime, presence and ephemeral bot progress.
 redisSecret: thechat-redis
 
 redis:
@@ -94,7 +94,8 @@ env:
   AUTH_TRUSTED_IP_HEADER: "x-real-ip"
   REALTIME_DRIVER: "redis"
   REDIS_KEY_PREFIX: "thechat"
-  ASYNC_WORKER_CONCURRENCY: "4"
+  DATABASE_POOL_MAX: "10"
+
   EMAIL_PROVIDER: "smtp"
   EMAIL_FROM: "noreply@thechat.app"
   REQUIRE_EMAIL_VERIFICATION: "false"
@@ -103,7 +104,7 @@ env:
   ATTACHMENT_S3_REGION: "eu-central-1"
   ATTACHMENT_S3_FORCE_PATH_STYLE: "false"
   ATTACHMENT_UNATTACHED_TTL_SECONDS: "2592000"
-  ATTACHMENT_VALIDATION_CONCURRENCY: "1"
+
 
 # Static AWS credentials for attachment storage. The chart only references
 # existing Secrets; it never accepts or renders credential values.
@@ -138,17 +139,15 @@ attachments:
 
 worker:
   enabled: true
-  # Workers claim outbox events with row leases (FOR UPDATE SKIP LOCKED) and
-  # their periodic sweeps are idempotent, so several replicas are safe and keep
-  # background work flowing when one pod is slow, restarting or gone.
+  # pg-boss coordinates claims, heartbeats and per-conversation FIFO across replicas.
   replicaCount: 3
-  # Covers DOMAIN_EVENTS_SHUTDOWN_GRACE_MS (20s) plus handler abort grace.
+  # Covers pg-boss graceful shutdown (20s) plus abort and database cleanup.
   terminationGracePeriodSeconds: 45
   # Worker-only environment, merged over `env`.
   env:
     # Production reaches PostgreSQL through PgBouncer in session mode, where
     # every client connection pins a server connection. Keep each replica's
-    # pool small so all replicas plus the API stay well inside the pool.
+    # pool small. Add the shared pg-boss pool (2) per process: 8 per worker.
     DATABASE_POOL_MAX: "6"
     DATABASE_IDLE_TIMEOUT_SECONDS: "60"
   serviceAccount:

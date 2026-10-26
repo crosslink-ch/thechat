@@ -1,191 +1,156 @@
-import { afterAll, describe, expect, test } from "bun:test";
-import crypto from "crypto";
-import { eq, inArray } from "drizzle-orm";
+import { test, expect } from "bun:test";
+import { sql } from "drizzle-orm";
 import { db } from "../db";
-import { eventOutbox } from "../db/schema";
-import { parseDomainEventEnvelope } from "./envelope";
 import {
-  claimOutboxEvents,
-  enqueueDomainEvent,
-  markOutboxEventPublished,
-  prunePublishedOutboxEvents,
-  releaseOutboxEvent,
-} from "./outbox";
+  createQueueClient,
+  getQueueClient,
+  QUEUES,
+  archiveFailedJobs,
+} from "../async/queue";
 
-const ids: string[] = [];
-
-afterAll(async () => {
-  if (ids.length > 0) {
-    await db.delete(eventOutbox).where(inArray(eventOutbox.id, ids));
+test("two replicas preserve per-key FIFO and fence stale acknowledgements after crash recovery", async () => {
+  const a = createQueueClient(),
+    b = createQueueClient();
+  await a.start();
+  await b.start();
+  const name = `test.fifo.${crypto.randomUUID()}`;
+  await a.createQueue(name, {
+    policy: "key_strict_fifo",
+    heartbeatSeconds: 10,
+    retryLimit: 7,
+    retryDelay: 0,
+  });
+  try {
+    const first = (await a.send(name, { n: 1 }, { singletonKey: "a" }))!;
+    const second = (await a.send(name, { n: 2 }, { singletonKey: "a" }))!;
+    const other = (await a.send(name, { n: 3 }, { singletonKey: "b" }))!;
+    const batches = await Promise.all([
+      a.fetch(name, { includeMetadata: true, batchSize: 10 }),
+      b.fetch(name, { includeMetadata: true, batchSize: 10 }),
+    ]);
+    const jobs = batches.flat();
+    expect(jobs.map((j) => j.id).sort()).toEqual([first, other].sort());
+    const stale = jobs.find((j) => j.id === first)!;
+    await db.execute(
+      sql`update pgboss.job set heartbeat_on=now()-interval '1 hour' where name=${name} and id=${first}`,
+    );
+    await b.supervise(name);
+    const [replacement] = await b.fetch(name, { includeMetadata: true });
+    expect(replacement.id).toBe(first);
+    expect(replacement.retryCount).toBe(1);
+    await a.complete(name, stale);
+    await a.fail(name, stale);
+    await a.touch(name, stale);
+    const [stillOwned] = await b.findJobs(name, { id: first });
+    expect(stillOwned.state).toBe("active");
+    expect(stillOwned.retryCount).toBe(1);
+    expect((await b.findJobs(name, { id: other }))[0].state).toBe("active");
+    await b.complete(name, replacement);
+    expect((await a.fetch(name))[0].id).toBe(second);
+  } finally {
+    await a.deleteQueue(name);
+    await Promise.all([a.stop(), b.stop()]);
   }
 });
 
-describe("transactional outbox claiming", () => {
-  test("reclaims stale leases, preserves fresh leases, and reschedules a transient failure", async () => {
-    const now = new Date("2000-01-01T00:00:00.000Z");
-    const staleEvent = event(crypto.randomUUID(), "stale");
-    const freshEvent = event(crypto.randomUUID(), "fresh");
-    await enqueueDomainEvent(db, staleEvent, {
-      partitionKey: "conversation-stale",
-      availableAt: new Date("1999-12-31T23:00:00.000Z"),
-    });
-    await enqueueDomainEvent(db, freshEvent, {
-      partitionKey: "conversation-fresh",
-      availableAt: new Date("1999-12-31T23:00:00.000Z"),
-    });
-    ids.push(staleEvent.id, freshEvent.id);
-    await db
-      .update(eventOutbox)
-      .set({ lockedBy: "dead-worker", lockedAt: new Date("1999-12-31T23:00:00.000Z") })
-      .where(eq(eventOutbox.id, staleEvent.id));
-    await db
-      .update(eventOutbox)
-      .set({ lockedBy: "live-worker", lockedAt: new Date("1999-12-31T23:59:45.000Z") })
-      .where(eq(eventOutbox.id, freshEvent.id));
-
-    const claimed = await claimOutboxEvents({
-      workerId: "replacement-worker",
-      batchSize: 10,
-      lockTimeoutMs: 30_000,
-      now,
-    });
-    expect(claimed.map((row) => row.id)).toContain(staleEvent.id);
-    expect(claimed.map((row) => row.id)).not.toContain(freshEvent.id);
-
-    const staleClaim = claimed.find((row) => row.id === staleEvent.id)!;
-    expect(await releaseOutboxEvent(staleClaim, new Error("handler unavailable"), now)).toMatchObject({
-      kind: "released",
-      attempts: 1,
-    });
-    const [released] = await db.select().from(eventOutbox).where(eq(eventOutbox.id, staleEvent.id));
-    expect(released).toMatchObject({
-      attempts: 1,
-      lastError: "handler unavailable",
-      lockedBy: null,
-      lockedAt: null,
-    });
-    expect(released.availableAt.toISOString()).toBe("2000-01-01T00:00:01.000Z");
+test("native FIFO defers initially scheduled jobs but blocks siblings behind a retry", async () => {
+  const boss = await getQueueClient();
+  const name = `test.scheduled.${crypto.randomUUID()}`;
+  await boss.createQueue(name, {
+    policy: "key_strict_fifo",
+    retryLimit: 1,
+    retryDelay: 60,
+    retryBackoff: false,
   });
-
-  test("fences terminal writes by the claimed lease token", async () => {
-    const now = new Date("2100-01-01T00:00:00.000Z");
-    const item = event(crypto.randomUUID(), "fenced");
-    ids.push(item.id);
-    await enqueueDomainEvent(db, item, {
-      partitionKey: `fenced-${item.id}`,
-      availableAt: new Date("1999-12-31T23:00:00.000Z"),
-    });
-    const [claimed] = await claimOutboxEvents({
-      workerId: "lease-owner",
-      batchSize: 1,
-      lockTimeoutMs: 30_000,
-      now,
-    });
-
-    expect(await markOutboxEventPublished(claimed.id, "stale-worker", now)).toEqual({
-      kind: "lease_lost",
-    });
-    expect(await releaseOutboxEvent({ ...claimed, lockedBy: "stale-worker" }, new Error("late"), now)).toEqual({
-      kind: "lease_lost",
-    });
-    expect(await markOutboxEventPublished(claimed.id, claimed.lockedBy, now)).toMatchObject({
-      kind: "published",
-      publishedAt: now,
-    });
-  });
-
-  test("dead-letters a poison row and then unblocks its partition", async () => {
-    const now = new Date("2001-01-01T00:00:00.000Z");
-    const partitionKey = `poison-${crypto.randomUUID()}`;
-    const poison = event(crypto.randomUUID(), "poison");
-    const following = event(crypto.randomUUID(), "following");
-    for (const item of [poison, following]) {
-      await enqueueDomainEvent(db, item, {
-        partitionKey,
-        availableAt: new Date("2000-12-31T23:00:00.000Z"),
-      });
-      ids.push(item.id);
-    }
-    await db.update(eventOutbox).set({ createdAt: new Date("2000-12-31T23:00:00.000Z") })
-      .where(eq(eventOutbox.id, poison.id));
-    await db.update(eventOutbox).set({ createdAt: new Date("2000-12-31T23:00:01.000Z") })
-      .where(eq(eventOutbox.id, following.id));
-
-    const claimed = await claimOutboxEvents({
-      workerId: "poison-worker", batchSize: 10, lockTimeoutMs: 300_000, now,
-    });
-    const poisonClaim = claimed.find((row) => row.id === poison.id)!;
-    expect(await releaseOutboxEvent(poisonClaim, new Error("unsupported"), now, 1)).toMatchObject({
-      kind: "dead",
-      attempts: 1,
-      deadAt: now,
-    });
-
-    const nextClaim = await claimOutboxEvents({
-      workerId: "following-worker", batchSize: 10, lockTimeoutMs: 300_000, now,
-    });
-    expect(nextClaim.map((row) => row.id)).toContain(following.id);
-  });
-
-  test("keeps per-partition order and prunes only old successfully published rows", async () => {
-    const now = new Date("2002-01-01T00:00:00.000Z");
-    const partitionKey = `ordered-${crypto.randomUUID()}`;
-    const first = event(crypto.randomUUID(), "first");
-    const second = event(crypto.randomUUID(), "second");
-    const live = event(crypto.randomUUID(), "live");
-    const dead = event(crypto.randomUUID(), "dead");
-    for (const item of [first, second, live, dead]) {
-      await enqueueDomainEvent(db, item, {
-        partitionKey: item === first || item === second ? partitionKey : `other-${item.id}`,
-        availableAt: new Date("2001-12-31T23:00:00.000Z"),
-      });
-      ids.push(item.id);
-    }
-    await db.update(eventOutbox).set({ createdAt: new Date("2001-12-31T23:00:00.000Z") })
-      .where(eq(eventOutbox.id, first.id));
-    await db.update(eventOutbox).set({ createdAt: new Date("2001-12-31T23:00:01.000Z") })
-      .where(eq(eventOutbox.id, second.id));
-
-    const firstClaim = await claimOutboxEvents({
-      workerId: "ordered-worker", batchSize: 10, lockTimeoutMs: 30_000, now,
-    });
-    expect(firstClaim.map((row) => row.id)).toContain(first.id);
-    expect(firstClaim.map((row) => row.id)).not.toContain(second.id);
-    const claimedFirst = firstClaim.find((row) => row.id === first.id)!;
-    await markOutboxEventPublished(claimedFirst.id, claimedFirst.lockedBy, now);
-
-    const secondClaim = await claimOutboxEvents({
-      workerId: "ordered-worker-2", batchSize: 10, lockTimeoutMs: 30_000, now,
-    });
-    expect(secondClaim.map((row) => row.id)).toContain(second.id);
-
-    await db.update(eventOutbox).set({
-      publishedAt: new Date("2000-01-01T00:00:00.000Z"),
-      deadAt: null,
-    }).where(eq(eventOutbox.id, dead.id));
-    await db.update(eventOutbox).set({
-      publishedAt: new Date("2000-01-01T00:00:00.000Z"),
-      deadAt: new Date("2000-01-02T00:00:00.000Z"),
-    }).where(eq(eventOutbox.id, live.id));
-
-    expect(await prunePublishedOutboxEvents({
-      before: new Date("2001-01-01T00:00:00.000Z"),
-      batchSize: 10,
-    })).toBe(1);
-    expect(await db.select({ id: eventOutbox.id }).from(eventOutbox)
-      .where(eq(eventOutbox.id, dead.id))).toEqual([]);
-    expect((await db.select({ id: eventOutbox.id }).from(eventOutbox)
-      .where(eq(eventOutbox.id, live.id))).map((row) => row.id)).toEqual([live.id]);
-  });
+  try {
+    const future = (await boss.send(
+      name,
+      { n: 1 },
+      { singletonKey: "key", startAfter: 60 },
+    ))!;
+    const ready = (await boss.send(name, { n: 2 }, { singletonKey: "key" }))!;
+    const [head] = await boss.fetch(name, { includeMetadata: true });
+    expect(head.id).toBe(ready);
+    await boss.fail(name, head);
+    // Make the initially deferred sibling due. The failed head still owns the key.
+    await db.execute(
+      sql`update pgboss.job set start_after=now() where name=${name} and id=${future}`,
+    );
+    expect(await boss.fetch(name)).toEqual([]);
+    await db.execute(
+      sql`update pgboss.job set start_after=now() where name=${name} and id=${ready}`,
+    );
+    const [retry] = await boss.fetch(name, { includeMetadata: true });
+    expect(retry.id).toBe(ready);
+    await boss.complete(name, retry);
+    expect((await boss.fetch(name))[0].id).toBe(future);
+  } finally {
+    await boss.deleteQueue(name);
+  }
 });
 
-function event(id: string, aggregateId: string) {
-  return parseDomainEventEnvelope({
-    id,
-    type: "test.outbox",
-    version: 1,
-    aggregate: { type: "test", id: aggregateId },
-    occurredAt: "1999-12-31T23:00:00.000Z",
-    payload: {},
-  });
-}
+test("failed audit write rolls back head removal; native retention keeps failures", async () => {
+  const boss = await getQueueClient();
+  const key = crypto.randomUUID();
+  const id = (await boss.send(
+    QUEUES.chat,
+    { test: "audit-crash" },
+    { singletonKey: key, retryLimit: 0, deleteAfterSeconds: 1 },
+  ))!;
+  const [job] = (
+    await boss.fetch(QUEUES.chat, { includeMetadata: true, batchSize: 1000 })
+  ).filter((j) => j.id === id);
+  await boss.fail(QUEUES.chat, job);
+  await db.execute(
+    sql`update pgboss.job set completed_on=now()-interval '2 years' where id=${id}`,
+  );
+  await boss.supervise(QUEUES.chat);
+  expect((await boss.findJobs(QUEUES.chat, { id }))[0].state).toBe("failed");
+  // Simulate audit storage failure without changing the queue implementation.
+  await db.execute(
+    sql`create or replace function public.test_reject_audit() returns trigger language plpgsql as $$ begin raise exception 'synthetic audit unavailable'; end $$`,
+  );
+  await db.execute(
+    sql`create trigger test_reject_audit before insert on queue_dead_letters for each row execute function public.test_reject_audit()`,
+  );
+  try {
+    await expect(archiveFailedJobs()).rejects.toThrow();
+    expect((await boss.findJobs(QUEUES.chat, { id }))[0].state).toBe("failed");
+  } finally {
+    await db.execute(sql`drop trigger test_reject_audit on queue_dead_letters`);
+    await db.execute(sql`drop function public.test_reject_audit()`);
+  }
+  await archiveFailedJobs();
+  expect(
+    (await db.execute(sql`select id from queue_dead_letters where id=${id}`))
+      .length,
+  ).toBe(1);
+  expect(await boss.findJobs(QUEUES.chat, { id })).toEqual([]);
+  await db.execute(sql`delete from queue_dead_letters where id=${id}`);
+});
+
+test("native retention removes old completed jobs but not recent successes or pending work", async () => {
+  const boss = await getQueueClient();
+  const name = `test.retention.${crypto.randomUUID()}`;
+  await boss.createQueue(name, { deleteAfterSeconds: 1 });
+  try {
+    const old = (await boss.send(name, {}))!;
+    const recent = (await boss.send(name, {}))!;
+    const batch = await boss.fetch(name, { batchSize: 2 });
+    await boss.complete(name, batch);
+    await db.execute(
+      sql`update pgboss.job set completed_on=now()-interval '1 day' where name=${name} and id=${old}`,
+    );
+    const pending = (await boss.send(name, {}))!;
+    await boss.supervise(name);
+    expect(await boss.findJobs(name, { id: old })).toEqual([]);
+    expect((await boss.findJobs(name, { id: recent }))[0].state).toBe(
+      "completed",
+    );
+    expect((await boss.findJobs(name, { id: pending }))[0].state).toBe(
+      "created",
+    );
+  } finally {
+    await boss.deleteQueue(name);
+  }
+});

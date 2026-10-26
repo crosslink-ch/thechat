@@ -1,7 +1,7 @@
 FROM node:22-slim AS builder
 
 RUN corepack enable && corepack prepare pnpm@latest --activate
-RUN npm i -g bun
+RUN npm i -g bun@1.4.2
 
 WORKDIR /app
 
@@ -20,10 +20,10 @@ COPY packages/shared/ packages/shared/
 COPY packages/api/ packages/api/
 
 # Build
-RUN cd packages/api && bun build src/index.ts src/scripts/worker.ts src/scripts/outbox-dlq.ts --outdir dist --target bun
+RUN pnpm --filter @thechat/api build
 
 # --- Production stage ---
-FROM oven/bun:1-slim
+FROM oven/bun:1.4.2-slim
 
 WORKDIR /app
 

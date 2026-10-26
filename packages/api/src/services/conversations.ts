@@ -1,6 +1,7 @@
-import { and, asc, desc, eq, gt, inArray, isNull, lt, ne, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, lt, ne, or, sql } from "drizzle-orm";
 import { resolveBotAppearance, type WsServerEvent } from "@thechat/shared";
 import { db } from "../db";
+import { pendingChatJobs } from '../async/queue';
 import {
   attachments,
   botInvocations,
@@ -9,7 +10,7 @@ import {
   conversations,
   conversationParticipants,
   conversationThreads,
-  eventOutbox,
+
   messageAttachments,
   messages,
   taskProjects,
@@ -22,7 +23,7 @@ import {
   ATTACHMENT_DELETION_REQUESTED,
   createAttachmentLifecycleEvent,
 } from "../attachments/events";
-import { CHAT_MESSAGE_SENT_EVENT_TYPE } from "../events/envelope";
+
 import { enqueueDomainEvent } from "../events/outbox";
 import { log } from "../logging";
 import { publishWsEventToUsers } from "../realtime";
@@ -729,24 +730,7 @@ export async function deleteConversationThread(
 
     // Same rule as channel deletion: a bot-targeted message whose dispatch has
     // not been processed yet is still on its way to a bot.
-    const [pendingTargetedEvent] = await tx
-      .select({ id: eventOutbox.id })
-      .from(eventOutbox)
-      .where(
-        and(
-          eq(eventOutbox.eventType, CHAT_MESSAGE_SENT_EVENT_TYPE),
-          eq(eventOutbox.partitionKey, conversationId),
-          isNull(eventOutbox.publishedAt),
-          isNull(eventOutbox.deadAt),
-          sql`jsonb_typeof(${eventOutbox.event}->'payload'->'targetBotIds') = 'array'`,
-          sql`jsonb_array_length(${eventOutbox.event}->'payload'->'targetBotIds') > 0`,
-          sql`${eventOutbox.event}->'payload'->>'messageId' IN (
-            SELECT ${messages.id}::text FROM ${messages}
-            WHERE ${messages.threadId} = ${thread.id}
-          )`,
-        ),
-      )
-      .limit(1);
+    const [pendingTargetedEvent] = await pendingChatJobs(tx, conversationId, thread.id);
     if (activeInvocation || pendingTargetedEvent) {
       throw new ServiceError(
         "Wait for the bot to finish working on this task before deleting it",
@@ -1290,20 +1274,7 @@ export async function deleteChannel(
       )
       .limit(1);
 
-    const [pendingTargetedEvent] = await tx
-      .select({ id: eventOutbox.id })
-      .from(eventOutbox)
-      .where(
-        and(
-          eq(eventOutbox.eventType, "chat.message.sent"),
-          eq(eventOutbox.partitionKey, channel.id),
-          isNull(eventOutbox.publishedAt),
-          isNull(eventOutbox.deadAt),
-          sql`jsonb_typeof(${eventOutbox.event}->'payload'->'targetBotIds') = 'array'`,
-          sql`jsonb_array_length(${eventOutbox.event}->'payload'->'targetBotIds') > 0`,
-        ),
-      )
-      .limit(1);
+    const [pendingTargetedEvent] = await pendingChatJobs(tx, channel.id);
 
     if (activeInvocation || pendingTargetedEvent) {
       throw new ServiceError(
