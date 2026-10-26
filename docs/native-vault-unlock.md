@@ -2,7 +2,13 @@
 
 This is a dedicated encrypted native vault response, **not** clarification text,
 chat content, a bot invocation, or a copy/migration of Hermes vault state. The
-shared client supplies the same UI and encryption for web and desktop.
+shared client supplies the same UI and encryption for web and desktop. Prompts
+are actionable in Hermes DMs, DM task threads, and the real channel route
+(`/channel/$id`, `/#/channel/<id>` in web). Channel runtime snapshots/realtime
+remain requester-private, and both **Unlock** and **Cancel** use the dedicated
+v2 Eden response lane. Switching channels clears pending inputs; re-entry and
+websocket reconnect refresh missed resolutions. This does not impose an owner
+requirement on Bitwarden.
 
 ## Shared access, private interaction
 
@@ -16,7 +22,9 @@ Conversation admission and current bot access checks are unchanged.
 
 `GET /hermes-platform/health` still exposes canonical `ownerUserId` for existing
 owner-scoped integrations. That value is **not** a Bitwarden authorization input.
-1Password and ordinary approval/clarification semantics are unchanged.
+The separate [secure-input v3 protocol](secure-input.md) covers owner-only
+1Password unlock and other masked prompts. It does not change v2 Bitwarden's
+shared-profile access. Ordinary approval/clarification semantics are unchanged.
 
 ## Request and identity
 
@@ -38,7 +46,10 @@ The API strictly validates this metadata-only payload:
 }
 ```
 
-Lifetime is at most 120 seconds. The original invocation requester must be a
+Lifetime is at most 120 seconds. Hermes stamps `expiresAt` from its own clock,
+so TheChat accepts up to 30 seconds of clock skew on that upper bound
+(`MASKED_PROMPT_CLOCK_SKEW_MS`); expiry itself is still judged on TheChat's
+clock. The original invocation requester must be a
 human with current conversation access. The bot credential must match the
 invocation, and the bot must still have access to the conversation. The API
 rejects extra properties (including `ownerUserId`), non-SPKI/non-RSA3072 keys,

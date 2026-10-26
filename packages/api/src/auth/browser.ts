@@ -125,6 +125,11 @@ function effectiveBrowserOrigin(request: Request) {
 
 export const browserCors = new Elysia({ name: "browser-cors" })
   .onRequest(({ request, set }) => {
+    // This shared hook runs before CSRF/auth short-circuits. A route-local
+    // hook alone may run too late when this plugin was registered earlier.
+    if (/^\/bot-runtime\/invocations\/[^/]+\/interactions\/[^/]+\/(secure-input|vault-unlock)$/.test(new URL(request.url).pathname)) {
+      set.headers["Cache-Control"] = "no-store";
+    }
     if (trustedWebOrigin(request.headers.get("origin"))) {
       set.headers["access-control-allow-credentials"] = "true";
     }

@@ -108,6 +108,32 @@ describe("local bot progress store", () => {
 const redisTestUrl = process.env.TEST_REDIS_URL;
 const redisTest = redisTestUrl ? test : test.skip;
 
+describe("secure input retention", () => {
+  for (const backend of ["local", "redis"] as const) {
+    (backend === "redis" && !redisTestUrl ? test.skip : test)(`${backend}: immutable first context, no resurrection, expiry and clear`, async () => {
+      let now = Date.now();
+      const store = backend === "local" ? createLocalBotProgressStoreForTests({ now: () => now, maxEvents: 2 }) : createRedisBotProgressStoreForTests({ redisUrl: redisTestUrl!, redisKeyPrefix: `secure-store-${crypto.randomUUID()}`, now: () => now, maxEvents: 2 });
+      try {
+        const input = progressInput({ type: "secure.input.request", payload: { version: 3, requestId: "secure", sessionKey: "session", expiresAt: now + 120000, target: "first" } });
+        const [first, altered] = await Promise.all([store.append(input), store.append({ ...input, payload: { ...input.payload, target: "altered" } })]);
+        expect(altered).toEqual(first);
+        for (let i = 0; i < 5; i++) await store.append(progressInput({ toolCallId: `overflow-${i}` }));
+        now += 31000;
+        expect(await store.listForConversation("conversation-1")).toContainEqual(first);
+        await store.append(progressInput({ type: "secure.input.resolved", payload: { version: 3, requestId: "secure", sessionKey: "session", outcome: "cancelled" } }));
+        for (let i = 0; i < 5; i++) await store.append(progressInput({ toolCallId: `resolved-overflow-${i}` }));
+        expect(await store.append(input)).toEqual(first);
+        now += 31000;
+        expect(await store.listForConversation("conversation-1")).toEqual([]);
+        now += 120000;
+        expect(await store.findRequest?.("invocation-1", "secure.input.request", "secure")).toEqual(first);
+        await store.clear({ invocationId: "invocation-1", conversationId: "conversation-1" });
+        expect(await store.findRequest?.("invocation-1", "secure.input.request", "secure")).toBeNull();
+      } finally { await store.clear({ invocationId: "invocation-1", conversationId: "conversation-1" }); await store.close?.(); }
+    });
+  }
+});
+
 describe("redis bot progress store", () => {
   redisTest("retains metadata for expiry resolution without keeping an expired prompt active", async () => {
     let now = Date.now();

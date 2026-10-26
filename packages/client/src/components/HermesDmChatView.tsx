@@ -26,6 +26,7 @@ import {
   useBotRequestTimeline,
 } from "./BotRequestTimeline";
 import type { VaultUnlockCallback } from "./HermesVaultUnlock";
+import type { SecureInputCallback } from "./HermesSecureInput";
 import type { HermesSlashCommand } from "../lib/hermes-slash-commands";
 import { MessageSendError } from "./MessageSendError";
 import { ArrowDown } from "lucide-react";
@@ -61,6 +62,7 @@ interface HermesDmChatViewProps {
   requestScope?: { conversationId: string; threadId: string | null };
   onStop?: () => void;
   onVaultUnlock?: VaultUnlockCallback;
+  onSecureInput?: SecureInputCallback;
   onLoadOlderMessages?: () => boolean | void | Promise<boolean | void>;
   onSetReaction?: (
     messageId: string,
@@ -91,6 +93,7 @@ export function HermesDmChatView({
   onSend,
   requestScope,
   onVaultUnlock,
+  onSecureInput,
   onStop,
   onLoadOlderMessages,
   onSetReaction,
@@ -451,6 +454,7 @@ export function HermesDmChatView({
             invocations={progressInvocations}
             botAppearances={botAppearances}
             onVaultUnlock={onVaultUnlock}
+            onSecureInput={onSecureInput}
             onStop={onStop}
           />
           {/* Requests asked after the newest message, usually by the run in

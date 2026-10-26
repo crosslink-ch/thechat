@@ -9,6 +9,10 @@ import { useMessageTopCommand } from "../hooks/useMessageTopCommand";
 import { useOlderHistoryScroll } from "../hooks/useOlderHistoryScroll";
 import { useScrollStability } from "../hooks/useScrollStability";
 import { MessageSendError } from "./MessageSendError";
+import { HermesProgressInline } from "./HermesProgressInline";
+import type { ActiveHermesInvocationProgress } from "../lib/hermes-progress";
+import type { SecureInputCallback } from "./HermesSecureInput";
+import type { VaultUnlockCallback } from "./HermesVaultUnlock";
 import {
   BotRequestTimelineItems,
   useBotRequestTimeline,
@@ -23,6 +27,7 @@ import {
 } from "./SharedChatMessage";
 
 const noop = () => {};
+const NO_PROGRESS: ActiveHermesInvocationProgress[] = [];
 
 interface ChannelChatViewProps {
   messages: ChatMessage[];
@@ -46,6 +51,9 @@ interface ChannelChatViewProps {
   draftKey?: string;
   conversationId?: string;
   token?: string | null;
+  progressInvocations?: ActiveHermesInvocationProgress[];
+  onSecureInput?: SecureInputCallback;
+  onVaultUnlock?: VaultUnlockCallback;
 }
 
 export function ChannelChatView({
@@ -63,6 +71,9 @@ export function ChannelChatView({
   draftKey,
   conversationId,
   token,
+  progressInvocations = NO_PROGRESS,
+  onSecureInput,
+  onVaultUnlock,
 }: ChannelChatViewProps) {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const { isAtBottom, pauseAutoScroll, scrollToBottom, shouldFollowBottom } =
@@ -79,7 +90,7 @@ export function ChannelChatView({
     () => Array.from(typingUsers.values()).filter(Boolean),
     [typingUsers],
   );
-  const hasLiveActivity = visibleTypingNames.length > 0;
+  const hasLiveActivity = visibleTypingNames.length > 0 || progressInvocations.length > 0;
   // Requests from any bot in this conversation, placed where they were asked.
   // Any participant may answer unless the bot addressed one person.
   const requestTimeline = useBotRequestTimeline({
@@ -137,6 +148,11 @@ export function ChannelChatView({
   useEffect(() => {
     scrollToBottom();
   }, [typingScrollSignature, scrollToBottom]);
+
+  useEffect(() => {
+    // Honor the same explicit scroll-away pause as ordinary messages/typing.
+    scrollToBottom();
+  }, [progressInvocations, scrollToBottom]);
 
   const handleSend = useCallback(
     (content: string, attachmentIds: string[] = []) => {
@@ -202,6 +218,12 @@ export function ChannelChatView({
           <BotRequestTimelineItems
             requests={requestTimeline.trailing}
             blocked={requestTimeline.blocked}
+          />
+          <HermesProgressInline
+            key={conversationId ?? scrollScopeKey}
+            invocations={progressInvocations}
+            onSecureInput={onSecureInput}
+            onVaultUnlock={onVaultUnlock}
           />
           {visibleTypingNames.length > 0 && (
             <div className="animate-pulse px-5 py-1 pb-2 text-[0.786rem] text-text-dimmed">

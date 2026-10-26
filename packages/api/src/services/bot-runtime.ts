@@ -62,6 +62,8 @@ import { recordMessageUnreads } from "./activity";
 import { toPublicConversationThread } from "./task-project-records";
 import { vaultUnlockRequestSchema, vaultUnlockResolvedSchema, vaultUnlockResponseSchema, validateVaultPublicKey, VAULT_UNLOCK_PREVIEW } from "./vault-unlock";
 import type { VaultUnlockResponse } from "@thechat/shared";
+import { SECURE_INPUT_KINDS, maskedPromptExpiryTooFar, type SecureInputResponse } from "@thechat/shared";
+import { secureInputRequestSchema, secureInputResolvedSchema, secureInputResponseSchema, secureInputError } from "./secure-input";
 
 const botRuntimeLog = log.child({ component: "bot-runtime" });
 
@@ -70,7 +72,7 @@ export const BOT_INVOKE_JOB_NAME = "bot.invoke";
 export const HERMES_WEBHOOK_DELIVERY_JOB_NAME = "bot.hermes_webhook.deliver";
 const MAX_THREAD_TITLE_LENGTH = 255;
 const DEFAULT_HERMES_DISPATCH_TIMEOUT_MS = 2 * 60 * 1000;
-/** Vault unlock is the only synchronous relay left; requests use the outbox. */
+/** Encrypted prompts relay synchronously; ordinary bot requests use the outbox. */
 const HERMES_INTERACTION_TIMEOUT_MS = 5_000;
 const HERMES_WEBHOOK_BODY_FIELD = "hermesWebhookBody";
 
@@ -243,7 +245,7 @@ export async function submitHermesPlatformVaultUnlock(input: {
   if (!parsed.success) throw reject(409);
   const request = parsed.data;
   validateVaultPublicKey(request.publicKeySpkiB64);
-  if (request.requesterUserId !== input.userId || request.expiresAt <= Date.now() || request.expiresAt > Date.parse(event.createdAt)+120_000) throw reject(409);
+  if (request.requesterUserId !== input.userId || request.expiresAt <= Date.now() || maskedPromptExpiryTooFar(request.expiresAt, Date.parse(event.createdAt))) throw reject(409);
   if (events.some(e => e.invocationId === event.invocationId && e.botId === event.botId && e.type === "vault.unlock.resolved" && e.payload?.requestId === request.requestId && e.payload?.sessionKey === request.sessionKey)) throw reject(409);
   const webhookUrl = loaded.bot.webhookUrl;
   try { if (!webhookUrl || !["http:","https:"].includes(new URL(webhookUrl).protocol)) throw new Error(); }
@@ -263,6 +265,56 @@ export async function submitHermesPlatformVaultUnlock(input: {
     const ack: unknown = await upstream.json();
     if (!ack || typeof ack !== "object" || (ack as {ok?:unknown}).ok !== true || typeof (ack as {duplicate?:unknown}).duplicate !== "boolean") throw reject(502);
     return {ok:true,duplicate:(ack as {duplicate:boolean}).duplicate};
+  } catch (error) {
+    if (error instanceof ServiceError) throw error;
+    throw reject(controller.signal.aborted ? 504 : 502);
+  } finally { clearTimeout(timeout); }
+}
+
+/** Ciphertext has a single memory-only HTTP hop; never put it on the durable outbox. */
+export async function submitHermesPlatformSecureInput(input: {
+  userId: string; userType: "human" | "bot"; invocationId: string; eventId: string; response: SecureInputResponse;
+}): Promise<{ ok: true; duplicate: boolean }> {
+  const reject = secureInputError;
+  if (input.userType !== "human") throw reject(403);
+  const response = secureInputResponseSchema.safeParse(input.response);
+  if (!response.success) throw reject(400);
+  const loaded = await loadInvocationContext(input.invocationId);
+  if (!loaded) throw reject(404);
+  if (loaded.triggerMessage.senderId !== input.userId || loaded.triggerSender.type !== "human") throw reject(403);
+  await requireSecureInputHumanAccess(loaded.conversation.id, input.userId);
+  await requireCurrentBotConversationAccess(loaded.conversation.id, loaded.bot.userId);
+  if (loaded.bot.kind !== "hermes" || loaded.invocation.adapterKind !== "hermes") throw reject(400);
+  if (interactionInvocationIsTerminal(loaded.invocation) || !["running", "claimed"].includes(loaded.invocation.status)) throw reject(409);
+  const events = await getBotProgressStore().listForConversation(loaded.conversation.id, [loaded.invocation.id]);
+  const event = events.find(e => e.id === input.eventId && e.type === "secure.input.request" && e.invocationId === loaded.invocation.id && e.botId === loaded.bot.id && e.conversationId === loaded.conversation.id && e.threadId === resolveInvocationThreadId(loaded));
+  if (!event) throw reject(404);
+  const parsed = secureInputRequestSchema.safeParse(event.payload);
+  if (!parsed.success) throw reject(409);
+  const request = parsed.data;
+  if (request.requesterUserId !== input.userId) throw reject(403);
+  if (request.promptKind !== "vault.code" && loaded.bot.ownerId !== input.userId) throw reject(403);
+  if (request.expiresAt <= Date.now() || maskedPromptExpiryTooFar(request.expiresAt, Date.parse(event.createdAt))) throw reject(409);
+  if (events.some(e => e.invocationId === event.invocationId && e.botId === event.botId && e.type === "secure.input.resolved" && e.payload?.requestId === request.requestId && e.payload?.sessionKey === request.sessionKey)) throw reject(409);
+  const webhookUrl = loaded.bot.webhookUrl;
+  try { if (!webhookUrl || !["http:", "https:"].includes(new URL(webhookUrl).protocol)) throw new Error(); }
+  catch { throw reject(409); }
+  const { publicKeySpkiB64: _publicKey, ...context } = request;
+  const body = JSON.stringify({ type: "thechat.hermes_platform.secure_input", interaction: {
+    id: event.id, requestType: "secure.input.request", invocationId: loaded.invocation.id,
+    conversationId: loaded.conversation.id, threadId: resolveInvocationThreadId(loaded),
+    actorUserId: loaded.triggerMessage.senderId, ...context, ...response.data,
+  } });
+  const timestamp = Math.floor(Date.now() / 1000);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), HERMES_INTERACTION_TIMEOUT_MS);
+  try {
+    const upstream = await fetch(webhookUrl!, { method: "POST", redirect: "error", signal: controller.signal,
+      headers: { "Content-Type": "application/json", "Cache-Control": "no-store", "X-Webhook-Timestamp": String(timestamp), "X-Webhook-Signature": signWebhookPayload(body, loaded.bot.webhookSecret, timestamp), "X-TheChat-Bot-Id": loaded.bot.id, "X-TheChat-Invocation-Id": loaded.invocation.id }, body });
+    if (!upstream.ok) throw reject(upstream.status === 409 ? 409 : 502);
+    const ack: unknown = await upstream.json();
+    if (!ack || typeof ack !== "object" || (ack as { ok?: unknown }).ok !== true || typeof (ack as { duplicate?: unknown }).duplicate !== "boolean") throw reject(502);
+    return { ok: true, duplicate: (ack as { duplicate: boolean }).duplicate };
   } catch (error) {
     if (error instanceof ServiceError) throw error;
     throw reject(controller.signal.aborted ? 504 : 502);
@@ -428,9 +480,25 @@ export async function listConversationBotRuntime(conversationId: string, userId:
         activeInvocationRows.map((invocation) => invocation.id),
       );
       const requesterByInvocation = new Map(activeInvocationRows.map(row => [row.id, row.requesterUserId]));
+      // Revalidate current admission; never expose owner-only metadata after transfer.
+      const visibleSecureEventIds = new Set<string>();
+      for (const invocationId of new Set(events.filter(e => e.type.startsWith("secure.input.") && requesterByInvocation.get(e.invocationId) === userId).map(e => e.invocationId))) {
+        const context = await loadInvocationContext(invocationId);
+        if (!context || context.triggerSender.type !== "human") continue;
+        try {
+          await requireSecureInputHumanAccess(conversationId, userId);
+          await requireCurrentBotConversationAccess(conversationId, context.bot.userId);
+        } catch { continue; }
+        for (const event of events.filter(e => e.invocationId === invocationId && e.type.startsWith("secure.input."))) {
+          const original = event.type === "secure.input.request" ? event : await getBotProgressStore().findRequest?.(invocationId, "secure.input.request", String(event.payload?.requestId));
+          const request = secureInputRequestSchema.safeParse(original?.payload);
+          if (request.success && request.data.requesterUserId === userId && (request.data.promptKind === "vault.code" || context.bot.ownerId === userId)) visibleSecureEventIds.add(event.id);
+        }
+      }
       const visibleEvents = events.filter((event) =>
         visibleInvocationIds.has(event.invocationId) &&
-        (!event.type.startsWith("vault.unlock.") || requesterByInvocation.get(event.invocationId) === userId),
+        (!event.type.startsWith("secure.input.") || visibleSecureEventIds.has(event.id)) &&
+        (!(event.type.startsWith("vault.unlock.") || event.type.startsWith("secure.input.")) || requesterByInvocation.get(event.invocationId) === userId),
       );
 
       span.setAttribute("thechat.bot_runtime.active_invocations", activeInvocationRows.length);
@@ -2060,7 +2128,7 @@ export async function publishHermesPlatformProgress(
       "messaging.system": "thechat",
       "messaging.operation": "hermes_progress",
       "thechat.hermes_progress.type": input.type,
-      "thechat.hermes_progress.tool": input.toolName ?? "",
+      "thechat.hermes_progress.tool": input.type.startsWith("secure.input.") ? "" : input.toolName ?? "",
     },
     async (span) => {
       const loaded = await loadInvocationContext(input.invocationId);
@@ -2093,6 +2161,34 @@ export async function publishHermesPlatformProgress(
         await updateHermesThreadTitleFromProgress(loaded, generatedTitle);
       }
 
+      if (input.type.startsWith("secure.input.")) {
+        if (!["running", "claimed"].includes(loaded.invocation.status)) throw secureInputError(409);
+        const store = getBotProgressStore();
+        if (input.type === "secure.input.request") {
+          const parsed = secureInputRequestSchema.safeParse(input.payload);
+          if (!parsed.success) throw new ServiceError("Invalid secure input request", 400);
+          const request = parsed.data;
+          if (request.requesterUserId !== loaded.triggerMessage.senderId || loaded.triggerSender.type !== "human") throw secureInputError(403);
+          if (request.promptKind !== "vault.code" && loaded.bot.ownerId !== request.requesterUserId) throw secureInputError(403);
+          await requireSecureInputHumanAccess(loaded.conversation.id, request.requesterUserId);
+          if (!loaded.bot.webhookUrl || request.expiresAt <= Date.now() || maskedPromptExpiryTooFar(request.expiresAt, Date.now())) throw secureInputError(400);
+          const previous = await store.findRequest?.(loaded.invocation.id, "secure.input.request", request.requestId);
+          const original = previous ? secureInputRequestSchema.safeParse(previous.payload) : null;
+          if (original && (!original.success || JSON.stringify(original.data) !== JSON.stringify(request))) throw secureInputError(409);
+          const presentation = SECURE_INPUT_KINDS[request.promptKind];
+          input = { ...input, status: "waiting", toolCallId: null, toolName: null, label: presentation.title, preview: presentation.description, payload: request };
+        } else if (input.type === "secure.input.resolved") {
+          const parsed = secureInputResolvedSchema.safeParse(input.payload);
+          if (!parsed.success) throw new ServiceError("Invalid secure input resolution", 400);
+          const event = await store.findRequest?.(loaded.invocation.id, "secure.input.request", parsed.data.requestId);
+          const original = secureInputRequestSchema.safeParse(event?.payload);
+          if (!event || event.botId !== loaded.bot.id || event.conversationId !== loaded.conversation.id || !original.success || original.data.sessionKey !== parsed.data.sessionKey) throw secureInputError(409);
+          if (loaded.triggerSender.type !== "human" || original.data.requesterUserId !== loaded.triggerMessage.senderId) throw secureInputError(403);
+          if (original.data.promptKind !== "vault.code" && loaded.bot.ownerId !== original.data.requesterUserId) throw secureInputError(403);
+          await requireSecureInputHumanAccess(loaded.conversation.id, original.data.requesterUserId);
+          input = { ...input, status: "completed", toolCallId: null, toolName: null, label: "Secure input response", preview: null, payload: parsed.data };
+        } else throw new ServiceError("Invalid secure input progress", 400);
+      }
       if (input.type.startsWith("vault.unlock.")) {
         const events = await getBotProgressStore().listForConversation(loaded.conversation.id, [loaded.invocation.id]);
         if (input.type === "vault.unlock.request") {
@@ -2104,7 +2200,7 @@ export async function publishHermesPlatformProgress(
             throw new ServiceError("Vault unlock requires the original human requester", 403);
           }
           await requireConversationParticipant(loaded.conversation.id, request.requesterUserId);
-          if (request.expiresAt <= Date.now() || request.expiresAt > Date.now()+120_000) throw new ServiceError("Invalid vault unlock expiry",400);
+          if (request.expiresAt <= Date.now() || maskedPromptExpiryTooFar(request.expiresAt, Date.now())) throw new ServiceError("Invalid vault unlock expiry",400);
           const previous = events.find(e => e.invocationId === loaded.invocation.id && e.type === input.type && e.payload?.requestId === request.requestId)
             ?? await getBotProgressStore().findRequest?.(loaded.invocation.id,"vault.unlock.request",request.requestId);
           // Redis's Lua JSON encoder may reorder keys; compare schema-canonical
@@ -2144,8 +2240,8 @@ export async function publishHermesPlatformProgress(
       });
       // The store atomically chooses the first request even if concurrent
       // preflight reads both saw no request. Reject the losing altered replay.
-      if (input.type === "vault.unlock.request") {
-        const canonical = vaultUnlockRequestSchema.safeParse(event.payload);
+      if (input.type === "vault.unlock.request" || input.type === "secure.input.request") {
+        const canonical = (input.type === "secure.input.request" ? secureInputRequestSchema : vaultUnlockRequestSchema).safeParse(event.payload);
         if (!canonical.success || JSON.stringify(canonical.data) !== JSON.stringify(input.payload)) {
           throw new ServiceError("Vault unlock request changed", 409);
         }
@@ -2176,7 +2272,7 @@ export async function publishHermesPlatformProgress(
       }
       span.setAttribute("thechat.hermes_progress.sequence", event.sequence);
       const participantUserIds = participantRows.map((participant) => participant.userId)
-        .filter(id => !input.type.startsWith("vault.unlock.") || id === loaded.triggerMessage.senderId);
+        .filter(id => !(input.type.startsWith("vault.unlock.") || input.type.startsWith("secure.input.")) || id === loaded.triggerMessage.senderId);
       const progressInvocation = toProgressCompatibleInvocation(
         toPublicInvocationFromContext(loaded),
       );
@@ -2536,6 +2632,11 @@ async function publishBotMessage(
 async function messageAttachmentsForBotDelivery(messageId: string) {
   const attachmentMap = await attachmentsByMessageIds([messageId]);
   return attachmentMap.get(messageId) ?? [];
+}
+
+async function requireSecureInputHumanAccess(conversationId: string, userId: string) {
+  const access = await db.transaction(tx => requireConversationMutationAccess(tx, conversationId, userId));
+  if (access.senderType !== "human") throw secureInputError(403);
 }
 
 async function requireCurrentBotConversationAccess(
