@@ -1,5 +1,9 @@
-import { and, asc, desc, eq, gt, inArray, isNull, lt, ne, or, sql } from "drizzle-orm";
-import { resolveBotAppearance, type WsServerEvent } from "@thechat/shared";
+import { and, asc, desc, eq, gt, inArray, isNull, lt, lte, ne, or, sql } from "drizzle-orm";
+import {
+  resolveBotAppearance,
+  type ConversationThreadGroups,
+  type WsServerEvent,
+} from "@thechat/shared";
 import { db } from "../db";
 import {
   attachments,
@@ -490,6 +494,12 @@ export async function listConversationThreads(
     cursor?: string | null;
     botId?: string | null;
     status?: string | null;
+    /**
+     * Omitted lists every task, `null` lists tasks outside any project and a
+     * project id lists that project's tasks. Clients page each project group
+     * separately, so a project's tasks never hide behind other projects'.
+     */
+    projectId?: string | null;
   } = {},
 ) {
   await requireConversationParticipant(conversationId, userId);
@@ -504,6 +514,13 @@ export async function listConversationThreads(
   if (options.status) {
     conditions.push(eq(conversationThreads.status, options.status));
   }
+  if (options.projectId === null) {
+    conditions.push(isNull(conversationThreads.projectId));
+  } else if (options.projectId) {
+    conditions.push(eq(conversationThreads.projectId, options.projectId));
+  }
+  const filter = and(...conditions);
+  const pageConditions = [...conditions];
   if (cursor) {
     const cursorCondition = or(
       lt(conversationThreads.lastActivityAt, cursor.lastActivityAt),
@@ -512,15 +529,21 @@ export async function listConversationThreads(
         lt(conversationThreads.id, cursor.id),
       ),
     );
-    if (cursorCondition) conditions.push(cursorCondition);
+    if (cursorCondition) pageConditions.push(cursorCondition);
   }
 
-  const rows = await db
-    .select()
-    .from(conversationThreads)
-    .where(and(...conditions))
-    .orderBy(desc(conversationThreads.lastActivityAt), desc(conversationThreads.id))
-    .limit(limit + 1);
+  const [rows, [counted]] = await Promise.all([
+    db
+      .select()
+      .from(conversationThreads)
+      .where(and(...pageConditions))
+      .orderBy(desc(conversationThreads.lastActivityAt), desc(conversationThreads.id))
+      .limit(limit + 1),
+    db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(conversationThreads)
+      .where(filter),
+  ]);
 
   const pageRows = rows.slice(0, limit);
   const hasMore = rows.length > limit;
@@ -530,7 +553,109 @@ export async function listConversationThreads(
       ? encodeConversationThreadCursor(pageRows.at(-1) ?? null)
       : null,
     hasMore,
+    totalCount: counted?.count ?? 0,
   };
+}
+
+/**
+ * The first page of every task group (each project, then tasks without one)
+ * with each group's exact size. Paging the whole conversation by recency and
+ * grouping on the client hides a quiet project's tasks behind newer tasks
+ * elsewhere, so each group is paged on its own; further pages come from
+ * `listConversationThreads` with that group's `projectId`.
+ */
+export async function listConversationThreadGroups(
+  conversationId: string,
+  userId: string,
+  options: { limit?: number | null } = {},
+): Promise<ConversationThreadGroups> {
+  await requireConversationParticipant(conversationId, userId);
+  const limit = normalizeThreadPageSize(options.limit);
+
+  const ranked = db
+    .select({
+      id: conversationThreads.id,
+      position: sql<number>`(row_number() over (partition by ${conversationThreads.projectId} order by ${conversationThreads.lastActivityAt} desc, ${conversationThreads.id} desc))::int`.as(
+        "position",
+      ),
+      groupSize: sql<number>`(count(*) over (partition by ${conversationThreads.projectId}))::int`.as(
+        "group_size",
+      ),
+    })
+    .from(conversationThreads)
+    .where(eq(conversationThreads.conversationId, conversationId))
+    .as("ranked");
+
+  const [rows, projects] = await Promise.all([
+    db
+      .select({
+        thread: conversationThreads,
+        groupSize: ranked.groupSize,
+      })
+      .from(ranked)
+      .innerJoin(conversationThreads, eq(conversationThreads.id, ranked.id))
+      // One extra row per group tells whether it has another page.
+      .where(lte(ranked.position, limit + 1))
+      .orderBy(desc(conversationThreads.lastActivityAt), desc(conversationThreads.id)),
+    db
+      .select({ id: taskProjects.id })
+      .from(taskProjects)
+      .where(eq(taskProjects.conversationId, conversationId)),
+  ]);
+
+  const groups = new Map<
+    string | null,
+    { rows: Array<typeof conversationThreads.$inferSelect>; totalCount: number }
+  >();
+  for (const projectId of [...projects.map((project) => project.id), null]) {
+    groups.set(projectId, { rows: [], totalCount: 0 });
+  }
+  for (const row of rows) {
+    let group = groups.get(row.thread.projectId);
+    if (!group) {
+      group = { rows: [], totalCount: 0 };
+      groups.set(row.thread.projectId, group);
+    }
+    group.rows.push(row.thread);
+    group.totalCount = row.groupSize;
+  }
+
+  return {
+    groups: [...groups].map(([projectId, group]) => {
+      const pageRows = group.rows.slice(0, limit);
+      const hasMore = group.rows.length > limit;
+      return {
+        projectId,
+        items: pageRows.map(toPublicConversationThread),
+        nextCursor: hasMore
+          ? encodeConversationThreadCursor(pageRows.at(-1) ?? null)
+          : null,
+        hasMore,
+        totalCount: group.totalCount,
+      };
+    }),
+  };
+}
+
+/** One task, so a client can show a task that is not on a loaded page. */
+export async function getConversationThread(
+  conversationId: string,
+  threadId: string,
+  userId: string,
+) {
+  await requireConversationParticipant(conversationId, userId);
+  const [thread] = await db
+    .select()
+    .from(conversationThreads)
+    .where(
+      and(
+        eq(conversationThreads.id, threadId),
+        eq(conversationThreads.conversationId, conversationId),
+      ),
+    )
+    .limit(1);
+  if (!thread) throw new ServiceError("Thread not found", 404);
+  return toPublicConversationThread(thread);
 }
 
 export async function createConversationThread(

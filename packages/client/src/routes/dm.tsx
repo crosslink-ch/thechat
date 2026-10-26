@@ -116,19 +116,21 @@ export function DmRoute() {
   const runtimeQuery = useBotRuntime(conversationId, token, isHermesDm);
   const runtime = runtimeQuery.data ?? null;
   const runtimeLoading = runtimeQuery.isLoading;
-  const threadState = useConversationThreads(conversationId, token, isHermesDm);
+  const threadState = useConversationThreads(conversationId, token, isHermesDm, {
+    activeThreadId,
+  });
   const {
     threads,
-    loading: threadsLoading,
-    loadingMore: threadsLoadingMore,
-    hasMore: threadsHasMore,
+    groups: threadGroups,
     loadMore: loadMoreThreads,
     createThread,
     renameThread,
     moveThread,
     deleteThread,
     touchThread,
+    activeThreadMissing,
   } = threadState;
+  const threadsLoading = threadState.loading;
   const {
     projects,
     createProject,
@@ -363,12 +365,11 @@ export function DmRoute() {
     draftPersistingRef.current = null;
   }, [conversationId, requestedThreadId]);
 
+  // A task that is on no loaded page is fetched on its own; only a task the
+  // server no longer has (deleted, or a stale link) falls back to General.
   useEffect(() => {
-    if (!isHermesDm || threadsLoading) return;
-    if (activeThreadId && !threads.some((thread) => thread.id === activeThreadId)) {
-      setActiveThreadId(null);
-    }
-  }, [activeThreadId, isHermesDm, threads, threadsLoading]);
+    if (isHermesDm && activeThreadMissing) setActiveThreadId(null);
+  }, [activeThreadMissing, isHermesDm]);
 
   const handleCreateThread = useCallback((projectId: string | null = null) => {
     if (!isHermesDm || draftPersistingRef.current) return;
@@ -689,8 +690,7 @@ export function DmRoute() {
           loading={runtimeLoading}
           threads={threads}
           threadsLoading={threadsLoading}
-          threadsLoadingMore={threadsLoadingMore}
-          threadsHasMore={threadsHasMore}
+          threadGroups={threadGroups}
           activeThreadId={activeThreadId}
           draftTaskActive={draftTaskActive}
           draftTaskPresent={draftTaskPresent}
@@ -708,8 +708,8 @@ export function DmRoute() {
           generalNeedsApproval={generalNeedsApproval}
           unreadThreadIds={unreadThreadIds}
           generalUnread={generalUnread}
-          onLoadMoreThreads={() => {
-            void loadMoreThreads();
+          onLoadMoreThreads={(projectId) => {
+            void loadMoreThreads(projectId);
           }}
         />
       )}

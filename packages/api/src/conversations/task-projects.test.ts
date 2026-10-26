@@ -482,6 +482,94 @@ describe("Task projects", () => {
   });
 });
 
+describe("Task groups", () => {
+  test("a quiet project's tasks are listed even when newer tasks fill a page", async () => {
+    const { owner, dmId } = await hermesFixture("Groups");
+    const outsider = await registerUser("Groups Outsider");
+    const security = await createProject(dmId, owner.token, "Security");
+    const empty = await createProject(dmId, owner.token, "Empty");
+    const filed: string[] = [];
+    for (const title of ["Rotate keys", "Audit logins", "Review firewall"]) {
+      filed.unshift((await createTask(dmId, owner.token, { title, projectId: security.id })).id);
+    }
+    // Newer activity elsewhere: more than one page of unfiled tasks.
+    const unfiled: string[] = [];
+    for (let index = 0; index < 5; index += 1) {
+      unfiled.unshift((await createTask(dmId, owner.token, { title: `Chore ${index}` })).id);
+    }
+
+    // The old shape: one recency-ordered page shows no Security task at all.
+    const recent = await req("GET", `/conversations/threads/${dmId}?limit=2`, undefined, owner.token);
+    expect(recent.body.items.map((item: { id: string }) => item.id)).toEqual(unfiled.slice(0, 2));
+    expect(recent.body.totalCount).toBe(8);
+
+    const grouped = await req("GET", `/conversations/thread-groups/${dmId}?limit=2`, undefined, owner.token);
+    expect(grouped.status).toBe(200);
+    const byProject = new Map(
+      (grouped.body.groups as Array<{ projectId: string | null; nextCursor: string | null }>).map(
+        (group) => [group.projectId, group],
+      ),
+    );
+    expect(byProject.get(security.id)).toMatchObject({
+      items: [{ id: filed[0] }, { id: filed[1] }],
+      hasMore: true,
+      totalCount: 3,
+    });
+    expect(byProject.get(empty.id)).toMatchObject({
+      items: [],
+      hasMore: false,
+      nextCursor: null,
+      totalCount: 0,
+    });
+    expect(byProject.get(null)).toMatchObject({
+      items: [{ id: unfiled[0] }, { id: unfiled[1] }],
+      hasMore: true,
+      totalCount: 5,
+    });
+
+    // Each group pages on its own from its cursor, never mixing groups.
+    const securityCursor = byProject.get(security.id)?.nextCursor;
+    expect(securityCursor).toBeTruthy();
+    const next = await req(
+      "GET",
+      `/conversations/threads/${dmId}?limit=2&projectId=${security.id}&cursor=${securityCursor}`,
+      undefined,
+      owner.token,
+    );
+    expect(next.body).toMatchObject({
+      items: [{ id: filed[2], projectId: security.id }],
+      hasMore: false,
+      totalCount: 3,
+    });
+    const unfiledPage = await req(
+      "GET",
+      `/conversations/threads/${dmId}?limit=10&projectId=none`,
+      undefined,
+      owner.token,
+    );
+    expect(unfiledPage.body.items.map((item: { id: string }) => item.id)).toEqual(unfiled);
+    expect(
+      (await req("GET", `/conversations/threads/${dmId}?projectId=nope`, undefined, owner.token)).status,
+    ).toBe(400);
+
+    // A task off every loaded page can still be opened by id.
+    expect(
+      await req("GET", `/conversations/threads/${dmId}/${filed[2]}`, undefined, owner.token),
+    ).toMatchObject({ status: 200, body: { id: filed[2], projectId: security.id } });
+    expect(
+      (await req("GET", `/conversations/threads/${dmId}/${crypto.randomUUID()}`, undefined, owner.token))
+        .status,
+    ).toBe(404);
+
+    for (const path of [
+      `/conversations/thread-groups/${dmId}`,
+      `/conversations/threads/${dmId}/${filed[0]}`,
+    ]) {
+      expect((await req("GET", path, undefined, outsider.token)).status).toBe(403);
+    }
+  });
+});
+
 describe("Task deletion", () => {
   test("removes the task's messages, runs, requests and files and nothing else", async () => {
     const fixture = await hermesFixture("Delete");

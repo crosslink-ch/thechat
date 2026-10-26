@@ -115,6 +115,42 @@ test('New Project, drag a task in, delete a task, and everything persists', asyn
   await expect(page.getByText('Scratch notes', { exact: true })).toHaveCount(0);
 });
 
+test('A quiet project keeps its tasks when more than a page of newer tasks exists', async ({ page, request }, info) => {
+  test.skip(info.project.name !== 'chromium-desktop', 'Paging is layout independent');
+  const { f, dm } = await hermesDmWithTasks(request, []);
+  const project = await call(request, 'POST', `/conversations/projects/${dm.id}`, { name: 'Security' }, f.a.accessToken);
+  for (const title of ['Rotate keys', 'Audit logins']) {
+    await call(request, 'POST', `/conversations/threads/${dm.id}`, { title, projectId: project.id }, f.a.accessToken);
+  }
+  // 52 newer unfiled tasks: more than one 50-task page, all newer than Security's.
+  const unfiled: Array<{ id: string; title: string }> = [];
+  for (let index = 1; index <= 52; index += 1) {
+    unfiled.push(await call(request, 'POST', `/conversations/threads/${dm.id}`, { title: `Chore ${index}` }, f.a.accessToken));
+  }
+
+  await login(page, f.alice);
+  await page.goto(`${webURL}/#/dm/${dm.id}`);
+  const security = page.getByRole('group', { name: 'Project Security' });
+  await expect(security.getByText('Rotate keys', { exact: true })).toBeVisible();
+  await expect(security.getByText('Audit logins', { exact: true })).toBeVisible();
+  await expect(security.locator('span.tabular-nums')).toHaveText('2');
+
+  const noProject = page.getByRole('group', { name: 'Tasks without a project' });
+  await expect(noProject.locator('span.tabular-nums')).toHaveText('52');
+  await expect(noProject.locator('[data-task-row]')).toHaveCount(50);
+  await expect(noProject.getByText('Chore 1', { exact: true })).toHaveCount(0);
+  await page.screenshot({ path: info.outputPath('quiet-project-visible.png') });
+  await noProject.getByRole('button', { name: 'Load more tasks without a project' }).click();
+  await expect(noProject.locator('[data-task-row]')).toHaveCount(52);
+  await expect(noProject.getByRole('button', { name: /Load more/ })).toHaveCount(0);
+
+  // A link to a task beyond the first page opens that task, not General.
+  await page.goto(`${webURL}/#/`);
+  await page.goto(`${webURL}/#/dm/${dm.id}?threadId=${unfiled[0].id}`);
+  await expect(page.locator('header').getByText('Chore 1', { exact: true })).toBeVisible();
+  await expect(noProject.locator(`[data-task-row="${unfiled[0].id}"]`)).toBeVisible();
+});
+
 test('Phone users move tasks through the row menu', async ({ page, request }, info) => {
   test.skip(info.project.name === 'chromium-desktop', 'Covers the touch layout');
   const { f, dm, tasks } = await hermesDmWithTasks(request, ['Phone task']);

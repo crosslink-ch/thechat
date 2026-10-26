@@ -7,6 +7,8 @@ import {
   createConversationThread,
   createOrGetDm,
   getConversationDetail,
+  getConversationThread,
+  listConversationThreadGroups,
   listConversationThreads,
   listUserDms,
   createChannel,
@@ -67,6 +69,12 @@ const threadListQuerySchema = z.object({
   cursor: z.string().min(1).optional(),
   botId: z.string().uuid().optional(),
   status: z.string().trim().min(1).max(20).optional(),
+  // A project id lists that project's tasks; "none" lists unfiled tasks.
+  projectId: z.union([z.literal("none"), z.string().uuid()]).optional(),
+});
+
+const threadGroupsQuerySchema = z.object({
+  limit: z.coerce.number().int().positive().max(100).optional(),
 });
 
 export const conversationRoutes = new Elysia({ prefix: "/conversations" })
@@ -191,6 +199,8 @@ export const conversationRoutes = new Elysia({ prefix: "/conversations" })
           cursor: parsed.data.cursor,
           botId: parsed.data.botId,
           status: parsed.data.status,
+          projectId:
+            parsed.data.projectId === "none" ? null : parsed.data.projectId,
         },
       );
     } catch (e) {
@@ -200,6 +210,26 @@ export const conversationRoutes = new Elysia({ prefix: "/conversations" })
       }
       throw e;
     }
+  })
+
+  .get("/threads/:conversationId/:threadId", async ({ params, user, set }) =>
+    handleServiceErrors(set, () =>
+      getConversationThread(params.conversationId, params.threadId, user.id),
+    ),
+  )
+
+  // The first page of each project's tasks and of unfiled tasks, with counts.
+  .get("/thread-groups/:conversationId", async ({ params, query, user, set }) => {
+    const parsed = threadGroupsQuerySchema.safeParse(query);
+    if (!parsed.success) {
+      set.status = 400;
+      return { error: parsed.error.issues[0]?.message ?? "Invalid query" };
+    }
+    return handleServiceErrors(set, () =>
+      listConversationThreadGroups(params.conversationId, user.id, {
+        limit: parsed.data.limit,
+      }),
+    );
   })
 
   // Create a task thread for a Hermes-capable conversation

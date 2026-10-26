@@ -17,7 +17,7 @@ it("enables shared detail, history, runtime and task creation with cookie identi
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, options) => {
     const path = new URL(String(input)).pathname;
     requests.push({ path, method: options?.method, headers: new Headers(options?.headers), credentials: options?.credentials });
-    const value = path.includes("threads") ? (options?.method === "POST" ? { id: "task-1", conversationId: "chat", title: "Task" } : { items: [], nextCursor: null }) : path.includes("bot-runtime") ? { invocations: [], events: [] } : path.includes("messages") ? [] : { id: "chat", type: "dm" };
+    const value = path.includes("thread-groups") ? { groups: [] } : path.includes("threads") ? (options?.method === "POST" ? { id: "task-1", conversationId: "chat", title: "Task" } : { items: [], nextCursor: null }) : path.includes("bot-runtime") ? { invocations: [], events: [] } : path.includes("messages") ? [] : { id: "chat", type: "dm" };
     return new Response(JSON.stringify(value), { headers: { "content-type": "application/json" } });
   });
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });

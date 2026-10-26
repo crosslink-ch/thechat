@@ -102,6 +102,62 @@ describe("Hermes task projects", () => {
     expect(groups).toEqual(["Project Research", "Project Launch", "Tasks without a project"]);
   });
 
+  it("counts and pages each project on its own", async () => {
+    const user = userEvent.setup();
+    const onLoadMoreThreads = vi.fn();
+    render(
+      <HermesRuntimePanel
+        botName="Hermes"
+        runtime={{ invocations: [], events: [] }}
+        loading={false}
+        threads={[pricing, inbox]}
+        projects={[research, launch]}
+        threadGroups={[
+          { projectId: research.id, totalCount: 6, hasMore: true, loadingMore: false },
+          { projectId: launch.id, totalCount: 0, hasMore: false, loadingMore: false },
+          { projectId: null, totalCount: 2184, hasMore: true, loadingMore: true },
+        ]}
+        onLoadMoreThreads={onLoadMoreThreads}
+      />,
+    );
+
+    // Counts come from the server, not from the tasks loaded so far.
+    const researchGroup = screen.getByRole("group", { name: "Project Research" });
+    expect(within(researchGroup).getByText("6")).toBeInTheDocument();
+    const unfiled = screen.getByRole("group", { name: "Tasks without a project" });
+    expect(within(unfiled).getByText("2184")).toBeInTheDocument();
+    expect(
+      within(screen.getByRole("group", { name: "Project Launch" })).queryByRole("button", {
+        name: /Load more/,
+      }),
+    ).not.toBeInTheDocument();
+
+    await user.click(within(researchGroup).getByRole("button", { name: "Load more tasks in Research" }));
+    expect(onLoadMoreThreads).toHaveBeenCalledWith(research.id);
+    expect(
+      within(unfiled).getByRole("button", { name: "Load more tasks without a project" }),
+    ).toBeDisabled();
+  });
+
+  it("collapsing a project hides its Load more", async () => {
+    const user = userEvent.setup();
+    render(
+      <HermesRuntimePanel
+        botName="Hermes"
+        runtime={{ invocations: [], events: [] }}
+        loading={false}
+        threads={[pricing]}
+        projects={[research]}
+        threadGroups={[{ projectId: research.id, totalCount: 6, hasMore: true, loadingMore: false }]}
+        onLoadMoreThreads={vi.fn()}
+      />,
+    );
+    const researchGroup = screen.getByRole("group", { name: "Project Research" });
+    await user.click(within(researchGroup).getByRole("button", { expanded: true }));
+    expect(within(researchGroup).queryByRole("button", { name: /Load more/ })).not.toBeInTheDocument();
+    expect(within(researchGroup).getByText("6")).toBeInTheDocument();
+  });
+
   it("creates a project from the New Project command palette entry", async () => {
     const user = userEvent.setup();
     const h = renderPanel();

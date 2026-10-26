@@ -30,6 +30,7 @@ import {
 } from "lucide-react";
 import { OrbLoader } from "./OrbLoader";
 import { TaskPanelDialogs, type TaskPanelDialog } from "./TaskProjectDialogs";
+import type { TaskGroupSummary } from "../hooks/task-groups-cache";
 import {
   buttonClass,
   iconButtonClass,
@@ -53,8 +54,7 @@ export function HermesRuntimePanel({
   loading,
   threads = [],
   threadsLoading = false,
-  threadsLoadingMore = false,
-  threadsHasMore = false,
+  threadGroups = [],
   activeThreadId = null,
   draftTaskActive = false,
   draftTaskPresent = draftTaskActive,
@@ -82,8 +82,12 @@ export function HermesRuntimePanel({
   loading: boolean;
   threads?: ConversationThreadPublic[];
   threadsLoading?: boolean;
-  threadsLoadingMore?: boolean;
-  threadsHasMore?: boolean;
+  /**
+   * Paging state per task group (project id, or null for tasks without a
+   * project). Each group loads its own pages, so a project's count and its
+   * "Load more" never depend on tasks elsewhere.
+   */
+  threadGroups?: TaskGroupSummary[];
   activeThreadId?: string | null;
   draftTaskActive?: boolean;
   draftTaskPresent?: boolean;
@@ -97,7 +101,8 @@ export function HermesRuntimePanel({
   onRenameThread?: (threadId: string, title: string) => Promise<unknown>;
   /** Starts a draft task, filed under `projectId` when one is given. */
   onCreateThread?: (projectId?: string | null) => void;
-  onLoadMoreThreads?: () => void;
+  /** Loads the next page of one group: a project id, or null for unfiled tasks. */
+  onLoadMoreThreads?: (projectId: string | null) => void;
   projects?: TaskProjectPublic[];
   /** The project the unsaved draft task will be filed under. */
   draftTaskProjectId?: string | null;
@@ -219,6 +224,30 @@ export function HermesRuntimePanel({
     const key = thread.projectId && projectIds.has(thread.projectId) ? thread.projectId : null;
     tasksByProject.set(key, [...(tasksByProject.get(key) ?? []), thread]);
   }
+  const groupSummaries = new Map(threadGroups.map((group) => [group.projectId, group]));
+  // Tasks of a project the list does not show yet are listed without one.
+  const unfiledTotal = threadGroups.reduce<number | null>((sum, group) => {
+    if (group.projectId !== null && projectIds.has(group.projectId)) return sum;
+    return sum === null || group.totalCount === null ? null : sum + group.totalCount;
+  }, 0);
+  /** The server's group size when known; never less than what is shown. */
+  const groupCount = (total: number | null | undefined, shown: number) =>
+    total == null ? shown : Math.max(total, shown);
+  const loadMoreButton = (projectId: string | null, label: string) => {
+    const group = groupSummaries.get(projectId);
+    if (!group?.hasMore || !onLoadMoreThreads) return null;
+    return (
+      <button
+        type="button"
+        className={`mt-1 w-full ${buttonClass("ghost", "sm")}`}
+        onClick={() => onLoadMoreThreads(projectId)}
+        disabled={group.loadingMore}
+        aria-label={label ? `Load more tasks ${label}` : "Load more tasks"}
+      >
+        {group.loadingMore ? "Loading..." : "Load more"}
+      </button>
+    );
+  };
   const draftGroupId =
     draftTaskProjectId && projectIds.has(draftTaskProjectId) ? draftTaskProjectId : null;
   const toggleProject = (projectId: string) =>
@@ -419,7 +448,7 @@ export function HermesRuntimePanel({
                     dropTargetId={project.id}
                     dropActive={!!drag && drag.targetId === project.id}
                     name={project.name}
-                    count={tasks.length}
+                    count={groupCount(groupSummaries.get(project.id)?.totalCount, tasks.length)}
                     collapsed={collapsed}
                     onToggle={() => toggleProject(project.id)}
                     onCreateTask={
@@ -450,6 +479,7 @@ export function HermesRuntimePanel({
                             {draggable ? "Drag tasks here" : "No tasks yet"}
                           </div>
                         )}
+                        {loadMoreButton(project.id, `in ${project.name}`)}
                       </>
                     )}
                   </ProjectGroup>
@@ -458,13 +488,14 @@ export function HermesRuntimePanel({
               {(() => {
                 const unfiled = tasksByProject.get(null) ?? [];
                 const draftHere = draftTaskPresent && draftGroupId === null;
-                if (unfiled.length === 0 && !draftHere && !drag) return null;
+                const count = groupCount(unfiledTotal, unfiled.length);
+                if (count === 0 && !draftHere && !drag) return null;
                 return (
                   <ProjectGroup
                     dropTargetId={NO_PROJECT_DROP_TARGET}
                     dropActive={!!drag && drag.targetId === NO_PROJECT_DROP_TARGET}
                     name="No project"
-                    count={unfiled.length}
+                    count={count}
                     unfiled
                   >
                     {draftHere && (
@@ -479,6 +510,7 @@ export function HermesRuntimePanel({
                         Drop here to remove from its project
                       </div>
                     )}
+                    {loadMoreButton(null, "without a project")}
                   </ProjectGroup>
                 );
               })()}
@@ -498,17 +530,8 @@ export function HermesRuntimePanel({
                 )}
                 {threads.map(renderThreadRow)}
               </div>
+              {loadMoreButton(null, "")}
             </div>
-          )}
-          {threadsHasMore && (
-            <button
-              type="button"
-              className={`mt-2 w-full ${buttonClass("secondary", "sm")}`}
-              onClick={onLoadMoreThreads}
-              disabled={threadsLoadingMore}
-            >
-              {threadsLoadingMore ? "Loading..." : "Load more"}
-            </button>
           )}
         </section>
 

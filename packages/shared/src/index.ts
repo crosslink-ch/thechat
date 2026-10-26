@@ -344,6 +344,25 @@ export interface ConversationThreadsPage {
   items: ConversationThreadPublic[];
   nextCursor: string | null;
   hasMore: boolean;
+  /**
+   * Tasks matching the list's filters across all pages. Optional because
+   * servers that predate per-project paging do not send it.
+   */
+  totalCount?: number;
+}
+
+/** One task group: a project's tasks, or (projectId null) tasks without one. */
+export interface ConversationThreadGroupPage extends ConversationThreadsPage {
+  projectId: string | null;
+  totalCount: number;
+}
+
+/**
+ * The first page of every task group in a conversation. Each group is paged
+ * separately so a project's tasks never fall behind newer tasks elsewhere.
+ */
+export interface ConversationThreadGroups {
+  groups: ConversationThreadGroupPage[];
 }
 
 /** A named group of tasks inside one conversation. */
