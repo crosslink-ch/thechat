@@ -40,7 +40,10 @@ function deliveryTimeoutMs() {
  * their poll instead, so they need nothing here. A 2xx reply that carries
  * `{applied: boolean}` doubles as the bot's acknowledgement.
  */
-export async function deliverBotRequestAnswer(requestId: string): Promise<void> {
+export async function deliverBotRequestAnswer(
+  requestId: string,
+  options: { signal?: AbortSignal } = {},
+): Promise<void> {
   await withSpan(
     "bot_request.answer.deliver",
     { "messaging.system": "thechat", "messaging.destination.kind": "bot_webhook" },
@@ -74,12 +77,17 @@ export async function deliverBotRequestAnswer(requestId: string): Promise<void> 
       const timestamp = Math.floor(Date.now() / 1000);
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), deliveryTimeoutMs());
+      // The outbox attempt signal (attempt budget, lost lease, shutdown) also
+      // stops the request.
+      const signal = options.signal
+        ? AbortSignal.any([controller.signal, options.signal])
+        : controller.signal;
       let response: Response;
       try {
         response = await fetch(webhookUrl, {
           method: "POST",
           redirect: "error",
-          signal: controller.signal,
+          signal,
           headers: {
             "Content-Type": "application/json",
             "X-Webhook-Timestamp": String(timestamp),
@@ -142,8 +150,10 @@ export function createBotRequestAnsweredHandler(): DomainEventHandler<BotRequest
     type: BOT_REQUEST_ANSWERED_EVENT_TYPE,
     version: BOT_REQUEST_ANSWERED_EVENT_VERSION,
     parse: parseBotRequestAnsweredV1,
-    async handle(event) {
-      await deliverBotRequestAnswer(event.payload.requestId);
+    async handle(event, context) {
+      await deliverBotRequestAnswer(event.payload.requestId, {
+        signal: context?.signal,
+      });
     },
   };
 }

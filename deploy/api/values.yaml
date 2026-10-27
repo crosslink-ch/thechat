@@ -138,7 +138,19 @@ attachments:
 
 worker:
   enabled: true
-  replicaCount: 1
+  # Workers claim outbox events with row leases (FOR UPDATE SKIP LOCKED) and
+  # their periodic sweeps are idempotent, so several replicas are safe and keep
+  # background work flowing when one pod is slow, restarting or gone.
+  replicaCount: 3
+  # Covers DOMAIN_EVENTS_SHUTDOWN_GRACE_MS (20s) plus handler abort grace.
+  terminationGracePeriodSeconds: 45
+  # Worker-only environment, merged over `env`.
+  env:
+    # Production reaches PostgreSQL through PgBouncer in session mode, where
+    # every client connection pins a server connection. Keep each replica's
+    # pool small so all replicas plus the API stay well inside the pool.
+    DATABASE_POOL_MAX: "6"
+    DATABASE_IDLE_TIMEOUT_SECONDS: "60"
   serviceAccount:
     create: true
     name: ""

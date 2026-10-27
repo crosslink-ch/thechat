@@ -2,15 +2,40 @@ import { withSpan } from "../observability";
 import { parseDomainEventEnvelope, type DomainEventEnvelope } from "./envelope";
 import { logDomainEvent } from "./log";
 
+/**
+ * Worker lanes have independent capacity. Slow storage work (attachment
+ * validation and deletion) runs in its own lane so it can never occupy the
+ * capacity that chat delivery and bot triggers need.
+ */
+export type DomainEventLane = "default" | "attachments";
+
+export const DOMAIN_EVENT_LANES: readonly DomainEventLane[] = [
+  "default",
+  "attachments",
+];
+
+export interface DomainEventHandlerContext {
+  /**
+   * Aborted when the attempt's time budget is exhausted, the worker lost the
+   * row's lease, or the worker is shutting down. Handlers should pass it to
+   * any I/O they start.
+   */
+  signal: AbortSignal;
+}
+
 export interface DomainEventHandler<TEvent extends DomainEventEnvelope> {
   type: TEvent["type"];
   version: TEvent["version"];
+  /** Defaults to "default". */
+  lane?: DomainEventLane;
   parse(value: unknown): TEvent;
-  handle(event: TEvent): Promise<void>;
+  /** The runtime always passes `context`; direct callers (tests) may omit it. */
+  handle(event: TEvent, context?: DomainEventHandlerContext): Promise<void>;
 }
 
 export interface DomainEventDispatchOptions {
   rejectMissing?: boolean;
+  signal?: AbortSignal;
 }
 
 export class InvalidDomainEventError extends Error {
@@ -29,6 +54,8 @@ export class PermanentDomainEventError extends Error {
   }
 }
 
+const NEVER_ABORTED = new AbortController().signal;
+
 export class DomainEventRegistry {
   private readonly handlers = new Map<
     string,
@@ -41,6 +68,16 @@ export class DomainEventRegistry {
     const key = handlerKey(handler.type, handler.version);
     if (this.handlers.has(key)) {
       throw new Error(`Domain event handler already registered: ${key}`);
+    }
+    for (const existing of this.handlers.values()) {
+      if (
+        existing.type === handler.type &&
+        (existing.lane ?? "default") !== (handler.lane ?? "default")
+      ) {
+        throw new Error(
+          `All versions of ${handler.type} must use the same worker lane`,
+        );
+      }
     }
     this.handlers.set(
       key,
@@ -58,6 +95,15 @@ export class DomainEventRegistry {
 
   supports(type: string, version: number): boolean {
     return this.handlers.has(handlerKey(type, version));
+  }
+
+  /** Event types whose handlers declared the given non-default lane. */
+  eventTypesForLane(lane: Exclude<DomainEventLane, "default">): string[] {
+    const types = new Set<string>();
+    for (const handler of this.handlers.values()) {
+      if (handler.lane === lane) types.add(handler.type);
+    }
+    return [...types].sort();
   }
 
   async dispatch(
@@ -92,6 +138,7 @@ export class DomainEventRegistry {
         "messaging.message.type": event.type,
         "thechat.event.version": event.version,
         "thechat.aggregate.type": event.aggregate.type,
+        "thechat.event.lane": handler.lane ?? "default",
       },
       async (span) => {
         let parsed: DomainEventEnvelope;
@@ -101,7 +148,9 @@ export class DomainEventRegistry {
           throw new InvalidDomainEventError(event.type, event.version, error);
         }
         logDomainEvent("info", "domain_event.handle.started", parsed);
-        await handler.handle(parsed);
+        await handler.handle(parsed, {
+          signal: options.signal ?? NEVER_ABORTED,
+        });
         logDomainEvent("info", "domain_event.handle.completed", parsed);
         span.setAttribute("thechat.event.outcome", "handled");
         return true;

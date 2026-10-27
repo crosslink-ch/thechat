@@ -23,11 +23,9 @@ type DeletionEvent = AttachmentLifecycleEvent & {
   type: typeof ATTACHMENT_DELETION_REQUESTED;
 };
 
-const attachmentValidationConcurrency = boundedConcurrency(
-  process.env.ATTACHMENT_VALIDATION_CONCURRENCY,
-);
-const validationWaiters: Array<() => void> = [];
-let activeValidations = 0;
+// Both handlers run in the worker's "attachments" lane. Its capacity
+// (ATTACHMENT_VALIDATION_CONCURRENCY) bounds concurrent storage work per
+// worker, so slow S3 I/O never occupies chat or bot-trigger capacity.
 
 export function createAttachmentValidationHandler(options: {
   store?: ObjectStore;
@@ -35,6 +33,7 @@ export function createAttachmentValidationHandler(options: {
   return {
     type: ATTACHMENT_VALIDATION_REQUESTED,
     version: ATTACHMENT_EVENT_VERSION,
+    lane: "attachments",
     parse(value) {
       const event = parseAttachmentLifecycleEvent(value);
       if (event.type !== ATTACHMENT_VALIDATION_REQUESTED) {
@@ -42,14 +41,13 @@ export function createAttachmentValidationHandler(options: {
       }
       return event as ValidationEvent;
     },
-    async handle(event) {
+    async handle(event, context) {
       const config = loadAttachmentConfig();
-      await withValidationSlot(() =>
-        validateAndPromoteAttachment(event.payload.attachmentId, {
-          store: options.store ?? getAttachmentObjectStore(),
-          maxBytes: config.maxBytes,
-        }),
-      );
+      await validateAndPromoteAttachment(event.payload.attachmentId, {
+        store: options.store ?? getAttachmentObjectStore(),
+        maxBytes: config.maxBytes,
+        signal: context?.signal,
+      });
     },
   };
 }
@@ -60,6 +58,7 @@ export function createAttachmentDeletionHandler(options: {
   return {
     type: ATTACHMENT_DELETION_REQUESTED,
     version: ATTACHMENT_EVENT_VERSION,
+    lane: "attachments",
     parse(value) {
       const event = parseAttachmentLifecycleEvent(value);
       if (event.type !== ATTACHMENT_DELETION_REQUESTED) {
@@ -67,32 +66,14 @@ export function createAttachmentDeletionHandler(options: {
       }
       return event as DeletionEvent;
     },
-    async handle(event) {
+    async handle(event, context) {
       await deleteAttachmentObjects(
         event.payload.attachmentId,
         options.store ?? getAttachmentObjectStore(),
+        context?.signal,
       );
     },
   };
-}
-
-async function withValidationSlot<T>(operation: () => Promise<T>) {
-  if (activeValidations >= attachmentValidationConcurrency) {
-    await new Promise<void>((resolve) => validationWaiters.push(resolve));
-  }
-  activeValidations += 1;
-  try {
-    return await operation();
-  } finally {
-    activeValidations -= 1;
-    validationWaiters.shift()?.();
-  }
-}
-
-function boundedConcurrency(raw: string | undefined) {
-  const parsed = Number.parseInt(raw ?? "1", 10);
-  if (!Number.isFinite(parsed)) return 1;
-  return Math.max(1, Math.min(parsed, 8));
 }
 
 export async function validateAndPromoteAttachment(
@@ -100,8 +81,10 @@ export async function validateAndPromoteAttachment(
   input: {
     store: ObjectStore;
     maxBytes: number;
+    signal?: AbortSignal;
   },
 ) {
+  const signal = input.signal;
   return withSpan(
     "attachment.validate_promote",
     {
@@ -133,9 +116,11 @@ export async function validateAndPromoteAttachment(
         row.declaredChecksumSha256,
         "hex",
       ).toString("base64");
+      signal?.throwIfAborted();
       const pinned = await input.store.headObject({
         key: row.quarantineKey,
         versionId: row.quarantineVersionId,
+        signal,
       });
       if (
         !pinned ||
@@ -149,14 +134,16 @@ export async function validateAndPromoteAttachment(
           "stored_object_mismatch",
         );
         span.setAttribute("thechat.attachment.next_status", "rejected");
-        await rejectAttachment(row, input.store, "stored_object_mismatch");
+        await rejectAttachment(row, input.store, "stored_object_mismatch", signal);
         return;
       }
 
+      signal?.throwIfAborted();
       const bytes = await input.store.getObject({
         key: row.quarantineKey,
         versionId: row.quarantineVersionId,
         maxBytes: Math.min(input.maxBytes, row.declaredSizeBytes),
+        signal,
       });
       const checksum = crypto
         .createHash("sha256")
@@ -172,7 +159,7 @@ export async function validateAndPromoteAttachment(
           "content_mismatch",
         );
         span.setAttribute("thechat.attachment.next_status", "rejected");
-        await rejectAttachment(row, input.store, "content_mismatch");
+        await rejectAttachment(row, input.store, "content_mismatch", signal);
         return;
       }
 
@@ -182,11 +169,13 @@ export async function validateAndPromoteAttachment(
       // AccessDenied rather than NotFound to identities without ListBucket.
       // A retry can safely create another version at this deterministic key;
       // the bucket lifecycle removes superseded versions.
+      signal?.throwIfAborted();
       const copied = await input.store.copyObject({
         sourceKey: row.quarantineKey,
         sourceVersionId: row.quarantineVersionId,
         destinationKey: row.cleanKey,
         mediaType: verified.storageMediaType,
+        signal,
       });
       if (!copied.versionId) {
         throw new Error(
@@ -196,6 +185,7 @@ export async function validateAndPromoteAttachment(
       const clean = await input.store.headObject({
         key: row.cleanKey,
         versionId: copied.versionId,
+        signal,
       });
       if (
         !clean?.versionId ||
@@ -205,6 +195,9 @@ export async function validateAndPromoteAttachment(
         throw new Error("Promoted clean object failed integrity verification");
       }
 
+      // An aborted attempt (timeout, lost lease, shutdown) must not promote:
+      // the retry or the new lease owner repeats the idempotent steps above.
+      signal?.throwIfAborted();
       const now = new Date();
       const [promoted] = await db
         .update(attachments)
@@ -250,6 +243,7 @@ export async function validateAndPromoteAttachment(
 export async function deleteAttachmentObjects(
   attachmentId: string,
   store: ObjectStore,
+  signal?: AbortSignal,
 ) {
   return withSpan(
     "attachment.delete_objects",
@@ -273,7 +267,7 @@ export async function deleteAttachmentObjects(
           return;
         }
 
-        await deletePinnedAttachmentObjects(row, store);
+        await deletePinnedAttachmentObjects(row, store, signal);
 
         const nextStatus = row.status === "rejected" ? "rejected" : "deleted";
         const now = new Date();
@@ -306,8 +300,9 @@ async function rejectAttachment(
   row: typeof attachments.$inferSelect,
   store: ObjectStore,
   reason: string,
+  signal?: AbortSignal,
 ) {
-  await deletePinnedAttachmentObjects(row, store);
+  await deletePinnedAttachmentObjects(row, store, signal);
   const now = new Date();
   await db
     .update(attachments)
@@ -328,16 +323,19 @@ async function rejectAttachment(
 async function deletePinnedAttachmentObjects(
   row: typeof attachments.$inferSelect,
   store: ObjectStore,
+  signal?: AbortSignal,
 ) {
   if (row.cleanKey && row.cleanVersionId) {
     await store.deleteObject({
       key: row.cleanKey,
       versionId: row.cleanVersionId,
+      signal,
     });
   }
   await store.deleteObject({
     key: row.quarantineKey,
     versionId: row.quarantineVersionId,
+    signal,
   });
 }
 
