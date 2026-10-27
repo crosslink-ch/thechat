@@ -5,12 +5,13 @@ import { Elysia } from "elysia";
 import { authRoutes } from "../auth";
 import { conversationRoutes } from "../conversations";
 import { db } from "../db";
+import { queueJobs as eventOutbox } from '../async/job-schema';
 import {
   attachments,
   botInvocations,
   bots,
   conversationParticipants,
-  eventOutbox,
+
   messages,
   users,
   workspaces,
@@ -859,7 +860,7 @@ describe("Channel management", () => {
 
     await db
       .update(eventOutbox)
-      .set({ deadAt: new Date() })
+      .set({ state:'cancelled', completedOn: new Date() })
       .where(eq(eventOutbox.id, event.id));
     expect(
       (

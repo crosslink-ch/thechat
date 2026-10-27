@@ -1,8 +1,9 @@
 import { describe, test, expect, afterAll, beforeAll } from "bun:test";
 import { Elysia } from "elysia";
 import { defaultBotAppearance } from "@thechat/shared";
-import { and, asc, eq, inArray } from "drizzle-orm";
+import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "../db";
+import { queueJobs as eventOutbox } from '../async/job-schema';
 import {
   apikey,
   attachments,
@@ -10,7 +11,7 @@ import {
   bots,
   conversationParticipants,
   conversations,
-  eventOutbox,
+
   messages,
   users,
   workspaces,
@@ -57,6 +58,7 @@ import {
 import { closeDomainEventRuntime, startDomainEventRuntime } from "../events/runtime";
 import { createChatMessageSentV1 } from "../events/envelope";
 import { enqueueDomainEvent } from "../events/outbox";
+import { createChatMessageSentHandler } from '../events/message-handler';
 import { setAttachmentObjectStoreForTests } from "../attachments/service";
 import {
   ATTACHMENT_VALIDATION_REQUESTED,
@@ -1241,15 +1243,15 @@ describe("Bots: Workspace management", () => {
     const [revokedEvent] = await db
       .select({
         event: eventOutbox.event,
-        deadAt: eventOutbox.deadAt,
-        lastError: eventOutbox.lastError,
+        state: eventOutbox.state,
+        output: eventOutbox.output,
       })
       .from(eventOutbox)
       .where(eq(eventOutbox.id, delayedEvent.id))
       .limit(1);
     expect((revokedEvent.event as any).payload.targetBotIds).toEqual([]);
-    expect(revokedEvent.deadAt).toBeInstanceOf(Date);
-    expect(revokedEvent.lastError).toBe("Target bot removed from workspace");
+    expect(revokedEvent.state).toBe('cancelled');
+    expect(revokedEvent.output).toEqual({reason:'Target bot removed from workspace'});
 
     const pollRes = await req(
       "GET",
@@ -4308,6 +4310,30 @@ describe("Bots: @mention webhook", () => {
 });
 
 describe("Bots: background isolation", () => {
+  test('invocation creation rolls back if durable dispatch enqueue fails, and redelivery deduplicates both',async()=>{
+    await closeDomainEventRuntime();await closeBotRuntimeForTests();
+    try {
+      const human=await registerUser('Atomic dispatch owner');
+      const {workspaceId,channelId}=await createWorkspaceWithGeneralChannel(human.token,'Atomic dispatch WS');
+      const bot=await createBot(human.token,'AtomicBot','http://127.0.0.1:9/unused');
+      await addBotToWorkspace(bot.body.id,workspaceId,human.token);
+      const sent=await req('POST',`/messages/${channelId}`,{content:'@AtomicBot hello'},human.token);
+      expect(sent.status).toBe(200);
+      const event=createChatMessageSentV1({messageId:sent.body.id,conversationId:channelId,targetBotIds:[bot.body.id],messageKind:'user',automationDepth:0,senderId:human.user.id,senderType:'human',workspaceId});
+      await db.execute(sql`create function public.test_reject_dispatch() returns trigger language plpgsql as $$ begin if new.name='bot.dispatch' then raise exception 'synthetic dispatch unavailable'; end if; return new; end $$`);
+      await db.execute(sql`create trigger test_reject_dispatch before insert on pgboss.job for each row execute function public.test_reject_dispatch()`);
+      try {
+        await expect(createChatMessageSentHandler().handle(event)).rejects.toThrow();
+        expect(await db.select().from(botInvocations).where(eq(botInvocations.triggerMessageId,sent.body.id))).toHaveLength(0);
+      } finally {
+        await db.execute(sql`drop trigger test_reject_dispatch on pgboss.job`);await db.execute(sql`drop function public.test_reject_dispatch()`);
+      }
+      await createChatMessageSentHandler().handle(event);await createChatMessageSentHandler().handle(event);
+      const rows=await db.select().from(botInvocations).where(eq(botInvocations.triggerMessageId,sent.body.id));expect(rows).toHaveLength(1);
+      expect((await db.execute(sql`select id from pgboss.job where name='bot.dispatch' and data->'message'->'payload'->>'invocationId'=${rows[0].id}`)).length).toBe(1);
+    } finally {await startDomainEventRuntime();}
+  });
+
   test("a bot mention is delivered while an attachment check is stuck on storage", async () => {
     // Production incident: one attachment validation waited 217 s on S3 and
     // every bot trigger queued behind it. The attachment lane must not delay

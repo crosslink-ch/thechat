@@ -6,12 +6,13 @@ import { authRoutes } from "../auth";
 import { botRoutes } from "../bots";
 import { conversationRoutes } from "../conversations";
 import { db } from "../db";
+import { queueJobs as eventOutbox } from '../async/job-schema';
 import {
   attachments,
   botInvocations,
   botRequests,
   conversationThreads,
-  eventOutbox,
+
   messageAttachments,
   messages,
   users,
@@ -201,7 +202,7 @@ async function postMessage(
 async function settleMessageEvents(conversationId: string) {
   await db
     .update(eventOutbox)
-    .set({ publishedAt: new Date() })
+    .set({ state:'completed', completedOn: new Date() })
     .where(eq(eventOutbox.partitionKey, conversationId));
 }
 

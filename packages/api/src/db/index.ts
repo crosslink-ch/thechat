@@ -7,7 +7,7 @@ if (!databaseUrl) {
   throw new Error("DATABASE_URL environment variable is required");
 }
 
-const client = postgres(databaseUrl, databasePoolOptions(process.env));
+export const client = postgres(databaseUrl, databasePoolOptions(process.env));
 export const db = drizzle({ client, schema });
 
 /**

@@ -136,6 +136,7 @@ def main() -> int:
 
     if not args.skip_migrate and env.get("DATABASE_URL"):
         run(["pnpm", "db:migrate"], env)
+        run(["pnpm", "--filter", "@thechat/api", "queue:setup"], env)
 
     processes = build_processes(env, logs_dir, no_worker=args.no_worker)
     for process in processes:

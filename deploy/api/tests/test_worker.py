@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Render-level tests for the TheChat outbox worker Deployment."""
+"""Render-level tests for the TheChat pg-boss worker Deployment."""
 
 from __future__ import annotations
 
@@ -64,7 +64,7 @@ class WorkerDeploymentTests(unittest.TestCase):
         self.assertIn("replicas: 1", worker)
         self.assertNotIn("topologySpreadConstraints:", worker)
 
-    def test_shutdown_window_covers_the_outbox_grace_period(self) -> None:
+    def test_shutdown_window_covers_pg_boss_grace_period(self) -> None:
         worker = render("templates/worker-deployment.yaml")
         self.assertIn("terminationGracePeriodSeconds: 45", worker)
 
@@ -85,9 +85,10 @@ class WorkerDeploymentTests(unittest.TestCase):
 
         self.assertEqual(env_value(worker, "DATABASE_POOL_MAX"), "6")
         self.assertEqual(env_value(worker, "DATABASE_IDLE_TIMEOUT_SECONDS"), "60")
-        self.assertIsNone(env_value(api, "DATABASE_POOL_MAX"))
+        self.assertEqual(env_value(api, "DATABASE_POOL_MAX"), "10")
         # Shared settings and secret references still reach the worker.
-        self.assertEqual(env_value(worker, "ATTACHMENT_VALIDATION_CONCURRENCY"), "1")
+        # Queue capacity is now explicit in async/queue.ts, not legacy flags.
+        self.assertIsNone(env_value(worker, "ATTACHMENT_VALIDATION_CONCURRENCY"))
         self.assertIn("name: DATABASE_URL", worker)
         self.assertIn("name: REDIS_URL", worker)
 

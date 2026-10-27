@@ -6,8 +6,8 @@ Deploys the TheChat API server and bot worker to Kubernetes.
 
 - Kubernetes 1.24+
 - Helm 3+
-- An external PostgreSQL database
-- An external Redis instance for realtime fanout and BullMQ workers
+- An external PostgreSQL database (13+, including the explicitly initialized pg-boss schema)
+- An external Redis instance for realtime fanout/presence
 - Existing application Secrets in the target namespace
 - Infisical Secrets Operator when `attachments.infisical.enabled=true` or
   `betterAuthInfisical.enabled=true`
@@ -155,48 +155,21 @@ With `worker.enabled=true` (the default), the chart also renders:
 - worker-only environment from `worker.env`, merged over `env` (the worker uses a
   small PostgreSQL pool per replica, `DATABASE_POOL_MAX`).
 
-Several replicas are safe: outbox rows are claimed with leases
-(`FOR UPDATE SKIP LOCKED`), a running handler renews its lease, and the periodic
-attachment-cleanup and bot-request-expiry sweeps use conditional updates.
-`helm upgrade -f current-release-values.yaml` keeps the old `replicaCount`; the
-production example overlay sets `worker.replicaCount: 3` explicitly.
+Several replicas are coordinated by pg-boss, including strict per-conversation FIFO,
+heartbeat recovery and attempt-fenced acknowledgements. Attachment cleanup and
+bot-request expiry retain their conditional, idempotent business updates.
 
-### Domain-event lanes and deadlines
+Each worker has independent queues for chat messages (16 slots), attachments (1),
+bot-request answers (4) and bot dispatch (4). Its queue database pool is capped at
+two connections in addition to `DATABASE_POOL_MAX`. These defaults are defined in
+`packages/api/src/async/queue.ts`; the old `DOMAIN_EVENTS_*` settings no longer
+control a custom outbox worker.
 
-Each worker drains the outbox in two lanes with separate capacity, refilling a
-slot as soon as a handler finishes:
-
-| Lane | Events | Capacity | First-attempt budget |
-| --- | --- | --- | --- |
-| default | `chat.message.sent`, `bot_request.answered`, ... | `DOMAIN_EVENTS_BATCH_SIZE` (50) | `DOMAIN_EVENTS_HANDLER_TIMEOUT_MS` (60 s) |
-| attachments | `attachment.validation_requested`, `attachment.deletion_requested` | `ATTACHMENT_VALIDATION_CONCURRENCY` (1) | `DOMAIN_EVENTS_ATTACHMENT_HANDLER_TIMEOUT_MS` (5 min) |
-
-A timed-out attempt is retried with double the budget, up to
-`DOMAIN_EVENTS_MAX_HANDLER_TIMEOUT_MS` (30 min), so slow but valid work is never
-failed forever by a fixed limit. S3 calls additionally fail fast on a dead
-connection (`ATTACHMENT_S3_CONNECT_TIMEOUT_MS`, `ATTACHMENT_S3_RESPONSE_TIMEOUT_MS`,
-`ATTACHMENT_S3_BODY_IDLE_TIMEOUT_MS`) without limiting transfers that keep
-making progress.
-
-### Dead-letter queue
-
-An event that fails `DOMAIN_EVENTS_MAX_ATTEMPTS` times (or fails permanently) is
-kept in `event_outbox` with `dead_at` set: never pruned, never retried, and it
-no longer blocks its partition. The worker logs `domain_event.outbox.dead_lettered`
-for each one and `domain_event.outbox.dead_letter_backlog` (with the count)
-hourly while any remain. Inspect and replay from a worker pod:
-
-```bash
-kubectl -n thechat exec deploy/thechat-api-worker -- bun run dist/scripts/outbox-dlq.js count
-kubectl -n thechat exec deploy/thechat-api-worker -- bun run dist/scripts/outbox-dlq.js list --limit 20
-kubectl -n thechat exec deploy/thechat-api-worker -- bun run dist/scripts/outbox-dlq.js show <event-id>
-kubectl -n thechat exec deploy/thechat-api-worker -- bun run dist/scripts/outbox-dlq.js replay <event-id> [...]
-kubectl -n thechat exec deploy/thechat-api-worker -- bun run dist/scripts/outbox-dlq.js replay --type <event-type> --all
-```
-
-Replay resets the attempt count and puts the event back in its original
-partition order. Handlers are idempotent, so replaying an event whose effect
-already happened is safe.
+See [the queue operations runbook](../../docs/pg-boss-queues.md) for retry/expiry
+semantics, dead-letter inspection and replay, metrics, connection budgeting and
+the required **stopped-world migration from outbox/BullMQ**. That cutover must be
+performed before enabling the new API/worker. It is not a normal rolling Helm
+upgrade, and the migration hook alone does not import legacy jobs.
 
 ## Production attachment credentials
 

@@ -22,9 +22,10 @@ import { botRoutes } from "../bots";
 import { hermesPlatformRoutes } from "../hermes-platform";
 import { conversationRoutes } from "../conversations";
 import { db } from "../db";
+import { queueJobs as eventOutbox } from '../async/job-schema';
 import {
   attachments,
-  eventOutbox,
+
   messageAttachments,
   messages,
   users,
@@ -84,6 +85,7 @@ beforeAll(async () => {
 afterAll(async () => {
   setAttachmentObjectStoreForTests(null);
   await closeRealtimeBusForTests();
+  if (createdUserIds.length) await db.delete(eventOutbox).where(inArray(eventOutbox.actorId,createdUserIds));
   if (createdConversationIds.length > 0) {
     const createdAttachmentIds = await db
       .select({ id: attachments.id })
@@ -285,6 +287,33 @@ describe("attachment lifecycle", () => {
         .from(attachments)
         .where(eq(attachments.conversationId, conversationId)),
     ).toHaveLength(0);
+  });
+
+  test("deleting during validation cannot resurrect the attachment or leak its late clean version", async () => {
+    const owner=await register('Validation deletion race');
+    const {conversationId}=await workspaceWithMembers(owner);
+    const bytes=new TextEncoder().encode('race fixture');
+    const checksum=crypto.createHash('sha256').update(bytes).digest('hex');
+    const reserved=await request('POST','/attachments',{conversationId,fileName:'race.txt',mediaType:'text/plain',sizeBytes:bytes.byteLength,checksumSha256:checksum},owner.token);
+    const id=reserved.body.attachment.id;
+    store.acceptLatestUpload(bytes);
+    expect((await request('POST',`/attachments/${id}/complete`,{},owner.token)).status).toBe(200);
+    let release!:()=>void,started!:()=>void;
+    const copied=new Promise<void>(r=>started=r),gate=new Promise<void>(r=>release=r);
+    const copy=store.copyObject.bind(store);
+    let cleanVersion:string|undefined;
+    store.copyObject=async(input)=>{const result=await copy(input);cleanVersion=result.versionId;started();await gate;return result;};
+    const validation=validateAndPromoteAttachment(id,{store,maxBytes:1024});
+    try {
+      await copied;
+      expect((await request('DELETE',`/attachments/${id}`,undefined,owner.token)).status).toBe(200);
+      await deleteAttachmentObjects(id,store);
+      release();await validation;
+      const [row]=await db.select().from(attachments).where(eq(attachments.id,id));
+      expect(row.status).toBe('deleted');expect(row.cleanVersionId).toBeNull();
+      expect(store.deleteCalls).toContainEqual({key:row.cleanKey!,versionId:cleanVersion});
+      expect(await store.headObject({key:row.cleanKey!})).toBeNull();
+    } finally {release();await validation;store.copyObject=copy;}
   });
 
   test("authorizes, validates, atomically binds, replays, and downloads without leaking storage coordinates", async () => {
@@ -930,7 +959,7 @@ describe("attachment lifecycle", () => {
     const bind = exactlyOneSpan(traced.spans, "attachment.bind");
     const produce = exactlyOneSpan(
       traced.spans,
-      "domain_event.outbox.enqueue",
+      "domain_event.enqueue",
     );
     expect(server.kind).toBe(SpanKind.SERVER);
     expect(server.spanContext().traceId).toBe(
@@ -949,7 +978,7 @@ describe("attachment lifecycle", () => {
       "staged",
     );
     expect(produce.kind).toBe(SpanKind.PRODUCER);
-    expect(produce.attributes["thechat.outbox.outcome"]).toBe("staged");
+    expect(produce.attributes["thechat.queue.outcome"]).toBe("staged");
     expect(produce.parentSpanContext?.spanId).toBe(send.spanContext().spanId);
 
     const conflict = await captureSpans(() =>

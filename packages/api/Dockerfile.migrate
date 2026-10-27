@@ -1,7 +1,7 @@
 FROM node:22-slim
 
 RUN corepack enable && corepack prepare pnpm@latest --activate
-RUN npm i -g bun
+RUN npm i -g bun@1.4.2
 
 WORKDIR /app
 
@@ -21,4 +21,4 @@ COPY packages/api/ packages/api/
 
 WORKDIR /app/packages/api
 
-CMD ["bunx", "drizzle-kit", "migrate"]
+CMD ["sh", "-c", "bunx drizzle-kit migrate && bun run src/scripts/queue-setup.ts"]

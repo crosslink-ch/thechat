@@ -22,7 +22,7 @@ import type {
   WebhookPayload,
   WsServerEvent,
 } from "@thechat/shared";
-import { BullMqAsyncBus } from "../async";
+import { PgBossAsyncBus } from "../async";
 import { AsyncWorkerRuntime } from "../async/worker";
 import type { AsyncJobHandler, QueueCommand } from "../async/types";
 import { db } from "../db";
@@ -145,7 +145,7 @@ interface HermesPlatformMessageTarget {
   threadId: string | null;
 }
 
-let asyncBus: BullMqAsyncBus | null = null;
+let asyncBus: PgBossAsyncBus | null = null;
 let botWorker: AsyncWorkerRuntime | null = null;
 let botWorkerStartPromise: Promise<AsyncWorkerRuntime> | null = null;
 
@@ -637,7 +637,7 @@ export async function closeBotRuntimeForTests(): Promise<void> {
 }
 
 export async function closeBotRuntime(): Promise<void> {
-  await Promise.allSettled([asyncBus?.close(), botWorker?.close(true)]);
+  await botWorker?.close();
   asyncBus = null;
   botWorker = null;
   botWorkerStartPromise = null;
@@ -648,9 +648,9 @@ function createBotInvokeHandler(): AsyncJobHandler<BotInvokePayload> {
     queue: BOT_QUEUE_NAME,
     name: BOT_INVOKE_JOB_NAME,
     async handle(job, context) {
-      await context.setProgress(5, { invocationId: job.message.payload.invocationId });
-      await handleQueuedBotInvocation(job.message.payload.invocationId, context);
-      await context.setProgress(100, { invocationId: job.message.payload.invocationId });
+
+      await handleQueuedBotInvocation(job.message.payload.invocationId, context, job.attemptsMade + 1 >= job.maxAttempts);
+
     },
   };
 }
@@ -661,10 +661,10 @@ function createHermesWebhookDeliveryHandler(): AsyncJobHandler<HermesWebhookDeli
     name: HERMES_WEBHOOK_DELIVERY_JOB_NAME,
     async handle(job, context) {
       const { invocationId } = job.message.payload;
-      await context.setProgress(5, { invocationId });
+
       const isFinalAttempt = job.attemptsMade + 1 >= job.maxAttempts;
-      await deliverHermesPlatformWebhookInvocation(invocationId, { failOnError: isFinalAttempt });
-      await context.setProgress(100, { invocationId });
+      await deliverHermesPlatformWebhookInvocation(invocationId, { failOnError: isFinalAttempt, signal:context.signal });
+
     },
   };
 }
@@ -677,27 +677,6 @@ async function enqueueBotInvocation(input: {
   const invocation = await getOrCreateInvocation(input.bot, input.conversation, input.message);
   if (!invocation) return;
   await publishInvocationUpdate(invocation.id);
-
-  if (input.bot.kind === "hermes") {
-    if (invocation.status === "queued" && input.bot.webhookUrl) {
-      const command = createHermesWebhookDeliveryCommand(
-        invocation.id,
-        input.conversation.workspaceId,
-        input.message.correlationId,
-        input.message.domainEventId,
-      );
-      await getAsyncBus().enqueue(command);
-    }
-    return;
-  }
-
-  const command = createBotInvokeCommand(
-    invocation.id,
-    input.conversation.workspaceId,
-    input.message.correlationId,
-    input.message.domainEventId,
-  );
-  await getAsyncBus().enqueue(command);
 }
 
 async function getOrCreateInvocation(
@@ -742,7 +721,17 @@ async function getOrCreateInvocation(
       })
       .returning();
 
-    if (inserted[0]) return inserted[0];
+    if (inserted[0]) {
+      // Invocation creation and dispatch have one commit point. Polling-only
+      // Hermes invocations intentionally have no delivery job.
+      if (bot.kind !== 'hermes' || bot.webhookUrl) {
+        const command = bot.kind === 'hermes'
+          ? createHermesWebhookDeliveryCommand(inserted[0].id, conversation.workspaceId, message.correlationId, message.domainEventId)
+          : createBotInvokeCommand(inserted[0].id, conversation.workspaceId, message.correlationId, message.domainEventId);
+        await getAsyncBus().enqueue(command, tx);
+      }
+      return inserted[0];
+    }
 
     const [existing] = await tx
       .select()
@@ -819,10 +808,10 @@ function createHermesWebhookDeliveryCommand(
   };
 }
 
-async function handleQueuedBotInvocation(invocationId: string, context: { setProgress(progress: number, detail?: unknown): Promise<void> }) {
+async function handleQueuedBotInvocation(invocationId: string, context: { signal?:AbortSignal }, finalAttempt:boolean) {
   const loaded = await loadInvocationContext(invocationId);
   if (!loaded) {
-    await context.setProgress(100, { status: "missing" });
+
     return;
   }
   try {
@@ -842,10 +831,8 @@ async function handleQueuedBotInvocation(invocationId: string, context: { setPro
   ) {
     return;
   }
-  if (loaded.invocation.status === "running" && loaded.invocation.startedAt) {
-    const ageMs = Date.now() - loaded.invocation.startedAt.getTime();
-    if (ageMs < 10 * 60 * 1000) return;
-  }
+  // pg-boss owns retry/lease fencing; a recovered running invocation must not
+  // be silently acknowledged without delivering its webhook.
 
   const started = await markInvocationStatus(invocationId, "running", {
     startedAt: new Date(),
@@ -853,21 +840,19 @@ async function handleQueuedBotInvocation(invocationId: string, context: { setPro
   });
   if (!started) return;
   await publishInvocationUpdate(invocationId);
-  await context.setProgress(15, { status: "running" });
+
 
   try {
-    if (loaded.bot.kind === "hermes") {
-      await context.setProgress(100, { status: "claimed_by_hermes_platform" });
-    } else {
-      await handleWebhookInvocation(invocationId);
+    if (loaded.bot.kind !== "hermes") {
+      await handleWebhookInvocation(invocationId, context.signal);
     }
   } catch (error: any) {
-    await failInvocation(invocationId, error);
+    if (finalAttempt) await failInvocation(invocationId, error);
     throw error;
   }
 }
 
-async function handleWebhookInvocation(invocationId: string) {
+async function handleWebhookInvocation(invocationId: string, signal?:AbortSignal) {
   const loaded = await loadInvocationContext(invocationId);
   if (!loaded) throw new Error(`Bot invocation not found: ${invocationId}`);
   if (!loaded.bot.webhookUrl) throw new Error("Webhook bot does not have a webhook URL");
@@ -911,10 +896,12 @@ async function handleWebhookInvocation(invocationId: string) {
 
   const response = await fetch(loaded.bot.webhookUrl, {
     method: "POST",
+    signal,
     headers: {
       "Content-Type": "application/json",
       "X-Webhook-Timestamp": String(timestamp),
       "X-Webhook-Signature": signature,
+      "X-TheChat-Invocation-Id": invocationId,
     },
     body,
   });
@@ -1228,7 +1215,7 @@ async function prepareHermesPlatformEvent(
 
 async function deliverHermesPlatformWebhookInvocation(
   invocationId: string,
-  options: { failOnError?: boolean } = {},
+  options: { failOnError?: boolean; signal?:AbortSignal } = {},
 ): Promise<void> {
   await withSpan(
     "hermes_platform.webhook.deliver",
@@ -1328,6 +1315,7 @@ async function deliverHermesPlatformWebhookInvocation(
       try {
         const response = await fetch(loaded.bot.webhookUrl, {
           method: "POST",
+          signal: options.signal,
           headers: {
             "Content-Type": "application/json",
             "X-Webhook-Timestamp": String(timestamp),
@@ -2697,7 +2685,7 @@ async function requireConversationThread(conversationId: string, threadId: strin
 }
 
 function getAsyncBus() {
-  asyncBus ??= new BullMqAsyncBus();
+  asyncBus ??= new PgBossAsyncBus();
   return asyncBus;
 }
 

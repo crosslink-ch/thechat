@@ -6,13 +6,12 @@ import {
   parseDomainEventEnvelope,
   type DomainEventEnvelope,
 } from "./envelope";
-import { handlerBudgetMs, loadDomainEventsConfig } from "./config";
+
 import {
   DomainEventRegistry,
   InvalidDomainEventError,
   PermanentDomainEventError,
 } from "./registry";
-import { retryDelayMs } from "./retry";
 
 const ids = {
   message: "11111111-1111-4111-8111-111111111111",
@@ -86,12 +85,34 @@ describe("domain event envelopes", () => {
 describe("domain event registry", () => {
   test("assigns handlers to lanes and refuses mixed lanes for one event type", () => {
     const registry = new DomainEventRegistry()
-      .register({ type: "lane.default", version: 1, parse: parseDomainEventEnvelope, async handle() {} })
-      .register({ type: "lane.storage", version: 1, lane: "attachments", parse: parseDomainEventEnvelope, async handle() {} })
-      .register({ type: "lane.storage", version: 2, lane: "attachments", parse: parseDomainEventEnvelope, async handle() {} });
+      .register({
+        type: "lane.default",
+        version: 1,
+        parse: parseDomainEventEnvelope,
+        async handle() {},
+      })
+      .register({
+        type: "lane.storage",
+        version: 1,
+        lane: "attachments",
+        parse: parseDomainEventEnvelope,
+        async handle() {},
+      })
+      .register({
+        type: "lane.storage",
+        version: 2,
+        lane: "attachments",
+        parse: parseDomainEventEnvelope,
+        async handle() {},
+      });
     expect(registry.eventTypesForLane("attachments")).toEqual(["lane.storage"]);
     expect(() =>
-      registry.register({ type: "lane.storage", version: 3, parse: parseDomainEventEnvelope, async handle() {} }),
+      registry.register({
+        type: "lane.storage",
+        version: 3,
+        parse: parseDomainEventEnvelope,
+        async handle() {},
+      }),
     ).toThrow("same worker lane");
   });
 
@@ -105,7 +126,10 @@ describe("domain event registry", () => {
         if (event.type !== "test.event" || event.version !== 1) {
           throw new Error("unexpected event");
         }
-        return event as DomainEventEnvelope & { type: "test.event"; version: 1 };
+        return event as DomainEventEnvelope & {
+          type: "test.event";
+          version: 1;
+        };
       },
       async handle(event) {
         handled.push(event.id);
@@ -122,28 +146,34 @@ describe("domain event registry", () => {
 
     await expect(registry.dispatch(event)).resolves.toBe(true);
     expect(handled).toEqual([event.id]);
-    await expect(registry.dispatch({ ...event, type: "another.event" })).resolves.toBe(false);
     await expect(
-      registry.dispatch({ ...event, type: "another.event" }, { rejectMissing: true }),
+      registry.dispatch({ ...event, type: "another.event" }),
+    ).resolves.toBe(false);
+    await expect(
+      registry.dispatch(
+        { ...event, type: "another.event" },
+        { rejectMissing: true },
+      ),
     ).rejects.toBeInstanceOf(PermanentDomainEventError);
-    await expect(registry.dispatch({ not: "an envelope" })).rejects.toBeInstanceOf(
-      InvalidDomainEventError,
-    );
+    await expect(
+      registry.dispatch({ not: "an envelope" }),
+    ).rejects.toBeInstanceOf(InvalidDomainEventError);
   });
 
   test("classifies event-specific parse failures without hiding transient handler failures", async () => {
     const parseFailure = new Error("payload marker is invalid");
     const transientFailure = new Error("transient failure");
-    const parseRegistry = new DomainEventRegistry().register<DomainEventEnvelope>({
-      type: "test.invalid-payload",
-      version: 1,
-      parse() {
-        throw parseFailure;
-      },
-      async handle() {
-        throw new Error("handler must not run");
-      },
-    });
+    const parseRegistry =
+      new DomainEventRegistry().register<DomainEventEnvelope>({
+        type: "test.invalid-payload",
+        version: 1,
+        parse() {
+          throw parseFailure;
+        },
+        async handle() {
+          throw new Error("handler must not run");
+        },
+      });
     const transientRegistry = new DomainEventRegistry().register({
       type: "test.transient",
       version: 1,
@@ -172,64 +202,8 @@ describe("domain event registry", () => {
     await expect(parseRegistry.dispatch(invalid)).rejects.toMatchObject({
       cause: parseFailure,
     });
-    await expect(transientRegistry.dispatch(transient)).rejects.toBe(transientFailure);
-  });
-});
-
-describe("outbox configuration and retry policy", () => {
-  test("has a broker-free configuration with safe bounded defaults", () => {
-    expect(loadDomainEventsConfig({
-      DOMAIN_EVENTS_BATCH_SIZE: "12",
-      DOMAIN_EVENTS_RETENTION_DAYS: "14",
-    })).toMatchObject({
-      batchSize: 12,
-      retentionDays: 14,
-      maxAttempts: 25,
-    });
-    expect(loadDomainEventsConfig({ DOMAIN_EVENTS_BATCH_SIZE: "0" }).batchSize).toBe(50);
-  });
-
-  test("gives attachments a longer budget and never caps below a configured base", () => {
-    const config = loadDomainEventsConfig({});
-    expect(config).toMatchObject({
-      handlerTimeoutMs: 60_000,
-      attachmentHandlerTimeoutMs: 300_000,
-      maxHandlerTimeoutMs: 1_800_000,
-      lockTimeoutMs: 60_000,
-      attachmentConcurrency: 1,
-    });
-    expect(
-      loadDomainEventsConfig({
-        DOMAIN_EVENTS_ATTACHMENT_HANDLER_TIMEOUT_MS: "3600000",
-        DOMAIN_EVENTS_MAX_HANDLER_TIMEOUT_MS: "600000",
-      }).maxHandlerTimeoutMs,
-    ).toBe(3_600_000);
-    expect(
-      loadDomainEventsConfig({ ATTACHMENT_VALIDATION_CONCURRENCY: "50" })
-        .attachmentConcurrency,
-    ).toBe(8);
-  });
-
-  test("doubles the attempt budget on every retry up to the cap", () => {
-    // A job that needs 3 minutes fails twice at most, then always fits.
-    expect([0, 1, 2, 3, 4, 5].map((attempts) => handlerBudgetMs(60_000, 1_800_000, attempts))).toEqual([
-      60_000,
-      120_000,
-      240_000,
-      480_000,
-      960_000,
-      1_800_000,
-    ]);
-    expect(handlerBudgetMs(300_000, 1_800_000, 25)).toBe(1_800_000);
-    expect(handlerBudgetMs(300_000, 100_000, 0)).toBe(300_000);
-  });
-
-  test("backs off retries with a bounded delay", () => {
-    expect([1, 2, 3, 20].map(retryDelayMs)).toEqual([
-      1_000,
-      2_000,
-      4_000,
-      60_000,
-    ]);
+    await expect(transientRegistry.dispatch(transient)).rejects.toBe(
+      transientFailure,
+    );
   });
 });

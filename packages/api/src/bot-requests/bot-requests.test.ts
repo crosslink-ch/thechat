@@ -4,11 +4,12 @@ import { and, eq, inArray } from "drizzle-orm";
 import crypto from "crypto";
 import type { BotRequestPublic } from "@thechat/shared";
 import { db } from "../db";
+import { queueJobs as eventOutbox } from '../async/job-schema';
 import {
   botInvocations,
   botRequests,
   conversationParticipants,
-  eventOutbox,
+
   users,
   workspaceMembers,
   workspaces,
@@ -342,7 +343,7 @@ describe("bot requests: answering", () => {
         ),
       );
     expect(events).toHaveLength(1);
-    expect(events[0]!.partitionKey).toBe(`bot-request:${raceBot.id}`);
+    expect(events[0]!.partitionKey).toBeNull(); // Answer delivery is deliberately unordered.
 
     // Owner answering with Always in a fresh DM request is stored verbatim.
     const f = await hermesFixture("Always DM");

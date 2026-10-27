@@ -1,5 +1,6 @@
 import {
   context,
+  metrics,
   createContextKey,
   createTraceState,
   isSpanContextValid,
@@ -17,11 +18,14 @@ import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
 import { resourceFromAttributes } from "@opentelemetry/resources";
 import { BatchSpanProcessor } from "@opentelemetry/sdk-trace-base";
 import { NodeTracerProvider } from "@opentelemetry/sdk-trace-node";
+import { MeterProvider, PeriodicExportingMetricReader } from '@opentelemetry/sdk-metrics';
+import { OTLPMetricExporter } from '@opentelemetry/exporter-metrics-otlp-http';
 
 const defaultTracer = trace.getTracer("thechat-api");
 let testTracer: Tracer | null = null;
 
 let tracerProvider: NodeTracerProvider | null = null;
+let meterProvider: MeterProvider | null = null;
 let initPromise: Promise<void> | null = null;
 
 export async function initObservability(defaultServiceName = "thechat-api") {
@@ -48,6 +52,12 @@ export async function initObservability(defaultServiceName = "thechat-api") {
 
     provider.register();
     tracerProvider = provider;
+    const metricEndpoint = process.env.OTEL_EXPORTER_OTLP_METRICS_ENDPOINT || endpoint.replace(/\/v1\/traces$/, '/v1/metrics');
+    meterProvider = new MeterProvider({
+      resource: resourceFromAttributes(resourceAttributes),
+      readers: [new PeriodicExportingMetricReader({exporter:new OTLPMetricExporter({url:metricEndpoint}),exportIntervalMillis:15_000})],
+    });
+    metrics.setGlobalMeterProvider(meterProvider);
   });
 
   return initPromise;
@@ -58,6 +68,7 @@ export async function shutdownObservability() {
   tracerProvider = null;
   initPromise = null;
   await provider?.shutdown();
+  const meter=meterProvider;meterProvider=null;await meter?.shutdown();
 }
 
 export interface TraceContextCarrier {

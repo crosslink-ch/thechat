@@ -1,10 +1,20 @@
-import { BOT_QUEUE_NAME, closeBotRuntime, startBotWorker } from "../services/bot-runtime";
+import {
+  BOT_QUEUE_NAME,
+  closeBotRuntime,
+  startBotWorker,
+} from "../services/bot-runtime";
 import {
   closeDomainEventRuntime,
   startDomainEventRuntime,
 } from "../events/runtime";
 import { initObservability, shutdownObservability } from "../observability";
 import { log } from "../logging";
+import {
+  getQueueClient,
+  closeQueueClient,
+  closeQueueDatabase,
+} from "../async/queue";
+import { client } from "../db";
 import {
   closeAttachmentCleanup,
   startAttachmentCleanup,
@@ -20,12 +30,16 @@ async function main() {
   await initObservability("thechat-worker");
 
   try {
+    await getQueueClient();
     await startBotWorker();
     await startDomainEventRuntime();
     void startAttachmentCleanup();
     void startBotRequestExpirySweep();
-    workerLog.info({ queue: BOT_QUEUE_NAME }, "TheChat bot worker is listening");
-    workerLog.info("TheChat PostgreSQL domain-event outbox relay is running");
+    workerLog.info(
+      { queue: BOT_QUEUE_NAME },
+      "TheChat bot worker is listening",
+    );
+    workerLog.info("TheChat pg-boss durable queues are running");
 
     await waitForShutdownSignal();
   } finally {
@@ -36,6 +50,9 @@ async function main() {
       closeBotRuntime(),
     ]);
     await shutdownObservability();
+    await closeQueueClient();
+    await closeQueueDatabase();
+    await client.end();
   }
 }
 
