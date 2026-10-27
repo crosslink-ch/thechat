@@ -22,6 +22,8 @@ const mocks = vi.hoisted(() => ({
   invalidateBotRuntime: vi.fn(),
   submitHermesInteraction: vi.fn(),
   threads: [] as any[],
+  threadHookOptions: vi.fn(),
+  activeThreadMissing: false,
   projects: [] as any[],
   messageQueryStale: false,
   participantName: "Hermes",
@@ -79,16 +81,24 @@ vi.mock("../hooks/useConversationDetail", () => ({
 }));
 
 vi.mock("../hooks/useConversationThreads", () => ({
-  useConversationThreads: () => ({
-    threads: mocks.threads,
-    loading: false,
-    loadingMore: false,
-    hasMore: false,
-    loadMore: vi.fn(),
-    createThread: mocks.createThread,
-    renameThread: mocks.renameThread,
-    touchThread: mocks.touchThread,
-  }),
+  useConversationThreads: (
+    _conversationId: string,
+    _token: string,
+    _enabled: boolean,
+    options: { activeThreadId?: string | null } = {},
+  ) => {
+    mocks.threadHookOptions(options);
+    return {
+      threads: mocks.threads,
+      groups: [],
+      loading: false,
+      loadMore: vi.fn(),
+      createThread: mocks.createThread,
+      renameThread: mocks.renameThread,
+      touchThread: mocks.touchThread,
+      activeThreadMissing: mocks.activeThreadMissing,
+    };
+  },
 }));
 
 vi.mock("../hooks/useTaskProjects", () => ({
@@ -292,6 +302,7 @@ beforeEach(() => {
     sendingAttachments: {},
   });
   mocks.threads = [];
+  mocks.activeThreadMissing = false;
   mocks.messageQueryStale = false;
   mocks.participantName = "Hermes";
   mocks.participantKind = "hermes";
@@ -367,6 +378,28 @@ describe("DmRoute deferred Hermes task drafts", () => {
           threadId: "thread-1",
           unthreadedOnly: false,
         }),
+      ),
+    );
+  });
+
+  it("keeps a deep-linked task open while it is on no loaded page", async () => {
+    // An old task in a busy conversation is not on any loaded page yet.
+    mocks.threads = [];
+    await renderRoute("/dm/dm-1?threadId=thread-1");
+
+    expect(mocks.threadHookOptions).toHaveBeenLastCalledWith({ activeThreadId: "thread-1" });
+    expect(mocks.channelChatOptions).toHaveBeenLastCalledWith(
+      expect.objectContaining({ threadId: "thread-1", unthreadedOnly: false }),
+    );
+  });
+
+  it("falls back to General only when the server no longer has the task", async () => {
+    mocks.activeThreadMissing = true;
+    await renderRoute("/dm/dm-1?threadId=thread-1");
+
+    await waitFor(() =>
+      expect(mocks.channelChatOptions).toHaveBeenLastCalledWith(
+        expect.objectContaining({ threadId: null, unthreadedOnly: true }),
       ),
     );
   });

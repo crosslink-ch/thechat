@@ -1,70 +1,127 @@
 import { isAuthenticated } from "../lib/auth-identity";
-import { useCallback, useEffect, useMemo } from "react";
-import {
-  useInfiniteQuery,
-  useQueryClient,
-  type InfiniteData,
-} from "@tanstack/react-query";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type {
+  ConversationThreadGroups,
   ConversationThreadPublic,
   ConversationThreadsPage,
 } from "@thechat/shared";
 import { api } from "../lib/api";
 import { authHeaders, edenErrorMessage } from "../lib/eden";
 import { wsEvents, type WsEvents } from "../lib/ws-events";
+import {
+  appendGroupPage,
+  findLoadedThread,
+  legacyTaskGroups,
+  loadedThreads,
+  normalizeThread,
+  normalizeThreadPage,
+  removeThread,
+  revealThread,
+  taskGroupSummaries,
+  taskGroupsFromServer,
+  touchThread as touchCachedThread,
+  unfileProject,
+  upsertThread,
+  type TaskGroupsData,
+} from "./task-groups-cache";
 
 const CONVERSATION_THREADS_STALE_MS = 60_000;
 const DEFAULT_THREAD_PAGE_SIZE = 50;
 
 interface ConversationThreadsOptions {
-  botId?: string | null;
-  status?: string | null;
   pageSize?: number;
+  /**
+   * The task the user has open. It is fetched on its own when it is not on a
+   * loaded page, so opening an old task never falls back to General.
+   */
+  activeThreadId?: string | null;
 }
-
-type ThreadsInfiniteData = InfiniteData<ConversationThreadsPage, string | null>;
 
 export const conversationThreadsQueryKey = (
   conversationId: string,
-  options: ConversationThreadsOptions = {},
+  options: { pageSize?: number } = {},
 ) =>
   [
     "conversation-threads",
     conversationId,
-    {
-      botId: options.botId ?? null,
-      status: options.status ?? null,
-      pageSize: options.pageSize ?? DEFAULT_THREAD_PAGE_SIZE,
-    },
+    { pageSize: options.pageSize ?? DEFAULT_THREAD_PAGE_SIZE },
   ] as const;
 
-async function fetchConversationThreads(
+class ThreadRequestError extends Error {
+  constructor(message: string, readonly status: number | null) {
+    super(message);
+  }
+}
+
+function edenStatus(error: unknown) {
+  const status = (error as { status?: unknown } | null)?.status;
+  return typeof status === "number" ? status : null;
+}
+
+async function fetchThreadPage(
   conversationId: string,
   token: string | null,
-  input: {
-    cursor?: string | null;
-    botId?: string | null;
-    status?: string | null;
-    limit: number;
-  },
+  input: { limit: number; cursor?: string | null; projectId?: string | null; legacy?: boolean },
 ): Promise<ConversationThreadsPage> {
   const query: Record<string, string | number> = { limit: input.limit };
   if (input.cursor) query.cursor = input.cursor;
-  if (input.botId) query.botId = input.botId;
-  if (input.status) query.status = input.status;
-
-  const { data, error } = await api.conversations.threads({ conversationId }).get(
-    {
-      query,
-      ...authHeaders(token),
-    },
-  );
-
-  if (error) {
-    throw new Error(edenErrorMessage(error, "Failed to load task threads"));
+  if (!input.legacy && input.projectId !== undefined) {
+    query.projectId = input.projectId ?? "none";
   }
+  const { data, error } = await api.conversations.threads({ conversationId }).get({
+    query,
+    ...authHeaders(token),
+  });
+  if (error) {
+    throw new ThreadRequestError(
+      edenErrorMessage(error, "Failed to load task threads"),
+      edenStatus(error),
+    );
+  }
+  return normalizeThreadPage(data as unknown as ConversationThreadsPage);
+}
 
-  return data as ConversationThreadsPage;
+/**
+ * The first page of every task group. Servers that predate grouped paging
+ * have no such route; they get the single recency-ordered list instead.
+ */
+async function fetchTaskGroups(
+  conversationId: string,
+  token: string | null,
+  limit: number,
+): Promise<TaskGroupsData> {
+  const { data, error } = await api.conversations["thread-groups"]({ conversationId }).get({
+    query: { limit },
+    ...authHeaders(token),
+  });
+  if (!error) return taskGroupsFromServer(data as unknown as ConversationThreadGroups);
+  if (edenStatus(error) !== 404) {
+    throw new ThreadRequestError(
+      edenErrorMessage(error, "Failed to load task threads"),
+      edenStatus(error),
+    );
+  }
+  return legacyTaskGroups(
+    await fetchThreadPage(conversationId, token, { limit, legacy: true }),
+  );
+}
+
+async function fetchConversationThread(
+  conversationId: string,
+  token: string | null,
+  threadId: string,
+) {
+  const { data, error } = await api.conversations
+    .threads({ conversationId })({ threadId })
+    .get(authHeaders(token));
+  if (error) {
+    throw new ThreadRequestError(
+      edenErrorMessage(error, "Failed to load the task"),
+      edenStatus(error),
+    );
+  }
+  return normalizeThread(data as unknown as ConversationThreadPublic);
 }
 
 async function createConversationThread(
@@ -86,7 +143,7 @@ async function createConversationThread(
     throw new Error(edenErrorMessage(error, "Failed to create task thread"));
   }
 
-  return data as ConversationThreadPublic;
+  return normalizeThread(data as unknown as ConversationThreadPublic);
 }
 
 async function updateConversationThread(
@@ -103,7 +160,7 @@ async function updateConversationThread(
     throw new Error(edenErrorMessage(error, "Failed to update task thread"));
   }
 
-  return data as ConversationThreadPublic;
+  return normalizeThread(data as unknown as ConversationThreadPublic);
 }
 
 async function deleteConversationThread(
@@ -119,6 +176,23 @@ async function deleteConversationThread(
   }
 }
 
+const groupKey = (projectId: string | null) => projectId ?? "none";
+
+/** A task fetched on its own because it is on no loaded page. */
+const singleThreadQueryKey = (conversationId: string | null, threadId: string | null) =>
+  ["conversation-thread", conversationId, threadId] as const;
+
+/** The task does not exist for this user (deleted, foreign or malformed id). */
+function isGone(error: unknown) {
+  const status = (error as ThreadRequestError | null)?.status;
+  return status === 400 || status === 403 || status === 404;
+}
+
+/**
+ * A conversation's Hermes tasks, paged per project group. Each project and
+ * the tasks without one load their own pages, so a project whose tasks are
+ * older than a page of newer tasks elsewhere still shows them.
+ */
 export function useConversationThreads(
   conversationId: string | null,
   token: string | null,
@@ -126,35 +200,89 @@ export function useConversationThreads(
   options: ConversationThreadsOptions = {},
 ) {
   const queryClient = useQueryClient();
-  const botId = options.botId ?? null;
-  const status = options.status ?? null;
   const pageSize = options.pageSize ?? DEFAULT_THREAD_PAGE_SIZE;
+  const activeThreadId = options.activeThreadId ?? null;
+  const active = enabled && !!conversationId && isAuthenticated(token);
   const queryKey = useMemo(
     () =>
       conversationId
-        ? conversationThreadsQueryKey(conversationId, { botId, status, pageSize })
+        ? conversationThreadsQueryKey(conversationId, { pageSize })
         : (["conversation-threads", "disabled"] as const),
-    [botId, conversationId, pageSize, status],
+    [conversationId, pageSize],
   );
-  const query = useInfiniteQuery({
+  const query = useQuery({
     queryKey,
-    queryFn: ({ pageParam }) =>
-      fetchConversationThreads(conversationId!, token!, {
-        cursor: pageParam,
-        botId,
-        status,
-        limit: pageSize,
-      }),
-    initialPageParam: null as string | null,
-    getNextPageParam: (lastPage) => lastPage.nextCursor,
-    enabled: enabled && !!conversationId && isAuthenticated(token),
+    queryFn: () => fetchTaskGroups(conversationId!, token, pageSize),
+    enabled: active,
     staleTime: CONVERSATION_THREADS_STALE_MS,
   });
+  const [loadingGroups, setLoadingGroups] = useState<ReadonlySet<string>>(() => new Set());
+  const loadingGroupsRef = useRef(loadingGroups);
+  loadingGroupsRef.current = loadingGroups;
 
-  const threads = useMemo(
-    () => dedupeThreads(query.data?.pages.flatMap((page) => page.items) ?? []),
-    [query.data],
+  const threads = useMemo(() => loadedThreads(query.data), [query.data]);
+  const groups = useMemo(
+    () => taskGroupSummaries(query.data, (projectId) => loadingGroups.has(groupKey(projectId))),
+    [loadingGroups, query.data],
   );
+
+  const refetch = query.refetch;
+  /** Applies a cache edit; a null result means the cache cannot tell, so reload. */
+  const updateCache = useCallback(
+    (edit: (data: TaskGroupsData) => TaskGroupsData | null) => {
+      const data = queryClient.getQueryData<TaskGroupsData>(queryKey);
+      if (!data) return;
+      const next = edit(data);
+      if (next) queryClient.setQueryData<TaskGroupsData>(queryKey, next);
+      else void refetch();
+    },
+    [queryClient, queryKey, refetch],
+  );
+
+  const loadMore = useCallback(
+    async (projectId: string | null = null) => {
+      if (!conversationId || !active) return;
+      const key = groupKey(projectId);
+      if (loadingGroupsRef.current.has(key)) return;
+      const data = queryClient.getQueryData<TaskGroupsData>(queryKey);
+      const group = data?.groups.find((item) => item.projectId === projectId);
+      if (!data || !group?.hasMore || !group.nextCursor) return;
+      const cursor = group.nextCursor;
+      setLoadingGroups((current) => new Set(current).add(key));
+      try {
+        const page = await fetchThreadPage(conversationId, token, {
+          limit: pageSize,
+          cursor,
+          projectId,
+          legacy: data.legacy,
+        });
+        updateCache((current) => appendGroupPage(current, projectId, cursor, page));
+      } finally {
+        setLoadingGroups((current) => {
+          const next = new Set(current);
+          next.delete(key);
+          return next;
+        });
+      }
+    },
+    [active, conversationId, pageSize, queryClient, queryKey, token, updateCache],
+  );
+
+  const activeLoaded = !!activeThreadId && threads.some((thread) => thread.id === activeThreadId);
+  const activeThreadQuery = useQuery({
+    queryKey: singleThreadQueryKey(conversationId, activeThreadId),
+    queryFn: () => fetchConversationThread(conversationId!, token, activeThreadId!),
+    enabled: active && !!activeThreadId && query.isSuccess && !activeLoaded,
+    staleTime: CONVERSATION_THREADS_STALE_MS,
+    retry: (failureCount, error) => !isGone(error) && failureCount < 1,
+  });
+  const fetchedActiveThread = activeThreadQuery.data;
+  useEffect(() => {
+    if (activeLoaded || !fetchedActiveThread || fetchedActiveThread.id !== activeThreadId) return;
+    updateCache((data) => revealThread(data, fetchedActiveThread));
+  }, [activeLoaded, activeThreadId, fetchedActiveThread, updateCache]);
+  const activeThreadMissing =
+    !!activeThreadId && !activeLoaded && isGone(activeThreadQuery.error);
 
   const createThread = useCallback(
     async (
@@ -167,13 +295,21 @@ export function useConversationThreads(
     ) => {
       if (!conversationId || !isAuthenticated(token)) return null;
       const thread = await createConversationThread(conversationId, token, input);
-      queryClient.setQueryData<ThreadsInfiniteData>(
-        conversationThreadsQueryKey(conversationId, { botId, status, pageSize }),
-        (previous) => upsertLoadedThread(previous, thread),
-      );
+      if (queryClient.getQueryData(queryKey)) {
+        updateCache((data) => upsertThread(data, thread, { isNew: true }));
+      } else {
+        void queryClient.invalidateQueries({ queryKey });
+      }
       return thread;
     },
-    [botId, conversationId, pageSize, queryClient, status, token],
+    [conversationId, queryClient, queryKey, token, updateCache],
+  );
+
+  /** Stores a task the server returned; it may come from an unloaded page. */
+  const applyServerThread = useCallback(
+    (thread: ConversationThreadPublic) =>
+      updateCache((data) => upsertThread(data, thread) ?? revealThread(data, thread)),
+    [updateCache],
   );
 
   const renameThread = useCallback(
@@ -183,102 +319,65 @@ export function useConversationThreads(
         threadId,
         title,
       });
-      queryClient.setQueryData<ThreadsInfiniteData>(
-        conversationThreadsQueryKey(conversationId, { botId, status, pageSize }),
-        (previous) => updateLoadedThread(previous, thread),
-      );
+      applyServerThread(thread);
       return thread;
     },
-    [botId, conversationId, pageSize, queryClient, status, token],
+    [applyServerThread, conversationId, token],
   );
 
   /** Files a task under a project, or unfiles it with `null`. */
   const moveThread = useCallback(
     async (threadId: string, projectId: string | null) => {
       if (!conversationId || !isAuthenticated(token)) return null;
-      const key = conversationThreadsQueryKey(conversationId, { botId, status, pageSize });
-      const previous = queryClient.getQueryData<ThreadsInfiniteData>(key);
-      const current = previous?.pages
-        .flatMap((page) => page.items)
-        .find((thread) => thread.id === threadId);
+      const current = findLoadedThread(
+        queryClient.getQueryData<TaskGroupsData>(queryKey),
+        threadId,
+      );
       // Optimistic so drag and drop feels immediate; rolled back on failure.
-      if (current) {
-        queryClient.setQueryData<ThreadsInfiniteData>(key, (data) =>
-          updateLoadedThread(data, { ...current, projectId }),
-        );
-      }
+      if (current) updateCache((data) => upsertThread(data, { ...current, projectId }));
       try {
         const thread = await updateConversationThread(conversationId, token, {
           threadId,
           projectId,
         });
-        queryClient.setQueryData<ThreadsInfiniteData>(key, (data) =>
-          updateLoadedThread(data, thread),
-        );
+        applyServerThread(thread);
         return thread;
       } catch (error) {
-        if (current) {
-          queryClient.setQueryData<ThreadsInfiniteData>(key, (data) =>
-            updateLoadedThread(data, current),
-          );
-        }
+        if (current) updateCache((data) => upsertThread(data, current));
         throw error;
       }
     },
-    [botId, conversationId, pageSize, queryClient, status, token],
+    [applyServerThread, conversationId, queryClient, queryKey, token, updateCache],
   );
 
   const deleteThread = useCallback(
     async (threadId: string) => {
       if (!conversationId || !isAuthenticated(token)) return;
       await deleteConversationThread(conversationId, token, threadId);
-      queryClient.setQueryData<ThreadsInfiniteData>(
-        conversationThreadsQueryKey(conversationId, { botId, status, pageSize }),
-        (data) => removeLoadedThread(data, threadId),
-      );
+      queryClient.removeQueries({ queryKey: singleThreadQueryKey(conversationId, threadId) });
+      updateCache((data) => removeThread(data, threadId));
     },
-    [botId, conversationId, pageSize, queryClient, status, token],
+    [conversationId, queryClient, token, updateCache],
   );
 
   const touchThread = useCallback(
     (threadId: string, at = new Date().toISOString()) => {
-      if (!conversationId || !isAuthenticated(token) || !enabled) return;
-      const previous = queryClient.getQueryData<ThreadsInfiniteData>(queryKey);
-      if (!hasLoadedThread(previous, threadId)) {
-        void query.refetch();
-        return;
-      }
-
-      queryClient.setQueryData<ThreadsInfiniteData>(
-        queryKey,
-        (previous) =>
-          updateLoadedThreadActivity(previous, threadId, at),
-      );
+      if (!active) return;
+      updateCache((data) => touchCachedThread(data, threadId, at));
     },
-    [conversationId, enabled, query.refetch, queryClient, queryKey, token],
+    [active, updateCache],
   );
 
   useEffect(() => {
-    if (!conversationId || !isAuthenticated(token) || !enabled) return;
+    if (!active) return;
 
     const onConversationThreadUpdated = ({
       conversationId: eventConversationId,
       thread,
     }: WsEvents["ws:conversation_thread_updated"]) => {
       if (eventConversationId !== conversationId) return;
-      if (botId && thread.botId !== botId) return;
-      if (status && thread.status !== status) return;
-
-      const previous = queryClient.getQueryData<ThreadsInfiniteData>(queryKey);
-      if (!hasLoadedThread(previous, thread.id)) {
-        void query.refetch();
-        return;
-      }
-
-      queryClient.setQueryData<ThreadsInfiniteData>(
-        queryKey,
-        (previous) => updateLoadedThread(previous, thread),
-      );
+      // An update to a task no group has loaded leaves its old group unknown.
+      updateCache((data) => upsertThread(data, normalizeThread(thread)));
     };
 
     const onConversationThreadDeleted = ({
@@ -286,22 +385,23 @@ export function useConversationThreads(
       threadId,
     }: WsEvents["ws:conversation_thread_deleted"]) => {
       if (eventConversationId !== conversationId) return;
-      queryClient.setQueryData<ThreadsInfiniteData>(
-        queryKey,
-        (previous) => removeLoadedThread(previous, threadId),
-      );
+      // Never re-show a deleted task from its single-task cache.
+      queryClient.removeQueries({ queryKey: singleThreadQueryKey(conversationId, threadId) });
+      // A deleted task that was never loaded changes nothing on screen.
+      const data = queryClient.getQueryData<TaskGroupsData>(queryKey);
+      if (!findLoadedThread(data, threadId)) return;
+      updateCache((current) => removeThread(current, threadId));
     };
 
-    // Deleting a project unfiles its tasks on the server; mirror it locally.
+    // Deleting a project unfiles its tasks on the server. Show that now, then
+    // reload: its tasks that were never loaded may belong on the first page.
     const onTaskProjectDeleted = ({
       conversationId: eventConversationId,
       projectId,
     }: WsEvents["ws:task_project_deleted"]) => {
       if (eventConversationId !== conversationId) return;
-      queryClient.setQueryData<ThreadsInfiniteData>(
-        queryKey,
-        (previous) => unfileLoadedThreads(previous, projectId),
-      );
+      updateCache((data) => unfileProject(data, projectId));
+      void queryClient.invalidateQueries({ queryKey });
     };
 
     wsEvents.on("ws:conversation_thread_updated", onConversationThreadUpdated);
@@ -312,158 +412,34 @@ export function useConversationThreads(
       wsEvents.off("ws:conversation_thread_deleted", onConversationThreadDeleted);
       wsEvents.off("ws:task_project_deleted", onTaskProjectDeleted);
     };
-  }, [botId, conversationId, enabled, query.refetch, queryClient, queryKey, status, token]);
+  }, [active, conversationId, queryClient, queryKey, updateCache]);
 
   return useMemo(
     () => ({
       threads,
+      groups,
       loading: query.isLoading,
-      loadingMore: query.isFetchingNextPage,
-      hasMore: query.hasNextPage,
-      loadMore: query.fetchNextPage,
+      loadMore,
       createThread,
       renameThread,
       moveThread,
       deleteThread,
       touchThread,
-      refetchThreads: query.refetch,
+      activeThreadMissing,
+      refetchThreads: refetch,
     }),
     [
+      activeThreadMissing,
       createThread,
       deleteThread,
+      groups,
+      loadMore,
       moveThread,
-      query.fetchNextPage,
-      query.hasNextPage,
-      query.isFetchingNextPage,
       query.isLoading,
-      query.refetch,
+      refetch,
       renameThread,
       threads,
       touchThread,
     ],
   );
 }
-
-function dedupeThreads(threads: ConversationThreadPublic[]) {
-  const seen = new Set<string>();
-  return threads.filter((thread) => {
-    if (seen.has(thread.id)) return false;
-    seen.add(thread.id);
-    return true;
-  });
-}
-
-function hasLoadedThread(
-  data: ThreadsInfiniteData | undefined,
-  threadId: string,
-) {
-  return data?.pages.some((page) =>
-    page.items.some((thread) => thread.id === threadId),
-  ) ?? false;
-}
-
-function emptyThreadPages(thread: ConversationThreadPublic): ThreadsInfiniteData {
-  return {
-    pages: [{ items: [thread], nextCursor: null, hasMore: false }],
-    pageParams: [null],
-  };
-}
-
-function upsertLoadedThread(
-  data: ThreadsInfiniteData | undefined,
-  thread: ConversationThreadPublic,
-): ThreadsInfiniteData {
-  if (!data) return emptyThreadPages(thread);
-  const [firstPage, ...restPages] = data.pages;
-  if (!firstPage) return emptyThreadPages(thread);
-  return {
-    ...data,
-    pages: [
-      {
-        ...firstPage,
-        items: [thread, ...firstPage.items.filter((item) => item.id !== thread.id)],
-      },
-      ...restPages.map((page) => ({
-        ...page,
-        items: page.items.filter((item) => item.id !== thread.id),
-      })),
-    ],
-  };
-}
-
-function updateLoadedThread(
-  data: ThreadsInfiniteData | undefined,
-  thread: ConversationThreadPublic,
-): ThreadsInfiniteData | undefined {
-  if (!data) return data;
-  return {
-    ...data,
-    pages: data.pages.map((page) => ({
-      ...page,
-      items: page.items.map((item) => (item.id === thread.id ? thread : item)),
-    })),
-  };
-}
-
-function removeLoadedThread(
-  data: ThreadsInfiniteData | undefined,
-  threadId: string,
-): ThreadsInfiniteData | undefined {
-  if (!data) return data;
-  return {
-    ...data,
-    pages: data.pages.map((page) => ({
-      ...page,
-      items: page.items.filter((item) => item.id !== threadId),
-    })),
-  };
-}
-
-function unfileLoadedThreads(
-  data: ThreadsInfiniteData | undefined,
-  projectId: string,
-): ThreadsInfiniteData | undefined {
-  if (!data) return data;
-  return {
-    ...data,
-    pages: data.pages.map((page) => ({
-      ...page,
-      items: page.items.map((item) =>
-        item.projectId === projectId ? { ...item, projectId: null } : item,
-      ),
-    })),
-  };
-}
-
-function updateLoadedThreadActivity(
-  data: ThreadsInfiniteData | undefined,
-  threadId: string,
-  at: string,
-): ThreadsInfiniteData | undefined {
-  if (!data) return data;
-  const loadedThreads = dedupeThreads(
-    data.pages.flatMap((page) =>
-      page.items.map((thread) =>
-        thread.id === threadId
-          ? { ...thread, lastActivityAt: at, updatedAt: at }
-          : thread,
-      ),
-    ),
-  ).sort((a, b) => {
-    const activity = Date.parse(b.lastActivityAt) - Date.parse(a.lastActivityAt);
-    return activity || b.id.localeCompare(a.id);
-  });
-
-  let cursor = 0;
-  return {
-    ...data,
-    pages: data.pages.map((page) => {
-      const size = page.items.length;
-      const items = loadedThreads.slice(cursor, cursor + size);
-      cursor += size;
-      return { ...page, items };
-    }),
-  };
-}
-
-
