@@ -602,6 +602,7 @@ describe("registerGlobalWsHandlers", () => {
 
     expect(fireNotification).toHaveBeenCalledWith("Other User", "hello", {
       dedupeKey: "message:msg-1",
+      coveredByBackgroundPush: true,
     });
 
     cleanup();

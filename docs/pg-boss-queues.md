@@ -10,10 +10,11 @@ The API and worker use **pg-boss 12.38.0**, pinned in the lockfile, on **Bun 1.4
 | `attachment.work` | standard, independent capacity | 1 |
 | `bot-request.answer` | standard | 4 |
 | `bot.dispatch` | standard | 4 |
+| `push.notification` | standard (Web Push fan-out and per-device delivery) | 8 |
 
 Each callback fetches one job. A slow handler occupies only its slot; there is no shared `Promise.all` batch barrier. FIFO is per conversation across worker replicas, not globally. An active head or one backing off after failure blocks later messages for that conversation. **Initially deferred jobs only enter FIFO when due**, so a newly queued future-dated job does not block an immediately runnable sibling; this differs from the old outbox's deferred-head behavior. A permanently failed head is atomically copied to `public.queue_dead_letters` and removed from the live queue, which releases that conversation without losing the failure audit.
 
-Business writes and `boss.send()` use the **same Drizzle/PostgreSQL transaction**, through pg-boss's supported `fromDrizzle(tx, sql)` adapter. The pg-boss infrastructure uses a separate **maximum-two-connection `pg` pool per process**, shared by the producer and both worker clients. `DATABASE_POOL_MAX=6` therefore permits up to eight PostgreSQL connections per worker. LISTEN/NOTIFY, scheduling and per-queue partition tables are disabled. Include all API and worker replicas when sizing PgBouncer; no assumption of transaction pooling is required.
+Business writes and `boss.send()` use the **same Drizzle/PostgreSQL transaction**, through pg-boss's supported `fromDrizzle(tx, sql)` adapter. The pg-boss infrastructure uses a separate **maximum-two-connection `pg` pool per process**, shared by the producer and every worker client. `DATABASE_POOL_MAX=6` therefore permits up to eight PostgreSQL connections per worker. LISTEN/NOTIFY, scheduling and per-queue partition tables are disabled. Include all API and worker replicas when sizing PgBouncer; no assumption of transaction pooling is required.
 
 Queue defaults live in `packages/api/src/async/queue.ts`, not environment feature flags:
 

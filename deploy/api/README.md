@@ -160,7 +160,8 @@ heartbeat recovery and attempt-fenced acknowledgements. Attachment cleanup and
 bot-request expiry retain their conditional, idempotent business updates.
 
 Each worker has independent queues for chat messages (16 slots), attachments (1),
-bot-request answers (4) and bot dispatch (4). Its queue database pool is capped at
+bot-request answers (4), bot dispatch (4) and, when `webPushSecret` is set, Web Push
+notifications (8). Its queue database pool is capped at
 two connections in addition to `DATABASE_POOL_MAX`. These defaults are defined in
 `packages/api/src/async/queue.ts`; the old `DOMAIN_EVENTS_*` settings no longer
 control a custom outbox worker.

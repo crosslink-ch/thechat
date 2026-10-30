@@ -20,13 +20,16 @@ export const QUEUES = {
   attachments: "attachment.work",
   answers: "bot-request.answer",
   bots: "bot.dispatch",
+  push: "push.notification",
 } as const;
+export type QueueId = (typeof QUEUES)[keyof typeof QUEUES];
 export const queueConfig = {
   concurrency: {
     [QUEUES.chat]: 16,
     [QUEUES.attachments]: 1,
     [QUEUES.answers]: 4,
     [QUEUES.bots]: 4,
+    [QUEUES.push]: 8,
   },
   pollingIntervalSeconds: 0.5,
   heartbeatSeconds: 60,

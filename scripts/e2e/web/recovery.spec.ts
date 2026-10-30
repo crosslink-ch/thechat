@@ -1,6 +1,10 @@
 import { test, expect } from '@playwright/test';
 import { apiURL, webURL, webHeaders, seedWorkspace, login, clearCredentialFields } from './fixtures';
 test.afterEach(async ({ page }) => clearCredentialFields(page));
+// The outage below is injected with page.route. Once TheChat's service worker
+// controls the page, WebKit no longer reports its requests to page.route, so
+// block the worker here (Playwright's documented advice for interception).
+test.use({ serviceWorkers: 'block' });
 
 test('revalidation outage preserves drafts; real server revocation clears them', async ({ page, request }) => {
   const f = await seedWorkspace(request);
