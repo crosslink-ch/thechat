@@ -1,6 +1,7 @@
 import { onSessionReset } from "../lib/session-boundary";
 import { ArrowUp, FileText, Paperclip, Square, X } from "lucide-react";
 import { memo, useEffect, useRef, useState, useCallback, type DragEvent } from "react";
+import type { MessageQuoteDraft } from "@thechat/shared";
 import { useIsStreaming } from "../stores/streaming";
 import { useInputFocusStore } from "../stores/input-focus";
 import { useComposerDraftsStore } from "../stores/composer-drafts";
@@ -8,6 +9,7 @@ import { RichInput, type RichInputHandle } from "./RichInput";
 import { VoiceRecorder } from "./VoiceRecorder";
 import { SlashCommandMenu } from "./SlashCommandMenu";
 import { iconButtonClass } from "./ui";
+import { QuoteCard } from "./MessageQuote";
 import type { MentionUser } from "./MentionList";
 import type { ImageAttachment } from "../lib/image-types";
 import {
@@ -57,6 +59,8 @@ interface InputBarProps {
     content: string,
     images?: ImageAttachment[],
     attachmentIds?: string[],
+    /** The snippet this message replies to; set through the drafts store. */
+    quote?: MessageQuoteDraft,
   ) => InputSendResult | Promise<InputSendResult>;
   onStop: () => void;
   mentions?: MentionUser[];
@@ -110,6 +114,16 @@ function ScopedInputBar({
   const sharedDrafts = storedSharedDrafts ?? EMPTY_SHARED_DRAFTS;
   const sendingShared = useComposerDraftsStore(
     (state) => state.sendingAttachments[draftKey] ?? false,
+  );
+  const quoteDraft = useComposerDraftsStore(
+    (state) => state.quoteDrafts[draftKey] ?? null,
+  );
+  const setQuoteDraft = useComposerDraftsStore((state) => state.setQuoteDraft);
+  const clearQuoteDraft = useComposerDraftsStore(
+    (state) => state.clearQuoteDraft,
+  );
+  const restoreQuoteDraft = useComposerDraftsStore(
+    (state) => state.restoreQuoteDraft,
   );
   const [sharedError, setSharedError] = useState<string | null>(null);
   const sharedDraftsRef = useRef<SharedAttachmentDraft[]>(sharedDrafts);
@@ -557,12 +571,14 @@ function ScopedInputBar({
       content: string,
       submittedImages?: ImageAttachment[],
       attachmentIds?: string[],
+      quote?: MessageQuoteDraft,
     ) => {
       if (sendPendingRef.current) return false;
       sendPendingRef.current = true;
       try {
-        const result =
-          attachmentIds !== undefined
+        const result = quote
+          ? await onSend(content, submittedImages, attachmentIds, quote)
+          : attachmentIds !== undefined
             ? await onSend(content, submittedImages, attachmentIds)
             : submittedImages !== undefined
               ? await onSend(content, submittedImages)
@@ -576,7 +592,7 @@ function ScopedInputBar({
   );
 
   const sendSharedContent = useCallback(
-    async (text: string) => {
+    async (text: string, quote?: MessageQuoteDraft) => {
       if (!sharedUpload || voiceBusyRef.current) return false;
       const state = useComposerDraftsStore.getState();
       if (state.sendingAttachments[draftKey]) return false;
@@ -593,7 +609,12 @@ function ScopedInputBar({
       setSendingAttachments(draftKey, true);
       setSharedError(null);
       try {
-        const accepted = await requestSend(text, undefined, attachmentIds);
+        const accepted = await requestSend(
+          text,
+          undefined,
+          attachmentIds,
+          quote,
+        );
         if (!accepted) return false;
         updateSharedDrafts((current) =>
           current.filter((draft) => !localIds.has(draft.localId)),
@@ -652,10 +673,11 @@ function ScopedInputBar({
       const submittedRevision = draftState.revisions[draftKey] ?? 0;
       const submittedDraft = draftState.drafts[draftKey] ?? text;
       const submittedImages = images.length > 0 ? [...images] : undefined;
+      const submittedQuote = draftState.quoteDrafts[draftKey];
       const send = () =>
         sharedUpload
-          ? sendSharedContent(text)
-          : requestSend(text, submittedImages);
+          ? sendSharedContent(text, submittedQuote)
+          : requestSend(text, submittedImages, undefined, submittedQuote);
 
       if (!optimisticSend) {
         return (async () => {
@@ -664,6 +686,7 @@ function ScopedInputBar({
             if (!accepted) return false;
             clearSubmittedText(submittedRevision);
             if (submittedImages) removeAcceptedImages(submittedImages);
+            if (submittedQuote) clearQuoteDraft(draftKey, submittedQuote);
             return true;
           } catch {
             return false;
@@ -680,6 +703,13 @@ function ScopedInputBar({
 
       const clearedRevision = clearSubmittedText(submittedRevision);
       if (clearedRevision === null) return false;
+      if (submittedQuote) clearQuoteDraft(draftKey, submittedQuote);
+      // The quote comes back only with its text: if the user has typed a newer
+      // draft meanwhile, an old quote must not attach itself to that one.
+      const restoreRejected = () => {
+        if (!restoreDraft(draftKey, clearedRevision, submittedDraft)) return;
+        if (submittedQuote) restoreQuoteDraft(draftKey, submittedQuote);
+      };
 
       // Clearing the scoped draft makes the send feel immediate. The transport
       // still owns acceptance; a rejected send restores only if the user has
@@ -688,17 +718,18 @@ function ScopedInputBar({
         try {
           const accepted = await send();
           if (!accepted) {
-            restoreDraft(draftKey, clearedRevision, submittedDraft);
+            restoreRejected();
             return;
           }
           if (submittedImages) removeAcceptedImages(submittedImages);
         } catch {
-          restoreDraft(draftKey, clearedRevision, submittedDraft);
+          restoreRejected();
         }
       })();
       return true;
     },
     [
+      clearQuoteDraft,
       clearSubmittedText,
       draftKey,
       images,
@@ -706,6 +737,7 @@ function ScopedInputBar({
       removeAcceptedImages,
       requestSend,
       restoreDraft,
+      restoreQuoteDraft,
       sendSharedContent,
       sendingShared,
       sharedReady,
@@ -713,16 +745,41 @@ function ScopedInputBar({
     ],
   );
 
+  /** Attachment-only sends still reply to the quote shown above them. */
+  const sendSharedWithoutText = useCallback(async () => {
+    const quote =
+      useComposerDraftsStore.getState().quoteDrafts[draftKey] ?? undefined;
+    const accepted = await sendSharedContent("", quote);
+    if (accepted && quote) clearQuoteDraft(draftKey, quote);
+    return accepted;
+  }, [clearQuoteDraft, draftKey, sendSharedContent]);
+
+  const sendVoiceNote = useCallback(
+    async (attachmentId: string) => {
+      const quote =
+        useComposerDraftsStore.getState().quoteDrafts[draftKey] ?? undefined;
+      const accepted = await requestSend("", undefined, [attachmentId], quote);
+      if (accepted && quote) clearQuoteDraft(draftKey, quote);
+      return accepted;
+    },
+    [clearQuoteDraft, draftKey, requestSend],
+  );
+
   // Called when RichInput has empty text but user presses Enter — allow if images exist
   const handleEmptySubmitAttempt = useCallback(async () => {
     if (sharedUpload && sharedDrafts.length > 0 && sharedReady) {
-      return sendSharedContent("");
+      return sendSharedWithoutText();
     }
     if (images.length > 0) {
       const submittedImages = [...images];
+      const quote =
+        useComposerDraftsStore.getState().quoteDrafts[draftKey] ?? undefined;
       try {
-        const accepted = await requestSend("", submittedImages);
-        if (accepted) removeAcceptedImages(submittedImages);
+        const accepted = await requestSend("", submittedImages, undefined, quote);
+        if (accepted) {
+          removeAcceptedImages(submittedImages);
+          if (quote) clearQuoteDraft(draftKey, quote);
+        }
         return accepted;
       } catch {
         return false;
@@ -730,10 +787,12 @@ function ScopedInputBar({
     }
     return false;
   }, [
+    clearQuoteDraft,
+    draftKey,
     images,
     removeAcceptedImages,
     requestSend,
-    sendSharedContent,
+    sendSharedWithoutText,
     sharedDrafts.length,
     sharedReady,
     sharedUpload,
@@ -829,7 +888,7 @@ function ScopedInputBar({
       if (canSubmit || localTextRef.current.trim().length > 0) {
         handleSubmit();
       } else if (sharedDrafts.length > 0) {
-        void sendSharedContent("");
+        void sendSharedWithoutText();
       }
       return;
     }
@@ -843,7 +902,7 @@ function ScopedInputBar({
     handleEmptySubmitAttempt,
     handleSubmit,
     images.length,
-    sendSharedContent,
+    sendSharedWithoutText,
     sendingShared,
     sharedDrafts.length,
     sharedReady,
@@ -921,6 +980,34 @@ function ScopedInputBar({
         }}
         onFocus={() => setSlashMenuDismissed(false)}
       >
+        {quoteDraft && (
+          <div
+            className="composer-attachment-tray flex flex-wrap gap-2 px-3 pt-3"
+            role="group"
+            aria-label="Replying to"
+          >
+            <div className="group relative">
+              <QuoteCard
+                text={quoteDraft.text}
+                variant="draft"
+                className="w-48 sm:w-60"
+              />
+              <button
+                type="button"
+                data-testid="quote-draft-remove"
+                className="composer-quote-remove absolute -right-1.5 -top-1.5 flex size-5 cursor-pointer items-center justify-center rounded-full border border-border-strong bg-elevated text-text-muted opacity-0 shadow-sm transition-[opacity,background-color,color] duration-100 group-hover:opacity-100 focus-visible:opacity-100 hover:bg-button-hover hover:text-text"
+                onClick={() => {
+                  setQuoteDraft(draftKey, null);
+                  inputRef.current?.focus();
+                }}
+                title="Remove quote"
+                aria-label="Remove quote"
+              >
+                <X size={14} aria-hidden="true" />
+              </button>
+            </div>
+          </div>
+        )}
         {/* Image preview strip */}
         {images.length > 0 && (
           <div className="composer-attachment-tray flex flex-wrap gap-2 px-3 pt-3">
@@ -1063,7 +1150,7 @@ function ScopedInputBar({
               disabled={sendingShared}
               onBusyChange={handleVoiceBusyChange}
               scope={sharedUpload}
-              onSend={(attachmentId) => requestSend("", undefined, [attachmentId])}
+              onSend={sendVoiceNote}
             />
           )}
           <div hidden={voiceBusy} className={voiceBusy ? "hidden" : "contents"}>

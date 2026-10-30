@@ -17,7 +17,14 @@ import { useAutoScroll } from "../hooks/useAutoScroll";
 import { useMessageTopCommand } from "../hooks/useMessageTopCommand";
 import { useOlderHistoryScroll } from "../hooks/useOlderHistoryScroll";
 import { useScrollStability } from "../hooks/useScrollStability";
-import type { BotAppearance, ChatMessage } from "@thechat/shared";
+import type {
+  BotAppearance,
+  ChatMessage,
+  MessageQuoteDraft,
+} from "@thechat/shared";
+import { SelectionReplyButton } from "./SelectionReplyButton";
+import { useComposerDraftsStore } from "../stores/composer-drafts";
+import { requestInputBarFocus } from "../stores/input-focus";
 import type { ActiveHermesInvocationProgress } from "../lib/hermes-progress";
 import type { MentionUser } from "./MentionList";
 import { HermesProgressInline } from "./HermesProgressInline";
@@ -54,6 +61,7 @@ interface HermesDmChatViewProps {
   onSend: (
     content: string,
     attachmentIds?: string[],
+    quote?: MessageQuoteDraft,
   ) => InputSendResult | Promise<InputSendResult>;
   /**
    * Where bot request rows come from; omit to show none. Rows sit in the
@@ -368,11 +376,17 @@ export function HermesDmChatView({
   }, [typingScrollSignature, scrollToBottom]);
 
   const handleSend = useCallback(
-    async (content: string, attachmentIds: string[] = []) => {
+    async (
+      content: string,
+      attachmentIds: string[] = [],
+      quote?: MessageQuoteDraft,
+    ) => {
       forceNextContentScrollRef.current = true;
-      const accepted = await (attachmentIds.length > 0
-        ? onSend(content, attachmentIds)
-        : onSend(content));
+      const accepted = await (quote
+        ? onSend(content, attachmentIds, quote)
+        : attachmentIds.length > 0
+          ? onSend(content, attachmentIds)
+          : onSend(content));
       requestAnimationFrame(() => scrollToBottom({ force: true }));
       return accepted !== false;
     },
@@ -381,9 +395,27 @@ export function HermesDmChatView({
   const shouldDeferFormatting = (messageId: string) =>
     deferMessageFormatting && !eagerlyFormattedMessageIds?.has(messageId);
 
+  const composerDraftKey =
+    draftKey ??
+    `dm:${conversationId ?? scrollScopeKey}:composer:${String(
+      composerKey ?? "stable",
+    )}`;
+  const setQuoteDraft = useComposerDraftsStore((state) => state.setQuoteDraft);
+  const handleReplyToSelection = useCallback(
+    (quote: MessageQuoteDraft) => {
+      setQuoteDraft(composerDraftKey, quote);
+      requestInputBarFocus();
+    },
+    [composerDraftKey, setQuoteDraft],
+  );
+
   return (
     <>
       <div className="relative flex min-h-0 flex-1 flex-col">
+        <SelectionReplyButton
+          scrollContainerRef={scrollContainerRef}
+          onReply={handleReplyToSelection}
+        />
         <div
           ref={scrollContainerRef}
           data-testid="hermes-dm-chat-scroll"
@@ -495,14 +527,9 @@ export function HermesDmChatView({
       <InputBar
         key={composerKey}
         convId={undefined}
-        draftKey={
-          draftKey ??
-          `dm:${conversationId ?? scrollScopeKey}:composer:${String(
-            composerKey ?? "stable",
-          )}`
-        }
-        onSend={(content, _images, attachmentIds) =>
-          handleSend(content, attachmentIds)
+        draftKey={composerDraftKey}
+        onSend={(content, _images, attachmentIds, quote) =>
+          handleSend(content, attachmentIds, quote)
         }
         onStop={onStop ?? (() => {})}
         mentions={mentions}

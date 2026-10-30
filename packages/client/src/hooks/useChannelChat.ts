@@ -11,6 +11,7 @@ import {
 import type {
   AuthUser,
   ChatMessage,
+  MessageQuoteDraft,
   MessageReactionSummary,
 } from "@thechat/shared";
 import { api } from "../lib/api";
@@ -46,6 +47,7 @@ interface UseChannelChatOptions {
     threadId?: string | null,
     clientMessageId?: string,
     attachmentIds?: string[],
+    quote?: MessageQuoteDraft,
   ) => void;
   selfUser?: AuthUser | null;
 }
@@ -478,6 +480,7 @@ export function useChannelChat({
       content: string,
       targetThreadId: string | null = threadId ?? null,
       clientMessageId: string = newClientMessageId(),
+      quote?: MessageQuoteDraft,
     ) => {
       if (!conversationId) return null;
       const localMessage = createLocalSentMessage(
@@ -486,6 +489,7 @@ export function useChannelChat({
         content,
         selfUser,
         clientMessageId,
+        quote,
       );
       if (!localMessage) return null;
       setSendError(null);
@@ -502,6 +506,7 @@ export function useChannelChat({
       content: string,
       targetThreadId: string | null,
       attachmentIds: string[] = [],
+      quote?: MessageQuoteDraft,
     ) => {
       if (!conversationId) return null;
       const signature = JSON.stringify([
@@ -509,6 +514,7 @@ export function useChannelChat({
         targetThreadId,
         content,
         attachmentIds,
+        quote ?? null,
       ]);
       const failedCommand = failedSendRef.current;
       if (failedCommand && failedCommand.signature !== signature) {
@@ -523,6 +529,7 @@ export function useChannelChat({
           content,
           targetThreadId,
           preferredClientMessageId,
+          quote,
         ) ?? preferredClientMessageId;
       const command = { clientMessageId, signature };
       pendingSendsRef.current.set(clientMessageId, command);
@@ -549,6 +556,7 @@ export function useChannelChat({
             content: string;
             threadId: string | null;
             attachmentIds: string[];
+            quote?: MessageQuoteDraft;
           },
           options: ReturnType<typeof authHeaders>,
         ) => Promise<{ data?: ChatMessage | null; error?: unknown }>;
@@ -557,7 +565,16 @@ export function useChannelChat({
       // Compatibility fallback for older API clients and the existing WS
       // protocol. Current Eden clients always expose the canonical REST post.
       if (typeof endpoint.post !== "function" || !isAuthenticated(token)) {
-        if (attachmentIds.length > 0) {
+        if (quote) {
+          wsSendMessage(
+            conversationId,
+            content,
+            targetThreadId,
+            clientMessageId,
+            attachmentIds,
+            quote,
+          );
+        } else if (attachmentIds.length > 0) {
           wsSendMessage(
             conversationId,
             content,
@@ -591,6 +608,7 @@ export function useChannelChat({
                 content,
                 threadId: targetThreadId,
                 attachmentIds,
+                ...(quote ? { quote } : {}),
               },
               authHeaders(token, traceHeaders(requestContext)),
             );
@@ -635,8 +653,14 @@ export function useChannelChat({
   );
 
   const sendMessage = useCallback(
-    (content: string, attachmentIds: string[] = []) =>
-      sendMessageToThread(content, threadId ?? null, attachmentIds),
+    (
+      content: string,
+      attachmentIds: string[] = [],
+      quote?: MessageQuoteDraft,
+    ) =>
+      quote
+        ? sendMessageToThread(content, threadId ?? null, attachmentIds, quote)
+        : sendMessageToThread(content, threadId ?? null, attachmentIds),
     [sendMessageToThread, threadId],
   );
 
@@ -818,6 +842,7 @@ function createLocalSentMessage(
   content: string,
   selfUser: AuthUser | null,
   clientMessageId: string = newClientMessageId(),
+  quote?: MessageQuoteDraft,
 ): LocalSentMessage | null {
   if (!selfUser) return null;
   return {
@@ -832,6 +857,7 @@ function createLocalSentMessage(
       senderType: selfUser.type,
       content,
       parts: null,
+      quote: quote ? { text: quote.text, messageId: quote.messageId } : null,
       attachments: [],
       createdAt: new Date().toISOString(),
     },

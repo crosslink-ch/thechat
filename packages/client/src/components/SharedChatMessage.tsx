@@ -4,6 +4,8 @@ import { useBotAppearance } from "../lib/bot-appearance";
 import { Avatar } from "./Avatar";
 import { MessageReactions } from "./MessageReactions";
 import { SharedMessageAttachments } from "./SharedMessageAttachments";
+import { QuoteCard } from "./MessageQuote";
+import { QUOTE_SOURCE_ATTRIBUTE } from "../lib/message-quote";
 import {
   formatFullMessageTimestamp,
   formatMessageTimestamp,
@@ -127,7 +129,21 @@ export function SharedChatMessage({
             </time>
           </div>
         )}
-        {children}
+        {message.quote && (
+          <QuoteCard
+            text={message.quote.text}
+            variant="sent"
+            className="mb-1.5 mt-1 w-full max-w-[22rem]"
+          />
+        )}
+        {/* Unconfirmed sends have no server id yet, so they cannot be quoted. */}
+        <div
+          {...(message.id.startsWith("optimistic:")
+            ? {}
+            : { [QUOTE_SOURCE_ATTRIBUTE]: message.id })}
+        >
+          {children}
+        </div>
         <SharedMessageAttachments attachments={message.attachments ?? []} />
         {(onSetReaction || message.content) && (
           <MessageReactions

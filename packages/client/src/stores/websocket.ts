@@ -3,7 +3,11 @@ import { expireBrowserSession, onSessionReset } from "../lib/session-boundary";
 import { isWeb } from "../platform/environment";
 import { API_URL } from "../lib/api";
 import { create } from "zustand";
-import type { WsClientEvent, WsServerEvent } from "@thechat/shared";
+import type {
+  MessageQuoteDraft,
+  WsClientEvent,
+  WsServerEvent,
+} from "@thechat/shared";
 import {
   contextFromRemoteTrace,
   SpanKind,
@@ -28,6 +32,7 @@ interface WebSocketStore {
     threadId?: string | null,
     clientMessageId?: string,
     attachmentIds?: string[],
+    quote?: MessageQuoteDraft,
   ) => void;
   sendTyping: (conversationId: string, threadId?: string | null) => void;
 }
@@ -407,6 +412,7 @@ export const useWebSocketStore = create<WebSocketStore>()(() => ({
     threadId?: string | null,
     clientMessageId?: string,
     attachmentIds?: string[],
+    quote?: MessageQuoteDraft,
   ) => {
     recordWebSocketBoundary({
       operation: "send_message_requested",
@@ -421,6 +427,7 @@ export const useWebSocketStore = create<WebSocketStore>()(() => ({
       threadId: threadId ?? null,
       clientMessageId,
       attachmentIds,
+      ...(quote ? { quote } : {}),
     };
     if (authenticated && ws?.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify(event));

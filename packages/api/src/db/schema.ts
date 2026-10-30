@@ -13,6 +13,7 @@ import {
   index,
   uniqueIndex,
   foreignKey,
+  check,
 } from "drizzle-orm/pg-core";
 import { relations, sql } from "drizzle-orm";
 import type { BotCommandPublic, MessagePart } from "@thechat/shared";
@@ -226,6 +227,10 @@ export const messages = pgTable(
     clientMessageId: varchar("client_message_id", { length: 255 }),
     content: text("content").notNull(),
     parts: jsonb("parts").$type<MessagePart[]>(),
+    /** Snapshot of the text the sender selected and replied to. */
+    quoteText: text("quote_text"),
+    /** Source of `quoteText`; cleared when that message is deleted. */
+    quoteMessageId: uuid("quote_message_id"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
       .notNull(),
@@ -242,6 +247,20 @@ export const messages = pgTable(
     uniqueIndex("messages_sender_client_message_idx").on(
       t.senderId,
       t.clientMessageId,
+    ),
+    // Deleting a message nulls the quotes that point at it; without this
+    // index each deletion would scan every message.
+    index("messages_quote_message_id_idx")
+      .on(t.quoteMessageId)
+      .where(sql`${t.quoteMessageId} IS NOT NULL`),
+    foreignKey({
+      name: "messages_quote_message_id_fk",
+      columns: [t.quoteMessageId],
+      foreignColumns: [t.id],
+    }).onDelete("set null"),
+    check(
+      "messages_quote_source_has_text",
+      sql`${t.quoteMessageId} IS NULL OR ${t.quoteText} IS NOT NULL`,
     ),
   ]
 );
