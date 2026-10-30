@@ -1,6 +1,14 @@
 import crypto from "node:crypto";
 import { and, asc, desc, eq, inArray, isNull, lt } from "drizzle-orm";
-import type { ChatMessage, WsServerEvent } from "@thechat/shared";
+import { z } from "zod";
+import {
+  MESSAGE_QUOTE_MAX_LENGTH,
+  normalizeQuoteText,
+  type BotMessageQuote,
+  type ChatMessage,
+  type MessageQuote,
+  type WsServerEvent,
+} from "@thechat/shared";
 import { attachmentsByMessageIds } from "../attachments/public";
 import { loadAttachmentConfig } from "../attachments/config";
 import { db } from "../db";
@@ -25,8 +33,34 @@ import { requireConversationMutationAccess } from "./conversation-mutation-acces
 import { resolveMessageBotTargetIds } from "./message-bot-targets";
 import { messageReactionsByMessageIds } from "./message-reactions";
 import { recordMessageUnreads } from "./activity";
+import { quoteMatchesSource } from "./message-quote-match";
 
 const messageLog = log.child({ component: "messages" });
+
+/**
+ * A reply quote as sent by a client: the text selected in an earlier message
+ * of the same conversation, and that message's id.
+ */
+export const messageQuoteInputSchema = z.object({
+  text: z.string().min(1).max(MESSAGE_QUOTE_MAX_LENGTH),
+  messageId: z.string().uuid(),
+});
+export type MessageQuoteInput = z.infer<typeof messageQuoteInputSchema>;
+
+export function normalizeMessageQuote(
+  input: MessageQuoteInput | null | undefined,
+): MessageQuoteInput | null {
+  if (!input) return null;
+  const text = normalizeQuoteText(input.text);
+  if (!text) throw new ServiceError("Quoted text is required", 400);
+  if (text.length > MESSAGE_QUOTE_MAX_LENGTH) {
+    throw new ServiceError(
+      `Quoted text can be at most ${MESSAGE_QUOTE_MAX_LENGTH} characters`,
+      400,
+    );
+  }
+  return { text, messageId: input.messageId };
+}
 
 type DbTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
 type MessageReadExecutor = Pick<typeof db, "select">;
@@ -64,6 +98,8 @@ export async function getMessages(
       senderId: messages.senderId,
       content: messages.content,
       parts: messages.parts,
+      quoteText: messages.quoteText,
+      quoteMessageId: messages.quoteMessageId,
       createdAt: messages.createdAt,
       senderName: users.name,
       senderType: users.type,
@@ -105,6 +141,8 @@ export async function getMessageByIdForParticipant(
       senderId: messages.senderId,
       content: messages.content,
       parts: messages.parts,
+      quoteText: messages.quoteText,
+      quoteMessageId: messages.quoteMessageId,
       createdAt: messages.createdAt,
       senderName: users.name,
       senderType: users.type,
@@ -133,11 +171,13 @@ export async function sendMessage(
     threadId?: string | null;
     clientMessageId?: string | null;
     attachmentIds?: string[];
+    quote?: MessageQuoteInput | null;
     afterWorkspaceLocked?: () => Promise<void>;
   } = {},
 ) {
   const normalizedContent = content.trim();
   const attachmentIds = options.attachmentIds ?? [];
+  const quote = normalizeMessageQuote(options.quote);
   const config = loadAttachmentConfig();
   if (!normalizedContent && attachmentIds.length === 0) {
     throw new ServiceError(
@@ -164,6 +204,7 @@ export async function sendMessage(
       "messaging.system": "thechat",
       "messaging.operation": "send",
       "thechat.message.attachment_count": attachmentIds.length,
+      "thechat.message.has_quote": quote !== null,
     },
     async (span) => {
       const result = await db.transaction(async (tx) => {
@@ -202,6 +243,7 @@ export async function sendMessage(
             threadId,
             content: normalizedContent,
             attachmentIds,
+            quote,
           });
           return {
             message: existing,
@@ -209,6 +251,12 @@ export async function sendMessage(
             conversationType: participant.conversationType,
             duplicate: true,
           };
+        }
+
+        // Checked only for new messages: a retried send stays an idempotent
+        // replay even if the quoted message was deleted in between.
+        if (quote) {
+          await requireQuotedMessage(tx, conversationId, quote.messageId);
         }
 
         const [inserted] = await tx
@@ -219,6 +267,8 @@ export async function sendMessage(
             senderId: userId,
             clientMessageId,
             content: normalizedContent,
+            quoteText: quote?.text ?? null,
+            quoteMessageId: quote?.messageId ?? null,
           })
           .onConflictDoNothing({
             target: [messages.senderId, messages.clientMessageId],
@@ -236,6 +286,7 @@ export async function sendMessage(
             threadId,
             content: normalizedContent,
             attachmentIds,
+            quote,
           });
           return {
             message: raced,
@@ -518,6 +569,7 @@ export async function assertIdempotentCommandMatches(
     threadId: string | null;
     content: string;
     attachmentIds: string[];
+    quote?: MessageQuoteInput | null;
   },
 ) {
   const links = await tx
@@ -526,10 +578,18 @@ export async function assertIdempotentCommandMatches(
     .where(eq(messageAttachments.messageId, existing.id))
     .orderBy(asc(messageAttachments.position));
   const existingAttachmentIds = links.map((link) => link.attachmentId);
+  const quote = command.quote ?? null;
+  // The quoted message may have been deleted since the first attempt, which
+  // clears the stored source id but not the quoted text.
+  const quoteMatches =
+    existing.quoteText === (quote?.text ?? null) &&
+    (existing.quoteMessageId === null ||
+      existing.quoteMessageId === (quote?.messageId ?? null));
   if (
     existing.conversationId !== command.conversationId ||
     existing.threadId !== command.threadId ||
     existing.content !== command.content ||
+    !quoteMatches ||
     existingAttachmentIds.length !== command.attachmentIds.length ||
     existingAttachmentIds.some(
       (id, index) => id !== command.attachmentIds[index],
@@ -606,6 +666,29 @@ async function requireParticipant(
   return includeContext ? participant : participant;
 }
 
+async function requireQuotedMessage(
+  executor: DbTransaction,
+  conversationId: string,
+  quotedMessageId: string,
+) {
+  // KEY SHARE holds off a concurrent delete of the quoted message until this
+  // transaction commits, so the foreign key cannot fail mid-insert.
+  const [quoted] = await executor
+    .select({ conversationId: messages.conversationId })
+    .from(messages)
+    .where(eq(messages.id, quotedMessageId))
+    .limit(1)
+    .for("key share");
+  // One error for missing and foreign messages: a sender must not learn
+  // whether a message id exists in a conversation they cannot read.
+  if (!quoted || quoted.conversationId !== conversationId) {
+    throw new ServiceError(
+      "The quoted message is not in this conversation",
+      400,
+    );
+  }
+}
+
 async function requireConversationThread(
   executor: typeof db | DbTransaction,
   conversationId: string,
@@ -650,6 +733,8 @@ function toChatMessage(
     senderType: "human" | "bot";
     content: string;
     parts: typeof messages.$inferSelect.parts;
+    quoteText: string | null;
+    quoteMessageId: string | null;
     createdAt: Date;
   },
   messageAttachments: ChatMessage["attachments"],
@@ -664,8 +749,48 @@ function toChatMessage(
     senderType: row.senderType,
     content: row.content,
     parts: row.parts ?? null,
+    quote: toMessageQuote(row),
     attachments: messageAttachments,
     reactions,
     createdAt: row.createdAt.toISOString(),
+  };
+}
+
+export function toMessageQuote(row: {
+  quoteText: string | null;
+  quoteMessageId: string | null;
+}): MessageQuote | null {
+  return row.quoteText === null
+    ? null
+    : { text: row.quoteText, messageId: row.quoteMessageId };
+}
+
+/**
+ * The quote with its author, for webhook and Hermes bot deliveries.
+ *
+ * Senders choose the quoted text, so it is attributed to the quoted message's
+ * author only when that message really contains it. Otherwise a sender could
+ * put words in a bot's mouth ("Replying to your previous message: ...").
+ */
+export async function botMessageQuote(row: {
+  quoteText: string | null;
+  quoteMessageId: string | null;
+}): Promise<BotMessageQuote | null> {
+  const quote = toMessageQuote(row);
+  if (!quote) return null;
+  const [source] = quote.messageId
+    ? await db
+        .select({ id: users.id, name: users.name, content: messages.content })
+        .from(messages)
+        .innerJoin(users, eq(messages.senderId, users.id))
+        .where(eq(messages.id, quote.messageId))
+        .limit(1)
+    : [];
+  const author =
+    source && quoteMatchesSource(quote.text, source.content) ? source : null;
+  return {
+    ...quote,
+    senderId: author?.id ?? null,
+    senderName: author?.name ?? null,
   };
 }

@@ -9,7 +9,7 @@ import {
   submitHermesVaultUnlock,
   submitHermesSecureInput,
 } from "../hooks/useBotRuntime";
-import type { BotAppearance } from "@thechat/shared";
+import type { BotAppearance, MessageQuoteDraft } from "@thechat/shared";
 import { useConversationThreads } from "../hooks/useConversationThreads";
 import { useTaskProjects } from "../hooks/useTaskProjects";
 import { useConversationDetail } from "../hooks/useConversationDetail";
@@ -422,6 +422,7 @@ export function DmRoute() {
     content: string,
     threadId: string | null,
     attachmentIds: string[] = [],
+    quote?: MessageQuoteDraft,
   ) => {
     if (threadId !== null) {
       const activeThread = threadsRef.current.find((thread) => thread.id === threadId);
@@ -434,7 +435,9 @@ export function DmRoute() {
       }
       touchThread(threadId);
     }
-    return channelSendMessageToThread(content, threadId, attachmentIds);
+    return quote
+      ? channelSendMessageToThread(content, threadId, attachmentIds, quote)
+      : channelSendMessageToThread(content, threadId, attachmentIds);
   }, [
     channelSendMessageToThread,
     renameThread,
@@ -444,6 +447,7 @@ export function DmRoute() {
   const persistDraftAndSend = useCallback(async (
     content: string,
     attachmentIds: string[] = [],
+    quote?: MessageQuoteDraft,
   ) => {
     if (!isHermesDm || draftPersistingRef.current) return false;
     const persistAttempt = Symbol("persist-hermes-task-draft");
@@ -464,14 +468,25 @@ export function DmRoute() {
         return false;
       }
 
-      const clientMessageId = isCurrentDraft
-        ? addOptimisticSentMessage(content, thread.id)
-        : null;
+      const clientMessageId = !isCurrentDraft
+        ? null
+        : quote
+          ? addOptimisticSentMessage(content, thread.id, undefined, quote)
+          : addOptimisticSentMessage(content, thread.id);
       if (isCurrentDraft) {
         setDraftTaskActive(false);
         setActiveThreadId(thread.id);
       }
-      if (attachmentIds.length > 0) {
+      if (quote) {
+        wsSendMessage(
+          conversationId,
+          content,
+          thread.id,
+          clientMessageId ?? undefined,
+          attachmentIds,
+          quote,
+        );
+      } else if (attachmentIds.length > 0) {
         wsSendMessage(
           conversationId,
           content,
@@ -571,9 +586,12 @@ export function DmRoute() {
   const handleSend = useCallback((
     content: string,
     attachmentIds: string[] = [],
+    quote?: MessageQuoteDraft,
   ) => {
     if (!isHermesDm) {
-      return channelSendMessage(content, attachmentIds);
+      return quote
+        ? channelSendMessage(content, attachmentIds, quote)
+        : channelSendMessage(content, attachmentIds);
     }
     if (draftTaskActive && !content.trim() && attachmentIds.length === 0) return false;
 
@@ -581,21 +599,23 @@ export function DmRoute() {
     const canonical = slash
       ? canonicalHermesSlashCommand(slash.command, slashCommands) ?? slash.command
       : null;
-    if (canonical === "/branch" && attachmentIds.length === 0) {
+    // Like attachments, a quote turns /branch into an ordinary message so the
+    // quoted context is not silently dropped.
+    if (canonical === "/branch" && attachmentIds.length === 0 && !quote) {
       return handleBranchCommand(slash!.args);
     }
     if (draftTaskActive) {
-      return persistDraftAndSend(content, attachmentIds);
+      return persistDraftAndSend(content, attachmentIds, quote);
     }
     if (slash) {
       // Typed /approve and /deny stay regular chat messages. Hermes resolves
       // its waiter and withdraws the matching request, which closes the card.
-      return sendHermesMessageNow(content, activeThreadId, attachmentIds);
+      return sendHermesMessageNow(content, activeThreadId, attachmentIds, quote);
     }
     // TheChat intentionally does not queue normal Hermes DM messages locally.
     // Hermes owns the busy-turn policy: default messages can interrupt/steer
     // according to gateway config, while /queue passes through to Hermes' FIFO.
-    return sendHermesMessageNow(content, activeThreadId, attachmentIds);
+    return sendHermesMessageNow(content, activeThreadId, attachmentIds, quote);
   }, [
     activeThreadId,
     channelSendMessage,

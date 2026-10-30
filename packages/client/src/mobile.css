@@ -153,7 +153,8 @@
     max-width: 100%;
     padding-right: 52px;
   }
-  .chat-composer [title="Remove image"] {
+  .chat-composer [title="Remove image"],
+  .chat-composer .composer-quote-remove {
     opacity: 1;
     top: 0;
     right: 0;

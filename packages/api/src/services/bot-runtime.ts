@@ -16,6 +16,7 @@ import { SpanStatusCode } from "@opentelemetry/api";
 import type {
   BotInvocationPublic,
   BotInvocationProgressEventPublic,
+  BotMessageQuote,
   BotRuntimeSnapshot,
   ChatMessage,
   ChatAttachment,
@@ -55,6 +56,7 @@ import { loadAttachmentConfig } from "../attachments/config";
 import {
   assertIdempotentCommandMatches,
   attachReadyAttachments,
+  botMessageQuote,
   findIdempotentMessage,
 } from "./messages";
 import { requireConversationMutationAccess } from "./conversation-mutation-access";
@@ -875,6 +877,7 @@ async function handleWebhookInvocation(invocationId: string, signal?:AbortSignal
       threadId: loaded.triggerMessage.threadId,
       senderId: loaded.triggerMessage.senderId,
       senderName: loaded.triggerSender.name,
+      quote: await botMessageQuote(loaded.triggerMessage),
       attachments: loaded.bot.attachmentAccess
         ? await messageAttachmentsForBotDelivery(loaded.triggerMessage.id)
         : [],
@@ -930,6 +933,8 @@ export interface HermesPlatformEvent {
    */
   project?: HermesPlatformProject;
   text: string;
+  /** The snippet the sender replied to; absent when the message quotes nothing. */
+  quote?: BotMessageQuote;
   attachments: ChatAttachment[];
   messageId: string;
   sender: { id: string; name: string };
@@ -1153,6 +1158,7 @@ async function prepareHermesPlatformEvent(
   const attachmentMetadata = loaded.bot.attachmentAccess
     ? await messageAttachmentsForBotDelivery(loaded.triggerMessage.id)
     : [];
+  const quote = await botMessageQuote(loaded.triggerMessage);
   const chatId = conversationChatId(loaded.conversation);
   const threadId = loaded.invocation.threadId ?? loaded.triggerMessage.threadId ?? null;
   const sessionIntent = loaded.thread?.branchPending
@@ -1176,6 +1182,7 @@ async function prepareHermesPlatformEvent(
     messageId: loaded.triggerMessage.id,
     messageContent: loaded.triggerMessage.content,
     text,
+    ...(quote ? { quote } : {}),
     attachments: attachmentMetadata,
     triggeredAt: loaded.triggerMessage.createdAt.toISOString(),
   };
@@ -1192,6 +1199,7 @@ async function prepareHermesPlatformEvent(
       ...(sessionIntent ? { sessionIntent } : {}),
       ...(project ? { project } : {}),
       text,
+      ...(quote ? { quote } : {}),
       attachments: attachmentMetadata,
       messageId: loaded.triggerMessage.id,
       sender: {

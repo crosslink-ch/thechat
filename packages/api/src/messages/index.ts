@@ -3,7 +3,11 @@ import { z } from "zod";
 import { resolveRequestUser } from "../auth/middleware";
 import { browserAuthPolicy } from "../auth/browser";
 import { ServiceError } from "../services/errors";
-import { getMessages, sendMessage } from "../services/messages";
+import {
+  getMessages,
+  messageQuoteInputSchema,
+  sendMessage,
+} from "../services/messages";
 import { setMessageReaction } from "../services/message-reactions";
 import {
   setHttpResponseStatus,
@@ -15,6 +19,7 @@ const sendSchema = z.object({
   content: z.string().max(100_000).default(""),
   threadId: z.string().uuid().nullable().optional(),
   attachmentIds: z.array(z.string().uuid()).max(25).default([]),
+  quote: messageQuoteInputSchema.nullish(),
 }).refine(
   (value) => value.content.trim().length > 0 || value.attachmentIds.length > 0,
   { message: "Message text or at least one attachment is required" },
@@ -109,6 +114,7 @@ export const messageRoutes = new Elysia({ prefix: "/messages" })
               threadId: parsed.data.threadId ?? null,
               clientMessageId: parsed.data.clientMessageId,
               attachmentIds: parsed.data.attachmentIds,
+              quote: parsed.data.quote ?? null,
             },
           );
           setHttpResponseStatus(span, set.status);

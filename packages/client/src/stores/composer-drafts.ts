@@ -1,5 +1,6 @@
 import { onSessionReset } from "../lib/session-boundary";
 import { create } from "zustand";
+import type { MessageQuoteDraft } from "@thechat/shared";
 import type { ImageAttachment } from "../lib/image-types";
 import type { SharedAttachmentDraft } from "../lib/shared-attachments";
 
@@ -9,11 +10,18 @@ interface ComposerDraftsStore {
   imageDrafts: Record<string, ImageAttachment[]>;
   attachmentDrafts: Record<string, SharedAttachmentDraft[]>;
   sendingAttachments: Record<string, boolean>;
+  /** The snippet the next message replies to, per composer. */
+  quoteDrafts: Record<string, MessageQuoteDraft>;
   setDraft: (key: string, text: string) => void;
   restoreDraft: (key: string, expectedRevision: number, text: string) => boolean;
   setImageDrafts: (key: string, drafts: ImageAttachment[]) => void;
   setAttachmentDrafts: (key: string, drafts: SharedAttachmentDraft[]) => void;
   setSendingAttachments: (key: string, sending: boolean) => void;
+  setQuoteDraft: (key: string, quote: MessageQuoteDraft | null) => void;
+  /** Clear the quote only if it is still `expected`, so a newer pick survives. */
+  clearQuoteDraft: (key: string, expected: MessageQuoteDraft) => void;
+  /** Put a quote back after a rejected send unless another one was picked. */
+  restoreQuoteDraft: (key: string, quote: MessageQuoteDraft) => void;
   moveDraft: (fromKey: string, toKey: string) => void;
 }
 
@@ -70,6 +78,7 @@ export const useComposerDraftsStore = create<ComposerDraftsStore>()((set) => ({
   imageDrafts: {},
   attachmentDrafts: {},
   sendingAttachments: {},
+  quoteDrafts: {},
 
   setDraft: (key, text) => {
     set((state) => {
@@ -119,6 +128,32 @@ export const useComposerDraftsStore = create<ComposerDraftsStore>()((set) => ({
     });
   },
 
+  setQuoteDraft: (key, quote) => {
+    set((state) => {
+      if ((state.quoteDrafts[key] ?? null) === quote) return state;
+      const quoteDrafts = { ...state.quoteDrafts };
+      if (quote) quoteDrafts[key] = quote;
+      else delete quoteDrafts[key];
+      return { quoteDrafts };
+    });
+  },
+
+  clearQuoteDraft: (key, expected) => {
+    set((state) => {
+      if (state.quoteDrafts[key] !== expected) return state;
+      const quoteDrafts = { ...state.quoteDrafts };
+      delete quoteDrafts[key];
+      return { quoteDrafts };
+    });
+  },
+
+  restoreQuoteDraft: (key, quote) => {
+    set((state) => {
+      if (state.quoteDrafts[key] !== undefined) return state;
+      return { quoteDrafts: { ...state.quoteDrafts, [key]: quote } };
+    });
+  },
+
   moveDraft: (fromKey, toKey) => {
     if (fromKey === toKey) return;
     set((state) => {
@@ -126,11 +161,13 @@ export const useComposerDraftsStore = create<ComposerDraftsStore>()((set) => ({
       const images = state.imageDrafts[fromKey];
       const attachments = state.attachmentDrafts[fromKey];
       const sending = state.sendingAttachments[fromKey];
+      const quote = state.quoteDrafts[fromKey];
       if (
         text === undefined &&
         images === undefined &&
         attachments === undefined &&
-        sending === undefined
+        sending === undefined &&
+        quote === undefined
       ) {
         return state;
       }
@@ -139,10 +176,15 @@ export const useComposerDraftsStore = create<ComposerDraftsStore>()((set) => ({
       const imageDrafts = { ...state.imageDrafts };
       const attachmentDrafts = { ...state.attachmentDrafts };
       const sendingAttachments = { ...state.sendingAttachments };
+      const quoteDrafts = { ...state.quoteDrafts };
       delete drafts[fromKey];
       delete imageDrafts[fromKey];
       delete attachmentDrafts[fromKey];
       delete sendingAttachments[fromKey];
+      delete quoteDrafts[fromKey];
+      if (quoteDrafts[toKey] === undefined && quote !== undefined) {
+        quoteDrafts[toKey] = quote;
+      }
       if (drafts[toKey] === undefined && text !== undefined) drafts[toKey] = text;
       if (imageDrafts[toKey] === undefined && images !== undefined) {
         imageDrafts[toKey] = images;
@@ -159,6 +201,7 @@ export const useComposerDraftsStore = create<ComposerDraftsStore>()((set) => ({
         imageDrafts,
         attachmentDrafts,
         sendingAttachments,
+        quoteDrafts,
         revisions: {
           ...state.revisions,
           [fromKey]: (state.revisions[fromKey] ?? 0) + 1,

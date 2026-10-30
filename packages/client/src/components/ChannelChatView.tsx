@@ -19,7 +19,10 @@ import {
 } from "./BotRequestTimeline";
 import { ArrowDown } from "lucide-react";
 import { buttonClass } from "./ui";
-import type { ChatMessage } from "@thechat/shared";
+import type { ChatMessage, MessageQuoteDraft } from "@thechat/shared";
+import { SelectionReplyButton } from "./SelectionReplyButton";
+import { useComposerDraftsStore } from "../stores/composer-drafts";
+import { requestInputBarFocus } from "../stores/input-focus";
 import type { MentionUser } from "./MentionList";
 import {
   SharedChatMessage,
@@ -39,6 +42,7 @@ interface ChannelChatViewProps {
   onSend: (
     content: string,
     attachmentIds?: string[],
+    quote?: MessageQuoteDraft,
   ) => InputSendResult | Promise<InputSendResult>;
   onLoadOlderMessages?: () => boolean | void | Promise<boolean | void>;
   onSetReaction?: (
@@ -155,10 +159,15 @@ export function ChannelChatView({
   }, [progressInvocations, scrollToBottom]);
 
   const handleSend = useCallback(
-    (content: string, attachmentIds: string[] = []) => {
+    (
+      content: string,
+      attachmentIds: string[] = [],
+      quote?: MessageQuoteDraft,
+    ) => {
       forceNextContentScrollRef.current = true;
-      const result =
-        attachmentIds.length > 0
+      const result = quote
+        ? onSend(content, attachmentIds, quote)
+        : attachmentIds.length > 0
           ? onSend(content, attachmentIds)
           : onSend(content);
       requestAnimationFrame(() => scrollToBottom({ force: true }));
@@ -167,9 +176,24 @@ export function ChannelChatView({
     [onSend, scrollToBottom],
   );
 
+  const composerDraftKey =
+    draftKey ?? `channel:${conversationId ?? scrollScopeKey}`;
+  const setQuoteDraft = useComposerDraftsStore((state) => state.setQuoteDraft);
+  const handleReplyToSelection = useCallback(
+    (quote: MessageQuoteDraft) => {
+      setQuoteDraft(composerDraftKey, quote);
+      requestInputBarFocus();
+    },
+    [composerDraftKey, setQuoteDraft],
+  );
+
   return (
     <>
       <div className="relative flex min-h-0 flex-1 flex-col">
+        <SelectionReplyButton
+          scrollContainerRef={scrollContainerRef}
+          onReply={handleReplyToSelection}
+        />
         <div
           ref={scrollContainerRef}
           data-testid="channel-chat-scroll"
@@ -245,10 +269,10 @@ export function ChannelChatView({
       <MessageSendError error={sendError} />
       <InputBar
         convId={undefined}
-        draftKey={draftKey ?? `channel:${conversationId ?? scrollScopeKey}`}
+        draftKey={composerDraftKey}
         optimisticSend
-        onSend={(content, _images, attachmentIds) =>
-          handleSend(content, attachmentIds)
+        onSend={(content, _images, attachmentIds, quote) =>
+          handleSend(content, attachmentIds, quote)
         }
         onStop={noop}
         mentions={mentions}

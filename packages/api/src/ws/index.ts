@@ -6,7 +6,11 @@ import { conversationParticipants } from "../db/schema";
 import type { WsClientEvent, WsServerEvent } from "@thechat/shared";
 import { resolveTokenToUser, resolveSessionTokenToHumanUser } from "../auth/middleware";
 import { browserSessionToken } from "../auth/browser";
-import { sendMessage } from "../services/messages";
+import {
+  messageQuoteInputSchema,
+  sendMessage,
+  type MessageQuoteInput,
+} from "../services/messages";
 import { requireConversationParticipant } from "../services/conversations";
 import { ServiceError } from "../services/errors";
 import { getRealtimeBus, publishWsEventToUsers } from "../realtime";
@@ -36,6 +40,7 @@ const wsClientEventSchema = z.union([
       content: z.string().max(100_000).default(""),
       threadId: z.string().uuid().nullable().optional(),
       attachmentIds: z.array(z.string().uuid()).max(25).default([]),
+      quote: messageQuoteInputSchema.nullish(),
     })
     .refine(
       (event) =>
@@ -438,12 +443,14 @@ async function handleSendMessage(
   threadId?: string | null,
   clientMessageId?: string,
   attachmentIds: string[] = [],
+  quote: MessageQuoteInput | null = null,
 ) {
   try {
     await sendMessage(conversationId, userId, userName, content, {
       threadId: threadId ?? null,
       clientMessageId,
       attachmentIds,
+      quote,
     });
   } catch (e) {
     if (e instanceof ServiceError) {
@@ -646,6 +653,7 @@ export const wsRoutes = new Elysia().ws("/ws", {
         event.threadId ?? null,
         event.clientMessageId,
         event.attachmentIds ?? [],
+        event.quote ?? null,
       );
     } else if (event.type === "typing") {
       await handleTyping(

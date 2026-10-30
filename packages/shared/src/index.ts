@@ -217,6 +217,46 @@ export interface StreamResult {
 
 // -- Human-to-Human Chat Types --
 
+/** Longest quoted snippet a message may carry, in UTF-16 code units. */
+export const MESSAGE_QUOTE_MAX_LENGTH = 4_000;
+
+/**
+ * Text the sender selected in an earlier message and replied to. The text is
+ * a snapshot: it stays readable when the source message is later deleted, in
+ * which case `messageId` becomes null.
+ */
+export interface MessageQuote {
+  text: string;
+  messageId: string | null;
+}
+
+/**
+ * Canonical form of quoted text. Selections copied from rendered messages
+ * carry platform line endings, control characters, trailing spaces and runs of
+ * blank lines between blocks; client previews and the server agree on this.
+ */
+export function normalizeQuoteText(text: string): string {
+  return text
+    .normalize("NFC")
+    .replace(/\r\n?/g, "\n")
+    .replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, "")
+    .replace(/[ \t\u00a0]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+/** A quote being sent: it always names the message the text came from. */
+export interface MessageQuoteDraft {
+  text: string;
+  messageId: string;
+}
+
+/** A quote as delivered to bots: who wrote the quoted message, when known. */
+export interface BotMessageQuote extends MessageQuote {
+  senderId: string | null;
+  senderName: string | null;
+}
+
 export interface ChatMessage {
   id: string;
   conversationId: string;
@@ -226,6 +266,7 @@ export interface ChatMessage {
   senderType?: "human" | "bot";
   content: string;
   parts?: MessagePart[] | null;
+  quote?: MessageQuote | null;
   attachments?: ChatAttachment[];
   reactions?: MessageReactionSummary[];
   createdAt: string;
@@ -393,6 +434,7 @@ export type WsClientEvent =
       threadId?: string | null;
       clientMessageId?: string;
       attachmentIds?: string[];
+      quote?: MessageQuoteDraft | null;
     }
   | { type: "typing"; conversationId: string; threadId?: string | null }
   | { type: "ping" };
@@ -482,6 +524,8 @@ export interface WebhookPayload {
     threadId: string | null;
     senderId: string;
     senderName: string;
+    /** The snippet the sender replied to, with the quoted message's author. */
+    quote: BotMessageQuote | null;
     attachments: ChatAttachment[];
     createdAt: string;
   };
