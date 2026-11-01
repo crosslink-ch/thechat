@@ -921,17 +921,20 @@ function ProjectGroup({
           }`}
         />
       )}
-      <Icon size={14} aria-hidden="true" className="shrink-0 text-text-dimmed" />
+      <span className="relative flex shrink-0">
+        <Icon size={14} aria-hidden="true" className="text-text-dimmed" />
+        {collapsed && unread && (
+          // A badge on the folder's corner; expanded groups show the dot on
+          // the unread task rows instead.
+          <span
+            role="img"
+            className="absolute -top-0.5 -right-1 size-2 rounded-full border-[1.5px] border-surface bg-accent"
+            title="Unread tasks"
+            aria-label="Unread tasks"
+          />
+        )}
+      </span>
       <span className="min-w-0 flex-1 truncate">{name}</span>
-      {collapsed && unread && (
-        // Expanded groups show the dot on the unread task rows instead.
-        <span
-          role="img"
-          className="size-1.5 shrink-0 rounded-full bg-accent"
-          title="Unread tasks"
-          aria-label="Unread tasks"
-        />
-      )}
       <span className="shrink-0 tabular-nums text-[0.714rem] text-text-dimmed">{count}</span>
     </>
   );

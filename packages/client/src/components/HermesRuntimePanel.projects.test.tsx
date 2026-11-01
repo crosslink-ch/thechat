@@ -231,8 +231,13 @@ describe("Hermes task projects", () => {
     expect(within(researchGroup).getByRole("img", { name: "Unread tasks" })).toBeInTheDocument();
     expect(within(launchGroup).queryByRole("img", { name: "Unread tasks" })).not.toBeInTheDocument();
 
+    // The badge sits on the folder icon inside the collapsed header toggle.
+    const badge = within(researchGroup).getByRole("img", { name: "Unread tasks" });
+    const toggle = badge.closest("button")!;
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+
     // Expanded, the task row carries the dot instead of the header.
-    await user.click(within(researchGroup).getByRole("button", { name: /^Research/ }));
+    await user.click(toggle);
     expect(within(researchGroup).queryByRole("img", { name: "Unread tasks" })).not.toBeInTheDocument();
     expect(within(researchGroup).getByLabelText("Unread")).toBeInTheDocument();
   });
