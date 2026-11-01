@@ -448,6 +448,11 @@ export function HermesRuntimePanel({
                 const tasks = tasksByProject.get(project.id) ?? [];
                 const draftHere = draftTaskPresent && draftGroupId === project.id;
                 const collapsed = !expandedProjectIds.has(project.id);
+                // Same rule as a task row's dot: the open task is never unread.
+                const unread = tasks.some(
+                  (thread) =>
+                    thread.id !== activeThreadId && (unreadThreadIds?.has(thread.id) ?? false),
+                );
                 return (
                   <ProjectGroup
                     key={project.id}
@@ -456,6 +461,7 @@ export function HermesRuntimePanel({
                     name={project.name}
                     count={groupCount(groupSummaries.get(project.id)?.totalCount, tasks.length)}
                     collapsed={collapsed}
+                    unread={unread}
                     onToggle={() => toggleProject(project.id)}
                     onCreateTask={
                       onCreateThread ? () => onCreateThread(project.id) : undefined
@@ -877,6 +883,7 @@ function ProjectGroup({
   count,
   unfiled = false,
   collapsed = false,
+  unread = false,
   onToggle,
   onCreateTask,
   onRename,
@@ -889,6 +896,8 @@ function ProjectGroup({
   count: number;
   unfiled?: boolean;
   collapsed?: boolean;
+  /** A task in the group has unread messages; shown on the header while collapsed. */
+  unread?: boolean;
   onToggle?: () => void;
   onCreateTask?: () => void;
   onRename?: () => void;
@@ -914,6 +923,15 @@ function ProjectGroup({
       )}
       <Icon size={14} aria-hidden="true" className="shrink-0 text-text-dimmed" />
       <span className="min-w-0 flex-1 truncate">{name}</span>
+      {collapsed && unread && (
+        // Expanded groups show the dot on the unread task rows instead.
+        <span
+          role="img"
+          className="size-1.5 shrink-0 rounded-full bg-accent"
+          title="Unread tasks"
+          aria-label="Unread tasks"
+        />
+      )}
       <span className="shrink-0 tabular-nums text-[0.714rem] text-text-dimmed">{count}</span>
     </>
   );

@@ -212,6 +212,51 @@ describe("Hermes task projects", () => {
     ).toBeInTheDocument();
   });
 
+  it("marks a collapsed project that holds an unread task", async () => {
+    const user = userEvent.setup();
+    const checklist = task("task-checklist", "Launch checklist", launch.id);
+    render(
+      <HermesRuntimePanel
+        botName="Hermes"
+        runtime={{ invocations: [], events: [] }}
+        loading={false}
+        threads={[pricing, checklist, inbox]}
+        projects={[research, launch]}
+        activeThreadId={null}
+        unreadThreadIds={new Set([pricing.id])}
+      />,
+    );
+    const researchGroup = screen.getByRole("group", { name: "Project Research" });
+    const launchGroup = screen.getByRole("group", { name: "Project Launch" });
+    expect(within(researchGroup).getByRole("img", { name: "Unread tasks" })).toBeInTheDocument();
+    expect(within(launchGroup).queryByRole("img", { name: "Unread tasks" })).not.toBeInTheDocument();
+
+    // Expanded, the task row carries the dot instead of the header.
+    await user.click(within(researchGroup).getByRole("button", { name: /^Research/ }));
+    expect(within(researchGroup).queryByRole("img", { name: "Unread tasks" })).not.toBeInTheDocument();
+    expect(within(researchGroup).getByLabelText("Unread")).toBeInTheDocument();
+  });
+
+  it("does not mark a project for the task that is open", () => {
+    render(
+      <HermesRuntimePanel
+        botName="Hermes"
+        runtime={{ invocations: [], events: [] }}
+        loading={false}
+        threads={[pricing, inbox]}
+        projects={[research]}
+        activeThreadId={pricing.id}
+        unreadThreadIds={new Set([pricing.id])}
+      />,
+    );
+    // Opening the task expands its project; collapsing it must not show a dot.
+    const researchGroup = screen.getByRole("group", { name: "Project Research" });
+    fireEvent.click(within(researchGroup).getByRole("button", { name: /^Research/ }));
+    expect(within(researchGroup).getByRole("button", { name: /^Research/ }))
+      .toHaveAttribute("aria-expanded", "false");
+    expect(within(researchGroup).queryByRole("img", { name: "Unread tasks" })).not.toBeInTheDocument();
+  });
+
   it("opens the project holding the selected task", () => {
     renderPanel(handlers(), { activeThreadId: pricing.id });
     const researchGroup = screen.getByRole("group", { name: "Project Research" });
