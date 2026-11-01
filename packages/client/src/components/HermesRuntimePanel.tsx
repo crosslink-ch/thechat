@@ -13,6 +13,7 @@ import { closePalette } from "../CommandPalette";
 import type { Command } from "../commands";
 import { useScopedCommands } from "../hooks/useScopedCommands";
 import { NO_PROJECT_DROP_TARGET, useTaskDrag } from "../hooks/useTaskDrag";
+import { useTaskProjectExpansionStore } from "../stores/task-project-expansion";
 import { useMediaQuery } from "./ResponsiveShell";
 import { HeaderAction } from "./HeaderActions";
 import {
@@ -116,9 +117,8 @@ export function HermesRuntimePanel({
   const [open, setOpen] = useState(false);
   const [editingThreadId, setEditingThreadId] = useState<string | null>(null);
   const [dialog, setDialog] = useState<TaskPanelDialog | null>(null);
-  const [collapsedProjectIds, setCollapsedProjectIds] = useState<ReadonlySet<string>>(
-    () => new Set(),
-  );
+  const expandedProjectIds = useTaskProjectExpansionStore((state) => state.expandedProjectIds);
+  const setProjectExpanded = useTaskProjectExpansionStore((state) => state.setProjectExpanded);
   const [moveError, setMoveError] = useState<string | null>(null);
   const activeThread = threads.find((thread) => thread.id === activeThreadId);
   const canEditActiveTask = !!activeThread && !draftTaskActive;
@@ -251,12 +251,16 @@ export function HermesRuntimePanel({
   const draftGroupId =
     draftTaskProjectId && projectIds.has(draftTaskProjectId) ? draftTaskProjectId : null;
   const toggleProject = (projectId: string) =>
-    setCollapsedProjectIds((current) => {
-      const next = new Set(current);
-      if (next.has(projectId)) next.delete(projectId);
-      else next.add(projectId);
-      return next;
-    });
+    setProjectExpanded(projectId, !expandedProjectIds.has(projectId));
+  // Projects start collapsed, so open the one holding the selected task when
+  // it is selected from elsewhere (Activity, a link) or moved into another.
+  const activeProjectId =
+    !draftTaskActive && activeThread?.projectId && projectIds.has(activeThread.projectId)
+      ? activeThread.projectId
+      : null;
+  useEffect(() => {
+    if (activeProjectId) setProjectExpanded(activeProjectId, true);
+  }, [activeProjectId, activeThreadId, setProjectExpanded]);
   useEffect(() => setOpen(false), [mobile, botName]);
   useEffect(() => {
     const dismiss = () => setOpen(false);
@@ -267,6 +271,8 @@ export function HermesRuntimePanel({
   const onCreateThread = createThread
     ? (projectId: string | null = null) => {
         setOpen(false);
+        // The new task's draft row is listed inside its project.
+        if (projectId) setProjectExpanded(projectId, true);
         createThread(projectId);
       }
     : undefined;
@@ -441,7 +447,12 @@ export function HermesRuntimePanel({
               {projects.map((project) => {
                 const tasks = tasksByProject.get(project.id) ?? [];
                 const draftHere = draftTaskPresent && draftGroupId === project.id;
-                const collapsed = collapsedProjectIds.has(project.id);
+                const collapsed = !expandedProjectIds.has(project.id);
+                // Same rule as a task row's dot: the open task is never unread.
+                const unread = tasks.some(
+                  (thread) =>
+                    thread.id !== activeThreadId && (unreadThreadIds?.has(thread.id) ?? false),
+                );
                 return (
                   <ProjectGroup
                     key={project.id}
@@ -450,6 +461,7 @@ export function HermesRuntimePanel({
                     name={project.name}
                     count={groupCount(groupSummaries.get(project.id)?.totalCount, tasks.length)}
                     collapsed={collapsed}
+                    unread={unread}
                     onToggle={() => toggleProject(project.id)}
                     onCreateTask={
                       onCreateThread ? () => onCreateThread(project.id) : undefined
@@ -871,6 +883,7 @@ function ProjectGroup({
   count,
   unfiled = false,
   collapsed = false,
+  unread = false,
   onToggle,
   onCreateTask,
   onRename,
@@ -883,6 +896,8 @@ function ProjectGroup({
   count: number;
   unfiled?: boolean;
   collapsed?: boolean;
+  /** A task in the group has unread messages; shown on the header while collapsed. */
+  unread?: boolean;
   onToggle?: () => void;
   onCreateTask?: () => void;
   onRename?: () => void;
@@ -906,7 +921,19 @@ function ProjectGroup({
           }`}
         />
       )}
-      <Icon size={14} aria-hidden="true" className="shrink-0 text-text-dimmed" />
+      <span className="relative flex shrink-0">
+        <Icon size={14} aria-hidden="true" className="text-text-dimmed" />
+        {collapsed && unread && (
+          // A badge on the folder's corner; expanded groups show the dot on
+          // the unread task rows instead.
+          <span
+            role="img"
+            className="absolute -top-0.5 -right-1 size-2 rounded-full border-[1.5px] border-surface bg-accent"
+            title="Unread tasks"
+            aria-label="Unread tasks"
+          />
+        )}
+      </span>
       <span className="min-w-0 flex-1 truncate">{name}</span>
       <span className="shrink-0 tabular-nums text-[0.714rem] text-text-dimmed">{count}</span>
     </>

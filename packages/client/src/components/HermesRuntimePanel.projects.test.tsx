@@ -5,6 +5,7 @@ import type { ConversationThreadPublic, TaskProjectPublic } from "@thechat/share
 import { CommandPalette, closePalette, openPaletteInCommandMode } from "../CommandPalette";
 import { useCommandsStore } from "../commands";
 import { useKeybindings } from "../hooks/useKeybindings";
+import { useTaskProjectExpansionStore } from "../stores/task-project-expansion";
 import { HermesRuntimePanel } from "./HermesRuntimePanel";
 
 const at = "2026-10-20T12:00:00.000Z";
@@ -79,9 +80,16 @@ async function runCommand(user: ReturnType<typeof userEvent.setup>, label: strin
   await user.click(screen.getByRole("button", { name: label }));
 }
 
+function expandProjects(...projectIds: string[]) {
+  for (const projectId of projectIds) {
+    useTaskProjectExpansionStore.getState().setProjectExpanded(projectId, true);
+  }
+}
+
 beforeEach(() => {
   closePalette();
   useCommandsStore.setState({ globalCommands: [], scopedCommands: {}, commands: [] });
+  useTaskProjectExpansionStore.setState(useTaskProjectExpansionStore.getInitialState());
 });
 afterEach(() => {
   cleanup();
@@ -91,6 +99,7 @@ afterEach(() => {
 
 describe("Hermes task projects", () => {
   it("groups tasks by project with tasks without one listed last", () => {
+    expandProjects(research.id, launch.id);
     renderPanel();
     const researchGroup = screen.getByRole("group", { name: "Project Research" });
     expect(within(researchGroup).getByText("Competitor pricing")).toBeInTheDocument();
@@ -105,6 +114,7 @@ describe("Hermes task projects", () => {
   it("counts and pages each project on its own", async () => {
     const user = userEvent.setup();
     const onLoadMoreThreads = vi.fn();
+    expandProjects(research.id, launch.id);
     render(
       <HermesRuntimePanel
         botName="Hermes"
@@ -139,7 +149,7 @@ describe("Hermes task projects", () => {
     ).toBeDisabled();
   });
 
-  it("collapsing a project hides its Load more", async () => {
+  it("starts projects collapsed, showing only their counts", async () => {
     const user = userEvent.setup();
     render(
       <HermesRuntimePanel
@@ -153,9 +163,114 @@ describe("Hermes task projects", () => {
       />,
     );
     const researchGroup = screen.getByRole("group", { name: "Project Research" });
-    await user.click(within(researchGroup).getByRole("button", { expanded: true }));
+    expect(within(researchGroup).getByRole("button", { expanded: false })).toBeInTheDocument();
+    expect(within(researchGroup).queryByText("Competitor pricing")).not.toBeInTheDocument();
     expect(within(researchGroup).queryByRole("button", { name: /Load more/ })).not.toBeInTheDocument();
     expect(within(researchGroup).getByText("6")).toBeInTheDocument();
+
+    await user.click(within(researchGroup).getByRole("button", { expanded: false }));
+    expect(within(researchGroup).getByText("Competitor pricing")).toBeInTheDocument();
+    expect(within(researchGroup).getByRole("button", { name: /Load more/ })).toBeInTheDocument();
+
+    await user.click(within(researchGroup).getByRole("button", { expanded: true }));
+    expect(within(researchGroup).queryByText("Competitor pricing")).not.toBeInTheDocument();
+    expect(within(researchGroup).queryByRole("button", { name: /Load more/ })).not.toBeInTheDocument();
+  });
+
+  it("keeps expanded projects open after switching to another bot and back", async () => {
+    const user = userEvent.setup();
+    const otherProject: TaskProjectPublic = { ...project("project-other", "Ops"), conversationId: "dm-2" };
+    const panelFor = (botName: string, projects: TaskProjectPublic[], threads: ConversationThreadPublic[]) => (
+      <HermesRuntimePanel
+        botName={botName}
+        runtime={{ invocations: [], events: [] }}
+        loading={false}
+        threads={threads}
+        projects={projects}
+        activeThreadId={null}
+      />
+    );
+    const { unmount } = render(panelFor("Hermes", [research, launch], [pricing]));
+    await user.click(
+      within(screen.getByRole("group", { name: "Project Research" })).getByRole("button", { expanded: false }),
+    );
+
+    // Another bot's DM replaces the panel (and its tasks) entirely.
+    unmount();
+    const other = render(panelFor("Ops bot", [otherProject], []));
+    expect(
+      within(screen.getByRole("group", { name: "Project Ops" })).getByRole("button", { expanded: false }),
+    ).toBeInTheDocument();
+    other.unmount();
+
+    render(panelFor("Hermes", [research, launch], [pricing]));
+    const researchGroup = screen.getByRole("group", { name: "Project Research" });
+    expect(within(researchGroup).getByRole("button", { expanded: true })).toBeInTheDocument();
+    expect(within(researchGroup).getByText("Competitor pricing")).toBeInTheDocument();
+    expect(
+      within(screen.getByRole("group", { name: "Project Launch" })).getByRole("button", { expanded: false }),
+    ).toBeInTheDocument();
+  });
+
+  it("marks a collapsed project that holds an unread task", async () => {
+    const user = userEvent.setup();
+    const checklist = task("task-checklist", "Launch checklist", launch.id);
+    render(
+      <HermesRuntimePanel
+        botName="Hermes"
+        runtime={{ invocations: [], events: [] }}
+        loading={false}
+        threads={[pricing, checklist, inbox]}
+        projects={[research, launch]}
+        activeThreadId={null}
+        unreadThreadIds={new Set([pricing.id])}
+      />,
+    );
+    const researchGroup = screen.getByRole("group", { name: "Project Research" });
+    const launchGroup = screen.getByRole("group", { name: "Project Launch" });
+    expect(within(researchGroup).getByRole("img", { name: "Unread tasks" })).toBeInTheDocument();
+    expect(within(launchGroup).queryByRole("img", { name: "Unread tasks" })).not.toBeInTheDocument();
+
+    // The badge sits on the folder icon inside the collapsed header toggle.
+    const badge = within(researchGroup).getByRole("img", { name: "Unread tasks" });
+    const toggle = badge.closest("button")!;
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+
+    // Expanded, the task row carries the dot instead of the header.
+    await user.click(toggle);
+    expect(within(researchGroup).queryByRole("img", { name: "Unread tasks" })).not.toBeInTheDocument();
+    expect(within(researchGroup).getByLabelText("Unread")).toBeInTheDocument();
+  });
+
+  it("does not mark a project for the task that is open", () => {
+    render(
+      <HermesRuntimePanel
+        botName="Hermes"
+        runtime={{ invocations: [], events: [] }}
+        loading={false}
+        threads={[pricing, inbox]}
+        projects={[research]}
+        activeThreadId={pricing.id}
+        unreadThreadIds={new Set([pricing.id])}
+      />,
+    );
+    // Opening the task expands its project; collapsing it must not show a dot.
+    const researchGroup = screen.getByRole("group", { name: "Project Research" });
+    fireEvent.click(within(researchGroup).getByRole("button", { name: /^Research/ }));
+    expect(within(researchGroup).getByRole("button", { name: /^Research/ }))
+      .toHaveAttribute("aria-expanded", "false");
+    expect(within(researchGroup).queryByRole("img", { name: "Unread tasks" })).not.toBeInTheDocument();
+  });
+
+  it("opens the project holding the selected task", () => {
+    renderPanel(handlers(), { activeThreadId: pricing.id });
+    const researchGroup = screen.getByRole("group", { name: "Project Research" });
+    expect(within(researchGroup).getByRole("button", { name: /^Research/ }))
+      .toHaveAttribute("aria-expanded", "true");
+    expect(within(researchGroup).getByText("Competitor pricing")).toBeInTheDocument();
+    expect(
+      within(screen.getByRole("group", { name: "Project Launch" })).getByRole("button", { name: /^Launch/ }),
+    ).toHaveAttribute("aria-expanded", "false");
   });
 
   it("creates a project from the New Project command palette entry", async () => {
@@ -204,6 +319,7 @@ describe("Hermes task projects", () => {
 
   it("moves a task from its row menu, including out of its project", async () => {
     const user = userEvent.setup();
+    expandProjects(research.id);
     const h = renderPanel();
     await user.click(screen.getByRole("button", { name: "Task actions for Competitor pricing" }));
     await user.click(await screen.findByRole("menuitem", { name: "Move to project..." }));
@@ -311,6 +427,10 @@ describe("Hermes task projects", () => {
     const h = renderPanel();
     await user.click(screen.getByRole("button", { name: "New task in Launch" }));
     expect(h.onCreateThread).toHaveBeenCalledWith(launch.id);
+    // The draft is listed inside the project, so the project opens.
+    expect(
+      within(screen.getByRole("group", { name: "Project Launch" })).getByRole("button", { name: /^Launch/ }),
+    ).toHaveAttribute("aria-expanded", "true");
   });
 
   it("offers task commands only for a saved active task", () => {
