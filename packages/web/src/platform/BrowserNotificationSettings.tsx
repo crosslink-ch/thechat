@@ -156,7 +156,9 @@ function PreferenceRows() {
     };
   }, [relevant, preferences, ensureLoaded]);
 
-  if (!relevant) return null;
+  // Without background push the push choices are moot, but agent updates also
+  // gate in-app notifications in open tabs, so that choice stays available.
+  if (!relevant) return <AgentUpdatesSetting />;
 
   const update = async (key: PreferenceKey, value: boolean) => {
     if (!preferences) return;

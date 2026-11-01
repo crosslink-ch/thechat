@@ -1498,7 +1498,7 @@ export async function publishHermesPlatformMessage(input: {
       "messaging.operation": "hermes_message",
       "thechat.hermes_platform.message.has_invocation": Boolean(input.invocationId),
       "thechat.hermes_platform.message.complete": Boolean(input.invocationId && input.complete === true),
-      "thechat.hermes_platform.message.interim": input.interim === true,
+      "thechat.hermes_platform.message.interim": input.interim === true && input.complete !== true,
     },
     async (span) => {
       const content = input.content.trim();
@@ -1532,6 +1532,8 @@ export async function publishHermesPlatformMessage(input: {
         );
       }
       const shouldComplete = Boolean(target.invocation && input.complete === true);
+      // A message that completes the run is its answer, whatever else it claims.
+      const interim = input.interim === true && !shouldComplete;
       const previousResponseJson = recordFromJson(target.invocation?.responseJson);
       const shouldFinalize = shouldComplete &&
         !hasHermesExecutionCompletion(previousResponseJson);
@@ -1597,7 +1599,7 @@ export async function publishHermesPlatformMessage(input: {
             clientMessageId,
             content,
             parts: content ? [{ type: "text", text: content }] : null,
-            interim: input.interim === true,
+            interim,
           })
           .onConflictDoNothing({
             target: [messages.senderId, messages.clientMessageId],
@@ -1633,7 +1635,13 @@ export async function publishHermesPlatformMessage(input: {
           uploaderId: target.bot.userId,
         });
 
-        if (target.invocation) {
+        if (target.invocation && interim) {
+          // Progress keeps the run alive but is never recorded as its output.
+          await tx
+            .update(botInvocations)
+            .set({ updatedAt: now })
+            .where(eq(botInvocations.id, target.invocation.id));
+        } else if (target.invocation) {
           await tx
             .update(botInvocations)
             .set({

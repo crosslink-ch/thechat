@@ -1,6 +1,6 @@
 import { useEffect, useId, useState } from "react";
 import { useNotificationPreferencesStore } from "../stores/notification-preferences";
-import { settingsHint, settingsLabel, settingsRow } from "./SettingsSection";
+import { settingsHint, settingsLabel, settingsRow, settingsSecondaryButton } from "./SettingsSection";
 
 const CHOICES = [
   {
@@ -31,18 +31,27 @@ export function AgentUpdatesSetting({
   const ensureLoaded = useNotificationPreferencesStore((state) => state.ensureLoaded);
   const update = useNotificationPreferencesStore((state) => state.update);
   const [error, setError] = useState<string | null>(null);
+  const [loadFailed, setLoadFailed] = useState(false);
+  const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
     let active = true;
     void ensureLoaded().then((loaded) => {
       if (active && !loaded && reportLoadError) {
+        setLoadFailed(true);
         setError("Couldn't load your notification choices.");
       }
     });
     return () => {
       active = false;
     };
-  }, [ensureLoaded, reportLoadError]);
+  }, [ensureLoaded, reportLoadError, attempt]);
+
+  const retry = () => {
+    setError(null);
+    setLoadFailed(false);
+    setAttempt((value) => value + 1);
+  };
 
   const choose = async (agentProgress: boolean) => {
     setError(null);
@@ -60,13 +69,14 @@ export function AgentUpdatesSetting({
         <div id={`${id}-label`} className={settingsLabel}>
           Agent updates
         </div>
-        <p className={settingsHint}>
+        <p id={`${id}-hint`} className={settingsHint}>
           {repliesOff ? "Agent replies are off" : "Applies to all your devices"}
         </p>
       </div>
       <div
         role="radiogroup"
         aria-labelledby={`${id}-label`}
+        aria-describedby={`${id}-hint`}
         className="flex min-w-0 flex-col gap-3"
       >
         {CHOICES.map((choice) => (
@@ -94,6 +104,11 @@ export function AgentUpdatesSetting({
           <p className="text-[0.929rem] leading-5 text-error-bright" role="alert">
             {error}
           </p>
+        )}
+        {loadFailed && (
+          <button type="button" className={`${settingsSecondaryButton} self-start`} onClick={retry}>
+            Try again
+          </button>
         )}
       </div>
     </div>

@@ -58,14 +58,17 @@ export const useNotificationPreferencesStore = create<NotificationPreferencesSta
       const previous = get().preferences;
       if (previous) set({ preferences: { ...previous, ...changes } });
       const token = useAuthStore.getState().token;
+      const generation = sessionGeneration();
+      // A save (or its revert) that lands after sign-out must not leak into the next session.
+      const current = () => generation === sessionGeneration();
       try {
         const { data, error } = await api.push.preferences.patch(changes, authHeaders(token));
         const saved = error ? null : asPreferences(data);
         if (!saved) throw new Error("Couldn't save notification choices");
-        set({ preferences: saved });
+        if (current()) set({ preferences: saved });
         return saved;
       } catch (error) {
-        set({ preferences: previous });
+        if (current()) set({ preferences: previous });
         throw error;
       }
     },

@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const push = vi.hoisted(() => {
@@ -156,10 +156,13 @@ describe("BrowserNotificationSettings", () => {
     expect(screen.getByRole("radio", { name: /Every update/ })).toBeDisabled();
   });
 
-  it("hides the choices where background notifications cannot work", () => {
+  it("hides the push choices where background notifications cannot work but keeps agent updates", async () => {
     push.set({ state: "unsupported" });
     render(<BrowserNotificationSettings />);
     expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
-    expect(api.get).not.toHaveBeenCalled();
+    // Agent updates also gate in-app notifications in open tabs, so they stay choosable.
+    const group = await screen.findByRole("radiogroup", { name: "Agent updates" });
+    expect(await within(group).findByRole("radio", { name: /Final results only/ })).toBeChecked();
+    expect(within(group).getByRole("radio", { name: /Every update/ })).toBeEnabled();
   });
 });

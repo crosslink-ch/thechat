@@ -36,16 +36,20 @@ run notify straight away.
 
 ### Agent progress updates
 
-The Hermes gateway flags its own status posts (the long-running "⏳ Working"
+The Hermes gateway flags its own progress posts (the long-running "⏳ Working"
 heartbeat, interrupt and queue acknowledgements, stuck-run warnings) with
-`interim: true` on `POST /hermes-platform/messages`. TheChat stores that as
-`messages.interim`. A progress update:
+`interim: true` on `POST /hermes-platform/messages`. Notices that end work or
+need the user (restart and shutdown notices, "send it again" refusals,
+approval prompts) are not progress and are never flagged. TheChat stores the
+flag as `messages.interim`. A progress update:
 
 - shows in the conversation, muted, like any other message;
 - creates no unread rows, so it never adds to the Activity badge or marks a DM
   unread; the answer that follows does;
-- never supersedes an answer: a heartbeat posted after the reply does not
-  swallow the reply's notification;
+- never supersedes an answer: a heartbeat posted after the reply neither
+  swallows the reply's notification nor replaces the run's recorded output;
+- is never the run's last word: a post that also sets `complete: true` is
+  stored as an ordinary answer;
 - notifies at once, without waiting for the run, but only people whose
   "Agent updates" choice is "Every update" (`agentProgress`). That choice
   refines "Agent replies": with replies off, progress is off too.
@@ -54,7 +58,8 @@ heartbeat, interrupt and queue acknowledgements, stuck-run warnings) with
 you: answers, failure messages and agent requests still notify. Text approval
 prompts are never flagged, because the agent is waiting on a person. The same
 account-wide choice gates in-app (desktop and open-tab) notifications, so the
-desktop app shows it in Settings too.
+desktop app shows it in Settings too, and browsers without Web Push still
+offer it.
 
 Gateways that predate the flag send unflagged messages; they keep the
 wait-for-the-run behaviour above.

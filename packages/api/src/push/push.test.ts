@@ -9,7 +9,9 @@ import { queueJobs as eventOutbox } from "../async/job-schema";
 import { queueJobId } from "../async/pg-boss";
 import { QUEUES } from "../async/queue";
 import {
+  botInvocations,
   conversationParticipants,
+  messages,
   pushSubscriptions,
   users,
   workspaceMembers,
@@ -770,6 +772,12 @@ describe("push delivery", () => {
     expect(await unreadCount()).toBe(unreadBefore + 1);
     // A late heartbeat after the answer must not swallow the answer's notification.
     const lateHeartbeat = await post({ invocationId, content: "⏳ Working — 4 min", interim: true });
+    // Nor replace the answer the run records as its output.
+    const [run] = await db
+      .select({ responseMessageId: botInvocations.responseMessageId, responseJson: botInvocations.responseJson })
+      .from(botInvocations)
+      .where(eq(botInvocations.id, invocationId));
+    expect(run).toMatchObject({ responseMessageId: answer, responseJson: expect.objectContaining({ output: "Index rebuilt: 1,204 documents" }) });
     expect((await req("POST", `/hermes-platform/invocations/${invocationId}/completed`, {}, bot.body.apiKey)).status).toBe(200);
     await waitForFanout(`message:${answer}`);
     await waitForFanout(`message:${lateHeartbeat}`);
@@ -799,6 +807,11 @@ describe("push delivery", () => {
     await waitForFanout(`message:${muted}`);
     await drainPushJobs();
     expect(delivered).toHaveLength(0);
+
+    // A message that completes the run is its answer, even if it claims to be progress.
+    const closing = await post({ invocationId, content: "Archive done", interim: true, complete: true });
+    const [stored] = await db.select({ interim: messages.interim }).from(messages).where(eq(messages.id, closing));
+    expect(stored!.interim).toBe(false);
   });
 
   test("an agent asking for approval notifies the person it is waiting on", async () => {
