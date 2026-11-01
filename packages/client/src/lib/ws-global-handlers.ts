@@ -16,6 +16,10 @@ import {
   useHermesIndicatorsStore,
 } from "../stores/hermes-indicators";
 import { fireNotification } from "./notifications";
+import {
+  agentProgressNotificationsEnabled,
+  useNotificationPreferencesStore,
+} from "../stores/notification-preferences";
 import { useBotRequestsStore } from "../stores/bot-requests";
 import { queryClient } from "./query-client";
 import { cacheIncomingMessage } from "../hooks/useChannelChat";
@@ -86,6 +90,7 @@ export function registerGlobalWsHandlers(
     void messageQueryClient.invalidateQueries({ queryKey: ["messages"] });
     void useNotificationsStore.getState().fetchNotifications();
     void useActivityStore.getState().fetchActivity();
+    void useNotificationPreferencesStore.getState().ensureLoaded();
     // Reconcile requests answered, cancelled or expired while disconnected.
     void useBotRequestsStore.getState().fetchInbox();
   };
@@ -118,6 +123,22 @@ export function registerGlobalWsHandlers(
   }: WsEvents["ws:new_message"]) => {
     cacheIncomingMessage(messageQueryClient, msg, clientMessageId);
     const currentUserId = useAuthStore.getState().user?.id;
+    // An agent's progress update ("⏳ Working") is not something to catch up
+    // on: it marks nothing unread and notifies only people who opted in.
+    if (msg.interim && msg.senderType === "bot") {
+      if (
+        msg.senderId !== currentUserId &&
+        conversationType === "direct" &&
+        !isVisibleHermesConversation(msg.conversationId) &&
+        agentProgressNotificationsEnabled()
+      ) {
+        fireNotification(msg.senderName, notificationBodyPreview(msg.content), {
+          dedupeKey: `message:${msg.id}`,
+          coveredByBackgroundPush: true,
+        });
+      }
+      return;
+    }
     if (msg.senderId !== currentUserId) {
       const route = currentPath();
       const conversationVisible =

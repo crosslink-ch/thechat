@@ -15,6 +15,7 @@ import { useNotificationsStore } from "../stores/notifications";
 import { useActivityStore } from "../stores/activity";
 import { useConversationsStore } from "../stores/conversations";
 import { usePresenceStore } from "../stores/presence";
+import { useNotificationPreferencesStore } from "../stores/notification-preferences";
 import {
   hermesScopeKey,
   useHermesIndicatorsStore,
@@ -320,6 +321,78 @@ describe("registerGlobalWsHandlers", () => {
       .getState()
       .setVisibleScope(hermesScopeKey("conv-1", null));
     expect(useHermesIndicatorsStore.getState().unreadScopes).toEqual({});
+
+    cleanup();
+  });
+
+  it("keeps an agent's progress update quiet unless the person opted into every update", () => {
+    useAuthStore.setState({
+      token: "token-1",
+      loading: false,
+      user: {
+        id: "u-me",
+        name: "Me",
+        email: "me@example.com",
+        avatar: null,
+        type: "human",
+      },
+    });
+    useConversationsStore.setState({
+      directConversationIdsByUserId: { "u-bot": "conv-progress" },
+    });
+    const cleanup = registerGlobalWsHandlers(() => {}, () => "/channel/elsewhere");
+    const progress = (id: string) => ({
+      conversationType: "direct" as const,
+      message: {
+        id,
+        conversationId: "conv-progress",
+        threadId: "task-thread",
+        senderId: "u-bot",
+        senderName: "Koda",
+        senderType: "bot" as const,
+        content: "⏳ Working — 3 min",
+        parts: null,
+        interim: true as const,
+        createdAt: "2026-11-01T10:00:00.000Z",
+      },
+    });
+
+    // Default ("Final results only"), and before the choices have loaded.
+    useNotificationPreferencesStore.setState({ preferences: null });
+    wsEvents.emit("ws:new_message", progress("msg-progress-1"));
+    useNotificationPreferencesStore.setState({
+      preferences: {
+        directMessages: true,
+        mentions: true,
+        agentReplies: true,
+        agentRequests: true,
+        agentProgress: false,
+        showPreviews: true,
+      },
+    });
+    wsEvents.emit("ws:new_message", progress("msg-progress-2"));
+
+    expect(fireNotification).not.toHaveBeenCalled();
+    // A progress update is not something to catch up on.
+    expect(useActivityStore.getState().handleIncomingMessage).not.toHaveBeenCalled();
+    expect(useConversationsStore.getState().unreadDirectConversations).toEqual({});
+    expect(useHermesIndicatorsStore.getState().unreadScopes).toEqual({});
+
+    // "Every update".
+    useNotificationPreferencesStore.setState({
+      preferences: {
+        ...useNotificationPreferencesStore.getState().preferences!,
+        agentProgress: true,
+      },
+    });
+    wsEvents.emit("ws:new_message", progress("msg-progress-3"));
+
+    expect(fireNotification).toHaveBeenCalledTimes(1);
+    expect(fireNotification).toHaveBeenCalledWith("Koda", "⏳ Working — 3 min", {
+      dedupeKey: "message:msg-progress-3",
+      coveredByBackgroundPush: true,
+    });
+    expect(useConversationsStore.getState().unreadDirectConversations).toEqual({});
 
     cleanup();
   });

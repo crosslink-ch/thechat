@@ -405,6 +405,15 @@ describe("push endpoint and key validation", () => {
     expect(classifyMessage({ conversationType: "direct", content: "x", senderType: "bot" }, recipient)).toBe("agent_reply");
   });
 
+  test("an agent's progress update reaches only the people its answer would", () => {
+    const recipient = { userId: "u1", name: "Ana" };
+    const progress = { content: "⏳ Working — 3 min", senderType: "bot" as const, interim: true };
+    expect(classifyMessage({ ...progress, conversationType: "direct" }, recipient)).toBe("agent_progress");
+    expect(classifyMessage({ ...progress, conversationType: "group" }, recipient, "u1")).toBe("agent_progress");
+    // Not the person who started the channel run, and not mentioned: nothing.
+    expect(classifyMessage({ ...progress, conversationType: "group" }, recipient, "u2")).toBeNull();
+  });
+
   test("oversized previews shrink to fit the push size limit and topics stay valid", () => {
     const payload: PushNotificationPayload = {
       v: 1, id: "m", kind: "direct_message", title: "T", body: "é".repeat(4000),
@@ -497,7 +506,9 @@ describe("push routes", () => {
   test("preferences default on and patch individually", async () => {
     const { token } = await registerUser("Prefs");
     expect((await req("GET", "/push/preferences", undefined, token)).body).toEqual({
-      directMessages: true, mentions: true, agentReplies: true, agentRequests: true, showPreviews: true,
+      directMessages: true, mentions: true, agentReplies: true, agentRequests: true,
+      // Agent progress is opt-in: by default only finished work notifies.
+      agentProgress: false, showPreviews: true,
     });
     expect((await req("PATCH", "/push/preferences", {}, token)).status).toBe(400);
     expect((await req("PATCH", "/push/preferences", { mentions: "no" }, token)).status).toBe(400);
@@ -705,6 +716,89 @@ describe("push delivery", () => {
       title: "Reply Hermes",
       body: "Root cause: expired certificate",
     });
+  });
+
+  test("agent progress updates stay quiet by default and notify only people who opt in", async () => {
+    const owner = await registerUser("Progress Asker");
+    const ws = await req("POST", "/workspaces/create", { name: "Progress ws" }, owner.token);
+    createdWorkspaceIds.push(ws.body.id);
+    const bot = await req("POST", "/bots/create", { name: "Progress Hermes", kind: "hermes", workspaceId: ws.body.id }, owner.token);
+    expect(bot.status).toBe(200);
+    createdBotUserIds.push(bot.body.userId);
+    const dm = await req("POST", "/conversations/dm", { workspaceId: ws.body.id, otherUserId: bot.body.userId }, owner.token);
+    await subscribe(owner.token);
+
+    const startRun = async (prompt: string) => {
+      await send(owner.token, dm.body.id, prompt);
+      const deadline = Date.now() + 8_000;
+      while (Date.now() < deadline) {
+        const claimed = await req("GET", "/hermes-platform/events?limit=1", undefined, bot.body.apiKey);
+        const invocationId = claimed.body.events?.[0]?.invocationId as string | undefined;
+        if (invocationId) return invocationId;
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      throw new Error("Hermes never received the run");
+    };
+    const post = async (body: Record<string, unknown>) => {
+      const res = await req("POST", "/hermes-platform/messages", body, bot.body.apiKey);
+      expect(res.status).toBe(200);
+      return res.body.messageId as string;
+    };
+    const unreadCount = async () =>
+      (await req("GET", "/activity", undefined, owner.token)).body.totalUnreadMessages as number;
+
+    // -- Default: final results only ---------------------------------------
+    let invocationId = await startRun("Rebuild the index");
+    const unreadBefore = await unreadCount();
+    const heartbeat = await post({ invocationId, content: "⏳ Working — 3 min", interim: true });
+
+    // Stored as a progress update, shown in history, and not something to catch up on.
+    const history = await req("GET", `/messages/${dm.body.id}`, undefined, owner.token);
+    expect(history.body.find((message: { id: string }) => message.id === heartbeat)).toMatchObject({
+      interim: true,
+      content: "⏳ Working — 3 min",
+    });
+    expect(await unreadCount()).toBe(unreadBefore);
+
+    // A flagged update is decided at once: it neither waits for the run nor notifies.
+    await waitForFanout(`message:${heartbeat}`);
+    await drainPushJobs();
+    expect(delivered).toHaveLength(0);
+    expect(bus.jobs.has(`push-fanout:message:${heartbeat}:wait1`)).toBe(false);
+
+    const answer = await post({ invocationId, content: "Index rebuilt: 1,204 documents" });
+    expect(await unreadCount()).toBe(unreadBefore + 1);
+    // A late heartbeat after the answer must not swallow the answer's notification.
+    const lateHeartbeat = await post({ invocationId, content: "⏳ Working — 4 min", interim: true });
+    expect((await req("POST", `/hermes-platform/invocations/${invocationId}/completed`, {}, bot.body.apiKey)).status).toBe(200);
+    await waitForFanout(`message:${answer}`);
+    await waitForFanout(`message:${lateHeartbeat}`);
+    await drainPushJobs();
+    await drainPushJobs();
+    expect(delivered.map((entry) => entry.payload)).toEqual([
+      expect.objectContaining({ id: `message:${answer}`, kind: "agent_reply", body: "Index rebuilt: 1,204 documents" }),
+    ]);
+
+    // -- Opted in: every update -----------------------------------------------
+    delivered = [];
+    const patched = await req("PATCH", "/push/preferences", { agentProgress: true }, owner.token);
+    expect(patched.body.agentProgress).toBe(true);
+    invocationId = await startRun("Now the archive");
+    const progress = await post({ invocationId, content: "⏳ Working — 5 min", interim: true });
+    await waitForFanout(`message:${progress}`);
+    await drainPushJobs();
+    // Notifies now, while the run is still going.
+    expect(delivered.map((entry) => entry.payload)).toEqual([
+      expect.objectContaining({ id: `message:${progress}`, kind: "agent_progress", body: "⏳ Working — 5 min" }),
+    ]);
+
+    // Agent replies off silences progress too: it refines replies, never overrides them.
+    delivered = [];
+    await req("PATCH", "/push/preferences", { agentReplies: false }, owner.token);
+    const muted = await post({ invocationId, content: "⏳ Working — 8 min", interim: true });
+    await waitForFanout(`message:${muted}`);
+    await drainPushJobs();
+    expect(delivered).toHaveLength(0);
   });
 
   test("an agent asking for approval notifies the person it is waiting on", async () => {

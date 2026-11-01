@@ -21,6 +21,7 @@ delay or hide notifications. TheChat cannot override these.
 | Message in a channel that @mentions you | The mentioned person | Mentions |
 | An agent's answer in a DM, or in a channel run you started | The person the agent is answering | Agent replies |
 | An agent request (approval, question, review) | Its addressee; in a DM, the participants; in a channel, the person who started the run | Agent requests |
+| An agent's progress update ("⏳ Working — 5 min") | Whoever would get its answer | Agent updates: Every update (off by default) |
 
 Never the sender. Rules are evaluated when the notification is sent (by
 default 3 seconds after the message, `WEB_PUSH_DELAY_MS`), so it is skipped if
@@ -28,14 +29,39 @@ the message was read on another device in the meantime, the recipient left the
 workspace, changed their settings, or the request was already answered.
 
 Agent replies notify once per run, with the run's newest message. While a
-Hermes run is still going, its interim messages ("Looking into it…") wait; the
-run ends when Hermes sends a final message, reports the turn completed, fails or
-is cancelled. After 10 minutes the newest message notifies anyway. Webhook bots
-and messages outside a run notify straight away.
+Hermes run is still going, its messages wait; the run ends when Hermes sends a
+final message, reports the turn completed, fails or is cancelled. After 10
+minutes the newest message notifies anyway. Webhook bots and messages outside a
+run notify straight away.
+
+### Agent progress updates
+
+The Hermes gateway flags its own status posts (the long-running "⏳ Working"
+heartbeat, interrupt and queue acknowledgements, stuck-run warnings) with
+`interim: true` on `POST /hermes-platform/messages`. TheChat stores that as
+`messages.interim`. A progress update:
+
+- shows in the conversation, muted, like any other message;
+- creates no unread rows, so it never adds to the Activity badge or marks a DM
+  unread; the answer that follows does;
+- never supersedes an answer: a heartbeat posted after the reply does not
+  swallow the reply's notification;
+- notifies at once, without waiting for the run, but only people whose
+  "Agent updates" choice is "Every update" (`agentProgress`). That choice
+  refines "Agent replies": with replies off, progress is off too.
+
+"Final results only" (the default) means work that finished, failed or needs
+you: answers, failure messages and agent requests still notify. Text approval
+prompts are never flagged, because the agent is waiting on a person. The same
+account-wide choice gates in-app (desktop and open-tab) notifications, so the
+desktop app shows it in Settings too.
+
+Gateways that predate the flag send unflagged messages; they keep the
+wait-for-the-run behaviour above.
 
 Settings are account-wide and stored on the server, because a closed browser
 cannot consult local settings. "Show message previews" off replaces message
-text with "Sent you a message" / "Mentioned you" / "Replied".
+text with "Sent you a message" / "Mentioned you" / "Replied" / "Still working".
 
 ## How it works
 

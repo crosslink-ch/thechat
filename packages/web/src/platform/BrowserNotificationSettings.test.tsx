@@ -40,11 +40,14 @@ vi.mock("./push", async () => {
     enablePush: push.enablePush,
     disablePush: push.disablePush,
     sendTestPush: push.sendTestPush,
+    pushDeliveryActive: () => false,
     isIosDevice: () => false,
   };
 });
 
 import { settingsPrimaryButton } from "@thechat/client/components/SettingsSection";
+import { useAuthStore } from "@thechat/client/stores/auth";
+import { useNotificationPreferencesStore } from "@thechat/client/stores/notification-preferences";
 import { BrowserNotificationSettings } from "./BrowserNotificationSettings";
 
 const defaults = {
@@ -52,11 +55,18 @@ const defaults = {
   mentions: true,
   agentReplies: true,
   agentRequests: true,
+  agentProgress: false,
   showPreviews: true,
 };
 
 beforeEach(() => {
   vi.clearAllMocks();
+  useNotificationPreferencesStore.getState().reset();
+  useAuthStore.setState({
+    token: null,
+    loading: false,
+    user: { id: "u-me", name: "Me", email: "me@example.com", avatar: null, type: "human" },
+  });
   push.set({ state: "off" });
   api.get.mockResolvedValue({ data: { ...defaults }, error: null });
   api.patch.mockImplementation(async (changes: object) => ({
@@ -116,6 +126,34 @@ describe("BrowserNotificationSettings", () => {
     fireEvent.click(previews);
     expect(await screen.findByRole("alert")).toHaveTextContent("Couldn't save. Try again.");
     expect(previews).toBeChecked();
+  });
+
+  it("defaults agent updates to final results only and saves every update account-wide", async () => {
+    render(<BrowserNotificationSettings />);
+    const group = await screen.findByRole("radiogroup", { name: "Agent updates" });
+    const finalOnly = screen.getByRole("radio", { name: /Final results only/ });
+    const everyUpdate = screen.getByRole("radio", { name: /Every update/ });
+    expect(group).toContainElement(finalOnly);
+    await waitFor(() => expect(finalOnly).toBeChecked());
+    expect(everyUpdate).not.toBeChecked();
+
+    fireEvent.click(everyUpdate);
+    await waitFor(() => expect(api.patch).toHaveBeenCalledWith({ agentProgress: true }, expect.anything()));
+    expect(everyUpdate).toBeChecked();
+    // The same choice drives in-app notifications, not only this browser's push.
+    expect(useNotificationPreferencesStore.getState().preferences?.agentProgress).toBe(true);
+
+    api.patch.mockResolvedValueOnce({ data: null, error: { status: 500 } });
+    fireEvent.click(finalOnly);
+    expect(await screen.findByRole("alert")).toHaveTextContent("Couldn't save. Try again.");
+    expect(everyUpdate).toBeChecked();
+  });
+
+  it("disables agent updates while agent replies are off", async () => {
+    api.get.mockResolvedValue({ data: { ...defaults, agentReplies: false }, error: null });
+    render(<BrowserNotificationSettings />);
+    expect(await screen.findByText("Agent replies are off")).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: /Every update/ })).toBeDisabled();
   });
 
   it("hides the choices where background notifications cannot work", () => {

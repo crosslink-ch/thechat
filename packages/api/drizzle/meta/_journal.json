@@ -148,6 +148,13 @@
       "when": 1793187564515,
       "tag": "0020_web_push_notifications",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1793546672719,
+      "tag": "0021_agent_progress_notifications",
+      "breakpoints": true
     }
   ]
 }

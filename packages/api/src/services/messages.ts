@@ -64,6 +64,7 @@ export async function getMessages(
       senderId: messages.senderId,
       content: messages.content,
       parts: messages.parts,
+      interim: messages.interim,
       createdAt: messages.createdAt,
       senderName: users.name,
       senderType: users.type,
@@ -105,6 +106,7 @@ export async function getMessageByIdForParticipant(
       senderId: messages.senderId,
       content: messages.content,
       parts: messages.parts,
+      interim: messages.interim,
       createdAt: messages.createdAt,
       senderName: users.name,
       senderType: users.type,
@@ -650,6 +652,7 @@ function toChatMessage(
     senderType: "human" | "bot";
     content: string;
     parts: typeof messages.$inferSelect.parts;
+    interim?: boolean;
     createdAt: Date;
   },
   messageAttachments: ChatMessage["attachments"],
@@ -666,6 +669,7 @@ function toChatMessage(
     parts: row.parts ?? null,
     attachments: messageAttachments,
     reactions,
+    ...(row.interim ? { interim: true as const } : {}),
     createdAt: row.createdAt.toISOString(),
   };
 }

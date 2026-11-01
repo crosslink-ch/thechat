@@ -28,6 +28,8 @@ const messageSchema = z.object({
   attachmentIds: z.array(z.string().uuid()).max(5).default([]),
   platformMessageId: z.string().trim().min(1).max(255).nullish(),
   complete: z.boolean().optional(),
+  /** A progress update ("⏳ Working"), not the run's answer. */
+  interim: z.boolean().optional(),
 }).refine(
   (value) => value.content.trim().length > 0 || value.attachmentIds.length > 0,
   { message: "Message text or at least one attachment is required" },
@@ -232,6 +234,7 @@ export const hermesPlatformRoutes = new Elysia({ prefix: "/hermes-platform" })
         attachmentIds: parsed.data.attachmentIds,
         platformMessageId: parsed.data.platformMessageId ?? null,
         complete: parsed.data.complete,
+        interim: parsed.data.interim === true,
       });
     } catch (e: any) {
       set.status = e instanceof ServiceError ? e.status : 500;
