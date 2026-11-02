@@ -830,3 +830,156 @@ describe("Task deletion", () => {
     ).toBe(200);
   });
 });
+
+describe("Task branches", () => {
+  /** What Hermes is told when the first message of `threadId` is claimed. */
+  async function claimedSessionIntent(
+    fixture: Awaited<ReturnType<typeof hermesFixture>>,
+    threadId: string,
+  ) {
+    const messageId = await postMessage(fixture.dmId, fixture.owner.token, "First message", threadId);
+    await settleMessageEvents(fixture.dmId);
+    await db.insert(botInvocations).values({
+      botId: fixture.bot.id,
+      conversationId: fixture.dmId,
+      threadId,
+      triggerMessageId: messageId,
+      adapterKind: "hermes",
+      status: "queued",
+      requestJson: { platform: "thechat" },
+      responseJson: { status: "dispatch_pending" },
+    });
+    const claimed = await req("GET", "/hermes-platform/events?limit=10", undefined, fixture.bot.apiKey);
+    expect(claimed.status).toBe(200);
+    const event = (claimed.body.events as Array<{ threadId: string; sessionIntent?: unknown }>)
+      .find((item) => item.threadId === threadId);
+    expect(event).toBeDefined();
+    return event!.sessionIntent ?? null;
+  }
+
+  async function branchState(ids: string[]) {
+    const rows = await db
+      .select({
+        id: conversationThreads.id,
+        from: conversationThreads.branchFromThreadId,
+        pending: conversationThreads.branchPending,
+      })
+      .from(conversationThreads)
+      .where(inArray(conversationThreads.id, ids));
+    return Object.fromEntries(rows.map((row) => [row.id, { from: row.from, pending: row.pending }]));
+  }
+
+  test("deleting a task keeps its branches, attached one level up", async () => {
+    const fixture = await hermesFixture("Branch Delete");
+    const { owner, dmId } = fixture;
+    // Plan → Draft (branch) → Draft review (branch of the branch), plus a
+    // branch of General with its own branch.
+    const plan = await createTask(dmId, owner.token, { title: "Plan" });
+    const draft = await createTask(dmId, owner.token, { title: "Draft", branchFromThreadId: plan.id });
+    const review = await createTask(dmId, owner.token, { title: "Draft review", branchFromThreadId: draft.id });
+    const fromGeneral = await createTask(dmId, owner.token, { title: "Idea", branchFromThreadId: null });
+    const ideaFollowUp = await createTask(dmId, owner.token, {
+      title: "Idea follow-up",
+      branchFromThreadId: fromGeneral.id,
+    });
+
+    realtimeEvents.length = 0;
+    const deletedDraft = await req("DELETE", `/conversations/threads/${dmId}/${draft.id}`, undefined, owner.token);
+    expect(deletedDraft).toMatchObject({ status: 200, body: { reparentedBranchIds: [review.id] } });
+    expect((await branchState([review.id]))[review.id]).toEqual({ from: plan.id, pending: true });
+    // Open clients regroup the branch before they drop its old source.
+    const order = realtimeEvents
+      .filter((event) => event.type === "ws.event")
+      .map((event) => (event.type === "ws.event" ? event.event : null)!)
+      .filter((event) => event.type.startsWith("conversation_thread"))
+      .map((event) =>
+        event.type === "conversation_thread_updated"
+          ? `updated:${event.thread.id}:${event.thread.branchFromThreadId}`
+          : event.type === "conversation_thread_deleted"
+            ? `deleted:${event.threadId}`
+            : event.type,
+      );
+    expect(order).toEqual([`updated:${review.id}:${plan.id}`, `deleted:${draft.id}`]);
+
+    // Hermes now continues "Draft review" from "Plan", not from General.
+    expect(await claimedSessionIntent(fixture, review.id)).toEqual({
+      type: "branch",
+      fromThreadId: plan.id,
+      title: "Draft review",
+    });
+
+    // Deleting the plain root makes its branch a plain task: nothing to copy.
+    expect(
+      (await req("DELETE", `/conversations/threads/${dmId}/${plan.id}`, undefined, owner.token)).status,
+    ).toBe(200);
+    expect((await branchState([review.id]))[review.id]).toEqual({ from: null, pending: false });
+
+    // A branch of a General branch moves up to General and still branches.
+    expect(
+      (await req("DELETE", `/conversations/threads/${dmId}/${fromGeneral.id}`, undefined, owner.token)).status,
+    ).toBe(200);
+    expect((await branchState([ideaFollowUp.id]))[ideaFollowUp.id]).toEqual({ from: null, pending: true });
+    expect(await claimedSessionIntent(fixture, ideaFollowUp.id)).toEqual({
+      type: "branch",
+      fromThreadId: null,
+      title: "Idea follow-up",
+    });
+  });
+
+  test("moving a task to another project takes its branches along", async () => {
+    const fixture = await hermesFixture("Branch Move");
+    const { owner, dmId } = fixture;
+    const research = await createProject(dmId, owner.token, "Research");
+    const launch = await createProject(dmId, owner.token, "Launch");
+    const root = await createTask(dmId, owner.token, { title: "Pricing", projectId: research.id });
+    const child = await createTask(dmId, owner.token, { title: "Pricing EU", branchFromThreadId: root.id });
+    const grandchild = await createTask(dmId, owner.token, { title: "Pricing DE", branchFromThreadId: child.id });
+    const elsewhere = await createTask(dmId, owner.token, { title: "Pricing US", branchFromThreadId: root.id });
+    const elsewhereChild = await createTask(dmId, owner.token, {
+      title: "Pricing US west",
+      branchFromThreadId: elsewhere.id,
+    });
+    const unrelated = await createTask(dmId, owner.token, { title: "Unrelated", projectId: research.id });
+    // Branches inherit their source's project; the user files one elsewhere.
+    expect([child.projectId, grandchild.projectId]).toEqual([research.id, research.id]);
+    await req("PATCH", `/conversations/threads/${dmId}`, { threadId: elsewhere.id, projectId: launch.id }, owner.token);
+    // That branch's own branch went with it.
+    const projectOf = async () =>
+      Object.fromEntries(
+        (
+          await db
+            .select({ id: conversationThreads.id, projectId: conversationThreads.projectId })
+            .from(conversationThreads)
+            .where(eq(conversationThreads.conversationId, dmId))
+        ).map((row) => [row.id, row.projectId]),
+      );
+    expect((await projectOf())[elsewhereChild.id]).toBe(launch.id);
+
+    realtimeEvents.length = 0;
+    const moved = await req(
+      "PATCH",
+      `/conversations/threads/${dmId}`,
+      { threadId: root.id, projectId: null },
+      owner.token,
+    );
+    expect(moved).toMatchObject({ status: 200, body: { id: root.id, projectId: null } });
+    expect(await projectOf()).toEqual({
+      [root.id]: null,
+      [child.id]: null,
+      [grandchild.id]: null,
+      // Filed elsewhere on purpose, so it stays, with what grew from it.
+      [elsewhere.id]: launch.id,
+      [elsewhereChild.id]: launch.id,
+      [unrelated.id]: research.id,
+    });
+    // Every open client hears about each task that moved.
+    expect(
+      new Set(wsEvents("conversation_thread_updated").map((event) => event.event.type === "conversation_thread_updated" ? event.event.thread.id : null)),
+    ).toEqual(new Set([root.id, child.id, grandchild.id]));
+
+    // Renaming never moves branches.
+    realtimeEvents.length = 0;
+    await req("PATCH", `/conversations/threads/${dmId}`, { threadId: root.id, title: "Pricing 2027" }, owner.token);
+    expect(wsEvents("conversation_thread_updated")).toHaveLength(1);
+  });
+});

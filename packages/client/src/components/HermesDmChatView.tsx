@@ -9,6 +9,7 @@ import {
   useMemo,
   useLayoutEffect,
   useState,
+  type ReactNode,
 } from "react";
 import { flushSync } from "react-dom";
 import { InputBar, type InputSendResult } from "./InputBar";
@@ -78,6 +79,8 @@ interface HermesDmChatViewProps {
   conversationId?: string;
   token?: string | null;
   composerKey?: string | number;
+  /** Shown instead of the default empty-conversation text, e.g. for a new branch. */
+  emptyState?: ReactNode;
 }
 
 export function HermesDmChatView({
@@ -106,6 +109,7 @@ export function HermesDmChatView({
   conversationId,
   token,
   composerKey,
+  emptyState,
 }: HermesDmChatViewProps) {
   // Workspace names shown as @mention pills; mentions of you are highlighted.
   const selfId = useAuthStore((state) => state.user?.id ?? null);
@@ -405,7 +409,9 @@ export function HermesDmChatView({
             </div>
           )}
           {!loading && messages.length === 0 && (
-            <div className="flex flex-1 flex-col items-center justify-center text-[1rem] text-text-dimmed">No messages yet. Start the conversation!</div>
+            <div className="flex flex-1 flex-col items-center justify-center text-[1rem] text-text-dimmed">
+              {emptyState ?? "No messages yet. Start the conversation!"}
+            </div>
           )}
           {messages.map((msg, index) => {
             const requestsBefore = requestTimeline.beforeMessage.get(msg.id);

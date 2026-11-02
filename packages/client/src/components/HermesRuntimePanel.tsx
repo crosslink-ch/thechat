@@ -14,6 +14,14 @@ import type { Command } from "../commands";
 import { useScopedCommands } from "../hooks/useScopedCommands";
 import { NO_PROJECT_DROP_TARGET, useTaskDrag } from "../hooks/useTaskDrag";
 import { useTaskProjectExpansionStore } from "../stores/task-project-expansion";
+import { useTaskBranchExpansionStore } from "../stores/task-branch-expansion";
+import {
+  buildTaskTree,
+  isBranch,
+  subtreeThreads,
+  taskLineage,
+  type TaskTreeNode,
+} from "../lib/task-tree";
 import { useMediaQuery } from "./ResponsiveShell";
 import { HeaderAction } from "./HeaderActions";
 import {
@@ -23,7 +31,9 @@ import {
   FolderInput,
   FolderPlus,
   GitBranch,
+  GitBranchPlus,
   Inbox,
+  MessageSquareText,
   Pencil,
   Plus,
   Trash2,
@@ -76,6 +86,7 @@ export function HermesRuntimePanel({
   onDeleteProject,
   onMoveThread,
   onDeleteThread,
+  onBranchThread,
 }: {
   title?: string;
   botName: string;
@@ -112,6 +123,8 @@ export function HermesRuntimePanel({
   onDeleteProject?: (projectId: string) => Promise<unknown>;
   onMoveThread?: (threadId: string, projectId: string | null) => Promise<unknown>;
   onDeleteThread?: (threadId: string) => Promise<unknown>;
+  /** Starts a branch of a task; Hermes continues that task's conversation in it. */
+  onBranchThread?: (threadId: string) => void;
 }) {
   const mobile = useMediaQuery("(max-width: 899px)");
   const [open, setOpen] = useState(false);
@@ -261,6 +274,25 @@ export function HermesRuntimePanel({
   useEffect(() => {
     if (activeProjectId) setProjectExpanded(activeProjectId, true);
   }, [activeProjectId, activeThreadId, setProjectExpanded]);
+  const collapsedBranchIds = useTaskBranchExpansionStore((state) => state.collapsedThreadIds);
+  const setBranchesCollapsed = useTaskBranchExpansionStore((state) => state.setBranchesCollapsed);
+  const expandBranches = useTaskBranchExpansionStore((state) => state.expandBranches);
+  // Likewise unfold every task the selected branch grew from, so it is never
+  // hidden inside a folded tree when it is opened from elsewhere.
+  const activeAncestorKey = useMemo(
+    () =>
+      draftTaskActive || !activeThread
+        ? ""
+        : taskLineage(activeThread, threads).ancestors.map((thread) => thread.id).join(","),
+    [activeThread, draftTaskActive, threads],
+  );
+  useEffect(() => {
+    if (activeAncestorKey) expandBranches(activeAncestorKey.split(","));
+  }, [activeAncestorKey, activeThreadId, expandBranches]);
+  const threadsById = useMemo(
+    () => new Map(threads.map((thread) => [thread.id, thread])),
+    [threads],
+  );
   useEffect(() => setOpen(false), [mobile, botName]);
   useEffect(() => {
     const dismiss = () => setOpen(false);
@@ -305,11 +337,78 @@ export function HermesRuntimePanel({
       .map((invocation) => invocation.threadId),
   );
 
-  function renderThreadRow(thread: ConversationThreadPublic) {
+  /** Where a branch listed without its source came from, shown under its title. */
+  function branchOrigin(thread: ConversationThreadPublic) {
+    if (!isBranch(thread)) return undefined;
+    if (!thread.branchFromThreadId) return "from General";
+    const source = threadsById.get(thread.branchFromThreadId);
+    return source ? `from ${source.title}` : undefined;
+  }
+
+  function renderTaskTree(tasks: ConversationThreadPublic[]) {
+    return buildTaskTree(tasks).map((node) => renderTaskNode(node, 0));
+  }
+
+  function renderTaskNode(node: TaskTreeNode, depth: number): ReactNode {
+    const { thread } = node;
+    const hasBranches = node.children.length > 0;
+    const collapsed = hasBranches && collapsedBranchIds.has(thread.id);
+    const hidden = collapsed ? subtreeThreads(node) : [];
+    return (
+      <div key={thread.id} className="flex min-w-0 flex-col gap-0.5">
+        {renderThreadRow(thread, {
+          origin: depth === 0 ? branchOrigin(thread) : undefined,
+          branches: hasBranches
+            ? {
+                count: node.descendantCount,
+                collapsed,
+                onToggle: () => setBranchesCollapsed(thread.id, !collapsed),
+                hiddenNeedsApproval: hidden.some(
+                  (item) => approvalThreadIds?.has(item.id) ?? false,
+                ),
+                hiddenUnread: hidden.some(
+                  (item) =>
+                    item.id !== activeThreadId && (unreadThreadIds?.has(item.id) ?? false),
+                ),
+                hiddenRunning: hidden.some((item) => runningThreadIds.has(item.id)),
+                hiddenActive: hidden.some((item) => item.id === activeThreadId),
+              }
+            : undefined,
+        })}
+        {hasBranches && !collapsed && (
+          <div
+            role="group"
+            aria-label={`Branches of ${thread.title}`}
+            data-task-branches={thread.id}
+            // The guide line runs under the source's icon, and a branch row's
+            // own accent bar lands on it, so the open branch lights up its
+            // segment of the line. Deep trees stop indenting so titles stay
+            // readable in the narrow panel.
+            className={`flex min-w-0 flex-col gap-0.5 border-l border-border-subtle ${
+              depth < 2 ? "ml-[23px]" : "ml-2"
+            }`}
+          >
+            {node.children.map((child) => renderTaskNode(child, depth + 1))}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  function renderThreadRow(
+    thread: ConversationThreadPublic,
+    tree: Pick<ThreadRowProps, "origin" | "branches"> = {},
+  ) {
     return (
       <ThreadRow
-        key={thread.id}
         thread={thread}
+        branch={isBranch(thread)}
+        origin={tree.origin}
+        branches={tree.branches}
+        onBranch={onBranchThread ? () => {
+          setOpen(false);
+          onBranchThread(thread.id);
+        } : undefined}
         active={thread.id === activeThreadId}
         activeCount={
           (activeCountsByThread.get(thread.id) ?? 0) +
@@ -485,7 +584,7 @@ export function HermesRuntimePanel({
                             onSelect={() => onCreateThread?.(draftGroupId)}
                           />
                         )}
-                        {tasks.map(renderThreadRow)}
+                        {renderTaskTree(tasks)}
                         {tasks.length === 0 && !draftHere && (
                           <div className="px-2.5 py-1.5 text-[0.786rem] text-text-dimmed">
                             {draggable ? "Drag tasks here" : "No tasks yet"}
@@ -516,7 +615,7 @@ export function HermesRuntimePanel({
                         onSelect={() => onCreateThread?.(null)}
                       />
                     )}
-                    {unfiled.map(renderThreadRow)}
+                    {renderTaskTree(unfiled)}
                     {unfiled.length === 0 && !draftHere && (
                       <div className="px-2.5 py-1.5 text-[0.786rem] text-text-dimmed">
                         Drop here to remove from its project
@@ -540,7 +639,7 @@ export function HermesRuntimePanel({
                     onSelect={() => onCreateThread?.()}
                   />
                 )}
-                {threads.map(renderThreadRow)}
+                {renderTaskTree(threads)}
               </div>
               {loadMoreButton(null, "")}
             </div>
@@ -600,24 +699,27 @@ export function HermesRuntimePanel({
   );
 }
 
-function ThreadRow({
-  thread,
-  active,
-  activeCount,
-  running = false,
-  needsApproval,
-  unread,
-  onSelect,
-  onRename,
-  editing,
-  onEditingChange: setEditing,
-  dragging = false,
-  dragSourceProps,
-  onMove,
-  onNewProjectFromTask,
-  onDelete,
-}: {
+/** A task's folded or unfolded branches, and what is going on inside them. */
+interface ThreadRowBranches {
+  /** Branches below the task at any depth. */
+  count: number;
+  collapsed: boolean;
+  onToggle: () => void;
+  /** Folded branches still surface what needs attention on the source row. */
+  hiddenNeedsApproval: boolean;
+  hiddenUnread: boolean;
+  hiddenRunning: boolean;
+  hiddenActive: boolean;
+}
+
+interface ThreadRowProps {
   thread: ConversationThreadPublic;
+  /** The task was branched from another task or from General. */
+  branch?: boolean;
+  /** Where a branch shown away from its source came from, e.g. "from General". */
+  origin?: string;
+  branches?: ThreadRowBranches;
+  onBranch?: () => void;
   active: boolean;
   activeCount: number;
   running?: boolean;
@@ -632,7 +734,30 @@ function ThreadRow({
   onMove?: () => void;
   onNewProjectFromTask?: () => void;
   onDelete?: () => void;
-}) {
+}
+
+function ThreadRow({
+  thread,
+  branch = false,
+  origin,
+  branches,
+  onBranch,
+  active,
+  activeCount,
+  running = false,
+  needsApproval,
+  unread,
+  onSelect,
+  onRename,
+  editing,
+  onEditingChange: setEditing,
+  dragging = false,
+  dragSourceProps,
+  onMove,
+  onNewProjectFromTask,
+  onDelete,
+}: ThreadRowProps) {
+  const TaskIcon = branch ? GitBranch : MessageSquareText;
   const [menuOpen, setMenuOpen] = useState(false);
   const [draftTitle, setDraftTitle] = useState(thread.title);
   const [saving, setSaving] = useState(false);
@@ -723,7 +848,7 @@ function ThreadRow({
           aria-hidden="true"
         />
         <span className={`flex size-7 shrink-0 items-center justify-center rounded-md border ${iconTone}`}>
-          <GitBranch size={14} aria-hidden="true" />
+          <TaskIcon size={14} aria-hidden="true" />
         </span>
         <span className="flex min-w-0 flex-1 flex-col gap-1">
           <input
@@ -764,13 +889,14 @@ function ThreadRow({
     );
   }
 
-  const hasMenu = !!onMove || !!onNewProjectFromTask || !!onDelete;
+  const hasMenu = !!onBranch || !!onMove || !!onNewProjectFromTask || !!onDelete;
   return (
     <div
       className={`group relative flex w-full items-center rounded-lg transition-[colors,opacity] duration-150 ${rowTone} ${
         dragging ? "opacity-40" : ""
       }`}
       data-task-row={thread.id}
+      data-task-branch={branch ? "true" : undefined}
       {...dragSourceProps}
     >
       <button
@@ -780,6 +906,7 @@ function ThreadRow({
         }`}
         onClick={() => onSelect?.(thread.id)}
         title={dragSourceProps ? "Drag onto a project to move" : undefined}
+        aria-current={active ? "true" : undefined}
       >
         <span
           className={`absolute top-2.5 bottom-2.5 left-0 w-0.5 rounded-full ${
@@ -791,15 +918,25 @@ function ThreadRow({
           {running && !needsApproval ? (
             <OrbLoader state="composing" size={20} />
           ) : (
-            <GitBranch size={14} aria-hidden="true" />
+            <TaskIcon
+              size={14}
+              aria-label={branch ? "Branch" : undefined}
+              aria-hidden={branch ? undefined : "true"}
+            />
           )}
         </span>
         <span className="flex min-w-0 flex-1 flex-col">
           <span className="truncate text-[0.857rem] font-medium">
             {thread.title}
           </span>
-          <span className="mt-0.5 text-[0.714rem] text-text-dimmed">
-            {formatSessionTime(thread.lastActivityAt)}
+          <span className="mt-0.5 flex min-w-0 gap-1 text-[0.714rem] text-text-dimmed">
+            <span className="shrink-0">{formatSessionTime(thread.lastActivityAt)}</span>
+            {origin && (
+              <>
+                <span aria-hidden="true">·</span>
+                <span className="min-w-0 truncate" title={origin}>{origin}</span>
+              </>
+            )}
           </span>
         </span>
         <ThreadRowBadges
@@ -808,6 +945,9 @@ function ThreadRow({
           unread={unread}
         />
       </button>
+      {branches && (
+        <BranchToggle branches={branches} title={thread.title} />
+      )}
       {onRename && (
         <button
           ref={renameButtonRef}
@@ -847,6 +987,15 @@ function ThreadRow({
               loop
               className={`z-50 ${menuContentClass}`}
             >
+              {onBranch && (
+                <DropdownMenu.Item className={menuItemClass} onSelect={onBranch}>
+                  <GitBranchPlus size={14} className="text-text-dimmed" aria-hidden="true" />
+                  Branch from here
+                </DropdownMenu.Item>
+              )}
+              {onBranch && (onMove || onNewProjectFromTask) && (
+                <DropdownMenu.Separator className={menuSeparatorClass} />
+              )}
               {onMove && (
                 <DropdownMenu.Item className={menuItemClass} onSelect={onMove}>
                   <FolderInput size={14} className="text-text-dimmed" aria-hidden="true" />
@@ -859,7 +1008,7 @@ function ThreadRow({
                   New project from task...
                 </DropdownMenu.Item>
               )}
-              {onDelete && (onMove || onNewProjectFromTask) && (
+              {onDelete && (onBranch || onMove || onNewProjectFromTask) && (
                 <DropdownMenu.Separator className={menuSeparatorClass} />
               )}
               {onDelete && (
@@ -873,6 +1022,67 @@ function ThreadRow({
         </DropdownMenu.Root>
       )}
     </div>
+  );
+}
+
+/**
+ * Folds or unfolds a task's branches. It shows how many there are, and while
+ * folded it carries the strongest signal from inside: a pending review, then
+ * a run in progress, then unread replies, so nothing is lost by folding.
+ */
+function BranchToggle({ branches, title }: { branches: ThreadRowBranches; title: string }) {
+  const { count, collapsed, onToggle } = branches;
+  const signal = !collapsed
+    ? null
+    : branches.hiddenNeedsApproval
+      ? "review"
+      : branches.hiddenRunning
+        ? "running"
+        : branches.hiddenUnread
+          ? "unread"
+          : branches.hiddenActive
+            ? "open"
+            : null;
+  const signalLabel = {
+    review: "a branch needs your review",
+    running: "a branch is working",
+    unread: "unread branches",
+    open: "contains the open task",
+  } as const;
+  const label = `${collapsed ? "Show" : "Hide"} ${count} ${count === 1 ? "branch" : "branches"} of ${title}${
+    signal ? `, ${signalLabel[signal]}` : ""
+  }`;
+  return (
+    <button
+      type="button"
+      data-no-task-drag
+      onClick={onToggle}
+      aria-expanded={!collapsed}
+      aria-label={label}
+      title={label}
+      className={`relative -mr-1 flex h-6 shrink-0 cursor-pointer items-center gap-px rounded-md px-1 text-[0.714rem] font-medium tabular-nums transition-colors duration-150 hover:bg-hover hover:text-text ${
+        signal === "review"
+          ? "text-warning-text"
+          : signal === "open"
+            ? "text-accent"
+            : "text-text-dimmed"
+      }`}
+    >
+      <span>{count}</span>
+      <ChevronRight
+        size={12}
+        aria-hidden="true"
+        className={`transition-transform duration-150 ${collapsed ? "" : "rotate-90"}`}
+      />
+      {(signal === "unread" || signal === "running" || signal === "review") && (
+        <span
+          aria-hidden="true"
+          className={`absolute -top-0.5 right-0 size-1.5 rounded-full ${
+            signal === "review" ? "bg-warning-text" : "bg-accent"
+          } ${signal === "running" ? "animate-pulse" : ""}`}
+        />
+      )}
+    </button>
   );
 }
 

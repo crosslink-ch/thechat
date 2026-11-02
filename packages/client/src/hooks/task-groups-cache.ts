@@ -236,6 +236,31 @@ export function removeThread(data: TaskGroupsData, threadId: string): TaskGroups
   };
 }
 
+/**
+ * Mirrors a deleted task's branches moving up one level on the server: each
+ * loaded branch of `deleted` now comes from `deleted`'s own source.
+ */
+export function reparentBranches(
+  data: TaskGroupsData,
+  deleted: Pick<ConversationThreadPublic, "id" | "branchFromThreadId" | "branchPending">,
+): TaskGroupsData {
+  const reparent = (item: ConversationThreadPublic) =>
+    item.branchFromThreadId === deleted.id
+      ? {
+          ...item,
+          branchFromThreadId: deleted.branchFromThreadId ?? null,
+          branchPending: deleted.branchPending ?? false,
+        }
+      : item;
+  if (!data.groups.some((group) => group.items.some((item) => item.branchFromThreadId === deleted.id))) {
+    return data;
+  }
+  return {
+    ...data,
+    groups: data.groups.map((group) => ({ ...group, items: group.items.map(reparent) })),
+  };
+}
+
 /** Moves a loaded task to the top of its group; null when it is not loaded. */
 export function touchThread(
   data: TaskGroupsData,

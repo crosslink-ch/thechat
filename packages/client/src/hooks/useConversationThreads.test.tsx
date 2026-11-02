@@ -313,3 +313,81 @@ describe("useConversationThreads", () => {
     expect(result.current.threads).toHaveLength(4);
   });
 });
+
+describe("useConversationThreads branches", () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+  });
+
+  const branchOf = (id: string, from: string, minutesAgo: number, projectId: string | null = null) => ({
+    ...task(id, minutesAgo, projectId),
+    branchPending: true,
+    branchFromThreadId: from,
+  });
+  // Whole trees on one page, so every branch is loaded.
+  const render = () =>
+    renderHook(
+      () => useConversationThreads("conversation-1", "test-token", true, { pageSize: 50 }),
+      { wrapper: createQueryWrapper() },
+    );
+  const fieldsOf = (result: HookResult, id: string) => {
+    const thread = result.current.threads.find((item) => item.id === id);
+    return thread && { projectId: thread.projectId ?? null, from: thread.branchFromThreadId ?? null };
+  };
+
+  it("moves a task's branches with it at once and puts them back if the move fails", async () => {
+    const server = fakeServer([
+      task("root", 1),
+      branchOf("child", "root", 2),
+      branchOf("grandchild", "child", 3),
+      branchOf("filed", "root", 4, SECURITY),
+    ]);
+    const { result } = render();
+    await waitFor(() => expect(result.current.threads).toHaveLength(4));
+
+    let resolvePatch!: (value: unknown) => void;
+    server.patch.mockImplementationOnce(
+      () => new Promise<any>((resolve) => { resolvePatch = resolve; }),
+    );
+    let move!: Promise<unknown>;
+    act(() => {
+      move = result.current.moveThread("root", SECURITY);
+    });
+    // Before the server answers, the whole tree is already in Security.
+    await waitFor(() => expect(fieldsOf(result, "grandchild")?.projectId).toBe(SECURITY));
+    expect(fieldsOf(result, "child")?.projectId).toBe(SECURITY);
+    expect(group(result, SECURITY)?.totalCount).toBe(4);
+    expect(group(result, null)?.totalCount).toBe(0);
+
+    await act(async () => {
+      resolvePatch({ error: { status: 500, value: { error: "Database unavailable" } } });
+      await expect(move).rejects.toThrow("Database unavailable");
+    });
+    await waitFor(() => expect(fieldsOf(result, "root")?.projectId).toBeNull());
+    expect(fieldsOf(result, "child")?.projectId).toBeNull();
+    expect(fieldsOf(result, "grandchild")?.projectId).toBeNull();
+    // The branch that was already filed elsewhere never moved.
+    expect(fieldsOf(result, "filed")?.projectId).toBe(SECURITY);
+    expect(group(result, null)?.totalCount).toBe(3);
+  });
+
+  it("keeps a deleted task's branches, attached to the task it came from", async () => {
+    fakeServer([
+      task("root", 1),
+      branchOf("middle", "root", 2),
+      branchOf("leaf", "middle", 3),
+      branchOf("leaf-2", "middle", 4),
+    ]);
+    const { result } = render();
+    await waitFor(() => expect(result.current.threads).toHaveLength(4));
+
+    await act(async () => {
+      await result.current.deleteThread("middle");
+    });
+    await waitFor(() =>
+      expect(result.current.threads.map((thread) => thread.id)).toEqual(["root", "leaf", "leaf-2"]),
+    );
+    expect(fieldsOf(result, "leaf")?.from).toBe("root");
+    expect(fieldsOf(result, "leaf-2")?.from).toBe("root");
+  });
+});

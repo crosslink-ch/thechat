@@ -9,6 +9,7 @@ import type {
 import { api } from "../lib/api";
 import { authHeaders, edenErrorMessage } from "../lib/eden";
 import { wsEvents, type WsEvents } from "../lib/ws-events";
+import { branchesInProject } from "../lib/task-tree";
 import {
   appendGroupPage,
   findLoadedThread,
@@ -17,6 +18,7 @@ import {
   normalizeThread,
   normalizeThreadPage,
   removeThread,
+  reparentBranches,
   revealThread,
   taskGroupSummaries,
   taskGroupsFromServer,
@@ -325,16 +327,23 @@ export function useConversationThreads(
     [applyServerThread, conversationId, token],
   );
 
-  /** Files a task under a project, or unfiles it with `null`. */
+  /**
+   * Files a task under a project, or unfiles it with `null`. Its branches
+   * that were filed with it move too, as the server does.
+   */
   const moveThread = useCallback(
     async (threadId: string, projectId: string | null) => {
       if (!conversationId || !isAuthenticated(token)) return null;
-      const current = findLoadedThread(
-        queryClient.getQueryData<TaskGroupsData>(queryKey),
-        threadId,
-      );
+      const data = queryClient.getQueryData<TaskGroupsData>(queryKey);
+      const current = findLoadedThread(data, threadId);
+      const branches = current
+        ? branchesInProject(threadId, current.projectId ?? null, loadedThreads(data))
+        : [];
+      const before = current ? [current, ...branches] : [];
       // Optimistic so drag and drop feels immediate; rolled back on failure.
-      if (current) updateCache((data) => upsertThread(data, { ...current, projectId }));
+      for (const item of before) {
+        updateCache((cached) => upsertThread(cached, { ...item, projectId }));
+      }
       try {
         const thread = await updateConversationThread(conversationId, token, {
           threadId,
@@ -343,7 +352,7 @@ export function useConversationThreads(
         applyServerThread(thread);
         return thread;
       } catch (error) {
-        if (current) updateCache((data) => upsertThread(data, current));
+        for (const item of before) updateCache((cached) => upsertThread(cached, item));
         throw error;
       }
     },
@@ -353,11 +362,17 @@ export function useConversationThreads(
   const deleteThread = useCallback(
     async (threadId: string) => {
       if (!conversationId || !isAuthenticated(token)) return;
+      const deleted = findLoadedThread(
+        queryClient.getQueryData<TaskGroupsData>(queryKey),
+        threadId,
+      );
       await deleteConversationThread(conversationId, token, threadId);
       queryClient.removeQueries({ queryKey: singleThreadQueryKey(conversationId, threadId) });
+      // Its branches stay, attached to the deleted task's own source.
+      if (deleted) updateCache((data) => reparentBranches(data, deleted));
       updateCache((data) => removeThread(data, threadId));
     },
-    [conversationId, queryClient, token, updateCache],
+    [conversationId, queryClient, queryKey, token, updateCache],
   );
 
   const touchThread = useCallback(

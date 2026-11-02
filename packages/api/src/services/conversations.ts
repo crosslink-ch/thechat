@@ -721,21 +721,35 @@ export async function updateConversationThread(
   if (input.title === undefined && input.projectId === undefined) {
     throw new ServiceError("Nothing to update", 400);
   }
-  const thread = await db.transaction(async (tx) => {
+  const { thread, movedBranches } = await db.transaction(async (tx) => {
     const access = await requireConversationMutationAccess(tx, conversationId, userId, options);
 
+    const now = new Date();
     const changes: Partial<typeof conversationThreads.$inferInsert> = {
-      updatedAt: new Date(),
+      updatedAt: now,
     };
     if (input.title !== undefined) {
       changes.title = normalizeThreadTitle(input.title);
     }
+    let previousProjectId: string | null | undefined;
     if (input.projectId !== undefined) {
       requireHuman(access);
       if (input.projectId) {
         await requireTaskProjectInConversation(tx, conversationId, input.projectId);
       }
       changes.projectId = input.projectId;
+      const [current] = await tx
+        .select({ projectId: conversationThreads.projectId })
+        .from(conversationThreads)
+        .where(
+          and(
+            eq(conversationThreads.id, threadId),
+            eq(conversationThreads.conversationId, conversationId),
+          ),
+        )
+        .for("update")
+        .limit(1);
+      previousProjectId = current ? current.projectId : undefined;
     }
 
     const [updated] = await tx
@@ -752,16 +766,76 @@ export async function updateConversationThread(
     if (!updated) {
       throw new ServiceError("Thread not found", 404);
     }
-    return toPublicConversationThread(updated);
+
+    // A task's branches move with it, so a branch tree stays in one project.
+    // Branches the user already filed elsewhere keep their own project.
+    let movedBranches: Array<typeof conversationThreads.$inferSelect> = [];
+    if (
+      input.projectId !== undefined &&
+      previousProjectId !== undefined &&
+      previousProjectId !== input.projectId
+    ) {
+      const branchIds = await branchIdsInProject(
+        tx,
+        conversationId,
+        threadId,
+        previousProjectId,
+      );
+      if (branchIds.length > 0) {
+        movedBranches = await tx
+          .update(conversationThreads)
+          .set({ projectId: input.projectId, updatedAt: now })
+          .where(
+            and(
+              eq(conversationThreads.conversationId, conversationId),
+              inArray(conversationThreads.id, branchIds),
+            ),
+          )
+          .returning();
+      }
+    }
+    return {
+      thread: toPublicConversationThread(updated),
+      movedBranches: movedBranches.map(toPublicConversationThread),
+    };
   });
 
   // Other open clients regroup the task without reloading.
-  await publishToConversation(conversationId, {
-    type: "conversation_thread_updated",
-    conversationId,
-    thread,
-  });
+  for (const changed of [thread, ...movedBranches]) {
+    await publishToConversation(conversationId, {
+      type: "conversation_thread_updated",
+      conversationId,
+      thread: changed,
+    });
+  }
   return thread;
+}
+
+/**
+ * Every branch below a task, at any depth, that is still filed in the given
+ * project. The walk stops at a branch filed elsewhere: the user moved that
+ * branch (and what grew from it) out of the tree on purpose.
+ */
+async function branchIdsInProject(
+  executor: Parameters<Parameters<typeof db.transaction>[0]>[0],
+  conversationId: string,
+  threadId: string,
+  projectId: string | null,
+) {
+  const rows = await executor.execute<{ id: string }>(sql`
+    with recursive branches(id) as (
+      select id from conversation_threads
+       where conversation_id = ${conversationId}
+         and branch_from_thread_id = ${threadId}
+         and project_id is not distinct from ${projectId}::uuid
+      union
+      select child.id from conversation_threads child
+        join branches parent on child.branch_from_thread_id = parent.id
+       where child.conversation_id = ${conversationId}
+         and child.project_id is not distinct from ${projectId}::uuid
+    )
+    select id from branches`);
+  return [...rows].map((row) => row.id);
 }
 
 /**
@@ -919,6 +993,24 @@ export async function deleteConversationThread(
       .delete(messages)
       .where(eq(messages.threadId, thread.id))
       .returning({ id: messages.id });
+    // Branches outlive the task they came from: they move up one level, to
+    // the deleted task's own source. A branch of a plain task becomes a plain
+    // task; left to the foreign key, an unsent branch would instead start
+    // from the General lane's session.
+    const reparentedBranches = await tx
+      .update(conversationThreads)
+      .set({
+        branchFromThreadId: thread.branchFromThreadId,
+        branchPending: thread.branchPending,
+        updatedAt: now,
+      })
+      .where(
+        and(
+          eq(conversationThreads.conversationId, conversationId),
+          eq(conversationThreads.branchFromThreadId, thread.id),
+        ),
+      )
+      .returning();
     await tx.delete(conversationThreads).where(eq(conversationThreads.id, thread.id));
 
     return {
@@ -926,15 +1018,29 @@ export async function deleteConversationThread(
       deletedMessageCount: deletedMessages.length,
       deletedRequestCount: deletedRequests.length,
       deletedAttachmentCount: doomedAttachments.length,
+      reparentedBranches: reparentedBranches.map(toPublicConversationThread),
     };
   });
 
+  const { reparentedBranches, ...result } = deleted;
+  // Updates first, so a client never shows a branch of a task it just removed.
+  for (const branch of reparentedBranches) {
+    await publishToConversation(conversationId, {
+      type: "conversation_thread_updated",
+      conversationId,
+      thread: branch,
+    });
+  }
   await publishToConversation(conversationId, {
     type: "conversation_thread_deleted",
     conversationId,
-    threadId: deleted.deletedThreadId,
+    threadId: result.deletedThreadId,
   });
-  return { ok: true as const, ...deleted };
+  return {
+    ok: true as const,
+    ...result,
+    reparentedBranchIds: reparentedBranches.map((branch) => branch.id),
+  };
 }
 
 export async function requireConversationParticipant(conversationId: string, userId: string) {

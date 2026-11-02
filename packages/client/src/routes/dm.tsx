@@ -25,6 +25,12 @@ import { usePersistConversationRead } from "../hooks/usePersistConversationRead"
 import { ChannelChatView } from "../components/ChannelChatView";
 import { HermesDmChatView } from "../components/HermesDmChatView";
 import { HermesRuntimePanel } from "../components/HermesRuntimePanel";
+import { BranchEmptyState, TaskBranchBar } from "../components/TaskBranchBar";
+import { HeaderAction } from "../components/HeaderActions";
+import { iconButtonClass } from "../components/ui";
+import { GitBranchPlus } from "lucide-react";
+import { childBranches, isBranch, nextBranchTitle } from "../lib/task-tree";
+import { requestInputBarFocus } from "../stores/input-focus";
 import { closePaletteAndRefocus } from "../CommandPalette";
 import type { Command } from "../commands";
 import { wsEvents, type WsEvents } from "../lib/ws-events";
@@ -518,55 +524,120 @@ export function DmRoute() {
     sendHermesMessageNow("/stop", activeThreadId);
   }, [activeThreadId, isHermesDm, sendHermesMessageNow]);
 
-  const handleBranchCommand = useCallback(async (args: string) => {
-    if (!isHermesDm) return false;
-    if (draftTaskActive && draftPersistingRef.current) return false;
-    const branchPersistAttempt = draftTaskActive
-      ? Symbol("persist-hermes-branch-draft")
+  /**
+   * Creates a branch of a task, or with null of the General lane, and opens
+   * it. Hermes copies the source's conversation into the branch when its
+   * first message arrives. Every branch entry point (the /branch command, the
+   * header button, a task's menu, C-x b) goes through here.
+   */
+  const createBranch = useCallback(async (
+    sourceThreadId: string | null,
+    explicitTitle?: string,
+  ) => {
+    if (!isHermesDm || draftPersistingRef.current) return false;
+    const attempt = Symbol("create-hermes-branch");
+    draftPersistingRef.current = attempt;
+    setDraftSendError(null);
+    const loaded = threadsRef.current;
+    const source = sourceThreadId
+      ? loaded.find((thread) => thread.id === sourceThreadId) ?? null
       : null;
-    if (branchPersistAttempt) {
-      draftPersistingRef.current = branchPersistAttempt;
-      setDraftSendError(null);
-    }
-    const sourceThread = !draftTaskActive && activeThreadId
-      ? threadsRef.current.find((thread) => thread.id === activeThreadId)
-      : null;
-    const branchTitle = titleFromBranchCommand(args, sourceThread?.title);
+    const title = explicitTitle?.trim()
+      ? titleFromMessage(explicitTitle)
+      : nextBranchTitle(
+          source?.title ?? null,
+          childBranches(sourceThreadId, loaded).map((thread) => thread.title),
+        );
+    const isCurrent = () =>
+      activeConversationIdRef.current === conversationId &&
+      draftPersistingRef.current === attempt;
 
     try {
       const thread = await createThread({
         botId: otherParticipant?.bot?.id,
-        title: branchTitle,
-        branchFromThreadId: sourceThread?.id ?? null,
+        title,
+        branchFromThreadId: sourceThreadId,
       });
-      const isCurrentConversation =
-        activeConversationIdRef.current === conversationId &&
-        (!branchPersistAttempt || draftPersistingRef.current === branchPersistAttempt);
-      if (thread && isCurrentConversation) {
+      const current = isCurrent();
+      if (thread && current) {
         setDraftTaskActive(false);
         setActiveThreadId(thread.id);
+        requestInputBarFocus();
       }
-      return !!thread && isCurrentConversation;
+      if (!thread && current) setDraftSendError("Could not create the branch. Try again.");
+      return !!thread && current;
     } catch {
-      if (
-        activeConversationIdRef.current === conversationId &&
-        (!branchPersistAttempt || draftPersistingRef.current === branchPersistAttempt)
-      ) {
-        setDraftSendError("Could not create the task. Try again.");
-      }
+      if (isCurrent()) setDraftSendError("Could not create the branch. Try again.");
       return false;
     } finally {
-      if (branchPersistAttempt && draftPersistingRef.current === branchPersistAttempt) {
-        draftPersistingRef.current = null;
-      }
+      if (draftPersistingRef.current === attempt) draftPersistingRef.current = null;
     }
   }, [
-    activeThreadId,
+    conversationId,
     createThread,
-    draftTaskActive,
     isHermesDm,
     otherParticipant?.bot?.id,
   ]);
+
+  // `/branch [name]` branches whatever is open; a New task draft has no
+  // conversation yet, so it branches from General as before.
+  const handleBranchCommand = useCallback(
+    (args: string) =>
+      createBranch(!draftTaskActive && activeThreadId ? activeThreadId : null, args),
+    [activeThreadId, createBranch, draftTaskActive],
+  );
+
+  const activeThread = useMemo(
+    () =>
+      !draftTaskActive && activeThreadId
+        ? threads.find((thread) => thread.id === activeThreadId) ?? null
+        : null,
+    [activeThreadId, draftTaskActive, threads],
+  );
+  const canBranchActive = isHermesDm && !draftTaskActive;
+  const branchActive = useCallback(() => {
+    if (!canBranchActive) return;
+    void createBranch(activeThreadId);
+  }, [activeThreadId, canBranchActive, createBranch]);
+  const branchSourceId = activeThread?.branchFromThreadId ?? null;
+  const branchCommands = useMemo<Command[]>(
+    () => [
+      {
+        id: "hermes.branch-task",
+        label: activeThreadId ? "Branch Task" : "Branch General",
+        shortcut: "C-x b",
+        keybinding: { prefix: "C-x", key: "b" },
+        enabled: canBranchActive,
+        priority: 100,
+        execute: () => {
+          closePaletteAndRefocus();
+          branchActive();
+        },
+      },
+      {
+        id: "hermes.go-to-branch-source",
+        label: "Go to Branch Source",
+        shortcut: null,
+        keybinding: null,
+        enabled: isHermesDm && !!activeThread && isBranch(activeThread),
+        priority: 100,
+        execute: () => {
+          closePaletteAndRefocus();
+          handleSelectThread(branchSourceId);
+        },
+      },
+    ],
+    [
+      activeThread,
+      activeThreadId,
+      branchActive,
+      branchSourceId,
+      canBranchActive,
+      handleSelectThread,
+      isHermesDm,
+    ],
+  );
+  useScopedCommands(branchCommands);
 
   const handleSend = useCallback((
     content: string,
@@ -607,11 +678,49 @@ export function DmRoute() {
     slashCommands,
   ]);
 
+  const activeBranchSource = activeThread?.branchFromThreadId
+    ? threads.find((thread) => thread.id === activeThread.branchFromThreadId) ?? null
+    : null;
+
   return (
     <div className="shared-dm-layout flex min-h-0 min-w-0 flex-1">
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+        {isHermesDm && canBranchActive && (
+          <HeaderAction>
+            <button
+              type="button"
+              className={iconButtonClass("md")}
+              onClick={branchActive}
+              aria-label={activeThread ? `Branch “${activeThread.title}”` : "Branch General"}
+              title={`Branch ${activeThread ? "this task" : "General"} (C-x b)`}
+              data-testid="branch-active-task"
+            >
+              <GitBranchPlus size={16} aria-hidden="true" />
+            </button>
+          </HeaderAction>
+        )}
+        {isHermesDm && !draftTaskActive && (
+          <TaskBranchBar
+            activeThread={activeThread}
+            threads={threads}
+            unreadThreadIds={unreadThreadIds}
+            approvalThreadIds={approvalThreadIds}
+            onSelectThread={handleSelectThread}
+          />
+        )}
         {isHermesDm ? (
           <HermesDmChatView
+            emptyState={
+              activeThread && isBranch(activeThread) ? (
+                <BranchEmptyState
+                  sourceTitle={
+                    activeThread.branchFromThreadId
+                      ? activeBranchSource?.title ?? "the source task"
+                      : null
+                  }
+                />
+              ) : undefined
+            }
             messages={draftTaskActive ? [] : channelChat.messages}
             loading={
               draftTaskActive
@@ -704,6 +813,7 @@ export function DmRoute() {
           onDeleteProject={deleteProject}
           onMoveThread={moveThread}
           onDeleteThread={handleDeleteThread}
+          onBranchThread={(threadId) => void createBranch(threadId)}
           approvalThreadIds={approvalThreadIds}
           generalNeedsApproval={generalNeedsApproval}
           unreadThreadIds={unreadThreadIds}
@@ -721,16 +831,6 @@ function titleFromMessage(content: string) {
   const normalized = content.trim().replace(/\s+/g, " ");
   if (!normalized) return "New task";
   return normalized.length > 48 ? `${normalized.slice(0, 45)}...` : normalized;
-}
-
-function titleFromBranchCommand(args: string, sourceTitle?: string | null) {
-  const explicitTitle = args.trim().replace(/\s+/g, " ");
-  if (explicitTitle) return titleFromMessage(explicitTitle);
-  const normalizedSourceTitle = sourceTitle?.trim();
-  if (normalizedSourceTitle && normalizedSourceTitle !== "New task") {
-    return titleFromMessage(`${normalizedSourceTitle} branch`);
-  }
-  return "Branch";
 }
 
 function isAutoNamedThread(thread: { title: string } | null | undefined) {
