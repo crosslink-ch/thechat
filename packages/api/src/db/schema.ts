@@ -226,6 +226,11 @@ export const messages = pgTable(
     clientMessageId: varchar("client_message_id", { length: 255 }),
     content: text("content").notNull(),
     parts: jsonb("parts").$type<MessagePart[]>(),
+    /**
+     * An agent's progress update ("⏳ Working — 5 min"), not its answer. It
+     * creates no unread rows and only notifies people who opted in.
+     */
+    interim: boolean("interim").notNull().default(false),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
       .notNull(),
@@ -883,6 +888,8 @@ export const notificationPreferences = pgTable("notification_preferences", {
   mentions: boolean("mentions").notNull().default(true),
   agentReplies: boolean("agent_replies").notNull().default(true),
   agentRequests: boolean("agent_requests").notNull().default(true),
+  /** Also notify for agents' progress updates, not only finished work. */
+  agentProgress: boolean("agent_progress").notNull().default(false),
   showPreviews: boolean("show_previews").notNull().default(true),
   updatedAt: timestamp("updated_at", { withTimezone: true })
     .defaultNow()

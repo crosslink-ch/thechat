@@ -1,8 +1,8 @@
 import { useEffect, useId, useState } from "react";
 import type { NotificationPreferences } from "@thechat/shared";
 import { isWeb } from "@thechat/client/platform/environment";
-import { api } from "@thechat/client/lib/api";
-import { authHeaders } from "@thechat/client/lib/eden";
+import { AgentUpdatesSetting } from "@thechat/client/components/AgentUpdatesSetting";
+import { useNotificationPreferencesStore } from "@thechat/client/stores/notification-preferences";
 import {
   SettingsSection,
   settingsCard,
@@ -23,7 +23,9 @@ import {
   type PushStatus,
 } from "./push";
 
-const PREFERENCE_ROWS: { key: keyof NotificationPreferences; label: string; hint: string }[] = [
+type PreferenceKey = Exclude<keyof NotificationPreferences, "agentProgress">;
+
+const PREFERENCE_ROWS: { key: PreferenceKey; label: string; hint: string }[] = [
   { key: "directMessages", label: "Direct messages", hint: "Messages sent to you" },
   { key: "mentions", label: "Mentions", hint: "When someone @mentions you in a channel" },
   { key: "agentReplies", label: "Agent replies", hint: "When an agent answers you" },
@@ -134,7 +136,9 @@ function DeviceRow() {
 function PreferenceRows() {
   const status = usePushStatus();
   const id = useId();
-  const [preferences, setPreferences] = useState<NotificationPreferences | null>(null);
+  const preferences = useNotificationPreferencesStore((state) => state.preferences);
+  const ensureLoaded = useNotificationPreferencesStore((state) => state.ensureLoaded);
+  const save = useNotificationPreferencesStore((state) => state.update);
   const [error, setError] = useState<string | null>(null);
   const relevant =
     status.state !== "unsupported" &&
@@ -144,42 +148,29 @@ function PreferenceRows() {
   useEffect(() => {
     if (!relevant || preferences) return;
     let active = true;
-    void api.push.preferences
-      .get(authHeaders(null))
-      .then(({ data, error: loadError }) => {
-        if (!active) return;
-        if (loadError || !data || "error" in data) setError("Couldn't load your notification choices.");
-        else setPreferences(data as NotificationPreferences);
-      })
-      .catch(() => {
-        if (active) setError("Couldn't load your notification choices.");
-      });
+    void ensureLoaded().then((loaded) => {
+      if (active && !loaded) setError("Couldn't load your notification choices.");
+    });
     return () => {
       active = false;
     };
-  }, [relevant, preferences]);
+  }, [relevant, preferences, ensureLoaded]);
 
-  if (!relevant) return null;
+  // Without background push the push choices are moot, but agent updates also
+  // gate in-app notifications in open tabs, so that choice stays available.
+  if (!relevant) return <AgentUpdatesSetting />;
 
-  const update = async (key: keyof NotificationPreferences, value: boolean) => {
+  const update = async (key: PreferenceKey, value: boolean) => {
     if (!preferences) return;
-    const previous = preferences;
-    setPreferences({ ...preferences, [key]: value });
     setError(null);
     try {
-      const { data, error: saveError } = await api.push.preferences.patch(
-        { [key]: value },
-        authHeaders(null),
-      );
-      if (saveError || !data || "error" in data) throw new Error("save failed");
-      setPreferences(data as NotificationPreferences);
+      await save({ [key]: value });
     } catch {
-      setPreferences(previous);
       setError("Couldn't save. Try again.");
     }
   };
 
-  const checkbox = (key: keyof NotificationPreferences, label: string, hint: string) => (
+  const checkbox = (key: PreferenceKey, label: string, hint: string) => (
     <label
       key={key}
       htmlFor={`${id}-${key}`}
@@ -211,6 +202,7 @@ function PreferenceRows() {
           {PREFERENCE_ROWS.map((row) => checkbox(row.key, row.label, row.hint))}
         </div>
       </div>
+      <AgentUpdatesSetting reportLoadError={false} />
       <div className={settingsRow}>
         <div className="min-w-0">
           <div className={settingsLabel}>Privacy</div>

@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useAuthStore } from "../stores/auth";
+import { useNotificationPreferencesStore } from "../stores/notification-preferences";
 import { SettingsRoute } from "./settings";
 
 const {
@@ -10,12 +11,14 @@ const {
   createTokenMock,
   tokenEndpointMock,
   revokeTokenMock,
+  preferencesGetMock,
 } = vi.hoisted(() => ({
   invokeMock: vi.fn(),
   listTokensMock: vi.fn(),
   createTokenMock: vi.fn(),
   tokenEndpointMock: vi.fn(),
   revokeTokenMock: vi.fn(),
+  preferencesGetMock: vi.fn(),
 }));
 const updateNameMock = vi.fn();
 const profileEmail =
@@ -39,12 +42,25 @@ vi.mock("../lib/api", () => {
       auth: {
         "personal-access-tokens": personalAccessTokens,
       },
+      push: { preferences: { get: preferencesGetMock, patch: vi.fn() } },
     },
   };
 });
 
 beforeEach(() => {
   invokeMock.mockClear();
+  useNotificationPreferencesStore.getState().reset();
+  preferencesGetMock.mockResolvedValue({
+    data: {
+      directMessages: true,
+      mentions: true,
+      agentReplies: true,
+      agentRequests: true,
+      agentProgress: false,
+      showPreviews: true,
+    },
+    error: null,
+  });
   updateNameMock.mockReset();
   listTokensMock.mockReset();
   createTokenMock.mockReset();
@@ -94,10 +110,13 @@ describe("SettingsRoute", () => {
     // Decorative eyebrow labels no longer precede the section headings.
     expect(screen.queryByText("Account")).not.toBeInTheDocument();
     expect(screen.queryByText("Integrations")).not.toBeInTheDocument();
-    // The desktop shell contributes no browser notification section.
+    // The desktop shell has no background push, only the agent-updates choice
+    // that also gates its in-app notifications.
+    const notifications = screen.getByRole("region", { name: "Notifications" });
     expect(
-      screen.queryByRole("heading", { name: "Notifications" }),
-    ).not.toBeInTheDocument();
+      await within(notifications).findByRole("radio", { name: /Final results only/ }),
+    ).toBeChecked();
+    expect(within(notifications).queryByRole("button")).not.toBeInTheDocument();
     expect(
       await screen.findByText("No personal access tokens yet."),
     ).toBeInTheDocument();

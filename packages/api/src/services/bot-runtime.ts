@@ -1488,6 +1488,8 @@ export async function publishHermesPlatformMessage(input: {
   chatId?: string | null;
   threadId?: string | null;
   complete?: boolean;
+  /** A progress update ("⏳ Working"), not the run's answer. */
+  interim?: boolean;
 }) {
   return withSpan(
     "hermes_platform.message.record",
@@ -1496,6 +1498,7 @@ export async function publishHermesPlatformMessage(input: {
       "messaging.operation": "hermes_message",
       "thechat.hermes_platform.message.has_invocation": Boolean(input.invocationId),
       "thechat.hermes_platform.message.complete": Boolean(input.invocationId && input.complete === true),
+      "thechat.hermes_platform.message.interim": input.interim === true && input.complete !== true,
     },
     async (span) => {
       const content = input.content.trim();
@@ -1529,6 +1532,8 @@ export async function publishHermesPlatformMessage(input: {
         );
       }
       const shouldComplete = Boolean(target.invocation && input.complete === true);
+      // A message that completes the run is its answer, whatever else it claims.
+      const interim = input.interim === true && !shouldComplete;
       const previousResponseJson = recordFromJson(target.invocation?.responseJson);
       const shouldFinalize = shouldComplete &&
         !hasHermesExecutionCompletion(previousResponseJson);
@@ -1594,6 +1599,7 @@ export async function publishHermesPlatformMessage(input: {
             clientMessageId,
             content,
             parts: content ? [{ type: "text", text: content }] : null,
+            interim,
           })
           .onConflictDoNothing({
             target: [messages.senderId, messages.clientMessageId],
@@ -1618,7 +1624,9 @@ export async function publishHermesPlatformMessage(input: {
           return { message: existing, duplicate: true };
         }
 
-        await recordMessageUnreads(tx, inserted);
+        // A progress update is not something to catch up on: the answer that
+        // follows is. Only the answer marks the conversation unread.
+        if (!inserted.interim) await recordMessageUnreads(tx, inserted);
 
         await attachReadyAttachments(tx, {
           messageId: inserted.id,
@@ -1627,7 +1635,13 @@ export async function publishHermesPlatformMessage(input: {
           uploaderId: target.bot.userId,
         });
 
-        if (target.invocation) {
+        if (target.invocation && interim) {
+          // Progress keeps the run alive but is never recorded as its output.
+          await tx
+            .update(botInvocations)
+            .set({ updatedAt: now })
+            .where(eq(botInvocations.id, target.invocation.id));
+        } else if (target.invocation) {
           await tx
             .update(botInvocations)
             .set({
@@ -2586,6 +2600,7 @@ async function publishBotMessage(
       content: message.content,
       parts: message.parts ?? null,
       attachments: attachmentMetadata,
+      ...(message.interim ? { interim: true as const } : {}),
       createdAt: message.createdAt.toISOString(),
     } as ChatMessage,
     conversationType,

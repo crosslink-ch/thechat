@@ -228,6 +228,11 @@ export interface ChatMessage {
   parts?: MessagePart[] | null;
   attachments?: ChatAttachment[];
   reactions?: MessageReactionSummary[];
+  /**
+   * Present (true) only on an agent's progress update ("⏳ Working — 5 min").
+   * The agent's answer follows in a later message.
+   */
+  interim?: true;
   createdAt: string;
 }
 
@@ -699,6 +704,11 @@ export interface NotificationPreferences {
   agentReplies: boolean;
   /** Approvals, questions and reviews that an agent is waiting on. */
   agentRequests: boolean;
+  /**
+   * Also an agent's progress updates while it is still working. Off by
+   * default: agent replies then notify only for finished work.
+   */
+  agentProgress: boolean;
   /** Show message text on the lock screen. */
   showPreviews: boolean;
 }
@@ -707,6 +717,7 @@ export type PushNotificationKind =
   | "direct_message"
   | "mention"
   | "agent_reply"
+  | "agent_progress"
   | "agent_request"
   | "test";
 

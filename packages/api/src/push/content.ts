@@ -48,6 +48,9 @@ export function kindAllowed(
       return preferences.mentions;
     case "agent_reply":
       return preferences.agentReplies;
+    case "agent_progress":
+      // Progress refines agent replies: only for people who want both.
+      return preferences.agentReplies && preferences.agentProgress;
     case "agent_request":
       return preferences.agentRequests;
     case "test":
@@ -154,6 +157,7 @@ async function loadMessageContext(messageId: string) {
     .select({
       id: messages.id,
       content: messages.content,
+      interim: messages.interim,
       conversationId: messages.conversationId,
       threadId: messages.threadId,
       senderId: messages.senderId,
@@ -177,8 +181,16 @@ async function loadMessageContext(messageId: string) {
 
 type MessageContext = NonNullable<Awaited<ReturnType<typeof loadMessageContext>>>;
 
+/**
+ * A newer message from the same sender in the same place supersedes this one.
+ * A progress update never supersedes an answer: "⏳ Working" posted after a
+ * reply must not swallow the reply's notification.
+ */
 async function hasNewerMessageFromSender(
-  context: Pick<MessageContext, "id" | "conversationId" | "threadId" | "senderId" | "createdAt">,
+  context: Pick<
+    MessageContext,
+    "id" | "conversationId" | "threadId" | "senderId" | "createdAt" | "interim"
+  >,
 ) {
   const [row] = await db
     .select({ id: messages.id })
@@ -189,6 +201,7 @@ async function hasNewerMessageFromSender(
         eq(messages.senderId, context.senderId),
         context.threadId ? eq(messages.threadId, context.threadId) : isNull(messages.threadId),
         ne(messages.id, context.id),
+        context.interim ? undefined : eq(messages.interim, false),
         or(
           gt(messages.createdAt, context.createdAt),
           and(eq(messages.createdAt, context.createdAt), gt(messages.id, context.id)),
@@ -199,8 +212,18 @@ async function hasNewerMessageFromSender(
   return Boolean(row);
 }
 
+/** An agent's progress update, flagged by the gateway that posted it. */
+export async function isInterimMessage(messageId: string) {
+  const [row] = await db
+    .select({ interim: messages.interim })
+    .from(messages)
+    .where(eq(messages.id, messageId))
+    .limit(1);
+  return row?.interim === true;
+}
+
 /**
- * True while a Hermes run is still going. Its messages then are interim
+ * True while a Hermes run is still going. Its unflagged messages then may be interim
  * ("Looking into it…"); only the newest one after the run ends should notify.
  * A run ends when it records a completion: a final message (`complete: true`),
  * the gateway's `/completed` call, a failure or a cancellation. `completed_at`
@@ -248,9 +271,21 @@ async function invocationRequesterId(
 }
 
 export function classifyMessage(
-  context: Pick<MessageContext, "conversationType" | "senderType" | "content">,
+  context: Pick<MessageContext, "conversationType" | "senderType" | "content"> & {
+    interim?: boolean;
+  },
   recipient: { userId: string; name: string },
   requesterId: string | null = null,
+): PushNotificationKind | null {
+  const kind = baseMessageKind(context, recipient, requesterId);
+  // Whoever would hear about the agent's answer may opt into its progress too.
+  return kind && context.senderType === "bot" && context.interim ? "agent_progress" : kind;
+}
+
+function baseMessageKind(
+  context: Pick<MessageContext, "conversationType" | "senderType" | "content">,
+  recipient: { userId: string; name: string },
+  requesterId: string | null,
 ): PushNotificationKind | null {
   if (context.conversationType === "direct") {
     return context.senderType === "bot" ? "agent_reply" : "direct_message";
@@ -298,13 +333,16 @@ async function buildMessagePayload(
     { onlyUserIds: [userId] },
   );
   if (!recipient) return null;
-  // Read on any device during the delay: nothing to tell the phone.
-  const [unread] = await db
-    .select({ messageId: messageUnreads.messageId })
-    .from(messageUnreads)
-    .where(and(eq(messageUnreads.messageId, messageId), eq(messageUnreads.userId, userId)))
-    .limit(1);
-  if (!unread) return null;
+  // Read on any device during the delay: nothing to tell the phone. Progress
+  // updates leave no unread rows, so for them only a newer message counts.
+  if (!context.interim) {
+    const [unread] = await db
+      .select({ messageId: messageUnreads.messageId })
+      .from(messageUnreads)
+      .where(and(eq(messageUnreads.messageId, messageId), eq(messageUnreads.userId, userId)))
+      .limit(1);
+    if (!unread) return null;
+  }
   // Agents can post several messages in one turn. Only the newest one notifies.
   if (context.senderType === "bot" && (await hasNewerMessageFromSender(context))) return null;
 
@@ -321,7 +359,7 @@ async function buildMessagePayload(
   const title =
     context.conversationType === "group"
       ? `${context.senderName} in #${channel}`
-      : kind === "agent_reply" && context.threadTitle
+      : (kind === "agent_reply" || kind === "agent_progress") && context.threadTitle
         ? `${context.senderName} · ${context.threadTitle}`
         : context.senderName;
   const preview = previewText(context.content) || "Sent an attachment";
@@ -330,7 +368,9 @@ async function buildMessagePayload(
       ? "Mentioned you"
       : kind === "agent_reply"
         ? "Replied"
-        : "Sent you a message";
+        : kind === "agent_progress"
+          ? "Still working"
+          : "Sent you a message";
   return {
     v: 1,
     id: `message:${context.id}`,

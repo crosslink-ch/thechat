@@ -82,9 +82,10 @@ export function SharedChatMessage({
       data-message-id={message.id}
       data-message-grouped={merged ? "true" : "false"}
       data-mentions-you={mentionsYou ? "true" : undefined}
+      data-message-interim={message.interim ? "true" : undefined}
       className={`group/message group relative flex gap-2.5 px-5 transition-colors duration-100 hover:bg-white/[0.025] ${
         merged ? "py-0.5" : "pb-0.5 pt-2.5"
-      }`}
+      } ${message.interim ? "text-text-muted opacity-75" : ""}`}
     >
       {merged ? (
         <time
