@@ -14,6 +14,7 @@ import { webPushConfig } from "./config";
 import {
   agentRunInProgress,
   buildPushPayload,
+  isInterimMessage,
   planBotRequestRecipients,
   planMessageRecipients,
   type PlannedRecipient,
@@ -160,12 +161,14 @@ export function createPushFanoutHandler(): AsyncJobHandler<FanoutPayload> {
       const config = webPushConfig();
       if (!config) return { recipients: 0, deliveries: 0 };
       const { source } = job.message.payload;
-      // An agent's interim messages ("Looking into it…") wait for its run to
-      // end; then only the newest message of the run notifies (see content.ts).
+      // An agent's messages wait for its run to end; then only the newest one
+      // of the run notifies (see content.ts). A flagged progress update does
+      // not wait: it notifies now, and only people who opted into progress.
       if (
         source.type === "message" &&
         source.invocationId &&
         (source.waitRound ?? 0) < MAX_AGENT_RUN_WAITS &&
+        !(await isInterimMessage(source.messageId)) &&
         (await agentRunInProgress(source.invocationId))
       ) {
         await enqueueFanout({ ...source, waitRound: (source.waitRound ?? 0) + 1 }, AGENT_RUN_WAIT_MS);

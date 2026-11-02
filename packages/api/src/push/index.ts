@@ -45,6 +45,7 @@ const preferencesSchema = z
     mentions: z.boolean(),
     agentReplies: z.boolean(),
     agentRequests: z.boolean(),
+    agentProgress: z.boolean(),
     showPreviews: z.boolean(),
   })
   .partial()
