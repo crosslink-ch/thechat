@@ -249,6 +249,7 @@ export function DmRoute() {
     conversationId: chatConversationId,
     threadId: isHermesDm ? activeThreadId : null,
     unthreadedOnly: generalThreadActive,
+    taskRead: isHermesDm,
     enabled: !draftTaskActive,
     token,
     wsSendMessage,
@@ -258,6 +259,7 @@ export function DmRoute() {
     chatConversationId,
     channelChat.messages,
     !draftTaskActive && !channelChat.loading,
+    isHermesDm ? { threadId: activeThreadId, snapshot: channelChat.taskReadSnapshot } : undefined,
   );
 
   const channelChatRef = useRef(channelChat);

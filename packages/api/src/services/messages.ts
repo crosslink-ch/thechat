@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 import { and, asc, desc, eq, inArray, isNull, lt } from "drizzle-orm";
-import type { ChatMessage, WsServerEvent } from "@thechat/shared";
+import type { ChatMessage, TaskMessagePage, WsServerEvent } from "@thechat/shared";
 import { attachmentsByMessageIds } from "../attachments/public";
 import { loadAttachmentConfig } from "../attachments/config";
 import { db } from "../db";
@@ -12,6 +12,7 @@ import {
   conversations,
   messageAttachments,
   messages,
+  messageUnreads,
   users,
   workspaceMembers,
 } from "../db/schema";
@@ -92,6 +93,34 @@ export async function getMessages(
       reactionMap.get(row.id) ?? [],
     ),
   );
+}
+
+export async function getTaskMessagePage(
+  conversationId: string,
+  userId: string,
+  threadId: string | null,
+  options: { limit?: number; includeAttachments?: boolean } = {},
+): Promise<TaskMessagePage> {
+  await requireParticipant(db, conversationId, userId);
+  if (threadId) await requireConversationThread(db, conversationId, threadId);
+
+  // Capture BEFORE selecting the displayed page. A backdated transaction that
+  // commits later is acknowledged only if its message actually reaches the view.
+  const unread = await db
+    .select({ id: messageUnreads.messageId })
+    .from(messageUnreads)
+    .innerJoin(messages, eq(messages.id, messageUnreads.messageId))
+    .where(and(
+      eq(messageUnreads.userId, userId),
+      eq(messageUnreads.conversationId, conversationId),
+      threadId ? eq(messages.threadId, threadId) : isNull(messages.threadId),
+    ));
+  const page = await getMessages(conversationId, userId, {
+    ...options,
+    threadId: threadId ?? undefined,
+    unthreaded: threadId === null,
+  });
+  return { messages: page, unreadMessageIds: unread.map((row) => row.id) };
 }
 
 export async function getMessageByIdForParticipant(

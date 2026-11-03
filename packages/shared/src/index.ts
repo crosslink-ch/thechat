@@ -236,6 +236,12 @@ export interface ChatMessage {
   createdAt: string;
 }
 
+/** First task/General page plus the exact unread backlog captured before it. */
+export interface TaskMessagePage {
+  messages: ChatMessage[];
+  unreadMessageIds: string[];
+}
+
 export interface MessageReactionSummary {
   emoji: string;
   count: number;

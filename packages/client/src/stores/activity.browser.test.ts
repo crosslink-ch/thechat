@@ -67,3 +67,17 @@ it("clears cached Activity at an authoritative session reset", () => {
   expect(useActivityStore.getState()).toMatchObject({ ...empty, error: null, loading: false });
   expect(useHermesIndicatorsStore.getState().unreadScopes).toEqual({});
 });
+
+it.each(["reset", "identity"])("does not send remaining backlog batches across a cookie %s", async (boundary) => {
+  let finish!: (value: unknown) => void;
+  readPost.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+  const pending = useActivityStore.getState().markConversationRead(
+    "conversation-1", Array.from({ length: 245 }, (_, i) => `old-${i}`), "task-a",
+  );
+  expect(readPost.mock.calls[0][0].messageIds).toHaveLength(200);
+  if (boundary === "reset") resetPrivateSession();
+  useAuthStore.setState({ user: { ...user, id: "bob" } });
+  finish({ data: empty, error: null });
+  await pending;
+  expect(readPost).toHaveBeenCalledTimes(1);
+});

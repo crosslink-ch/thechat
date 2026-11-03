@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ActivitySnapshot, BotInvocationPublic, ChatMessage } from "@thechat/shared";
 import { useAuthStore } from "./auth";
+import { resetPrivateSession } from "../lib/session-boundary";
 import { useActivityStore } from "./activity";
 import { useConversationsStore } from "./conversations";
 import { hermesScopeKey, useHermesIndicatorsStore } from "./hermes-indicators";
@@ -175,6 +176,43 @@ describe("activity store", () => {
     );
     expect(useActivityStore.getState()).toMatchObject(emptySnapshot);
     expect(useConversationsStore.getState().unreadChannels.size).toBe(0);
+  });
+
+  it("acknowledges a fixed task backlog in batches of at most 200 IDs", async () => {
+    const ids = Array.from({ length: 245 }, (_, i) => `old-${i}`);
+    conversationReadPost.mockImplementation(async (body) => {
+      expect(body.messageIds.length).toBeLessThanOrEqual(200);
+      return { data: emptySnapshot, error: null };
+    });
+    await useActivityStore.getState().markConversationRead("conversation-1", ids, "task-a");
+    expect(conversationReadPost.mock.calls.map(([body]) => body)).toEqual([
+      { messageIds: ids.slice(0, 200), threadId: "task-a" },
+      { messageIds: ids.slice(200), threadId: "task-a" },
+    ]);
+    expect(useActivityStore.getState()).toMatchObject(emptySnapshot);
+  });
+
+  it.each(["token", "reset"])("stops remaining batches after a %s boundary", async (boundary) => {
+    let finish!: (value: unknown) => void;
+    conversationReadPost.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    const pending = useActivityStore.getState().markConversationRead(
+      "conversation-1", Array.from({ length: 245 }, (_, i) => `old-${i}`), "task-a",
+    );
+    if (boundary === "token") useAuthStore.setState({ token: "token-2" });
+    else resetPrivateSession();
+    finish({ data: unreadSnapshot, error: null });
+    await pending;
+    expect(conversationReadPost).toHaveBeenCalledTimes(1);
+    expect(useActivityStore.getState().items).toEqual([]);
+  });
+
+  it("retains the read error and stops after a failed backlog batch", async () => {
+    conversationReadPost.mockResolvedValueOnce({ data: null, error: { value: { error: "Read failed" } } });
+    await expect(useActivityStore.getState().markConversationRead(
+      "conversation-1", Array.from({ length: 245 }, (_, i) => `old-${i}`), "task-a",
+    )).rejects.toThrow("Read failed");
+    expect(conversationReadPost).toHaveBeenCalledTimes(1);
+    expect(useActivityStore.getState().error).toBe("Read failed");
   });
 
   it("explicitly clears a whole conversation from Activity", async () => {

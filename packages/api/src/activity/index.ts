@@ -18,7 +18,10 @@ const renderedMessageIdsSchema = z
   });
 
 const readSelectionSchema = z.union([
-  z.object({ messageIds: renderedMessageIdsSchema }).strict(),
+  z.object({
+    messageIds: renderedMessageIdsSchema,
+    threadId: z.string().uuid().nullable().optional(),
+  }).strict(),
   z.object({ all: z.literal(true) }).strict(),
 ]);
 

@@ -3,12 +3,15 @@ import userEvent from "@testing-library/user-event";
 import { createMemoryHistory, createRootRoute, createRoute, createRouter, RouterProvider } from "@tanstack/react-router";
 import { beforeEach, expect, it, vi } from "vitest";
 import type { ActivitySnapshot, BotInvocationPublic, ChatMessage, ConversationThreadPublic } from "@thechat/shared";
+import type { TaskReadSnapshot } from "../hooks/useChannelChat";
+import { sessionGeneration } from "../lib/session-boundary";
 
 const mocks = vi.hoisted(() => ({
   activityGet: vi.fn(),
   readPost: vi.fn(),
   messages: [] as ChatMessage[],
   threads: [] as ConversationThreadPublic[],
+  snapshots: {} as Record<string, TaskReadSnapshot>,
 }));
 vi.mock("../lib/api", () => ({ API_URL: "http://localhost:3000", api: { activity: {
   get: mocks.activityGet,
@@ -28,8 +31,9 @@ vi.mock("../hooks/useBotRuntime", () => ({
   useBotRuntime: () => ({ data: null, isLoading: false }),
   useBotRuntimeCache: () => ({}),
 }));
-vi.mock("../hooks/useChannelChat", () => ({ useChannelChat: ({ threadId }: { threadId: string | null }) => ({
+vi.mock("../hooks/useChannelChat", () => ({ useChannelChat: ({ threadId, taskRead }: { threadId: string | null; taskRead?: boolean }) => ({
   messages: mocks.messages.filter((message) => message.threadId === threadId), loading: false,
+  taskReadSnapshot: taskRead ? mocks.snapshots[threadId ?? "general"] : null,
 }) }));
 vi.mock("../components/HermesDmChatView", () => ({ HermesDmChatView: ({ messages }: { messages: ChatMessage[] }) => (
   <div>{messages.map((message) => <p key={message.id}>{message.content}</p>)}</div>
@@ -83,6 +87,10 @@ beforeEach(() => {
   useActivityStore.getState().reset();
   useHermesIndicatorsStore.getState().resetForTests();
   mocks.messages = [];
+  mocks.snapshots = Object.fromEntries(["task-a", "task-b", "read-task", "general"].map((key) => [key, {
+    conversationId: "dm-1", threadId: key === "general" ? null : key, messageIds: [],
+    token: "token", userId: "human", generation: sessionGeneration(),
+  }]));
   mocks.threads = [["task-a", "Task A"], ["task-b", "Task B"], ["read-task", "Read task"]].map(([id, title]) => ({
     id, title, conversationId: "dm-1", botId: "bot", status: "open", createdById: "human", createdAt: at, updatedAt: at, lastActivityAt: at,
   }));
@@ -104,9 +112,29 @@ it("restores all task and General dots from Activity with a fresh indicator stor
   }, error: null });
   fireEvent.click(screen.getByRole("button", { name: /^Task A/ }));
   await waitFor(() => expect(mocks.readPost).toHaveBeenCalledWith(
-    { messageIds: ["message-a"] }, { headers: { authorization: "Bearer token" } },
+    { messageIds: ["message-a"], threadId: "task-a" }, { headers: { authorization: "Bearer token" } },
   ));
   await waitFor(() => expect(useActivityStore.getState().totalUnreadMessages).toBe(2));
+  fireEvent.click(screen.getByRole("button", { name: /^Read task/ }));
+  expect(unread("Task A")).not.toBeInTheDocument();
+  expect(unread("Task B")).toBeInTheDocument();
+  expect(unread("General")).toBeInTheDocument();
+});
+
+it("acknowledges a task's captured old backlog when its newest page is already read", async () => {
+  await useActivityStore.getState().fetchActivity();
+  await openDm();
+  mocks.messages = [{ ...snapshot.items[0].latestMessage, conversationId: "dm-1", id: "already-read-latest" }];
+  mocks.snapshots["task-a"].messageIds = ["old-unread-outside-page"];
+  mocks.readPost.mockResolvedValue({ data: {
+    ...snapshot, totalUnreadMessages: 2,
+    items: [{ ...snapshot.items[0], unreadCount: 2, unreadThreadIds: ["task-b", null] }],
+  }, error: null });
+  fireEvent.click(screen.getByRole("button", { name: /^Task A/ }));
+  await waitFor(() => expect(mocks.readPost).toHaveBeenCalledWith(
+    { messageIds: ["old-unread-outside-page", "already-read-latest"], threadId: "task-a" },
+    { headers: { authorization: "Bearer token" } },
+  ));
   fireEvent.click(screen.getByRole("button", { name: /^Read task/ }));
   expect(unread("Task A")).not.toBeInTheDocument();
   expect(unread("Task B")).toBeInTheDocument();
