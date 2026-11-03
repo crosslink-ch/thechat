@@ -3,8 +3,12 @@ import { call, login, seedWorkspace, clearCredentialFields } from './fixtures';
 
 async function openTasks(page: Page) {
   const toggle = page.getByRole('button', { name: 'Open tasks and activity', exact: true });
-  if (await toggle.isVisible()) await toggle.click();
-  await expect(page.getByRole('complementary', { name: 'Hermes tasks and activity' })).toBeVisible();
+  const panel = page.getByRole('complementary', { name: 'Hermes tasks and activity' });
+  // The route loads asynchronously. On a phone the toggle is not present yet
+  // immediately after navigation, and the panel only mounts when it is opened.
+  await expect.poll(async () => (await toggle.isVisible()) || (await panel.isVisible())).toBe(true);
+  if (!(await panel.isVisible())) await toggle.click();
+  await expect(panel).toBeVisible();
 }
 
 // Real API + production shared client. New contexts deliberately carry only the
