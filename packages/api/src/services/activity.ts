@@ -102,14 +102,21 @@ export async function listActivity(userId: string): Promise<ActivitySnapshot> {
     .where(eq(messageUnreads.userId, userId))
     .orderBy(desc(messages.createdAt), desc(messages.id));
 
-  const grouped = new Map<string, ActivityItem>();
+  const grouped = new Map<string, ActivityItem & { unreadThreadIds: (string | null)[] }>();
+  const unreadScopes = new Map<string, Set<string | null>>();
   for (const row of rows) {
     const existing = grouped.get(row.conversationId);
     if (existing) {
       existing.unreadCount += 1;
+      const scopes = unreadScopes.get(row.conversationId)!;
+      if (!scopes.has(row.threadId)) {
+        scopes.add(row.threadId);
+        existing.unreadThreadIds.push(row.threadId);
+      }
       continue;
     }
 
+    unreadScopes.set(row.conversationId, new Set([row.threadId]));
     grouped.set(row.conversationId, {
       conversationId: row.conversationId,
       conversationType: row.conversationType,
@@ -120,6 +127,7 @@ export async function listActivity(userId: string): Promise<ActivitySnapshot> {
       workspaceId: row.workspaceId,
       workspaceName: row.workspaceName,
       unreadCount: 1,
+      unreadThreadIds: [row.threadId],
       latestMessage: {
         id: row.messageId,
         threadId: row.threadId,

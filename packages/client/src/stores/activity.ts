@@ -6,6 +6,7 @@ import { isAuthenticated } from "../lib/auth-identity";
 import { onSessionReset, sessionGeneration } from "../lib/session-boundary";
 import { useAuthStore } from "./auth";
 import { useConversationsStore } from "./conversations";
+import { useHermesIndicatorsStore } from "./hermes-indicators";
 
 interface ActivityState extends ActivitySnapshot {
   loading: boolean;
@@ -131,6 +132,9 @@ export const useActivityStore = create<ActivityState>((set, get) => ({
     const token = currentToken();
     if (!isAuthenticated(token)) return;
     const isCurrent = activitySession(token);
+    const completionScopes = messageIds ? [] : Object.values(
+      useHermesIndicatorsStore.getState().unreadScopes,
+    ).filter((scope) => scope.conversationId === conversationId);
     const mutationRequest = ++activityMutationRequestCounter;
     latestActivityMutationRequest = mutationRequest;
     const operation = ++activityOperationCounter;
@@ -156,6 +160,7 @@ export const useActivityStore = create<ActivityState>((set, get) => ({
       }
       throw new Error(message);
     }
+    if (isCurrent()) useHermesIndicatorsStore.getState().clearUnreadScopes(completionScopes);
     if (
       isCurrent() &&
       mutationRequest === latestActivityMutationRequest &&
@@ -173,6 +178,7 @@ export const useActivityStore = create<ActivityState>((set, get) => ({
     const token = currentToken();
     if (!isAuthenticated(token)) return;
     const isCurrent = activitySession(token);
+    const completionScopes = Object.values(useHermesIndicatorsStore.getState().unreadScopes);
     const mutationRequest = ++activityMutationRequestCounter;
     latestActivityMutationRequest = mutationRequest;
     const operation = ++activityOperationCounter;
@@ -197,6 +203,7 @@ export const useActivityStore = create<ActivityState>((set, get) => ({
       }
       throw new Error(message);
     }
+    if (isCurrent()) useHermesIndicatorsStore.getState().clearUnreadScopes(completionScopes);
     if (
       isCurrent() &&
       mutationRequest === latestActivityMutationRequest &&

@@ -159,13 +159,6 @@ export function registerGlobalWsHandlers(
       useConversationsStore
         .getState()
         .markDirectConversationUnread(msg.conversationId, msg.senderId);
-      if (msg.senderType === "bot") {
-        useHermesIndicatorsStore.getState().markScopeUnread({
-          conversationId: msg.conversationId,
-          threadId: msg.threadId ?? null,
-          botUserId: msg.senderId,
-        });
-      }
     }
     if (
       conversationType === "direct" &&

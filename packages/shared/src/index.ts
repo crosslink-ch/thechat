@@ -321,6 +321,8 @@ export interface ActivityItem {
   workspaceId: string;
   workspaceName: string;
   unreadCount: number;
+  /** All scopes with unread messages; null denotes General. Absent on older servers. */
+  unreadThreadIds?: (string | null)[];
   latestMessage: ActivityLatestMessage;
 }
 

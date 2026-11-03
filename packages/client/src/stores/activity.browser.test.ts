@@ -11,6 +11,7 @@ vi.mock("../lib/api", () => ({ api: { activity: {
 import { useAuthStore } from "./auth";
 import { useActivityStore } from "./activity";
 import { resetPrivateSession } from "../lib/session-boundary";
+import { hermesScopeKey, useHermesIndicatorsStore } from "./hermes-indicators";
 
 const user = { id: "alice", name: "Alice", email: "alice@example.invalid", avatar: null, type: "human" } as const;
 const empty: ActivitySnapshot = { items: [], totalUnreadMessages: 0 };
@@ -19,6 +20,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   useAuthStore.setState({ token: null, user, loading: false });
   useActivityStore.getState().reset();
+  useHermesIndicatorsStore.getState().resetForTests();
   conversationsRoute.mockReturnValue({ read: { post: readPost } });
   for (const mock of [activityGet, readPost, readAllPost]) mock.mockResolvedValue({ data: empty, error: null });
 });
@@ -45,16 +47,23 @@ it.each(["fetch", "read", "read-all"] as const)(
     expect(finish).toBeDefined();
     resetPrivateSession();
     useAuthStore.setState({ user: { ...user, id: "bob" } });
+    useHermesIndicatorsStore.getState().markScopeUnread({
+      conversationId: "conversation-1", threadId: "bob-task", botUserId: "bob-bot",
+    });
     activityGet.mockClear();
-    finish({ data: { items: [], totalUnreadMessages: 9 }, error: null });
+    finish({ data: { items: [{ conversationId: "alice-private-dm", unreadThreadIds: ["alice-private-task", null] }], totalUnreadMessages: 9 }, error: null });
     await pending;
     expect(useActivityStore.getState().totalUnreadMessages).toBe(0);
+    expect(useActivityStore.getState().items).toEqual([]);
+    expect(useHermesIndicatorsStore.getState().unreadScopes[hermesScopeKey("conversation-1", "bob-task")]).toBeDefined();
     expect(activityGet).not.toHaveBeenCalled();
   },
 );
 
 it("clears cached Activity at an authoritative session reset", () => {
   useActivityStore.setState({ totalUnreadMessages: 9, error: "old account", loading: true });
+  useHermesIndicatorsStore.getState().markScopeUnread({ conversationId: "private-dm", threadId: "private-task", botUserId: "bot" });
   resetPrivateSession();
   expect(useActivityStore.getState()).toMatchObject({ ...empty, error: null, loading: false });
+  expect(useHermesIndicatorsStore.getState().unreadScopes).toEqual({});
 });
