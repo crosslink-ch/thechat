@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useAuthStore } from "@thechat/client/stores/auth";
 import { buttonClass, iconButtonClass } from "@thechat/client/components/ui";
-import { enablePush, usePushStatus } from "./push";
+import { enablePush, getPushStatus, usePushStatus } from "./push";
 
 const DISMISS_KEY = "thechat:push-prompt-dismissed";
 
@@ -21,30 +21,55 @@ function rememberDismissal(userId: string) {
   }
 }
 
+type Attempt = { userId: string; phase: "working" } | { userId: string; phase: "failed"; message: string };
+
 /**
  * Offered once per account and browser after sign-in. The browser's own
  * permission prompt only appears from the Turn on tap, never automatically.
+ * Either answer is final for this browser, even when turning on fails (for
+ * example Brave with Google push services off): Settings is where to retry.
  */
 export function PushPrompt() {
   const userId = useAuthStore((state) => state.user?.id ?? null);
   const status = usePushStatus();
   const [hiddenFor, setHiddenFor] = useState<string | null>(null);
+  const [attempt, setAttempt] = useState<Attempt | null>(null);
 
+  if (!userId) return null;
+  const current = attempt?.userId === userId ? attempt : null;
   const askable =
     status.state === "off" &&
     typeof Notification !== "undefined" &&
     Notification.permission !== "denied";
-  if (!userId || !askable || hiddenFor === userId || dismissedFor(userId)) return null;
+  if (!current && (!askable || hiddenFor === userId || dismissedFor(userId))) return null;
 
-  const dismiss = () => {
+  const close = () => {
     rememberDismissal(userId);
     setHiddenFor(userId);
+    setAttempt(null);
   };
+
+  const turnOn = () => {
+    rememberDismissal(userId);
+    setAttempt({ userId, phase: "working" });
+    void enablePush().then((enabled) => {
+      const after = getPushStatus();
+      if (!enabled && after.state === "error") {
+        setAttempt({ userId, phase: "failed", message: after.message });
+      } else {
+        setHiddenFor(userId);
+        setAttempt(null);
+      }
+    });
+  };
+
+  const failure = current?.phase === "failed" ? current.message : null;
 
   return (
     <div
       role="dialog"
       aria-labelledby="push-prompt-title"
+      aria-describedby="push-prompt-body"
       className="fixed inset-x-3 bottom-[calc(env(safe-area-inset-bottom)+0.75rem)] z-50 mx-auto flex max-w-[420px] animate-slide-up items-start gap-3 rounded-xl border border-border bg-surface/95 p-4 shadow-card backdrop-blur-2xl backdrop-saturate-150 sm:inset-x-auto sm:right-4 sm:bottom-4"
     >
       <svg aria-hidden viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mt-0.5 size-5 shrink-0 text-accent">
@@ -53,33 +78,42 @@ export function PushPrompt() {
       </svg>
       <div className="min-w-0 flex-1">
         <h2 id="push-prompt-title" className="text-[0.929rem] font-semibold leading-5 text-text">
-          Get notified when TheChat is closed
+          {failure ? "Couldn't turn on notifications" : "Get notified when TheChat is closed"}
         </h2>
-        <p className="mt-1 text-[0.857rem] leading-5 text-text-muted">
-          Direct messages, mentions and agent replies. You can change this in Settings.
+        <p
+          id="push-prompt-body"
+          role={failure ? "alert" : undefined}
+          className="mt-1 text-[0.857rem] leading-5 text-text-muted"
+        >
+          {failure ?? "Direct messages, mentions and agent replies. You can change this in Settings."}
         </p>
         <div className="mt-3 flex flex-wrap gap-2">
-          <button
-            type="button"
-            className={`${buttonClass("primary", "md")} max-sm:h-[44px]`}
-            onClick={() => {
-              void enablePush().then((enabled) => {
-                if (enabled) rememberDismissal(userId);
-              });
-            }}
-          >
-            Turn on
-          </button>
-          <button type="button" className={`${buttonClass("ghost", "md")} max-sm:h-[44px]`} onClick={dismiss}>
-            Not now
-          </button>
+          {failure ? (
+            <button type="button" className={`${buttonClass("primary", "md")} max-sm:h-[44px]`} onClick={close}>
+              OK
+            </button>
+          ) : (
+            <>
+              <button
+                type="button"
+                className={`${buttonClass("primary", "md")} max-sm:h-[44px]`}
+                disabled={current?.phase === "working"}
+                onClick={turnOn}
+              >
+                {current?.phase === "working" ? "Turning on…" : "Turn on"}
+              </button>
+              <button type="button" className={`${buttonClass("ghost", "md")} max-sm:h-[44px]`} onClick={close}>
+                Not now
+              </button>
+            </>
+          )}
         </div>
       </div>
       <button
         type="button"
         aria-label="Dismiss"
         className={`${iconButtonClass("md")} max-sm:size-[44px]`}
-        onClick={dismiss}
+        onClick={close}
       >
         <svg aria-hidden viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className="size-4">
           <path d="M18 6 6 18M6 6l12 12" />

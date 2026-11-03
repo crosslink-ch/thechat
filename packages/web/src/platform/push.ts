@@ -83,6 +83,22 @@ export function pushSupport(): "supported" | "unsupported" | "install-required" 
   return capable ? "supported" : "unsupported";
 }
 
+/** Brave exposes `navigator.brave`; its user agent is identical to Chrome's. */
+export function isBraveBrowser(nav: Navigator = navigator) {
+  return "brave" in nav;
+}
+
+export const BRAVE_PUSH_HINT =
+  "Brave blocks this by default. Turn on \u201cUse Google services for push messaging\u201d in brave://settings/privacy, restart Brave, then try again.";
+
+/**
+ * Permission is granted but the browser's push service refused the
+ * subscription. On Brave that is almost always its off-by-default push setting.
+ */
+function subscribeFailureMessage() {
+  return isBraveBrowser() ? BRAVE_PUSH_HINT : "Couldn't turn on notifications. Try again.";
+}
+
 /** Registered on every web start so page notifications work on phones too. */
 export function registerServiceWorker(): Promise<ServiceWorkerRegistration | null> {
   if (typeof navigator === "undefined" || !("serviceWorker" in navigator) || !window.isSecureContext) {
@@ -260,7 +276,7 @@ async function subscribeAndRegister(
         ? { state: "blocked" }
         : permission === "default"
           ? { state: "off" }
-          : { state: "error", message: "Couldn't turn on notifications. Try again." },
+          : { state: "error", message: subscribeFailureMessage() },
     );
     return false;
   }
