@@ -4,6 +4,7 @@ import { eq } from "drizzle-orm";
 import { Elysia } from "elysia";
 import { activityRoutes } from "./index";
 import { authRoutes } from "../auth";
+import { botRoutes } from "../bots";
 import { conversationRoutes } from "../conversations";
 import { db } from "../db";
 import { messages, users, workspaces } from "../db/schema";
@@ -14,6 +15,7 @@ import { workspaceRoutes } from "../workspaces";
 
 const app = new Elysia()
   .use(authRoutes)
+  .use(botRoutes)
   .use(workspaceRoutes)
   .use(inviteRoutes)
   .use(conversationRoutes)
@@ -21,6 +23,7 @@ const app = new Elysia()
   .use(activityRoutes);
 
 const createdUserEmails: string[] = [];
+const createdBotUserIds: string[] = [];
 const createdWorkspaceIds: string[] = [];
 
 async function req(
@@ -114,11 +117,11 @@ async function createSharedWorkspace(
   };
 }
 
-async function sendMessage(token: string, conversationId: string, content: string) {
+async function sendMessage(token: string, conversationId: string, content: string, threadId?: string) {
   const response = await req(
     "POST",
     `/messages/${conversationId}`,
-    { content },
+    { content, ...(threadId ? { threadId } : {}) },
     token,
   );
   expect(response.status).toBe(200);
@@ -138,9 +141,183 @@ afterAll(async () => {
   for (const email of createdUserEmails) {
     await db.delete(users).where(eq(users.email, email));
   }
+  for (const id of createdBotUserIds) {
+    await db.delete(users).where(eq(users.id, id));
+  }
+});
+
+async function taskFixture() {
+  const owner = await registerUser("Backlog Owner");
+  const recipient = await registerUser("Backlog Recipient");
+  const workspace = await createSharedWorkspace(owner, recipient, "Backlog Tasks");
+  const bot = await req("POST", "/bots/create", {
+    name: "Backlog Hermes", kind: "hermes", workspaceId: workspace.id,
+  }, owner.token);
+  expect(bot.status).toBe(200);
+  createdBotUserIds.push(bot.body.userId);
+  const dm = await req("POST", "/conversations/dm", {
+    workspaceId: workspace.id, otherUserId: bot.body.userId,
+  }, recipient.token);
+  expect(dm.status).toBe(200);
+  const tasks = [];
+  for (const title of ["Task A", "Task B"]) {
+    const task = await req("POST", `/conversations/threads/${dm.body.id}`, {
+      botId: bot.body.id, title,
+    }, recipient.token);
+    expect(task.status).toBe(200);
+    tasks.push(task.body.id as string);
+  }
+  return { owner, recipient, workspace, bot: bot.body, conversationId: dm.body.id as string, taskA: tasks[0], taskB: tasks[1] };
+}
+
+describe("Task opening backlog", () => {
+  test("tolerates deleted snapshot IDs but rejects sibling and cross-conversation IDs", async () => {
+    const { recipient, bot, workspace, conversationId, taskA, taskB } = await taskFixture();
+    const old = await sendMessage(bot.apiKey, conversationId, "Old", taskA);
+    const deleted = await sendMessage(bot.apiKey, conversationId, "Deleted", taskA);
+    const sibling = await sendMessage(bot.apiKey, conversationId, "Sibling", taskB);
+    const general = await sendMessage(bot.apiKey, conversationId, "General");
+    const page = await req("GET", `/messages/${conversationId}/task-page?threadId=${taskA}`, undefined, recipient.token);
+    await db.delete(messages).where(eq(messages.id, deleted.id));
+    const marked = await req("POST", `/activity/conversations/${conversationId}/read`, {
+      messageIds: page.body.unreadMessageIds, threadId: taskA,
+    }, recipient.token);
+    expect(marked.status).toBe(200);
+    expect(marked.body.totalUnreadMessages).toBe(2);
+    for (const [messageId, threadId] of [[sibling.id, taskA], [general.id, taskA], [sibling.id, null]]) {
+      const rejected = await req("POST", `/activity/conversations/${conversationId}/read`, {
+        messageIds: [messageId], threadId,
+      }, recipient.token);
+      expect(rejected.status).toBe(400);
+    }
+    const wrongConversation = await req("POST", `/activity/conversations/${workspace.channelId}/read`, {
+      messageIds: [sibling.id], threadId: taskB,
+    }, recipient.token);
+    expect(wrongConversation.status).toBe(400);
+    const after = await req("GET", "/activity", undefined, recipient.token);
+    expect(after.body.totalUnreadMessages).toBe(2);
+    expect(new Set(after.body.items[0].unreadThreadIds)).toEqual(new Set([taskB, null]));
+    expect(page.body.unreadMessageIds).toContain(old.id);
+  });
+
+  test("captures old unread IDs outside the newest page without consuming siblings or late commits", async () => {
+    const { owner, recipient, bot, conversationId, taskA, taskB } = await taskFixture();
+    const history = await db.transaction(async (tx) => {
+      const rows = await tx.insert(messages).values(Array.from({ length: 245 }, (_, i) => ({
+        conversationId, threadId: taskA, senderId: bot.userId,
+        content: `History ${i}`, createdAt: new Date(Date.UTC(2026, 0, 1, 0, i)),
+      }))).returning();
+      for (const row of rows.slice(0, 225)) await recordMessageUnreads(tx, row);
+      return rows;
+    });
+    const general = await sendMessage(bot.apiKey, conversationId, "General");
+    const sibling = await sendMessage(bot.apiKey, conversationId, "Sibling", taskB);
+    let release!: () => void;
+    let staged!: () => void;
+    const ready = new Promise<void>((resolve) => { staged = resolve; });
+    const hold = new Promise<void>((resolve) => { release = resolve; });
+    let lateId = "";
+    const delayed = db.transaction(async (tx) => {
+      const [row] = await tx.insert(messages).values({
+        conversationId, threadId: taskA, senderId: bot.userId,
+        content: "Backdated late commit", createdAt: new Date("2025-01-01"),
+      }).returning();
+      lateId = row.id;
+      await recordMessageUnreads(tx, row);
+      staged();
+      await hold;
+    });
+    await ready;
+    try {
+      const ordinary = await req("GET", `/messages/${conversationId}?threadId=${taskA}&limit=20`, undefined, recipient.token);
+      expect(Array.isArray(ordinary.body)).toBe(true);
+      expect(ordinary.body).toHaveLength(20);
+      const page = await req("GET", `/messages/${conversationId}/task-page?threadId=${taskA}&limit=20`, undefined, recipient.token);
+      expect(page.status).toBe(200);
+      expect(page.body.messages.map((m: { id: string }) => m.id)).toEqual(history.slice(-20).map((m) => m.id));
+      expect(new Set(page.body.unreadMessageIds)).toEqual(new Set(history.slice(0, 225).map((m) => m.id)));
+      expect((await req("GET", "/activity", undefined, recipient.token)).body.totalUnreadMessages).toBe(227);
+      release();
+      await delayed;
+      const later = await sendMessage(bot.apiKey, conversationId, "Later reply", taskA);
+      const ids = [...page.body.unreadMessageIds, ...page.body.messages.map((m: { id: string }) => m.id)];
+      for (let i = 0; i < ids.length; i += 200) {
+        const marked = await req("POST", `/activity/conversations/${conversationId}/read`, {
+          messageIds: ids.slice(i, i + 200), threadId: taskA,
+        }, recipient.token);
+        expect(marked.status).toBe(200);
+      }
+      const remaining = await req("GET", `/messages/${conversationId}/task-page?threadId=${taskA}`, undefined, recipient.token);
+      expect(new Set(remaining.body.unreadMessageIds)).toEqual(new Set([lateId, later.id]));
+      const generalPage = await req("GET", `/messages/${conversationId}/task-page?unthreaded=true`, undefined, recipient.token);
+      expect(generalPage.body.unreadMessageIds).toEqual([general.id]);
+      const siblingPage = await req("GET", `/messages/${conversationId}/task-page?threadId=${taskB}`, undefined, recipient.token);
+      expect(siblingPage.body.unreadMessageIds).toEqual([sibling.id]);
+      expect((await req("GET", "/activity", undefined, recipient.token)).body.totalUnreadMessages).toBe(4);
+      expect((await req("GET", `/messages/${conversationId}/task-page`, undefined, recipient.token)).status).toBe(400);
+      expect((await req("GET", `/messages/${conversationId}/task-page?threadId=${taskA}`, undefined, owner.token)).status).toBe(403);
+    } finally {
+      release();
+      await delayed;
+    }
+  });
 });
 
 describe("Activity unread persistence", () => {
+  test("restores every unread task and General, deduplicating scopes and retaining siblings after exact reads", async () => {
+    const owner = await registerUser("Task Owner");
+    const recipient = await registerUser("Offline Task Recipient");
+    const workspace = await createSharedWorkspace(owner, recipient, "Unread Tasks");
+    const bot = await req("POST", "/bots/create", {
+      name: "Unread Hermes", kind: "hermes", workspaceId: workspace.id,
+    }, owner.token);
+    expect(bot.status).toBe(200);
+    createdBotUserIds.push(bot.body.userId);
+    const dm = await req("POST", "/conversations/dm", {
+      workspaceId: workspace.id, otherUserId: bot.body.userId,
+    }, recipient.token);
+    expect(dm.status).toBe(200);
+    const taskA = await req("POST", `/conversations/threads/${dm.body.id}`, {
+      botId: bot.body.id, title: "Task A",
+    }, recipient.token);
+    const taskB = await req("POST", `/conversations/threads/${dm.body.id}`, {
+      botId: bot.body.id, title: "Task B",
+    }, recipient.token);
+    expect(taskA.status).toBe(200);
+    expect(taskB.status).toBe(200);
+    const firstA = await sendMessage(bot.body.apiKey, dm.body.id, "A first result", taskA.body.id);
+    const general = await sendMessage(bot.body.apiKey, dm.body.id, "General result");
+    await sendMessage(bot.body.apiKey, dm.body.id, "B result", taskB.body.id);
+    const secondA = await sendMessage(bot.body.apiKey, dm.body.id, "A latest result", taskA.body.id);
+
+    // There is no websocket client or client-side indicator state in this test.
+    const restored = await req("GET", "/activity", undefined, recipient.token);
+    expect(restored.status).toBe(200);
+    expect(restored.body.totalUnreadMessages).toBe(4);
+    expect(restored.body.items).toHaveLength(1);
+    expect(restored.body.items[0].latestMessage.id).toBe(secondA.id);
+    expect(restored.body.items[0].unreadThreadIds).toEqual([taskA.body.id, taskB.body.id, null]);
+    expect((await req("GET", "/activity", undefined, owner.token)).body.items).toEqual([]);
+
+    const partial = await req("POST", `/activity/conversations/${dm.body.id}/read`, {
+      messageIds: [secondA.id],
+    }, recipient.token);
+    expect(partial.status).toBe(200);
+    expect(new Set(partial.body.items[0].unreadThreadIds)).toEqual(new Set([taskA.body.id, taskB.body.id, null]));
+    const readA = await req("POST", `/activity/conversations/${dm.body.id}/read`, {
+      messageIds: [firstA.id],
+    }, recipient.token);
+    expect(readA.status).toBe(200);
+    expect(readA.body.items[0].unreadThreadIds).toEqual([taskB.body.id, null]);
+    expect(readA.body.totalUnreadMessages).toBe(2);
+    const reopened = await req("GET", "/activity", undefined, recipient.token);
+    expect(reopened.body).toEqual(readA.body);
+    const readGeneral = await req("POST", `/activity/conversations/${dm.body.id}/read`, {
+      messageIds: [general.id],
+    }, recipient.token);
+    expect(readGeneral.body.items[0].unreadThreadIds).toEqual([taskB.body.id]);
+  });
+
   test("requires authentication", async () => {
     expect((await req("GET", "/activity")).status).toBe(401);
   });

@@ -1,8 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { ActivitySnapshot, ChatMessage } from "@thechat/shared";
+import type { ActivitySnapshot, BotInvocationPublic, ChatMessage } from "@thechat/shared";
 import { useAuthStore } from "./auth";
+import { resetPrivateSession } from "../lib/session-boundary";
 import { useActivityStore } from "./activity";
 import { useConversationsStore } from "./conversations";
+import { hermesScopeKey, useHermesIndicatorsStore } from "./hermes-indicators";
 
 const {
   activityGet,
@@ -55,6 +57,17 @@ const emptySnapshot: ActivitySnapshot = {
   totalUnreadMessages: 0,
 };
 
+function finishSilently(id: string, threadId: string, conversationId = "conversation-1") {
+  const invocation: BotInvocationPublic = {
+    id, threadId, conversationId, botId: "bot", botUserId: "bot-user", botName: "Hermes", botKind: "hermes",
+    triggerMessageId: "trigger", responseMessageId: null, adapterKind: "hermes", status: "queued",
+    externalRunId: null, requestJson: null, responseJson: null, error: null, startedAt: null, completedAt: null,
+    createdAt: "2026-11-01T10:00:00.000Z", updatedAt: "2026-11-01T10:00:00.000Z",
+  };
+  useHermesIndicatorsStore.getState().trackInvocation(invocation);
+  useHermesIndicatorsStore.getState().trackInvocation({ ...invocation, status: "completed", responseJson: { silent: true } });
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   conversationsRoute.mockReturnValue({
@@ -65,6 +78,7 @@ beforeEach(() => {
   readAllPost.mockResolvedValue({ data: emptySnapshot, error: null });
   useAuthStore.setState({ token: "token-1", user: null, loading: false });
   useActivityStore.getState().reset();
+  useHermesIndicatorsStore.getState().resetForTests();
   useConversationsStore.setState({
     unreadChannels: new Set(),
     unreadDirectConversations: {},
@@ -72,6 +86,65 @@ beforeEach(() => {
 });
 
 describe("activity store", () => {
+  it("does not erase silent completion attention when fetching Activity or acknowledging rendered messages", async () => {
+    finishSilently("silent", "silent-task");
+    const scopes = useHermesIndicatorsStore.getState().unreadScopes;
+    activityGet.mockResolvedValue({ data: emptySnapshot, error: null });
+    await useActivityStore.getState().fetchActivity();
+    await useActivityStore.getState().markConversationRead("conversation-1", ["rendered-message"]);
+    expect(useHermesIndicatorsStore.getState().unreadScopes).toEqual(scopes);
+  });
+
+  it.each(["conversation", "all"])("preserves completion attention when explicit %s read fails", async (selection) => {
+    finishSilently("silent", "silent-task");
+    const scopes = useHermesIndicatorsStore.getState().unreadScopes;
+    (selection === "all" ? readAllPost : conversationReadPost)
+      .mockResolvedValueOnce({ data: null, error: { value: { error: "Read failed" } } });
+    const pending = selection === "all"
+      ? useActivityStore.getState().markAllRead()
+      : useActivityStore.getState().markConversationRead("conversation-1");
+    await expect(pending).rejects.toThrow("Read failed");
+    expect(useHermesIndicatorsStore.getState().unreadScopes).toEqual(scopes);
+  });
+
+  it.each(["fetch", "conversation", "all"])("fences a delayed %s response after a bearer identity change", async (operation) => {
+    finishSilently("silent", "silent-task");
+    const scopes = useHermesIndicatorsStore.getState().unreadScopes;
+    let finish!: (value: unknown) => void;
+    const mock = operation === "fetch" ? activityGet : operation === "all" ? readAllPost : conversationReadPost;
+    mock.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    const pending = operation === "fetch" ? useActivityStore.getState().fetchActivity()
+      : operation === "all" ? useActivityStore.getState().markAllRead()
+      : useActivityStore.getState().markConversationRead("conversation-1");
+    useAuthStore.setState({ token: "token-2" });
+    finish({ data: unreadSnapshot, error: null });
+    await pending;
+    expect(useActivityStore.getState().items).toEqual([]);
+    expect(useHermesIndicatorsStore.getState().unreadScopes).toEqual(scopes);
+  });
+
+  it.each(["conversation", "all"])("explicit %s read clears only completion attention present when requested", async (selection) => {
+    finishSilently("old", "old-task");
+    finishSilently("same-before", "same-task");
+    finishSilently("other", "other-task", "conversation-2");
+    let finish!: (value: unknown) => void;
+    (selection === "all" ? readAllPost : conversationReadPost)
+      .mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    const pending = selection === "all"
+      ? useActivityStore.getState().markAllRead()
+      : useActivityStore.getState().markConversationRead("conversation-1");
+    finishSilently("same-after", "same-task");
+    finishSilently("new", "new-task");
+    finish({ data: emptySnapshot, error: null });
+    await pending;
+
+    const scopes = useHermesIndicatorsStore.getState().unreadScopes;
+    expect(scopes[hermesScopeKey("conversation-1", "old-task")]).toBeUndefined();
+    expect(scopes[hermesScopeKey("conversation-1", "same-task")]).toBeDefined();
+    expect(scopes[hermesScopeKey("conversation-1", "new-task")]).toBeDefined();
+    expect(Boolean(scopes[hermesScopeKey("conversation-2", "other-task")])).toBe(selection !== "all");
+  });
+
   it("hydrates persisted unread activity from the server", async () => {
     await useActivityStore.getState().fetchActivity();
 
@@ -103,6 +176,43 @@ describe("activity store", () => {
     );
     expect(useActivityStore.getState()).toMatchObject(emptySnapshot);
     expect(useConversationsStore.getState().unreadChannels.size).toBe(0);
+  });
+
+  it("acknowledges a fixed task backlog in batches of at most 200 IDs", async () => {
+    const ids = Array.from({ length: 245 }, (_, i) => `old-${i}`);
+    conversationReadPost.mockImplementation(async (body) => {
+      expect(body.messageIds.length).toBeLessThanOrEqual(200);
+      return { data: emptySnapshot, error: null };
+    });
+    await useActivityStore.getState().markConversationRead("conversation-1", ids, "task-a");
+    expect(conversationReadPost.mock.calls.map(([body]) => body)).toEqual([
+      { messageIds: ids.slice(0, 200), threadId: "task-a" },
+      { messageIds: ids.slice(200), threadId: "task-a" },
+    ]);
+    expect(useActivityStore.getState()).toMatchObject(emptySnapshot);
+  });
+
+  it.each(["token", "reset"])("stops remaining batches after a %s boundary", async (boundary) => {
+    let finish!: (value: unknown) => void;
+    conversationReadPost.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    const pending = useActivityStore.getState().markConversationRead(
+      "conversation-1", Array.from({ length: 245 }, (_, i) => `old-${i}`), "task-a",
+    );
+    if (boundary === "token") useAuthStore.setState({ token: "token-2" });
+    else resetPrivateSession();
+    finish({ data: unreadSnapshot, error: null });
+    await pending;
+    expect(conversationReadPost).toHaveBeenCalledTimes(1);
+    expect(useActivityStore.getState().items).toEqual([]);
+  });
+
+  it("retains the read error and stops after a failed backlog batch", async () => {
+    conversationReadPost.mockResolvedValueOnce({ data: null, error: { value: { error: "Read failed" } } });
+    await expect(useActivityStore.getState().markConversationRead(
+      "conversation-1", Array.from({ length: 245 }, (_, i) => `old-${i}`), "task-a",
+    )).rejects.toThrow("Read failed");
+    expect(conversationReadPost).toHaveBeenCalledTimes(1);
+    expect(useActivityStore.getState().error).toBe("Read failed");
   });
 
   it("explicitly clears a whole conversation from Activity", async () => {

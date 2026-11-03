@@ -2,6 +2,7 @@ import { isAuthenticated } from "../lib/auth-identity";
 import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { useParams, useSearch } from "@tanstack/react-router";
 import { useAuthStore } from "../stores/auth";
+import { useActivityStore } from "../stores/activity";
 import { useDmHeaderIdentity } from "../stores/chat-header";
 import {
   useBotRuntime,
@@ -188,6 +189,9 @@ export function DmRoute() {
     [conversationRequests, user?.id],
   );
   const unreadScopes = useHermesIndicatorsStore((s) => s.unreadScopes);
+  const unreadActivity = useActivityStore((s) =>
+    s.items.find((item) => item.conversationId === conversationId),
+  );
   const approvalThreadIds = useMemo(() => {
     const ids = new Set<string>();
     for (const interaction of pendingInteractions) {
@@ -206,19 +210,21 @@ export function DmRoute() {
     [conversationId, pendingInteractions],
   );
   const unreadThreadIds = useMemo(() => {
-    const ids = new Set<string>();
+    const ids = new Set<string | null>(
+      unreadActivity
+        ? unreadActivity.unreadThreadIds ?? [unreadActivity.latestMessage.threadId]
+        : [],
+    );
     for (const scope of Object.values(unreadScopes)) {
       if (scope.conversationId !== conversationId) continue;
-      if (scope.threadId) ids.add(scope.threadId);
+      ids.add(scope.threadId);
     }
     return ids;
-  }, [conversationId, unreadScopes]);
-  const generalUnread = useMemo(
-    () =>
-      Object.values(unreadScopes).some(
-        (scope) => scope.conversationId === conversationId && scope.threadId === null,
-      ),
-    [conversationId, unreadScopes],
+  }, [conversationId, unreadActivity, unreadScopes]);
+  const generalUnread = unreadThreadIds.has(null);
+  const taskUnreadThreadIds = useMemo(
+    () => new Set([...unreadThreadIds].filter((id): id is string => id !== null)),
+    [unreadThreadIds],
   );
 
   // Runs that started before this client connected still count for unread.
@@ -243,6 +249,7 @@ export function DmRoute() {
     conversationId: chatConversationId,
     threadId: isHermesDm ? activeThreadId : null,
     unthreadedOnly: generalThreadActive,
+    taskRead: isHermesDm,
     enabled: !draftTaskActive,
     token,
     wsSendMessage,
@@ -252,6 +259,7 @@ export function DmRoute() {
     chatConversationId,
     channelChat.messages,
     !draftTaskActive && !channelChat.loading,
+    isHermesDm ? { threadId: activeThreadId, snapshot: channelChat.taskReadSnapshot } : undefined,
   );
 
   const channelChatRef = useRef(channelChat);
@@ -703,7 +711,7 @@ export function DmRoute() {
           <TaskBranchBar
             activeThread={activeThread}
             threads={threads}
-            unreadThreadIds={unreadThreadIds}
+            unreadThreadIds={taskUnreadThreadIds}
             approvalThreadIds={approvalThreadIds}
             onSelectThread={handleSelectThread}
           />
@@ -816,7 +824,7 @@ export function DmRoute() {
           onBranchThread={(threadId) => void createBranch(threadId)}
           approvalThreadIds={approvalThreadIds}
           generalNeedsApproval={generalNeedsApproval}
-          unreadThreadIds={unreadThreadIds}
+          unreadThreadIds={taskUnreadThreadIds}
           generalUnread={generalUnread}
           onLoadMoreThreads={(projectId) => {
             void loadMoreThreads(projectId);

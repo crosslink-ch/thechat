@@ -260,20 +260,17 @@ describe("registerGlobalWsHandlers", () => {
     });
 
     expect(fireNotification).not.toHaveBeenCalled();
-    expect(
-      useHermesIndicatorsStore.getState().unreadScopes[
-        hermesScopeKey("conv-1", "background-thread")
-      ],
-    ).toEqual({
-      conversationId: "conv-1",
-      threadId: "background-thread",
-      botUserId: "u-bot",
-    });
+    // Message dots belong to the durable Activity snapshot, not completion state.
+    expect(useActivityStore.getState().handleIncomingMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ conversationId: "conv-1", threadId: "background-thread" }),
+      expect.any(Boolean),
+    );
+    expect(useHermesIndicatorsStore.getState().unreadScopes).toEqual({});
 
     cleanup();
   });
 
-  it("marks General unread when a direct bot message arrives while a task is visible", () => {
+  it("reconciles General through Activity without creating sticky completion attention", () => {
     useAuthStore.setState({
       token: "token-1",
       loading: false,
@@ -306,15 +303,11 @@ describe("registerGlobalWsHandlers", () => {
       },
     });
 
-    expect(
-      useHermesIndicatorsStore.getState().unreadScopes[
-        hermesScopeKey("conv-1", null)
-      ],
-    ).toEqual({
-      conversationId: "conv-1",
-      threadId: null,
-      botUserId: "u-bot",
-    });
+    expect(useActivityStore.getState().handleIncomingMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ conversationId: "conv-1", threadId: null }),
+      expect.any(Boolean),
+    );
+    expect(useHermesIndicatorsStore.getState().unreadScopes).toEqual({});
     expect(fireNotification).not.toHaveBeenCalled();
 
     useHermesIndicatorsStore

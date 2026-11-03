@@ -236,6 +236,12 @@ export interface ChatMessage {
   createdAt: string;
 }
 
+/** First task/General page plus the exact unread backlog captured before it. */
+export interface TaskMessagePage {
+  messages: ChatMessage[];
+  unreadMessageIds: string[];
+}
+
 export interface MessageReactionSummary {
   emoji: string;
   count: number;
@@ -321,6 +327,8 @@ export interface ActivityItem {
   workspaceId: string;
   workspaceName: string;
   unreadCount: number;
+  /** All scopes with unread messages; null denotes General. Absent on older servers. */
+  unreadThreadIds?: (string | null)[];
   latestMessage: ActivityLatestMessage;
 }
 

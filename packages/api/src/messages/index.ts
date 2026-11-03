@@ -3,7 +3,7 @@ import { z } from "zod";
 import { resolveRequestUser } from "../auth/middleware";
 import { browserAuthPolicy } from "../auth/browser";
 import { ServiceError } from "../services/errors";
-import { getMessages, sendMessage } from "../services/messages";
+import { getMessages, getTaskMessagePage, sendMessage } from "../services/messages";
 import { setMessageReaction } from "../services/message-reactions";
 import {
   setHttpResponseStatus,
@@ -66,6 +66,33 @@ export const messageRoutes = new Elysia({ prefix: "/messages" })
   )
 
   // Fetch messages (paginated)
+  .get("/:conversationId/task-page", async ({ params, query, user, set }) => {
+    const parsed = z.object({
+      threadId: z.string().uuid().optional(),
+      unthreaded: z.enum(["true", "1"]).optional(),
+      limit: z.coerce.number().int().min(1).max(100).optional(),
+    }).strict().refine((value) => Boolean(value.threadId) !== Boolean(value.unthreaded), {
+      message: "Select one task or General",
+    }).safeParse(query);
+    if (!parsed.success) {
+      set.status = 400;
+      return { error: parsed.error.issues[0]?.message ?? "Invalid input" };
+    }
+    try {
+      return await getTaskMessagePage(params.conversationId, user.id, parsed.data.threadId ?? null, {
+        limit: parsed.data.limit,
+        includeAttachments: user.type !== "bot" || user.attachmentAccess === true,
+      });
+    } catch (error) {
+      if (error instanceof ServiceError) {
+        set.status = error.status;
+        return { error: error.message };
+      }
+      throw error;
+    }
+  })
+
+  // Ordinary clients and bots retain the array response and pagination contract.
   .get("/:conversationId", async ({ params, query, user, set }) => {
     try {
       return await getMessages(params.conversationId, user.id, {

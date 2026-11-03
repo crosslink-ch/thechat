@@ -42,6 +42,8 @@ interface HermesIndicatorsStore {
     invocation?: BotInvocationPublic,
   ) => void;
   markScopeUnread: (scope: HermesUnreadScope) => void;
+  /** Clear captured attention only if no later completion replaced it. */
+  clearUnreadScopes: (scopes: HermesUnreadScope[]) => void;
   /** Remember runs that were active before this client connected. */
   seedFromSnapshot: (snapshot: BotRuntimeSnapshot) => void;
   setVisibleScope: (scopeKey: string | null) => void;
@@ -139,7 +141,7 @@ export const useHermesIndicatorsStore = create<HermesIndicatorsStore>()((set, ge
       const finished =
         invocation.status === "completed" || invocation.status === "failed";
       const scopeKey = hermesScopeKey(invocation.conversationId, invocation.threadId);
-      if (wasActive && finished && scopeKey !== state.visibleScope && !state.unreadScopes[scopeKey]) {
+      if (wasActive && finished && scopeKey !== state.visibleScope) {
         next.unreadScopes = {
           ...state.unreadScopes,
           [scopeKey]: {
@@ -191,8 +193,7 @@ export const useHermesIndicatorsStore = create<HermesIndicatorsStore>()((set, ge
         if (
           wasActive &&
           finished &&
-          scopeKey !== state.visibleScope &&
-          !state.unreadScopes[scopeKey]
+          scopeKey !== state.visibleScope
         ) {
           next.unreadScopes = {
             ...state.unreadScopes,
@@ -234,6 +235,19 @@ export const useHermesIndicatorsStore = create<HermesIndicatorsStore>()((set, ge
           [scopeKey]: scope,
         },
       };
+    });
+  },
+
+  clearUnreadScopes: (scopes) => {
+    set((state) => {
+      const unreadScopes = { ...state.unreadScopes };
+      for (const scope of scopes) {
+        const key = hermesScopeKey(scope.conversationId, scope.threadId);
+        // Each observed completion creates a new object, including when this
+        // scope was already unread. A pending read must not consume that event.
+        if (unreadScopes[key] === scope) delete unreadScopes[key];
+      }
+      return { unreadScopes };
     });
   },
 

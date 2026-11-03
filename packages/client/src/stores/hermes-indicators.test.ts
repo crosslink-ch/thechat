@@ -66,6 +66,24 @@ describe("useHermesIndicatorsStore", () => {
   });
 
   describe("unread scopes", () => {
+    it.each(["invocation.completed", "invocation.failed"])("keeps a later %s progress event through an in-flight explicit read", (type) => {
+      const invocation = makeInvocation({ status: "claimed", threadId: "task" });
+      store().trackProgressEvent(makeEvent(), invocation);
+      store().trackProgressEvent(makeEvent({ type, sequence: 2 }), invocation);
+      const captured = Object.values(store().unreadScopes);
+      expect(captured).toHaveLength(1);
+
+      const next = { ...invocation, id: "inv-next" };
+      store().trackProgressEvent(makeEvent({ invocationId: next.id }), next);
+      store().trackProgressEvent(makeEvent({ invocationId: next.id, type, sequence: 2 }), next);
+      store().clearUnreadScopes(captured);
+      expect(store().unreadScopes[hermesScopeKey("conv-1", "task")]).toBeDefined();
+
+      store().clearUnreadScopes(Object.values(store().unreadScopes));
+      store().trackProgressEvent(makeEvent({ invocationId: next.id, type, sequence: 2 }), next);
+      expect(store().unreadScopes).toEqual({});
+    });
+
     it("marks a scope unread when an observed-active invocation finishes off-screen", () => {
       store().trackInvocation(makeInvocation({ threadId: "t-1", status: "queued" }));
       store().trackInvocation(makeInvocation({ threadId: "t-1", status: "completed" }));

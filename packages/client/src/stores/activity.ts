@@ -6,6 +6,7 @@ import { isAuthenticated } from "../lib/auth-identity";
 import { onSessionReset, sessionGeneration } from "../lib/session-boundary";
 import { useAuthStore } from "./auth";
 import { useConversationsStore } from "./conversations";
+import { useHermesIndicatorsStore } from "./hermes-indicators";
 
 interface ActivityState extends ActivitySnapshot {
   loading: boolean;
@@ -14,6 +15,7 @@ interface ActivityState extends ActivitySnapshot {
   markConversationRead: (
     conversationId: string,
     messageIds?: string[],
+    threadId?: string | null,
   ) => Promise<void>;
   markAllRead: () => Promise<void>;
   handleIncomingMessage: (
@@ -53,7 +55,9 @@ function currentToken() {
 
 function activitySession(token: string | null) {
   const generation = sessionGeneration();
-  return () => currentToken() === token && sessionGeneration() === generation;
+  const userId = useAuthStore.getState().user?.id;
+  return () => currentToken() === token && sessionGeneration() === generation
+    && useAuthStore.getState().user?.id === userId;
 }
 
 function syncConversationUnread(snapshot: ActivitySnapshot) {
@@ -127,10 +131,17 @@ export const useActivityStore = create<ActivityState>((set, get) => ({
     }
   },
 
-  markConversationRead: async (conversationId, messageIds) => {
+  markConversationRead: async (conversationId, messageIds, threadId) => {
     const token = currentToken();
     if (!isAuthenticated(token)) return;
+    // Freeze the selection before awaiting anything; a started view may finish
+    // after navigation, but must never acquire later arrivals or another account.
+    const ids = messageIds ? [...new Set(messageIds)] : undefined;
+    if (ids?.length === 0) return;
     const isCurrent = activitySession(token);
+    const completionScopes = messageIds ? [] : Object.values(
+      useHermesIndicatorsStore.getState().unreadScopes,
+    ).filter((scope) => scope.conversationId === conversationId);
     const mutationRequest = ++activityMutationRequestCounter;
     latestActivityMutationRequest = mutationRequest;
     const operation = ++activityOperationCounter;
@@ -139,14 +150,23 @@ export const useActivityStore = create<ActivityState>((set, get) => ({
     set({ error: null });
 
     const endpoint = api.activity.conversations({ conversationId }).read;
-    const body = messageIds ? { messageIds } : { all: true as const };
-    const { data, error } = await endpoint
-      .post(body, authHeaders(token))
-      .finally(() => {
-        if (isCurrent()) activityMutationVersion += 1;
-      });
-    if (error) {
-      const message = edenErrorMessage(error, "Failed to mark activity as read");
+    let data: unknown;
+    try {
+      for (let offset = 0; offset < (ids?.length ?? 1); offset += 200) {
+        if (!isCurrent()) return;
+        const body = ids
+          ? { messageIds: ids.slice(offset, offset + 200), ...(threadId !== undefined ? { threadId } : {}) }
+          : { all: true as const };
+        const response = await endpoint.post(body, authHeaders(token)).finally(() => {
+          if (isCurrent()) activityMutationVersion += 1;
+        });
+        if (response.error) {
+          throw new Error(edenErrorMessage(response.error, "Failed to mark activity as read"));
+        }
+        data = response.data;
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to mark activity as read";
       if (
         isCurrent() &&
         mutationRequest === latestActivityMutationRequest &&
@@ -156,6 +176,7 @@ export const useActivityStore = create<ActivityState>((set, get) => ({
       }
       throw new Error(message);
     }
+    if (isCurrent()) useHermesIndicatorsStore.getState().clearUnreadScopes(completionScopes);
     if (
       isCurrent() &&
       mutationRequest === latestActivityMutationRequest &&
@@ -173,6 +194,7 @@ export const useActivityStore = create<ActivityState>((set, get) => ({
     const token = currentToken();
     if (!isAuthenticated(token)) return;
     const isCurrent = activitySession(token);
+    const completionScopes = Object.values(useHermesIndicatorsStore.getState().unreadScopes);
     const mutationRequest = ++activityMutationRequestCounter;
     latestActivityMutationRequest = mutationRequest;
     const operation = ++activityOperationCounter;
@@ -197,6 +219,7 @@ export const useActivityStore = create<ActivityState>((set, get) => ({
       }
       throw new Error(message);
     }
+    if (isCurrent()) useHermesIndicatorsStore.getState().clearUnreadScopes(completionScopes);
     if (
       isCurrent() &&
       mutationRequest === latestActivityMutationRequest &&

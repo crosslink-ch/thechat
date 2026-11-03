@@ -14,6 +14,8 @@ import type {
   MessageReactionSummary,
 } from "@thechat/shared";
 import { api } from "../lib/api";
+import { sessionGeneration } from "../lib/session-boundary";
+import { useAuthStore } from "../stores/auth";
 import { authHeaders, edenErrorMessage, edenErrorStatus } from "../lib/eden";
 import { wsEvents, type WsEvents } from "../lib/ws-events";
 import {
@@ -38,6 +40,8 @@ interface UseChannelChatOptions {
   conversationId: string | null;
   threadId?: string | null;
   unthreadedOnly?: boolean;
+  /** Capture the opening backlog only for Hermes task/General views. */
+  taskRead?: boolean;
   enabled?: boolean;
   token: string | null;
   wsSendMessage: (
@@ -61,9 +65,19 @@ export const messagesQueryKey = (
     unthreadedOnly ? "general" : (threadId ?? "all"),
   ] as const;
 
+export interface TaskReadSnapshot {
+  conversationId: string;
+  threadId: string | null;
+  messageIds: string[];
+  token: string | null;
+  userId: string | undefined;
+  generation: number;
+}
+
 interface MessagePage {
   messages: ChatMessage[];
   hasOlder: boolean;
+  taskReadSnapshot?: TaskReadSnapshot;
 }
 
 type MessageWindow = InfiniteData<MessagePage, string | null>;
@@ -350,7 +364,23 @@ async function fetchMessagePage(
   threadId: string | null,
   unthreadedOnly: boolean,
   before: string | null,
+  taskRead: boolean,
 ): Promise<MessagePage> {
+  if (taskRead && !before) {
+    const owner = { token, userId: useAuthStore.getState().user?.id, generation: sessionGeneration() };
+    const { data, error } = await api.messages({ conversationId })["task-page"].get({
+      query: { limit: MESSAGE_PAGE_SIZE, ...(threadId ? { threadId } : { unthreaded: "true" }) },
+      ...authHeaders(token),
+    });
+    if (error || !data || !("messages" in data)) {
+      throw new Error(edenErrorMessage(error, "Failed to load messages"));
+    }
+    return {
+      messages: data.messages,
+      hasOlder: data.messages.length === MESSAGE_PAGE_SIZE,
+      taskReadSnapshot: { ...owner, conversationId, threadId, messageIds: data.unreadMessageIds },
+    };
+  }
   const messages = await fetchMessages(
     conversationId,
     token,
@@ -368,6 +398,7 @@ export function useChannelChat({
   conversationId,
   threadId = null,
   unthreadedOnly = false,
+  taskRead = false,
   enabled = true,
   token,
   wsSendMessage,
@@ -397,12 +428,15 @@ export function useChannelChat({
         threadId,
         unthreadedOnly,
         pageParam,
+        taskRead,
       ),
     initialPageParam: null as string | null,
     getNextPageParam: (lastPage) =>
       lastPage.hasOlder ? oldestMessageCursor(lastPage.messages) : undefined,
     enabled: enabled && !!conversationId && isAuthenticated(token),
-    staleTime: MESSAGE_CACHE_TTL_MS,
+    // Reopening a task must capture its current backlog, not reuse the prior
+    // opening's snapshot while realtime keeps the message cache fresh.
+    staleTime: taskRead ? 0 : MESSAGE_CACHE_TTL_MS,
   });
 
   // Older pages accumulate while the user scrolls up. Rendering them all
@@ -799,6 +833,9 @@ export function useChannelChat({
   return {
     messages,
     loading: enabled ? query.isLoading : false,
+    taskReadSnapshot: taskRead && enabled && query.isSuccess && !query.isFetching
+      ? query.data.pages[0]?.taskReadSnapshot ?? null
+      : null,
     loadingOlder: enabled ? query.isFetchingNextPage : false,
     hasOlderMessages: enabled ? query.hasNextPage : false,
     addMessage,
@@ -989,7 +1026,7 @@ function trimCachedWindowToInitialPage(
   const messages = flattenMessageWindow(window);
   if (messages.length <= MESSAGE_PAGE_SIZE) return;
   queryClient.setQueryData<MessageWindow>(key, {
-    pages: [{ messages: messages.slice(-MESSAGE_PAGE_SIZE), hasOlder: true }],
+    pages: [{ ...window.pages[0], messages: messages.slice(-MESSAGE_PAGE_SIZE), hasOlder: true }],
     pageParams: [null],
   });
 }
@@ -1005,6 +1042,7 @@ function trimWindowToRecentMessages(
 
   const recentMessages = messages.slice(-MESSAGE_WINDOW_SIZE);
   const pages = buildNewestFirstPages(recentMessages, true);
+  pages[0].taskReadSnapshot = window.pages[0]?.taskReadSnapshot;
   return {
     pages,
     pageParams: buildPageParams(pages),

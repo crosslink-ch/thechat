@@ -102,14 +102,21 @@ export async function listActivity(userId: string): Promise<ActivitySnapshot> {
     .where(eq(messageUnreads.userId, userId))
     .orderBy(desc(messages.createdAt), desc(messages.id));
 
-  const grouped = new Map<string, ActivityItem>();
+  const grouped = new Map<string, ActivityItem & { unreadThreadIds: (string | null)[] }>();
+  const unreadScopes = new Map<string, Set<string | null>>();
   for (const row of rows) {
     const existing = grouped.get(row.conversationId);
     if (existing) {
       existing.unreadCount += 1;
+      const scopes = unreadScopes.get(row.conversationId)!;
+      if (!scopes.has(row.threadId)) {
+        scopes.add(row.threadId);
+        existing.unreadThreadIds.push(row.threadId);
+      }
       continue;
     }
 
+    unreadScopes.set(row.conversationId, new Set([row.threadId]));
     grouped.set(row.conversationId, {
       conversationId: row.conversationId,
       conversationType: row.conversationType,
@@ -120,6 +127,7 @@ export async function listActivity(userId: string): Promise<ActivitySnapshot> {
       workspaceId: row.workspaceId,
       workspaceName: row.workspaceName,
       unreadCount: 1,
+      unreadThreadIds: [row.threadId],
       latestMessage: {
         id: row.messageId,
         threadId: row.threadId,
@@ -174,7 +182,7 @@ async function requireActivityConversationAccess(
 }
 
 export type ConversationReadSelection =
-  | { messageIds: string[] }
+  | { messageIds: string[]; threadId?: string | null }
   | { all: true };
 
 export async function markConversationRead(
@@ -198,11 +206,10 @@ export async function markConversationRead(
 
   const requestedIds = [...new Set(selection.messageIds)];
   const renderedMessages = await db
-    .select({ id: messages.id, conversationId: messages.conversationId })
+    .select({ id: messages.id, conversationId: messages.conversationId, threadId: messages.threadId })
     .from(messages)
     .where(inArray(messages.id, requestedIds));
   if (
-    renderedMessages.length !== requestedIds.length ||
     renderedMessages.some((message) => message.conversationId !== conversationId)
   ) {
     throw new ServiceError(
@@ -211,16 +218,24 @@ export async function markConversationRead(
     );
   }
 
-  // Delete only IDs the client actually rendered. A timestamp/read-cursor range
-  // can consume an earlier transaction that committed after the page snapshot
+  if (selection.threadId !== undefined && renderedMessages.some(
+    (message) => message.threadId !== selection.threadId,
+  )) {
+    throw new ServiceError("Message does not belong to this task", 400);
+  }
+
+  // Deleted IDs are harmless (their unread rows cascade away). Only acknowledge
+  // exact captured backlog/rendered IDs, never a timestamp/read-cursor range:
+  // a range can consume an earlier transaction that committed after the snapshot
   // but before this request, losing an unread message the user never saw.
+  if (renderedMessages.length === 0) return listActivity(userId);
   await db
     .delete(messageUnreads)
     .where(
       and(
         eq(messageUnreads.userId, userId),
         eq(messageUnreads.conversationId, conversationId),
-        inArray(messageUnreads.messageId, requestedIds),
+        inArray(messageUnreads.messageId, renderedMessages.map((message) => message.id)),
       ),
     );
 
