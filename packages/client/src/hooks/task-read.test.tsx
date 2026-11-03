@@ -162,6 +162,30 @@ it("does not expand an opened backlog on refetch, but still acknowledges rendere
   await waitFor(() => expect(mocks.read.mock.calls.flatMap(([body]) => body.messageIds)).toContain("visible-live"));
 });
 
+it("retries only the original opening backlog after a failed batch and a newer refetch", async () => {
+  const initial = page();
+  const unread = new Set(initial.unreadMessageIds);
+  let calls = 0;
+  mocks.read.mockImplementation(async ({ messageIds }: { messageIds: string[] }) => {
+    if (++calls === 2) return { data: null, error: { value: { error: "Read failed" } } };
+    messageIds.forEach((id) => unread.delete(id));
+    return empty;
+  });
+  const { result } = renderHook(() => useTask({}), { wrapper: createQueryWrapper() });
+  await waitFor(() => expect(mocks.read).toHaveBeenCalledTimes(2));
+  await act(async () => {});
+  expect(unread.size).toBeGreaterThan(0);
+  unread.add("late-unrendered-backdated");
+  mocks.page.mockResolvedValue({ data: { ...initial, unreadMessageIds: [...unread] }, error: null });
+  act(() => result.current.refetchMessages());
+  await waitFor(() => expect(mocks.page).toHaveBeenCalledTimes(2));
+  await waitFor(() => expect(mocks.read.mock.calls.length).toBeGreaterThan(2));
+  await waitFor(() => expect([...unread]).toEqual(["late-unrendered-backdated"]));
+  expect(mocks.read.mock.calls.flatMap(([body]) => body.messageIds)).not.toContain("late-unrendered-backdated");
+  act(() => result.current.addMessage(message("visible-live")));
+  await waitFor(() => expect(mocks.read.mock.calls.flatMap(([body]) => body.messageIds)).toContain("visible-live"));
+});
+
 it("does not expand an initially empty task's opening snapshot on a later refetch", async () => {
   mocks.page.mockResolvedValue({ data: { messages: [], unreadMessageIds: [] }, error: null });
   const { result } = renderHook(() => useTask({}), { wrapper: createQueryWrapper() });

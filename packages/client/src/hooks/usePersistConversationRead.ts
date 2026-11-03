@@ -37,7 +37,11 @@ export function usePersistConversationRead(
   const snapshot = taskView?.snapshot;
   const taskThreadId = taskView?.threadId;
   const taskMode = taskView !== undefined;
-  const openedScope = useRef<string | null>(null);
+  const openedScope = useRef<{
+    scope: string;
+    messageIds: string[];
+    acknowledged: boolean;
+  } | null>(null);
   const scope = JSON.stringify([conversationId, taskThreadId, sessionGeneration()]);
   // Switching scope or entering a draft ends the old opening. Returning to
   // General after a draft has the same scope ID but needs a fresh backlog.
@@ -56,20 +60,28 @@ export function usePersistConversationRead(
       || snapshot.generation !== sessionGeneration()
       || snapshot.token !== useAuthStore.getState().token
       || snapshot.userId !== useAuthStore.getState().user?.id)) return;
-    const opening = taskMode && openedScope.current !== scope;
+    if (taskMode && openedScope.current?.scope !== scope) {
+      openedScope.current = {
+        scope,
+        messageIds: [...new Set([...snapshot!.messageIds, ...renderedMessageIds])],
+        acknowledged: false,
+      };
+    }
+    const opening = taskMode ? openedScope.current : null;
     const ids = [...new Set([
-      ...(opening ? snapshot!.messageIds : []),
+      ...(opening && !opening.acknowledged ? opening.messageIds : []),
       ...renderedMessageIds,
     ])];
-    if (opening) openedScope.current = scope;
     if (ids.length === 0) return;
     const pending = taskMode
       ? markConversationRead(conversationId, ids, taskThreadId)
       : markConversationRead(conversationId, ids);
-    void pending.catch(() => {
-      if (opening && openedScope.current === scope) openedScope.current = null;
-      // The activity store retains a user-visible error and a future snapshot
-      // or realtime event will retry reconciliation.
+    void pending.then(() => {
+      if (opening) opening.acknowledged = true;
+    }).catch(() => {
+      // Retain this opening's exact IDs across retries. A refetch can include
+      // newer, unrendered messages that were not part of the original view.
+      // The activity store retains the error; a future event retries these IDs.
     });
     // The key is the stable identity of the exact rendered server message set.
     // eslint-disable-next-line react-hooks/exhaustive-deps
