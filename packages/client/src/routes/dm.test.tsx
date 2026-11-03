@@ -199,6 +199,7 @@ vi.mock("../components/HermesDmChatView", async () => {
       composerKey,
       draftKey,
       botAppearances,
+      emptyState,
     }: any) => {
       const draft = useComposerDraftsStore(
         (state) => state.drafts[draftKey] ?? "",
@@ -219,6 +220,8 @@ vi.mock("../components/HermesDmChatView", async () => {
           />
           <button type="button" onClick={() => onSend("First task prompt")}>Send first prompt</button>
           <button type="button" onClick={() => onSend("   ")}>Send empty prompt</button>
+          <button type="button" onClick={() => onSend("/branch Pricing in EUR")}>Send branch command</button>
+          {messages.length === 0 ? emptyState : null}
           {sendError ? <div role="alert">{sendError}</div> : null}
         </div>
       );
@@ -232,6 +235,7 @@ vi.mock("../components/HermesRuntimePanel", () => ({
     draftTaskActive,
     onSelectThread,
     onRenameThread,
+    onBranchThread,
     threads,
   }: any) => (
     <aside>
@@ -249,6 +253,9 @@ vi.mock("../components/HermesRuntimePanel", () => ({
           >
             Rename {thread.title}
           </button>
+          <button type="button" onClick={() => onBranchThread(thread.id)}>
+            Branch from {thread.title}
+          </button>
         </div>
       ))}
       {draftTaskActive ? <div data-testid="local-task-draft">New task draft</div> : null}
@@ -256,6 +263,8 @@ vi.mock("../components/HermesRuntimePanel", () => ({
   ),
 }));
 
+import userEvent from "@testing-library/user-event";
+import { useScopedCommands } from "../hooks/useScopedCommands";
 import { DmRoute } from "./dm";
 import { ChatHeader } from "../components/ChatHeader";
 import { useComposerDraftsStore } from "../stores/composer-drafts";
@@ -624,5 +633,131 @@ describe("DmRoute deferred Hermes task drafts", () => {
     await waitFor(() => expect(mocks.wsSendMessage).toHaveBeenCalledTimes(1));
     expect(mocks.createThread).toHaveBeenCalledTimes(2);
     expect(mocks.addOptimisticSentMessage).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("DmRoute Hermes branches", () => {
+  const plan = { ...persistedThread, id: "thread-1", title: "Launch plan" };
+  const branch = {
+    ...persistedThread,
+    id: "branch-1",
+    title: "Launch plan branch",
+    branchPending: true,
+    branchFromThreadId: "thread-1",
+  };
+  const openThreadId = () => mocks.channelChatOptions.mock.lastCall?.[0]?.threadId;
+  const branchCommand = () =>
+    vi
+      .mocked(useScopedCommands)
+      .mock.calls.map(([commands]) => commands.find((command) => command.id === "hermes.branch-task"))
+      .filter(Boolean)
+      .at(-1)!;
+
+  it("branches the open task from the header and opens the new branch", async () => {
+    mocks.threads = [plan];
+    mocks.createThread.mockResolvedValue(branch);
+    await renderRoute("/dm/dm-1?threadId=thread-1");
+
+    fireEvent.click(screen.getByRole("button", { name: "Branch “Launch plan”" }));
+    await waitFor(() =>
+      expect(mocks.createThread).toHaveBeenCalledWith({
+        botId: "bot-1",
+        title: "Launch plan branch",
+        branchFromThreadId: "thread-1",
+      }),
+    );
+    await waitFor(() => expect(openThreadId()).toBe("branch-1"));
+  });
+
+  it("numbers a second branch and branches General from the General lane", async () => {
+    mocks.threads = [plan, branch];
+    mocks.createThread.mockResolvedValue({ ...branch, id: "branch-2" });
+    await renderRoute("/dm/dm-1?threadId=thread-1");
+    fireEvent.click(screen.getByRole("button", { name: "Branch “Launch plan”" }));
+    await waitFor(() =>
+      expect(mocks.createThread).toHaveBeenLastCalledWith(
+        expect.objectContaining({ title: "Launch plan branch 2", branchFromThreadId: "thread-1" }),
+      ),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "General" }));
+    fireEvent.click(screen.getByRole("button", { name: "Branch General" }));
+    await waitFor(() =>
+      expect(mocks.createThread).toHaveBeenLastCalledWith({
+        botId: "bot-1",
+        title: "Branch",
+        branchFromThreadId: null,
+      }),
+    );
+  });
+
+  it("branches a task from the task panel without opening it first", async () => {
+    mocks.threads = [plan, { ...persistedThread, id: "thread-2", title: "Expenses" }];
+    mocks.createThread.mockResolvedValue({ ...branch, id: "branch-x", branchFromThreadId: "thread-2" });
+    await renderRoute("/dm/dm-1");
+    fireEvent.click(screen.getByRole("button", { name: "Branch from Expenses" }));
+    await waitFor(() =>
+      expect(mocks.createThread).toHaveBeenCalledWith(
+        expect.objectContaining({ title: "Expenses branch", branchFromThreadId: "thread-2" }),
+      ),
+    );
+    await waitFor(() => expect(openThreadId()).toBe("branch-x"));
+  });
+
+  it("names a branch from the /branch command and never sends it to Hermes", async () => {
+    mocks.threads = [plan];
+    mocks.createThread.mockResolvedValue(branch);
+    await renderRoute("/dm/dm-1?threadId=thread-1");
+    fireEvent.click(screen.getByRole("button", { name: "Send branch command" }));
+    await waitFor(() =>
+      expect(mocks.createThread).toHaveBeenCalledWith({
+        botId: "bot-1",
+        title: "Pricing in EUR",
+        branchFromThreadId: "thread-1",
+      }),
+    );
+    expect(mocks.sendChannelMessage).not.toHaveBeenCalled();
+    expect(mocks.wsSendMessage).not.toHaveBeenCalled();
+  });
+
+  it("shows where a branch came from, explains it before the first message and links both ways", async () => {
+    const user = userEvent.setup();
+    mocks.threads = [plan, branch];
+    await renderRoute("/dm/dm-1?threadId=branch-1");
+
+    const bar = screen.getByRole("navigation", { name: "Task branches" });
+    expect(within(bar).getByText("Branched from")).toBeInTheDocument();
+    expect(screen.getByTestId("branch-empty-state")).toHaveTextContent("Branch of “Launch plan”");
+
+    await user.click(within(bar).getByRole("button", { name: "Launch plan" }));
+    await waitFor(() => expect(openThreadId()).toBe("thread-1"));
+
+    // The source task lists its branches in the same bar.
+    const sourceBar = screen.getByRole("navigation", { name: "Task branches" });
+    expect(within(sourceBar).queryByText("Branched from")).not.toBeInTheDocument();
+    await user.click(within(sourceBar).getByRole("button", { name: "1 branch from this task" }));
+    await user.click(screen.getByRole("menuitem", { name: "Launch plan branch" }));
+    await waitFor(() => expect(openThreadId()).toBe("branch-1"));
+  });
+
+  it("offers C-x b for the open task and hides it while a New task draft is open", async () => {
+    mocks.threads = [plan];
+    mocks.createThread.mockResolvedValue(branch);
+    await renderRoute("/dm/dm-1?threadId=thread-1");
+    expect(branchCommand()).toMatchObject({
+      label: "Branch Task",
+      keybinding: { prefix: "C-x", key: "b" },
+      enabled: true,
+    });
+    await act(async () => branchCommand().execute());
+    await waitFor(() =>
+      expect(mocks.createThread).toHaveBeenCalledWith(
+        expect.objectContaining({ branchFromThreadId: "thread-1" }),
+      ),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "New task" }));
+    expect(branchCommand().enabled).toBe(false);
+    expect(screen.queryByTestId("branch-active-task")).not.toBeInTheDocument();
   });
 });
