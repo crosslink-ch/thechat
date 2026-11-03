@@ -709,7 +709,7 @@ export function DmRoute() {
           <TaskBranchBar
             activeThread={activeThread}
             threads={threads}
-            unreadThreadIds={unreadThreadIds}
+            unreadThreadIds={taskUnreadThreadIds}
             approvalThreadIds={approvalThreadIds}
             onSelectThread={handleSelectThread}
           />

@@ -1,4 +1,5 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { createMemoryHistory, createRootRoute, createRoute, createRouter, RouterProvider } from "@tanstack/react-router";
 import { beforeEach, expect, it, vi } from "vitest";
 import type { ActivitySnapshot, BotInvocationPublic, ChatMessage, ConversationThreadPublic } from "@thechat/shared";
@@ -110,6 +111,27 @@ it("restores all task and General dots from Activity with a fresh indicator stor
   expect(unread("Task A")).not.toBeInTheDocument();
   expect(unread("Task B")).toBeInTheDocument();
   expect(unread("General")).toBeInTheDocument();
+});
+
+it("restores branch-menu unread markers from Activity and clears them when the branch is read", async () => {
+  const user = userEvent.setup();
+  mocks.threads = mocks.threads.map((thread) => thread.id === "task-a"
+    ? { ...thread, branchFromThreadId: "read-task", branchPending: true }
+    : thread);
+  await useActivityStore.getState().fetchActivity();
+  await openDm();
+  expect(useHermesIndicatorsStore.getState().unreadScopes).toEqual({});
+  const bar = screen.getByRole("navigation", { name: "Task branches" });
+  await user.click(within(bar).getByRole("button", { name: "1 branch from this task, unread branches" }));
+  expect(within(screen.getByRole("menuitem", { name: /^Task A/ })).getByLabelText("Unread")).toBeInTheDocument();
+
+  await act(async () => {
+    useActivityStore.setState({ items: [{ ...snapshot.items[0], unreadThreadIds: ["task-b", null] }], totalUnreadMessages: 2 });
+  });
+  expect(within(screen.getByRole("menuitem", { name: "Task A" })).queryByLabelText("Unread")).not.toBeInTheDocument();
+  await user.keyboard("{Escape}");
+  expect(within(bar).getByRole("button", { name: "1 branch from this task" })).toBeInTheDocument();
+  expect(unread("Task B")).toBeInTheDocument();
 });
 
 it.each(["task-a", null])("uses the latest scope as a fallback for older Activity servers (%s)", async (threadId) => {
