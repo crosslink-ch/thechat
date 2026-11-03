@@ -22,8 +22,10 @@ vi.mock("@thechat/client/lib/api", () => ({
 }));
 
 import {
+  BRAVE_PUSH_HINT,
   base64UrlToBytes,
   bytesToBase64Url,
+  isBraveBrowser,
   disablePush,
   enablePush,
   getPushStatus,
@@ -182,6 +184,35 @@ describe("push manager", () => {
     setPermission("denied");
     expect(await enablePush()).toBe(false);
     expect(getPushStatus()).toEqual({ state: "blocked" });
+  });
+
+  it("tells Brave users how to enable push when the push service refuses", async () => {
+    // Brave ships with "Use Google services for push messaging" off: permission
+    // is granted, then subscribe() fails with an AbortError from the push service.
+    Object.defineProperty(navigator, "brave", { value: { isBrave: async () => true }, configurable: true });
+    try {
+      await syncPushState("alice");
+      setPermission("granted");
+      manager.subscribe.mockRejectedValueOnce(
+        new DOMException("Registration failed - push service error", "AbortError"),
+      );
+      expect(await enablePush()).toBe(false);
+      expect(getPushStatus()).toEqual({ state: "error", message: BRAVE_PUSH_HINT });
+      expect(BRAVE_PUSH_HINT).toMatch(/Use Google services for push messaging/);
+    } finally {
+      delete (navigator as Navigator & { brave?: unknown }).brave;
+    }
+  });
+
+  it("keeps the generic retry message in other browsers", async () => {
+    expect(isBraveBrowser()).toBe(false);
+    await syncPushState("alice");
+    setPermission("granted");
+    manager.subscribe.mockRejectedValueOnce(
+      new DOMException("Registration failed - push service error", "AbortError"),
+    );
+    expect(await enablePush()).toBe(false);
+    expect(getPushStatus()).toEqual({ state: "error", message: "Couldn't turn on notifications. Try again." });
   });
 
   it("drops the browser subscription if the server refuses it", async () => {
