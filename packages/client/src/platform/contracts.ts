@@ -2,7 +2,7 @@ import type { ComponentType } from "react";
 import type { Conversation } from "@thechat/shared";
 
 export type CredentialKey = "auth_access_token" | "auth_user" | "auth_refresh_token";
-export type PreferenceKey = "ui_font_size" | "active_workspace_id";
+export type PreferenceKey = "ui_font_size" | "active_workspace_id" | "recent_locations";
 export interface KeyValueStore<K extends string> {
   get(key: K, account?: string): Promise<string | null>;
   set(key: K, value: string, account?: string): Promise<void>;

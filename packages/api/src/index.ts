@@ -21,6 +21,7 @@ import { attachmentRoutes } from "./attachments";
 import { activityRoutes } from "./activity";
 import { botRequestRoutes, inboxRoutes } from "./bot-requests";
 import { pushRoutes } from "./push";
+import { searchRoutes } from "./search";
 import { webPushConfig } from "./push/config";
 import { initObservability, shutdownObservability, withSpan } from "./observability";
 import { log } from "./logging";
@@ -82,6 +83,7 @@ const app = new Elysia()
   .use(botRequestRoutes)
   .use(inboxRoutes)
   .use(pushRoutes)
+  .use(searchRoutes)
   .use(inviteRoutes)
   .use(botWorkspaceInviteRoutes)
   .use(mcpRoutes)

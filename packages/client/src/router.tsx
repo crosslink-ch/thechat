@@ -18,6 +18,8 @@ import { SettingsRoute } from "./routes/settings";
 import { WorkspaceManageRoute } from "./routes/workspace-manage";
 import { BotsManageRoute } from "./routes/bots-manage";
 import { OpenConversationRoute, validateOpenSearch } from "./routes/open";
+import { SearchRoute, validateSearchRouteSearch } from "./routes/search";
+import { MessageContextRoute } from "./routes/message";
 
 const rootRoute = createRootRoute({
   component: RootLayout,
@@ -104,6 +106,21 @@ const openRoute = createRoute({
   component: OpenConversationRoute,
 });
 
+// Full message search results; filters live in the URL.
+const searchRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/search",
+  validateSearch: validateSearchRouteSearch,
+  component: SearchRoute,
+});
+
+// One message in its conversation: search results and shared message links.
+const messageRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/message/$messageId",
+  component: MessageContextRoute,
+});
+
 const scrollDebugRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/debug/scroll",
@@ -139,6 +156,8 @@ const routeTree = rootRoute.addChildren([
   workspaceManageRoute,
   botsManageRoute,
   openRoute,
+  searchRoute,
+  messageRoute,
   scrollDebugRoute,
   hermesDebugRoute,
 ]);
