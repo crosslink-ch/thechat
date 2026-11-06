@@ -23,7 +23,8 @@ import {
 } from "./ChannelModal";
 import { api } from "../lib/api";
 import type { WorkspaceChannel, WorkspaceMember } from "@thechat/shared";
-import { Bell, Bot, ChevronDown, Ellipsis, Inbox, LogIn, LogOut, Pencil, Plus, Settings, Trash2 } from "lucide-react";
+import { Bell, Bot, ChevronDown, Ellipsis, Inbox, LogIn, LogOut, Pencil, Plus, Search, Settings, Trash2 } from "lucide-react";
+import { openPalette } from "../lib/palette-state";
 import { Avatar } from "./Avatar";
 import {
   avatarColor,
@@ -372,6 +373,26 @@ export function Sidebar() {
             </button>
           )}
         </div>
+
+        {user && (
+          <div className="shrink-0 px-3 pt-3">
+            <button
+              type="button"
+              data-testid="sidebar-search"
+              className="flex h-8 w-full cursor-pointer items-center gap-2 rounded-lg border border-border-subtle bg-base/60 px-2.5 text-left font-[inherit] text-[0.857rem] text-text-dimmed transition-colors duration-150 hover:border-border-strong hover:text-text-secondary"
+              onClick={() => {
+                dismissNavigation?.();
+                openPalette("all");
+              }}
+              aria-label="Search and jump to (Ctrl+K)"
+              aria-keyshortcuts="Control+K"
+            >
+              <Search size={14} aria-hidden="true" />
+              <span className="min-w-0 flex-1 truncate">Search or jump to…</span>
+              <kbd className="hidden rounded bg-white/[0.06] px-1.5 py-px font-mono text-[0.643rem] lg:inline">Ctrl K</kbd>
+            </button>
+          </div>
+        )}
 
         <div className="flex min-h-0 flex-1 flex-col">
           {user && activeWorkspace ? (

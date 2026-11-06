@@ -40,6 +40,13 @@ import {
   newBotRequestIdempotencyKey,
   waitForBotRequest,
 } from "../services/bot-requests";
+import {
+  findDestinations,
+  getMessageContext,
+  MESSAGE_CONTEXT_MAX,
+  MESSAGE_SEARCH_MAX_LIMIT,
+  searchMessages,
+} from "../services/search";
 import type { McpUser } from "./auth";
 
 function getUser(extra: { authInfo?: unknown }): McpUser {
@@ -70,6 +77,19 @@ async function withService<T>(fn: () => Promise<T>) {
     return error(e.message ?? "Unknown error");
   }
 }
+
+/** Search results are read by models: compact JSON costs far fewer tokens. */
+async function withCompactService<T>(fn: () => Promise<T>) {
+  try {
+    return {
+      content: [{ type: "text" as const, text: JSON.stringify(await fn()) }],
+    };
+  } catch (e: any) {
+    return error(e.message ?? "Unknown error");
+  }
+}
+
+const readOnly = { readOnlyHint: true, openWorldHint: false } as const;
 
 export function registerTools(server: McpServer) {
   // --- get_me ---
@@ -269,6 +289,101 @@ export function registerTools(server: McpServer) {
         })
       );
     }
+  );
+
+  // --- Search: find things without reading channel by channel ---
+  server.registerTool(
+    "search_messages",
+    {
+      description:
+        "Search message text across every conversation you can read (channels, DMs, Hermes tasks), newest first. " +
+        "All words must appear (case-insensitive, literal); use double quotes for an exact phrase, e.g. \"release notes\" draft. " +
+        "Narrow with workspaceId, conversationId (+ threadId), senderId, after/before. " +
+        "Each result has conversationId/threadId/id: pass id to get_message_context to read around it. " +
+        "When nextCursor is set, pass it as cursor for older results.",
+      annotations: { title: "Search messages", ...readOnly },
+      inputSchema: {
+        query: z.string().min(1).max(500).describe("Words to find; quote a phrase to keep it together"),
+        workspaceId: z.string().min(1).optional().describe("Only this workspace"),
+        conversationId: z.string().uuid().optional().describe("Only this conversation"),
+        threadId: z.string().uuid().optional().describe("Only this task (requires conversationId)"),
+        senderId: z.string().uuid().optional().describe("Only messages from this user or bot"),
+        after: z.string().optional().describe("ISO date/time: messages at or after"),
+        before: z.string().optional().describe("ISO date/time: messages before"),
+        cursor: z.string().optional().describe("nextCursor from the previous page"),
+        limit: z
+          .number()
+          .int()
+          .min(1)
+          .max(MESSAGE_SEARCH_MAX_LIMIT)
+          .optional()
+          .describe(`Results per page (default 20, max ${MESSAGE_SEARCH_MAX_LIMIT})`),
+      },
+    },
+    async (args, extra) => {
+      const user = getUser(extra);
+      return withCompactService(() =>
+        searchMessages(user.id, { ...args, query: args.query }),
+      );
+    },
+  );
+
+  server.registerTool(
+    "get_message_context",
+    {
+      description:
+        "Read the messages around one message (e.g. a search result), in the same scope the app shows it: " +
+        "a Hermes task shows only that task, a channel or DM the whole conversation. Chronological; " +
+        "targetMessageId marks the anchor. Use get_messages with `before` for more history.",
+      annotations: { title: "Read message context", ...readOnly },
+      inputSchema: {
+        messageId: z.string().uuid().describe("The message to center on"),
+        before: z
+          .number()
+          .int()
+          .min(0)
+          .max(MESSAGE_CONTEXT_MAX)
+          .optional()
+          .describe(`Messages before it (default 20, max ${MESSAGE_CONTEXT_MAX})`),
+        after: z
+          .number()
+          .int()
+          .min(0)
+          .max(MESSAGE_CONTEXT_MAX)
+          .optional()
+          .describe(`Messages after it (default 20, max ${MESSAGE_CONTEXT_MAX})`),
+      },
+    },
+    async ({ messageId, before, after }, extra) => {
+      const user = getUser(extra);
+      return withCompactService(() => getMessageContext(user.id, messageId, { before, after }));
+    },
+  );
+
+  server.registerTool(
+    "find_conversations",
+    {
+      description:
+        "Resolve a name to IDs across all your workspaces: channels, people and bots (with the existing DM's " +
+        "conversationId, if any), and Hermes tasks by title. Best match first; tolerant of case, accents and typos " +
+        "like 'kda' for 'Koda'. A person without conversationId has no DM yet: create_dm opens one.",
+      annotations: { title: "Find channels, people and tasks", ...readOnly },
+      inputSchema: {
+        query: z.string().min(1).max(200).describe("Name or part of a name"),
+        kinds: z
+          .array(z.enum(["channel", "person", "task"]))
+          .optional()
+          .describe("Limit to these kinds (default all)"),
+        workspaceId: z.string().min(1).optional().describe("Only this workspace"),
+        limit: z.number().int().min(1).max(50).optional().describe("Max results (default 10)"),
+      },
+    },
+    async ({ query, kinds, workspaceId, limit }, extra) => {
+      const user = getUser(extra);
+      return withCompactService(async () => ({
+        destinations: await findDestinations(user.id, query, { kinds, workspaceId, limit }),
+      }));
+    },
   );
 
   // --- send_message ---

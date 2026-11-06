@@ -671,7 +671,7 @@ function normalizeClientMessageId(value: string) {
   return normalized;
 }
 
-function toChatMessage(
+export function toChatMessage(
   row: {
     id: string;
     conversationId: string;

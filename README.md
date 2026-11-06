@@ -97,6 +97,10 @@ pnpm dev -- --skip-migrate
 pnpm dev -- --no-worker
 ```
 
+### Search and navigation
+
+Press **Ctrl+K** (Cmd+K on macOS) to jump to any channel, person, bot or Hermes task across your workspaces, or to search message text; **Ctrl+Shift+F** searches messages directly. Agents get the same search through the MCP tools `find_conversations`, `search_messages` and `get_message_context`. See [Search and navigation](docs/search.md).
+
 ### API and MCP access
 
 Human users can create named personal access tokens under **Settings → API access** for REST automation and the Streamable HTTP MCP endpoint. Tokens are non-expiring, carry the creator's permissions, and are shown only once. See [Personal access tokens](docs/personal-access-tokens.md) for secure storage, revocation, and ready-to-use REST/MCP examples.

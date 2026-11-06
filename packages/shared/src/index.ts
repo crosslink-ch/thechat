@@ -2,6 +2,7 @@ import type { BotAppearance } from "./bot-avatars";
 
 export * from "./bot-avatars";
 export * from "./secure-input";
+export * from "./search";
 
 // -- Message Parts (rich message model) --
 
@@ -240,6 +241,86 @@ export interface ChatMessage {
 export interface TaskMessagePage {
   messages: ChatMessage[];
   unreadMessageIds: string[];
+}
+
+// -- Search --
+
+/** One message that matched a search, with enough context to show and open it. */
+export interface MessageSearchHit {
+  id: string;
+  conversationId: string;
+  conversationType: "direct" | "group";
+  /** Channel name, or the other participant's name for a direct conversation. */
+  conversationName: string;
+  workspaceId: string;
+  workspaceName: string;
+  threadId: string | null;
+  threadTitle: string | null;
+  senderId: string;
+  senderName: string;
+  senderType: "human" | "bot";
+  /** Plain-text excerpt around the first match. */
+  snippet: string;
+  createdAt: string;
+}
+
+export interface MessageSearchPage {
+  results: MessageSearchHit[];
+  /** Pass back as `cursor` for the next (older) page; null when exhausted. */
+  nextCursor: string | null;
+}
+
+/** A place the quick switcher can jump to. */
+export type SearchDestination =
+  | {
+      kind: "channel";
+      conversationId: string;
+      name: string;
+      workspaceId: string;
+      workspaceName: string;
+    }
+  | {
+      kind: "person";
+      userId: string;
+      name: string;
+      userType: "human" | "bot";
+      botKind: BotKind | null;
+      botAvatar: BotAppearance | null;
+      workspaceId: string;
+      workspaceName: string;
+      /** The existing direct conversation, when there is one. */
+      conversationId: string | null;
+    }
+  | {
+      /** A Hermes task, opened inside its DM. */
+      kind: "task";
+      conversationId: string;
+      /** The bot's name. */
+      conversationName: string;
+      threadId: string;
+      title: string;
+      workspaceId: string;
+      workspaceName: string;
+      lastActivityAt: string;
+    };
+
+/** Messages around one message, in the scope the conversation shows them. */
+export interface MessageContext {
+  conversation: {
+    id: string;
+    type: "direct" | "group";
+    name: string;
+    workspaceId: string;
+    workspaceName: string;
+  };
+  /** Task scope of the target (null is General / the whole channel). */
+  threadId: string | null;
+  threadTitle: string | null;
+  targetMessageId: string;
+  /** Chronological, including the target. */
+  messages: ChatMessage[];
+  hasOlder: boolean;
+  hasNewer: boolean;
 }
 
 export interface MessageReactionSummary {

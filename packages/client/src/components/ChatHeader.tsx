@@ -25,6 +25,8 @@ const pageLabels: Record<string, string> = {
   "/bots/manage": "Bots",
   "/notifications": "Notifications",
   "/activity": "Activity",
+  "/search": "Search",
+  "/message/$messageId": "Message",
 };
 
 export function ChatHeader() {

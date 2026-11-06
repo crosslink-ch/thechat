@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { togglePalette, closePalette, closePaletteAndRefocus, openPaletteInCommandMode } from "./CommandPalette";
+import { togglePalette, closePalette, closePaletteAndRefocus, openPaletteInCommandMode, openMessageSearch } from "./CommandPalette";
 import { toggleSidebar } from "./components/Sidebar";
 import { openWorkspaceModal } from "./components/WorkspaceModal";
 import { openHermesBotModal } from "./components/HermesBotModal";
@@ -119,6 +119,15 @@ export function createCommands(
       hidden: true,
       execute: () => {
         openPaletteInCommandMode();
+      },
+    },
+    {
+      id: "search-messages",
+      label: "Search Messages",
+      shortcut: "Ctrl+Shift+F",
+      keybinding: { key: "f", ctrl: true, shift: true },
+      execute: () => {
+        openMessageSearch();
       },
     },
     {
