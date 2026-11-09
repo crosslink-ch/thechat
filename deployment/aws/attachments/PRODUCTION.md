@@ -24,7 +24,7 @@ separate Kubernetes Secrets.
 | Worker Kubernetes Secret | `thechat-attachments-worker-aws` |
 | API ServiceAccount | `thechat-api` |
 | Worker ServiceAccount | `thechat-api-worker` |
-| Clean retention | current and noncurrent versions, at least 30 days |
+| Clean retention | indefinite; no lifecycle expiry, explicit application deletion only |
 | Quarantine retention | current and noncurrent versions, 1 day |
 | Packaged desktop origins | `http://tauri.localhost`, `tauri://localhost` |
 
@@ -113,8 +113,7 @@ aws cloudformation create-change-set \
   --parameters \
     ParameterKey=BucketName,ParameterValue="$BUCKET_NAME" \
     ParameterKey=ApiUserName,ParameterValue="$API_USER" \
-    ParameterKey=WorkerUserName,ParameterValue="$WORKER_USER" \
-    ParameterKey=CleanObjectRetentionDays,ParameterValue=30
+    ParameterKey=WorkerUserName,ParameterValue="$WORKER_USER"
 
 aws cloudformation wait change-set-create-complete \
   --region "$AWS_REGION" \
@@ -512,7 +511,7 @@ Before any deliberate CloudFormation deletion:
 
 - [ ] Change set reviewed; no unexpected replacement.
 - [ ] Bucket and bucket policy are retained, private, versioned, and encrypted.
-- [ ] Clean current/noncurrent retention is at least 30 days.
+- [ ] No lifecycle rule expires `clean/` current or noncurrent versions.
 - [ ] IAM users, policies, and access-key IDs are distinct.
 - [ ] Both Infisical resources use `cluster-operator`; API/worker paths remain
   distinct.

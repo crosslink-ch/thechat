@@ -26,12 +26,6 @@ Parameters:
     Default: thechat-attachments-prod-worker
     AllowedPattern: '[\w+=,.@-]{1,64}'
     Description: Dedicated IAM user used only by the TheChat attachment worker
-  CleanObjectRetentionDays:
-    Type: Number
-    Default: 30
-    MinValue: 30
-    MaxValue: 3650
-    Description: Days to retain both current and noncurrent clean object versions
 
 Rules:
   DedicatedAttachmentUsersMustDiffer:
@@ -104,12 +98,6 @@ Resources:
             Status: Enabled
             Prefix: quarantine/
             ExpiredObjectDeleteMarker: true
-          - Id: ExpireCleanObjectVersions
-            Status: Enabled
-            Prefix: clean/
-            ExpirationInDays: !Ref CleanObjectRetentionDays
-            NoncurrentVersionExpiration:
-              NoncurrentDays: !Ref CleanObjectRetentionDays
           - Id: RemoveExpiredCleanDeleteMarkers
             Status: Enabled
             Prefix: clean/

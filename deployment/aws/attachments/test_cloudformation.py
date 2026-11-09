@@ -313,9 +313,7 @@ class ProductionAttachmentTemplateTests(unittest.TestCase):
             },
         )
 
-        retention = self.template["Parameters"]["CleanObjectRetentionDays"]
-        self.assertEqual(retention["Default"], 30)
-        self.assertEqual(retention["MinValue"], 30)
+        self.assertNotIn("CleanObjectRetentionDays", self.template["Parameters"])
         lifecycle = {
             rule["Id"]: rule for rule in bucket["LifecycleConfiguration"]["Rules"]
         }
@@ -327,12 +325,16 @@ class ProductionAttachmentTemplateTests(unittest.TestCase):
                 "ExpiredObjectDeleteMarker"
             ]
         )
-        clean = lifecycle["ExpireCleanObjectVersions"]
-        self.assertEqual(clean["ExpirationInDays"], {"Ref": "CleanObjectRetentionDays"})
-        self.assertEqual(
-            clean["NoncurrentVersionExpiration"]["NoncurrentDays"],
-            {"Ref": "CleanObjectRetentionDays"},
-        )
+        # Clean attachments are kept indefinitely. Only explicit application
+        # deletion removes them, so no lifecycle rule may expire clean/ data.
+        self.assertNotIn("ExpireCleanObjectVersions", lifecycle)
+        for rule in lifecycle.values():
+            if rule["Prefix"] in ("", "clean/"):
+                self.assertNotIn("ExpirationInDays", rule)
+                self.assertNotIn("ExpirationDate", rule)
+                self.assertNotIn("NoncurrentVersionExpiration", rule)
+                self.assertNotIn("Transitions", rule)
+                self.assertNotIn("NoncurrentVersionTransitions", rule)
         self.assertTrue(
             lifecycle["RemoveExpiredCleanDeleteMarkers"]["ExpiredObjectDeleteMarker"]
         )

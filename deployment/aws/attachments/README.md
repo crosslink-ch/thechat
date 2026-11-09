@@ -26,8 +26,9 @@ Both templates manage:
 - one-day cleanup of incomplete multipart uploads.
 
 The production definition additionally retains its bucket policy, rejects SSE-C
-and explicit non-SSE-S3 encryption, removes expired delete markers, and retains
-both current and noncurrent clean versions for at least 30 days. Its 15-minute
+and explicit non-SSE-S3 encryption, removes expired delete markers, and never
+expires clean attachment versions: they are removed only by explicit application
+deletion (for example deleting a message or conversation). Its 15-minute
 signature-age ceiling matches the application's maximum upload TTL. Production
 bucket names exclude dots so packaged clients use TLS virtual-host addressing
 without wildcard-certificate ambiguity.
