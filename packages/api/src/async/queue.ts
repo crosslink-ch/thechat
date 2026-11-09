@@ -287,16 +287,18 @@ export async function replayDeadJob(queue: string, id: string) {
     return replayId;
   });
 }
+/** Bot-targeted messages of a conversation (or one task, or one message) still waiting for dispatch. */
 export async function pendingChatJobs(
   tx: Executor,
   conversationId: string,
-  threadId?: string,
+  scope: { threadId?: string; messageId?: string } = {},
 ) {
   return tx.execute(sql`select id from pgboss.job where name=${QUEUES.chat} and singleton_key=${conversationId}
     and state in ('created','retry','active')
     and jsonb_typeof(data->'payload'->'targetBotIds')='array'
     and jsonb_array_length(data->'payload'->'targetBotIds') > 0
-    ${threadId ? sql`and data->'payload'->>'messageId' in (select id::text from messages where thread_id=${threadId})` : sql``}
+    ${scope.threadId ? sql`and data->'payload'->>'messageId' in (select id::text from messages where thread_id=${scope.threadId})` : sql``}
+    ${scope.messageId ? sql`and data->'payload'->>'messageId' = ${scope.messageId}` : sql``}
     limit 1`);
 }
 export type QueueJob<T = object> = JobWithMetadata<T>;

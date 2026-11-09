@@ -104,6 +104,26 @@ export function cacheIncomingMessage(
   }
 }
 
+export function removeCachedMessage(
+  queryClient: QueryClient,
+  conversationId: string,
+  messageId: string,
+) {
+  // Cancel older history responses before filtering, so they cannot restore it.
+  void queryClient.cancelQueries({ queryKey: ["messages", conversationId] });
+  queryClient.setQueriesData<MessageWindow>(
+    { queryKey: ["messages", conversationId] },
+    (window) => window && ({
+      ...window,
+      pages: window.pages.map((page) => ({
+        ...page,
+        messages: page.messages.filter((message) => message.id !== messageId),
+      })),
+    }),
+  );
+  void queryClient.invalidateQueries({ queryKey: ["messages", conversationId] });
+}
+
 export function cacheMessageReactions(
   queryClient: QueryClient,
   conversationId: string,
@@ -770,8 +790,16 @@ export function useChannelChat({
       setSendError(message);
     };
 
+    const onMessageDeleted = (event: WsEvents["ws:message_deleted"]) => {
+      if (event.conversationId !== conversationId) return;
+      setLocalSentMessages((previous) =>
+        previous.filter((local) => local.message.id !== event.messageId),
+      );
+    };
+    wsEvents.on("ws:message_deleted", onMessageDeleted);
     wsEvents.on("ws:message_error", onMessageError);
     return () => {
+      wsEvents.off("ws:message_deleted", onMessageDeleted);
       wsEvents.off("ws:message_error", onMessageError);
     };
   }, [conversationId]);

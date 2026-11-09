@@ -541,6 +541,28 @@ export function currentHermesDispatchTimeoutCutoff() {
   return hermesDispatchTimeoutCutoff(hermesDispatchTimeoutMs());
 }
 
+/**
+ * SQL condition: a bot is working on this invocation, or is about to. A queued
+ * Hermes run older than the dispatch timeout was never picked up.
+ */
+export function botInvocationIsActive(hermesDispatchCutoff: Date) {
+  return or(
+    and(
+      eq(botInvocations.status, "queued"),
+      or(
+        ne(botInvocations.adapterKind, "hermes"),
+        gt(botInvocations.createdAt, hermesDispatchCutoff),
+      ),
+    ),
+    eq(botInvocations.status, "running"),
+    and(
+      eq(botInvocations.status, "claimed"),
+      sql`NULLIF(${botInvocations.responseJson}->'completion'->>'type', '') IS NULL`,
+      sql`COALESCE(${botInvocations.responseJson}->>'silent', 'false') <> 'true'`,
+    ),
+  );
+}
+
 function hermesDispatchTimedOut(createdAt: Date, timeoutMs: number) {
   return createdAt.getTime() <= Date.now() - timeoutMs;
 }

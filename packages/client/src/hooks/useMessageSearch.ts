@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { MessageSearchHit, MessageSearchPage } from "@thechat/shared";
 import { fetchMessageSearch, type MessageSearchParams } from "../lib/search-api";
 import { canSearchMessages } from "../lib/search";
+import { wsEvents, type WsEvents } from "../lib/ws-events";
 
 /** Wait this long after the last keystroke before asking the server. */
 export const MESSAGE_SEARCH_DEBOUNCE_MS = 180;
@@ -66,6 +67,17 @@ export function useMessageSearch(
     error: string | null;
   }>({ key: null, results: [], nextCursor: null, loading: false, loadingMore: false, error: null });
   const moreController = useRef<AbortController | null>(null);
+  const [revision, setRevision] = useState(0);
+  useEffect(() => {
+    const onDeleted = ({ messageId }: WsEvents["ws:message_deleted"]) => {
+      clearMessageSearchCache();
+      moreController.current?.abort();
+      setState((current) => ({ ...current, results: current.results.filter((hit) => hit.id !== messageId) }));
+      setRevision((value) => value + 1);
+    };
+    wsEvents.on("ws:message_deleted", onDeleted);
+    return () => wsEvents.off("ws:message_deleted", onDeleted);
+  }, []);
 
   useEffect(() => {
     moreController.current?.abort();
@@ -95,7 +107,7 @@ export function useMessageSearch(
         }));
       });
     return () => controller.abort();
-  }, [debouncedKey]);
+  }, [debouncedKey, revision]);
 
   // Read in loadMore without re-creating it; updaters must stay side-effect free.
   const stateRef = useRef(state);

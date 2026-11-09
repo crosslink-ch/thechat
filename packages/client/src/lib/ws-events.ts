@@ -26,6 +26,11 @@ export type WsEvents = {
     conversationId: string;
     messageId: string;
   };
+  "ws:message_deleted": {
+    conversationId: string;
+    messageId: string;
+    threadId: string | null;
+  };
   "ws:message_error": {
     conversationId: string;
     clientMessageId: string;
