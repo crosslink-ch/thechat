@@ -13,6 +13,7 @@ import { botAppearanceFor } from "../lib/bot-appearance";
 import { isAuthenticated } from "../lib/auth-identity";
 import { useRecentLocationsStore } from "../stores/recent-locations";
 import { selectHermesConversationProgress } from "../lib/hermes-progress";
+import { usePendingMessageJump } from "../lib/search-navigation";
 import {
   useBotRuntime,
   useBotRuntimeCache,
@@ -75,6 +76,8 @@ export function ChannelRoute() {
     channelChat.messages,
     !channelChat.loading,
   );
+  // "Open conversation" from a message: open the channel at that message.
+  const { jump, onJumpDone } = usePendingMessageJump(channelId);
 
   const channelChatRef = useRef(channelChat);
   channelChatRef.current = channelChat;
@@ -187,6 +190,8 @@ export function ChannelRoute() {
           conversationId={channelId}
           token={token}
           progressInvocations={progress.invocations}
+          jump={jump}
+          onJumpDone={onJumpDone}
           onSecureInput={async (event, response) => {
             if (!isAuthenticated(token) || user?.type !== "human" ||
                 event.conversationId !== channelId || event.payload?.requesterUserId !== user.id) {

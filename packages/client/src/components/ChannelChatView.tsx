@@ -7,6 +7,7 @@ import { Markdown } from "./Markdown";
 import { useAutoScroll } from "../hooks/useAutoScroll";
 import { useMessageTopCommand } from "../hooks/useMessageTopCommand";
 import { useOlderHistoryScroll } from "../hooks/useOlderHistoryScroll";
+import { useMessageJump, type MessageJumpRequest } from "../hooks/useMessageJump";
 import { useScrollStability } from "../hooks/useScrollStability";
 import { MessageSendError } from "./MessageSendError";
 import { HermesProgressInline } from "./HermesProgressInline";
@@ -54,6 +55,9 @@ interface ChannelChatViewProps {
   progressInvocations?: ActiveHermesInvocationProgress[];
   onSecureInput?: SecureInputCallback;
   onVaultUnlock?: VaultUnlockCallback;
+  /** Open at this message (loading older history as needed) and highlight it. */
+  jump?: MessageJumpRequest;
+  onJumpDone?: (found: boolean) => void;
 }
 
 export function ChannelChatView({
@@ -74,6 +78,8 @@ export function ChannelChatView({
   progressInvocations = NO_PROGRESS,
   onSecureInput,
   onVaultUnlock,
+  jump,
+  onJumpDone,
 }: ChannelChatViewProps) {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const { isAtBottom, pauseAutoScroll, scrollToBottom, shouldFollowBottom } =
@@ -145,6 +151,19 @@ export function ChannelChatView({
     scrollToBottom();
   }, [consumeSkipContentScroll, messageScrollSignature, scrollToBottom]);
 
+  // After the scroll-to-bottom effects above: the jump scrolls last.
+  const highlightedMessageId = useMessageJump({
+    containerRef: scrollContainerRef,
+    jump,
+    messages,
+    loading,
+    loadingOlder,
+    hasOlderMessages,
+    requestOlderMessages,
+    pauseAutoScroll,
+    onDone: onJumpDone,
+  });
+
   useEffect(() => {
     scrollToBottom();
   }, [typingScrollSignature, scrollToBottom]);
@@ -182,7 +201,7 @@ export function ChannelChatView({
             <div className="flex justify-center px-5 py-3">
               <button
                 type="button"
-                onClick={requestOlderMessages}
+                onClick={() => void requestOlderMessages()}
                 disabled={loadingOlder}
                 className={buttonClass("secondary", "sm")}
               >
@@ -208,6 +227,7 @@ export function ChannelChatView({
                     shouldMergeChatMessage(messages[index - 1], msg)
                   }
                   mentionsYou={mentionsYou(msg)}
+                  highlighted={msg.id === highlightedMessageId}
                   onSetReaction={onSetReaction}
                 >
                   {msg.content && <Markdown content={msg.content} mentions={mentionNames} />}

@@ -43,7 +43,11 @@ export function useOlderHistoryScroll({
   const skipContentScrollRef = useRef(false);
   const anchorRef = useRef<{ id: string; contentTop: number } | null>(null);
 
-  const requestOlderMessages = useCallback(() => {
+  /**
+   * Starts loading one older page. The promise settles with the load; null
+   * means no load was started (nothing older, or one is already running).
+   */
+  const requestOlderMessages = useCallback((): Promise<void> | null => {
     const el = containerRef.current;
     if (
       !el ||
@@ -53,13 +57,13 @@ export function useOlderHistoryScroll({
       !hasOlderMessages ||
       !onLoadOlderMessages
     ) {
-      return;
+      return null;
     }
 
     pendingRequestRef.current = true;
     skipContentScrollRef.current = true;
 
-    void Promise.resolve()
+    return Promise.resolve()
       .then(onLoadOlderMessages)
       .catch(() => undefined)
       .then((loaded) => {

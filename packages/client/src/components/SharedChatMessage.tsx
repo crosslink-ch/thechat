@@ -52,6 +52,8 @@ interface SharedChatMessageProps {
   children: ReactNode;
   /** The message @mentions the signed-in user. */
   mentionsYou?: boolean;
+  /** The message a search result jumped to: briefly marked. */
+  highlighted?: boolean;
   onSetReaction?: (
     messageId: string,
     emoji: string,
@@ -64,6 +66,7 @@ export function SharedChatMessage({
   merged,
   children,
   mentionsYou = false,
+  highlighted = false,
   onSetReaction,
 }: SharedChatMessageProps) {
   const botAvatar = useBotAppearance(
@@ -83,9 +86,14 @@ export function SharedChatMessage({
       data-message-grouped={merged ? "true" : "false"}
       data-mentions-you={mentionsYou ? "true" : undefined}
       data-message-interim={message.interim ? "true" : undefined}
-      className={`group/message group relative flex gap-2.5 px-5 transition-colors duration-100 hover:bg-white/[0.025] ${
-        merged ? "py-0.5" : "pb-0.5 pt-2.5"
-      } ${message.interim ? "text-text-muted opacity-75" : ""}`}
+      data-message-highlighted={highlighted ? "true" : undefined}
+      className={`group/message group relative flex gap-2.5 px-5 transition-colors duration-100 ${
+        highlighted
+          ? "bg-accent/[0.12] shadow-[inset_3px_0_0_var(--color-accent)]"
+          : "hover:bg-white/[0.025]"
+      } ${merged ? "py-0.5" : "pb-0.5 pt-2.5"} ${
+        message.interim ? "text-text-muted opacity-75" : ""
+      }`}
     >
       {merged ? (
         <time

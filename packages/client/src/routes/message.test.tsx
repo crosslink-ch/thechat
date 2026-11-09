@@ -57,6 +57,7 @@ describe("MessageContextView", () => {
         conversationId: "dm-koda",
         conversationType: "direct",
         threadId: "t-1",
+        messageId: "m2",
       }),
     );
   });

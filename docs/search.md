@@ -32,7 +32,10 @@ switcher (on a phone, open the navigation first).
   conversation on screen.
 - Opening a message shows it highlighted among its neighbours at
   `#/message/<id>`: a stable link that also works for old messages. **Open
-  conversation** (or **Open task**) continues in the live chat.
+  conversation** (or **Open task**) continues in the live chat, scrolled to the
+  same message and briefly highlighted. The chat loads older history as needed
+  (up to 500 messages back); for a message further back it opens on the latest
+  messages.
 
 Typing never waits on the network for names: the list of places is loaded once
 and filtered on the device. Message search is debounced and cancels stale

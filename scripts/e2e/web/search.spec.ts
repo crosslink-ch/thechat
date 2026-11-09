@@ -114,12 +114,73 @@ test('quick switcher jumps anywhere and message search opens the hit in context'
   await expect(context.getByText('The staging password rotates every Tuesday')).toBeVisible();
   await shot(page, `message-context-${info.project.name}.png`, info.outputPath);
 
-  // The link is shareable: reload keeps it; "Open conversation" goes live.
+  // The link is shareable: reload keeps it; "Open conversation" goes live,
+  // at the same message.
   await page.reload();
   await expect(page.getByTestId('message-context').locator('[data-search-target="true"]')).toBeVisible();
   await page.getByRole('button', { name: 'Open conversation' }).click();
   await expect(page).toHaveURL(new RegExp(`/channel/${w.channel.id}`));
   await expect(page.getByRole('textbox', { name: 'Message', exact: true })).toBeVisible();
+  await expectOpenedAt(page, w.target.id);
+});
+
+/** The live chat shows the message in view, highlighted. */
+async function expectOpenedAt(page: Page, messageId: string) {
+  const row = page.locator(`[data-message-id="${messageId}"]`);
+  await expect(row).toHaveAttribute('data-message-highlighted', 'true');
+  await expect(row).toBeInViewport();
+}
+
+test('"Open conversation" opens the live chat at a message far back', async ({ page, request }, info) => {
+  const isPhone = info.project.name.includes('phone');
+  const f = await seedWorkspace(request);
+  const post = (content: string) => call(request, 'POST', `/messages/${f.channel.id}`, { content }, f.b.accessToken);
+  const target = await post('The vendor contract renews on 1 March');
+  // More than two pages of newer messages: the chat first loads only the latest.
+  for (let index = 0; index < 45; index += 1) await post(`Status update ${index + 1}`);
+
+  await login(page, f.alice);
+  await page.goto(`${webURL}/#/message/${target.id}`);
+  await expect(page.getByTestId('message-context').locator('[data-search-target="true"]')).toContainText('vendor contract');
+  await page.getByRole('button', { name: 'Open conversation' }).click();
+
+  await expect(page).toHaveURL(new RegExp(`/channel/${f.channel.id}`));
+  await expect(page.getByTestId('message-context')).toHaveCount(0);
+  await expectOpenedAt(page, target.id);
+  // Not the newest messages, and the view stays there.
+  await expect(page.locator('[data-message-id]').filter({ hasText: 'Status update 45' })).not.toBeInViewport();
+  await page.waitForTimeout(1000);
+  await expect(page.locator(`[data-message-id="${target.id}"]`)).toBeInViewport();
+  await shot(page, `open-conversation-${info.project.name}.png`, info.outputPath);
+
+  // A new message arriving meanwhile does not pull the view away.
+  await post('Fresh news after the jump');
+  await expect(page.getByText('Fresh news after the jump')).toBeAttached();
+  await expect(page.locator(`[data-message-id="${target.id}"]`)).toBeInViewport();
+
+  // The highlight fades; the chat works normally from here.
+  await expect(page.locator(`[data-message-id="${target.id}"]`)).not.toHaveAttribute('data-message-highlighted', 'true', { timeout: 10_000 });
+  if (!isPhone) {
+    await page.getByRole('textbox', { name: 'Message', exact: true }).fill('Back to the bottom');
+    await page.getByRole('textbox', { name: 'Message', exact: true }).press('Enter');
+    await expect(page.locator('[data-message-id]').filter({ hasText: 'Back to the bottom' })).toBeInViewport();
+  }
+});
+
+test('"Open task" opens the Hermes task at the message', async ({ page, request }, info) => {
+  test.skip(info.project.name !== 'chromium-desktop', 'One browser covers the task variant');
+  const w = await seedSearchWorld(request);
+  const post = (content: string) =>
+    call(request, 'POST', `/messages/${w.kodaDm.id}`, { content, threadId: w.invoices.id }, w.a.accessToken);
+  const target = await post('Invoice 2026-114 is missing its VAT number');
+  for (let index = 0; index < 30; index += 1) await post(`Invoice check ${index + 1}`);
+
+  await login(page, w.alice);
+  await page.goto(`${webURL}/#/message/${target.id}`);
+  await page.getByRole('button', { name: 'Open task' }).click();
+  await expect(page).toHaveURL(new RegExp(`/dm/${w.kodaDm.id}.*threadId=${w.invoices.id}`));
+  await expectOpenedAt(page, target.id);
+  await expect(page.locator('[data-message-id]').filter({ hasText: 'Invoice check 30' })).not.toBeInViewport();
 });
 
 test('full results page pages through results; others never see private messages', async ({ page, request }, info) => {
