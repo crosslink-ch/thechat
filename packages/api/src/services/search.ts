@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gte, ilike, inArray, isNull, lt, ne, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, ilike, inArray, isNull, lt, ne, or, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import {
   parseMessageSearchTerms,
@@ -26,6 +26,7 @@ import { withSpan } from "../observability";
 import { ServiceError } from "./errors";
 import { messageReactionsByMessageIds } from "./message-reactions";
 import { canUserAccessAttachments, toChatMessage } from "./messages";
+import { threadSummariesForRows } from "./message-threads";
 
 export const MESSAGE_SEARCH_DEFAULT_LIMIT = 20;
 export const MESSAGE_SEARCH_MAX_LIMIT = 50;
@@ -285,6 +286,7 @@ export async function searchMessages(
           id: messages.id,
           conversationId: messages.conversationId,
           threadId: messages.threadId,
+          parentMessageId: messages.parentMessageId,
           senderId: messages.senderId,
           content: messages.content,
           createdAt: messages.createdAt,
@@ -326,6 +328,7 @@ export async function searchMessages(
           workspaceName: conversation.workspaceName,
           threadId: row.threadId,
           threadTitle: row.threadTitle ?? null,
+          ...(row.parentMessageId ? { parentMessageId: row.parentMessageId } : {}),
           senderId: row.senderId,
           senderName: row.senderName,
           senderType: row.senderType,
@@ -526,6 +529,10 @@ const contextColumns = {
   id: messages.id,
   conversationId: messages.conversationId,
   threadId: messages.threadId,
+  parentMessageId: messages.parentMessageId,
+  alsoSentToConversation: messages.alsoSentToConversation,
+  replyCount: messages.replyCount,
+  lastReplyAt: messages.lastReplyAt,
   senderId: messages.senderId,
   content: messages.content,
   parts: messages.parts,
@@ -553,6 +560,8 @@ export async function getMessageContext(
         id: messages.id,
         conversationId: messages.conversationId,
         threadId: messages.threadId,
+        parentMessageId: messages.parentMessageId,
+        alsoSentToConversation: messages.alsoSentToConversation,
         createdAtKey: sql<string>`${messages.createdAt}::text`,
       })
       .from(messages)
@@ -565,14 +574,21 @@ export async function getMessageContext(
     ).get(target.conversationId);
     if (!conversation) throw notFound;
 
-    const scope = and(
-      eq(messages.conversationId, conversation.id),
-      conversation.hermesDm
-        ? target.threadId
-          ? eq(messages.threadId, target.threadId)
-          : isNull(messages.threadId)
-        : undefined,
-    );
+    // A reply that stayed in its thread is shown among its thread (root
+    // first); everything else among the conversation's main timeline.
+    const replyRootId =
+      target.parentMessageId && !target.alsoSentToConversation ? target.parentMessageId : null;
+    const scope = replyRootId
+      ? or(eq(messages.parentMessageId, replyRootId), eq(messages.id, replyRootId))
+      : and(
+          eq(messages.conversationId, conversation.id),
+          or(isNull(messages.parentMessageId), eq(messages.alsoSentToConversation, true)),
+          conversation.hermesDm
+            ? target.threadId
+              ? eq(messages.threadId, target.threadId)
+              : isNull(messages.threadId)
+            : undefined,
+        );
     const position = sql`(${messages.createdAt}, ${messages.id})`;
     const anchor = sql`(${target.createdAtKey}::timestamptz, ${target.id}::uuid)`;
     const [older, newer, [targetRow], thread] = await Promise.all([
@@ -612,11 +628,12 @@ export async function getMessageContext(
       ...newer.slice(0, afterCount),
     ];
     const ids = rows.map((row) => row.id);
-    const [attachmentMap, reactionMap] = await Promise.all([
+    const [attachmentMap, reactionMap, threadMap] = await Promise.all([
       canUserAccessAttachments(db, userId).then((allowed) =>
         allowed ? attachmentsByMessageIds(ids) : new Map<string, NonNullable<ChatMessage["attachments"]>>(),
       ),
       messageReactionsByMessageIds(ids, userId),
+      threadSummariesForRows(rows),
     ]);
     return {
       conversation: {
@@ -628,9 +645,15 @@ export async function getMessageContext(
       },
       threadId: target.threadId,
       threadTitle: thread[0]?.title ?? null,
+      ...(replyRootId ? { replyRootId } : {}),
       targetMessageId: target.id,
       messages: rows.map((row) =>
-        toChatMessage(row, attachmentMap.get(row.id) ?? [], reactionMap.get(row.id) ?? []),
+        toChatMessage(
+          row,
+          attachmentMap.get(row.id) ?? [],
+          reactionMap.get(row.id) ?? [],
+          threadMap.get(row.id),
+        ),
       ),
       hasOlder: older.length > beforeCount,
       hasNewer: newer.length > afterCount,

@@ -89,6 +89,18 @@
   .shared-dm-layout {
     flex-direction: column;
   }
+  /* Too narrow to sit beside the conversation: the thread covers it, like
+     Slack on a phone. Closing it returns to the conversation. */
+  .thread-panel {
+    position: absolute;
+    inset: 0;
+    z-index: 30;
+    width: 100% !important;
+    border-left: 0;
+  }
+  .thread-panel-resize {
+    display: none;
+  }
 }
 @media (max-width: 1023px), (pointer: coarse) {
   .chat-header {

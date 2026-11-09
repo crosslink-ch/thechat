@@ -220,6 +220,20 @@ export const messages = pgTable(
     threadId: uuid("thread_id").references(() => conversationThreads.id, {
       onDelete: "set null",
     }),
+    /**
+     * Reply threads (Slack-style): a reply points at its root message. Only
+     * one level deep; a reply always shares its root's conversation and task.
+     * Unrelated to `threadId`, which is a Hermes task.
+     */
+    parentMessageId: uuid("parent_message_id"),
+    /** A reply that is also shown in the conversation's main timeline. */
+    alsoSentToConversation: boolean("also_sent_to_conversation")
+      .notNull()
+      .default(false),
+    /** On a root message: its reply count, kept in the reply's transaction. */
+    replyCount: integer("reply_count").notNull().default(0),
+    /** On a root message: when the newest reply was sent. */
+    lastReplyAt: timestamp("last_reply_at", { withTimezone: true }),
     senderId: uuid("sender_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
@@ -246,6 +260,13 @@ export const messages = pgTable(
     index("messages_created_at_idx").on(t.createdAt),
     // Ordered reads of one conversation (history, search context).
     index("messages_conversation_created_idx").on(t.conversationId, t.createdAt, t.id),
+    // Ordered reads of one reply thread, and per-root reply summaries.
+    index("messages_parent_created_idx").on(t.parentMessageId, t.createdAt, t.id),
+    foreignKey({
+      name: "messages_parent_message_id_fk",
+      columns: [t.parentMessageId],
+      foreignColumns: [t.id],
+    }).onDelete("cascade"),
     // Case-insensitive substring search (ILIKE) over message text.
     index("messages_content_trgm_idx").using("gin", t.content.op("gin_trgm_ops")),
     uniqueIndex("messages_sender_client_message_idx").on(
@@ -274,6 +295,43 @@ export const messageReactions = pgTable(
     index("message_reactions_message_emoji_idx").on(t.messageId, t.emoji),
     index("message_reactions_user_id_idx").on(t.userId),
   ]
+);
+
+// Who follows a reply thread. Following decides who gets unread state and
+// notifications for replies: the root's author, everyone who replied or was
+// @mentioned in it, and (in direct conversations) both people. An explicit
+// unfollow is kept as `following = false` so it is not silently undone.
+export const messageThreadFollowers = pgTable(
+  "message_thread_followers",
+  {
+    rootMessageId: uuid("root_message_id")
+      .notNull()
+      .references(() => messages.id, { onDelete: "cascade" }),
+    conversationId: uuid("conversation_id").notNull(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    following: boolean("following").notNull().default(true),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull()
+      .$onUpdate(() => new Date()),
+  },
+  (t) => [
+    primaryKey({ columns: [t.rootMessageId, t.userId] }),
+    foreignKey({
+      name: "message_thread_followers_participant_fk",
+      columns: [t.conversationId, t.userId],
+      foreignColumns: [
+        conversationParticipants.conversationId,
+        conversationParticipants.userId,
+      ],
+    }).onDelete("cascade"),
+    index("message_thread_followers_user_idx").on(t.userId, t.following),
+  ],
 );
 
 // Durable, bounded unread state. A row exists only while a human participant
@@ -894,6 +952,8 @@ export const notificationPreferences = pgTable("notification_preferences", {
   agentRequests: boolean("agent_requests").notNull().default(true),
   /** Also notify for agents' progress updates, not only finished work. */
   agentProgress: boolean("agent_progress").notNull().default(false),
+  /** Replies in threads you follow. */
+  threadReplies: boolean("thread_replies").notNull().default(true),
   showPreviews: boolean("show_previews").notNull().default(true),
   updatedAt: timestamp("updated_at", { withTimezone: true })
     .defaultNow()

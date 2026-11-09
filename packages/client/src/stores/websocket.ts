@@ -28,8 +28,13 @@ interface WebSocketStore {
     threadId?: string | null,
     clientMessageId?: string,
     attachmentIds?: string[],
+    reply?: { parentMessageId?: string | null; alsoSendToConversation?: boolean },
   ) => void;
-  sendTyping: (conversationId: string, threadId?: string | null) => void;
+  sendTyping: (
+    conversationId: string,
+    threadId?: string | null,
+    parentMessageId?: string | null,
+  ) => void;
 }
 
 let ws: WebSocket | null = null;
@@ -176,6 +181,7 @@ function doConnect() {
             message: event.message,
             conversationType: event.conversationType,
             clientMessageId: event.clientMessageId,
+            rootThread: event.rootThread,
           });
           span.setAttribute("thechat.realtime.outcome", "handled");
         },
@@ -184,6 +190,12 @@ function doConnect() {
           parentContext: contextFromRemoteTrace(event.traceContext),
         },
       );
+    } else if (event.type === "thread_follow_updated") {
+      wsEvents.emit("ws:thread_follow_updated", {
+        conversationId: event.conversationId,
+        rootMessageId: event.rootMessageId,
+        following: event.following,
+      });
     } else if (event.type === "message_reactions_updated") {
       wsEvents.emit("ws:message_reactions_updated", {
         conversationId: event.conversationId,
@@ -236,6 +248,7 @@ function doConnect() {
       wsEvents.emit("ws:typing", {
         conversationId: event.conversationId,
         threadId: event.threadId,
+        parentMessageId: event.parentMessageId ?? null,
         userId: event.userId,
         userName: event.userName,
       });
@@ -407,6 +420,7 @@ export const useWebSocketStore = create<WebSocketStore>()(() => ({
     threadId?: string | null,
     clientMessageId?: string,
     attachmentIds?: string[],
+    reply?: { parentMessageId?: string | null; alsoSendToConversation?: boolean },
   ) => {
     recordWebSocketBoundary({
       operation: "send_message_requested",
@@ -421,6 +435,12 @@ export const useWebSocketStore = create<WebSocketStore>()(() => ({
       threadId: threadId ?? null,
       clientMessageId,
       attachmentIds,
+      ...(reply?.parentMessageId
+        ? {
+            parentMessageId: reply.parentMessageId,
+            alsoSendToConversation: reply.alsoSendToConversation ?? false,
+          }
+        : {}),
     };
     if (authenticated && ws?.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify(event));
@@ -441,12 +461,17 @@ export const useWebSocketStore = create<WebSocketStore>()(() => ({
     }
   },
 
-  sendTyping: (conversationId: string, threadId?: string | null) => {
+  sendTyping: (
+    conversationId: string,
+    threadId?: string | null,
+    parentMessageId?: string | null,
+  ) => {
     if (authenticated && ws?.readyState === WebSocket.OPEN) {
       const event: WsClientEvent = {
         type: "typing",
         conversationId,
         threadId: threadId ?? null,
+        ...(parentMessageId ? { parentMessageId } : {}),
       };
       ws.send(JSON.stringify(event));
     }

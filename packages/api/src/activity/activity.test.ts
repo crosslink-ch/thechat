@@ -381,6 +381,7 @@ describe("Activity unread persistence", () => {
     expect(stillUnread.body.totalUnreadMessages).toBe(3);
     expect((await req("GET", "/activity", undefined, owner.token)).body).toEqual({
       items: [],
+      threads: [],
       totalUnreadMessages: 0,
     });
   });
@@ -421,7 +422,7 @@ describe("Activity unread persistence", () => {
     );
     expect(fullyRead).toMatchObject({
       status: 200,
-      body: { items: [], totalUnreadMessages: 0 },
+      body: { items: [], threads: [], totalUnreadMessages: 0 },
     });
   });
 
@@ -528,7 +529,7 @@ describe("Activity unread persistence", () => {
 
     expect(response).toMatchObject({
       status: 200,
-      body: { items: [], totalUnreadMessages: 0 },
+      body: { items: [], threads: [], totalUnreadMessages: 0 },
     });
   });
 
@@ -549,10 +550,10 @@ describe("Activity unread persistence", () => {
 
     expect(cleared).toMatchObject({
       status: 200,
-      body: { items: [], totalUnreadMessages: 0 },
+      body: { items: [], threads: [], totalUnreadMessages: 0 },
     });
     const persisted = await req("GET", "/activity", undefined, recipient.token);
-    expect(persisted.body).toEqual({ items: [], totalUnreadMessages: 0 });
+    expect(persisted.body).toEqual({ items: [], threads: [], totalUnreadMessages: 0 });
   });
 
   test("does not expose workspace-DM activity after membership removal", async () => {
@@ -580,12 +581,14 @@ describe("Activity unread persistence", () => {
     expect(removed.status).toBe(200);
     expect((await req("GET", "/activity", undefined, member.token)).body).toEqual({
       items: [],
+      threads: [],
       totalUnreadMessages: 0,
     });
 
     await sendMessage(owner.token, dm.body.id, "After removal");
     expect((await req("GET", "/activity", undefined, member.token)).body).toEqual({
       items: [],
+      threads: [],
       totalUnreadMessages: 0,
     });
 

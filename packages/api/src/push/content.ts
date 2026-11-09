@@ -12,6 +12,7 @@ import {
   conversationParticipants,
   conversationThreads,
   conversations,
+  messageThreadFollowers,
   messageUnreads,
   messages,
   users,
@@ -46,6 +47,8 @@ export function kindAllowed(
       return preferences.directMessages;
     case "mention":
       return preferences.mentions;
+    case "thread_reply":
+      return preferences.threadReplies ?? true;
     case "agent_reply":
       return preferences.agentReplies;
     case "agent_progress":
@@ -85,6 +88,8 @@ export function openConversationUrl(input: {
   conversationType: "direct" | "group";
   workspaceId: string | null;
   threadId: string | null;
+  /** Open this reply thread in the side panel. */
+  replyRootId?: string | null;
 }) {
   const params = new URLSearchParams({
     conversationId: input.conversationId,
@@ -92,11 +97,18 @@ export function openConversationUrl(input: {
   });
   if (input.workspaceId) params.set("workspaceId", input.workspaceId);
   if (input.threadId) params.set("threadId", input.threadId);
+  if (input.replyRootId) params.set("replyThread", input.replyRootId);
   return `#/open?${params.toString()}`;
 }
 
-function conversationTag(conversationId: string, threadId: string | null) {
-  return `conversation:${conversationId}:${threadId ?? "main"}`;
+function conversationTag(
+  conversationId: string,
+  threadId: string | null,
+  replyRootId: string | null = null,
+) {
+  return replyRootId
+    ? `conversation:${conversationId}:reply:${replyRootId}`
+    : `conversation:${conversationId}:${threadId ?? "main"}`;
 }
 
 // -- Shared access rule ---------------------------------------------------
@@ -160,6 +172,8 @@ async function loadMessageContext(messageId: string) {
       interim: messages.interim,
       conversationId: messages.conversationId,
       threadId: messages.threadId,
+      parentMessageId: messages.parentMessageId,
+      alsoSentToConversation: messages.alsoSentToConversation,
       senderId: messages.senderId,
       createdAt: messages.createdAt,
       senderName: users.name,
@@ -189,7 +203,7 @@ type MessageContext = NonNullable<Awaited<ReturnType<typeof loadMessageContext>>
 async function hasNewerMessageFromSender(
   context: Pick<
     MessageContext,
-    "id" | "conversationId" | "threadId" | "senderId" | "createdAt" | "interim"
+    "id" | "conversationId" | "threadId" | "parentMessageId" | "senderId" | "createdAt" | "interim"
   >,
 ) {
   const [row] = await db
@@ -200,6 +214,9 @@ async function hasNewerMessageFromSender(
         eq(messages.conversationId, context.conversationId),
         eq(messages.senderId, context.senderId),
         context.threadId ? eq(messages.threadId, context.threadId) : isNull(messages.threadId),
+        context.parentMessageId
+          ? eq(messages.parentMessageId, context.parentMessageId)
+          : isNull(messages.parentMessageId),
         ne(messages.id, context.id),
         context.interim ? undefined : eq(messages.interim, false),
         or(
@@ -273,8 +290,10 @@ async function invocationRequesterId(
 export function classifyMessage(
   context: Pick<MessageContext, "conversationType" | "senderType" | "content"> & {
     interim?: boolean;
+    /** Set for a reply in a reply thread. */
+    parentMessageId?: string | null;
   },
-  recipient: { userId: string; name: string },
+  recipient: { userId: string; name: string; followsThread?: boolean },
   requesterId: string | null = null,
 ): PushNotificationKind | null {
   const kind = baseMessageKind(context, recipient, requesterId);
@@ -283,8 +302,10 @@ export function classifyMessage(
 }
 
 function baseMessageKind(
-  context: Pick<MessageContext, "conversationType" | "senderType" | "content">,
-  recipient: { userId: string; name: string },
+  context: Pick<MessageContext, "conversationType" | "senderType" | "content"> & {
+    parentMessageId?: string | null;
+  },
+  recipient: { userId: string; name: string; followsThread?: boolean },
   requesterId: string | null,
 ): PushNotificationKind | null {
   if (context.conversationType === "direct") {
@@ -294,7 +315,24 @@ function baseMessageKind(
   if (context.senderType === "bot" && requesterId === recipient.userId) {
     return "agent_reply";
   }
-  return mentionsName(context.content, recipient.name) ? "mention" : null;
+  if (mentionsName(context.content, recipient.name)) return "mention";
+  // A reply in a thread you follow (you started it, replied or were mentioned).
+  return context.parentMessageId && recipient.followsThread ? "thread_reply" : null;
+}
+
+/** Who follows a reply thread (and so hears about its replies). */
+async function threadFollowerIds(rootMessageId: string | null) {
+  if (!rootMessageId) return new Set<string>();
+  const rows = await db
+    .select({ userId: messageThreadFollowers.userId })
+    .from(messageThreadFollowers)
+    .where(
+      and(
+        eq(messageThreadFollowers.rootMessageId, rootMessageId),
+        eq(messageThreadFollowers.following, true),
+      ),
+    );
+  return new Set(rows.map((row) => row.userId));
 }
 
 /** Who should hear about this message: DMs, agent replies and @mentions. */
@@ -310,9 +348,14 @@ export async function planMessageRecipients(
     { excludeUserId: context.senderId },
   );
   const requesterId = await invocationRequesterId(context, invocationId);
+  const followers = await threadFollowerIds(context.parentMessageId);
   const planned: PlannedRecipient[] = [];
   for (const participant of participants) {
-    const kind = classifyMessage(context, participant, requesterId);
+    const kind = classifyMessage(
+      context,
+      { ...participant, followsThread: followers.has(participant.userId) },
+      requesterId,
+    );
     if (!kind) continue;
     const preferences = await getNotificationPreferences(participant.userId);
     if (kindAllowed(preferences, kind)) planned.push({ userId: participant.userId, kind });
@@ -346,9 +389,10 @@ async function buildMessagePayload(
   // Agents can post several messages in one turn. Only the newest one notifies.
   if (context.senderType === "bot" && (await hasNewerMessageFromSender(context))) return null;
 
+  const followers = await threadFollowerIds(context.parentMessageId);
   const kind = classifyMessage(
     context,
-    recipient,
+    { ...recipient, followsThread: followers.has(userId) },
     await invocationRequesterId(context, invocationId),
   );
   if (!kind) return null;
@@ -356,17 +400,22 @@ async function buildMessagePayload(
   if (!kindAllowed(preferences, kind)) return null;
 
   const channel = context.conversationName ?? context.conversationTitle ?? "channel";
+  const inReplyThread = Boolean(context.parentMessageId);
   const title =
     context.conversationType === "group"
-      ? `${context.senderName} in #${channel}`
+      ? inReplyThread
+        ? `${context.senderName} in a thread in #${channel}`
+        : `${context.senderName} in #${channel}`
       : (kind === "agent_reply" || kind === "agent_progress") && context.threadTitle
         ? `${context.senderName} · ${context.threadTitle}`
-        : context.senderName;
+        : inReplyThread
+          ? `${context.senderName} in a thread`
+          : context.senderName;
   const preview = previewText(context.content) || "Sent an attachment";
   const hidden =
     kind === "mention"
       ? "Mentioned you"
-      : kind === "agent_reply"
+      : kind === "agent_reply" || kind === "thread_reply"
         ? "Replied"
         : kind === "agent_progress"
           ? "Still working"
@@ -377,8 +426,8 @@ async function buildMessagePayload(
     kind,
     title: clampTitle(title),
     body: preferences.showPreviews ? preview : hidden,
-    tag: conversationTag(context.conversationId, context.threadId),
-    url: openConversationUrl(context),
+    tag: conversationTag(context.conversationId, context.threadId, context.parentMessageId),
+    url: openConversationUrl({ ...context, replyRootId: context.parentMessageId }),
     timestamp: context.createdAt.getTime(),
     badge: await unreadBadge(userId),
   };

@@ -82,6 +82,12 @@ export const useNotificationPreferencesStore = create<NotificationPreferencesSta
 
 onSessionReset(() => useNotificationPreferencesStore.getState().reset());
 
+/** Whether a reply in a followed thread should notify in-app. */
+export function threadReplyNotificationsEnabled() {
+  // Older servers omit the choice; it is on by default.
+  return useNotificationPreferencesStore.getState().preferences?.threadReplies !== false;
+}
+
 /**
  * Whether an agent's progress update should notify. Until the choices load,
  * stay quiet: "Final results only" is the default.

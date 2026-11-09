@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
-import type { ActivityItem } from "@thechat/shared";
+import type { ActivityItem, ActivityThreadItem } from "@thechat/shared";
 import { useActivityStore } from "../stores/activity";
 import { useNotificationsStore } from "../stores/notifications";
 import { useWorkspacesStore } from "../stores/workspaces";
-import { Check, CheckCheck } from "lucide-react";
+import { Check, CheckCheck, MessagesSquare } from "lucide-react";
+import { openReplyThread } from "../lib/open-reply-thread";
 import { Avatar } from "../components/Avatar";
 import { buttonClass, iconButtonClass } from "../components/ui";
 
@@ -20,14 +21,20 @@ function relativeTime(iso: string) {
   return `${Math.floor(hours / 24)}d`;
 }
 
-function messagePreview(item: ActivityItem) {
+function messagePreview(item: ActivityItem | ActivityThreadItem) {
   const content = item.latestMessage.content.trim();
   return content || "Sent an attachment";
+}
+
+function rootPreview(item: ActivityThreadItem) {
+  return item.root.content.trim() || "an attachment";
 }
 
 export function ActivityRoute() {
   const navigate = useNavigate();
   const items = useActivityStore((state) => state.items);
+  const threadItems = useActivityStore((state) => state.threads);
+  const markThreadRead = useActivityStore((state) => state.markThreadRead);
   const totalUnreadMessages = useActivityStore(
     (state) => state.totalUnreadMessages,
   );
@@ -116,10 +123,29 @@ export function ActivityRoute() {
     }
   };
 
+  const openThreadActivity = async (item: ActivityThreadItem) => {
+    setActionError(null);
+    try {
+      await openReplyThread(navigate, {
+        workspaceId: item.workspaceId,
+        workspaceName: item.workspaceName,
+        conversationId: item.conversationId,
+        conversationType: item.conversationType,
+        rootMessageId: item.rootMessageId,
+        highlightMessageId: item.latestMessage.id,
+      });
+    } catch (error) {
+      setActionError(
+        error instanceof Error ? error.message : "Could not open this thread",
+      );
+    }
+  };
+
   const noActivity =
     !activityLoading &&
     !notificationsLoading &&
     items.length === 0 &&
+    threadItems.length === 0 &&
     notifications.length === 0;
 
   return (
@@ -154,6 +180,97 @@ export function ActivityRoute() {
           </div>
         ) : (
           <div className="mx-auto flex max-w-3xl flex-col gap-8">
+            {threadItems.length > 0 && (
+              <section aria-labelledby="activity-threads-heading" data-testid="activity-threads">
+                <div className="mb-3 flex items-center justify-between gap-3">
+                  <div>
+                    <h2
+                      id="activity-threads-heading"
+                      className="text-[1rem] font-semibold text-text"
+                    >
+                      Threads
+                    </h2>
+                    <p className="mt-0.5 text-[0.857rem] text-text-dimmed">
+                      New replies in threads you follow
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    className={buttonClass("ghost", "sm")}
+                    onClick={() => void navigate({ to: "/threads" })}
+                  >
+                    <MessagesSquare size={14} aria-hidden="true" />
+                    All threads
+                  </button>
+                </div>
+                <div className={`flex flex-col gap-0.5 p-1 ${panelClass}`}>
+                  {threadItems.map((item) => {
+                    const where =
+                      item.conversationType === "group"
+                        ? `# ${item.conversationName}`
+                        : item.conversationName;
+                    const key = `thread:${item.rootMessageId}`;
+                    const processing = processingIds.has(key) || processingIds.has("all");
+                    return (
+                      <article
+                        key={item.rootMessageId}
+                        data-testid={`activity-thread-${item.rootMessageId}`}
+                        className="flex items-start gap-3 rounded-lg px-3 py-2.5 transition-colors duration-150 hover:bg-white/[0.04]"
+                      >
+                        <span className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-lg bg-accent/15 text-accent">
+                          <MessagesSquare size={16} aria-hidden="true" />
+                        </span>
+                        <button
+                          type="button"
+                          className="min-w-0 flex-1 cursor-pointer border-none bg-transparent text-left"
+                          aria-label={`Open thread in ${where}`}
+                          onClick={() => void openThreadActivity(item)}
+                        >
+                          <span className="flex items-center gap-2">
+                            <span className="truncate text-[0.929rem] font-semibold text-text">
+                              Thread in {where}
+                            </span>
+                            <span className="truncate text-[0.786rem] text-text-dimmed">
+                              {item.workspaceName}
+                            </span>
+                            <span className="ml-auto shrink-0 text-[0.786rem] text-text-dimmed">
+                              {relativeTime(item.latestMessage.createdAt)}
+                            </span>
+                          </span>
+                          <span className="mt-0.5 block truncate text-[0.857rem] text-text-dimmed">
+                            {item.root.senderName}: {rootPreview(item)}
+                          </span>
+                          <span className="mt-0.5 block truncate text-[0.929rem] text-text-muted">
+                            <strong className="font-medium text-text-secondary">
+                              {item.latestMessage.senderName}
+                            </strong>{" "}
+                            {messagePreview(item)}
+                          </span>
+                          <span className="mt-1.5 inline-flex rounded-full bg-accent/15 px-2 py-0.5 text-[0.786rem] font-medium text-accent">
+                            {item.unreadCount} new {item.unreadCount === 1 ? "reply" : "replies"}
+                          </span>
+                        </button>
+                        <button
+                          type="button"
+                          disabled={processing}
+                          aria-label={`Mark thread in ${where} as read`}
+                          title="Mark as read"
+                          className={iconButtonClass("md")}
+                          onClick={() =>
+                            void runAction(key, () =>
+                              markThreadRead(item.conversationId, item.rootMessageId),
+                            )
+                          }
+                        >
+                          <Check size={16} aria-hidden="true" />
+                        </button>
+                      </article>
+                    );
+                  })}
+                </div>
+              </section>
+            )}
+
             {(items.length > 0 || activityLoading) && (
               <section aria-labelledby="activity-unread-heading">
                 <div className="mb-3 flex items-center justify-between gap-3">
@@ -170,7 +287,7 @@ export function ActivityRoute() {
                       </p>
                     )}
                   </div>
-                  {items.length > 0 && (
+                  {(items.length > 0 || threadItems.length > 0) && (
                     <button
                       type="button"
                       disabled={processingIds.size > 0}

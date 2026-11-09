@@ -12,6 +12,7 @@ import type {
   AuthUser,
   ChatMessage,
   MessageReactionSummary,
+  MessageThreadSummary,
 } from "@thechat/shared";
 import { api } from "../lib/api";
 import { sessionGeneration } from "../lib/session-boundary";
@@ -82,11 +83,48 @@ interface MessagePage {
 
 type MessageWindow = InfiniteData<MessagePage, string | null>;
 
+/** A reply that lives only in its reply thread, not in the main timeline. */
+export function isThreadOnlyReply(message: Pick<ChatMessage, "parentMessageId" | "alsoSentToConversation">) {
+  return Boolean(message.parentMessageId) && !message.alsoSentToConversation;
+}
+
+/** Show a root message's new reply count, participants and last reply time. */
+export function cacheRootThreadSummary(
+  queryClient: QueryClient,
+  conversationId: string,
+  rootMessageId: string,
+  summary: MessageThreadSummary,
+) {
+  queryClient.setQueriesData<MessageWindow>(
+    { queryKey: ["messages", conversationId] },
+    (previous) => {
+      if (!previous) return previous;
+      let changed = false;
+      const pages = previous.pages.map((page) => ({
+        ...page,
+        messages: page.messages.map((message) => {
+          if (message.id !== rootMessageId) return message;
+          changed = true;
+          return { ...message, thread: summary };
+        }),
+      }));
+      return changed ? { ...previous, pages } : previous;
+    },
+  );
+}
+
 export function cacheIncomingMessage(
   queryClient: QueryClient,
   message: ChatMessage,
   clientMessageId?: string,
+  rootThread?: MessageThreadSummary,
 ) {
+  if (message.parentMessageId && rootThread) {
+    cacheRootThreadSummary(queryClient, message.conversationId, message.parentMessageId, rootThread);
+  }
+  // A thread reply updates its root's summary; the timeline shows it only
+  // when it was also sent to the conversation.
+  if (isThreadOnlyReply(message)) return;
   associateClientMessageId(message, clientMessageId);
   const cachedWindows = queryClient.getQueriesData<MessageWindow>({
     queryKey: ["messages", message.conversationId],
@@ -465,6 +503,7 @@ export function useChannelChat({
   const addMessage = useCallback(
     (msg: ChatMessage, clientMessageId?: string) => {
       if (msg.conversationId !== conversationId) return;
+      if (isThreadOnlyReply(msg)) return;
       associateClientMessageId(msg, clientMessageId);
       if (clientMessageId) {
         pendingSendsRef.current.delete(clientMessageId);

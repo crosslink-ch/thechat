@@ -191,6 +191,16 @@ export function createCommands(
       },
     },
     {
+      id: "view-threads",
+      label: "View Threads",
+      shortcut: null,
+      keybinding: null,
+      execute: () => {
+        navigate({ to: "/threads" });
+        closePaletteAndRefocus();
+      },
+    },
+    {
       id: "settings",
       label: "Settings",
       shortcut: "C-x ,",

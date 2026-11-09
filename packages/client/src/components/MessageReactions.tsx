@@ -1,7 +1,7 @@
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import type { MessageReactionSummary } from "@thechat/shared";
 import { useId, useState } from "react";
-import { SmilePlus } from "lucide-react";
+import { MessageSquareText, SmilePlus } from "lucide-react";
 import { EmojiImage } from "./EmojiImage";
 import { CopyMessageButton } from "./CopyMessageButton";
 
@@ -20,12 +20,15 @@ interface MessageReactionsProps {
   copyText?: string;
   reactions: MessageReactionSummary[];
   onSetReaction?: (emoji: string, active: boolean) => void | Promise<void>;
+  /** Shows a "Reply in thread" action. */
+  onReplyInThread?: () => void;
 }
 
 export function MessageReactions({
   copyText,
   reactions,
   onSetReaction,
+  onReplyInThread,
 }: MessageReactionsProps) {
   const [pendingEmoji, setPendingEmoji] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -142,6 +145,18 @@ export function MessageReactions({
               </DropdownMenu.Content>
             </DropdownMenu.Portal>
           </DropdownMenu.Root>
+        )}
+        {onReplyInThread && (
+          <button
+            type="button"
+            data-reply-in-thread
+            className="inline-flex size-7 cursor-pointer items-center justify-center rounded-full border border-border bg-transparent text-text-dimmed transition-colors duration-150 hover:border-border-strong hover:bg-hover hover:text-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+            aria-label="Reply in thread"
+            title="Reply in thread"
+            onClick={onReplyInThread}
+          >
+            <MessageSquareText size={15} aria-hidden="true" />
+          </button>
         )}
         {copyText && <CopyMessageButton text={copyText} onError={setCopyError} />}
       </div>

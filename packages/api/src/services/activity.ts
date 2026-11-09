@@ -1,4 +1,8 @@
-import type { ActivityItem, ActivitySnapshot } from "@thechat/shared";
+import type {
+  ActivityItem,
+  ActivitySnapshot,
+  ActivityThreadItem,
+} from "@thechat/shared";
 import {
   and,
   desc,
@@ -6,6 +10,8 @@ import {
   inArray,
   ne,
 } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
+import { isNull, or } from "drizzle-orm";
 import { db } from "../db";
 import {
   conversationParticipants,
@@ -65,6 +71,9 @@ export async function recordMessageUnreads(
     .onConflictDoNothing();
 }
 
+const rootMessages = alias(messages, "root_messages");
+const rootSenders = alias(users, "root_senders");
+
 export async function listActivity(userId: string): Promise<ActivitySnapshot> {
   const rows = await db
     .select({
@@ -82,9 +91,17 @@ export async function listActivity(userId: string): Promise<ActivitySnapshot> {
       senderType: users.type,
       content: messages.content,
       createdAt: messages.createdAt,
+      parentMessageId: messages.parentMessageId,
+      alsoSentToConversation: messages.alsoSentToConversation,
+      rootSenderId: rootMessages.senderId,
+      rootSenderName: rootSenders.name,
+      rootContent: rootMessages.content,
+      rootCreatedAt: rootMessages.createdAt,
     })
     .from(messageUnreads)
     .innerJoin(messages, eq(messages.id, messageUnreads.messageId))
+    .leftJoin(rootMessages, eq(rootMessages.id, messages.parentMessageId))
+    .leftJoin(rootSenders, eq(rootSenders.id, rootMessages.senderId))
     .innerJoin(
       conversations,
       eq(conversations.id, messageUnreads.conversationId),
@@ -104,7 +121,49 @@ export async function listActivity(userId: string): Promise<ActivitySnapshot> {
 
   const grouped = new Map<string, ActivityItem & { unreadThreadIds: (string | null)[] }>();
   const unreadScopes = new Map<string, Set<string | null>>();
+  const threads = new Map<string, ActivityThreadItem>();
+  const directNames = await directConversationNames(
+    userId,
+    [...new Set(rows.filter((row) => row.conversationType === "direct").map((row) => row.conversationId))],
+  );
   for (const row of rows) {
+    // A reply that stayed in its thread is a thread item, not a channel unread.
+    if (row.parentMessageId && !row.alsoSentToConversation) {
+      const thread = threads.get(row.parentMessageId);
+      if (thread) {
+        thread.unreadCount += 1;
+        continue;
+      }
+      threads.set(row.parentMessageId, {
+        conversationId: row.conversationId,
+        conversationType: row.conversationType,
+        conversationName:
+          row.conversationType === "direct"
+            ? (directNames.get(row.conversationId) ?? row.senderName)
+            : (row.conversationTitle ?? row.conversationName ?? "Channel"),
+        workspaceId: row.workspaceId,
+        workspaceName: row.workspaceName,
+        rootMessageId: row.parentMessageId,
+        root: {
+          senderId: row.rootSenderId ?? row.senderId,
+          senderName: row.rootSenderName ?? row.senderName,
+          content: row.rootContent ?? "",
+          createdAt: (row.rootCreatedAt ?? row.createdAt).toISOString(),
+        },
+        unreadCount: 1,
+        latestMessage: {
+          id: row.messageId,
+          threadId: row.threadId,
+          threadTitle: row.threadTitle,
+          senderId: row.senderId,
+          senderName: row.senderName,
+          senderType: row.senderType,
+          content: row.content,
+          createdAt: row.createdAt.toISOString(),
+        },
+      });
+      continue;
+    }
     const existing = grouped.get(row.conversationId);
     if (existing) {
       existing.unreadCount += 1;
@@ -122,7 +181,7 @@ export async function listActivity(userId: string): Promise<ActivitySnapshot> {
       conversationType: row.conversationType,
       conversationName:
         row.conversationType === "direct"
-          ? row.senderName
+          ? (directNames.get(row.conversationId) ?? row.senderName)
           : (row.conversationTitle ?? row.conversationName ?? "Channel"),
       workspaceId: row.workspaceId,
       workspaceName: row.workspaceName,
@@ -143,8 +202,25 @@ export async function listActivity(userId: string): Promise<ActivitySnapshot> {
 
   return {
     items: [...grouped.values()],
+    threads: [...threads.values()],
     totalUnreadMessages: rows.length,
   };
+}
+
+/** The other person's name for each direct conversation. */
+async function directConversationNames(userId: string, conversationIds: string[]) {
+  if (conversationIds.length === 0) return new Map<string, string>();
+  const rows = await db
+    .select({ conversationId: conversationParticipants.conversationId, name: users.name })
+    .from(conversationParticipants)
+    .innerJoin(users, eq(users.id, conversationParticipants.userId))
+    .where(
+      and(
+        inArray(conversationParticipants.conversationId, conversationIds),
+        ne(conversationParticipants.userId, userId),
+      ),
+    );
+  return new Map(rows.map((row) => [row.conversationId, row.name]));
 }
 
 async function requireActivityConversationAccess(
@@ -183,7 +259,8 @@ async function requireActivityConversationAccess(
 
 export type ConversationReadSelection =
   | { messageIds: string[]; threadId?: string | null }
-  | { all: true };
+  /** Everything in the main timeline, or every reply of one thread. */
+  | { all: true; rootMessageId?: string };
 
 export async function markConversationRead(
   conversationId: string,
@@ -193,12 +270,24 @@ export async function markConversationRead(
   await requireActivityConversationAccess(conversationId, userId);
 
   if ("all" in selection) {
+    // Followed threads keep their own unread state, like Slack: marking a
+    // channel read does not mark its threads read, and vice versa.
+    const scope = selection.rootMessageId
+      ? eq(messages.parentMessageId, selection.rootMessageId)
+      : or(isNull(messages.parentMessageId), eq(messages.alsoSentToConversation, true));
     await db
       .delete(messageUnreads)
       .where(
         and(
           eq(messageUnreads.userId, userId),
           eq(messageUnreads.conversationId, conversationId),
+          inArray(
+            messageUnreads.messageId,
+            db
+              .select({ id: messages.id })
+              .from(messages)
+              .where(and(eq(messages.conversationId, conversationId), scope)),
+          ),
         ),
       );
     return listActivity(userId);

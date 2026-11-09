@@ -33,6 +33,9 @@ export const composerDraftKey = {
     `${accountScope(userId)}:dm:${conversationId}:${
       threadId ? `thread:${threadId}` : "general"
     }`,
+  /** The composer of one reply thread (Slack-style), kept per root message. */
+  replyThread: (userId: string | undefined, conversationId: string, rootMessageId: string) =>
+    `${accountScope(userId)}:reply:${conversationId}:${rootMessageId}`,
 };
 
 function updatedDraftState(

@@ -510,7 +510,7 @@ describe("push routes", () => {
     expect((await req("GET", "/push/preferences", undefined, token)).body).toEqual({
       directMessages: true, mentions: true, agentReplies: true, agentRequests: true,
       // Agent progress is opt-in: by default only finished work notifies.
-      agentProgress: false, showPreviews: true,
+      agentProgress: false, threadReplies: true, showPreviews: true,
     });
     expect((await req("PATCH", "/push/preferences", {}, token)).status).toBe(400);
     expect((await req("PATCH", "/push/preferences", { mentions: "no" }, token)).status).toBe(400);

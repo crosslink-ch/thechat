@@ -28,6 +28,11 @@ type PreferenceKey = Exclude<keyof NotificationPreferences, "agentProgress">;
 const PREFERENCE_ROWS: { key: PreferenceKey; label: string; hint: string }[] = [
   { key: "directMessages", label: "Direct messages", hint: "Messages sent to you" },
   { key: "mentions", label: "Mentions", hint: "When someone @mentions you in a channel" },
+  {
+    key: "threadReplies",
+    label: "Thread replies",
+    hint: "New replies in threads you follow",
+  },
   { key: "agentReplies", label: "Agent replies", hint: "When an agent answers you" },
   {
     key: "agentRequests",
@@ -180,7 +185,7 @@ function PreferenceRows() {
         id={`${id}-${key}`}
         type="checkbox"
         className="mt-0.5 size-4 shrink-0 cursor-pointer accent-accent"
-        checked={preferences?.[key] ?? false}
+        checked={preferences?.[key] ?? (preferences && key === "threadReplies" ? true : false)}
         disabled={!preferences}
         onChange={(event) => void update(key, event.target.checked)}
       />
