@@ -635,6 +635,48 @@ export const botRequests = pgTable(
 );
 
 /**
+ * A secret URL that posts messages into one channel. The URL's token is never
+ * stored, only its SHA-256 hash. Each webhook posts as its own hidden bot user
+ * (`userId`), whose name is the webhook's name; that user is neither a
+ * workspace member nor a channel participant, so it can do nothing else.
+ * Revoking keeps the row and the user so earlier messages keep their sender.
+ */
+export const incomingWebhooks = pgTable(
+  "incoming_webhooks",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    conversationId: uuid("conversation_id")
+      .notNull()
+      .references(() => conversations.id, { onDelete: "cascade" }),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    tokenHash: varchar("token_hash", { length: 64 }).notNull(),
+    windowStartedAt: timestamp("window_started_at", { withTimezone: true }),
+    windowCount: integer("window_count").notNull().default(0),
+    // Leading characters of the token, shown so people can tell URLs apart.
+    tokenStart: varchar("token_start", { length: 32 }).notNull(),
+    createdById: uuid("created_by_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull()
+      .$onUpdate(() => new Date()),
+  },
+  (t) => [
+    uniqueIndex("incoming_webhooks_token_hash_idx").on(t.tokenHash),
+    uniqueIndex("incoming_webhooks_user_id_idx").on(t.userId),
+    index("incoming_webhooks_conversation_idx").on(t.conversationId),
+  ],
+);
+
+/**
  * PostgreSQL is authoritative for attachment ownership and lifecycle. The
  * object-store coordinates below are private implementation details and must
  * never be serialized into messages, events, webhooks, or logs.

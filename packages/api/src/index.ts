@@ -22,6 +22,7 @@ import { activityRoutes } from "./activity";
 import { botRequestRoutes, inboxRoutes } from "./bot-requests";
 import { pushRoutes } from "./push";
 import { searchRoutes } from "./search";
+import { incomingWebhookRoutes, isIncomingWebhookRequest } from "./incoming-webhooks";
 import { webPushConfig } from "./push/config";
 import { initObservability, shutdownObservability, withSpan } from "./observability";
 import { log } from "./logging";
@@ -65,7 +66,7 @@ await getQueueClient();
 
 const app = new Elysia()
   .use(browserCors)
-  .use(log.into())
+  .use(log.into({ autoLogging: { ignore: ({ request }) => isIncomingWebhookRequest(request) } }))
   .decorate("db", db)
   .use(authInfrastructureErrors)
   .use(authRoutes)
@@ -84,6 +85,7 @@ const app = new Elysia()
   .use(inboxRoutes)
   .use(pushRoutes)
   .use(searchRoutes)
+  .use(incomingWebhookRoutes)
   .use(inviteRoutes)
   .use(botWorkspaceInviteRoutes)
   .use(mcpRoutes)
