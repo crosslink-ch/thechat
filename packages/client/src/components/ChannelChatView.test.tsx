@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeAll, beforeEach, vi } from "vitest";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { ChatMessage } from "@thechat/shared";
 import { ChannelChatView } from "./ChannelChatView";
 import { useAuthStore } from "../stores/auth";
@@ -364,6 +364,109 @@ describe("ChannelChatView", () => {
     expect(onLoadOlderMessages).toHaveBeenCalledTimes(1);
   });
 
+  describe("opening at a message", () => {
+    const history = [
+      message({ id: "m1", content: "First", createdAt: "2026-01-01T00:00:00.000Z" }),
+      message({ id: "m2", content: "The one we searched for", createdAt: "2026-01-01T01:00:00.000Z" }),
+      message({ id: "m3", content: "Latest", createdAt: "2026-01-01T02:00:00.000Z" }),
+    ];
+    const base = { typingUsers: new Map<string, string>(), onSend: () => {} };
+
+    /** Gives a row a top at `contentTop` in the scroller's content, scroll-aware. */
+    function placeRow(content: string, contentTop: number, height = 40) {
+      const scroller = screen.getByTestId("channel-chat-scroll");
+      messageRow(content).getBoundingClientRect = () =>
+        new DOMRect(0, contentTop - scroller.scrollTop, 100, height);
+    }
+
+    it("centres and highlights the message instead of showing the latest ones", () => {
+      vi.useFakeTimers();
+      try {
+        const onJumpDone = vi.fn();
+        const jump = { messageId: "m2", key: "1" };
+        const { rerender } = render(
+          <ChannelChatView {...base} messages={history} loading jump={jump} onJumpDone={onJumpDone} />,
+        );
+        const scroller = screen.getByTestId("channel-chat-scroll");
+        makeScrollable(scroller);
+        placeRow("The one we searched for", 400);
+        expect(onJumpDone).not.toHaveBeenCalled();
+
+        rerender(
+          <ChannelChatView {...base} messages={history} loading={false} jump={jump} onJumpDone={onJumpDone} />,
+        );
+
+        // Centred: 400 - (300 - 40) / 2, not the bottom (700).
+        expect(scroller.scrollTop).toBe(270);
+        expect(messageRow("The one we searched for")).toHaveAttribute("data-message-highlighted", "true");
+        expect(messageRow("Latest")).not.toHaveAttribute("data-message-highlighted");
+        expect(onJumpDone).toHaveBeenCalledWith(true);
+
+        // A new message does not pull the view away from it.
+        scrollToMock.mockClear();
+        rerender(
+          <ChannelChatView
+            {...base}
+            messages={[...history, message({ id: "m4", content: "Newer", createdAt: "2026-01-01T03:00:00.000Z" })]}
+            loading={false}
+            jump={jump}
+            onJumpDone={onJumpDone}
+          />,
+        );
+        expect(scrollToMock).not.toHaveBeenCalled();
+        expect(scroller.scrollTop).toBe(270);
+        expect(onJumpDone).toHaveBeenCalledTimes(1);
+
+        // The highlight fades after a few seconds.
+        act(() => {
+          vi.advanceTimersByTime(5000);
+        });
+        expect(messageRow("The one we searched for")).not.toHaveAttribute("data-message-highlighted");
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("loads older history until the message is there", async () => {
+      let finishLoad: (loaded: boolean) => void = () => {};
+      const onLoadOlderMessages = vi.fn(
+        () => new Promise<boolean>((resolve) => {
+          finishLoad = resolve;
+        }),
+      );
+      const onJumpDone = vi.fn();
+      const jump = { messageId: "m1", key: "1" };
+      const props = { ...base, loading: false, jump, onJumpDone, onLoadOlderMessages };
+      const { rerender } = render(
+        <ChannelChatView {...props} messages={history.slice(1)} hasOlderMessages />,
+      );
+      await waitFor(() => expect(onLoadOlderMessages).toHaveBeenCalledTimes(1));
+      expect(onJumpDone).not.toHaveBeenCalled();
+
+      // The older page arrives, then the load settles.
+      rerender(<ChannelChatView {...props} messages={history} hasOlderMessages={false} />);
+      await act(async () => finishLoad(true));
+
+      expect(messageRow("First")).toHaveAttribute("data-message-highlighted", "true");
+      expect(onLoadOlderMessages).toHaveBeenCalledTimes(1);
+      expect(onJumpDone).toHaveBeenCalledWith(true);
+    });
+
+    it("stays on the latest messages when the message is out of reach", () => {
+      const onJumpDone = vi.fn();
+      render(
+        <ChannelChatView
+          {...base}
+          messages={history}
+          loading={false}
+          jump={{ messageId: "gone", key: "1" }}
+          onJumpDone={onJumpDone}
+        />,
+      );
+      expect(onJumpDone).toHaveBeenCalledWith(false);
+      expect(document.querySelector("[data-message-highlighted]")).toBeNull();
+    });
+  });
 });
 
 function messageRow(content: string) {

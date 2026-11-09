@@ -17,6 +17,7 @@ import { Markdown } from "./Markdown";
 import { useAutoScroll } from "../hooks/useAutoScroll";
 import { useMessageTopCommand } from "../hooks/useMessageTopCommand";
 import { useOlderHistoryScroll } from "../hooks/useOlderHistoryScroll";
+import { useMessageJump, type MessageJumpRequest } from "../hooks/useMessageJump";
 import { useScrollStability } from "../hooks/useScrollStability";
 import type { BotAppearance, ChatMessage } from "@thechat/shared";
 import type { ActiveHermesInvocationProgress } from "../lib/hermes-progress";
@@ -81,6 +82,9 @@ interface HermesDmChatViewProps {
   composerKey?: string | number;
   /** Shown instead of the default empty-conversation text, e.g. for a new branch. */
   emptyState?: ReactNode;
+  /** Open at this message (loading older history as needed) and highlight it. */
+  jump?: MessageJumpRequest;
+  onJumpDone?: (found: boolean) => void;
 }
 
 export function HermesDmChatView({
@@ -110,6 +114,8 @@ export function HermesDmChatView({
   token,
   composerKey,
   emptyState,
+  jump,
+  onJumpDone,
 }: HermesDmChatViewProps) {
   // Workspace names shown as @mention pills; mentions of you are highlighted.
   const selfId = useAuthStore((state) => state.user?.id ?? null);
@@ -265,12 +271,12 @@ export function HermesDmChatView({
           total - deferredFormattingPendingIdsRef.current.size,
         );
         setFormattingProgress({ ready, total });
-        if (isAtBottomRef.current) {
+        if (isAtBottomRef.current && shouldFollowBottom()) {
           scrollToBottom({ force: true });
         }
       });
     },
-    [scrollToBottom],
+    [scrollToBottom, shouldFollowBottom],
   );
 
   const { requestOlderMessages, consumeSkipContentScroll } = useOlderHistoryScroll({
@@ -367,6 +373,19 @@ export function HermesDmChatView({
     scrollToBottom();
   }, [progressScrollSignature, scrollToBottom]);
 
+  // After the scroll-to-bottom effects above: the jump scrolls last.
+  const highlightedMessageId = useMessageJump({
+    containerRef: scrollContainerRef,
+    jump,
+    messages,
+    loading,
+    loadingOlder,
+    hasOlderMessages,
+    requestOlderMessages,
+    pauseAutoScroll,
+    onDone: onJumpDone,
+  });
+
   useEffect(() => {
     scrollToBottom();
   }, [typingScrollSignature, scrollToBottom]);
@@ -400,7 +419,7 @@ export function HermesDmChatView({
             <div className="flex justify-center px-5 py-3">
               <button
                 type="button"
-                onClick={requestOlderMessages}
+                onClick={() => void requestOlderMessages()}
                 disabled={loadingOlder}
                 className={buttonClass("secondary", "sm")}
               >
@@ -433,6 +452,7 @@ export function HermesDmChatView({
                     )
                   }
                   mentionsYou={mentionsYou(msg)}
+                  highlighted={msg.id === highlightedMessageId}
                   onSetReaction={onSetReaction}
                 >
                   {msg.content && (

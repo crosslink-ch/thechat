@@ -86,6 +86,8 @@ export function MessageContextView({ context }: { context: MessageContext }) {
         conversationId: conversation.id,
         conversationType: conversation.type,
         threadId: context.threadId,
+        // The live chat opens scrolled to this message, highlighted.
+        messageId: context.targetMessageId,
       });
     } catch (error) {
       if (!(error instanceof JumpSupersededError)) {

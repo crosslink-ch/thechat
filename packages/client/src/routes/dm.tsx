@@ -33,7 +33,7 @@ import { GitBranchPlus } from "lucide-react";
 import { childBranches, isBranch, nextBranchTitle } from "../lib/task-tree";
 import { requestInputBarFocus } from "../stores/input-focus";
 import { closePaletteAndRefocus } from "../CommandPalette";
-import { useLocationJumpStore } from "../lib/search-navigation";
+import { useLocationJumpStore, usePendingMessageJump } from "../lib/search-navigation";
 import { useRecentLocationsStore } from "../stores/recent-locations";
 import type { Command } from "../commands";
 import { wsEvents, type WsEvents } from "../lib/ws-events";
@@ -262,6 +262,13 @@ export function DmRoute() {
     channelChat.messages,
     !draftTaskActive && !channelChat.loading,
     isHermesDm ? { threadId: activeThreadId, snapshot: channelChat.taskReadSnapshot } : undefined,
+  );
+
+  // "Open conversation" from a message: open this chat at that message. A
+  // Hermes DM shows one task at a time, so only that task's messages qualify.
+  const { jump, onJumpDone } = usePendingMessageJump(
+    conversationId,
+    isHermesDm ? (draftTaskActive ? LOCAL_TASK_DRAFT_SCOPE : activeThreadId) : undefined,
   );
 
   const channelChatRef = useRef(channelChat);
@@ -794,6 +801,8 @@ export function DmRoute() {
             conversationId={conversationId}
             token={token}
             composerKey={draftComposerRevision}
+            jump={jump}
+            onJumpDone={onJumpDone}
           />
         ) : (
           <ChannelChatView
@@ -815,6 +824,8 @@ export function DmRoute() {
             draftKey={composerDraftKey.dm(user?.id, conversationId)}
             conversationId={conversationId}
             token={token}
+            jump={jump}
+            onJumpDone={onJumpDone}
           />
         )}
       </div>
