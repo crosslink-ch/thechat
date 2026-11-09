@@ -75,8 +75,16 @@ export function useMessageSearch(
       setState((current) => ({ ...current, results: current.results.filter((hit) => hit.id !== messageId) }));
       setRevision((value) => value + 1);
     };
+    const onReconnect = () => {
+      clearMessageSearchCache();
+      setRevision((value) => value + 1);
+    };
     wsEvents.on("ws:message_deleted", onDeleted);
-    return () => wsEvents.off("ws:message_deleted", onDeleted);
+    wsEvents.on("ws:authenticated", onReconnect);
+    return () => {
+      wsEvents.off("ws:message_deleted", onDeleted);
+      wsEvents.off("ws:authenticated", onReconnect);
+    };
   }, []);
 
   useEffect(() => {

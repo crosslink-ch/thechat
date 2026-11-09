@@ -88,6 +88,8 @@ export function registerGlobalWsHandlers(
   const onAuthenticated = () => {
     const workspaceId = useWorkspacesStore.getState().activeWorkspace?.id;
     if (workspaceId) reconcileWorkspace(workspaceId);
+    clearMessageSearchCache();
+    void messageQueryClient.invalidateQueries({ queryKey: ["message-context"] });
     void messageQueryClient.invalidateQueries({ queryKey: ["messages"] });
     void useNotificationsStore.getState().fetchNotifications();
     void useActivityStore.getState().fetchActivity();
