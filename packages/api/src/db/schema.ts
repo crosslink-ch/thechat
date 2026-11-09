@@ -244,6 +244,10 @@ export const messages = pgTable(
     index("messages_thread_id_idx").on(t.threadId),
     index("messages_sender_id_idx").on(t.senderId),
     index("messages_created_at_idx").on(t.createdAt),
+    // Ordered reads of one conversation (history, search context).
+    index("messages_conversation_created_idx").on(t.conversationId, t.createdAt, t.id),
+    // Case-insensitive substring search (ILIKE) over message text.
+    index("messages_content_trgm_idx").using("gin", t.content.op("gin_trgm_ops")),
     uniqueIndex("messages_sender_client_message_idx").on(
       t.senderId,
       t.clientMessageId,

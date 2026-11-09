@@ -33,6 +33,8 @@ import { GitBranchPlus } from "lucide-react";
 import { childBranches, isBranch, nextBranchTitle } from "../lib/task-tree";
 import { requestInputBarFocus } from "../stores/input-focus";
 import { closePaletteAndRefocus } from "../CommandPalette";
+import { useLocationJumpStore } from "../lib/search-navigation";
+import { useRecentLocationsStore } from "../stores/recent-locations";
 import type { Command } from "../commands";
 import { wsEvents, type WsEvents } from "../lib/ws-events";
 import { botAppearanceFor } from "../lib/bot-appearance";
@@ -372,12 +374,28 @@ export function DmRoute() {
   }, [conversationId, activeThreadId, draftTaskActive]);
 
   // Keep Activity deep links and browser navigation aligned with task state.
+  // A quick-switcher jump re-applies the URL's task even when the URL did not
+  // change (jumping to "Koda" from one of Koda's tasks lands on General).
+  const jumpNonce = useLocationJumpStore((state) =>
+    state.conversationId === conversationId ? state.nonce : 0,
+  );
   useEffect(() => {
     setActiveThreadId(requestedThreadId ?? null);
     setDraftTaskActive(false);
     setDraftSendError(null);
     draftPersistingRef.current = null;
-  }, [conversationId, requestedThreadId]);
+  }, [conversationId, requestedThreadId, jumpNonce]);
+
+  // Recent places for the quick switcher, from every way of getting here.
+  useEffect(() => {
+    if (draftTaskActive) return;
+    useRecentLocationsStore.getState().enter({
+      conversationId,
+      type: "direct",
+      threadId: isHermesDm ? activeThreadId : null,
+    });
+  }, [activeThreadId, conversationId, draftTaskActive, isHermesDm]);
+  useEffect(() => () => useRecentLocationsStore.getState().leave(conversationId), [conversationId]);
 
   // A task that is on no loaded page is fetched on its own; only a task the
   // server no longer has (deleted, or a stale link) falls back to General.

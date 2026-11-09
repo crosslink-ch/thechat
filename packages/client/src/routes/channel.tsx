@@ -11,6 +11,7 @@ import { ChannelChatView } from "../components/ChannelChatView";
 import { wsEvents, type WsEvents } from "../lib/ws-events";
 import { botAppearanceFor } from "../lib/bot-appearance";
 import { isAuthenticated } from "../lib/auth-identity";
+import { useRecentLocationsStore } from "../stores/recent-locations";
 import { selectHermesConversationProgress } from "../lib/hermes-progress";
 import {
   useBotRuntime,
@@ -22,6 +23,11 @@ import {
 export function ChannelRoute() {
   const { id: channelId } = useParams({ from: "/channel/$id" });
   const token = useAuthStore((s) => s.token);
+  useEffect(() => {
+    const recents = useRecentLocationsStore.getState();
+    recents.enter({ conversationId: channelId, type: "group", threadId: null });
+    return () => useRecentLocationsStore.getState().leave(channelId);
+  }, [channelId]);
   const user = useAuthStore((s) => s.user);
   const members = useWorkspacesStore((s) => s.activeWorkspace?.members);
   const wsSendMessage = useWebSocketStore((s) => s.sendMessage);

@@ -21,6 +21,9 @@ import { registerGlobalWsHandlers } from "../lib/ws-global-handlers";
 import { createCommands, useCommandsStore } from "../commands";
 import { ErrorBoundary } from "../components/ErrorBoundary";
 import { useCtrlWheelZoom } from "../hooks/useCtrlWheelZoom";
+import { registerSearchNavigator } from "../lib/search-navigation";
+import { registerSearchDirectoryInvalidation, useSearchDirectoryStore } from "../stores/search-directory";
+import { useRecentLocationsStore } from "../stores/recent-locations";
 import { PlatformDialogs, PlatformTitlebar, PlatformUpdateToast, usePlatformLifecycle } from "#platform-shell";
 
 export function RootLayout() {
@@ -58,6 +61,20 @@ export function RootLayout() {
   useEffect(() => {
     return registerGlobalWsHandlers(navigate);
   }, [navigate]);
+
+  useEffect(() => registerSearchNavigator(navigate), [navigate]);
+  useEffect(() => registerSearchDirectoryInvalidation(), []);
+
+  // Recent places are per person; the quick switcher's directory per session.
+  useEffect(() => {
+    void useRecentLocationsStore.getState().load(user?.id ?? null);
+    if (!user) {
+      useSearchDirectoryStore.getState().reset();
+      return;
+    }
+    // One small request at sign-in, so the first Ctrl+K is instant.
+    void useSearchDirectoryStore.getState().ensure();
+  }, [user?.id]);
 
   // Initialize command registry
   useEffect(() => {
