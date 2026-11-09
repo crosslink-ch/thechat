@@ -56,6 +56,10 @@ test('upload, replace and remove pictures across live settings, channel, DM, mem
     await expect(channel.getByText('Profile pictures make our conversations easier to recognise.', { exact: true })).toBeVisible();
     await expect.poll(() => channelEvents.some(e => e.type === 'auth_ok')).toBe(true);
     await login(page, f.alice);
+    // Wait for automatic post-login routing before opening the mobile drawer,
+    // since a route change deliberately closes it.
+    await expect(page).toHaveURL(`${webURL}/#/channel/${f.channel.id}`);
+    await expect(page.getByRole('textbox', { name: 'Message', exact: true })).toBeVisible();
     await openNavigation(page);
     await page.getByRole('button', { name: /Alice Web Test$/ }).click();
     await page.getByRole('button', { name: 'Settings', exact: true }).click();
@@ -66,7 +70,7 @@ test('upload, replace and remove pictures across live settings, channel, DM, mem
     await expect.poll(() => channelEvents.some(e => e.type === 'member_updated' && e.userId === f.a.user.id)).toBe(true);
     const channelAvatar = channel.locator(`[data-message-id="${channelMessage.id}"] img`).first();
     await picture(channelAvatar, original);
-    const sidebarAvatar = channel.getByRole('button', { name: /^Alice Web Test(?:,|$)/ }).locator('img');
+    const sidebarAvatar = channel.getByRole('button', { name: /^Alice Web Test,.*online$/ }).locator('img');
     await picture(sidebarAvatar, original);
     // The status dot remains a visible sibling rather than being clipped by the photo.
     await expect(channel.getByTestId(`online-indicator-${f.a.user.id}`)).toBeVisible();
@@ -85,20 +89,31 @@ test('upload, replace and remove pictures across live settings, channel, DM, mem
     const memberAvatar = members.getByTestId(`member-row-${f.a.user.id}`).locator('img');
     const paletteAvatar = palette.getByTestId('palette-item').filter({ hasText: 'Alice Web Test' }).locator('img');
     for (const img of [dmAvatar, memberAvatar, paletteAvatar]) await picture(img, original);
-    // An open mention menu also receives the picture in its suggestion item.
-    await channel.getByRole('textbox', { name: 'Message', exact: true }).fill('@Alice');
-    await picture(channel.getByRole('button', { name: 'Alice Web Test', exact: true }).locator('img'), original);
-    await channel.getByRole('textbox', { name: 'Message', exact: true }).press('Escape');
-    await channel.getByRole('textbox', { name: 'Message', exact: true }).fill('');
+    const isolatedWorkspace = await call(request, 'POST', '/workspaces/create', { name: 'Other workspace without Alice' }, f.b.accessToken);
+    const switched = await peerContext.newPage();
+    switched.on('pageerror', error => errors.push(error.message));
+    await switched.goto(`${webURL}/#/channel/${f.channel.id}`);
+    const switchedAvatar = switched.locator(`[data-message-id="${channelMessage.id}"] img`).first();
+    await picture(switchedAvatar, original);
+    await switched.getByRole('button', { name: f.workspace.name, exact: true }).click();
+    await switched.getByRole('button', { name: isolatedWorkspace.name, exact: true }).click();
+    await expect(switched.getByRole('button', { name: isolatedWorkspace.name, exact: true })).toBeVisible();
+    await expect(switched).toHaveURL(`${webURL}/#/channel/${f.channel.id}`);
+    await picture(switchedAvatar, original);
 
-    const documents = [channel, dm, members, palette];
+    // Keep this popup open during both updates: no subsequent editor input.
+    await channel.getByRole('textbox', { name: 'Message', exact: true }).fill('@Alice');
+    const mentionAvatar = channel.getByRole('button', { name: 'Alice Web Test', exact: true }).locator('img');
+    await picture(mentionAvatar, original);
+
+    const documents = [channel, dm, members, palette, switched];
     const before = await Promise.all(documents.map(peer => peer.evaluate(() => performance.timeOrigin)));
     const replacement = await choose(page, await portrait('#d3c4ee', '#6b3e8e', 'webp'), 'image/webp');
     expect(replacement).not.toBe(original);
-    for (const img of [channelAvatar, sidebarAvatar, dmAvatar, memberAvatar, paletteAvatar]) await picture(img, replacement);
+    for (const img of [channelAvatar, sidebarAvatar, dmAvatar, memberAvatar, paletteAvatar, switchedAvatar, mentionAvatar]) await picture(img, replacement);
     await page.getByRole('button', { name: 'Remove picture', exact: true }).click();
     await expect(page.getByRole('status').filter({ hasText: 'Profile picture' })).toHaveText('Profile picture removed.');
-    for (const img of [channelAvatar, sidebarAvatar, dmAvatar, memberAvatar, paletteAvatar]) await picture(img, null);
+    for (const img of [channelAvatar, sidebarAvatar, dmAvatar, memberAvatar, paletteAvatar, switchedAvatar, mentionAvatar]) await picture(img, null);
     expect(await Promise.all(documents.map(peer => peer.evaluate(() => performance.timeOrigin)))).toEqual(before);
     const me = await page.context().request.get(`${apiURL}/auth/me`, { headers: webHeaders });
     expect((await me.json()).user.avatar).toBeNull();
@@ -109,6 +124,9 @@ test('upload, replace and remove pictures across live settings, channel, DM, mem
     await picture(page.locator('form[aria-label="Profile settings"] img').last(), final);
     await assertContained(page, 'form[aria-label="Profile settings"]');
     await expect.poll(() => page.locator('form img').last().evaluate((img: HTMLImageElement) => img.naturalWidth)).toBe(256);
+    await channel.getByRole('textbox', { name: 'Message', exact: true }).press('Escape');
+    await channel.getByRole('textbox', { name: 'Message', exact: true }).press('Control+a');
+    await channel.getByRole('textbox', { name: 'Message', exact: true }).press('Backspace');
     await page.screenshot({ path: info.outputPath('profile-settings.png') });
     await channel.screenshot({ path: info.outputPath('profile-channel.png') });
     if (info.project.name.includes('phone')) {

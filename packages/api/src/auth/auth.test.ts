@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, spyOn, test } from "bun:test";
 import crypto from "crypto";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { Elysia } from "elysia";
 import { db } from "../db";
 import {
@@ -278,6 +278,50 @@ describe("Better Auth session facade", () => {
       avatar: null,
     });
     await unsubscribe();
+  });
+
+  test("PAT renames return and broadcast the committed picture when another writer changes it after authentication", async () => {
+    const { response: registered } = await register("Concurrent Profile");
+    const userId = registered.body.user.id;
+    const token = await req("POST", "/auth/personal-access-tokens", { name: "Profile race test" }, registered.body.accessToken);
+    expect(token.status).toBe(200);
+    const workspaceId = `profile-race-${crypto.randomUUID()}`;
+    await db.insert(workspaces).values({ id: workspaceId, name: "Profile race", createdById: userId });
+    await db.insert(workspaceMembers).values({ workspaceId, userId, role: "owner" });
+    const events: RealtimeEvent[] = [];
+    const bus = new LocalRealtimeBus();
+    await setRealtimeBusForTests(bus);
+    const unsubscribe = await bus.subscribe((event) => { events.push(event); });
+    let pending: ReturnType<typeof req> | undefined;
+    try {
+      for (const avatar of [profilePictureDataUrl(), null]) {
+        events.length = 0;
+        await db.transaction(async (tx) => {
+          const [{ pid }] = await tx.execute<{ pid: number }>(sql`select pg_backend_pid() as pid`);
+          // Hold this write uncommitted. The PAT authenticates against the old
+          // row, then its name UPDATE demonstrably blocks on our row lock.
+          await tx.update(users).set({ avatar }).where(eq(users.id, userId));
+          pending = req("PATCH", "/auth/me", { name: "Concurrent Rename" }, token.body.token);
+          let blocked = false;
+          for (let attempt = 0; attempt < 500; attempt++) {
+            const [row] = await db.execute<{ blocked: boolean }>(sql`
+              select exists(select 1 from pg_stat_activity where ${pid!} = any(pg_blocking_pids(pid))) as blocked
+            `);
+            if (row?.blocked) { blocked = true; break; }
+            await Bun.sleep(10);
+          }
+          expect(blocked).toBe(true);
+        });
+        const response = await pending!;
+        expect(response).toMatchObject({ status: 200, body: { user: { name: "Concurrent Rename", avatar } } });
+        expect(events).toHaveLength(1);
+        expect(events[0]?.event).toMatchObject({ type: "member_updated", userId, name: "Concurrent Rename", avatar });
+        expect(await db.select({ avatar: users.avatar }).from(users).where(eq(users.id, userId))).toEqual([{ avatar }]);
+      }
+    } finally {
+      await pending;
+      await unsubscribe();
+    }
   });
 
   test("PATCH /me rejects unsafe profile pictures and empty updates", async () => {

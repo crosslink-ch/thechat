@@ -6,10 +6,13 @@ import { SharedChatMessage } from "./SharedChatMessage";
 import { MentionList } from "./MentionList";
 import { useAuthStore } from "../stores/auth";
 import { useWorkspacesStore } from "../stores/workspaces";
+import { wsEvents } from "../lib/ws-events";
+import { resetPrivateSession } from "../lib/session-boundary";
 
 vi.mock("./BotFace", () => ({ BotFace: () => <span data-testid="bot-face" /> }));
 
 beforeEach(() => {
+  resetPrivateSession();
   useAuthStore.setState({ user: null, token: null });
   useWorkspacesStore.setState({ activeWorkspace: null });
 });
@@ -56,6 +59,39 @@ describe("shared Avatar", () => {
     act(() => useWorkspacesStore.setState({ activeWorkspace: { ...workspace, members: [{ ...workspace.members[0]!, user: { ...workspace.members[0]!.user, avatar: null } }] } }));
     expect(container.querySelector("img")).toBeNull();
     expect(screen.getByText("J")).toBeInTheDocument();
+  });
+
+  it("keeps an open conversation's pictures live after the sidebar changes workspace, and clears them on logout", () => {
+    const member = { userId: "jane", user: { id: "jane", name: "Jane", avatar: "data:image/png;base64,first", type: "human" }, role: "member" };
+    const workspace = { id: "workspace", members: [member], channels: [] } as unknown as WorkspaceWithDetails;
+    useWorkspacesStore.setState({ activeWorkspace: workspace });
+    const message = { id: "message", conversationId: "conversation", senderId: "jane", senderName: "Jane", senderType: "human", content: "Hello", createdAt: "2026-01-01T00:00:00Z" } as ChatMessage;
+    const { container } = render(<SharedChatMessage message={message} merged={false}>Hello</SharedChatMessage>);
+    act(() => useWorkspacesStore.setState({ activeWorkspace: { ...workspace, id: "other", members: [] } }));
+    expect(container.querySelector("img")).toHaveAttribute("src", member.user.avatar);
+    act(() => wsEvents.emit("ws:member_updated", { workspaceId: "workspace", userId: "jane", name: "Jane", avatar: "data:image/png;base64,new" }));
+    expect(container.querySelector("img")).toHaveAttribute("src", "data:image/png;base64,new");
+    act(() => wsEvents.emit("ws:member_updated", { workspaceId: "workspace", userId: "jane", name: "Jane", avatar: null }));
+    expect(container.querySelector("img")).toBeNull();
+    act(() => wsEvents.emit("ws:member_updated", { workspaceId: "workspace", userId: "jane", name: "Jane", avatar: member.user.avatar }));
+    expect(container.querySelector("img")).not.toBeNull();
+    act(() => resetPrivateSession());
+    expect(container.querySelector("img")).toBeNull();
+    // Old-session or unrelated workspace events cannot populate an unknown profile.
+    act(() => wsEvents.emit("ws:member_updated", { workspaceId: "workspace", userId: "jane", name: "Jane", avatar: member.user.avatar }));
+    expect(container.querySelector("img")).toBeNull();
+  });
+
+  it("updates an already-open mention suggestion on replacement and removal without editor input", () => {
+    const item = { id: "jane", label: "Jane", type: "human" as const, picture: "data:image/png;base64,old" };
+    const workspace = { id: "workspace", members: [{ userId: "jane", user: { id: "jane", name: "Jane", type: "human", avatar: item.picture } }], channels: [] } as unknown as WorkspaceWithDetails;
+    useWorkspacesStore.setState({ activeWorkspace: workspace });
+    const { container } = render(<MentionList items={[item]} command={vi.fn()} />);
+    expect(container.querySelector("img")).toHaveAttribute("src", item.picture);
+    act(() => wsEvents.emit("ws:member_updated", { workspaceId: "workspace", userId: "jane", name: "Jane", avatar: "data:image/png;base64,new" }));
+    expect(container.querySelector("img")).toHaveAttribute("src", "data:image/png;base64,new");
+    act(() => wsEvents.emit("ws:member_updated", { workspaceId: "workspace", userId: "jane", name: "Jane", avatar: null }));
+    expect(container.querySelector("img")).toBeNull();
   });
 
   it("shows pictures in mention suggestions without changing the selection payload", () => {

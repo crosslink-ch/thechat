@@ -928,12 +928,12 @@ export const authRoutes = new Elysia({ prefix: "/auth" })
           .where(
             and(eq(users.id, currentUser.id), eq(users.type, "human")),
           )
-          .returning({ id: users.id });
+          .returning({ id: users.id, name: users.name, avatar: users.avatar });
         if (!updated) {
           set.status = 401;
           return { error: "Authentication required" };
         }
-        const user = { ...currentUser, ...updates };
+        const user = { ...currentUser, ...updated };
         await publishProfileUpdateSafely(user);
         return { user };
       } catch (error) {
