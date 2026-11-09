@@ -551,6 +551,8 @@ describe("Sidebar", () => {
     expect(renameItem).toHaveFocus();
 
     await ui.keyboard("{ArrowDown}");
+    expect(screen.getByRole("menuitem", { name: "Incoming webhooks" })).toHaveFocus();
+    await ui.keyboard("{ArrowDown}");
     expect(deleteItem).toHaveFocus();
     await ui.keyboard("{Escape}");
     expect(trigger).toHaveFocus();

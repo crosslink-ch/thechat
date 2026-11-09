@@ -16,6 +16,7 @@ import { useOpenBotRequests } from "../stores/bot-requests";
 import { botAppearanceFor } from "../lib/bot-appearance";
 import { openAuthModal } from "./AuthModal";
 import { openWorkspaceModal } from "./WorkspaceModal";
+import { openIncomingWebhooksModal } from "./IncomingWebhooksModal";
 import {
   openCreateChannelModal,
   openDeleteChannelModal,
@@ -23,7 +24,7 @@ import {
 } from "./ChannelModal";
 import { api } from "../lib/api";
 import type { WorkspaceChannel, WorkspaceMember } from "@thechat/shared";
-import { Bell, Bot, ChevronDown, Ellipsis, Inbox, LogIn, LogOut, Pencil, Plus, Search, Settings, Trash2 } from "lucide-react";
+import { Bell, Bot, ChevronDown, Ellipsis, Inbox, LogIn, LogOut, Pencil, Plus, Search, Settings, Trash2, Webhook } from "lucide-react";
 import { openPalette } from "../lib/palette-state";
 import { Avatar } from "./Avatar";
 import {
@@ -458,6 +459,15 @@ export function Sidebar() {
                                   >
                                     <Pencil size={14} className="text-text-dimmed" aria-hidden="true" />
                                     Rename channel
+                                  </button>
+                                </DropdownMenu.Item>
+                                <DropdownMenu.Item
+                                  asChild
+                                  onSelect={() => openIncomingWebhooksModal(ch)}
+                                >
+                                  <button type="button" className={menuItemClass}>
+                                    <Webhook size={14} className="text-text-dimmed" aria-hidden="true" />
+                                    Incoming webhooks
                                   </button>
                                 </DropdownMenu.Item>
                                 <DropdownMenu.Item

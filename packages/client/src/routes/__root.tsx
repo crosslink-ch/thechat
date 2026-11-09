@@ -16,6 +16,7 @@ import { CommandPalette } from "../CommandPalette";
 import { AuthModal, AuthOnboarding } from "../components/AuthModal";
 import { WorkspaceModal } from "../components/WorkspaceModal";
 import { ChannelModal } from "../components/ChannelModal";
+import { IncomingWebhooksModal } from "../components/IncomingWebhooksModal";
 import { HermesBotModal } from "../components/HermesBotModal";
 import { registerGlobalWsHandlers } from "../lib/ws-global-handlers";
 import { createCommands, useCommandsStore } from "../commands";
@@ -123,6 +124,7 @@ export function RootView({ authLoading, authenticated, routeKey = "" }: RootView
           <AuthModal />
           <WorkspaceModal />
           <ChannelModal />
+          <IncomingWebhooksModal />
           <HermesBotModal />
         </>
       )}
