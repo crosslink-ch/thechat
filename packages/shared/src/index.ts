@@ -868,6 +868,13 @@ export type WsServerEvent =
       messageId: string;
     }
   | {
+      // The author deleted the message; it is gone for everyone.
+      type: "message_deleted";
+      conversationId: string;
+      messageId: string;
+      threadId: string | null;
+    }
+  | {
       type: "message_error";
       conversationId: string;
       clientMessageId: string;

@@ -14,7 +14,7 @@ import type {
   MessageReactionSummary,
 } from "@thechat/shared";
 import { api } from "../lib/api";
-import { sessionGeneration } from "../lib/session-boundary";
+import { onSessionReset, sessionGeneration } from "../lib/session-boundary";
 import { useAuthStore } from "../stores/auth";
 import { authHeaders, edenErrorMessage, edenErrorStatus } from "../lib/eden";
 import { wsEvents, type WsEvents } from "../lib/ws-events";
@@ -35,6 +35,10 @@ export const MESSAGE_WINDOW_TRIM_THRESHOLD = 160;
 // state has reconciled. Keep the correlation on the server message object so
 // that transient overlap renders only the acknowledged server copy.
 const clientMessageIdsByServerMessage = new WeakMap<ChatMessage, string>();
+// A send response or delayed live echo can arrive after the deletion event.
+// Keep IDs only (never message contents) until the account session resets.
+const deletedMessageIds = new Set<string>();
+onSessionReset(() => deletedMessageIds.clear());
 
 interface UseChannelChatOptions {
   conversationId: string | null;
@@ -87,6 +91,7 @@ export function cacheIncomingMessage(
   message: ChatMessage,
   clientMessageId?: string,
 ) {
+  if (deletedMessageIds.has(message.id)) return;
   associateClientMessageId(message, clientMessageId);
   const cachedWindows = queryClient.getQueriesData<MessageWindow>({
     queryKey: ["messages", message.conversationId],
@@ -102,6 +107,27 @@ export function cacheIncomingMessage(
       appendMessageToWindow(previous, message),
     );
   }
+}
+
+export function removeCachedMessage(
+  queryClient: QueryClient,
+  conversationId: string,
+  messageId: string,
+) {
+  deletedMessageIds.add(messageId);
+  // Cancel older history responses before filtering, so they cannot restore it.
+  void queryClient.cancelQueries({ queryKey: ["messages", conversationId] });
+  queryClient.setQueriesData<MessageWindow>(
+    { queryKey: ["messages", conversationId] },
+    (window) => window && ({
+      ...window,
+      pages: window.pages.map((page) => ({
+        ...page,
+        messages: page.messages.filter((message) => message.id !== messageId),
+      })),
+    }),
+  );
+  void queryClient.invalidateQueries({ queryKey: ["messages", conversationId] });
 }
 
 export function cacheMessageReactions(
@@ -355,7 +381,7 @@ async function fetchMessages(
     throw new Error(edenErrorMessage(error, "Failed to load messages"));
   }
 
-  return Array.isArray(data) ? (data as ChatMessage[]) : [];
+  return Array.isArray(data) ? (data as ChatMessage[]).filter((message) => !deletedMessageIds.has(message.id)) : [];
 }
 
 async function fetchMessagePage(
@@ -376,7 +402,7 @@ async function fetchMessagePage(
       throw new Error(edenErrorMessage(error, "Failed to load messages"));
     }
     return {
-      messages: data.messages,
+      messages: data.messages.filter((message) => !deletedMessageIds.has(message.id)),
       hasOlder: data.messages.length === MESSAGE_PAGE_SIZE,
       taskReadSnapshot: { ...owner, conversationId, threadId, messageIds: data.unreadMessageIds },
     };
@@ -465,6 +491,13 @@ export function useChannelChat({
   const addMessage = useCallback(
     (msg: ChatMessage, clientMessageId?: string) => {
       if (msg.conversationId !== conversationId) return;
+      if (deletedMessageIds.has(msg.id)) {
+        if (clientMessageId) pendingSendsRef.current.delete(clientMessageId);
+        setLocalSentMessages((previous) => previous.filter((local) =>
+          local.message.id !== msg.id && local.clientMessageId !== clientMessageId,
+        ));
+        return;
+      }
       associateClientMessageId(msg, clientMessageId);
       if (clientMessageId) {
         pendingSendsRef.current.delete(clientMessageId);
@@ -559,6 +592,7 @@ export function useChannelChat({
           preferredClientMessageId,
         ) ?? preferredClientMessageId;
       const command = { clientMessageId, signature };
+      const sendGeneration = sessionGeneration();
       pendingSendsRef.current.set(clientMessageId, command);
       const markFailed = (message: string) => {
         pendingSendsRef.current.delete(clientMessageId);
@@ -649,7 +683,7 @@ export function useChannelChat({
           span.setAttribute("http.response.status_code", 200);
           span.setAttribute("thechat.message.outcome", "sent");
           markSucceeded();
-          addMessage(data, clientMessageId);
+          if (sendGeneration === sessionGeneration()) addMessage(data, clientMessageId);
           return true;
         },
         { kind: SpanKind.CLIENT },
@@ -770,8 +804,17 @@ export function useChannelChat({
       setSendError(message);
     };
 
+    const onMessageDeleted = (event: WsEvents["ws:message_deleted"]) => {
+      if (event.conversationId !== conversationId) return;
+      deletedMessageIds.add(event.messageId);
+      setLocalSentMessages((previous) =>
+        previous.filter((local) => local.message.id !== event.messageId),
+      );
+    };
+    wsEvents.on("ws:message_deleted", onMessageDeleted);
     wsEvents.on("ws:message_error", onMessageError);
     return () => {
+      wsEvents.off("ws:message_deleted", onMessageDeleted);
       wsEvents.off("ws:message_error", onMessageError);
     };
   }, [conversationId]);

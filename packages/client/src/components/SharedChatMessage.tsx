@@ -3,6 +3,8 @@ import type { ReactNode } from "react";
 import { useBotAppearance } from "../lib/bot-appearance";
 import { Avatar } from "./Avatar";
 import { MessageReactions } from "./MessageReactions";
+import { DeleteMessageButton } from "./DeleteMessageButton";
+import { useAuthStore } from "../stores/auth";
 import { SharedMessageAttachments } from "./SharedMessageAttachments";
 import {
   formatFullMessageTimestamp,
@@ -69,6 +71,8 @@ export function SharedChatMessage({
   highlighted = false,
   onSetReaction,
 }: SharedChatMessageProps) {
+  const userId = useAuthStore((state) => state.user?.id);
+  const canDelete = message.senderId === userId && !message.id.startsWith("optimistic:");
   const botAvatar = useBotAppearance(
     message.senderType === "bot" ? message.senderId : null,
   );
@@ -138,9 +142,10 @@ export function SharedChatMessage({
         )}
         {children}
         <SharedMessageAttachments attachments={message.attachments ?? []} />
-        {(onSetReaction || message.content) && (
+        {(onSetReaction || message.content || canDelete) && (
           <MessageReactions
             copyText={message.content}
+            deleteAction={canDelete ? <DeleteMessageButton message={message} /> : undefined}
             reactions={message.reactions ?? []}
             onSetReaction={onSetReaction ? (emoji, active) =>
               onSetReaction(message.id, emoji, active) : undefined

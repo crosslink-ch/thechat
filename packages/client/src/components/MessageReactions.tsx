@@ -4,6 +4,7 @@ import { useId, useState } from "react";
 import { SmilePlus } from "lucide-react";
 import { EmojiImage } from "./EmojiImage";
 import { CopyMessageButton } from "./CopyMessageButton";
+import type { ReactNode } from "react";
 
 export const DEFAULT_REACTION_EMOJIS = [
   "👍",
@@ -18,12 +19,14 @@ export const DEFAULT_REACTION_EMOJIS = [
 
 interface MessageReactionsProps {
   copyText?: string;
+  deleteAction?: ReactNode;
   reactions: MessageReactionSummary[];
   onSetReaction?: (emoji: string, active: boolean) => void | Promise<void>;
 }
 
 export function MessageReactions({
   copyText,
+  deleteAction,
   reactions,
   onSetReaction,
 }: MessageReactionsProps) {
@@ -144,6 +147,7 @@ export function MessageReactions({
           </DropdownMenu.Root>
         )}
         {copyText && <CopyMessageButton text={copyText} onError={setCopyError} />}
+        {deleteAction}
       </div>
 
       {copyError && (

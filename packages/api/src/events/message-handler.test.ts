@@ -4,7 +4,7 @@ import {
   MAX_BOT_AUTOMATION_DEPTH,
 } from "./envelope";
 import { createChatMessageSentHandler } from "./message-handler";
-import { PermanentDomainEventError } from "./registry";
+
 
 const ids = {
   message: "11111111-1111-4111-8111-111111111111",
@@ -28,7 +28,7 @@ describe("chat.message.sent automation guards", () => {
     await expect(createChatMessageSentHandler().handle(event)).resolves.toBeUndefined();
   });
 
-  test("classifies a missing canonical message as a permanent poison event", async () => {
+  test("ignores a message deleted before its durable event is consumed", async () => {
     await expect(
       createChatMessageSentHandler().handle(
         createChatMessageSentV1({
@@ -41,7 +41,7 @@ describe("chat.message.sent automation guards", () => {
           senderType: "human",
         }),
       ),
-    ).rejects.toBeInstanceOf(PermanentDomainEventError);
+    ).resolves.toBeUndefined();
   });
 
   test("never turns a system failure message into another bot invocation", async () => {

@@ -62,6 +62,25 @@ const baseWorkspace: WorkspaceWithDetails = {
 };
 
 describe("registerGlobalWsHandlers", () => {
+  it("deletion removes cached messages across task windows and refreshes Activity and search context", () => {
+    const client = new QueryClient();
+    for (const scope of ["all", "task-1"]) {
+      client.setQueryData(["messages", "conversation-1", scope], {
+        pageParams: [null], pages: [{ messages: [{ id: "deleted" }, { id: "keep" }], hasOlder: false }],
+      });
+    }
+    client.setQueryData(["message-context", "deleted"], { id: "deleted" });
+    const cleanup = registerGlobalWsHandlers(vi.fn(), () => "/", client);
+    try {
+      wsEvents.emit("ws:message_deleted", { conversationId: "conversation-1", messageId: "deleted", threadId: "task-1" });
+      for (const scope of ["all", "task-1"]) {
+        expect(client.getQueryData(["messages", "conversation-1", scope])).toMatchObject({ pages: [{ messages: [{ id: "keep" }] }] });
+      }
+      expect(client.getQueryState(["message-context", "deleted"])?.isInvalidated).toBe(true);
+      expect(useActivityStore.getState().fetchActivity).toHaveBeenCalled();
+    } finally { cleanup(); client.clear(); }
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
     window.location.hash = "";

@@ -189,6 +189,12 @@ function doConnect() {
         conversationId: event.conversationId,
         messageId: event.messageId,
       });
+    } else if (event.type === "message_deleted") {
+      wsEvents.emit("ws:message_deleted", {
+        conversationId: event.conversationId,
+        messageId: event.messageId,
+        threadId: event.threadId,
+      });
     } else if (event.type === "message_error") {
       wsEvents.emit("ws:message_error", {
         conversationId: event.conversationId,

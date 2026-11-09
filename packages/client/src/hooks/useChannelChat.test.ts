@@ -8,6 +8,8 @@ import {
   MESSAGE_WINDOW_SIZE,
   messagesQueryKey,
   useChannelChat,
+  removeCachedMessage,
+  cacheIncomingMessage,
 } from "./useChannelChat";
 import { api } from "../lib/api";
 import { createQueryWrapper, createTestQueryClient } from "../test-utils/query";
@@ -78,6 +80,37 @@ function flattenWindow(
 }
 
 describe("useChannelChat", () => {
+  it("does not resurrect a deleted live echo when its outstanding POST finishes", async () => {
+    const response = deferred<{ data: ChatMessage }>();
+    const get = vi.fn().mockResolvedValue({ data: [] });
+    const post = vi.fn(() => response.promise);
+    vi.mocked(api.messages).mockReturnValue({ get, post } as any);
+    const queryClient = createTestQueryClient();
+    const { result } = renderHook(() => useChannelChat({
+      conversationId: "delete-race", token: "token", selfUser: selfUser(), wsSendMessage: vi.fn(),
+    }), { wrapper: createQueryWrapper(queryClient) });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    let pending: unknown;
+    act(() => { pending = result.current.sendMessage("Delete me"); });
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(1));
+    const clientId = (post.mock.calls[0] as any)[0].clientMessageId;
+    const echo = { ...message("delete-race", "Delete me"), attachments: [{ id: "private-file" }] } as ChatMessage;
+    act(() => result.current.addMessage(echo, clientId));
+    await waitFor(() => expect(result.current.messages.map((m) => m.id)).toEqual([echo.id]));
+    act(() => {
+      removeCachedMessage(queryClient, echo.conversationId, echo.id);
+      wsEvents.emit("ws:message_deleted", { conversationId: echo.conversationId, messageId: echo.id, threadId: null });
+    });
+    await waitFor(() => {
+      expect(queryClient.isFetching()).toBe(0);
+      expect(result.current.messages).toEqual([]);
+    });
+    await act(async () => { response.resolve({ data: echo }); await pending; });
+    expect(result.current.messages).toEqual([]);
+    act(() => cacheIncomingMessage(queryClient, echo, clientId));
+    expect(flattenWindow(queryClient.getQueryData(messagesQueryKey("delete-race")))).toEqual([]);
+  });
+
   beforeEach(() => {
     vi.resetAllMocks();
   });

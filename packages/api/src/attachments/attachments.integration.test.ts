@@ -50,7 +50,7 @@ import {
   deleteAttachmentObjects,
   validateAndPromoteAttachment,
 } from "./handler";
-import { ATTACHMENT_VALIDATION_REQUESTED } from "./events";
+import { ATTACHMENT_VALIDATION_REQUESTED, ATTACHMENT_DELETION_REQUESTED } from "./events";
 import {
   reserveAttachment,
   setAttachmentObjectStoreForTests,
@@ -217,6 +217,40 @@ async function workspaceWithMembers(
 }
 
 describe("attachment lifecycle", () => {
+  test("message deletion revokes downloads and durably removes both stored versions", async () => {
+    const owner = await register("Deletion author");
+    const member = await register("Deletion reader");
+    const { conversationId } = await workspaceWithMembers(owner, member);
+    const bytes = new TextEncoder().encode("Delete these stored bytes");
+    const reservation = await request("POST", "/attachments", {
+      conversationId, fileName: "delete.txt", mediaType: "text/plain", sizeBytes: bytes.byteLength,
+      checksumSha256: crypto.createHash("sha256").update(bytes).digest("hex"),
+    }, owner.token);
+    expect(reservation.status).toBe(200);
+    const id = reservation.body.attachment.id;
+    store.acceptLatestUpload(bytes);
+    expect((await request("POST", `/attachments/${id}/complete`, {}, owner.token)).status).toBe(200);
+    await validateAndPromoteAttachment(id, { store, maxBytes: 1024 });
+    const sent = await request("POST", `/messages/${conversationId}`, { content: "", attachmentIds: [id] }, owner.token);
+    expect(sent.status).toBe(200);
+    expect((await request("DELETE", `/messages/${conversationId}/${sent.body.id}`, undefined, member.token)).status).toBe(403);
+    const [before] = await db.select().from(attachments).where(eq(attachments.id, id));
+    expect(before.status).toBe("attached");
+    expect((await request("DELETE", `/messages/${conversationId}/${sent.body.id}`, undefined, owner.token)).status).toBe(200);
+    expect(await db.select().from(messageAttachments).where(eq(messageAttachments.attachmentId, id))).toEqual([]);
+    const [deleting] = await db.select().from(attachments).where(eq(attachments.id, id));
+    expect(deleting.status).toBe("deleting");
+    expect((await request("GET", `/attachments/${id}/download`, undefined, member.token)).status).not.toBe(200);
+    expect(await db.select().from(eventOutbox).where(and(eq(eventOutbox.eventType, ATTACHMENT_DELETION_REQUESTED), eq(eventOutbox.aggregateId, id)))).toHaveLength(1);
+    await deleteAttachmentObjects(id, store);
+    await deleteAttachmentObjects(id, store); // worker retries are safe
+    const [deleted] = await db.select().from(attachments).where(eq(attachments.id, id));
+    expect(deleted.status).toBe("deleted");
+    expect(await store.headObject({ key: before.cleanKey!, versionId: before.cleanVersionId! })).toBeNull();
+    expect(await store.headObject({ key: before.quarantineKey, versionId: before.quarantineVersionId! })).toBeNull();
+    expect(store.deleteCalls).toContainEqual({ key: before.cleanKey!, versionId: before.cleanVersionId! });
+  });
+
   test("removal-first serialization rejects stale attachment reservations", async () => {
     const owner = await register("Attachment race owner");
     const member = await register("Attachment race member");

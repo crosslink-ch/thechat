@@ -22,7 +22,8 @@ import {
 } from "../stores/notification-preferences";
 import { useBotRequestsStore } from "../stores/bot-requests";
 import { queryClient } from "./query-client";
-import { cacheIncomingMessage } from "../hooks/useChannelChat";
+import { cacheIncomingMessage, removeCachedMessage } from "../hooks/useChannelChat";
+import { clearMessageSearchCache } from "../hooks/useMessageSearch";
 import { api } from "./api";
 import type { QueryClient } from "@tanstack/react-query";
 import type { WorkspaceWithDetails } from "@thechat/shared";
@@ -87,6 +88,8 @@ export function registerGlobalWsHandlers(
   const onAuthenticated = () => {
     const workspaceId = useWorkspacesStore.getState().activeWorkspace?.id;
     if (workspaceId) reconcileWorkspace(workspaceId);
+    clearMessageSearchCache();
+    void messageQueryClient.invalidateQueries({ queryKey: ["message-context"] });
     void messageQueryClient.invalidateQueries({ queryKey: ["messages"] });
     void useNotificationsStore.getState().fetchNotifications();
     void useActivityStore.getState().fetchActivity();
@@ -101,6 +104,14 @@ export function registerGlobalWsHandlers(
     void messageQueryClient.invalidateQueries({
       queryKey: ["messages", conversationId],
     });
+  };
+
+  const onMessageDeleted = ({ conversationId, messageId }: WsEvents["ws:message_deleted"]) => {
+    removeCachedMessage(messageQueryClient, conversationId, messageId);
+    clearMessageSearchCache();
+    void messageQueryClient.cancelQueries({ queryKey: ["message-context"] });
+    void messageQueryClient.invalidateQueries({ queryKey: ["message-context"] });
+    void useActivityStore.getState().fetchActivity();
   };
 
   const onPresenceSnapshot = ({
@@ -404,6 +415,7 @@ export function registerGlobalWsHandlers(
   wsEvents.on("ws:presence_changed", onPresenceChanged);
   wsEvents.on("ws:new_message", onNewMessage);
   wsEvents.on("ws:message_reactions_updated", onMessageReactionsUpdated);
+  wsEvents.on("ws:message_deleted", onMessageDeleted);
   wsEvents.on("ws:member_joined", onMemberJoined);
   wsEvents.on("ws:member_role_changed", onMemberRoleChanged);
   wsEvents.on("ws:member_updated", onMemberUpdated);
@@ -425,6 +437,7 @@ export function registerGlobalWsHandlers(
     wsEvents.off("ws:presence_changed", onPresenceChanged);
     wsEvents.off("ws:new_message", onNewMessage);
     wsEvents.off("ws:message_reactions_updated", onMessageReactionsUpdated);
+    wsEvents.off("ws:message_deleted", onMessageDeleted);
     wsEvents.off("ws:member_joined", onMemberJoined);
     wsEvents.off("ws:member_role_changed", onMemberRoleChanged);
     wsEvents.off("ws:member_updated", onMemberUpdated);

@@ -5,6 +5,7 @@ import { browserAuthPolicy } from "../auth/browser";
 import { ServiceError } from "../services/errors";
 import { getMessages, getTaskMessagePage, sendMessage } from "../services/messages";
 import { setMessageReaction } from "../services/message-reactions";
+import { deleteMessage } from "../services/message-deletion";
 import {
   setHttpResponseStatus,
   withHttpServerSpan,
@@ -64,6 +65,23 @@ export const messageRoutes = new Elysia({ prefix: "/messages" })
       }
     },
   )
+
+  .delete("/:conversationId/:messageId", async ({ params, user, set }) => {
+    if (!z.string().uuid().safeParse(params.conversationId).success ||
+        !z.string().uuid().safeParse(params.messageId).success) {
+      set.status = 400;
+      return { error: "Invalid conversation or message ID" };
+    }
+    try {
+      return await deleteMessage(params.conversationId, params.messageId, user.id);
+    } catch (error) {
+      if (error instanceof ServiceError) {
+        set.status = error.status;
+        return { error: error.message };
+      }
+      throw error;
+    }
+  })
 
   // Fetch messages (paginated)
   .get("/:conversationId/task-page", async ({ params, query, user, set }) => {

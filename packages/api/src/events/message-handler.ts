@@ -68,10 +68,10 @@ export function createChatMessageSentHandler(): DomainEventHandler<ChatMessageSe
         .limit(1);
 
       if (!message) {
-        logDomainEvent("error", "domain_event.message_missing", event);
-        throw new PermanentDomainEventError(
-          `Message ${event.payload.messageId} does not exist`,
-        );
+        // A message (or its parent task/channel) can be hard-deleted before
+        // this durable event is consumed. There is no longer work to dispatch.
+        logDomainEvent("info", "domain_event.message_missing", event);
+        return;
       }
       if (message.conversationId !== event.payload.conversationId) {
         throw new PermanentDomainEventError(

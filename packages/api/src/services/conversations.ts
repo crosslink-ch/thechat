@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gt, inArray, isNull, lt, lte, ne, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, lt, lte, or, sql } from "drizzle-orm";
 import {
   resolveBotAppearance,
   type ConversationThreadGroups,
@@ -31,7 +31,10 @@ import {
 import { enqueueDomainEvent } from "../events/outbox";
 import { log } from "../logging";
 import { publishWsEventToUsers } from "../realtime";
-import { currentHermesDispatchTimeoutCutoff } from "./bot-runtime";
+import {
+  botInvocationIsActive,
+  currentHermesDispatchTimeoutCutoff,
+} from "./bot-runtime";
 import { requireConversationMutationAccess } from "./conversation-mutation-access";
 import { ServiceError } from "./errors";
 import { canUserAccessAttachments } from "./messages";
@@ -908,28 +911,14 @@ export async function deleteConversationThread(
             eq(botInvocations.threadId, thread.id),
             inArray(botInvocations.triggerMessageId, threadMessageIds),
           ),
-          or(
-            and(
-              eq(botInvocations.status, "queued"),
-              or(
-                ne(botInvocations.adapterKind, "hermes"),
-                gt(botInvocations.createdAt, hermesDispatchCutoff),
-              ),
-            ),
-            eq(botInvocations.status, "running"),
-            and(
-              eq(botInvocations.status, "claimed"),
-              sql`NULLIF(${botInvocations.responseJson}->'completion'->>'type', '') IS NULL`,
-              sql`COALESCE(${botInvocations.responseJson}->>'silent', 'false') <> 'true'`,
-            ),
-          ),
+          botInvocationIsActive(hermesDispatchCutoff),
         ),
       )
       .limit(1);
 
     // Same rule as channel deletion: a bot-targeted message whose dispatch has
     // not been processed yet is still on its way to a bot.
-    const [pendingTargetedEvent] = await pendingChatJobs(tx, conversationId, thread.id);
+    const [pendingTargetedEvent] = await pendingChatJobs(tx, conversationId, { threadId: thread.id });
     if (activeInvocation || pendingTargetedEvent) {
       throw new ServiceError(
         "Wait for the bot to finish working on this task before deleting it",
@@ -1486,21 +1475,7 @@ export async function deleteChannel(
       .where(
         and(
           eq(botInvocations.conversationId, channel.id),
-          or(
-            and(
-              eq(botInvocations.status, "queued"),
-              or(
-                ne(botInvocations.adapterKind, "hermes"),
-                gt(botInvocations.createdAt, hermesDispatchCutoff),
-              ),
-            ),
-            eq(botInvocations.status, "running"),
-            and(
-              eq(botInvocations.status, "claimed"),
-              sql`NULLIF(${botInvocations.responseJson}->'completion'->>'type', '') IS NULL`,
-              sql`COALESCE(${botInvocations.responseJson}->>'silent', 'false') <> 'true'`,
-            ),
-          ),
+          botInvocationIsActive(hermesDispatchCutoff),
         ),
       )
       .limit(1);
