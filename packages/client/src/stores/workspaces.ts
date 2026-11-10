@@ -45,6 +45,9 @@ interface WorkspacesStore {
   createChannel: (name: string, options?: CreateChannelOptions) => Promise<WorkspaceChannel>;
   renameChannel: (channelId: string, name: string) => Promise<WorkspaceChannel>;
   deleteChannel: (channelId: string) => Promise<void>;
+  setChannelArchived: (channelId: string, archived: boolean) => Promise<WorkspaceChannel>;
+  addChannelMembers: (channelId: string, userIds: string[]) => Promise<void>;
+  removeChannelMember: (channelId: string, userId: string) => Promise<void>;
   reset: () => void;
 }
 
@@ -69,6 +72,13 @@ export function upsertWorkspaceChannel(
   return channels.map((existing, currentIndex) =>
     currentIndex === index ? channel : existing,
   );
+}
+
+/** Where to land by default: the first channel that is not archived. */
+export function defaultChannel(
+  channels: WorkspaceChannel[],
+): WorkspaceChannel | undefined {
+  return channels.find((channel) => !channel.archivedAt) ?? channels[0];
 }
 
 export function updateExistingWorkspaceChannel(
@@ -286,6 +296,55 @@ export const useWorkspacesStore = create<WorkspacesStore>()((set) => ({
             }
           : state.activeWorkspace,
     }));
+  },
+
+  setChannelArchived: async (channelId: string, archived: boolean) => {
+    const session = workspaceSession(set);
+    const token = useAuthStore.getState().token;
+    const workspaceId = useWorkspacesStore.getState().activeWorkspace?.id;
+    if (!authenticated(token) || !workspaceId) throw new Error("Select a workspace first");
+
+    const route = api.conversations.channel({ conversationId: channelId });
+    const { data, error } = archived
+      ? await route.archive.post(undefined, auth(token))
+      : await route.unarchive.post(undefined, auth(token));
+    if (error) throw new Error(apiErrorMessage(error));
+
+    const channel = data as WorkspaceChannel;
+    session.commit((state) => ({
+      activeWorkspace:
+        state.activeWorkspace?.id === workspaceId
+          ? {
+              ...state.activeWorkspace,
+              channels: updateExistingWorkspaceChannel(
+                state.activeWorkspace.channels,
+                channel,
+              ),
+            }
+          : state.activeWorkspace,
+    }));
+    return channel;
+  },
+
+  // Membership is not kept in this store: the channel's member list is the
+  // conversation detail, refreshed by the caller and by realtime events.
+  addChannelMembers: async (channelId: string, userIds: string[]) => {
+    const token = useAuthStore.getState().token;
+    if (!authenticated(token)) throw new Error("Sign in first");
+    const { error } = await api.conversations
+      .channel({ conversationId: channelId })
+      .members.post({ userIds }, auth(token));
+    if (error) throw new Error(apiErrorMessage(error));
+  },
+
+  removeChannelMember: async (channelId: string, userId: string) => {
+    const token = useAuthStore.getState().token;
+    if (!authenticated(token)) throw new Error("Sign in first");
+    const { error } = await api.conversations
+      .channel({ conversationId: channelId })
+      .members({ userId })
+      .delete(undefined, auth(token));
+    if (error) throw new Error(apiErrorMessage(error));
   },
 
   reset: () => {

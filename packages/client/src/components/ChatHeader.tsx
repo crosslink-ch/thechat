@@ -8,7 +8,8 @@ import { useDmHeaderStore } from "../stores/chat-header";
 import { isWeb } from "../platform/environment";
 import { toggleSidebar, useSidebarState } from "./Sidebar";
 import { HeaderActionsSlot } from "./HeaderActions";
-import { PanelLeft } from "lucide-react";
+import { Archive, Lock, PanelLeft } from "lucide-react";
+import { openChannelDetailsModal } from "./ChannelDetailsModal";
 import { iconButtonClass } from "./ui";
 
 // Mini-store for agent chat title & project dir (set by agent-chat route)
@@ -71,8 +72,33 @@ export function ChatHeader() {
         </button>
       )}
       <div className="flex min-w-0 flex-1 items-center">
-        {isChannel && <span className="mr-2 shrink-0 text-[1rem] text-text-dimmed" aria-hidden="true">#</span>}
-        <span title={title} className={`min-w-0 truncate ${isPage ? "text-[0.929rem] text-text-muted" : "text-[1rem] font-semibold text-text"} ${context ? "max-w-[60%] shrink-0" : ""}`}>{title}</span>
+        {channel ? (
+          // The channel's name opens its details: members, archive, rename.
+          <button
+            type="button"
+            className="-ml-1.5 flex min-w-0 cursor-pointer items-center rounded-md border-none bg-transparent px-1.5 py-1 font-[inherit] transition-colors duration-100 hover:bg-white/[0.06]"
+            onClick={() => openChannelDetailsModal(channel.id)}
+            aria-label={`Channel details for ${channel.name}`}
+            title="Channel details"
+            data-testid="channel-details-trigger"
+          >
+            <span className="mr-2 flex shrink-0 items-center text-[1rem] text-text-dimmed" aria-hidden="true">
+              {channel.isPrivate ? <Lock size={14} /> : "#"}
+            </span>
+            <span className="min-w-0 truncate text-[1rem] font-semibold text-text">{title}</span>
+            {channel.archivedAt && (
+              <span className="ml-2 inline-flex shrink-0 items-center gap-1 rounded-md bg-white/[0.06] px-1.5 py-0.5 text-[0.714rem] font-medium text-text-muted">
+                <Archive size={11} aria-hidden="true" />
+                Archived
+              </span>
+            )}
+          </button>
+        ) : (
+          <>
+            {isChannel && <span className="mr-2 shrink-0 text-[1rem] text-text-dimmed" aria-hidden="true">#</span>}
+            <span title={title} className={`min-w-0 truncate ${isPage ? "text-[0.929rem] text-text-muted" : "text-[1rem] font-semibold text-text"} ${context ? "max-w-[60%] shrink-0" : ""}`}>{title}</span>
+          </>
+        )}
         {context && <>
           <span className="mx-1.5 shrink-0 text-text-dimmed" aria-hidden="true">·</span>
           <span title={context} className="min-w-0 truncate text-[0.857rem] text-text-muted">{context}</span>

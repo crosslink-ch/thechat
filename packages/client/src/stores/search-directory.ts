@@ -98,6 +98,8 @@ const STRUCTURAL_EVENTS = [
   "ws:channel_created",
   "ws:channel_renamed",
   "ws:channel_deleted",
+  "ws:channel_members_added",
+  "ws:channel_member_removed",
   "ws:conversation_thread_updated",
   "ws:conversation_thread_deleted",
 ] as const satisfies readonly (keyof WsEvents)[];

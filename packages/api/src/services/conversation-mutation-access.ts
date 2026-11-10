@@ -9,6 +9,9 @@ import {
 } from "../db/schema";
 import { ServiceError } from "./errors";
 
+export const CHANNEL_ARCHIVED_MESSAGE =
+  "This channel is archived. Unarchive it to post or make changes.";
+
 type DbTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
 
 export interface ConversationMutationAccess {
@@ -23,8 +26,12 @@ export interface ConversationMutationAccess {
  * workspace row -> current membership/participation -> child writes.
  *
  * Shared workspace locks let ordinary writes proceed concurrently while
- * serializing them with member/bot removal and channel deletion, which take
- * the same row FOR UPDATE and revalidate authorization after it is acquired.
+ * serializing them with member/bot removal, channel membership changes,
+ * archiving and channel deletion, which take the same row FOR UPDATE and
+ * revalidate authorization after it is acquired.
+ *
+ * An archived channel is read-only: every write that goes through here is
+ * refused, for people and bots alike.
  */
 export async function requireConversationMutationAccess(
   executor: DbTransaction,
@@ -67,9 +74,15 @@ export async function requireConversationMutationAccess(
     .select({
       userId: conversationParticipants.userId,
       senderType: users.type,
+      // Read under the workspace lock, so it cannot race with archiving.
+      archivedAt: conversations.archivedAt,
     })
     .from(conversationParticipants)
     .innerJoin(users, eq(conversationParticipants.userId, users.id))
+    .innerJoin(
+      conversations,
+      eq(conversations.id, conversationParticipants.conversationId),
+    )
     .where(
       and(
         eq(conversationParticipants.conversationId, conversationId),
@@ -96,6 +109,10 @@ export async function requireConversationMutationAccess(
     if (!membership) {
       throw new ServiceError("You are not a participant of this conversation", 403);
     }
+  }
+
+  if (participant.archivedAt) {
+    throw new ServiceError(CHANNEL_ARCHIVED_MESSAGE, 403);
   }
 
   return {

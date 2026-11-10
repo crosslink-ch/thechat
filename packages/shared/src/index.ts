@@ -148,6 +148,8 @@ export interface WorkspaceChannel {
   name: string;
   title: string | null;
   isPrivate: boolean;
+  /** Set while the channel is archived: read-only, out of the active list. */
+  archivedAt: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -449,6 +451,7 @@ export interface ConversationDetail {
   name: string | null;
   title: string | null;
   isPrivate: boolean;
+  archivedAt: string | null;
   participants: ConversationParticipantPublic[];
 }
 
@@ -1051,6 +1054,28 @@ export type WsServerEvent =
       type: "channel_deleted";
       workspaceId: string;
       channelId: string;
+    }
+  // Archived or unarchived. Sent to everyone who can see the channel.
+  | {
+      type: "channel_updated";
+      workspaceId: string;
+      channel: WorkspaceChannel;
+    }
+  // People or bots were added to a private channel. Sent to its members,
+  // including the ones just added, who did not know the channel before.
+  | {
+      type: "channel_members_added";
+      workspaceId: string;
+      channel: WorkspaceChannel;
+      userIds: string[];
+    }
+  // Sent to the remaining members and to the one removed, who has already
+  // lost access.
+  | {
+      type: "channel_member_removed";
+      workspaceId: string;
+      channelId: string;
+      userId: string;
     }
   | { type: "invite_received"; invite: WorkspaceInvite }
   | { type: "bot_workspace_invite_received"; invite: BotWorkspaceInvite }

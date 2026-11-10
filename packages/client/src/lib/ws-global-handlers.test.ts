@@ -869,6 +869,7 @@ describe("registerGlobalWsHandlers", () => {
       name: "recovered",
       title: "Recovered",
       isPrivate: false,
+      archivedAt: null,
       createdAt: "2026-01-02T00:00:00.000Z",
       updatedAt: "2026-01-02T00:00:00.000Z",
     };
@@ -899,6 +900,7 @@ describe("registerGlobalWsHandlers", () => {
       name: "general",
       title: "General",
       isPrivate: false,
+      archivedAt: null,
       createdAt: "2026-01-01T00:00:00.000Z",
       updatedAt: "2026-01-01T00:00:00.000Z",
     };

@@ -21,9 +21,10 @@ import {
   openDeleteChannelModal,
   openRenameChannelModal,
 } from "./ChannelModal";
+import { openChannelDetailsModal } from "./ChannelDetailsModal";
 import { api } from "../lib/api";
 import type { WorkspaceChannel, WorkspaceMember } from "@thechat/shared";
-import { Bell, Bot, ChevronDown, Ellipsis, Inbox, Lock, LogIn, LogOut, MessagesSquare, Pencil, Plus, Search, Settings, Trash2 } from "lucide-react";
+import { Archive, Bell, Bot, ChevronDown, Ellipsis, Inbox, Lock, LogIn, LogOut, MessagesSquare, Pencil, Plus, Search, Settings, Trash2, Users } from "lucide-react";
 import { openPalette } from "../lib/palette-state";
 import { Avatar } from "./Avatar";
 import {
@@ -109,6 +110,7 @@ export function Sidebar() {
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
   const [channelMenuId, setChannelMenuId] = useState<string | null>(null);
+  const [archivedOpen, setArchivedOpen] = useState(false);
   const profileMenuRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -278,6 +280,118 @@ export function Sidebar() {
       unread ? "font-semibold" : "",
     ].join(" ");
 
+  const allChannels = activeWorkspace?.channels ?? [];
+  const activeChannels = allChannels.filter((channel) => !channel.archivedAt);
+  const archivedChannels = allChannels.filter((channel) => channel.archivedAt);
+  // Archived channels stay out of the way until asked for, except the one
+  // that is open right now.
+  const showArchived =
+    archivedOpen ||
+    archivedChannels.some((channel) => channel.id === activeChannelId);
+
+  const renderChannel = (ch: WorkspaceChannel) => {
+    const isActive = activeChannelId === ch.id;
+    const isUnread =
+      unreadChannels.has(ch.id) ||
+      unreadActivityConversationIds.has(ch.id);
+    const menuOpen = channelMenuId === ch.id;
+    return (
+      <div key={ch.id} className="group relative">
+        <button
+          data-channel-id={ch.id}
+          className={`${itemClassName(isActive, isUnread)} ${canManageChannels ? "pr-9" : ""}`}
+          onClick={() => handleSelectChannel(ch)}
+          aria-current={isActive ? "page" : undefined}
+        >
+          <span
+            className="flex w-4 shrink-0 items-center justify-center text-text-dimmed"
+            title={ch.isPrivate ? "Private channel" : undefined}
+            aria-hidden={ch.isPrivate ? undefined : true}
+          >
+            {ch.isPrivate ? <Lock size={13} role="img" aria-label="Private channel" /> : "#"}
+          </span>
+          <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap">{ch.name}</span>
+          {isUnread && (
+            <span
+              data-testid={`channel-unread-indicator-${ch.id}`}
+              className="size-1.5 shrink-0 rounded-full bg-accent"
+            />
+          )}
+        </button>
+        {canManageChannels && (
+          <DropdownMenu.Root
+            open={menuOpen}
+            onOpenChange={(nextOpen) =>
+              setChannelMenuId(nextOpen ? ch.id : null)
+            }
+          >
+            <DropdownMenu.Trigger asChild>
+              <button
+                type="button"
+                className={`absolute right-1 top-1/2 flex size-7 -translate-y-1/2 items-center justify-center rounded-md text-text-dimmed transition-all hover:bg-hover hover:text-text focus:opacity-100 ${
+                  menuOpen ? "bg-hover text-text opacity-100" : "opacity-0 group-hover:opacity-100"
+                }`}
+                aria-label={`Manage #${ch.name}`}
+              >
+                <Ellipsis size={16} aria-hidden="true" />
+              </button>
+            </DropdownMenu.Trigger>
+            <DropdownMenu.Portal>
+              <DropdownMenu.Content
+                align="end"
+                sideOffset={4}
+                loop
+                className={`z-50 ${menuContentClass}`}
+              >
+                <DropdownMenu.Item
+                  asChild
+                  onSelect={() => {
+                    dismissNavigation?.();
+                    openChannelDetailsModal(ch.id);
+                  }}
+                >
+                  <button
+                    type="button"
+                    className={menuItemClass}
+                  >
+                    <Users size={14} className="text-text-dimmed" aria-hidden="true" />
+                    Channel details
+                  </button>
+                </DropdownMenu.Item>
+                {!ch.archivedAt && (
+                  <DropdownMenu.Item
+                    asChild
+                    onSelect={() => openRenameChannelModal(ch)}
+                  >
+                    <button
+                      type="button"
+                      className={menuItemClass}
+                    >
+                      <Pencil size={14} className="text-text-dimmed" aria-hidden="true" />
+                      Rename channel
+                    </button>
+                  </DropdownMenu.Item>
+                )}
+                <DropdownMenu.Item
+                  asChild
+                  onSelect={() => openDeleteChannelModal(ch)}
+                >
+                  <button
+                    type="button"
+                    className={menuDangerItemClass}
+                  >
+                    <Trash2 size={14} aria-hidden="true" />
+                    Delete channel
+                  </button>
+                </DropdownMenu.Item>
+              </DropdownMenu.Content>
+            </DropdownMenu.Portal>
+          </DropdownMenu.Root>
+        )}
+      </div>
+    );
+  };
+
   return (
     <div
       className="app-sidebar flex h-full shrink-0 border-r border-border-subtle bg-surface transition-[margin-left] duration-200 ease-out"
@@ -433,92 +547,31 @@ export function Sidebar() {
               <div>
                 {renderSectionLabel("Channels", openCreateChannelModal)}
                 <div className="space-y-0.5 pb-1">
-                  {activeWorkspace.channels.map((ch) => {
-                    const isActive = activeChannelId === ch.id;
-                    const isUnread =
-                      unreadChannels.has(ch.id) ||
-                      unreadActivityConversationIds.has(ch.id);
-                    const menuOpen = channelMenuId === ch.id;
-                    return (
-                      <div key={ch.id} className="group relative">
-                        <button
-                          data-channel-id={ch.id}
-                          className={`${itemClassName(isActive, isUnread)} ${canManageChannels ? "pr-9" : ""}`}
-                          onClick={() => handleSelectChannel(ch)}
-                          aria-current={isActive ? "page" : undefined}
-                        >
-                          <span
-                            className="flex w-4 shrink-0 items-center justify-center text-text-dimmed"
-                            title={ch.isPrivate ? "Private channel" : undefined}
-                            aria-hidden={ch.isPrivate ? undefined : true}
-                          >
-                            {ch.isPrivate ? <Lock size={13} role="img" aria-label="Private channel" /> : "#"}
-                          </span>
-                          <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap">{ch.name}</span>
-                          {isUnread && (
-                            <span
-                              data-testid={`channel-unread-indicator-${ch.id}`}
-                              className="size-1.5 shrink-0 rounded-full bg-accent"
-                            />
-                          )}
-                        </button>
-                        {canManageChannels && (
-                          <DropdownMenu.Root
-                            open={menuOpen}
-                            onOpenChange={(nextOpen) =>
-                              setChannelMenuId(nextOpen ? ch.id : null)
-                            }
-                          >
-                            <DropdownMenu.Trigger asChild>
-                              <button
-                                type="button"
-                                className={`absolute right-1 top-1/2 flex size-7 -translate-y-1/2 items-center justify-center rounded-md text-text-dimmed transition-all hover:bg-hover hover:text-text focus:opacity-100 ${
-                                  menuOpen ? "bg-hover text-text opacity-100" : "opacity-0 group-hover:opacity-100"
-                                }`}
-                                aria-label={`Manage #${ch.name}`}
-                              >
-                                <Ellipsis size={16} aria-hidden="true" />
-                              </button>
-                            </DropdownMenu.Trigger>
-                            <DropdownMenu.Portal>
-                              <DropdownMenu.Content
-                                align="end"
-                                sideOffset={4}
-                                loop
-                                className={`z-50 ${menuContentClass}`}
-                              >
-                                <DropdownMenu.Item
-                                  asChild
-                                  onSelect={() => openRenameChannelModal(ch)}
-                                >
-                                  <button
-                                    type="button"
-                                    className={menuItemClass}
-                                  >
-                                    <Pencil size={14} className="text-text-dimmed" aria-hidden="true" />
-                                    Rename channel
-                                  </button>
-                                </DropdownMenu.Item>
-                                <DropdownMenu.Item
-                                  asChild
-                                  onSelect={() => openDeleteChannelModal(ch)}
-                                >
-                                  <button
-                                    type="button"
-                                    className={menuDangerItemClass}
-                                  >
-                                    <Trash2 size={14} aria-hidden="true" />
-                                    Delete channel
-                                  </button>
-                                </DropdownMenu.Item>
-                              </DropdownMenu.Content>
-                            </DropdownMenu.Portal>
-                          </DropdownMenu.Root>
-                        )}
-                      </div>
-                    );
-                  })}
+                  {activeChannels.map(renderChannel)}
                 </div>
+                {archivedChannels.length > 0 && (
+                  <div className="pb-1">
+                    <button
+                      type="button"
+                      className="flex w-full cursor-pointer items-center gap-2.5 rounded-lg border-none bg-transparent px-2.5 py-1.5 text-left font-[inherit] text-[0.857rem] text-text-dimmed transition-colors duration-100 hover:bg-white/[0.05] hover:text-text-secondary"
+                      aria-expanded={showArchived}
+                      onClick={() => setArchivedOpen(!showArchived)}
+                    >
+                      <span className="flex w-4 shrink-0 items-center justify-center">
+                        <Archive size={13} aria-hidden="true" />
+                      </span>
+                      <span className="min-w-0 flex-1 truncate">
+                        Archived ({archivedChannels.length})
+                      </span>
+                      <Chevron open={showArchived} />
+                    </button>
+                    {showArchived && (
+                      <div className="space-y-0.5 pt-0.5" data-testid="archived-channels">
+                        {archivedChannels.map(renderChannel)}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
 
               {(() => {

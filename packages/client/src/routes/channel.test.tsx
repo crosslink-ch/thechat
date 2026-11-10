@@ -81,7 +81,7 @@ afterEach(() => { cleanup(); clients.splice(0).forEach(client => client.clear())
 
 const workspace = (id: string, channels: string[]) => ({
   id, name: id, createdAt: "2026-01-01", updatedAt: "2026-01-01", members: [],
-  channels: channels.map((channel) => ({ id: channel, workspaceId: id, name: channel, title: channel, isPrivate: false, createdAt: "2026-01-01", updatedAt: "2026-01-01" })),
+  channels: channels.map((channel) => ({ id: channel, workspaceId: id, name: channel, title: channel, isPrivate: false, archivedAt: null, createdAt: "2026-01-01", updatedAt: "2026-01-01" })),
 });
 
 it("sends the reader to a visible channel once the server refuses a hidden one", async () => {
@@ -95,7 +95,7 @@ it("sends the reader to a visible channel once the server refuses a hidden one",
 it("stays on a listed private channel without asking the server", async () => {
   const { router } = await mount();
   act(() => useWorkspacesStore.setState({ activeWorkspace: { ...workspace("workspace-1", ["general"]), channels: [
-    { id: "channel-1", workspaceId: "workspace-1", name: "private", title: "Private", isPrivate: true, createdAt: "2026-01-01", updatedAt: "2026-01-01" },
+    { id: "channel-1", workspaceId: "workspace-1", name: "private", title: "Private", isPrivate: true, archivedAt: null, createdAt: "2026-01-01", updatedAt: "2026-01-01" },
   ] } }));
   await act(() => new Promise((resolve) => setTimeout(resolve, 50)));
   expect(detail).not.toHaveBeenCalled();
