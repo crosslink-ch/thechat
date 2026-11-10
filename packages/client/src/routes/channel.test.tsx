@@ -16,7 +16,7 @@ import { botRuntimeQueryKey } from "../hooks/useBotRuntime";
 
 // Keep the real route, view, runtime hooks/cache, progress forms, and WebCrypto.
 // Only the transport boundary and unrelated chat data/composer are fixtures.
-vi.mock("../lib/api", () => ({ API_URL: "http://localhost:23000", api: { "bot-runtime": { conversations: vi.fn(), invocations: vi.fn() } } }));
+vi.mock("../lib/api", () => ({ API_URL: "http://localhost:23000", api: { "bot-runtime": { conversations: vi.fn(), invocations: vi.fn() }, conversations: { detail: vi.fn() } } }));
 vi.mock("../hooks/usePersistConversationRead", () => ({ usePersistConversationRead: vi.fn() }));
 vi.mock("../hooks/useChannelChat", () => {
   const chat = { messages: [], loading: false, loadingOlder: false, hasOlderMessages: false, sendError: null, sendMessage: vi.fn(), addMessage: vi.fn(), loadOlderMessages: vi.fn(), setReaction: vi.fn() };
@@ -31,6 +31,8 @@ const post = vi.fn();
 const vaultPost = vi.fn();
 const interactions = vi.fn();
 const get = vi.fn();
+const detail = vi.fn();
+const realSelectWorkspace = useWorkspacesStore.getState().selectWorkspace;
 const clients: ReturnType<typeof createTestQueryClient>[] = [];
 function invocation(conversationId = "channel-1", id = "run"): BotInvocationPublic {
   return { id, botId: "bot", botUserId: "bot-user", botName: "Hermes", botKind: "hermes", conversationId, threadId: null, status: "running", createdAt: new Date().toISOString(), startedAt: new Date().toISOString() } as BotInvocationPublic;
@@ -61,12 +63,15 @@ beforeAll(async () => {
 beforeEach(() => {
   vi.clearAllMocks();
   vi.stubGlobal("crypto", webcrypto);
+  useWorkspacesStore.setState({ selectWorkspace: realSelectWorkspace });
   useWorkspacesStore.getState().reset();
   snapshots = new Map();
   useAuthStore.setState({ token: "test-token", user: { id: "requester", type: "human", name: "Requester", email: null, avatar: null } });
   useConversationsStore.setState({ markChannelRead: vi.fn() });
   get.mockImplementation((conversationId: string) => Promise.resolve({ data: snapshots.get(conversationId) ?? { invocations: [], events: [] }, error: null }));
   vi.mocked(api["bot-runtime"].conversations).mockImplementation(({ conversationId }) => ({ get: (...args: unknown[]) => get(conversationId, ...args) }) as any);
+  detail.mockResolvedValue({ data: null, error: { status: 403, value: { error: "You are not a participant of this conversation" } } });
+  vi.mocked(api.conversations.detail).mockImplementation(({ conversationId }) => ({ get: (...args: unknown[]) => detail(conversationId, ...args) }) as any);
   post.mockResolvedValue({ data: { ok: true, duplicate: false }, error: null });
   vaultPost.mockResolvedValue({ data: { ok: true, duplicate: false }, error: null });
   interactions.mockReturnValue({ "secure-input": { post }, "vault-unlock": { post: vaultPost } });
@@ -74,23 +79,61 @@ beforeEach(() => {
 });
 afterEach(() => { cleanup(); clients.splice(0).forEach(client => client.clear()); vi.unstubAllGlobals(); });
 
-it("redirects a hidden channel URL to a visible channel without replacing newer runtime behavior", async () => {
+const workspace = (id: string, channels: string[]) => ({
+  id, name: id, createdAt: "2026-01-01", updatedAt: "2026-01-01", members: [],
+  channels: channels.map((channel) => ({ id: channel, workspaceId: id, name: channel, title: channel, isPrivate: false, createdAt: "2026-01-01", updatedAt: "2026-01-01" })),
+});
+
+it("sends the reader to a visible channel once the server refuses a hidden one", async () => {
   const { router } = await mount();
-  act(() => useWorkspacesStore.setState({ activeWorkspace: {
-    id: "workspace-1", name: "Team", createdAt: "2026-01-01", updatedAt: "2026-01-01", members: [],
-    channels: [{ id: "general", workspaceId: "workspace-1", name: "general", title: "General", isPrivate: false, createdAt: "2026-01-01", updatedAt: "2026-01-01" }],
-  } }));
+  act(() => useWorkspacesStore.setState({ activeWorkspace: workspace("workspace-1", ["general"]) }));
   await waitFor(() => expect(router.state.location.pathname).toBe("/channel/general"));
+  expect(detail).toHaveBeenCalledWith("channel-1", { headers: { authorization: "Bearer test-token" } });
   expect(screen.getByTestId("channel-chat-scroll")).toBeInTheDocument();
 });
 
-it("retains a selected private channel when its workspace details arrive", async () => {
+it("stays on a listed private channel without asking the server", async () => {
   const { router } = await mount();
-  act(() => useWorkspacesStore.setState({ activeWorkspace: {
-    id: "workspace-1", name: "Team", createdAt: "2026-01-01", updatedAt: "2026-01-01", members: [],
-    channels: [{ id: "channel-1", workspaceId: "workspace-1", name: "private", title: "Private", isPrivate: true, createdAt: "2026-01-01", updatedAt: "2026-01-01" }],
-  } }));
-  await waitFor(() => expect(router.state.status).toBe("idle"));
+  act(() => useWorkspacesStore.setState({ activeWorkspace: { ...workspace("workspace-1", ["general"]), channels: [
+    { id: "channel-1", workspaceId: "workspace-1", name: "private", title: "Private", isPrivate: true, createdAt: "2026-01-01", updatedAt: "2026-01-01" },
+  ] } }));
+  await act(() => new Promise((resolve) => setTimeout(resolve, 50)));
+  expect(detail).not.toHaveBeenCalled();
+  expect(router.state.location.pathname).toBe("/channel/channel-1");
+});
+
+it("keeps a readable channel of another workspace open while that workspace is still loading", async () => {
+  // Inbox and notification links open the channel before the workspace switch lands.
+  detail.mockResolvedValue({ data: { id: "channel-1", workspaceId: "workspace-2" }, error: null });
+  const selectWorkspace = vi.fn().mockResolvedValue(true);
+  useWorkspacesStore.setState({ selectWorkspace });
+  const { router } = await mount();
+  act(() => useWorkspacesStore.setState({ activeWorkspace: workspace("workspace-1", ["general"]) }));
+  await waitFor(() => expect(detail).toHaveBeenCalled());
+  await act(() => new Promise((resolve) => setTimeout(resolve, 50)));
+  expect(router.state.location.pathname).toBe("/channel/channel-1");
+  expect(selectWorkspace).not.toHaveBeenCalled();
+  act(() => useWorkspacesStore.setState({ activeWorkspace: workspace("workspace-2", ["channel-1"]) }));
+  await act(() => new Promise((resolve) => setTimeout(resolve, 50)));
+  expect(router.state.location.pathname).toBe("/channel/channel-1");
+});
+
+it("refreshes a stale channel list instead of bouncing a member out of a channel created while offline", async () => {
+  detail.mockResolvedValue({ data: { id: "channel-1", workspaceId: "workspace-1" }, error: null });
+  const selectWorkspace = vi.fn().mockResolvedValue(true);
+  useWorkspacesStore.setState({ selectWorkspace });
+  const { router } = await mount();
+  act(() => useWorkspacesStore.setState({ activeWorkspace: workspace("workspace-1", ["general"]) }));
+  await waitFor(() => expect(selectWorkspace).toHaveBeenCalledWith("workspace-1"));
+  expect(router.state.location.pathname).toBe("/channel/channel-1");
+});
+
+it("does not redirect when the server cannot be reached", async () => {
+  detail.mockResolvedValue({ data: null, error: { status: 503, value: new Error("offline") } });
+  const { router } = await mount();
+  act(() => useWorkspacesStore.setState({ activeWorkspace: workspace("workspace-1", ["general"]) }));
+  await waitFor(() => expect(detail).toHaveBeenCalled());
+  await act(() => new Promise((resolve) => setTimeout(resolve, 50)));
   expect(router.state.location.pathname).toBe("/channel/channel-1");
 });
 

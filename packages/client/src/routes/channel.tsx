@@ -13,6 +13,8 @@ import { useReplyThreadPanel } from "../hooks/useReplyThreadPanel";
 import { wsEvents, type WsEvents } from "../lib/ws-events";
 import { botAppearanceFor } from "../lib/bot-appearance";
 import { isAuthenticated } from "../lib/auth-identity";
+import { api } from "../lib/api";
+import { authHeaders } from "../lib/eden";
 import { useRecentLocationsStore } from "../stores/recent-locations";
 import { selectHermesConversationProgress } from "../lib/hermes-progress";
 import { usePendingMessageJump } from "../lib/search-navigation";
@@ -66,23 +68,55 @@ export function ChannelRoute() {
   const channelIsVisible = activeWorkspace?.channels.some(
     (channel) => channel.id === channelId,
   );
+  const activeWorkspaceId = activeWorkspace?.id;
 
+  // A channel missing from the sidebar is not proof that it is hidden: it may
+  // belong to a workspace that is still being selected (Inbox, notification
+  // links) or have been created while this client was offline. Only the
+  // server refusing it sends the reader to a channel they can see.
   useEffect(() => {
-    if (!activeWorkspace || channelIsVisible) return;
-
-    const fallbackChannel =
-      activeWorkspace.channels.find((channel) => channel.name === "general") ??
-      activeWorkspace.channels[0];
-    if (fallbackChannel) {
-      navigate({
-        to: "/channel/$id",
-        params: { id: fallbackChannel.id },
-        replace: true,
-      });
-      return;
-    }
-    navigate({ to: "/", replace: true });
-  }, [activeWorkspace, channelId, channelIsVisible, navigate]);
+    if (!activeWorkspaceId || channelIsVisible || !isAuthenticated(token)) return;
+    let cancelled = false;
+    void (async () => {
+      const { data, error } = await api.conversations
+        .detail({ conversationId: channelId })
+        .get(authHeaders(token));
+      if (cancelled) return;
+      const workspaces = useWorkspacesStore.getState();
+      const current = workspaces.activeWorkspace;
+      if (!current || current.id !== activeWorkspaceId) return;
+      if (!error) {
+        // Readable but unlisted: bring a stale channel list up to date.
+        const detail = data as { workspaceId: string | null };
+        if (
+          detail.workspaceId === current.id &&
+          !current.channels.some((channel) => channel.id === channelId)
+        ) {
+          void workspaces.selectWorkspace(current.id);
+        }
+        return;
+      }
+      // Eden types only the validation error; the service answers 403.
+      const status: number = error.status;
+      if (status !== 403 && status !== 404) return;
+      if (current.channels.some((channel) => channel.id === channelId)) return;
+      const fallbackChannel =
+        current.channels.find((channel) => channel.name === "general") ??
+        current.channels[0];
+      if (fallbackChannel) {
+        navigate({
+          to: "/channel/$id",
+          params: { id: fallbackChannel.id },
+          replace: true,
+        });
+        return;
+      }
+      navigate({ to: "/", replace: true });
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeWorkspaceId, channelId, channelIsVisible, navigate, token]);
 
   const mentions = useMemo(
     () =>

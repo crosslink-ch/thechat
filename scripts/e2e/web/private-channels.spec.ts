@@ -79,7 +79,7 @@ test('an owner creates a private channel; picked members get it, the rest of the
     await dialog.getByRole('checkbox', { name: 'Include Avery Picked' }).check();
     await expect(dialog.getByRole('checkbox', { name: 'Include Nora Outside' })).not.toBeChecked();
     await expect(dialog.getByText('2 selected')).toBeVisible();
-    await shot(page, `private-create-${info.project.name}.png`, info.outputPath);
+    await shot(page, `private-create-${info.project.name}.png`, (name) => info.outputPath(name));
     await dialog.getByRole('button', { name: 'Create channel', exact: true }).click();
     await expect(dialog).toHaveCount(0);
     await expect(page).not.toHaveURL(new RegExp(`/channel/${w.general.id}`));
@@ -104,7 +104,7 @@ test('an owner creates a private channel; picked members get it, the rest of the
     await expect(avery.page).toHaveURL(new RegExp(`/channel/${leadershipId}`));
     await expect(avery.page.locator('[data-message-id]').filter({ hasText: secret })).toBeVisible();
     await openNavigation(avery.page);
-    await shot(avery.page, `private-member-${info.project.name}.png`, info.outputPath);
+    await shot(avery.page, `private-member-${info.project.name}.png`, (name) => info.outputPath(name));
     if (isPhone) await avery.page.keyboard.press('Escape');
     const averyHits = await searchFor(avery.page, isPhone, `?${secret}`);
     await expect(averyHits.getByTestId('palette-item').filter({ hasText: secret })).toBeVisible();
@@ -115,7 +115,7 @@ test('an owner creates a private channel; picked members get it, the rest of the
     await expect(sidebarChannel(nora.page, 'general')).toBeVisible();
     await expect(sidebarChannel(nora.page, 'leadership')).toHaveCount(0);
     await expect(nora.page.getByRole('img', { name: 'Private channel' })).toHaveCount(0);
-    await shot(nora.page, `private-non-member-${info.project.name}.png`, info.outputPath);
+    await shot(nora.page, `private-non-member-${info.project.name}.png`, (name) => info.outputPath(name));
     if (isPhone) await nora.page.keyboard.press('Escape');
 
     // Not in the quick switcher, not in message search.
