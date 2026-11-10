@@ -2,7 +2,7 @@ import { type FormEvent, useEffect, useRef, useState, useSyncExternalStore } fro
 import { useMatches, useNavigate } from "@tanstack/react-router";
 import * as Dialog from "@radix-ui/react-dialog";
 import type { WorkspaceChannel } from "@thechat/shared";
-import { useWorkspacesStore } from "../stores/workspaces";
+import { defaultChannel, useWorkspacesStore } from "../stores/workspaces";
 import { useConversationsStore } from "../stores/conversations";
 import { useAuthStore } from "../stores/auth";
 import { Hash, Pencil, Trash2, X } from "lucide-react";
@@ -191,7 +191,9 @@ export function ChannelModal() {
       const deletedId = currentState.channel.id;
       await deleteChannel(deletedId);
       markChannelRead(deletedId);
-      const nextChannel = useWorkspacesStore.getState().activeWorkspace?.channels[0];
+      const nextChannel = defaultChannel(
+        useWorkspacesStore.getState().activeWorkspace?.channels ?? [],
+      );
       closeChannelModal();
       if (activeChannelId === deletedId) {
         if (nextChannel) {

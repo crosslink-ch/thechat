@@ -176,6 +176,8 @@ export const conversations = pgTable(
     ),
     name: varchar("name", { length: 100 }),
     isPrivate: boolean("is_private").notNull().default(false),
+    // Set while a channel is archived: read-only and out of the active list.
+    archivedAt: timestamp("archived_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
       .notNull(),

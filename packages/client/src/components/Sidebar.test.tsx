@@ -127,6 +127,7 @@ const activeWorkspace: WorkspaceWithDetails = {
       name: "general",
       title: "General",
       isPrivate: false,
+      archivedAt: null,
       createdAt: "2026-01-01",
       updatedAt: "2026-01-01",
     },
@@ -570,16 +571,68 @@ describe("Sidebar", () => {
     const trigger = screen.getByRole("button", { name: "Manage #general" });
     trigger.focus();
     await ui.keyboard("{Enter}");
-    const renameItem = await screen.findByRole("menuitem", {
-      name: "Rename channel",
+    const detailsItem = await screen.findByRole("menuitem", {
+      name: "Channel details",
     });
+    const renameItem = screen.getByRole("menuitem", { name: "Rename channel" });
     const deleteItem = screen.getByRole("menuitem", { name: "Delete channel" });
-    expect(renameItem).toHaveFocus();
+    expect(detailsItem).toHaveFocus();
 
+    await ui.keyboard("{ArrowDown}");
+    expect(renameItem).toHaveFocus();
     await ui.keyboard("{ArrowDown}");
     expect(deleteItem).toHaveFocus();
     await ui.keyboard("{Escape}");
     expect(trigger).toHaveFocus();
+  });
+
+  it("keeps archived channels in a collapsed section, open while one of them is on screen", async () => {
+    const ui = userEvent.setup();
+    const archived = {
+      ...activeWorkspace.channels[0],
+      id: "ch-old",
+      name: "old-project",
+      title: "Old Project",
+      archivedAt: "2026-02-01T00:00:00.000Z",
+    };
+    useAuthStore.setState({ user, token: "test-token" });
+    useWorkspacesStore.setState({
+      workspaces: workspaceList,
+      activeWorkspace: {
+        ...activeWorkspace,
+        channels: [archived, ...activeWorkspace.channels],
+      },
+    });
+
+    const view = await renderWithRouter(<Sidebar />);
+
+    // Out of the active list until asked for.
+    expect(screen.getByRole("button", { name: "general" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "old-project" })).not.toBeInTheDocument();
+    const toggle = screen.getByRole("button", { name: "Archived (1)" });
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+
+    await ui.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("button", { name: "old-project" })).toBeInTheDocument();
+
+    // An archived channel cannot be renamed; details and delete remain.
+    await ui.click(screen.getByRole("button", { name: "Manage #old-project" }));
+    expect(screen.getByRole("menuitem", { name: "Channel details" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Delete channel" })).toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: "Rename channel" })).not.toBeInTheDocument();
+    view.unmount();
+
+    // Unarchived again: back in the list, and the section is gone.
+    useWorkspacesStore.setState({
+      activeWorkspace: {
+        ...activeWorkspace,
+        channels: [{ ...archived, archivedAt: null }, ...activeWorkspace.channels],
+      },
+    });
+    await renderWithRouter(<Sidebar />);
+    expect(screen.getByRole("button", { name: "old-project" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Archived/ })).not.toBeInTheDocument();
   });
 
   it("allows members to create channels without exposing manager actions", async () => {

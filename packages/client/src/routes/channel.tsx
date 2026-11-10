@@ -3,11 +3,15 @@ import { useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import { useAuthStore } from "../stores/auth";
 import { useWebSocketStore } from "../stores/websocket";
 import { useConversationsStore } from "../stores/conversations";
-import { useWorkspacesStore } from "../stores/workspaces";
+import { defaultChannel, useWorkspacesStore } from "../stores/workspaces";
 import { composerDraftKey } from "../stores/composer-drafts";
 import { useChannelChat } from "../hooks/useChannelChat";
 import { usePersistConversationRead } from "../hooks/usePersistConversationRead";
 import { ChannelChatView } from "../components/ChannelChatView";
+import {
+  ArchivedChannelNotice,
+  openChannelDetailsModal,
+} from "../components/ChannelDetailsModal";
 import { ThreadPanel } from "../components/ThreadPanel";
 import { useReplyThreadPanel } from "../hooks/useReplyThreadPanel";
 import { wsEvents, type WsEvents } from "../lib/ws-events";
@@ -33,6 +37,13 @@ export function ChannelRoute() {
   const token = useAuthStore((s) => s.token);
   const channelName = useWorkspacesStore(
     (s) => s.activeWorkspace?.channels.find((channel) => channel.id === channelId)?.name ?? "channel",
+  );
+  // An archived channel is read-only: history and threads stay readable.
+  const archived = useWorkspacesStore((s) =>
+    Boolean(
+      s.activeWorkspace?.channels.find((channel) => channel.id === channelId)
+        ?.archivedAt,
+    ),
   );
   const replyThreads = useReplyThreadPanel(channelId, {
     requestedRootId: requestedReplyRoot,
@@ -101,8 +112,9 @@ export function ChannelRoute() {
       if (status !== 403 && status !== 404) return;
       if (current.channels.some((channel) => channel.id === channelId)) return;
       const fallbackChannel =
-        current.channels.find((channel) => channel.name === "general") ??
-        current.channels[0];
+        current.channels.find(
+          (channel) => channel.name === "general" && !channel.archivedAt,
+        ) ?? defaultChannel(current.channels);
       if (fallbackChannel) {
         navigate({
           to: "/channel/$id",
@@ -254,7 +266,14 @@ export function ChannelRoute() {
           typingUsers={typingUsers}
           onSend={channelChat.sendMessage}
           onLoadOlderMessages={channelChat.loadOlderMessages}
-          onSetReaction={channelChat.setReaction}
+          onSetReaction={archived ? undefined : channelChat.setReaction}
+          readOnlyNotice={
+            archived ? (
+              <ArchivedChannelNotice
+                onOpenDetails={() => openChannelDetailsModal(channelId)}
+              />
+            ) : undefined
+          }
           mentions={mentions}
           scrollKey={channelId}
           draftKey={composerDraftKey.channel(user?.id, channelId)}
@@ -291,6 +310,7 @@ export function ChannelRoute() {
           conversationType="group"
           conversationName={channelName}
           rootMessageId={replyThreads.openThreadRootId}
+          readOnly={archived}
           mentions={mentions}
         />
       )}

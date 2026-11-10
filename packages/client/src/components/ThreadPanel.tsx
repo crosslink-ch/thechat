@@ -29,6 +29,8 @@ interface ThreadPanelProps {
   conversationName: string;
   rootMessageId: string;
   mentions?: MentionUser[];
+  /** The conversation takes no replies or reactions (an archived channel). */
+  readOnly?: boolean;
 }
 
 /**
@@ -41,6 +43,7 @@ export function ThreadPanel({
   conversationName,
   rootMessageId,
   mentions,
+  readOnly = false,
 }: ThreadPanelProps) {
   const token = useAuthStore((state) => state.token);
   const user = useAuthStore((state) => state.user);
@@ -267,7 +270,7 @@ export function ThreadPanel({
                 message={thread.root}
                 merged={false}
                 mentionsYou={mentionsYou(thread.root)}
-                onSetReaction={thread.setReaction}
+                onSetReaction={readOnly ? undefined : thread.setReaction}
                 hideThreadActions
               >
                 {thread.root.content && <Markdown content={thread.root.content} mentions={mentionNames} />}
@@ -305,7 +308,7 @@ export function ThreadPanel({
                     message={reply}
                     merged={shouldMergeChatMessage(thread.replies[index - 1], reply)}
                     mentionsYou={mentionsYou(reply)}
-                    onSetReaction={reply.id.startsWith("optimistic:") ? undefined : thread.setReaction}
+                    onSetReaction={readOnly || reply.id.startsWith("optimistic:") ? undefined : thread.setReaction}
                     hideThreadActions
                   >
                     {reply.alsoSentToConversation && (
@@ -321,7 +324,12 @@ export function ThreadPanel({
       </div>
 
       <MessageSendError error={thread.sendError} />
-      {thread.root && (
+      {thread.root && readOnly && (
+        <p className="shrink-0 border-t border-border px-4 py-3 text-[0.857rem] text-text-muted">
+          This channel is archived. Replies are closed.
+        </p>
+      )}
+      {thread.root && !readOnly && (
         <div className="thread-panel-composer shrink-0">
           <InputBar
             convId={undefined}

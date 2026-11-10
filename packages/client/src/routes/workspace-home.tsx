@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { openWorkspaceModal } from "../components/WorkspaceModal";
-import { useWorkspacesStore } from "../stores/workspaces";
+import { defaultChannel, useWorkspacesStore } from "../stores/workspaces";
 import { Plus } from "lucide-react";
 import { buttonClass } from "../components/ui";
 
@@ -24,7 +24,9 @@ export function WorkspaceHomeRoute() {
   }, [activeWorkspace, error, loading, selectWorkspace, workspaces]);
 
   useEffect(() => {
-    const firstChannel = activeWorkspace?.channels[0];
+    const firstChannel = activeWorkspace
+      ? defaultChannel(activeWorkspace.channels)
+      : undefined;
     if (!firstChannel) return;
     navigate({
       to: "/channel/$id",

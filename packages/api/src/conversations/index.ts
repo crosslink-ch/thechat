@@ -15,6 +15,9 @@ import {
   deleteChannel,
   deleteConversationThread,
   renameChannel,
+  addChannelMembers,
+  removeChannelMember,
+  setChannelArchived,
   updateConversationThread,
 } from "../services/conversations";
 import {
@@ -36,6 +39,10 @@ const channelSchema = z.object({
   name: z.string().trim().min(1).max(100),
   isPrivate: z.boolean().optional().default(false),
   memberIds: z.array(z.string().uuid()).max(500).optional(),
+});
+
+const channelMembersSchema = z.object({
+  userIds: z.array(z.string().uuid()).min(1).max(500),
 });
 
 const threadSchema = z.object({
@@ -187,6 +194,40 @@ export const conversationRoutes = new Elysia({ prefix: "/conversations" })
       throw e;
     }
   })
+
+  // Add workspace members to a private channel.
+  .post("/channel/:conversationId/members", async ({ params, body, user, set }) => {
+    const parsed = channelMembersSchema.safeParse(body);
+    if (!parsed.success) {
+      set.status = 400;
+      return { error: parsed.error.issues[0]?.message ?? "Invalid input" };
+    }
+    return handleServiceErrors(set, () =>
+      addChannelMembers(params.conversationId, parsed.data.userIds, user.id),
+    );
+  })
+
+  // Remove someone from a private channel; they lose access at once.
+  .delete(
+    "/channel/:conversationId/members/:userId",
+    async ({ params, user, set }) =>
+      handleServiceErrors(set, () =>
+        removeChannelMember(params.conversationId, params.userId, user.id),
+      ),
+  )
+
+  // Archive: read-only and out of the active list. History stays readable.
+  .post("/channel/:conversationId/archive", async ({ params, user, set }) =>
+    handleServiceErrors(set, () =>
+      setChannelArchived(params.conversationId, true, user.id),
+    ),
+  )
+
+  .post("/channel/:conversationId/unarchive", async ({ params, user, set }) =>
+    handleServiceErrors(set, () =>
+      setChannelArchived(params.conversationId, false, user.id),
+    ),
+  )
 
   // List task threads for a conversation
   .get("/threads/:conversationId", async ({ params, query, user, set }) => {

@@ -869,6 +869,7 @@ describe("registerGlobalWsHandlers", () => {
       name: "recovered",
       title: "Recovered",
       isPrivate: false,
+      archivedAt: null,
       createdAt: "2026-01-02T00:00:00.000Z",
       updatedAt: "2026-01-02T00:00:00.000Z",
     };
@@ -892,6 +893,144 @@ describe("registerGlobalWsHandlers", () => {
     cleanup();
   });
 
+  it("adds a private channel for someone added to it, and takes it away again when they are removed", () => {
+    const general: WorkspaceChannel = {
+      id: "ch-general",
+      workspaceId: "ws-1",
+      name: "general",
+      title: "General",
+      isPrivate: false,
+      archivedAt: null,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    };
+    const board: WorkspaceChannel = {
+      ...general,
+      id: "ch-board",
+      name: "board",
+      title: "Board",
+      isPrivate: true,
+    };
+    const channelIds = () =>
+      useWorkspacesStore.getState().activeWorkspace?.channels.map((channel) => channel.id);
+    useAuthStore.setState({ user: { id: "u-current", name: "Me", type: "human" } as any });
+    useWorkspacesStore.setState({
+      activeWorkspace: { ...structuredClone(baseWorkspace), channels: [general] },
+    });
+    const messageQueryClient = new QueryClient();
+    messageQueryClient.setQueryData(["messages", board.id], { secret: true });
+    messageQueryClient.setQueryData(["message-thread", board.id, "root-1"], { secret: true });
+    messageQueryClient.setQueryData(["conversation-detail", board.id], { secret: true });
+    messageQueryClient.setQueryData(["bot-runtime", board.id], { secret: true });
+    messageQueryClient.setQueryData(["messages", general.id], { kept: true });
+    const invalidate = vi.spyOn(messageQueryClient, "invalidateQueries").mockResolvedValue();
+    const navigate = vi.fn(({ to }: { to: string }) => {
+      window.location.hash = `#${to}`;
+    });
+    const cleanup = registerGlobalWsHandlers(navigate, undefined, messageQueryClient);
+
+    // Someone else joining a channel this client cannot see changes nothing here.
+    wsEvents.emit("ws:channel_members_added", {
+      workspaceId: "ws-1",
+      channel: board,
+      userIds: ["u-other"],
+    });
+    expect(channelIds()).toEqual([general.id]);
+
+    // Added: the channel appears without a reload.
+    wsEvents.emit("ws:channel_members_added", {
+      workspaceId: "ws-1",
+      channel: board,
+      userIds: ["u-current", "u-other"],
+    });
+    expect(channelIds()).toEqual([general.id, board.id]);
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ["conversation-detail", board.id] });
+
+    // Someone else leaving only refreshes the member list.
+    wsEvents.emit("ws:channel_member_removed", {
+      workspaceId: "ws-1",
+      channelId: board.id,
+      userId: "u-other",
+    });
+    expect(channelIds()).toEqual([general.id, board.id]);
+    expect(navigate).not.toHaveBeenCalled();
+
+    // Removed while reading it: out of the list, off the screen, nothing cached.
+    window.location.hash = `#/channel/${board.id}`;
+    useConversationsStore.setState({ unreadChannels: new Set([board.id]) });
+    wsEvents.emit("ws:channel_member_removed", {
+      workspaceId: "ws-1",
+      channelId: board.id,
+      userId: "u-current",
+    });
+    expect(channelIds()).toEqual([general.id]);
+    expect(navigate).toHaveBeenCalledWith({ to: `/channel/${general.id}` });
+    expect(useConversationsStore.getState().unreadChannels.has(board.id)).toBe(false);
+    expect(messageQueryClient.getQueryData(["messages", board.id])).toBeUndefined();
+    expect(messageQueryClient.getQueryData(["message-thread", board.id, "root-1"])).toBeUndefined();
+    expect(messageQueryClient.getQueryData(["conversation-detail", board.id])).toBeUndefined();
+    expect(messageQueryClient.getQueryData(["bot-runtime", board.id])).toBeUndefined();
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ["followed-threads"] });
+    expect(messageQueryClient.getQueryData(["messages", general.id])).toEqual({ kept: true });
+    expect(useActivityStore.getState().fetchActivity).toHaveBeenCalled();
+
+    // Added back later: it returns, although this client saw it go.
+    wsEvents.emit("ws:channel_members_added", {
+      workspaceId: "ws-1",
+      channel: board,
+      userIds: ["u-current"],
+    });
+    expect(channelIds()).toEqual([general.id, board.id]);
+
+    cleanup();
+    window.location.hash = "";
+  });
+
+  it("marks a channel archived and unarchived in place, and prefers an active channel as a fallback", () => {
+    const general: WorkspaceChannel = {
+      id: "ch-general",
+      workspaceId: "ws-1",
+      name: "general",
+      title: "General",
+      isPrivate: false,
+      archivedAt: null,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    };
+    const old: WorkspaceChannel = { ...general, id: "ch-old", name: "old", title: "Old" };
+    const doomed: WorkspaceChannel = { ...general, id: "ch-doomed", name: "doomed", title: "Doomed" };
+    const channels = () => useWorkspacesStore.getState().activeWorkspace?.channels;
+    useWorkspacesStore.setState({
+      activeWorkspace: { ...structuredClone(baseWorkspace), channels: [old, doomed, general] },
+    });
+    const navigate = vi.fn();
+    const cleanup = registerGlobalWsHandlers(navigate);
+
+    const archivedAt = "2026-03-01T00:00:00.000Z";
+    wsEvents.emit("ws:channel_updated", { workspaceId: "ws-1", channel: { ...old, archivedAt } });
+    expect(channels()).toEqual([{ ...old, archivedAt }, doomed, general]);
+    // The reader is not moved: an archived channel stays readable.
+    expect(navigate).not.toHaveBeenCalled();
+
+    // An update for a channel this client does not have is not an invitation.
+    wsEvents.emit("ws:channel_updated", {
+      workspaceId: "ws-1",
+      channel: { ...old, id: "ch-unknown", archivedAt },
+    });
+    expect(channels()?.map((channel) => channel.id)).toEqual([old.id, doomed.id, general.id]);
+
+    // Losing the open channel lands on an active one, not the archived neighbour.
+    window.location.hash = `#/channel/${doomed.id}`;
+    wsEvents.emit("ws:channel_deleted", { workspaceId: "ws-1", channelId: doomed.id });
+    expect(navigate).toHaveBeenCalledWith({ to: `/channel/${general.id}` });
+
+    wsEvents.emit("ws:channel_updated", { workspaceId: "ws-1", channel: old });
+    expect(channels()).toEqual([old, general]);
+
+    cleanup();
+    window.location.hash = "";
+  });
+
   it("applies channel lifecycle events idempotently and reroutes a deleted active channel", () => {
     const general: WorkspaceChannel = {
       id: "ch-general",
@@ -899,6 +1038,7 @@ describe("registerGlobalWsHandlers", () => {
       name: "general",
       title: "General",
       isPrivate: false,
+      archivedAt: null,
       createdAt: "2026-01-01T00:00:00.000Z",
       updatedAt: "2026-01-01T00:00:00.000Z",
     };
