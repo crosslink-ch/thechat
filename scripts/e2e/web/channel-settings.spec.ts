@@ -2,7 +2,7 @@ import { test, expect, type Browser, type Page } from '@playwright/test';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { apiURL, call, clearCredentialFields, identity, login, openNavigation, webURL } from './fixtures';
+import { apiURL, call, clearCredentialFields, identity, login, webURL } from './fixtures';
 
 test.afterEach(async ({ page }) => clearCredentialFields(page));
 
@@ -47,6 +47,26 @@ async function peer(browser: Browser, viewport: { width: number; height: number 
   return { context, page };
 }
 
+/**
+ * On a phone the sidebar is a drawer. Opening and closing are awaited to their
+ * end state: a one-shot visibility check can land in the drawer's transition.
+ */
+async function openNavigation(page: Page) {
+  const search = page.getByTestId('sidebar-search');
+  const toggle = page.getByRole('button', { name: 'Open navigation', exact: true });
+  await expect(search.or(toggle).first()).toBeVisible();
+  await expect(async () => {
+    if (!(await search.isVisible())) await toggle.click({ timeout: 2_000 });
+    await expect(search).toBeVisible({ timeout: 2_000 });
+  }).toPass({ timeout: 15_000 });
+}
+
+async function closeNavigation(page: Page, isPhone: boolean) {
+  if (!isPhone) return;
+  await page.keyboard.press('Escape');
+  await expect(page.getByTestId('sidebar-search')).toBeHidden();
+}
+
 /** A channel's row in the sidebar (owners also get a "Manage" button beside it). */
 const sidebarChannel = (target: Page, channel: { id: string }) => target.locator(`[data-channel-id="${channel.id}"]`);
 const composer = (target: Page) => target.getByRole('textbox', { name: 'Message', exact: true });
@@ -87,7 +107,7 @@ test('channel details: members, adding and removing people, and archiving, live 
     await openNavigation(nora.page);
     await expect(sidebarChannel(nora.page, w.general)).toBeVisible();
     await expect(sidebarChannel(nora.page, w.leadership)).toHaveCount(0);
-    if (isPhone) await nora.page.keyboard.press('Escape');
+    await closeNavigation(nora.page, isPhone);
 
     // --- The details view, opened from the channel header -------------------
     await login(page, w.morgan);
@@ -157,7 +177,7 @@ test('channel details: members, adding and removing people, and archiving, live 
     await openNavigation(nora.page);
     await expect(sidebarChannel(nora.page, w.general)).toBeVisible();
     await expect(sidebarChannel(nora.page, w.leadership)).toHaveCount(0);
-    if (isPhone) await nora.page.keyboard.press('Escape');
+    await closeNavigation(nora.page, isPhone);
     // Avery's open member list follows.
     await expect(averyDialog.getByTestId('channel-members').getByRole('listitem')).toHaveCount(2);
     await averyDialog.getByRole('button', { name: 'Close channel details' }).click();
@@ -207,7 +227,7 @@ test('channel details: members, adding and removing people, and archiving, live 
     // Away from it, the section is closed and the channel is out of sight.
     await expect(avery.page.getByRole('button', { name: 'Archived (1)' })).toHaveAttribute('aria-expanded', 'false');
     await expect(sidebarChannel(avery.page, w.leadership)).toHaveCount(0);
-    if (isPhone) await avery.page.keyboard.press('Escape');
+    await closeNavigation(avery.page, isPhone);
     // Its history is still found by search and opens from there.
     const hits = await searchFor(avery.page, isPhone, `?${w.history}`);
     await hits.getByRole('button', { name: `Message from Morgan Owner in #leadership: ${w.history}` }).click();
