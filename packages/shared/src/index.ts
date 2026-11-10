@@ -234,7 +234,60 @@ export interface ChatMessage {
    * The agent's answer follows in a later message.
    */
   interim?: true;
+  /**
+   * Set on a reply in a reply thread (Slack-style): the thread's root message.
+   * Replies are not part of the conversation's main timeline unless
+   * `alsoSentToConversation` is set. Unrelated to `threadId` (a Hermes task).
+   */
+  parentMessageId?: string | null;
+  /** A thread reply that is also shown in the main timeline. */
+  alsoSentToConversation?: true;
+  /** Present on a root message that has replies. */
+  thread?: MessageThreadSummary;
   createdAt: string;
+}
+
+/** What a root message shows about its replies ("3 replies · Last reply 5m ago"). */
+export interface MessageThreadSummary {
+  replyCount: number;
+  lastReplyAt: string;
+  /** People who replied, most recent first (at most 5). */
+  participants: { id: string; name: string; type: "human" | "bot" }[];
+}
+
+/** A reply thread opened in the side panel. */
+export interface MessageThreadPage {
+  root: ChatMessage;
+  /** Chronological. */
+  replies: ChatMessage[];
+  /** Earlier replies exist; page with `before` = the first reply's createdAt. */
+  hasOlder: boolean;
+  /** The signed-in user follows the thread (gets unread state and notifications). */
+  following: boolean;
+  /** Unread replies captured before the page was read. */
+  unreadMessageIds: string[];
+}
+
+/** One followed thread in the Threads view. */
+export interface FollowedThread {
+  conversationId: string;
+  conversationType: "direct" | "group";
+  /** Channel name, or the other person's name for a direct conversation. */
+  conversationName: string;
+  workspaceId: string;
+  workspaceName: string;
+  root: ChatMessage;
+  /** The newest replies, chronological (at most 3). */
+  latestReplies: ChatMessage[];
+  replyCount: number;
+  unreadCount: number;
+  lastReplyAt: string;
+}
+
+export interface FollowedThreadsPage {
+  items: FollowedThread[];
+  /** Pass back as `before` for older threads; null when exhausted. */
+  nextCursor: string | null;
 }
 
 /** First task/General page plus the exact unread backlog captured before it. */
@@ -256,6 +309,8 @@ export interface MessageSearchHit {
   workspaceName: string;
   threadId: string | null;
   threadTitle: string | null;
+  /** Set when the match is a reply in a reply thread: the thread's root. */
+  parentMessageId?: string | null;
   senderId: string;
   senderName: string;
   senderType: "human" | "bot";
@@ -316,6 +371,11 @@ export interface MessageContext {
   /** Task scope of the target (null is General / the whole channel). */
   threadId: string | null;
   threadTitle: string | null;
+  /**
+   * Set when the target is a reply: the thread's root. The context is then
+   * the reply thread (root first), not the conversation's timeline.
+   */
+  replyRootId?: string | null;
   targetMessageId: string;
   /** Chronological, including the target. */
   messages: ChatMessage[];
@@ -413,8 +473,30 @@ export interface ActivityItem {
   latestMessage: ActivityLatestMessage;
 }
 
+/** Unread replies in one followed reply thread. */
+export interface ActivityThreadItem {
+  conversationId: string;
+  conversationType: "direct" | "group";
+  conversationName: string;
+  workspaceId: string;
+  workspaceName: string;
+  rootMessageId: string;
+  root: {
+    senderId: string;
+    senderName: string;
+    content: string;
+    createdAt: string;
+  };
+  unreadCount: number;
+  latestMessage: ActivityLatestMessage;
+}
+
 export interface ActivitySnapshot {
+  /** Unread messages in conversations' main timelines. */
   items: ActivityItem[];
+  /** Unread replies in followed threads. Absent on older servers. */
+  threads?: ActivityThreadItem[];
+  /** Every unread message, thread replies included. */
   totalUnreadMessages: number;
 }
 
@@ -485,10 +567,18 @@ export type WsClientEvent =
       conversationId: string;
       content: string;
       threadId?: string | null;
+      parentMessageId?: string | null;
+      alsoSendToConversation?: boolean;
       clientMessageId?: string;
       attachmentIds?: string[];
     }
-  | { type: "typing"; conversationId: string; threadId?: string | null }
+  | {
+      type: "typing";
+      conversationId: string;
+      threadId?: string | null;
+      /** Typing in the reply thread of this root message. */
+      parentMessageId?: string | null;
+    }
   | { type: "ping" };
 
 // -- Bot Types --
@@ -798,6 +888,8 @@ export interface NotificationPreferences {
    * default: agent replies then notify only for finished work.
    */
   agentProgress: boolean;
+  /** Replies in threads you follow. Absent on older servers. */
+  threadReplies?: boolean;
   /** Show message text on the lock screen. */
   showPreviews: boolean;
 }
@@ -805,6 +897,7 @@ export interface NotificationPreferences {
 export type PushNotificationKind =
   | "direct_message"
   | "mention"
+  | "thread_reply"
   | "agent_reply"
   | "agent_progress"
   | "agent_request"
@@ -860,7 +953,15 @@ export type WsServerEvent =
       message: ChatMessage;
       conversationType: "direct" | "group";
       clientMessageId?: string;
+      /** For a thread reply: the root's updated reply summary. */
+      rootThread?: MessageThreadSummary;
       traceContext?: TraceContextCarrier;
+    }
+  | {
+      type: "thread_follow_updated";
+      conversationId: string;
+      rootMessageId: string;
+      following: boolean;
     }
   | {
       type: "message_reactions_updated";
@@ -914,6 +1015,8 @@ export type WsServerEvent =
       type: "typing";
       conversationId: string;
       threadId: string | null;
+      /** Set when typing in a reply thread. */
+      parentMessageId?: string | null;
       userId: string;
       userName: string;
     }

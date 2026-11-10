@@ -3,7 +3,14 @@ import { z } from "zod";
 import { resolveRequestUser } from "../auth/middleware";
 import { browserAuthPolicy } from "../auth/browser";
 import { ServiceError } from "../services/errors";
-import { getMessages, getTaskMessagePage, sendMessage } from "../services/messages";
+import {
+  getMessages,
+  getTaskMessagePage,
+  getThreadPage,
+  sendMessage,
+  setThreadFollowing,
+} from "../services/messages";
+import { publishWsEventToUsers } from "../realtime";
 import { setMessageReaction } from "../services/message-reactions";
 import {
   setHttpResponseStatus,
@@ -14,6 +21,10 @@ const sendSchema = z.object({
   clientMessageId: z.string().min(1).max(255).optional(),
   content: z.string().max(100_000).default(""),
   threadId: z.string().uuid().nullable().optional(),
+  /** Reply in this message's thread (Slack-style reply threads). */
+  parentMessageId: z.string().uuid().nullable().optional(),
+  /** Also show the reply in the conversation's main timeline. */
+  alsoSendToConversation: z.boolean().optional(),
   attachmentIds: z.array(z.string().uuid()).max(25).default([]),
 }).refine(
   (value) => value.content.trim().length > 0 || value.attachmentIds.length > 0,
@@ -22,6 +33,21 @@ const sendSchema = z.object({
 
 function isTruthyQueryValue(value: unknown) {
   return value === "true" || value === "1" || value === true;
+}
+
+const threadPageQuerySchema = z.object({
+  before: z.string().datetime({ offset: true }).optional(),
+  limit: z.coerce.number().int().min(1).max(100).optional(),
+}).strict();
+
+const followSchema = z.object({ following: z.boolean() }).strict();
+
+function serviceErrorResponse(error: unknown, set: { status?: number | string }) {
+  if (error instanceof ServiceError) {
+    set.status = error.status;
+    return { error: error.message };
+  }
+  throw error;
 }
 
 const reactionSchema = z.object({
@@ -64,6 +90,50 @@ export const messageRoutes = new Elysia({ prefix: "/messages" })
       }
     },
   )
+
+  // One reply thread: its root, newest replies and follow state.
+  .get("/:conversationId/threads/:rootMessageId", async ({ params, query, user, set }) => {
+    const parsed = threadPageQuerySchema.safeParse(query);
+    if (!parsed.success) {
+      set.status = 400;
+      return { error: parsed.error.issues[0]?.message ?? "Invalid input" };
+    }
+    try {
+      return await getThreadPage(params.conversationId, params.rootMessageId, user.id, {
+        ...parsed.data,
+        includeAttachments: user.type !== "bot" || user.attachmentAccess === true,
+      });
+    } catch (error) {
+      return serviceErrorResponse(error, set);
+    }
+  })
+
+  // Follow or unfollow a reply thread.
+  .post("/:conversationId/threads/:rootMessageId/follow", async ({ params, body, user, set }) => {
+    const parsed = followSchema.safeParse(body);
+    if (!parsed.success) {
+      set.status = 400;
+      return { error: parsed.error.issues[0]?.message ?? "Invalid input" };
+    }
+    try {
+      const result = await setThreadFollowing(
+        params.conversationId,
+        params.rootMessageId,
+        user.id,
+        parsed.data.following,
+      );
+      // The user's other windows and devices update their follow toggle.
+      await publishWsEventToUsers([user.id], {
+        type: "thread_follow_updated",
+        conversationId: params.conversationId,
+        rootMessageId: params.rootMessageId,
+        following: result.following,
+      }).catch(() => {});
+      return result;
+    } catch (error) {
+      return serviceErrorResponse(error, set);
+    }
+  })
 
   // Fetch messages (paginated)
   .get("/:conversationId/task-page", async ({ params, query, user, set }) => {
@@ -133,7 +203,11 @@ export const messageRoutes = new Elysia({ prefix: "/messages" })
             user.name,
             parsed.data.content,
             {
-              threadId: parsed.data.threadId ?? null,
+              threadId: parsed.data.parentMessageId
+                ? parsed.data.threadId
+                : (parsed.data.threadId ?? null),
+              parentMessageId: parsed.data.parentMessageId ?? null,
+              alsoSendToConversation: parsed.data.alsoSendToConversation,
               clientMessageId: parsed.data.clientMessageId,
               attachmentIds: parsed.data.attachmentIds,
             },

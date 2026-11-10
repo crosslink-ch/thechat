@@ -27,6 +27,7 @@ const wsClientEventSchema = z.union([
     type: z.literal("typing"),
     conversationId: z.string().uuid(),
     threadId: z.string().uuid().nullable().optional(),
+    parentMessageId: z.string().uuid().nullable().optional(),
   }),
   z
     .object({
@@ -35,6 +36,8 @@ const wsClientEventSchema = z.union([
       clientMessageId: z.string().min(1).max(255).optional(),
       content: z.string().max(100_000).default(""),
       threadId: z.string().uuid().nullable().optional(),
+      parentMessageId: z.string().uuid().nullable().optional(),
+      alsoSendToConversation: z.boolean().optional(),
       attachmentIds: z.array(z.string().uuid()).max(25).default([]),
     })
     .refine(
@@ -438,10 +441,13 @@ async function handleSendMessage(
   threadId?: string | null,
   clientMessageId?: string,
   attachmentIds: string[] = [],
+  reply: { parentMessageId?: string | null; alsoSendToConversation?: boolean } = {},
 ) {
   try {
     await sendMessage(conversationId, userId, userName, content, {
-      threadId: threadId ?? null,
+      threadId: reply.parentMessageId ? (threadId ?? undefined) : (threadId ?? null),
+      parentMessageId: reply.parentMessageId ?? null,
+      alsoSendToConversation: reply.alsoSendToConversation,
       clientMessageId,
       attachmentIds,
     });
@@ -470,6 +476,7 @@ async function handleTyping(
   userName: string,
   conversationId: string,
   threadId?: string | null,
+  parentMessageId?: string | null,
 ) {
   try {
     await requireConversationParticipant(conversationId, userId);
@@ -483,6 +490,7 @@ async function handleTyping(
       type: "typing",
       conversationId,
       threadId: threadId ?? null,
+      ...(parentMessageId ? { parentMessageId } : {}),
       userId,
       userName,
     };
@@ -646,6 +654,10 @@ export const wsRoutes = new Elysia().ws("/ws", {
         event.threadId ?? null,
         event.clientMessageId,
         event.attachmentIds ?? [],
+        {
+          parentMessageId: event.parentMessageId ?? null,
+          alsoSendToConversation: event.alsoSendToConversation,
+        },
       );
     } else if (event.type === "typing") {
       await handleTyping(
@@ -654,6 +666,7 @@ export const wsRoutes = new Elysia().ws("/ws", {
         socketUser.name,
         event.conversationId,
         event.threadId ?? null,
+        event.parentMessageId ?? null,
       );
     }
   },

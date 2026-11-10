@@ -1,13 +1,14 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { useParams } from "@tanstack/react-router";
+import { useNavigate, useParams } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import type { MessageContext } from "@thechat/shared";
-import { ArrowLeft, ArrowUpRight, Hash, ListTodo } from "lucide-react";
+import { ArrowLeft, ArrowUpRight, Hash, ListTodo, MessagesSquare } from "lucide-react";
 import { Markdown } from "../components/Markdown";
 import { SharedChatMessage, shouldMergeChatMessage } from "../components/SharedChatMessage";
 import { buttonClass } from "../components/ui";
 import { fetchMessageContext, SearchRequestError } from "../lib/search-api";
 import { openSearchLocation, JumpSupersededError } from "../lib/search-navigation";
+import { openReplyThread } from "../lib/open-reply-thread";
 import { useAuthStore } from "../stores/auth";
 
 /** Messages shown on each side of the target. */
@@ -53,7 +54,9 @@ export function MessageContextRoute() {
 }
 
 export function MessageContextView({ context }: { context: MessageContext }) {
+  const navigate = useNavigate();
   const targetRef = useRef<HTMLDivElement>(null);
+  const replyRootId = context.replyRootId ?? null;
   const [opening, setOpening] = useState(false);
   const [openError, setOpenError] = useState<string | null>(null);
   const { conversation } = context;
@@ -81,6 +84,19 @@ export function MessageContextView({ context }: { context: MessageContext }) {
     setOpening(true);
     setOpenError(null);
     try {
+      if (replyRootId) {
+        // A reply: open its conversation with the thread beside it.
+        await openReplyThread(navigate, {
+          workspaceId: conversation.workspaceId,
+          workspaceName: conversation.workspaceName,
+          conversationId: conversation.id,
+          conversationType: conversation.type,
+          rootMessageId: replyRootId,
+          highlightMessageId:
+            context.targetMessageId === replyRootId ? null : context.targetMessageId,
+        });
+        return;
+      }
       await openSearchLocation({
         workspaceId: conversation.workspaceId,
         conversationId: conversation.id,
@@ -119,6 +135,12 @@ export function MessageContextView({ context }: { context: MessageContext }) {
               <span className="truncate text-text-muted">{context.threadTitle}</span>
             </>
           )}
+          {replyRootId && (
+            <>
+              <MessagesSquare size={14} className="ml-1 shrink-0 text-text-dimmed" aria-hidden="true" />
+              <span className="truncate text-text-muted">Thread</span>
+            </>
+          )}
           <span className="ml-1 hidden shrink-0 text-[0.786rem] text-text-dimmed sm:inline">· {conversation.workspaceName}</span>
         </div>
         <button
@@ -127,7 +149,7 @@ export function MessageContextView({ context }: { context: MessageContext }) {
           onClick={() => void openConversation()}
           disabled={opening}
         >
-          {context.threadId ? "Open task" : "Open conversation"}
+          {replyRootId ? "Open thread" : context.threadId ? "Open task" : "Open conversation"}
           <ArrowUpRight size={14} aria-hidden="true" />
         </button>
       </div>

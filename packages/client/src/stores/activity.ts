@@ -1,5 +1,10 @@
 import { create } from "zustand";
-import type { ActivityItem, ActivitySnapshot, ChatMessage } from "@thechat/shared";
+import type {
+  ActivityItem,
+  ActivitySnapshot,
+  ActivityThreadItem,
+  ChatMessage,
+} from "@thechat/shared";
 import { api } from "../lib/api";
 import { authHeaders, edenErrorMessage } from "../lib/eden";
 import { isAuthenticated } from "../lib/auth-identity";
@@ -9,6 +14,8 @@ import { useConversationsStore } from "./conversations";
 import { useHermesIndicatorsStore } from "./hermes-indicators";
 
 interface ActivityState extends ActivitySnapshot {
+  /** Followed threads with unread replies (always present client-side). */
+  threads: ActivityThreadItem[];
   loading: boolean;
   error: string | null;
   fetchActivity: () => Promise<void>;
@@ -18,6 +25,8 @@ interface ActivityState extends ActivitySnapshot {
     threadId?: string | null,
   ) => Promise<void>;
   markAllRead: () => Promise<void>;
+  /** Mark every reply of one followed thread read. */
+  markThreadRead: (conversationId: string, rootMessageId: string) => Promise<void>;
   handleIncomingMessage: (
     message: ChatMessage,
     conversationVisible: boolean,
@@ -32,7 +41,7 @@ let latestActivityMutationRequest = 0;
 let activityOperationCounter = 0;
 let latestActivityOperation = 0;
 
-function normalizeSnapshot(value: unknown): ActivitySnapshot {
+function normalizeSnapshot(value: unknown): ActivitySnapshot & { threads: ActivityThreadItem[] } {
   if (!value || typeof value !== "object") {
     throw new Error("Failed to load activity");
   }
@@ -45,6 +54,9 @@ function normalizeSnapshot(value: unknown): ActivitySnapshot {
   }
   return {
     items: candidate.items as ActivityItem[],
+    threads: Array.isArray(candidate.threads)
+      ? (candidate.threads as ActivityThreadItem[])
+      : [],
     totalUnreadMessages: candidate.totalUnreadMessages,
   };
 }
@@ -77,6 +89,7 @@ function syncConversationUnread(snapshot: ActivitySnapshot) {
 
 export const useActivityStore = create<ActivityState>((set, get) => ({
   items: [],
+  threads: [],
   totalUnreadMessages: 0,
   loading: false,
   error: null,
@@ -233,6 +246,26 @@ export const useActivityStore = create<ActivityState>((set, get) => ({
     }
   },
 
+  markThreadRead: async (conversationId, rootMessageId) => {
+    const token = currentToken();
+    if (!isAuthenticated(token)) return;
+    const isCurrent = activitySession(token);
+    activityMutationVersion += 1;
+    const { data, error } = await api.activity
+      .conversations({ conversationId })
+      .read.post({ all: true, rootMessageId }, authHeaders(token))
+      .finally(() => {
+        if (isCurrent()) activityMutationVersion += 1;
+      });
+    if (error) {
+      throw new Error(edenErrorMessage(error, "Failed to mark the thread as read"));
+    }
+    if (!isCurrent()) return;
+    const snapshot = normalizeSnapshot(data);
+    set({ ...snapshot, error: null });
+    syncConversationUnread(snapshot);
+  },
+
   handleIncomingMessage: async (message, _conversationVisible) => {
     const currentUserId = useAuthStore.getState().user?.id;
     if (currentUserId && message.senderId === currentUserId) return;
@@ -249,6 +282,7 @@ export const useActivityStore = create<ActivityState>((set, get) => ({
     latestActivityOperation = ++activityOperationCounter;
     set({
       items: [],
+      threads: [],
       totalUnreadMessages: 0,
       loading: false,
       error: null,

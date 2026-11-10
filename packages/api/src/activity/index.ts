@@ -7,6 +7,7 @@ import {
   markAllActivityRead,
   markConversationRead,
 } from "../services/activity";
+import { listFollowedThreads } from "../services/messages";
 import { ServiceError } from "../services/errors";
 
 const renderedMessageIdsSchema = z
@@ -22,7 +23,11 @@ const readSelectionSchema = z.union([
     messageIds: renderedMessageIdsSchema,
     threadId: z.string().uuid().nullable().optional(),
   }).strict(),
-  z.object({ all: z.literal(true) }).strict(),
+  z.object({
+    all: z.literal(true),
+    /** Only the replies of this thread. */
+    rootMessageId: z.string().uuid().optional(),
+  }).strict(),
 ]);
 
 export const activityRoutes = new Elysia({ prefix: "/activity" })
@@ -35,6 +40,22 @@ export const activityRoutes = new Elysia({ prefix: "/activity" })
     }
   })
   .get("/", async ({ user }) => listActivity(user.id))
+  // Threads the user follows, most recent reply first (the Threads view).
+  .get("/threads", async ({ query, user, set }) => {
+    const parsed = z
+      .object({
+        workspaceId: z.string().min(1).max(128).optional(),
+        before: z.string().datetime({ offset: true }).optional(),
+        limit: z.coerce.number().int().min(1).max(50).optional(),
+      })
+      .strict()
+      .safeParse(query);
+    if (!parsed.success) {
+      set.status = 400;
+      return { error: parsed.error.issues[0]?.message ?? "Invalid input" };
+    }
+    return listFollowedThreads(user.id, parsed.data);
+  })
   .post(
     "/conversations/:conversationId/read",
     async ({ params, body, user, set }) => {

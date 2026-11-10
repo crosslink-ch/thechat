@@ -1,6 +1,6 @@
 import { onSessionReset } from "../lib/session-boundary";
 import { ArrowUp, FileText, Paperclip, Square, X } from "lucide-react";
-import { memo, useEffect, useRef, useState, useCallback, type DragEvent } from "react";
+import { memo, useEffect, useRef, useState, useCallback, type DragEvent, type ReactNode } from "react";
 import { useIsStreaming } from "../stores/streaming";
 import { useInputFocusStore } from "../stores/input-focus";
 import { useComposerDraftsStore } from "../stores/composer-drafts";
@@ -70,6 +70,12 @@ interface InputBarProps {
     conversationId: string;
     token: string | null;
   };
+  /** Placeholder when nothing is streaming (default "Send a message..."). */
+  placeholder?: string;
+  /** Accessible name of the message editor (default "Message"). */
+  ariaLabel?: string;
+  /** Extra controls shown at the start of the action row (e.g. "Also send to #general"). */
+  footer?: ReactNode;
 }
 
 export const InputBar = memo(function InputBar(props: InputBarProps) {
@@ -88,6 +94,9 @@ function ScopedInputBar({
   slashCommands,
   optimisticSend = false,
   sharedUpload,
+  placeholder = "Send a message...",
+  ariaLabel,
+  footer,
 }: InputBarProps) {
   const storeStreaming = useIsStreaming(convId);
   const isStreaming = isStreamingOverride ?? storeStreaming;
@@ -1031,7 +1040,8 @@ function ScopedInputBar({
           initialText={initialText}
           onSubmit={handleRichInputSubmit}
           onEmptySubmitAttempt={handleEmptySubmitAttempt}
-          placeholder={isStreaming ? "Queue a message..." : "Send a message..."}
+          placeholder={isStreaming ? "Queue a message..." : placeholder}
+          ariaLabel={ariaLabel}
           mentions={mentions}
           onCanSubmitChange={setCanSubmit}
           onTextChange={handleInputTextChange}
@@ -1057,6 +1067,9 @@ function ScopedInputBar({
           data-testid="input-actions"
           className="flex min-h-10 items-center justify-end gap-1.5 px-2 pb-2"
         >
+          {footer && !voiceBusy && (
+            <div className="mr-auto flex min-w-0 items-center pl-2">{footer}</div>
+          )}
           {sharedUpload && (
             <VoiceRecorder
               key={`${sharedUpload.conversationId}\u0000${sharedUpload.token}`}

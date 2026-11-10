@@ -22,6 +22,8 @@ interface RichInputProps {
   onKeyIntercept?: (event: KeyboardEvent) => boolean;
   /** Text used when this editor instance is created. */
   initialText?: string;
+  /** Accessible name of the editor. */
+  ariaLabel?: string;
 }
 
 function serializeTextNode(
@@ -121,6 +123,7 @@ export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function Ri
     onTextChange,
     onKeyIntercept,
     initialText = "",
+    ariaLabel = "Message",
   }: RichInputProps,
   ref,
 ) {
@@ -270,7 +273,7 @@ export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function Ri
     editorProps: {
       attributes: {
         role: "textbox",
-        "aria-label": "Message",
+        "aria-label": ariaLabel,
         "aria-multiline": "true",
         enterkeyhint: "enter",
         class:

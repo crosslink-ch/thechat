@@ -56,9 +56,10 @@ import {
   assertIdempotentCommandMatches,
   attachReadyAttachments,
   findIdempotentMessage,
+  recordReplyAwareUnreads,
 } from "./messages";
 import { requireConversationMutationAccess } from "./conversation-mutation-access";
-import { recordMessageUnreads } from "./activity";
+import { recordThreadReply, threadSummaryForRoot } from "./message-threads";
 import { toPublicConversationThread } from "./task-project-records";
 import { vaultUnlockRequestSchema, vaultUnlockResolvedSchema, vaultUnlockResponseSchema, validateVaultPublicKey, VAULT_UNLOCK_PREVIEW } from "./vault-unlock";
 import type { VaultUnlockResponse } from "@thechat/shared";
@@ -143,6 +144,18 @@ interface HermesPlatformMessageTarget {
   botName: string;
   conversation: typeof conversations.$inferSelect;
   threadId: string | null;
+  /** Answer in this reply thread: the trigger message was a thread reply. */
+  parentMessageId: string | null;
+}
+
+/**
+ * A bot answers where it was asked: a mention inside a reply thread is
+ * answered in that thread (like Slack), and never leaks into the timeline.
+ */
+function invocationReplyRoot(
+  loaded: NonNullable<Awaited<ReturnType<typeof loadInvocationContext>>>,
+) {
+  return loaded.triggerMessage.parentMessageId ?? null;
 }
 
 let asyncBus: PgBossAsyncBus | null = null;
@@ -1415,6 +1428,7 @@ async function resolveHermesPlatformMessageTarget(input: {
       botName: loaded.botName,
       conversation: loaded.conversation,
       threadId,
+      parentMessageId: invocationReplyRoot(loaded),
     };
   }
 
@@ -1463,6 +1477,7 @@ async function resolveHermesPlatformMessageTarget(input: {
     botName: botRow.botName,
     conversation,
     threadId,
+    parentMessageId: null,
   };
 }
 
@@ -1595,6 +1610,7 @@ export async function publishHermesPlatformMessage(input: {
           .values({
             conversationId: target.conversation.id,
             threadId: target.threadId,
+            parentMessageId: target.parentMessageId,
             senderId: target.bot.userId,
             clientMessageId,
             content,
@@ -1625,8 +1641,11 @@ export async function publishHermesPlatformMessage(input: {
         }
 
         // A progress update is not something to catch up on: the answer that
-        // follows is. Only the answer marks the conversation unread.
-        if (!inserted.interim) await recordMessageUnreads(tx, inserted);
+        // follows is. Only the answer marks the conversation (or thread) unread.
+        if (!inserted.interim) {
+          await recordThreadReply(tx, inserted);
+          await recordReplyAwareUnreads(tx, inserted);
+        }
 
         await attachReadyAttachments(tx, {
           messageId: inserted.id,
@@ -1963,13 +1982,15 @@ async function recordHermesExecutionFailure(
       .values({
         conversationId: loaded.conversation.id,
         threadId: resolveInvocationThreadId(loaded),
+        parentMessageId: invocationReplyRoot(loaded),
         senderId: loaded.bot.userId,
         content,
         parts: [{ type: "text", text: content }],
       })
       .returning();
 
-    await recordMessageUnreads(tx, inserted);
+    await recordThreadReply(tx, inserted);
+    await recordReplyAwareUnreads(tx, inserted);
 
     await tx
       .update(botInvocations)
@@ -2414,12 +2435,14 @@ async function failInvocation(
       .values({
         conversationId: loaded.conversation.id,
         threadId: resolveInvocationThreadId(loaded),
+        parentMessageId: invocationReplyRoot(loaded),
         senderId: loaded.bot.userId,
         content,
         parts: [{ type: "text", text: content }],
       })
       .returning();
-    await recordMessageUnreads(tx, responseMessage);
+    await recordThreadReply(tx, responseMessage);
+    await recordReplyAwareUnreads(tx, responseMessage);
     await tx
       .update(botInvocations)
       .set({ responseMessageId: responseMessage.id })
@@ -2601,10 +2624,18 @@ async function publishBotMessage(
       parts: message.parts ?? null,
       attachments: attachmentMetadata,
       ...(message.interim ? { interim: true as const } : {}),
+      ...(message.parentMessageId ? { parentMessageId: message.parentMessageId } : {}),
+      ...(message.parentMessageId && message.alsoSentToConversation
+        ? { alsoSentToConversation: true as const }
+        : {}),
       createdAt: message.createdAt.toISOString(),
     } as ChatMessage,
     conversationType,
   };
+  if (message.parentMessageId) {
+    const rootThread = await threadSummaryForRoot(message.parentMessageId);
+    if (rootThread && event.type === "new_message") event.rootThread = rootThread;
+  }
   const scopedRecipients = participants
     .filter(
       (participant) =>

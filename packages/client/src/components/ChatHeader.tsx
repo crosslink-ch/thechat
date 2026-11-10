@@ -25,6 +25,7 @@ const pageLabels: Record<string, string> = {
   "/bots/manage": "Bots",
   "/notifications": "Notifications",
   "/activity": "Activity",
+  "/threads": "Threads",
   "/search": "Search",
   "/message/$messageId": "Message",
 };

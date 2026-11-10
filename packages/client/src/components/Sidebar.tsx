@@ -23,7 +23,7 @@ import {
 } from "./ChannelModal";
 import { api } from "../lib/api";
 import type { WorkspaceChannel, WorkspaceMember } from "@thechat/shared";
-import { Bell, Bot, ChevronDown, Ellipsis, Inbox, LogIn, LogOut, Pencil, Plus, Search, Settings, Trash2 } from "lucide-react";
+import { Bell, Bot, ChevronDown, Ellipsis, Inbox, LogIn, LogOut, MessagesSquare, Pencil, Plus, Search, Settings, Trash2 } from "lucide-react";
 import { openPalette } from "../lib/palette-state";
 import { Avatar } from "./Avatar";
 import {
@@ -90,6 +90,7 @@ export function Sidebar() {
   const notificationCount = useNotificationsStore((s) => s.notifications.length);
   const activityItems = useActivityStore((s) => s.items);
   const unreadMessageCount = useActivityStore((s) => s.totalUnreadMessages);
+  const unreadThreadCount = useActivityStore((s) => s.threads.length);
   const onlineUserIds = usePresenceStore((s) => s.onlineUserIds);
 
   // Determine current active IDs from route
@@ -390,6 +391,38 @@ export function Sidebar() {
               <Search size={14} aria-hidden="true" />
               <span className="min-w-0 flex-1 truncate">Search or jump to…</span>
               <kbd className="hidden rounded bg-white/[0.06] px-1.5 py-px font-mono text-[0.643rem] lg:inline">Ctrl K</kbd>
+            </button>
+            <button
+              type="button"
+              data-testid="sidebar-threads"
+              aria-current={routePath === "/threads" ? "page" : undefined}
+              className={`mt-1.5 flex h-8 w-full cursor-pointer items-center gap-2 rounded-lg border-none px-2.5 text-left font-[inherit] text-[0.929rem] transition-colors duration-150 ${
+                routePath === "/threads"
+                  ? "bg-white/[0.08] text-text"
+                  : unreadThreadCount > 0
+                    ? "bg-transparent font-semibold text-text hover:bg-white/[0.05]"
+                    : "bg-transparent text-text-muted hover:bg-white/[0.05] hover:text-text-secondary"
+              }`}
+              onClick={() => {
+                dismissNavigation?.();
+                navigate({ to: "/threads" });
+              }}
+              aria-label={
+                unreadThreadCount > 0
+                  ? `Threads, ${unreadThreadCount} with new replies`
+                  : "Threads"
+              }
+            >
+              <MessagesSquare size={15} aria-hidden="true" />
+              <span className="min-w-0 flex-1 truncate">Threads</span>
+              {unreadThreadCount > 0 && (
+                <span
+                  data-testid="sidebar-threads-unread"
+                  className="min-w-[18px] rounded-full bg-accent px-1.5 py-px text-center text-[0.714rem] font-semibold text-white"
+                >
+                  {unreadThreadCount > 99 ? "99+" : unreadThreadCount}
+                </span>
+              )}
             </button>
           </div>
         )}

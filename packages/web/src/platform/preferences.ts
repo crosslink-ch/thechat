@@ -1,7 +1,7 @@
 
 
 /** UI preferences only. Authentication never uses this adapter. */
-export type PreferenceKey = "ui_font_size" | "active_workspace_id" | "recent_locations";
+export type PreferenceKey = "ui_font_size" | "active_workspace_id" | "recent_locations" | "thread_panel_width";
 const memory = new Map<string, string>();
 const storageKey = (key: PreferenceKey, account?: string) => `thechat:preferences:${account ?? "device"}:${key}`;
 export const preferences = {

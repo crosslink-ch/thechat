@@ -8,6 +8,8 @@ export interface OpenConversationSearch {
   type?: "direct" | "group";
   workspaceId?: string;
   threadId?: string;
+  /** A reply thread to open in the side panel. */
+  replyThread?: string;
 }
 
 const ID = /^[A-Za-z0-9_-]{1,128}$/;
@@ -22,6 +24,7 @@ export function validateOpenSearch(search: Record<string, unknown>): OpenConvers
     type: search.type === "direct" || search.type === "group" ? search.type : undefined,
     workspaceId: id(search.workspaceId),
     threadId: id(search.threadId),
+    replyThread: id(search.replyThread),
   };
 }
 
@@ -41,7 +44,7 @@ export function OpenConversationRoute() {
     const key = JSON.stringify(search);
     if (started.current === key) return;
     started.current = key;
-    const { conversationId, type, workspaceId, threadId } = search;
+    const { conversationId, type, workspaceId, threadId, replyThread } = search;
     void (async () => {
       if (workspaceId && workspaceId !== activeWorkspaceId) {
         await useWorkspacesStore.getState().selectWorkspace(workspaceId);
@@ -49,12 +52,17 @@ export function OpenConversationRoute() {
       if (!conversationId || !type) {
         await navigate({ to: "/activity", replace: true });
       } else if (type === "group") {
-        await navigate({ to: "/channel/$id", params: { id: conversationId }, replace: true });
+        await navigate({
+          to: "/channel/$id",
+          params: { id: conversationId },
+          search: { replyThread },
+          replace: true,
+        });
       } else {
         await navigate({
           to: "/dm/$id",
           params: { id: conversationId },
-          search: { threadId },
+          search: { threadId, replyThread },
           replace: true,
         });
       }

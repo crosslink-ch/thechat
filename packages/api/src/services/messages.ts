@@ -1,6 +1,14 @@
 import crypto from "node:crypto";
-import { and, asc, desc, eq, inArray, isNull, lt } from "drizzle-orm";
-import type { ChatMessage, TaskMessagePage, WsServerEvent } from "@thechat/shared";
+import { and, asc, desc, eq, gt, inArray, isNull, lt, ne, sql } from "drizzle-orm";
+import type {
+  ChatMessage,
+  FollowedThread,
+  FollowedThreadsPage,
+  MessageThreadPage,
+  MessageThreadSummary,
+  TaskMessagePage,
+  WsServerEvent,
+} from "@thechat/shared";
 import { attachmentsByMessageIds } from "../attachments/public";
 import { loadAttachmentConfig } from "../attachments/config";
 import { db } from "../db";
@@ -12,9 +20,11 @@ import {
   conversations,
   messageAttachments,
   messages,
+  messageThreadFollowers,
   messageUnreads,
   users,
   workspaceMembers,
+  workspaces,
 } from "../db/schema";
 import { createChatMessageSentV1 } from "../events/envelope";
 import { enqueueDomainEvent } from "../events/outbox";
@@ -26,11 +36,78 @@ import { requireConversationMutationAccess } from "./conversation-mutation-acces
 import { resolveMessageBotTargetIds } from "./message-bot-targets";
 import { messageReactionsByMessageIds } from "./message-reactions";
 import { recordMessageUnreads } from "./activity";
+import {
+  mainTimelineCondition,
+  recordThreadReply,
+  recordThreadReplyUnreads,
+  resolveReplyRoot,
+  threadSummariesForRows,
+  threadSummaryForRoot,
+} from "./message-threads";
 
 const messageLog = log.child({ component: "messages" });
 
 type DbTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
 type MessageReadExecutor = Pick<typeof db, "select">;
+
+/** Columns every public message read selects (with the sender joined). */
+export const publicMessageColumns = {
+  id: messages.id,
+  conversationId: messages.conversationId,
+  threadId: messages.threadId,
+  parentMessageId: messages.parentMessageId,
+  alsoSentToConversation: messages.alsoSentToConversation,
+  replyCount: messages.replyCount,
+  lastReplyAt: messages.lastReplyAt,
+  senderId: messages.senderId,
+  content: messages.content,
+  parts: messages.parts,
+  interim: messages.interim,
+  createdAt: messages.createdAt,
+  senderName: users.name,
+  senderType: users.type,
+};
+
+type PublicMessageRow = {
+  id: string;
+  conversationId: string;
+  threadId: string | null;
+  parentMessageId?: string | null;
+  alsoSentToConversation?: boolean | null;
+  replyCount?: number | null;
+  lastReplyAt?: Date | null;
+  senderId: string;
+  senderName: string;
+  senderType: "human" | "bot";
+  content: string;
+  parts: typeof messages.$inferSelect.parts;
+  interim?: boolean;
+  createdAt: Date;
+};
+
+/** Attachments, reactions and reply summaries for rows, as public messages. */
+export async function hydrateMessages(
+  rows: PublicMessageRow[],
+  viewerId: string,
+  includeAttachments: boolean,
+): Promise<ChatMessage[]> {
+  const ids = rows.map((row) => row.id);
+  const [attachmentMap, reactionMap, threadMap] = await Promise.all([
+    includeAttachments
+      ? attachmentsByMessageIds(ids)
+      : Promise.resolve(new Map<string, NonNullable<ChatMessage["attachments"]>>()),
+    messageReactionsByMessageIds(ids, viewerId),
+    threadSummariesForRows(rows),
+  ]);
+  return rows.map((row) =>
+    toChatMessage(
+      row,
+      attachmentMap.get(row.id) ?? [],
+      reactionMap.get(row.id) ?? [],
+      threadMap.get(row.id),
+    ),
+  );
+}
 
 export async function getMessages(
   conversationId: string,
@@ -46,7 +123,9 @@ export async function getMessages(
   await requireParticipant(db, conversationId, userId);
 
   const limit = Math.min(options?.limit || 50, 100);
-  const conditions = [eq(messages.conversationId, conversationId)];
+  // Thread replies live in their thread; only those also sent to the
+  // conversation appear in its timeline.
+  const conditions = [eq(messages.conversationId, conversationId), mainTimelineCondition()];
   if (options?.threadId) {
     await requireConversationThread(db, conversationId, options.threadId);
     conditions.push(eq(messages.threadId, options.threadId));
@@ -58,18 +137,7 @@ export async function getMessages(
   }
 
   const rows = await db
-    .select({
-      id: messages.id,
-      conversationId: messages.conversationId,
-      threadId: messages.threadId,
-      senderId: messages.senderId,
-      content: messages.content,
-      parts: messages.parts,
-      interim: messages.interim,
-      createdAt: messages.createdAt,
-      senderName: users.name,
-      senderType: users.type,
-    })
+    .select(publicMessageColumns)
     .from(messages)
     .innerJoin(users, eq(messages.senderId, users.id))
     .where(and(...conditions))
@@ -78,21 +146,7 @@ export async function getMessages(
   const chronological = rows.reverse();
   const includeAttachments =
     options?.includeAttachments ?? (await canUserAccessAttachments(db, userId));
-  const attachmentMap = includeAttachments
-    ? await attachmentsByMessageIds(rows.map((row) => row.id))
-    : new Map<string, NonNullable<ChatMessage["attachments"]>>();
-  const reactionMap = await messageReactionsByMessageIds(
-    rows.map((row) => row.id),
-    userId,
-  );
-
-  return chronological.map((row) =>
-    toChatMessage(
-      row,
-      attachmentMap.get(row.id) ?? [],
-      reactionMap.get(row.id) ?? [],
-    ),
-  );
+  return hydrateMessages(chronological, userId, includeAttachments);
 }
 
 export async function getTaskMessagePage(
@@ -114,6 +168,7 @@ export async function getTaskMessagePage(
       eq(messageUnreads.userId, userId),
       eq(messageUnreads.conversationId, conversationId),
       threadId ? eq(messages.threadId, threadId) : isNull(messages.threadId),
+      mainTimelineCondition(),
     ));
   const page = await getMessages(conversationId, userId, {
     ...options,
@@ -128,31 +183,15 @@ export async function getMessageByIdForParticipant(
   userId: string,
 ) {
   const [row] = await db
-    .select({
-      id: messages.id,
-      conversationId: messages.conversationId,
-      threadId: messages.threadId,
-      senderId: messages.senderId,
-      content: messages.content,
-      parts: messages.parts,
-      interim: messages.interim,
-      createdAt: messages.createdAt,
-      senderName: users.name,
-      senderType: users.type,
-    })
+    .select(publicMessageColumns)
     .from(messages)
     .innerJoin(users, eq(messages.senderId, users.id))
     .where(eq(messages.id, messageId))
     .limit(1);
   if (!row) throw new ServiceError("Message not found", 404);
   await requireParticipant(db, row.conversationId, userId);
-  const attachmentMap = await attachmentsByMessageIds([row.id]);
-  const reactionMap = await messageReactionsByMessageIds([row.id], userId);
-  return toChatMessage(
-    row,
-    attachmentMap.get(row.id) ?? [],
-    reactionMap.get(row.id) ?? [],
-  );
+  const [message] = await hydrateMessages([row], userId, true);
+  return message!;
 }
 
 export async function sendMessage(
@@ -162,6 +201,10 @@ export async function sendMessage(
   content: string,
   options: {
     threadId?: string | null;
+    /** Reply in the thread of this message (or of its root, for a reply). */
+    parentMessageId?: string | null;
+    /** Also show the reply in the conversation's main timeline. */
+    alsoSendToConversation?: boolean;
     clientMessageId?: string | null;
     attachmentIds?: string[];
     afterWorkspaceLocked?: () => Promise<void>;
@@ -217,10 +260,24 @@ export async function sendMessage(
             );
           }
         }
-        const threadId = options.threadId ?? null;
-        if (threadId) {
+        // A reply belongs to its root's Hermes task, whatever the client sent.
+        const root = options.parentMessageId
+          ? await resolveReplyRoot(tx, conversationId, options.parentMessageId)
+          : null;
+        if (
+          root &&
+          options.threadId !== undefined &&
+          options.threadId !== null &&
+          options.threadId !== root.threadId
+        ) {
+          throw new ServiceError("Reply must stay in its root message's task", 400);
+        }
+        const threadId = root ? root.threadId : (options.threadId ?? null);
+        if (threadId && !root) {
           await requireConversationThread(tx, conversationId, threadId);
         }
+        const parentMessageId = root?.id ?? null;
+        const alsoSentToConversation = Boolean(root && options.alsoSendToConversation);
 
         const existing = await findIdempotentMessage(
           tx,
@@ -231,6 +288,7 @@ export async function sendMessage(
           await assertIdempotentCommandMatches(tx, existing, {
             conversationId,
             threadId,
+            parentMessageId,
             content: normalizedContent,
             attachmentIds,
           });
@@ -247,6 +305,8 @@ export async function sendMessage(
           .values({
             conversationId,
             threadId,
+            parentMessageId,
+            alsoSentToConversation,
             senderId: userId,
             clientMessageId,
             content: normalizedContent,
@@ -265,6 +325,7 @@ export async function sendMessage(
           await assertIdempotentCommandMatches(tx, raced, {
             conversationId,
             threadId,
+            parentMessageId,
             content: normalizedContent,
             attachmentIds,
           });
@@ -276,7 +337,8 @@ export async function sendMessage(
           };
         }
 
-        await recordMessageUnreads(tx, inserted);
+        await recordThreadReply(tx, inserted);
+        await recordReplyAwareUnreads(tx, inserted);
 
         await attachReadyAttachments(tx, {
           messageId: inserted.id,
@@ -344,6 +406,9 @@ export async function sendMessage(
             result.message.id,
           ) ?? []
         : [];
+      const ownSummary = result.duplicate
+        ? (await threadSummariesForRows([result.message])).get(result.message.id)
+        : undefined;
       const publicMessage = toChatMessage(
         {
           ...result.message,
@@ -352,6 +417,7 @@ export async function sendMessage(
         },
         attachmentMap.get(result.message.id) ?? [],
         reactions,
+        ownSummary,
       );
       span.setAttribute("thechat.message.idempotent_replay", result.duplicate);
       span.setAttribute(
@@ -389,11 +455,15 @@ export async function sendMessage(
             participant.userType === "bot" &&
             participant.attachmentAccess !== true,
         );
+        const rootThread = publicMessage.parentMessageId
+          ? await threadSummaryForRoot(publicMessage.parentMessageId)
+          : null;
         const realtimeEvent: WsServerEvent = {
           type: "new_message",
           message: publicMessage,
           conversationType: result.conversationType,
           clientMessageId,
+          ...(rootThread ? { rootThread } : {}),
         };
         try {
           await Promise.all([
@@ -547,6 +617,7 @@ export async function assertIdempotentCommandMatches(
   command: {
     conversationId: string;
     threadId: string | null;
+    parentMessageId?: string | null;
     content: string;
     attachmentIds: string[];
   },
@@ -560,6 +631,8 @@ export async function assertIdempotentCommandMatches(
   if (
     existing.conversationId !== command.conversationId ||
     existing.threadId !== command.threadId ||
+    (command.parentMessageId !== undefined &&
+      (existing.parentMessageId ?? null) !== command.parentMessageId) ||
     existing.content !== command.content ||
     existingAttachmentIds.length !== command.attachmentIds.length ||
     existingAttachmentIds.some(
@@ -672,20 +745,10 @@ function normalizeClientMessageId(value: string) {
 }
 
 export function toChatMessage(
-  row: {
-    id: string;
-    conversationId: string;
-    threadId: string | null;
-    senderId: string;
-    senderName: string;
-    senderType: "human" | "bot";
-    content: string;
-    parts: typeof messages.$inferSelect.parts;
-    interim?: boolean;
-    createdAt: Date;
-  },
+  row: PublicMessageRow,
   messageAttachments: ChatMessage["attachments"],
   reactions: NonNullable<ChatMessage["reactions"]>,
+  thread?: MessageThreadSummary,
 ): ChatMessage {
   return {
     id: row.id,
@@ -699,6 +762,288 @@ export function toChatMessage(
     attachments: messageAttachments,
     reactions,
     ...(row.interim ? { interim: true as const } : {}),
+    ...(row.parentMessageId ? { parentMessageId: row.parentMessageId } : {}),
+    ...(row.parentMessageId && row.alsoSentToConversation
+      ? { alsoSentToConversation: true as const }
+      : {}),
+    ...(thread ? { thread } : {}),
     createdAt: row.createdAt.toISOString(),
+  };
+}
+
+/**
+ * Unread rows for a new message: everyone for the main timeline, only the
+ * thread's followers for a reply that stays in its thread.
+ */
+export async function recordReplyAwareUnreads(
+  tx: DbTransaction,
+  message: {
+    id: string;
+    conversationId: string;
+    senderId: string;
+    parentMessageId: string | null;
+    alsoSentToConversation: boolean;
+  },
+) {
+  if (!message.parentMessageId) {
+    await recordMessageUnreads(tx, message);
+    return;
+  }
+  await recordThreadReplyUnreads(tx, {
+    ...message,
+    parentMessageId: message.parentMessageId,
+  });
+  if (message.alsoSentToConversation) await recordMessageUnreads(tx, message);
+}
+
+// -- Reply threads --------------------------------------------------------
+
+const THREAD_PAGE_SIZE = 50;
+
+/** One reply thread: its root, replies (newest page) and follow state. */
+export async function getThreadPage(
+  conversationId: string,
+  rootMessageId: string,
+  userId: string,
+  options: { limit?: number; before?: string; includeAttachments?: boolean } = {},
+): Promise<MessageThreadPage> {
+  await requireParticipant(db, conversationId, userId);
+  const [rootRow] = await db
+    .select(publicMessageColumns)
+    .from(messages)
+    .innerJoin(users, eq(messages.senderId, users.id))
+    .where(and(eq(messages.id, rootMessageId), eq(messages.conversationId, conversationId)))
+    .limit(1);
+  if (!rootRow) throw new ServiceError("Message not found", 404);
+  if (rootRow.parentMessageId) {
+    throw new ServiceError("Open the thread of the root message", 400);
+  }
+
+  const limit = Math.min(Math.max(options.limit ?? THREAD_PAGE_SIZE, 1), 100);
+  // Capture before reading the page (see getTaskMessagePage).
+  const unread = await db
+    .select({ id: messageUnreads.messageId })
+    .from(messageUnreads)
+    .innerJoin(messages, eq(messages.id, messageUnreads.messageId))
+    .where(
+      and(
+        eq(messageUnreads.userId, userId),
+        eq(messageUnreads.conversationId, conversationId),
+        eq(messages.parentMessageId, rootMessageId),
+      ),
+    );
+  const replyRows = await db
+    .select(publicMessageColumns)
+    .from(messages)
+    .innerJoin(users, eq(messages.senderId, users.id))
+    .where(
+      and(
+        eq(messages.parentMessageId, rootMessageId),
+        options.before ? lt(messages.createdAt, new Date(options.before)) : undefined,
+      ),
+    )
+    .orderBy(desc(messages.createdAt), desc(messages.id))
+    .limit(limit + 1);
+  const hasOlder = replyRows.length > limit;
+  const chronological = replyRows.slice(0, limit).reverse();
+  const includeAttachments =
+    options.includeAttachments ?? (await canUserAccessAttachments(db, userId));
+  const [root, ...replies] = await hydrateMessages(
+    [rootRow, ...chronological],
+    userId,
+    includeAttachments,
+  );
+  const [follow] = await db
+    .select({ following: messageThreadFollowers.following })
+    .from(messageThreadFollowers)
+    .where(
+      and(
+        eq(messageThreadFollowers.rootMessageId, rootMessageId),
+        eq(messageThreadFollowers.userId, userId),
+      ),
+    )
+    .limit(1);
+  return {
+    root: root!,
+    replies,
+    hasOlder,
+    following: follow?.following ?? false,
+    unreadMessageIds: unread.map((row) => row.id),
+  };
+}
+
+/** Follow or unfollow a reply thread. Unfollowing also clears its unread replies. */
+export async function setThreadFollowing(
+  conversationId: string,
+  rootMessageId: string,
+  userId: string,
+  following: boolean,
+) {
+  await requireParticipant(db, conversationId, userId);
+  const [root] = await db
+    .select({ id: messages.id, parentMessageId: messages.parentMessageId })
+    .from(messages)
+    .where(and(eq(messages.id, rootMessageId), eq(messages.conversationId, conversationId)))
+    .limit(1);
+  if (!root) throw new ServiceError("Message not found", 404);
+  if (root.parentMessageId) throw new ServiceError("Follow the root message's thread", 400);
+  await db.transaction(async (tx) => {
+    await tx
+      .insert(messageThreadFollowers)
+      .values({ rootMessageId, conversationId, userId, following })
+      .onConflictDoUpdate({
+        target: [messageThreadFollowers.rootMessageId, messageThreadFollowers.userId],
+        set: { following, updatedAt: new Date() },
+      });
+    if (!following) {
+      await tx.delete(messageUnreads).where(
+        and(
+          eq(messageUnreads.userId, userId),
+          eq(messageUnreads.conversationId, conversationId),
+          inArray(
+            messageUnreads.messageId,
+            tx
+              .select({ id: messages.id })
+              .from(messages)
+              .where(
+                and(
+                  eq(messages.parentMessageId, rootMessageId),
+                  eq(messages.alsoSentToConversation, false),
+                ),
+              ),
+          ),
+        ),
+      );
+    }
+  });
+  return { rootMessageId, following };
+}
+
+const FOLLOWED_THREADS_PAGE_SIZE = 20;
+const FOLLOWED_THREAD_PREVIEW_REPLIES = 3;
+
+/**
+ * Threads the user follows that have replies, most recent reply first. Like
+ * Slack's Threads view: each with its root, newest replies and unread count.
+ */
+export async function listFollowedThreads(
+  userId: string,
+  options: { workspaceId?: string | null; before?: string | null; limit?: number } = {},
+): Promise<FollowedThreadsPage> {
+  const limit = Math.min(Math.max(options.limit ?? FOLLOWED_THREADS_PAGE_SIZE, 1), 50);
+  const rootRows = await db
+    .select({
+      ...publicMessageColumns,
+      conversationType: conversations.type,
+      conversationName: conversations.name,
+      conversationTitle: conversations.title,
+      workspaceId: workspaces.id,
+      workspaceName: workspaces.name,
+    })
+    .from(messageThreadFollowers)
+    .innerJoin(messages, eq(messages.id, messageThreadFollowers.rootMessageId))
+    .innerJoin(users, eq(users.id, messages.senderId))
+    .innerJoin(conversations, eq(conversations.id, messages.conversationId))
+    .innerJoin(workspaces, eq(workspaces.id, conversations.workspaceId))
+    .innerJoin(
+      workspaceMembers,
+      and(
+        eq(workspaceMembers.workspaceId, conversations.workspaceId),
+        eq(workspaceMembers.userId, userId),
+      ),
+    )
+    .where(
+      and(
+        eq(messageThreadFollowers.userId, userId),
+        eq(messageThreadFollowers.following, true),
+        gt(messages.replyCount, 0),
+        options.workspaceId ? eq(conversations.workspaceId, options.workspaceId) : undefined,
+        options.before ? lt(messages.lastReplyAt, new Date(options.before)) : undefined,
+      ),
+    )
+    .orderBy(desc(messages.lastReplyAt), desc(messages.id))
+    .limit(limit + 1);
+  const page = rootRows.slice(0, limit);
+  if (page.length === 0) return { items: [], nextCursor: null };
+  const rootIds = page.map((row) => row.id);
+
+  // The newest replies of each thread, via a window over the reply index.
+  const ranked = db
+    .select({
+      id: messages.id,
+      rank: sql<number>`row_number() over (partition by ${messages.parentMessageId} order by ${messages.createdAt} desc, ${messages.id} desc)`.as("rank"),
+    })
+    .from(messages)
+    .where(inArray(messages.parentMessageId, rootIds))
+    .as("ranked");
+  const replyRows = await db
+    .select(publicMessageColumns)
+    .from(messages)
+    .innerJoin(ranked, eq(ranked.id, messages.id))
+    .innerJoin(users, eq(users.id, messages.senderId))
+    .where(sql`${ranked.rank} <= ${FOLLOWED_THREAD_PREVIEW_REPLIES}`)
+    .orderBy(asc(messages.createdAt), asc(messages.id));
+
+  const unreadRows = await db
+    .select({
+      rootId: messages.parentMessageId,
+      count: sql<number>`count(*)::int`,
+    })
+    .from(messageUnreads)
+    .innerJoin(messages, eq(messages.id, messageUnreads.messageId))
+    .where(
+      and(
+        eq(messageUnreads.userId, userId),
+        inArray(messages.parentMessageId, rootIds),
+      ),
+    )
+    .groupBy(messages.parentMessageId);
+  const unreadByRoot = new Map(unreadRows.map((row) => [row.rootId, Number(row.count)]));
+
+  // Direct conversations are named after the other person.
+  const directIds = [...new Set(page.filter((row) => row.conversationType === "direct").map((row) => row.conversationId))];
+  const others = directIds.length
+    ? await db
+        .select({ conversationId: conversationParticipants.conversationId, name: users.name })
+        .from(conversationParticipants)
+        .innerJoin(users, eq(users.id, conversationParticipants.userId))
+        .where(
+          and(
+            inArray(conversationParticipants.conversationId, directIds),
+            ne(conversationParticipants.userId, userId),
+          ),
+        )
+    : [];
+  const otherName = new Map(others.map((row) => [row.conversationId, row.name]));
+
+  const includeAttachments = await canUserAccessAttachments(db, userId);
+  const hydrated = await hydrateMessages([...page, ...replyRows], userId, includeAttachments);
+  const byId = new Map(hydrated.map((message) => [message.id, message]));
+  const repliesByRoot = new Map<string, ChatMessage[]>();
+  for (const row of replyRows) {
+    const list = repliesByRoot.get(row.parentMessageId!) ?? [];
+    list.push(byId.get(row.id)!);
+    repliesByRoot.set(row.parentMessageId!, list);
+  }
+
+  const items: FollowedThread[] = page.map((row) => ({
+    conversationId: row.conversationId,
+    conversationType: row.conversationType,
+    conversationName:
+      row.conversationType === "direct"
+        ? (otherName.get(row.conversationId) ?? "Direct message")
+        : (row.conversationTitle ?? row.conversationName ?? "channel"),
+    workspaceId: row.workspaceId,
+    workspaceName: row.workspaceName,
+    root: byId.get(row.id)!,
+    latestReplies: repliesByRoot.get(row.id) ?? [],
+    replyCount: row.replyCount ?? 0,
+    unreadCount: unreadByRoot.get(row.id) ?? 0,
+    lastReplyAt: (row.lastReplyAt ?? row.createdAt).toISOString(),
+  }));
+  const last = page[page.length - 1]!;
+  return {
+    items,
+    nextCursor: rootRows.length > limit ? (last.lastReplyAt ?? last.createdAt).toISOString() : null,
   };
 }

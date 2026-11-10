@@ -26,6 +26,8 @@ import { usePersistConversationRead } from "../hooks/usePersistConversationRead"
 import { ChannelChatView } from "../components/ChannelChatView";
 import { HermesDmChatView } from "../components/HermesDmChatView";
 import { HermesRuntimePanel } from "../components/HermesRuntimePanel";
+import { ThreadPanel } from "../components/ThreadPanel";
+import { useReplyThreadPanel } from "../hooks/useReplyThreadPanel";
 import { BranchEmptyState, TaskBranchBar } from "../components/TaskBranchBar";
 import { HeaderAction } from "../components/HeaderActions";
 import { iconButtonClass } from "../components/ui";
@@ -54,7 +56,11 @@ const LOCAL_TASK_DRAFT_SCOPE = "__local_task_draft__";
 
 export function DmRoute() {
   const { id: conversationId } = useParams({ from: "/dm/$id" });
-  const { threadId: requestedThreadId } = useSearch({ from: "/dm/$id" });
+  const {
+    threadId: requestedThreadId,
+    replyThread: requestedReplyRoot,
+    replyMessage: requestedReplyMessage,
+  } = useSearch({ from: "/dm/$id" });
   const token = useAuthStore((s) => s.token);
   const user = useAuthStore((s) => s.user);
   const members = useWorkspacesStore((s) => s.activeWorkspace?.members);
@@ -96,6 +102,14 @@ export function DmRoute() {
     [conversation],
   );
   const isHermesDm = conversation?.type === "direct" && otherParticipant?.bot?.kind === "hermes";
+  // Reply threads (Slack-style) are for DMs with people. A Hermes DM already
+  // organizes its conversation into tasks, its own kind of thread.
+  const replyThreads = useReplyThreadPanel(conversationId, {
+    enabled: Boolean(conversation) && !isHermesDm,
+    requestedRootId: requestedReplyRoot,
+    requestedHighlightId: requestedReplyMessage,
+    routeTo: "/dm/$id",
+  });
   const registeredBotCommands = otherParticipant?.bot?.commands;
   const slashCommands = useMemo(
     () => buildHermesSlashCommands(registeredBotCommands),
@@ -304,9 +318,12 @@ export function DmRoute() {
       threadId,
       userId,
       userName,
+      parentMessageId,
     }: WsEvents["ws:typing"]) => {
       if (convId !== conversationId) return;
       if (draftTaskActive) return;
+      // Typing in a reply thread is shown in the thread, not here.
+      if (parentMessageId) return;
       if (isHermesDm && (threadId ?? null) !== activeThreadId) return;
 
       setTypingUsers((prev) => {
@@ -716,7 +733,7 @@ export function DmRoute() {
     : null;
 
   return (
-    <div className="shared-dm-layout flex min-h-0 min-w-0 flex-1">
+    <div className="shared-dm-layout relative flex min-h-0 min-w-0 flex-1">
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         {isHermesDm && canBranchActive && (
           <HeaderAction>
@@ -826,9 +843,22 @@ export function DmRoute() {
             token={token}
             jump={jump}
             onJumpDone={onJumpDone}
+            onOpenThread={replyThreads.onOpenThread}
+            openThreadRootId={replyThreads.openThreadRootId}
+            unreadThreadRootIds={replyThreads.unreadThreadRootIds}
           />
         )}
       </div>
+      {!isHermesDm && conversation && replyThreads.openThreadRootId && (
+        <ThreadPanel
+          key={replyThreads.openThreadRootId}
+          conversationId={conversationId}
+          conversationType="direct"
+          conversationName={otherParticipant?.user.name ?? "Direct message"}
+          rootMessageId={replyThreads.openThreadRootId}
+          mentions={mentions}
+        />
+      )}
       {isHermesDm && (
         <HermesRuntimePanel
           botName={otherParticipant.user.name}

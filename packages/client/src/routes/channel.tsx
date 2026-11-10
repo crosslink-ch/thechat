@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from "react";
-import { useParams } from "@tanstack/react-router";
+import { useParams, useSearch } from "@tanstack/react-router";
 import { useAuthStore } from "../stores/auth";
 import { useWebSocketStore } from "../stores/websocket";
 import { useConversationsStore } from "../stores/conversations";
@@ -8,6 +8,8 @@ import { composerDraftKey } from "../stores/composer-drafts";
 import { useChannelChat } from "../hooks/useChannelChat";
 import { usePersistConversationRead } from "../hooks/usePersistConversationRead";
 import { ChannelChatView } from "../components/ChannelChatView";
+import { ThreadPanel } from "../components/ThreadPanel";
+import { useReplyThreadPanel } from "../hooks/useReplyThreadPanel";
 import { wsEvents, type WsEvents } from "../lib/ws-events";
 import { botAppearanceFor } from "../lib/bot-appearance";
 import { isAuthenticated } from "../lib/auth-identity";
@@ -23,7 +25,17 @@ import {
 
 export function ChannelRoute() {
   const { id: channelId } = useParams({ from: "/channel/$id" });
+  const { replyThread: requestedReplyRoot, replyMessage: requestedReplyMessage } =
+    useSearch({ from: "/channel/$id" });
   const token = useAuthStore((s) => s.token);
+  const channelName = useWorkspacesStore(
+    (s) => s.activeWorkspace?.channels.find((channel) => channel.id === channelId)?.name ?? "channel",
+  );
+  const replyThreads = useReplyThreadPanel(channelId, {
+    requestedRootId: requestedReplyRoot,
+    requestedHighlightId: requestedReplyMessage,
+    routeTo: "/channel/$id",
+  });
   useEffect(() => {
     const recents = useRecentLocationsStore.getState();
     recents.enter({ conversationId: channelId, type: "group", threadId: null });
@@ -128,8 +140,10 @@ export function ChannelRoute() {
       }
     };
 
-    const onTyping = ({ conversationId, userId, userName }: WsEvents["ws:typing"]) => {
+    const onTyping = ({ conversationId, parentMessageId, userId, userName }: WsEvents["ws:typing"]) => {
       if (conversationId !== channelId) return;
+      // Typing in a reply thread is shown in the thread, not here.
+      if (parentMessageId) return;
 
       setTypingUsers((prev) => {
         const next = new Map(prev);
@@ -172,7 +186,7 @@ export function ChannelRoute() {
   }, [channelId]);
 
   return (
-    <div className="flex min-h-0 flex-1">
+    <div className="relative flex min-h-0 flex-1">
       <div className="flex min-w-0 flex-1 flex-col">
         <ChannelChatView
           messages={channelChat.messages}
@@ -192,6 +206,9 @@ export function ChannelRoute() {
           progressInvocations={progress.invocations}
           jump={jump}
           onJumpDone={onJumpDone}
+          onOpenThread={replyThreads.onOpenThread}
+          openThreadRootId={replyThreads.openThreadRootId}
+          unreadThreadRootIds={replyThreads.unreadThreadRootIds}
           onSecureInput={async (event, response) => {
             if (!isAuthenticated(token) || user?.type !== "human" ||
                 event.conversationId !== channelId || event.payload?.requesterUserId !== user.id) {
@@ -210,6 +227,16 @@ export function ChannelRoute() {
           }}
         />
       </div>
+      {replyThreads.openThreadRootId && (
+        <ThreadPanel
+          key={replyThreads.openThreadRootId}
+          conversationId={channelId}
+          conversationType="group"
+          conversationName={channelName}
+          rootMessageId={replyThreads.openThreadRootId}
+          mentions={mentions}
+        />
+      )}
     </div>
   );
 }

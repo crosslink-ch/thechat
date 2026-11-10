@@ -9,6 +9,7 @@ export const DEFAULT_NOTIFICATION_PREFERENCES: NotificationPreferences = {
   agentReplies: true,
   agentRequests: true,
   agentProgress: false,
+  threadReplies: true,
   showPreviews: true,
 };
 
@@ -25,6 +26,7 @@ export async function getNotificationPreferences(
       agentReplies: notificationPreferences.agentReplies,
       agentRequests: notificationPreferences.agentRequests,
       agentProgress: notificationPreferences.agentProgress,
+      threadReplies: notificationPreferences.threadReplies,
       showPreviews: notificationPreferences.showPreviews,
     })
     .from(notificationPreferences)

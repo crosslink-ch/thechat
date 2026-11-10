@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import { useBotAppearance } from "../lib/bot-appearance";
 import { Avatar } from "./Avatar";
 import { MessageReactions } from "./MessageReactions";
+import { ThreadReplySummary } from "./ThreadReplySummary";
 import { SharedMessageAttachments } from "./SharedMessageAttachments";
 import {
   formatFullMessageTimestamp,
@@ -20,7 +21,10 @@ export function shouldMergeChatMessage(
     !previous ||
     previous.senderId !== current.senderId ||
     previous.conversationId !== current.conversationId ||
-    previous.threadId !== current.threadId
+    previous.threadId !== current.threadId ||
+    // A root with replies, or a reply also sent here, keeps its own header.
+    previous.thread ||
+    current.alsoSentToConversation
   ) {
     return false;
   }
@@ -59,6 +63,17 @@ interface SharedChatMessageProps {
     emoji: string,
     active: boolean,
   ) => void | Promise<void>;
+  /**
+   * Open this message's reply thread (Slack-style). Shows "Reply in thread"
+   * and, when it has replies, the reply summary under the message.
+   */
+  onOpenThread?: (rootMessageId: string, options?: { focus?: boolean }) => void;
+  /** This message's thread is open in the side panel. */
+  threadOpen?: boolean;
+  /** The thread has replies the signed-in user has not read. */
+  threadUnread?: boolean;
+  /** Hide reply affordances (e.g. the root inside its own thread panel). */
+  hideThreadActions?: boolean;
 }
 
 export function SharedChatMessage({
@@ -68,7 +83,19 @@ export function SharedChatMessage({
   mentionsYou = false,
   highlighted = false,
   onSetReaction,
+  onOpenThread,
+  threadOpen = false,
+  threadUnread = false,
+  hideThreadActions = false,
 }: SharedChatMessageProps) {
+  // Replies attach to the root, so a reply shown in the timeline (also sent
+  // to the conversation) opens its root's thread.
+  const threadRootId = message.parentMessageId ?? message.id;
+  const canOpenThread =
+    Boolean(onOpenThread) &&
+    !hideThreadActions &&
+    !message.id.startsWith("optimistic:") &&
+    !message.interim;
   const botAvatar = useBotAppearance(
     message.senderType === "bot" ? message.senderId : null,
   );
@@ -87,10 +114,13 @@ export function SharedChatMessage({
       data-mentions-you={mentionsYou ? "true" : undefined}
       data-message-interim={message.interim ? "true" : undefined}
       data-message-highlighted={highlighted ? "true" : undefined}
+      data-thread-open={threadOpen ? "true" : undefined}
       className={`group/message group relative flex gap-2.5 px-5 transition-colors duration-100 ${
         highlighted
           ? "bg-accent/[0.12] shadow-[inset_3px_0_0_var(--color-accent)]"
-          : "hover:bg-white/[0.025]"
+          : threadOpen
+            ? "bg-accent/[0.06] hover:bg-white/[0.025]"
+            : "hover:bg-white/[0.025]"
       } ${merged ? "py-0.5" : "pb-0.5 pt-2.5"} ${
         message.interim ? "text-text-muted opacity-75" : ""
       }`}
@@ -136,14 +166,44 @@ export function SharedChatMessage({
             </time>
           </div>
         )}
+        {message.alsoSentToConversation && message.parentMessageId && !hideThreadActions && (
+          <div className="mb-0.5 text-[0.786rem] text-text-dimmed">
+            replied to a thread
+            {canOpenThread && (
+              <>
+                {": "}
+                <button
+                  type="button"
+                  className="cursor-pointer border-none bg-transparent p-0 font-[inherit] text-accent hover:underline"
+                  onClick={() => onOpenThread!(threadRootId)}
+                >
+                  View thread
+                </button>
+              </>
+            )}
+          </div>
+        )}
         {children}
         <SharedMessageAttachments attachments={message.attachments ?? []} />
-        {(onSetReaction || message.content) && (
+        {message.thread && !message.parentMessageId && onOpenThread && !hideThreadActions && (
+          <ThreadReplySummary
+            summary={message.thread}
+            active={threadOpen}
+            unread={threadUnread}
+            onOpen={() => onOpenThread(message.id)}
+          />
+        )}
+        {(onSetReaction || message.content || canOpenThread) && (
           <MessageReactions
             copyText={message.content}
             reactions={message.reactions ?? []}
             onSetReaction={onSetReaction ? (emoji, active) =>
               onSetReaction(message.id, emoji, active) : undefined
+            }
+            onReplyInThread={
+              canOpenThread
+                ? () => onOpenThread!(threadRootId, { focus: true })
+                : undefined
             }
           />
         )}

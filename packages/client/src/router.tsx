@@ -11,6 +11,7 @@ import { ChannelRoute } from "./routes/channel";
 import { DmRoute } from "./routes/dm";
 import { NotificationsRoute } from "./routes/notifications";
 import { ActivityRoute } from "./routes/activity";
+import { ThreadsRoute } from "./routes/threads";
 import { InboxRoute } from "./routes/inbox";
 import { HermesDebugRoute } from "./routes/hermes-debug";
 import { ScrollDebugRoute } from "./routes/scroll-debug";
@@ -47,9 +48,25 @@ const legacyAgentChatIdRoute = createRoute({
   },
 });
 
+/** Opens a reply thread in the side panel (and highlights one of its replies). */
+function replyThreadSearch(search: Record<string, unknown>): {
+  replyThread?: string;
+  replyMessage?: string;
+} {
+  const id = (value: unknown) =>
+    typeof value === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(value) ? value : undefined;
+  const replyThread = id(search.replyThread);
+  const replyMessage = replyThread ? id(search.replyMessage) : undefined;
+  return {
+    ...(replyThread ? { replyThread } : {}),
+    ...(replyMessage ? { replyMessage } : {}),
+  };
+}
+
 const channelRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/channel/$id",
+  validateSearch: (search: Record<string, unknown>) => replyThreadSearch(search),
   component: ChannelRoute,
 });
 
@@ -58,6 +75,7 @@ const dmRoute = createRoute({
   path: "/dm/$id",
   validateSearch: (search: Record<string, unknown>) => ({
     threadId: typeof search.threadId === "string" ? search.threadId : undefined,
+    ...replyThreadSearch(search),
   }),
   component: DmRoute,
 });
@@ -72,6 +90,12 @@ const activityRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/activity",
   component: ActivityRoute,
+});
+
+const threadsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/threads",
+  component: ThreadsRoute,
 });
 
 const inboxRoute = createRoute({
@@ -151,6 +175,7 @@ const routeTree = rootRoute.addChildren([
   dmRoute,
   notificationsRoute,
   activityRoute,
+  threadsRoute,
   inboxRoute,
   settingsRoute,
   workspaceManageRoute,

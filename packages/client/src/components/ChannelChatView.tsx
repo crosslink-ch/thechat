@@ -58,6 +58,12 @@ interface ChannelChatViewProps {
   /** Open at this message (loading older history as needed) and highlight it. */
   jump?: MessageJumpRequest;
   onJumpDone?: (found: boolean) => void;
+  /** Open a message's reply thread in the side panel. */
+  onOpenThread?: (rootMessageId: string, options?: { focus?: boolean }) => void;
+  /** The root whose thread is open in the side panel. */
+  openThreadRootId?: string | null;
+  /** Roots of followed threads with unread replies. */
+  unreadThreadRootIds?: ReadonlySet<string>;
 }
 
 export function ChannelChatView({
@@ -80,6 +86,9 @@ export function ChannelChatView({
   onVaultUnlock,
   jump,
   onJumpDone,
+  onOpenThread,
+  openThreadRootId = null,
+  unreadThreadRootIds,
 }: ChannelChatViewProps) {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const { isAtBottom, pauseAutoScroll, scrollToBottom, shouldFollowBottom } =
@@ -229,6 +238,9 @@ export function ChannelChatView({
                   mentionsYou={mentionsYou(msg)}
                   highlighted={msg.id === highlightedMessageId}
                   onSetReaction={onSetReaction}
+                  onOpenThread={onOpenThread}
+                  threadOpen={openThreadRootId === msg.id}
+                  threadUnread={unreadThreadRootIds?.has(msg.id) ?? false}
                 >
                   {msg.content && <Markdown content={msg.content} mentions={mentionNames} />}
                 </SharedChatMessage>

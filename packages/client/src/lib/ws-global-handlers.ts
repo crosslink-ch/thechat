@@ -18,11 +18,14 @@ import {
 import { fireNotification } from "./notifications";
 import {
   agentProgressNotificationsEnabled,
+  threadReplyNotificationsEnabled,
   useNotificationPreferencesStore,
 } from "../stores/notification-preferences";
 import { useBotRequestsStore } from "../stores/bot-requests";
 import { queryClient } from "./query-client";
-import { cacheIncomingMessage } from "../hooks/useChannelChat";
+import { cacheIncomingMessage, isThreadOnlyReply } from "../hooks/useChannelChat";
+import { cacheIncomingThreadReply, cacheThreadFollowing } from "../hooks/useMessageThread";
+import { useThreadPanelStore } from "../stores/thread-panel";
 import { api } from "./api";
 import type { QueryClient } from "@tanstack/react-query";
 import type { WorkspaceWithDetails } from "@thechat/shared";
@@ -101,6 +104,9 @@ export function registerGlobalWsHandlers(
     void messageQueryClient.invalidateQueries({
       queryKey: ["messages", conversationId],
     });
+    void messageQueryClient.invalidateQueries({
+      queryKey: ["message-thread", conversationId],
+    });
   };
 
   const onPresenceSnapshot = ({
@@ -120,8 +126,10 @@ export function registerGlobalWsHandlers(
     message: msg,
     conversationType,
     clientMessageId,
+    rootThread,
   }: WsEvents["ws:new_message"]) => {
-    cacheIncomingMessage(messageQueryClient, msg, clientMessageId);
+    cacheIncomingMessage(messageQueryClient, msg, clientMessageId, rootThread);
+    cacheIncomingThreadReply(messageQueryClient, msg, rootThread);
     const currentUserId = useAuthStore.getState().user?.id;
     // An agent's progress update ("⏳ Working") is not something to catch up
     // on: it marks nothing unread and notifies only people who opted in.
@@ -139,7 +147,7 @@ export function registerGlobalWsHandlers(
       }
       return;
     }
-    if (msg.senderId !== currentUserId) {
+    if (msg.senderId !== currentUserId && !isThreadOnlyReply(msg)) {
       const route = currentPath();
       const conversationVisible =
         route === `/channel/${msg.conversationId}` ||
@@ -147,6 +155,28 @@ export function registerGlobalWsHandlers(
       void useActivityStore
         .getState()
         .handleIncomingMessage(msg, conversationVisible);
+    }
+    if (isThreadOnlyReply(msg)) {
+      // Thread replies leave the channel/DM read; followed threads surface in
+      // Activity and Threads. Notify when the reply is in a followed thread
+      // that is not open on screen.
+      if (msg.senderId !== currentUserId && msg.parentMessageId) {
+        const rootId = msg.parentMessageId;
+        void useActivityStore.getState().handleIncomingMessage(msg, false).then(() => {
+          const followed = (useActivityStore.getState().threads ?? []).some(
+            (thread) => thread.rootMessageId === rootId,
+          );
+          const open = useThreadPanelStore.getState().openRootMessageId === rootId;
+          if (followed && !open && threadReplyNotificationsEnabled()) {
+            fireNotification(
+              `${msg.senderName} replied in a thread`,
+              notificationBodyPreview(msg.content),
+              { dedupeKey: `message:${msg.id}`, coveredByBackgroundPush: true },
+            );
+          }
+        });
+      }
+      return;
     }
     if (
       conversationType === "group" &&
@@ -170,6 +200,15 @@ export function registerGlobalWsHandlers(
         coveredByBackgroundPush: true,
       });
     }
+  };
+
+  const onThreadFollowUpdated = ({
+    conversationId,
+    rootMessageId,
+    following,
+  }: WsEvents["ws:thread_follow_updated"]) => {
+    cacheThreadFollowing(messageQueryClient, conversationId, rootMessageId, following);
+    void useActivityStore.getState().fetchActivity();
   };
 
   const onMemberJoined = ({
@@ -403,6 +442,7 @@ export function registerGlobalWsHandlers(
   wsEvents.on("ws:presence_snapshot", onPresenceSnapshot);
   wsEvents.on("ws:presence_changed", onPresenceChanged);
   wsEvents.on("ws:new_message", onNewMessage);
+  wsEvents.on("ws:thread_follow_updated", onThreadFollowUpdated);
   wsEvents.on("ws:message_reactions_updated", onMessageReactionsUpdated);
   wsEvents.on("ws:member_joined", onMemberJoined);
   wsEvents.on("ws:member_role_changed", onMemberRoleChanged);
@@ -424,6 +464,7 @@ export function registerGlobalWsHandlers(
     wsEvents.off("ws:presence_snapshot", onPresenceSnapshot);
     wsEvents.off("ws:presence_changed", onPresenceChanged);
     wsEvents.off("ws:new_message", onNewMessage);
+    wsEvents.off("ws:thread_follow_updated", onThreadFollowUpdated);
     wsEvents.off("ws:message_reactions_updated", onMessageReactionsUpdated);
     wsEvents.off("ws:member_joined", onMemberJoined);
     wsEvents.off("ws:member_role_changed", onMemberRoleChanged);

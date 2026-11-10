@@ -8,6 +8,7 @@ import type {
   BotWorkspaceInviteStatus,
   ChatMessage,
   ConversationThreadPublic,
+  MessageThreadSummary,
   TaskProjectPublic,
   WorkspaceChannel,
   WorkspaceMember,
@@ -21,6 +22,13 @@ export type WsEvents = {
     message: ChatMessage;
     conversationType: "direct" | "group";
     clientMessageId?: string;
+    /** For a thread reply: the root's updated reply summary. */
+    rootThread?: MessageThreadSummary;
+  };
+  "ws:thread_follow_updated": {
+    conversationId: string;
+    rootMessageId: string;
+    following: boolean;
   };
   "ws:message_reactions_updated": {
     conversationId: string;
@@ -64,6 +72,8 @@ export type WsEvents = {
   "ws:typing": {
     conversationId: string;
     threadId: string | null;
+    /** Set when typing in a reply thread. */
+    parentMessageId?: string | null;
     userId: string;
     userName: string;
   };

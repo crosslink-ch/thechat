@@ -46,6 +46,7 @@ const preferencesSchema = z
     agentReplies: z.boolean(),
     agentRequests: z.boolean(),
     agentProgress: z.boolean(),
+    threadReplies: z.boolean(),
     showPreviews: z.boolean(),
   })
   .partial()

@@ -13,7 +13,7 @@ import {
   listUserDms,
   createChannel,
 } from "../services/conversations";
-import { getMessages, sendMessage } from "../services/messages";
+import { getMessages, getThreadPage, sendMessage } from "../services/messages";
 import {
   createBot,
   createHermesBotInWorkspace,
@@ -291,6 +291,32 @@ export function registerTools(server: McpServer) {
     }
   );
 
+  // --- get_thread ---
+  server.registerTool(
+    "get_thread",
+    {
+      description:
+        "Read a reply thread: its root message, replies (chronological) and whether you follow it. " +
+        "Messages with a `thread` summary in get_messages have replies; pass their id as rootMessageId.",
+      annotations: { title: "Read a reply thread", ...readOnly },
+      inputSchema: {
+        conversationId: z.string().uuid().describe("The conversation ID"),
+        rootMessageId: z.string().uuid().describe("The thread's root message ID"),
+        before: z.string().optional().describe("ISO timestamp: replies before this time"),
+        limit: z.number().int().min(1).max(100).optional().describe("Max replies (default 50)"),
+      },
+    },
+    async ({ conversationId, rootMessageId, before, limit }, extra) => {
+      const user = getUser(extra);
+      return withService(() =>
+        getThreadPage(conversationId as string, rootMessageId as string, user.id, {
+          before: before as string | undefined,
+          limit: limit as number | undefined,
+        }),
+      );
+    },
+  );
+
   // --- Search: find things without reading channel by channel ---
   server.registerTool(
     "search_messages",
@@ -401,6 +427,15 @@ export function registerTools(server: McpServer) {
           .optional()
           .describe("Stable sender-scoped idempotency key"),
         content: z.string().optional().describe("Message content"),
+        parentMessageId: z
+          .string()
+          .uuid()
+          .optional()
+          .describe("Reply in this message's thread instead of the main conversation"),
+        alsoSendToConversation: z
+          .boolean()
+          .optional()
+          .describe("With parentMessageId: also show the reply in the conversation"),
         attachmentIds: z
           .array(z.string().uuid())
           .max(25)
@@ -409,7 +444,14 @@ export function registerTools(server: McpServer) {
       },
     },
     async (
-      { conversationId, clientMessageId, content, attachmentIds },
+      {
+        conversationId,
+        clientMessageId,
+        content,
+        parentMessageId,
+        alsoSendToConversation,
+        attachmentIds,
+      },
       extra,
     ) => {
       const user = getUser(extra);
@@ -421,6 +463,8 @@ export function registerTools(server: McpServer) {
           ((content as string | undefined) ?? "").trim(),
           {
             clientMessageId: clientMessageId as string | undefined,
+            parentMessageId: (parentMessageId as string | undefined) ?? null,
+            alsoSendToConversation: alsoSendToConversation as boolean | undefined,
             attachmentIds: attachmentIds as string[] | undefined,
           },
         )
