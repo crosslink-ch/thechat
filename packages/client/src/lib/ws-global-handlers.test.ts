@@ -921,6 +921,7 @@ describe("registerGlobalWsHandlers", () => {
     messageQueryClient.setQueryData(["messages", board.id], { secret: true });
     messageQueryClient.setQueryData(["message-thread", board.id, "root-1"], { secret: true });
     messageQueryClient.setQueryData(["conversation-detail", board.id], { secret: true });
+    messageQueryClient.setQueryData(["bot-runtime", board.id], { secret: true });
     messageQueryClient.setQueryData(["messages", general.id], { kept: true });
     const invalidate = vi.spyOn(messageQueryClient, "invalidateQueries").mockResolvedValue();
     const navigate = vi.fn(({ to }: { to: string }) => {
@@ -968,6 +969,8 @@ describe("registerGlobalWsHandlers", () => {
     expect(messageQueryClient.getQueryData(["messages", board.id])).toBeUndefined();
     expect(messageQueryClient.getQueryData(["message-thread", board.id, "root-1"])).toBeUndefined();
     expect(messageQueryClient.getQueryData(["conversation-detail", board.id])).toBeUndefined();
+    expect(messageQueryClient.getQueryData(["bot-runtime", board.id])).toBeUndefined();
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ["followed-threads"] });
     expect(messageQueryClient.getQueryData(["messages", general.id])).toEqual({ kept: true });
     expect(useActivityStore.getState().fetchActivity).toHaveBeenCalled();
 

@@ -41,6 +41,7 @@ const DIRECT_NOTIFICATION_BODY_MAX_CHARS = 240;
 async function refreshWorkspaceDetails(
   workspaceId: string,
   isLatestRequest: () => boolean = () => true,
+  onChannelsListed: (channelIds: string[]) => void = () => {},
 ) {
   const token = useAuthStore.getState().token;
   if (!isAuthenticated(token)) return;
@@ -53,6 +54,7 @@ async function refreshWorkspaceDetails(
     if (error || !data) return;
 
     const latest = data as WorkspaceWithDetails;
+    onChannelsListed(latest.channels.map((channel) => channel.id));
     const stillCurrent = useWorkspacesStore.getState().activeWorkspace;
     if (
       !stillCurrent ||
@@ -85,6 +87,11 @@ export function registerGlobalWsHandlers(
     void refreshWorkspaceDetails(
       workspaceId,
       () => generation === workspaceRefreshGeneration,
+      // A channel the server lists exists for this user again (re-added to a
+      // private channel while disconnected): stop ignoring its events.
+      (channelIds) => {
+        for (const id of channelIds) deletedChannelIds.delete(id);
+      },
     );
   };
 
@@ -422,6 +429,8 @@ export function registerGlobalWsHandlers(
     messageQueryClient.removeQueries({
       queryKey: conversationDetailQueryKey(channelId),
     });
+    messageQueryClient.removeQueries({ queryKey: ["bot-runtime", channelId] });
+    void messageQueryClient.invalidateQueries({ queryKey: ["followed-threads"] });
     void useActivityStore.getState().fetchActivity();
     onChannelDeleted({ workspaceId, channelId });
   };

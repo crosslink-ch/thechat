@@ -32,6 +32,7 @@ import { enqueueDomainEvent } from "../events/outbox";
 import { log } from "../logging";
 import { publishWsEventToUsers } from "../realtime";
 import { currentHermesDispatchTimeoutCutoff } from "./bot-runtime";
+import { publishBotRequestUpdate } from "./bot-requests";
 import { requireConversationMutationAccess } from "./conversation-mutation-access";
 import { ServiceError } from "./errors";
 import { canUserAccessAttachments } from "./messages";
@@ -1714,9 +1715,64 @@ export async function removeChannelMember(
       throw new ServiceError("This person is not in the channel", 404);
     }
 
+    // What the removed member left open here can no longer be finished: a
+    // removed bot is refused when it tries to end its run, and nobody else may
+    // answer a request addressed to a removed person. Close both, as removing
+    // a bot from the workspace does, so they do not block archive or delete.
+    const now = new Date();
+    const [removedBot] = await tx
+      .select({ id: bots.id })
+      .from(bots)
+      .where(eq(bots.userId, targetUserId))
+      .limit(1);
+    if (removedBot) {
+      await tx
+        .update(botInvocations)
+        .set({
+          status: "cancelled",
+          error: "Bot removed from channel",
+          completedAt: now,
+          updatedAt: now,
+        })
+        .where(
+          and(
+            eq(botInvocations.conversationId, channel.id),
+            eq(botInvocations.botId, removedBot.id),
+            or(
+              inArray(botInvocations.status, ["queued", "running"]),
+              and(
+                eq(botInvocations.status, "claimed"),
+                sql`NULLIF(${botInvocations.responseJson}->'completion'->>'type', '') IS NULL`,
+                sql`COALESCE(${botInvocations.responseJson}->>'silent', 'false') <> 'true'`,
+              ),
+            ),
+          ),
+        );
+    }
+    const cancelledRequests = await tx
+      .update(botRequests)
+      .set({
+        status: "cancelled",
+        cancelReason: removedBot
+          ? "Bot removed from channel"
+          : "The person asked was removed from the channel",
+        updatedAt: now,
+      })
+      .where(
+        and(
+          eq(botRequests.conversationId, channel.id),
+          eq(botRequests.status, "open"),
+          removedBot
+            ? eq(botRequests.botId, removedBot.id)
+            : eq(botRequests.audienceUserId, targetUserId),
+        ),
+      )
+      .returning({ id: botRequests.id });
+
     return {
       channelId: channel.id,
       workspaceId,
+      cancelledRequestIds: cancelledRequests.map((request) => request.id),
       targetUserIds: [
         ...(await channelLifecycleTargetUserIds(tx, channel)),
         targetUserId,
@@ -1730,6 +1786,13 @@ export async function removeChannelMember(
     channelId: result.channelId,
     userId: targetUserId,
   });
+  for (const requestId of result.cancelledRequestIds) {
+    try {
+      await publishBotRequestUpdate(requestId);
+    } catch (error) {
+      channelLog.warn({ err: error, requestId }, "channel.request_publish_failed");
+    }
+  }
   return { ok: true as const, removedUserId: targetUserId };
 }
 
@@ -1768,6 +1831,27 @@ export async function setChannelArchived(
         "Wait for active bot runs to finish before archiving this channel",
         409,
       );
+    }
+
+    if (archived) {
+      // What is still queued at this point is a Hermes dispatch that already
+      // timed out (hasActiveBotRuns counts the rest). Its failure notice could
+      // not be posted into a read-only channel, so close it here.
+      const now = new Date();
+      await tx
+        .update(botInvocations)
+        .set({
+          status: "cancelled",
+          error: "Channel archived before the bot picked this up",
+          completedAt: now,
+          updatedAt: now,
+        })
+        .where(
+          and(
+            eq(botInvocations.conversationId, channel.id),
+            eq(botInvocations.status, "queued"),
+          ),
+        );
     }
 
     const [updated] = await tx

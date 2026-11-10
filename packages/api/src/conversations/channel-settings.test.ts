@@ -5,9 +5,10 @@ import { Elysia } from "elysia";
 import { activityRoutes } from "../activity";
 import { queueJobs } from "../async/job-schema";
 import { authRoutes } from "../auth";
+import { botRequestRoutes } from "../bot-requests";
 import { botRoutes } from "../bots";
 import { db } from "../db";
-import { botInvocations, users, workspaces } from "../db/schema";
+import { botInvocations, botRequests, users, workspaces } from "../db/schema";
 import { inviteRoutes } from "../invites";
 import { messageRoutes } from "../messages";
 import { searchRoutes } from "../search";
@@ -34,6 +35,7 @@ const app = new Elysia()
   .use(searchRoutes)
   .use(activityRoutes)
   .use(botRoutes)
+  .use(botRequestRoutes)
   .use(wsRoutes)
   .listen(0);
 const baseUrl = `http://127.0.0.1:${app.server!.port}`;
@@ -446,6 +448,98 @@ describe("adding and removing people takes effect at once", () => {
   });
 });
 
+describe("what a removed member left unfinished", () => {
+  test("a removed bot's run and open request are closed, so the channel can still be archived and deleted", async () => {
+    const channelId = await createPrivateChannel("bot-leftovers", [member.id, bot.userId]);
+    const trigger = await ok("POST", `/messages/${channelId}`, { content: "start working" }, owner.token);
+    const [invocation] = await db
+      .insert(botInvocations)
+      .values({
+        botId: bot.id,
+        conversationId: channelId,
+        triggerMessageId: trigger.id,
+        adapterKind: "hermes",
+        status: "running",
+        requestJson: {},
+        startedAt: new Date(),
+      })
+      .returning({ id: botInvocations.id });
+    const asked = await req(
+      "POST",
+      "/bot-requests",
+      {
+        clientKey: `leftover-${crypto.randomUUID()}`,
+        kind: "approval",
+        title: "Deploy?",
+        conversationId: channelId,
+        response: { type: "choice", choices: ["yes", "no"] },
+      },
+      bot.apiKey,
+    );
+    expect(asked.status, JSON.stringify(asked.body)).toBe(201);
+    const requestId = asked.body.request.id as string;
+    await db.delete(queueJobs).where(eq(queueJobs.partitionKey, channelId));
+
+    // The run blocks archiving while the bot is still a member.
+    expect((await req("POST", `/conversations/channel/${channelId}/archive`, undefined, owner.token)).status).toBe(409);
+
+    const memberSocket = await connect(member.token);
+    await ok("DELETE", `/conversations/channel/${channelId}/members/${bot.userId}`, undefined, owner.token);
+
+    const [run] = await db.select().from(botInvocations).where(eq(botInvocations.id, invocation.id));
+    expect(run).toMatchObject({ status: "cancelled", error: "Bot removed from channel" });
+    const [request] = await db.select().from(botRequests).where(eq(botRequests.id, requestId));
+    expect(request.status).toBe("cancelled");
+    // The card closes for the people still in the channel, and cannot be answered.
+    await until(
+      () =>
+        memberSocket.events.some(
+          (event) => event.type === "bot_request_updated" && event.request.id === requestId && event.request.status === "cancelled",
+        ),
+      "the cancelled request reaching members",
+    );
+    expect((await req("POST", `/bot-requests/${requestId}/answer`, { choice: "yes" }, member.token)).status).toBe(409);
+
+    // Nothing is left to wait for.
+    await ok("POST", `/conversations/channel/${channelId}/archive`, undefined, owner.token);
+    await ok("DELETE", `/conversations/channel/${channelId}`, undefined, owner.token);
+  });
+
+  test("a request addressed to a removed person is closed; one for everyone stays open", async () => {
+    const channelId = await createPrivateChannel("person-leftovers", [member.id, bot.userId]);
+    const ask = async (audienceUserId?: string) => {
+      const response = await req(
+        "POST",
+        "/bot-requests",
+        {
+          clientKey: `ask-${crypto.randomUUID()}`,
+          kind: "approval",
+          title: "Approve?",
+          conversationId: channelId,
+          response: { type: "choice", choices: ["yes", "no"] },
+          ...(audienceUserId ? { audienceUserId } : {}),
+        },
+        bot.apiKey,
+      );
+      expect(response.status, JSON.stringify(response.body)).toBe(201);
+      return response.body.request.id as string;
+    };
+    const forMember = await ask(member.id);
+    const forAnyone = await ask();
+
+    await ok("DELETE", `/conversations/channel/${channelId}/members/${member.id}`, undefined, owner.token);
+
+    const statusOf = async (id: string) =>
+      (await db.select({ status: botRequests.status }).from(botRequests).where(eq(botRequests.id, id)))[0].status;
+    expect(await statusOf(forMember)).toBe("cancelled");
+    expect(await statusOf(forAnyone)).toBe("open");
+    // The removed person cannot see or answer either of them.
+    expect((await req("GET", `/bot-requests/${forAnyone}`, undefined, member.token)).status).toBe(404);
+    expect((await req("POST", `/bot-requests/${forAnyone}/answer`, { choice: "yes" }, member.token)).status).toBe(404);
+    expect((await req("POST", `/bot-requests/${forAnyone}/answer`, { choice: "yes" }, owner.token)).status).toBe(200);
+  });
+});
+
 describe("archive and unarchive", () => {
   test("an archived channel is read-only for everyone and its history stays readable and searchable", async () => {
     const channelId = await createPrivateChannel("archive", [admin.id, member.id, bot.userId]);
@@ -496,6 +590,24 @@ describe("archive and unarchive", () => {
     ];
     expect(writes.map((response) => response.status)).toEqual(writes.map(() => 403));
     expect(writes[0].body.error).toContain("archived");
+    // The same rule covers everything else that writes into a conversation.
+    const otherWrites = [
+      await req("POST", `/conversations/threads/${channelId}`, { botId: bot.id, title: "New task" }, member.token),
+      await req("POST", `/conversations/projects/${channelId}`, { name: "New project" }, member.token),
+      await req(
+        "POST",
+        "/bot-requests",
+        {
+          clientKey: `archived-${crypto.randomUUID()}`,
+          kind: "approval",
+          title: "Approve?",
+          conversationId: channelId,
+          response: { type: "choice", choices: ["yes", "no"] },
+        },
+        bot.apiKey,
+      ),
+    ];
+    expect(otherWrites.map((response) => response.status)).toEqual([403, 403, 403]);
     memberSocket.socket.send(
       JSON.stringify({ type: "send_message", conversationId: channelId, clientMessageId: `arch-${run}`, content: "over the socket" }),
     );
@@ -623,11 +735,26 @@ describe("archive and unarchive", () => {
     expect(blocked.status).toBe(409);
     expect((await ok("GET", `/conversations/detail/${channelId}`, undefined, owner.token)).archivedAt).toBeNull();
 
+    await db.delete(queueJobs).where(eq(queueJobs.partitionKey, channelId));
+    // Waiting to start, or claimed by the gateway without an answer yet, count too.
+    for (const state of [
+      { status: "queued" as const, adapterKind: "webhook" as const, responseJson: null },
+      { status: "claimed" as const, adapterKind: "hermes" as const, responseJson: {} },
+    ]) {
+      await db.update(botInvocations).set(state).where(eq(botInvocations.id, invocation.id));
+      const waiting = await req("POST", `/conversations/channel/${channelId}/archive`, undefined, owner.token);
+      expect(waiting.status, state.status).toBe(409);
+    }
+
+    // A Hermes dispatch that timed out long ago does not hold the channel
+    // hostage: it is closed with the archive instead of failing into it later.
     await db
       .update(botInvocations)
-      .set({ status: "completed", completedAt: new Date() })
+      .set({ status: "queued", adapterKind: "hermes", responseJson: null, createdAt: new Date(Date.now() - 24 * 60 * 60 * 1000) })
       .where(eq(botInvocations.id, invocation.id));
-    await db.delete(queueJobs).where(eq(queueJobs.partitionKey, channelId));
     await ok("POST", `/conversations/channel/${channelId}/archive`, undefined, owner.token);
+    const [stale] = await db.select().from(botInvocations).where(eq(botInvocations.id, invocation.id));
+    expect(stale.status).toBe("cancelled");
+    expect((await ok("GET", `/messages/${channelId}`, undefined, owner.token)).map((m: any) => m.id)).toEqual([trigger.id]);
   });
 });
