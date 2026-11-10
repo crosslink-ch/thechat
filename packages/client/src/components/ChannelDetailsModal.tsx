@@ -353,30 +353,31 @@ function ChannelDetails({ channelId }: { channelId: string }) {
                             <span className="font-normal text-text-dimmed"> (you)</span>
                           )}
                         </span>
-                        <span className="shrink-0 text-[0.786rem] text-text-muted">
+                        <span data-member-role className="shrink-0 text-[0.786rem] text-text-muted">
                           {roleLabel(participant)}
                         </span>
-                        {canManage && isPrivate && !canRemove(participant) && (
-                          // Keeps the role column aligned with removable rows
-                          // (touch layouts widen dialog buttons to 44px).
-                          <span className="h-6 w-6 shrink-0 max-lg:w-11" aria-hidden="true" />
-                        )}
-                        {canRemove(participant) && (
-                          <button
-                            type="button"
-                            className={`size-6 ${iconButtonClass("sm")}`}
-                            disabled={Boolean(busy)}
-                            aria-label={`Remove ${participant.user.name}`}
-                            title={`Remove ${participant.user.name} from this channel`}
-                            onClick={() =>
-                              void run(`remove:${participant.userId}`, async () => {
-                                await removeChannelMember(channelId, participant.userId);
-                                await refreshMembers();
-                              })
-                            }
-                          >
-                            <X size={14} aria-hidden="true" />
-                          </button>
+                        {canManage && isPrivate && (
+                          // The same slot in every row keeps the role column
+                          // aligned (touch layouts widen dialog buttons to 44px).
+                          <span className="flex w-11 shrink-0 items-center justify-end max-lg:h-11">
+                            {canRemove(participant) && (
+                              <button
+                                type="button"
+                                className={iconButtonClass("sm")}
+                                disabled={Boolean(busy)}
+                                aria-label={`Remove ${participant.user.name}`}
+                                title={`Remove ${participant.user.name} from this channel`}
+                                onClick={() =>
+                                  void run(`remove:${participant.userId}`, async () => {
+                                    await removeChannelMember(channelId, participant.userId);
+                                    await refreshMembers();
+                                  })
+                                }
+                              >
+                                <X size={14} aria-hidden="true" />
+                              </button>
+                            )}
+                          </span>
                         )}
                       </li>
                     );

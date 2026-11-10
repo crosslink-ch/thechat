@@ -125,6 +125,11 @@ test('channel details: members, adding and removing people, and archiving, live 
     // The owner cannot remove themselves.
     await expect(dialog.getByRole('button', { name: 'Remove Morgan Owner' })).toHaveCount(0);
     await expect(dialog.getByRole('button', { name: 'Remove Avery Member' })).toBeVisible();
+    // Roles line up in one column whether or not a row has a remove button.
+    const roleEdges = await members.evaluateAll((rows) =>
+      rows.map((row) => Math.round(row.querySelector('[data-member-role]')!.getBoundingClientRect().right)),
+    );
+    expect(roleEdges[0]).toBe(roleEdges[1]);
     await shot(page, `details-${info.project.name}.png`, (name) => info.outputPath(name));
 
     // --- Adding a workspace member -----------------------------------------
