@@ -12,7 +12,14 @@ import {
   createOrGetDm,
   listUserDms,
   createChannel,
+  renameChannel,
 } from "../services/conversations";
+import {
+  MAX_CHANNEL_MEMBER_BATCH,
+  addChannelMembers,
+  removeChannelMember,
+  setChannelVisibility,
+} from "../services/channel-membership";
 import { getMessages, getThreadPage, sendMessage } from "../services/messages";
 import {
   createBot,
@@ -239,7 +246,7 @@ export function registerTools(server: McpServer) {
     "create_channel",
     {
       description:
-        "Create a new channel (group conversation) in a workspace. All workspace members are added automatically.",
+        "Create a public or private channel (group conversation) in a workspace. Public channels include all workspace members; private channels include only the creator and selected member IDs.",
       inputSchema: {
         workspaceId: z.string().min(1).describe("The workspace ID"),
         name: z
@@ -247,12 +254,96 @@ export function registerTools(server: McpServer) {
           .min(1)
           .max(100)
           .describe("Channel name (will be slugified)"),
+        isPrivate: z
+          .boolean()
+          .optional()
+          .describe("When true, only selected workspace members can access the channel"),
+        memberIds: z
+          .array(z.string().uuid())
+          .max(500)
+          .optional()
+          .describe("Workspace user IDs to include in a private channel; the creator is always included"),
       },
     },
-    async ({ workspaceId, name }, extra) => {
+    async ({ workspaceId, name, isPrivate, memberIds }, extra) => {
       const user = getUser(extra);
       return withService(() =>
-        createChannel(workspaceId as string, name as string, user.id)
+        createChannel(workspaceId as string, name as string, user.id, {
+          isPrivate: isPrivate === true,
+          memberIds: memberIds as string[] | undefined,
+        })
+      );
+    }
+  );
+
+  // --- update_channel ---
+  server.registerTool(
+    "update_channel",
+    {
+      description:
+        "Rename a channel or switch it between public and private. Making it public adds every workspace member, who can then read its history; making it private keeps the current members. Public channels are managed by workspace owners and admins, private channels by their channel admins.",
+      inputSchema: {
+        conversationId: z.string().uuid().describe("The channel ID"),
+        name: z.string().min(1).max(100).optional().describe("New channel name (will be slugified)"),
+        isPrivate: z.boolean().optional().describe("true makes the channel private, false makes it public"),
+      },
+    },
+    async ({ conversationId, name, isPrivate }, extra) => {
+      const user = getUser(extra);
+      return withService(async () => {
+        if (name === undefined && isPrivate === undefined) {
+          throw new Error("Nothing to change");
+        }
+        let channel;
+        if (name !== undefined) {
+          channel = await renameChannel(conversationId as string, name as string, user.id);
+        }
+        if (isPrivate !== undefined) {
+          channel = await setChannelVisibility(conversationId as string, user.id, isPrivate as boolean);
+        }
+        return channel;
+      });
+    }
+  );
+
+  // --- add_channel_members ---
+  server.registerTool(
+    "add_channel_members",
+    {
+      description:
+        "Add workspace members to a private channel you are in. They can read its whole history. The result lists the channel's members.",
+      inputSchema: {
+        conversationId: z.string().uuid().describe("The private channel ID"),
+        userIds: z
+          .array(z.string().uuid())
+          .min(1)
+          .max(MAX_CHANNEL_MEMBER_BATCH)
+          .describe("Workspace user IDs to add"),
+      },
+    },
+    async ({ conversationId, userIds }, extra) => {
+      const user = getUser(extra);
+      return withService(() =>
+        addChannelMembers(conversationId as string, user.id, userIds as string[])
+      );
+    }
+  );
+
+  // --- remove_channel_member ---
+  server.registerTool(
+    "remove_channel_member",
+    {
+      description:
+        "Remove someone from a private channel. Pass your own user ID to leave. Removing someone else takes a channel admin. A channel left without people is deleted.",
+      inputSchema: {
+        conversationId: z.string().uuid().describe("The private channel ID"),
+        userId: z.string().uuid().describe("The user ID to remove"),
+      },
+    },
+    async ({ conversationId, userId }, extra) => {
+      const user = getUser(extra);
+      return withService(() =>
+        removeChannelMember(conversationId as string, user.id, userId as string)
       );
     }
   );

@@ -94,6 +94,70 @@ afterAll(async () => {
 });
 
 describe("bot workspace membership approvals", () => {
+  test("adds joining bots to public channels but not private channels", async () => {
+    const owner = await register("Private bot workspace owner");
+    const workspace = await createWorkspace(
+      owner.token,
+      "Private bot membership workspace",
+    );
+    const privateChannel = await request(
+      "POST",
+      "/conversations/channel",
+      {
+        workspaceId: workspace.id,
+        name: "Private Humans",
+        isPrivate: true,
+        memberIds: [],
+      },
+      owner.token,
+    );
+    expect(privateChannel.status).toBe(200);
+    const bot = await createBot(owner.token, "Private membership helper");
+
+    const response = await request(
+      "POST",
+      `/workspaces/${workspace.id}/bots`,
+      { botId: bot.id },
+      owner.token,
+    );
+    expect(response.status).toBe(200);
+
+    const privateParticipation = await db
+      .select({ userId: conversationParticipants.userId })
+      .from(conversationParticipants)
+      .where(
+        and(
+          eq(
+            conversationParticipants.conversationId,
+            privateChannel.body.id,
+          ),
+          eq(conversationParticipants.userId, bot.userId),
+        ),
+      );
+    expect(privateParticipation).toHaveLength(0);
+
+    const [generalChannel] = await db
+      .select({ id: conversations.id })
+      .from(conversations)
+      .where(
+        and(
+          eq(conversations.workspaceId, workspace.id),
+          eq(conversations.name, "general"),
+        ),
+      )
+      .limit(1);
+    const publicParticipation = await db
+      .select({ userId: conversationParticipants.userId })
+      .from(conversationParticipants)
+      .where(
+        and(
+          eq(conversationParticipants.conversationId, generalChannel.id),
+          eq(conversationParticipants.userId, bot.userId),
+        ),
+      );
+    expect(publicParticipation).toHaveLength(1);
+  });
+
   test("a workspace admin adds their own bot immediately", async () => {
     const owner = await register("Workspace owner");
     const workspace = await createWorkspace(owner.token, "Owned bot workspace");

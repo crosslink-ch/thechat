@@ -13,6 +13,7 @@ vi.mock("../CommandPalette", () => ({ CommandPalette: () => null }));
 vi.mock("../components/AuthModal", () => ({ AuthModal: () => null, AuthOnboarding: () => <div>Log in</div> }));
 vi.mock("../components/WorkspaceModal", () => ({ WorkspaceModal: () => null, openWorkspaceModal: vi.fn() }));
 vi.mock("../components/ChannelModal", () => ({ ChannelModal: () => null }));
+vi.mock("../components/ChannelDetailsModal", () => ({ ChannelDetailsModal: () => null }));
 vi.mock("../components/HermesBotModal", () => ({ HermesBotModal: () => null }));
 
 const initializeWorkspaces = useWorkspacesStore.getState().initialize;

@@ -142,11 +142,25 @@ export interface WorkspaceMember {
   bot?: { id: string; kind: BotKind; avatar?: BotAppearance } | null;
 }
 
+/** A private channel is run by its own admins, starting with its creator. */
+export type ChannelMemberRole = "member" | "admin";
+
+export interface ChannelMember {
+  userId: string;
+  role: ChannelMemberRole;
+}
+
 export interface WorkspaceChannel {
   id: string;
   workspaceId: string;
   name: string;
   title: string | null;
+  isPrivate: boolean;
+  /**
+   * Who is in a private channel, oldest member first. Absent for public
+   * channels, which always contain the whole workspace.
+   */
+  members?: ChannelMember[];
   createdAt: string;
   updatedAt: string;
 }
@@ -447,6 +461,7 @@ export interface ConversationDetail {
   workspaceId: string | null;
   name: string | null;
   title: string | null;
+  isPrivate: boolean;
   participants: ConversationParticipantPublic[];
 }
 
@@ -1046,6 +1061,19 @@ export type WsServerEvent =
       channel: WorkspaceChannel;
     }
   | {
+      // Visibility or membership changed; sent to everyone still in it.
+      type: "channel_updated";
+      workspaceId: string;
+      channel: WorkspaceChannel;
+    }
+  | {
+      // The receiver was added to a channel that already existed.
+      type: "channel_joined";
+      workspaceId: string;
+      channel: WorkspaceChannel;
+    }
+  | {
+      // Also sent to someone who left or was removed from a private channel.
       type: "channel_deleted";
       workspaceId: string;
       channelId: string;

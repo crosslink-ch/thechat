@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from "react";
-import { useParams, useSearch } from "@tanstack/react-router";
+import { useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import { useAuthStore } from "../stores/auth";
 import { useWebSocketStore } from "../stores/websocket";
 import { useConversationsStore } from "../stores/conversations";
@@ -13,6 +13,9 @@ import { useReplyThreadPanel } from "../hooks/useReplyThreadPanel";
 import { wsEvents, type WsEvents } from "../lib/ws-events";
 import { botAppearanceFor } from "../lib/bot-appearance";
 import { isAuthenticated } from "../lib/auth-identity";
+import { channelIncludes } from "../lib/channel-access";
+import { api } from "../lib/api";
+import { authHeaders } from "../lib/eden";
 import { useRecentLocationsStore } from "../stores/recent-locations";
 import { selectHermesConversationProgress } from "../lib/hermes-progress";
 import { usePendingMessageJump } from "../lib/search-navigation";
@@ -27,6 +30,7 @@ export function ChannelRoute() {
   const { id: channelId } = useParams({ from: "/channel/$id" });
   const { replyThread: requestedReplyRoot, replyMessage: requestedReplyMessage } =
     useSearch({ from: "/channel/$id" });
+  const navigate = useNavigate();
   const token = useAuthStore((s) => s.token);
   const channelName = useWorkspacesStore(
     (s) => s.activeWorkspace?.channels.find((channel) => channel.id === channelId)?.name ?? "channel",
@@ -42,7 +46,8 @@ export function ChannelRoute() {
     return () => useRecentLocationsStore.getState().leave(channelId);
   }, [channelId]);
   const user = useAuthStore((s) => s.user);
-  const members = useWorkspacesStore((s) => s.activeWorkspace?.members);
+  const activeWorkspace = useWorkspacesStore((s) => s.activeWorkspace);
+  const members = activeWorkspace?.members;
   const wsSendMessage = useWebSocketStore((s) => s.sendMessage);
   const runtimeQuery = useBotRuntime(channelId, token, user?.type === "human");
   const { invalidate, mergeInvocationUpdate, mergeProgressEvent } = useBotRuntimeCache();
@@ -61,10 +66,68 @@ export function ChannelRoute() {
     return selectHermesConversationProgress({ ...runtime, invocations, events });
   }, [channelId, runtimeQuery.data]);
 
+  const channelIsVisible = activeWorkspace?.channels.some(
+    (channel) => channel.id === channelId,
+  );
+  const activeWorkspaceId = activeWorkspace?.id;
+
+  // A channel missing from the sidebar is not proof that it is hidden: it may
+  // belong to a workspace that is still being selected (Inbox, notification
+  // links) or have been created while this client was offline. Only the
+  // server refusing it sends the reader to a channel they can see.
+  useEffect(() => {
+    if (!activeWorkspaceId || channelIsVisible || !isAuthenticated(token)) return;
+    let cancelled = false;
+    void (async () => {
+      const { data, error } = await api.conversations
+        .detail({ conversationId: channelId })
+        .get(authHeaders(token));
+      if (cancelled) return;
+      const workspaces = useWorkspacesStore.getState();
+      const current = workspaces.activeWorkspace;
+      if (!current || current.id !== activeWorkspaceId) return;
+      if (!error) {
+        // Readable but unlisted: bring a stale channel list up to date.
+        const detail = data as { workspaceId: string | null };
+        if (
+          detail.workspaceId === current.id &&
+          !current.channels.some((channel) => channel.id === channelId)
+        ) {
+          void workspaces.selectWorkspace(current.id);
+        }
+        return;
+      }
+      // Eden types only the validation error; the service answers 403.
+      const status: number = error.status;
+      if (status !== 403 && status !== 404) return;
+      if (current.channels.some((channel) => channel.id === channelId)) return;
+      const fallbackChannel =
+        current.channels.find((channel) => channel.name === "general") ??
+        current.channels[0];
+      if (fallbackChannel) {
+        navigate({
+          to: "/channel/$id",
+          params: { id: fallbackChannel.id },
+          replace: true,
+        });
+        return;
+      }
+      navigate({ to: "/", replace: true });
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeWorkspaceId, channelId, channelIsVisible, navigate, token]);
+
+  // In a private channel only its members can be reached by a mention.
+  const currentChannel = activeWorkspace?.channels.find(
+    (channel) => channel.id === channelId,
+  );
   const mentions = useMemo(
     () =>
       members
         ?.filter((m) => m.userId !== user?.id)
+        .filter((m) => channelIncludes(currentChannel, m.userId))
         .map((m) => ({
           id: m.userId,
           label: m.user.name,
@@ -74,7 +137,7 @@ export function ChannelRoute() {
               ? botAppearanceFor(m.userId, m.bot?.avatar)
               : undefined,
         })),
-    [members, user?.id]
+    [members, currentChannel, user?.id]
   );
 
   const channelChat = useChannelChat({

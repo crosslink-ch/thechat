@@ -2,10 +2,13 @@ import { beforeEach, expect, it, vi } from "vitest";
 import type { WorkspaceWithDetails } from "@thechat/shared";
 
 vi.mock("../platform/environment", () => ({ isWeb: true }));
-const { listGet, workspaceRoute, preferenceGet } = vi.hoisted(() => ({
-  listGet: vi.fn(), workspaceRoute: vi.fn(), preferenceGet: vi.fn(),
+const { listGet, workspaceRoute, preferenceGet, channelPost } = vi.hoisted(() => ({
+  listGet: vi.fn(), workspaceRoute: vi.fn(), preferenceGet: vi.fn(), channelPost: vi.fn(),
 }));
-vi.mock("../lib/api", () => ({ api: { workspaces: Object.assign(workspaceRoute, { list: { get: listGet } }) } }));
+vi.mock("../lib/api", () => ({ api: {
+  workspaces: Object.assign(workspaceRoute, { list: { get: listGet } }),
+  conversations: { channel: { post: channelPost } },
+} }));
 vi.mock("../platform/preferences", () => ({ preferences: { get: preferenceGet, set: vi.fn() } }));
 import { useAuthStore } from "./auth";
 import { useWorkspacesStore } from "./workspaces";
@@ -24,6 +27,28 @@ beforeEach(() => {
   preferenceGet.mockResolvedValue(workspace.id);
   workspaceRoute.mockReturnValue({ get: vi.fn().mockResolvedValue({ data: workspace, error: null }) });
   listGet.mockResolvedValue({ data: list, error: null });
+});
+
+it("creates private channels with cookie identity and fences a late result after logout", async () => {
+  await useWorkspacesStore.getState().initialize();
+  const channel = { id: "private-1", workspaceId: workspace.id, name: "private", title: "Private", isPrivate: true, createdAt: "2026-01-01", updatedAt: "2026-01-01" };
+  channelPost.mockResolvedValueOnce({ data: channel, error: null });
+  await expect(useWorkspacesStore.getState().createChannel("Private", { isPrivate: true, memberIds: ["bob"] }))
+    .resolves.toEqual(channel);
+  expect(channelPost).toHaveBeenCalledWith(
+    { workspaceId: workspace.id, name: "Private", isPrivate: true, memberIds: ["bob"] },
+    { headers: { "X-TheChat-Client": "web" } },
+  );
+  expect(useWorkspacesStore.getState().activeWorkspace?.channels).toEqual([channel]);
+
+  let resolve!: (value: unknown) => void;
+  channelPost.mockImplementationOnce(() => new Promise(done => { resolve = done; }));
+  const pending = useWorkspacesStore.getState().createChannel("Private", { isPrivate: true });
+  resetPrivateSession();
+  useAuthStore.setState({ user: { ...user, id: "bob" } });
+  resolve({ data: channel, error: null });
+  await pending;
+  expect(useWorkspacesStore.getState().activeWorkspace).toBeNull();
 });
 
 it("preserves a cookie session's workspaces after network failure and clears the error on retry", async () => {

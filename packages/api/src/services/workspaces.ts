@@ -1,4 +1,4 @@
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, or } from "drizzle-orm";
 import { resolveBotAppearance } from "@thechat/shared";
 import { db } from "../db";
 import {
@@ -9,6 +9,11 @@ import {
   bots,
   users,
 } from "../db/schema";
+import {
+  privateChannelMembers,
+  publishChannelDeliveries,
+  settlePrivateChannelsAfterWorkspaceDeparture,
+} from "./channel-membership";
 import { ServiceError } from "./errors";
 
 function generateWorkspaceId(name: string): string {
@@ -100,14 +105,38 @@ export async function getWorkspaceDetail(workspaceId: string, userId: string) {
     .where(eq(workspaceMembers.workspaceId, workspaceId));
 
   const channels = await db
-    .select()
+    .select({
+      id: conversations.id,
+      workspaceId: conversations.workspaceId,
+      name: conversations.name,
+      title: conversations.title,
+      isPrivate: conversations.isPrivate,
+      createdAt: conversations.createdAt,
+      updatedAt: conversations.updatedAt,
+    })
     .from(conversations)
+    .leftJoin(
+      conversationParticipants,
+      and(
+        eq(conversationParticipants.conversationId, conversations.id),
+        eq(conversationParticipants.userId, userId),
+      ),
+    )
     .where(
       and(
         eq(conversations.workspaceId, workspaceId),
         eq(conversations.type, "group"),
+        or(
+          eq(conversations.isPrivate, false),
+          eq(conversationParticipants.userId, userId),
+        ),
       ),
     );
+
+  const privateMembers = await privateChannelMembers(
+    db,
+    channels.filter((c) => c.isPrivate).map((c) => c.id),
+  );
 
   return {
     id: workspace.id,
@@ -141,6 +170,8 @@ export async function getWorkspaceDetail(workspaceId: string, userId: string) {
       workspaceId: c.workspaceId,
       name: c.name,
       title: c.title,
+      isPrivate: c.isPrivate,
+      ...(c.isPrivate ? { members: privateMembers.get(c.id) ?? [] } : {}),
       createdAt: c.createdAt.toISOString(),
       updatedAt: c.updatedAt.toISOString(),
     })),
@@ -239,6 +270,7 @@ export async function joinWorkspace(workspaceId: string, userId: string) {
         and(
           eq(conversations.workspaceId, workspaceId),
           eq(conversations.type, "group"),
+          eq(conversations.isPrivate, false),
         ),
       );
 
@@ -340,7 +372,7 @@ export async function removeMember(
   targetUserId: string,
   options: { afterWorkspaceLocked?: () => Promise<void> } = {},
 ) {
-  return db.transaction(async (tx) => {
+  const result = await db.transaction(async (tx) => {
     const [workspace] = await tx
       .select({ id: workspaces.id })
       .from(workspaces)
@@ -400,8 +432,9 @@ export async function removeMember(
         ),
       );
 
+    let leftChannelIds: string[] = [];
     if (channels.length > 0) {
-      await tx
+      const left = await tx
         .delete(conversationParticipants)
         .where(
           and(
@@ -411,7 +444,9 @@ export async function removeMember(
             ),
             eq(conversationParticipants.userId, targetUserId),
           ),
-        );
+        )
+        .returning({ conversationId: conversationParticipants.conversationId });
+      leftChannelIds = left.map((row) => row.conversationId);
     }
 
     await tx
@@ -423,6 +458,17 @@ export async function removeMember(
         ),
       );
 
-    return { success: true };
+    // A private channel must not be left without anyone who can open it, or
+    // without an admin.
+    const channelDeliveries = await settlePrivateChannelsAfterWorkspaceDeparture(
+      tx,
+      workspaceId,
+      leftChannelIds,
+    );
+
+    return { channelDeliveries };
   });
+
+  await publishChannelDeliveries(result.channelDeliveries);
+  return { success: true };
 }

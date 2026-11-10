@@ -25,6 +25,7 @@ const general: WorkspaceChannel = {
   workspaceId: "ws-1",
   name: "general",
   title: "General",
+  isPrivate: false,
   createdAt: "2026-01-01",
   updatedAt: "2026-01-01",
 };
@@ -34,6 +35,7 @@ const product: WorkspaceChannel = {
   workspaceId: "ws-1",
   name: "product",
   title: "Product",
+  isPrivate: false,
   createdAt: "2026-01-02",
   updatedAt: "2026-01-02",
 };
@@ -42,6 +44,14 @@ const user: AuthUser = {
   id: "u1",
   name: "Test User",
   email: "test@example.com",
+  avatar: null,
+  type: "human",
+};
+
+const collaborator: AuthUser = {
+  id: "u2",
+  name: "Avery Stone",
+  email: "avery@example.com",
   avatar: null,
   type: "human",
 };
@@ -57,6 +67,12 @@ const workspace: WorkspaceWithDetails = {
       role: "owner",
       joinedAt: "2026-01-01",
       user,
+    },
+    {
+      userId: collaborator.id,
+      role: "member",
+      joinedAt: "2026-01-02",
+      user: collaborator,
     },
   ],
   channels: [general, product],
@@ -106,6 +122,76 @@ beforeEach(() => {
 });
 
 describe("ChannelModal", () => {
+  it("lets the admin of a private channel rename it without a workspace role, and closes for anyone else", async () => {
+    const ui = userEvent.setup();
+    const mine: WorkspaceChannel = {
+      ...product, id: "ch-mine", name: "mine", title: "Mine", isPrivate: true,
+      members: [{ userId: user.id, role: "admin" }],
+    };
+    const regular = {
+      ...workspace,
+      members: workspace.members.map((member) =>
+        member.userId === user.id ? { ...member, role: "member" as const } : member,
+      ),
+    };
+    const renameChannel = vi.fn().mockResolvedValue({ ...mine, name: "ours", title: "Ours" });
+    useWorkspacesStore.setState({ renameChannel, activeWorkspace: { ...regular, channels: [general, mine] } });
+    await renderModal();
+
+    act(() => openRenameChannelModal(mine));
+    const input = await screen.findByRole("textbox", { name: "Channel name" });
+    await ui.clear(input);
+    await ui.type(input, "Ours");
+    await ui.click(screen.getByRole("button", { name: "Save changes" }));
+    expect(renameChannel).toHaveBeenCalledWith(mine.id, "Ours");
+
+    // A regular member cannot rename a public channel, nor a private one they only belong to.
+    act(() => openRenameChannelModal(general));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    const theirs = { ...mine, members: [{ userId: collaborator.id, role: "admin" as const }, { userId: user.id, role: "member" as const }] };
+    act(() => useWorkspacesStore.setState({ activeWorkspace: { ...regular, channels: [general, theirs] } }));
+    act(() => openDeleteChannelModal(theirs));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  });
+
+  it("creates a private channel with explicitly selected workspace members", async () => {
+    const created: WorkspaceChannel = {
+      ...product,
+      id: "ch-leadership",
+      name: "leadership",
+      title: "Leadership",
+      isPrivate: true,
+    };
+    const createChannel = vi.fn().mockResolvedValue(created);
+    useWorkspacesStore.setState({ createChannel });
+    await renderModal();
+
+    act(() => openCreateChannelModal());
+    expect(screen.getByRole("radio", { name: /Public/ })).toBeChecked();
+    fireEvent.click(screen.getByRole("radio", { name: /Private/ }));
+    expect(screen.getByRole("radio", { name: /Private/ })).toBeChecked();
+    expect(
+      screen.getByRole("checkbox", { name: "Test User (you)" }),
+    ).toBeChecked();
+    expect(
+      screen.getByRole("checkbox", { name: "Test User (you)" }),
+    ).toBeDisabled();
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: "Include Avery Stone" }),
+    );
+    fireEvent.change(screen.getByLabelText("Channel name"), {
+      target: { value: "Leadership" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Create channel" }));
+
+    await waitFor(() =>
+      expect(createChannel).toHaveBeenCalledWith("Leadership", {
+        isPrivate: true,
+        memberIds: [collaborator.id],
+      }),
+    );
+  });
+
   it("traps focus, closes on Escape, and restores the launcher", async () => {
     const ui = userEvent.setup();
     await renderModal();

@@ -609,6 +609,42 @@ describe("push delivery", () => {
     expect(delivered[0]!.payload.url).toContain("type=group");
   });
 
+  test("a private channel notifies the members who are @mentioned, never a workspace member who was not picked", async () => {
+    const f = await fixture("Private");
+    const outsider = await registerUser("Private Outsider");
+    await db.insert(workspaceMembers).values({ workspaceId: f.workspaceId, userId: outsider.user.id, role: "member" });
+    await db.insert(conversationParticipants).values({ conversationId: f.channelId, userId: outsider.user.id });
+    const memberPhone = await subscribe(f.member.token);
+    await subscribe(outsider.token);
+    const channel = await req(
+      "POST",
+      "/conversations/channel",
+      { workspaceId: f.workspaceId, name: "Board", isPrivate: true, memberIds: [f.member.user.id] },
+      f.owner.token,
+    );
+    expect(channel.status).toBe(200);
+
+    const secret = await send(f.owner.token, channel.body.id, "@Private Member @Private Outsider the budget is approved");
+    await waitForFanout(`message:${secret.id}`);
+    await drainPushJobs();
+    expect(delivered.map((entry) => entry.request.url)).toEqual([memberPhone.endpoint]);
+    expect(delivered[0]!.payload).toMatchObject({
+      kind: "mention",
+      title: "Private Owner in #board",
+      tag: `conversation:${channel.body.id}:main`,
+      badge: 1,
+    });
+
+    // The same mention in a public channel does reach the outsider, and the
+    // badge counts only what they can read.
+    delivered = [];
+    const open = await send(f.owner.token, f.channelId, "@Private Outsider lunch?");
+    await waitForFanout(`message:${open.id}`);
+    await drainPushJobs();
+    expect(delivered).toHaveLength(1);
+    expect(delivered[0]!.payload).toMatchObject({ title: "Private Owner in #general", badge: 1 });
+  });
+
   test("preferences are honoured at send time, including hidden previews", async () => {
     const f = await fixture("Prefs DM");
     await subscribe(f.member.token);
