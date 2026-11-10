@@ -357,8 +357,9 @@ function ChannelDetails({ channelId }: { channelId: string }) {
                           {roleLabel(participant)}
                         </span>
                         {canManage && isPrivate && !canRemove(participant) && (
-                          // Keeps the role column aligned with removable rows.
-                          <span className="size-6 shrink-0" aria-hidden="true" />
+                          // Keeps the role column aligned with removable rows
+                          // (touch layouts widen dialog buttons to 44px).
+                          <span className="h-6 w-6 shrink-0 max-lg:w-11" aria-hidden="true" />
                         )}
                         {canRemove(participant) && (
                           <button
