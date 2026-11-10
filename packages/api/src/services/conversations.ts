@@ -1680,25 +1680,24 @@ export async function removeChannelMember(
       throw new ServiceError("You cannot remove yourself from a channel", 400);
     }
     // Same hierarchy as removing someone from the workspace.
-    const [actor, target] = await Promise.all(
-      [actorUserId, targetUserId].map(async (memberUserId) => {
-        const [member] = await tx
-          .select({ role: workspaceMembers.role })
+    const roles = new Map(
+      (
+        await tx
+          .select({ userId: workspaceMembers.userId, role: workspaceMembers.role })
           .from(workspaceMembers)
           .where(
             and(
               eq(workspaceMembers.workspaceId, workspaceId),
-              eq(workspaceMembers.userId, memberUserId),
+              inArray(workspaceMembers.userId, [actorUserId, targetUserId]),
             ),
           )
-          .limit(1);
-        return member;
-      }),
+      ).map((member) => [member.userId, member.role]),
     );
-    if (target?.role === "owner") {
+    const targetRole = roles.get(targetUserId);
+    if (targetRole === "owner") {
       throw new ServiceError("The workspace owner cannot be removed", 403);
     }
-    if (actor?.role === "admin" && target?.role === "admin") {
+    if (roles.get(actorUserId) === "admin" && targetRole === "admin") {
       throw new ServiceError("Admins can only remove regular members", 403);
     }
 

@@ -356,10 +356,14 @@ function ChannelDetails({ channelId }: { channelId: string }) {
                         <span className="shrink-0 text-[0.786rem] text-text-muted">
                           {roleLabel(participant)}
                         </span>
+                        {canManage && isPrivate && !canRemove(participant) && (
+                          // Keeps the role column aligned with removable rows.
+                          <span className="size-6 shrink-0" aria-hidden="true" />
+                        )}
                         {canRemove(participant) && (
                           <button
                             type="button"
-                            className={iconButtonClass("sm")}
+                            className={`size-6 ${iconButtonClass("sm")}`}
                             disabled={Boolean(busy)}
                             aria-label={`Remove ${participant.user.name}`}
                             title={`Remove ${participant.user.name} from this channel`}

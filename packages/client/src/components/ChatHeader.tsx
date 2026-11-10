@@ -78,7 +78,7 @@ export function ChatHeader() {
             type="button"
             className="-ml-1.5 flex min-w-0 cursor-pointer items-center rounded-md border-none bg-transparent px-1.5 py-1 font-[inherit] transition-colors duration-100 hover:bg-white/[0.06]"
             onClick={() => openChannelDetailsModal(channel.id)}
-            aria-label={`Channel details for ${channel.name}`}
+            aria-label={`${channel.name}, open channel details`}
             title="Channel details"
             data-testid="channel-details-trigger"
           >
