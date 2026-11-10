@@ -339,6 +339,48 @@ describe("private channels stay invisible to workspace members who were not pick
     expect(JSON.stringify(forOutsider)).not.toContain(secretWord);
   });
 
+  test("reply threads in a private channel: read, reply, follow and the Threads view", async () => {
+    const replyWord = `kestrel${run}`;
+    const reply = await ok(
+      "POST",
+      `/messages/${secretId}`,
+      { content: `Thread reply about ${replyWord}, @Outsider ${run}`, parentMessageId: secretMessageId },
+      picked.token,
+    );
+    const threadPath = `/messages/${secretId}/threads/${secretMessageId}`;
+    const forOwner = await ok("GET", threadPath, undefined, owner.token);
+    expect(forOwner.replies.map((message: any) => message.id)).toEqual([reply.id]);
+
+    const refused = [
+      await req("GET", threadPath, undefined, outsider.token),
+      await req("POST", `${threadPath}/follow`, { following: true }, outsider.token),
+      await req("POST", `/messages/${secretId}`, { content: "me too", parentMessageId: secretMessageId }, outsider.token),
+      await req("GET", threadPath, undefined, bot.apiKey),
+    ];
+    expect(refused.map((response) => response.status)).toEqual([403, 403, 403, 403]);
+
+    // The owner follows the thread they started; the outsider follows nothing.
+    const ownerThreads = await ok("GET", "/activity/threads", undefined, owner.token);
+    expect(JSON.stringify(ownerThreads)).toContain(secretMessageId);
+    const outsiderThreads = await ok("GET", "/activity/threads", undefined, outsider.token);
+    expect(JSON.stringify(outsiderThreads)).not.toContain(secretMessageId);
+    expect(JSON.stringify(await ok("GET", "/activity", undefined, outsider.token))).not.toContain(replyWord);
+    expect((await ok("GET", `/search/messages?q=${replyWord}`, undefined, outsider.token)).results).toEqual([]);
+    expect((await ok("GET", `/search/messages?q=${replyWord}`, undefined, owner.token)).results.map((hit: any) => hit.id)).toEqual([
+      reply.id,
+    ]);
+
+    const agent = await mcp(bot.apiKey);
+    try {
+      expect((await agent.call("get_thread", { conversationId: secretId, rootMessageId: secretMessageId })).isError).toBe(true);
+      expect(
+        (await agent.call("send_message", { conversationId: secretId, content: "agent reply", parentMessageId: secretMessageId })).isError,
+      ).toBe(true);
+    } finally {
+      await agent.close();
+    }
+  });
+
   test("someone who joins the workspace later sees public channels only", async () => {
     const late = await register(`Late ${run}`);
     const invite = await ok("POST", "/invites/create", { workspaceId, email: late.email }, owner.token);
