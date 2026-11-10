@@ -107,7 +107,8 @@ test('an owner creates a private channel; picked members get it, the rest of the
     await shot(avery.page, `private-member-${info.project.name}.png`, (name) => info.outputPath(name));
     if (isPhone) await avery.page.keyboard.press('Escape');
     const averyHits = await searchFor(avery.page, isPhone, `?${secret}`);
-    await expect(averyHits.getByTestId('palette-item').filter({ hasText: secret })).toBeVisible();
+    // Hits are matched by their accessible name: the visible text is split by highlight marks.
+    await expect(averyHits.getByRole('button', { name: `Message from Morgan Owner in #leadership: ${secret}` })).toBeVisible();
 
     // Nora received the public message, and nothing about #leadership.
     await expect(nora.page.locator('[data-message-id]').filter({ hasText: barrier })).toBeVisible();
@@ -125,10 +126,10 @@ test('an owner creates a private channel; picked members get it, the rest of the
     await panel.getByRole('textbox', { name: 'Search TheChat' }).fill('#general');
     await expect(panel.getByRole('button', { name: /^general, channel/ })).toBeVisible();
     await panel.getByRole('textbox', { name: 'Search TheChat' }).fill(`?${barrier}`);
-    await expect(panel.getByTestId('palette-item').filter({ hasText: barrier })).toBeVisible();
+    await expect(panel.getByRole('button', { name: `Message from Morgan Owner in #general: ${barrier}` })).toBeVisible();
     await panel.getByRole('textbox', { name: 'Search TheChat' }).fill(`?${secret}`);
     await expect(panel.getByText(/No messages/i)).toBeVisible();
-    await expect(panel.getByTestId('palette-item').filter({ hasText: secret })).toHaveCount(0);
+    await expect(panel.getByRole('button', { name: /^Message from/ })).toHaveCount(0);
     await nora.page.keyboard.press('Escape');
 
     // A guessed link bounces to a channel she can see; reload changes nothing.
