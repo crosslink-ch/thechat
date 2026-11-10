@@ -304,6 +304,18 @@ export function registerGlobalWsHandlers(
       activeWorkspace: {
         ...activeWorkspace,
         members: activeWorkspace.members.filter((m) => m.userId !== userId),
+        // Leaving the workspace also takes a person or bot out of its
+        // private channels.
+        channels: activeWorkspace.channels.map((channel) =>
+          channel.members?.some((member) => member.userId === userId)
+            ? {
+                ...channel,
+                members: channel.members.filter(
+                  (member) => member.userId !== userId,
+                ),
+              }
+            : channel,
+        ),
       },
     });
   };
@@ -348,6 +360,51 @@ export function registerGlobalWsHandlers(
     reconcileWorkspace(workspaceId);
   };
 
+  // Members or visibility changed for a channel this user is still in.
+  const onChannelUpdated = ({
+    workspaceId,
+    channel,
+  }: WsEvents["ws:channel_updated"]) => {
+    if (deletedChannelIds.has(channel.id)) return;
+    useWorkspacesStore.setState((state) => {
+      if (state.activeWorkspace?.id !== workspaceId) return state;
+      return {
+        activeWorkspace: {
+          ...state.activeWorkspace,
+          channels: upsertWorkspaceChannel(
+            state.activeWorkspace.channels,
+            channel,
+          ),
+        },
+      };
+    });
+  };
+
+  // This user was added to a channel, possibly one they were removed from
+  // earlier in this session.
+  const onChannelJoined = ({
+    workspaceId,
+    channel,
+  }: WsEvents["ws:channel_joined"]) => {
+    deletedChannelIds.delete(channel.id);
+    useWorkspacesStore.setState((state) => {
+      if (state.activeWorkspace?.id !== workspaceId) return state;
+      return {
+        activeWorkspace: {
+          ...state.activeWorkspace,
+          channels: upsertWorkspaceChannel(
+            state.activeWorkspace.channels,
+            channel,
+          ),
+        },
+      };
+    });
+    void messageQueryClient.invalidateQueries({
+      queryKey: ["messages", channel.id],
+    });
+    reconcileWorkspace(workspaceId);
+  };
+
   const onChannelDeleted = ({
     workspaceId,
     channelId,
@@ -370,6 +427,8 @@ export function registerGlobalWsHandlers(
       };
     });
     useConversationsStore.getState().markChannelRead(channelId);
+    // Unread state of a channel this user left or was removed from is gone.
+    void useActivityStore.getState().fetchActivity();
 
     if (currentPath() === `/channel/${channelId}`) {
       navigate({
@@ -450,6 +509,8 @@ export function registerGlobalWsHandlers(
   wsEvents.on("ws:member_removed", onMemberRemoved);
   wsEvents.on("ws:channel_created", onChannelCreated);
   wsEvents.on("ws:channel_renamed", onChannelRenamed);
+  wsEvents.on("ws:channel_updated", onChannelUpdated);
+  wsEvents.on("ws:channel_joined", onChannelJoined);
   wsEvents.on("ws:channel_deleted", onChannelDeleted);
   wsEvents.on("ws:invite_received", onInviteReceived);
   wsEvents.on("ws:bot_workspace_invite_received", onBotWorkspaceInviteReceived);
@@ -472,6 +533,8 @@ export function registerGlobalWsHandlers(
     wsEvents.off("ws:member_removed", onMemberRemoved);
     wsEvents.off("ws:channel_created", onChannelCreated);
     wsEvents.off("ws:channel_renamed", onChannelRenamed);
+    wsEvents.off("ws:channel_updated", onChannelUpdated);
+    wsEvents.off("ws:channel_joined", onChannelJoined);
     wsEvents.off("ws:channel_deleted", onChannelDeleted);
     wsEvents.off("ws:invite_received", onInviteReceived);
     wsEvents.off("ws:bot_workspace_invite_received", onBotWorkspaceInviteReceived);

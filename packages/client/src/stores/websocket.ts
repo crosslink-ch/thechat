@@ -292,6 +292,16 @@ function doConnect() {
         workspaceId: event.workspaceId,
         channel: event.channel,
       });
+    } else if (event.type === "channel_updated") {
+      wsEvents.emit("ws:channel_updated", {
+        workspaceId: event.workspaceId,
+        channel: event.channel,
+      });
+    } else if (event.type === "channel_joined") {
+      wsEvents.emit("ws:channel_joined", {
+        workspaceId: event.workspaceId,
+        channel: event.channel,
+      });
     } else if (event.type === "channel_deleted") {
       wsEvents.emit("ws:channel_deleted", {
         workspaceId: event.workspaceId,

@@ -5,6 +5,7 @@ import type { WorkspaceChannel } from "@thechat/shared";
 import { useWorkspacesStore } from "../stores/workspaces";
 import { useConversationsStore } from "../stores/conversations";
 import { useAuthStore } from "../stores/auth";
+import { channelAccess } from "../lib/channel-access";
 import { Hash, Pencil, Trash2, X } from "lucide-react";
 import { buttonClass, dialogContentClass, dialogOverlayClass, dialogTitleClass, iconButtonClass } from "./ui";
 
@@ -105,8 +106,14 @@ export function ChannelModal() {
   const canUseChannelModal = Boolean(
     currentMembership &&
     (state?.mode === "create" ||
-      currentMembership.role === "owner" ||
-      currentMembership.role === "admin"),
+      (state &&
+        channelAccess(
+          // Follow live membership changes; fall back to the opened snapshot.
+          activeWorkspace?.channels.find((item) => item.id === state.channel.id) ??
+            state.channel,
+          activeWorkspace?.members,
+          currentUserId,
+        ).canManage)),
   );
 
   useEffect(() => {
@@ -152,8 +159,12 @@ export function ChannelModal() {
     const stillAuthorized = Boolean(
       latestMembership &&
       (currentState.mode === "create" ||
-        latestMembership.role === "owner" ||
-        latestMembership.role === "admin"),
+        channelAccess(
+          latestWorkspace?.channels.find((item) => item.id === currentState.channel.id) ??
+            currentState.channel,
+          latestWorkspace?.members,
+          latestUserId,
+        ).canManage),
     );
     if (!stillAuthorized) {
       closeChannelModal();

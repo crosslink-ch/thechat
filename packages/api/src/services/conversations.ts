@@ -2,7 +2,6 @@ import { and, asc, desc, eq, gt, inArray, isNull, lt, lte, ne, or, sql } from "d
 import {
   resolveBotAppearance,
   type ConversationThreadGroups,
-  type WsServerEvent,
 } from "@thechat/shared";
 import { db } from "../db";
 import { pendingChatJobs } from '../async/queue';
@@ -29,9 +28,15 @@ import {
 } from "../attachments/events";
 
 import { enqueueDomainEvent } from "../events/outbox";
-import { log } from "../logging";
-import { publishWsEventToUsers } from "../realtime";
 import { currentHermesDispatchTimeoutCutoff } from "./bot-runtime";
+import {
+  assertChannelDeletable,
+  channelAudience,
+  describeChannel,
+  publishChannelLifecycleEvent,
+  requireChannelManager,
+  requirePrivateChannelAdmin,
+} from "./channel-membership";
 import { requireConversationMutationAccess } from "./conversation-mutation-access";
 import { ServiceError } from "./errors";
 import { canUserAccessAttachments } from "./messages";
@@ -41,8 +46,6 @@ import {
   requireTaskProjectInConversation,
   toPublicConversationThread,
 } from "./task-project-records";
-
-const channelLog = log.child({ component: "channels" });
 
 /** The `otherBot` of a DM whose other participant is a bot. */
 function directBot(user: {
@@ -1331,13 +1334,21 @@ export async function createChannel(
           channelMembers.map((member) => ({
             conversationId: channel.id,
             userId: member.userId,
-            role: member.role,
+            // A private channel is run by its own admins, starting with its
+            // creator, not by whoever manages the workspace.
+            role: isPrivate
+              ? member.userId === userId
+                ? ("admin" as const)
+                : ("member" as const)
+              : member.role,
           })),
         );
       }
 
+      if (isPrivate) await requirePrivateChannelAdmin(tx, channel.id);
+
       return {
-        channel: toWorkspaceChannel(channel),
+        channel: await describeChannel(tx, channel),
         targetUserIds: channelMembers.map((member) => member.userId),
       };
     });
@@ -1435,10 +1446,10 @@ export async function renameChannel(
         .set({ name: normalized.slug, title: normalized.title })
         .where(eq(conversations.id, channel.id))
         .returning();
-      const targetUserIds = await channelLifecycleTargetUserIds(tx, updated);
+      const targetUserIds = await channelAudience(tx, updated);
 
       return {
-        channel: toWorkspaceChannel(updated),
+        channel: await describeChannel(tx, updated),
         targetUserIds,
         workspaceId: workspace.id,
       };
@@ -1463,8 +1474,6 @@ export async function deleteChannel(
   userId: string,
   options: { afterWorkspaceLocked?: () => Promise<void> } = {},
 ) {
-  const hermesDispatchCutoff = currentHermesDispatchTimeoutCutoff();
-
   const result = await db.transaction(async (tx) => {
     const [candidate] = await tx
       .select({ workspaceId: conversations.workspaceId })
@@ -1519,55 +1528,9 @@ export async function deleteChannel(
       channel.isPrivate,
     );
 
-    const [activeInvocation] = await tx
-      .select({ id: botInvocations.id })
-      .from(botInvocations)
-      .where(
-        and(
-          eq(botInvocations.conversationId, channel.id),
-          or(
-            and(
-              eq(botInvocations.status, "queued"),
-              or(
-                ne(botInvocations.adapterKind, "hermes"),
-                gt(botInvocations.createdAt, hermesDispatchCutoff),
-              ),
-            ),
-            eq(botInvocations.status, "running"),
-            and(
-              eq(botInvocations.status, "claimed"),
-              sql`NULLIF(${botInvocations.responseJson}->'completion'->>'type', '') IS NULL`,
-              sql`COALESCE(${botInvocations.responseJson}->>'silent', 'false') <> 'true'`,
-            ),
-          ),
-        ),
-      )
-      .limit(1);
+    await assertChannelDeletable(tx, channel.id);
 
-    const [pendingTargetedEvent] = await pendingChatJobs(tx, channel.id);
-
-    if (activeInvocation || pendingTargetedEvent) {
-      throw new ServiceError(
-        "Wait for active bot runs to finish before deleting this channel",
-        409,
-      );
-    }
-
-    // Attachment rows own private object-store coordinates. Cascading them
-    // away would make their exact S3 versions impossible to clean up safely.
-    const [attachment] = await tx
-      .select({ id: attachments.id })
-      .from(attachments)
-      .where(eq(attachments.conversationId, channel.id))
-      .limit(1);
-    if (attachment) {
-      throw new ServiceError(
-        "Channels with attachments cannot be deleted",
-        409,
-      );
-    }
-
-    const targetUserIds = await channelLifecycleTargetUserIds(tx, channel);
+    const targetUserIds = await channelAudience(tx, channel);
     await tx.delete(conversations).where(eq(conversations.id, channel.id));
     return {
       ok: true as const,
@@ -1583,31 +1546,6 @@ export async function deleteChannel(
     channelId: result.deletedChannelId,
   });
   return { ok: result.ok, deletedChannelId: result.deletedChannelId };
-}
-
-type ChannelLifecycleEvent = Extract<
-  WsServerEvent,
-  { type: "channel_created" | "channel_renamed" | "channel_deleted" }
->;
-
-async function publishChannelLifecycleEvent(
-  targetUserIds: string[],
-  event: ChannelLifecycleEvent,
-) {
-  try {
-    await publishWsEventToUsers(targetUserIds, event);
-  } catch (error) {
-    // The channel mutation has already committed. Realtime fanout failure must
-    // not turn a successful REST mutation into an ambiguous client failure.
-    channelLog.warn(
-      {
-        err: error,
-        eventType: event.type,
-        workspaceId: event.workspaceId,
-      },
-      "channel.realtime_publish_failed",
-    );
-  }
 }
 
 function normalizeChannelName(name: string) {
@@ -1627,86 +1565,6 @@ function normalizeChannelName(name: string) {
     );
   }
   return { title, slug };
-}
-
-function toWorkspaceChannel(channel: typeof conversations.$inferSelect) {
-  if (!channel.workspaceId || !channel.name) {
-    throw new ServiceError("Channel data is incomplete", 500);
-  }
-  return {
-    id: channel.id,
-    workspaceId: channel.workspaceId,
-    name: channel.name,
-    title: channel.title,
-    isPrivate: channel.isPrivate,
-    createdAt: channel.createdAt.toISOString(),
-    updatedAt: channel.updatedAt.toISOString(),
-  };
-}
-
-async function channelLifecycleTargetUserIds(
-  executor: Pick<typeof db, "select">,
-  channel: typeof conversations.$inferSelect,
-) {
-  if (channel.isPrivate) {
-    const participants = await executor
-      .select({ userId: conversationParticipants.userId })
-      .from(conversationParticipants)
-      .where(eq(conversationParticipants.conversationId, channel.id));
-    return participants.map((participant) => participant.userId);
-  }
-  const members = await executor
-    .select({ userId: workspaceMembers.userId })
-    .from(workspaceMembers)
-    .where(eq(workspaceMembers.workspaceId, channel.workspaceId!));
-  return members.map((member) => member.userId);
-}
-
-async function requireChannelManager(
-  executor: Pick<typeof db, "select">,
-  workspaceId: string,
-  userId: string,
-  conversationId: string,
-  isPrivate: boolean,
-) {
-  const [membership] = await executor
-    .select({ role: workspaceMembers.role })
-    .from(workspaceMembers)
-    .where(
-      and(
-        eq(workspaceMembers.workspaceId, workspaceId),
-        eq(workspaceMembers.userId, userId),
-      ),
-    )
-    .limit(1);
-
-  if (!membership) {
-    throw new ServiceError("You are not a member of this workspace", 403);
-  }
-  if (isPrivate) {
-    const [participant] = await executor
-      .select({ userId: conversationParticipants.userId })
-      .from(conversationParticipants)
-      .where(
-        and(
-          eq(conversationParticipants.conversationId, conversationId),
-          eq(conversationParticipants.userId, userId),
-        ),
-      )
-      .limit(1);
-    if (!participant) {
-      throw new ServiceError(
-        "You are not a participant of this conversation",
-        403,
-      );
-    }
-  }
-  if (membership.role !== "owner" && membership.role !== "admin") {
-    throw new ServiceError(
-      "Only workspace owners and admins can manage channels",
-      403,
-    );
-  }
 }
 
 function isUniqueViolation(error: unknown) {

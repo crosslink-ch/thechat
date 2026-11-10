@@ -104,6 +104,17 @@ export type WsEvents = {
     workspaceId: string;
     channel: WorkspaceChannel;
   };
+  /** Members or visibility changed. */
+  "ws:channel_updated": {
+    workspaceId: string;
+    channel: WorkspaceChannel;
+  };
+  /** This user was added to an existing channel. */
+  "ws:channel_joined": {
+    workspaceId: string;
+    channel: WorkspaceChannel;
+  };
+  /** Also received by someone who left or was removed from a private channel. */
   "ws:channel_deleted": {
     workspaceId: string;
     channelId: string;

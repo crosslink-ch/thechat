@@ -97,6 +97,8 @@ const STRUCTURAL_EVENTS = [
   "ws:member_updated",
   "ws:channel_created",
   "ws:channel_renamed",
+  "ws:channel_updated",
+  "ws:channel_joined",
   "ws:channel_deleted",
   "ws:conversation_thread_updated",
   "ws:conversation_thread_deleted",

@@ -9,6 +9,11 @@ import {
   bots,
   users,
 } from "../db/schema";
+import {
+  privateChannelMembers,
+  publishChannelDeliveries,
+  settlePrivateChannelsAfterWorkspaceDeparture,
+} from "./channel-membership";
 import { ServiceError } from "./errors";
 
 function generateWorkspaceId(name: string): string {
@@ -128,6 +133,11 @@ export async function getWorkspaceDetail(workspaceId: string, userId: string) {
       ),
     );
 
+  const privateMembers = await privateChannelMembers(
+    db,
+    channels.filter((c) => c.isPrivate).map((c) => c.id),
+  );
+
   return {
     id: workspace.id,
     name: workspace.name,
@@ -161,6 +171,7 @@ export async function getWorkspaceDetail(workspaceId: string, userId: string) {
       name: c.name,
       title: c.title,
       isPrivate: c.isPrivate,
+      ...(c.isPrivate ? { members: privateMembers.get(c.id) ?? [] } : {}),
       createdAt: c.createdAt.toISOString(),
       updatedAt: c.updatedAt.toISOString(),
     })),
@@ -361,7 +372,7 @@ export async function removeMember(
   targetUserId: string,
   options: { afterWorkspaceLocked?: () => Promise<void> } = {},
 ) {
-  return db.transaction(async (tx) => {
+  const result = await db.transaction(async (tx) => {
     const [workspace] = await tx
       .select({ id: workspaces.id })
       .from(workspaces)
@@ -421,8 +432,9 @@ export async function removeMember(
         ),
       );
 
+    let leftChannelIds: string[] = [];
     if (channels.length > 0) {
-      await tx
+      const left = await tx
         .delete(conversationParticipants)
         .where(
           and(
@@ -432,7 +444,9 @@ export async function removeMember(
             ),
             eq(conversationParticipants.userId, targetUserId),
           ),
-        );
+        )
+        .returning({ conversationId: conversationParticipants.conversationId });
+      leftChannelIds = left.map((row) => row.conversationId);
     }
 
     await tx
@@ -444,6 +458,17 @@ export async function removeMember(
         ),
       );
 
-    return { success: true };
+    // A private channel must not be left without anyone who can open it, or
+    // without an admin.
+    const channelDeliveries = await settlePrivateChannelsAfterWorkspaceDeparture(
+      tx,
+      workspaceId,
+      leftChannelIds,
+    );
+
+    return { channelDeliveries };
   });
+
+  await publishChannelDeliveries(result.channelDeliveries);
+  return { success: true };
 }

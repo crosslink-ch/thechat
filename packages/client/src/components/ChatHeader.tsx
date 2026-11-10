@@ -8,7 +8,9 @@ import { useDmHeaderStore } from "../stores/chat-header";
 import { isWeb } from "../platform/environment";
 import { toggleSidebar, useSidebarState } from "./Sidebar";
 import { HeaderActionsSlot } from "./HeaderActions";
-import { PanelLeft } from "lucide-react";
+import { Lock, PanelLeft, Users } from "lucide-react";
+import { openChannelDetailsModal } from "./ChannelDetailsModal";
+import { channelMemberCount } from "../lib/channel-access";
 import { iconButtonClass } from "./ui";
 
 // Mini-store for agent chat title & project dir (set by agent-chat route)
@@ -59,6 +61,7 @@ export function ChatHeader() {
       : isAgentChat ? agentTitle
         : pageLabels[routePath] ?? activeWorkspace?.name ?? "Home";
   const context = currentDm?.context;
+  const channelMembers = channel ? channelMemberCount(channel, activeWorkspace?.members) : 0;
 
   if (isPage && !mobile && !showSidebarToggle) return null;
 
@@ -71,8 +74,29 @@ export function ChatHeader() {
         </button>
       )}
       <div className="flex min-w-0 flex-1 items-center">
-        {isChannel && <span className="mr-2 shrink-0 text-[1rem] text-text-dimmed" aria-hidden="true">#</span>}
-        <span title={title} className={`min-w-0 truncate ${isPage ? "text-[0.929rem] text-text-muted" : "text-[1rem] font-semibold text-text"} ${context ? "max-w-[60%] shrink-0" : ""}`}>{title}</span>
+        {isChannel && channel ? (
+          <button
+            type="button"
+            className="-ml-2 flex min-w-0 cursor-pointer items-center rounded-md border-none bg-transparent px-2 py-1 font-[inherit] transition-colors duration-150 hover:bg-hover"
+            aria-label={`Channel details: ${channel.isPrivate ? "private channel " : ""}${title}, ${channelMembers} ${channelMembers === 1 ? "member" : "members"}`}
+            title="Channel details"
+            onClick={() => openChannelDetailsModal(channel.id)}
+          >
+            <span className="mr-2 flex shrink-0 items-center text-[1rem] text-text-dimmed" aria-hidden="true">
+              {channel.isPrivate ? <Lock size={14} /> : "#"}
+            </span>
+            <span className="min-w-0 truncate text-[1rem] font-semibold text-text">{title}</span>
+            <span className="ml-2.5 flex shrink-0 items-center gap-1 text-[0.857rem] text-text-dimmed" aria-hidden="true">
+              <Users size={13} />
+              {channelMembers}
+            </span>
+          </button>
+        ) : (
+          <>
+            {isChannel && <span className="mr-2 shrink-0 text-[1rem] text-text-dimmed" aria-hidden="true">#</span>}
+            <span title={title} className={`min-w-0 truncate ${isPage ? "text-[0.929rem] text-text-muted" : "text-[1rem] font-semibold text-text"} ${context ? "max-w-[60%] shrink-0" : ""}`}>{title}</span>
+          </>
+        )}
         {context && <>
           <span className="mx-1.5 shrink-0 text-text-dimmed" aria-hidden="true">·</span>
           <span title={context} className="min-w-0 truncate text-[0.857rem] text-text-muted">{context}</span>

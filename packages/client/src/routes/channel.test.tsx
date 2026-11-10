@@ -22,7 +22,11 @@ vi.mock("../hooks/useChannelChat", () => {
   const chat = { messages: [], loading: false, loadingOlder: false, hasOlderMessages: false, sendError: null, sendMessage: vi.fn(), addMessage: vi.fn(), loadOlderMessages: vi.fn(), setReaction: vi.fn() };
   return { useChannelChat: () => chat };
 });
-vi.mock("../components/InputBar", () => ({ InputBar: () => <textarea aria-label="Ordinary channel composer" /> }));
+const mentionsSeen: Array<Array<{ id: string; label: string }> | undefined> = [];
+vi.mock("../components/InputBar", () => ({ InputBar: (props: { mentions?: Array<{ id: string; label: string }> }) => {
+  mentionsSeen.push(props.mentions);
+  return <textarea aria-label="Ordinary channel composer" />;
+} }));
 
 let keys: webcrypto.CryptoKeyPair;
 let publicKeySpkiB64: string;
@@ -90,6 +94,23 @@ it("sends the reader to a visible channel once the server refuses a hidden one",
   await waitFor(() => expect(router.state.location.pathname).toBe("/channel/general"));
   expect(detail).toHaveBeenCalledWith("channel-1", { headers: { authorization: "Bearer test-token" } });
   expect(screen.getByTestId("channel-chat-scroll")).toBeInTheDocument();
+});
+
+it("offers only the members of a private channel for @mentions", async () => {
+  const person = (id: string, name: string) => ({ userId: id, role: "member" as const, joinedAt: "2026-01-01", user: { id, name, email: null, avatar: null, type: "human" as const } });
+  const everyone = [person("requester", "Requester"), person("in", "Inside Ivy"), person("out", "Outside Omar")];
+  const base = workspace("workspace-1", ["general"]);
+  const listed = (isPrivate: boolean) => ({ ...base, members: everyone, channels: [{
+    ...base.channels[0]!, id: "channel-1", name: "room", isPrivate,
+    ...(isPrivate ? { members: [{ userId: "requester", role: "admin" as const }, { userId: "in", role: "member" as const }] } : {}),
+  }] });
+  const offered = () => mentionsSeen.at(-1)?.map((mention) => mention.label);
+  await mount();
+  act(() => useWorkspacesStore.setState({ activeWorkspace: listed(true) }));
+  await waitFor(() => expect(offered()).toEqual(["Inside Ivy"]));
+  // The same channel made public reaches the whole workspace.
+  act(() => useWorkspacesStore.setState({ activeWorkspace: listed(false) }));
+  await waitFor(() => expect(offered()).toEqual(["Inside Ivy", "Outside Omar"]));
 });
 
 it("stays on a listed private channel without asking the server", async () => {

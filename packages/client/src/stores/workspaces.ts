@@ -4,6 +4,7 @@ import { preferences, type PreferenceKey } from "../platform/preferences";
 import { isWeb } from "../platform/environment";
 import { authHeaders as auth } from "../lib/eden";
 import type {
+  ChannelMemberRole,
   WorkspaceChannel,
   WorkspaceListItem,
   WorkspaceWithDetails,
@@ -45,6 +46,11 @@ interface WorkspacesStore {
   createChannel: (name: string, options?: CreateChannelOptions) => Promise<WorkspaceChannel>;
   renameChannel: (channelId: string, name: string) => Promise<WorkspaceChannel>;
   deleteChannel: (channelId: string) => Promise<void>;
+  setChannelVisibility: (channelId: string, isPrivate: boolean) => Promise<WorkspaceChannel>;
+  addChannelMembers: (channelId: string, userIds: string[]) => Promise<WorkspaceChannel>;
+  /** Removing yourself is leaving. Resolves true when the channel was deleted. */
+  removeChannelMember: (channelId: string, userId: string) => Promise<boolean>;
+  setChannelMemberRole: (channelId: string, userId: string, role: ChannelMemberRole) => Promise<WorkspaceChannel>;
   reset: () => void;
 }
 
@@ -96,6 +102,30 @@ function workspaceSession(set: (update: WorkspaceUpdate) => void) {
     useAuthStore.getState().user?.id === userId &&
     useAuthStore.getState().token === token;
   return { current, commit: (update: WorkspaceUpdate) => { if (current()) set(update); } };
+}
+
+/** Shared plumbing of the channel member and visibility mutations. */
+function channelMutationContext(set: (update: WorkspaceUpdate) => void) {
+  const session = workspaceSession(set);
+  const token = useAuthStore.getState().token;
+  const workspaceId = useWorkspacesStore.getState().activeWorkspace?.id;
+  if (!authenticated(token) || !workspaceId) throw new Error("Select a workspace first");
+  const apply = (change: (channels: WorkspaceChannel[]) => WorkspaceChannel[]) =>
+    session.commit((state) => ({
+      activeWorkspace:
+        state.activeWorkspace?.id === workspaceId
+          ? { ...state.activeWorkspace, channels: change(state.activeWorkspace.channels) }
+          : state.activeWorkspace,
+    }));
+  return {
+    token,
+    keep: (channel: WorkspaceChannel) => {
+      apply((channels) => upsertWorkspaceChannel(channels, channel));
+      return channel;
+    },
+    drop: (channelId: string) =>
+      apply((channels) => channels.filter((channel) => channel.id !== channelId)),
+  };
 }
 
 export const useWorkspacesStore = create<WorkspacesStore>()((set) => ({
@@ -286,6 +316,50 @@ export const useWorkspacesStore = create<WorkspacesStore>()((set) => ({
             }
           : state.activeWorkspace,
     }));
+  },
+
+  setChannelVisibility: async (channelId, isPrivate) => {
+    const context = channelMutationContext(set);
+    const { data, error } = await api.conversations
+      .channel({ conversationId: channelId })
+      .patch({ isPrivate }, auth(context.token));
+    if (error) throw new Error(apiErrorMessage(error));
+    return context.keep(data as WorkspaceChannel);
+  },
+
+  addChannelMembers: async (channelId, userIds) => {
+    const context = channelMutationContext(set);
+    const { data, error } = await api.conversations
+      .channel({ conversationId: channelId })
+      .members.post({ userIds }, auth(context.token));
+    if (error) throw new Error(apiErrorMessage(error));
+    return context.keep(data as WorkspaceChannel);
+  },
+
+  removeChannelMember: async (channelId, userId) => {
+    const context = channelMutationContext(set);
+    const { data, error } = await api.conversations
+      .channel({ conversationId: channelId })
+      .members({ userId })
+      .delete(undefined, auth(context.token));
+    if (error) throw new Error(apiErrorMessage(error));
+    const result = data as { channelDeleted: boolean; channel: WorkspaceChannel | null };
+    if (result.channel && userId !== useAuthStore.getState().user?.id) {
+      context.keep(result.channel);
+    } else {
+      context.drop(channelId);
+    }
+    return result.channelDeleted;
+  },
+
+  setChannelMemberRole: async (channelId, userId, role) => {
+    const context = channelMutationContext(set);
+    const { data, error } = await api.conversations
+      .channel({ conversationId: channelId })
+      .members({ userId })
+      .patch({ role }, auth(context.token));
+    if (error) throw new Error(apiErrorMessage(error));
+    return context.keep(data as WorkspaceChannel);
   },
 
   reset: () => {

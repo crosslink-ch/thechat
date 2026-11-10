@@ -33,11 +33,13 @@ const {
   openCreateChannelModalMock,
   openRenameChannelModalMock,
   openDeleteChannelModalMock,
+  openChannelDetailsModalMock,
 } = vi.hoisted(() => ({
   dmPostMock: vi.fn(),
   openCreateChannelModalMock: vi.fn(),
   openRenameChannelModalMock: vi.fn(),
   openDeleteChannelModalMock: vi.fn(),
+  openChannelDetailsModalMock: vi.fn(),
 }));
 
 vi.mock("#platform-shell", () => ({
@@ -68,6 +70,10 @@ vi.mock("../lib/api", () => ({
 
 vi.mock("../lib/notifications", () => ({
   fireNotification: vi.fn(),
+}));
+
+vi.mock("./ChannelDetailsModal", () => ({
+  openChannelDetailsModal: openChannelDetailsModalMock,
 }));
 
 vi.mock("./ChannelModal", () => ({
@@ -570,19 +576,20 @@ describe("Sidebar", () => {
     const trigger = screen.getByRole("button", { name: "Manage #general" });
     trigger.focus();
     await ui.keyboard("{Enter}");
-    const renameItem = await screen.findByRole("menuitem", {
-      name: "Rename channel",
+    const detailsItem = await screen.findByRole("menuitem", {
+      name: "Channel details",
     });
-    const deleteItem = screen.getByRole("menuitem", { name: "Delete channel" });
-    expect(renameItem).toHaveFocus();
+    const renameItem = screen.getByRole("menuitem", { name: "Rename channel" });
+    expect(detailsItem).toHaveFocus();
 
     await ui.keyboard("{ArrowDown}");
-    expect(deleteItem).toHaveFocus();
+    expect(renameItem).toHaveFocus();
     await ui.keyboard("{Escape}");
     expect(trigger).toHaveFocus();
   });
 
   it("allows members to create channels without exposing manager actions", async () => {
+    const ui = userEvent.setup();
     const memberWorkspace: WorkspaceWithDetails = {
       ...activeWorkspace,
       members: activeWorkspace.members.map((member) =>
@@ -598,7 +605,50 @@ describe("Sidebar", () => {
     await renderWithRouter(<Sidebar />);
 
     expect(screen.getByRole("button", { name: "Create channel" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Manage #general" })).not.toBeInTheDocument();
+    // Everyone can open a channel's details; managing it is for managers.
+    await ui.click(screen.getByRole("button", { name: "Manage #general" }));
+    expect(screen.getByRole("menuitem", { name: "Channel details" })).toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: "Rename channel" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: "Delete channel" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: "Leave channel" })).not.toBeInTheDocument();
+  });
+
+  it("lets the admin of a private channel manage it, and any member leave it, whatever their workspace role", async () => {
+    const ui = userEvent.setup();
+    const privateChannel = (id: string, role: "admin" | "member") => ({
+      ...activeWorkspace.channels[0],
+      id,
+      name: id,
+      title: id,
+      isPrivate: true,
+      members: [{ userId: user.id, role }],
+    });
+    useAuthStore.setState({ user, token: "test-token" });
+    useWorkspacesStore.setState({
+      workspaces: [{ ...workspaceList[0], role: "member" }],
+      activeWorkspace: {
+        ...activeWorkspace,
+        members: activeWorkspace.members.map((member) =>
+          member.userId === user.id ? { ...member, role: "member" } : member,
+        ),
+        channels: [privateChannel("mine", "admin"), privateChannel("theirs", "member")],
+      },
+    });
+
+    await renderWithRouter(<Sidebar />);
+
+    await ui.click(screen.getByRole("button", { name: "Manage #mine" }));
+    expect(screen.getByRole("menuitem", { name: "Rename channel" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Delete channel" })).toBeInTheDocument();
+    await ui.click(screen.getByRole("menuitem", { name: "Leave channel" }));
+    expect(openChannelDetailsModalMock).toHaveBeenCalledWith("mine", { confirm: "leave" });
+
+    await ui.click(screen.getByRole("button", { name: "Manage #theirs" }));
+    expect(screen.queryByRole("menuitem", { name: "Rename channel" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: "Delete channel" })).not.toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Leave channel" })).toBeInTheDocument();
+    await ui.click(screen.getByRole("menuitem", { name: "Channel details" }));
+    expect(openChannelDetailsModalMock).toHaveBeenCalledWith("theirs");
   });
 
   it("does not show agent chats in the sidebar UI", async () => {

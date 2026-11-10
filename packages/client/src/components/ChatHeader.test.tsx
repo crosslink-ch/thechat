@@ -14,6 +14,8 @@ import { ResponsiveShell } from "./ResponsiveShell";
 import { useSidebarState } from "./Sidebar";
 
 vi.mock("../platform/environment", () => ({ isWeb: true }));
+const { openChannelDetailsModalMock } = vi.hoisted(() => ({ openChannelDetailsModalMock: vi.fn() }));
+vi.mock("./ChannelDetailsModal", () => ({ openChannelDetailsModal: openChannelDetailsModalMock }));
 
 async function renderHeader(path: string, initialEntry = path) {
   const rootRoute = createRootRoute();
@@ -82,6 +84,31 @@ describe("ChatHeader contextual identity", () => {
     } as any }));
     expect(screen.getByText("renamed")).toBeInTheDocument();
     expect(screen.queryByText("general")).not.toBeInTheDocument();
+  });
+
+  it("marks a private channel with a lock and opens its details from the header", async () => {
+    useWorkspacesStore.setState({ activeWorkspace: {
+      name: "Acme",
+      members: [{ userId: "u1" }, { userId: "u2" }, { userId: "u3" }],
+      channels: [
+        { id: "general", name: "general", isPrivate: false },
+        { id: "leadership", name: "leadership", isPrivate: true, members: [{ userId: "u1", role: "admin" }, { userId: "u2", role: "member" }] },
+      ],
+    } as any });
+    await renderHeader("/channel/$id", "/channel/leadership");
+    // A private channel counts its own members, not the workspace.
+    const details = screen.getByRole("button", { name: "Channel details: private channel leadership, 2 members" });
+    fireEvent.click(details);
+    expect(openChannelDetailsModalMock).toHaveBeenCalledWith("leadership");
+  });
+
+  it("counts the whole workspace for a public channel", async () => {
+    useWorkspacesStore.setState({ activeWorkspace: {
+      name: "Acme", members: [{ userId: "u1" }, { userId: "u2" }, { userId: "u3" }],
+      channels: [{ id: "general", name: "general", isPrivate: false }],
+    } as any });
+    await renderHeader("/channel/$id", "/channel/general");
+    expect(screen.getByRole("button", { name: "Channel details: general, 3 members" })).toBeInTheDocument();
   });
 
   it.each([['bypass', 'Bypass'], ['allow-edits', 'Allow Edits']] as const)("keeps %s warnings with the retained agent title", async (mode, label) => {

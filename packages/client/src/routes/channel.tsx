@@ -13,6 +13,7 @@ import { useReplyThreadPanel } from "../hooks/useReplyThreadPanel";
 import { wsEvents, type WsEvents } from "../lib/ws-events";
 import { botAppearanceFor } from "../lib/bot-appearance";
 import { isAuthenticated } from "../lib/auth-identity";
+import { channelIncludes } from "../lib/channel-access";
 import { api } from "../lib/api";
 import { authHeaders } from "../lib/eden";
 import { useRecentLocationsStore } from "../stores/recent-locations";
@@ -118,10 +119,15 @@ export function ChannelRoute() {
     };
   }, [activeWorkspaceId, channelId, channelIsVisible, navigate, token]);
 
+  // In a private channel only its members can be reached by a mention.
+  const currentChannel = activeWorkspace?.channels.find(
+    (channel) => channel.id === channelId,
+  );
   const mentions = useMemo(
     () =>
       members
         ?.filter((m) => m.userId !== user?.id)
+        .filter((m) => channelIncludes(currentChannel, m.userId))
         .map((m) => ({
           id: m.userId,
           label: m.user.name,
@@ -131,7 +137,7 @@ export function ChannelRoute() {
               ? botAppearanceFor(m.userId, m.bot?.avatar)
               : undefined,
         })),
-    [members, user?.id]
+    [members, currentChannel, user?.id]
   );
 
   const channelChat = useChannelChat({
