@@ -47,6 +47,7 @@ vi.mock("../stores/workspaces", () => {
   };
   const store = (selector: (value: typeof state) => unknown) => selector(state);
   store.getState = () => ({ touchThread: mocks.touchThread });
+  store.subscribe = () => () => {};
   return { useWorkspacesStore: store };
 });
 
