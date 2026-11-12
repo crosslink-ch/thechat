@@ -164,10 +164,10 @@ describe("workspace selection races", () => {
     resolveSelection({ data: betaWorkspace, error: null });
     await expect(selecting).resolves.toBe(true);
     expect(useWorkspacesStore.getState().activeWorkspace).toEqual(betaWorkspace);
-    expect(workspaceListGetMock).not.toHaveBeenCalled();
-    // Once selection is finished, subsequent recovery can load normally.
-    await useWorkspacesStore.getState().initialize();
-    expect(workspaceListGetMock).toHaveBeenCalledOnce();
+    // The list still loads (cold start from a notification link), but the
+    // saved workspace is not restored over the explicit selection.
+    expect(useWorkspacesStore.getState().workspaces).toEqual(workspaceList);
+    expect(workspaceRouteMock).not.toHaveBeenCalledWith({ id: workspace.id });
   });
 
   it("reports a selection failure and clears it after an explicit successful retry", async () => {
@@ -232,6 +232,7 @@ describe("workspace selection races", () => {
     expect(useWorkspacesStore.getState().activeWorkspace?.id).toBe(
       betaWorkspace.id,
     );
+    expect(useWorkspacesStore.getState().workspaces).toEqual(workspaceList);
     expect(workspaceRouteMock).not.toHaveBeenCalledWith({
       id: workspace.id,
     });

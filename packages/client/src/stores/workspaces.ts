@@ -136,40 +136,47 @@ export const useWorkspacesStore = create<WorkspacesStore>()((set) => ({
   error: null,
 
   initialize: async () => {
-    // Background recovery must not supersede a user's in-flight selection.
-    if (pendingWorkspaceSelection !== null) return;
     const session = workspaceSession(set);
     const token = useAuthStore.getState().token;
     if (!authenticated(token)) return;
     const initializationRequest = ++workspaceInitializationGeneration;
-    const selectionGeneration = ++workspaceSelectionGeneration;
+    const selectionAtStart = workspaceSelectionGeneration;
 
+    // The list always loads. The active workspace belongs to an explicit
+    // selection (notification link, Activity, sidebar) that is pending or
+    // started meanwhile; only without one is the saved choice restored.
     const isCurrent = () =>
       session.current() &&
       initializationRequest === workspaceInitializationGeneration &&
-      selectionGeneration === workspaceSelectionGeneration &&
       useAuthStore.getState().token === token;
+    const mayRestore = () =>
+      isCurrent() &&
+      pendingWorkspaceSelection === null &&
+      selectionAtStart === workspaceSelectionGeneration;
 
     session.commit({ loading: true });
     try {
       const list = await fetchWorkspacesList(token);
       if (!isCurrent()) return;
+      const restoring = mayRestore();
       session.commit((state) => ({
         workspaces: list,
         loaded: true,
-        activeWorkspace: list.some((workspace) => workspace.id === state.activeWorkspace?.id)
-          ? state.activeWorkspace : null,
+        error: null,
+        activeWorkspace:
+          !restoring || list.some((workspace) => workspace.id === state.activeWorkspace?.id)
+            ? state.activeWorkspace : null,
       }));
+      if (!restoring) return;
 
       const savedId = await kvGet(KV_ACTIVE_WORKSPACE);
-      if (!isCurrent()) return;
+      if (!mayRestore()) return;
       if (savedId && list.some((workspace) => workspace.id === savedId)) {
         const { data, error } = await api.workspaces({ id: savedId }).get(auth(token));
-        if (!isCurrent()) return;
+        if (!mayRestore()) return;
         if (error) throw new Error(apiErrorMessage(error));
         session.commit({ activeWorkspace: data as WorkspaceWithDetails });
       }
-      session.commit({ error: null });
     } catch {
       if (isCurrent()) session.commit({ error: "Unable to load workspaces." });
     } finally {
