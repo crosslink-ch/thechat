@@ -19,6 +19,7 @@ import {
   workspaceMembers,
 } from "../db/schema";
 import { getNotificationPreferences } from "./preferences";
+import { messageMentionsUser } from "../services/message-threads";
 
 /** What a queued notification refers to. Content is rebuilt at send time. */
 export type PushSource =
@@ -61,17 +62,7 @@ export function kindAllowed(
   }
 }
 
-/**
- * Mentions are stored as plain "@Display Name" text. Same rule as the client's
- * "mentions you" highlight: not after a word character, "." or "@" (emails),
- * and not followed by a word character.
- */
-export function mentionsName(content: string, name: string) {
-  const trimmed = name.trim();
-  if (!trimmed || !content.includes("@")) return false;
-  const escaped = trimmed.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return new RegExp(`(^|[^\\w.@])@${escaped}(?!\\w)`, "i").test(content);
-}
+export { mentionsName } from "../services/message-threads";
 
 export function previewText(content: string, maxChars = PREVIEW_MAX_CHARS) {
   const normalized = content.trim().replace(/\s+/g, " ");
@@ -169,6 +160,8 @@ async function loadMessageContext(messageId: string) {
     .select({
       id: messages.id,
       content: messages.content,
+      contentFormat: messages.contentFormat,
+      parts: messages.parts,
       interim: messages.interim,
       conversationId: messages.conversationId,
       threadId: messages.threadId,
@@ -287,8 +280,14 @@ async function invocationRequesterId(
   return row?.senderId ?? null;
 }
 
+/** The part of a message that decides who it mentions. */
+type MentionSource = Pick<MessageContext, "content"> & {
+  contentFormat?: string | null;
+  parts?: unknown;
+};
+
 export function classifyMessage(
-  context: Pick<MessageContext, "conversationType" | "senderType" | "content"> & {
+  context: Pick<MessageContext, "conversationType" | "senderType"> & MentionSource & {
     interim?: boolean;
     /** Set for a reply in a reply thread. */
     parentMessageId?: string | null;
@@ -302,7 +301,7 @@ export function classifyMessage(
 }
 
 function baseMessageKind(
-  context: Pick<MessageContext, "conversationType" | "senderType" | "content"> & {
+  context: Pick<MessageContext, "conversationType" | "senderType"> & MentionSource & {
     parentMessageId?: string | null;
   },
   recipient: { userId: string; name: string; followsThread?: boolean },
@@ -315,7 +314,7 @@ function baseMessageKind(
   if (context.senderType === "bot" && requesterId === recipient.userId) {
     return "agent_reply";
   }
-  if (mentionsName(context.content, recipient.name)) return "mention";
+  if (messageMentionsUser(context, recipient)) return "mention";
   // A reply in a thread you follow (you started it, replied or were mentioned).
   return context.parentMessageId && recipient.followsThread ? "thread_reply" : null;
 }

@@ -1,0 +1,1 @@
+ALTER TABLE "messages" ADD COLUMN "content_format" varchar(20) DEFAULT 'legacy-text' NOT NULL;

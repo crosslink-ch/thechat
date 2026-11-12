@@ -1,4 +1,5 @@
 import { and, eq } from "drizzle-orm";
+import type { MessageContentFormat } from "@thechat/shared";
 import { db } from "../db";
 import {
   bots,
@@ -10,6 +11,13 @@ import {
 interface MessageBotTargetInput {
   conversationId: string;
   content: string;
+  /**
+   * "parts-v1": only the referenced user IDs count. A typed or pasted "@Koda"
+   * that was not picked from the menu is plain text. Otherwise the legacy
+   * name match on `content` applies.
+   */
+  contentFormat?: MessageContentFormat;
+  referencedUserIds?: readonly string[];
   senderId: string;
   senderType: "bot" | "human";
 }
@@ -54,15 +62,16 @@ export async function resolveMessageBotTargetIds(
       ),
     );
 
+  const referenced =
+    input.contentFormat === "parts-v1" ? new Set(input.referencedUserIds ?? []) : null;
   return participantBots
     .filter((bot) => {
       if (bot.botUserId === input.senderId) return false;
       if (bot.kind === "webhook" && !bot.webhookUrl) return false;
 
-      const escaped = bot.botName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      const isMentioned = new RegExp(`@${escaped}\\b`, "i").test(
-        input.content,
-      );
+      const isMentioned = referenced
+        ? referenced.has(bot.botUserId)
+        : legacyMentionsBot(input.content, bot.botName);
       const isDirectHermesDm =
         input.senderType !== "bot" &&
         conversation.type === "direct" &&
@@ -71,4 +80,10 @@ export async function resolveMessageBotTargetIds(
     })
     .map((bot) => bot.botId)
     .sort();
+}
+
+/** Legacy text routing for content-only requests (API, MCP, older clients). */
+function legacyMentionsBot(content: string, botName: string) {
+  const escaped = botName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`@${escaped}\\b`, "i").test(content);
 }

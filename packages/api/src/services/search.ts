@@ -537,6 +537,7 @@ const contextColumns = {
   lastReplyAt: messages.lastReplyAt,
   senderId: messages.senderId,
   content: messages.content,
+  contentFormat: messages.contentFormat,
   parts: messages.parts,
   interim: messages.interim,
   createdAt: messages.createdAt,
