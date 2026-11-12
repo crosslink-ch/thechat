@@ -272,6 +272,19 @@ describe("message search", () => {
 });
 
 describe("quick switcher directory", () => {
+  test("includes current human pictures without leaking another workspace's members", async () => {
+    const avatar = "data:image/png;base64,cGljdHVyZQ==";
+    await db.update(users).set({ avatar }).where(eq(users.id, bob.id));
+    try {
+      const directory = (await ok("GET", "/search/directory", undefined, alice.token)).destinations;
+      expect(directory).toContainEqual(expect.objectContaining({ userId: bob.id, avatar }));
+      const unrelated = (await ok("GET", "/search/directory", undefined, carol.token)).destinations;
+      expect(unrelated.some((entry: any) => entry.userId === bob.id)).toBe(false);
+    } finally {
+      await db.update(users).set({ avatar: null }).where(eq(users.id, bob.id));
+    }
+  });
+
   test("lists channels, people with their DM, and recent Hermes tasks in all workspaces", async () => {
     const [task] = await db
       .insert(conversationThreads)

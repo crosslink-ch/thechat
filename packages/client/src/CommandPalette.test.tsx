@@ -49,11 +49,11 @@ const W2 = { workspaceId: "w2", workspaceName: "TouchPoint" };
 
 const koda: SearchDestination = {
   kind: "person", userId: "u-koda", name: "Koda", userType: "bot", botKind: "hermes",
-  botAvatar: null, conversationId: "dm-koda", ...W1,
+  avatar: null, botAvatar: null, conversationId: "dm-koda", ...W1,
 };
 const simon: SearchDestination = {
   kind: "person", userId: "u-simon", name: "Simon", userType: "human", botKind: null,
-  botAvatar: null, conversationId: null, ...W1,
+  avatar: null, botAvatar: null, conversationId: null, ...W1,
 };
 const general: SearchDestination = { kind: "channel", conversationId: "ch-general", name: "general", ...W1 };
 const releases: SearchDestination = { kind: "channel", conversationId: "ch-releases", name: "releases", ...W2 };
@@ -176,6 +176,14 @@ describe("command mode (Ctrl+Shift+P)", () => {
 });
 
 describe("quick switcher (Ctrl+K)", () => {
+  it("shows a person's picture in the directory", async () => {
+    const avatar = "data:image/png;base64,cGljdHVyZQ==";
+    useSearchDirectoryStore.setState({ destinations: [{ ...simon, avatar } as SearchDestination] });
+    await open();
+    type("Simon");
+    expect(activeRow()?.querySelector("img")).toHaveAttribute("src", avatar);
+  });
+
   it("finds a loosely typed name across workspaces and opens it with Enter", async () => {
     await open();
     type("kda");

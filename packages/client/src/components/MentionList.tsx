@@ -6,12 +6,15 @@ import {
 } from "react";
 import type { BotAppearance } from "@thechat/shared";
 import { Avatar } from "./Avatar";
+import { useProfilePicture } from "../hooks/useProfilePicture";
 import { menuContentClass } from "./ui";
 
 export interface MentionUser {
   id: string;
   label: string;
   type: "human" | "bot";
+  /** A person's profile picture. */
+  picture?: string | null;
   botAvatar?: BotAppearance;
 }
 
@@ -62,14 +65,7 @@ export const MentionList = forwardRef<
           onClick={() => command(item)}
           onMouseEnter={() => setSelectedIndex(index)}
         >
-          <Avatar
-            name={item.label}
-            colorKey={item.id}
-            bot={item.type === "bot"}
-            botAvatar={item.botAvatar}
-            size={24}
-            className="size-6 text-[0.786rem]"
-          />
+          <MentionAvatar item={item} />
           <span className="min-w-0 flex-1 truncate">{item.label}</span>
           {item.type === "bot" && (
             <span className="rounded-md bg-accent/15 px-1.5 py-0.5 text-[0.714rem] font-medium tracking-wide text-accent">
@@ -81,5 +77,12 @@ export const MentionList = forwardRef<
     </div>
   );
 });
+
+function MentionAvatar({ item }: { item: MentionUser }) {
+  const picture = useProfilePicture(item.id, item.picture);
+  return <Avatar name={item.label} colorKey={item.id} picture={picture}
+    bot={item.type === "bot"} botAvatar={item.botAvatar} size={24}
+    className="size-6 text-[0.786rem]" />;
+}
 
 MentionList.displayName = "MentionList";

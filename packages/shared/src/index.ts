@@ -352,6 +352,7 @@ export type SearchDestination =
       kind: "person";
       userId: string;
       name: string;
+      avatar: string | null;
       userType: "human" | "bot";
       botKind: BotKind | null;
       botAvatar: BotAppearance | null;
@@ -1047,6 +1048,8 @@ export type WsServerEvent =
       workspaceId: string;
       userId: string;
       name: string;
+      /** A person's profile picture; absent when the event does not change it. */
+      avatar?: string | null;
       botAvatar?: BotAppearance;
     }
   | { type: "member_removed"; workspaceId: string; userId: string }
