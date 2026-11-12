@@ -6,7 +6,13 @@ import rehypeKatex from "rehype-katex";
 import type { Components } from "react-markdown";
 import { memo, useEffect, useMemo, useRef, useState, type ComponentProps } from "react";
 import { remarkBareDomains } from "../lib/remark-bare-domains";
-import { remarkMentions, type MentionNames } from "../lib/remark-mentions";
+import {
+  partsMarkdown,
+  remarkMentions,
+  remarkReferenceMentions,
+  type MentionNames,
+} from "../lib/remark-mentions";
+import type { ChatMessage } from "@thechat/shared";
 
 type ReactMarkdownProps = ComponentProps<typeof ReactMarkdown>;
 
@@ -61,6 +67,11 @@ interface MarkdownProps {
   onDeferredRender?: () => void;
   /** Workspace names to show as @mention pills (keep the object stable). */
   mentions?: MentionNames;
+  /**
+   * The message being rendered. A "parts-v1" message renders from its parts:
+   * its references are the pills, and a typed "@Name" stays text.
+   */
+  message?: Pick<ChatMessage, "contentFormat" | "parts">;
 }
 
 export const Markdown = memo(function Markdown({
@@ -69,6 +80,7 @@ export const Markdown = memo(function Markdown({
   deferDelayMs = 0,
   onDeferredRender,
   mentions,
+  message,
 }: MarkdownProps) {
   const [readyContent, setReadyContent] = useState<string | null>(() =>
     defer ? null : content,
@@ -101,20 +113,37 @@ export const Markdown = memo(function Markdown({
     return <MarkdownPreview content={content} />;
   }
 
-  return <MarkdownContent content={content} mentions={mentions} />;
+  return <MarkdownContent content={content} mentions={mentions} message={message} />;
 }, areMarkdownPropsEqual);
+
+const NO_MENTIONS: MentionNames = { names: [], self: null };
 
 const MarkdownContent = memo(function MarkdownContent({
   content,
   mentions,
+  message,
 }: {
   content: string;
   mentions?: MentionNames;
+  message?: Pick<ChatMessage, "contentFormat" | "parts">;
 }) {
-  const plugins = useMemo(
-    () => (mentions ? [...remarkPlugins, [remarkMentions, mentions] as const] : remarkPlugins),
-    [mentions],
+  const structured = useMemo(
+    () => (message ? partsMarkdown(message) : null),
+    [message?.contentFormat, message?.parts],
   );
+  const plugins = useMemo(() => {
+    if (structured) {
+      // Pills come from the reference parts, never from matching names.
+      return [
+        ...remarkPlugins,
+        [
+          remarkReferenceMentions,
+          { references: structured.references, names: mentions ?? NO_MENTIONS },
+        ] as const,
+      ];
+    }
+    return mentions ? [...remarkPlugins, [remarkMentions, mentions] as const] : remarkPlugins;
+  }, [mentions, structured]);
   return (
     <div className="md-content">
       <ReactMarkdown
@@ -122,7 +151,7 @@ const MarkdownContent = memo(function MarkdownContent({
         rehypePlugins={rehypePlugins}
         components={components}
       >
-        {content}
+        {structured ? structured.source : content}
       </ReactMarkdown>
     </div>
   );
@@ -141,7 +170,9 @@ function areMarkdownPropsEqual(previous: MarkdownProps, next: MarkdownProps) {
     previous.content === next.content &&
     (previous.defer ?? false) === (next.defer ?? false) &&
     (previous.deferDelayMs ?? 0) === (next.deferDelayMs ?? 0) &&
-    previous.mentions === next.mentions
+    previous.mentions === next.mentions &&
+    previous.message?.contentFormat === next.message?.contentFormat &&
+    previous.message?.parts === next.message?.parts
   );
 }
 

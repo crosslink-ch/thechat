@@ -3,6 +3,10 @@ import { createRef } from "react";
 import { act, fireEvent, render, waitFor } from "@testing-library/react";
 import { Markdown } from "./Markdown";
 import { RichInput, type RichInputHandle } from "./RichInput";
+import type { ComposerDocument } from "../lib/composer-parts";
+
+/** The existing tests assert what was sent as text; parts have their own tests. */
+const asText = <T,>(fn: (text: string) => T) => (message: ComposerDocument) => fn(message.text);
 
 function renderRichInput(initialText?: string) {
   const ref = createRef<RichInputHandle>();
@@ -11,9 +15,9 @@ function renderRichInput(initialText?: string) {
   const utils = render(
     <RichInput
       ref={ref}
-      onSubmit={onSubmit}
+      onSubmit={asText(onSubmit)}
       onTextChange={onTextChange}
-      initialText={initialText}
+      initialValue={initialText}
     />,
   );
   const editor = utils.container.querySelector<HTMLElement>(".ProseMirror");
@@ -136,7 +140,7 @@ describe("RichInput", () => {
     const onSubmit = vi.fn();
     const onCanSubmitChange = vi.fn();
     const onEmptySubmitAttempt = vi.fn(() => false);
-    const { getByRole } = render(<RichInput ref={ref} onSubmit={onSubmit} onCanSubmitChange={onCanSubmitChange} onEmptySubmitAttempt={onEmptySubmitAttempt} />);
+    const { getByRole } = render(<RichInput ref={ref} onSubmit={asText(onSubmit)} onCanSubmitChange={onCanSubmitChange} onEmptySubmitAttempt={onEmptySubmitAttempt} />);
     pasteHtml(getByRole("textbox"), `<a href="${LINK_URL}">&nbsp;&nbsp;</a>`, "  ");
     expect(onCanSubmitChange).toHaveBeenLastCalledWith(false);
     act(() => ref.current!.submit());
@@ -164,7 +168,7 @@ describe("RichInput", () => {
   it("retains mention and hard-break schema serialization beside a named link", () => {
     const onSubmit = vi.fn();
     const ref = createRef<RichInputHandle>();
-    const { getByRole } = render(<RichInput ref={ref} onSubmit={onSubmit} mentions={[]} />);
+    const { getByRole } = render(<RichInput ref={ref} onSubmit={asText(onSubmit)} mentions={[]} />);
     pasteHtml(getByRole("textbox"), `<p><span data-type="mention" data-id="ada" data-label="Ada">@Ada</span> see<br><a href="${LINK_URL}">${LINK_LABEL}</a></p>`, "");
     act(() => ref.current!.submit());
     expect(onSubmit).toHaveBeenCalledWith(`@Ada see\n[${LINK_LABEL}](${LINK_URL})`);
@@ -174,7 +178,7 @@ describe("RichInput", () => {
     let settle!: (accepted: boolean) => void;
     const onSubmit = vi.fn(() => new Promise<boolean>((resolve) => { settle = resolve; }));
     const ref = createRef<RichInputHandle>();
-    const { getByRole } = render(<RichInput ref={ref} onSubmit={onSubmit} />);
+    const { getByRole } = render(<RichInput ref={ref} onSubmit={asText(onSubmit)} />);
     const editor = getByRole("textbox");
     pasteHtml(editor, `<a href="${LINK_URL}">${LINK_LABEL}</a>`, LINK_LABEL);
     act(() => ref.current!.submit());
@@ -275,7 +279,7 @@ describe("RichInput", () => {
       )
       .mockResolvedValueOnce(true);
     const ref = createRef<RichInputHandle>();
-    const { container } = render(<RichInput ref={ref} onSubmit={onSubmit} />);
+    const { container } = render(<RichInput ref={ref} onSubmit={asText(onSubmit)} />);
     const editor = container.querySelector<HTMLElement>(".ProseMirror");
     if (!editor) throw new Error("ProseMirror editor not found");
 
@@ -302,7 +306,7 @@ describe("RichInput", () => {
         }),
     );
     const ref = createRef<RichInputHandle>();
-    const { container } = render(<RichInput ref={ref} onSubmit={onSubmit} />);
+    const { container } = render(<RichInput ref={ref} onSubmit={asText(onSubmit)} />);
     const editor = container.querySelector<HTMLElement>(".ProseMirror");
     if (!editor) throw new Error("ProseMirror editor not found");
 
@@ -312,5 +316,102 @@ describe("RichInput", () => {
     await act(async () => accept(true));
 
     expect(editor.textContent).toBe("newer local edit");
+  });
+});
+
+describe("RichInput mentions (parts-v1)", () => {
+  const SAM_A = { id: "aaaaaaaa-0000-4000-8000-000000000001", label: "Sam", type: "human" as const };
+  const SAM_B = { id: "bbbbbbbb-0000-4000-8000-000000000002", label: "Sam", type: "bot" as const, detail: "Hermes" };
+  const ADA = { id: "cccccccc-0000-4000-8000-000000000003", label: "Ada Lovelace", type: "human" as const };
+
+  function renderWithMentions(mentions = [SAM_A, SAM_B, ADA]) {
+    const ref = createRef<RichInputHandle>();
+    const onSubmit = vi.fn((_message: ComposerDocument) => true);
+    const onChange = vi.fn();
+    const utils = render(
+      <RichInput ref={ref} onSubmit={onSubmit} onChange={onChange} mentions={mentions} />,
+    );
+    const editor = utils.container.querySelector<HTMLElement>(".ProseMirror")!;
+    return { ...utils, ref, onSubmit, onChange, editor };
+  }
+
+  it("sends the ID of the menu pick, and only that one of two equal names", async () => {
+    const { ref, onSubmit } = renderWithMentions();
+    // Insert a picked mention the way the suggestion command does.
+    act(() => ref.current!.setValue({
+      text: "",
+      labels: { [SAM_B.id]: "Sam" },
+      parts: [
+        { type: "text", text: "Hi " },
+        { type: "reference", refType: "user", refId: SAM_B.id },
+        { type: "text", text: " please check" },
+      ],
+    }));
+    act(() => ref.current!.submit());
+
+    const sent = onSubmit.mock.calls[0]![0];
+    expect(sent.parts).toEqual([
+      { type: "text", text: "Hi " },
+      { type: "reference", refType: "user", refId: SAM_B.id },
+      { type: "text", text: " please check" },
+    ]);
+    expect(sent.text).toBe("Hi @Sam please check");
+  });
+
+  it("keeps a hand-typed @Name as plain text", () => {
+    const { ref, onSubmit } = renderWithMentions();
+    act(() => ref.current!.setText("Hi @Sam, typed by hand"));
+    act(() => ref.current!.submit());
+    expect(onSubmit.mock.calls[0]![0].parts).toEqual([{ type: "text", text: "Hi @Sam, typed by hand" }]);
+  });
+
+  it("restores a draft with its mention as an atomic node, showing the current name", () => {
+    const { ref, editor, onChange } = renderWithMentions([{ ...ADA, label: "Ada King" }]);
+    act(() => ref.current!.setValue({
+      text: "@Ada Lovelace hi",
+      labels: { [ADA.id]: "Ada Lovelace" },
+      parts: [
+        { type: "reference", refType: "user", refId: ADA.id },
+        { type: "text", text: " hi" },
+      ],
+    }));
+    const chip = editor.querySelector('[data-type="mention"]');
+    expect(chip?.getAttribute("data-id")).toBe(ADA.id);
+    expect(chip?.textContent).toBe("@Ada King");
+    expect(onChange).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        parts: [
+          { type: "reference", refType: "user", refId: ADA.id },
+          { type: "text", text: " hi" },
+        ],
+      }),
+    );
+  });
+
+  it("opens the @ menu with People and Agents sections, tells equal names apart, and picks by ID", async () => {
+    const { ref, editor, onSubmit } = renderWithMentions();
+    // The suggestion plugin reacts to document changes, as when typing.
+    act(() => ref.current!.setText("Hi @sa"));
+    const menu = await waitFor(() => {
+      const element = document.querySelector<HTMLElement>('[data-testid="mention-menu"]');
+      if (!element) throw new Error("menu not open");
+      return element;
+    });
+    const groups = [...menu.querySelectorAll('[role="group"]')].map((group) => group.getAttribute("aria-label"));
+    expect(groups).toEqual(["People", "Agents"]);
+    const hints = [...menu.querySelectorAll("[data-mention-hint]")].map((hint) => hint.textContent);
+    expect(hints).toEqual(["#aaaa", "Hermes · #bbbb"]);
+
+    // Pick the agent "Sam" (second option) with the keyboard.
+    fireEvent.keyDown(editor, { key: "ArrowDown" });
+    fireEvent.keyDown(editor, { key: "Enter" });
+    await waitFor(() => expect(editor.querySelector('[data-type="mention"]')).not.toBeNull());
+    expect(editor.querySelector('[data-type="mention"]')?.getAttribute("data-id")).toBe(SAM_B.id);
+
+    act(() => ref.current!.submit());
+    expect(onSubmit.mock.calls[0]![0].parts).toEqual([
+      { type: "text", text: "Hi " },
+      { type: "reference", refType: "user", refId: SAM_B.id },
+    ]);
   });
 });

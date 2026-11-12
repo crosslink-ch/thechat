@@ -2,15 +2,29 @@ import { onSessionReset } from "../lib/session-boundary";
 import { create } from "zustand";
 import type { ImageAttachment } from "../lib/image-types";
 import type { SharedAttachmentDraft } from "../lib/shared-attachments";
+import {
+  composerFromText,
+  messageInputSignature,
+  type ComposerDocument,
+  type MessageInput,
+} from "../lib/composer-parts";
+
+/**
+ * A draft is a composer document: its readable text plus the ordered parts,
+ * so mentions picked from the @ menu keep their user IDs when a draft is
+ * restored, moved or put back after a failed send.
+ */
+export type ComposerDraft = ComposerDocument;
 
 interface ComposerDraftsStore {
-  drafts: Record<string, string>;
+  drafts: Record<string, ComposerDraft>;
   revisions: Record<string, number>;
   imageDrafts: Record<string, ImageAttachment[]>;
   attachmentDrafts: Record<string, SharedAttachmentDraft[]>;
   sendingAttachments: Record<string, boolean>;
-  setDraft: (key: string, text: string) => void;
-  restoreDraft: (key: string, expectedRevision: number, text: string) => boolean;
+  /** Text (no mentions) or a composer document. */
+  setDraft: (key: string, value: MessageInput) => void;
+  restoreDraft: (key: string, expectedRevision: number, value: MessageInput) => boolean;
   setImageDrafts: (key: string, drafts: ImageAttachment[]) => void;
   setAttachmentDrafts: (key: string, drafts: SharedAttachmentDraft[]) => void;
   setSendingAttachments: (key: string, sending: boolean) => void;
@@ -38,14 +52,29 @@ export const composerDraftKey = {
     `${accountScope(userId)}:reply:${conversationId}:${rootMessageId}`,
 };
 
+function asDraft(value: MessageInput): ComposerDraft {
+  return typeof value === "string" ? composerFromText(value) : value;
+}
+
+/** The text of a stored draft ("" when there is none). */
+export function draftText(draft: ComposerDraft | undefined) {
+  return draft?.text ?? "";
+}
+
+/** Same text and the same mention IDs. */
+export function sameDraft(left: ComposerDraft | undefined, right: ComposerDraft | undefined) {
+  return messageInputSignature(left ?? composerFromText("")) ===
+    messageInputSignature(right ?? composerFromText(""));
+}
+
 function updatedDraftState(
   state: Pick<ComposerDraftsStore, "drafts" | "revisions">,
   key: string,
-  text: string,
+  draft: ComposerDraft,
 ) {
   const drafts = { ...state.drafts };
-  if (text.length === 0) delete drafts[key];
-  else drafts[key] = text;
+  if (draft.parts.length === 0) delete drafts[key];
+  else drafts[key] = draft;
   return {
     drafts,
     revisions: {
@@ -74,20 +103,22 @@ export const useComposerDraftsStore = create<ComposerDraftsStore>()((set) => ({
   attachmentDrafts: {},
   sendingAttachments: {},
 
-  setDraft: (key, text) => {
+  setDraft: (key, value) => {
+    const draft = asDraft(value);
     set((state) => {
-      if ((state.drafts[key] ?? "") === text) return state;
-      return updatedDraftState(state, key, text);
+      if (sameDraft(state.drafts[key], draft)) return state;
+      return updatedDraftState(state, key, draft);
     });
   },
 
-  restoreDraft: (key, expectedRevision, text) => {
+  restoreDraft: (key, expectedRevision, value) => {
+    const draft = asDraft(value);
     let restored = false;
     set((state) => {
       if ((state.revisions[key] ?? 0) !== expectedRevision) return state;
       restored = true;
-      if ((state.drafts[key] ?? "") === text) return state;
-      return updatedDraftState(state, key, text);
+      if (sameDraft(state.drafts[key], draft)) return state;
+      return updatedDraftState(state, key, draft);
     });
     return restored;
   },

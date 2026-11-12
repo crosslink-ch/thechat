@@ -170,7 +170,7 @@ export function MessageContextView({ context }: { context: MessageContext }) {
             className={target ? "border-l-[3px] border-accent bg-accent/[0.12]" : "border-l-[3px] border-transparent"}
           >
             <SharedChatMessage message={message} merged={merged && !target}>
-              {message.content && <Markdown content={message.content} />}
+              {message.content && <Markdown content={message.content} message={message} />}
             </SharedChatMessage>
           </div>
         ))}

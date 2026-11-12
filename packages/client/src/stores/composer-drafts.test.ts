@@ -3,6 +3,7 @@ import {
   composerDraftKey,
   useComposerDraftsStore,
 } from "./composer-drafts";
+import { composerFromText } from "../lib/composer-parts";
 
 afterEach(() => {
   useComposerDraftsStore.setState({
@@ -36,7 +37,7 @@ describe("composer draft state", () => {
     store.setDraft("thread:one", "");
 
     expect(useComposerDraftsStore.getState().drafts).toEqual({
-      "thread:two": "second draft",
+      "thread:two": composerFromText("second draft"),
     });
   });
 
@@ -92,7 +93,7 @@ describe("composer draft state", () => {
         "submitted text",
       ),
     ).toBe(true);
-    expect(useComposerDraftsStore.getState().drafts["thread:one"]).toBe(
+    expect(useComposerDraftsStore.getState().drafts["thread:one"]?.text).toBe(
       "submitted text",
     );
 
@@ -104,7 +105,7 @@ describe("composer draft state", () => {
         "submitted text",
       ),
     ).toBe(false);
-    expect(useComposerDraftsStore.getState().drafts["thread:one"]).toBe(
+    expect(useComposerDraftsStore.getState().drafts["thread:one"]?.text).toBe(
       "newer text",
     );
   });
@@ -124,7 +125,7 @@ describe("composer draft state", () => {
     store.moveDraft(provisionalKey, durableKey);
 
     expect(useComposerDraftsStore.getState().drafts).toEqual({
-      [durableKey]: "next message typed during creation",
+      [durableKey]: composerFromText("next message typed during creation"),
     });
     expect(useComposerDraftsStore.getState().imageDrafts).toEqual({
       [durableKey]: [image],
