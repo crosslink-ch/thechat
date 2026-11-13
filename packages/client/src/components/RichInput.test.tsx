@@ -36,14 +36,22 @@ function pasteHtml(editor: HTMLElement, html: string, text: string) {
 }
 
 describe("RichInput", () => {
-  it("shows pasted Markdown and literal URLs without hidden formatting", () => {
+  it("shows pasted Markdown text literally and sends it as literal text, links still links", () => {
     const { editor, ref, onSubmit } = renderRichInput();
     const source = "**bold** _under_ [already](https://example.com/a) `code` <b>literal</b>";
     pasteHtml(editor, "", source);
     expect(editor.textContent).toBe(source);
     expect(editor.querySelector("a, strong, em, u, code")).toBeNull();
     act(() => ref.current!.submit());
-    expect(onSubmit).toHaveBeenCalledWith(source);
+    // Pasted plain text is literal: its Markdown characters are escaped,
+    // link source and HTML tags are kept byte for byte.
+    expect(onSubmit).toHaveBeenCalledWith(
+      "\\*\\*bold\\*\\* \\_under\\_ [already](https://example.com/a) \\`code\\` <b>literal</b>",
+    );
+    const message = render(<Markdown content={onSubmit.mock.calls[0][0]} />);
+    expect(message.container.textContent).toBe("**bold** _under_ already `code` <b>literal</b>");
+    expect(message.container.querySelector("strong, em, code")).toBeNull();
+    expect(message.container.querySelector("a")?.getAttribute("href")).toBe("https://example.com/a");
   });
   it("does not turn a separately pasted named link after existing ! into an image", () => {
     const { editor, ref, onSubmit } = renderRichInput("Look!");
