@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import type { Editor as TiptapEditor } from "@tiptap/react";
 import { InputBar } from "./InputBar";
 import { useComposerDraftsStore } from "../stores/composer-drafts";
 import type { ComposerDocument } from "../lib/composer-parts";
@@ -102,6 +103,54 @@ describe("InputBar mention drafts (real editor)", () => {
     rerender(<InputBar {...props} draftKey={secondKey} />);
     expect(editorElement().querySelector('[data-type="mention"]')).toBeNull();
     rerender(<InputBar {...props} draftKey={firstKey} />);
+    expect(editorElement().querySelector('[data-type="mention"]')?.getAttribute("data-id")).toBe(ADA.id);
+  });
+
+  it("keeps a draft with a mention when the members have not loaded yet", () => {
+    const draftKey = "account:me:channel:loading";
+    useComposerDraftsStore.getState().setDraft(draftKey, {
+      text: "Hi @Koda",
+      labels: { [KODA.id]: "Koda" },
+      parts: [
+        { type: "text", text: "Hi " },
+        { type: "reference", refType: "user", refId: KODA.id },
+      ],
+    });
+    // No mentions prop: the editor has no mention node yet.
+    render(<InputBar convId={undefined} draftKey={draftKey} onSend={vi.fn()} onStop={vi.fn()} />);
+    expect(editorElement().textContent).toBe("Hi @Koda");
+    expect(useComposerDraftsStore.getState().drafts[draftKey]?.text).toBe("Hi @Koda");
+  });
+
+  it("keeps an empty line typed after a mention across a scope switch", async () => {
+    const firstKey = "account:me:channel:general";
+    const secondKey = "account:me:channel:random";
+    useComposerDraftsStore.getState().setDraft(firstKey, {
+      text: "@Ada look",
+      labels: { [ADA.id]: "Ada" },
+      parts: [
+        { type: "reference", refType: "user", refId: ADA.id },
+        { type: "text", text: " look" },
+      ],
+    });
+    const props = { convId: undefined, onSend: vi.fn(), onStop: vi.fn(), mentions: [KODA, ADA] };
+    const { rerender } = render(<InputBar {...props} draftKey={firstKey} />);
+    // Shift+Enter at the end starts a new, still empty line.
+    const editor = editorElement();
+    // Tiptap keeps its editor on the editable element.
+    const tiptap = (editor as HTMLElement & { editor: TiptapEditor }).editor;
+    act(() => {
+      tiptap.commands.focus("end");
+    });
+    fireEvent.keyDown(editor, { key: "Enter", shiftKey: true });
+    await waitFor(() => expect(editor.querySelectorAll("p")).toHaveLength(2));
+    await waitFor(() =>
+      expect(useComposerDraftsStore.getState().drafts[firstKey]?.text).toBe("@Ada look\n"),
+    );
+
+    rerender(<InputBar {...props} draftKey={secondKey} />);
+    rerender(<InputBar {...props} draftKey={firstKey} />);
+    expect(editorElement().querySelectorAll("p")).toHaveLength(2);
     expect(editorElement().querySelector('[data-type="mention"]')?.getAttribute("data-id")).toBe(ADA.id);
   });
 });

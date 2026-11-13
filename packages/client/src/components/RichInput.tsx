@@ -12,7 +12,7 @@ import type { MentionUser } from "./MentionList";
 import {
   composerFromText,
   composerToDocument,
-  messageInputSignature,
+  sameComposerDocument,
   serializeComposer,
   serializeTextNode,
   type ComposerDocument,
@@ -57,8 +57,6 @@ function trimmedComposer(document: ComposerDocument): ComposerDocument {
   };
 }
 
-const sameComposer = (left: ComposerDocument, right: ComposerDocument) =>
-  messageInputSignature(left) === messageInputSignature(right);
 
 /** Convert clipboard link marks before insertion, so display and send agree.
  * Preserve paragraphs, hard breaks and mention atoms; discard hidden text marks.
@@ -198,7 +196,7 @@ export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function Ri
               void submitIfNotEmpty(submitted, () => {
                 // Do not erase edits made while an asynchronous submit was
                 // waiting for persistence acknowledgement.
-                if (sameComposer(composerOf(editor.state.doc), submitted)) {
+                if (sameComposerDocument(composerOf(editor.state.doc), submitted)) {
                   editor.commands.clearContent();
                   return true;
                 }
@@ -263,7 +261,7 @@ export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function Ri
     extensions,
     // Link's paste rule would otherwise mark URLs inside generated Markdown.
     enablePasteRules: false,
-    content: composerToDocument(initialValue, labelOf),
+    content: composerToDocument(initialValue, labelOf, { mentions: Boolean(mentionsRef.current) }),
     editorProps: {
       attributes: {
         role: "textbox",
@@ -293,7 +291,7 @@ export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function Ri
         if (!editor) return;
         const submitted = composerOf(editor.state.doc);
         void submitIfNotEmpty(submitted, () => {
-          if (sameComposer(composerOf(editor.state.doc), submitted)) {
+          if (sameComposerDocument(composerOf(editor.state.doc), submitted)) {
             editor.commands.clearContent();
             return true;
           }
@@ -311,7 +309,9 @@ export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function Ri
       },
       setValue: (value: MessageInput) => {
         if (!editor) return;
-        editor.commands.setContent(composerToDocument(value, labelOf));
+        editor.commands.setContent(
+          composerToDocument(value, labelOf, { mentions: Boolean(editor.schema.nodes.mention) }),
+        );
         notifyChange(composerOf(editor.state.doc));
         editor.commands.focus("end");
       },

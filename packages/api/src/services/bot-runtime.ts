@@ -1176,8 +1176,12 @@ function structuredMessageFields(message: {
   contentFormat: string;
   parts: unknown;
 }) {
-  if (message.contentFormat !== "parts-v1" || !isStoredChatParts(message.parts)) return {};
-  return { contentFormat: "parts-v1" as const, parts: message.parts };
+  if (message.contentFormat !== "parts-v1") return {};
+  // An attachment-only parts-v1 message stores no parts: it is still parts-v1.
+  return {
+    contentFormat: "parts-v1" as const,
+    parts: isStoredChatParts(message.parts) ? message.parts : [],
+  };
 }
 
 /**

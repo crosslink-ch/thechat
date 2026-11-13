@@ -402,10 +402,19 @@ describe("RichInput mentions (parts-v1)", () => {
     const hints = [...menu.querySelectorAll("[data-mention-hint]")].map((hint) => hint.textContent);
     expect(hints).toEqual(["#aaaa", "Hermes · #bbbb"]);
 
+    // Focus stays in the editor; it points assistive tech at the active option.
+    const options = [...menu.querySelectorAll('[role="option"]')];
+    expect(editor.getAttribute("aria-controls")).toBe(menu.id);
+    expect(editor.getAttribute("aria-expanded")).toBe("true");
+    expect(editor.getAttribute("aria-activedescendant")).toBe(options[0]!.id);
+
     // Pick the agent "Sam" (second option) with the keyboard.
     fireEvent.keyDown(editor, { key: "ArrowDown" });
+    await waitFor(() => expect(editor.getAttribute("aria-activedescendant")).toBe(options[1]!.id));
     fireEvent.keyDown(editor, { key: "Enter" });
     await waitFor(() => expect(editor.querySelector('[data-type="mention"]')).not.toBeNull());
+    await waitFor(() => expect(editor.getAttribute("aria-expanded")).toBe("false"));
+    expect(editor.hasAttribute("aria-activedescendant")).toBe(false);
     expect(editor.querySelector('[data-type="mention"]')?.getAttribute("data-id")).toBe(SAM_B.id);
 
     act(() => ref.current!.submit());

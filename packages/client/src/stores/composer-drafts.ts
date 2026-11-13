@@ -4,7 +4,7 @@ import type { ImageAttachment } from "../lib/image-types";
 import type { SharedAttachmentDraft } from "../lib/shared-attachments";
 import {
   composerFromText,
-  messageInputSignature,
+  sameComposerDocument,
   type ComposerDocument,
   type MessageInput,
 } from "../lib/composer-parts";
@@ -61,10 +61,9 @@ export function draftText(draft: ComposerDraft | undefined) {
   return draft?.text ?? "";
 }
 
-/** Same text and the same mention IDs. */
+/** Same text (whitespace included) and the same mention IDs. */
 export function sameDraft(left: ComposerDraft | undefined, right: ComposerDraft | undefined) {
-  return messageInputSignature(left ?? composerFromText("")) ===
-    messageInputSignature(right ?? composerFromText(""));
+  return sameComposerDocument(left ?? composerFromText(""), right ?? composerFromText(""));
 }
 
 function updatedDraftState(

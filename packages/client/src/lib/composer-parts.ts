@@ -142,19 +142,21 @@ export function serializeComposer(doc: ProseMirrorNode): ComposerDocument {
 export function composerToDocument(
   value: MessageInput,
   labelFor: (id: string) => string | undefined = () => undefined,
+  { mentions = true }: { mentions?: boolean } = {},
 ): JSONContent {
   const document = typeof value === "string" ? composerFromText(value) : value;
   const paragraphs: JSONContent[][] = [[]];
   const current = () => paragraphs[paragraphs.length - 1]!;
   for (const part of document.parts) {
     if (part.type === "reference") {
-      current().push({
-        type: MENTION,
-        attrs: {
-          id: part.refId,
-          label: labelFor(part.refId) ?? document.labels[part.refId] ?? "unknown",
-        },
-      });
+      const label = labelFor(part.refId) ?? document.labels[part.refId] ?? "unknown";
+      // An editor without the mention node (no candidates loaded yet) keeps
+      // the readable text instead of dropping the whole draft as invalid.
+      current().push(
+        mentions
+          ? { type: MENTION, attrs: { id: part.refId, label } }
+          : { type: "text", text: `@${label}` },
+      );
       continue;
     }
     part.text.split("\n").forEach((line, index) => {
@@ -199,7 +201,25 @@ export function composerHasReferences(document: ComposerDocument) {
   return document.parts.some((part) => part.type === "reference");
 }
 
-/** Comparable identity of a send: same text and the same reference IDs. */
+/**
+ * Whether two composer states are the same edit: identical text, whitespace
+ * included, and the same reference IDs in the same places. Drafts and the
+ * editor compare this way, so a trailing newline or space is kept.
+ */
+export function sameComposerDocument(left: ComposerDocument, right: ComposerDocument) {
+  const exact = (document: ComposerDocument) =>
+    JSON.stringify(
+      normalizeInputParts(document.parts).map((part) =>
+        part.type === "text" ? ["t", part.text] : ["r", part.refType, part.refId],
+      ),
+    );
+  return exact(left) === exact(right);
+}
+
+/**
+ * Comparable identity of a send (trimmed, like the server trims it): same text
+ * and the same reference IDs. Used for retries, not for comparing edits.
+ */
 export function messageInputSignature(input: MessageInput) {
   return typeof input === "string"
     ? JSON.stringify(["legacy", input])

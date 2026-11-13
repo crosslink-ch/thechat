@@ -99,13 +99,14 @@ export function trimInputParts(parts: readonly InputChatPart[]): InputChatPart[]
   const result = normalizeInputParts(parts);
   const first = result[0];
   if (first?.type === "text") {
-    const text = first.text.replace(/^\s+/, "");
+    const text = first.text.trimStart();
     if (text) result[0] = { type: "text", text };
     else result.shift();
   }
   const last = result[result.length - 1];
   if (last?.type === "text") {
-    const text = last.text.replace(/\s+$/, "");
+    // trimEnd, not /\s+$/: the regex is quadratic on long inner whitespace.
+    const text = last.text.trimEnd();
     if (text) result[result.length - 1] = { type: "text", text };
     else result.pop();
   }

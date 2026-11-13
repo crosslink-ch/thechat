@@ -90,9 +90,29 @@ describe("parts-v1 mention pills", () => {
     expect(container.querySelector("code")?.textContent).toBe("@x @Koda Prime");
   });
 
-  it("does not let sentinel characters in text forge a pill", () => {
-    const container = renderParts([{ type: "text", text: "evil \uE0000\uE001 text" }]);
+  it.each([
+    ["raw characters", "\uE0000\uE001"],
+    ["hex references", "&#xE000;0&#xE001;"],
+    ["padded hex references", "&#X0e000;0&#x0E001;"],
+    ["decimal references", "&#57344;0&#57345;"],
+    ["a split across text parts", "\uE000", "0\uE001"],
+  ])("does not let %s in text forge a pill", (_name, ...forged) => {
+    // A real reference exists, so a forged marker "0" would copy its pill.
+    const container = renderParts([
+      { type: "reference", refType: "user", refId: KODA, label: "Koda" },
+      ...forged.map((text) => ({ type: "text" as const, text: ` ${text} ` })),
+      { type: "text", text: "end" },
+    ]);
+    expect(container.querySelectorAll(".md-mention")).toHaveLength(1);
+    expect(container.textContent).toContain("end");
+  });
+
+  it("keeps text a forged marker with a missing index would have swallowed", () => {
+    const container = renderParts([{ type: "text", text: "keep &#xE000;9&#xE001; this" }]);
     expect(container.querySelectorAll(".md-mention")).toHaveLength(0);
+    expect(container.textContent).toContain("keep");
+    expect(container.textContent).toContain("9");
+    expect(container.textContent).toContain("this");
   });
 });
 

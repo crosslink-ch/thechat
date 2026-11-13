@@ -41,6 +41,17 @@ describe("composer draft state", () => {
     });
   });
 
+  it("keeps a change that only adds whitespace, like a new line", () => {
+    const store = useComposerDraftsStore.getState();
+    store.setDraft("thread:one", "line1");
+    const revision = useComposerDraftsStore.getState().revisions["thread:one"];
+    store.setDraft("thread:one", "line1\n");
+
+    const state = useComposerDraftsStore.getState();
+    expect(state.drafts["thread:one"]?.text).toBe("line1\n");
+    expect(state.revisions["thread:one"]).toBe((revision ?? 0) + 1);
+  });
+
   it("keeps file drafts and send ownership isolated by composer scope", () => {
     const firstAttachment = {
       localId: "local-1",

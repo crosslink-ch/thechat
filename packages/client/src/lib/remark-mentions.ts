@@ -83,6 +83,14 @@ export function remarkMentions({ names, self }: MentionNames) {
 const OPEN = "\uE000";
 const CLOSE = "\uE001";
 const SENTINEL = new RegExp(`${OPEN}(\\d+)${CLOSE}`, "g");
+/**
+ * The markers as a sender could write them: the raw characters, or a numeric
+ * character reference (`&#xE000;`, `&#57344;`) that Markdown decodes into
+ * one. Each becomes U+FFFD, which cannot complete a reference, so the
+ * replacement never assembles a new marker and text cannot forge a pill.
+ */
+const FORGED_MARKER = /[\uE000\uE001]|&#(?:[xX]0*[eE]00[01]|0*5734[45]);/g;
+const neutralize = (text: string) => text.replace(FORGED_MARKER, "\uFFFD");
 
 export interface PartsMarkdown {
   /** Markdown with one sentinel per reference. */
@@ -98,16 +106,18 @@ export function partsMarkdown(
   if (message.contentFormat !== "parts-v1" || !isStoredChatParts(message.parts)) return null;
   const references: StoredReferencePart[] = [];
   let source = "";
+  // Neutralize whole runs of text, so adjacent text parts cannot join into a marker.
+  let text = "";
   for (const part of message.parts) {
     if (part.type === "text") {
-      // Drop sentinel characters a sender typed, so text cannot forge a pill.
-      source += part.text.replace(/[\uE000\uE001]/g, "");
+      text += part.text;
     } else {
-      source += `${OPEN}${references.length}${CLOSE}`;
+      source += `${neutralize(text)}${OPEN}${references.length}${CLOSE}`;
+      text = "";
       references.push(part);
     }
   }
-  return { source, references };
+  return { source: source + neutralize(text), references };
 }
 
 /**

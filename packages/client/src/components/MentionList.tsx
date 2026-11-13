@@ -26,6 +26,8 @@ export interface MentionUser {
 interface MentionListProps {
   items: MentionUser[];
   command: (item: MentionUser) => void;
+  /** The editable element: it keeps focus, so it carries the combobox state. */
+  editor?: { view: { dom: HTMLElement } };
 }
 
 /**
@@ -36,7 +38,7 @@ interface MentionListProps {
 export const MentionList = forwardRef<
   { onKeyDown: (props: { event: KeyboardEvent }) => boolean },
   MentionListProps
->(({ items, command }, ref) => {
+>(({ items, command, editor }, ref) => {
   const [selectedIndex, setSelectedIndex] = useState(0);
   const listId = useId();
   const listRef = useRef<HTMLDivElement>(null);
@@ -51,6 +53,26 @@ export const MentionList = forwardRef<
       ?.querySelector<HTMLElement>(`[data-index="${selectedIndex}"]`)
       ?.scrollIntoView?.({ block: "nearest" });
   }, [selectedIndex]);
+
+  // Focus stays in the editor, so a screen reader follows the active option
+  // through the editor's aria-activedescendant.
+  const dom = editor?.view.dom;
+  const open = items.length > 0;
+  useEffect(() => {
+    if (!dom || !open) return;
+    dom.setAttribute("aria-controls", listId);
+    dom.setAttribute("aria-expanded", "true");
+    dom.setAttribute("aria-autocomplete", "list");
+    return () => {
+      dom.removeAttribute("aria-controls");
+      dom.removeAttribute("aria-activedescendant");
+      dom.removeAttribute("aria-autocomplete");
+      dom.setAttribute("aria-expanded", "false");
+    };
+  }, [dom, open, listId]);
+  useEffect(() => {
+    if (dom && open) dom.setAttribute("aria-activedescendant", `${listId}-option-${selectedIndex}`);
+  }, [dom, open, listId, selectedIndex]);
 
   useImperativeHandle(ref, () => ({
     onKeyDown: ({ event }: { event: KeyboardEvent }) => {
@@ -87,6 +109,7 @@ export const MentionList = forwardRef<
   return (
     <div
       ref={listRef}
+      id={listId}
       role="listbox"
       aria-label="Mention a person or agent"
       aria-activedescendant={optionId(selectedIndex)}

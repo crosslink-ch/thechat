@@ -121,14 +121,23 @@ export function hermesPromptFromParts(
     let text = part.type === "text" ? part.text : referenceText(part.label);
     if (removedBefore) {
       const previous = segments.length > 0 ? segments[segments.length - 1]! : "";
-      if (previous === "" || previous.endsWith("\n")) {
+      if (previous.endsWith("\n") && /^[ \t]*\n/.test(text)) {
+        // The mention was the whole line: drop the line.
+        text = text.replace(/^[ \t]*\n/, "");
+      } else if (previous === "" || previous.endsWith("\n")) {
         // The mention started the line: drop the space after it.
         text = text.replace(/^[ \t]+/, "");
+      } else if (/[ \t]$/.test(previous) && /^[,.;:!?]/.test(text)) {
+        // "Hi @Koda, please": no space before the punctuation.
+        segments[segments.length - 1] = previous.replace(/[ \t]+$/, "");
       } else if (/[ \t]$/.test(previous) && /^[ \t]/.test(text)) {
         // "Hi @Koda please": keep one space between the neighbours.
         text = text.slice(1);
       } else if (/^\n/.test(text) || text === "") {
         segments[segments.length - 1] = previous.replace(/[ \t]+$/, "");
+      } else if (/\S$/.test(previous) && /^\S/.test(text)) {
+        // "foo@Koda bar" must not become "foobar": keep the words apart.
+        text = ` ${text}`;
       }
       removedBefore = false;
     }

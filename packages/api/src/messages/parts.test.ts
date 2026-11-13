@@ -528,6 +528,68 @@ describe("parts-v1 effects come from IDs", () => {
     expect(refused.status).toBe(400);
   });
 
+  test("Hermes retries compare parts: completing answer and plain publish", async () => {
+    const f = await workspace("Hermes retry");
+    const bot = await hermesBot(f.owner, "Koda", f.workspaceId);
+    const other = await register("Hermes Retry Other");
+    await db.insert(workspaceMembers).values({ workspaceId: f.workspaceId, userId: other.id, role: "member" });
+    await db.insert(conversationParticipants).values({ conversationId: f.channelId, userId: other.id });
+    const trigger = await parts(f.channelId, f.owner.token, [ref(bot.userId), text(" who reviews?")]);
+    expect(trigger.status).toBe(200);
+    await waitFor(async () => ((await invokedBotIds(trigger.body.id)).length ? true : null), "invocation");
+    const claim = await ok("GET", "/hermes-platform/events?limit=5", undefined, bot.apiKey);
+    const event = claim.events.find((candidate: any) => candidate.messageId === trigger.body.id);
+    const answer = (refId: string, platformMessageId: string, extra: Record<string, unknown> = {}) => ({
+      invocationId: event.invocationId,
+      contentFormat: "parts-v1",
+      parts: [text("Ask "), ref(refId)],
+      platformMessageId,
+      complete: true,
+      ...extra,
+    });
+
+    // The completing answer, then its exact retry: the duplicate-completion branch.
+    const answerId = `answer-${crypto.randomUUID()}`;
+    const first = await ok("POST", "/hermes-platform/messages", answer(f.member.id, answerId), bot.apiKey);
+    const replay = await ok("POST", "/hermes-platform/messages", answer(f.member.id, answerId), bot.apiKey);
+    expect(replay).toMatchObject({ messageId: first.messageId, duplicate: true });
+    // Same visible text is impossible to tell apart, so compare who: another ID conflicts.
+    const otherTarget = await req("POST", "/hermes-platform/messages", answer(other.id, answerId), bot.apiKey);
+    expect(otherTarget.status).toBe(409);
+    const asLegacy = await req(
+      "POST",
+      "/hermes-platform/messages",
+      { invocationId: event.invocationId, content: `Ask @${f.member.name}`, platformMessageId: answerId, complete: true },
+      bot.apiKey,
+    );
+    expect(asLegacy.status).toBe(409);
+
+    // A plain publish (no invocation): the insert-conflict branch.
+    const noteId = `note-${crypto.randomUUID()}`;
+    const note = (refId: string) => ({
+      conversationId: f.channelId,
+      contentFormat: "parts-v1",
+      parts: [text("FYI "), ref(refId)],
+      platformMessageId: noteId,
+    });
+    const published = await ok("POST", "/hermes-platform/messages", note(f.member.id), bot.apiKey);
+    const again = await ok("POST", "/hermes-platform/messages", note(f.member.id), bot.apiKey);
+    expect(again).toMatchObject({ messageId: published.messageId, duplicate: true });
+    expect((await req("POST", "/hermes-platform/messages", note(other.id), bot.apiKey)).status).toBe(409);
+    expect(
+      (await req(
+        "POST",
+        "/hermes-platform/messages",
+        { conversationId: f.channelId, content: `FYI @${f.member.name}`, platformMessageId: noteId },
+        bot.apiKey,
+      )).status,
+    ).toBe(409);
+    expect((await storedMessage(published.messageId)).parts).toEqual([
+      text("FYI "),
+      { ...ref(f.member.id), label: f.member.name, targetType: "human" },
+    ]);
+  });
+
   test("webhook bots receive the parts so they can tell who was mentioned", async () => {
     const webhook = startWebhookServer();
     try {
@@ -632,6 +694,11 @@ describe("hermesPromptFromParts", () => {
     ["mention on its own line", [label(BOT, "Koda"), { type: "text" as const, text: "\n  keep\n    indent" }], "  keep\n    indent"],
     ["other references kept", [label(BOT, "Koda"), { type: "text" as const, text: " ask " }, label("ada", "Ada")], "ask @Ada"],
     ["literal @Koda text kept", [label(BOT, "Koda"), { type: "text" as const, text: " say @Koda literally" }], "say @Koda literally"],
+    ["mention glued between words keeps them apart", [{ type: "text" as const, text: "foo" }, label(BOT, "Koda"), { type: "text" as const, text: "bar" }], "foo bar"],
+    ["mention alone on a middle line drops the line", [{ type: "text" as const, text: "Line1\n" }, label(BOT, "Koda"), { type: "text" as const, text: "\nLine3" }], "Line1\nLine3"],
+    ["two bot mentions in a row", [label(BOT, "Koda"), { type: "text" as const, text: " " }, label(BOT, "Koda"), { type: "text" as const, text: " go" }], "go"],
+    ["only the mention", [label(BOT, "Koda")], ""],
+    ["mention before punctuation", [{ type: "text" as const, text: "Hi " }, label(BOT, "Koda"), { type: "text" as const, text: ", please" }], "Hi, please"],
   ])("%s", (_name, input, expected) => {
     expect(hermesPromptFromParts(input, BOT)).toBe(expected);
   });

@@ -12,9 +12,10 @@ A message has a `contentFormat`:
 | `parts-v1` | `parts`: ordered text and user references | The referenced user IDs |
 | `legacy-text` (default, all older rows) | `content` | `@Display Name` matched against current names |
 
-The desktop and web clients always send `parts-v1`. Programmatic clients (the
-REST API, MCP, bots) may send either. A request carries `parts` or `content`,
-never both:
+The desktop and web composers send typed messages as `parts-v1`. Sends with
+no composer text (attachments only, voice messages, the Hermes stop command)
+stay `legacy-text`. Programmatic clients (the REST API, MCP, bots) may send
+either. A request carries `parts` or `content`, never both:
 
 ```json
 {
@@ -50,6 +51,13 @@ Limits: 500 parts, 50 reference occurrences, 100 000 characters of content.
 
 The idempotency check (`clientMessageId`) compares the parts: the same visible
 text pointing at a different user is a conflict (409), not a replay.
+
+## Rollout order
+
+Deploy the API before the web and desktop clients. An API without this change
+ignores `parts`, so every text message a new client sends is refused as empty
+(400, "Message text or at least one attachment is required"). Rolling the API
+back below this change has the same effect while new clients are live.
 
 ## Effects
 
