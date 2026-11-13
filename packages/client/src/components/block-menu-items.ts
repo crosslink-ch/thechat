@@ -1,4 +1,5 @@
 import type { Editor, Range } from "@tiptap/core";
+import type { Transaction } from "@tiptap/pm/state";
 
 /**
  * Entries of the # block menu. Each entry turns the current line into a
@@ -18,6 +19,21 @@ export interface BlockMenuItem {
 
 const chainAt = (editor: Editor, range: Range) =>
   editor.chain().focus().deleteRange(range);
+
+/**
+ * A code block holds only text, and converting a line drops inline nodes:
+ * its mentions become their readable "@name" first, so no name disappears.
+ */
+const mentionsAsText = ({ tr }: { tr: Transaction }) => {
+  const { $from } = tr.selection;
+  const start = $from.start();
+  const mentions: { pos: number; text: string }[] = [];
+  $from.parent.forEach((child, offset) => {
+    if (child.type.name === "mention") mentions.push({ pos: start + offset, text: `@${child.attrs.label ?? ""}` });
+  });
+  for (const { pos, text } of mentions.reverse()) tr.replaceWith(pos, pos + 1, tr.doc.type.schema.text(text));
+  return true;
+};
 
 export const BLOCK_MENU_ITEMS: BlockMenuItem[] = [
   {
@@ -58,7 +74,7 @@ export const BLOCK_MENU_ITEMS: BlockMenuItem[] = [
     label: "Code block",
     keywords: ["code", "pre", "snippet"],
     hint: "```",
-    run: (editor, range) => chainAt(editor, range).toggleCodeBlock().run(),
+    run: (editor, range) => chainAt(editor, range).command(mentionsAsText).toggleCodeBlock().run(),
   },
   {
     id: "divider",

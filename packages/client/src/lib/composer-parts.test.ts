@@ -52,10 +52,11 @@ describe("composer serializer (Tiptap <-> parts-v1)", () => {
       { type: "reference", refType: "user", refId: KODA },
       { type: "text", text: ", please ask " },
       { type: "reference", refType: "user", refId: ADA },
-      { type: "text", text: "\n  - indented line\n\nafter a blank line" },
+      // "- " would start a list; the literal line keeps its dash escaped.
+      { type: "text", text: "\n  \\- indented line\n\nafter a blank line" },
     ]);
     expect(result.labels).toEqual({ [KODA]: "Koda", [ADA]: "Ada Lovelace" });
-    expect(result.text).toBe("Hi @Koda, please ask @Ada Lovelace\n  - indented line\n\nafter a blank line");
+    expect(result.text).toBe("Hi @Koda, please ask @Ada Lovelace\n  \\- indented line\n\nafter a blank line");
     // The server derives `content` with the same projector.
     expect(projectPartsContent(result.parts, (id) => result.labels[id])).toBe(result.text);
   });

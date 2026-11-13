@@ -62,9 +62,11 @@
     "rehype-katex": "^7.0.1",
     "remark-gfm": "^4.0.1",
     "remark-math": "^6.0.0",
+    "remark-parse": "^11.0.0",
     "sucrase": "^3.35.1",
     "tailwindcss": "^4.2.1",
     "thinking-orbs": "^0.1.1",
+    "unified": "^11.0.5",
     "zod": "^4.3.6",
     "zustand": "^5.0.11"
   },

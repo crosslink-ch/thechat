@@ -114,6 +114,20 @@ describe("composer live formatting", () => {
     expect(sentText(onSend)).toBe("```\na = 1\nb = 2\n```\n\nafter");
   });
 
+  it("sends with Enter when a # or : suggestion matches nothing", async () => {
+    const { onSend } = renderComposer();
+    type("fixed in #42");
+    expect(screen.queryByTestId("block-menu")).toBeNull();
+    press("Enter");
+    await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
+    expect(sentText(onSend)).toBe("fixed in #42");
+    type("ok :xy");
+    expect(screen.queryByTestId("emoji-menu")).toBeNull();
+    press("Enter");
+    await waitFor(() => expect(onSend).toHaveBeenCalledTimes(2));
+    expect(sentText(onSend, 1)).toBe("ok :xy");
+  });
+
   it("makes Shift+Enter a new line everywhere, never a send", () => {
     const { onSend } = renderComposer();
     type("- item");
@@ -183,6 +197,19 @@ describe("# block menu", () => {
     const option = await screen.findByRole("option", { name: /Divider/ });
     fireEvent.click(option);
     await waitFor(() => expect(editorElement().querySelector("hr")).not.toBeNull());
+  });
+
+  it("turns a line with a mention into code without losing the name", async () => {
+    renderComposer({ mentions: [{ id: "11111111-1111-4111-8111-111111111111", label: "Ada", type: "human" }] });
+    type("hey @Ad");
+    await screen.findByTestId("mention-menu");
+    press("Enter");
+    await waitFor(() => expect(editorElement().querySelector('[data-type="mention"]')).not.toBeNull());
+    type("look #co");
+    await screen.findByTestId("block-menu");
+    press("Enter");
+    await waitFor(() => expect(editorElement().querySelector("pre")).not.toBeNull());
+    expect(editorElement().querySelector("pre")?.textContent).toBe("hey @Ada look ");
   });
 
   it("does not open after a word character or inside code", () => {

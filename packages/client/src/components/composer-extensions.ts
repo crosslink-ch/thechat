@@ -4,7 +4,7 @@ import Suggestion from "@tiptap/suggestion";
 import { createElement } from "react";
 import { EmojiImage } from "./EmojiImage";
 import { SuggestionList } from "./SuggestionList";
-import { suggestionPopup } from "./suggestion-popup";
+import { suggestionMenuVisible, suggestionPopup } from "./suggestion-popup";
 import { BLOCK_MENU_ITEMS, filterBlockMenuItems, type BlockMenuItem } from "./block-menu-items";
 import { emojiForShortName, searchEmoji, type EmojiEntry } from "../lib/emoji-search";
 
@@ -166,12 +166,9 @@ export function createEnterRules(submit: (editor: import("@tiptap/core").Editor)
         }
         return false;
       };
-      // An open @, # or : menu owns Enter (its plugin picks the entry).
-      const menuOpen = (editor: import("@tiptap/core").Editor) =>
-        editor.state.plugins.some((plugin) => {
-          const state = plugin.getState(editor.state) as { active?: unknown; range?: unknown } | undefined;
-          return Boolean(state && typeof state === "object" && state.active === true && "range" in state);
-        });
+      // A visible @, # or : menu owns Enter (its plugin picks the entry); a
+      // suggestion that matches nothing ("fixed in #42") shows none.
+      const menuOpen = (editor: import("@tiptap/core").Editor) => suggestionMenuVisible(editor);
       return {
         Enter: ({ editor }) => {
           if (menuOpen(editor)) return false;

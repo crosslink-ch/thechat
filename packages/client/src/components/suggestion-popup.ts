@@ -4,6 +4,17 @@ import type { ComponentType } from "react";
 
 type KeyHandler = { onKeyDown: (props: { event: KeyboardEvent }) => boolean };
 
+/** Per editor, the menus on screen with at least one entry. */
+const visibleMenus = new WeakMap<object, Set<object>>();
+
+/**
+ * Whether an @, # or : menu is on screen with entries, so it owns Enter.
+ * A suggestion that matches nothing shows no menu and leaves Enter alone.
+ */
+export function suggestionMenuVisible(editor: object) {
+  return (visibleMenus.get(editor)?.size ?? 0) > 0;
+}
+
 /**
  * The popup lifecycle shared by the @, # and : menus: a fixed element on
  * <body> that renders `component`, sits above the composer and follows the
@@ -16,7 +27,17 @@ export function suggestionPopup<I, P extends object>(
   return () => {
     let renderer: ReactRenderer<KeyHandler, P> | null = null;
     let popup: HTMLDivElement | null = null;
+    let owner: object | null = null;
+    const token = {};
+    const track = (visible: boolean) => {
+      if (!owner) return;
+      const menus = visibleMenus.get(owner) ?? new Set<object>();
+      if (visible) menus.add(token);
+      else menus.delete(token);
+      visibleMenus.set(owner, menus);
+    };
     const close = () => {
+      track(false);
       popup?.remove();
       renderer?.destroy();
       popup = null;
@@ -24,6 +45,7 @@ export function suggestionPopup<I, P extends object>(
     };
     return {
       onStart: (suggestion: SuggestionProps<I>) => {
+        owner = suggestion.editor;
         renderer = new ReactRenderer(component as ComponentType<P>, {
           props: props(suggestion),
           editor: suggestion.editor,
@@ -34,10 +56,13 @@ export function suggestionPopup<I, P extends object>(
         popup.appendChild(renderer.element);
         document.body.appendChild(popup);
         updatePosition(popup, suggestion.clientRect, suggestion.editor.view.dom);
+        track(suggestion.items.length > 0);
       },
       onUpdate: (suggestion: SuggestionProps<I>) => {
-        renderer?.updateProps(props(suggestion));
+        if (!renderer) return;
+        renderer.updateProps(props(suggestion));
         if (popup) updatePosition(popup, suggestion.clientRect, suggestion.editor.view.dom);
+        track(suggestion.items.length > 0);
       },
       onKeyDown: ({ event }: SuggestionKeyDownProps) => {
         if (event.key === "Escape") {

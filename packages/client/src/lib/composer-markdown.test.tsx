@@ -47,8 +47,24 @@ const FIXTURES: Record<string, string> = {
   divider: "above\n\n---\n\nbelow",
   marks: "**bold** *italic* ~~gone~~ `code` and ***both***",
   unicode: "Zoë 🧪 👋🏽 e\u0301 — مرحبا 日本語",
-  "literal markdown-ish text": "2*3 = 6, a_b_c, [link](https://example.com) <b>html</b> &amp; \\*",
   "blocks after text": "Intro\n\n- a\n\n> q\n\n```\nx\n```\n\nOutro",
+  // Block markers need escapes only at the start of a line.
+  "escaped literal text":
+    "2\\*3 = 6, a_b_c, \\_x\\_, [link](https://example.com) <b>html</b> \\&amp; \\\\\\* - # 1. > \\`\n\\- a\n\\# b\n1\\. c\n\\> d\n\\+ e\n\\---\n\\===",
+  "kept source": "see https://e.com/__init__.py, [a *b*](https://e.com/?a=1&b=2) <https://e.com> $$x_1*y_2$$",
+};
+
+/**
+ * Markdown the composer did not write (plain text, older drafts) is read
+ * once into the editor; what the editor shows is then written with escapes,
+ * and that output is stable.
+ */
+const NORMALIZED: Record<string, [string, string]> = {
+  "unescaped literal characters": [
+    "2*3 = 6, a_b_c, [x] &amp; \\*",
+    "2\\*3 = 6, a_b_c, \\[x] \\&amp; \\*",
+  ],
+  "underscore emphasis becomes stars": ["_x_ and __y__", "*x* and **y**"],
 };
 
 describe("composer Markdown round trip", () => {
@@ -57,6 +73,11 @@ describe("composer Markdown round trip", () => {
     expect(text).toBe(markdown);
     // Stable: a restored draft serializes to the same text again.
     expect(roundText(text)).toBe(markdown);
+  });
+
+  it.each(Object.entries(NORMALIZED))("%s", (_name, [input, output]) => {
+    expect(roundText(input)).toBe(output);
+    expect(roundText(output)).toBe(output);
   });
 
   it("holds real blocks, not literal Markdown", () => {

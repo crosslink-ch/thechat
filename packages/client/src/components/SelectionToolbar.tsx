@@ -1,13 +1,31 @@
 import { useState, type FormEvent, type KeyboardEvent } from "react";
 import type { Editor } from "@tiptap/core";
+import type { EditorState } from "@tiptap/pm/state";
+import { useEditorState } from "@tiptap/react";
 import { BubbleMenu } from "@tiptap/react/menus";
 import { Bold, Check, Code, Italic, Link, Strikethrough } from "lucide-react";
 import { markdownLinkSource } from "../lib/composer-parts";
 
 const buttonClass = (active: boolean) =>
-  `flex size-7 cursor-pointer items-center justify-center rounded-md border-none transition-colors duration-100 ${
+  `flex size-7 cursor-pointer items-center justify-center rounded-md border-none transition-colors duration-100 disabled:cursor-default disabled:opacity-40 ${
     active ? "bg-accent/20 text-accent" : "bg-transparent text-text-secondary hover:bg-hover hover:text-text"
   }`;
+
+/**
+ * The selected text a link can be made from: one line of plain text. A
+ * selection across lines or with a mention has no single text label.
+ */
+function linkLabel(state: EditorState, from: number, to: number): string | null {
+  const $from = state.doc.resolve(from);
+  const $to = state.doc.resolve(to);
+  if (from === to || !$from.sameParent($to) || $from.parent.type.spec.code) return null;
+  let textOnly = true;
+  state.doc.nodesBetween(from, to, (node) => {
+    if (node.isInline && !node.isText) textOnly = false;
+  });
+  const text = state.doc.textBetween(from, to, "");
+  return textOnly && text.trim() ? text : null;
+}
 
 /**
  * Toolbar on a text selection: bold, italic, strike, inline code and link.
@@ -19,15 +37,26 @@ export function SelectionToolbar({ editor }: { editor: Editor }) {
   /** The selection a link is being written for, while the URL field is open. */
   const [linkRange, setLinkRange] = useState<{ from: number; to: number } | null>(null);
   const [href, setHref] = useState("https://");
+  const active = useEditorState({
+    editor,
+    selector: ({ editor: current }) => ({
+      bold: current.isActive("bold"),
+      italic: current.isActive("italic"),
+      strike: current.isActive("strike"),
+      code: current.isActive("code"),
+      linkable:
+        linkLabel(current.state, current.state.selection.from, current.state.selection.to) !== null,
+    }),
+  });
 
-  const mark = (name: string, label: string, Icon: typeof Bold, toggle: () => void) => (
+  const mark = (name: "bold" | "italic" | "strike" | "code", label: string, Icon: typeof Bold, toggle: () => void) => (
     <button
       key={name}
       type="button"
       aria-label={label}
       title={label}
-      aria-pressed={editor.isActive(name)}
-      className={buttonClass(editor.isActive(name))}
+      aria-pressed={active[name]}
+      className={buttonClass(active[name])}
       onMouseDown={(event) => event.preventDefault()}
       onClick={toggle}
     >
@@ -37,6 +66,7 @@ export function SelectionToolbar({ editor }: { editor: Editor }) {
 
   const openLink = () => {
     const { from, to } = editor.state.selection;
+    if (linkLabel(editor.state, from, to) === null) return;
     setHref("https://");
     setLinkRange({ from, to });
   };
@@ -49,11 +79,12 @@ export function SelectionToolbar({ editor }: { editor: Editor }) {
   const applyLink = (event: FormEvent) => {
     event.preventDefault();
     if (!linkRange) return;
-    const text = editor.state.doc.textBetween(linkRange.from, linkRange.to, "");
-    const source = markdownLinkSource(text, href.trim());
+    const label = linkLabel(editor.state, linkRange.from, linkRange.to);
+    const source = label === null ? null : markdownLinkSource(label, href.trim());
     if (!source) return;
     setLinkRange(null);
-    editor.chain().focus().insertContentAt(linkRange, source).run();
+    // A text node, never HTML: the label is the user's literal text.
+    editor.chain().focus().insertContentAt(linkRange, { type: "text", text: source }).run();
   };
 
   const onLinkKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
@@ -100,7 +131,7 @@ export function SelectionToolbar({ editor }: { editor: Editor }) {
               aria-label="Apply link"
               title="Apply link"
               disabled={!linkValid}
-              className={`${buttonClass(false)} disabled:cursor-default disabled:opacity-40`}
+              className={buttonClass(false)}
             >
               <Check size={15} aria-hidden="true" />
             </button>
@@ -114,7 +145,8 @@ export function SelectionToolbar({ editor }: { editor: Editor }) {
             <button
               type="button"
               aria-label="Link"
-              title="Link"
+              title={active.linkable ? "Link" : "Link (select text on one line, without mentions)"}
+              disabled={!active.linkable}
               className={buttonClass(false)}
               onMouseDown={(event) => event.preventDefault()}
               onClick={openLink}
