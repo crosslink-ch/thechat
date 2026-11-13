@@ -82,6 +82,17 @@ describe("composer live formatting", () => {
     type("# Title");
     expect(editorElement().querySelector("h1")?.textContent).toBe("Title");
     expect(document.querySelector('[data-testid="block-menu"]')).toBeNull();
+    act(() => {
+      tiptap().commands.setContent("");
+    });
+    type("---");
+    expect(editorElement().querySelector("hr")).not.toBeNull();
+    act(() => {
+      tiptap().commands.setContent("");
+    });
+    type("~~gone~~ *soft*");
+    expect(editorElement().querySelector("s")?.textContent).toBe("gone");
+    expect(editorElement().querySelector("em")?.textContent).toBe("soft");
   });
 
   it("keeps Enter inside a code block until an empty last line", async () => {
