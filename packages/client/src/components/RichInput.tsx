@@ -3,11 +3,13 @@ import { useEditor, EditorContent } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import Mention from "@tiptap/extension-mention";
 import Placeholder from "@tiptap/extension-placeholder";
-import { Extension, type AnyExtension } from "@tiptap/react";
+import type { AnyExtension } from "@tiptap/react";
 import { Fragment, Slice, type Node as ProseMirrorNode } from "@tiptap/pm/model";
 import type { EditorView } from "@tiptap/pm/view";
 import { projectPartsContent, trimInputParts } from "@thechat/shared";
 import { createMentionSuggestion } from "./mention-suggestion";
+import { BlockMenu, EmojiMenu, createEnterRules } from "./composer-extensions";
+import { SelectionToolbar } from "./SelectionToolbar";
 import type { MentionUser } from "./MentionList";
 import {
   composerFromText,
@@ -181,38 +183,17 @@ export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function Ri
 
   const submitExtension = useMemo(
     () =>
-      Extension.create({
-        name: "submitOnEnter",
-        addKeyboardShortcuts() {
-          return {
-            Enter: ({ editor }) => {
-              // Phone/tablet Return is for writing, not sending. Use the
-              // primary pointer, not viewport width, so narrow desktop windows
-              // retain Enter-to-send and touch devices work in landscape too.
-              if (window.matchMedia?.("(pointer: coarse)").matches) {
-                return editor.commands.splitBlock();
-              }
-              const submitted = composerOf(editor.state.doc);
-              void submitIfNotEmpty(submitted, () => {
-                // Do not erase edits made while an asynchronous submit was
-                // waiting for persistence acknowledgement.
-                if (sameComposerDocument(composerOf(editor.state.doc), submitted)) {
-                  editor.commands.clearContent();
-                  return true;
-                }
-                return false;
-              });
-              return true;
-            },
-            // Split a new paragraph rather than inserting a hard break:
-            // WebKitGTK renders the caret on the wrong line after trailing
-            // <br> elements, while real block splits position it correctly.
-            "Shift-Enter": ({ editor }) => {
-              editor.commands.splitBlock();
-              return true;
-            },
-          };
-        },
+      createEnterRules((editor) => {
+        const submitted = composerOf(editor.state.doc);
+        void submitIfNotEmpty(submitted, () => {
+          // Do not erase edits made while an asynchronous submit was
+          // waiting for persistence acknowledgement.
+          if (sameComposerDocument(composerOf(editor.state.doc), submitted)) {
+            editor.commands.clearContent();
+            return true;
+          }
+          return false;
+        });
       }),
     [],
   );
@@ -225,21 +206,16 @@ export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function Ri
   const extensions = useMemo(() => {
     const exts: AnyExtension[] = [
       StarterKit.configure({
-        heading: false,
-        codeBlock: false,
-        blockquote: false,
-        bulletList: false,
-        orderedList: false,
-        listItem: false,
-        horizontalRule: false,
-        bold: false,
-        italic: false,
-        strike: false,
-        code: false,
         underline: false,
+        trailingNode: false,
+        heading: { levels: [1, 2, 3] },
+        // Enter rules for code blocks live in createEnterRules.
+        codeBlock: { exitOnTripleEnter: false },
         // Keep the parser for clipboard anchors, not a rich/autolinking editor.
         link: { autolink: false, linkOnPaste: false, openOnClick: false },
       }),
+      BlockMenu,
+      EmojiMenu,
       Placeholder.configure({ placeholder }),
       submitExtension,
     ];
@@ -269,7 +245,7 @@ export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function Ri
         "aria-multiline": "true",
         enterkeyhint: "enter",
         class:
-          "block max-h-[200px] w-full overflow-y-auto bg-transparent px-4 pb-1.5 pt-3 font-[inherit] text-[1rem] leading-relaxed text-text outline-none",
+          "composer-content md-content block max-h-[200px] w-full overflow-y-auto bg-transparent px-4 pb-1.5 pt-3 font-[inherit] text-[1rem] leading-relaxed text-text outline-none",
       },
       // Direct view props run before extension keymaps, so interceptors
       // (slash command menu navigation) win over Enter-to-submit.
@@ -323,5 +299,10 @@ export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function Ri
     if (editor) editor.setEditable(!disabled);
   }, [editor, disabled]);
 
-  return <EditorContent editor={editor} />;
+  return (
+    <>
+      <EditorContent editor={editor} />
+      {editor && <SelectionToolbar editor={editor} />}
+    </>
+  );
 });

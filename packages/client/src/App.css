@@ -411,6 +411,39 @@ body,
   color: var(--color-text-placeholder);
 }
 
+/* Composer blocks look like sent messages (.md-content), with tighter spacing. */
+.composer-content.md-content p { margin: 0; }
+.composer-content.md-content h1,
+.composer-content.md-content h2,
+.composer-content.md-content h3 { margin: 0.35em 0 0.15em; }
+.composer-content.md-content > :first-child { margin-top: 0; }
+.composer-content.md-content ul,
+.composer-content.md-content ol { margin: 0.15em 0; }
+.composer-content.md-content blockquote { margin: 0.25em 0; }
+.composer-content.md-content hr { margin: 0.6em 0; }
+.composer-content.md-content hr.ProseMirror-selectednode { border-top-color: var(--color-accent); }
+.composer-content.md-content pre {
+  margin: 0.35em 0;
+  padding: 8px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-raised);
+  font-family: var(--font-mono);
+  font-size: 0.893rem;
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+.composer-content.md-content pre code { background: none; border: 0; padding: 0; font-size: inherit; }
+.composer-content.md-content :not(pre) > code {
+  border: 1px solid var(--color-border);
+  border-radius: 0.25rem;
+  background: var(--color-elevated);
+  padding: 0.15em 0.4em;
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+}
+.ProseMirror .suggestion { color: var(--color-accent); }
+
 .ProseMirror .mention {
   color: var(--color-accent);
   font-weight: 500;

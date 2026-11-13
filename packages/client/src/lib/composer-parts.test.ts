@@ -81,8 +81,11 @@ describe("composer serializer (Tiptap <-> parts-v1)", () => {
       ],
     };
     const result = round(original);
-    expect(result.parts).toEqual(original.parts);
-    expect(result.text).toBe("**bold** @Zoë 🧪 👋🏽 e\u0301 — مرحبا @كودا\n`code` _end_");
+    // Markdown is normalized once (\`_x_\` is written \`*x*\`), then stable.
+    expect(result.parts).toEqual(original.parts.map((part) =>
+      part.type === "text" ? { ...part, text: part.text.replace("_end_", "*end*") } : part));
+    expect(round(result).parts).toEqual(result.parts);
+    expect(result.text).toBe("**bold** @Zoë 🧪 👋🏽 e\u0301 — مرحبا @كودا\n`code` *end*");
   });
 
   it("restores a draft with its mentions, preferring the current name", () => {
