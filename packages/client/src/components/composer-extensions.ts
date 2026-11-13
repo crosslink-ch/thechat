@@ -5,7 +5,7 @@ import { createElement } from "react";
 import { EmojiImage } from "./EmojiImage";
 import { SuggestionList } from "./SuggestionList";
 import { suggestionMenuVisible, suggestionPopup } from "./suggestion-popup";
-import { BLOCK_MENU_ITEMS, filterBlockMenuItems, type BlockMenuItem } from "./block-menu-items";
+import { BLOCK_MENU_ITEMS, filterBlockMenuItems, mentionsAsText, type BlockMenuItem } from "./block-menu-items";
 import { emojiForShortName, searchEmoji, type EmojiEntry } from "../lib/emoji-search";
 
 /** True inside a code block or inline code, where menus and rules stay off. */
@@ -61,6 +61,35 @@ export const BlockMenu = Extension.create<{ items: BlockMenuItem[] }>({
         })),
       }),
     ];
+  },
+});
+
+/**
+ * "```" or "~~~" plus space turns the line into a code block, like the
+ * code-block extension's own rules (which run after these), but the line's
+ * mentions become their "@name" text first instead of being dropped.
+ */
+export const CodeBlockKeepsMentions = Extension.create({
+  name: "codeBlockKeepsMentions",
+  priority: 1000,
+  addInputRules() {
+    return [/^```([a-z]+)?[\s\n]$/, /^~~~([a-z]+)?[\s\n]$/].map(
+      (find) =>
+        new InputRule({
+          find,
+          handler: ({ state, range, match }) => {
+            const codeBlock = state.schema.nodes.codeBlock;
+            const $start = state.doc.resolve(range.from);
+            if (!codeBlock || !$start.node(-1).canReplaceWith($start.index(-1), $start.indexAfter(-1), codeBlock)) {
+              return null;
+            }
+            mentionsAsText({ tr: state.tr });
+            state.tr
+              .delete(range.from, range.to)
+              .setBlockType(range.from, range.from, codeBlock, { language: match[1] || null });
+          },
+        }),
+    );
   },
 });
 

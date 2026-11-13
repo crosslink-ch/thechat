@@ -24,7 +24,7 @@ const chainAt = (editor: Editor, range: Range) =>
  * A code block holds only text, and converting a line drops inline nodes:
  * its mentions become their readable "@name" first, so no name disappears.
  */
-const mentionsAsText = ({ tr }: { tr: Transaction }) => {
+export const mentionsAsText = ({ tr }: { tr: Transaction }) => {
   const { $from } = tr.selection;
   const start = $from.start();
   const mentions: { pos: number; text: string }[] = [];

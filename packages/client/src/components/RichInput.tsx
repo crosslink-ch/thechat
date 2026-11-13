@@ -8,7 +8,7 @@ import { Fragment, Slice, type Node as ProseMirrorNode } from "@tiptap/pm/model"
 import type { EditorView } from "@tiptap/pm/view";
 import { projectPartsContent, trimInputParts } from "@thechat/shared";
 import { createMentionSuggestion } from "./mention-suggestion";
-import { BlockMenu, EmojiMenu, createEnterRules } from "./composer-extensions";
+import { BlockMenu, CodeBlockKeepsMentions, EmojiMenu, createEnterRules } from "./composer-extensions";
 import { SelectionToolbar } from "./SelectionToolbar";
 import type { MentionUser } from "./MentionList";
 import {
@@ -216,6 +216,7 @@ export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function Ri
       }),
       BlockMenu,
       EmojiMenu,
+      CodeBlockKeepsMentions,
       Placeholder.configure({ placeholder }),
       submitExtension,
     ];

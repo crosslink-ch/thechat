@@ -232,6 +232,19 @@ describe("# block menu", () => {
     expect(editorElement().querySelector("pre")?.textContent).toBe("hey @Ada look ");
   });
 
+  it("keeps a mention's name when ``` turns its line into code", () => {
+    renderComposer({ mentions: [{ id: "11111111-1111-4111-8111-111111111111", label: "Ada", type: "human" }] });
+    act(() => {
+      tiptap().commands.setContent({
+        type: "doc",
+        content: [{ type: "paragraph", content: [{ type: "text", text: "hi " }, { type: "mention", attrs: { id: "11111111-1111-4111-8111-111111111111", label: "Ada" } }] }],
+      });
+      tiptap().commands.focus("start");
+    });
+    type("``` ");
+    expect(editorElement().querySelector("pre")?.textContent).toBe("hi @Ada");
+  });
+
   it("does not open after a word character or inside code", () => {
     renderComposer();
     type("issue#12");
