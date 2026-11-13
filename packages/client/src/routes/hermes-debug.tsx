@@ -15,6 +15,7 @@ import {
   type BotRequestAnswerer,
 } from "../stores/bot-requests";
 import { HERMES_FALLBACK_SLASH_COMMANDS } from "../lib/hermes-slash-commands";
+import { messageText, type MessageInput } from "../lib/composer-parts";
 
 const CONVERSATION_ID = "hermes-debug-conversation";
 const BOT_ID = "hermes-debug-bot";
@@ -343,7 +344,8 @@ export function HermesDebugRoute() {
   // Typed /approve and /deny resolve the waiter in Hermes, which withdraws
   // the matching request.
   const handleSend = useCallback(
-    (content: string) => {
+    (input: MessageInput) => {
+      const content = messageText(input);
       appendMessage("human", content);
 
       const approval = typedApproval(content);

@@ -15,6 +15,12 @@ import { api } from "../lib/api";
 import { authHeaders, edenErrorMessage } from "../lib/eden";
 import { isAuthenticated } from "../lib/auth-identity";
 import { cacheRootThreadSummary } from "./useChannelChat";
+import {
+  messageRequestBody,
+  messageText,
+  optimisticParts,
+  type MessageInput,
+} from "../lib/composer-parts";
 
 type ThreadWindow = InfiniteData<MessageThreadPage, string | null>;
 
@@ -157,7 +163,7 @@ export function useMessageThread({
   }, [localReplies, query.data]);
 
   const sendReply = useCallback(
-    async (content: string, attachmentIds: string[] = [], alsoSendToConversation = false) => {
+    async (content: MessageInput, attachmentIds: string[] = [], alsoSendToConversation = false) => {
       if (!conversationId || !rootMessageId || !isAuthenticated(token)) return false;
       const clientMessageId = globalThis.crypto?.randomUUID?.() ??
         `${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -174,8 +180,8 @@ export function useMessageThread({
               senderId: selfUser.id,
               senderName: selfUser.name,
               senderType: selfUser.type,
-              content,
-              parts: null,
+              content: messageText(content),
+              ...optimisticParts(content),
               attachments: [],
               createdAt: new Date().toISOString(),
             },
@@ -191,7 +197,7 @@ export function useMessageThread({
         const { data, error } = await api.messages({ conversationId }).post(
           {
             clientMessageId,
-            content,
+            ...messageRequestBody(content),
             parentMessageId: rootMessageId,
             alsoSendToConversation,
             attachmentIds,

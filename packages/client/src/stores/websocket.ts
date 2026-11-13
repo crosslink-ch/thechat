@@ -11,6 +11,7 @@ import {
 } from "../lib/telemetry";
 import { wsEvents } from "../lib/ws-events";
 import { usePresenceStore } from "./presence";
+import { messageRequestBody, type MessageInput } from "../lib/composer-parts";
 
 const WS_URL = isWeb && __WEB_WS_URL__ ? __WEB_WS_URL__ : `${API_URL.replace(/^http/, "ws")}/ws`;
 
@@ -22,9 +23,10 @@ interface WebSocketStore {
   reconnecting: boolean;
   connect: (token: string | null) => void;
   disconnect: () => void;
+  /** `content` is plain text or a composer document (mentions by user ID). */
   sendMessage: (
     conversationId: string,
-    content: string,
+    content: MessageInput,
     threadId?: string | null,
     clientMessageId?: string,
     attachmentIds?: string[],
@@ -427,7 +429,7 @@ export const useWebSocketStore = create<WebSocketStore>()(() => ({
 
   sendMessage: (
     conversationId: string,
-    content: string,
+    content: MessageInput,
     threadId?: string | null,
     clientMessageId?: string,
     attachmentIds?: string[],
@@ -442,7 +444,7 @@ export const useWebSocketStore = create<WebSocketStore>()(() => ({
     const event: WsClientEvent = {
       type: "send_message",
       conversationId,
-      content,
+      ...messageRequestBody(content),
       threadId: threadId ?? null,
       clientMessageId,
       attachmentIds,

@@ -1,6 +1,5 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from "react";
 import { Bell, BellOff, Hash, X } from "lucide-react";
-import type { ChatMessage } from "@thechat/shared";
 import { Markdown } from "./Markdown";
 import { InputBar, type InputSendResult } from "./InputBar";
 import { MessageSendError } from "./MessageSendError";
@@ -17,8 +16,9 @@ import {
   useThreadPanelStore,
 } from "../stores/thread-panel";
 import { useMessageThread } from "../hooks/useMessageThread";
-import { mentionsName, type MentionNames } from "../lib/remark-mentions";
+import { useMentionNames } from "../hooks/useMentionNames";
 import { isAuthenticated } from "../lib/auth-identity";
+import type { MessageInput } from "../lib/composer-parts";
 
 const KEYBOARD_RESIZE_STEP = 24;
 
@@ -159,15 +159,10 @@ export function ThreadPanel({
   }, [conversationId, hasUnread, markConversationRead, pageVisible, replyKey, thread.loading, thread.replies]);
 
   // -- Mentions: highlight mentions of the signed-in user, like the timeline.
-  const mentionNames = useMemo<MentionNames>(
-    () => ({ names: (mentions ?? []).map((mention) => mention.label), self: user?.name ?? null }),
-    [mentions, user?.name],
-  );
-  const mentionsYou = (message: ChatMessage) =>
-    message.senderId !== user?.id && mentionsName(message.content, user?.name ?? null);
+  const { mentionNames, mentionsYou } = useMentionNames(mentions);
 
   const handleSend = useCallback(
-    (content: string, _images?: unknown, attachmentIds?: string[]): Promise<InputSendResult> =>
+    (content: MessageInput, _images?: unknown, attachmentIds?: string[]): Promise<InputSendResult> =>
       thread.sendReply(content, attachmentIds ?? [], alsoSend).then((accepted) => {
         if (accepted) setAlsoSend(false);
         return accepted;
@@ -270,7 +265,7 @@ export function ThreadPanel({
                 onSetReaction={thread.setReaction}
                 hideThreadActions
               >
-                {thread.root.content && <Markdown content={thread.root.content} mentions={mentionNames} />}
+                {thread.root.content && <Markdown content={thread.root.content} message={thread.root} mentions={mentionNames} />}
               </SharedChatMessage>
             </div>
             <div className="flex items-center gap-3 px-5 py-2" role="separator" aria-label={`${replyCount} replies`}>
@@ -311,7 +306,7 @@ export function ThreadPanel({
                     {reply.alsoSentToConversation && (
                       <div className="mb-0.5 text-[0.786rem] text-text-dimmed">Also sent to {destination}</div>
                     )}
-                    {reply.content && <Markdown content={reply.content} mentions={mentionNames} />}
+                    {reply.content && <Markdown content={reply.content} message={reply} mentions={mentionNames} />}
                   </SharedChatMessage>
                 </div>
               ))}

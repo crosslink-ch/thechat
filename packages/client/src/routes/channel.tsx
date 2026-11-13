@@ -11,7 +11,6 @@ import { ChannelChatView } from "../components/ChannelChatView";
 import { ThreadPanel } from "../components/ThreadPanel";
 import { useReplyThreadPanel } from "../hooks/useReplyThreadPanel";
 import { wsEvents, type WsEvents } from "../lib/ws-events";
-import { botAppearanceFor } from "../lib/bot-appearance";
 import { isAuthenticated } from "../lib/auth-identity";
 import { channelIncludes } from "../lib/channel-access";
 import { api } from "../lib/api";
@@ -25,6 +24,7 @@ import {
   submitHermesSecureInput,
   submitHermesVaultUnlock,
 } from "../hooks/useBotRuntime";
+import { mentionCandidate } from "../components/mention-ranking";
 
 export function ChannelRoute() {
   const { id: channelId } = useParams({ from: "/channel/$id" });
@@ -128,16 +128,7 @@ export function ChannelRoute() {
       members
         ?.filter((m) => m.userId !== user?.id)
         .filter((m) => channelIncludes(currentChannel, m.userId))
-        .map((m) => ({
-          id: m.userId,
-          label: m.user.name,
-          type: m.user.type,
-          picture: m.user.avatar,
-          botAvatar:
-            m.user.type === "bot"
-              ? botAppearanceFor(m.userId, m.bot?.avatar)
-              : undefined,
-        })),
+        .map((m) => mentionCandidate(m)),
     [members, currentChannel, user?.id]
   );
 

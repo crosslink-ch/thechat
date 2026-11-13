@@ -12,26 +12,30 @@ import { useComposerDraftsStore } from "../stores/composer-drafts";
 vi.mock("./RichInput", async () => {
   const React = await import("react");
 
+  type Doc = { text: string; parts: { type: "text"; text: string }[]; labels: Record<string, string> };
+  const doc = (text: string): Doc => ({ text, parts: text ? [{ type: "text", text }] : [], labels: {} });
   interface MockRichInputProps {
-    initialText?: string;
-    onSubmit: (text: string) => void | boolean | Promise<void | boolean>;
-    onTextChange?: (text: string) => void;
+    initialValue?: string | Doc;
+    onSubmit: (message: Doc) => void | boolean | Promise<void | boolean>;
+    onChange?: (message: Doc) => void;
     onCanSubmitChange?: (canSubmit: boolean) => void;
   }
 
   const RichInput = React.forwardRef(function MockRichInput(
     {
-      initialText = "",
+      initialValue = "",
       onSubmit,
-      onTextChange,
+      onChange,
       onCanSubmitChange,
     }: MockRichInputProps,
     ref: React.ForwardedRef<{
       submit: () => void;
       focus: () => void;
       setText: (text: string) => void;
+      setValue: (value: string | Doc) => void;
     }>,
   ) {
+    const initialText = typeof initialValue === "string" ? initialValue : initialValue.text;
     const [text, setText] = React.useState(initialText);
     const textRef = React.useRef(text);
     textRef.current = text;
@@ -39,7 +43,7 @@ vi.mock("./RichInput", async () => {
     const update = (next: string) => {
       textRef.current = next;
       setText(next);
-      onTextChange?.(next);
+      onChange?.(doc(next));
       onCanSubmitChange?.(next.trim().length > 0);
     };
 
@@ -53,7 +57,7 @@ vi.mock("./RichInput", async () => {
             update("");
           }
         };
-        const result = onSubmit(value);
+        const result = onSubmit(doc(value));
         if (
           result &&
           typeof (result as PromiseLike<void | boolean>).then === "function"
@@ -65,6 +69,7 @@ vi.mock("./RichInput", async () => {
       },
       focus: () => undefined,
       setText: update,
+      setValue: (value: string | Doc) => update(typeof value === "string" ? value : value.text),
     }));
 
     return (
@@ -78,6 +83,13 @@ vi.mock("./RichInput", async () => {
 
   return { RichInput };
 });
+
+/** Draft text by scope (drafts are composer documents). */
+function draftTexts() {
+  return Object.fromEntries(
+    Object.entries(useComposerDraftsStore.getState().drafts).map(([key, draft]) => [key, draft.text]),
+  );
+}
 
 afterEach(() => {
   useComposerDraftsStore.setState({
@@ -140,7 +152,7 @@ describe("InputBar composer draft scoping", () => {
     expect(screen.getByRole("textbox", { name: "Message" })).toHaveValue(
       "draft for task one",
     );
-    expect(useComposerDraftsStore.getState().drafts).toEqual({
+    expect(draftTexts()).toEqual({
       "dm:conversation-1:thread:task-1": "draft for task one",
       "dm:conversation-1:thread:task-2": "draft for task two",
     });
@@ -203,9 +215,9 @@ describe("InputBar composer draft scoping", () => {
     });
     fireEvent.click(screen.getByTitle("Send message"));
 
-    expect(onSend).toHaveBeenCalledWith("ready to send");
+    expect(onSend).toHaveBeenCalledWith(expect.objectContaining({ text: "ready to send" }));
     await waitFor(() =>
-      expect(useComposerDraftsStore.getState().drafts).toEqual({}),
+      expect(draftTexts()).toEqual({}),
     );
   });
 
@@ -255,7 +267,7 @@ describe("InputBar composer draft scoping", () => {
     fireEvent.click(screen.getByTitle("Send message"));
 
     expect(editor).toHaveValue("agent prompt");
-    expect(useComposerDraftsStore.getState().drafts[draftKey]).toBe(
+    expect(useComposerDraftsStore.getState().drafts[draftKey]?.text).toBe(
       "agent prompt",
     );
 
@@ -291,7 +303,7 @@ describe("InputBar composer draft scoping", () => {
     });
 
     expect(editor).toHaveValue("newer draft");
-    expect(useComposerDraftsStore.getState().drafts[draftKey]).toBe(
+    expect(useComposerDraftsStore.getState().drafts[draftKey]?.text).toBe(
       "newer draft",
     );
   });
@@ -321,7 +333,7 @@ describe("InputBar composer draft scoping", () => {
     });
 
     expect(editor).toHaveValue("newer draft");
-    expect(useComposerDraftsStore.getState().drafts[draftKey]).toBe(
+    expect(useComposerDraftsStore.getState().drafts[draftKey]?.text).toBe(
       "newer draft",
     );
   });
@@ -379,7 +391,7 @@ describe("InputBar composer draft scoping", () => {
         "submitted text",
       ),
     );
-    expect(useComposerDraftsStore.getState().drafts[firstKey]).toBe(
+    expect(useComposerDraftsStore.getState().drafts[firstKey]?.text).toBe(
       "submitted text",
     );
   });
@@ -437,7 +449,7 @@ describe("InputBar composer draft scoping", () => {
     expect(screen.getByRole("textbox", { name: "Message" })).toHaveValue(
       "newer draft",
     );
-    expect(useComposerDraftsStore.getState().drafts[firstKey]).toBe(
+    expect(useComposerDraftsStore.getState().drafts[firstKey]?.text).toBe(
       "newer draft",
     );
   });

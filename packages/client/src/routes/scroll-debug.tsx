@@ -7,6 +7,7 @@ import type {
 import { ChannelChatView } from "../components/ChannelChatView";
 import { HermesDmChatView } from "../components/HermesDmChatView";
 import type { ActiveHermesInvocationProgress } from "../lib/hermes-progress";
+import { messageText, type MessageInput } from "../lib/composer-parts";
 
 type DebugMode = "hermes" | "channel";
 type DebugScopeId = "general" | "task-latex" | "task-code";
@@ -132,7 +133,8 @@ export function ScrollDebugRoute() {
   );
 
   const handleSend = useCallback(
-    (content: string) => {
+    (input: MessageInput) => {
+      const content = messageText(input);
       const message = makeMessage({
         index: GENERATED_MESSAGE_COUNT + manualMessagesByScope[activeScopeId].length,
         scope: activeScope,

@@ -99,7 +99,8 @@ describe("shared Avatar", () => {
     const command = vi.fn();
     const { container } = render(<MentionList items={[item]} command={command} />);
     expect(container.querySelector("img")).toHaveAttribute("src", item.picture);
-    fireEvent.click(screen.getByRole("button", { name: "Jane" }));
+    // The @ menu is a listbox; each candidate is an option.
+    fireEvent.click(screen.getByRole("option", { name: /Jane/ }));
     expect(command).toHaveBeenCalledWith(item);
   });
 });

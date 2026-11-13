@@ -203,7 +203,7 @@ vi.mock("../components/HermesDmChatView", async () => {
       emptyState,
     }: any) => {
       const draft = useComposerDraftsStore(
-        (state) => state.drafts[draftKey] ?? "",
+        (state) => state.drafts[draftKey]?.text ?? "",
       );
       const setDraft = useComposerDraftsStore((state) => state.setDraft);
       return (

@@ -20,6 +20,13 @@ import { useAuthStore } from "../stores/auth";
 import { authHeaders, edenErrorMessage, edenErrorStatus } from "../lib/eden";
 import { wsEvents, type WsEvents } from "../lib/ws-events";
 import {
+  messageInputSignature,
+  messageRequestBody,
+  messageText,
+  optimisticParts,
+  type MessageInput,
+} from "../lib/composer-parts";
+import {
   recordSanitizedException,
   SpanKind,
   SpanStatusCode,
@@ -47,7 +54,7 @@ interface UseChannelChatOptions {
   token: string | null;
   wsSendMessage: (
     conversationId: string,
-    content: string,
+    content: MessageInput,
     threadId?: string | null,
     clientMessageId?: string,
     attachmentIds?: string[],
@@ -548,7 +555,7 @@ export function useChannelChat({
 
   const addOptimisticSentMessage = useCallback(
     (
-      content: string,
+      content: MessageInput,
       targetThreadId: string | null = threadId ?? null,
       clientMessageId: string = newClientMessageId(),
     ) => {
@@ -572,15 +579,17 @@ export function useChannelChat({
 
   const sendMessageToThread = useCallback(
     (
-      content: string,
+      content: MessageInput,
       targetThreadId: string | null,
       attachmentIds: string[] = [],
     ) => {
       if (!conversationId) return null;
+      // A retry reuses the failed send's ID only for the same command: same
+      // text and the same mentioned user IDs.
       const signature = JSON.stringify([
         conversationId,
         targetThreadId,
-        content,
+        messageInputSignature(content),
         attachmentIds,
       ]);
       const failedCommand = failedSendRef.current;
@@ -619,10 +628,9 @@ export function useChannelChat({
         post?: (
           body: {
             clientMessageId: string;
-            content: string;
             threadId: string | null;
             attachmentIds: string[];
-          },
+          } & ReturnType<typeof messageRequestBody>,
           options: ReturnType<typeof authHeaders>,
         ) => Promise<{ data?: ChatMessage | null; error?: unknown }>;
       };
@@ -661,7 +669,7 @@ export function useChannelChat({
             response = await endpoint.post!(
               {
                 clientMessageId,
-                content,
+                ...messageRequestBody(content),
                 threadId: targetThreadId,
                 attachmentIds,
               },
@@ -708,7 +716,7 @@ export function useChannelChat({
   );
 
   const sendMessage = useCallback(
-    (content: string, attachmentIds: string[] = []) =>
+    (content: MessageInput, attachmentIds: string[] = []) =>
       sendMessageToThread(content, threadId ?? null, attachmentIds),
     [sendMessageToThread, threadId],
   );
@@ -891,7 +899,7 @@ export function useChannelChat({
 function createLocalSentMessage(
   conversationId: string,
   threadId: string | null,
-  content: string,
+  content: MessageInput,
   selfUser: AuthUser | null,
   clientMessageId: string = newClientMessageId(),
 ): LocalSentMessage | null {
@@ -906,8 +914,9 @@ function createLocalSentMessage(
       senderId: selfUser.id,
       senderName: selfUser.name,
       senderType: selfUser.type,
-      content,
-      parts: null,
+      // The optimistic copy shows the same mention pills as the server's.
+      content: messageText(content),
+      ...optimisticParts(content),
       attachments: [],
       createdAt: new Date().toISOString(),
     },

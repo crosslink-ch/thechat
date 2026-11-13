@@ -1,6 +1,5 @@
 import { isAuthenticated } from "../lib/auth-identity";
-import { useAuthStore } from "../stores/auth";
-import { mentionsName, type MentionNames } from "../lib/remark-mentions";
+import { useMentionNames } from "../hooks/useMentionNames";
 import { Fragment, useRef, useEffect, useCallback, useMemo, useLayoutEffect } from "react";
 import { InputBar, type InputSendResult } from "./InputBar";
 import { Markdown } from "./Markdown";
@@ -26,6 +25,7 @@ import {
   SharedChatMessage,
   shouldMergeChatMessage,
 } from "./SharedChatMessage";
+import type { MessageInput } from "../lib/composer-parts";
 
 const noop = () => {};
 const NO_PROGRESS: ActiveHermesInvocationProgress[] = [];
@@ -38,7 +38,7 @@ interface ChannelChatViewProps {
   sendError?: string | null;
   typingUsers: Map<string, string>; // userId -> userName
   onSend: (
-    content: string,
+    content: MessageInput,
     attachmentIds?: string[],
   ) => InputSendResult | Promise<InputSendResult>;
   onLoadOlderMessages?: () => boolean | void | Promise<boolean | void>;
@@ -116,14 +116,7 @@ export function ChannelChatView({
   });
 
   // Workspace names shown as @mention pills; mentions of you are highlighted.
-  const selfId = useAuthStore((state) => state.user?.id ?? null);
-  const selfName = useAuthStore((state) => state.user?.name ?? null);
-  const mentionNames = useMemo<MentionNames>(
-    () => ({ names: (mentions ?? []).map((mention) => mention.label), self: selfName }),
-    [mentions, selfName],
-  );
-  const mentionsYou = (message: { senderId: string; content: string }) =>
-    message.senderId !== selfId && mentionsName(message.content, selfName);
+  const { mentionNames, mentionsYou } = useMentionNames(mentions);
   const messageScrollSignature = useMemo(
     () => chatMessageWindowSignature(messages),
     [messages],
@@ -183,7 +176,7 @@ export function ChannelChatView({
   }, [progressInvocations, scrollToBottom]);
 
   const handleSend = useCallback(
-    (content: string, attachmentIds: string[] = []) => {
+    (content: MessageInput, attachmentIds: string[] = []) => {
       forceNextContentScrollRef.current = true;
       const result =
         attachmentIds.length > 0
@@ -242,7 +235,7 @@ export function ChannelChatView({
                   threadOpen={openThreadRootId === msg.id}
                   threadUnread={unreadThreadRootIds?.has(msg.id) ?? false}
                 >
-                  {msg.content && <Markdown content={msg.content} mentions={mentionNames} />}
+                  {msg.content && <Markdown content={msg.content} message={msg} mentions={mentionNames} />}
                 </SharedChatMessage>
               </Fragment>
             );

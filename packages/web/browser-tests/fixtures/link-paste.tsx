@@ -2,7 +2,8 @@ import { useState } from "react";
 import { createRoot } from "react-dom/client";
 import { InputBar } from "@thechat/client/components/InputBar";
 import { Markdown } from "@thechat/client/components/Markdown";
-import { useComposerDraftsStore } from "@thechat/client/stores/composer-drafts";
+import { draftText, useComposerDraftsStore } from "@thechat/client/stores/composer-drafts";
+import { messageText } from "@thechat/client/lib/composer-parts";
 import "@thechat/client/styles";
 
 const label = "KGSP 18-140 I V.mp4";
@@ -11,7 +12,7 @@ const href = "https://example.com/?file=KGSP%2018-140%20I%20V.mp4&e=Demo123&down
 function LinkPasteFixture() {
   const [scope, setScope] = useState("A");
   const [sent, setSent] = useState<string[]>([]);
-  const draft = useComposerDraftsStore((state) => state.drafts[`link-paste:${scope}`] ?? "");
+  const draft = useComposerDraftsStore((state) => draftText(state.drafts[`link-paste:${scope}`]));
   return (
     <main style={{ maxWidth: 900, margin: "32px auto", padding: 24 }}>
       <h1>Named link paste regression</h1>
@@ -26,7 +27,7 @@ function LinkPasteFixture() {
         {["A", "B"].map((key) => <button key={key} type="button" aria-pressed={scope === key} onClick={() => setScope(key)}>Draft {key}</button>)}
       </nav>
       <p>Active draft: {scope}. Pasting must immediately show [label](url) as editable Markdown, not hide the URL behind its label. Edit the URL directly, then switch away and back before sending: the same source must remain visible.</p>
-      <InputBar convId={undefined} draftKey={`link-paste:${scope}`} onStop={() => {}} onSend={(content) => { setSent((previous) => [...previous, content]); return true; }} />
+      <InputBar convId={undefined} draftKey={`link-paste:${scope}`} onStop={() => {}} onSend={(message) => { setSent((previous) => [...previous, messageText(message)]); return true; }} />
       <h2>Current serialized draft</h2>
       <pre data-testid="draft" style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{draft}</pre>
       <h2>Local sends</h2>

@@ -18,7 +18,7 @@ delay or hide notifications. TheChat cannot override these.
 | Event | Who | Setting |
 | --- | --- | --- |
 | Direct message | The other person | Direct messages |
-| Message in a channel that @mentions you | The mentioned person | Mentions |
+| Message in a channel that @mentions you (picked from the @ menu, see [mentions](mentions.md)) | The mentioned person | Mentions |
 | An agent's answer in a DM, or in a channel run you started | The person the agent is answering | Agent replies |
 | An agent request (approval, question, review) | Its addressee; in a DM, the participants; in a channel, the person who started the run | Agent requests |
 | An agent's progress update ("⏳ Working — 5 min") | Whoever would get its answer | Agent updates: Every update (off by default) |

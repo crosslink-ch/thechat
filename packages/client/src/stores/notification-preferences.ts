@@ -82,6 +82,12 @@ export const useNotificationPreferencesStore = create<NotificationPreferencesSta
 
 onSessionReset(() => useNotificationPreferencesStore.getState().reset());
 
+/** Whether a channel message that mentions you should notify in-app. */
+export function mentionNotificationsEnabled() {
+  // Before the choices load, follow the server default (on).
+  return useNotificationPreferencesStore.getState().preferences?.mentions !== false;
+}
+
 /** Whether a reply in a followed thread should notify in-app. */
 export function threadReplyNotificationsEnabled() {
   // Older servers omit the choice; it is on by default.

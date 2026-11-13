@@ -398,8 +398,9 @@ describe("AgentChatRoute", () => {
       "data-draft-key",
       durableKey,
     );
-    expect(useComposerDraftsStore.getState().drafts).toEqual({
-      [durableKey]: "typed while the conversation was created",
-    });
+    expect(useComposerDraftsStore.getState().drafts[durableKey]?.text).toBe(
+      "typed while the conversation was created",
+    );
+    expect(Object.keys(useComposerDraftsStore.getState().drafts)).toEqual([durableKey]);
   });
 });
