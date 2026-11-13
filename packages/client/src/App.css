@@ -445,6 +445,9 @@ body,
 .ProseMirror .suggestion { color: var(--color-accent); }
 
 .ProseMirror .mention {
+  padding: 0 0.2em;
+  border-radius: 0.3em;
+  background: color-mix(in srgb, var(--color-accent) 16%, transparent);
   color: var(--color-accent);
   font-weight: 500;
 }
