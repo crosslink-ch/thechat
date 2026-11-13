@@ -8,7 +8,14 @@ test('scripted Hermes requests inline and in the Inbox, rendered reply and task 
   const dm = await call(request, 'POST', '/conversations/dm', { workspaceId: f.workspace.id, otherUserId: bot.userId }, f.a.accessToken);
   await login(page, f.alice);
   await page.goto(`${webURL}/#/dm/${dm.id}`);
-  await page.getByRole('textbox', { name: 'Message', exact: true }).fill('Scripted Hermes browser acceptance');
+  // The Hermes view remounts its composer once its task list has loaded;
+  // text filled before that is lost.
+  await expect(page.getByText('No tasks yet')).toBeVisible();
+  const composer = page.getByRole('textbox', { name: 'Message', exact: true });
+  await expect(async () => {
+    await composer.fill('Scripted Hermes browser acceptance');
+    await expect(composer).toHaveText('Scripted Hermes browser acceptance', { timeout: 1000 });
+  }).toPass();
   await page.getByTitle('Send message', { exact: true }).click();
   let event: any;
   await expect.poll(async () => {
