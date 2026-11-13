@@ -1,4 +1,4 @@
-import { Extension, type AnyExtension, type JSONContent } from "@tiptap/core";
+import { Extension, renderNestedMarkdownContent, type AnyExtension, type JSONContent } from "@tiptap/core";
 import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
 import { MarkdownManager } from "@tiptap/markdown";
 import StarterKit from "@tiptap/starter-kit";
@@ -134,6 +134,21 @@ const markdownOverrides: AnyExtension[] = [
       const fence = codeFence(code);
       const language = typeof node.attrs?.language === "string" ? node.attrs.language : "";
       return code ? `${fence}${language}\n${code}\n${fence}` : `${fence}${language}\n${fence}`;
+    },
+  }),
+  // Every line of an item's text is indented under its marker.
+  Extension.create({
+    name: LIST_ITEM,
+    priority: 1000,
+    renderMarkdown: (node, helpers, context) => {
+      const prefix = context?.parentType === ORDERED_LIST
+        ? `${(Number(context.meta?.parentAttrs?.start) || 1) + (context.index || 0)}. `
+        : "- ";
+      const output = renderNestedMarkdownContent(node, helpers, prefix, context, {
+        alignNestedToPrefix: context?.parentType === ORDERED_LIST,
+        indentMainContent: true,
+      });
+      return output;
     },
   }),
   // An empty heading is still a heading ("#"), so a draft keeps it.
