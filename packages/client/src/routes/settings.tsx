@@ -5,6 +5,7 @@ import {
   SettingsField,
   SettingsSection,
   settingsCard,
+  settingsInlineButton,
   settingsInput,
   settingsPrimaryButton,
   settingsSecondaryButton,
@@ -27,6 +28,9 @@ export function SettingsRoute() {
   const [pictureError, setPictureError] = useState<string | null>(null);
   const [pictureStatus, setPictureStatus] = useState<string | null>(null);
   const pictureOperationRef = useRef(0);
+  const [userIdCopied, setUserIdCopied] = useState(false);
+  const [userIdCopyError, setUserIdCopyError] = useState<string | null>(null);
+  const userIdCopyTimerRef = useRef<number | null>(null);
 
 
   useEffect(() => {
@@ -38,7 +42,37 @@ export function SettingsRoute() {
     setPictureSaving(false);
     setPictureError(null);
     setPictureStatus(null);
+    setUserIdCopied(false);
+    setUserIdCopyError(null);
   }, [user?.id]);
+
+  useEffect(
+    () => () => {
+      if (userIdCopyTimerRef.current !== null) {
+        window.clearTimeout(userIdCopyTimerRef.current);
+      }
+    },
+    [],
+  );
+
+  const copyUserId = async (userId: string) => {
+    if (userIdCopyTimerRef.current !== null) {
+      window.clearTimeout(userIdCopyTimerRef.current);
+      userIdCopyTimerRef.current = null;
+    }
+    try {
+      await navigator.clipboard.writeText(userId);
+      setUserIdCopyError(null);
+      setUserIdCopied(true);
+      userIdCopyTimerRef.current = window.setTimeout(() => {
+        userIdCopyTimerRef.current = null;
+        setUserIdCopied(false);
+      }, 1600);
+    } catch {
+      setUserIdCopied(false);
+      setUserIdCopyError("Could not copy the user ID");
+    }
+  };
 
   const isCurrentPictureOperation = (operation: number, userId: string) =>
     pictureOperationRef.current === operation &&
@@ -260,7 +294,30 @@ export function SettingsRoute() {
                   <SettingsFact term="Email address" hint="Read only">
                     {user.email ?? "No email address"}
                   </SettingsFact>
-                  <SettingsFact term="User ID" mono>
+                  <SettingsFact
+                    term="User ID"
+                    mono
+                    action={
+                      <>
+                        <button
+                          type="button"
+                          aria-label="Copy user ID"
+                          className={settingsInlineButton}
+                          onClick={() => void copyUserId(user.id)}
+                        >
+                          {userIdCopied ? "Copied" : "Copy"}
+                        </button>
+                        {userIdCopyError && (
+                          <p
+                            className="basis-full text-[0.857rem] leading-5 text-error-bright"
+                            role="alert"
+                          >
+                            {userIdCopyError}
+                          </p>
+                        )}
+                      </>
+                    }
+                  >
                     {user.id}
                   </SettingsFact>
                 </dl>

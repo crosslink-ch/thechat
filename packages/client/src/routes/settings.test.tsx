@@ -148,11 +148,65 @@ describe("SettingsRoute", () => {
     expect(email).toHaveClass("break-all");
     expect(screen.getByText("Read only")).toBeInTheDocument();
     expect(screen.getByText("User ID")).toBeInTheDocument();
-    expect(screen.getByText("user-1").tagName).toBe("DD");
+    expect(screen.getByText("user-1").closest("dd")).not.toBeNull();
     expect(
       screen.queryByText(/Your display name appears across TheChat/i),
     ).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Save name" })).toBeDisabled();
+    expect(
+      await screen.findByText("No personal access tokens yet."),
+    ).toBeInTheDocument();
+  });
+
+  it("copies exactly the user ID and confirms it briefly", async () => {
+    const user = userEvent.setup();
+    const writeText = vi
+      .spyOn(navigator.clipboard, "writeText")
+      .mockResolvedValue(undefined);
+    render(<SettingsRoute />);
+
+    const userIdValue = screen.getByText("user-1").closest("dd")!;
+    const copyButton = within(userIdValue).getByRole("button", {
+      name: "Copy user ID",
+    });
+    expect(copyButton).toHaveTextContent(/^Copy$/);
+    // Copying must not submit the surrounding profile form.
+    await user.click(copyButton);
+
+    expect(writeText).toHaveBeenCalledTimes(1);
+    expect(writeText).toHaveBeenCalledWith("user-1");
+    expect(copyButton).toHaveTextContent("Copied");
+    expect(updateNameMock).not.toHaveBeenCalled();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    await waitFor(() => expect(copyButton).toHaveTextContent(/^Copy$/), {
+      timeout: 3000,
+    });
+    expect(
+      await screen.findByText("No personal access tokens yet."),
+    ).toBeInTheDocument();
+  });
+
+  it("explains when the user ID cannot be copied", async () => {
+    const user = userEvent.setup();
+    const writeText = vi
+      .spyOn(navigator.clipboard, "writeText")
+      .mockRejectedValueOnce(new Error("Clipboard permission denied"))
+      .mockResolvedValueOnce(undefined);
+    render(<SettingsRoute />);
+
+    const copyButton = screen.getByRole("button", { name: "Copy user ID" });
+    await user.click(copyButton);
+
+    expect(writeText).toHaveBeenCalledWith("user-1");
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Could not copy the user ID",
+    );
+    expect(copyButton).toHaveTextContent(/^Copy$/);
+
+    // A later successful copy clears the error.
+    await user.click(copyButton);
+    expect(copyButton).toHaveTextContent("Copied");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(
       await screen.findByText("No personal access tokens yet."),
     ).toBeInTheDocument();
@@ -482,6 +536,7 @@ describe("SettingsRoute", () => {
     const controls = [
       screen.getByLabelText("Name"),
       screen.getByRole("button", { name: "Save name" }),
+      screen.getByRole("button", { name: "Copy user ID" }),
       screen.getByLabelText("Token name"),
       screen.getByRole("button", { name: "Create token" }),
       revealedInput,

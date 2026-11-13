@@ -29,6 +29,10 @@ export const settingsSecondaryButton = `${buttonClass("secondary", "md")} ${sett
 export const settingsQuietButton = `${buttonClass("ghost", "md")} ${settingsButtonExtras}`;
 export const settingsDangerButton = `${buttonClass("danger", "md")} ${settingsButtonExtras}`;
 
+/** Small accent text button placed beside a value, e.g. "Copy". */
+export const settingsInlineButton =
+  "inline-flex shrink-0 cursor-pointer items-center rounded-md border-none bg-transparent px-1.5 py-0.5 font-[inherit] text-[0.786rem] font-medium text-accent transition-colors duration-150 hover:bg-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent max-sm:h-[44px] max-sm:px-3";
+
 export function SettingsSection({
   id,
   title,
@@ -82,31 +86,40 @@ export function SettingsField({
   );
 }
 
-/** A read-only term/value row for use inside a `<dl>`. */
+/**
+ * A read-only term/value row for use inside a `<dl>`. `action` (for example a
+ * copy button) sits beside the value and wraps below it when space runs out.
+ */
 export function SettingsFact({
   term,
   hint,
   mono = false,
+  action,
   children,
 }: {
   term: ReactNode;
   hint?: ReactNode;
   mono?: boolean;
+  action?: ReactNode;
   children: ReactNode;
 }) {
+  const valueClass = `break-all ${
+    mono ? "font-mono text-[0.857rem] leading-5 text-text-muted" : settingsValue
+  }`;
   return (
     <div className={settingsRow}>
       <dt className={`min-w-0 ${settingsLabel}`}>
         {term}
         {hint && <span className={`block font-normal ${settingsHint}`}>{hint}</span>}
       </dt>
-      <dd
-        className={`min-w-0 break-all ${
-          mono ? "font-mono text-[0.857rem] leading-5 text-text-muted" : settingsValue
-        }`}
-      >
-        {children}
-      </dd>
+      {action ? (
+        <dd className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+          <span className={`min-w-0 ${valueClass}`}>{children}</span>
+          {action}
+        </dd>
+      ) : (
+        <dd className={`min-w-0 ${valueClass}`}>{children}</dd>
+      )}
     </div>
   );
 }
