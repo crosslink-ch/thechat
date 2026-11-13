@@ -4,7 +4,7 @@ import type { Editor as TiptapEditor } from "@tiptap/core";
 import { InputBar } from "./InputBar";
 import { useComposerDraftsStore } from "../stores/composer-drafts";
 import { HERMES_FALLBACK_SLASH_COMMANDS } from "../lib/hermes-slash-commands";
-import type { MessageInput } from "../lib/composer-parts";
+import { composerToDocument, type MessageInput } from "../lib/composer-parts";
 
 /** The real InputBar and RichInput: blocks, # and : menus, Enter rules. */
 
@@ -126,6 +126,26 @@ describe("composer live formatting", () => {
     press("Enter");
     await waitFor(() => expect(onSend).toHaveBeenCalledTimes(2));
     expect(sentText(onSend, 1)).toBe("ok :xy");
+  });
+
+  it("edits instead of sending when Enter replaces a selection in a list or code", () => {
+    const { onSend } = renderComposer();
+    act(() => {
+      tiptap().commands.setContent(composerToDocument("- one\n- two"));
+      // From after "o" in "one" to after "t" in "two".
+      tiptap().commands.setTextSelection({ from: 4, to: 11 });
+    });
+    press("Enter");
+    expect(onSend).not.toHaveBeenCalled();
+    expect([...editorElement().querySelectorAll("li")].map((item) => item.textContent)).toEqual(["o", "wo"]);
+
+    act(() => {
+      tiptap().commands.setContent(composerToDocument("```\none\n```\n\ntwo"));
+      tiptap().commands.setTextSelection({ from: 2, to: 7 });
+    });
+    press("Enter");
+    expect(onSend).not.toHaveBeenCalled();
+    expect(editorElement().querySelector("pre")?.textContent).toBe("o\nwo");
   });
 
   it("makes Shift+Enter a new line everywhere, never a send", () => {

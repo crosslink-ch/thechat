@@ -47,6 +47,8 @@ works on text within one line; a selection with a mention cannot be linked.
 - In a code block, Enter makes a new line; Enter on an empty last line
   leaves the block.
 - Shift+Enter is always a new line.
+- Enter over a selection in a list or code block replaces it with the new
+  item or line, as typing would; it does not send.
 - On touch devices Return writes a new line or item and the send button
   sends.
 

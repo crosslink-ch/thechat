@@ -169,9 +169,23 @@ export function createEnterRules(submit: (editor: import("@tiptap/core").Editor)
       // A visible @, # or : menu owns Enter (its plugin picks the entry); a
       // suggestion that matches nothing ("fixed in #42") shows none.
       const menuOpen = (editor: import("@tiptap/core").Editor) => suggestionMenuVisible(editor);
+      /** Inside a list item or a code block, where Enter edits. */
+      const structured = ($pos: import("@tiptap/pm/model").ResolvedPos) => {
+        if ($pos.parent.type.name === "codeBlock") return true;
+        for (let depth = $pos.depth; depth > 0; depth--) {
+          if ($pos.node(depth).type.name === "listItem") return true;
+        }
+        return false;
+      };
       return {
         Enter: ({ editor }) => {
           if (menuOpen(editor)) return false;
+          // Enter over a selection in a list or code replaces it with the
+          // new line or item, as typing would; it never sends the draft.
+          const { selection } = editor.state;
+          if (!selection.empty && (structured(selection.$from) || structured(selection.$to))) {
+            editor.commands.deleteSelection();
+          }
           if (newLine(editor)) return true;
           if (touch()) return editor.commands.splitBlock();
           submit(editor);
