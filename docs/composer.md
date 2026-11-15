@@ -43,10 +43,17 @@ works on text within one line; a selection with a mention cannot be linked.
 ## Enter
 
 - Enter sends.
-- In a list, Enter makes a new item; Enter in an empty item leaves the list.
+- In a list, Enter makes a new item.
 - In a code block, Enter makes a new line; Enter on an empty last line
   leaves the block.
 - Shift+Enter is always a new line.
+- An empty line in a list or a quote leaves it: Enter or Shift+Enter on the
+  empty line moves that line out of the innermost list or quote, so pressing
+  again steps out one more level (a quoted list: list, then quote). A nested
+  item moves to the outer list. Only the empty line moves; an empty line in
+  the middle of a quote splits the quote in two. Enter on such a line does
+  not send.
+- Backspace at the start of a quoted line or a list item also takes it out.
 - Enter over a selection in a list or code block replaces it with the new
   item or line, as typing would; it does not send.
 - On touch devices Return writes a new line or item and the send button

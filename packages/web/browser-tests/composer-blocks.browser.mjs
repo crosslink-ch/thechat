@@ -141,4 +141,47 @@ for (const engine of [chromium, webkit]) {
     assert.equal((await rendered.locator("blockquote").textContent()).trim(), "quoted");
     assert.deepEqual(errors, []);
   });
+
+  test(`${engine.name()}: an empty line steps out of a list, then out of a quote`, async (t) => {
+    const { page, editor, errors } = await openComposer(engine, t);
+
+    // A quoted bullet, then new lines until the caret is back in plain text.
+    await page.keyboard.type("> - quoted point");
+    await page.keyboard.press("Shift+Enter");
+    await page.keyboard.press("Shift+Enter");
+    assert.equal(await editor.locator("blockquote li").count(), 1);
+    assert.equal(await editor.locator("blockquote li").textContent(), "quoted point");
+    await page.keyboard.press("Shift+Enter");
+    await page.keyboard.type("my reply");
+    assert.equal(await editor.locator("blockquote").textContent(), "quoted point");
+    assert.equal(await editor.locator(":scope > p").last().textContent(), "my reply");
+
+    // The same with Enter: a new item, then an empty item and an empty quoted line leave.
+    await page.keyboard.press("Shift+Enter");
+    await page.keyboard.type("> - one");
+    await page.keyboard.press("Enter");
+    await page.keyboard.type("two");
+    await page.keyboard.press("Enter");
+    await page.keyboard.press("Enter");
+    await page.keyboard.press("Enter");
+    await page.keyboard.type("done");
+    assert.equal(await page.getByTestId("sent-message").count(), 0, "Enter on an empty line must not send");
+
+    await page.keyboard.press("Enter");
+    const message = page.getByTestId("sent-message").first();
+    await message.waitFor();
+    assert.equal(
+      await message.getByTestId("sent-source").textContent(),
+      "> - quoted point\n\nmy reply\n\n> - one\n> - two\n\ndone",
+    );
+    const rendered = message.locator(".md-content");
+    assert.equal(await rendered.locator("blockquote").count(), 2);
+    assert.equal(await rendered.locator("blockquote li").count(), 3);
+    assert.deepEqual(
+      await rendered.locator(":scope > p").allTextContents(),
+      ["my reply", "done"],
+    );
+    assert.equal(await editor.textContent(), "");
+    assert.deepEqual(errors, []);
+  });
 }
