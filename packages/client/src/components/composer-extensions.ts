@@ -1,0 +1,235 @@
+import { Extension, InputRule } from "@tiptap/core";
+import { PluginKey } from "@tiptap/pm/state";
+import Suggestion from "@tiptap/suggestion";
+import { createElement } from "react";
+import { EmojiImage } from "./EmojiImage";
+import { SuggestionList } from "./SuggestionList";
+import { suggestionMenuVisible, suggestionPopup } from "./suggestion-popup";
+import { BLOCK_MENU_ITEMS, filterBlockMenuItems, mentionsAsText, type BlockMenuItem } from "./block-menu-items";
+import { emojiForShortName, searchEmoji, type EmojiEntry } from "../lib/emoji-search";
+
+/** True inside a code block or inline code, where menus and rules stay off. */
+function inCode(state: import("@tiptap/pm/state").EditorState, from: number) {
+  const $from = state.doc.resolve(from);
+  if ($from.parent.type.spec.code) return true;
+  return state.doc.rangeHasMark(Math.max(0, from - 1), from + 1, state.schema.marks.code!)
+    || $from.marks().some((mark) => mark.type.spec.code);
+}
+
+export const BlockMenuPluginKey = new PluginKey("blockMenu");
+export const EmojiMenuPluginKey = new PluginKey("emojiMenu");
+
+/**
+ * The # block menu. "#" at the start of a line or after a space opens it;
+ * typing filters it. "# " plus space still makes a heading (the Heading
+ * input rule), because the menu does not allow spaces in its query.
+ */
+export const BlockMenu = Extension.create<{ items: BlockMenuItem[] }>({
+  name: "blockMenu",
+  addOptions() {
+    return { items: BLOCK_MENU_ITEMS };
+  },
+  addProseMirrorPlugins() {
+    const items = this.options.items;
+    return [
+      Suggestion<BlockMenuItem>({
+        editor: this.editor,
+        pluginKey: BlockMenuPluginKey,
+        char: "#",
+        allowedPrefixes: [" "],
+        allow: ({ state, range }) => !inCode(state, range.from),
+        items: ({ query }) => filterBlockMenuItems(items, query),
+        command: ({ editor, range, props }) => props.run(editor, range),
+        render: suggestionPopup(SuggestionList<BlockMenuItem>, (props) => ({
+          items: props.items,
+          command: props.command,
+          editor: props.editor,
+          label: "Insert a block",
+          testId: "block-menu",
+          render: (item: BlockMenuItem) => ({
+            key: item.id,
+            section: item.section,
+            content: [
+              createElement("span", { key: "label", className: "min-w-0 flex-1 truncate" }, item.label),
+              createElement(
+                "span",
+                { key: "hint", className: "shrink-0 font-mono text-[0.786rem] text-text-dimmed" },
+                item.hint,
+              ),
+            ],
+          }),
+        })),
+      }),
+    ];
+  },
+});
+
+/**
+ * "```" or "~~~" plus space turns the line into a code block, like the
+ * code-block extension's own rules (which run after these), but the line's
+ * mentions become their "@name" text first instead of being dropped.
+ */
+export const CodeBlockKeepsMentions = Extension.create({
+  name: "codeBlockKeepsMentions",
+  priority: 1000,
+  addInputRules() {
+    return [/^```([a-z]+)?[\s\n]$/, /^~~~([a-z]+)?[\s\n]$/].map(
+      (find) =>
+        new InputRule({
+          find,
+          handler: ({ state, range, match }) => {
+            const codeBlock = state.schema.nodes.codeBlock;
+            const $start = state.doc.resolve(range.from);
+            if (!codeBlock || !$start.node(-1).canReplaceWith($start.index(-1), $start.indexAfter(-1), codeBlock)) {
+              return null;
+            }
+            mentionsAsText({ tr: state.tr });
+            state.tr
+              .delete(range.from, range.to)
+              .setBlockType(range.from, range.from, codeBlock, { language: match[1] || null });
+          },
+        }),
+    );
+  },
+});
+
+/** Minimum query (":sm") before the : menu opens. */
+const EMOJI_MIN_QUERY = 2;
+
+/**
+ * The : emoji menu. Opens after ":" plus two characters, at the start of a
+ * line or after whitespace, never after a word character (10:30, URLs) or
+ * inside code. Enter/Tab inserts the unicode character.
+ */
+export const EmojiMenu = Extension.create({
+  name: "emojiMenu",
+  addProseMirrorPlugins() {
+    return [
+      Suggestion<EmojiEntry>({
+        editor: this.editor,
+        pluginKey: EmojiMenuPluginKey,
+        char: ":",
+        allowedPrefixes: [" ", "\u00a0", "(", "["],
+        allow: ({ state, range }) => {
+          if (inCode(state, range.from)) return false;
+          const query = state.doc.textBetween(range.from + 1, range.to);
+          return query.length >= EMOJI_MIN_QUERY && /^[\w+-]+$/.test(query);
+        },
+        items: ({ query }) => searchEmoji(query, 8),
+        command: ({ editor, range, props }) => {
+          editor.chain().focus().insertContentAt(range, props.emoji).run();
+        },
+        render: suggestionPopup(SuggestionList<EmojiEntry>, (props) => ({
+          items: props.items,
+          command: props.command,
+          editor: props.editor,
+          label: "Insert an emoji",
+          testId: "emoji-menu",
+          render: (item: EmojiEntry) => ({
+            key: item.shortName,
+            content: [
+              createElement(EmojiImage, { key: "image", emoji: item.emoji, size: 20 }),
+              createElement(
+                "span",
+                { key: "name", className: "min-w-0 flex-1 truncate font-mono text-[0.857rem]" },
+                `:${item.shortName}:`,
+              ),
+            ],
+          }),
+        })),
+      }),
+    ];
+  },
+  addInputRules() {
+    return [
+      // A complete ":smile:" converts by itself (not after a word character).
+      new InputRule({
+        find: /(?:^|[\s([])(:([\w+-]+):)$/,
+        handler: ({ state, range, match }) => {
+          const entry = emojiForShortName(match[2]!);
+          if (!entry || inCode(state, range.from)) return null;
+          const start = range.to - match[1]!.length;
+          state.tr.insertText(entry.emoji, start, range.to);
+        },
+      }),
+    ];
+  },
+});
+
+/**
+ * Enter rules. Enter sends; inside a list it makes a new item (an empty item
+ * leaves the list) and inside a code block it makes a new line (Enter on an
+ * empty last line leaves the block). Shift+Enter is always a new line.
+ * On touch devices Return writes (a new line or item) and the button sends.
+ */
+export function createEnterRules(submit: (editor: import("@tiptap/core").Editor) => void) {
+  return Extension.create({
+    name: "composerEnter",
+    // Before the list and code-block keymaps, so every Enter goes through here.
+    priority: 1000,
+    addKeyboardShortcuts() {
+      const touch = () => Boolean(window.matchMedia?.("(pointer: coarse)").matches);
+      const newLine = (editor: import("@tiptap/core").Editor) => {
+        const { $from } = editor.state.selection;
+        if ($from.parent.type.name === "codeBlock") {
+          const atEnd = $from.parentOffset === $from.parent.content.size;
+          if (atEnd && $from.parent.textContent.endsWith("\n")) {
+            // An empty last line leaves the block.
+            return editor
+              .chain()
+              .command(({ tr }) => {
+                tr.delete($from.pos - 1, $from.pos);
+                return true;
+              })
+              .exitCode()
+              .run();
+          }
+          return editor.commands.newlineInCode();
+        }
+        for (let depth = $from.depth; depth > 0; depth--) {
+          if ($from.node(depth).type.name === "listItem") {
+            // An empty item leaves the list.
+            if ($from.parent.content.size === 0) return editor.commands.liftListItem("listItem");
+            return editor.commands.splitListItem("listItem");
+          }
+        }
+        return false;
+      };
+      // A visible @, # or : menu owns Enter (its plugin picks the entry); a
+      // suggestion that matches nothing ("fixed in #42") shows none.
+      const menuOpen = (editor: import("@tiptap/core").Editor) => suggestionMenuVisible(editor);
+      /** Inside a list item or a code block, where Enter edits. */
+      const structured = ($pos: import("@tiptap/pm/model").ResolvedPos) => {
+        if ($pos.parent.type.name === "codeBlock") return true;
+        for (let depth = $pos.depth; depth > 0; depth--) {
+          if ($pos.node(depth).type.name === "listItem") return true;
+        }
+        return false;
+      };
+      return {
+        Enter: ({ editor }) => {
+          if (menuOpen(editor)) return false;
+          // Enter over a selection in a list or code replaces it with the
+          // new line or item, as typing would; it never sends the draft.
+          const { selection } = editor.state;
+          if (!selection.empty && (structured(selection.$from) || structured(selection.$to))) {
+            editor.commands.deleteSelection();
+          }
+          if (newLine(editor)) return true;
+          if (touch()) return editor.commands.splitBlock();
+          submit(editor);
+          return true;
+        },
+        // A new line in the same block: paragraphs split (WebKitGTK renders
+        // the caret on the wrong line after trailing <br> elements), list
+        // items stay one item, code gets a newline.
+        "Shift-Enter": ({ editor }) => {
+          if (menuOpen(editor)) return false;
+          const { $from } = editor.state.selection;
+          if ($from.parent.type.name === "codeBlock") return editor.commands.newlineInCode();
+          return editor.commands.splitBlock();
+        },
+      };
+    },
+  });
+}

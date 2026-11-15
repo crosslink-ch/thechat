@@ -52,10 +52,11 @@ describe("composer serializer (Tiptap <-> parts-v1)", () => {
       { type: "reference", refType: "user", refId: KODA },
       { type: "text", text: ", please ask " },
       { type: "reference", refType: "user", refId: ADA },
-      { type: "text", text: "\n  - indented line\n\nafter a blank line" },
+      // "- " would start a list; the literal line keeps its dash escaped.
+      { type: "text", text: "\n  \\- indented line\n\nafter a blank line" },
     ]);
     expect(result.labels).toEqual({ [KODA]: "Koda", [ADA]: "Ada Lovelace" });
-    expect(result.text).toBe("Hi @Koda, please ask @Ada Lovelace\n  - indented line\n\nafter a blank line");
+    expect(result.text).toBe("Hi @Koda, please ask @Ada Lovelace\n  \\- indented line\n\nafter a blank line");
     // The server derives `content` with the same projector.
     expect(projectPartsContent(result.parts, (id) => result.labels[id])).toBe(result.text);
   });
@@ -81,8 +82,11 @@ describe("composer serializer (Tiptap <-> parts-v1)", () => {
       ],
     };
     const result = round(original);
-    expect(result.parts).toEqual(original.parts);
-    expect(result.text).toBe("**bold** @Zoë 🧪 👋🏽 e\u0301 — مرحبا @كودا\n`code` _end_");
+    // Markdown is normalized once (\`_x_\` is written \`*x*\`), then stable.
+    expect(result.parts).toEqual(original.parts.map((part) =>
+      part.type === "text" ? { ...part, text: part.text.replace("_end_", "*end*") } : part));
+    expect(round(result).parts).toEqual(result.parts);
+    expect(result.text).toBe("**bold** @Zoë 🧪 👋🏽 e\u0301 — مرحبا @كودا\n`code` *end*");
   });
 
   it("restores a draft with its mentions, preferring the current name", () => {
