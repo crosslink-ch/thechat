@@ -1,5 +1,7 @@
-import { Extension, InputRule } from "@tiptap/core";
-import { PluginKey } from "@tiptap/pm/state";
+import { Extension, InputRule, type Editor } from "@tiptap/core";
+import { liftListItem } from "@tiptap/pm/schema-list";
+import { PluginKey, type Transaction } from "@tiptap/pm/state";
+import { canSplit, liftTarget } from "@tiptap/pm/transform";
 import Suggestion from "@tiptap/suggestion";
 import { createElement } from "react";
 import { EmojiImage } from "./EmojiImage";
@@ -157,19 +159,70 @@ export const EmojiMenu = Extension.create({
 });
 
 /**
- * Enter rules. Enter sends; inside a list it makes a new item (an empty item
- * leaves the list) and inside a code block it makes a new line (Enter on an
- * empty last line leaves the block). Shift+Enter is always a new line.
- * On touch devices Return writes (a new line or item) and the button sends.
+ * An empty line in a list item or a quote moves out of the innermost one, so
+ * repeated presses step out level by level: a nested item to the outer list,
+ * a list line into the quote or text around the list, a quoted line out of
+ * the quote (splitting the quote when the line is in its middle). Only the
+ * empty line moves; the item's or the quote's text stays where it is.
  */
-export function createEnterRules(submit: (editor: import("@tiptap/core").Editor) => void) {
+function leaveEmptyLine(editor: Editor): boolean {
+  const { selection } = editor.state;
+  const { $from } = selection;
+  if (!selection.empty || !$from.parent.isTextblock || $from.parent.content.size > 0 || $from.depth < 2) return false;
+  const container = $from.node(-1).type.name;
+  if (container === "listItem") {
+    // Give the empty line an item of its own first (a later line of an item
+    // stays in the list), then lift that item.
+    const tr = editor.state.tr;
+    const $line = tr.doc.resolve(tr.selection.from);
+    if ($line.index(-1) > 0) {
+      if (!canSplit(tr.doc, $line.before())) return false;
+      tr.split($line.before());
+    }
+    const $own = tr.doc.resolve(tr.selection.from);
+    if ($own.index(-1) < $own.node(-1).childCount - 1) {
+      if (!canSplit(tr.doc, $own.after())) return false;
+      tr.split($own.after());
+    }
+    if (tr.docChanged) {
+      // liftListItem maps through its transaction's earlier steps, so run it
+      // on the split document and append its steps: one transaction, one undo.
+      let lift: Transaction | undefined;
+      if (!liftListItem(editor.schema.nodes.listItem!)(editor.state.apply(tr), (liftTr) => (lift = liftTr))) return false;
+      for (const step of lift!.steps) tr.step(step);
+      editor.view.dispatch(tr.scrollIntoView());
+      return true;
+    }
+    return editor.commands.liftListItem("listItem");
+  }
+  if (container === "blockquote") {
+    return editor.commands.command(({ tr, dispatch }) => {
+      const range = tr.doc.resolve(tr.selection.from).blockRange();
+      const target = range && liftTarget(range);
+      if (range == null || target == null) return false;
+      if (dispatch) tr.lift(range, target);
+      return true;
+    });
+  }
+  return false;
+}
+
+/**
+ * Enter rules. Enter sends; inside a list it makes a new item and inside a
+ * code block it makes a new line (Enter on an empty last line leaves the
+ * block). Shift+Enter is always a new line. On an empty line in a list or a
+ * quote, Enter and Shift+Enter move that line out of the innermost list or
+ * quote instead (see leaveEmptyLine). On touch devices Return writes (a new
+ * line or item) and the button sends.
+ */
+export function createEnterRules(submit: (editor: Editor) => void) {
   return Extension.create({
     name: "composerEnter",
     // Before the list and code-block keymaps, so every Enter goes through here.
     priority: 1000,
     addKeyboardShortcuts() {
       const touch = () => Boolean(window.matchMedia?.("(pointer: coarse)").matches);
-      const newLine = (editor: import("@tiptap/core").Editor) => {
+      const newLine = (editor: Editor) => {
         const { $from } = editor.state.selection;
         if ($from.parent.type.name === "codeBlock") {
           const atEnd = $from.parentOffset === $from.parent.content.size;
@@ -186,18 +239,15 @@ export function createEnterRules(submit: (editor: import("@tiptap/core").Editor)
           }
           return editor.commands.newlineInCode();
         }
+        if (leaveEmptyLine(editor)) return true;
         for (let depth = $from.depth; depth > 0; depth--) {
-          if ($from.node(depth).type.name === "listItem") {
-            // An empty item leaves the list.
-            if ($from.parent.content.size === 0) return editor.commands.liftListItem("listItem");
-            return editor.commands.splitListItem("listItem");
-          }
+          if ($from.node(depth).type.name === "listItem") return editor.commands.splitListItem("listItem");
         }
         return false;
       };
       // A visible @, # or : menu owns Enter (its plugin picks the entry); a
       // suggestion that matches nothing ("fixed in #42") shows none.
-      const menuOpen = (editor: import("@tiptap/core").Editor) => suggestionMenuVisible(editor);
+      const menuOpen = (editor: Editor) => suggestionMenuVisible(editor);
       /** Inside a list item or a code block, where Enter edits. */
       const structured = ($pos: import("@tiptap/pm/model").ResolvedPos) => {
         if ($pos.parent.type.name === "codeBlock") return true;
@@ -222,11 +272,13 @@ export function createEnterRules(submit: (editor: import("@tiptap/core").Editor)
         },
         // A new line in the same block: paragraphs split (WebKitGTK renders
         // the caret on the wrong line after trailing <br> elements), list
-        // items stay one item, code gets a newline.
+        // items stay one item, code gets a newline. An empty line in a list
+        // or quote leaves it instead.
         "Shift-Enter": ({ editor }) => {
           if (menuOpen(editor)) return false;
           const { $from } = editor.state.selection;
           if ($from.parent.type.name === "codeBlock") return editor.commands.newlineInCode();
+          if (leaveEmptyLine(editor)) return true;
           return editor.commands.splitBlock();
         },
       };

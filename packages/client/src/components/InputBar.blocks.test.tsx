@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { Editor as TiptapEditor } from "@tiptap/core";
+import { closeHistory } from "@tiptap/pm/history";
 import { InputBar } from "./InputBar";
 import { useComposerDraftsStore } from "../stores/composer-drafts";
 import { HERMES_FALLBACK_SLASH_COMMANDS } from "../lib/hermes-slash-commands";
@@ -168,6 +169,141 @@ describe("composer live formatting", () => {
     press("Enter");
     expect(editorElement().querySelectorAll("li")).toHaveLength(2);
     expect(onSend).not.toHaveBeenCalled();
+  });
+});
+
+describe("leaving a list or quote", () => {
+  const quote = () => editorElement().querySelector(":scope > blockquote");
+  const topLevel = () => [...editorElement().children].map((block) => block.tagName.toLowerCase());
+
+  it("Shift+Enter on an empty line steps out of the list, then out of the quote", async () => {
+    const { onSend } = renderComposer();
+    type("> - item");
+    press("Enter", { shiftKey: true });
+    press("Enter", { shiftKey: true });
+    // The empty line left the list but is still quoted; the item kept its text and bullet.
+    expect(quote()?.querySelectorAll("li")).toHaveLength(1);
+    expect(quote()?.querySelector("li")?.textContent).toBe("item");
+    expect(quote()?.querySelectorAll("li p")).toHaveLength(1);
+    expect([...quote()!.children].map((block) => block.tagName.toLowerCase())).toEqual(["ul", "p"]);
+    press("Enter", { shiftKey: true });
+    expect(topLevel()).toEqual(["blockquote", "p"]);
+    type("plain");
+    expect(quote()?.textContent).toBe("item");
+    expect(onSend).not.toHaveBeenCalled();
+    press("Enter");
+    await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
+    expect(sentText(onSend)).toBe("> - item\n\nplain");
+  });
+
+  it("Enter on an empty line leaves a quote instead of sending", async () => {
+    const { onSend } = renderComposer();
+    type("> - one");
+    press("Enter");
+    type("two");
+    press("Enter");
+    // An empty item leaves the list, into the quote.
+    press("Enter");
+    expect(quote()?.querySelectorAll("li")).toHaveLength(2);
+    // An empty quoted line leaves the quote.
+    press("Enter");
+    expect(onSend).not.toHaveBeenCalled();
+    expect(topLevel()).toEqual(["blockquote", "p"]);
+    type("after");
+    press("Enter");
+    await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
+    expect(sentText(onSend)).toBe("> - one\n> - two\n\nafter");
+  });
+
+  it("moves only the empty line out of a list item, not the item's text", async () => {
+    const { onSend } = renderComposer();
+    type("- item");
+    press("Enter", { shiftKey: true });
+    // A pause, so the next edit is its own undo step.
+    act(() => {
+      tiptap().view.dispatch(closeHistory(tiptap().state.tr));
+    });
+    press("Enter");
+    expect(topLevel()).toEqual(["ul", "p"]);
+    expect(editorElement().querySelector("li")?.textContent).toBe("item");
+    // One undo puts the line back into the item.
+    act(() => {
+      tiptap().commands.undo();
+    });
+    expect(topLevel()).toEqual(["ul"]);
+    expect(editorElement().querySelectorAll("li p")).toHaveLength(2);
+    press("Enter");
+    expect(topLevel()).toEqual(["ul", "p"]);
+    type("next");
+    press("Enter");
+    await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
+    expect(sentText(onSend)).toBe("- item\n\nnext");
+  });
+
+  it("splits a quote when an empty line in its middle leaves it", async () => {
+    const { onSend } = renderComposer();
+    type("> a");
+    press("Enter", { shiftKey: true });
+    type("b");
+    act(() => {
+      // Caret after "a".
+      tiptap().commands.setTextSelection(3);
+    });
+    press("Enter", { shiftKey: true });
+    press("Enter", { shiftKey: true });
+    expect(topLevel()).toEqual(["blockquote", "p", "blockquote"]);
+    type("between");
+    press("Enter");
+    await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
+    expect(sentText(onSend)).toBe("> a\n\nbetween\n\n> b");
+  });
+
+  it("moves an empty nested item to the outer list first", () => {
+    renderComposer();
+    act(() => {
+      tiptap().commands.setContent(composerToDocument("- outer\n  - inner"));
+      tiptap().commands.focus("end");
+    });
+    press("Enter", { shiftKey: true });
+    press("Enter", { shiftKey: true });
+    const outerItems = editorElement().querySelectorAll(":scope > ul > li");
+    expect(outerItems).toHaveLength(2);
+    expect(outerItems[0]?.querySelector("ul > li")?.textContent).toBe("inner");
+    expect(outerItems[1]?.textContent).toBe("");
+    press("Enter", { shiftKey: true });
+    expect(topLevel()).toEqual(["ul", "p"]);
+  });
+
+  it("takes a line out with Backspace at its start, in a quote and in a list", () => {
+    renderComposer();
+    type("> quoted");
+    act(() => {
+      tiptap().commands.setTextSelection(2);
+    });
+    press("Backspace");
+    expect(topLevel()).toEqual(["p"]);
+    expect(editorElement().textContent).toBe("quoted");
+    act(() => {
+      tiptap().commands.setContent("");
+    });
+    type("- item");
+    act(() => {
+      tiptap().commands.setTextSelection(3);
+    });
+    press("Backspace");
+    expect(topLevel()).toEqual(["p"]);
+    expect(editorElement().textContent).toBe("item");
+  });
+
+  it("still sends with Enter on a quoted line with text, and Shift+Enter there stays in the quote", async () => {
+    const { onSend } = renderComposer();
+    type("> first");
+    press("Enter", { shiftKey: true });
+    type("second");
+    expect(quote()?.querySelectorAll("p")).toHaveLength(2);
+    press("Enter");
+    await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
+    expect(sentText(onSend)).toBe("> first\n> second");
   });
 });
 
