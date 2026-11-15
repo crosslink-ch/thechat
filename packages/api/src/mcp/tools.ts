@@ -22,6 +22,10 @@ import {
 } from "../services/channel-membership";
 import { getMessages, getThreadPage, sendMessage } from "../services/messages";
 import {
+  inputChatPartsSchema,
+  messageBodyFromRequest,
+} from "../services/message-parts";
+import {
   createBot,
   createHermesBotInWorkspace,
   listBots,
@@ -508,7 +512,11 @@ export function registerTools(server: McpServer) {
     "send_message",
     {
       description:
-        "Send a message to a conversation with optional ready attachment IDs.",
+        "Send a message to a conversation with optional ready attachment IDs. " +
+        "Plain `content` mentions people by name (\"@Ada\"). To mention by user ID, " +
+        "send `contentFormat: \"parts-v1\"` with `parts` instead of `content`: " +
+        "ordered {type:\"text\",text} and {type:\"reference\",refType:\"user\",refId} items. " +
+        "Every referenced user must be in the conversation.",
       inputSchema: {
         conversationId: z.string().uuid().describe("The conversation ID"),
         clientMessageId: z
@@ -517,7 +525,14 @@ export function registerTools(server: McpServer) {
           .max(255)
           .optional()
           .describe("Stable sender-scoped idempotency key"),
-        content: z.string().optional().describe("Message content"),
+        content: z.string().optional().describe("Message content (legacy text; omit when sending parts)"),
+        contentFormat: z
+          .literal("parts-v1")
+          .optional()
+          .describe('Set to "parts-v1" when sending parts'),
+        parts: inputChatPartsSchema
+          .optional()
+          .describe("Ordered text and user-reference parts (mentions by user ID)"),
         parentMessageId: z
           .string()
           .uuid()
@@ -539,6 +554,8 @@ export function registerTools(server: McpServer) {
         conversationId,
         clientMessageId,
         content,
+        contentFormat,
+        parts,
         parentMessageId,
         alsoSendToConversation,
         attachmentIds,
@@ -546,12 +563,18 @@ export function registerTools(server: McpServer) {
       extra,
     ) => {
       const user = getUser(extra);
+      const resolved = messageBodyFromRequest({
+        content: content as string | undefined,
+        contentFormat: contentFormat as "parts-v1" | undefined,
+        parts: parts as Parameters<typeof messageBodyFromRequest>[0]["parts"],
+      });
+      if ("error" in resolved) return error(resolved.error);
       return withService(() =>
         sendMessage(
           conversationId as string,
           user.id,
           user.name,
-          ((content as string | undefined) ?? "").trim(),
+          resolved.body,
           {
             clientMessageId: clientMessageId as string | undefined,
             parentMessageId: (parentMessageId as string | undefined) ?? null,

@@ -17,6 +17,11 @@ import { resolveTokenToUser } from "../auth/middleware";
 import { vaultUnlockRequestSchema, vaultUnlockResolvedSchema } from "../services/vault-unlock";
 import { secureInputRequestSchema, secureInputResolvedSchema } from "../services/secure-input";
 import { listUndeliveredAnswersForBot } from "../services/bot-requests";
+import {
+  messageBodyFields,
+  messageBodyFromRequest,
+  messageBodyHasText,
+} from "../services/message-parts";
 
 const messageSchema = z.object({
   invocationId: z.string().min(1).optional(),
@@ -24,16 +29,25 @@ const messageSchema = z.object({
   conversationId: z.string().min(1).optional(),
   chatId: z.string().min(1).optional(),
   threadId: z.string().min(1).nullish(),
-  content: z.string().max(100_000).default(""),
+  /** Legacy text, or `contentFormat: "parts-v1"` with `parts` (never both). */
+  ...messageBodyFields,
   attachmentIds: z.array(z.string().uuid()).max(5).default([]),
   platformMessageId: z.string().trim().min(1).max(255).nullish(),
   complete: z.boolean().optional(),
   /** A progress update ("⏳ Working"), not the run's answer. */
   interim: z.boolean().optional(),
-}).refine(
-  (value) => value.content.trim().length > 0 || value.attachmentIds.length > 0,
-  { message: "Message text or at least one attachment is required" },
-);
+}).transform((value, ctx) => {
+  const resolved = messageBodyFromRequest(value);
+  if ("error" in resolved) {
+    ctx.addIssue({ code: "custom", message: resolved.error });
+    return z.NEVER;
+  }
+  if (!messageBodyHasText(resolved.body) && value.attachmentIds.length === 0) {
+    ctx.addIssue({ code: "custom", message: "Message text or at least one attachment is required" });
+    return z.NEVER;
+  }
+  return { ...value, body: resolved.body };
+});
 
 const typingSchema = z.object({
   invocationId: z.string().min(1),
@@ -230,7 +244,7 @@ export const hermesPlatformRoutes = new Elysia({ prefix: "/hermes-platform" })
         conversationId: parsed.data.conversationId,
         chatId: parsed.data.chatId,
         threadId: parsed.data.threadId ?? null,
-        content: parsed.data.content,
+        content: parsed.data.body,
         attachmentIds: parsed.data.attachmentIds,
         platformMessageId: parsed.data.platformMessageId ?? null,
         complete: parsed.data.complete,

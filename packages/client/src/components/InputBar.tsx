@@ -3,7 +3,16 @@ import { ArrowUp, FileText, Paperclip, Square, X } from "lucide-react";
 import { memo, useEffect, useRef, useState, useCallback, type DragEvent, type ReactNode } from "react";
 import { useIsStreaming } from "../stores/streaming";
 import { useInputFocusStore } from "../stores/input-focus";
-import { useComposerDraftsStore } from "../stores/composer-drafts";
+import {
+  sameDraft,
+  useComposerDraftsStore,
+  type ComposerDraft,
+} from "../stores/composer-drafts";
+import {
+  composerFromText,
+  EMPTY_COMPOSER_DOCUMENT,
+  type MessageInput,
+} from "../lib/composer-parts";
 import { RichInput, type RichInputHandle } from "./RichInput";
 import { VoiceRecorder } from "./VoiceRecorder";
 import { SlashCommandMenu } from "./SlashCommandMenu";
@@ -53,8 +62,13 @@ export type InputSendResult = void | boolean | string | null;
 interface InputBarProps {
   convId: string | undefined;
   draftKey: string;
+  /**
+   * `message` is what the composer holds: its text plus the users picked in
+   * the @ menu (a parts-v1 document). A slash command or an attachment-only
+   * send passes plain text.
+   */
   onSend: (
-    content: string,
+    message: MessageInput,
     images?: ImageAttachment[],
     attachmentIds?: string[],
   ) => InputSendResult | Promise<InputSendResult>;
@@ -127,15 +141,13 @@ function ScopedInputBar({
   const mountedRef = useRef(true);
   const sharedScopeRef = useRef(sharedUpload);
   const [dragOver, setDragOver] = useState(false);
-  const [initialText] = useState(
-    () => useComposerDraftsStore.getState().drafts[draftKey] ?? "",
+  const [initialDraft] = useState<ComposerDraft>(
+    () => useComposerDraftsStore.getState().drafts[draftKey] ?? EMPTY_COMPOSER_DOCUMENT,
   );
-  const [inputText, setInputText] = useState(initialText);
-  const localTextRef = useRef(initialText);
+  const [inputText, setInputText] = useState(initialDraft.text);
+  const localDraftRef = useRef<ComposerDraft>(initialDraft);
   const sendPendingRef = useRef(false);
-  const storedText = useComposerDraftsStore(
-    (state) => state.drafts[draftKey] ?? "",
-  );
+  const storedDraft = useComposerDraftsStore((state) => state.drafts[draftKey]);
   const setDraft = useComposerDraftsStore((state) => state.setDraft);
   const restoreDraft = useComposerDraftsStore((state) => state.restoreDraft);
   const setImageDrafts = useComposerDraftsStore((state) => state.setImageDrafts);
@@ -163,28 +175,33 @@ function ScopedInputBar({
     [draftKey, setImageDrafts],
   );
 
-  const updateInputText = useCallback(
-    (text: string) => {
-      localTextRef.current = text;
-      setInputText(text);
-      setDraft(draftKey, text);
+  const updateInputDraft = useCallback(
+    (draft: ComposerDraft) => {
+      localDraftRef.current = draft;
+      setInputText(draft.text);
+      setDraft(draftKey, draft);
     },
     [draftKey, setDraft],
+  );
+  const updateInputText = useCallback(
+    (text: string) => updateInputDraft(composerFromText(text)),
+    [updateInputDraft],
   );
 
   useEffect(() => {
     // Ignore effects from a render that predates a synchronous local store
     // write. Otherwise a slash-menu insertion can be overwritten by the old
     // draft value before Zustand delivers the next subscribed render.
-    const liveStoredText =
-      useComposerDraftsStore.getState().drafts[draftKey] ?? "";
-    if (storedText !== liveStoredText || storedText === localTextRef.current) {
+    const liveStoredDraft = useComposerDraftsStore.getState().drafts[draftKey];
+    if (storedDraft !== liveStoredDraft || sameDraft(storedDraft, localDraftRef.current)) {
       return;
     }
-    localTextRef.current = storedText;
-    setInputText(storedText);
-    inputRef.current?.setText(storedText);
-  }, [draftKey, storedText]);
+    const next = storedDraft ?? EMPTY_COMPOSER_DOCUMENT;
+    localDraftRef.current = next;
+    setInputText(next.text);
+    // A restored draft (e.g. after a failed send) brings its mentions back.
+    inputRef.current?.setValue(next);
+  }, [draftKey, storedDraft]);
 
   const sharedReady =
     sharedDrafts.length === 0 ||
@@ -563,7 +580,7 @@ function ScopedInputBar({
 
   const requestSend = useCallback(
     async (
-      content: string,
+      content: MessageInput,
       submittedImages?: ImageAttachment[],
       attachmentIds?: string[],
     ) => {
@@ -585,7 +602,7 @@ function ScopedInputBar({
   );
 
   const sendSharedContent = useCallback(
-    async (text: string) => {
+    async (text: MessageInput) => {
       if (!sharedUpload || voiceBusyRef.current) return false;
       const state = useComposerDraftsStore.getState();
       if (state.sendingAttachments[draftKey]) return false;
@@ -653,12 +670,13 @@ function ScopedInputBar({
   );
 
   const handleRichInputSubmit = useCallback(
-    (text: string) => {
+    (text: ComposerDraft) => {
       // Voice Send is standalone. Never clear a text/mention draft, including
       // the optimistic editor path, while capture or review owns the composer.
       if (voiceBusyRef.current) return false;
       const draftState = useComposerDraftsStore.getState();
       const submittedRevision = draftState.revisions[draftKey] ?? 0;
+      // The whole draft, mentions included, so a failed send restores them.
       const submittedDraft = draftState.drafts[draftKey] ?? text;
       const submittedImages = images.length > 0 ? [...images] : undefined;
       const send = () =>
@@ -748,12 +766,12 @@ function ScopedInputBar({
     sharedUpload,
   ]);
 
-  const handleInputTextChange = useCallback((text: string) => {
-    updateInputText(text);
+  const handleInputChange = useCallback((draft: ComposerDraft) => {
+    updateInputDraft(draft);
     // Typing re-opens an Esc-dismissed menu and resets the highlight.
     setSlashMenuDismissed(false);
     setSlashSelectedIndex(0);
-  }, [updateInputText]);
+  }, [updateInputDraft]);
 
   // Telegram-style selection: commands that need arguments are inserted for
   // further typing, argument-less commands are sent immediately.
@@ -835,14 +853,14 @@ function ScopedInputBar({
   const handleSendClick = useCallback(() => {
     if (sharedUpload) {
       if (!sharedReady || sendingShared) return;
-      if (canSubmit || localTextRef.current.trim().length > 0) {
+      if (canSubmit || localDraftRef.current.text.trim().length > 0) {
         handleSubmit();
       } else if (sharedDrafts.length > 0) {
         void sendSharedContent("");
       }
       return;
     }
-    if (canSubmit || localTextRef.current.trim().length > 0) {
+    if (canSubmit || localDraftRef.current.text.trim().length > 0) {
       handleSubmit();
     } else if (images.length > 0) {
       void handleEmptySubmitAttempt();
@@ -918,6 +936,8 @@ function ScopedInputBar({
     <div className="chat-composer min-w-0 shrink-0 px-4 pb-4 pt-2">
       <div
         ref={containerRef}
+        // The @ menu opens above this box, not over it.
+        data-composer=""
         className={`relative rounded-xl border bg-raised shadow-input transition-colors duration-150 focus-within:border-border-focus ${dragOver ? "border-accent border-dashed bg-accent/5" : "border-border"}`}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
@@ -1037,14 +1057,14 @@ function ScopedInputBar({
         <div hidden={voiceBusy}>
         <RichInput
           ref={inputRef}
-          initialText={initialText}
+          initialValue={initialDraft}
           onSubmit={handleRichInputSubmit}
           onEmptySubmitAttempt={handleEmptySubmitAttempt}
           placeholder={isStreaming ? "Queue a message..." : placeholder}
           ariaLabel={ariaLabel}
           mentions={mentions}
           onCanSubmitChange={setCanSubmit}
-          onTextChange={handleInputTextChange}
+          onChange={handleInputChange}
           onKeyIntercept={handleSlashMenuKey}
         />
         </div>

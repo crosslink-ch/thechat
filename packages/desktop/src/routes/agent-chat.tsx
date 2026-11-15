@@ -27,6 +27,7 @@ import { buildSystemPrompt, type ProjectInfo } from "../core/system-prompt";
 import { fireNotification } from "@thechat/client/lib/notifications";
 import type { Conversation, Message } from "@thechat/client/core/types";
 import { activateAgentChatMcp, syncAgentChatMcpAuth } from "../desktop-lifecycle";
+import { messageText } from "@thechat/client/lib/composer-parts";
 
 const TOP_LOAD_THRESHOLD_PX = 80;
 
@@ -471,7 +472,8 @@ export function AgentChatRoute() {
       <InputBar
         convId={conversation?.id}
         draftKey={composerDraftKey.agent(routeId)}
-        onSend={sendMessage}
+        // The local agent reads text; mentions are a chat-server concept.
+        onSend={(message, images) => sendMessage(messageText(message), images)}
         onStop={stopStreaming}
         autoFocusKey={routeId ?? "new-chat"}
       />

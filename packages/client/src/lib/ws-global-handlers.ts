@@ -18,9 +18,11 @@ import {
 import { fireNotification } from "./notifications";
 import {
   agentProgressNotificationsEnabled,
+  mentionNotificationsEnabled,
   threadReplyNotificationsEnabled,
   useNotificationPreferencesStore,
 } from "../stores/notification-preferences";
+import { messageMentionsUser } from "./remark-mentions";
 import { useBotRequestsStore } from "../stores/bot-requests";
 import { queryClient } from "./query-client";
 import { cacheIncomingMessage, isThreadOnlyReply } from "../hooks/useChannelChat";
@@ -184,6 +186,21 @@ export function registerGlobalWsHandlers(
       currentPath() !== `/channel/${msg.conversationId}`
     ) {
       useConversationsStore.getState().markChannelUnread(msg.conversationId);
+      // A mention of you elsewhere notifies, like a direct message. For a
+      // parts-v1 message that means you were picked from the @ menu; a typed
+      // "@Name" is plain text.
+      const user = useAuthStore.getState().user;
+      if (
+        user &&
+        mentionNotificationsEnabled() &&
+        messageMentionsUser(msg, { id: user.id, name: user.name })
+      ) {
+        fireNotification(
+          `${msg.senderName} mentioned you`,
+          notificationBodyPreview(msg.content),
+          { dedupeKey: `message:${msg.id}`, coveredByBackgroundPush: true },
+        );
+      }
     }
     if (conversationType === "direct" && msg.senderId !== currentUserId) {
       useConversationsStore

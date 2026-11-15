@@ -103,7 +103,7 @@ test('upload, replace and remove pictures across live settings, channel, DM, mem
 
     // Keep this popup open during both updates: no subsequent editor input.
     await channel.getByRole('textbox', { name: 'Message', exact: true }).fill('@Alice');
-    const mentionAvatar = channel.getByRole('button', { name: 'Alice Web Test', exact: true }).locator('img');
+    const mentionAvatar = channel.getByTestId('mention-menu').getByRole('option', { name: /^Alice Web Test/ }).locator('img');
     await picture(mentionAvatar, original);
 
     const documents = [channel, dm, members, palette, switched];

@@ -37,6 +37,7 @@ import { ChannelChatView } from "../components/ChannelChatView";
 import { createQueryWrapper } from "../test-utils/query";
 import type { ChatMessage } from "@thechat/shared";
 import WS from "ws";
+import { messageRequestBody, type MessageInput } from "../lib/composer-parts";
 
 const INTEGRATION = process.env.INTEGRATION === "true";
 
@@ -126,7 +127,7 @@ const TestChannelView = forwardRef(function TestChannelView(
   props: {
     conversationId: string;
     token: string;
-    wsSendMessage: (conversationId: string, content: string) => void;
+    wsSendMessage: (conversationId: string, content: MessageInput) => void;
   },
   ref: Ref<TestChannelViewHandle>,
 ) {
@@ -296,8 +297,8 @@ describe.skipIf(!INTEGRATION)(
       const refA = { current: null as TestChannelViewHandle | null };
       const refB = { current: null as TestChannelViewHandle | null };
 
-      const wsSendA = (_convId: string, _content: string) => {};
-      const wsSendB = (_convId: string, _content: string) => {};
+      const wsSendA = (_convId: string, _content: MessageInput) => {};
+      const wsSendB = (_convId: string, _content: MessageInput) => {};
 
       const viewA = render(
         <TestChannelView
@@ -344,12 +345,12 @@ describe.skipIf(!INTEGRATION)(
         const refB = { current: null as TestChannelViewHandle | null };
 
         // Wire wsSendMessage for User A to actually send via WebSocket
-        const wsSendA = (convId: string, content: string) => {
+        const wsSendA = (convId: string, content: MessageInput) => {
           wsA.send(
             JSON.stringify({
               type: "send_message",
               conversationId: convId,
-              content,
+              ...messageRequestBody(content),
             }),
           );
         };

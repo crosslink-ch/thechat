@@ -15,7 +15,7 @@ import {
   foreignKey,
 } from "drizzle-orm/pg-core";
 import { relations, sql } from "drizzle-orm";
-import type { BotCommandPublic, MessagePart } from "@thechat/shared";
+import type { BotCommandPublic, ChatMessagePart, MessageContentFormat } from "@thechat/shared";
 import type { DomainEventEnvelope } from "../events/envelope";
 
 // -- Enums --
@@ -239,8 +239,21 @@ export const messages = pgTable(
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
     clientMessageId: varchar("client_message_id", { length: 255 }),
+    /**
+     * Readable text. For a "parts-v1" message the server derives it from
+     * `parts` in the send transaction; it is never a second authoring source.
+     */
     content: text("content").notNull(),
-    parts: jsonb("parts").$type<MessagePart[]>(),
+    /**
+     * "legacy-text": `content` is the source and mentions are matched by
+     * name. "parts-v1": `parts` holds the ordered text and user references
+     * (with a label snapshot) that the author picked. Old rows stay legacy.
+     */
+    contentFormat: varchar("content_format", { length: 20 })
+      .$type<MessageContentFormat>()
+      .notNull()
+      .default("legacy-text"),
+    parts: jsonb("parts").$type<ChatMessagePart[]>(),
     /**
      * An agent's progress update ("⏳ Working — 5 min"), not its answer. It
      * creates no unread rows and only notifies people who opted in.

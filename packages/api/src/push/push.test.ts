@@ -609,6 +609,35 @@ describe("push delivery", () => {
     expect(delivered[0]!.payload.url).toContain("type=group");
   });
 
+  test("a mention picked from the menu notifies that person once; a typed @Name in a parts-v1 message does not", async () => {
+    const f = await fixture("Parts");
+    await subscribe(f.member.token);
+    const post = async (body: unknown) => {
+      const res = await req("POST", `/messages/${f.channelId}`, body, f.owner.token);
+      expect(res.status).toBe(200);
+      return res.body as { id: string; content: string };
+    };
+    const reference = { type: "reference", refType: "user", refId: f.member.user.id };
+    const picked = await post({
+      contentFormat: "parts-v1",
+      parts: [{ type: "text", text: "Review this " }, reference, { type: "text", text: " and again " }, reference],
+    });
+    expect(picked.content).toBe("Review this @Parts Member and again @Parts Member");
+    const typed = await post({
+      contentFormat: "parts-v1",
+      parts: [{ type: "text", text: "typed by hand: @Parts Member" }],
+    });
+    await waitForFanout(`message:${picked.id}`);
+    await waitForFanout(`message:${typed.id}`);
+    await drainPushJobs();
+    expect(delivered).toHaveLength(1);
+    expect(delivered[0]!.payload).toMatchObject({
+      id: `message:${picked.id}`,
+      kind: "mention",
+      body: "Review this @Parts Member and again @Parts Member",
+    });
+  });
+
   test("a private channel notifies the members who are @mentioned, never a workspace member who was not picked", async () => {
     const f = await fixture("Private");
     const outsider = await registerUser("Private Outsider");

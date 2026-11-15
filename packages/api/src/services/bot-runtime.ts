@@ -39,7 +39,7 @@ import {
   workspaces,
 } from "../db/schema";
 import { publishWsEventToUsers } from "../realtime";
-import { stripBotMention } from "./hermes";
+import { hermesPromptFromParts, stripBotMention } from "./hermes";
 import { ServiceError } from "./errors";
 import { withSpan } from "../observability";
 import { log } from "../logging";
@@ -50,6 +50,11 @@ import {
 import { createChatMessageSentV1 } from "../events/envelope";
 import { enqueueDomainEvent } from "../events/outbox";
 import { resolveMessageBotTargetIds } from "./message-bot-targets";
+import {
+  canonicalizeMessageBody,
+  messageBodyHasText,
+  type MessageBody,
+} from "./message-parts";
 import { attachmentsByMessageIds } from "../attachments/public";
 import { loadAttachmentConfig } from "../attachments/config";
 import {
@@ -63,7 +68,7 @@ import { recordThreadReply, threadSummaryForRoot } from "./message-threads";
 import { toPublicConversationThread } from "./task-project-records";
 import { vaultUnlockRequestSchema, vaultUnlockResolvedSchema, vaultUnlockResponseSchema, validateVaultPublicKey, VAULT_UNLOCK_PREVIEW } from "./vault-unlock";
 import type { VaultUnlockResponse } from "@thechat/shared";
-import { SECURE_INPUT_KINDS, maskedPromptExpiryTooFar, type SecureInputResponse } from "@thechat/shared";
+import { SECURE_INPUT_KINDS, maskedPromptExpiryTooFar, isStoredChatParts, type SecureInputResponse, type StoredChatPart } from "@thechat/shared";
 import { secureInputRequestSchema, secureInputResolvedSchema, secureInputResponseSchema, secureInputError } from "./secure-input";
 
 const botRuntimeLog = log.child({ component: "bot-runtime" });
@@ -884,6 +889,7 @@ async function handleWebhookInvocation(invocationId: string, signal?:AbortSignal
     message: {
       id: loaded.triggerMessage.id,
       content: loaded.triggerMessage.content,
+      ...structuredMessageFields(loaded.triggerMessage),
       conversationId: loaded.triggerMessage.conversationId,
       threadId: loaded.triggerMessage.threadId,
       senderId: loaded.triggerMessage.senderId,
@@ -943,6 +949,12 @@ export interface HermesPlatformEvent {
    */
   project?: HermesPlatformProject;
   text: string;
+  /**
+   * Present for a "parts-v1" message: the ordered text and user references
+   * (IDs plus label snapshots). `text` is the prompt with this bot removed.
+   */
+  contentFormat?: "parts-v1";
+  parts?: StoredChatPart[];
   attachments: ChatAttachment[];
   messageId: string;
   sender: { id: string; name: string };
@@ -1155,6 +1167,39 @@ export async function claimHermesPlatformEvents(botId: string, limit = 10): Prom
   );
 }
 
+/**
+ * Mentions by ID for outbound consumers (webhooks, Hermes). Present only for a
+ * "parts-v1" message; `content` stays the readable projection for consumers
+ * that only read text.
+ */
+function structuredMessageFields(message: {
+  contentFormat: string;
+  parts: unknown;
+}) {
+  if (message.contentFormat !== "parts-v1") return {};
+  // An attachment-only parts-v1 message stores no parts: it is still parts-v1.
+  return {
+    contentFormat: "parts-v1" as const,
+    parts: isStoredChatParts(message.parts) ? message.parts : [],
+  };
+}
+
+/**
+ * What Hermes reads as the prompt. A "parts-v1" message drops the reference
+ * to this bot and keeps line breaks; a legacy message strips the bot's name.
+ * A message that is only the mention falls back to its readable content.
+ */
+function hermesPromptText(
+  message: { content: string; contentFormat: string; parts: unknown },
+  botUserId: string,
+  botName: string,
+) {
+  if (message.contentFormat === "parts-v1" && isStoredChatParts(message.parts)) {
+    return hermesPromptFromParts(message.parts, botUserId) || message.content;
+  }
+  return stripBotMention(message.content, botName) || message.content;
+}
+
 async function prepareHermesPlatformEvent(
   invocationId: string,
   deliveryMode: HermesPlatformDeliveryMode,
@@ -1162,7 +1207,7 @@ async function prepareHermesPlatformEvent(
   const loaded = await loadInvocationContext(invocationId);
   if (!loaded || loaded.bot.kind !== "hermes") return null;
 
-  const text = stripBotMention(loaded.triggerMessage.content, loaded.botName) || loaded.triggerMessage.content;
+  const text = hermesPromptText(loaded.triggerMessage, loaded.bot.userId, loaded.botName);
   const attachmentMetadata = loaded.bot.attachmentAccess
     ? await messageAttachmentsForBotDelivery(loaded.triggerMessage.id)
     : [];
@@ -1188,6 +1233,7 @@ async function prepareHermesPlatformEvent(
     ...(project ? { projectId: project.id } : {}),
     messageId: loaded.triggerMessage.id,
     messageContent: loaded.triggerMessage.content,
+    ...structuredMessageFields(loaded.triggerMessage),
     text,
     attachments: attachmentMetadata,
     triggeredAt: loaded.triggerMessage.createdAt.toISOString(),
@@ -1205,6 +1251,7 @@ async function prepareHermesPlatformEvent(
       ...(sessionIntent ? { sessionIntent } : {}),
       ...(project ? { project } : {}),
       text,
+      ...structuredMessageFields(loaded.triggerMessage),
       attachments: attachmentMetadata,
       messageId: loaded.triggerMessage.id,
       sender: {
@@ -1495,7 +1542,8 @@ function resolveInvocationThreadId(
 export async function publishHermesPlatformMessage(input: {
   authenticatedBotId: string;
   invocationId?: string | null;
-  content: string;
+  /** Legacy text, or the request's canonical body (parts or content). */
+  content: string | MessageBody;
   attachmentIds?: string[];
   platformMessageId?: string | null;
   botId?: string;
@@ -1516,9 +1564,12 @@ export async function publishHermesPlatformMessage(input: {
       "thechat.hermes_platform.message.interim": input.interim === true && input.complete !== true,
     },
     async (span) => {
-      const content = input.content.trim();
+      const body: MessageBody =
+        typeof input.content === "string"
+          ? { format: "legacy-text", content: input.content }
+          : input.content;
       const attachmentIds = input.attachmentIds ?? [];
-      if (!content && attachmentIds.length === 0) {
+      if (!messageBodyHasText(body) && attachmentIds.length === 0) {
         throw new ServiceError(
           "Message text or at least one attachment is required",
           400,
@@ -1583,7 +1634,7 @@ export async function publishHermesPlatformMessage(input: {
         await assertIdempotentCommandMatches(db, existing, {
           conversationId: target.conversation.id,
           threadId: target.threadId,
-          content,
+          body,
           attachmentIds,
         });
         span.setAttribute("thechat.hermes_platform.message.duplicate", true);
@@ -1605,6 +1656,10 @@ export async function publishHermesPlatformMessage(input: {
           target.conversation.id,
           target.bot.userId,
         );
+        // A bot's references are validated like a person's: participants
+        // of this conversation only, resolved in this transaction.
+        const canonical = await canonicalizeMessageBody(tx, target.conversation.id, body);
+        const content = canonical.content;
         const [inserted] = await tx
           .insert(messages)
           .values({
@@ -1614,7 +1669,10 @@ export async function publishHermesPlatformMessage(input: {
             senderId: target.bot.userId,
             clientMessageId,
             content,
-            parts: content ? [{ type: "text", text: content }] : null,
+            contentFormat: canonical.contentFormat,
+            parts:
+              canonical.parts ??
+              (content ? [{ type: "text", text: content }] : null),
             interim,
           })
           .onConflictDoNothing({
@@ -1634,7 +1692,7 @@ export async function publishHermesPlatformMessage(input: {
           await assertIdempotentCommandMatches(tx, existing, {
             conversationId: target.conversation.id,
             threadId: target.threadId,
-            content,
+            body,
             attachmentIds,
           });
           return { message: existing, duplicate: true };
@@ -1707,6 +1765,8 @@ export async function publishHermesPlatformMessage(input: {
         const targetBotIds = await resolveMessageBotTargetIds(tx, {
           conversationId: inserted.conversationId,
           content: inserted.content,
+          contentFormat: canonical.contentFormat,
+          referencedUserIds: canonical.references.map((reference) => reference.userId),
           senderId: inserted.senderId,
           senderType: "bot",
         });
@@ -2621,6 +2681,7 @@ async function publishBotMessage(
       senderName,
       senderType: "bot",
       content: message.content,
+      ...(message.contentFormat === "parts-v1" ? { contentFormat: "parts-v1" as const } : {}),
       parts: message.parts ?? null,
       attachments: attachmentMetadata,
       ...(message.interim ? { interim: true as const } : {}),

@@ -39,7 +39,6 @@ import { useLocationJumpStore, usePendingMessageJump } from "../lib/search-navig
 import { useRecentLocationsStore } from "../stores/recent-locations";
 import type { Command } from "../commands";
 import { wsEvents, type WsEvents } from "../lib/ws-events";
-import { botAppearanceFor } from "../lib/bot-appearance";
 import { selectHermesConversationProgress } from "../lib/hermes-progress";
 import { useConversationBotRequests } from "../stores/bot-requests";
 import {
@@ -51,6 +50,8 @@ import {
   canonicalHermesSlashCommand,
   parseHermesSlashCommand,
 } from "../lib/hermes-slash-commands";
+import { messageText, type MessageInput } from "../lib/composer-parts";
+import { mentionCandidate } from "../components/mention-ranking";
 
 const LOCAL_TASK_DRAFT_SCOPE = "__local_task_draft__";
 
@@ -70,21 +71,19 @@ export function DmRoute() {
   const conversationLoading = conversationQuery.isLoading;
   const conversationPending = !conversation && isAuthenticated(token) && !conversationQuery.error;
 
+  // Only people in this conversation can be mentioned: the server rejects a
+  // mention of anyone else. Before the conversation loads, nobody is offered.
   const mentions = useMemo(
     () =>
       members
         ?.filter((m) => m.userId !== user?.id)
-        .map((m) => ({
-          id: m.userId,
-          label: m.user.name,
-          type: m.user.type,
-          picture: m.user.avatar,
-          botAvatar:
-            m.user.type === "bot"
-              ? botAppearanceFor(m.userId, m.bot?.avatar)
-              : undefined,
-        })),
-    [members, user?.id]
+        .filter((m) =>
+          conversation
+            ? conversation.participants.some((p) => p.userId === m.userId)
+            : false,
+        )
+        .map((m) => mentionCandidate(m)),
+    [conversation, members, user?.id]
   );
 
   const [typingUsers, setTypingUsers] = useState<Map<string, string>>(new Map());
@@ -476,15 +475,16 @@ export function DmRoute() {
   useScopedCommands(hermesTaskCommands);
 
   const sendHermesMessageNow = useCallback(async (
-    content: string,
+    content: MessageInput,
     threadId: string | null,
     attachmentIds: string[] = [],
   ) => {
     if (threadId !== null) {
       const activeThread = threadsRef.current.find((thread) => thread.id === threadId);
-      if (!parseHermesSlashCommand(content) && isAutoNamedThread(activeThread)) {
+      const text = messageText(content);
+      if (!parseHermesSlashCommand(text) && isAutoNamedThread(activeThread)) {
         try {
-          await renameThread(threadId, titleFromMessage(content));
+          await renameThread(threadId, titleFromMessage(text));
         } catch (error) {
           console.error("Failed to rename Hermes task thread", error);
         }
@@ -499,7 +499,7 @@ export function DmRoute() {
   ]);
 
   const persistDraftAndSend = useCallback(async (
-    content: string,
+    content: MessageInput,
     attachmentIds: string[] = [],
   ) => {
     if (!isHermesDm || draftPersistingRef.current) return false;
@@ -510,7 +510,9 @@ export function DmRoute() {
     try {
       const thread = await createThread({
         botId: otherParticipant?.bot?.id,
-        ...(parseHermesSlashCommand(content) ? {} : { title: titleFromMessage(content) }),
+        ...(parseHermesSlashCommand(messageText(content))
+          ? {}
+          : { title: titleFromMessage(messageText(content)) }),
         ...(draftTaskProjectId ? { projectId: draftTaskProjectId } : {}),
       });
       const isCurrentDraft =
@@ -691,15 +693,16 @@ export function DmRoute() {
   useScopedCommands(branchCommands);
 
   const handleSend = useCallback((
-    content: string,
+    content: MessageInput,
     attachmentIds: string[] = [],
   ) => {
     if (!isHermesDm) {
       return channelSendMessage(content, attachmentIds);
     }
-    if (draftTaskActive && !content.trim() && attachmentIds.length === 0) return false;
+    const text = messageText(content);
+    if (draftTaskActive && !text.trim() && attachmentIds.length === 0) return false;
 
-    const slash = parseHermesSlashCommand(content);
+    const slash = parseHermesSlashCommand(text);
     const canonical = slash
       ? canonicalHermesSlashCommand(slash.command, slashCommands) ?? slash.command
       : null;

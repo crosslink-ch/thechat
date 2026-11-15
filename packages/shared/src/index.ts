@@ -3,6 +3,8 @@ import type { BotAppearance } from "./bot-avatars";
 export * from "./bot-avatars";
 export * from "./secure-input";
 export * from "./search";
+export * from "./message-parts";
+import type { MessageContentFormat, InputChatPart, StoredChatPart, StoredReferencePart } from "./message-parts";
 
 // -- Message Parts (rich message model) --
 
@@ -12,6 +14,12 @@ export type MessagePart =
   | { type: "image"; path: string; mimeType: string }
   | { type: "tool-call"; toolCallId: string; toolName: string; args: Record<string, unknown> }
   | { type: "tool-result"; toolCallId: string; toolName: string; result: unknown; isError?: boolean };
+
+/**
+ * A part of a chat message: the rich model above, plus a user reference in a
+ * "parts-v1" message (see message-parts.ts).
+ */
+export type ChatMessagePart = MessagePart | StoredReferencePart;
 
 export interface Message {
   id: string;
@@ -239,8 +247,18 @@ export interface ChatMessage {
   senderId: string;
   senderName: string;
   senderType?: "human" | "bot";
+  /**
+   * Readable text. For a "parts-v1" message the server derives it from
+   * `parts` ("Hi @Koda"); it is never a second authoring source.
+   */
   content: string;
-  parts?: MessagePart[] | null;
+  /**
+   * "parts-v1": `parts` holds the ordered text and user references the
+   * author picked. "legacy-text" (or absent): `content` is the source and
+   * mentions are recognised by name.
+   */
+  contentFormat?: MessageContentFormat;
+  parts?: ChatMessagePart[] | null;
   attachments?: ChatAttachment[];
   reactions?: MessageReactionSummary[];
   /**
@@ -581,7 +599,11 @@ export type WsClientEvent =
   | {
       type: "send_message";
       conversationId: string;
-      content: string;
+      /** Legacy text. Omit when sending `parts`. */
+      content?: string;
+      /** With `parts`: mentions by user ID (see message-parts.ts). */
+      contentFormat?: "parts-v1";
+      parts?: InputChatPart[];
       threadId?: string | null;
       parentMessageId?: string | null;
       alsoSendToConversation?: boolean;
@@ -677,7 +699,14 @@ export interface WebhookPayload {
   event: "mention";
   message: {
     id: string;
+    /** Readable text ("Hi @Koda"). */
     content: string;
+    /**
+     * Present for a "parts-v1" message: the ordered text and user
+     * references by ID, so a bot can tell who was mentioned.
+     */
+    contentFormat?: "parts-v1";
+    parts?: StoredChatPart[];
     conversationId: string;
     threadId: string | null;
     senderId: string;
