@@ -21,9 +21,9 @@ other participants, including the bot owner, cannot submit or cancel it.
 Conversation admission and current bot access checks are unchanged.
 
 `GET /hermes-platform/health` still exposes canonical `ownerUserId` for existing
-owner-scoped integrations. That value is **not** a Bitwarden authorization input.
-The separate [secure-input v3 protocol](secure-input.md) covers owner-only
-1Password unlock and other masked prompts. It does not change v2 Bitwarden's
+owner-scoped integrations. That value is **not** a password-manager authorization
+input. The separate [secure-input v3 protocol](secure-input.md) covers 1Password
+unlock (same requester rule as Bitwarden) and other masked prompts. It does not change v2 Bitwarden's
 shared-profile access. Ordinary approval/clarification semantics are unchanged.
 
 ## Request and identity
