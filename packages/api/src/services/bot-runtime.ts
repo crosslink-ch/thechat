@@ -69,7 +69,7 @@ import { toPublicConversationThread } from "./task-project-records";
 import { vaultUnlockRequestSchema, vaultUnlockResolvedSchema, vaultUnlockResponseSchema, validateVaultPublicKey, VAULT_UNLOCK_PREVIEW } from "./vault-unlock";
 import type { VaultUnlockResponse } from "@thechat/shared";
 import { SECURE_INPUT_KINDS, maskedPromptExpiryTooFar, isStoredChatParts, type SecureInputResponse, type StoredChatPart } from "@thechat/shared";
-import { secureInputRequestSchema, secureInputResolvedSchema, secureInputResponseSchema, secureInputError } from "./secure-input";
+import { secureInputRequestSchema, secureInputResolvedSchema, secureInputResponseSchema, secureInputError, secureInputNeedsBotOwner } from "./secure-input";
 
 const botRuntimeLog = log.child({ component: "bot-runtime" });
 
@@ -311,7 +311,7 @@ export async function submitHermesPlatformSecureInput(input: {
   if (!parsed.success) throw reject(409);
   const request = parsed.data;
   if (request.requesterUserId !== input.userId) throw reject(403);
-  if (request.promptKind !== "vault.code" && loaded.bot.ownerId !== input.userId) throw reject(403);
+  if (secureInputNeedsBotOwner(request.promptKind) && loaded.bot.ownerId !== input.userId) throw reject(403);
   if (request.expiresAt <= Date.now() || maskedPromptExpiryTooFar(request.expiresAt, Date.parse(event.createdAt))) throw reject(409);
   if (events.some(e => e.invocationId === event.invocationId && e.botId === event.botId && e.type === "secure.input.resolved" && e.payload?.requestId === request.requestId && e.payload?.sessionKey === request.sessionKey)) throw reject(409);
   const webhookUrl = loaded.bot.webhookUrl;
@@ -510,7 +510,7 @@ export async function listConversationBotRuntime(conversationId: string, userId:
         for (const event of events.filter(e => e.invocationId === invocationId && e.type.startsWith("secure.input."))) {
           const original = event.type === "secure.input.request" ? event : await getBotProgressStore().findRequest?.(invocationId, "secure.input.request", String(event.payload?.requestId));
           const request = secureInputRequestSchema.safeParse(original?.payload);
-          if (request.success && request.data.requesterUserId === userId && (request.data.promptKind === "vault.code" || context.bot.ownerId === userId)) visibleSecureEventIds.add(event.id);
+          if (request.success && request.data.requesterUserId === userId && (!secureInputNeedsBotOwner(request.data.promptKind) || context.bot.ownerId === userId)) visibleSecureEventIds.add(event.id);
         }
       }
       const visibleEvents = events.filter((event) =>
@@ -2252,7 +2252,7 @@ export async function publishHermesPlatformProgress(
           if (!parsed.success) throw new ServiceError("Invalid secure input request", 400);
           const request = parsed.data;
           if (request.requesterUserId !== loaded.triggerMessage.senderId || loaded.triggerSender.type !== "human") throw secureInputError(403);
-          if (request.promptKind !== "vault.code" && loaded.bot.ownerId !== request.requesterUserId) throw secureInputError(403);
+          if (secureInputNeedsBotOwner(request.promptKind) && loaded.bot.ownerId !== request.requesterUserId) throw secureInputError(403);
           await requireSecureInputHumanAccess(loaded.conversation.id, request.requesterUserId);
           if (!loaded.bot.webhookUrl || request.expiresAt <= Date.now() || maskedPromptExpiryTooFar(request.expiresAt, Date.now())) throw secureInputError(400);
           const previous = await store.findRequest?.(loaded.invocation.id, "secure.input.request", request.requestId);
@@ -2267,7 +2267,7 @@ export async function publishHermesPlatformProgress(
           const original = secureInputRequestSchema.safeParse(event?.payload);
           if (!event || event.botId !== loaded.bot.id || event.conversationId !== loaded.conversation.id || !original.success || original.data.sessionKey !== parsed.data.sessionKey) throw secureInputError(409);
           if (loaded.triggerSender.type !== "human" || original.data.requesterUserId !== loaded.triggerMessage.senderId) throw secureInputError(403);
-          if (original.data.promptKind !== "vault.code" && loaded.bot.ownerId !== original.data.requesterUserId) throw secureInputError(403);
+          if (secureInputNeedsBotOwner(original.data.promptKind) && loaded.bot.ownerId !== original.data.requesterUserId) throw secureInputError(403);
           await requireSecureInputHumanAccess(loaded.conversation.id, original.data.requesterUserId);
           input = { ...input, status: "completed", toolCallId: null, toolName: null, label: "Secure input response", preview: null, payload: parsed.data };
         } else throw new ServiceError("Invalid secure input progress", 400);
