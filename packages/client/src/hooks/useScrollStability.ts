@@ -35,9 +35,24 @@ export function useScrollStability(
     let previousScrollHeight = el.scrollHeight;
     let previousClientHeight = el.clientHeight;
     let geometryDirty = true;
+    let lastScrollTop = el.scrollTop;
 
     const rememberScrollIntent = () => {
-      bottomGap = readBottomGap();
+      const scrolledUp = el.scrollTop < lastScrollTop;
+      lastScrollTop = el.scrollTop;
+      const gap = readBottomGap();
+      // A scroll event can arrive after a resize but before the observer below
+      // has seen it. The event of following a grown message, delivered in the
+      // frame where the phone keyboard opens, reads the keyboard's gap. A gap
+      // that grew without scrolling up is the layout's, not the user's: keep
+      // the remembered one and let the observer restore it. Moves toward the
+      // bottom (jumping to the newest message, the browser clamping the
+      // position after content shrank) and scrolling up are recorded.
+      const resizePending =
+        el.scrollHeight !== previousScrollHeight ||
+        el.clientHeight !== previousClientHeight;
+      if (resizePending && !scrolledUp && gap > bottomGap) return;
+      bottomGap = gap;
       pinnedToBottom = bottomGap <= NEAR_BOTTOM_PX;
     };
     const rememberContentGeometry = (heightDeltas: Map<Element, number>) => {

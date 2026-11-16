@@ -47,6 +47,11 @@ export function useAutoScroll(containerRef: RefObject<HTMLElement | null>) {
       previousClientHeight = el.clientHeight;
       setIsAtBottom(atBottom);
       if (!atBottom) {
+        // A layout change (phone keyboard, window resize, a grown message) can
+        // reach this handler before useScrollStability's resize observer has
+        // restored the bottom, for example with the scroll event of following
+        // the previous change. Only a move up is the user leaving the bottom.
+        if (layoutChanged && !movedUp) return;
         userScrolledAwayRef.current = true;
         return;
       }
