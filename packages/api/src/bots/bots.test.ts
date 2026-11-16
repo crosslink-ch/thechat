@@ -4094,9 +4094,13 @@ describe("Bots: runtime state", () => {
       );
       expect(sendRes.status).toBe(200);
 
+      // The second attempt is a queue retry: pg-boss backs off 2-4 s (jittered
+      // doubling of retryDelay 2 s) before the worker's next poll, so it can land
+      // after waitForResult's 5 s default.
       await waitForResult(
         async () => (webhook.requests.length >= 2 ? webhook.requests[1] : null),
         "second Hermes webhook delivery attempt",
+        15_000,
       );
       expect(webhook.requests[0].body).toBe(webhook.requests[1].body);
       expect(webhook.requests[0].payload.event.bot.name).toBe("StableRetryHermes");

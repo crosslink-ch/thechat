@@ -105,7 +105,8 @@ describe("local bot progress store", () => {
   });
 });
 
-const redisTestUrl = process.env.TEST_REDIS_URL;
+// The API suite already requires Redis (REDIS_URL); TEST_REDIS_URL can point elsewhere.
+const redisTestUrl = process.env.TEST_REDIS_URL || process.env.REDIS_URL;
 const redisTest = redisTestUrl ? test : test.skip;
 
 describe("secure input retention", () => {
