@@ -27,6 +27,7 @@
     "db:push": "pnpm --filter @thechat/api db:push",
     "db:studio": "pnpm --filter @thechat/api db:studio",
     "test:e2e:web": "playwright test -c scripts/e2e/web/playwright.config.ts",
+    "test:mobile": "playwright test --config packages/web/mobile-tests/playwright.config.mjs",
     "test:e2e": "pnpm --filter @thechat/desktop test:e2e",
     "test:e2e:headless": "pnpm --filter @thechat/desktop test:e2e:headless",
     "test:e2e:hermes": "python3 scripts/e2e/hermes-bot-flow.py",
