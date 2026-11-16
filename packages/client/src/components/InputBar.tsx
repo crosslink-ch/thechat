@@ -2,7 +2,7 @@ import { onSessionReset } from "../lib/session-boundary";
 import { ArrowUp, FileText, Paperclip, Square, X } from "lucide-react";
 import { memo, useEffect, useRef, useState, useCallback, type DragEvent, type ReactNode } from "react";
 import { useIsStreaming } from "../stores/streaming";
-import { useInputFocusStore } from "../stores/input-focus";
+import { claimInputBarFocus, useInputFocusStore } from "../stores/input-focus";
 import {
   sameDraft,
   useComposerDraftsStore,
@@ -224,12 +224,15 @@ function ScopedInputBar({
     inputRef.current?.focus();
   }, [autoFocusKey]);
 
-  // Re-focus when another UI surface (command palette, picker, etc.) requests it
+  // Re-focus when another UI surface (command palette, picker, etc.) requests
+  // it. Each request is taken once, by the composer open at the time or the
+  // first one to open after it (a jump's destination), and never pulls focus
+  // out of an open dialog such as a reopened quick switcher.
   const focusTick = useInputFocusStore((s) => s.focusTick);
   useEffect(() => {
-    if (focusTick > 0) {
-      inputRef.current?.focus();
-    }
+    if (!claimInputBarFocus()) return;
+    if (document.activeElement?.closest('[role="dialog"]:not([data-state="closed"])')) return;
+    inputRef.current?.focus();
   }, [focusTick]);
 
   const updateSharedDrafts = useCallback(
