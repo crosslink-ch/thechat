@@ -4,7 +4,8 @@ import { resolve } from 'node:path';
 import { apiURL, webURL, webHeaders, seedWorkspace, login, call, openNavigation, assertContained, identity, clearCredentialFields } from './fixtures';
 test.afterEach(async ({ page }) => clearCredentialFields(page));
 
-test('desktop bearer compatibility and isolated membership fixtures', async ({ request }) => {
+test('desktop bearer compatibility and isolated membership fixtures', async ({ request }, info) => {
+  test.skip(info.project.name !== 'chromium-desktop', 'API only: identical in every browser project');
   const fixture = await seedWorkspace(request);
   expect(typeof fixture.a.accessToken === 'string').toBe(true);
   expect(fixture.channel.name).toBe('general');

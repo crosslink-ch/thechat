@@ -164,6 +164,15 @@ python3 deploy/web/tests/test_image.py
 The API tests decrypt each push exactly as a browser would and verify the VAPID
 signature. They do not prove that a locked phone shows the notification.
 
+`scripts/e2e/web/web-push.spec.ts` delivers real pushes through Google's push
+service to installed Google Chrome (`pnpm exec playwright install chrome`). It
+needs outbound HTTPS and a stack with VAPID keys whose API may leave loopback:
+
+```sh
+THECHAT_WEB_E2E_REAL_PUSH=1 scripts/e2e/web/stack.sh up
+THECHAT_WEB_E2E_REAL_PUSH=1 xvfb-run -a pnpm test:e2e:web web-push.spec.ts --project=chromium-desktop
+```
+
 Before relying on it, check on real devices against a deployment with VAPID
 keys:
 

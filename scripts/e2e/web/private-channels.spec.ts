@@ -34,7 +34,17 @@ async function peer(browser: Browser, viewport: { width: number; height: number 
   const context = await browser.newContext({ baseURL: webURL, ignoreHTTPSErrors: true, viewport });
   const page = await context.newPage();
   await login(page, person);
+  await landed(page);
   return { context, page };
+}
+
+/**
+ * After login the app moves to its landing channel, and a route change closes
+ * the phone navigation drawer. Wait for that move before opening the drawer,
+ * or the drawer can close under the next click.
+ */
+async function landed(target: Page) {
+  await expect(target).toHaveURL(/\/channel\//);
 }
 
 /** The channel's own sidebar row, not the "Manage #name" menu next to it. */
@@ -222,6 +232,7 @@ test('members manage a private channel: details, add, remove, leave, visibility'
 
     // Avery opens the channel: the header carries the lock and the member count.
     await login(page, w.avery);
+    await landed(page);
     await showSidebar(page);
     await sidebarChannel(page, 'offsite').click();
     await expect(page).toHaveURL(new RegExp(`/channel/${room.id}`));

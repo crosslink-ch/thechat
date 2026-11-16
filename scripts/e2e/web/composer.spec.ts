@@ -88,9 +88,9 @@ test('blocks, # and : menus in a channel, a DM, the thread panel and a Hermes ta
   const bot = await call(request, 'POST', '/bots/create', { name: 'Composer Hermes', kind: 'hermes', workspaceId: f.workspace.id }, f.a.accessToken);
   const hermes = await call(request, 'POST', '/conversations/dm', { workspaceId: f.workspace.id, otherUserId: bot.userId }, f.a.accessToken);
   await page.goto(`${webURL}/#/dm/${hermes.id}`);
-  // The Hermes view remounts its composer once its task list has loaded.
-  await expect(page.getByText('No tasks yet')).toBeVisible();
-  await page.waitForTimeout(1000);
+  // The DM first renders as a plain DM, then swaps in the Hermes view with a
+  // new composer once it knows the other side is Hermes. Type after the swap.
+  await expect(page.getByTestId('hermes-dm-chat-scroll')).toBeVisible();
   await composeBlocks(page, editor, 'Hermes');
   await expectRendered(page, 'Hermes');
   await editor.click();

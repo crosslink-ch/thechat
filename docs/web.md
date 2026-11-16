@@ -115,6 +115,11 @@ Postgres/Redis and versioned S3-compatible test bucket. It creates synthetic
 URLs so it cannot accidentally be aimed at production. Configure
 `THECHAT_WEB_E2E_URL` and `THECHAT_WEB_E2E_API_URL` for your loopback listeners;
 defaults are `http://127.0.0.1:1422` and `http://127.0.0.1:13300`.
+`scripts/e2e/web/stack.sh up` starts such a stack on those defaults: LocalStack
+S3 with a versioned bucket, the API and worker on a fresh `thechat_e2e` database
+and Redis key prefix next to the compose Postgres/Redis, and the compiled
+frontend; `stack.sh down` stops it. `voice-permission.spec.ts` drives headed
+Chromium, so on display-less Linux run `xvfb-run -a pnpm test:e2e:web`.
 For Secure-cookie acceptance, use HTTPS loopback proxies and matching public API
 configuration. Playwright accepts the disposable test certificate only in its
 isolated browser context. It does not alter the browser's normal trust store.

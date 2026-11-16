@@ -166,7 +166,7 @@ describeNewTask("client-only Hermes New task", () => {
       await existingThread.waitForClickable({ timeout: 30_000 });
       await existingThread.click();
       await browser.waitUntil(
-        async () => (await existingThread.getAttribute("class")).includes("bg-accent/10"),
+        async () => (await existingThread.getAttribute("aria-current")) === "true",
         {
           timeout: 10_000,
           timeoutMsg: "Existing task did not become selected",
@@ -353,7 +353,7 @@ describeNewTask("client-only Hermes New task", () => {
       );
       await persistedTaskRow.waitForDisplayed({ timeout: 30_000 });
       await browser.waitUntil(
-        async () => (await persistedTaskRow.getAttribute("class")).includes("bg-accent/10"),
+        async () => (await persistedTaskRow.getAttribute("aria-current")) === "true",
         {
           timeout: 10_000,
           timeoutMsg: "Persisted task did not become the selected task",

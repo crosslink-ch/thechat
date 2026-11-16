@@ -377,10 +377,7 @@ def main() -> None:
     try:
         harness.start_postgres()
         harness.start_redis()
-        harness.run(
-            [harness.PNPM, "--dir", "packages/api", "exec", "drizzle-kit", "migrate"],
-            env=env,
-        )
+        harness.migrate_database(env)
         api_holder[0] = harness.start_api(env)
         base = f"http://127.0.0.1:{harness.API_PORT}"
         email = f"new-task-e2e-{int(time.time())}@example.com"

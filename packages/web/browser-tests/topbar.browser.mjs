@@ -1,11 +1,10 @@
 import { chromium, webkit } from "playwright";
-import { createServer } from "vite";
 import { test } from "node:test";
-import { fileURLToPath } from "node:url";
 import path from "node:path";
 import os from "node:os";
 import fs from "node:fs/promises";
 import assert from "node:assert/strict";
+import { startViteServer } from "./support/vite-server.mjs";
 // Real web entrypoint, router and components with synthetic HTTP/WebSocket fixtures.
 // This is UI integration coverage, not live authentication/API/bot E2E.
 test(
@@ -16,16 +15,7 @@ test(
       process.env.TOPBAR_ARTIFACTS_DIR ||
       path.join(os.homedir(), ".cache/thechat/topbar-tests");
     await fs.mkdir(out, { recursive: true });
-    const root = fileURLToPath(new URL("../", import.meta.url));
-    const server = await createServer({
-      root,
-      cacheDir: path.join(out, "vite-cache"),
-      configFile: path.join(root, "vite.config.ts"),
-      mode: "web",
-      server: { host: "127.0.0.1", port: 0, strictPort: false, hmr: false },
-      logLevel: "error",
-    });
-    await server.listen();
+    const server = await startViteServer({ entries: ["index.html"], mode: "web" });
     t.after(() => server.close());
     const date = "2026-09-09T12:00:00.000Z";
     const self = {
@@ -81,6 +71,8 @@ test(
         conversationId: "dm-hermes",
         botId: "review-bot",
         status: "open",
+        createdById: self.id,
+        projectId: null,
         createdAt: date,
         updatedAt: date,
         lastActivityAt: date,
@@ -94,13 +86,15 @@ test(
         conversationId: "dm-hermes",
         botId: "review-bot",
         status: "open",
+        createdById: self.id,
+        projectId: null,
         createdAt: date,
         updatedAt: date,
         lastActivityAt: date,
       },
     ];
     const label = "after";
-    const base = `http://127.0.0.1:${server.httpServer.address().port}`;
+    const base = server.baseUrl;
     const results = [];
     for (const engineName of ["chromium", "webkit"]) {
       const browser = await { chromium, webkit }[engineName].launch();
@@ -114,6 +108,8 @@ test(
           const page = await browser.newPage({
             viewport: { width, height },
             hasTouch: width < 800,
+            // The web app registers /sw.js; its fetches would bypass page.route.
+            serviceWorkers: "block",
           });
           const errors = [],
             unknown = [];
@@ -152,6 +148,19 @@ test(
               data = [];
             else if (p.startsWith("/activity"))
               data = { items: [], totalUnreadMessages: 0 };
+            else if (p === "/push/config")
+              data = { enabled: false, publicKey: null };
+            else if (p === "/push/preferences")
+              data = {
+                directMessages: true,
+                mentions: true,
+                agentReplies: true,
+                agentRequests: true,
+                agentProgress: false,
+                threadReplies: true,
+                showPreviews: true,
+              };
+            else if (p === "/search/directory") data = { destinations: [] };
             else if (p.startsWith("/conversations/detail/")) {
               const isBot = p.endsWith("dm-hermes");
               const other = isBot ? bot : human;
@@ -178,6 +187,25 @@ test(
                   },
                 ],
               };
+            } else if (p.startsWith("/conversations/thread-groups/"))
+              data = {
+                groups: [
+                  {
+                    projectId: null,
+                    items: threads,
+                    hasMore: false,
+                    nextCursor: null,
+                    totalCount: threads.length,
+                  },
+                ],
+              };
+            else if (p.startsWith("/conversations/projects/")) data = [];
+            else if (/^\/conversations\/threads\/[^/]+\/[^/]+$/.test(p)) {
+              data = threads.find((thread) => thread.id === p.split("/").at(-1));
+              if (!data) {
+                unknown.push(req.method() + " " + p);
+                return route.fulfill({ status: 404, json: { error: "Unknown synthetic task" } });
+              }
             } else if (p.startsWith("/conversations/threads/"))
               data = { items: threads, hasMore: false, nextCursor: null };
             else if (p.startsWith("/bot-runtime/conversations/"))
@@ -194,8 +222,10 @@ test(
                   ? "dm-hermes"
                   : "dm-human",
               };
-            else if (p.startsWith("/messages/")) {
-              const conversationId = p.split("/").at(-1);
+            else if (/^\/messages\/[^/]+(?:\/task-page)?$/.test(p)) {
+              // Task views read /messages/:id/task-page ({ messages,
+              // unreadMessageIds }); other views keep the array contract.
+              const [, , conversationId, page] = p.split("/");
               const isBot = conversationId === "dm-hermes";
               data = [
                 {
@@ -231,6 +261,8 @@ test(
                   reactions: [],
                 },
               ];
+              if (page === "task-page")
+                data = { messages: data, unreadMessageIds: [] };
             } else {
               unknown.push(req.method() + " " + p);
               return route.fulfill({
@@ -260,7 +292,12 @@ test(
             if (name === "dm")
               await page
                 .getByText("Start with the essentials:", { exact: false })
-                .waitFor();
+                .waitFor()
+                .catch(async (error) => {
+                  throw new Error(
+                    `${engineName} ${width} ${name}: ${error.message}\n${await page.locator("body").innerText()}\n${JSON.stringify({ errors, unknown })}`,
+                  );
+                });
             await page.screenshot({
               path: `${out}/${label}-${engineName}-${name}-${width}.png`,
               fullPage: true,
@@ -310,11 +347,13 @@ test(
                   geometry.headerText,
                   /Hermes.*Plan the product launch/,
                 );
+                // HermesRuntimePanel becomes a drawer at (max-width: 899px).
+                const taskDrawer = width < 900;
                 const trigger = page.getByRole("button", {
                   name: "Open tasks and activity",
                   exact: true,
                 });
-                if (width < 1280) {
+                if (taskDrawer) {
                   assert.equal(
                     await trigger.evaluate(
                       (el) => !!el.closest(".chat-header"),
@@ -335,10 +374,11 @@ test(
                       "Open tasks and activity",
                   );
                   await trigger.click();
-                }
+                } else assert.equal(await trigger.count(), 0, "tasks panel is inline");
                 await page
                   .getByRole("button", {
-                    name: /ReviewTheEntireCustomerOnboarding/,
+                    // Rows also carry "Rename <task>" and "Task actions for <task>".
+                    name: /^ReviewTheEntireCustomerOnboarding/,
                   })
                   .click();
                 await page
@@ -351,7 +391,7 @@ test(
                   ),
                   true,
                 );
-                if (width < 1280) {
+                if (taskDrawer) {
                   await page
                     .getByRole("dialog", {
                       name: "Tasks and activity",
@@ -367,7 +407,7 @@ test(
                   .locator(".chat-header")
                   .filter({ hasText: "General" })
                   .waitFor();
-                if (width < 1280) await trigger.click();
+                if (taskDrawer) await trigger.click();
                 await page
                   .getByRole("button", { name: "New task", exact: true })
                   .click();

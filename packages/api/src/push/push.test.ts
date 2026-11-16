@@ -574,9 +574,15 @@ describe("push delivery", () => {
     // Same source again (a redelivered chat event): queue job ids are deterministic.
     const { schedulePushNotifications } = await import("./jobs");
     await schedulePushNotifications({ type: "message", messageId: message.id });
-    expect(bus.pending(PUSH_FANOUT_JOB_NAME)).toHaveLength(1);
+    // Scope by source: the domain-event runtime also replays chat events that
+    // earlier test files left in the shared test database, and those schedule
+    // fan-outs for their own messages into this bus.
+    const ownFanouts = bus.pending(PUSH_FANOUT_JOB_NAME).filter(
+      (command) => command.message.payload.source.type === "message" && command.message.payload.source.messageId === message.id,
+    );
+    expect(ownFanouts.map((command) => command.jobId)).toEqual([`push-fanout:message:${message.id}`]);
     await drainPushJobs();
-    expect(delivered).toHaveLength(1);
+    expect(delivered.filter((entry) => entry.payload.id === `message:${message.id}`)).toHaveLength(1);
   });
 
   test("a message read on another device before delivery does not buzz the phone", async () => {

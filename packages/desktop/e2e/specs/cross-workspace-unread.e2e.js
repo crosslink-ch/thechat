@@ -280,8 +280,10 @@ describe("Cross-workspace unread activity", function () {
       setup.workspaceBeta.id,
     );
     expect(indicatorVisual).not.toBeNull();
-    expect(indicatorVisual.width).toBeGreaterThanOrEqual(7);
-    expect(indicatorVisual.height).toBeGreaterThanOrEqual(7);
+    // size-2 is exactly 7px at the app's 14px root size; WebKit can report
+    // 6.99999 for it, so compare whole pixels.
+    expect(Math.round(indicatorVisual.width)).toBeGreaterThanOrEqual(7);
+    expect(Math.round(indicatorVisual.height)).toBeGreaterThanOrEqual(7);
     expect(indicatorVisual.backgroundColor).not.toBe("rgba(0, 0, 0, 0)");
     expect(indicatorVisual.opacity).toBe("1");
     expect(indicatorVisual.visibility).toBe("visible");

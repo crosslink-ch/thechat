@@ -136,15 +136,18 @@ _SAFE_ENV_KEYS = {
 
 @contextmanager
 def _exclusive_run_lock():
-    TMP.mkdir(parents=True, exist_ok=True)
-    lock_path = TMP / NATIVE_DESKTOP_E2E_LOCK
+    # Shared with attachments-ui-flow.py: both suites rebuild the same Tauri
+    # binary, so the lock must live in the repository, not the per-run TMP.
+    lock_dir = ROOT / ".tmp"
+    lock_dir.mkdir(parents=True, exist_ok=True)
+    lock_path = lock_dir / NATIVE_DESKTOP_E2E_LOCK
     lock_file = lock_path.open("a+", encoding="utf-8")
     try:
         try:
             fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError as exc:
             raise RuntimeError(
-                f"Another Hermes approval UI E2E run owns {lock_path}"
+                f"Another native desktop E2E run owns {lock_path}"
             ) from exc
         lock_file.seek(0)
         lock_file.truncate()
@@ -224,8 +227,14 @@ print(json.dumps({
         capture_output=True,
         text=True,
         timeout=60,
-        check=True,
+        check=False,
     )
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"Hermes approval preflight failed in {harness.HERMES_SOURCE_DIR}; "
+            "run `uv sync --frozen --extra messaging` there first.\n"
+            + result.stderr[-2000:]
+        )
     lines = [line for line in result.stdout.splitlines() if line.strip()]
     if not lines:
         raise AssertionError("Hermes approval preflight produced no result")
@@ -523,10 +532,7 @@ def _run() -> None:
     try:
         harness.start_postgres()
         harness.start_redis()
-        harness.run(
-            [harness.PNPM, "--dir", "packages/api", "exec", "drizzle-kit", "migrate"],
-            env=env,
-        )
+        harness.migrate_database(env)
         api_proc = harness.start_api(env)
         worker_proc = harness.start_worker(env)
         model_proc = _start_fake_model(env)

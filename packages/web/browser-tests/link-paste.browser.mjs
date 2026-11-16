@@ -1,10 +1,7 @@
 import assert from "node:assert/strict";
-import { tmpdir } from "node:os";
-import path from "node:path";
 import { after, before, test } from "node:test";
-import { fileURLToPath } from "node:url";
 import { chromium, webkit } from "playwright";
-import { createServer } from "vite";
+import { startViteServer } from "./support/vite-server.mjs";
 
 const label = "KGSP 18-140 I V.mp4";
 const href = "https://example.com/?file=KGSP%2018-140%20I%20V.mp4&e=Demo123&download=1#preview";
@@ -12,15 +9,8 @@ const markdown = `[${label}](${href})`;
 let server;
 let baseUrl;
 before(async () => {
-  const root = fileURLToPath(new URL("../", import.meta.url));
-  server = await createServer({
-    root, configFile: `${root}vite.config.ts`,
-    cacheDir: path.join(tmpdir(), `thechat-link-paste-vite-${process.pid}`),
-    server: { host: "127.0.0.1", port: 0, strictPort: false, hmr: false },
-    logLevel: "error",
-  });
-  await server.listen();
-  baseUrl = `http://127.0.0.1:${server.httpServer.address().port}`;
+  server = await startViteServer({ entries: ["browser-tests/fixtures/link-paste.html"] });
+  baseUrl = server.baseUrl;
 });
 after(async () => { await server?.close(); });
 

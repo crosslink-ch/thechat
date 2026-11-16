@@ -64,12 +64,13 @@ test('a direct message reaches a closed TheChat through the real push service', 
     const prompt = page.getByRole('dialog', { name: 'Get notified when TheChat is closed' });
     await expect(prompt).toBeVisible();
     await prompt.getByRole('button', { name: 'Turn on' }).click();
-    await expect(prompt).toHaveCount(0);
+    // The prompt stays on "Turning on…" until the subscription exists. A fresh
+    // Chrome profile first registers with Google's push service; this took
+    // ~30s on a cloud VM. Phones that already use FCM subscribe quickly.
+    await expect(prompt).toHaveCount(0, { timeout: 90_000 });
 
     await page.goto(`${webURL}/#/settings`);
-    // A fresh Chrome profile first registers with Google's push service; this
-    // took ~30s on a cloud VM. Phones that already use FCM subscribe quickly.
-    await expect(page.getByText("On. You'll get notifications when TheChat is closed.")).toBeVisible({ timeout: 90_000 });
+    await expect(page.getByText("On. You'll get notifications when TheChat is closed.")).toBeVisible();
     const endpointHost = await page.evaluate(async () => {
       const registration = await navigator.serviceWorker.ready;
       const subscription = await registration.pushManager.getSubscription();

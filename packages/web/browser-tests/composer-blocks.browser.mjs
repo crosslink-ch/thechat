@@ -1,25 +1,15 @@
 import assert from "node:assert/strict";
-import { tmpdir } from "node:os";
-import path from "node:path";
 import { after, before, test } from "node:test";
-import { fileURLToPath } from "node:url";
 import { chromium, webkit } from "playwright";
-import { createServer } from "vite";
+import { startViteServer } from "./support/vite-server.mjs";
 
 // Real keyboard input in real engines: Markdown shortcuts, the # and : menus,
 // Enter rules, and the sent message rendering the same blocks.
 let server;
 let baseUrl;
 before(async () => {
-  const root = fileURLToPath(new URL("../", import.meta.url));
-  server = await createServer({
-    root, configFile: `${root}vite.config.ts`,
-    cacheDir: path.join(tmpdir(), `thechat-composer-vite-${process.pid}`),
-    server: { host: "127.0.0.1", port: 0, strictPort: false, hmr: false },
-    logLevel: "error",
-  });
-  await server.listen();
-  baseUrl = `http://127.0.0.1:${server.httpServer.address().port}`;
+  server = await startViteServer({ entries: ["browser-tests/fixtures/composer.html"] });
+  baseUrl = server.baseUrl;
 });
 after(async () => { await server?.close(); });
 
@@ -116,6 +106,9 @@ for (const engine of [chromium, webkit]) {
     await url.fill("https://example.com/ship?sig=a%2Fb&x=1");
     await url.press("Enter");
     assert.equal(await editor.textContent(), "[Ship](https://example.com/ship?sig=a%2Fb&x=1) it today");
+    // Tiptap's focus() hands focus back to the editor on the next animation
+    // frame in Chromium; a key pressed before then never reaches the editor.
+    await page.waitForFunction(() => document.activeElement?.classList.contains("ProseMirror"));
 
     // The : and # menus by mouse. Text typed after the bold word stays bold.
     await page.keyboard.press("End");

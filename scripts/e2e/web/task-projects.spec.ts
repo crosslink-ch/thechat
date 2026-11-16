@@ -1,4 +1,4 @@
-import { test, expect, type APIRequestContext, type Page } from '@playwright/test';
+import { test, expect, type APIRequestContext, type Locator, type Page } from '@playwright/test';
 import { webURL, seedWorkspace, login, call, clearCredentialFields } from './fixtures';
 
 test.afterEach(async ({ page }) => clearCredentialFields(page));
@@ -36,6 +36,20 @@ async function settled(page: Page) {
   await page.evaluate(() => Promise.all(document.getAnimations().map((a) => a.finished.catch(() => {}))));
 }
 
+/**
+ * Projects start collapsed and their expansion is kept in memory only, so a
+ * reload collapses them again. Open one to see its tasks.
+ */
+async function expandProject(scope: Page | Locator, name: string) {
+  const group = scope.getByRole('group', { name: `Project ${name}` });
+  // The toggle's name is the project name plus its count; the other project
+  // buttons are "New task in …" and "Project actions for …".
+  const toggle = group.getByRole('button', { name: new RegExp(`^${name}\\b`) });
+  if ((await toggle.getAttribute('aria-expanded')) !== 'true') await toggle.click();
+  await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+  return group;
+}
+
 async function runPaletteCommand(page: Page, label: string) {
   await page.keyboard.press('Control+Shift+P');
   const palette = page.getByTestId('palette-panel');
@@ -63,8 +77,7 @@ test('New Project, drag a task in, delete a task, and everything persists', asyn
   await settled(page);
   await page.screenshot({ path: info.outputPath('new-project-dialog.png') });
   await page.getByRole('button', { name: 'Create project' }).click();
-  const project = page.getByRole('group', { name: 'Project Q4 planning' });
-  await expect(project).toBeVisible();
+  const project = await expandProject(page, 'Q4 planning');
   await expect(project.getByText('Drag tasks here')).toBeVisible();
 
   // Real mouse drag of a task row onto the project.
@@ -110,7 +123,7 @@ test('New Project, drag a task in, delete a task, and everything persists', asyn
 
   // Server-backed: the grouping survives a full reload.
   await page.reload();
-  await expect(page.getByRole('group', { name: 'Project Q4 planning' }).getByText('Budget draft', { exact: true })).toBeVisible();
+  await expect((await expandProject(page, 'Q4 planning')).getByText('Budget draft', { exact: true })).toBeVisible();
   await expect(page.getByRole('group', { name: 'Tasks without a project' }).getByText('Hiring plan', { exact: true })).toBeVisible();
   await expect(page.getByText('Scratch notes', { exact: true })).toHaveCount(0);
 });
@@ -130,7 +143,7 @@ test('A quiet project keeps its tasks when more than a page of newer tasks exist
 
   await login(page, f.alice);
   await page.goto(`${webURL}/#/dm/${dm.id}`);
-  const security = page.getByRole('group', { name: 'Project Security' });
+  const security = await expandProject(page, 'Security');
   await expect(security.getByText('Rotate keys', { exact: true })).toBeVisible();
   await expect(security.getByText('Audit logins', { exact: true })).toBeVisible();
   await expect(security.locator('span.tabular-nums')).toHaveText('2');
@@ -165,7 +178,9 @@ test('Phone users move tasks through the row menu', async ({ page, request }, in
   const move = page.getByRole('dialog', { name: 'Move “Phone task”' });
   await move.getByRole('button', { name: 'Errands' }).click();
   await expect(move).toHaveCount(0);
-  await expect(drawer.getByRole('group', { name: 'Project Errands' }).getByText('Phone task')).toBeVisible();
+  // The moved task is not the open one, so its project stays collapsed.
+  await expect(drawer.getByRole('group', { name: 'Project Errands' }).locator('span.tabular-nums')).toHaveText('1');
+  await expect((await expandProject(drawer, 'Errands')).getByText('Phone task')).toBeVisible();
   await page.screenshot({ path: info.outputPath('phone-moved-task.png') });
 
   const state = await serverState(request, dm.id, f.a.accessToken);
