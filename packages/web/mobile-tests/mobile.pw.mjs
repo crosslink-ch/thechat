@@ -163,7 +163,7 @@ test("workspace dialog remains editable and dismissible at short height", async 
 
 test("synthetic approval and custom clarification remain touch-operable", async ({ page }, info) => {
   const errors = await load(page);
-  const approve = page.getByRole("button", { name: "Approve", exact: true });
+  const approve = page.getByRole("button", { name: "Allow once", exact: true });
   await approve.scrollIntoViewIfNeeded();
   await touch(approve);
   await approve.tap();
@@ -181,7 +181,7 @@ test("synthetic approval and custom clarification remain touch-operable", async 
   await touch(submit);
   await screenshot(page, info, "320-clarification");
   await submit.tap();
-  await expect(page.getByTestId("interaction")).toHaveText("clarify:Verified from a phone");
+  await expect(page.getByTestId("interaction")).toHaveText("question:Verified from a phone");
   expect(errors).toEqual([]);
 });
 
