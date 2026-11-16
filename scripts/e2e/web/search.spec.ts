@@ -48,6 +48,9 @@ async function seedSearchWorld(request: Parameters<typeof seedWorkspace>[0]) {
 }
 
 async function openSwitcher(page: Page, isPhone: boolean) {
+  // A jump keeps the palette open until the destination has loaded, after the
+  // URL already changed. Reopening before it closes types into the closing one.
+  await expect(page.getByTestId('palette-panel')).toHaveCount(0);
   if (isPhone) {
     await openNavigation(page);
     await page.getByTestId('sidebar-search').click();
