@@ -1,4 +1,4 @@
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect, type Page, type TestInfo } from '@playwright/test';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { call, clearCredentialFields, identity, login, openNavigation, seedWorkspace, webURL } from './fixtures';
@@ -6,12 +6,12 @@ import { call, clearCredentialFields, identity, login, openNavigation, seedWorks
 test.afterEach(async ({ page }) => clearCredentialFields(page));
 
 /** PR screenshots go here when set; otherwise into the test's output folder. */
-async function shot(page: Page, name: string, outputPath: (name: string) => string) {
+async function shot(page: Page, name: string, info: TestInfo) {
   const dir = process.env.THECHAT_SEARCH_SCREENSHOTS;
   if (dir) mkdirSync(dir, { recursive: true });
   // Dialogs fade and scale in: capture the settled frame, not the first one.
   await page.evaluate(() => Promise.all(document.getAnimations().map((animation) => animation.finished.catch(() => {}))));
-  await page.screenshot({ path: dir ? join(dir, name) : outputPath(name) });
+  await page.screenshot({ path: dir ? join(dir, name) : info.outputPath(name) });
 }
 
 async function seedSearchWorld(request: Parameters<typeof seedWorkspace>[0]) {
@@ -80,7 +80,7 @@ test('quick switcher jumps anywhere and message search opens the hit in context'
   panel = await openSwitcher(page, isPhone);
   await panel.getByRole('textbox', { name: 'Search TheChat' }).fill('invoice');
   await expect(panel.locator('[data-active="true"]')).toHaveAccessibleName(/^Invoice cleanup for October, task in Koda/);
-  if (!isPhone) await shot(page, `switcher-task-${info.project.name}.png`, info.outputPath);
+  if (!isPhone) await shot(page, `switcher-task-${info.project.name}.png`, info);
   await panel.getByRole('textbox', { name: 'Search TheChat' }).press('Enter');
   await expect(page).toHaveURL(new RegExp(`threadId=${w.invoices.id}`));
   await expect(page.locator('[data-message-id]').filter({ hasText: 'Reconcile the October invoices' })).toBeVisible();
@@ -106,13 +106,13 @@ test('quick switcher jumps anywhere and message search opens the hit in context'
   await expect(results.filter({ hasText: 'TouchPoint staging is frozen' })).toBeVisible();
   // Bob's private DM with Alice is hers; Koda's task is hers; all are found.
   await expect(results.filter({ hasText: 'Check the staging deploy before Friday' })).toBeVisible();
-  await shot(page, `switcher-messages-${info.project.name}.png`, info.outputPath);
+  await shot(page, `switcher-messages-${info.project.name}.png`, info);
   await results.filter({ hasText: 'maintenance window' }).click();
   await expect(page).toHaveURL(new RegExp(`/message/${w.target.id}`));
   const context = page.getByTestId('message-context');
   await expect(context.locator('[data-search-target="true"]')).toContainText('Final reminder: staging maintenance window');
   await expect(context.getByText('The staging password rotates every Tuesday')).toBeVisible();
-  await shot(page, `message-context-${info.project.name}.png`, info.outputPath);
+  await shot(page, `message-context-${info.project.name}.png`, info);
 
   // The link is shareable: reload keeps it; "Open conversation" goes live,
   // at the same message.
@@ -151,7 +151,7 @@ test('"Open conversation" opens the live chat at a message far back', async ({ p
   await expect(page.locator('[data-message-id]').filter({ hasText: 'Status update 45' })).not.toBeInViewport();
   await page.waitForTimeout(1000);
   await expect(page.locator(`[data-message-id="${target.id}"]`)).toBeInViewport();
-  await shot(page, `open-conversation-${info.project.name}.png`, info.outputPath);
+  await shot(page, `open-conversation-${info.project.name}.png`, info);
 
   // A new message arriving meanwhile does not pull the view away.
   await post('Fresh news after the jump');
@@ -205,7 +205,7 @@ test('full results page pages through results; others never see private messages
   // The URL is the state: a reload shows the same results.
   await page.reload();
   await expect(rows).toHaveCount(30);
-  await shot(page, `search-page-${info.project.name}.png`, info.outputPath);
+  await shot(page, `search-page-${info.project.name}.png`, info);
   await page.getByRole('button', { name: 'Load more' }).click();
   await expect(rows).toHaveCount(35);
 

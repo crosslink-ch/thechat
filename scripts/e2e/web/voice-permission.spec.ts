@@ -16,6 +16,11 @@ test('microphone denial stays local and recovers after permission is granted', a
   page.on('request', req => {
     if (req.method() === 'POST' && new URL(req.url()).pathname === '/attachments') reservations++;
   });
+  // When the server has Web Push keys, headed Chromium (notification permission
+  // still "default") is offered notifications once after sign-in, in a card over
+  // the composer. It is unrelated to the microphone: decline it if it shows.
+  const pushOffer = page.getByRole('dialog', { name: 'Get notified when TheChat is closed' });
+  await page.addLocatorHandler(pushOffer, () => pushOffer.getByRole('button', { name: 'Not now', exact: true }).click());
   await login(page, f.alice);
   const cdp = await page.context().newCDPSession(page);
   const { targetInfo } = await cdp.send('Target.getTargetInfo');
