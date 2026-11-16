@@ -270,6 +270,9 @@ describe("BotsManageRoute", () => {
     mocks.botGet.mockResolvedValue({ data: ownedBot, error: null });
     render(<BotsManageRoute />);
     await screen.findByText("Bot API key");
+    // Selecting a bot fills its form and clears pending confirmations in an
+    // effect; click confirm-gated controls only after that effect has run.
+    await screen.findByDisplayValue("Research Bot");
     const rotateButton = screen.getAllByRole("button", { name: "Rotate" })[0];
 
     fireEvent.click(rotateButton);
@@ -294,6 +297,9 @@ describe("BotsManageRoute", () => {
 
     render(<BotsManageRoute />);
     await screen.findByRole("heading", { name: "Research Bot" });
+    // Selecting a bot fills its form and clears pending confirmations in an
+    // effect; click confirm-gated controls only after that effect has run.
+    await screen.findByDisplayValue("Research Bot");
 
     fireEvent.click(screen.getAllByRole("button", { name: "Rotate" })[0]);
     fireEvent.click(screen.getByRole("button", { name: "Confirm new key" }));
@@ -313,6 +319,9 @@ describe("BotsManageRoute", () => {
   it("sends authentication as request options for bodyless delete operations", async () => {
     render(<BotsManageRoute />);
     await screen.findByRole("heading", { name: "Research Bot" });
+    // Selecting a bot fills its form and clears pending confirmations in an
+    // effect; click confirm-gated controls only after that effect has run.
+    await screen.findByDisplayValue("Research Bot");
 
     fireEvent.click(screen.getByRole("button", { name: "Delete bot" }));
     expect(mocks.botDelete).not.toHaveBeenCalled();

@@ -2,7 +2,9 @@ import { describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { ScrollDebugRoute } from "./scroll-debug";
 
-describe("ScrollDebugRoute", () => {
+// Rendering the whole debug route (80+ LaTeX-heavy messages) takes the
+// interactive tests 2-3 s when idle and over Vitest's 5 s default under load.
+describe("ScrollDebugRoute", { timeout: 20_000 }, () => {
   it("renders generated Hermes history and debug controls", () => {
     render(<ScrollDebugRoute />);
 

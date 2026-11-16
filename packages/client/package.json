@@ -17,8 +17,8 @@
   },
   "scripts": {
     "build": "tsc",
-    "test": "vitest run --exclude '**/*.integration.test.ts'",
-    "test:unit": "vitest run --exclude '**/*.integration.test.ts'",
+    "test": "vitest run --exclude '**/*.integration.test.{ts,tsx}'",
+    "test:unit": "vitest run --exclude '**/*.integration.test.{ts,tsx}'",
     "test:integration": "INTEGRATION=true vitest run integration",
     "vitest": "vitest"
   },
