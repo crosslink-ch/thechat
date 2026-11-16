@@ -1,32 +1,22 @@
 import assert from "node:assert/strict";
 import { after, before, test } from "node:test";
-import { fileURLToPath } from "node:url";
 import path from "node:path";
-import os from "node:os";
 import fs from "node:fs/promises";
 import { chromium, webkit } from "playwright";
-import { createServer } from "vite";
+import { startViteServer } from "./support/vite-server.mjs";
 
 // Component/store integration with real browser input and rendering, not live
 // API/authentication or compiled Tauri E2E. Screenshot evidence stays external.
-let server, baseUrl, cacheDir;
+let server, baseUrl;
 const results = [];
 const out = process.env.MINIMAL_ARTIFACTS_DIR;
 before(async () => {
-  const root = fileURLToPath(new URL("../", import.meta.url));
-  cacheDir = await fs.mkdtemp(path.join(os.tmpdir(), "minimal-avatar-vite-"));
   if (out) await fs.mkdir(out, { recursive: true });
-  server = await createServer({
-    root, configFile: path.join(root, "vite.config.ts"), cacheDir,
-    mode: "web", server: { host: "127.0.0.1", port: 0, strictPort: false, hmr: false },
-    logLevel: "error",
-  });
-  await server.listen();
-  baseUrl = `http://127.0.0.1:${server.httpServer.address().port}`;
+  server = await startViteServer({ entries: ["browser-tests/fixtures/minimal-avatar.html"], mode: "web" });
+  baseUrl = server.baseUrl;
 });
 after(async () => {
   await server?.close();
-  if (cacheDir) await fs.rm(cacheDir, { recursive: true, force: true });
   if (out) await fs.writeFile(path.join(out, "acceptance.json"), JSON.stringify(results, null, 2));
 });
 const settle = (page) => page.evaluate(() => new Promise((resolve) => {
@@ -55,6 +45,10 @@ async function fits(page) {
 for (const [engineName, engine] of Object.entries({ chromium, webkit })) {
   for (const width of [390, 1024]) {
     for (const reducedMotion of ["no-preference", "reduce"]) {
+      // Motion assertions do not depend on width and clipping checks do not
+      // depend on motion; 390px is the tighter layout, so 1024px x reduce adds
+      // no coverage over 390px x reduce plus 1024px x no-preference.
+      if (width === 1024 && reducedMotion === "reduce") continue;
       test(`${engineName}, ${width}px, ${reducedMotion}: explicit Minimal and preserved activity`, { timeout: 60000 }, async (t) => {
         const browser = await engine.launch();
         t.after(() => browser.close());
@@ -148,6 +142,10 @@ for (const [engineName, engine] of Object.entries({ chromium, webkit })) {
             assert.equal(await glyph.evaluate((el) => el.getAnimations({ subtree: true }).length), 0);
           }
 
+          // Approvals and questions are bot request rows: the progress row only
+          // reports that action is needed; the answer card is its own timeline
+          // item after the progress row (not inside HermesProgressInline).
+          const requests = page.getByTestId("request-area");
           for (const state of ["queued", "approval", "clarification"]) {
             await page.getByRole("button", { name: `Show ${state}`, exact: true }).click();
             const marker = indicator.locator(state === "queued" ? ".lucide-clock-3" : ".lucide-circle-alert");
@@ -156,20 +154,28 @@ for (const [engineName, engine] of Object.entries({ chromium, webkit })) {
             assert.equal((await styles(marker)).animation, "none");
             if (state === "queued") {
               assert.equal(await progress.getByRole("button", { name: "Stop" }).count(), 0);
+              assert.equal(await requests.getByTestId("bot-request-card").count(), 0);
             } else {
               assert.match(await progress.textContent(), /action needed/);
+              assert.match(await progress.textContent(), state === "approval" ? /waiting for your approval/ : /waiting for your response/);
               assert.equal(await progress.getByRole("button", { name: "Stop" }).count(), 1);
+              assert.equal(await progress.getByTestId("bot-request-card").count(), 0);
+              await requests.getByTestId("bot-request-card").waitFor();
             }
             record.states.push({ state, markerStyle: await styles(marker), geometry: await fits(page) });
             await shot(`minimal-${state}`);
             if (state === "approval") {
-              await progress.getByRole("button", { name: "Approve", exact: true }).click();
+              assert.match(await requests.textContent(), /pwd/);
+              await requests.getByRole("button", { name: "Allow once", exact: true }).click();
               await spinner.waitFor();
-              assert.match(await page.getByTestId("callback-log").textContent(), /approval.request:"once"/);
+              assert.match(await page.getByTestId("callback-log").textContent(), /approval:\{"choice":"once"\}/);
+              await requests.getByTestId("bot-request-resolved").waitFor();
             } else if (state === "clarification") {
-              await progress.getByRole("button", { name: "Safe", exact: true }).click();
+              assert.match(await requests.textContent(), /Which approach should we use\?/);
+              await requests.getByRole("button", { name: "Safe", exact: true }).click();
               await spinner.waitFor();
-              assert.match(await page.getByTestId("callback-log").textContent(), /clarify.request:"Safe"/);
+              assert.match(await page.getByTestId("callback-log").textContent(), /question:\{"choice":"Safe"\}/);
+              await requests.getByTestId("bot-request-resolved").waitFor();
             }
           }
 

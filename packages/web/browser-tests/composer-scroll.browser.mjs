@@ -1,21 +1,13 @@
 import assert from "node:assert/strict";
 import { after, before, test } from "node:test";
-import { fileURLToPath } from "node:url";
 import { chromium, webkit } from "playwright";
-import { createServer } from "vite";
+import { startViteServer } from "./support/vite-server.mjs";
 
 let server;
 let baseUrl;
 before(async () => {
-  const root = fileURLToPath(new URL("../", import.meta.url));
-  server = await createServer({
-    root,
-    configFile: `${root}vite.config.ts`,
-    server: { host: "127.0.0.1", port: 0, strictPort: false, hmr: false },
-    logLevel: "error",
-  });
-  await server.listen();
-  baseUrl = `http://127.0.0.1:${server.httpServer.address().port}`;
+  server = await startViteServer({ entries: ["browser-tests/fixtures/chat.html"] });
+  baseUrl = server.baseUrl;
 });
 after(async () => { await server?.close(); });
 

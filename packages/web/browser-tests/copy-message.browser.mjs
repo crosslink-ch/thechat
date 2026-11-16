@@ -1,26 +1,16 @@
 import assert from "node:assert/strict";
 import { mkdir } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, before, test } from "node:test";
-import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
-import { createServer } from "vite";
+import { startViteServer } from "./support/vite-server.mjs";
 
 let server;
 let baseUrl;
 const evidenceDir = process.env.THECHAT_COPY_EVIDENCE_DIR;
 before(async () => {
-  const root = fileURLToPath(new URL("../", import.meta.url));
-  server = await createServer({
-    root,
-    configFile: `${root}vite.config.ts`,
-    cacheDir: path.join(tmpdir(), `thechat-copy-vite-${process.pid}`),
-    server: { host: "127.0.0.1", port: 0, strictPort: false, hmr: false },
-    logLevel: "error",
-  });
-  await server.listen();
-  baseUrl = `http://127.0.0.1:${server.httpServer.address().port}`;
+  server = await startViteServer({ entries: ["browser-tests/fixtures/chat.html"] });
+  baseUrl = server.baseUrl;
   if (evidenceDir) await mkdir(evidenceDir, { recursive: true });
 });
 after(async () => { await server?.close(); });
@@ -101,6 +91,9 @@ test("copy uses the real browser clipboard in shared chat views", async (t) => {
           await copy.click();
           const alert = row.getByRole("alert");
           await alert.waitFor();
+          // Bottom-following scroll is applied by a ResizeObserver before the
+          // next paint; measure the first painted frame, not the commit.
+          await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
           const errorBox = await alert.boundingBox();
           const scrollerBox = await page.getByTestId(view === "channel" ? "channel-chat-scroll" : "hermes-dm-chat-scroll").boundingBox();
           assert.ok(errorBox && scrollerBox && errorBox.x >= 0 && errorBox.x + errorBox.width <= width && errorBox.y >= scrollerBox.y && errorBox.y + errorBox.height <= scrollerBox.y + scrollerBox.height, `copy error must not be clipped: ${JSON.stringify({ errorBox, scrollerBox })}`);
