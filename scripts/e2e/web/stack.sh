@@ -143,10 +143,23 @@ up() {
   status && echo "stack up; logs in $STATE"
 }
 
+# SIGTERM a service's process group and wait for it; SIGKILL what is left after
+# 20 s. After a full suite run the worker can keep shutting down indefinitely
+# (a job in flight), and each later `up` would leave another worker behind.
+stop_group() {
+  local pid=$1
+  kill -TERM -- -"$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null || return 0
+  for _ in $(seq 1 20); do
+    kill -0 -- -"$pid" 2>/dev/null || return 0
+    sleep 1
+  done
+  kill -KILL -- -"$pid" 2>/dev/null
+}
+
 down() {
   for s in web worker api; do
     if [ -f "$STATE/$s.pid" ]; then
-      kill -- -"$(cat "$STATE/$s.pid")" 2>/dev/null || kill "$(cat "$STATE/$s.pid")" 2>/dev/null
+      stop_group "$(cat "$STATE/$s.pid")"
       rm -f "$STATE/$s.pid"
     fi
   done
