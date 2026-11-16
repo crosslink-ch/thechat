@@ -265,7 +265,9 @@ describe("Secure message attachments", function () {
       expect(Math.abs(sample.height - stableThumbnail.samples[0].height)).toBeLessThan(0.5);
     }
 
-    await browser.setWindowSize(390, 700);
+    // The desktop window cannot shrink below tauri.conf.json's minWidth
+    // (640px), so exercise the viewer at the narrowest supported width.
+    await browser.setWindowSize(640, 700);
     await thumbnail.click();
     await $('[role="dialog"]').waitForExist({ timeout: 10_000 });
     await browser.waitUntil(
@@ -334,7 +336,7 @@ describe("Secure message attachments", function () {
       };
     }, imageName);
 
-    expect(geometry.viewport.width).toBeLessThanOrEqual(430);
+    expect(geometry.viewport.width).toBeLessThanOrEqual(640);
     for (const control of [geometry.download, geometry.close]) {
       expect(control.width).toBeGreaterThanOrEqual(44);
       expect(control.height).toBeGreaterThanOrEqual(44);

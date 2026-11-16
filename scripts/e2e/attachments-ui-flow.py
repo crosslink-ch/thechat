@@ -1141,17 +1141,7 @@ def _run() -> None:
         _start_s3(env)
         harness.start_postgres(env=DOCKER_ENV)
         harness.start_redis(env=DOCKER_ENV)
-        harness.run(
-            [
-                harness.PNPM,
-                "--dir",
-                "packages/api",
-                "exec",
-                "drizzle-kit",
-                "migrate",
-            ],
-            env=env,
-        )
+        harness.migrate_database(env)
         api_proc = harness.start_api(env)
         worker_proc = harness.start_worker(env)
         base = f"http://127.0.0.1:{API_PORT}"
