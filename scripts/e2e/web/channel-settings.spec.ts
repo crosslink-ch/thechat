@@ -111,6 +111,7 @@ test('channel details: members, adding and removing people, and archiving, live 
 
     // --- The details view, opened from the channel header -------------------
     await login(page, w.morgan);
+    await expect(page).toHaveURL(/\/channel\//);
     await openNavigation(page);
     await sidebarChannel(page, w.leadership).click();
     await expect(page).toHaveURL(leadershipURL);
@@ -283,6 +284,7 @@ test('a public channel shows everyone read-only; rename and delete work from the
   const project = await call(request, 'POST', '/conversations/channel', { workspaceId: w.workspace.id, name: 'Project Atlas' }, w.m.accessToken);
 
   await login(page, w.morgan);
+  await expect(page).toHaveURL(/\/channel\//);
   await openNavigation(page);
   await sidebarChannel(page, project).click();
   await expect(page).toHaveURL(new RegExp(`/channel/${project.id}`));
