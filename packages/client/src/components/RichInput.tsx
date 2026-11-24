@@ -3,14 +3,30 @@ import { useEditor, EditorContent } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import Mention from "@tiptap/extension-mention";
 import Placeholder from "@tiptap/extension-placeholder";
-import { Extension, type AnyExtension } from "@tiptap/react";
+import type { AnyExtension } from "@tiptap/react";
 import { Fragment, Slice, type Node as ProseMirrorNode } from "@tiptap/pm/model";
 import type { EditorView } from "@tiptap/pm/view";
+import { projectPartsContent, trimInputParts } from "@thechat/shared";
 import { createMentionSuggestion } from "./mention-suggestion";
+import { BlockMenu, CodeBlockKeepsMentions, EmojiMenu, createEnterRules } from "./composer-extensions";
+import { SelectionToolbar } from "./SelectionToolbar";
 import type { MentionUser } from "./MentionList";
+import {
+  composerFromText,
+  composerToDocument,
+  sameComposerDocument,
+  serializeComposer,
+  serializeTextNode,
+  type ComposerDocument,
+  type MessageInput,
+} from "../lib/composer-parts";
 
 interface RichInputProps {
-  onSubmit: (text: string) => void | boolean | Promise<void | boolean>;
+  /**
+   * The message to send: ordered text and the user references picked in the
+   * @ menu, with its readable text. Trimmed; never empty.
+   */
+  onSubmit: (message: ComposerDocument) => void | boolean | Promise<void | boolean>;
   /** Called when user presses Enter with empty text. Return true if handled (e.g., images-only send). */
   onEmptySubmitAttempt?: () => boolean | Promise<boolean>;
   placeholder?: string;
@@ -18,65 +34,31 @@ interface RichInputProps {
   mentions?: MentionUser[];
   onCanSubmitChange?: (canSubmit: boolean) => void;
   onTextChange?: (text: string) => void;
+  /** The whole draft, mentions included, after every change. */
+  onChange?: (message: ComposerDocument) => void;
   /** Pre-editor key hook (e.g. for a command menu). Return true to consume the event. */
   onKeyIntercept?: (event: KeyboardEvent) => boolean;
-  /** Text used when this editor instance is created. */
-  initialText?: string;
+  /** Draft used when this editor instance is created: text or a parts document. */
+  initialValue?: MessageInput;
   /** Accessible name of the editor. */
   ariaLabel?: string;
 }
 
-function serializeTextNode(
-  node: ProseMirrorNode,
-  parent: ProseMirrorNode,
-  index: number,
-  precedingText = "",
-): string {
-  const hrefOf = (child: typeof node) => child.isText
-    ? child.marks.find((mark) => mark.type.name === "link")?.attrs.href
-    : undefined;
-  const href = hrefOf(node);
-  if (!href) return node.text ?? "";
-
-  // A single pasted anchor can be split into text nodes by other inline marks.
-  // Emit its whole contiguous run once, without overriding mention/break nodes.
-  if (index > 0 && hrefOf(parent.child(index - 1)) === href) return "";
-  let text = node.text ?? "";
-  for (let next = index + 1; next < parent.childCount; next++) {
-    const child = parent.child(next);
-    if (hrefOf(child) !== href) break;
-    text += child.text;
-  }
-  if (text === href || !text.trim() || !/^https?:\/\//i.test(href) || /[\s\u0000-\u001f\u007f]/.test(href)) return text;
-  // Markdown escapes are reversible; URL parsing/re-encoding can corrupt signed
-  // query strings. Escape ampersands too, so entity-looking text stays literal.
-  const label = text.replace(/[\\`*_[\]<>!~$&]/g, "\\$&");
-  const destination = href.replace(/[\\()<>"']/g, "\\$&")
-    .replace(/&(?=#\d+;|#x[\da-f]+;|[a-z][\da-z]+;)/gi, "\\&");
-  // Keep a preceding literal ! from turning the generated link into an image.
-  const previousText = index > 0 ? parent.child(index - 1).text : precedingText;
-  const boundary = previousText?.endsWith("!") ? " " : "";
-  return `${boundary}[${label}](${destination})`;
+/** The editor's message: parts, labels and readable text. */
+function composerOf(doc: ProseMirrorNode): ComposerDocument {
+  return serializeComposer(doc);
 }
 
-/** Newlines are paragraph splits; retain schema defaults for mentions/breaks. */
-const TEXT_OPTIONS = {
-  blockSeparator: "\n",
-  textSerializers: {
-    text: ({ node, parent, index }: { node: ProseMirrorNode; parent: ProseMirrorNode; index: number }) =>
-      serializeTextNode(node, parent, index),
-  },
-} as const;
-
-function textDocument(text: string) {
+/** Parts trimmed like the server trims a message; empty when nothing to send. */
+function trimmedComposer(document: ComposerDocument): ComposerDocument {
+  const parts = trimInputParts(document.parts);
   return {
-    type: "doc",
-    content: text.split("\n").map((line) => ({
-      type: "paragraph",
-      content: line ? [{ type: "text", text: line }] : [],
-    })),
+    parts,
+    labels: document.labels,
+    text: projectPartsContent(parts, (id) => document.labels[id]),
   };
 }
+
 
 /** Convert clipboard link marks before insertion, so display and send agree.
  * Preserve paragraphs, hard breaks and mention atoms; discard hidden text marks.
@@ -110,6 +92,8 @@ export interface RichInputHandle {
   submit: () => void;
   focus: () => void;
   setText: (text: string) => void;
+  /** Replace the draft with text or a parts document (mentions restored). */
+  setValue: (value: MessageInput) => void;
 }
 
 export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function RichInput(
@@ -121,8 +105,9 @@ export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function Ri
     mentions,
     onCanSubmitChange,
     onTextChange,
+    onChange,
     onKeyIntercept,
-    initialText = "",
+    initialValue = "",
     ariaLabel = "Message",
   }: RichInputProps,
   ref,
@@ -142,30 +127,39 @@ export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function Ri
   const onTextChangeRef = useRef(onTextChange);
   onTextChangeRef.current = onTextChange;
 
+  const onChangeRef = useRef(onChange);
+  onChangeRef.current = onChange;
+
+  const notifyChange = (message: ComposerDocument) => {
+    onCanSubmitChangeRef.current?.(trimInputParts(message.parts).length > 0);
+    onTextChangeRef.current?.(message.text);
+    onChangeRef.current?.(message);
+  };
+
   const mentionsRef = useRef(mentions);
   mentionsRef.current = mentions;
+  /** A restored mention shows the target's current name when known. */
+  const labelOf = (id: string) => mentionsRef.current?.find((mention) => mention.id === id)?.label;
 
   const submittingRef = useRef(false);
 
   const submitIfNotEmpty = (
-    text: string,
+    message: ComposerDocument,
     clearContent: () => boolean,
   ): boolean | Promise<boolean> => {
     if (submittingRef.current) return false;
-    const trimmed = text.trim();
+    const trimmed = trimmedComposer(message);
+    const hasContent = trimmed.parts.length > 0;
     const complete = (result: void | boolean) => {
-      const accepted = trimmed ? result !== false : result === true;
+      const accepted = hasContent ? result !== false : result === true;
       if (!accepted) return false;
-      if (clearContent()) {
-        onCanSubmitChangeRef.current?.(false);
-        onTextChangeRef.current?.("");
-      }
+      if (clearContent()) notifyChange(composerFromText(""));
       return true;
     };
 
     submittingRef.current = true;
     try {
-      const result = trimmed
+      const result = hasContent
         ? onSubmitRef.current(trimmed)
         : onEmptySubmitAttemptRef.current?.();
       if (result && typeof (result as PromiseLike<void | boolean>).then === "function") {
@@ -189,38 +183,17 @@ export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function Ri
 
   const submitExtension = useMemo(
     () =>
-      Extension.create({
-        name: "submitOnEnter",
-        addKeyboardShortcuts() {
-          return {
-            Enter: ({ editor }) => {
-              // Phone/tablet Return is for writing, not sending. Use the
-              // primary pointer, not viewport width, so narrow desktop windows
-              // retain Enter-to-send and touch devices work in landscape too.
-              if (window.matchMedia?.("(pointer: coarse)").matches) {
-                return editor.commands.splitBlock();
-              }
-              const submittedText = editor.getText(TEXT_OPTIONS);
-              void submitIfNotEmpty(submittedText, () => {
-                // Do not erase edits made while an asynchronous submit was
-                // waiting for persistence acknowledgement.
-                if (editor.getText(TEXT_OPTIONS) === submittedText) {
-                  editor.commands.clearContent();
-                  return true;
-                }
-                return false;
-              });
-              return true;
-            },
-            // Split a new paragraph rather than inserting a hard break:
-            // WebKitGTK renders the caret on the wrong line after trailing
-            // <br> elements, while real block splits position it correctly.
-            "Shift-Enter": ({ editor }) => {
-              editor.commands.splitBlock();
-              return true;
-            },
-          };
-        },
+      createEnterRules((editor) => {
+        const submitted = composerOf(editor.state.doc);
+        void submitIfNotEmpty(submitted, () => {
+          // Do not erase edits made while an asynchronous submit was
+          // waiting for persistence acknowledgement.
+          if (sameComposerDocument(composerOf(editor.state.doc), submitted)) {
+            editor.commands.clearContent();
+            return true;
+          }
+          return false;
+        });
       }),
     [],
   );
@@ -233,21 +206,17 @@ export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function Ri
   const extensions = useMemo(() => {
     const exts: AnyExtension[] = [
       StarterKit.configure({
-        heading: false,
-        codeBlock: false,
-        blockquote: false,
-        bulletList: false,
-        orderedList: false,
-        listItem: false,
-        horizontalRule: false,
-        bold: false,
-        italic: false,
-        strike: false,
-        code: false,
         underline: false,
+        trailingNode: false,
+        heading: { levels: [1, 2, 3] },
+        // Enter rules for code blocks live in createEnterRules.
+        codeBlock: { exitOnTripleEnter: false },
         // Keep the parser for clipboard anchors, not a rich/autolinking editor.
         link: { autolink: false, linkOnPaste: false, openOnClick: false },
       }),
+      BlockMenu,
+      EmojiMenu,
+      CodeBlockKeepsMentions,
       Placeholder.configure({ placeholder }),
       submitExtension,
     ];
@@ -269,7 +238,7 @@ export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function Ri
     extensions,
     // Link's paste rule would otherwise mark URLs inside generated Markdown.
     enablePasteRules: false,
-    content: textDocument(initialText),
+    content: composerToDocument(initialValue, labelOf, { mentions: Boolean(mentionsRef.current) }),
     editorProps: {
       attributes: {
         role: "textbox",
@@ -277,7 +246,7 @@ export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function Ri
         "aria-multiline": "true",
         enterkeyhint: "enter",
         class:
-          "block max-h-[200px] w-full overflow-y-auto bg-transparent px-4 pb-1.5 pt-3 font-[inherit] text-[1rem] leading-relaxed text-text outline-none",
+          "composer-content md-content block max-h-[200px] w-full overflow-y-auto bg-transparent px-4 pb-1.5 pt-3 font-[inherit] text-[1rem] leading-relaxed text-text outline-none",
       },
       // Direct view props run before extension keymaps, so interceptors
       // (slash command menu navigation) win over Enter-to-submit.
@@ -285,14 +254,10 @@ export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function Ri
       transformPasted: markdownPaste,
     },
     onCreate: ({ editor: currentEditor }) => {
-      const text = currentEditor.getText(TEXT_OPTIONS);
-      onCanSubmitChangeRef.current?.(text.trim().length > 0);
-      onTextChangeRef.current?.(text);
+      notifyChange(composerOf(currentEditor.state.doc));
     },
     onUpdate: ({ editor: currentEditor }) => {
-      const text = currentEditor.getText(TEXT_OPTIONS);
-      onCanSubmitChangeRef.current?.(text.trim().length > 0);
-      onTextChangeRef.current?.(text);
+      notifyChange(composerOf(currentEditor.state.doc));
     },
   });
 
@@ -301,9 +266,9 @@ export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function Ri
     () => ({
       submit: () => {
         if (!editor) return;
-        const submittedText = editor.getText(TEXT_OPTIONS);
-        void submitIfNotEmpty(submittedText, () => {
-          if (editor.getText(TEXT_OPTIONS) === submittedText) {
+        const submitted = composerOf(editor.state.doc);
+        void submitIfNotEmpty(submitted, () => {
+          if (sameComposerDocument(composerOf(editor.state.doc), submitted)) {
             editor.commands.clearContent();
             return true;
           }
@@ -315,9 +280,16 @@ export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function Ri
       },
       setText: (text: string) => {
         if (!editor) return;
-        editor.commands.setContent(textDocument(text));
-        onCanSubmitChangeRef.current?.(text.trim().length > 0);
-        onTextChangeRef.current?.(text);
+        editor.commands.setContent(composerToDocument(text));
+        notifyChange(composerOf(editor.state.doc));
+        editor.commands.focus("end");
+      },
+      setValue: (value: MessageInput) => {
+        if (!editor) return;
+        editor.commands.setContent(
+          composerToDocument(value, labelOf, { mentions: Boolean(editor.schema.nodes.mention) }),
+        );
+        notifyChange(composerOf(editor.state.doc));
         editor.commands.focus("end");
       },
     }),
@@ -328,5 +300,10 @@ export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function Ri
     if (editor) editor.setEditable(!disabled);
   }, [editor, disabled]);
 
-  return <EditorContent editor={editor} />;
+  return (
+    <>
+      <EditorContent editor={editor} />
+      {editor && <SelectionToolbar editor={editor} />}
+    </>
+  );
 });

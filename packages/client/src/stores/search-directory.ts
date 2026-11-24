@@ -97,6 +97,8 @@ const STRUCTURAL_EVENTS = [
   "ws:member_updated",
   "ws:channel_created",
   "ws:channel_renamed",
+  "ws:channel_updated",
+  "ws:channel_joined",
   "ws:channel_deleted",
   "ws:channel_members_added",
   "ws:channel_member_removed",
@@ -110,8 +112,24 @@ const STRUCTURAL_EVENTS = [
  */
 export function registerSearchDirectoryInvalidation() {
   const markStale = () => useSearchDirectoryStore.getState().markStale();
+  const updateProfile = ({ workspaceId, userId, name, avatar, botAvatar }: WsEvents["ws:member_updated"]) => {
+    useSearchDirectoryStore.setState((state) => ({
+      destinations: state.destinations.map((destination) =>
+        destination.kind === "person" && destination.workspaceId === workspaceId && destination.userId === userId
+          ? {
+              ...destination,
+              name,
+              ...(avatar !== undefined ? { avatar } : {}),
+              ...(botAvatar !== undefined ? { botAvatar } : {}),
+            }
+          : destination,
+      ),
+    }));
+  };
   for (const event of STRUCTURAL_EVENTS) wsEvents.on(event, markStale);
+  wsEvents.on("ws:member_updated", updateProfile);
   return () => {
     for (const event of STRUCTURAL_EVENTS) wsEvents.off(event, markStale);
+    wsEvents.off("ws:member_updated", updateProfile);
   };
 }

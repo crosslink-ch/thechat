@@ -1,6 +1,5 @@
 import { isAuthenticated } from "../lib/auth-identity";
-import { useAuthStore } from "../stores/auth";
-import { mentionsName, type MentionNames } from "../lib/remark-mentions";
+import { useMentionNames } from "../hooks/useMentionNames";
 import {
   Fragment,
   useRef,
@@ -37,6 +36,7 @@ import {
   SharedChatMessage,
   shouldMergeChatMessage,
 } from "./SharedChatMessage";
+import type { MessageInput } from "../lib/composer-parts";
 
 const DEFER_FORMATTING_MESSAGE_THRESHOLD = 40;
 const DEFER_FORMATTING_BATCH_SIZE = 4;
@@ -54,7 +54,7 @@ interface HermesDmChatViewProps {
   botAppearances?: ReadonlyMap<string, BotAppearance>;
   typingSuppressedUserIds: string[];
   onSend: (
-    content: string,
+    content: MessageInput,
     attachmentIds?: string[],
   ) => InputSendResult | Promise<InputSendResult>;
   /**
@@ -118,14 +118,7 @@ export function HermesDmChatView({
   onJumpDone,
 }: HermesDmChatViewProps) {
   // Workspace names shown as @mention pills; mentions of you are highlighted.
-  const selfId = useAuthStore((state) => state.user?.id ?? null);
-  const selfName = useAuthStore((state) => state.user?.name ?? null);
-  const mentionNames = useMemo<MentionNames>(
-    () => ({ names: (mentions ?? []).map((mention) => mention.label), self: selfName }),
-    [mentions, selfName],
-  );
-  const mentionsYou = (message: { senderId: string; content: string }) =>
-    message.senderId !== selfId && mentionsName(message.content, selfName);
+  const { mentionNames, mentionsYou } = useMentionNames(mentions);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const { isAtBottom, pauseAutoScroll, scrollToBottom, shouldFollowBottom } =
     useAutoScroll(scrollContainerRef);
@@ -391,7 +384,7 @@ export function HermesDmChatView({
   }, [typingScrollSignature, scrollToBottom]);
 
   const handleSend = useCallback(
-    async (content: string, attachmentIds: string[] = []) => {
+    async (content: MessageInput, attachmentIds: string[] = []) => {
       forceNextContentScrollRef.current = true;
       const accepted = await (attachmentIds.length > 0
         ? onSend(content, attachmentIds)
@@ -458,6 +451,7 @@ export function HermesDmChatView({
                   {msg.content && (
                     <Markdown
                       content={msg.content}
+                      message={msg}
                       mentions={mentionNames}
                       defer={shouldDeferFormatting(msg.id)}
                       deferDelayMs={

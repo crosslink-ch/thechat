@@ -25,11 +25,15 @@ RUN pnpm --filter @thechat/api build
 # --- Production stage ---
 FROM oven/bun:1.4.2-slim
 
-WORKDIR /app
+WORKDIR /app/packages/api
 
-# Copy built output and node_modules
+# Keep the package-level dependency links next to the bundle and the pnpm
+# virtual store at its original workspace-relative path. Native dependencies
+# such as sharp can then resolve their platform package at runtime.
 COPY --from=builder /app/packages/api/dist ./dist
-COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/packages/api/package.json ./package.json
+COPY --from=builder /app/packages/api/node_modules ./node_modules
+COPY --from=builder /app/node_modules /app/node_modules
 
 EXPOSE 3000
 

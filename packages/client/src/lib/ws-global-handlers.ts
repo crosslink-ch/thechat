@@ -18,9 +18,11 @@ import {
 import { fireNotification } from "./notifications";
 import {
   agentProgressNotificationsEnabled,
+  mentionNotificationsEnabled,
   threadReplyNotificationsEnabled,
   useNotificationPreferencesStore,
 } from "../stores/notification-preferences";
+import { messageMentionsUser } from "./remark-mentions";
 import { useBotRequestsStore } from "../stores/bot-requests";
 import { queryClient } from "./query-client";
 import { cacheIncomingMessage, isThreadOnlyReply } from "../hooks/useChannelChat";
@@ -192,6 +194,21 @@ export function registerGlobalWsHandlers(
       currentPath() !== `/channel/${msg.conversationId}`
     ) {
       useConversationsStore.getState().markChannelUnread(msg.conversationId);
+      // A mention of you elsewhere notifies, like a direct message. For a
+      // parts-v1 message that means you were picked from the @ menu; a typed
+      // "@Name" is plain text.
+      const user = useAuthStore.getState().user;
+      if (
+        user &&
+        mentionNotificationsEnabled() &&
+        messageMentionsUser(msg, { id: user.id, name: user.name })
+      ) {
+        fireNotification(
+          `${msg.senderName} mentioned you`,
+          notificationBodyPreview(msg.content),
+          { dedupeKey: `message:${msg.id}`, coveredByBackgroundPush: true },
+        );
+      }
     }
     if (conversationType === "direct" && msg.senderId !== currentUserId) {
       useConversationsStore
@@ -270,8 +287,18 @@ export function registerGlobalWsHandlers(
     workspaceId,
     userId,
     name,
+    avatar,
     botAvatar,
   }: WsEvents["ws:member_updated"]) => {
+    const updateUser = <T extends { name: string; avatar: string | null }>(user: T) => ({
+      ...user,
+      name,
+      ...(avatar !== undefined ? { avatar } : {}),
+    });
+    const authUser = useAuthStore.getState().user;
+    if (authUser?.id === userId) {
+      useAuthStore.setState({ user: updateUser(authUser) });
+    }
     const { activeWorkspace } = useWorkspacesStore.getState();
     if (!activeWorkspace || activeWorkspace.id !== workspaceId) return;
     useWorkspacesStore.setState({
@@ -281,7 +308,7 @@ export function registerGlobalWsHandlers(
           member.userId === userId
             ? {
                 ...member,
-                user: { ...member.user, name },
+                user: updateUser(member.user),
                 bot:
                   member.bot && botAvatar
                     ? { ...member.bot, avatar: botAvatar }
@@ -312,6 +339,18 @@ export function registerGlobalWsHandlers(
       activeWorkspace: {
         ...activeWorkspace,
         members: activeWorkspace.members.filter((m) => m.userId !== userId),
+        // Leaving the workspace also takes a person or bot out of its
+        // private channels.
+        channels: activeWorkspace.channels.map((channel) =>
+          channel.members?.some((member) => member.userId === userId)
+            ? {
+                ...channel,
+                members: channel.members.filter(
+                  (member) => member.userId !== userId,
+                ),
+              }
+            : channel,
+        ),
       },
     });
   };
@@ -363,8 +402,9 @@ export function registerGlobalWsHandlers(
     });
   };
 
-  // Archived or unarchived: the sidebar section, header badge and composer
-  // all read the channel from the workspace store.
+  // Members, visibility or archive state changed for a channel this user
+  // is still in. The sidebar section, header badge and composer all read
+  // the channel from the workspace store.
   const onChannelUpdated = ({
     workspaceId,
     channel,
@@ -435,6 +475,32 @@ export function registerGlobalWsHandlers(
     onChannelDeleted({ workspaceId, channelId });
   };
 
+  // This user was added to a channel, possibly one they were removed from
+  // earlier in this session.
+  const onChannelJoined = ({
+    workspaceId,
+    channel,
+  }: WsEvents["ws:channel_joined"]) => {
+    deletedChannelIds.delete(channel.id);
+    useWorkspacesStore.setState((state) => {
+      if (state.activeWorkspace?.id !== workspaceId) return state;
+      return {
+        activeWorkspace: {
+          ...state.activeWorkspace,
+          channels: upsertWorkspaceChannel(
+            state.activeWorkspace.channels,
+            channel,
+          ),
+        },
+      };
+    });
+    void messageQueryClient.invalidateQueries({
+      queryKey: ["messages", channel.id],
+    });
+    refreshChannelDetail(channel.id);
+    reconcileWorkspace(workspaceId);
+  };
+
   const onChannelDeleted = ({
     workspaceId,
     channelId,
@@ -461,6 +527,8 @@ export function registerGlobalWsHandlers(
       };
     });
     useConversationsStore.getState().markChannelRead(channelId);
+    // Unread state of a channel this user left or was removed from is gone.
+    void useActivityStore.getState().fetchActivity();
 
     if (currentPath() === `/channel/${channelId}`) {
       navigate({
@@ -541,8 +609,9 @@ export function registerGlobalWsHandlers(
   wsEvents.on("ws:member_removed", onMemberRemoved);
   wsEvents.on("ws:channel_created", onChannelCreated);
   wsEvents.on("ws:channel_renamed", onChannelRenamed);
-  wsEvents.on("ws:channel_deleted", onChannelDeleted);
   wsEvents.on("ws:channel_updated", onChannelUpdated);
+  wsEvents.on("ws:channel_joined", onChannelJoined);
+  wsEvents.on("ws:channel_deleted", onChannelDeleted);
   wsEvents.on("ws:channel_members_added", onChannelMembersAdded);
   wsEvents.on("ws:channel_member_removed", onChannelMemberRemoved);
   wsEvents.on("ws:invite_received", onInviteReceived);
@@ -566,8 +635,9 @@ export function registerGlobalWsHandlers(
     wsEvents.off("ws:member_removed", onMemberRemoved);
     wsEvents.off("ws:channel_created", onChannelCreated);
     wsEvents.off("ws:channel_renamed", onChannelRenamed);
-    wsEvents.off("ws:channel_deleted", onChannelDeleted);
     wsEvents.off("ws:channel_updated", onChannelUpdated);
+    wsEvents.off("ws:channel_joined", onChannelJoined);
+    wsEvents.off("ws:channel_deleted", onChannelDeleted);
     wsEvents.off("ws:channel_members_added", onChannelMembersAdded);
     wsEvents.off("ws:channel_member_removed", onChannelMemberRemoved);
     wsEvents.off("ws:invite_received", onInviteReceived);

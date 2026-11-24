@@ -69,6 +69,11 @@ CONTAINERS = {
     "redis": f"thechat-password-reset-redis-{RUN_ID}",
     "mailpit": f"thechat-password-reset-mailpit-{RUN_ID}",
 }
+IMAGES = {
+    "postgres": "postgres:17-alpine",
+    "redis": "redis:7-alpine",
+    "mailpit": "axllent/mailpit:v1.27",
+}
 
 
 def base_env() -> dict[str, str]:
@@ -207,6 +212,7 @@ def local_env() -> dict[str, str]:
             "THECHAT_E2E_DISABLE_DOTENV": "1",
             "THECHAT_E2E_LOOPBACK_ONLY": "1",
             "THECHAT_E2E_RUN_ID": RUN_ID,
+            "THECHAT_E2E_TAURI_DRIVER_PORT": str(TAURI_DRIVER_PORT),
             "THECHAT_OTEL_ENABLED": "false",
             "OTEL_SDK_DISABLED": "true",
             "SKIP_BUILD": "0",
@@ -226,6 +232,21 @@ def local_env() -> dict[str, str]:
             raise RuntimeError("E2E screenshots must stay under the repository .tmp directory")
         env["PASSWORD_RESET_E2E_SCREENSHOT"] = str(screenshot_path)
     return env
+
+
+def ensure_images() -> None:
+    """Pull missing pinned images up front; the containers start with --pull=never."""
+    env = docker_env()
+    for image in IMAGES.values():
+        present = subprocess.run(
+            ["docker", "image", "inspect", image],
+            cwd=ROOT,
+            env=env,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        if present.returncode != 0:
+            run(["docker", "pull", image], env=env)
 
 
 def start_containers() -> None:
@@ -264,7 +285,7 @@ def start_containers() -> None:
             "POSTGRES_DB=thechat_password_reset_e2e",
             "-p",
             f"127.0.0.1:{POSTGRES_PORT}:5432",
-            "postgres:17-alpine",
+            IMAGES["postgres"],
         ],
         env=env,
     )
@@ -278,7 +299,7 @@ def start_containers() -> None:
             CONTAINERS["redis"],
             "-p",
             f"127.0.0.1:{REDIS_PORT}:6379",
-            "redis:7-alpine",
+            IMAGES["redis"],
         ],
         env=env,
     )
@@ -294,7 +315,7 @@ def start_containers() -> None:
             f"127.0.0.1:{SMTP_PORT}:1025",
             "-p",
             f"127.0.0.1:{MAILPIT_PORT}:8025",
-            "axllent/mailpit:v1.27",
+            IMAGES["mailpit"],
         ],
         env=env,
     )
@@ -422,9 +443,10 @@ def main() -> int:
     with exclusive_lock():
         try:
             assert_ports_available()
+            ensure_images()
             start_containers()
             run(
-                ["pnpm", "--filter", "@thechat/api", "exec", "drizzle-kit", "push"],
+                ["pnpm", "--filter", "@thechat/api", "exec", "drizzle-kit", "migrate"],
                 env=env,
             )
             run_focused_api_tests(
@@ -438,6 +460,12 @@ def main() -> int:
                 print("Password-reset API tests passed", flush=True)
                 return 0
 
+            # The API refuses to start without the explicit pg-boss schema.
+            run(
+                ["bun", "--no-env-file", "run", "src/scripts/queue-setup.ts"],
+                env=env,
+                cwd=ROOT / "packages/api",
+            )
             with API_LOG.open("wb") as log:
                 api = subprocess.Popen(
                     ["bun", "--no-env-file", "run", "src/index.ts"],

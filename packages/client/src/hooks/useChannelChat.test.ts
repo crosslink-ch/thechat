@@ -941,6 +941,88 @@ describe("useChannelChat", () => {
     expect(result.current.messages.map((item) => item.id)).toEqual([persisted.id]);
   });
 
+  it("sends a picked mention as parts-v1 and retries the same mention with the same client message id", async () => {
+    const KODA = "22222222-2222-4222-8222-222222222222";
+    const OTHER = "33333333-3333-4333-8333-333333333333";
+    const mention = (refId: string) => ({
+      text: "Hi @Koda",
+      labels: { [refId]: "Koda" },
+      parts: [
+        { type: "text" as const, text: "Hi " },
+        { type: "reference" as const, refType: "user" as const, refId },
+      ],
+    });
+    const persisted: ChatMessage = {
+      ...message("dm-mention", "Hi @Koda"),
+      contentFormat: "parts-v1",
+      parts: [
+        { type: "text", text: "Hi " },
+        { type: "reference", refType: "user", refId: KODA, label: "Koda", targetType: "bot" },
+      ],
+    };
+    const post = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("response lost"))
+      .mockResolvedValueOnce({ data: persisted, error: null })
+      .mockResolvedValueOnce({ data: { ...persisted, id: crypto.randomUUID() }, error: null });
+    vi.mocked(api.messages).mockReturnValue({
+      get: vi.fn(() => Promise.resolve({ data: [] })),
+      post,
+    } as any);
+
+    const { result } = renderHook(
+      () =>
+        useChannelChat({
+          conversationId: "dm-mention",
+          token: "test-token",
+          wsSendMessage: vi.fn(),
+          selfUser: selfUser(),
+        }),
+      { wrapper: createQueryWrapper() },
+    );
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    let pending!: Promise<unknown> | string | null;
+    act(() => {
+      pending = result.current.sendMessage(mention(KODA));
+    });
+    // The optimistic echo already carries the reference, so its pill renders.
+    expect(result.current.messages[0]).toMatchObject({
+      id: expect.stringMatching(/^optimistic:/),
+      content: "Hi @Koda",
+      contentFormat: "parts-v1",
+      parts: [
+        { type: "text", text: "Hi " },
+        { type: "reference", refType: "user", refId: KODA, label: "Koda" },
+      ],
+    });
+    await act(async () => {
+      expect(await pending).toBe(false);
+    });
+    expect(post.mock.calls[0][0]).toMatchObject({
+      contentFormat: "parts-v1",
+      parts: [
+        { type: "text", text: "Hi " },
+        { type: "reference", refType: "user", refId: KODA },
+      ],
+    });
+    expect(post.mock.calls[0][0]).not.toHaveProperty("content");
+    const firstClientMessageId = post.mock.calls[0][0].clientMessageId;
+
+    await act(async () => {
+      expect(await result.current.sendMessage(mention(KODA))).toBe(true);
+    });
+    expect(post.mock.calls[1][0].clientMessageId).toBe(firstClientMessageId);
+    expect(post.mock.calls[1][0].parts).toEqual(post.mock.calls[0][0].parts);
+    expect(result.current.messages.map((item) => item.id)).toEqual([persisted.id]);
+
+    // The same visible text pointed at someone else is a different command.
+    await act(async () => {
+      await result.current.sendMessage(mention(OTHER));
+    });
+    expect(post.mock.calls[2][0].clientMessageId).not.toBe(firstClientMessageId);
+  });
+
   it("keeps the failed client message id after a delayed live echo", async () => {
     const persisted = message("dm-retry-echo", "retry after echo");
     const post = vi

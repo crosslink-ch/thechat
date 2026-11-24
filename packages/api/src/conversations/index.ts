@@ -15,9 +15,6 @@ import {
   deleteChannel,
   deleteConversationThread,
   renameChannel,
-  addChannelMembers,
-  removeChannelMember,
-  setChannelArchived,
   updateConversationThread,
 } from "../services/conversations";
 import {
@@ -28,6 +25,14 @@ import {
   MAX_TASK_PROJECT_NAME_LENGTH,
   renameTaskProject,
 } from "../services/task-projects";
+import {
+  MAX_CHANNEL_MEMBER_BATCH,
+  addChannelMembers,
+  removeChannelMember,
+  setChannelArchived,
+  setChannelMemberRole,
+  setChannelVisibility,
+} from "../services/channel-membership";
 
 const dmSchema = z.object({
   workspaceId: z.string().trim().min(1),
@@ -41,8 +46,22 @@ const channelSchema = z.object({
   memberIds: z.array(z.string().uuid()).max(500).optional(),
 });
 
+// Rename, change visibility, or both. At least one is required.
+const channelUpdateSchema = z
+  .object({
+    name: z.string().trim().min(1).max(100).optional(),
+    isPrivate: z.boolean().optional(),
+  })
+  .refine((value) => value.name !== undefined || value.isPrivate !== undefined, {
+    message: "Nothing to change",
+  });
+
 const channelMembersSchema = z.object({
-  userIds: z.array(z.string().uuid()).min(1).max(500),
+  userIds: z.array(z.string().uuid()).min(1).max(MAX_CHANNEL_MEMBER_BATCH),
+});
+
+const channelMemberRoleSchema = z.object({
+  role: z.enum(["member", "admin"]),
 });
 
 const threadSchema = z.object({
@@ -159,20 +178,32 @@ export const conversationRoutes = new Elysia({ prefix: "/conversations" })
     }
   })
 
-  // Rename a channel. Channel-wide mutations are limited to workspace managers.
+  // Rename a channel or switch it between public and private. Limited to
+  // channel managers: see requireChannelManager.
   .patch("/channel/:conversationId", async ({ params, body, user, set }) => {
-    const parsed = channelSchema.pick({ name: true }).safeParse(body);
+    const parsed = channelUpdateSchema.safeParse(body);
     if (!parsed.success) {
       set.status = 400;
       return { error: parsed.error.issues[0]?.message ?? "Invalid input" };
     }
 
     try {
-      return await renameChannel(
-        params.conversationId,
-        parsed.data.name,
-        user.id,
-      );
+      let channel;
+      if (parsed.data.name !== undefined) {
+        channel = await renameChannel(
+          params.conversationId,
+          parsed.data.name,
+          user.id,
+        );
+      }
+      if (parsed.data.isPrivate !== undefined) {
+        channel = await setChannelVisibility(
+          params.conversationId,
+          user.id,
+          parsed.data.isPrivate,
+        );
+      }
+      return channel!;
     } catch (e) {
       if (e instanceof ServiceError) {
         set.status = e.status;
@@ -195,25 +226,72 @@ export const conversationRoutes = new Elysia({ prefix: "/conversations" })
     }
   })
 
-  // Add workspace members to a private channel.
+  // Add workspace members to a private channel. Any member of it may.
   .post("/channel/:conversationId/members", async ({ params, body, user, set }) => {
     const parsed = channelMembersSchema.safeParse(body);
     if (!parsed.success) {
       set.status = 400;
       return { error: parsed.error.issues[0]?.message ?? "Invalid input" };
     }
-    return handleServiceErrors(set, () =>
-      addChannelMembers(params.conversationId, parsed.data.userIds, user.id),
-    );
+    try {
+      return await addChannelMembers(
+        params.conversationId,
+        user.id,
+        parsed.data.userIds,
+      );
+    } catch (e) {
+      if (e instanceof ServiceError) {
+        set.status = e.status;
+        return { error: e.message };
+      }
+      throw e;
+    }
   })
 
-  // Remove someone from a private channel; they lose access at once.
+  // Remove someone from a private channel; removing yourself is leaving.
   .delete(
     "/channel/:conversationId/members/:userId",
-    async ({ params, user, set }) =>
-      handleServiceErrors(set, () =>
-        removeChannelMember(params.conversationId, params.userId, user.id),
-      ),
+    async ({ params, user, set }) => {
+      try {
+        return await removeChannelMember(
+          params.conversationId,
+          user.id,
+          params.userId,
+        );
+      } catch (e) {
+        if (e instanceof ServiceError) {
+          set.status = e.status;
+          return { error: e.message };
+        }
+        throw e;
+      }
+    },
+  )
+
+  // Make a member of a private channel its admin, or an ordinary member.
+  .patch(
+    "/channel/:conversationId/members/:userId",
+    async ({ params, body, user, set }) => {
+      const parsed = channelMemberRoleSchema.safeParse(body);
+      if (!parsed.success) {
+        set.status = 400;
+        return { error: parsed.error.issues[0]?.message ?? "Invalid input" };
+      }
+      try {
+        return await setChannelMemberRole(
+          params.conversationId,
+          user.id,
+          params.userId,
+          parsed.data.role,
+        );
+      } catch (e) {
+        if (e instanceof ServiceError) {
+          set.status = e.status;
+          return { error: e.message };
+        }
+        throw e;
+      }
+    },
   )
 
   // Archive: read-only and out of the active list. History stays readable.

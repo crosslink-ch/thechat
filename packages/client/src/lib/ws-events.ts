@@ -90,6 +90,7 @@ export type WsEvents = {
     workspaceId: string;
     userId: string;
     name: string;
+    avatar?: string | null;
     botAvatar?: BotAppearance;
   };
   "ws:member_removed": {
@@ -104,13 +105,20 @@ export type WsEvents = {
     workspaceId: string;
     channel: WorkspaceChannel;
   };
-  "ws:channel_deleted": {
-    workspaceId: string;
-    channelId: string;
-  };
+  /** Members, visibility or archive state changed. */
   "ws:channel_updated": {
     workspaceId: string;
     channel: WorkspaceChannel;
+  };
+  /** This user was added to an existing channel. */
+  "ws:channel_joined": {
+    workspaceId: string;
+    channel: WorkspaceChannel;
+  };
+  /** Also received by someone who left or was removed from a private channel. */
+  "ws:channel_deleted": {
+    workspaceId: string;
+    channelId: string;
   };
   "ws:channel_members_added": {
     workspaceId: string;

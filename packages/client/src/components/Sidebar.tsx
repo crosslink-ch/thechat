@@ -22,9 +22,10 @@ import {
   openRenameChannelModal,
 } from "./ChannelModal";
 import { openChannelDetailsModal } from "./ChannelDetailsModal";
+import { channelAccess } from "../lib/channel-access";
 import { api } from "../lib/api";
 import type { WorkspaceChannel, WorkspaceMember } from "@thechat/shared";
-import { Archive, Bell, Bot, ChevronDown, Ellipsis, Inbox, Lock, LogIn, LogOut, MessagesSquare, Pencil, Plus, Search, Settings, Trash2, Users } from "lucide-react";
+import { Archive, Bell, Bot, ChevronDown, Ellipsis, Inbox, Info, Lock, LogIn, LogOut, MessagesSquare, Pencil, Plus, Search, Settings, Trash2 } from "lucide-react";
 import { openPalette } from "../lib/palette-state";
 import { Avatar } from "./Avatar";
 import {
@@ -131,11 +132,6 @@ export function Sidebar() {
 
   const initials = user?.name?.trim().charAt(0).toUpperCase() ?? "?";
   const workspaceInitial = (activeWorkspace?.name ?? "TheChat").trim().charAt(0).toUpperCase();
-  const currentMembership = activeWorkspace?.members.find(
-    (member) => member.userId === user?.id,
-  );
-  const canManageChannels =
-    currentMembership?.role === "owner" || currentMembership?.role === "admin";
   const activityCount = unreadMessageCount + notificationCount;
   const unreadActivityConversationIds = new Set(
     activityItems.map((item) => item.conversationId),
@@ -295,11 +291,15 @@ export function Sidebar() {
       unreadChannels.has(ch.id) ||
       unreadActivityConversationIds.has(ch.id);
     const menuOpen = channelMenuId === ch.id;
+    const access = channelAccess(ch, activeWorkspace?.members, user?.id);
+    // An archived channel is read-only: it can be looked at, unarchived from
+    // its details, or deleted, but not renamed.
+    const archived = Boolean(ch.archivedAt);
     return (
       <div key={ch.id} className="group relative">
         <button
           data-channel-id={ch.id}
-          className={`${itemClassName(isActive, isUnread)} ${canManageChannels ? "pr-9" : ""}`}
+          className={`${itemClassName(isActive, isUnread)} pr-9`}
           onClick={() => handleSelectChannel(ch)}
           aria-current={isActive ? "page" : undefined}
         >
@@ -318,76 +318,81 @@ export function Sidebar() {
             />
           )}
         </button>
-        {canManageChannels && (
-          <DropdownMenu.Root
-            open={menuOpen}
-            onOpenChange={(nextOpen) =>
-              setChannelMenuId(nextOpen ? ch.id : null)
-            }
-          >
-            <DropdownMenu.Trigger asChild>
-              <button
-                type="button"
-                className={`absolute right-1 top-1/2 flex size-7 -translate-y-1/2 items-center justify-center rounded-md text-text-dimmed transition-all hover:bg-hover hover:text-text focus:opacity-100 ${
-                  menuOpen ? "bg-hover text-text opacity-100" : "opacity-0 group-hover:opacity-100"
-                }`}
-                aria-label={`Manage #${ch.name}`}
+        <DropdownMenu.Root
+          open={menuOpen}
+          onOpenChange={(nextOpen) =>
+            setChannelMenuId(nextOpen ? ch.id : null)
+          }
+        >
+          <DropdownMenu.Trigger asChild>
+            <button
+              type="button"
+              className={`absolute right-1 top-1/2 flex size-7 -translate-y-1/2 items-center justify-center rounded-md text-text-dimmed transition-all hover:bg-hover hover:text-text focus:opacity-100 ${
+                menuOpen ? "bg-hover text-text opacity-100" : "opacity-0 group-hover:opacity-100"
+              }`}
+              aria-label={`Manage #${ch.name}`}
+            >
+              <Ellipsis size={16} aria-hidden="true" />
+            </button>
+          </DropdownMenu.Trigger>
+          <DropdownMenu.Portal>
+            <DropdownMenu.Content
+              align="end"
+              sideOffset={4}
+              loop
+              className={`z-50 ${menuContentClass}`}
+            >
+              <DropdownMenu.Item
+                asChild
+                onSelect={() => {
+                  dismissNavigation?.();
+                  openChannelDetailsModal(ch.id);
+                }}
               >
-                <Ellipsis size={16} aria-hidden="true" />
-              </button>
-            </DropdownMenu.Trigger>
-            <DropdownMenu.Portal>
-              <DropdownMenu.Content
-                align="end"
-                sideOffset={4}
-                loop
-                className={`z-50 ${menuContentClass}`}
-              >
+                <button type="button" className={menuItemClass}>
+                  <Info size={14} className="text-text-dimmed" aria-hidden="true" />
+                  Channel details
+                </button>
+              </DropdownMenu.Item>
+              {access.canManage && !archived && (
+                <DropdownMenu.Item
+                  asChild
+                  onSelect={() => openRenameChannelModal(ch)}
+                >
+                  <button type="button" className={menuItemClass}>
+                    <Pencil size={14} className="text-text-dimmed" aria-hidden="true" />
+                    Rename channel
+                  </button>
+                </DropdownMenu.Item>
+              )}
+              {access.canLeave && (
                 <DropdownMenu.Item
                   asChild
                   onSelect={() => {
                     dismissNavigation?.();
-                    openChannelDetailsModal(ch.id);
+                    openChannelDetailsModal(ch.id, { confirm: "leave" });
                   }}
                 >
-                  <button
-                    type="button"
-                    className={menuItemClass}
-                  >
-                    <Users size={14} className="text-text-dimmed" aria-hidden="true" />
-                    Channel details
+                  <button type="button" className={menuItemClass}>
+                    <LogOut size={14} className="text-text-dimmed" aria-hidden="true" />
+                    Leave channel
                   </button>
                 </DropdownMenu.Item>
-                {!ch.archivedAt && (
-                  <DropdownMenu.Item
-                    asChild
-                    onSelect={() => openRenameChannelModal(ch)}
-                  >
-                    <button
-                      type="button"
-                      className={menuItemClass}
-                    >
-                      <Pencil size={14} className="text-text-dimmed" aria-hidden="true" />
-                      Rename channel
-                    </button>
-                  </DropdownMenu.Item>
-                )}
+              )}
+              {access.canManage && (
                 <DropdownMenu.Item
                   asChild
                   onSelect={() => openDeleteChannelModal(ch)}
                 >
-                  <button
-                    type="button"
-                    className={menuDangerItemClass}
-                  >
+                  <button type="button" className={menuDangerItemClass}>
                     <Trash2 size={14} aria-hidden="true" />
                     Delete channel
                   </button>
                 </DropdownMenu.Item>
-              </DropdownMenu.Content>
-            </DropdownMenu.Portal>
-          </DropdownMenu.Root>
-        )}
+              )}
+            </DropdownMenu.Content>
+          </DropdownMenu.Portal>
+        </DropdownMenu.Root>
       </div>
     );
   };
@@ -606,6 +611,7 @@ export function Sidebar() {
                       <Avatar
                         name={m.user.name}
                         colorKey={m.userId}
+                        picture={m.user.avatar}
                         bot={m.user.type === "bot"}
                         botAvatar={
                           m.user.type === "bot"
@@ -692,7 +698,7 @@ export function Sidebar() {
                 onClick={() => setProfileMenuOpen((v) => !v)}
               >
                 <span className="flex min-w-0 items-center gap-2.5">
-                  <Avatar name={initials} colorKey={user.id} className="size-6 text-[0.786rem]" />
+                  <Avatar name={initials} colorKey={user.id} picture={user.avatar} className="size-6 text-[0.786rem]" />
                   <span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap text-[1rem] font-medium text-text-secondary">
                     {user.name}
                   </span>

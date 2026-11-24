@@ -15,8 +15,8 @@ import {
 import { ThreadPanel } from "../components/ThreadPanel";
 import { useReplyThreadPanel } from "../hooks/useReplyThreadPanel";
 import { wsEvents, type WsEvents } from "../lib/ws-events";
-import { botAppearanceFor } from "../lib/bot-appearance";
 import { isAuthenticated } from "../lib/auth-identity";
+import { channelIncludes } from "../lib/channel-access";
 import { api } from "../lib/api";
 import { authHeaders } from "../lib/eden";
 import { useRecentLocationsStore } from "../stores/recent-locations";
@@ -28,6 +28,7 @@ import {
   submitHermesSecureInput,
   submitHermesVaultUnlock,
 } from "../hooks/useBotRuntime";
+import { mentionCandidate } from "../components/mention-ranking";
 
 export function ChannelRoute() {
   const { id: channelId } = useParams({ from: "/channel/$id" });
@@ -130,20 +131,17 @@ export function ChannelRoute() {
     };
   }, [activeWorkspaceId, channelId, channelIsVisible, navigate, token]);
 
+  // In a private channel only its members can be reached by a mention.
+  const currentChannel = activeWorkspace?.channels.find(
+    (channel) => channel.id === channelId,
+  );
   const mentions = useMemo(
     () =>
       members
         ?.filter((m) => m.userId !== user?.id)
-        .map((m) => ({
-          id: m.userId,
-          label: m.user.name,
-          type: m.user.type,
-          botAvatar:
-            m.user.type === "bot"
-              ? botAppearanceFor(m.userId, m.bot?.avatar)
-              : undefined,
-        })),
-    [members, user?.id]
+        .filter((m) => channelIncludes(currentChannel, m.userId))
+        .map((m) => mentionCandidate(m)),
+    [members, currentChannel, user?.id]
   );
 
   const channelChat = useChannelChat({

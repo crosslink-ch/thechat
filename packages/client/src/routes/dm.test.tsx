@@ -47,6 +47,7 @@ vi.mock("../stores/workspaces", () => {
   };
   const store = (selector: (value: typeof state) => unknown) => selector(state);
   store.getState = () => ({ touchThread: mocks.touchThread });
+  store.subscribe = () => () => {};
   return { useWorkspacesStore: store };
 });
 
@@ -202,7 +203,7 @@ vi.mock("../components/HermesDmChatView", async () => {
       emptyState,
     }: any) => {
       const draft = useComposerDraftsStore(
-        (state) => state.drafts[draftKey] ?? "",
+        (state) => state.drafts[draftKey]?.text ?? "",
       );
       const setDraft = useComposerDraftsStore((state) => state.setDraft);
       return (

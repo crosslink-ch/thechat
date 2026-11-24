@@ -18,7 +18,7 @@ delay or hide notifications. TheChat cannot override these.
 | Event | Who | Setting |
 | --- | --- | --- |
 | Direct message | The other person | Direct messages |
-| Message in a channel that @mentions you | The mentioned person | Mentions |
+| Message in a channel that @mentions you (picked from the @ menu, see [mentions](mentions.md)) | The mentioned person | Mentions |
 | An agent's answer in a DM, or in a channel run you started | The person the agent is answering | Agent replies |
 | An agent request (approval, question, review) | Its addressee; in a DM, the participants; in a channel, the person who started the run | Agent requests |
 | An agent's progress update ("⏳ Working — 5 min") | Whoever would get its answer | Agent updates: Every update (off by default) |
@@ -163,6 +163,15 @@ python3 deploy/web/tests/test_image.py
 
 The API tests decrypt each push exactly as a browser would and verify the VAPID
 signature. They do not prove that a locked phone shows the notification.
+
+`scripts/e2e/web/web-push.spec.ts` delivers real pushes through Google's push
+service to installed Google Chrome (`pnpm exec playwright install chrome`). It
+needs outbound HTTPS and a stack with VAPID keys whose API may leave loopback:
+
+```sh
+THECHAT_WEB_E2E_REAL_PUSH=1 scripts/e2e/web/stack.sh up
+THECHAT_WEB_E2E_REAL_PUSH=1 xvfb-run -a pnpm test:e2e:web web-push.spec.ts --project=chromium-desktop
+```
 
 Before relying on it, check on real devices against a deployment with VAPID
 keys:

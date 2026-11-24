@@ -574,9 +574,15 @@ describe("push delivery", () => {
     // Same source again (a redelivered chat event): queue job ids are deterministic.
     const { schedulePushNotifications } = await import("./jobs");
     await schedulePushNotifications({ type: "message", messageId: message.id });
-    expect(bus.pending(PUSH_FANOUT_JOB_NAME)).toHaveLength(1);
+    // Scope by source: the domain-event runtime also replays chat events that
+    // earlier test files left in the shared test database, and those schedule
+    // fan-outs for their own messages into this bus.
+    const ownFanouts = bus.pending(PUSH_FANOUT_JOB_NAME).filter(
+      (command) => command.message.payload.source.type === "message" && command.message.payload.source.messageId === message.id,
+    );
+    expect(ownFanouts.map((command) => command.jobId)).toEqual([`push-fanout:message:${message.id}`]);
     await drainPushJobs();
-    expect(delivered).toHaveLength(1);
+    expect(delivered.filter((entry) => entry.payload.id === `message:${message.id}`)).toHaveLength(1);
   });
 
   test("a message read on another device before delivery does not buzz the phone", async () => {
@@ -607,6 +613,35 @@ describe("push delivery", () => {
       tag: `conversation:${f.channelId}:main`,
     });
     expect(delivered[0]!.payload.url).toContain("type=group");
+  });
+
+  test("a mention picked from the menu notifies that person once; a typed @Name in a parts-v1 message does not", async () => {
+    const f = await fixture("Parts");
+    await subscribe(f.member.token);
+    const post = async (body: unknown) => {
+      const res = await req("POST", `/messages/${f.channelId}`, body, f.owner.token);
+      expect(res.status).toBe(200);
+      return res.body as { id: string; content: string };
+    };
+    const reference = { type: "reference", refType: "user", refId: f.member.user.id };
+    const picked = await post({
+      contentFormat: "parts-v1",
+      parts: [{ type: "text", text: "Review this " }, reference, { type: "text", text: " and again " }, reference],
+    });
+    expect(picked.content).toBe("Review this @Parts Member and again @Parts Member");
+    const typed = await post({
+      contentFormat: "parts-v1",
+      parts: [{ type: "text", text: "typed by hand: @Parts Member" }],
+    });
+    await waitForFanout(`message:${picked.id}`);
+    await waitForFanout(`message:${typed.id}`);
+    await drainPushJobs();
+    expect(delivered).toHaveLength(1);
+    expect(delivered[0]!.payload).toMatchObject({
+      id: `message:${picked.id}`,
+      kind: "mention",
+      body: "Review this @Parts Member and again @Parts Member",
+    });
   });
 
   test("a private channel notifies the members who are @mentioned, never a workspace member who was not picked", async () => {

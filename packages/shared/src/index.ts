@@ -3,6 +3,8 @@ import type { BotAppearance } from "./bot-avatars";
 export * from "./bot-avatars";
 export * from "./secure-input";
 export * from "./search";
+export * from "./message-parts";
+import type { MessageContentFormat, InputChatPart, StoredChatPart, StoredReferencePart } from "./message-parts";
 
 // -- Message Parts (rich message model) --
 
@@ -12,6 +14,12 @@ export type MessagePart =
   | { type: "image"; path: string; mimeType: string }
   | { type: "tool-call"; toolCallId: string; toolName: string; args: Record<string, unknown> }
   | { type: "tool-result"; toolCallId: string; toolName: string; result: unknown; isError?: boolean };
+
+/**
+ * A part of a chat message: the rich model above, plus a user reference in a
+ * "parts-v1" message (see message-parts.ts).
+ */
+export type ChatMessagePart = MessagePart | StoredReferencePart;
 
 export interface Message {
   id: string;
@@ -142,6 +150,14 @@ export interface WorkspaceMember {
   bot?: { id: string; kind: BotKind; avatar?: BotAppearance } | null;
 }
 
+/** A private channel is run by its own admins, starting with its creator. */
+export type ChannelMemberRole = "member" | "admin";
+
+export interface ChannelMember {
+  userId: string;
+  role: ChannelMemberRole;
+}
+
 export interface WorkspaceChannel {
   id: string;
   workspaceId: string;
@@ -150,6 +166,11 @@ export interface WorkspaceChannel {
   isPrivate: boolean;
   /** Set while the channel is archived: read-only, out of the active list. */
   archivedAt: string | null;
+  /**
+   * Who is in a private channel, oldest member first. Absent for public
+   * channels, which always contain the whole workspace.
+   */
+  members?: ChannelMember[];
   createdAt: string;
   updatedAt: string;
 }
@@ -228,8 +249,18 @@ export interface ChatMessage {
   senderId: string;
   senderName: string;
   senderType?: "human" | "bot";
+  /**
+   * Readable text. For a "parts-v1" message the server derives it from
+   * `parts` ("Hi @Koda"); it is never a second authoring source.
+   */
   content: string;
-  parts?: MessagePart[] | null;
+  /**
+   * "parts-v1": `parts` holds the ordered text and user references the
+   * author picked. "legacy-text" (or absent): `content` is the source and
+   * mentions are recognised by name.
+   */
+  contentFormat?: MessageContentFormat;
+  parts?: ChatMessagePart[] | null;
   attachments?: ChatAttachment[];
   reactions?: MessageReactionSummary[];
   /**
@@ -341,6 +372,7 @@ export type SearchDestination =
       kind: "person";
       userId: string;
       name: string;
+      avatar: string | null;
       userType: "human" | "bot";
       botKind: BotKind | null;
       botAvatar: BotAppearance | null;
@@ -434,6 +466,8 @@ export interface DirectConversation {
 export interface ConversationParticipantPublic {
   userId: string;
   role: WorkspaceMemberRole;
+  /** Current workspace role in a channel; private channel roles are independent. */
+  workspaceRole?: WorkspaceMemberRole;
   joinedAt: string;
   user: AuthUser;
   bot?: {
@@ -570,7 +604,11 @@ export type WsClientEvent =
   | {
       type: "send_message";
       conversationId: string;
-      content: string;
+      /** Legacy text. Omit when sending `parts`. */
+      content?: string;
+      /** With `parts`: mentions by user ID (see message-parts.ts). */
+      contentFormat?: "parts-v1";
+      parts?: InputChatPart[];
       threadId?: string | null;
       parentMessageId?: string | null;
       alsoSendToConversation?: boolean;
@@ -666,7 +704,14 @@ export interface WebhookPayload {
   event: "mention";
   message: {
     id: string;
+    /** Readable text ("Hi @Koda"). */
     content: string;
+    /**
+     * Present for a "parts-v1" message: the ordered text and user
+     * references by ID, so a bot can tell who was mentioned.
+     */
+    contentFormat?: "parts-v1";
+    parts?: StoredChatPart[];
     conversationId: string;
     threadId: string | null;
     senderId: string;
@@ -1037,6 +1082,8 @@ export type WsServerEvent =
       workspaceId: string;
       userId: string;
       name: string;
+      /** A person's profile picture; absent when the event does not change it. */
+      avatar?: string | null;
       botAvatar?: BotAppearance;
     }
   | { type: "member_removed"; workspaceId: string; userId: string }
@@ -1051,31 +1098,22 @@ export type WsServerEvent =
       channel: WorkspaceChannel;
     }
   | {
-      type: "channel_deleted";
-      workspaceId: string;
-      channelId: string;
-    }
-  // Archived or unarchived. Sent to everyone who can see the channel.
-  | {
+      // Visibility, membership, or archive state changed; sent to its members.
       type: "channel_updated";
       workspaceId: string;
       channel: WorkspaceChannel;
     }
-  // People or bots were added to a private channel. Sent to its members,
-  // including the ones just added, who did not know the channel before.
   | {
-      type: "channel_members_added";
+      // The receiver was added to a channel that already existed.
+      type: "channel_joined";
       workspaceId: string;
       channel: WorkspaceChannel;
-      userIds: string[];
     }
-  // Sent to the remaining members and to the one removed, who has already
-  // lost access.
   | {
-      type: "channel_member_removed";
+      // Also sent to someone who left or was removed from a private channel.
+      type: "channel_deleted";
       workspaceId: string;
       channelId: string;
-      userId: string;
     }
   | { type: "invite_received"; invite: WorkspaceInvite }
   | { type: "bot_workspace_invite_received"; invite: BotWorkspaceInvite }

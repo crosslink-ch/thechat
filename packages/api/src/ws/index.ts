@@ -3,10 +3,16 @@ import { z } from "zod";
 import { eq } from "drizzle-orm";
 import { db } from "../db";
 import { conversationParticipants } from "../db/schema";
-import type { WsClientEvent, WsServerEvent } from "@thechat/shared";
+import type { WsServerEvent } from "@thechat/shared";
 import { resolveTokenToUser, resolveSessionTokenToHumanUser } from "../auth/middleware";
 import { browserSessionToken } from "../auth/browser";
 import { sendMessage } from "../services/messages";
+import {
+  messageBodyFields,
+  messageBodyFromRequest,
+  messageBodyHasText,
+  type MessageBody,
+} from "../services/message-parts";
 import { requireConversationParticipant } from "../services/conversations";
 import { ServiceError } from "../services/errors";
 import { getRealtimeBus, publishWsEventToUsers } from "../realtime";
@@ -34,18 +40,40 @@ const wsClientEventSchema = z.union([
       type: z.literal("send_message"),
       conversationId: z.string().uuid(),
       clientMessageId: z.string().min(1).max(255).optional(),
-      content: z.string().max(100_000).default(""),
+      /** Legacy text, or `contentFormat: "parts-v1"` with `parts` (never both). */
+      ...messageBodyFields,
       threadId: z.string().uuid().nullable().optional(),
       parentMessageId: z.string().uuid().nullable().optional(),
       alsoSendToConversation: z.boolean().optional(),
       attachmentIds: z.array(z.string().uuid()).max(25).default([]),
     })
-    .refine(
-      (event) =>
-        event.content.trim().length > 0 || event.attachmentIds.length > 0,
-      { message: "Message text or at least one attachment is required" },
-    ),
+    .transform((event, ctx) => {
+      const resolved = messageBodyFromRequest(event);
+      if ("error" in resolved) {
+        ctx.addIssue({ code: "custom", message: resolved.error });
+        return z.NEVER;
+      }
+      if (!messageBodyHasText(resolved.body) && event.attachmentIds.length === 0) {
+        ctx.addIssue({ code: "custom", message: "Message text or at least one attachment is required" });
+        return z.NEVER;
+      }
+      return { ...event, body: resolved.body };
+    }),
 ]);
+type ParsedWsClientEvent = z.infer<typeof wsClientEventSchema>;
+
+/** The reason a send_message frame was refused (the union hides it). */
+function sendMessageIssue(error: z.ZodError) {
+  for (const issue of error.issues) {
+    if (issue.code === "invalid_union") {
+      for (const branch of issue.errors) {
+        const custom = branch.find((candidate) => candidate.code === "custom");
+        if (custom) return custom.message;
+      }
+    }
+  }
+  return "Invalid message";
+}
 
 // Connection tracking
 const userSockets = new Map<string, Set<WebSocket>>();
@@ -437,14 +465,14 @@ async function handleSendMessage(
   userId: string,
   userName: string,
   conversationId: string,
-  content: string,
+  body: MessageBody,
   threadId?: string | null,
   clientMessageId?: string,
   attachmentIds: string[] = [],
   reply: { parentMessageId?: string | null; alsoSendToConversation?: boolean } = {},
 ) {
   try {
-    await sendMessage(conversationId, userId, userName, content, {
+    await sendMessage(conversationId, userId, userName, body, {
       threadId: reply.parentMessageId ? (threadId ?? undefined) : (threadId ?? null),
       parentMessageId: reply.parentMessageId ?? null,
       alsoSendToConversation: reply.alsoSendToConversation,
@@ -516,18 +544,35 @@ export const wsRoutes = new Elysia().ws("/ws", {
     handshakeCookies.set(ws.raw as unknown as WebSocket, browserSessionToken({ ...headers, "x-thechat-client": "web" }));
   },
   async message(ws, rawMessage) {
-    let event: WsClientEvent;
+    let event: ParsedWsClientEvent;
     let candidate: unknown;
     try {
       candidate =
         typeof rawMessage === "string" ? JSON.parse(rawMessage) : rawMessage;
-      event = wsClientEventSchema.parse(candidate) as WsClientEvent;
-    } catch {
+      event = wsClientEventSchema.parse(candidate);
+    } catch (error) {
       if (candidate && typeof candidate === "object" && "type" in candidate && candidate.type === "auth") {
         const socket = ws.raw as unknown as WebSocket;
         sendTo(socket, { type: "auth_error", message: "Invalid authentication frame", retryable: false });
         await removeSocket(socket);
         ws.close();
+        return;
+      }
+      // A rejected send (e.g. parts and content together) answers its own
+      // clientMessageId, so the sender's optimistic message is withdrawn.
+      const send = candidate as { type?: unknown; conversationId?: unknown; clientMessageId?: unknown } | null;
+      if (
+        error instanceof z.ZodError &&
+        send?.type === "send_message" &&
+        typeof send.conversationId === "string" &&
+        typeof send.clientMessageId === "string"
+      ) {
+        sendTo(ws.raw as unknown as WebSocket, {
+          type: "message_error",
+          conversationId: send.conversationId,
+          clientMessageId: send.clientMessageId,
+          message: sendMessageIssue(error),
+        });
         return;
       }
       sendTo(ws.raw as unknown as WebSocket, {
@@ -549,8 +594,9 @@ export const wsRoutes = new Elysia().ws("/ws", {
     }
 
     if (event.type === "auth") {
-      const mode = event.mode === "cookie" ? "cookie" : "bearer";
-      const token = mode === "cookie" ? handshakeCookies.get(socket) : event.token;
+      const mode = "mode" in event && event.mode === "cookie" ? "cookie" : "bearer";
+      const token =
+        mode === "cookie" ? handshakeCookies.get(socket) : "token" in event ? event.token : undefined;
       let user: Awaited<ReturnType<typeof validateToken>>;
       try {
         user = token ? await validateToken(token, mode) : null;
@@ -650,7 +696,7 @@ export const wsRoutes = new Elysia().ws("/ws", {
         socketUser.id,
         socketUser.name,
         event.conversationId,
-        event.content,
+        event.body,
         event.threadId ?? null,
         event.clientMessageId,
         event.attachmentIds ?? [],

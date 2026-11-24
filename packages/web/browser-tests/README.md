@@ -5,6 +5,12 @@ messages in Chromium and WebKit. They require no API, account, database or Tauri
 IPC. Vite is started on an ephemeral loopback port and closed after the run.
 They complement, rather than replace, the compiled Tauri E2E suite.
 
+Each file starts its server through `support/vite-server.mjs`, which limits
+Vite's dependency scan to the pages that file opens and fails the file at once
+if the scan fails (for example, a fixture importing a removed module). HMR is
+off, so a dependency found only after a page loaded would leave it blank
+(`504 Outdated Optimize Dep`) and surface as unrelated 30 s locator timeouts.
+
 ## Named pasted links: automated and hands-on
 
 Run just the native clipboard regression from the repository root:

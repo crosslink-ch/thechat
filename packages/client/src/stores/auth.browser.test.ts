@@ -78,7 +78,7 @@ it.each([403, 503, "transport"])("preserves identity and unsent drafts on retrya
   await useAuthStore.getState().initialize();
   expect(useAuthStore.getState().user).toEqual(user);
   expect(queryClient.getQueryData(["private-outage"])).toBe("cached conversation");
-  expect(useComposerDraftsStore.getState().drafts["account:alice:dm:outage"]).toBe("unsent draft");
+  expect(useComposerDraftsStore.getState().drafts["account:alice:dm:outage"]?.text).toBe("unsent draft");
 });
 
 it("clears identity and drafts after authoritative revalidation rejection", async () => {

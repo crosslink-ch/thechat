@@ -232,11 +232,3 @@ describe("streamCompletion", () => {
     expect(body.model).toBe("override-model");
   });
 });
-
-describe("streamCompletion integration", () => {
-  const apiKey = import.meta.env.OPENROUTER_API_KEY as string | undefined;
-
-  it.skipIf(!apiKey)("streams a real response from OpenRouter", async () => {
-    // Integration tests need real Tauri — skip in unit test env
-  }, 30000);
-});

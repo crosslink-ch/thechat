@@ -3,6 +3,7 @@ import {
   composerDraftKey,
   useComposerDraftsStore,
 } from "./composer-drafts";
+import { composerFromText } from "../lib/composer-parts";
 
 afterEach(() => {
   useComposerDraftsStore.setState({
@@ -36,8 +37,19 @@ describe("composer draft state", () => {
     store.setDraft("thread:one", "");
 
     expect(useComposerDraftsStore.getState().drafts).toEqual({
-      "thread:two": "second draft",
+      "thread:two": composerFromText("second draft"),
     });
+  });
+
+  it("keeps a change that only adds whitespace, like a new line", () => {
+    const store = useComposerDraftsStore.getState();
+    store.setDraft("thread:one", "line1");
+    const revision = useComposerDraftsStore.getState().revisions["thread:one"];
+    store.setDraft("thread:one", "line1\n");
+
+    const state = useComposerDraftsStore.getState();
+    expect(state.drafts["thread:one"]?.text).toBe("line1\n");
+    expect(state.revisions["thread:one"]).toBe((revision ?? 0) + 1);
   });
 
   it("keeps file drafts and send ownership isolated by composer scope", () => {
@@ -92,7 +104,7 @@ describe("composer draft state", () => {
         "submitted text",
       ),
     ).toBe(true);
-    expect(useComposerDraftsStore.getState().drafts["thread:one"]).toBe(
+    expect(useComposerDraftsStore.getState().drafts["thread:one"]?.text).toBe(
       "submitted text",
     );
 
@@ -104,7 +116,7 @@ describe("composer draft state", () => {
         "submitted text",
       ),
     ).toBe(false);
-    expect(useComposerDraftsStore.getState().drafts["thread:one"]).toBe(
+    expect(useComposerDraftsStore.getState().drafts["thread:one"]?.text).toBe(
       "newer text",
     );
   });
@@ -124,7 +136,7 @@ describe("composer draft state", () => {
     store.moveDraft(provisionalKey, durableKey);
 
     expect(useComposerDraftsStore.getState().drafts).toEqual({
-      [durableKey]: "next message typed during creation",
+      [durableKey]: composerFromText("next message typed during creation"),
     });
     expect(useComposerDraftsStore.getState().imageDrafts).toEqual({
       [durableKey]: [image],

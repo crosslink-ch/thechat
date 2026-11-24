@@ -1,16 +1,18 @@
-import type { HTMLAttributes } from "react";
+import { useState, type HTMLAttributes } from "react";
 import type { BotAppearance } from "@thechat/shared";
 import { BotFace, type BotMotion } from "./BotFace";
 import { avatarColor } from "./ui";
 
 /**
- * Initial-letter avatar: a stable colour per person. A bot with an appearance
- * draws its shape instead, unclipped so it can hop; the brand navy letter
- * stands in while the shape loads.
+ * A person's profile picture, or their initial letter on a stable colour when
+ * they have none or it fails to load. A bot with an appearance draws its shape
+ * instead, unclipped so it can hop; the brand navy letter stands in while the
+ * shape loads.
  */
 export function Avatar({
   name,
   colorKey,
+  picture,
   bot = false,
   botAvatar,
   botMotion = "still",
@@ -23,6 +25,8 @@ export function Avatar({
   name: string;
   /** Stable identity for the colour (user id); falls back to the name. */
   colorKey?: string;
+  /** The person's profile picture. Bots draw their shape instead. */
+  picture?: string | null;
   bot?: boolean;
   /** The bot's shape and colour; without it a bot shows the navy letter. */
   botAvatar?: BotAppearance | null;
@@ -30,6 +34,8 @@ export function Avatar({
   /** Pixel size of the bot shape; match it to the `size-*` class. */
   size?: number;
 }) {
+  // Remember which picture failed, so a replacement gets its own attempt.
+  const [failedPicture, setFailedPicture] = useState<string | null>(null);
   const initial = name.charAt(0).toUpperCase();
 
   if (bot && botAvatar) {
@@ -48,6 +54,29 @@ export function Avatar({
               {initial}
             </span>
           }
+        />
+        {children}
+      </span>
+    );
+  }
+
+  if (!bot && picture && picture !== failedPicture) {
+    return (
+      <span
+        {...rest}
+        className={`relative flex shrink-0 items-center justify-center rounded-full ${className}`}
+        style={style}
+      >
+        {/* The name is always shown beside the avatar, so the picture is
+            decorative. The image is rounded itself: children such as the
+            online dot overlap the circle's edge and must not be clipped. */}
+        <img
+          src={picture}
+          alt=""
+          draggable={false}
+          referrerPolicy="no-referrer"
+          className="size-full rounded-full object-cover"
+          onError={() => setFailedPicture(picture)}
         />
         {children}
       </span>

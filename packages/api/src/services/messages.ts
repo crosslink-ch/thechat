@@ -34,6 +34,14 @@ import { publishWsEventToUsers } from "../realtime";
 import { ServiceError } from "./errors";
 import { requireConversationMutationAccess } from "./conversation-mutation-access";
 import { resolveMessageBotTargetIds } from "./message-bot-targets";
+import {
+  canonicalizeMessageBody,
+  messageBodyHasText,
+  storedPartsSignature,
+  type CanonicalMessageBody,
+  type MessageBody,
+} from "./message-parts";
+import { inputPartsSignature } from "@thechat/shared";
 import { messageReactionsByMessageIds } from "./message-reactions";
 import { recordMessageUnreads } from "./activity";
 import {
@@ -61,6 +69,7 @@ export const publicMessageColumns = {
   lastReplyAt: messages.lastReplyAt,
   senderId: messages.senderId,
   content: messages.content,
+  contentFormat: messages.contentFormat,
   parts: messages.parts,
   interim: messages.interim,
   createdAt: messages.createdAt,
@@ -80,6 +89,7 @@ type PublicMessageRow = {
   senderName: string;
   senderType: "human" | "bot";
   content: string;
+  contentFormat?: typeof messages.$inferSelect.contentFormat;
   parts: typeof messages.$inferSelect.parts;
   interim?: boolean;
   createdAt: Date;
@@ -198,7 +208,11 @@ export async function sendMessage(
   conversationId: string,
   userId: string,
   userName: string,
-  content: string,
+  /**
+   * Legacy text, or the canonical body of a request: `parts` (mentions by
+   * user ID) or legacy `content`, never both.
+   */
+  input: string | MessageBody,
   options: {
     threadId?: string | null;
     /** Reply in the thread of this message (or of its root, for a reply). */
@@ -210,10 +224,11 @@ export async function sendMessage(
     afterWorkspaceLocked?: () => Promise<void>;
   } = {},
 ) {
-  const normalizedContent = content.trim();
+  const body: MessageBody =
+    typeof input === "string" ? { format: "legacy-text", content: input } : input;
   const attachmentIds = options.attachmentIds ?? [];
   const config = loadAttachmentConfig();
-  if (!normalizedContent && attachmentIds.length === 0) {
+  if (!messageBodyHasText(body) && attachmentIds.length === 0) {
     throw new ServiceError(
       "Message text or at least one attachment is required",
       400,
@@ -238,6 +253,7 @@ export async function sendMessage(
       "messaging.system": "thechat",
       "messaging.operation": "send",
       "thechat.message.attachment_count": attachmentIds.length,
+      "thechat.message.content_format": body.format,
     },
     async (span) => {
       const result = await db.transaction(async (tx) => {
@@ -289,7 +305,7 @@ export async function sendMessage(
             conversationId,
             threadId,
             parentMessageId,
-            content: normalizedContent,
+            body,
             attachmentIds,
           });
           return {
@@ -300,6 +316,9 @@ export async function sendMessage(
           };
         }
 
+        // Validate every reference against the conversation, resolve labels
+        // and derive the readable content, in the send transaction.
+        const canonical = await canonicalizeMessageBody(tx, conversationId, body);
         const [inserted] = await tx
           .insert(messages)
           .values({
@@ -309,7 +328,9 @@ export async function sendMessage(
             alsoSentToConversation,
             senderId: userId,
             clientMessageId,
-            content: normalizedContent,
+            content: canonical.content,
+            contentFormat: canonical.contentFormat,
+            parts: canonical.parts,
           })
           .onConflictDoNothing({
             target: [messages.senderId, messages.clientMessageId],
@@ -326,7 +347,7 @@ export async function sendMessage(
             conversationId,
             threadId,
             parentMessageId,
-            content: normalizedContent,
+            body,
             attachmentIds,
           });
           return {
@@ -363,6 +384,8 @@ export async function sendMessage(
             : await resolveMessageBotTargetIds(tx, {
                 conversationId: inserted.conversationId,
                 content: inserted.content,
+                contentFormat: canonical.contentFormat,
+                referencedUserIds: referencedIds(canonical),
                 senderId: inserted.senderId,
                 senderType: participant.senderType,
               });
@@ -611,6 +634,27 @@ export async function canUserAccessAttachments(
   );
 }
 
+/** Referenced user IDs of a canonical body, in first-occurrence order. */
+function referencedIds(canonical: CanonicalMessageBody) {
+  return canonical.references.map((reference) => reference.userId);
+}
+
+/**
+ * Whether a stored message was created by the same authoring command. A
+ * parts-v1 command matches only a parts-v1 row with the same text and the
+ * same reference IDs in order: the same visible "@Koda" pointing at another
+ * user is a different command.
+ */
+function sameMessageBody(
+  existing: Pick<typeof messages.$inferSelect, "content" | "contentFormat" | "parts">,
+  body: MessageBody,
+) {
+  if (body.format === "parts-v1") {
+    return storedPartsSignature(existing) === inputPartsSignature(body.parts);
+  }
+  return existing.contentFormat !== "parts-v1" && existing.content === body.content.trim();
+}
+
 export async function assertIdempotentCommandMatches(
   tx: MessageReadExecutor,
   existing: typeof messages.$inferSelect,
@@ -618,10 +662,15 @@ export async function assertIdempotentCommandMatches(
     conversationId: string;
     threadId: string | null;
     parentMessageId?: string | null;
-    content: string;
+    /** Legacy text or the request's canonical body. */
+    body: MessageBody | string;
     attachmentIds: string[];
   },
 ) {
+  const body: MessageBody =
+    typeof command.body === "string"
+      ? { format: "legacy-text", content: command.body }
+      : command.body;
   const links = await tx
     .select({ attachmentId: messageAttachments.attachmentId })
     .from(messageAttachments)
@@ -633,7 +682,7 @@ export async function assertIdempotentCommandMatches(
     existing.threadId !== command.threadId ||
     (command.parentMessageId !== undefined &&
       (existing.parentMessageId ?? null) !== command.parentMessageId) ||
-    existing.content !== command.content ||
+    !sameMessageBody(existing, body) ||
     existingAttachmentIds.length !== command.attachmentIds.length ||
     existingAttachmentIds.some(
       (id, index) => id !== command.attachmentIds[index],
@@ -758,6 +807,7 @@ export function toChatMessage(
     senderName: row.senderName,
     senderType: row.senderType,
     content: row.content,
+    ...(row.contentFormat === "parts-v1" ? { contentFormat: "parts-v1" as const } : {}),
     parts: row.parts ?? null,
     attachments: messageAttachments,
     reactions,

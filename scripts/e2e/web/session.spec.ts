@@ -9,7 +9,8 @@ function identity() {
   return { name: 'Web acceptance', email: `web-${randomUUID()}@example.invalid`, password: `Web-${randomUUID()}-9!` };
 }
 
-test('browser session has an HttpOnly cookie and no bearer token in the response', async ({ request }) => {
+test('browser session has an HttpOnly cookie and no bearer token in the response', async ({ request }, info) => {
+  test.skip(info.project.name !== 'chromium-desktop', 'API only: identical in every browser project');
   const response = await request.post(`${apiURL}/auth/register`, { data: identity(), headers: webHeaders });
   expect(response.status()).toBe(200);
   const body = await response.json();

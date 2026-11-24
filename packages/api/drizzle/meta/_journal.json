@@ -180,8 +180,15 @@
     {
       "idx": 25,
       "version": "7",
-      "when": 1794315504303,
-      "tag": "0025_channel_archive",
+      "when": 1794509053876,
+      "tag": "0025_message_content_format",
+      "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1795526225918,
+      "tag": "0026_channel_archive",
       "breakpoints": true
     }
   ]

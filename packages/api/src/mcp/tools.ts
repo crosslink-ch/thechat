@@ -12,8 +12,19 @@ import {
   createOrGetDm,
   listUserDms,
   createChannel,
+  renameChannel,
 } from "../services/conversations";
+import {
+  MAX_CHANNEL_MEMBER_BATCH,
+  addChannelMembers,
+  removeChannelMember,
+  setChannelVisibility,
+} from "../services/channel-membership";
 import { getMessages, getThreadPage, sendMessage } from "../services/messages";
+import {
+  inputChatPartsSchema,
+  messageBodyFromRequest,
+} from "../services/message-parts";
 import {
   createBot,
   createHermesBotInWorkspace,
@@ -269,6 +280,78 @@ export function registerTools(server: McpServer) {
     }
   );
 
+  // --- update_channel ---
+  server.registerTool(
+    "update_channel",
+    {
+      description:
+        "Rename a channel or switch it between public and private. Making it public adds every workspace member, who can then read its history; making it private keeps the current members. Public channels are managed by workspace owners and admins, private channels by their channel admins.",
+      inputSchema: {
+        conversationId: z.string().uuid().describe("The channel ID"),
+        name: z.string().min(1).max(100).optional().describe("New channel name (will be slugified)"),
+        isPrivate: z.boolean().optional().describe("true makes the channel private, false makes it public"),
+      },
+    },
+    async ({ conversationId, name, isPrivate }, extra) => {
+      const user = getUser(extra);
+      return withService(async () => {
+        if (name === undefined && isPrivate === undefined) {
+          throw new Error("Nothing to change");
+        }
+        let channel;
+        if (name !== undefined) {
+          channel = await renameChannel(conversationId as string, name as string, user.id);
+        }
+        if (isPrivate !== undefined) {
+          channel = await setChannelVisibility(conversationId as string, user.id, isPrivate as boolean);
+        }
+        return channel;
+      });
+    }
+  );
+
+  // --- add_channel_members ---
+  server.registerTool(
+    "add_channel_members",
+    {
+      description:
+        "Add workspace members to a private channel you are in. They can read its whole history. The result lists the channel's members.",
+      inputSchema: {
+        conversationId: z.string().uuid().describe("The private channel ID"),
+        userIds: z
+          .array(z.string().uuid())
+          .min(1)
+          .max(MAX_CHANNEL_MEMBER_BATCH)
+          .describe("Workspace user IDs to add"),
+      },
+    },
+    async ({ conversationId, userIds }, extra) => {
+      const user = getUser(extra);
+      return withService(() =>
+        addChannelMembers(conversationId as string, user.id, userIds as string[])
+      );
+    }
+  );
+
+  // --- remove_channel_member ---
+  server.registerTool(
+    "remove_channel_member",
+    {
+      description:
+        "Remove someone from a private channel. Pass your own user ID to leave. Removing someone else takes a channel admin. A channel left without people is deleted.",
+      inputSchema: {
+        conversationId: z.string().uuid().describe("The private channel ID"),
+        userId: z.string().uuid().describe("The user ID to remove"),
+      },
+    },
+    async ({ conversationId, userId }, extra) => {
+      const user = getUser(extra);
+      return withService(() =>
+        removeChannelMember(conversationId as string, user.id, userId as string)
+      );
+    }
+  );
+
   // --- get_messages ---
   server.registerTool(
     "get_messages",
@@ -429,7 +512,11 @@ export function registerTools(server: McpServer) {
     "send_message",
     {
       description:
-        "Send a message to a conversation with optional ready attachment IDs.",
+        "Send a message to a conversation with optional ready attachment IDs. " +
+        "Plain `content` mentions people by name (\"@Ada\"). To mention by user ID, " +
+        "send `contentFormat: \"parts-v1\"` with `parts` instead of `content`: " +
+        "ordered {type:\"text\",text} and {type:\"reference\",refType:\"user\",refId} items. " +
+        "Every referenced user must be in the conversation.",
       inputSchema: {
         conversationId: z.string().uuid().describe("The conversation ID"),
         clientMessageId: z
@@ -438,7 +525,14 @@ export function registerTools(server: McpServer) {
           .max(255)
           .optional()
           .describe("Stable sender-scoped idempotency key"),
-        content: z.string().optional().describe("Message content"),
+        content: z.string().optional().describe("Message content (legacy text; omit when sending parts)"),
+        contentFormat: z
+          .literal("parts-v1")
+          .optional()
+          .describe('Set to "parts-v1" when sending parts'),
+        parts: inputChatPartsSchema
+          .optional()
+          .describe("Ordered text and user-reference parts (mentions by user ID)"),
         parentMessageId: z
           .string()
           .uuid()
@@ -460,6 +554,8 @@ export function registerTools(server: McpServer) {
         conversationId,
         clientMessageId,
         content,
+        contentFormat,
+        parts,
         parentMessageId,
         alsoSendToConversation,
         attachmentIds,
@@ -467,12 +563,18 @@ export function registerTools(server: McpServer) {
       extra,
     ) => {
       const user = getUser(extra);
+      const resolved = messageBodyFromRequest({
+        content: content as string | undefined,
+        contentFormat: contentFormat as "parts-v1" | undefined,
+        parts: parts as Parameters<typeof messageBodyFromRequest>[0]["parts"],
+      });
+      if ("error" in resolved) return error(resolved.error);
       return withService(() =>
         sendMessage(
           conversationId as string,
           user.id,
           user.name,
-          ((content as string | undefined) ?? "").trim(),
+          resolved.body,
           {
             clientMessageId: clientMessageId as string | undefined,
             parentMessageId: (parentMessageId as string | undefined) ?? null,

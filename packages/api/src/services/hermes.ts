@@ -1,4 +1,5 @@
 import { eq } from "drizzle-orm";
+import { referenceText, type StoredChatPart } from "@thechat/shared";
 import { db } from "../db";
 import { bots, hermesBotConfigs, users } from "../db/schema";
 import { ServiceError } from "./errors";
@@ -97,4 +98,55 @@ export async function getHermesBotCapabilities(botId: string, userId: string) {
 export function stripBotMention(content: string, botName: string) {
   const escaped = botName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   return content.replace(new RegExp(`@${escaped}\\b`, "ig"), "").replace(/\s+/g, " ").trim();
+}
+
+/**
+ * The prompt Hermes receives for a "parts-v1" message: the parts with every
+ * reference to the invoked bot removed, other references kept as "@Name".
+ * Unlike the legacy name strip, line breaks and indentation are kept; only
+ * the space the removed mention leaves behind is tidied.
+ */
+export function hermesPromptFromParts(
+  parts: readonly StoredChatPart[],
+  botUserId: string,
+): string {
+  const segments: string[] = [];
+  let removedBefore = false;
+  for (const part of parts) {
+    const removed = part.type === "reference" && part.refId === botUserId;
+    if (removed) {
+      removedBefore = true;
+      continue;
+    }
+    let text = part.type === "text" ? part.text : referenceText(part.label);
+    if (removedBefore) {
+      const previous = segments.length > 0 ? segments[segments.length - 1]! : "";
+      if (previous.endsWith("\n") && /^[ \t]*\n/.test(text)) {
+        // The mention was the whole line: drop the line.
+        text = text.replace(/^[ \t]*\n/, "");
+      } else if (previous === "" || previous.endsWith("\n")) {
+        // The mention started the line: drop the space after it.
+        text = text.replace(/^[ \t]+/, "");
+      } else if (/[ \t]$/.test(previous) && /^[,.;:!?]/.test(text)) {
+        // "Hi @Koda, please": no space before the punctuation.
+        segments[segments.length - 1] = previous.replace(/[ \t]+$/, "");
+      } else if (/[ \t]$/.test(previous) && /^[ \t]/.test(text)) {
+        // "Hi @Koda please": keep one space between the neighbours.
+        text = text.slice(1);
+      } else if (/^\n/.test(text) || text === "") {
+        segments[segments.length - 1] = previous.replace(/[ \t]+$/, "");
+      } else if (/\S$/.test(previous) && /^\S/.test(text)) {
+        // "foo@Koda bar" must not become "foobar": keep the words apart.
+        text = ` ${text}`;
+      }
+      removedBefore = false;
+    }
+    segments.push(text);
+  }
+  if (removedBefore && segments.length > 0) {
+    // The mention ended the message: drop the space before it.
+    segments[segments.length - 1] = segments[segments.length - 1]!.replace(/[ \t]+$/, "");
+  }
+  // Blank lines left at the start by a mention on its own line go too.
+  return segments.join("").replace(/^(?:[ \t]*\n)+/, "").trimEnd();
 }

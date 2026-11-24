@@ -1,9 +1,22 @@
 import { afterAll, describe, expect, spyOn, test } from "bun:test";
 import crypto from "crypto";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { Elysia } from "elysia";
 import { db } from "../db";
-import { account, bots, session, users } from "../db/schema";
+import {
+  account,
+  bots,
+  session,
+  users,
+  workspaceMembers,
+  workspaces,
+} from "../db/schema";
+import {
+  closeRealtimeBusForTests,
+  LocalRealtimeBus,
+  setRealtimeBusForTests,
+  type RealtimeEvent,
+} from "../realtime";
 import { auth } from "./better-auth";
 import { createBotApiKey } from "./bot-api-keys";
 import { authRoutes } from "./index";
@@ -18,6 +31,7 @@ function uniqueEmail() {
 }
 
 afterAll(async () => {
+  await closeRealtimeBusForTests();
   for (const email of createdUserEmails) {
     await db.delete(users).where(eq(users.email, email));
   }
@@ -61,6 +75,10 @@ async function register(name = "Test User") {
     password: "password123",
   });
   return { email, response };
+}
+
+function profilePictureDataUrl() {
+  return "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC";
 }
 
 describe("Better Auth registration and login", () => {
@@ -188,6 +206,143 @@ describe("Better Auth session facade", () => {
         .from(users)
         .where(eq(users.id, registered.body.user.id)),
     ).toEqual([{ name: "Updated Name", email }]);
+  });
+
+  test("PATCH /me sets and removes a validated profile picture", async () => {
+    const { response: registered } = await register("Picture Profile");
+    const token = registered.body.accessToken;
+    const avatar = profilePictureDataUrl();
+    const teammateId = crypto.randomUUID();
+    const workspaceId = `profile-${crypto.randomUUID()}`;
+    createdUserIds.push(teammateId);
+    await db.insert(users).values({
+      id: teammateId,
+      name: "Picture Teammate",
+      email: `picture-${teammateId}@test.com`,
+      type: "human",
+    });
+    await db.insert(workspaces).values({
+      id: workspaceId,
+      name: "Picture workspace",
+      createdById: registered.body.user.id,
+    });
+    await db.insert(workspaceMembers).values([
+      {
+        workspaceId,
+        userId: registered.body.user.id,
+        role: "owner",
+      },
+      { workspaceId, userId: teammateId, role: "member" },
+    ]);
+    const realtimeEvents: RealtimeEvent[] = [];
+    const realtimeBus = new LocalRealtimeBus();
+    await setRealtimeBusForTests(realtimeBus);
+    const unsubscribe = await realtimeBus.subscribe((event) => {
+      realtimeEvents.push(event);
+    });
+
+    const updated = await req("PATCH", "/auth/me", { avatar }, token);
+    expect(updated).toMatchObject({
+      status: 200,
+      body: { user: { id: registered.body.user.id, avatar } },
+    });
+    expect(
+      await db
+        .select({ avatar: users.avatar })
+        .from(users)
+        .where(eq(users.id, registered.body.user.id)),
+    ).toEqual([{ avatar }]);
+    expect(realtimeEvents).toHaveLength(1);
+    expect([...realtimeEvents[0]!.targetUserIds].sort()).toEqual(
+      [registered.body.user.id, teammateId].sort(),
+    );
+    expect(realtimeEvents[0]!.event).toMatchObject({
+      type: "member_updated",
+      workspaceId,
+      userId: registered.body.user.id,
+      name: "Picture Profile",
+      avatar,
+    });
+
+    expect(await req("PATCH", "/auth/me", { avatar: null }, token)).toMatchObject({
+      status: 200,
+      body: { user: { avatar: null } },
+    });
+    expect(await req("GET", "/auth/me", undefined, token)).toMatchObject({
+      status: 200,
+      body: { user: { avatar: null } },
+    });
+    expect(realtimeEvents).toHaveLength(2);
+    expect(realtimeEvents[1]?.event).toMatchObject({
+      type: "member_updated",
+      avatar: null,
+    });
+    await unsubscribe();
+  });
+
+  test("PAT renames return and broadcast the committed picture when another writer changes it after authentication", async () => {
+    const { response: registered } = await register("Concurrent Profile");
+    const userId = registered.body.user.id;
+    const token = await req("POST", "/auth/personal-access-tokens", { name: "Profile race test" }, registered.body.accessToken);
+    expect(token.status).toBe(200);
+    const workspaceId = `profile-race-${crypto.randomUUID()}`;
+    await db.insert(workspaces).values({ id: workspaceId, name: "Profile race", createdById: userId });
+    await db.insert(workspaceMembers).values({ workspaceId, userId, role: "owner" });
+    const events: RealtimeEvent[] = [];
+    const bus = new LocalRealtimeBus();
+    await setRealtimeBusForTests(bus);
+    const unsubscribe = await bus.subscribe((event) => { events.push(event); });
+    let pending: ReturnType<typeof req> | undefined;
+    try {
+      for (const avatar of [profilePictureDataUrl(), null]) {
+        events.length = 0;
+        await db.transaction(async (tx) => {
+          const [{ pid }] = await tx.execute<{ pid: number }>(sql`select pg_backend_pid() as pid`);
+          // Hold this write uncommitted. The PAT authenticates against the old
+          // row, then its name UPDATE demonstrably blocks on our row lock.
+          await tx.update(users).set({ avatar }).where(eq(users.id, userId));
+          pending = req("PATCH", "/auth/me", { name: "Concurrent Rename" }, token.body.token);
+          let blocked = false;
+          for (let attempt = 0; attempt < 500; attempt++) {
+            const [row] = await db.execute<{ blocked: boolean }>(sql`
+              select exists(select 1 from pg_stat_activity where ${pid!} = any(pg_blocking_pids(pid))) as blocked
+            `);
+            if (row?.blocked) { blocked = true; break; }
+            await Bun.sleep(10);
+          }
+          expect(blocked).toBe(true);
+        });
+        const response = await pending!;
+        expect(response).toMatchObject({ status: 200, body: { user: { name: "Concurrent Rename", avatar } } });
+        expect(events).toHaveLength(1);
+        expect(events[0]?.event).toMatchObject({ type: "member_updated", userId, name: "Concurrent Rename", avatar });
+        expect(await db.select({ avatar: users.avatar }).from(users).where(eq(users.id, userId))).toEqual([{ avatar }]);
+      }
+    } finally {
+      await pending;
+      await unsubscribe();
+    }
+  });
+
+  test("PATCH /me rejects unsafe profile pictures and empty updates", async () => {
+    const { response: registered } = await register("Safe Picture Profile");
+    const token = registered.body.accessToken;
+
+    expect(
+      await req(
+        "PATCH",
+        "/auth/me",
+        { avatar: "data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=" },
+        token,
+      ),
+    ).toMatchObject({ status: 400, body: { error: expect.stringContaining("PNG") } });
+    expect(await req("PATCH", "/auth/me", {}, token)).toMatchObject({
+      status: 400,
+    });
+    expect(await req("GET", "/auth/me", undefined, token)).toMatchObject({
+      status: 200,
+      body: { user: { avatar: null } },
+    });
   });
 
   test("PATCH /me validates the name and does not accept email changes", async () => {

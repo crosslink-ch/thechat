@@ -1,50 +1,60 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
+import { useMatches, useNavigate } from "@tanstack/react-router";
 import * as Dialog from "@radix-ui/react-dialog";
-import { useQueryClient } from "@tanstack/react-query";
-import { create } from "zustand";
-import type {
-  ConversationParticipantPublic,
-  WorkspaceMember,
-} from "@thechat/shared";
-import { Archive, ArchiveRestore, Hash, Lock, Pencil, Trash2, UserPlus, X } from "lucide-react";
+import type { ChannelMemberRole, WorkspaceMember } from "@thechat/shared";
+import { Archive, ArchiveRestore, Hash, Lock, UserPlus, X } from "lucide-react";
+import { defaultChannel, useWorkspacesStore } from "../stores/workspaces";
+import { useConversationsStore } from "../stores/conversations";
 import { useAuthStore } from "../stores/auth";
-import { useWorkspacesStore } from "../stores/workspaces";
-import {
-  conversationDetailQueryKey,
-  useConversationDetail,
-} from "../hooks/useConversationDetail";
+import { channelAccess } from "../lib/channel-access";
 import { botAppearanceFor } from "../lib/bot-appearance";
 import { onSessionReset } from "../lib/session-boundary";
 import { Avatar } from "./Avatar";
 import { openDeleteChannelModal, openRenameChannelModal } from "./ChannelModal";
-import {
-  buttonClass,
-  dialogContentClass,
-  dialogOverlayClass,
-  dialogTitleClass,
-  iconButtonClass,
-  inputClass,
-} from "./ui";
+import { buttonClass, dialogContentClass, dialogOverlayClass, dialogTitleClass, iconButtonClass, inputClass } from "./ui";
 
-// Colocated visibility store: the channel whose details are open.
-const useChannelDetailsState = create(() => ({
-  channelId: null as string | null,
-}));
-export const openChannelDetailsModal = (channelId: string) =>
-  useChannelDetailsState.setState({ channelId });
-export const closeChannelDetailsModal = () =>
-  useChannelDetailsState.setState({ channelId: null });
+type Confirmation = "leave" | "visibility";
+type DetailsState = { channelId: string; confirm: Confirmation | null };
+
+let detailsState: DetailsState | null = null;
+let focusReturnTarget: HTMLElement | null = null;
+const listeners = new Set<() => void>();
+
+function emit() {
+  listeners.forEach((listener) => listener());
+}
+
+/** Opens the channel's details: who is in it, and the controls to manage it. */
+export function openChannelDetailsModal(
+  channelId: string,
+  options: { confirm?: Confirmation } = {},
+) {
+  focusReturnTarget =
+    document.activeElement instanceof HTMLElement && document.activeElement !== document.body
+      ? document.activeElement
+      : null;
+  detailsState = { channelId, confirm: options.confirm ?? null };
+  emit();
+}
+
+export function closeChannelDetailsModal() {
+  detailsState = null;
+  emit();
+}
 onSessionReset(closeChannelDetailsModal);
 
+function subscribe(listener: () => void) {
+  listeners.add(listener);
+  return () => listeners.delete(listener);
+}
+
+const getSnapshot = () => detailsState;
+
+const sectionTitleClass = "text-[0.857rem] font-medium text-text-secondary";
+const noteClass = "text-[0.786rem] leading-5 text-text-placeholder";
+const panelClass = "rounded-lg border border-border bg-base px-3.5 py-3";
 const badgeClass =
   "inline-flex shrink-0 items-center gap-1 rounded-md bg-white/[0.06] px-1.5 py-0.5 text-[0.714rem] font-medium text-text-muted";
-
-function roleLabel(participant: ConversationParticipantPublic) {
-  if (participant.user.type === "bot") return "Bot";
-  if (participant.role === "owner") return "Owner";
-  if (participant.role === "admin") return "Admin";
-  return "Member";
-}
 
 /** Shown in place of the composer of an archived channel. */
 export function ArchivedChannelNotice({ onOpenDetails }: { onOpenDetails: () => void }) {
@@ -66,97 +76,109 @@ export function ArchivedChannelNotice({ onOpenDetails }: { onOpenDetails: () => 
 }
 
 export function ChannelDetailsModal() {
-  const channelId = useChannelDetailsState((state) => state.channelId);
-  const channel = useWorkspacesStore((state) =>
-    channelId
-      ? state.activeWorkspace?.channels.find((item) => item.id === channelId)
-      : undefined,
-  );
-
-  // The channel was deleted, or this person was removed from it.
-  useEffect(() => {
-    if (channelId && !channel) closeChannelDetailsModal();
-  }, [channel, channelId]);
-
-  if (!channelId || !channel) return null;
-  return <ChannelDetails key={channelId} channelId={channelId} />;
-}
-
-function ChannelDetails({ channelId }: { channelId: string }) {
-  const queryClient = useQueryClient();
-  const token = useAuthStore((state) => state.token);
-  const currentUserId = useAuthStore((state) => state.user?.id);
-  const workspace = useWorkspacesStore((state) => state.activeWorkspace);
-  const setChannelArchived = useWorkspacesStore((state) => state.setChannelArchived);
-  const addChannelMembers = useWorkspacesStore((state) => state.addChannelMembers);
-  const removeChannelMember = useWorkspacesStore((state) => state.removeChannelMember);
-  const channel = workspace?.channels.find((item) => item.id === channelId);
-  const detail = useConversationDetail(channelId, token);
-  const refetchDetail = detail.refetch;
-
+  const state = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+  const navigate = useNavigate();
+  const matches = useMatches();
+  const activeChannelId = matches
+    .map((match) => (match.params as Record<string, string>).id)
+    .find(Boolean);
+  const activeWorkspace = useWorkspacesStore((store) => store.activeWorkspace);
+  const currentUserId = useAuthStore((store) => store.user?.id);
+  const channel = state
+    ? activeWorkspace?.channels.find((item) => item.id === state.channelId) ?? null
+    : null;
+  const [confirm, setConfirm] = useState<Confirmation | null>(null);
   const [adding, setAdding] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(() => new Set());
   const [filter, setFilter] = useState("");
-  const [picked, setPicked] = useState<Set<string>>(() => new Set());
-  const [busy, setBusy] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
-  // The cached member list may predate changes made while this was closed.
   useEffect(() => {
-    void refetchDetail();
-  }, [refetchDetail]);
+    setConfirm(state?.confirm ?? null);
+    setAdding(false);
+    setSelected(new Set());
+    setFilter("");
+    setBusy(false);
+    setError("");
+  }, [state]);
 
-  const participants = detail.data?.participants;
-  const participantIds = useMemo(
-    () => new Set((participants ?? []).map((participant) => participant.userId)),
-    [participants],
-  );
-  const myRole = workspace?.members.find((member) => member.userId === currentUserId)?.role;
-  // The server rule: a workspace owner or admin who is in the channel.
-  const canManage = myRole === "owner" || myRole === "admin";
-  const isPrivate = channel?.isPrivate ?? false;
-  const archived = Boolean(channel?.archivedAt);
+  // The channel was deleted, or this person is no longer in it.
+  useEffect(() => {
+    if (state && activeWorkspace && !channel) closeChannelDetailsModal();
+  }, [activeWorkspace, channel, state]);
 
-  const candidates = useMemo(() => {
-    const query = filter.trim().toLowerCase();
-    return (workspace?.members ?? []).filter(
-      (member: WorkspaceMember) =>
-        !participantIds.has(member.userId) &&
-        (!query ||
-          member.user.name.toLowerCase().includes(query) ||
-          (member.user.email ?? "").toLowerCase().includes(query)),
-    );
-  }, [filter, participantIds, workspace?.members]);
+  if (!state || !channel || !activeWorkspace) return <Dialog.Root open={false} />;
 
-  if (!channel) return null;
+  const access = channelAccess(channel, activeWorkspace.members, currentUserId);
+  const byId = new Map(activeWorkspace.members.map((member) => [member.userId, member]));
+  const rows: Array<{ userId: string; role: ChannelMemberRole; member: WorkspaceMember | undefined }> =
+    channel.isPrivate
+      ? (channel.members ?? []).map((entry) => ({ ...entry, member: byId.get(entry.userId) }))
+      : activeWorkspace.members.map((member) => ({ userId: member.userId, role: "member", member }));
+  const query = filter.trim().toLowerCase();
+  const candidates = channel.isPrivate
+    ? activeWorkspace.members.filter(
+        (member) =>
+          !channel.members?.some((entry) => entry.userId === member.userId) &&
+          (!query ||
+            member.user.name.toLowerCase().includes(query) ||
+            (member.user.email ?? "").toLowerCase().includes(query)),
+      )
+    : [];
+  // Archived: read-only and out of the active list until unarchived.
+  const archived = Boolean(channel.archivedAt);
+  const people = rows.filter((row) => row.member?.user.type !== "bot");
+  const lastPerson = people.length === 1 && people[0]!.userId === currentUserId;
+  const Icon = channel.isPrivate ? Lock : Hash;
 
-  const refreshMembers = () =>
-    queryClient.invalidateQueries({ queryKey: conversationDetailQueryKey(channelId) });
-
-  async function run(action: string, work: () => Promise<void>) {
+  async function run(action: () => Promise<void>) {
     if (busy) return;
-    setBusy(action);
+    setBusy(true);
     setError("");
     try {
-      await work();
+      await action();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Something went wrong");
     } finally {
-      setBusy(null);
+      setBusy(false);
     }
   }
 
-  const canRemove = (participant: ConversationParticipantPublic) =>
-    canManage &&
-    isPrivate &&
-    participant.userId !== currentUserId &&
-    participant.role !== "owner" &&
-    !(myRole === "admin" && participant.role === "admin");
+  const store = () => useWorkspacesStore.getState();
 
-  const closeAddPicker = () => {
-    setAdding(false);
-    setFilter("");
-    setPicked(new Set());
-  };
+  const leave = () =>
+    run(async () => {
+      const channelId = channel.id;
+      await store().removeChannelMember(channelId, currentUserId!);
+      useConversationsStore.getState().markChannelRead(channelId);
+      closeChannelDetailsModal();
+      if (activeChannelId !== channelId) return;
+      const channels = store().activeWorkspace?.channels ?? [];
+      const next =
+        channels.find((item) => item.name === "general" && !item.archivedAt) ??
+        defaultChannel(channels);
+      await navigate(next ? { to: "/channel/$id", params: { id: next.id } } : { to: "/" });
+    });
+
+  const changeVisibility = () =>
+    run(async () => {
+      await store().setChannelVisibility(channel.id, !channel.isPrivate);
+      setConfirm(null);
+    });
+
+  const addSelected = () =>
+    run(async () => {
+      await store().addChannelMembers(channel.id, [...selected]);
+      setSelected(new Set());
+      setFilter("");
+      setAdding(false);
+    });
+
+  const toggleArchived = () =>
+    run(async () => {
+      await store().setChannelArchived(channel.id, !archived);
+    });
 
   return (
     <Dialog.Root
@@ -168,34 +190,43 @@ function ChannelDetails({ channelId }: { channelId: string }) {
       <Dialog.Portal>
         <Dialog.Overlay className={`z-50 ${dialogOverlayClass}`} />
         <Dialog.Content
-          aria-describedby={undefined}
+          onCloseAutoFocus={(event) => {
+            event.preventDefault();
+            const target = focusReturnTarget;
+            focusReturnTarget = null;
+            if (target?.isConnected) target.focus();
+          }}
           data-testid="channel-details"
           className={`fixed left-1/2 top-1/2 z-50 flex max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] max-w-[520px] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden ${dialogContentClass}`}
         >
-          <div className="flex items-start gap-3 px-5 pb-3 pt-5">
+          <div className="flex items-start gap-3 px-5 pb-4 pt-5">
             <div className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-accent/10 text-accent">
-              {isPrivate ? <Lock size={18} aria-hidden="true" /> : <Hash size={18} aria-hidden="true" />}
+              <Icon size={18} aria-hidden="true" />
             </div>
             <div className="min-w-0 flex-1">
               <Dialog.Title asChild>
                 <h2 className={`truncate ${dialogTitleClass}`}>{channel.name}</h2>
               </Dialog.Title>
-              <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-                <span className={badgeClass} data-testid="channel-visibility">
-                  {isPrivate ? "Private channel" : "Public channel"}
-                </span>
-                {archived && (
+              <Dialog.Description asChild>
+                <p className="mt-1 text-[0.857rem] leading-5 text-text-muted">
+                  {channel.isPrivate
+                    ? "Private channel. Only its members can see and open it."
+                    : "Public channel. Everyone in the workspace can see and open it."}
+                </p>
+              </Dialog.Description>
+              {archived && (
+                <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
                   <span className={badgeClass} data-testid="channel-archived-badge">
                     <Archive size={11} aria-hidden="true" />
                     Archived
                   </span>
-                )}
-              </div>
+                </div>
+              )}
             </div>
             <Dialog.Close asChild>
               <button
                 type="button"
-                disabled={Boolean(busy)}
+                disabled={busy}
                 className={`-mr-1.5 -mt-1 ${iconButtonClass("md")}`}
                 aria-label="Close channel details"
               >
@@ -204,20 +235,115 @@ function ChannelDetails({ channelId }: { channelId: string }) {
             </Dialog.Close>
           </div>
 
-          <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-5">
-            <section aria-label="Members">
-              <div className="mb-1.5 flex items-center justify-between gap-3">
-                <h3 className="text-[0.857rem] font-medium text-text-secondary">
-                  Members
-                  {participants && (
-                    <span className="ml-1.5 text-text-dimmed">{participants.length}</span>
+          <div className="min-h-0 space-y-5 overflow-y-auto px-5 pb-5 pt-1">
+            {error && (
+              <p role="alert" className="text-[0.786rem] text-error-bright">
+                {error}
+              </p>
+            )}
+
+            {confirm === "leave" ? (
+              <section className={panelClass} aria-label="Leave channel">
+                <p className="text-[0.857rem] leading-5 text-text-secondary">
+                  {lastPerson
+                    ? "You are the last person in this channel. Leaving deletes it together with its messages."
+                    : "You will no longer see this channel or its messages. Someone in it can add you back."}
+                </p>
+                <div className="mt-3 flex justify-end gap-2">
+                  <button type="button" disabled={busy} className={buttonClass("ghost", "md")} onClick={() => setConfirm(null)}>
+                    Cancel
+                  </button>
+                  <button type="button" disabled={busy} className={buttonClass("danger", "md")} onClick={leave}>
+                    {busy ? "Leaving..." : lastPerson ? "Leave and delete" : "Leave channel"}
+                  </button>
+                </div>
+              </section>
+            ) : confirm === "visibility" ? (
+              <section className={panelClass} aria-label="Change visibility">
+                <p className="text-[0.857rem] leading-5 text-text-secondary">
+                  {channel.isPrivate
+                    ? "Everyone in the workspace will be added and can read all messages in this channel, including earlier ones."
+                    : "Only the people in the channel now keep access. People who join the workspace later are not added."}
+                </p>
+                <div className="mt-3 flex justify-end gap-2">
+                  <button type="button" disabled={busy} className={buttonClass("ghost", "md")} onClick={() => setConfirm(null)}>
+                    Cancel
+                  </button>
+                  <button type="button" disabled={busy} className={buttonClass("primary", "md")} onClick={changeVisibility}>
+                    {busy ? "Saving..." : channel.isPrivate ? "Make public" : "Make private"}
+                  </button>
+                </div>
+              </section>
+            ) : (
+              (access.canManage || access.canLeave) && (
+                <section aria-label="Channel settings">
+                  <h3 className={sectionTitleClass}>Settings</h3>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {access.canManage && !archived && (
+                      <button
+                        type="button"
+                        className={buttonClass("secondary", "md")}
+                        onClick={() => {
+                          closeChannelDetailsModal();
+                          openRenameChannelModal(channel);
+                        }}
+                      >
+                        Rename
+                      </button>
+                    )}
+                    {access.canManage && (channel.isPrivate || channel.name !== "general") && (
+                      <button type="button" className={buttonClass("secondary", "md")} onClick={() => setConfirm("visibility")}>
+                        {channel.isPrivate ? "Make public" : "Make private"}
+                      </button>
+                    )}
+                    {access.canLeave && (
+                      <button type="button" className={buttonClass("secondary", "md")} onClick={() => setConfirm("leave")}>
+                        Leave channel
+                      </button>
+                    )}
+                    {access.canManage && (
+                      <button type="button" disabled={busy} className={buttonClass("secondary", "md")} onClick={toggleArchived}>
+                        {archived ? <ArchiveRestore size={14} aria-hidden="true" /> : <Archive size={14} aria-hidden="true" />}
+                        {archived ? "Unarchive" : "Archive"}
+                      </button>
+                    )}
+                    {access.canManage && (
+                      <button
+                        type="button"
+                        className={buttonClass("danger-soft", "md")}
+                        onClick={() => {
+                          closeChannelDetailsModal();
+                          openDeleteChannelModal(channel);
+                        }}
+                      >
+                        Delete channel
+                      </button>
+                    )}
+                  </div>
+                  {access.canManage && (
+                    <p className={`mt-2 ${noteClass}`}>
+                      {archived
+                        ? "Archived channels are read-only and stay searchable. Unarchive to post again."
+                        : "Archiving makes the channel read-only and moves it out of the channel list. Its history stays readable and searchable. Deleting is permanent."}
+                    </p>
                   )}
+                </section>
+              )
+            )}
+
+            <section aria-label="Members">
+              <div className="flex items-center justify-between gap-3">
+                <h3 className={sectionTitleClass}>
+                  Members <span className="font-normal text-text-placeholder">{rows.length}</span>
                 </h3>
-                {canManage && isPrivate && !adding && (
+                {access.canAddMembers && !adding && (
                   <button
                     type="button"
                     className={buttonClass("secondary", "sm")}
-                    onClick={() => setAdding(true)}
+                    onClick={() => {
+                      setAdding(true);
+                      setError("");
+                    }}
                   >
                     <UserPlus size={14} aria-hidden="true" />
                     Add people
@@ -226,232 +352,138 @@ function ChannelDetails({ channelId }: { channelId: string }) {
               </div>
 
               {adding && (
-                <form
-                  aria-label="Add people"
-                  className="mb-3 rounded-lg border border-border bg-base p-3"
-                  onSubmit={(event) => {
-                    event.preventDefault();
-                    if (picked.size === 0) return;
-                    void run("add", async () => {
-                      await addChannelMembers(channelId, [...picked]);
-                      await refreshMembers();
-                      closeAddPicker();
-                    });
-                  }}
-                >
+                <div className={`mt-2 ${panelClass}`}>
                   <input
                     autoFocus
                     value={filter}
                     onChange={(event) => setFilter(event.target.value)}
                     placeholder="Search workspace members"
                     aria-label="Search workspace members"
-                    className={inputClass}
+                    className={`mb-2 ${inputClass}`}
                   />
-                  <div className="mt-2 max-h-40 overflow-y-auto">
-                    {candidates.length === 0 ? (
-                      <p className="px-1 py-2 text-[0.786rem] text-text-placeholder">
-                        {filter.trim()
-                          ? "No one matches."
-                          : "Everyone in the workspace is already in this channel."}
-                      </p>
-                    ) : (
-                      candidates.map((member) => (
-                        <label
-                          key={member.userId}
-                          className="flex cursor-pointer items-center gap-3 rounded-md px-1 py-1.5 hover:bg-hover/70"
-                        >
-                          <input
-                            type="checkbox"
-                            className="size-3.5 shrink-0 rounded accent-accent"
-                            checked={picked.has(member.userId)}
-                            disabled={Boolean(busy)}
-                            aria-label={`Add ${member.user.name}`}
-                            onChange={(event) => {
-                              const include = event.target.checked;
-                              setPicked((current) => {
-                                const next = new Set(current);
-                                if (include) next.add(member.userId);
-                                else next.delete(member.userId);
-                                return next;
-                              });
-                            }}
-                          />
-                          <Avatar
-                            name={member.user.name}
-                            colorKey={member.userId}
-                            bot={member.user.type === "bot"}
-                            botAvatar={
-                              member.user.type === "bot"
-                                ? botAppearanceFor(member.userId, member.bot?.avatar)
-                                : null
-                            }
-                            size={24}
-                            className="size-6 text-[0.714rem]"
-                          />
-                          <span className="min-w-0 flex-1 truncate text-[0.857rem] text-text">
-                            {member.user.name}
-                          </span>
-                          <span className="shrink-0 text-[0.75rem] text-text-placeholder">
-                            {member.user.type === "bot" ? "Bot" : null}
-                          </span>
-                        </label>
-                      ))
-                    )}
-                  </div>
+                  {candidates.length === 0 ? (
+                    <p className={noteClass}>
+                      {query ? "No one matches." : "Everyone in the workspace is already in this channel."}
+                    </p>
+                  ) : (
+                    <ul className="max-h-40 overflow-y-auto">
+                      {candidates.map((member) => (
+                        <li key={member.userId}>
+                          <label className="flex cursor-pointer items-center gap-3 rounded-md px-1 py-1.5 hover:bg-hover/70">
+                            <input
+                              type="checkbox"
+                              className="size-3.5 shrink-0 rounded accent-accent"
+                              checked={selected.has(member.userId)}
+                              disabled={busy}
+                              aria-label={`Add ${member.user.name}`}
+                              onChange={(event) => {
+                                const include = event.target.checked;
+                                setSelected((current) => {
+                                  const next = new Set(current);
+                                  if (include) next.add(member.userId);
+                                  else next.delete(member.userId);
+                                  return next;
+                                });
+                              }}
+                            />
+                            <span className="min-w-0 flex-1 truncate text-[0.857rem] text-text">{member.user.name}</span>
+                            {member.user.type === "bot" && <span className={noteClass}>Bot</span>}
+                          </label>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  <p className={`mt-2 ${noteClass}`}>People you add can read all messages in this channel, including earlier ones.</p>
                   <div className="mt-3 flex justify-end gap-2">
                     <button
                       type="button"
-                      className={buttonClass("ghost", "sm")}
-                      disabled={Boolean(busy)}
-                      onClick={closeAddPicker}
+                      disabled={busy}
+                      className={buttonClass("ghost", "md")}
+                      onClick={() => {
+                        setAdding(false);
+                        setFilter("");
+                        setSelected(new Set());
+                      }}
                     >
                       Cancel
                     </button>
                     <button
-                      type="submit"
-                      className={buttonClass("primary", "sm")}
-                      disabled={picked.size === 0 || Boolean(busy)}
+                      type="button"
+                      disabled={busy || selected.size === 0}
+                      className={buttonClass("primary", "md")}
+                      onClick={addSelected}
                     >
-                      {busy === "add"
-                        ? "Adding..."
-                        : picked.size > 1
-                          ? `Add ${picked.size} people`
-                          : "Add"}
+                      {busy ? "Adding..." : selected.size > 1 ? `Add ${selected.size} people` : "Add"}
                     </button>
                   </div>
-                </form>
-              )}
-
-              {!participants ? (
-                <p className="py-3 text-[0.857rem] text-text-placeholder">
-                  {detail.isError ? "Could not load members." : "Loading members..."}
-                </p>
-              ) : (
-                <ul className="overflow-hidden rounded-lg border border-border bg-base" data-testid="channel-members">
-                  {participants.map((participant) => {
-                    const isBot = participant.user.type === "bot";
-                    return (
-                      <li
-                        key={participant.userId}
-                        className="flex items-center gap-3 border-b border-border/70 px-3 py-2 last:border-b-0"
-                      >
-                        <Avatar
-                          name={participant.user.name}
-                          colorKey={participant.userId}
-                          bot={isBot}
-                          botAvatar={
-                            isBot
-                              ? botAppearanceFor(participant.userId, participant.bot?.avatar)
-                              : null
-                          }
-                          size={28}
-                          className="size-7 text-[0.786rem]"
-                        />
-                        <span className="min-w-0 flex-1 truncate text-[0.857rem] font-medium text-text">
-                          {participant.user.name}
-                          {participant.userId === currentUserId && (
-                            <span className="font-normal text-text-dimmed"> (you)</span>
-                          )}
-                        </span>
-                        <span data-member-role className="shrink-0 text-[0.786rem] text-text-muted">
-                          {roleLabel(participant)}
-                        </span>
-                        {canManage && isPrivate && (
-                          // The same slot in every row keeps the role column
-                          // aligned (touch layouts widen dialog buttons to 44px).
-                          <span className="flex w-11 shrink-0 items-center justify-end max-lg:h-11">
-                            {canRemove(participant) && (
-                              <button
-                                type="button"
-                                className={iconButtonClass("sm")}
-                                disabled={Boolean(busy)}
-                                aria-label={`Remove ${participant.user.name}`}
-                                title={`Remove ${participant.user.name} from this channel`}
-                                onClick={() =>
-                                  void run(`remove:${participant.userId}`, async () => {
-                                    await removeChannelMember(channelId, participant.userId);
-                                    await refreshMembers();
-                                  })
-                                }
-                              >
-                                <X size={14} aria-hidden="true" />
-                              </button>
-                            )}
-                          </span>
-                        )}
-                      </li>
-                    );
-                  })}
-                </ul>
-              )}
-              <p className="mt-2 text-[0.75rem] leading-4 text-text-placeholder">
-                {isPrivate
-                  ? "Only these members can see and open this channel."
-                  : "Everyone in the workspace is in a public channel."}
-              </p>
-            </section>
-
-            {error && (
-              <p role="alert" className="mt-3 text-[0.786rem] text-error-bright">
-                {error}
-              </p>
-            )}
-
-            {canManage && (
-              <section aria-label="Manage channel" className="mt-5 border-t border-border pt-4">
-                <h3 className="mb-2 text-[0.857rem] font-medium text-text-secondary">Manage</h3>
-                <div className="flex flex-wrap gap-2">
-                  {!archived && (
-                    <button
-                      type="button"
-                      className={buttonClass("secondary", "sm")}
-                      disabled={Boolean(busy)}
-                      onClick={() => {
-                        closeChannelDetailsModal();
-                        openRenameChannelModal(channel);
-                      }}
-                    >
-                      <Pencil size={14} aria-hidden="true" />
-                      Rename
-                    </button>
-                  )}
-                  <button
-                    type="button"
-                    className={buttonClass("secondary", "sm")}
-                    disabled={Boolean(busy)}
-                    onClick={() =>
-                      void run("archive", async () => {
-                        await setChannelArchived(channelId, !archived);
-                      })
-                    }
-                  >
-                    {archived ? (
-                      <ArchiveRestore size={14} aria-hidden="true" />
-                    ) : (
-                      <Archive size={14} aria-hidden="true" />
-                    )}
-                    {archived ? "Unarchive" : "Archive"}
-                  </button>
-                  <button
-                    type="button"
-                    className={buttonClass("danger-soft", "sm")}
-                    disabled={Boolean(busy)}
-                    onClick={() => {
-                      closeChannelDetailsModal();
-                      openDeleteChannelModal(channel);
-                    }}
-                  >
-                    <Trash2 size={14} aria-hidden="true" />
-                    Delete
-                  </button>
                 </div>
-                <p className="mt-2 text-[0.75rem] leading-4 text-text-placeholder">
-                  {archived
-                    ? "Archived channels are read-only and stay searchable. Unarchive to post again."
-                    : "Archiving makes the channel read-only and moves it out of the channel list. Its history stays readable and searchable. Deleting is permanent."}
+              )}
+
+              <ul className="mt-2 divide-y divide-border/70 rounded-lg border border-border bg-base" data-testid="channel-members">
+                {rows.map(({ userId, role, member }) => {
+                  const name = member?.user.name ?? "Unknown member";
+                  const isSelf = userId === currentUserId;
+                  const isBot = member?.user.type === "bot";
+                  const manageable = channel.isPrivate && access.canManage && !isSelf;
+                  return (
+                    <li key={userId} className="flex items-center gap-3 px-3 py-2">
+                      <Avatar
+                        name={name}
+                        colorKey={userId}
+                        bot={isBot}
+                        botAvatar={isBot ? botAppearanceFor(userId, member?.bot?.avatar) : undefined}
+                        size={28}
+                        className="size-7 rounded-md text-[0.75rem]"
+                      />
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-[0.857rem] font-medium text-text">
+                          {name}
+                          {isSelf ? " (you)" : ""}
+                        </span>
+                        <span data-member-role className="block truncate text-[0.75rem] text-text-placeholder">
+                          {isBot ? "Bot" : role === "admin" ? "Channel admin" : member?.user.email ?? "Member"}
+                        </span>
+                      </span>
+                      {manageable && !isBot && (
+                        <button
+                          type="button"
+                          disabled={busy}
+                          className={buttonClass("ghost", "sm")}
+                          aria-label={role === "admin" ? `Remove ${name} as channel admin` : `Make ${name} a channel admin`}
+                          onClick={() =>
+                            run(async () => {
+                              await store().setChannelMemberRole(channel.id, userId, role === "admin" ? "member" : "admin");
+                            })
+                          }
+                        >
+                          {role === "admin" ? "Remove admin" : "Make admin"}
+                        </button>
+                      )}
+                      {manageable && (
+                        <button
+                          type="button"
+                          disabled={busy}
+                          className={buttonClass("ghost", "sm")}
+                          aria-label={`Remove ${name} from channel`}
+                          onClick={() =>
+                            run(async () => {
+                              await store().removeChannelMember(channel.id, userId);
+                            })
+                          }
+                        >
+                          Remove
+                        </button>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+              {!channel.isPrivate && (
+                <p className={`mt-2 ${noteClass}`}>
+                  A public channel always includes everyone in the workspace.
                 </p>
-              </section>
-            )}
+              )}
+            </section>
           </div>
         </Dialog.Content>
       </Dialog.Portal>

@@ -312,7 +312,11 @@ def _scenario_inbox_answers(env: dict[str, str], base: str, token: str, workspac
     assert approval["deliveryApplied"] is True, approval
 
     question = _wait_for_open_request(base, token, dm_id, "question")
-    assert question["title"] == fake_model.CLARIFY_QUESTION, question
+    # Current Hermes appends its messaging-platform skip hint to the question.
+    assert question["title"] in {
+        fake_model.CLARIFY_QUESTION,
+        f'{fake_model.CLARIFY_QUESTION}\nReply "skip" to skip this question.',
+    }, question
     assert question["response"]["choices"] == fake_model.CLARIFY_CHOICES, question
     # Hermes marks its first choice as recommended; that is a display label, not the answer.
     assert question["response"]["labels"] == {
@@ -389,7 +393,7 @@ def _run() -> None:
     try:
         harness.start_postgres()
         harness.start_redis()
-        harness.run([harness.PNPM, "--dir", "packages/api", "exec", "drizzle-kit", "migrate"], env=env)
+        harness.migrate_database(env)
         api_proc = harness.start_api(env)
         worker_proc = harness.start_worker(env)
         model_proc = _start_fake_model(env)

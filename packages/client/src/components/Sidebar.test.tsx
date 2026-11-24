@@ -33,11 +33,13 @@ const {
   openCreateChannelModalMock,
   openRenameChannelModalMock,
   openDeleteChannelModalMock,
+  openChannelDetailsModalMock,
 } = vi.hoisted(() => ({
   dmPostMock: vi.fn(),
   openCreateChannelModalMock: vi.fn(),
   openRenameChannelModalMock: vi.fn(),
   openDeleteChannelModalMock: vi.fn(),
+  openChannelDetailsModalMock: vi.fn(),
 }));
 
 vi.mock("#platform-shell", () => ({
@@ -68,6 +70,10 @@ vi.mock("../lib/api", () => ({
 
 vi.mock("../lib/notifications", () => ({
   fireNotification: vi.fn(),
+}));
+
+vi.mock("./ChannelDetailsModal", () => ({
+  openChannelDetailsModal: openChannelDetailsModalMock,
 }));
 
 vi.mock("./ChannelModal", () => ({
@@ -422,6 +428,36 @@ describe("Sidebar", () => {
     expect(screen.getByLabelText("Activity")).toBeInTheDocument();
   });
 
+  it("shows saved profile pictures for the signed-in user and other people", async () => {
+    const ownAvatar = "data:image/jpeg;base64,b3du";
+    const aliceAvatar = "data:image/jpeg;base64,YWxpY2U=";
+    const picturedUser = { ...user, avatar: ownAvatar };
+    const picturedWorkspace: WorkspaceWithDetails = {
+      ...activeWorkspace,
+      members: activeWorkspace.members.map((member) =>
+        member.userId === "u1"
+          ? { ...member, user: picturedUser }
+          : member.userId === "u2"
+            ? { ...member, user: { ...member.user, avatar: aliceAvatar } }
+            : member,
+      ),
+    };
+    useAuthStore.setState({ user: picturedUser, token: "test-token" });
+    useWorkspacesStore.setState({
+      workspaces: workspaceList,
+      activeWorkspace: picturedWorkspace,
+    });
+
+    await renderWithRouter(<Sidebar />);
+
+    expect(
+      screen.getByRole("button", { name: "Test User" }).querySelector("img"),
+    ).toHaveAttribute("src", ownAvatar);
+    expect(
+      screen.getByRole("button", { name: "Alice" }).querySelector("img"),
+    ).toHaveAttribute("src", aliceAvatar);
+  });
+
   it("shows a green online indicator for connected people only", async () => {
     useAuthStore.setState({ user, token: "test-token" });
     useWorkspacesStore.setState({ workspaces: workspaceList, activeWorkspace });
@@ -575,13 +611,10 @@ describe("Sidebar", () => {
       name: "Channel details",
     });
     const renameItem = screen.getByRole("menuitem", { name: "Rename channel" });
-    const deleteItem = screen.getByRole("menuitem", { name: "Delete channel" });
     expect(detailsItem).toHaveFocus();
 
     await ui.keyboard("{ArrowDown}");
     expect(renameItem).toHaveFocus();
-    await ui.keyboard("{ArrowDown}");
-    expect(deleteItem).toHaveFocus();
     await ui.keyboard("{Escape}");
     expect(trigger).toHaveFocus();
   });
@@ -636,6 +669,7 @@ describe("Sidebar", () => {
   });
 
   it("allows members to create channels without exposing manager actions", async () => {
+    const ui = userEvent.setup();
     const memberWorkspace: WorkspaceWithDetails = {
       ...activeWorkspace,
       members: activeWorkspace.members.map((member) =>
@@ -651,7 +685,50 @@ describe("Sidebar", () => {
     await renderWithRouter(<Sidebar />);
 
     expect(screen.getByRole("button", { name: "Create channel" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Manage #general" })).not.toBeInTheDocument();
+    // Everyone can open a channel's details; managing it is for managers.
+    await ui.click(screen.getByRole("button", { name: "Manage #general" }));
+    expect(screen.getByRole("menuitem", { name: "Channel details" })).toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: "Rename channel" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: "Delete channel" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: "Leave channel" })).not.toBeInTheDocument();
+  });
+
+  it("lets the admin of a private channel manage it, and any member leave it, whatever their workspace role", async () => {
+    const ui = userEvent.setup();
+    const privateChannel = (id: string, role: "admin" | "member") => ({
+      ...activeWorkspace.channels[0],
+      id,
+      name: id,
+      title: id,
+      isPrivate: true,
+      members: [{ userId: user.id, role }],
+    });
+    useAuthStore.setState({ user, token: "test-token" });
+    useWorkspacesStore.setState({
+      workspaces: [{ ...workspaceList[0], role: "member" }],
+      activeWorkspace: {
+        ...activeWorkspace,
+        members: activeWorkspace.members.map((member) =>
+          member.userId === user.id ? { ...member, role: "member" } : member,
+        ),
+        channels: [privateChannel("mine", "admin"), privateChannel("theirs", "member")],
+      },
+    });
+
+    await renderWithRouter(<Sidebar />);
+
+    await ui.click(screen.getByRole("button", { name: "Manage #mine" }));
+    expect(screen.getByRole("menuitem", { name: "Rename channel" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Delete channel" })).toBeInTheDocument();
+    await ui.click(screen.getByRole("menuitem", { name: "Leave channel" }));
+    expect(openChannelDetailsModalMock).toHaveBeenCalledWith("mine", { confirm: "leave" });
+
+    await ui.click(screen.getByRole("button", { name: "Manage #theirs" }));
+    expect(screen.queryByRole("menuitem", { name: "Rename channel" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: "Delete channel" })).not.toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Leave channel" })).toBeInTheDocument();
+    await ui.click(screen.getByRole("menuitem", { name: "Channel details" }));
+    expect(openChannelDetailsModalMock).toHaveBeenCalledWith("theirs");
   });
 
   it("does not show agent chats in the sidebar UI", async () => {

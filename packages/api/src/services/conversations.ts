@@ -2,7 +2,6 @@ import { and, asc, desc, eq, gt, inArray, isNull, lt, lte, ne, or, sql } from "d
 import {
   resolveBotAppearance,
   type ConversationThreadGroups,
-  type WsServerEvent,
 } from "@thechat/shared";
 import { db } from "../db";
 import { pendingChatJobs } from '../async/queue';
@@ -29,10 +28,16 @@ import {
 } from "../attachments/events";
 
 import { enqueueDomainEvent } from "../events/outbox";
-import { log } from "../logging";
-import { publishWsEventToUsers } from "../realtime";
 import { currentHermesDispatchTimeoutCutoff } from "./bot-runtime";
-import { publishBotRequestUpdate } from "./bot-requests";
+import {
+  assertChannelDeletable,
+  channelAudience,
+  describeChannel,
+  publishChannelLifecycleEvent,
+  requireChannelManager,
+  requirePrivateChannelAdmin,
+} from "./channel-membership";
+export { setChannelArchived } from "./channel-membership";
 import { requireConversationMutationAccess } from "./conversation-mutation-access";
 import { ServiceError } from "./errors";
 import { canUserAccessAttachments } from "./messages";
@@ -42,8 +47,6 @@ import {
   requireTaskProjectInConversation,
   toPublicConversationThread,
 } from "./task-project-records";
-
-const channelLog = log.child({ component: "channels" });
 
 /** The `otherBot` of a DM whose other participant is a bot. */
 function directBot(user: {
@@ -432,8 +435,7 @@ export async function getConversationDetail(conversationId: string, userId: stri
     .select({
       userId: conversationParticipants.userId,
       role: conversationParticipants.role,
-      // A channel shows each member's current workspace role; the participant
-      // row only keeps the role they had when they were added.
+      // Public channels mirror the workspace. Private channels have their own roles.
       workspaceRole: workspaceMembers.role,
       joinedAt: conversationParticipants.joinedAt,
       userName: users.name,
@@ -469,7 +471,8 @@ export async function getConversationDetail(conversationId: string, userId: stri
     archivedAt: conv.archivedAt?.toISOString() ?? null,
     participants: participants.map((p) => ({
       userId: p.userId,
-      role: conv.type === "group" ? (p.workspaceRole ?? p.role) : p.role,
+      role: conv.type === "group" && !conv.isPrivate ? (p.workspaceRole ?? p.role) : p.role,
+      ...(conv.type === "group" && p.workspaceRole ? { workspaceRole: p.workspaceRole } : {}),
       joinedAt: p.joinedAt.toISOString(),
       user: {
         id: p.userId,
@@ -1344,13 +1347,21 @@ export async function createChannel(
           channelMembers.map((member) => ({
             conversationId: channel.id,
             userId: member.userId,
-            role: member.role,
+            // A private channel is run by its own admins, starting with its
+            // creator, not by whoever manages the workspace.
+            role: isPrivate
+              ? member.userId === userId
+                ? ("admin" as const)
+                : ("member" as const)
+              : member.role,
           })),
         );
       }
 
+      if (isPrivate) await requirePrivateChannelAdmin(tx, channel.id);
+
       return {
-        channel: toWorkspaceChannel(channel),
+        channel: await describeChannel(tx, channel),
         targetUserIds: channelMembers.map((member) => member.userId),
       };
     });
@@ -1451,10 +1462,10 @@ export async function renameChannel(
         .set({ name: normalized.slug, title: normalized.title })
         .where(eq(conversations.id, channel.id))
         .returning();
-      const targetUserIds = await channelLifecycleTargetUserIds(tx, updated);
+      const targetUserIds = await channelAudience(tx, updated);
 
       return {
-        channel: toWorkspaceChannel(updated),
+        channel: await describeChannel(tx, updated),
         targetUserIds,
         workspaceId: workspace.id,
       };
@@ -1479,8 +1490,6 @@ export async function deleteChannel(
   userId: string,
   options: { afterWorkspaceLocked?: () => Promise<void> } = {},
 ) {
-  const hermesDispatchCutoff = currentHermesDispatchTimeoutCutoff();
-
   const result = await db.transaction(async (tx) => {
     const [candidate] = await tx
       .select({ workspaceId: conversations.workspaceId })
@@ -1535,28 +1544,9 @@ export async function deleteChannel(
       channel.isPrivate,
     );
 
-    if (await hasActiveBotRuns(tx, channel.id, hermesDispatchCutoff)) {
-      throw new ServiceError(
-        "Wait for active bot runs to finish before deleting this channel",
-        409,
-      );
-    }
+    await assertChannelDeletable(tx, channel.id);
 
-    // Attachment rows own private object-store coordinates. Cascading them
-    // away would make their exact S3 versions impossible to clean up safely.
-    const [attachment] = await tx
-      .select({ id: attachments.id })
-      .from(attachments)
-      .where(eq(attachments.conversationId, channel.id))
-      .limit(1);
-    if (attachment) {
-      throw new ServiceError(
-        "Channels with attachments cannot be deleted",
-        409,
-      );
-    }
-
-    const targetUserIds = await channelLifecycleTargetUserIds(tx, channel);
+    const targetUserIds = await channelAudience(tx, channel);
     await tx.delete(conversations).where(eq(conversations.id, channel.id));
     return {
       ok: true as const,
@@ -1572,438 +1562,6 @@ export async function deleteChannel(
     channelId: result.deletedChannelId,
   });
   return { ok: result.ok, deletedChannelId: result.deletedChannelId };
-}
-
-type ChannelMutationOptions = { afterWorkspaceLocked?: () => Promise<void> };
-type DbTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
-
-/**
- * Add workspace members (people or bots) to a private channel. They can read
- * its whole history from then on. Public channels already hold everyone.
- */
-export async function addChannelMembers(
-  conversationId: string,
-  userIds: string[],
-  actorUserId: string,
-  options: ChannelMutationOptions = {},
-) {
-  const requestedUserIds = [...new Set(userIds)];
-  if (requestedUserIds.length === 0) {
-    throw new ServiceError("Pick at least one person to add", 400);
-  }
-
-  const result = await db.transaction(async (tx) => {
-    const { channel, workspaceId } = await lockChannelForManagement(
-      tx,
-      conversationId,
-      actorUserId,
-      options,
-    );
-    if (!channel.isPrivate) {
-      throw new ServiceError(
-        "Everyone in the workspace is already in a public channel",
-        400,
-      );
-    }
-
-    const candidates = await tx
-      .select({ userId: workspaceMembers.userId, role: workspaceMembers.role })
-      .from(workspaceMembers)
-      .where(
-        and(
-          eq(workspaceMembers.workspaceId, workspaceId),
-          inArray(workspaceMembers.userId, requestedUserIds),
-        ),
-      );
-    if (candidates.length !== requestedUserIds.length) {
-      throw new ServiceError(
-        "Every private channel member must belong to this workspace",
-        400,
-      );
-    }
-
-    const added = await tx
-      .insert(conversationParticipants)
-      .values(
-        candidates.map((member) => ({
-          conversationId: channel.id,
-          userId: member.userId,
-          role: member.role,
-        })),
-      )
-      .onConflictDoNothing()
-      .returning({ userId: conversationParticipants.userId });
-
-    return {
-      channel: toWorkspaceChannel(channel),
-      workspaceId,
-      addedUserIds: added.map((row) => row.userId),
-      targetUserIds: await channelLifecycleTargetUserIds(tx, channel),
-    };
-  });
-
-  if (result.addedUserIds.length > 0) {
-    await publishChannelLifecycleEvent(result.targetUserIds, {
-      type: "channel_members_added",
-      workspaceId: result.workspaceId,
-      channel: result.channel,
-      userIds: result.addedUserIds,
-    });
-  }
-  return { channel: result.channel, addedUserIds: result.addedUserIds };
-}
-
-/**
- * Remove someone from a private channel. Their participant row is the access
- * rule for every read and write, so access ends with this transaction; their
- * unread and followed-thread rows for the channel go with it.
- */
-export async function removeChannelMember(
-  conversationId: string,
-  targetUserId: string,
-  actorUserId: string,
-  options: ChannelMutationOptions = {},
-) {
-  const result = await db.transaction(async (tx) => {
-    const { channel, workspaceId } = await lockChannelForManagement(
-      tx,
-      conversationId,
-      actorUserId,
-      options,
-    );
-    if (!channel.isPrivate) {
-      throw new ServiceError(
-        "People cannot be removed from a public channel",
-        400,
-      );
-    }
-    if (targetUserId === actorUserId) {
-      throw new ServiceError("You cannot remove yourself from a channel", 400);
-    }
-    // Same hierarchy as removing someone from the workspace.
-    const roles = new Map(
-      (
-        await tx
-          .select({ userId: workspaceMembers.userId, role: workspaceMembers.role })
-          .from(workspaceMembers)
-          .where(
-            and(
-              eq(workspaceMembers.workspaceId, workspaceId),
-              inArray(workspaceMembers.userId, [actorUserId, targetUserId]),
-            ),
-          )
-      ).map((member) => [member.userId, member.role]),
-    );
-    const targetRole = roles.get(targetUserId);
-    if (targetRole === "owner") {
-      throw new ServiceError("The workspace owner cannot be removed", 403);
-    }
-    if (roles.get(actorUserId) === "admin" && targetRole === "admin") {
-      throw new ServiceError("Admins can only remove regular members", 403);
-    }
-
-    const [removed] = await tx
-      .delete(conversationParticipants)
-      .where(
-        and(
-          eq(conversationParticipants.conversationId, channel.id),
-          eq(conversationParticipants.userId, targetUserId),
-        ),
-      )
-      .returning({ userId: conversationParticipants.userId });
-    if (!removed) {
-      throw new ServiceError("This person is not in the channel", 404);
-    }
-
-    // What the removed member left open here can no longer be finished: a
-    // removed bot is refused when it tries to end its run, and nobody else may
-    // answer a request addressed to a removed person. Close both, as removing
-    // a bot from the workspace does, so they do not block archive or delete.
-    const now = new Date();
-    const [removedBot] = await tx
-      .select({ id: bots.id })
-      .from(bots)
-      .where(eq(bots.userId, targetUserId))
-      .limit(1);
-    if (removedBot) {
-      await tx
-        .update(botInvocations)
-        .set({
-          status: "cancelled",
-          error: "Bot removed from channel",
-          completedAt: now,
-          updatedAt: now,
-        })
-        .where(
-          and(
-            eq(botInvocations.conversationId, channel.id),
-            eq(botInvocations.botId, removedBot.id),
-            or(
-              inArray(botInvocations.status, ["queued", "running"]),
-              and(
-                eq(botInvocations.status, "claimed"),
-                sql`NULLIF(${botInvocations.responseJson}->'completion'->>'type', '') IS NULL`,
-                sql`COALESCE(${botInvocations.responseJson}->>'silent', 'false') <> 'true'`,
-              ),
-            ),
-          ),
-        );
-    }
-    const cancelledRequests = await tx
-      .update(botRequests)
-      .set({
-        status: "cancelled",
-        cancelReason: removedBot
-          ? "Bot removed from channel"
-          : "The person asked was removed from the channel",
-        updatedAt: now,
-      })
-      .where(
-        and(
-          eq(botRequests.conversationId, channel.id),
-          eq(botRequests.status, "open"),
-          removedBot
-            ? eq(botRequests.botId, removedBot.id)
-            : eq(botRequests.audienceUserId, targetUserId),
-        ),
-      )
-      .returning({ id: botRequests.id });
-
-    return {
-      channelId: channel.id,
-      workspaceId,
-      cancelledRequestIds: cancelledRequests.map((request) => request.id),
-      targetUserIds: [
-        ...(await channelLifecycleTargetUserIds(tx, channel)),
-        targetUserId,
-      ],
-    };
-  });
-
-  await publishChannelLifecycleEvent(result.targetUserIds, {
-    type: "channel_member_removed",
-    workspaceId: result.workspaceId,
-    channelId: result.channelId,
-    userId: targetUserId,
-  });
-  for (const requestId of result.cancelledRequestIds) {
-    try {
-      await publishBotRequestUpdate(requestId);
-    } catch (error) {
-      channelLog.warn({ err: error, requestId }, "channel.request_publish_failed");
-    }
-  }
-  return { ok: true as const, removedUserId: targetUserId };
-}
-
-/**
- * Archive or unarchive a channel. An archived channel keeps its members and
- * history (readable and searchable) but takes no new messages, reactions,
- * files or tasks: see requireConversationMutationAccess.
- */
-export async function setChannelArchived(
-  conversationId: string,
-  archived: boolean,
-  actorUserId: string,
-  options: ChannelMutationOptions = {},
-) {
-  const hermesDispatchCutoff = currentHermesDispatchTimeoutCutoff();
-
-  const result = await db.transaction(async (tx) => {
-    const { channel, workspaceId } = await lockChannelForManagement(
-      tx,
-      conversationId,
-      actorUserId,
-      options,
-    );
-    const targetUserIds = await channelLifecycleTargetUserIds(tx, channel);
-    if (Boolean(channel.archivedAt) === archived) {
-      return {
-        changed: false,
-        channel: toWorkspaceChannel(channel),
-        workspaceId,
-        targetUserIds,
-      };
-    }
-    // A run that is still going could not post its answer any more.
-    if (archived && (await hasActiveBotRuns(tx, channel.id, hermesDispatchCutoff))) {
-      throw new ServiceError(
-        "Wait for active bot runs to finish before archiving this channel",
-        409,
-      );
-    }
-
-    if (archived) {
-      // What is still queued at this point is a Hermes dispatch that already
-      // timed out (hasActiveBotRuns counts the rest). Its failure notice could
-      // not be posted into a read-only channel, so close it here.
-      const now = new Date();
-      await tx
-        .update(botInvocations)
-        .set({
-          status: "cancelled",
-          error: "Channel archived before the bot picked this up",
-          completedAt: now,
-          updatedAt: now,
-        })
-        .where(
-          and(
-            eq(botInvocations.conversationId, channel.id),
-            eq(botInvocations.status, "queued"),
-          ),
-        );
-    }
-
-    const [updated] = await tx
-      .update(conversations)
-      .set({ archivedAt: archived ? new Date() : null })
-      .where(eq(conversations.id, channel.id))
-      .returning();
-    return {
-      changed: true,
-      channel: toWorkspaceChannel(updated),
-      workspaceId,
-      targetUserIds,
-    };
-  });
-
-  if (result.changed) {
-    await publishChannelLifecycleEvent(result.targetUserIds, {
-      type: "channel_updated",
-      workspaceId: result.workspaceId,
-      channel: result.channel,
-    });
-  }
-  return result.channel;
-}
-
-/**
- * Lock order for managing a channel: workspace row, then the channel row, then
- * the caller's right to manage it. Message sends hold a shared lock on the
- * workspace row, so they never interleave with a membership or archive change.
- */
-async function lockChannelForManagement(
-  tx: DbTransaction,
-  conversationId: string,
-  actorUserId: string,
-  options: ChannelMutationOptions,
-) {
-  const [candidate] = await tx
-    .select({ workspaceId: conversations.workspaceId })
-    .from(conversations)
-    .where(
-      and(eq(conversations.id, conversationId), eq(conversations.type, "group")),
-    )
-    .limit(1);
-  if (!candidate?.workspaceId) {
-    throw new ServiceError("Channel not found", 404);
-  }
-
-  const [workspace] = await tx
-    .select({ id: workspaces.id })
-    .from(workspaces)
-    .where(eq(workspaces.id, candidate.workspaceId))
-    .for("update")
-    .limit(1);
-  if (!workspace) {
-    throw new ServiceError("Channel not found", 404);
-  }
-
-  await options.afterWorkspaceLocked?.();
-
-  const [channel] = await tx
-    .select()
-    .from(conversations)
-    .where(
-      and(
-        eq(conversations.id, conversationId),
-        eq(conversations.type, "group"),
-        eq(conversations.workspaceId, workspace.id),
-      ),
-    )
-    .for("update")
-    .limit(1);
-  if (!channel?.workspaceId) {
-    throw new ServiceError("Channel not found", 404);
-  }
-
-  await requireChannelManager(
-    tx,
-    workspace.id,
-    actorUserId,
-    channel.id,
-    channel.isPrivate,
-  );
-  return { channel, workspaceId: workspace.id };
-}
-
-/** A bot run that has not finished, or a message still waiting to start one. */
-async function hasActiveBotRuns(
-  tx: DbTransaction,
-  conversationId: string,
-  hermesDispatchCutoff: Date,
-) {
-  const [activeInvocation] = await tx
-    .select({ id: botInvocations.id })
-    .from(botInvocations)
-    .where(
-      and(
-        eq(botInvocations.conversationId, conversationId),
-        or(
-          and(
-            eq(botInvocations.status, "queued"),
-            or(
-              ne(botInvocations.adapterKind, "hermes"),
-              gt(botInvocations.createdAt, hermesDispatchCutoff),
-            ),
-          ),
-          eq(botInvocations.status, "running"),
-          and(
-            eq(botInvocations.status, "claimed"),
-            sql`NULLIF(${botInvocations.responseJson}->'completion'->>'type', '') IS NULL`,
-            sql`COALESCE(${botInvocations.responseJson}->>'silent', 'false') <> 'true'`,
-          ),
-        ),
-      ),
-    )
-    .limit(1);
-  if (activeInvocation) return true;
-
-  const [pendingTargetedEvent] = await pendingChatJobs(tx, conversationId);
-  return Boolean(pendingTargetedEvent);
-}
-
-type ChannelLifecycleEvent = Extract<
-  WsServerEvent,
-  {
-    type:
-      | "channel_created"
-      | "channel_renamed"
-      | "channel_deleted"
-      | "channel_updated"
-      | "channel_members_added"
-      | "channel_member_removed";
-  }
->;
-
-async function publishChannelLifecycleEvent(
-  targetUserIds: string[],
-  event: ChannelLifecycleEvent,
-) {
-  try {
-    await publishWsEventToUsers(targetUserIds, event);
-  } catch (error) {
-    // The channel mutation has already committed. Realtime fanout failure must
-    // not turn a successful REST mutation into an ambiguous client failure.
-    channelLog.warn(
-      {
-        err: error,
-        eventType: event.type,
-        workspaceId: event.workspaceId,
-      },
-      "channel.realtime_publish_failed",
-    );
-  }
 }
 
 function normalizeChannelName(name: string) {
@@ -2023,87 +1581,6 @@ function normalizeChannelName(name: string) {
     );
   }
   return { title, slug };
-}
-
-function toWorkspaceChannel(channel: typeof conversations.$inferSelect) {
-  if (!channel.workspaceId || !channel.name) {
-    throw new ServiceError("Channel data is incomplete", 500);
-  }
-  return {
-    id: channel.id,
-    workspaceId: channel.workspaceId,
-    name: channel.name,
-    title: channel.title,
-    isPrivate: channel.isPrivate,
-    archivedAt: channel.archivedAt?.toISOString() ?? null,
-    createdAt: channel.createdAt.toISOString(),
-    updatedAt: channel.updatedAt.toISOString(),
-  };
-}
-
-async function channelLifecycleTargetUserIds(
-  executor: Pick<typeof db, "select">,
-  channel: typeof conversations.$inferSelect,
-) {
-  if (channel.isPrivate) {
-    const participants = await executor
-      .select({ userId: conversationParticipants.userId })
-      .from(conversationParticipants)
-      .where(eq(conversationParticipants.conversationId, channel.id));
-    return participants.map((participant) => participant.userId);
-  }
-  const members = await executor
-    .select({ userId: workspaceMembers.userId })
-    .from(workspaceMembers)
-    .where(eq(workspaceMembers.workspaceId, channel.workspaceId!));
-  return members.map((member) => member.userId);
-}
-
-async function requireChannelManager(
-  executor: Pick<typeof db, "select">,
-  workspaceId: string,
-  userId: string,
-  conversationId: string,
-  isPrivate: boolean,
-) {
-  const [membership] = await executor
-    .select({ role: workspaceMembers.role })
-    .from(workspaceMembers)
-    .where(
-      and(
-        eq(workspaceMembers.workspaceId, workspaceId),
-        eq(workspaceMembers.userId, userId),
-      ),
-    )
-    .limit(1);
-
-  if (!membership) {
-    throw new ServiceError("You are not a member of this workspace", 403);
-  }
-  if (isPrivate) {
-    const [participant] = await executor
-      .select({ userId: conversationParticipants.userId })
-      .from(conversationParticipants)
-      .where(
-        and(
-          eq(conversationParticipants.conversationId, conversationId),
-          eq(conversationParticipants.userId, userId),
-        ),
-      )
-      .limit(1);
-    if (!participant) {
-      throw new ServiceError(
-        "You are not a participant of this conversation",
-        403,
-      );
-    }
-  }
-  if (membership.role !== "owner" && membership.role !== "admin") {
-    throw new ServiceError(
-      "Only workspace owners and admins can manage channels",
-      403,
-    );
-  }
 }
 
 function isUniqueViolation(error: unknown) {

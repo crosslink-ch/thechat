@@ -25,7 +25,7 @@ router ownership and platform startup remain in `routes/__root.tsx`.
 
 ```sh
 # From the repository root, after installing the pinned dependencies/browsers:
-pnpm exec playwright test --config packages/web/mobile-tests/playwright.config.mjs
+pnpm test:mobile
 ```
 
 The suite drives actual shared components in Chromium and WebKit at
