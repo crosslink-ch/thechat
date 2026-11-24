@@ -2,15 +2,16 @@ import { useEffect, useState, useSyncExternalStore } from "react";
 import { useMatches, useNavigate } from "@tanstack/react-router";
 import * as Dialog from "@radix-ui/react-dialog";
 import type { ChannelMemberRole, WorkspaceMember } from "@thechat/shared";
-import { Hash, Lock, UserPlus, X } from "lucide-react";
-import { useWorkspacesStore } from "../stores/workspaces";
+import { Archive, ArchiveRestore, Hash, Lock, UserPlus, X } from "lucide-react";
+import { defaultChannel, useWorkspacesStore } from "../stores/workspaces";
 import { useConversationsStore } from "../stores/conversations";
 import { useAuthStore } from "../stores/auth";
 import { channelAccess } from "../lib/channel-access";
 import { botAppearanceFor } from "../lib/bot-appearance";
+import { onSessionReset } from "../lib/session-boundary";
 import { Avatar } from "./Avatar";
 import { openDeleteChannelModal, openRenameChannelModal } from "./ChannelModal";
-import { buttonClass, dialogContentClass, dialogOverlayClass, dialogTitleClass, iconButtonClass } from "./ui";
+import { buttonClass, dialogContentClass, dialogOverlayClass, dialogTitleClass, iconButtonClass, inputClass } from "./ui";
 
 type Confirmation = "leave" | "visibility";
 type DetailsState = { channelId: string; confirm: Confirmation | null };
@@ -40,6 +41,7 @@ export function closeChannelDetailsModal() {
   detailsState = null;
   emit();
 }
+onSessionReset(closeChannelDetailsModal);
 
 function subscribe(listener: () => void) {
   listeners.add(listener);
@@ -51,6 +53,37 @@ const getSnapshot = () => detailsState;
 const sectionTitleClass = "text-[0.857rem] font-medium text-text-secondary";
 const noteClass = "text-[0.786rem] leading-5 text-text-placeholder";
 const panelClass = "rounded-lg border border-border bg-base px-3.5 py-3";
+const badgeClass =
+  "inline-flex shrink-0 items-center gap-1 rounded-md bg-white/[0.06] px-1.5 py-0.5 text-[0.714rem] font-medium text-text-muted";
+
+/** Workspace role and channel role, both shown: either one grants control. */
+function roleLabel(role: ChannelMemberRole, member: WorkspaceMember | undefined, isPrivate: boolean) {
+  if (member?.user.type === "bot") return "Bot";
+  const labels: string[] = [];
+  if (member?.role === "owner") labels.push("Workspace owner");
+  else if (member?.role === "admin") labels.push("Workspace admin");
+  if (isPrivate && role === "admin") labels.push("Channel admin");
+  return labels.length > 0 ? labels.join(" · ") : "Member";
+}
+
+/** Shown in place of the composer of an archived channel. */
+export function ArchivedChannelNotice({ onOpenDetails }: { onOpenDetails: () => void }) {
+  return (
+    <div
+      role="status"
+      data-testid="archived-channel-notice"
+      className="mx-5 mb-4 flex shrink-0 flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border border-border bg-surface px-3.5 py-3 text-[0.857rem] text-text-muted"
+    >
+      <Archive size={15} aria-hidden="true" className="shrink-0 text-text-dimmed" />
+      <span className="min-w-0 flex-1 basis-48">
+        This channel is archived. You can read and search its history, but not post.
+      </span>
+      <button type="button" className={buttonClass("secondary", "sm")} onClick={onOpenDetails}>
+        Channel details
+      </button>
+    </div>
+  );
+}
 
 export function ChannelDetailsModal() {
   const state = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
@@ -67,6 +100,7 @@ export function ChannelDetailsModal() {
   const [confirm, setConfirm] = useState<Confirmation | null>(null);
   const [adding, setAdding] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
+  const [filter, setFilter] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
@@ -74,6 +108,7 @@ export function ChannelDetailsModal() {
     setConfirm(state?.confirm ?? null);
     setAdding(false);
     setSelected(new Set());
+    setFilter("");
     setBusy(false);
     setError("");
   }, [state]);
@@ -91,11 +126,18 @@ export function ChannelDetailsModal() {
     channel.isPrivate
       ? (channel.members ?? []).map((entry) => ({ ...entry, member: byId.get(entry.userId) }))
       : activeWorkspace.members.map((member) => ({ userId: member.userId, role: "member", member }));
+  const query = filter.trim().toLowerCase();
   const candidates = channel.isPrivate
     ? activeWorkspace.members.filter(
-        (member) => !channel.members?.some((entry) => entry.userId === member.userId),
+        (member) =>
+          !channel.members?.some((entry) => entry.userId === member.userId) &&
+          (!query ||
+            member.user.name.toLowerCase().includes(query) ||
+            (member.user.email ?? "").toLowerCase().includes(query)),
       )
     : [];
+  // Archived: read-only and out of the active list until unarchived.
+  const archived = Boolean(channel.archivedAt);
   const people = rows.filter((row) => row.member?.user.type !== "bot");
   const lastPerson = people.length === 1 && people[0]!.userId === currentUserId;
   const Icon = channel.isPrivate ? Lock : Hash;
@@ -123,7 +165,9 @@ export function ChannelDetailsModal() {
       closeChannelDetailsModal();
       if (activeChannelId !== channelId) return;
       const channels = store().activeWorkspace?.channels ?? [];
-      const next = channels.find((item) => item.name === "general") ?? channels[0];
+      const next =
+        channels.find((item) => item.name === "general" && !item.archivedAt) ??
+        defaultChannel(channels);
       await navigate(next ? { to: "/channel/$id", params: { id: next.id } } : { to: "/" });
     });
 
@@ -137,7 +181,13 @@ export function ChannelDetailsModal() {
     run(async () => {
       await store().addChannelMembers(channel.id, [...selected]);
       setSelected(new Set());
+      setFilter("");
       setAdding(false);
+    });
+
+  const toggleArchived = () =>
+    run(async () => {
+      await store().setChannelArchived(channel.id, !archived);
     });
 
   return (
@@ -156,6 +206,7 @@ export function ChannelDetailsModal() {
             focusReturnTarget = null;
             if (target?.isConnected) target.focus();
           }}
+          data-testid="channel-details"
           className={`fixed left-1/2 top-1/2 z-50 flex max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] max-w-[520px] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden ${dialogContentClass}`}
         >
           <div className="flex items-start gap-3 px-5 pb-4 pt-5">
@@ -168,11 +219,22 @@ export function ChannelDetailsModal() {
               </Dialog.Title>
               <Dialog.Description asChild>
                 <p className="mt-1 text-[0.857rem] leading-5 text-text-muted">
+                  <span data-testid="channel-visibility">
+                    {channel.isPrivate ? "Private channel" : "Public channel"}
+                  </span>
                   {channel.isPrivate
-                    ? "Private channel. Only its members can see and open it."
-                    : "Public channel. Everyone in the workspace can see and open it."}
+                    ? ". Only its members can see and open it."
+                    : ". Everyone in the workspace can see and open it."}
                 </p>
               </Dialog.Description>
+              {archived && (
+                <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                  <span className={badgeClass} data-testid="channel-archived-badge">
+                    <Archive size={11} aria-hidden="true" />
+                    Archived
+                  </span>
+                </div>
+              )}
             </div>
             <Dialog.Close asChild>
               <button
@@ -230,7 +292,7 @@ export function ChannelDetailsModal() {
                 <section aria-label="Channel settings">
                   <h3 className={sectionTitleClass}>Settings</h3>
                   <div className="mt-2 flex flex-wrap gap-2">
-                    {access.canManage && (
+                    {access.canManage && !archived && (
                       <button
                         type="button"
                         className={buttonClass("secondary", "md")}
@@ -242,7 +304,8 @@ export function ChannelDetailsModal() {
                         Rename
                       </button>
                     )}
-                    {access.canManage && (channel.isPrivate || channel.name !== "general") && (
+                    {/* The server refuses visibility changes while archived. */}
+                    {access.canManage && !archived && (channel.isPrivate || channel.name !== "general") && (
                       <button type="button" className={buttonClass("secondary", "md")} onClick={() => setConfirm("visibility")}>
                         {channel.isPrivate ? "Make public" : "Make private"}
                       </button>
@@ -250,6 +313,12 @@ export function ChannelDetailsModal() {
                     {access.canLeave && (
                       <button type="button" className={buttonClass("secondary", "md")} onClick={() => setConfirm("leave")}>
                         Leave channel
+                      </button>
+                    )}
+                    {access.canManage && (
+                      <button type="button" disabled={busy} className={buttonClass("secondary", "md")} onClick={toggleArchived}>
+                        {archived ? <ArchiveRestore size={14} aria-hidden="true" /> : <Archive size={14} aria-hidden="true" />}
+                        {archived ? "Unarchive" : "Archive"}
                       </button>
                     )}
                     {access.canManage && (
@@ -265,6 +334,13 @@ export function ChannelDetailsModal() {
                       </button>
                     )}
                   </div>
+                  {access.canManage && (
+                    <p className={`mt-2 ${noteClass}`}>
+                      {archived
+                        ? "Archived channels are read-only and stay searchable. Unarchive to post again."
+                        : "Archiving makes the channel read-only and moves it out of the channel list. Its history stays readable and searchable. Deleting is permanent."}
+                    </p>
+                  )}
                 </section>
               )
             )}
@@ -290,9 +366,26 @@ export function ChannelDetailsModal() {
               </div>
 
               {adding && (
-                <div className={`mt-2 ${panelClass}`}>
+                <form
+                  aria-label="Add people"
+                  className={`mt-2 ${panelClass}`}
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    if (selected.size > 0) addSelected();
+                  }}
+                >
+                  <input
+                    autoFocus
+                    value={filter}
+                    onChange={(event) => setFilter(event.target.value)}
+                    placeholder="Search workspace members"
+                    aria-label="Search workspace members"
+                    className={`mb-2 ${inputClass}`}
+                  />
                   {candidates.length === 0 ? (
-                    <p className={noteClass}>Everyone in the workspace is already in this channel.</p>
+                    <p className={noteClass}>
+                      {query ? "No one matches." : "Everyone in the workspace is already in this channel."}
+                    </p>
                   ) : (
                     <ul className="max-h-40 overflow-y-auto">
                       {candidates.map((member) => (
@@ -323,7 +416,16 @@ export function ChannelDetailsModal() {
                   )}
                   <p className={`mt-2 ${noteClass}`}>People you add can read all messages in this channel, including earlier ones.</p>
                   <div className="mt-3 flex justify-end gap-2">
-                    <button type="button" disabled={busy} className={buttonClass("ghost", "md")} onClick={() => setAdding(false)}>
+                    <button
+                      type="button"
+                      disabled={busy}
+                      className={buttonClass("ghost", "md")}
+                      onClick={() => {
+                        setAdding(false);
+                        setFilter("");
+                        setSelected(new Set());
+                      }}
+                    >
                       Cancel
                     </button>
                     <button
@@ -335,10 +437,10 @@ export function ChannelDetailsModal() {
                       {busy ? "Adding..." : selected.size > 1 ? `Add ${selected.size} people` : "Add"}
                     </button>
                   </div>
-                </div>
+                </form>
               )}
 
-              <ul className="mt-2 divide-y divide-border/70 rounded-lg border border-border bg-base">
+              <ul className="mt-2 divide-y divide-border/70 rounded-lg border border-border bg-base" data-testid="channel-members">
                 {rows.map(({ userId, role, member }) => {
                   const name = member?.user.name ?? "Unknown member";
                   const isSelf = userId === currentUserId;
@@ -359,8 +461,10 @@ export function ChannelDetailsModal() {
                           {name}
                           {isSelf ? " (you)" : ""}
                         </span>
+                        {/* Left-aligned under the name, so every row's role starts at the same edge. */}
                         <span className="block truncate text-[0.75rem] text-text-placeholder">
-                          {isBot ? "Bot" : role === "admin" ? "Channel admin" : member?.user.email ?? "Member"}
+                          <span data-member-role>{roleLabel(role, member, channel.isPrivate)}</span>
+                          {!isBot && member?.user.email ? ` · ${member.user.email}` : ""}
                         </span>
                       </span>
                       {manageable && !isBot && (

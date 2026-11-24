@@ -111,6 +111,7 @@ export async function getWorkspaceDetail(workspaceId: string, userId: string) {
       name: conversations.name,
       title: conversations.title,
       isPrivate: conversations.isPrivate,
+      archivedAt: conversations.archivedAt,
       createdAt: conversations.createdAt,
       updatedAt: conversations.updatedAt,
     })
@@ -171,6 +172,7 @@ export async function getWorkspaceDetail(workspaceId: string, userId: string) {
       name: c.name,
       title: c.title,
       isPrivate: c.isPrivate,
+      archivedAt: c.archivedAt?.toISOString() ?? null,
       ...(c.isPrivate ? { members: privateMembers.get(c.id) ?? [] } : {}),
       createdAt: c.createdAt.toISOString(),
       updatedAt: c.updatedAt.toISOString(),

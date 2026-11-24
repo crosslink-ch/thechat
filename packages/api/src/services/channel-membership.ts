@@ -9,6 +9,8 @@ import { pendingChatJobs } from "../async/queue";
 import {
   attachments,
   botInvocations,
+  botRequests,
+  bots,
   conversationParticipants,
   conversations,
   users,
@@ -18,6 +20,7 @@ import {
 import { log } from "../logging";
 import { publishWsEventToUsers } from "../realtime";
 import { currentHermesDispatchTimeoutCutoff } from "./bot-runtime";
+import { publishBotRequestUpdate } from "./bot-requests";
 import { ServiceError } from "./errors";
 
 const channelLog = log.child({ component: "channels" });
@@ -93,6 +96,7 @@ export async function describeChannel(
     name: channel.name,
     title: channel.title,
     isPrivate: channel.isPrivate,
+    archivedAt: channel.archivedAt?.toISOString() ?? null,
     ...(members ? { members } : {}),
     createdAt: channel.createdAt.toISOString(),
     updatedAt: channel.updatedAt.toISOString(),
@@ -202,11 +206,8 @@ export async function requireChannelManager(
   }
 }
 
-/**
- * Refuses deletion while a bot is still working in the channel or while it
- * holds attachments. The caller must hold the channel row lock.
- */
-export async function assertChannelDeletable(tx: Tx, channelId: string) {
+/** An unfinished run, or a targeted message still waiting to start one. */
+async function hasActiveBotRuns(tx: Tx, channelId: string) {
   const hermesDispatchCutoff = currentHermesDispatchTimeoutCutoff();
   const [activeInvocation] = await tx
     .select({ id: botInvocations.id })
@@ -233,9 +234,17 @@ export async function assertChannelDeletable(tx: Tx, channelId: string) {
     )
     .limit(1);
 
+  if (activeInvocation) return true;
   const [pendingTargetedEvent] = await pendingChatJobs(tx, channelId);
+  return Boolean(pendingTargetedEvent);
+}
 
-  if (activeInvocation || pendingTargetedEvent) {
+/**
+ * Refuses deletion while a bot is still working in the channel or while it
+ * holds attachments. The caller must hold the channel row lock.
+ */
+export async function assertChannelDeletable(tx: Tx, channelId: string) {
+  if (await hasActiveBotRuns(tx, channelId)) {
     throw new ServiceError(
       "Wait for active bot runs to finish before deleting this channel",
       409,
@@ -458,6 +467,81 @@ export async function settlePrivateChannelsAfterWorkspaceDeparture(
   return deliveries;
 }
 
+/**
+ * Archive or unarchive a channel. An archived channel keeps its members and
+ * history (readable and searchable) but takes no new messages, reactions,
+ * files or tasks: see requireConversationMutationAccess.
+ */
+export async function setChannelArchived(
+  conversationId: string,
+  archived: boolean,
+  actorUserId: string,
+  options: MutationOptions = {},
+) {
+  const result = await db.transaction(async (tx) => {
+    const { channel, workspaceId } = await lockChannel(tx, conversationId, options);
+    await requireChannelManager(tx, workspaceId, actorUserId, channel.id, channel.isPrivate);
+    const targetUserIds = await channelAudience(tx, channel);
+    if (Boolean(channel.archivedAt) === archived) {
+      return {
+        changed: false,
+        channel: await describeChannel(tx, channel),
+        workspaceId,
+        targetUserIds,
+      };
+    }
+    // A run that is still going could not post its answer any more.
+    if (archived && (await hasActiveBotRuns(tx, channel.id))) {
+      throw new ServiceError(
+        "Wait for active bot runs to finish before archiving this channel",
+        409,
+      );
+    }
+
+    if (archived) {
+      // What is still queued at this point is a Hermes dispatch that already
+      // timed out (hasActiveBotRuns counts the rest). Its failure notice could
+      // not be posted into a read-only channel, so close it here.
+      const now = new Date();
+      await tx
+        .update(botInvocations)
+        .set({
+          status: "cancelled",
+          error: "Channel archived before the bot picked this up",
+          completedAt: now,
+          updatedAt: now,
+        })
+        .where(
+          and(
+            eq(botInvocations.conversationId, channel.id),
+            eq(botInvocations.status, "queued"),
+          ),
+        );
+    }
+
+    const [updated] = await tx
+      .update(conversations)
+      .set({ archivedAt: archived ? new Date() : null })
+      .where(eq(conversations.id, channel.id))
+      .returning();
+    return {
+      changed: true,
+      channel: await describeChannel(tx, updated!),
+      workspaceId,
+      targetUserIds,
+    };
+  });
+
+  if (result.changed) {
+    await publishChannelLifecycleEvent(result.targetUserIds, {
+      type: "channel_updated",
+      workspaceId: result.workspaceId,
+      channel: result.channel,
+    });
+  }
+  return result.channel;
+}
+
 /** Any member of a private channel can bring in other workspace members. */
 export async function addChannelMembers(
   conversationId: string,
@@ -601,6 +685,60 @@ export async function removeChannelMember(
       throw new ServiceError("That person is not in this channel", 404);
     }
 
+    // What the removed member left open here can no longer be finished: a
+    // removed bot is refused when it tries to end its run, and nobody else may
+    // answer a request addressed to a removed person. Close both, as removing
+    // a bot from the workspace does, so they do not block archive or delete.
+    const now = new Date();
+    const [removedBot] = await tx
+      .select({ id: bots.id })
+      .from(bots)
+      .where(eq(bots.userId, targetUserId))
+      .limit(1);
+    if (removedBot) {
+      await tx
+        .update(botInvocations)
+        .set({
+          status: "cancelled",
+          error: "Bot removed from channel",
+          completedAt: now,
+          updatedAt: now,
+        })
+        .where(
+          and(
+            eq(botInvocations.conversationId, channel.id),
+            eq(botInvocations.botId, removedBot.id),
+            or(
+              inArray(botInvocations.status, ["queued", "running"]),
+              and(
+                eq(botInvocations.status, "claimed"),
+                sql`NULLIF(${botInvocations.responseJson}->'completion'->>'type', '') IS NULL`,
+                sql`COALESCE(${botInvocations.responseJson}->>'silent', 'false') <> 'true'`,
+              ),
+            ),
+          ),
+        );
+    }
+    const cancelledRequests = await tx
+      .update(botRequests)
+      .set({
+        status: "cancelled",
+        cancelReason: removedBot
+          ? "Bot removed from channel"
+          : "The person asked was removed from the channel",
+        updatedAt: now,
+      })
+      .where(
+        and(
+          eq(botRequests.conversationId, channel.id),
+          eq(botRequests.status, "open"),
+          removedBot
+            ? eq(botRequests.botId, removedBot.id)
+            : eq(botRequests.audienceUserId, targetUserId),
+        ),
+      )
+      .returning({ id: botRequests.id });
+
     const settled = await settlePrivateChannelAfterDeparture(tx, channel, {
       strict: true,
     });
@@ -608,6 +746,7 @@ export async function removeChannelMember(
       workspaceId,
       channelId: channel.id,
       deleted: settled.deleted,
+      cancelledRequestIds: cancelledRequests.map((request) => request.id),
       remainingUserIds: settled.remainingUserIds,
       channel: settled.deleted ? null : await describeChannel(tx, channel),
     };
@@ -631,6 +770,13 @@ export async function removeChannelMember(
         : gone,
     },
   ]);
+  for (const requestId of result.cancelledRequestIds) {
+    try {
+      await publishBotRequestUpdate(requestId);
+    } catch (error) {
+      channelLog.warn({ err: error, requestId }, "channel.request_publish_failed");
+    }
+  }
   return { ok: true as const, channelDeleted: result.deleted, channel: result.channel };
 }
 
@@ -733,6 +879,9 @@ export async function setChannelVisibility(
         joined: [] as string[],
         existing: [] as string[],
       };
+    }
+    if (channel.archivedAt) {
+      throw new ServiceError("Unarchive this channel before changing its visibility", 409);
     }
     if (isPrivate && channel.name === "general") {
       // New workspace members land here; it is the one channel all can rely on.

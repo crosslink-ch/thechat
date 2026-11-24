@@ -105,7 +105,7 @@ export type WsEvents = {
     workspaceId: string;
     channel: WorkspaceChannel;
   };
-  /** Members or visibility changed. */
+  /** Members, visibility or archive state changed. */
   "ws:channel_updated": {
     workspaceId: string;
     channel: WorkspaceChannel;

@@ -164,6 +164,8 @@ export interface WorkspaceChannel {
   name: string;
   title: string | null;
   isPrivate: boolean;
+  /** Set while the channel is archived: read-only, out of the active list. */
+  archivedAt: string | null;
   /**
    * Who is in a private channel, oldest member first. Absent for public
    * channels, which always contain the whole workspace.
@@ -464,6 +466,8 @@ export interface DirectConversation {
 export interface ConversationParticipantPublic {
   userId: string;
   role: WorkspaceMemberRole;
+  /** Current workspace role in a channel; private channel roles are independent. */
+  workspaceRole?: WorkspaceMemberRole;
   joinedAt: string;
   user: AuthUser;
   bot?: {
@@ -481,6 +485,7 @@ export interface ConversationDetail {
   name: string | null;
   title: string | null;
   isPrivate: boolean;
+  archivedAt: string | null;
   participants: ConversationParticipantPublic[];
 }
 
@@ -1093,7 +1098,7 @@ export type WsServerEvent =
       channel: WorkspaceChannel;
     }
   | {
-      // Visibility or membership changed; sent to everyone still in it.
+      // Visibility, membership, or archive state changed; sent to its members.
       type: "channel_updated";
       workspaceId: string;
       channel: WorkspaceChannel;

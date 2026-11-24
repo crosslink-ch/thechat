@@ -18,7 +18,7 @@ const participant = {
   bot: { id: "bot-1", kind: "hermes" as const, avatar: { shape: "ghost", color: "#00B894" } as BotAppearance },
 };
 const detail: ConversationDetail = {
-  id: "dm-1", type: "direct", workspaceId: null, name: null, title: null, isPrivate: false,
+  id: "dm-1", type: "direct", workspaceId: null, name: null, title: null, isPrivate: false, archivedAt: null,
   participants: [participant],
 };
 const selectAppearance = (avatar: BotAppearance) => useWorkspacesStore.setState({

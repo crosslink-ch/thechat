@@ -37,6 +37,7 @@ import {
   requireChannelManager,
   requirePrivateChannelAdmin,
 } from "./channel-membership";
+export { setChannelArchived } from "./channel-membership";
 import { requireConversationMutationAccess } from "./conversation-mutation-access";
 import { ServiceError } from "./errors";
 import { canUserAccessAttachments } from "./messages";
@@ -434,6 +435,8 @@ export async function getConversationDetail(conversationId: string, userId: stri
     .select({
       userId: conversationParticipants.userId,
       role: conversationParticipants.role,
+      // Public channels mirror the workspace. Private channels have their own roles.
+      workspaceRole: workspaceMembers.role,
       joinedAt: conversationParticipants.joinedAt,
       userName: users.name,
       userEmail: users.email,
@@ -448,7 +451,15 @@ export async function getConversationDetail(conversationId: string, userId: stri
     .from(conversationParticipants)
     .innerJoin(users, eq(conversationParticipants.userId, users.id))
     .leftJoin(bots, eq(bots.userId, users.id))
-    .where(eq(conversationParticipants.conversationId, conversationId));
+    .leftJoin(
+      workspaceMembers,
+      and(
+        eq(workspaceMembers.workspaceId, conv.workspaceId ?? ""),
+        eq(workspaceMembers.userId, conversationParticipants.userId),
+      ),
+    )
+    .where(eq(conversationParticipants.conversationId, conversationId))
+    .orderBy(asc(conversationParticipants.joinedAt), asc(users.name));
 
   return {
     id: conv.id,
@@ -457,9 +468,11 @@ export async function getConversationDetail(conversationId: string, userId: stri
     name: conv.name,
     title: conv.title,
     isPrivate: conv.isPrivate,
+    archivedAt: conv.archivedAt?.toISOString() ?? null,
     participants: participants.map((p) => ({
       userId: p.userId,
-      role: p.role,
+      role: conv.type === "group" && !conv.isPrivate ? (p.workspaceRole ?? p.role) : p.role,
+      ...(conv.type === "group" && p.workspaceRole ? { workspaceRole: p.workspaceRole } : {}),
       joinedAt: p.joinedAt.toISOString(),
       user: {
         id: p.userId,
@@ -1426,6 +1439,9 @@ export async function renameChannel(
         channel.id,
         channel.isPrivate,
       );
+      if (channel.archivedAt) {
+        throw new ServiceError("Unarchive this channel before renaming it", 409);
+      }
 
       const [existing] = await tx
         .select({ id: conversations.id })

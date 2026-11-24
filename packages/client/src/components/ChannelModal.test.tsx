@@ -26,6 +26,7 @@ const general: WorkspaceChannel = {
   name: "general",
   title: "General",
   isPrivate: false,
+  archivedAt: null,
   createdAt: "2026-01-01",
   updatedAt: "2026-01-01",
 };
@@ -36,6 +37,7 @@ const product: WorkspaceChannel = {
   name: "product",
   title: "Product",
   isPrivate: false,
+  archivedAt: null,
   createdAt: "2026-01-02",
   updatedAt: "2026-01-02",
 };

@@ -8,7 +8,7 @@ const member = (userId: string, role: WorkspaceMember["role"]): WorkspaceMember 
 });
 const workspace = [member("owner", "owner"), member("admin", "admin"), member("ann", "member"), member("ben", "member")];
 const channel = (overrides: Partial<WorkspaceChannel>): WorkspaceChannel => ({
-  id: "c", workspaceId: "w", name: "c", title: "C", isPrivate: false,
+  id: "c", workspaceId: "w", name: "c", title: "C", isPrivate: false, archivedAt: null,
   createdAt: "2026-01-01", updatedAt: "2026-01-01", ...overrides,
 });
 const open = channel({});

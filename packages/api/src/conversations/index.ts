@@ -29,6 +29,7 @@ import {
   MAX_CHANNEL_MEMBER_BATCH,
   addChannelMembers,
   removeChannelMember,
+  setChannelArchived,
   setChannelMemberRole,
   setChannelVisibility,
 } from "../services/channel-membership";
@@ -291,6 +292,19 @@ export const conversationRoutes = new Elysia({ prefix: "/conversations" })
         throw e;
       }
     },
+  )
+
+  // Archive: read-only and out of the active list. History stays readable.
+  .post("/channel/:conversationId/archive", async ({ params, user, set }) =>
+    handleServiceErrors(set, () =>
+      setChannelArchived(params.conversationId, true, user.id),
+    ),
+  )
+
+  .post("/channel/:conversationId/unarchive", async ({ params, user, set }) =>
+    handleServiceErrors(set, () =>
+      setChannelArchived(params.conversationId, false, user.id),
+    ),
   )
 
   // List task threads for a conversation

@@ -1,6 +1,6 @@
 import { isAuthenticated } from "../lib/auth-identity";
 import { useMentionNames } from "../hooks/useMentionNames";
-import { Fragment, useRef, useEffect, useCallback, useMemo, useLayoutEffect } from "react";
+import { Fragment, useRef, useEffect, useCallback, useMemo, useLayoutEffect, type ReactNode } from "react";
 import { InputBar, type InputSendResult } from "./InputBar";
 import { Markdown } from "./Markdown";
 import { useAutoScroll } from "../hooks/useAutoScroll";
@@ -64,6 +64,8 @@ interface ChannelChatViewProps {
   openThreadRootId?: string | null;
   /** Roots of followed threads with unread replies. */
   unreadThreadRootIds?: ReadonlySet<string>;
+  /** Shown instead of the composer when the conversation takes no messages. */
+  readOnlyNotice?: ReactNode;
 }
 
 export function ChannelChatView({
@@ -89,6 +91,7 @@ export function ChannelChatView({
   onOpenThread,
   openThreadRootId = null,
   unreadThreadRootIds,
+  readOnlyNotice,
 }: ChannelChatViewProps) {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const { isAtBottom, pauseAutoScroll, scrollToBottom, shouldFollowBottom } =
@@ -268,19 +271,21 @@ export function ChannelChatView({
         )}
       </div>
       <MessageSendError error={sendError} />
-      <InputBar
-        convId={undefined}
-        draftKey={draftKey ?? `channel:${conversationId ?? scrollScopeKey}`}
-        optimisticSend
-        onSend={(content, _images, attachmentIds) =>
-          handleSend(content, attachmentIds)
-        }
-        onStop={noop}
-        mentions={mentions}
-        sharedUpload={
-          conversationId && isAuthenticated(token) ? { conversationId, token: token ?? null } : undefined
-        }
-      />
+      {readOnlyNotice ?? (
+        <InputBar
+          convId={undefined}
+          draftKey={draftKey ?? `channel:${conversationId ?? scrollScopeKey}`}
+          optimisticSend
+          onSend={(content, _images, attachmentIds) =>
+            handleSend(content, attachmentIds)
+          }
+          onStop={noop}
+          mentions={mentions}
+          sharedUpload={
+            conversationId && isAuthenticated(token) ? { conversationId, token: token ?? null } : undefined
+          }
+        />
+      )}
     </>
   );
 }
