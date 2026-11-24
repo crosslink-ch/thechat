@@ -16,6 +16,7 @@ async function shot(page: Page, name: string) {
 
 /** Create "My Channel" through the sidebar's create dialog, as a person would. */
 async function createMyChannel(page: Page) {
+  const previousURL = page.url();
   await openNavigation(page);
   await page.getByRole('button', { name: 'Create channel', exact: true }).click();
   const dialog = page.getByRole('dialog');
@@ -25,6 +26,7 @@ async function createMyChannel(page: Page) {
   );
   await dialog.getByRole('button', { name: 'Create channel', exact: true }).click();
   await expect(dialog).toHaveCount(0);
+  await expect(page).not.toHaveURL(previousURL);
   await expect(page).toHaveURL(/\/channel\/[0-9a-f-]{36}/);
   return /\/channel\/([0-9a-f-]{36})/.exec(page.url())![1]!;
 }
@@ -49,8 +51,8 @@ test('a channel created as "My Channel" reads as My Channel everywhere people se
   await expect(sidebar.locator(`[data-channel-id="${channelId}"]`)).toHaveText('#My Channel');
   await expect(sidebar.locator(`[data-channel-id="${f.channel.id}"]`)).toHaveText('#General');
   const trigger = page.getByTestId('channel-details-trigger');
-  await expect(trigger).toHaveText('#My Channel');
-  await expect(page.getByRole('button', { name: 'My Channel, open channel details' })).toBeVisible();
+  await expect(trigger).toContainText('#My Channel');
+  await expect(trigger).toHaveAccessibleName(/^Channel details: My Channel, \d+ members?$/);
   await expect(page.getByText('my-channel', { exact: true })).toHaveCount(0);
   await shot(page, 'sidebar-header-desktop.png');
 
@@ -136,7 +138,7 @@ test('phones show the title in the navigation and the header too', async ({ page
   await expect(page).toHaveURL(new RegExp(`/channel/${f.channel.id}`));
   const channelId = await createMyChannel(page);
 
-  await expect(page.getByTestId('channel-details-trigger')).toHaveText('#My Channel');
+  await expect(page.getByTestId('channel-details-trigger')).toContainText('#My Channel');
   await expect(page.getByText('No messages yet. Start the conversation!')).toBeVisible();
   await shot(page, `header-${info.project.name}.png`);
   await openNavigation(page);

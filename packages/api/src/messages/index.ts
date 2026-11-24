@@ -13,23 +13,37 @@ import {
 import { publishWsEventToUsers } from "../realtime";
 import { setMessageReaction } from "../services/message-reactions";
 import {
+  messageBodyFields,
+  messageBodyFromRequest,
+  messageBodyHasText,
+} from "../services/message-parts";
+import {
   setHttpResponseStatus,
   withHttpServerSpan,
 } from "../observability";
 
 const sendSchema = z.object({
   clientMessageId: z.string().min(1).max(255).optional(),
-  content: z.string().max(100_000).default(""),
+  /** Legacy text, or `contentFormat: "parts-v1"` with `parts` (never both). */
+  ...messageBodyFields,
   threadId: z.string().uuid().nullable().optional(),
   /** Reply in this message's thread (Slack-style reply threads). */
   parentMessageId: z.string().uuid().nullable().optional(),
   /** Also show the reply in the conversation's main timeline. */
   alsoSendToConversation: z.boolean().optional(),
   attachmentIds: z.array(z.string().uuid()).max(25).default([]),
-}).refine(
-  (value) => value.content.trim().length > 0 || value.attachmentIds.length > 0,
-  { message: "Message text or at least one attachment is required" },
-);
+}).transform((value, ctx) => {
+  const resolved = messageBodyFromRequest(value);
+  if ("error" in resolved) {
+    ctx.addIssue({ code: "custom", message: resolved.error });
+    return z.NEVER;
+  }
+  if (!messageBodyHasText(resolved.body) && value.attachmentIds.length === 0) {
+    ctx.addIssue({ code: "custom", message: "Message text or at least one attachment is required" });
+    return z.NEVER;
+  }
+  return { ...value, body: resolved.body };
+});
 
 function isTruthyQueryValue(value: unknown) {
   return value === "true" || value === "1" || value === true;
@@ -201,7 +215,7 @@ export const messageRoutes = new Elysia({ prefix: "/messages" })
             params.conversationId,
             user.id,
             user.name,
-            parsed.data.content,
+            parsed.data.body,
             {
               threadId: parsed.data.parentMessageId
                 ? parsed.data.threadId

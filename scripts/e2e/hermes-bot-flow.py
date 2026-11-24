@@ -98,7 +98,9 @@ PG_CONTAINER = os.environ.get(
 REDIS_CONTAINER = os.environ.get(
     "THECHAT_E2E_REDIS_CONTAINER", f"thechat-hermes-e2e-redis-{RUN_ID}"
 )
-HERMES_SOURCE_DIR = Path(os.environ.get("HERMES_E2E_SOURCE_DIR", "/home/bruno/projects/hermes2"))
+HERMES_SOURCE_DIR = Path(
+    os.environ.get("HERMES_E2E_SOURCE_DIR", str(ROOT.parent / "hermes-agent"))
+)
 HERMES_HOME_ROOT = Path(
     os.environ.get("HERMES_E2E_HOME", str(EVIDENCE_ROOT / "hermes-home"))
 )
@@ -624,6 +626,15 @@ def start_hermes_gateway(
     return proc
 
 
+def migrate_database(env: dict[str, str]) -> None:
+    """Apply the app migrations and the pg-boss schema the API and worker require."""
+    run([PNPM, "--dir", "packages/api", "exec", "drizzle-kit", "migrate"], env=env)
+    run(
+        [BUN, "run", "packages/api/src/scripts/queue-setup.ts"],
+        env=env | {"DATABASE_URL": DATABASE_URL},
+    )
+
+
 def start_api(
     env: dict[str, str], *, refuse_collision: bool = True
 ) -> subprocess.Popen:
@@ -833,7 +844,7 @@ def main():
         start_postgres()
         start_redis()
 
-        run([PNPM, "--dir", "packages/api", "exec", "drizzle-kit", "migrate"], env=env)
+        migrate_database(env)
         api_proc = start_api(env)
         worker_proc = start_worker(env)
 

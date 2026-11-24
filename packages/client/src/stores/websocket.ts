@@ -11,6 +11,7 @@ import {
 } from "../lib/telemetry";
 import { wsEvents } from "../lib/ws-events";
 import { usePresenceStore } from "./presence";
+import { messageRequestBody, type MessageInput } from "../lib/composer-parts";
 
 const WS_URL = isWeb && __WEB_WS_URL__ ? __WEB_WS_URL__ : `${API_URL.replace(/^http/, "ws")}/ws`;
 
@@ -22,9 +23,10 @@ interface WebSocketStore {
   reconnecting: boolean;
   connect: (token: string | null) => void;
   disconnect: () => void;
+  /** `content` is plain text or a composer document (mentions by user ID). */
   sendMessage: (
     conversationId: string,
-    content: string,
+    content: MessageInput,
     threadId?: string | null,
     clientMessageId?: string,
     attachmentIds?: string[],
@@ -275,6 +277,7 @@ function doConnect() {
         workspaceId: event.workspaceId,
         userId: event.userId,
         name: event.name,
+        avatar: event.avatar,
         botAvatar: event.botAvatar,
       });
     } else if (event.type === "member_removed") {
@@ -292,15 +295,20 @@ function doConnect() {
         workspaceId: event.workspaceId,
         channel: event.channel,
       });
-    } else if (event.type === "channel_deleted") {
-      wsEvents.emit("ws:channel_deleted", {
-        workspaceId: event.workspaceId,
-        channelId: event.channelId,
-      });
     } else if (event.type === "channel_updated") {
       wsEvents.emit("ws:channel_updated", {
         workspaceId: event.workspaceId,
         channel: event.channel,
+      });
+    } else if (event.type === "channel_joined") {
+      wsEvents.emit("ws:channel_joined", {
+        workspaceId: event.workspaceId,
+        channel: event.channel,
+      });
+    } else if (event.type === "channel_deleted") {
+      wsEvents.emit("ws:channel_deleted", {
+        workspaceId: event.workspaceId,
+        channelId: event.channelId,
       });
     } else if (event.type === "channel_members_added") {
       wsEvents.emit("ws:channel_members_added", {
@@ -433,7 +441,7 @@ export const useWebSocketStore = create<WebSocketStore>()(() => ({
 
   sendMessage: (
     conversationId: string,
-    content: string,
+    content: MessageInput,
     threadId?: string | null,
     clientMessageId?: string,
     attachmentIds?: string[],
@@ -448,7 +456,7 @@ export const useWebSocketStore = create<WebSocketStore>()(() => ({
     const event: WsClientEvent = {
       type: "send_message",
       conversationId,
-      content,
+      ...messageRequestBody(content),
       threadId: threadId ?? null,
       clientMessageId,
       attachmentIds,

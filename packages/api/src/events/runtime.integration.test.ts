@@ -25,6 +25,21 @@ async function waitFor(
   }
   throw Error("Queue condition timed out");
 }
+/** Chat events that other test files left in the shared queue are fetched
+ * first (each worker slot takes one job per poll). Give the runtime time to
+ * clear those already due before timing a job this test cannot prioritise;
+ * best effort, since a dirty database may hold jobs it never fetches. */
+async function drainDueChatJobs(timeout = 15_000) {
+  const end = Date.now() + timeout;
+  while (Date.now() < end) {
+    const [due] = await db.execute(
+      sql`select count(*)::int as count from pgboss.job where name=${QUEUES.chat}
+          and state in ('created','retry') and start_after <= now()`,
+    );
+    if (due.count === 0) return;
+    await Bun.sleep(50);
+  }
+}
 
 test("slow attachment and slow chat do not hold free slots or independent queues; ack follows effect", async () => {
   const boss = await getQueueClient();
@@ -64,9 +79,11 @@ test("slow attachment and slow chat do not hold free slots or independent queues
   try {
     await boss.send(QUEUES.attachments, slow, { id: slow.id, priority: 100 });
     await waitFor(() => started.has(slow.id));
-    await boss.send(QUEUES.chat, chat, { id: chat.id, singletonKey: chat.id });
+    // Priority, like the attachment above: chat events other test files left
+    // in the shared queue must not delay this test's own jobs.
+    await boss.send(QUEUES.chat, chat, { id: chat.id, singletonKey: chat.id, priority: 100 });
     await waitFor(() => started.has(chat.id));
-    await boss.send(QUEUES.chat, fast, { id: fast.id, singletonKey: fast.id });
+    await boss.send(QUEUES.chat, fast, { id: fast.id, singletonKey: fast.id, priority: 100 });
     await waitFor(
       async () =>
         (await boss.findJobs(QUEUES.chat, { id: fast.id }))[0]?.state ===
@@ -110,7 +127,8 @@ test("permanent poison is audited once and operator replay retains the original 
   await runtime.start();
   let replayId: string | undefined;
   try {
-    await boss.send(QUEUES.chat, item, { id: item.id, singletonKey: item.id });
+    await drainDueChatJobs();
+    await boss.send(QUEUES.chat, item, { id: item.id, singletonKey: item.id, priority: 100 });
     await waitFor(
       async () =>
         (

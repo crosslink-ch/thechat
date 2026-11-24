@@ -115,6 +115,7 @@ vi.mock("../components/ChatHeader", () => ({ ChatHeader: () => null }));
 vi.mock("../CommandPalette", () => ({ CommandPalette: () => null }));
 vi.mock("../components/WorkspaceModal", () => ({ WorkspaceModal: () => null }));
 vi.mock("../components/ChannelModal", () => ({ ChannelModal: () => null }));
+vi.mock("../components/ChannelDetailsModal", () => ({ ChannelDetailsModal: () => null }));
 vi.mock("../components/HermesBotModal", () => ({ HermesBotModal: () => null }));
 vi.mock("../components/AuthModal", () => ({
   AuthModal: () => null,

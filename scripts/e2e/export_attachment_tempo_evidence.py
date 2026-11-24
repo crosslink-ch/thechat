@@ -256,7 +256,7 @@ def assert_direct_parent(trace: dict[str, Any], parent_name: str, child_name: st
 def assert_outbox_handler_chain(trace: dict[str, Any], leaf_name: str) -> None:
     assert_direct_parent(
         trace,
-        "domain_event.outbox.consume",
+        "domain_event.consume",
         "domain_event.handle",
     )
     assert_direct_parent(trace, "domain_event.handle", leaf_name)
@@ -344,9 +344,8 @@ EXPECTED_KINDS: dict[str, str] = {
     "HTTP POST /messages/:conversationId": "SPAN_KIND_SERVER",
     "message.send": "SPAN_KIND_INTERNAL",
     "attachment.bind": "SPAN_KIND_INTERNAL",
-    "domain_event.outbox.enqueue": "SPAN_KIND_PRODUCER",
-    "domain_event.outbox.claim": "SPAN_KIND_CLIENT",
-    "domain_event.outbox.consume": "SPAN_KIND_CONSUMER",
+    "domain_event.enqueue": "SPAN_KIND_PRODUCER",
+    "domain_event.consume": "SPAN_KIND_CONSUMER",
     "domain_event.handle": "SPAN_KIND_INTERNAL",
     "realtime.publish": "SPAN_KIND_PRODUCER",
     "realtime.receive": "SPAN_KIND_CONSUMER",
@@ -432,46 +431,6 @@ def assert_identity_and_parent_invariants(
     }
 
 
-def assert_no_idle_claim_spans(all_spans: list[dict[str, Any]]) -> int:
-    claim_spans = [
-        span for span in all_spans if span["name"] == "domain_event.outbox.claim"
-    ]
-    if not claim_spans:
-        raise AssertionError("no non-empty outbox claim spans were exported")
-    productive = 0
-    invalid: list[str] = []
-    for span in claim_spans:
-        attributes = span["attributes"]
-        claimed_count = attributes.get("thechat.outbox.claimed_count")
-        outcome = attributes.get("thechat.outbox.outcome")
-        duration_ms = attributes.get("thechat.outbox.claim_duration_ms", 0)
-        if isinstance(claimed_count, int) and claimed_count > 0 and outcome == "claimed":
-            productive += 1
-            continue
-        if (
-            claimed_count == 0
-            and outcome == "slow_empty"
-            and isinstance(duration_ms, (int, float))
-            and duration_ms >= 100
-        ):
-            continue
-        if (
-            claimed_count == 0
-            and outcome == "error"
-            and span.get("status", {}).get("code") == ERROR
-        ):
-            continue
-        invalid.append(span.get("span_id", "unknown"))
-    if invalid:
-        raise AssertionError(
-            "idle/zero-result outbox claim span was exported without a slow/error outcome: "
-            + ", ".join(invalid[:5])
-        )
-    if productive == 0:
-        raise AssertionError("no productive outbox claim span was exported")
-    return productive
-
-
 def assert_graph(
     traces: list[dict[str, Any]],
     run_id: str,
@@ -523,8 +482,8 @@ def assert_graph(
         "HTTP POST /messages/:conversationId",
         "message.send",
         "attachment.bind",
-        "domain_event.outbox.enqueue",
-        "domain_event.outbox.consume",
+        "domain_event.enqueue",
+        "domain_event.consume",
         "realtime.publish",
         "realtime.receive",
         "realtime.websocket.send",
@@ -549,8 +508,8 @@ def assert_graph(
         ("message.send.request", "HTTP POST /messages/:conversationId"),
         ("HTTP POST /messages/:conversationId", "message.send"),
         ("message.send", "attachment.bind"),
-        ("message.send", "domain_event.outbox.enqueue"),
-        ("domain_event.outbox.enqueue", "domain_event.outbox.consume"),
+        ("message.send", "domain_event.enqueue"),
+        ("domain_event.enqueue", "domain_event.consume"),
         ("message.send", "realtime.publish"),
         ("realtime.publish", "realtime.receive"),
         ("realtime.receive", "realtime.websocket.send"),
@@ -580,7 +539,7 @@ def assert_graph(
         trace
         for trace in successful_message_traces
         if "attachment.bind" not in {span["name"] for span in trace["spans"]}
-        and "domain_event.outbox.enqueue"
+        and "domain_event.enqueue"
         not in {span["name"] for span in trace["spans"]}
     ]
     if len(retry_traces) != 1:
@@ -712,8 +671,8 @@ def assert_graph(
         "attachment.complete.request",
         "HTTP POST /attachments/:id/complete",
         "attachment.complete",
-        "domain_event.outbox.enqueue",
-        "domain_event.outbox.consume",
+        "domain_event.enqueue",
+        "domain_event.consume",
         "domain_event.handle",
         "attachment.validate_promote",
         "attachment.validation.wait",
@@ -730,8 +689,8 @@ def assert_graph(
         ("attachment.prepare", "attachment.complete.request"),
         ("attachment.complete.request", "HTTP POST /attachments/:id/complete"),
         ("HTTP POST /attachments/:id/complete", "attachment.complete"),
-        ("attachment.complete", "domain_event.outbox.enqueue"),
-        ("domain_event.outbox.enqueue", "domain_event.outbox.consume"),
+        ("attachment.complete", "domain_event.enqueue"),
+        ("domain_event.enqueue", "domain_event.consume"),
         ("attachment.prepare", "attachment.validation.wait"),
         ("attachment.validation.wait", "attachment.status.request"),
         ("attachment.status.request", "HTTP GET /attachments/:id"),
@@ -751,8 +710,8 @@ def assert_graph(
         "attachment.cancel.request",
         "HTTP DELETE /attachments/:id",
         "attachment.delete.request",
-        "domain_event.outbox.enqueue",
-        "domain_event.outbox.consume",
+        "domain_event.enqueue",
+        "domain_event.consume",
         "domain_event.handle",
         "attachment.delete_objects",
     }
@@ -768,8 +727,8 @@ def assert_graph(
     cleanup_edges = (
         ("attachment.cancel.request", "HTTP DELETE /attachments/:id"),
         ("HTTP DELETE /attachments/:id", "attachment.delete.request"),
-        ("attachment.delete.request", "domain_event.outbox.enqueue"),
-        ("domain_event.outbox.enqueue", "domain_event.outbox.consume"),
+        ("attachment.delete.request", "domain_event.enqueue"),
+        ("domain_event.enqueue", "domain_event.consume"),
     )
     for trace in cleanup_traces:
         for parent, child in cleanup_edges:
@@ -790,8 +749,6 @@ def assert_graph(
         ):
             raise AssertionError("successful attachment cleanup was error-marked or noisy")
 
-    claim_span_count = assert_no_idle_claim_spans(all_spans)
-
     error_spans = [span for span in all_spans if span["status"]["code"] == ERROR]
     missing_outcome = [span["name"] for span in error_spans if span_outcome(span) is None]
     if missing_outcome:
@@ -806,7 +763,6 @@ def assert_graph(
         "cancelled_upload_trace_id": cancelled_trace["trace_id"],
         "ready_trace_ids": [trace["trace_id"] for trace in ready_traces],
         "cleanup_trace_ids": [trace["trace_id"] for trace in cleanup_traces],
-        "claim_span_count": claim_span_count,
         "error_span_count": len(error_spans),
         "orphan_parent_count": len(orphans),
     }
@@ -1161,7 +1117,6 @@ def render_report(
         f"- Application-observed object download: `{graph['download_trace_id']}`",
         f"- In-flight upload cancellation: `{graph['cancelled_upload_trace_id']}`",
         f"- Ready validation traces: {', '.join(f'`{item}`' for item in graph['ready_trace_ids'])}",
-        f"- Non-empty claim spans: {graph['claim_span_count']}",
         f"- Error spans with bounded outcomes: {graph['error_span_count']}",
         "",
         "## Span inventory",
@@ -1185,7 +1140,7 @@ def render_report(
             for tree in canonical_trees
             for item in ("```text", tree, "```", "")
         ],
-        "The verifier required exact direct parent edges across HTTP, outbox, Redis/realtime, WebSocket, and desktop boundaries. It also required retries to avoid repeating attachment binding/outbox enqueue, both ordinary and opaque attachment uploads to reach ready without noisy error spans, all retained claim spans to have positive actual claimed counts, and the desktop download trace to include an observed HTTP 200 object GET with non-zero transferred bytes and a file-saved event.",
+        "The verifier required exact direct parent edges across HTTP, pg-boss domain-event, Redis/realtime, WebSocket, and desktop boundaries. It also required retries to avoid repeating attachment binding/domain-event enqueue, both ordinary and opaque attachment uploads to reach ready without noisy error spans, and the desktop download trace to include an observed HTTP 200 object GET with non-zero transferred bytes and a file-saved event.",
         "",
     ]
     return "\n".join(lines)

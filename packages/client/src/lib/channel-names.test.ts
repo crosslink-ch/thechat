@@ -50,7 +50,7 @@ describe("channels in the quick switcher", () => {
   const cafe: SearchDestination = { kind: "channel", conversationId: "ch-cafe", name: "caf-talk", title: "Café Talk", ...W };
   const person: SearchDestination = {
     kind: "person", userId: "u-mya", name: "Mya Chan", userType: "human", botKind: null, botAvatar: null,
-    conversationId: null, ...W,
+    avatar: null, conversationId: null, ...W,
   };
   const pool = [friendly, lower, legacy, cafe, person];
   const shown = (list: SearchDestination[]) => list.map(destinationName);

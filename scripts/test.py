@@ -152,6 +152,55 @@ def is_redis_running() -> bool:
         return False
 
 
+def start_disposable_backend(timeout: float = 60.0) -> tuple[subprocess.Popen, int] | None:
+    """Start the API (src/index.ts) on a free loopback port; None if it does not come up."""
+    port = allocate_loopback_port()
+    env = {
+        **os.environ,
+        "THECHAT_BACKEND_HOST": "127.0.0.1",
+        "THECHAT_BACKEND_PORT": str(port),
+        "THECHAT_BACKEND_URL": f"http://127.0.0.1:{port}",
+        "THECHAT_OTEL_ENABLED": "false",
+    }
+    proc = subprocess.Popen(
+        ["bun", "run", "--env-file", "../../.env", "src/index.ts"],
+        cwd=ROOT / "packages" / "api",
+        env=env,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    _register_suite_group(proc.pid)
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline and proc.poll() is None:
+        try:
+            with urlopen(f"http://127.0.0.1:{port}/health", timeout=1) as resp:
+                if resp.status == 200:
+                    return proc, port
+        except OSError:
+            time.sleep(0.25)
+    stop_disposable_backend(proc)
+    return None
+
+
+def stop_disposable_backend(proc: subprocess.Popen | None) -> None:
+    if proc is None:
+        return
+    try:
+        os.killpg(proc.pid, signal.SIGTERM)
+        proc.wait(timeout=15)
+    except ProcessLookupError:
+        pass
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        proc.wait()
+    finally:
+        _unregister_suite_group(proc.pid)
+
+
 def rust_cmd() -> list[str]:
     """Rust unit tests only — ignored tests are handled by opt-in suites (mcp, codex)."""
     return [
@@ -162,18 +211,26 @@ def rust_cmd() -> list[str]:
     ]
 
 
+# Default suites start in this order: longest first, so the API suite (mostly
+# I/O-bound, and the longest) is never queued behind short suites.
 SUITES = [
+    {
+        "name": "api",
+        "cmd": ["pnpm", "--filter", "@thechat/api", "test"],
+    },
+    {
+        "name": "client",
+        "cmd": ["pnpm", "--filter", "@thechat/client", "test:unit"],
+        "vitest": True,
+    },
     {
         "name": "typecheck",
         "cmd": ["pnpm", "-r", "exec", "tsc", "--noEmit"],
     },
     {
-        "name": "client",
-        "cmd": ["pnpm", "--filter", "@thechat/client", "test:unit"],
-    },
-    {
         "name": "web",
         "cmd": ["pnpm", "--filter", "@thechat/web", "test:unit"],
+        "vitest": True,
     },
     {
         "name": "client-boundaries",
@@ -186,10 +243,7 @@ SUITES = [
     {
         "name": "desktop",
         "cmd": ["pnpm", "--filter", "@thechat/desktop", "test:unit"],
-    },
-    {
-        "name": "api",
-        "cmd": ["pnpm", "--filter", "@thechat/api", "test"],
+        "vitest": True,
     },
     {
         "name": "rust",
@@ -199,19 +253,7 @@ SUITES = [
         "name": "integration",
         "cmd": ["pnpm", "--filter", "@thechat/desktop", "test:integration"],
         "env": {"INTEGRATION": "true"},
-    },
-    {
-        "name": "e2e-unit",
-        "cmd": [
-            "python3",
-            "-m",
-            "unittest",
-            "discover",
-            "-s",
-            "scripts/e2e",
-            "-p",
-            "test_*.py",
-        ],
+        "vitest": True,
     },
     {
         "name": "tauri-config",
@@ -252,7 +294,7 @@ SUITES = [
             ),
             "HERMES_E2E_SOURCE_DIR": explicit_env_or_default(
                 "HERMES_E2E_SOURCE_DIR",
-                "/home/bruno/projects/hermes2",
+                str(ROOT.parent / "hermes-agent"),
             ),
         },
         "opt_in": True,  # real Hermes Gateway source checkout + provider API key
@@ -611,15 +653,32 @@ def main():
         # marked explicit_only are also excluded from broad --all.
         suites = [s for s in suites if not s.get("opt_in")]
 
-    # Skip integration tests if backend is not running
+    # Integration tests talk to a real API. Use the running dev backend when there
+    # is one; otherwise start a disposable API on a free loopback port (stopped
+    # at exit) so the suite is not silently skipped.
+    disposable_backend: subprocess.Popen | None = None
     if any(s["name"] == "integration" for s in suites) and not is_backend_running():
-        print(
-            f"\033[33mSkipping integration tests: "
-            f"backend not running on localhost:{BACKEND_PORT}\033[0m"
-        )
-        suites = [s for s in suites if s["name"] != "integration"]
-        if not suites:
-            sys.exit(0)
+        started = None
+        if is_postgres_running() and is_redis_running():
+            started = start_disposable_backend()
+        if started is None:
+            print(
+                f"\033[33mSkipping integration tests: no backend on localhost:{BACKEND_PORT} "
+                f"and a disposable one could not start (needs PostgreSQL and Redis)\033[0m"
+            )
+            suites = [s for s in suites if s["name"] != "integration"]
+            if not suites:
+                sys.exit(0)
+        else:
+            disposable_backend, port = started
+            for s in suites:
+                if s["name"] == "integration":
+                    s["env"] = {
+                        **s.get("env", {}),
+                        "THECHAT_BACKEND_PORT": str(port),
+                        "THECHAT_BACKEND_URL": f"http://127.0.0.1:{port}",
+                    }
+            print(f"  (integration: disposable API on 127.0.0.1:{port})")
 
     # Skip API tests if PostgreSQL is not reachable
     if any(s["name"] == "api" for s in suites) and not is_postgres_running():
@@ -663,10 +722,19 @@ def main():
 
     cpu_count = available_cpu_count()
     worker_count = suite_worker_count(len(suites), cpu_count=cpu_count)
+    # Vitest suites run their own worker pools: give each its share of the CPUs
+    # so concurrent suites do not oversubscribe the host. An explicit
+    # VITEST_MAX_WORKERS (an integer; Vitest reads it after its config) wins.
+    vitest_workers = os.environ.get("VITEST_MAX_WORKERS") or str(
+        max(1, cpu_count // max(1, worker_count))
+    )
+    for s in suites:
+        if s.get("vitest"):
+            s["env"] = {**s.get("env", {}), "VITEST_MAX_WORKERS": vitest_workers}
     print(f"Running {len(suites)} test suite(s): {', '.join(s['name'] for s in suites)}")
     print(
         f"  (using {worker_count} concurrent suite worker(s) "
-        f"for {cpu_count} available CPU(s))"
+        f"for {cpu_count} available CPU(s), {vitest_workers} Vitest worker(s) per suite)"
     )
     if not run_all:
         opt_in_names = ", ".join(
@@ -714,6 +782,7 @@ def main():
         try:
             pool.shutdown(wait=True, cancel_futures=interrupted)
         finally:
+            stop_disposable_backend(disposable_backend)
             for signum, handler in previous_handlers.items():
                 signal.signal(signum, handler)
 

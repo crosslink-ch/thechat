@@ -3,6 +3,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { InputBar } from "./InputBar";
 import { resetPrivateSession } from "../lib/session-boundary";
 import { useComposerDraftsStore } from "../stores/composer-drafts";
+import { composerFromText } from "../lib/composer-parts";
 import { cancelSharedAttachment, uploadSharedAttachment } from "../lib/shared-attachments";
 
 vi.mock("../lib/shared-attachments", async (original) => ({
@@ -33,7 +34,7 @@ const props = { convId: "chat", draftKey: "chat", onSend: vi.fn(async () => true
 
 beforeEach(() => {
   vi.clearAllMocks();
-  useComposerDraftsStore.setState({ drafts: { chat: "Keep this draft" }, revisions: {}, imageDrafts: {}, attachmentDrafts: {}, sendingAttachments: {} });
+  useComposerDraftsStore.setState({ drafts: { chat: composerFromText("Keep this draft") }, revisions: {}, imageDrafts: {}, attachmentDrafts: {}, sendingAttachments: {} });
   vi.stubGlobal("MediaRecorder", Recorder);
   Object.defineProperty(navigator, "mediaDevices", { configurable: true, value: { getUserMedia } });
   getUserMedia.mockResolvedValue(stream);
@@ -155,7 +156,7 @@ it("blocks optimistic editor submission before it can clear the rich draft durin
   await recordPreview();
   act(() => { fireEvent.keyDown(editor, { key: "Enter" }); });
   expect(editor.textContent).toBe("Keep this draft");
-  expect(useComposerDraftsStore.getState().drafts.chat).toBe("Keep this draft");
+  expect(useComposerDraftsStore.getState().drafts.chat?.text).toBe("Keep this draft");
   expect(props.onSend).not.toHaveBeenCalled();
 });
 
@@ -286,7 +287,7 @@ it("sends a local voice preview directly without Attach or consuming the typed d
   expect(screen.queryByTestId("attachment-draft")).toBeNull();
   expect(screen.queryByLabelText("Voice message preview")).toBeNull();
   expect(container.querySelector(".ProseMirror")?.textContent).toBe("Keep this draft");
-  expect(useComposerDraftsStore.getState().drafts.chat).toBe("Keep this draft");
+  expect(useComposerDraftsStore.getState().drafts.chat?.text).toBe("Keep this draft");
 });
 
 it.each([false, null])("retries a rejected voice send (%s) without uploading twice or consuming the draft", async (rejected) => {

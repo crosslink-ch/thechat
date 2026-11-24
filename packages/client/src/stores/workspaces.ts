@@ -4,6 +4,7 @@ import { preferences, type PreferenceKey } from "../platform/preferences";
 import { isWeb } from "../platform/environment";
 import { authHeaders as auth } from "../lib/eden";
 import type {
+  ChannelMemberRole,
   WorkspaceChannel,
   WorkspaceListItem,
   WorkspaceWithDetails,
@@ -46,8 +47,11 @@ interface WorkspacesStore {
   renameChannel: (channelId: string, name: string) => Promise<WorkspaceChannel>;
   deleteChannel: (channelId: string) => Promise<void>;
   setChannelArchived: (channelId: string, archived: boolean) => Promise<WorkspaceChannel>;
-  addChannelMembers: (channelId: string, userIds: string[]) => Promise<void>;
-  removeChannelMember: (channelId: string, userId: string) => Promise<void>;
+  setChannelVisibility: (channelId: string, isPrivate: boolean) => Promise<WorkspaceChannel>;
+  addChannelMembers: (channelId: string, userIds: string[]) => Promise<WorkspaceChannel>;
+  /** Removing yourself is leaving. Resolves true when the channel was deleted. */
+  removeChannelMember: (channelId: string, userId: string) => Promise<boolean>;
+  setChannelMemberRole: (channelId: string, userId: string, role: ChannelMemberRole) => Promise<WorkspaceChannel>;
   reset: () => void;
 }
 
@@ -108,6 +112,30 @@ function workspaceSession(set: (update: WorkspaceUpdate) => void) {
   return { current, commit: (update: WorkspaceUpdate) => { if (current()) set(update); } };
 }
 
+/** Shared plumbing of the channel member and visibility mutations. */
+function channelMutationContext(set: (update: WorkspaceUpdate) => void) {
+  const session = workspaceSession(set);
+  const token = useAuthStore.getState().token;
+  const workspaceId = useWorkspacesStore.getState().activeWorkspace?.id;
+  if (!authenticated(token) || !workspaceId) throw new Error("Select a workspace first");
+  const apply = (change: (channels: WorkspaceChannel[]) => WorkspaceChannel[]) =>
+    session.commit((state) => ({
+      activeWorkspace:
+        state.activeWorkspace?.id === workspaceId
+          ? { ...state.activeWorkspace, channels: change(state.activeWorkspace.channels) }
+          : state.activeWorkspace,
+    }));
+  return {
+    token,
+    keep: (channel: WorkspaceChannel) => {
+      apply((channels) => upsertWorkspaceChannel(channels, channel));
+      return channel;
+    },
+    drop: (channelId: string) =>
+      apply((channels) => channels.filter((channel) => channel.id !== channelId)),
+  };
+}
+
 export const useWorkspacesStore = create<WorkspacesStore>()((set) => ({
   workspaces: [],
   activeWorkspace: null,
@@ -116,40 +144,47 @@ export const useWorkspacesStore = create<WorkspacesStore>()((set) => ({
   error: null,
 
   initialize: async () => {
-    // Background recovery must not supersede a user's in-flight selection.
-    if (pendingWorkspaceSelection !== null) return;
     const session = workspaceSession(set);
     const token = useAuthStore.getState().token;
     if (!authenticated(token)) return;
     const initializationRequest = ++workspaceInitializationGeneration;
-    const selectionGeneration = ++workspaceSelectionGeneration;
+    const selectionAtStart = workspaceSelectionGeneration;
 
+    // The list always loads. The active workspace belongs to an explicit
+    // selection (notification link, Activity, sidebar) that is pending or
+    // started meanwhile; only without one is the saved choice restored.
     const isCurrent = () =>
       session.current() &&
       initializationRequest === workspaceInitializationGeneration &&
-      selectionGeneration === workspaceSelectionGeneration &&
       useAuthStore.getState().token === token;
+    const mayRestore = () =>
+      isCurrent() &&
+      pendingWorkspaceSelection === null &&
+      selectionAtStart === workspaceSelectionGeneration;
 
     session.commit({ loading: true });
     try {
       const list = await fetchWorkspacesList(token);
       if (!isCurrent()) return;
+      const restoring = mayRestore();
       session.commit((state) => ({
         workspaces: list,
         loaded: true,
-        activeWorkspace: list.some((workspace) => workspace.id === state.activeWorkspace?.id)
-          ? state.activeWorkspace : null,
+        error: null,
+        activeWorkspace:
+          !restoring || list.some((workspace) => workspace.id === state.activeWorkspace?.id)
+            ? state.activeWorkspace : null,
       }));
+      if (!restoring) return;
 
       const savedId = await kvGet(KV_ACTIVE_WORKSPACE);
-      if (!isCurrent()) return;
+      if (!mayRestore()) return;
       if (savedId && list.some((workspace) => workspace.id === savedId)) {
         const { data, error } = await api.workspaces({ id: savedId }).get(auth(token));
-        if (!isCurrent()) return;
+        if (!mayRestore()) return;
         if (error) throw new Error(apiErrorMessage(error));
         session.commit({ activeWorkspace: data as WorkspaceWithDetails });
       }
-      session.commit({ error: null });
     } catch {
       if (isCurrent()) session.commit({ error: "Unable to load workspaces." });
     } finally {
@@ -326,25 +361,48 @@ export const useWorkspacesStore = create<WorkspacesStore>()((set) => ({
     return channel;
   },
 
-  // Membership is not kept in this store: the channel's member list is the
-  // conversation detail, refreshed by the caller and by realtime events.
-  addChannelMembers: async (channelId: string, userIds: string[]) => {
-    const token = useAuthStore.getState().token;
-    if (!authenticated(token)) throw new Error("Sign in first");
-    const { error } = await api.conversations
+  setChannelVisibility: async (channelId, isPrivate) => {
+    const context = channelMutationContext(set);
+    const { data, error } = await api.conversations
       .channel({ conversationId: channelId })
-      .members.post({ userIds }, auth(token));
+      .patch({ isPrivate }, auth(context.token));
     if (error) throw new Error(apiErrorMessage(error));
+    return context.keep(data as WorkspaceChannel);
   },
 
-  removeChannelMember: async (channelId: string, userId: string) => {
-    const token = useAuthStore.getState().token;
-    if (!authenticated(token)) throw new Error("Sign in first");
-    const { error } = await api.conversations
+  addChannelMembers: async (channelId, userIds) => {
+    const context = channelMutationContext(set);
+    const { data, error } = await api.conversations
+      .channel({ conversationId: channelId })
+      .members.post({ userIds }, auth(context.token));
+    if (error) throw new Error(apiErrorMessage(error));
+    return context.keep(data as WorkspaceChannel);
+  },
+
+  removeChannelMember: async (channelId, userId) => {
+    const context = channelMutationContext(set);
+    const { data, error } = await api.conversations
       .channel({ conversationId: channelId })
       .members({ userId })
-      .delete(undefined, auth(token));
+      .delete(undefined, auth(context.token));
     if (error) throw new Error(apiErrorMessage(error));
+    const result = data as { channelDeleted: boolean; channel: WorkspaceChannel | null };
+    if (result.channel && userId !== useAuthStore.getState().user?.id) {
+      context.keep(result.channel);
+    } else {
+      context.drop(channelId);
+    }
+    return result.channelDeleted;
+  },
+
+  setChannelMemberRole: async (channelId, userId, role) => {
+    const context = channelMutationContext(set);
+    const { data, error } = await api.conversations
+      .channel({ conversationId: channelId })
+      .members({ userId })
+      .patch({ role }, auth(context.token));
+    if (error) throw new Error(apiErrorMessage(error));
+    return context.keep(data as WorkspaceChannel);
   },
 
   reset: () => {

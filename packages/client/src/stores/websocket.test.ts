@@ -137,4 +137,23 @@ describe("WebSocket application send boundary", () => {
     });
     wsEvents.off("ws:message_reactions_updated", listener);
   });
+
+  it("forwards picture changes and removals without losing bot appearance updates", () => {
+    const listener = vi.fn();
+    wsEvents.on("ws:member_updated", listener);
+    try {
+      useWebSocketStore.getState().connect("token");
+      const socket = FakeWebSocket.instances.at(-1)!;
+      socket.authenticate();
+      for (const avatar of ["data:image/png;base64,cGljdHVyZQ==", null]) {
+        socket.receive({ type: "member_updated", workspaceId: "w1", userId: "u1", name: "Alice", avatar });
+        expect(listener).toHaveBeenLastCalledWith({ workspaceId: "w1", userId: "u1", name: "Alice", avatar, botAvatar: undefined });
+      }
+      const botAvatar = { shape: "square", color: "#FDCB6E" };
+      socket.receive({ type: "member_updated", workspaceId: "w1", userId: "bot", name: "Agent", botAvatar });
+      expect(listener).toHaveBeenLastCalledWith({ workspaceId: "w1", userId: "bot", name: "Agent", avatar: undefined, botAvatar });
+    } finally {
+      wsEvents.off("ws:member_updated", listener);
+    }
+  });
 });

@@ -529,7 +529,7 @@ describe("Secure input v3", () => {
       }
     } finally { webhook.stop(); }
   });
-  test("admits all owner kinds, rechecks canonical ownership on submit/cancel and advertises v3", async () => {
+  test("admits every kind for the owner, rechecks canonical ownership for host-level kinds only and advertises v3", async () => {
     const webhook = startWebhookServer(() => Response.json({ ok: true, duplicate: false }));
     const fixture = await createHermesInteractionFixture("SecureOwner", webhook.url);
     const other = await registerUser("ReplacementOwner");
@@ -544,13 +544,14 @@ describe("Secure input v3", () => {
         expect((await req("POST", path, response, fixture.human.token)).status).toBe(200);
         await db.update(bots).set({ ownerId: other.user.id }).where(eq(bots.id, fixture.botRes.body.id));
         const snapshot = await req("GET", `/bot-runtime/conversations/${fixture.conversationId}`, undefined, fixture.human.token);
-        expect(snapshot.body.events.some((e: any) => e.id === event.id)).toBe(kind === "vault.code");
-        if (kind !== "vault.code") {
+        const ownerOnly = kind === "sudo.password" || kind === "skill.secret";
+        expect(snapshot.body.events.some((e: any) => e.id === event.id)).toBe(!ownerOnly);
+        if (ownerOnly) {
           expect((await req("POST", `/hermes-platform/invocations/${fixture.invocationId}/progress`, { type: "secure.input.request", payload: { ...payload, requestId: crypto.randomUUID() } }, fixture.botRes.body.apiKey)).status).toBe(403);
         }
         for (const body of [response, { version: 3, action: "cancel" }]) {
           const result = await req("POST", path, body, fixture.human.token);
-          expect(result.status).toBe(kind === "vault.code" ? 200 : 403);
+          expect(result.status).toBe(ownerOnly ? 403 : 200);
           expect(result.headers.get("cache-control")).toBe("no-store");
         }
         await db.update(bots).set({ ownerId: fixture.human.user.id }).where(eq(bots.id, fixture.botRes.body.id));
@@ -575,14 +576,19 @@ describe("Secure input v3", () => {
       expect(rejected.status).toBe(400);
     } finally { webhook.stop(); }
   });
-  test("owner-only kinds reject shared requesters while code relays privately without durable writes", async () => {
+  test("host-level kinds reject shared requesters, vault kinds admit them, and code relays privately without durable writes", async () => {
     const webhook = startWebhookServer(() => Response.json({ ok: true, duplicate: false, diagnostic: "DO_NOT_REFLECT" }));
     const fixture = await createHermesInteractionFixture("SecureRequester", webhook.url, true);
     try {
       const progressPath = `/hermes-platform/invocations/${fixture.invocationId}/progress`;
-      for (const kind of ["onepassword.unlock", "vault.save_login", "sudo.password", "skill.secret"]) {
+      for (const kind of ["sudo.password", "skill.secret"]) {
         const denied = await req("POST", progressPath, { type: "secure.input.request", payload: secureRequest(fixture.requester.user.id, kind) }, fixture.botRes.body.apiKey);
         expect(denied.status).toBe(403);
+      }
+      // Anyone the agent admitted may use its password managers; bot ownership does not narrow that.
+      for (const kind of ["onepassword.unlock", "vault.save_login"]) {
+        const admitted = await req("POST", progressPath, { type: "secure.input.request", payload: secureRequest(fixture.requester.user.id, kind) }, fixture.botRes.body.apiKey);
+        expect(admitted.status).toBe(200);
       }
       const payload = secureRequest(fixture.requester.user.id);
       const event = await publishInteractionProgress(fixture, "secure.input.request", payload);
@@ -4094,9 +4100,13 @@ describe("Bots: runtime state", () => {
       );
       expect(sendRes.status).toBe(200);
 
+      // The second attempt is a queue retry: pg-boss backs off 2-4 s (jittered
+      // doubling of retryDelay 2 s) before the worker's next poll, so it can land
+      // after waitForResult's 5 s default.
       await waitForResult(
         async () => (webhook.requests.length >= 2 ? webhook.requests[1] : null),
         "second Hermes webhook delivery attempt",
+        15_000,
       );
       expect(webhook.requests[0].body).toBe(webhook.requests[1].body);
       expect(webhook.requests[0].payload.event.bot.name).toBe("StableRetryHermes");

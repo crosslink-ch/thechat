@@ -111,7 +111,9 @@ interface AuthStore {
     code: string,
     password: string,
   ) => Promise<string>;
+  updateProfile: (updates: { name?: string; avatar?: string | null }) => Promise<void>;
   updateName: (name: string) => Promise<void>;
+  updateAvatar: (avatar: string | null) => Promise<void>;
   logout: () => Promise<void>;
 }
 
@@ -298,13 +300,17 @@ export const useAuthStore = create<AuthStore>()((set, get) => ({
       return data.message;
     }),
 
-  updateName: (name: string) => runAuthMutation(async () => {
+  updateName: (name: string) => get().updateProfile({ name }),
+
+  updateAvatar: (avatar: string | null) => get().updateProfile({ avatar }),
+
+  updateProfile: (updates) => runAuthMutation(async () => {
     const generation = sessionGeneration();
     const accessToken = get().token;
     if (isWeb ? !get().user : !accessToken) throw new Error("Authentication required");
 
     const { data, error } = await api.auth.me.patch(
-      { name },
+      updates,
       authHeaders(accessToken),
     );
 

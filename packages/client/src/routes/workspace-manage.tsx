@@ -469,6 +469,7 @@ export function WorkspaceManageRoute() {
                       <Avatar
                         name={member.user.name}
                         colorKey={member.userId}
+                        picture={member.user.avatar}
                         className="size-8 text-[0.857rem]"
                       />
                       <div className="min-w-0">

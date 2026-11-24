@@ -417,6 +417,7 @@ export async function getSearchDirectory(
           workspaceName: workspaces.name,
           userId: users.id,
           name: users.name,
+          avatar: users.avatar,
           type: users.type,
           botKind: bots.kind,
           avatarShape: bots.avatarShape,
@@ -465,6 +466,7 @@ export async function getSearchDirectory(
       kind: "person",
       userId: member.userId,
       name: member.name,
+      avatar: member.type === "human" ? member.avatar : null,
       userType: member.type,
       botKind: member.botKind ?? null,
       botAvatar:
@@ -545,6 +547,7 @@ const contextColumns = {
   lastReplyAt: messages.lastReplyAt,
   senderId: messages.senderId,
   content: messages.content,
+  contentFormat: messages.contentFormat,
   parts: messages.parts,
   interim: messages.interim,
   createdAt: messages.createdAt,

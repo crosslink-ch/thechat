@@ -79,8 +79,8 @@ test("navigation traps/restores focus; same/new route, outside, Escape and Back 
   await expect(page.getByRole("navigation", { name: "Workspace navigation" })).toBeVisible();
   await within(dialog, 320, 640);
   await touch(page.locator('[data-channel-id="general"]'));
-  await expect(page.getByRole("button", { name: "Manage #general" })).toHaveCSS("opacity", "1");
-  await touch(page.getByRole("button", { name: "Manage #general" }));
+  await expect(page.getByRole("button", { name: "Manage general" })).toHaveCSS("opacity", "1");
+  await touch(page.getByRole("button", { name: "Manage general" }));
   await page.keyboard.press("Shift+Tab");
   expect(await page.evaluate(() => !!document.activeElement.closest('[role="dialog"]'))).toBe(true);
   await page.getByRole("button", { name: "M Mobile tester", exact: true }).tap();
@@ -163,7 +163,7 @@ test("workspace dialog remains editable and dismissible at short height", async 
 
 test("synthetic approval and custom clarification remain touch-operable", async ({ page }, info) => {
   const errors = await load(page);
-  const approve = page.getByRole("button", { name: "Approve", exact: true });
+  const approve = page.getByRole("button", { name: "Allow once", exact: true });
   await approve.scrollIntoViewIfNeeded();
   await touch(approve);
   await approve.tap();
@@ -181,7 +181,7 @@ test("synthetic approval and custom clarification remain touch-operable", async 
   await touch(submit);
   await screenshot(page, info, "320-clarification");
   await submit.tap();
-  await expect(page.getByTestId("interaction")).toHaveText("clarify:Verified from a phone");
+  await expect(page.getByTestId("interaction")).toHaveText("question:Verified from a phone");
   expect(errors).toEqual([]);
 });
 

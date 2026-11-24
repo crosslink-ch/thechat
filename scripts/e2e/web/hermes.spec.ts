@@ -8,7 +8,15 @@ test('scripted Hermes requests inline and in the Inbox, rendered reply and task 
   const dm = await call(request, 'POST', '/conversations/dm', { workspaceId: f.workspace.id, otherUserId: bot.userId }, f.a.accessToken);
   await login(page, f.alice);
   await page.goto(`${webURL}/#/dm/${dm.id}`);
-  await page.getByRole('textbox', { name: 'Message', exact: true }).fill('Scripted Hermes browser acceptance');
+  // The DM first renders as a plain DM, then swaps in the Hermes view with a
+  // new composer once it knows the other side is Hermes; text filled before
+  // that is lost. Phones keep the task list in a drawer, so wait for the view.
+  await expect(page.getByTestId('hermes-dm-chat-scroll')).toBeVisible();
+  const composer = page.getByRole('textbox', { name: 'Message', exact: true });
+  await expect(async () => {
+    await composer.fill('Scripted Hermes browser acceptance');
+    await expect(composer).toHaveText('Scripted Hermes browser acceptance', { timeout: 1000 });
+  }).toPass();
   await page.getByTitle('Send message', { exact: true }).click();
   let event: any;
   await expect.poll(async () => {
@@ -78,7 +86,14 @@ test('scripted Hermes requests inline and in the Inbox, rendered reply and task 
     const threads = await call(request, 'GET', `/conversations/threads/${dm.id}`, undefined, f.a.accessToken);
     return threads.items.length;
   }).toBe(1);
-  await expect(page.getByTestId('hermes-dm-chat-scroll').getByText('A dedicated web task', { exact: true })).toBeVisible();
+  // Exactly one message row. The row goes from pending to stored; getByText's
+  // strict mode fails without retrying on any brief second match (seen once
+  // after composer.spec), while toHaveCount retries and still fails on a
+  // lasting duplicate.
+  const taskMessage = page.getByTestId('hermes-dm-chat-scroll').locator('[data-message-id]')
+    .filter({ hasText: 'A dedicated web task' });
+  await expect(taskMessage).toHaveCount(1);
+  await expect(taskMessage).toBeVisible();
 });
 
 test('anyone in a shared channel can answer, and a second answer is told who won', async ({ page, request }) => {

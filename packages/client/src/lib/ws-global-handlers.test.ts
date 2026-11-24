@@ -571,7 +571,7 @@ describe("registerGlobalWsHandlers", () => {
     cleanup();
   });
 
-  it("updates an active workspace member name after a bot rename", () => {
+  it("updates an active workspace member name and profile picture", () => {
     useWorkspacesStore.setState({
       activeWorkspace: {
         ...structuredClone(baseWorkspace),
@@ -598,13 +598,43 @@ describe("registerGlobalWsHandlers", () => {
       workspaceId: "ws-1",
       userId: "u-bot",
       name: "Renamed Bot",
+      avatar: "data:image/jpeg;base64,dXBkYXRlZA==",
     });
 
     expect(
       useWorkspacesStore
         .getState()
-        .activeWorkspace?.members.find((member) => member.userId === "u-bot")?.user.name,
-    ).toBe("Renamed Bot");
+        .activeWorkspace?.members.find((member) => member.userId === "u-bot")?.user,
+    ).toMatchObject({
+      name: "Renamed Bot",
+      avatar: "data:image/jpeg;base64,dXBkYXRlZA==",
+    });
+
+    wsEvents.emit("ws:member_updated", {
+      workspaceId: "ws-1",
+      userId: "u-bot",
+      name: "Renamed Bot",
+      avatar: null,
+    });
+    expect(
+      useWorkspacesStore
+        .getState()
+        .activeWorkspace?.members.find((member) => member.userId === "u-bot")?.user.avatar,
+    ).toBeNull();
+
+    useAuthStore.setState({
+      user: structuredClone(baseWorkspace.members[0]!.user),
+    });
+    wsEvents.emit("ws:member_updated", {
+      workspaceId: "ws-1",
+      userId: "u-owner",
+      name: "Updated Owner",
+      avatar: "data:image/jpeg;base64,b3duZXI=",
+    });
+    expect(useAuthStore.getState().user).toMatchObject({
+      name: "Updated Owner",
+      avatar: "data:image/jpeg;base64,b3duZXI=",
+    });
     cleanup();
   });
 
@@ -1028,6 +1058,74 @@ describe("registerGlobalWsHandlers", () => {
 
     wsEvents.emit("ws:channel_updated", { workspaceId: "ws-1", channel: old });
     expect(channels()).toEqual([old, general]);
+
+    cleanup();
+    window.location.hash = "";
+  });
+
+  it("follows being added to, changed in and removed from a private channel", () => {
+    const general: WorkspaceChannel = {
+      id: "ch-general",
+      workspaceId: "ws-1",
+      name: "general",
+      title: "General",
+      isPrivate: false,
+      archivedAt: null,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    };
+    const secret: WorkspaceChannel = {
+      ...general,
+      id: "ch-secret",
+      name: "secret",
+      title: "Secret",
+      isPrivate: true,
+      members: [{ userId: "u-other", role: "admin" }, { userId: "u-me", role: "member" }],
+    };
+    useWorkspacesStore.setState({
+      activeWorkspace: { ...structuredClone(baseWorkspace), channels: [general] },
+    });
+    const channelIds = () =>
+      useWorkspacesStore.getState().activeWorkspace?.channels.map((channel) => channel.id);
+    window.location.hash = `#/channel/${general.id}`;
+    const navigate = vi.fn(({ to }: { to: string }) => {
+      window.location.hash = `#${to}`;
+    });
+    const cleanup = registerGlobalWsHandlers(navigate);
+
+    // Added to a channel that already existed.
+    wsEvents.emit("ws:channel_joined", { workspaceId: "ws-1", channel: secret });
+    expect(channelIds()).toEqual([general.id, secret.id]);
+
+    // Its member list changes while this user stays in it.
+    const grown = { ...secret, members: [...secret.members!, { userId: "u-new", role: "member" as const }] };
+    wsEvents.emit("ws:channel_updated", { workspaceId: "ws-1", channel: grown });
+    expect(useWorkspacesStore.getState().activeWorkspace?.channels[1]).toEqual(grown);
+    // An update for another workspace is ignored.
+    wsEvents.emit("ws:channel_updated", { workspaceId: "ws-other", channel: { ...secret, name: "elsewhere" } });
+    expect(useWorkspacesStore.getState().activeWorkspace?.channels[1]).toEqual(grown);
+
+    // Someone removed from the workspace is no longer listed in the channel.
+    wsEvents.emit("ws:member_removed", { workspaceId: "ws-1", userId: "u-new" });
+    expect(
+      useWorkspacesStore.getState().activeWorkspace?.channels[1]?.members,
+    ).toEqual(secret.members);
+    expect(useWorkspacesStore.getState().activeWorkspace?.channels[0]).toEqual(general);
+
+    // Removed while reading it: the channel goes and the reader is moved on.
+    window.location.hash = `#/channel/${secret.id}`;
+    vi.mocked(useActivityStore.getState().fetchActivity).mockClear();
+    wsEvents.emit("ws:channel_deleted", { workspaceId: "ws-1", channelId: secret.id });
+    expect(channelIds()).toEqual([general.id]);
+    expect(navigate).toHaveBeenCalledWith({ to: `/channel/${general.id}` });
+    // Unread state of the channel went with the membership.
+    expect(useActivityStore.getState().fetchActivity).toHaveBeenCalled();
+
+    // A late update must not bring it back, but being added again does.
+    wsEvents.emit("ws:channel_updated", { workspaceId: "ws-1", channel: grown });
+    expect(channelIds()).toEqual([general.id]);
+    wsEvents.emit("ws:channel_joined", { workspaceId: "ws-1", channel: secret });
+    expect(channelIds()).toEqual([general.id, secret.id]);
 
     cleanup();
     window.location.hash = "";

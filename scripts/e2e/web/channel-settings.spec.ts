@@ -115,7 +115,7 @@ test('channel details: members, adding and removing people, and archiving, live 
     await sidebarChannel(page, w.leadership).click();
     await expect(page).toHaveURL(leadershipURL);
     let dialog = await openDetails(page);
-    await expect(dialog.getByRole('heading', { name: 'leadership' })).toBeVisible();
+    await expect(dialog.getByRole('heading', { name: 'Leadership' })).toBeVisible();
     await expect(dialog.getByTestId('channel-visibility')).toHaveText('Private channel');
     const members = dialog.getByTestId('channel-members').getByRole('listitem');
     await expect(members).toHaveCount(2);

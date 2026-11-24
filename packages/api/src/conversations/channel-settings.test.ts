@@ -23,8 +23,8 @@ import { conversationRoutes } from ".";
  * channel, and archiving. One real server and real sockets, so "at once,
  * without reload" is checked on what a connected client actually receives.
  *
- * The permission rule is the one private channels use for rename and delete:
- * a workspace owner or admin who is in the channel.
+ * Archiving uses the same permission rule as renaming: a channel admin, or
+ * a workspace owner/admin who can see the channel.
  */
 const app = new Elysia()
   .use(authRoutes)
@@ -183,18 +183,18 @@ afterAll(async () => {
 });
 
 describe("channel details", () => {
-  test("a member sees name, visibility and every member with their current workspace role", async () => {
+  test("a member sees name, visibility, channel roles and current workspace roles", async () => {
     const channelId = await createPrivateChannel("details", [admin.id, member.id, bot.userId]);
     const detail = await ok("GET", `/conversations/detail/${channelId}`, undefined, member.token);
     expect(detail).toMatchObject({ id: channelId, type: "group", isPrivate: true, archivedAt: null });
     expect(
-      detail.participants.map((participant: any) => [participant.user.name, participant.role, participant.user.type]).sort(),
+      detail.participants.map((participant: any) => [participant.user.name, participant.role, participant.workspaceRole, participant.user.type]).sort(),
     ).toEqual(
       [
-        [admin.name, "admin", "human"],
-        [`Agent ${run}`, "member", "bot"],
-        [member.name, "member", "human"],
-        [owner.name, "owner", "human"],
+        [admin.name, "member", "admin", "human"],
+        [`Agent ${run}`, "member", "member", "bot"],
+        [member.name, "member", "member", "human"],
+        [owner.name, "admin", "owner", "human"],
       ].sort(),
     );
 
@@ -202,7 +202,9 @@ describe("channel details", () => {
     await ok("POST", `/workspaces/${workspaceId}/members/${member.id}/role`, { role: "admin" }, owner.token);
     try {
       const promoted = await ok("GET", `/conversations/detail/${channelId}`, undefined, owner.token);
-      expect(promoted.participants.find((participant: any) => participant.userId === member.id).role).toBe("admin");
+      expect(promoted.participants.find((participant: any) => participant.userId === member.id)).toMatchObject({
+        role: "member", workspaceRole: "admin",
+      });
     } finally {
       await ok("POST", `/workspaces/${workspaceId}/members/${member.id}/role`, { role: "member" }, owner.token);
     }
@@ -229,16 +231,10 @@ describe("channel details", () => {
   });
 });
 
-describe("who may add people, remove people, archive and unarchive", () => {
-  test("only a workspace owner or admin who is in the channel", async () => {
+describe("channel management permissions", () => {
+  test("only a channel manager may archive or unarchive", async () => {
     const channelId = await createPrivateChannel("perms", [admin.id, member.id]);
-    const actions = (target: Person) => [
-      ["POST", `/conversations/channel/${channelId}/members`, { userIds: [target.id] }],
-      ["DELETE", `/conversations/channel/${channelId}/members/${member.id}`, undefined],
-      ["POST", `/conversations/channel/${channelId}/archive`, undefined],
-      ["POST", `/conversations/channel/${channelId}/unarchive`, undefined],
-    ] as const;
-
+    const path = `/conversations/channel/${channelId}`;
     const refusedCallers = [
       { who: "signed out", token: undefined, status: 401 },
       { who: "not in the workspace", token: stranger.token, status: 403 },
@@ -247,55 +243,35 @@ describe("who may add people, remove people, archive and unarchive", () => {
       { who: "regular member of the channel", token: member.token, status: 403 },
       { who: "bot outside the channel", token: bot.apiKey, status: 403 },
     ];
-    for (const caller of refusedCallers) {
-      for (const [method, path, body] of actions(outsider)) {
-        const response = await req(method, path, body, caller.token);
-        expect(response.status, `${caller.who}: ${method} ${path}`).toBe(caller.status);
+    for (const action of ["archive", "unarchive"]) {
+      for (const caller of refusedCallers) {
+        const response = await req("POST", `${path}/${action}`, undefined, caller.token);
+        expect(response.status, `${caller.who}: ${action}`).toBe(caller.status);
       }
     }
-    // Nothing above changed the channel.
-    expect(await memberIdsOf(channelId, owner.token)).toEqual([owner.id, admin.id, member.id].sort());
-    expect((await ok("GET", `/conversations/detail/${channelId}`, undefined, owner.token)).archivedAt).toBeNull();
-
-    // An admin who is in the channel can do all four.
-    await ok("POST", `/conversations/channel/${channelId}/members`, { userIds: [outsider.id] }, admin.token);
-    await ok("DELETE", `/conversations/channel/${channelId}/members/${outsider.id}`, undefined, admin.token);
-    expect((await ok("POST", `/conversations/channel/${channelId}/archive`, undefined, admin.token)).archivedAt).toEqual(
-      expect.any(String),
-    );
-    expect((await ok("POST", `/conversations/channel/${channelId}/unarchive`, undefined, admin.token)).archivedAt).toBeNull();
-    // So can the owner.
-    await ok("POST", `/conversations/channel/${channelId}/members`, { userIds: [outsider.id] }, owner.token);
-    await ok("DELETE", `/conversations/channel/${channelId}/members/${outsider.id}`, undefined, owner.token);
-    await ok("POST", `/conversations/channel/${channelId}/archive`, undefined, owner.token);
-    await ok("POST", `/conversations/channel/${channelId}/unarchive`, undefined, owner.token);
-
-    // An admin added to the channel later gains the right with membership.
-    await ok("POST", `/conversations/channel/${channelId}/members`, { userIds: [hiddenAdmin.id] }, owner.token);
-    await ok("POST", `/conversations/channel/${channelId}/members`, { userIds: [outsider.id] }, hiddenAdmin.token);
-    expect(await memberIdsOf(channelId, owner.token)).toEqual(
-      [owner.id, admin.id, hiddenAdmin.id, member.id, outsider.id].sort(),
-    );
+    // A workspace admin who is a participant, and the owner who created it.
+    await ok("POST", `${path}/archive`, undefined, admin.token);
+    await ok("POST", `${path}/unarchive`, undefined, owner.token);
+    // A channel admin does not need any workspace-wide privilege.
+    await ok("PATCH", `${path}/members/${member.id}`, { role: "admin" }, owner.token);
+    const archived = await ok("POST", `${path}/archive`, undefined, member.token);
+    expect(archived.archivedAt).toEqual(expect.any(String));
+    expect(archived.members).toContainEqual({ userId: member.id, role: "admin" });
+    expect((await ok("POST", `${path}/unarchive`, undefined, member.token)).archivedAt).toBeNull();
   });
 
-  test("removal follows the workspace hierarchy and never targets yourself", async () => {
-    const channelId = await createPrivateChannel("hierarchy", [admin.id, hiddenAdmin.id, member.id]);
-    const remove = (targetId: string, token: string) =>
-      req("DELETE", `/conversations/channel/${channelId}/members/${targetId}`, undefined, token);
-
-    expect((await remove(owner.id, admin.token)).status).toBe(403);
-    expect((await remove(hiddenAdmin.id, admin.token)).status).toBe(403);
-    expect((await remove(admin.id, admin.token)).status).toBe(400);
-    expect((await remove(owner.id, owner.token)).status).toBe(400);
-    // Someone who is not in the channel, and an id that is no one.
-    expect((await remove(outsider.id, owner.token)).status).toBe(404);
-    expect((await remove(crypto.randomUUID(), owner.token)).status).toBe(404);
-    expect(await memberIdsOf(channelId, owner.token)).toEqual([owner.id, admin.id, hiddenAdmin.id, member.id].sort());
-
-    // The owner may remove an admin; an admin may remove a regular member.
-    expect((await remove(hiddenAdmin.id, owner.token)).status).toBe(200);
-    expect((await remove(member.id, admin.token)).status).toBe(200);
-    expect(await memberIdsOf(channelId, owner.token)).toEqual([owner.id, admin.id].sort());
+  test("removal changes channel membership, not workspace roles", async () => {
+    const channelId = await createPrivateChannel("hierarchy", [member.id]);
+    const path = `/conversations/channel/${channelId}/members`;
+    await ok("PATCH", `${path}/${member.id}`, { role: "admin" }, owner.token);
+    for (const absent of [outsider.id, crypto.randomUUID()]) {
+      expect((await req("DELETE", `${path}/${absent}`, undefined, member.token)).status).toBe(404);
+    }
+    // A channel admin may remove even a workspace owner from this channel only.
+    await ok("DELETE", `${path}/${owner.id}`, undefined, member.token);
+    expect(await memberIdsOf(channelId, member.token)).toEqual([member.id]);
+    expect((await req("GET", `/conversations/detail/${channelId}`, undefined, owner.token)).status).toBe(403);
+    expect(await memberIdsOf(generalId, owner.token)).toContain(owner.id);
   });
 
   test("only workspace members can be added", async () => {
@@ -329,19 +305,19 @@ describe("adding and removing people takes effect at once", () => {
     expect((await ok("GET", `/search/messages?q=${word}`, undefined, member.token)).results).toEqual([]);
 
     const result = await ok("POST", `/conversations/channel/${channelId}/members`, { userIds: [member.id, bot.userId] }, admin.token);
-    expect(result.addedUserIds.sort()).toEqual([member.id, bot.userId].sort());
+    expect(result.members.map((m: any) => m.userId).sort()).toEqual([owner.id, admin.id, member.id, bot.userId].sort());
     await barrier([ownerSocket, adminSocket, memberSocket, outsiderSocket]);
 
     // The new member's open client is handed the channel itself.
-    const forMember = memberSocket.events.find((event) => event.type === "channel_members_added");
+    const forMember = memberSocket.events.find((event) => event.type === "channel_joined" && event.channel.id === channelId);
     expect(forMember).toMatchObject({
       workspaceId,
       channel: { id: channelId, isPrivate: true, archivedAt: null },
     });
-    expect(forMember.userIds.sort()).toEqual([member.id, bot.userId].sort());
+    expect(forMember.channel.members).toEqual(result.members);
     // Existing members hear about it; everyone else in the workspace does not.
-    expect(ownerSocket.events.some((event) => event.type === "channel_members_added")).toBe(true);
-    expect(adminSocket.events.some((event) => event.type === "channel_members_added")).toBe(true);
+    expect(ownerSocket.events.some((event) => event.type === "channel_updated" && event.channel.id === channelId)).toBe(true);
+    expect(adminSocket.events.some((event) => event.type === "channel_updated" && event.channel.id === channelId)).toBe(true);
     expect(mentions(outsiderSocket.events, channelId)).toEqual([]);
 
     // Listing, history, search, posting and live delivery all work for them now.
@@ -361,9 +337,9 @@ describe("adding and removing people takes effect at once", () => {
     // Adding someone who is already in changes nothing and announces nothing.
     const before = ownerSocket.events.length;
     const again = await ok("POST", `/conversations/channel/${channelId}/members`, { userIds: [member.id] }, owner.token);
-    expect(again.addedUserIds).toEqual([]);
+    expect(again.members).toEqual(result.members);
     await barrier([ownerSocket]);
-    expect(ownerSocket.events.slice(before).some((event) => event.type === "channel_members_added")).toBe(false);
+    expect(ownerSocket.events.slice(before).some((event) => event.type === "channel_updated" && event.channel.id === channelId)).toBe(false);
   });
 
   test("a removed member loses the channel at once: events, reads, writes, search and unread counts", async () => {
@@ -380,18 +356,13 @@ describe("adding and removing people takes effect at once", () => {
     const memberSocket = await connect(member.token);
 
     const removed = await ok("DELETE", `/conversations/channel/${channelId}/members/${member.id}`, undefined, admin.token);
-    expect(removed).toEqual({ ok: true, removedUserId: member.id });
-    await until(
-      () => memberSocket.events.some((event) => event.type === "channel_member_removed"),
-      "the removed member's client being told",
-    );
-    expect(memberSocket.events.find((event) => event.type === "channel_member_removed")).toEqual({
-      type: "channel_member_removed",
-      workspaceId,
-      channelId,
-      userId: member.id,
+    expect(removed).toMatchObject({ ok: true, channelDeleted: false, channel: { id: channelId } });
+    await barrier([memberSocket, ownerSocket]);
+    expect(memberSocket.events.find((event) => event.type === "channel_deleted" && event.channelId === channelId)).toEqual({
+      type: "channel_deleted", workspaceId, channelId,
     });
-    expect(ownerSocket.events.some((event) => event.type === "channel_member_removed" && event.userId === member.id)).toBe(true);
+    const update = ownerSocket.events.find((event) => event.type === "channel_updated" && event.channel.id === channelId);
+    expect(update.channel.members.map((m: any) => m.userId).sort()).toEqual([owner.id, admin.id, bot.userId].sort());
 
     // What is said after the removal never reaches the socket that is still open.
     const cutoff = memberSocket.events.length;
@@ -441,7 +412,7 @@ describe("adding and removing people takes effect at once", () => {
     // Added back, they see the whole history again, including what they missed.
     await ok("POST", `/conversations/channel/${channelId}/members`, { userIds: [member.id] }, owner.token);
     await until(
-      () => memberSocket.events.slice(cutoff).some((event) => event.type === "channel_members_added"),
+      () => memberSocket.events.slice(cutoff).some((event) => event.type === "channel_joined" && event.channel.id === channelId),
       "the channel coming back for the re-added member",
     );
     expect((await ok("GET", `/messages/${channelId}`, undefined, member.token)).map((m: any) => m.id)).toContain(after.id);
@@ -583,6 +554,9 @@ describe("archive and unarchive", () => {
     // Nobody can write: not a member, not the owner who archived it, not a bot.
     const writes = [
       await req("POST", `/messages/${channelId}`, { content: "one more thing" }, member.token),
+      await req("POST", `/messages/${channelId}`, {
+        contentFormat: "parts-v1", parts: [{ type: "reference", refType: "user", refId: bot.userId }],
+      }, member.token),
       await req("POST", `/messages/${channelId}`, { content: "one more thing" }, owner.token),
       await req("POST", `/messages/${channelId}`, { content: "agent here" }, bot.apiKey),
       await req("POST", `/messages/${channelId}`, { content: "reply", parentMessageId: root.id }, member.token),
@@ -626,6 +600,10 @@ describe("archive and unarchive", () => {
     expect((await ok("POST", `/conversations/channel/${channelId}/archive`, undefined, owner.token)).archivedAt).toBe(archived.archivedAt);
     await barrier([ownerSocket]);
     expect(ownerSocket.events.slice(before).some((event) => event.type === "channel_updated")).toBe(false);
+
+    // An archive cannot be made public, disclosing its history to outsiders.
+    expect((await req("PATCH", `/conversations/channel/${channelId}`, { isPrivate: false }, owner.token)).status).toBe(409);
+    expect((await req("GET", `/conversations/detail/${channelId}`, undefined, outsider.token)).status).toBe(403);
 
     // Membership can still be managed while archived.
     await ok("DELETE", `/conversations/channel/${channelId}/members/${bot.userId}`, undefined, owner.token);

@@ -17,9 +17,10 @@ bound to the original event. No durable bot-request row is created.
 
 Only the original human requester sees or answers the private form. Other
 channel participants, including the bot owner when not the requester, receive
-neither request nor resolution metadata. Code prompts remain available to an
-admitted nonowner requester; the four owner-only kinds keep their existing API
-authority checks. Channel submit/cancel uses the same dedicated Eden endpoints,
+neither request nor resolution metadata. Vault prompts (code, save login and
+1Password unlock) are available to any admitted requester, owner or not: whoever
+can talk to the agent can use the password managers it is configured with. Only
+the two host-level kinds (`sudo.password`, `skill.secret`) require the bot owner. Channel submit/cancel uses the same dedicated Eden endpoints,
 never the ordinary message composer or websocket message-send path.
 
 Changing channels unmounts and clears the form, fences pending encryption and
@@ -38,8 +39,8 @@ plaintext fallback. There is no new TheChat environment feature flag.
 
 | Kind | Ordered fields | Who can request and answer | Public target |
 | --- | --- | --- | --- |
-| `onepassword.unlock` | `["password"]` | Original human requester **and** current bot owner | `1Password` |
-| `vault.save_login` | `["identifier","password"]` | Original human requester **and** current bot owner | Bound HTTP(S) browser origin |
+| `onepassword.unlock` | `["password"]` | Original admitted human requester, including nonowners | `1Password` |
+| `vault.save_login` | `["identifier","password"]` | Original admitted human requester, including nonowners | Bound HTTP(S) browser origin |
 | `vault.code` | `["code"]` | Original admitted human requester, including nonowners | Callback site/origin |
 | `sudo.password` | `["password"]` | Original human requester **and** current bot owner; Hermes profile opt-in | Redacted command or safe description |
 | `skill.secret` | `["value"]` | Original human requester **and** current bot owner; Hermes profile opt-in | Valid environment-variable name |
@@ -48,8 +49,8 @@ TheChat reads the owner from the current canonical bot row, never from caller
 actor/owner claims. Publication and submit/cancel revalidate human identity,
 workspace/conversation admission, bot admission and nonterminal active execution.
 Only the original requester receives request/resolution realtime events or
-snapshot metadata. Snapshots also hide owner-only requests after an ownership
-change or admission revocation. The UI's human/requester guard is defense in
+snapshot metadata. Snapshots also hide `sudo.password`/`skill.secret` requests
+after an ownership change, and every request after admission revocation. The UI's human/requester guard is defense in
 depth, not the authority boundary.
 
 Hermes owns the default-off `sudo.password`/`skill.secret` **profile configuration**

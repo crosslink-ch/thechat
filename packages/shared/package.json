@@ -7,8 +7,7 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "build": "tsc",
-    "test": "echo 'No tests yet'"
+    "build": "tsc"
   },
   "devDependencies": {
     "typescript": "~5.8.3"

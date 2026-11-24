@@ -18,6 +18,7 @@ vi.mock("../stores/workspaces", () => {
   const state = { activeWorkspace: { members: [] } };
   const store = (selector: (value: typeof state) => unknown) => selector(state);
   store.getState = () => ({ touchThread: mocks.touchThread });
+  store.subscribe = () => () => {};
   return { useWorkspacesStore: store };
 });
 vi.mock("../stores/websocket", () => ({

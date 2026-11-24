@@ -11,6 +11,7 @@ import {
   workspaceMembers,
 } from "../db/schema";
 import { ServiceError } from "./errors";
+import { storedReferenceIds } from "./message-parts";
 
 /**
  * Reply threads (Slack-style). A reply points at its root message through
@@ -89,6 +90,9 @@ export async function resolveReplyRoot(
  * - in a direct conversation both people follow,
  * - replying or being @mentioned (re)follows, even after an unfollow,
  * - otherwise an explicit unfollow is kept.
+ *
+ * A "parts-v1" reply mentions exactly the users it references by ID; a
+ * legacy text reply is matched by name.
  */
 export async function recordThreadReply(
   tx: DbTransaction,
@@ -97,6 +101,8 @@ export async function recordThreadReply(
     conversationId: string;
     senderId: string;
     content: string;
+    contentFormat?: string | null;
+    parts?: unknown;
     createdAt: Date;
     parentMessageId: string | null;
   },
@@ -141,7 +147,7 @@ export async function recordThreadReply(
   if (direct) for (const id of humanIds) keepExisting.add(id);
   if (humanIds.has(reply.senderId)) refollow.add(reply.senderId);
   for (const member of members) {
-    if (member.userId !== reply.senderId && mentionsName(reply.content, member.name)) {
+    if (member.userId !== reply.senderId && messageMentionsUser(reply, member)) {
       refollow.add(member.userId);
     }
   }
@@ -277,9 +283,24 @@ export async function threadSummaryForRoot(
 }
 
 /**
- * Mentions are stored as plain "@Display Name" text. Same rule as the client's
- * "mentions you" highlight: not after a word character, "." or "@" (emails),
- * and not followed by a word character.
+ * Whether a message mentions a user. A "parts-v1" message mentions exactly
+ * the users it references by ID (a typed "@Name" is plain text). A legacy
+ * text message is matched by name, as before.
+ */
+export function messageMentionsUser(
+  message: { content: string; contentFormat?: string | null; parts?: unknown },
+  user: { userId: string; name: string },
+) {
+  if (message.contentFormat === "parts-v1") {
+    return storedReferenceIds(message).includes(user.userId);
+  }
+  return mentionsName(message.content, user.name);
+}
+
+/**
+ * Legacy mentions are stored as plain "@Display Name" text. Same rule as the
+ * client's "mentions you" highlight: not after a word character, "." or "@"
+ * (emails), and not followed by a word character.
  */
 export function mentionsName(content: string, name: string) {
   const trimmed = name.trim();

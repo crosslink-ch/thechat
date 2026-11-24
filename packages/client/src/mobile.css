@@ -170,19 +170,22 @@
     top: 0;
     right: 0;
   }
-  .hermes-interaction-card {
+  /* Approvals and questions moved into bot request cards; they keep the
+     same phone rules: 44px touch targets and a 16px field (no iOS zoom). */
+  .hermes-interaction-card, .bot-request-card {
     overflow-wrap: anywhere;
   }
-  .hermes-interaction-card button, .hermes-interaction-card textarea, .hermes-interaction-card label:has(input[type="checkbox"]) {
+  .hermes-interaction-card button, .hermes-interaction-card textarea, .hermes-interaction-card label:has(input[type="checkbox"]),
+  .bot-request-card button, .bot-request-card textarea, .bot-request-card label:has(input[type="checkbox"]) {
     min-height: 44px;
   }
-  .hermes-interaction-card button {
+  .hermes-interaction-card button, .bot-request-card button {
     min-width: 44px;
     max-width: 100%;
     white-space: normal;
     overflow-wrap: anywhere;
   }
-  .hermes-interaction-card textarea {
+  .hermes-interaction-card textarea, .bot-request-card textarea {
     font-size: 16px;
   }
   .chat-composer .ProseMirror {

@@ -1,5 +1,5 @@
 {
-  "id": "6588a34a-569b-40c6-85ad-990d5503c152",
+  "id": "f2496ee4-bb97-4a31-b571-fed522a29651",
   "prevId": "8ea8a079-cd63-4084-aeac-c01c2f47414a",
   "version": "7",
   "dialect": "postgresql",
@@ -1974,12 +1974,6 @@
           "notNull": true,
           "default": false
         },
-        "archived_at": {
-          "name": "archived_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp with time zone",
@@ -2942,6 +2936,13 @@
           "type": "text",
           "primaryKey": false,
           "notNull": true
+        },
+        "content_format": {
+          "name": "content_format",
+          "type": "varchar(20)",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'legacy-text'"
         },
         "parts": {
           "name": "parts",

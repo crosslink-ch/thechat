@@ -14,6 +14,7 @@ import {
   cancelSharedAttachment,
   uploadSharedAttachment,
 } from "../lib/shared-attachments";
+import type { MessageInput } from "../lib/composer-parts";
 
 vi.mock("../lib/shared-attachments", async (importOriginal) => {
   const original =
@@ -146,7 +147,7 @@ describe("InputBar slash command menu", () => {
     openMenu(editor);
 
     await act(async () => fireEvent.keyDown(editor, { key: "Enter" }));
-    expect(onSend).toHaveBeenCalledWith("/help");
+    expect(onSend).toHaveBeenCalledWith(expect.objectContaining({ text: "/help" }));
     await waitFor(() => {
       expect(screen.queryByTestId("slash-command-menu")).toBeNull();
       expect(editor.textContent ?? "").toBe("");
@@ -191,7 +192,7 @@ describe("InputBar slash command menu", () => {
     await act(async () =>
       fireEvent.mouseDown(screen.getByTestId("slash-command-item-help")),
     );
-    expect(onSend).toHaveBeenCalledWith("/help");
+    expect(onSend).toHaveBeenCalledWith(expect.objectContaining({ text: "/help" }));
   });
 
   it("keeps action controls in normal layout below the editor", () => {
@@ -205,7 +206,7 @@ describe("InputBar slash command menu", () => {
     const onSend = vi
       .fn(
         (
-          _content: string,
+          _content: MessageInput,
           _images?: ImageAttachment[],
         ): boolean | Promise<boolean> => true,
       )
@@ -238,7 +239,7 @@ describe("InputBar slash command menu", () => {
 
     fireEvent.click(screen.getByTitle("Send message"));
     await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
-    expect(onSend.mock.calls[0][0]).toBe("/queue");
+    expect(onSend.mock.calls[0][0]).toMatchObject({ text: "/queue" });
     expect(onSend.mock.calls[0][1]).toHaveLength(1);
     expect(editor.textContent).toBe("");
     expect(container.querySelector("img[src^='data:image/png;base64,']")).not.toBeNull();

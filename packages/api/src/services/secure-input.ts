@@ -31,4 +31,7 @@ export const secureInputResponseSchema = z.discriminatedUnion("action", [
   vaultUnlockResponseSchema.options[0].extend({ version: z.literal(3), ciphertextB64: ciphertext }).strict(),
   z.object({ version: z.literal(3), action: z.literal("cancel") }).strict(),
 ]);
+// Vault prompts (login, code, password-manager unlock) belong to whoever the agent admitted; only
+// host-level secrets stay with the bot owner.
+export function secureInputNeedsBotOwner(kind: string) { return kind === "sudo.password" || kind === "skill.secret"; }
 export function secureInputError(status: number) { return new ServiceError("Could not deliver the secure input response", status); }

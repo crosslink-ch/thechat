@@ -9,8 +9,9 @@ import { useDmHeaderStore } from "../stores/chat-header";
 import { isWeb } from "../platform/environment";
 import { toggleSidebar, useSidebarState } from "./Sidebar";
 import { HeaderActionsSlot } from "./HeaderActions";
-import { Archive, Lock, PanelLeft } from "lucide-react";
+import { Archive, Lock, PanelLeft, Users } from "lucide-react";
 import { openChannelDetailsModal } from "./ChannelDetailsModal";
+import { channelMemberCount } from "../lib/channel-access";
 import { iconButtonClass } from "./ui";
 
 // Mini-store for agent chat title & project dir (set by agent-chat route)
@@ -61,6 +62,7 @@ export function ChatHeader() {
       : isAgentChat ? agentTitle
         : pageLabels[routePath] ?? activeWorkspace?.name ?? "Home";
   const context = currentDm?.context;
+  const channelMembers = channel ? channelMemberCount(channel, activeWorkspace?.members) : 0;
 
   if (isPage && !mobile && !showSidebarToggle) return null;
 
@@ -73,20 +75,24 @@ export function ChatHeader() {
         </button>
       )}
       <div className="flex min-w-0 flex-1 items-center">
-        {channel ? (
+        {isChannel && channel ? (
           // The channel's name opens its details: members, archive, rename.
           <button
             type="button"
-            className="-ml-1.5 flex min-w-0 cursor-pointer items-center rounded-md border-none bg-transparent px-1.5 py-1 font-[inherit] transition-colors duration-100 hover:bg-white/[0.06]"
-            onClick={() => openChannelDetailsModal(channel.id)}
-            aria-label={`${title}, open channel details`}
+            className="-ml-2 flex min-w-0 cursor-pointer items-center rounded-md border-none bg-transparent px-2 py-1 font-[inherit] transition-colors duration-150 hover:bg-hover"
+            aria-label={`Channel details: ${channel.isPrivate ? "private channel " : ""}${title}, ${channelMembers} ${channelMembers === 1 ? "member" : "members"}${channel.archivedAt ? ", archived" : ""}`}
             title="Channel details"
+            onClick={() => openChannelDetailsModal(channel.id)}
             data-testid="channel-details-trigger"
           >
             <span className="mr-2 flex shrink-0 items-center text-[1rem] text-text-dimmed" aria-hidden="true">
               {channel.isPrivate ? <Lock size={14} /> : "#"}
             </span>
             <span className="min-w-0 truncate text-[1rem] font-semibold text-text">{title}</span>
+            <span className="ml-2.5 flex shrink-0 items-center gap-1 text-[0.857rem] text-text-dimmed" aria-hidden="true">
+              <Users size={13} />
+              {channelMembers}
+            </span>
             {channel.archivedAt && (
               <span className="ml-2 inline-flex shrink-0 items-center gap-1 rounded-md bg-white/[0.06] px-1.5 py-0.5 text-[0.714rem] font-medium text-text-muted">
                 <Archive size={11} aria-hidden="true" />

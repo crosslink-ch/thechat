@@ -17,6 +17,5 @@ export default defineConfig({
     setupFiles: [here("../client/src/test-setup.ts")],
     exclude: ["**/node_modules/**", "**/.claude/**", "**/scripts/**", "**/browser-tests/**", "**/mobile-tests/**", "**/e2e/**"],
     env,
-    maxWorkers: 2,
   },
 });

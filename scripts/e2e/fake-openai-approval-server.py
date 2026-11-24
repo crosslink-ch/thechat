@@ -165,11 +165,20 @@ def _clarify_result_succeeded(message: dict[str, Any]) -> bool:
         result = json.loads(_message_text(message.get("content")))
     except (TypeError, json.JSONDecodeError):
         return False
+    # Hermes clarify result: {"responses": [{question, choices_offered,
+    # status, user_response}], "outcome"} in question order.
+    if not isinstance(result, dict) or result.get("outcome") != "submitted":
+        return False
+    responses = result.get("responses")
+    if not isinstance(responses, list) or len(responses) != 1:
+        return False
+    response = responses[0]
     return (
-        isinstance(result, dict)
-        and result.get("question") == CLARIFY_QUESTION
-        and result.get("choices_offered") == CLARIFY_CHOICES
-        and result.get("user_response") == CLARIFY_RESPONSE
+        isinstance(response, dict)
+        and response.get("question") == CLARIFY_QUESTION
+        and response.get("choices_offered") == CLARIFY_CHOICES
+        and response.get("status") == "answered"
+        and response.get("user_response") == CLARIFY_RESPONSE
     )
 
 
@@ -222,9 +231,13 @@ def completion_for(payload: dict[str, Any]) -> dict[str, Any]:
                                 "name": "clarify",
                                 "arguments": json.dumps(
                                     {
-                                        "question": CLARIFY_QUESTION,
-                                        "choices": CLARIFY_CHOICES,
-                                        "multi_select": True,
+                                        "questions": [
+                                            {
+                                                "question": CLARIFY_QUESTION,
+                                                "choices": CLARIFY_CHOICES,
+                                                "multi_select": True,
+                                            }
+                                        ]
                                     }
                                 ),
                             },

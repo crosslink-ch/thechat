@@ -135,6 +135,7 @@ vi.mock("../PermissionModePicker", () => ({ PermissionModePicker: () => null }))
 vi.mock("../components/CodexAuthModal", () => ({ CodexAuthModal: () => null }));
 vi.mock("@thechat/client/components/WorkspaceModal", () => ({ WorkspaceModal: () => null }));
 vi.mock("@thechat/client/components/ChannelModal", () => ({ ChannelModal: () => null }));
+vi.mock("@thechat/client/components/ChannelDetailsModal", () => ({ ChannelDetailsModal: () => null }));
 vi.mock("@thechat/client/components/HermesBotModal", () => ({ HermesBotModal: () => null }));
 vi.mock("../McpConfigDialog", () => ({ McpConfigDialog: () => null }));
 vi.mock("../components/UpdateToast", () => ({ UpdateToast: () => null }));
