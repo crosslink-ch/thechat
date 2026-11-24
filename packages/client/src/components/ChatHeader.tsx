@@ -1,6 +1,7 @@
 import { MOBILE_NAV_QUERY, NavigationToggle, useMediaQuery } from "./ResponsiveShell";
 import { create } from "zustand";
 import { useMatches } from "@tanstack/react-router";
+import { channelDisplayName } from "@thechat/shared";
 import { useWorkspacesStore } from "../stores/workspaces";
 import { usePermissionModeStore } from "../stores/permission-mode";
 import { useAuthStore } from "../stores/auth";
@@ -56,7 +57,7 @@ export function ChatHeader() {
   const channel = isChannel
     ? activeWorkspace?.channels.find((item) => item.id === params.id)
     : null;
-  const title = isChannel ? channel?.name ?? ""
+  const title = isChannel ? (channel ? channelDisplayName(channel) : "")
     : isDm ? currentDm?.title ?? ""
       : isAgentChat ? agentTitle
         : pageLabels[routePath] ?? activeWorkspace?.name ?? "Home";

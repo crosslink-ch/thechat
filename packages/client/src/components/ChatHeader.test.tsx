@@ -78,11 +78,16 @@ describe("ChatHeader contextual identity", () => {
 
   it("shows a channel name as the primary identity and follows renames", async () => {
     await renderHeader("/channel/$id", "/channel/general");
+    // A channel made before titles shows its slug.
     expect(screen.getByText("general")).toHaveClass("font-semibold", "text-text", "truncate");
     act(() => useWorkspacesStore.setState({ activeWorkspace: {
-      ...useWorkspacesStore.getState().activeWorkspace!, channels: [{ id: "general", name: "renamed" }],
+      ...useWorkspacesStore.getState().activeWorkspace!,
+      channels: [{ id: "general", name: "my-channel", title: "My Channel" }],
     } as any }));
-    expect(screen.getByText("renamed")).toBeInTheDocument();
+    // Renamed to "My Channel": the title as typed, never the slug.
+    expect(screen.getByText("My Channel")).toHaveClass("font-semibold", "text-text", "truncate");
+    expect(screen.getByRole("button", { name: "Channel details: My Channel, 0 members" })).toHaveTextContent("#My Channel");
+    expect(screen.queryByText("my-channel")).not.toBeInTheDocument();
     expect(screen.queryByText("general")).not.toBeInTheDocument();
   });
 

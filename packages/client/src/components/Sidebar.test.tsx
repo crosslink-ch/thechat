@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { render, screen, act, fireEvent, waitFor } from "@testing-library/react";
+import { render, screen, act, fireEvent, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import {
   RouterProvider,
@@ -228,7 +228,42 @@ describe("Sidebar", () => {
     expect(
       screen.getByRole("img", { name: "Private channel" }),
     ).toBeInTheDocument();
-    expect(screen.getByText("leadership")).toBeInTheDocument();
+    expect(screen.getByText("Leadership")).toBeInTheDocument();
+    expect(screen.queryByText("leadership")).not.toBeInTheDocument();
+  });
+
+  it("names channels by their title, and channels without one by their slug", async () => {
+    const base = activeWorkspace.channels[0];
+    useAuthStore.setState({ user, token: "test-token" });
+    useWorkspacesStore.setState({
+      workspaces: workspaceList,
+      activeWorkspace: {
+        ...activeWorkspace,
+        channels: [
+          { ...base, id: "ch-friendly", name: "my-channel", title: "My Channel" },
+          // Created in lowercase: the title is the slug, so nothing changes.
+          { ...base, id: "ch-lower", name: "product-updates", title: "product-updates" },
+          // Made before channels had titles.
+          { ...base, id: "ch-legacy", name: "legacy-ops", title: null },
+          { ...base, id: "ch-secret", name: "board-room", title: "Board Room", isPrivate: true },
+        ],
+      },
+    });
+
+    const view = await renderWithRouter(<Sidebar />);
+    const row = (id: string) => view.container.querySelector(`[data-channel-id="${id}"]`) as HTMLElement;
+
+    // The # (or the lock) stays; the slug is not what people read.
+    expect(row("ch-friendly")).toHaveTextContent(/^#My Channel$/);
+    expect(row("ch-lower")).toHaveTextContent(/^#product-updates$/);
+    expect(row("ch-legacy")).toHaveTextContent(/^#legacy-ops$/);
+    expect(row("ch-secret")).toHaveTextContent(/^Board Room$/);
+    expect(within(row("ch-secret")).getByRole("img", { name: "Private channel" })).toBeInTheDocument();
+    expect(screen.queryByText("my-channel")).not.toBeInTheDocument();
+    expect(screen.queryByText("board-room")).not.toBeInTheDocument();
+
+    expect(screen.getByRole("button", { name: "Manage My Channel" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Manage legacy-ops" })).toBeInTheDocument();
   });
 
   it("surfaces persisted unread activity across workspace boundaries", async () => {
@@ -420,7 +455,7 @@ describe("Sidebar", () => {
 
     // Channels and DMs shown
     expect(screen.getByText("Channels")).toBeInTheDocument();
-    expect(screen.getByText(/general/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "General" })).toBeInTheDocument();
     expect(screen.getByText("People")).toBeInTheDocument();
     expect(screen.getByText("Alice")).toBeInTheDocument();
 
@@ -565,13 +600,13 @@ describe("Sidebar", () => {
     await ui.click(screen.getByRole("button", { name: "Create channel" }));
     expect(openCreateChannelModalMock).toHaveBeenCalledOnce();
 
-    await ui.click(screen.getByRole("button", { name: "Manage #general" }));
+    await ui.click(screen.getByRole("button", { name: "Manage General" }));
     await ui.click(screen.getByRole("menuitem", { name: "Rename channel" }));
     expect(openRenameChannelModalMock).toHaveBeenCalledWith(
       activeWorkspace.channels[0],
     );
 
-    await ui.click(screen.getByRole("button", { name: "Manage #general" }));
+    await ui.click(screen.getByRole("button", { name: "Manage General" }));
     await ui.click(screen.getByRole("menuitem", { name: "Delete channel" }));
     expect(openDeleteChannelModalMock).toHaveBeenCalledWith(
       activeWorkspace.channels[0],
@@ -594,7 +629,7 @@ describe("Sidebar", () => {
     await renderWithRouter(<Sidebar />);
 
     expect(
-      screen.getByRole("button", { name: "Manage #general" }),
+      screen.getByRole("button", { name: "Manage General" }),
     ).toBeInTheDocument();
   });
 
@@ -604,7 +639,7 @@ describe("Sidebar", () => {
     useWorkspacesStore.setState({ workspaces: workspaceList, activeWorkspace });
     await renderWithRouter(<Sidebar />);
 
-    const trigger = screen.getByRole("button", { name: "Manage #general" });
+    const trigger = screen.getByRole("button", { name: "Manage General" });
     trigger.focus();
     await ui.keyboard("{Enter}");
     const detailsItem = await screen.findByRole("menuitem", {
@@ -640,17 +675,17 @@ describe("Sidebar", () => {
     const view = await renderWithRouter(<Sidebar />);
 
     // Out of the active list until asked for.
-    expect(screen.getByRole("button", { name: "general" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "old-project" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "General" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Old Project" })).not.toBeInTheDocument();
     const toggle = screen.getByRole("button", { name: "Archived (1)" });
     expect(toggle).toHaveAttribute("aria-expanded", "false");
 
     await ui.click(toggle);
     expect(toggle).toHaveAttribute("aria-expanded", "true");
-    expect(screen.getByRole("button", { name: "old-project" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Old Project" })).toBeInTheDocument();
 
     // An archived channel cannot be renamed; details and delete remain.
-    await ui.click(screen.getByRole("button", { name: "Manage #old-project" }));
+    await ui.click(screen.getByRole("button", { name: "Manage Old Project" }));
     expect(screen.getByRole("menuitem", { name: "Channel details" })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "Delete channel" })).toBeInTheDocument();
     expect(screen.queryByRole("menuitem", { name: "Rename channel" })).not.toBeInTheDocument();
@@ -664,7 +699,7 @@ describe("Sidebar", () => {
       },
     });
     await renderWithRouter(<Sidebar />);
-    expect(screen.getByRole("button", { name: "old-project" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Old Project" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^Archived/ })).not.toBeInTheDocument();
   });
 
@@ -686,7 +721,7 @@ describe("Sidebar", () => {
 
     expect(screen.getByRole("button", { name: "Create channel" })).toBeInTheDocument();
     // Everyone can open a channel's details; managing it is for managers.
-    await ui.click(screen.getByRole("button", { name: "Manage #general" }));
+    await ui.click(screen.getByRole("button", { name: "Manage General" }));
     expect(screen.getByRole("menuitem", { name: "Channel details" })).toBeInTheDocument();
     expect(screen.queryByRole("menuitem", { name: "Rename channel" })).not.toBeInTheDocument();
     expect(screen.queryByRole("menuitem", { name: "Delete channel" })).not.toBeInTheDocument();
@@ -717,13 +752,13 @@ describe("Sidebar", () => {
 
     await renderWithRouter(<Sidebar />);
 
-    await ui.click(screen.getByRole("button", { name: "Manage #mine" }));
+    await ui.click(screen.getByRole("button", { name: "Manage mine" }));
     expect(screen.getByRole("menuitem", { name: "Rename channel" })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "Delete channel" })).toBeInTheDocument();
     await ui.click(screen.getByRole("menuitem", { name: "Leave channel" }));
     expect(openChannelDetailsModalMock).toHaveBeenCalledWith("mine", { confirm: "leave" });
 
-    await ui.click(screen.getByRole("button", { name: "Manage #theirs" }));
+    await ui.click(screen.getByRole("button", { name: "Manage theirs" }));
     expect(screen.queryByRole("menuitem", { name: "Rename channel" })).not.toBeInTheDocument();
     expect(screen.queryByRole("menuitem", { name: "Delete channel" })).not.toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "Leave channel" })).toBeInTheDocument();

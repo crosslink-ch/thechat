@@ -190,7 +190,7 @@ describe("Channel management", function () {
         `Realtime channel rename failed: ${renamedCreatedChannel.status} ${JSON.stringify(renamedCreatedChannel.body)}`,
       );
     }
-    await $('button[aria-label="Manage #release-room"]').waitForExist({
+    await $('button[aria-label="Manage Release Room"]').waitForExist({
       timeout: 10_000,
     });
     await saveEvidence("channel-management-3-realtime-renamed.png");
@@ -250,7 +250,7 @@ describe("Channel management", function () {
         `Realtime channel rename failed: ${realtimeRenamed.status} ${JSON.stringify(realtimeRenamed.body)}`,
       );
     }
-    await $('button[aria-label="Manage #synced-room"]').waitForExist({
+    await $('button[aria-label="Manage Synced Room"]').waitForExist({
       timeout: 10_000,
     });
 

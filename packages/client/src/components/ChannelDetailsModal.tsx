@@ -1,7 +1,7 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { useMatches, useNavigate } from "@tanstack/react-router";
 import * as Dialog from "@radix-ui/react-dialog";
-import type { ChannelMemberRole, WorkspaceMember } from "@thechat/shared";
+import { channelDisplayName, type ChannelMemberRole, type WorkspaceMember } from "@thechat/shared";
 import { Archive, ArchiveRestore, Hash, Lock, UserPlus, X } from "lucide-react";
 import { defaultChannel, useWorkspacesStore } from "../stores/workspaces";
 import { useConversationsStore } from "../stores/conversations";
@@ -215,7 +215,7 @@ export function ChannelDetailsModal() {
             </div>
             <div className="min-w-0 flex-1">
               <Dialog.Title asChild>
-                <h2 className={`truncate ${dialogTitleClass}`}>{channel.name}</h2>
+                <h2 className={`truncate ${dialogTitleClass}`}>{channelDisplayName(channel)}</h2>
               </Dialog.Title>
               <Dialog.Description asChild>
                 <p className="mt-1 text-[0.857rem] leading-5 text-text-muted">
@@ -227,14 +227,21 @@ export function ChannelDetailsModal() {
                     : ". Everyone in the workspace can see and open it."}
                 </p>
               </Dialog.Description>
-              {archived && (
-                <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+              <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                <span
+                  className="min-w-0 max-w-full truncate font-mono text-[0.75rem] text-text-dimmed"
+                  title="Unique channel name, used by bots and the API"
+                  data-testid="channel-slug"
+                >
+                  #{channel.name}
+                </span>
+                {archived && (
                   <span className={badgeClass} data-testid="channel-archived-badge">
                     <Archive size={11} aria-hidden="true" />
                     Archived
                   </span>
-                </div>
-              )}
+                )}
+              </div>
             </div>
             <Dialog.Close asChild>
               <button

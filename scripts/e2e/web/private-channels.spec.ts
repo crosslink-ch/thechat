@@ -47,7 +47,7 @@ async function landed(target: Page) {
   await expect(target).toHaveURL(/\/channel\//);
 }
 
-/** The channel's own sidebar row, not the "Manage #name" menu next to it. */
+/** The channel's own sidebar row, not the "Manage …" menu next to it. */
 const sidebarChannel = (target: Page, name: string) =>
   target.locator('button[data-channel-id]').filter({ hasText: new RegExp(`^#?${name}$`) });
 
@@ -131,10 +131,10 @@ test('an owner creates a private channel; picked members get it, the rest of the
 
     // Avery got the channel live, with a lock, and can read it.
     await openNavigation(avery.page);
-    const averyChannel = sidebarChannel(avery.page, 'leadership');
+    const averyChannel = sidebarChannel(avery.page, 'Leadership');
     await expect(averyChannel).toBeVisible();
     await expect(averyChannel.getByRole('img', { name: 'Private channel' })).toBeVisible();
-    await expect(sidebarChannel(avery.page, 'general').getByRole('img', { name: 'Private channel' })).toHaveCount(0);
+    await expect(sidebarChannel(avery.page, 'General').getByRole('img', { name: 'Private channel' })).toHaveCount(0);
     await averyChannel.click();
     await expect(avery.page).toHaveURL(new RegExp(`/channel/${leadershipId}`));
     await expect(avery.page.locator('[data-message-id]').filter({ hasText: secret })).toBeVisible();
@@ -143,25 +143,25 @@ test('an owner creates a private channel; picked members get it, the rest of the
     if (isPhone) await avery.page.keyboard.press('Escape');
     const averyHits = await searchFor(avery.page, isPhone, `?${secret}`);
     // Hits are matched by their accessible name: the visible text is split by highlight marks.
-    await expect(averyHits.getByRole('button', { name: `Message from Morgan Owner in #leadership: ${secret}` })).toBeVisible();
+    await expect(averyHits.getByRole('button', { name: `Message from Morgan Owner in Leadership: ${secret}` })).toBeVisible();
 
     // Nora received the public message, and nothing about #leadership.
     await expect(nora.page.locator('[data-message-id]').filter({ hasText: barrier })).toBeVisible();
     await openNavigation(nora.page);
-    await expect(sidebarChannel(nora.page, 'general')).toBeVisible();
-    await expect(sidebarChannel(nora.page, 'leadership')).toHaveCount(0);
+    await expect(sidebarChannel(nora.page, 'General')).toBeVisible();
+    await expect(sidebarChannel(nora.page, 'Leadership')).toHaveCount(0);
     await expect(nora.page.getByRole('img', { name: 'Private channel' })).toHaveCount(0);
     await shot(nora.page, `private-non-member-${info.project.name}.png`, (name) => info.outputPath(name));
     if (isPhone) await nora.page.keyboard.press('Escape');
 
     // Not in the quick switcher, not in message search.
     let panel = await searchFor(nora.page, isPhone, '#leadership');
-    await expect(panel.getByRole('button', { name: /^general, channel/ })).toHaveCount(0);
-    await expect(panel.getByRole('button', { name: /^leadership, channel/ })).toHaveCount(0);
+    await expect(panel.getByRole('button', { name: /^General, channel/ })).toHaveCount(0);
+    await expect(panel.getByRole('button', { name: /^Leadership, channel/ })).toHaveCount(0);
     await panel.getByRole('textbox', { name: 'Search TheChat' }).fill('#general');
-    await expect(panel.getByRole('button', { name: /^general, channel/ })).toBeVisible();
+    await expect(panel.getByRole('button', { name: /^General, channel/ })).toBeVisible();
     await panel.getByRole('textbox', { name: 'Search TheChat' }).fill(`?${barrier}`);
-    await expect(panel.getByRole('button', { name: `Message from Morgan Owner in #general: ${barrier}` })).toBeVisible();
+    await expect(panel.getByRole('button', { name: `Message from Morgan Owner in General: ${barrier}` })).toBeVisible();
     await panel.getByRole('textbox', { name: 'Search TheChat' }).fill(`?${secret}`);
     await expect(panel.getByText(/No messages/i)).toBeVisible();
     await expect(panel.getByRole('button', { name: /^Message from/ })).toHaveCount(0);
@@ -175,8 +175,8 @@ test('an owner creates a private channel; picked members get it, the rest of the
     // The drawer toggle exists only once the app has rendered again.
     await expect(nora.page.getByRole('textbox', { name: 'Message', exact: true })).toBeVisible();
     await openNavigation(nora.page);
-    await expect(sidebarChannel(nora.page, 'general')).toBeVisible();
-    await expect(sidebarChannel(nora.page, 'leadership')).toHaveCount(0);
+    await expect(sidebarChannel(nora.page, 'General')).toBeVisible();
+    await expect(sidebarChannel(nora.page, 'Leadership')).toHaveCount(0);
 
     // Direct API reads and writes are refused for Nora and work for Avery.
     const asNora = (method: string, path: string, data?: unknown) =>
@@ -213,7 +213,7 @@ test('members manage a private channel: details, add, remove, leave, visibility'
   const openDetails = async (target: Page) => {
     await target.getByRole('button', { name: /^Channel details:/ }).click();
     const dialog = target.getByRole('dialog');
-    await expect(dialog.getByRole('heading', { name: 'offsite' })).toBeVisible();
+    await expect(dialog.getByRole('heading', { name: 'Offsite' })).toBeVisible();
     return dialog;
   };
   const closeDetails = async (target: Page) => {
@@ -226,17 +226,17 @@ test('members manage a private channel: details, add, remove, leave, visibility'
   try {
     // The workspace owner sees nothing of it.
     await showSidebar(morgan.page);
-    await expect(sidebarChannel(morgan.page, 'general')).toBeVisible();
-    await expect(sidebarChannel(morgan.page, 'offsite')).toHaveCount(0);
+    await expect(sidebarChannel(morgan.page, 'General')).toBeVisible();
+    await expect(sidebarChannel(morgan.page, 'Offsite')).toHaveCount(0);
     await hideSidebar(morgan.page, isPhone);
 
     // Avery opens the channel: the header carries the lock and the member count.
     await login(page, w.avery);
     await landed(page);
     await showSidebar(page);
-    await sidebarChannel(page, 'offsite').click();
+    await sidebarChannel(page, 'Offsite').click();
     await expect(page).toHaveURL(new RegExp(`/channel/${room.id}`));
-    await expect(page.getByRole('button', { name: 'Channel details: private channel offsite, 2 members' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Channel details: private channel Offsite, 2 members' })).toBeVisible();
 
     // As channel admin (not a workspace admin) Avery gets the full set of controls.
     let dialog = await openDetails(page);
@@ -257,10 +257,10 @@ test('members manage a private channel: details, add, remove, leave, visibility'
     await dialog.getByRole('button', { name: 'Add', exact: true }).click();
     await expect(membersList.getByText('Morgan Owner')).toBeVisible();
     await closeDetails(page);
-    await expect(page.getByRole('button', { name: 'Channel details: private channel offsite, 3 members' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Channel details: private channel Offsite, 3 members' })).toBeVisible();
 
     await showSidebar(morgan.page);
-    const morganChannel = sidebarChannel(morgan.page, 'offsite');
+    const morganChannel = sidebarChannel(morgan.page, 'Offsite');
     await expect(morganChannel).toBeVisible();
     await expect(morganChannel.getByRole('img', { name: 'Private channel' })).toBeVisible();
     await morganChannel.click();
@@ -268,7 +268,7 @@ test('members manage a private channel: details, add, remove, leave, visibility'
 
     // Nora is an ordinary member: she can add people and leave, nothing else.
     await showSidebar(nora.page);
-    await sidebarChannel(nora.page, 'offsite').click();
+    await sidebarChannel(nora.page, 'Offsite').click();
     await expect(nora.page).toHaveURL(new RegExp(`/channel/${room.id}`));
     dialog = await openDetails(nora.page);
     await expect(dialog.getByRole('button', { name: 'Add people' })).toBeVisible();
@@ -287,7 +287,7 @@ test('members manage a private channel: details, add, remove, leave, visibility'
     // Morgan was reading it: the channel disappears and they are moved to one they can see.
     await expect(morgan.page).toHaveURL(new RegExp(`/channel/${w.general.id}`));
     await showSidebar(morgan.page);
-    await expect(sidebarChannel(morgan.page, 'offsite')).toHaveCount(0);
+    await expect(sidebarChannel(morgan.page, 'Offsite')).toHaveCount(0);
     await hideSidebar(morgan.page, isPhone);
     const asMorgan = await request.fetch(`${apiURL}/messages/${room.id}`, { headers: { authorization: `Bearer ${w.m.accessToken}` } });
     expect(asMorgan.status()).toBe(403);
@@ -299,9 +299,9 @@ test('members manage a private channel: details, add, remove, leave, visibility'
     await dialog.getByRole('button', { name: 'Leave channel', exact: true }).click();
     await expect(nora.page).toHaveURL(new RegExp(`/channel/${w.general.id}`));
     await showSidebar(nora.page);
-    await expect(sidebarChannel(nora.page, 'offsite')).toHaveCount(0);
+    await expect(sidebarChannel(nora.page, 'Offsite')).toHaveCount(0);
     await hideSidebar(nora.page, isPhone);
-    await expect(page.getByRole('button', { name: 'Channel details: private channel offsite, 1 member' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Channel details: private channel Offsite, 1 member' })).toBeVisible();
 
     // Avery makes it public after a confirmation: everyone gets it, without a lock, with its history.
     dialog = await openDetails(page);
@@ -313,10 +313,10 @@ test('members manage a private channel: details, add, remove, leave, visibility'
     // It is an ordinary public channel now: Avery, a regular member, no longer manages it.
     await expect(dialog.getByRole('button', { name: 'Rename', exact: true })).toHaveCount(0);
     await closeDetails(page);
-    await expect(page.getByRole('button', { name: 'Channel details: offsite, 3 members' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Channel details: Offsite, 3 members' })).toBeVisible();
 
     await showSidebar(nora.page);
-    const noraChannel = sidebarChannel(nora.page, 'offsite');
+    const noraChannel = sidebarChannel(nora.page, 'Offsite');
     await expect(noraChannel).toBeVisible();
     await expect(noraChannel.getByRole('img', { name: 'Private channel' })).toHaveCount(0);
     await noraChannel.click();

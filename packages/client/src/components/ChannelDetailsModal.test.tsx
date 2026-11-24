@@ -92,7 +92,8 @@ describe("ChannelDetailsModal", () => {
     await open(leadership.id);
 
     const dialog = screen.getByRole("dialog");
-    expect(within(dialog).getByRole("heading", { name: "leadership" })).toBeInTheDocument();
+    expect(within(dialog).getByRole("heading", { name: "Leadership" })).toBeInTheDocument();
+    expect(within(dialog).getByTestId("channel-slug")).toHaveTextContent("#leadership");
     const list = within(dialog).getByRole("region", { name: "Members" });
     expect(within(list).getByText("Morgan Owner (you)")).toBeInTheDocument();
     expect(within(list).getByText("Channel admin")).toBeInTheDocument();

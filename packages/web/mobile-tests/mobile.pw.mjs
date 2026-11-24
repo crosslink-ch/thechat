@@ -79,8 +79,8 @@ test("navigation traps/restores focus; same/new route, outside, Escape and Back 
   await expect(page.getByRole("navigation", { name: "Workspace navigation" })).toBeVisible();
   await within(dialog, 320, 640);
   await touch(page.locator('[data-channel-id="general"]'));
-  await expect(page.getByRole("button", { name: "Manage #general" })).toHaveCSS("opacity", "1");
-  await touch(page.getByRole("button", { name: "Manage #general" }));
+  await expect(page.getByRole("button", { name: "Manage general" })).toHaveCSS("opacity", "1");
+  await touch(page.getByRole("button", { name: "Manage general" }));
   await page.keyboard.press("Shift+Tab");
   expect(await page.evaluate(() => !!document.activeElement.closest('[role="dialog"]'))).toBe(true);
   await page.getByRole("button", { name: "M Mobile tester", exact: true }).tap();

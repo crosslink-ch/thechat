@@ -434,3 +434,59 @@ describe("MCP search tools", () => {
     }
   });
 });
+
+describe("friendly channel names", () => {
+  test("a channel is shown by its title, found by its title or its slug, and keeps its slug for bots", async () => {
+    // "é" is dropped from the slug, so only the title matches "Café".
+    const title = `Café Roadmap ${run}`;
+    const slug = `caf-roadmap-${run}`;
+    const channel = await ok("POST", "/conversations/channel", { workspaceId, name: `  Café   Roadmap ${run} ` }, alice.token);
+    expect(channel).toMatchObject({ name: slug, title });
+    const word = `kickoff${run}`;
+    const messageId = await message(channel.id, bob.id, `Notes from the ${word}`);
+
+    // Message search and its context: the slug stays the conversation's name,
+    // and the title travels next to it.
+    const hits = await ok("GET", `/search/messages?q=${word}`, undefined, alice.token);
+    expect(hits.results).toEqual([
+      expect.objectContaining({ id: messageId, conversationType: "group", conversationName: slug, conversationTitle: title }),
+    ]);
+    const context = await ok("GET", `/search/messages/${messageId}/context?before=0&after=0`, undefined, alice.token);
+    expect(context.conversation).toMatchObject({ id: channel.id, type: "group", name: slug, title });
+    // A DM has no title: its name is the other person.
+    const dmWord = `dmword${run}`;
+    await message(aliceBobDmId, bob.id, `About the ${dmWord}`);
+    const dmHits = await ok("GET", `/search/messages?q=${dmWord}`, undefined, alice.token);
+    expect(dmHits.results[0]).toMatchObject({ conversationName: bob.name, conversationTitle: null });
+
+    // The quick switcher's directory and the name lookup find it by either name.
+    const directory = await ok("GET", `/search/directory?workspaceId=${workspaceId}`, undefined, alice.token);
+    expect(directory.destinations).toContainEqual({
+      kind: "channel", conversationId: channel.id, name: slug, title, workspaceId, workspaceName: `Search ${run}`,
+    });
+    for (const q of [title, slug, "Café Roadmap", "cafe roadmap"]) {
+      const found = await ok("GET", `/search/destinations?q=${encodeURIComponent(q)}&kinds=channel`, undefined, alice.token);
+      expect(found.destinations[0], q).toMatchObject({ conversationId: channel.id, name: slug, title });
+    }
+
+    // An agent resolves "Café Roadmap" too, and still gets the slug as the name.
+    const client = new Client({ name: "friendly-names-agent", version: "1.0.0" }, { capabilities: {} });
+    const transport = new StreamableHTTPClientTransport(new URL("http://localhost/mcp"), {
+      requestInit: { headers: { authorization: `Bearer ${koda.apiKey}` } },
+      fetch: (input, init) => app.handle(new Request(input, init)),
+    });
+    await client.connect(transport);
+    try {
+      const result = (await client.callTool({
+        name: "find_conversations",
+        arguments: { query: title, kinds: ["channel"], workspaceId },
+      })) as { content: Array<{ type: string; text: string }>; isError?: boolean };
+      expect(result.isError, result.content[0]?.text).not.toBe(true);
+      expect(JSON.parse(result.content[0]!.text).destinations[0]).toMatchObject({
+        kind: "channel", conversationId: channel.id, name: slug, title,
+      });
+    } finally {
+      await client.close();
+    }
+  });
+});

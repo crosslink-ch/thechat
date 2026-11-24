@@ -115,7 +115,7 @@ test('channel details: members, adding and removing people, and archiving, live 
     await sidebarChannel(page, w.leadership).click();
     await expect(page).toHaveURL(leadershipURL);
     let dialog = await openDetails(page);
-    await expect(dialog.getByRole('heading', { name: 'leadership' })).toBeVisible();
+    await expect(dialog.getByRole('heading', { name: 'Leadership' })).toBeVisible();
     await expect(dialog.getByTestId('channel-visibility')).toHaveText('Private channel');
     const members = dialog.getByTestId('channel-members').getByRole('listitem');
     await expect(members).toHaveCount(2);
@@ -236,7 +236,7 @@ test('channel details: members, adding and removing people, and archiving, live 
     await closeNavigation(avery.page, isPhone);
     // Its history is still found by search and opens from there.
     const hits = await searchFor(avery.page, isPhone, `?${w.history}`);
-    await hits.getByRole('button', { name: `Message from Morgan Owner in #leadership: ${w.history}` }).click();
+    await hits.getByRole('button', { name: `Message from Morgan Owner in Leadership: ${w.history}` }).click();
     await expect(avery.page).toHaveURL(/\/message\//);
     await expect(avery.page.getByText(w.history).first()).toBeVisible();
     await avery.page.getByRole('button', { name: 'Open conversation' }).click();
@@ -301,17 +301,18 @@ test('a public channel shows everyone read-only; rename and delete work from the
   const rename = page.getByRole('dialog');
   await rename.getByRole('textbox', { name: 'Channel name' }).fill('Atlas Launch');
   await rename.getByRole('button', { name: 'Save changes' }).click();
-  await expect(page.getByTestId('channel-details-trigger')).toContainText('atlas-launch');
+  await expect(page.getByTestId('channel-details-trigger')).toContainText('Atlas Launch');
 
   // The sidebar "..." menu still works, and now also opens the details.
   if (!isPhone) {
     await sidebarChannel(page, project).hover();
-    await page.getByRole('button', { name: 'Manage #atlas-launch' }).click();
+    await page.getByRole('button', { name: 'Manage Atlas Launch' }).click();
     await expect(page.getByRole('menuitem', { name: 'Rename channel' })).toBeVisible();
     await expect(page.getByRole('menuitem', { name: 'Delete channel' })).toBeVisible();
     await page.getByRole('menuitem', { name: 'Channel details' }).click();
     dialog = page.getByTestId('channel-details');
-    await expect(dialog.getByRole('heading', { name: 'atlas-launch' })).toBeVisible();
+    await expect(dialog.getByRole('heading', { name: 'Atlas Launch' })).toBeVisible();
+    await expect(dialog.getByTestId('channel-slug')).toHaveText('#atlas-launch');
   } else {
     dialog = await openDetails(page);
   }
@@ -319,7 +320,7 @@ test('a public channel shows everyone read-only; rename and delete work from the
   // Delete from the details view: permanent, with the existing confirmation.
   await dialog.getByRole('button', { name: 'Delete' }).click();
   const confirm = page.getByRole('dialog');
-  await expect(confirm.getByRole('heading', { name: 'Delete #atlas-launch?' })).toBeVisible();
+  await expect(confirm.getByRole('heading', { name: 'Delete Atlas Launch?' })).toBeVisible();
   await confirm.getByRole('button', { name: 'Delete channel' }).click();
   await expect(page).not.toHaveURL(new RegExp(`/channel/${project.id}`));
   await openNavigation(page);

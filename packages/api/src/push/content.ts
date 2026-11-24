@@ -4,6 +4,7 @@ import type {
   PushNotificationKind,
   PushNotificationPayload,
 } from "@thechat/shared";
+import { channelDisplayName } from "@thechat/shared";
 import { db } from "../db";
 import {
   botInvocations,
@@ -398,13 +399,16 @@ async function buildMessagePayload(
   const preferences = await getNotificationPreferences(userId);
   if (!kindAllowed(preferences, kind)) return null;
 
-  const channel = context.conversationName ?? context.conversationTitle ?? "channel";
+  const channel = channelDisplayName({
+    name: context.conversationName,
+    title: context.conversationTitle,
+  });
   const inReplyThread = Boolean(context.parentMessageId);
   const title =
     context.conversationType === "group"
       ? inReplyThread
-        ? `${context.senderName} in a thread in #${channel}`
-        : `${context.senderName} in #${channel}`
+        ? `${context.senderName} in a thread in ${channel}`
+        : `${context.senderName} in ${channel}`
       : (kind === "agent_reply" || kind === "agent_progress") && context.threadTitle
         ? `${context.senderName} · ${context.threadTitle}`
         : inReplyThread

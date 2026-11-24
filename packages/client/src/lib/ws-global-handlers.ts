@@ -398,6 +398,12 @@ export function registerGlobalWsHandlers(
       };
     });
     reconcileWorkspace(workspaceId);
+    // Activity, Threads and the Inbox carry the channel's name too.
+    useBotRequestsStore
+      .getState()
+      .renameConversation(channel.id, channel.name, channel.title ?? null);
+    void messageQueryClient.invalidateQueries({ queryKey: ["followed-threads"] });
+    void useActivityStore.getState().fetchActivity();
   };
 
   // The member list shown in channel details comes from this query.

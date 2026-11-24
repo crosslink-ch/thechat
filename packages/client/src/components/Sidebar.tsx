@@ -24,7 +24,7 @@ import {
 import { openChannelDetailsModal } from "./ChannelDetailsModal";
 import { channelAccess } from "../lib/channel-access";
 import { api } from "../lib/api";
-import type { WorkspaceChannel, WorkspaceMember } from "@thechat/shared";
+import { channelDisplayName, type WorkspaceChannel, type WorkspaceMember } from "@thechat/shared";
 import { Archive, Bell, Bot, ChevronDown, Ellipsis, Inbox, Info, Lock, LogIn, LogOut, MessagesSquare, Pencil, Plus, Search, Settings, Trash2 } from "lucide-react";
 import { openPalette } from "../lib/palette-state";
 import { Avatar } from "./Avatar";
@@ -310,7 +310,7 @@ export function Sidebar() {
           >
             {ch.isPrivate ? <Lock size={13} role="img" aria-label="Private channel" /> : "#"}
           </span>
-          <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap">{ch.name}</span>
+          <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap">{channelDisplayName(ch)}</span>
           {isUnread && (
             <span
               data-testid={`channel-unread-indicator-${ch.id}`}
@@ -330,7 +330,7 @@ export function Sidebar() {
               className={`absolute right-1 top-1/2 flex size-7 -translate-y-1/2 items-center justify-center rounded-md text-text-dimmed transition-all hover:bg-hover hover:text-text focus:opacity-100 ${
                 menuOpen ? "bg-hover text-text opacity-100" : "opacity-0 group-hover:opacity-100"
               }`}
-              aria-label={`Manage #${ch.name}`}
+              aria-label={`Manage ${channelDisplayName(ch)}`}
             >
               <Ellipsis size={16} aria-hidden="true" />
             </button>

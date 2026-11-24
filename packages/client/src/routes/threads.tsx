@@ -170,7 +170,7 @@ export function ThreadsRoute() {
                 <button
                   type="button"
                   className="block w-full cursor-pointer border-none bg-transparent p-4 text-left"
-                  aria-label={`Open thread in ${thread.conversationType === "group" ? "#" : ""}${thread.conversationName}`}
+                  aria-label={`Open thread in ${thread.conversationName}`}
                   onClick={() => void open(thread)}
                 >
                   <div className="mb-2.5 flex items-center gap-1.5 text-[0.857rem]">

@@ -88,7 +88,7 @@ interface InputBarProps {
   placeholder?: string;
   /** Accessible name of the message editor (default "Message"). */
   ariaLabel?: string;
-  /** Extra controls shown at the start of the action row (e.g. "Also send to #general"). */
+  /** Extra controls shown at the start of the action row (e.g. "Also send to General"). */
   footer?: ReactNode;
 }
 

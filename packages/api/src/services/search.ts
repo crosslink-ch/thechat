@@ -1,9 +1,10 @@
 import { and, asc, desc, eq, gte, ilike, inArray, isNull, lt, ne, or, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import {
+  channelSearchNames,
   parseMessageSearchTerms,
   resolveBotAppearance,
-  scoreSearchMatch,
+  scoreBestSearchMatch,
   type ChatMessage,
   type MessageContext,
   type MessageSearchHit,
@@ -40,8 +41,10 @@ const SNIPPET_RADIUS = 80;
 interface AccessibleConversation {
   id: string;
   type: "direct" | "group";
-  /** Channel name, or the other participant's name for a DM. */
+  /** Channel slug, or the other participant's name for a DM. */
   name: string;
+  /** A channel's title as typed ("My Channel"); null for a DM. */
+  title: string | null;
   workspaceId: string;
   workspaceName: string;
   otherUserId: string | null;
@@ -65,6 +68,7 @@ async function accessibleConversations(
       id: conversations.id,
       type: conversations.type,
       name: conversations.name,
+      title: conversations.title,
       workspaceId: workspaces.id,
       workspaceName: workspaces.name,
     })
@@ -114,6 +118,7 @@ async function accessibleConversations(
         id: row.id,
         type: "group",
         name: row.name ?? "channel",
+        title: row.title,
         workspaceId: row.workspaceId,
         workspaceName: row.workspaceName,
         otherUserId: null,
@@ -128,6 +133,7 @@ async function accessibleConversations(
       id: row.id,
       type: "direct",
       name: other.name,
+      title: null,
       workspaceId: row.workspaceId,
       workspaceName: row.workspaceName,
       otherUserId: other.userId,
@@ -324,6 +330,7 @@ export async function searchMessages(
           conversationId: row.conversationId,
           conversationType: conversation.type,
           conversationName: conversation.name,
+          conversationTitle: conversation.title,
           workspaceId: conversation.workspaceId,
           workspaceName: conversation.workspaceName,
           threadId: row.threadId,
@@ -451,6 +458,7 @@ export async function getSearchDirectory(
         kind: "channel",
         conversationId: conversation.id,
         name: conversation.name,
+        title: conversation.title,
         workspaceId: conversation.workspaceId,
         workspaceName: conversation.workspaceName,
       }));
@@ -493,8 +501,10 @@ export async function searchTasks(
 
 export type DestinationKind = SearchDestination["kind"];
 
-function destinationName(destination: SearchDestination) {
-  return destination.kind === "task" ? destination.title : destination.name;
+/** A channel is found by its title and by its slug. */
+function destinationSearchNames(destination: SearchDestination) {
+  if (destination.kind === "channel") return channelSearchNames(destination);
+  return [destination.kind === "task" ? destination.title : destination.name];
 }
 
 /**
@@ -518,7 +528,7 @@ export async function findDestinations(
   ]);
   return [...directory, ...tasks]
     .filter((destination) => wanted.has(destination.kind))
-    .map((destination) => ({ destination, score: scoreSearchMatch(text, destinationName(destination)) }))
+    .map((destination) => ({ destination, score: scoreBestSearchMatch(text, destinationSearchNames(destination)) }))
     .filter((entry): entry is { destination: SearchDestination; score: number } => entry.score !== null)
     .sort((a, b) => b.score - a.score)
     .slice(0, limit)
@@ -643,6 +653,7 @@ export async function getMessageContext(
         id: conversation.id,
         type: conversation.type,
         name: conversation.name,
+        title: conversation.title,
         workspaceId: conversation.workspaceId,
         workspaceName: conversation.workspaceName,
       },

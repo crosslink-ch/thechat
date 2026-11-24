@@ -487,7 +487,8 @@ export function registerTools(server: McpServer) {
       description:
         "Resolve a name to IDs across all your workspaces: channels, people and bots (with the existing DM's " +
         "conversationId, if any), and Hermes tasks by title. Best match first; tolerant of case, accents and typos " +
-        "like 'kda' for 'Koda'. A person without conversationId has no DM yet: create_dm opens one.",
+        "like 'kda' for 'Koda'. Channels match by title ('My Channel') or unique name ('my-channel'); name is the " +
+        "unique name, title what people see. A person without conversationId has no DM yet: create_dm opens one.",
       annotations: { title: "Find channels, people and tasks", ...readOnly },
       inputSchema: {
         query: z.string().min(1).max(200).describe("Name or part of a name"),

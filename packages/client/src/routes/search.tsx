@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useNavigate, useSearch } from "@tanstack/react-router";
 import type { MessageSearchHit } from "@thechat/shared";
 import { LoaderCircle, MessageSquare, Search } from "lucide-react";
-import { Highlighted, messageLocation } from "../CommandPalette";
+import { Highlighted, messageLocationLabel } from "../CommandPalette";
 import { buttonClass, inputClass } from "../components/ui";
 import { useMessageSearch } from "../hooks/useMessageSearch";
 import { canSearchMessages, formatSearchTime } from "../lib/search";
@@ -156,7 +156,7 @@ export function SearchRoute() {
                     <span className="min-w-0 flex-1">
                       <span className="flex min-w-0 items-baseline gap-1.5 text-[0.857rem] text-text-dimmed">
                         <span className="shrink-0 font-medium text-text-secondary">{hit.senderName}</span>
-                        <span className="min-w-0 truncate">{messageLocation(hit)}</span>
+                        <span className="min-w-0 truncate">{messageLocationLabel(hit)}</span>
                         {workspaces.length > 1 && <span className="min-w-0 shrink-[20] truncate">· {hit.workspaceName}</span>}
                         <span className="ml-auto shrink-0 pl-1">{formatSearchTime(hit.createdAt)}</span>
                       </span>

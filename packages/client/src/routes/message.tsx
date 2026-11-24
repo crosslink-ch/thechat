@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
-import type { MessageContext } from "@thechat/shared";
+import { channelDisplayName, type MessageContext } from "@thechat/shared";
 import { ArrowLeft, ArrowUpRight, Hash, ListTodo, MessagesSquare } from "lucide-react";
 import { Markdown } from "../components/Markdown";
 import { SharedChatMessage, shouldMergeChatMessage } from "../components/SharedChatMessage";
@@ -128,7 +128,9 @@ export function MessageContextView({ context }: { context: MessageContext }) {
         </button>
         <div className="flex min-w-0 flex-1 items-center gap-1.5 text-[0.929rem]">
           {conversation.type === "group" && <Hash size={14} className="shrink-0 text-text-dimmed" aria-hidden="true" />}
-          <span className="truncate font-semibold text-text">{conversation.name}</span>
+          <span className="truncate font-semibold text-text">
+            {conversation.type === "group" ? channelDisplayName(conversation) : conversation.name}
+          </span>
           {context.threadTitle && (
             <>
               <ListTodo size={14} className="ml-1 shrink-0 text-text-dimmed" aria-hidden="true" />

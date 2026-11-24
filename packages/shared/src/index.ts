@@ -1,6 +1,7 @@
 import type { BotAppearance } from "./bot-avatars";
 
 export * from "./bot-avatars";
+export * from "./channels";
 export * from "./secure-input";
 export * from "./search";
 export * from "./message-parts";
@@ -306,7 +307,7 @@ export interface MessageThreadPage {
 export interface FollowedThread {
   conversationId: string;
   conversationType: "direct" | "group";
-  /** Channel name, or the other person's name for a direct conversation. */
+  /** Channel title as people see it, or the other person's name for a direct conversation. */
   conversationName: string;
   workspaceId: string;
   workspaceName: string;
@@ -339,6 +340,8 @@ export interface MessageSearchHit {
   conversationType: "direct" | "group";
   /** Channel name, or the other participant's name for a direct conversation. */
   conversationName: string;
+  /** A channel's title as typed ("My Channel"); null for a DM. Absent on older servers. */
+  conversationTitle?: string | null;
   workspaceId: string;
   workspaceName: string;
   threadId: string | null;
@@ -364,7 +367,10 @@ export type SearchDestination =
   | {
       kind: "channel";
       conversationId: string;
+      /** The channel's unique slug ("my-channel"). */
       name: string;
+      /** Its title as typed ("My Channel"). Absent on older servers. */
+      title?: string | null;
       workspaceId: string;
       workspaceName: string;
     }
@@ -399,7 +405,10 @@ export interface MessageContext {
   conversation: {
     id: string;
     type: "direct" | "group";
+    /** Channel slug, or the other participant's name for a DM. */
     name: string;
+    /** A channel's title as typed; null for a DM. Absent on older servers. */
+    title?: string | null;
     workspaceId: string;
     workspaceName: string;
   };
@@ -848,7 +857,10 @@ export interface BotRequestPublic {
   botAvatar?: BotAppearance;
   conversationId: string;
   conversationType: "direct" | "group";
+  /** The channel's slug; null for a direct conversation. */
   conversationName: string | null;
+  /** The channel's title as typed ("My Channel"). Absent on older servers. */
+  conversationTitle?: string | null;
   workspaceId: string | null;
   threadId: string | null;
   threadTitle: string | null;

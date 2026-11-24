@@ -1,5 +1,6 @@
 import { and, asc, desc, eq, gt, inArray, isNull, lt, lte, ne, or, sql } from "drizzle-orm";
 import {
+  normalizeChannelTitle,
   resolveBotAppearance,
   type ConversationThreadGroups,
 } from "@thechat/shared";
@@ -1565,7 +1566,7 @@ export async function deleteChannel(
 }
 
 function normalizeChannelName(name: string) {
-  const title = name.trim().replace(/\s+/g, " ");
+  const title = normalizeChannelTitle(name);
   const slug = title
     .toLowerCase()
     .replace(/[^a-z0-9\s-]/g, "")

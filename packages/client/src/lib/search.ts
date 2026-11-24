@@ -1,4 +1,10 @@
-import { parseMessageSearchTerms, scoreSearchMatch, type SearchDestination } from "@thechat/shared";
+import {
+  channelDisplayName,
+  channelSearchNames,
+  parseMessageSearchTerms,
+  scoreBestSearchMatch,
+  type SearchDestination,
+} from "@thechat/shared";
 
 export type DestinationKind = SearchDestination["kind"];
 
@@ -31,8 +37,15 @@ export function canSearchMessages(text: string) {
   return parseMessageSearchTerms(text).join("").length >= 2;
 }
 
+/** What a destination is shown as: a channel by its title, "My Channel". */
 export function destinationName(destination: SearchDestination) {
+  if (destination.kind === "channel") return channelDisplayName(destination);
   return destination.kind === "task" ? destination.title : destination.name;
+}
+
+/** Every name a destination is found by: a channel by its title and its slug. */
+function destinationSearchNames(destination: SearchDestination) {
+  return destination.kind === "channel" ? channelSearchNames(destination) : [destinationName(destination)];
 }
 
 /** Stable identity for lists and selection. */
@@ -101,7 +114,7 @@ export function rankDestinations(
   for (const destination of destinations) {
     if (!allowed(destination)) continue;
     const name = destinationName(destination);
-    const match = scoreSearchMatch(text, name);
+    const match = scoreBestSearchMatch(text, destinationSearchNames(destination));
     if (match === null) continue;
     const key = destinationLocationKey(destination);
     const recent = key ? recentIndex.get(key) : undefined;
