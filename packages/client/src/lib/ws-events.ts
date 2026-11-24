@@ -120,16 +120,6 @@ export type WsEvents = {
     workspaceId: string;
     channelId: string;
   };
-  "ws:channel_members_added": {
-    workspaceId: string;
-    channel: WorkspaceChannel;
-    userIds: string[];
-  };
-  "ws:channel_member_removed": {
-    workspaceId: string;
-    channelId: string;
-    userId: string;
-  };
   "ws:invite_received": {
     invite: WorkspaceInvite;
   };

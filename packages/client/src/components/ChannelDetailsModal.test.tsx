@@ -36,11 +36,11 @@ const member = (user: AuthUser, role: WorkspaceMember["role"] = "member"): Works
 });
 
 const general: WorkspaceChannel = {
-  id: "ch-general", workspaceId: "ws-1", name: "general", title: "General", isPrivate: false,
+  id: "ch-general", workspaceId: "ws-1", name: "general", title: "General", isPrivate: false, archivedAt: null,
   createdAt: "2026-01-01", updatedAt: "2026-01-01",
 };
 const leadership: WorkspaceChannel = {
-  id: "ch-leadership", workspaceId: "ws-1", name: "leadership", title: "Leadership", isPrivate: true,
+  id: "ch-leadership", workspaceId: "ws-1", name: "leadership", title: "Leadership", isPrivate: true, archivedAt: null,
   members: [{ userId: me.id, role: "admin" }, { userId: avery.id, role: "member" }],
   createdAt: "2026-01-02", updatedAt: "2026-01-02",
 };

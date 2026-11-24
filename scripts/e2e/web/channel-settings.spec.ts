@@ -125,9 +125,10 @@ test('channel details: members, adding and removing people, and archiving, live 
     // The owner cannot remove themselves.
     await expect(dialog.getByRole('button', { name: 'Remove Morgan Owner' })).toHaveCount(0);
     await expect(dialog.getByRole('button', { name: 'Remove Avery Member' })).toBeVisible();
-    // Roles line up in one column whether or not a row has a remove button.
+    // Roles sit left-aligned under the name, in one column whether or not a
+    // row has member controls.
     const roleEdges = await members.evaluateAll((rows) =>
-      rows.map((row) => Math.round(row.querySelector('[data-member-role]')!.getBoundingClientRect().right)),
+      rows.map((row) => Math.round(row.querySelector('[data-member-role]')!.getBoundingClientRect().left)),
     );
     expect(roleEdges[0]).toBe(roleEdges[1]);
     await shot(page, `details-${info.project.name}.png`, (name) => info.outputPath(name));
@@ -166,8 +167,8 @@ test('channel details: members, adding and removing people, and archiving, live 
     await expect(message(avery.page, fromNora)).toBeVisible();
     const averyDialog = await openDetails(avery.page);
     await expect(averyDialog.getByTestId('channel-members').getByRole('listitem')).toHaveCount(3);
-    // A regular member reads the list and cannot change anything.
-    await expect(averyDialog.getByRole('button', { name: 'Add people' })).toHaveCount(0);
+    // A regular member of a private channel may add people, but not manage it.
+    await expect(averyDialog.getByRole('button', { name: 'Add people' })).toBeVisible();
     await expect(averyDialog.getByRole('button', { name: /^Remove / })).toHaveCount(0);
     await expect(averyDialog.getByRole('button', { name: 'Archive' })).toHaveCount(0);
     await expect(averyDialog.getByRole('button', { name: 'Rename' })).toHaveCount(0);
@@ -292,7 +293,7 @@ test('a public channel shows everyone read-only; rename and delete work from the
   await expect(dialog.getByTestId('channel-members').getByRole('listitem')).toHaveCount(3);
   await expect(dialog.getByRole('button', { name: 'Add people' })).toHaveCount(0);
   await expect(dialog.getByRole('button', { name: /^Remove / })).toHaveCount(0);
-  await expect(dialog.getByText('Everyone in the workspace is in a public channel.')).toBeVisible();
+  await expect(dialog.getByText('A public channel always includes everyone in the workspace.')).toBeVisible();
   await shot(page, `details-public-${info.project.name}.png`, (name) => info.outputPath(name));
 
   // Rename from the details view.
