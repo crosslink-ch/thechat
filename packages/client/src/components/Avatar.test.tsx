@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ChatMessage, WorkspaceWithDetails } from "@thechat/shared";
 import { Avatar } from "./Avatar";
+import { ThreadReplySummary } from "./ThreadReplySummary";
 import { SharedChatMessage } from "./SharedChatMessage";
 import { MentionList } from "./MentionList";
 import { useAuthStore } from "../stores/auth";
@@ -45,6 +46,27 @@ describe("shared Avatar", () => {
     rerender(<Avatar name="Agent" bot picture="data:image/png;base64,no" />);
     expect(screen.getByText("A")).toHaveClass("bg-accent-hover");
     expect(container.querySelector("img")).toBeNull();
+  });
+
+  it("shows the replier's profile picture in the thread summary and initials for a replier without one", () => {
+    const avatar = "data:image/png;base64,portrait";
+    useAuthStore.setState({ user: { id: "jane", name: "Jane", type: "human", email: null, avatar } });
+    const { container } = render(
+      <ThreadReplySummary
+        summary={{
+          replyCount: 2,
+          lastReplyAt: "2026-01-01T00:00:00Z",
+          participants: [
+            { id: "lee", name: "Lee", type: "human" },
+            { id: "jane", name: "Jane", type: "human" },
+          ],
+        }}
+        onOpen={() => {}}
+      />,
+    );
+    expect(container.querySelector("img")).toHaveAttribute("src", avatar);
+    expect(screen.getByText("L")).toBeInTheDocument();
+    expect(screen.queryByText("J")).not.toBeInTheDocument();
   });
 
   it("updates earlier channel/DM message rows when workspace pictures change, including removal", () => {
