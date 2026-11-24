@@ -112,7 +112,7 @@ describe("ActivityRoute", () => {
     render(<ActivityRoute />);
 
     await user.click(
-      screen.getByRole("button", { name: "Open # General in Beta" }),
+      screen.getByRole("button", { name: "Open General in Beta" }),
     );
 
     expect(useWorkspacesStore.getState().selectWorkspace).toHaveBeenCalledWith(
@@ -162,7 +162,7 @@ describe("ActivityRoute", () => {
     render(<ActivityRoute />);
 
     await userEvent.click(
-      screen.getByRole("button", { name: "Open # General in Beta" }),
+      screen.getByRole("button", { name: "Open General in Beta" }),
     );
 
     expect(screen.getByRole("alert")).toHaveTextContent(

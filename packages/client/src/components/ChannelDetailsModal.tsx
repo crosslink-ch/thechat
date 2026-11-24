@@ -2,9 +2,10 @@ import { useEffect, useMemo, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { useQueryClient } from "@tanstack/react-query";
 import { create } from "zustand";
-import type {
-  ConversationParticipantPublic,
-  WorkspaceMember,
+import {
+  channelDisplayName,
+  type ConversationParticipantPublic,
+  type WorkspaceMember,
 } from "@thechat/shared";
 import { Archive, ArchiveRestore, Hash, Lock, Pencil, Trash2, UserPlus, X } from "lucide-react";
 import { useAuthStore } from "../stores/auth";
@@ -178,9 +179,17 @@ function ChannelDetails({ channelId }: { channelId: string }) {
             </div>
             <div className="min-w-0 flex-1">
               <Dialog.Title asChild>
-                <h2 className={`truncate ${dialogTitleClass}`}>{channel.name}</h2>
+                <h2 className={`truncate ${dialogTitleClass}`}>{channelDisplayName(channel)}</h2>
               </Dialog.Title>
               <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                {/* The unique name bots and the API use. */}
+                <span
+                  className="min-w-0 max-w-full truncate font-mono text-[0.75rem] text-text-dimmed"
+                  title="Unique channel name, used by bots and the API"
+                  data-testid="channel-slug"
+                >
+                  #{channel.name}
+                </span>
                 <span className={badgeClass} data-testid="channel-visibility">
                   {isPrivate ? "Private channel" : "Public channel"}
                 </span>

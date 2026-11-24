@@ -9,6 +9,7 @@ import type {
   TaskMessagePage,
   WsServerEvent,
 } from "@thechat/shared";
+import { channelDisplayName } from "@thechat/shared";
 import { attachmentsByMessageIds } from "../attachments/public";
 import { loadAttachmentConfig } from "../attachments/config";
 import { db } from "../db";
@@ -1032,7 +1033,7 @@ export async function listFollowedThreads(
     conversationName:
       row.conversationType === "direct"
         ? (otherName.get(row.conversationId) ?? "Direct message")
-        : (row.conversationTitle ?? row.conversationName ?? "channel"),
+        : channelDisplayName({ name: row.conversationName, title: row.conversationTitle }),
     workspaceId: row.workspaceId,
     workspaceName: row.workspaceName,
     root: byId.get(row.id)!,

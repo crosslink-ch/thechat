@@ -602,11 +602,34 @@ describe("push delivery", () => {
     expect(delivered).toHaveLength(1);
     expect(delivered[0]!.payload).toMatchObject({
       kind: "mention",
-      title: "Channel Owner in #general",
+      title: "Channel Owner in General",
       body: "@Channel Member can you review?",
       tag: `conversation:${f.channelId}:main`,
     });
     expect(delivered[0]!.payload.url).toContain("type=group");
+  });
+
+  test("a reply in a channel thread you follow names the channel by its title", async () => {
+    const f = await fixture("Thread");
+    await subscribe(f.member.token);
+    // Starting a thread follows it.
+    const root = await send(f.member.token, f.channelId, "Who has the release notes?");
+    const reply = await req(
+      "POST",
+      `/messages/${f.channelId}`,
+      { content: "I do, sending them now", parentMessageId: root.id },
+      f.owner.token,
+    );
+    expect(reply.status).toBe(200);
+    await waitForFanout(`message:${root.id}`);
+    await waitForFanout(`message:${reply.body.id}`);
+    await drainPushJobs();
+    expect(delivered).toHaveLength(1);
+    expect(delivered[0]!.payload).toMatchObject({
+      kind: "thread_reply",
+      title: "Thread Owner in a thread in General",
+      body: "I do, sending them now",
+    });
   });
 
   test("a private channel notifies the members who are @mentioned, never a workspace member who was not picked", async () => {
@@ -619,7 +642,7 @@ describe("push delivery", () => {
     const channel = await req(
       "POST",
       "/conversations/channel",
-      { workspaceId: f.workspaceId, name: "Board", isPrivate: true, memberIds: [f.member.user.id] },
+      { workspaceId: f.workspaceId, name: "Board Room", isPrivate: true, memberIds: [f.member.user.id] },
       f.owner.token,
     );
     expect(channel.status).toBe(200);
@@ -630,7 +653,7 @@ describe("push delivery", () => {
     expect(delivered.map((entry) => entry.request.url)).toEqual([memberPhone.endpoint]);
     expect(delivered[0]!.payload).toMatchObject({
       kind: "mention",
-      title: "Private Owner in #board",
+      title: "Private Owner in Board Room",
       tag: `conversation:${channel.body.id}:main`,
       badge: 1,
     });
@@ -642,7 +665,7 @@ describe("push delivery", () => {
     await waitForFanout(`message:${open.id}`);
     await drainPushJobs();
     expect(delivered).toHaveLength(1);
-    expect(delivered[0]!.payload).toMatchObject({ title: "Private Owner in #general", badge: 1 });
+    expect(delivered[0]!.payload).toMatchObject({ title: "Private Owner in General", badge: 1 });
   });
 
   test("preferences are honoured at send time, including hidden previews", async () => {

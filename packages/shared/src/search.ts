@@ -45,6 +45,19 @@ export function scoreSearchMatch(query: string, text: string): number | null {
 }
 
 /**
+ * The best `scoreSearchMatch` of `query` over several names of one place
+ * (a channel's title and its slug), or null when none of them matches.
+ */
+export function scoreBestSearchMatch(query: string, texts: readonly string[]): number | null {
+  let best: number | null = null;
+  for (const text of texts) {
+    const score = scoreSearchMatch(query, text);
+    if (score !== null && (best === null || score > best)) best = score;
+  }
+  return best;
+}
+
+/**
  * Split a message query into the literal terms that must all appear.
  * Double quotes keep a phrase together: `"release notes" draft`.
  */

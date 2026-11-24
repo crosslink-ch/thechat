@@ -96,10 +96,10 @@ test('an owner creates a private channel; picked members get it, the rest of the
 
     // Avery got the channel live, with a lock, and can read it.
     await openNavigation(avery.page);
-    const averyChannel = sidebarChannel(avery.page, 'leadership');
+    const averyChannel = sidebarChannel(avery.page, 'Leadership');
     await expect(averyChannel).toBeVisible();
     await expect(averyChannel.getByRole('img', { name: 'Private channel' })).toBeVisible();
-    await expect(sidebarChannel(avery.page, 'general').getByRole('img', { name: 'Private channel' })).toHaveCount(0);
+    await expect(sidebarChannel(avery.page, 'General').getByRole('img', { name: 'Private channel' })).toHaveCount(0);
     await averyChannel.click();
     await expect(avery.page).toHaveURL(new RegExp(`/channel/${leadershipId}`));
     await expect(avery.page.locator('[data-message-id]').filter({ hasText: secret })).toBeVisible();
@@ -108,25 +108,25 @@ test('an owner creates a private channel; picked members get it, the rest of the
     if (isPhone) await avery.page.keyboard.press('Escape');
     const averyHits = await searchFor(avery.page, isPhone, `?${secret}`);
     // Hits are matched by their accessible name: the visible text is split by highlight marks.
-    await expect(averyHits.getByRole('button', { name: `Message from Morgan Owner in #leadership: ${secret}` })).toBeVisible();
+    await expect(averyHits.getByRole('button', { name: `Message from Morgan Owner in Leadership: ${secret}` })).toBeVisible();
 
     // Nora received the public message, and nothing about #leadership.
     await expect(nora.page.locator('[data-message-id]').filter({ hasText: barrier })).toBeVisible();
     await openNavigation(nora.page);
-    await expect(sidebarChannel(nora.page, 'general')).toBeVisible();
-    await expect(sidebarChannel(nora.page, 'leadership')).toHaveCount(0);
+    await expect(sidebarChannel(nora.page, 'General')).toBeVisible();
+    await expect(sidebarChannel(nora.page, 'Leadership')).toHaveCount(0);
     await expect(nora.page.getByRole('img', { name: 'Private channel' })).toHaveCount(0);
     await shot(nora.page, `private-non-member-${info.project.name}.png`, (name) => info.outputPath(name));
     if (isPhone) await nora.page.keyboard.press('Escape');
 
     // Not in the quick switcher, not in message search.
     let panel = await searchFor(nora.page, isPhone, '#leadership');
-    await expect(panel.getByRole('button', { name: /^general, channel/ })).toHaveCount(0);
-    await expect(panel.getByRole('button', { name: /^leadership, channel/ })).toHaveCount(0);
+    await expect(panel.getByRole('button', { name: /^General, channel/ })).toHaveCount(0);
+    await expect(panel.getByRole('button', { name: /^Leadership, channel/ })).toHaveCount(0);
     await panel.getByRole('textbox', { name: 'Search TheChat' }).fill('#general');
-    await expect(panel.getByRole('button', { name: /^general, channel/ })).toBeVisible();
+    await expect(panel.getByRole('button', { name: /^General, channel/ })).toBeVisible();
     await panel.getByRole('textbox', { name: 'Search TheChat' }).fill(`?${barrier}`);
-    await expect(panel.getByRole('button', { name: `Message from Morgan Owner in #general: ${barrier}` })).toBeVisible();
+    await expect(panel.getByRole('button', { name: `Message from Morgan Owner in General: ${barrier}` })).toBeVisible();
     await panel.getByRole('textbox', { name: 'Search TheChat' }).fill(`?${secret}`);
     await expect(panel.getByText(/No messages/i)).toBeVisible();
     await expect(panel.getByRole('button', { name: /^Message from/ })).toHaveCount(0);
@@ -140,8 +140,8 @@ test('an owner creates a private channel; picked members get it, the rest of the
     // The drawer toggle exists only once the app has rendered again.
     await expect(nora.page.getByRole('textbox', { name: 'Message', exact: true })).toBeVisible();
     await openNavigation(nora.page);
-    await expect(sidebarChannel(nora.page, 'general')).toBeVisible();
-    await expect(sidebarChannel(nora.page, 'leadership')).toHaveCount(0);
+    await expect(sidebarChannel(nora.page, 'General')).toBeVisible();
+    await expect(sidebarChannel(nora.page, 'Leadership')).toHaveCount(0);
 
     // Direct API reads and writes are refused for Nora and work for Avery.
     const asNora = (method: string, path: string, data?: unknown) =>

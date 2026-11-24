@@ -3,6 +3,7 @@ import type {
   ActivitySnapshot,
   ActivityThreadItem,
 } from "@thechat/shared";
+import { channelDisplayName } from "@thechat/shared";
 import {
   and,
   desc,
@@ -140,7 +141,7 @@ export async function listActivity(userId: string): Promise<ActivitySnapshot> {
         conversationName:
           row.conversationType === "direct"
             ? (directNames.get(row.conversationId) ?? row.senderName)
-            : (row.conversationTitle ?? row.conversationName ?? "Channel"),
+            : channelDisplayName({ name: row.conversationName, title: row.conversationTitle }, "Channel"),
         workspaceId: row.workspaceId,
         workspaceName: row.workspaceName,
         rootMessageId: row.parentMessageId,
@@ -182,7 +183,7 @@ export async function listActivity(userId: string): Promise<ActivitySnapshot> {
       conversationName:
         row.conversationType === "direct"
           ? (directNames.get(row.conversationId) ?? row.senderName)
-          : (row.conversationTitle ?? row.conversationName ?? "Channel"),
+          : channelDisplayName({ name: row.conversationName, title: row.conversationTitle }, "Channel"),
       workspaceId: row.workspaceId,
       workspaceName: row.workspaceName,
       unreadCount: 1,

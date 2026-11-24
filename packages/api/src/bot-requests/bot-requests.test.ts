@@ -377,7 +377,12 @@ describe("bot requests: answering", () => {
       bot.apiKey,
     );
     expect(open.status).toBe(201);
-    expect(open.body.request.conversationType).toBe("group");
+    // The bot keeps the channel's slug as its name; people see the title.
+    expect(open.body.request).toMatchObject({
+      conversationType: "group",
+      conversationName: "general",
+      conversationTitle: "General",
+    });
     // Not the bot owner, just someone in the channel.
     const answered = await req(
       "POST",

@@ -169,7 +169,7 @@ describe("ChannelModal", () => {
     launcher.focus();
 
     act(() => openDeleteChannelModal(general));
-    const dialog = screen.getByRole("dialog", { name: "Delete #general?" });
+    const dialog = screen.getByRole("dialog", { name: "Delete General?" });
     await waitFor(() =>
       expect(screen.getByRole("button", { name: "Cancel" })).toHaveFocus(),
     );
@@ -207,7 +207,10 @@ describe("ChannelModal", () => {
     fireEvent.change(screen.getByLabelText("Channel name"), {
       target: { value: "Launch   Plan" },
     });
-    expect(screen.getByText("#launch-plan")).toBeInTheDocument();
+    // People see the title as typed; the slug is the unique name behind it.
+    expect(screen.getByTestId("channel-name-preview")).toHaveTextContent(
+      "This channel will appear as Launch Plan with the unique name #launch-plan.",
+    );
     fireEvent.click(screen.getByRole("button", { name: "Create channel" }));
 
     await waitFor(() => expect(createChannel).toHaveBeenCalledWith("Launch   Plan"));
@@ -236,6 +239,17 @@ describe("ChannelModal", () => {
     );
     expect(screen.getByRole("dialog", { name: "Rename channel" })).toBeInTheDocument();
 
+    // A # typed by habit is not part of the name.
+    fireEvent.change(input, { target: { value: "#Design Team" } });
+    expect(screen.getByTestId("channel-name-preview")).toHaveTextContent(
+      /^This channel will appear as Design Team with the unique name #design-team\.$/,
+    );
+
+    // A lowercase name is its own slug: nothing else to show.
+    fireEvent.change(input, { target: { value: "design" } });
+    expect(screen.getByTestId("channel-name-preview")).toHaveTextContent(
+      /^This channel will appear as design\.$/,
+    );
     fireEvent.change(input, { target: { value: "Design" } });
     fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
     await waitFor(() => expect(renameChannel).toHaveBeenLastCalledWith(product.id, "Design"));
@@ -313,7 +327,7 @@ describe("ChannelModal", () => {
 
     act(() => openDeleteChannelModal(general));
     expect(
-      screen.getByRole("dialog", { name: "Delete #general?" }),
+      screen.getByRole("dialog", { name: "Delete General?" }),
     ).toHaveTextContent("This cannot be undone");
     fireEvent.click(screen.getByRole("button", { name: "Delete channel" }));
 

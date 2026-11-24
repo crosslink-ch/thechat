@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 import { useNavigate, useParams, useSearch } from "@tanstack/react-router";
+import { channelDisplayName } from "@thechat/shared";
 import { useAuthStore } from "../stores/auth";
 import { useWebSocketStore } from "../stores/websocket";
 import { useConversationsStore } from "../stores/conversations";
@@ -35,9 +36,10 @@ export function ChannelRoute() {
     useSearch({ from: "/channel/$id" });
   const navigate = useNavigate();
   const token = useAuthStore((s) => s.token);
-  const channelName = useWorkspacesStore(
-    (s) => s.activeWorkspace?.channels.find((channel) => channel.id === channelId)?.name ?? "channel",
-  );
+  const channelName = useWorkspacesStore((s) => {
+    const channel = s.activeWorkspace?.channels.find((item) => item.id === channelId);
+    return channel ? channelDisplayName(channel) : "channel";
+  });
   // An archived channel is read-only: history and threads stay readable.
   const archived = useWorkspacesStore((s) =>
     Boolean(

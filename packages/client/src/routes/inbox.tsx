@@ -1,6 +1,6 @@
 import { useEffect, useMemo } from "react";
 import { useNavigate } from "@tanstack/react-router";
-import type { BotRequestPublic } from "@thechat/shared";
+import { channelDisplayName, type BotRequestPublic } from "@thechat/shared";
 import { BotRequestCard } from "../components/BotRequestCard";
 import { Avatar } from "../components/Avatar";
 import {
@@ -36,7 +36,7 @@ function groupRequests(requests: BotRequestPublic[]): RequestGroup[] {
         botAvatar: request.botAvatar,
         where:
           request.conversationType === "group"
-            ? `#${request.conversationName ?? "channel"}`
+            ? `# ${channelDisplayName({ name: request.conversationName, title: request.conversationTitle })}`
             : "Direct message",
         requests: [],
       };

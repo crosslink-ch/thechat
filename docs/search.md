@@ -17,6 +17,8 @@ switcher (on a phone, open the navigation first).
 
 - Type a name, loosely: `kda` finds **Koda**, `ribaric` finds **Ribarić**. Exact
   names rank first; recent places and the current workspace break ties.
+- Channels show their title as typed (**My Channel**) and are found by that
+  title or by their unique name (`my-channel`).
 - With nothing typed, the switcher lists the places you opened most recently,
   from the sidebar, Activity, task list or switcher. Recents are kept on this
   device, per account.
@@ -76,6 +78,13 @@ Message search filters: `workspaceId`, `conversationId`, `threadId` (needs
 default 20). Pass `nextCursor` back as `cursor` for older results; pages never
 skip or repeat a message, even when many share a timestamp.
 
+A channel has two names. `name` is its unique, URL-safe name (`my-channel`),
+stable for bots and links. `title` is the name as typed (`My Channel`), what
+people see; it is absent on channels made before titles, so show `title ?? name`.
+Message hits and bot requests carry them as `conversationName` and
+`conversationTitle`; a message context as `conversation.name` and
+`conversation.title`.
+
 A context response is scoped the way the app shows the conversation: a Hermes
 task shows only that task, General only untasked messages, a channel or human
 DM the whole conversation.
@@ -88,7 +97,7 @@ JSON to save tokens.
 
 | Tool | Use |
 | --- | --- |
-| `find_conversations` | Turn "the releases channel" or "my DM with Simon" into IDs. Tolerates typos. |
+| `find_conversations` | Turn "the releases channel" or "my DM with Simon" into IDs. Tolerates typos. Finds a channel by its title or its unique name. |
 | `search_messages` | Find messages by text, optionally within a workspace, conversation, task, sender or time range. |
 | `get_message_context` | Read the messages around a hit, in the same scope the app shows. |
 
@@ -96,7 +105,7 @@ A typical agent flow:
 
 ```text
 find_conversations { query: "releases", kinds: ["channel"] }
-  → { destinations: [{ kind: "channel", conversationId: "…", name: "releases", … }] }
+  → { destinations: [{ kind: "channel", conversationId: "…", name: "releases", title: "Releases", … }] }
 search_messages { query: "\"staging password\"", conversationId: "…" }
   → { results: [{ id: "…", senderName: "Bob", snippet: "…", … }], nextCursor: null }
 get_message_context { messageId: "…", before: 5, after: 5 }

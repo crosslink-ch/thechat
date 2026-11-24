@@ -1,8 +1,9 @@
 import { useState } from "react";
-import type {
-  BotRequestAnswer,
-  BotRequestPublic,
-  BotRequestResponseSpec,
+import {
+  channelDisplayName,
+  type BotRequestAnswer,
+  type BotRequestPublic,
+  type BotRequestResponseSpec,
 } from "@thechat/shared";
 import { Check, CircleSlash, Clock3, ExternalLink, X } from "lucide-react";
 import { Avatar } from "./Avatar";
@@ -630,7 +631,7 @@ function RequestContext({
 }) {
   const where =
     request.conversationType === "group"
-      ? `#${request.conversationName ?? "channel"}`
+      ? `# ${channelDisplayName({ name: request.conversationName, title: request.conversationTitle })}`
       : `DM with ${request.botName}`;
   const label = request.threadTitle ? `${where}, “${request.threadTitle}”` : where;
   return (

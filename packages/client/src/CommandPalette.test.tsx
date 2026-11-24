@@ -55,7 +55,7 @@ const simon: SearchDestination = {
   kind: "person", userId: "u-simon", name: "Simon", userType: "human", botKind: null,
   botAvatar: null, conversationId: null, ...W1,
 };
-const general: SearchDestination = { kind: "channel", conversationId: "ch-general", name: "general", ...W1 };
+const general: SearchDestination = { kind: "channel", conversationId: "ch-general", name: "general", title: "General", ...W1 };
 const releases: SearchDestination = { kind: "channel", conversationId: "ch-releases", name: "releases", ...W2 };
 const invoiceTask: SearchDestination = {
   kind: "task", conversationId: "dm-koda", conversationName: "Koda", threadId: "t-invoice",
@@ -65,7 +65,7 @@ const directory = [general, releases, koda, simon, invoiceTask];
 
 function hit(id: string, snippet: string): MessageSearchHit {
   return {
-    id, conversationId: "ch-general", conversationType: "group", conversationName: "general",
+    id, conversationId: "ch-general", conversationType: "group", conversationName: "general", conversationTitle: "General",
     threadId: null, threadTitle: null, senderId: "u-simon", senderName: "Simon", senderType: "human",
     snippet, createdAt: "2026-11-05T10:00:00.000Z", ...W1,
   };
@@ -195,6 +195,26 @@ describe("quick switcher (Ctrl+K)", () => {
     expect(activeRow()).toHaveAccessibleName("rel, channel, Cross-Link");
   });
 
+  it("shows a channel by its title and finds it by its title or its slug", async () => {
+    const friendly: SearchDestination = {
+      kind: "channel", conversationId: "ch-my", name: "my-channel", title: "My Channel", ...W1,
+    };
+    useSearchDirectoryStore.setState({ destinations: [...directory, friendly] });
+    await open();
+    type("my chan");
+    expect(activeRow()).toHaveAccessibleName("My Channel, channel, Cross-Link");
+    expect(activeRow()).toHaveTextContent("My Channel");
+    expect(activeRow()).not.toHaveTextContent("my-channel");
+    type("#my-channel");
+    expect(rows().map((row) => row.getAttribute("aria-label"))).toEqual(["My Channel, channel, Cross-Link"]);
+    // Untitled channels (older servers, channels made before titles) keep their slug.
+    type("#releases");
+    expect(activeRow()).toHaveAccessibleName("releases, channel, TouchPoint");
+    type("#my-channel");
+    press("Enter");
+    await waitFor(() => expect(navigation.openSearchDestination).toHaveBeenCalledWith(friendly));
+  });
+
   it("finds Hermes tasks by title and says whose task it is", async () => {
     await open();
     type("invoice");
@@ -248,8 +268,10 @@ describe("quick switcher (Ctrl+K)", () => {
     await act(async () => resolve({ results: [hit("m1", "ask koda about invoices")], nextCursor: null }));
     const messages = screen.getByRole("group", { name: "Messages" });
     expect(within(messages).getAllByTestId("palette-item")[0]).toHaveAccessibleName(
-      "Message from Simon in #general: ask koda about invoices",
+      "Message from Simon in General: ask koda about invoices",
     );
+    expect(within(messages).getAllByTestId("palette-item")[0]).toHaveTextContent("# General");
+    expect(within(messages).getAllByTestId("palette-item")[0]).not.toHaveTextContent("general");
     expect(activeRow()!.getAttribute("aria-label")).toBe(selected);
   });
 
@@ -309,13 +331,13 @@ describe("message search (Ctrl+Shift+F)", () => {
   it("can stay inside the conversation on screen", async () => {
     useRecentLocationsStore.setState({ current: { conversationId: "ch-general", type: "group", threadId: null } });
     useWorkspacesStore.setState({
-      activeWorkspace: { id: "w1", name: "Cross-Link", channels: [{ id: "ch-general", name: "general" }], members: [] } as never,
+      activeWorkspace: { id: "w1", name: "Cross-Link", channels: [{ id: "ch-general", name: "general", title: "General" }], members: [] } as never,
     });
     await open(() => openMessageSearch("deploy"));
-    const scope = screen.getByRole("button", { name: "Limit to #general" });
+    const scope = screen.getByRole("button", { name: "Limit to General" });
     expect(scope).toHaveAttribute("aria-pressed", "false");
     fireEvent.click(scope);
-    expect(screen.getByRole("button", { name: "✓ Only in #general" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "✓ Only in General" })).toHaveAttribute("aria-pressed", "true");
     await waitFor(() =>
       expect(searchApi.fetchMessageSearch).toHaveBeenLastCalledWith(
         expect.objectContaining({ q: "deploy", conversationId: "ch-general" }),

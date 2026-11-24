@@ -3,6 +3,7 @@ import { QueryClient } from "@tanstack/react-query";
 import type {
   BotInvocationProgressEventPublic,
   BotInvocationPublic,
+  BotRequestPublic,
   WorkspaceChannel,
   WorkspaceWithDetails,
 } from "@thechat/shared";
@@ -15,6 +16,7 @@ import { useNotificationsStore } from "../stores/notifications";
 import { useActivityStore } from "../stores/activity";
 import { useConversationsStore } from "../stores/conversations";
 import { usePresenceStore } from "../stores/presence";
+import { useBotRequestsStore } from "../stores/bot-requests";
 import { useNotificationPreferencesStore } from "../stores/notification-preferences";
 import {
   hermesScopeKey,
@@ -1129,6 +1131,83 @@ describe("registerGlobalWsHandlers", () => {
     expect(
       useWorkspacesStore.getState().activeWorkspace?.channels,
     ).toEqual([renamedProduct]);
+  });
+
+  it("a renamed channel is shown by its new name in Activity, Threads and the Inbox", () => {
+    const channel: WorkspaceChannel = {
+      id: "ch-general",
+      workspaceId: "ws-1",
+      name: "general",
+      title: "general",
+      isPrivate: false,
+      archivedAt: null,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    };
+    useWorkspacesStore.setState({
+      activeWorkspace: { ...structuredClone(baseWorkspace), channels: [channel] },
+    });
+    const now = "2026-01-01T00:00:00.000Z";
+    const request = (id: string, conversationId: string): BotRequestPublic => ({
+      id,
+      botId: "bot-1",
+      botUserId: "bot-user-1",
+      botName: "Koda",
+      conversationId,
+      conversationType: "group",
+      conversationName: conversationId === channel.id ? "general" : "ops",
+      conversationTitle: conversationId === channel.id ? "general" : "ops",
+      workspaceId: "ws-1",
+      threadId: null,
+      threadTitle: null,
+      invocationId: null,
+      kind: "approval",
+      title: "Deploy?",
+      body: null,
+      details: null,
+      response: { type: "choice", choices: ["yes", "no"] },
+      orderGroup: null,
+      audienceUserId: null,
+      status: "open",
+      answer: null,
+      answeredBy: null,
+      answeredAt: null,
+      deliveredAt: null,
+      deliveryApplied: null,
+      deliveryNote: null,
+      cancelReason: null,
+      expiresAt: null,
+      createdAt: now,
+      updatedAt: now,
+    });
+    useBotRequestsStore.getState().reset();
+    useBotRequestsStore.getState().upsertMany([
+      request("req-here", channel.id),
+      request("req-elsewhere", "ch-ops"),
+    ]);
+    const messageQueryClient = new QueryClient();
+    const invalidateQueries = vi
+      .spyOn(messageQueryClient, "invalidateQueries")
+      .mockResolvedValue(undefined);
+    const cleanup = registerGlobalWsHandlers(
+      () => {},
+      () => "/activity",
+      messageQueryClient,
+    );
+
+    // Only the title changes: the slug stays "general".
+    wsEvents.emit("ws:channel_renamed", {
+      workspaceId: "ws-1",
+      channel: { ...channel, title: "General" },
+    });
+
+    const byId = useBotRequestsStore.getState().byId;
+    expect(byId["req-here"]).toMatchObject({ conversationName: "general", conversationTitle: "General" });
+    expect(byId["req-elsewhere"]).toMatchObject({ conversationName: "ops", conversationTitle: "ops" });
+    expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: ["followed-threads"] });
+    expect(useActivityStore.getState().fetchActivity).toHaveBeenCalled();
+    cleanup();
+    useBotRequestsStore.getState().reset();
   });
 
   it("feeds Hermes invocation progress lifecycle events into the indicators store", () => {

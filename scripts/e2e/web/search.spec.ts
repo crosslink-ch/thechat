@@ -94,8 +94,8 @@ test('quick switcher jumps anywhere and message search opens the hit in context'
   // The other workspace's channel, by name: the workspace switches with it.
   panel = await openSwitcher(page, isPhone);
   await panel.getByRole('textbox', { name: 'Search TheChat' }).fill('#general');
-  await expect(panel.getByRole('button', { name: 'general, channel, TouchPoint' })).toBeVisible();
-  await panel.getByRole('button', { name: 'general, channel, TouchPoint' }).click();
+  await expect(panel.getByRole('button', { name: 'General, channel, TouchPoint' })).toBeVisible();
+  await panel.getByRole('button', { name: 'General, channel, TouchPoint' }).click();
   await expect(page.getByText('TouchPoint staging is frozen until Monday')).toBeVisible();
 
   // Message text across both workspaces, previewed under the places.

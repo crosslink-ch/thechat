@@ -170,7 +170,7 @@ test('reply threads in a channel: deep link, search opens the thread, phone layo
   const panel = page.getByTestId('thread-panel');
   await expect(panel).toBeVisible();
   await expect(panel).toContainText('I added the migration section.');
-  await expect(panel.locator('header')).toContainText('general');
+  await expect(panel.locator('header')).toContainText('General');
   if (info.project.name === 'chromium-desktop') await evidence(page, '05-channel-thread-panel');
   if (info.project.name !== 'chromium-desktop') {
     // Phones: the thread covers the conversation instead of squeezing it.

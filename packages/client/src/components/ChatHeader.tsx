@@ -1,6 +1,7 @@
 import { MOBILE_NAV_QUERY, NavigationToggle, useMediaQuery } from "./ResponsiveShell";
 import { create } from "zustand";
 import { useMatches } from "@tanstack/react-router";
+import { channelDisplayName } from "@thechat/shared";
 import { useWorkspacesStore } from "../stores/workspaces";
 import { usePermissionModeStore } from "../stores/permission-mode";
 import { useAuthStore } from "../stores/auth";
@@ -55,7 +56,7 @@ export function ChatHeader() {
   const channel = isChannel
     ? activeWorkspace?.channels.find((item) => item.id === params.id)
     : null;
-  const title = isChannel ? channel?.name ?? ""
+  const title = isChannel ? (channel ? channelDisplayName(channel) : "")
     : isDm ? currentDm?.title ?? ""
       : isAgentChat ? agentTitle
         : pageLabels[routePath] ?? activeWorkspace?.name ?? "Home";
@@ -78,7 +79,7 @@ export function ChatHeader() {
             type="button"
             className="-ml-1.5 flex min-w-0 cursor-pointer items-center rounded-md border-none bg-transparent px-1.5 py-1 font-[inherit] transition-colors duration-100 hover:bg-white/[0.06]"
             onClick={() => openChannelDetailsModal(channel.id)}
-            aria-label={`${channel.name}, open channel details`}
+            aria-label={`${title}, open channel details`}
             title="Channel details"
             data-testid="channel-details-trigger"
           >

@@ -205,10 +205,7 @@ export function ActivityRoute() {
                 </div>
                 <div className={`flex flex-col gap-0.5 p-1 ${panelClass}`}>
                   {threadItems.map((item) => {
-                    const where =
-                      item.conversationType === "group"
-                        ? `# ${item.conversationName}`
-                        : item.conversationName;
+                    const where = item.conversationName;
                     const key = `thread:${item.rootMessageId}`;
                     const processing = processingIds.has(key) || processingIds.has("all");
                     return (
@@ -328,7 +325,7 @@ export function ActivityRoute() {
                           <button
                             type="button"
                             className="min-w-0 flex-1 cursor-pointer border-none bg-transparent text-left"
-                            aria-label={`Open ${label} in ${item.workspaceName}`}
+                            aria-label={`Open ${item.conversationName} in ${item.workspaceName}`}
                             onClick={() => void openActivity(item)}
                           >
                             <span className="flex items-center gap-2">

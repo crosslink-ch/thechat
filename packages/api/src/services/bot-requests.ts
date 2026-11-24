@@ -107,6 +107,7 @@ const publicSelection = {
   botAvatarColor: bots.avatarColor,
   conversationType: conversations.type,
   conversationName: conversations.name,
+  conversationTitle: conversations.title,
   workspaceId: conversations.workspaceId,
   threadTitle: conversationThreads.title,
   answeredByName: answeredByUsers.name,
@@ -120,6 +121,7 @@ type PublicRow = {
   botAvatarColor: string | null;
   conversationType: "direct" | "group";
   conversationName: string | null;
+  conversationTitle: string | null;
   workspaceId: string | null;
   threadTitle: string | null;
   answeredByName: string | null;
@@ -153,6 +155,7 @@ function toPublic(row: PublicRow): BotRequestPublic {
     conversationId: request.conversationId,
     conversationType: row.conversationType,
     conversationName: row.conversationName,
+    conversationTitle: row.conversationTitle,
     workspaceId: row.workspaceId,
     threadId: request.threadId,
     threadTitle: row.threadTitle,

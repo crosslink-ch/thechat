@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import type { MessageSearchHit, SearchDestination } from "@thechat/shared";
+import { channelDisplayName, type MessageSearchHit, type SearchDestination } from "@thechat/shared";
 import { ArrowUpRight, Hash, ListTodo, LoaderCircle, MessageSquare, Search, TerminalSquare } from "lucide-react";
 import { useCommandsStore, type Command } from "./commands";
 import { requestInputBarFocus } from "./stores/input-focus";
@@ -124,11 +124,11 @@ function useServerTaskLookup(text: string, enabled: boolean) {
 /** The conversation on screen, for "only in this conversation" search. */
 function useCurrentConversation() {
   const current = useRecentLocationsStore((state) => state.current);
-  const channelName = useWorkspacesStore((state) =>
-    current?.type === "group"
-      ? state.activeWorkspace?.channels.find((channel) => channel.id === current.conversationId)?.name ?? null
-      : null,
-  );
+  const channelName = useWorkspacesStore((state) => {
+    if (current?.type !== "group") return null;
+    const channel = state.activeWorkspace?.channels.find((item) => item.id === current.conversationId);
+    return channel ? channelDisplayName(channel) : null;
+  });
   const dmTitle = useDmHeaderStore((state) =>
     current?.type === "direct" && state.identity?.conversationId === current.conversationId
       ? state.identity.title
@@ -137,7 +137,7 @@ function useCurrentConversation() {
   if (!current) return null;
   return {
     conversationId: current.conversationId,
-    label: current.type === "group" ? (channelName ? `#${channelName}` : "this channel") : dmTitle || "this conversation",
+    label: current.type === "group" ? (channelName ?? "this channel") : dmTitle || "this conversation",
   };
 }
 
@@ -506,10 +506,20 @@ function destinationLabel(destination: SearchDestination, showWorkspace: boolean
   return [destinationName(destination), kind, showWorkspace ? destination.workspaceName : null].filter(Boolean).join(", ");
 }
 
-/** "#general", "Koda › Invoice cleanup", or the other person's name. */
-export function messageLocation(hit: Pick<MessageSearchHit, "conversationType" | "conversationName" | "threadTitle">) {
-  const base = hit.conversationType === "group" ? `#${hit.conversationName}` : hit.conversationName;
+type HitLocation = Pick<MessageSearchHit, "conversationType" | "conversationName" | "conversationTitle" | "threadTitle">;
+
+/** Where a hit is, for running text: "My Channel", "Koda › Invoice cleanup", or the other person's name. */
+export function messageLocation(hit: HitLocation) {
+  const base =
+    hit.conversationType === "group"
+      ? channelDisplayName({ name: hit.conversationName, title: hit.conversationTitle })
+      : hit.conversationName;
   return hit.threadTitle ? `${base} › ${hit.threadTitle}` : base;
+}
+
+/** The same place as a compact label, marked as a channel: "# My Channel". */
+export function messageLocationLabel(hit: HitLocation) {
+  return hit.conversationType === "group" ? `# ${messageLocation(hit)}` : messageLocation(hit);
 }
 
 function PaletteRow({
@@ -596,7 +606,7 @@ function PaletteRow({
             <span className="flex min-w-0 items-baseline gap-1.5 text-[0.786rem] text-text-dimmed">
               <span className="shrink-0 font-medium text-text-secondary">{hit.senderName}</span>
               {/* The workspace gives way first: the conversation name must stay readable. */}
-              <span className="min-w-0 truncate">{messageLocation(hit)}</span>
+              <span className="min-w-0 truncate">{messageLocationLabel(hit)}</span>
               {showWorkspace && <span className="min-w-0 shrink-[20] truncate">· {hit.workspaceName}</span>}
               <span className="ml-auto shrink-0 pl-1">{formatSearchTime(hit.createdAt)}</span>
             </span>

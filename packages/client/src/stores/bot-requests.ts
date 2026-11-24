@@ -30,6 +30,8 @@ interface BotRequestsState {
   fetchInbox: () => Promise<void>;
   fetchConversation: (conversationId: string) => Promise<void>;
   answer: (requestId: string, answer: BotRequestAnswer) => Promise<BotRequestPublic>;
+  /** A channel was renamed: its cards and Inbox group show the new name. */
+  renameConversation: (conversationId: string, name: string, title: string | null) => void;
   reset: () => void;
 }
 
@@ -159,6 +161,18 @@ export const useBotRequestsStore = create<BotRequestsState>()((set, get) => ({
     const request = (data as { request: BotRequestPublic }).request;
     get().upsert(request);
     return request;
+  },
+
+  renameConversation: (conversationId, name, title) => {
+    set((state) => {
+      let byId: Record<string, BotRequestPublic> | null = null;
+      for (const [id, request] of Object.entries(state.byId)) {
+        if (request.conversationId !== conversationId) continue;
+        byId ??= { ...state.byId };
+        byId[id] = { ...request, conversationName: name, conversationTitle: title };
+      }
+      return byId ? { byId } : state;
+    });
   },
 
   reset: () => set({ ...initialState }),

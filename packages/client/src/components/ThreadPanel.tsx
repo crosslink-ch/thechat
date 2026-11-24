@@ -178,7 +178,6 @@ export function ThreadPanel({
     [alsoSend, thread],
   );
 
-  const destination = conversationType === "group" ? `#${conversationName}` : conversationName;
   const replyCount = thread.root?.thread?.replyCount ?? thread.replies.length;
   const draftKey = composerDraftKey.replyThread(user?.id, conversationId, rootMessageId);
 
@@ -312,7 +311,7 @@ export function ThreadPanel({
                     hideThreadActions
                   >
                     {reply.alsoSentToConversation && (
-                      <div className="mb-0.5 text-[0.786rem] text-text-dimmed">Also sent to {destination}</div>
+                      <div className="mb-0.5 text-[0.786rem] text-text-dimmed">Also sent to {conversationName}</div>
                     )}
                     {reply.content && <Markdown content={reply.content} mentions={mentionNames} />}
                   </SharedChatMessage>
@@ -351,7 +350,7 @@ export function ThreadPanel({
                   onChange={(event) => setAlsoSend(event.target.checked)}
                   data-testid="thread-also-send"
                 />
-                <span className="truncate">Also send to {destination}</span>
+                <span className="truncate">Also send to {conversationName}</span>
               </label>
             }
           />

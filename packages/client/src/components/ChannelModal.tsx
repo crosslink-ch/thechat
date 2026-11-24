@@ -1,7 +1,7 @@
 import { type FormEvent, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useMatches, useNavigate } from "@tanstack/react-router";
 import * as Dialog from "@radix-ui/react-dialog";
-import type { WorkspaceChannel } from "@thechat/shared";
+import { channelDisplayName, normalizeChannelTitle, type WorkspaceChannel } from "@thechat/shared";
 import { defaultChannel, useWorkspacesStore } from "../stores/workspaces";
 import { useConversationsStore } from "../stores/conversations";
 import { useAuthStore } from "../stores/auth";
@@ -66,6 +66,11 @@ function restoreFocusToLauncher() {
   if (target?.isConnected) target.focus();
 }
 
+/** The title the server keeps: as typed, whitespace collapsed, no leading "#". */
+function channelTitle(value: string) {
+  return normalizeChannelTitle(value);
+}
+
 function channelSlug(value: string) {
   return value
     .trim()
@@ -128,12 +133,13 @@ export function ChannelModal() {
 
   const isDelete = currentState.mode === "delete";
   const slug = channelSlug(name);
+  const typedTitle = channelTitle(name);
   const title =
     currentState.mode === "create"
       ? "Create a channel"
       : currentState.mode === "rename"
         ? "Rename channel"
-        : `Delete #${currentState.channel.name}?`;
+        : `Delete ${channelDisplayName(currentState.channel)}?`;
   const description =
     currentState.mode === "create"
       ? `Add a place for your team to talk in ${activeWorkspace?.name ?? "this workspace"}.`
@@ -285,7 +291,7 @@ export function ChannelModal() {
               {isDelete ? (
                 <div className="rounded-lg border border-error-border bg-error-msg-bg px-3.5 py-3 text-[0.821rem] leading-5 text-text-muted">
                   <p>
-                    <span className="font-medium text-text-secondary">#{currentState.channel.name}</span> will disappear for every channel member. This cannot be undone.
+                    <span className="font-medium text-text-secondary">{channelDisplayName(currentState.channel)}</span> will disappear for every channel member. This cannot be undone.
                   </p>
                   <p className="mt-1.5 text-text-placeholder">
                     Channels with attachments or active bot runs are protected from deletion.
@@ -305,15 +311,21 @@ export function ChannelModal() {
                         onChange={(event) => setName(event.target.value)}
                         maxLength={100}
                         aria-label="Channel name"
-                        placeholder="e.g. product-updates"
+                        placeholder="e.g. Product updates"
                         className="min-w-0 flex-1 bg-transparent px-2 py-2 text-[0.929rem] text-text outline-none placeholder:text-text-placeholder"
                       />
                     </div>
                     <p className="mt-2 text-[0.75rem] text-text-placeholder">
                       {slug ? (
-                        <>
-                          This channel will appear as <span className="font-medium text-text-muted">#{slug}</span>.
-                        </>
+                        <span data-testid="channel-name-preview">
+                          This channel will appear as <span className="font-medium text-text-muted">{typedTitle}</span>
+                          {typedTitle !== slug && (
+                            <>
+                              {" "}with the unique name <span className="font-mono text-text-muted">#{slug}</span>
+                            </>
+                          )}
+                          .
+                        </span>
                       ) : (
                         "Use letters, numbers, spaces, or hyphens."
                       )}

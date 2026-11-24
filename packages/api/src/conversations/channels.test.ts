@@ -739,6 +739,20 @@ describe("Channel management", () => {
       title: "Product & Design",
     });
 
+    // A # typed by habit is the sidebar's mark, not part of the title.
+    const hashed = await req(
+      "PATCH",
+      `/conversations/channel/${channelId}`,
+      { name: " # Product &  Design" },
+      owner.token,
+    );
+    expect(hashed.status).toBe(200);
+    expect(hashed.body).toMatchObject({
+      id: channelId,
+      name: "product-design",
+      title: "Product & Design",
+    });
+
     const collision = await req(
       "PATCH",
       `/conversations/channel/${channelId}`,
@@ -826,6 +840,7 @@ describe("Channel management", () => {
         .filter((type) => type.startsWith("channel_")),
     ).toEqual([
       "channel_created",
+      "channel_renamed",
       "channel_renamed",
       "channel_renamed",
       "channel_deleted",
