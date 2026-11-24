@@ -310,18 +310,6 @@ function doConnect() {
         workspaceId: event.workspaceId,
         channelId: event.channelId,
       });
-    } else if (event.type === "channel_members_added") {
-      wsEvents.emit("ws:channel_members_added", {
-        workspaceId: event.workspaceId,
-        channel: event.channel,
-        userIds: event.userIds,
-      });
-    } else if (event.type === "channel_member_removed") {
-      wsEvents.emit("ws:channel_member_removed", {
-        workspaceId: event.workspaceId,
-        channelId: event.channelId,
-        userId: event.userId,
-      });
     } else if (event.type === "invite_received") {
       wsEvents.emit("ws:invite_received", {
         invite: event.invite,

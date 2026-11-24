@@ -959,40 +959,41 @@ describe("registerGlobalWsHandlers", () => {
     });
     const cleanup = registerGlobalWsHandlers(navigate, undefined, messageQueryClient);
 
-    // Someone else joining a channel this client cannot see changes nothing here.
-    wsEvents.emit("ws:channel_members_added", {
-      workspaceId: "ws-1",
-      channel: board,
-      userIds: ["u-other"],
+    const withMembers = (...userIds: string[]): WorkspaceChannel => ({
+      ...board,
+      members: userIds.map((userId, index) => ({
+        userId,
+        role: index === 0 ? ("admin" as const) : ("member" as const),
+      })),
     });
+
+    // An update for a channel this client cannot see is not an invitation.
+    wsEvents.emit("ws:channel_updated", { workspaceId: "ws-1", channel: withMembers("u-other") });
     expect(channelIds()).toEqual([general.id]);
 
     // Added: the channel appears without a reload.
-    wsEvents.emit("ws:channel_members_added", {
+    wsEvents.emit("ws:channel_joined", {
       workspaceId: "ws-1",
-      channel: board,
-      userIds: ["u-current", "u-other"],
+      channel: withMembers("u-other", "u-current"),
     });
     expect(channelIds()).toEqual([general.id, board.id]);
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ["conversation-detail", board.id] });
 
-    // Someone else leaving only refreshes the member list.
-    wsEvents.emit("ws:channel_member_removed", {
-      workspaceId: "ws-1",
-      channelId: board.id,
-      userId: "u-other",
-    });
+    // Someone else leaving only updates the channel and its member list.
+    invalidate.mockClear();
+    wsEvents.emit("ws:channel_updated", { workspaceId: "ws-1", channel: withMembers("u-current") });
     expect(channelIds()).toEqual([general.id, board.id]);
+    expect(
+      useWorkspacesStore.getState().activeWorkspace?.channels[1]?.members?.map((m) => m.userId),
+    ).toEqual(["u-current"]);
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ["conversation-detail", board.id] });
     expect(navigate).not.toHaveBeenCalled();
 
-    // Removed while reading it: out of the list, off the screen, nothing cached.
+    // Removed while reading it (the server sends channel_deleted to the person
+    // removed): out of the list, off the screen, nothing cached.
     window.location.hash = `#/channel/${board.id}`;
     useConversationsStore.setState({ unreadChannels: new Set([board.id]) });
-    wsEvents.emit("ws:channel_member_removed", {
-      workspaceId: "ws-1",
-      channelId: board.id,
-      userId: "u-current",
-    });
+    wsEvents.emit("ws:channel_deleted", { workspaceId: "ws-1", channelId: board.id });
     expect(channelIds()).toEqual([general.id]);
     expect(navigate).toHaveBeenCalledWith({ to: `/channel/${general.id}` });
     expect(useConversationsStore.getState().unreadChannels.has(board.id)).toBe(false);
@@ -1004,12 +1005,27 @@ describe("registerGlobalWsHandlers", () => {
     expect(messageQueryClient.getQueryData(["messages", general.id])).toEqual({ kept: true });
     expect(useActivityStore.getState().fetchActivity).toHaveBeenCalled();
 
+    // Stale events after the removal resurrect neither the channel nor its cache.
+    wsEvents.emit("ws:channel_updated", { workspaceId: "ws-1", channel: withMembers("u-other") });
+    wsEvents.emit("ws:new_message", {
+      message: {
+        id: "m-late",
+        conversationId: board.id,
+        senderId: "u-other",
+        senderName: "Other",
+        senderType: "human",
+        content: "late",
+        createdAt: "2026-01-03T00:00:00.000Z",
+      },
+      conversationType: "group",
+    } as any);
+    expect(channelIds()).toEqual([general.id]);
+    expect(messageQueryClient.getQueryData(["messages", board.id])).toBeUndefined();
+    expect(messageQueryClient.getQueryData(["conversation-detail", board.id])).toBeUndefined();
+    expect(useConversationsStore.getState().unreadChannels.has(board.id)).toBe(false);
+
     // Added back later: it returns, although this client saw it go.
-    wsEvents.emit("ws:channel_members_added", {
-      workspaceId: "ws-1",
-      channel: board,
-      userIds: ["u-current"],
-    });
+    wsEvents.emit("ws:channel_joined", { workspaceId: "ws-1", channel: withMembers("u-current") });
     expect(channelIds()).toEqual([general.id, board.id]);
 
     cleanup();

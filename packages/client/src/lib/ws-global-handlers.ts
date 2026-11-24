@@ -56,7 +56,6 @@ async function refreshWorkspaceDetails(
     if (error || !data) return;
 
     const latest = data as WorkspaceWithDetails;
-    onChannelsListed(latest.channels.map((channel) => channel.id));
     const stillCurrent = useWorkspacesStore.getState().activeWorkspace;
     if (
       !stillCurrent ||
@@ -64,6 +63,9 @@ async function refreshWorkspaceDetails(
       !isLatestRequest()
     ) return;
 
+    // Only the latest listing counts: an older response may predate a
+    // removal and must not make a channel this user lost visible again.
+    onChannelsListed(latest.channels.map((channel) => channel.id));
     useWorkspacesStore.setState({ activeWorkspace: latest });
   } catch {
     // Keep optimistic state if refresh fails.
@@ -138,6 +140,9 @@ export function registerGlobalWsHandlers(
     clientMessageId,
     rootThread,
   }: WsEvents["ws:new_message"]) => {
+    // A late delivery for a channel this user just lost must not bring its
+    // cache (or an unread badge) back.
+    if (deletedChannelIds.has(msg.conversationId)) return;
     cacheIncomingMessage(messageQueryClient, msg, clientMessageId, rootThread);
     cacheIncomingThreadReply(messageQueryClient, msg, rootThread);
     const currentUserId = useAuthStore.getState().user?.id;
@@ -426,55 +431,6 @@ export function registerGlobalWsHandlers(
     reconcileWorkspace(workspaceId);
   };
 
-  // For the people just added this is the first they hear of the channel.
-  const onChannelMembersAdded = ({
-    workspaceId,
-    channel,
-    userIds,
-  }: WsEvents["ws:channel_members_added"]) => {
-    const currentUserId = useAuthStore.getState().user?.id;
-    if (currentUserId && userIds.includes(currentUserId)) {
-      // Removed and added back: the channel is no longer gone for this client.
-      deletedChannelIds.delete(channel.id);
-      useWorkspacesStore.setState((state) => {
-        if (state.activeWorkspace?.id !== workspaceId) return state;
-        return {
-          activeWorkspace: {
-            ...state.activeWorkspace,
-            channels: upsertWorkspaceChannel(
-              state.activeWorkspace.channels,
-              channel,
-            ),
-          },
-        };
-      });
-      reconcileWorkspace(workspaceId);
-    }
-    refreshChannelDetail(channel.id);
-  };
-
-  const onChannelMemberRemoved = ({
-    workspaceId,
-    channelId,
-    userId,
-  }: WsEvents["ws:channel_member_removed"]) => {
-    if (userId !== useAuthStore.getState().user?.id) {
-      refreshChannelDetail(channelId);
-      return;
-    }
-    // The server already refuses this channel: drop what was cached of it
-    // and leave it, as if it had been deleted.
-    messageQueryClient.removeQueries({ queryKey: ["messages", channelId] });
-    messageQueryClient.removeQueries({ queryKey: ["message-thread", channelId] });
-    messageQueryClient.removeQueries({
-      queryKey: conversationDetailQueryKey(channelId),
-    });
-    messageQueryClient.removeQueries({ queryKey: ["bot-runtime", channelId] });
-    void messageQueryClient.invalidateQueries({ queryKey: ["followed-threads"] });
-    void useActivityStore.getState().fetchActivity();
-    onChannelDeleted({ workspaceId, channelId });
-  };
-
   // This user was added to a channel, possibly one they were removed from
   // earlier in this session.
   const onChannelJoined = ({
@@ -501,11 +457,29 @@ export function registerGlobalWsHandlers(
     reconcileWorkspace(workspaceId);
   };
 
+  // The channel was deleted, or this user left or was removed from it. The
+  // server already refuses it: drop everything cached of it, so nothing of
+  // a private channel stays readable here.
+  const purgeChannelCaches = (channelId: string) => {
+    for (const queryKey of [
+      ["messages", channelId],
+      ["message-thread", channelId],
+      conversationDetailQueryKey(channelId),
+      ["bot-runtime", channelId],
+    ]) {
+      // Cancel first so an in-flight fetch cannot write it back.
+      void messageQueryClient.cancelQueries({ queryKey });
+      messageQueryClient.removeQueries({ queryKey });
+    }
+    void messageQueryClient.invalidateQueries({ queryKey: ["followed-threads"] });
+  };
+
   const onChannelDeleted = ({
     workspaceId,
     channelId,
   }: WsEvents["ws:channel_deleted"]) => {
     deletedChannelIds.add(channelId);
+    purgeChannelCaches(channelId);
     let fallbackChannelId: string | null = null;
     useWorkspacesStore.setState((state) => {
       if (state.activeWorkspace?.id !== workspaceId) return state;
@@ -612,8 +586,6 @@ export function registerGlobalWsHandlers(
   wsEvents.on("ws:channel_updated", onChannelUpdated);
   wsEvents.on("ws:channel_joined", onChannelJoined);
   wsEvents.on("ws:channel_deleted", onChannelDeleted);
-  wsEvents.on("ws:channel_members_added", onChannelMembersAdded);
-  wsEvents.on("ws:channel_member_removed", onChannelMemberRemoved);
   wsEvents.on("ws:invite_received", onInviteReceived);
   wsEvents.on("ws:bot_workspace_invite_received", onBotWorkspaceInviteReceived);
   wsEvents.on("ws:bot_workspace_invite_resolved", onBotWorkspaceInviteResolved);
@@ -638,8 +610,6 @@ export function registerGlobalWsHandlers(
     wsEvents.off("ws:channel_updated", onChannelUpdated);
     wsEvents.off("ws:channel_joined", onChannelJoined);
     wsEvents.off("ws:channel_deleted", onChannelDeleted);
-    wsEvents.off("ws:channel_members_added", onChannelMembersAdded);
-    wsEvents.off("ws:channel_member_removed", onChannelMemberRemoved);
     wsEvents.off("ws:invite_received", onInviteReceived);
     wsEvents.off("ws:bot_workspace_invite_received", onBotWorkspaceInviteReceived);
     wsEvents.off("ws:bot_workspace_invite_resolved", onBotWorkspaceInviteResolved);

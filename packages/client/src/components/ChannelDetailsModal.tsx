@@ -56,6 +56,16 @@ const panelClass = "rounded-lg border border-border bg-base px-3.5 py-3";
 const badgeClass =
   "inline-flex shrink-0 items-center gap-1 rounded-md bg-white/[0.06] px-1.5 py-0.5 text-[0.714rem] font-medium text-text-muted";
 
+/** Workspace role and channel role, both shown: either one grants control. */
+function roleLabel(role: ChannelMemberRole, member: WorkspaceMember | undefined, isPrivate: boolean) {
+  if (member?.user.type === "bot") return "Bot";
+  const labels: string[] = [];
+  if (member?.role === "owner") labels.push("Workspace owner");
+  else if (member?.role === "admin") labels.push("Workspace admin");
+  if (isPrivate && role === "admin") labels.push("Channel admin");
+  return labels.length > 0 ? labels.join(" · ") : "Member";
+}
+
 /** Shown in place of the composer of an archived channel. */
 export function ArchivedChannelNotice({ onOpenDetails }: { onOpenDetails: () => void }) {
   return (
@@ -209,9 +219,12 @@ export function ChannelDetailsModal() {
               </Dialog.Title>
               <Dialog.Description asChild>
                 <p className="mt-1 text-[0.857rem] leading-5 text-text-muted">
+                  <span data-testid="channel-visibility">
+                    {channel.isPrivate ? "Private channel" : "Public channel"}
+                  </span>
                   {channel.isPrivate
-                    ? "Private channel. Only its members can see and open it."
-                    : "Public channel. Everyone in the workspace can see and open it."}
+                    ? ". Only its members can see and open it."
+                    : ". Everyone in the workspace can see and open it."}
                 </p>
               </Dialog.Description>
               {archived && (
@@ -291,7 +304,8 @@ export function ChannelDetailsModal() {
                         Rename
                       </button>
                     )}
-                    {access.canManage && (channel.isPrivate || channel.name !== "general") && (
+                    {/* The server refuses visibility changes while archived. */}
+                    {access.canManage && !archived && (channel.isPrivate || channel.name !== "general") && (
                       <button type="button" className={buttonClass("secondary", "md")} onClick={() => setConfirm("visibility")}>
                         {channel.isPrivate ? "Make public" : "Make private"}
                       </button>
@@ -352,7 +366,14 @@ export function ChannelDetailsModal() {
               </div>
 
               {adding && (
-                <div className={`mt-2 ${panelClass}`}>
+                <form
+                  aria-label="Add people"
+                  className={`mt-2 ${panelClass}`}
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    if (selected.size > 0) addSelected();
+                  }}
+                >
                   <input
                     autoFocus
                     value={filter}
@@ -416,7 +437,7 @@ export function ChannelDetailsModal() {
                       {busy ? "Adding..." : selected.size > 1 ? `Add ${selected.size} people` : "Add"}
                     </button>
                   </div>
-                </div>
+                </form>
               )}
 
               <ul className="mt-2 divide-y divide-border/70 rounded-lg border border-border bg-base" data-testid="channel-members">
@@ -440,8 +461,10 @@ export function ChannelDetailsModal() {
                           {name}
                           {isSelf ? " (you)" : ""}
                         </span>
-                        <span data-member-role className="block truncate text-[0.75rem] text-text-placeholder">
-                          {isBot ? "Bot" : role === "admin" ? "Channel admin" : member?.user.email ?? "Member"}
+                        {/* Left-aligned under the name, so every row's role starts at the same edge. */}
+                        <span className="block truncate text-[0.75rem] text-text-placeholder">
+                          <span data-member-role>{roleLabel(role, member, channel.isPrivate)}</span>
+                          {!isBot && member?.user.email ? ` · ${member.user.email}` : ""}
                         </span>
                       </span>
                       {manageable && !isBot && (
