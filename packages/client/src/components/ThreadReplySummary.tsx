@@ -1,5 +1,6 @@
 import type { MessageThreadSummary } from "@thechat/shared";
 import { ChevronRight } from "lucide-react";
+import { useProfilePicture } from "../hooks/useProfilePicture";
 import { Avatar } from "./Avatar";
 import { useBotAppearance } from "../lib/bot-appearance";
 import { formatFullMessageTimestamp } from "../lib/message-timestamp";
@@ -19,12 +20,14 @@ export function relativeReplyTime(iso: string, now = Date.now()) {
 }
 
 function ParticipantAvatar({ participant }: { participant: MessageThreadSummary["participants"][number] }) {
+  const picture = useProfilePicture(participant.type === "human" ? participant.id : null);
   const botAvatar = useBotAppearance(participant.type === "bot" ? participant.id : null);
   return (
     <Avatar
       aria-hidden="true"
       name={participant.name}
       colorKey={participant.id}
+      picture={picture}
       bot={participant.type === "bot"}
       botAvatar={botAvatar}
       size={20}
